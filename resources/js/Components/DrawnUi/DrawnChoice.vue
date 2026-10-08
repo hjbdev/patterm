@@ -75,14 +75,14 @@ const answers = inject(drawnUiAnsweredKey, null);
 const selected = ref<string | null>(null);
 const uid = useId();
 const sending = ref(false);
-const sentText = ref<string | null>(null);
 const error = ref('');
 const queueIndex = ref(0);
 const queueAnswers = ref<string[]>([]);
 const queueRef = ref<HTMLElement | null>(null);
 
-// An answer already in the transcript locks the card on every reload.
-const answeredText = computed(() => sentText.value ?? (props.choice.id ? answers?.value.get(props.choice.id) ?? null : null));
+// The answer's own message row in the transcript locks the card, from the
+// moment it is sent and on every reload; a failed send unlocks it again.
+const answeredText = computed(() => props.choice.id ? answers?.value.get(props.choice.id) ?? null : null);
 const locked = computed(() => Boolean(answeredText.value));
 const chosen = computed(() => new Set(answeredText.value ? answeredValues(answeredText.value) : []));
 const canAnswer = computed(() => Boolean(props.choice.ask && channel?.canSend.value && !locked.value));
@@ -92,7 +92,6 @@ const queueValues = computed(() => locked.value ? answeredValues(answeredText.va
 const progress = computed(() => props.choice.items ? (locked.value ? 1 : queueIndex.value / props.choice.items.length) : 0);
 const note = computed(() => {
   if (error.value) return error.value;
-  if (sentText.value) return 'Sent to the agent.';
   if (locked.value) return 'Answered.';
   if (!props.choice.ask) return '';
   if (!channel) return 'Answer this in the live conversation.';
@@ -130,7 +129,6 @@ async function send(text: string): Promise<void> {
   error.value = '';
   try {
     await channel.send(text);
-    sentText.value = text;
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : String(cause);
   } finally {

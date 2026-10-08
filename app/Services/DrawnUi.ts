@@ -480,7 +480,11 @@ function checkChart(chart: DrawnChart, path: string, errors: string[]): void {
   if ((chart.mark === 'line' || chart.mark === 'area' || chart.mark === 'point') && (!numeric(chart.y))) errors.push(`${path}.y: ${chart.mark} needs numbers on y`);
   if ((chart.mark === 'line' || chart.mark === 'area') && !numeric(chart.x)) errors.push(`${path}.x: ${chart.mark} needs numbers on x; use bar for categories`);
   for (const key of ['x', 'y'] as const) {
-    if (chart.scale?.[key] === 'log' && chart.data.some((row) => typeof row[chart[key]] === 'number' && (row[chart[key]] as number) <= 0)) errors.push(`${path}.scale.${key}: a log scale needs values above 0`);
+    if (chart.scale?.[key] !== 'log') continue;
+    if (chart.data.some((row) => typeof row[chart[key]] === 'number' && (row[chart[key]] as number) <= 0)) errors.push(`${path}.scale.${key}: a log scale needs values above 0`);
+    const { min, max } = chart.axis?.[key] ?? {};
+    if ((min !== undefined && min <= 0) || (max !== undefined && max <= 0)) errors.push(`${path}.axis.${key}: a log scale needs min and max above 0`);
+    else if (min !== undefined && max !== undefined && min >= max) errors.push(`${path}.axis.${key}: min must be below max`);
   }
   chart.data.forEach((row, index) => {
     if (row.tone !== undefined && !(DRAWN_TONES as readonly unknown[]).includes(row.tone)) errors.push(`${path}.data[${index}].tone: expected ${DRAWN_TONES.join(' | ')}`);
@@ -562,7 +566,8 @@ function checkChoice(choice: DrawnChoice, path: string, errors: string[]): void 
 export { answeredValues, drawnUiAnswers, drawnUiAnswerText, drawnUiId, drawnUiToolInput, figureToken, isDrawnUiTool, isSavedFigure } from './TranscriptProjection';
 
 // The tool's reply maps each image path to its stored copy. Harnesses keep the
-// reply as structured content, a content array, or plain text.
+// reply as structured content, a content array, or plain text; Codex keeps the
+// whole content wrapper as JSON text, so the reply is escaped one level down.
 export function drawnUiImages(tool: TranscriptTool): Record<string, string> {
   for (const candidate of [tool.result, tool.output, tool.state]) {
     const images = findImages(candidate, 0);
@@ -572,9 +577,9 @@ export function drawnUiImages(tool: TranscriptTool): Record<string, string> {
 }
 
 function findImages(value: unknown, depth: number): Record<string, string> | null {
-  if (depth > 4 || value === null || value === undefined) return null;
+  if (depth > 8 || value === null || value === undefined) return null;
   if (typeof value === 'string') {
-    if (!value.includes('"images"')) return null;
+    if (!value.includes('images')) return null;
     try { return findImages(JSON.parse(value), depth + 1); } catch { return null; }
   }
   if (Array.isArray(value)) {

@@ -306,7 +306,11 @@ function logDomain(values: number[], axis?: { min?: number | undefined; max?: nu
   const positive = values.filter((value) => Number.isFinite(value) && value > 0);
   const ticks = (axis as { ticks?: Array<number | { value: number }> } | undefined)?.ticks?.map((tick) => typeof tick === 'number' ? tick : tick.value).filter((value) => value > 0) ?? [];
   const all = [...positive, ...ticks];
-  return [axis?.min ?? Math.min(...all) / 1.6, axis?.max ?? Math.max(...all) * 1.4];
+  // Bounds at or below 0 have no logarithm, so they fall back to the data.
+  const bound = (value: number | undefined) => value !== undefined && Number.isFinite(value) && value > 0 ? value : undefined;
+  const lo = bound(axis?.min) ?? (all.length ? Math.min(...all) / 1.6 : 1);
+  const hi = bound(axis?.max) ?? (all.length ? Math.max(...all) * 1.4 : 10);
+  return lo < hi ? [lo, hi] : [lo, lo * 10];
 }
 
 // Compact scales have no log; this is the small subset Charts needs.
@@ -326,9 +330,13 @@ function logScale(min?: number, max?: number): () => InferableScaleLike<number> 
       },
       range: (next?: Iterable<number>) => { if (!next) return range; const values = [...next]; range = [values[0]!, values[1]!]; return scale; },
       copy: () => { const copy = make() as never as { domain: (value: Iterable<number>) => unknown; range: (value: Iterable<number>) => unknown }; copy.domain(domain); copy.range(range); return copy; },
+      // Bounded, so a domain that slipped past validation cannot hang the window.
       ticks: () => {
         const out: number[] = [];
-        for (let power = Math.ceil(Math.log10(domain[0])); power <= Math.floor(Math.log10(domain[1])); power++) out.push(10 ** power);
+        const first = Math.ceil(Math.log10(domain[0]));
+        const last = Math.floor(Math.log10(domain[1]));
+        if (!Number.isFinite(first) || !Number.isFinite(last)) return out;
+        for (let power = first; power <= last && out.length < 24; power++) out.push(10 ** power);
         return out;
       }
     });

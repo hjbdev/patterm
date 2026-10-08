@@ -1294,10 +1294,12 @@ export function drawnUiAnswerText(id: string, answers: Array<{ item?: string; la
 }
 
 // Which choices the user already answered, from the user messages after them.
-export function drawnUiAnswers(messages: Array<{ role: string; text: string }>): Map<string, string> {
+// A failed send is not an answer; one still sending or unconfirmed is, so the
+// card cannot send it twice while the message row offers its own retry.
+export function drawnUiAnswers(messages: Array<{ role: string; text: string; delivery?: { state: string } | undefined }>): Map<string, string> {
   const answers = new Map<string, string>();
   for (const message of messages) {
-    if (message.role !== 'user') continue;
+    if (message.role !== 'user' || message.delivery?.state === 'failed') continue;
     const match = ANSWER.exec(message.text.trimStart());
     if (match) answers.set(match[1]!, message.text.trim());
   }

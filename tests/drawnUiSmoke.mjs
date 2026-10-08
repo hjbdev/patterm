@@ -15,7 +15,8 @@ await build({
       export { SaveDrawnUiAction } from './app/Actions/SaveDrawnUiAction';
       export { McpToolRegistry } from './app/MCP/ToolRegistry';
       export { DRAWN_UI_EXAMPLES } from './resources/js/lib/drawnUiExamples';
-      export { groupTranscriptMessages } from './app/Services/TranscriptProjection';
+      export { groupTranscriptMessages, normaliseMessages } from './app/Services/TranscriptProjection';
+      export { projectCodexItem } from './app/Services/CodexTranscript';
       export { splitProcessMentions } from './resources/js/lib/agentMentions';
       export { renderPlainMarkdown } from './resources/js/lib/markdown';
       export { compileChart } from './resources/js/lib/drawnChart';
@@ -124,6 +125,19 @@ test('answers go back as one readable message and lock the card', () => {
   assert.deepEqual([...answered.keys()], ['ui_9', 'ui_14']);
   assert.deepEqual(ui.answeredValues(answered.get('ui_9')), ['inline']);
   assert.deepEqual(ui.answeredValues(answered.get('ui_14')), ['ping', 'silent']);
+  const delivery = (state) => ui.drawnUiAnswers([{ role: 'user', text: single, delivery: { state, messageId: 'm1' } }]).has('ui_9');
+  assert.equal(delivery('failed'), false, 'a failed send leaves the card open');
+  assert.equal(delivery('sending'), true, 'a send in flight locks the card');
+  assert.equal(delivery('uncertain'), true, 'an unconfirmed send is not sent twice');
+});
+
+test('Codex replies map screenshots to their stored copies', () => {
+  const sha = 'a'.repeat(64);
+  const reply = { ok: true, ref: '[patterm_figure:shot]', images: { 'shot.png': sha } };
+  const projected = ui.projectCodexItem({ type: 'mcpToolCall', id: 'call_1', server: 'patterm', tool: 'ui.save', status: 'completed', arguments: { id: 'shot', claim: 'x', figure: { type: 'image', path: 'shot.png' } }, result: { content: [{ type: 'text', text: JSON.stringify(reply, null, 2) }], structuredContent: null } });
+  const [message] = ui.normaliseMessages([projected]);
+  assert.ok(ui.isDrawnUiTool(message.tool));
+  assert.deepEqual(ui.drawnUiImages(message.tool), { 'shot.png': sha });
 });
 
 test('the Settings examples are valid figures', () => {
@@ -191,6 +205,10 @@ test('every mark compiles to a chart that draws', () => {
     const shapes = JSON.stringify(scene.nodes);
     assert.ok(shapes.length > 200, `${chart.mark} draws something`);
   }
+  const zeroFloor = { ...charts[3], axis: { x: { min: 0, max: 100 } } };
+  assert.match(errorsOf(figure(zeroFloor)), /axis\.x: a log scale needs min and max above 0/);
+  const unchecked = ui.compileChart({ ...ui.parseDrawnUi(figure(charts[3])).value.sections[0].figure, axis: { x: { min: 0, max: 100 } } });
+  assert.ok(ui.createChartScene(unchecked.definition, { width: 640, height: unchecked.height }), 'a zero log floor that slips past validation still draws');
   const log = ui.compileChart(ui.parseDrawnUi(figure(charts[3])).value.sections[0].figure);
   assert.match(JSON.stringify(ui.createChartScene(log.definition, { width: 640, height: log.height }).nodes), /ts-chart__bar/, 'log bars start at the domain floor instead of vanishing');
   const cells = ui.compileChart(ui.parseDrawnUi(figure(charts[9])).value.sections[0].figure);
