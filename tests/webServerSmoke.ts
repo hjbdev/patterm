@@ -341,11 +341,13 @@ async function main(): Promise<void> {
     const contextRpc = (tool: string, args: Record<string, unknown>) => rpc('patterm:mcp:call', {
       tool, arguments: { project_id: project.project_id, ...args }
     });
-    const patchesBeforeTodo = a.events.filter((event) => event.event === 'workbench-patch').length;
     const todoResponse = await contextRpc('patterm.todo.create', { title: 'Browser context' });
     assert.equal(todoResponse.status, 200);
     await until(() => a.events.some((event) => event.event === 'data-changed' && (event.payload as { topics: string[] }).topics.includes('context')), 'context change signal');
-    assert.equal(a.events.filter((event) => event.event === 'workbench-patch').length, patchesBeforeTodo, 'context writes publish no workbench patch');
+    // Patches up to the current version may still be on their way over the
+    // socket; only a later one would come from the todo.
+    const currentVersion = currentReply!.version;
+    assert.ok(!a.events.some((event) => event.event === 'workbench-patch' && (event.payload as { to: number }).to > currentVersion), 'context writes publish no workbench patch');
     assert.ok(!a.events.some((event) => event.event === 'workbench-changed'), 'clients are never told to refetch the whole workbench');
     const browserTodo = (await todoResponse.json() as { result: { id: string; created_by_actor: string } }).result;
     const storedTodo = await app.mcp.call('patterm.todo.get', { project_id: project.project_id, todo_id: browserTodo.id }) as { title: string; created_by_actor: string };
