@@ -727,11 +727,14 @@ server.listen(socketPath);
   seeding.service.disconnect();
 
   const partial = await launch({ ...process.env, SEED_STREAM: '1', SEED_NO_COMPLETION: '1', SEED_LIVE_DELTA: '1' });
-  const partialEvents: IntegratedConversationEvent[] = [];
-  const releasePartial = await partial.service.subscribe(partial.processId, (event) => partialEvents.push(event));
-  await waitFor(() => partialEvents.some((event) => event.kind === 'append' && event.id === 'seed_stream' && event.delta === '!'));
-  const partialSnapshot = await partial.service.conversation(partial.processId) as { messages: { data: Array<{ id: string; text: string }> } };
-  assert.equal(partialSnapshot.messages.data.find((message) => message.id === 'seed_stream')?.text, 'Seed text!', 'partial text survives without a completion and future deltas apply exactly once');
+  const releasePartial = await partial.service.subscribe(partial.processId, () => {});
+  // The last delta streams live, or joins the seed when it arrives in the same
+  // chunk as the read's reply; either way the text is the same.
+  const partialText = async () => (await partial.service.conversation(partial.processId) as { messages: { data: Array<{ id: string; text: string }> } })
+    .messages.data.find((message) => message.id === 'seed_stream')?.text;
+  const deadlinePartial = Date.now() + 3_000;
+  while (await partialText() !== 'Seed text!' && Date.now() < deadlinePartial) await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(await partialText(), 'Seed text!', 'partial text survives without a completion and future deltas apply exactly once');
   releasePartial();
   await partial.service.stop(partial.processId);
   partial.service.disconnect();
