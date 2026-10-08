@@ -58,6 +58,7 @@ const SIDEBAR_STATE_KEY = 'ui.sidebar.expanded.v1';
 const APPEARANCE_SETTINGS_KEY = 'ui.appearance.v1';
 const WORKSPACE_LAYOUT_KEY = 'ui.workspace.layout.v1';
 const AGENT_INTERFACE_KEY = 'agents.interface.v1';
+const AGENT_FIGURES_KEY = 'agents.figures.v1';
 const NOTIFICATION_SETTINGS_KEY = 'notifications.v1';
 
 export const agentInterfaceInput = z.enum(['tui', 'integrated']);
@@ -204,6 +205,18 @@ export class SettingsService {
     const value = agentInterfaceInput.parse(input);
     this.write(AGENT_INTERFACE_KEY, value);
     return value;
+  }
+
+  // Whether agents may save figures for their Integrated replies with ui.save.
+  figuresEnabled(): boolean {
+    const row = this.database.connection.prepare('select value from settings where key = ?').get(AGENT_FIGURES_KEY) as { value: string } | undefined;
+    return row?.value !== 'off';
+  }
+
+  updateFiguresEnabled(input: unknown): boolean {
+    const enabled = z.boolean().parse(input);
+    this.write(AGENT_FIGURES_KEY, enabled ? 'on' : 'off');
+    return enabled;
   }
 
   assistantSettings(): AssistantSettings {

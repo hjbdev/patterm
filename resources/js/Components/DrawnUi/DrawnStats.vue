@@ -7,7 +7,7 @@
         <p v-for="(line, lineIndex) in item.detail" :key="lineIndex" :class="lineIndex === item.detail.length - 1 ? 'font-mono text-[11px]' : ''">{{ line }}</p>
       </div>
       <p class="text-2xl font-semibold leading-tight tracking-tight tabular-nums" :class="item.state === 'unknown' ? 'text-muted-foreground/60' : item.state === 'projected' ? 'underline decoration-muted-foreground/60 decoration-dashed decoration-[1.5px] underline-offset-[6px]' : ''" :style="item.tone ? { color: toneColor(item.tone) } : undefined">
-        {{ valueText(item) }}<span v-if="item.unit && item.of === undefined" class="text-sm font-medium text-muted-foreground"> {{ item.unit }}</span>
+        {{ valueText(item) }}<span v-if="item.unit && item.of === undefined" class="ml-1 text-sm font-medium text-muted-foreground">{{ item.unit }}</span>
       </p>
       <p v-if="!worked" class="text-xs text-muted-foreground">{{ item.label }}{{ item.state === 'unknown' ? ' · unknown' : item.state === 'projected' ? ' · projected' : '' }}</p>
       <p v-if="item.delta" class="mt-0.5 text-xs" :style="{ color: toneColor(item.delta.tone ?? 'muted') }">{{ item.delta.text }}</p>

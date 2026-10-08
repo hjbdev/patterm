@@ -13,6 +13,8 @@ await build({
     contents: `
       export * from './app/Services/DrawnUi';
       export { SaveDrawnUiAction } from './app/Actions/SaveDrawnUiAction';
+      export { McpToolRegistry } from './app/MCP/ToolRegistry';
+      export { DRAWN_UI_EXAMPLES } from './resources/js/lib/drawnUiExamples';
       export { groupTranscriptMessages } from './app/Services/TranscriptProjection';
       export { splitProcessMentions } from './resources/js/lib/agentMentions';
       export { renderPlainMarkdown } from './resources/js/lib/markdown';
@@ -122,6 +124,26 @@ test('answers go back as one readable message and lock the card', () => {
   assert.deepEqual([...answered.keys()], ['ui_9', 'ui_14']);
   assert.deepEqual(ui.answeredValues(answered.get('ui_9')), ['inline']);
   assert.deepEqual(ui.answeredValues(answered.get('ui_14')), ['ping', 'silent']);
+});
+
+test('the Settings examples are valid figures', () => {
+  for (const example of ui.DRAWN_UI_EXAMPLES) {
+    const result = ui.parseDrawnUi(example.spec);
+    assert.ok(result.ok, `${example.label}: ${result.ok ? '' : result.errors.join('; ')}`);
+  }
+});
+
+test('the setting takes ui.save out of the catalog and rejects calls', async () => {
+  const registry = new ui.McpToolRegistry();
+  let enabled = true;
+  registry.register({ name: ui.DRAWN_UI_TOOL, namespace: 'cli.ui', description: 'Save a figure.', inputSchema: { type: 'object' }, unavailable: () => enabled ? null : 'ui.save is turned off' }, () => ({ ok: true }));
+  assert.deepEqual(registry.publicTools({}).map(({ name }) => name), ['ui.save']);
+  assert.equal('unavailable' in registry.publicTools({})[0], false, 'the catalog carries no functions');
+  assert.deepEqual(await registry.callPublic('ui.save', {}), { ok: true });
+  enabled = false;
+  assert.deepEqual(registry.publicTools({}), []);
+  assert.equal(registry.publicTools().length, 1, 'internal listings without a caller keep every tool');
+  await assert.rejects(registry.callPublic('ui.save', {}), /turned off/);
 });
 
 test('screenshots must live in the caller\'s directories', () => {

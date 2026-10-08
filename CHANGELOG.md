@@ -28,7 +28,8 @@ in the archived pre-release repository.
   from the window in control, and stays answered when the conversation
   reloads. Figures can show their source and never run agent code. Bad input
   is rejected with the exact path to fix. Charts use TanStack Charts, loaded
-  with the first figure.
+  with the first figure. Only Integrated agents are offered `ui.save`.
+  Settings › Figures turns it off and shows example figures.
 - An Electron desktop app and a Linux browser service that host Claude Code,
   Codex, opencode, and Amp through PTYs, keeping each CLI's own permissions,
   delegation, and resume.

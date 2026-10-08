@@ -110,7 +110,8 @@ export class McpSocketServer {
       id = request.id ?? null;
       if (request.version !== 2) throw new Error('unsupported MCP shim version');
       if (request.op === 'catalog') {
-        this.write(socket, { id, result: this.registry.publicTools() });
+        // OpenCode's shared helpers list tools without an agent identity.
+        this.write(socket, { id, result: this.registry.publicTools({ identity: typeof request.identity === 'string' && request.identity ? request.identity : null }) });
         return;
       }
       if (request.op === 'open-url') {

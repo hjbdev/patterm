@@ -33,13 +33,15 @@ import DrawnUiInputs from './DrawnUiInputs.vue';
 import { drawnUiImages, drawnUiToolInput, parseDrawnUi, type DrawnUiResult } from '../../../../app/Services/DrawnUi';
 import type { TranscriptMessage } from '../../lib/integratedConversation';
 
-const props = defineProps<{ message: TranscriptMessage }>();
-const input = computed(() => props.message.tool ? drawnUiToolInput(props.message.tool) : null);
+// A saved figure from the transcript, or a spec drawn directly, such as the
+// examples in Settings.
+const props = defineProps<{ message?: TranscriptMessage; spec?: unknown }>();
+const input = computed(() => props.spec ?? (props.message?.tool ? drawnUiToolInput(props.message.tool) : null));
 const source = computed(() => JSON.stringify(input.value, null, 2) ?? '');
 // Re-reads of the conversation hand over equal but new objects; a figure is
 // parsed once per content, so its chart is not rebuilt on every poll.
 const parsed = computed(() => cachedParse(source.value, input.value));
-const images = computed(() => props.message.tool ? drawnUiImages(props.message.tool) : {});
+const images = computed(() => props.message?.tool ? drawnUiImages(props.message.tool) : {});
 const shared = computed(() => parsed.value.ok ? { inputs: parsed.value.value.inputs, constants: parsed.value.value.constants } : {});
 const showSource = ref(false);
 // Sliders shared by every section start where the agent put them.

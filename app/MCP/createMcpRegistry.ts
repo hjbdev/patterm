@@ -70,7 +70,7 @@ interface RegistryServices {
   harnessLauncher: HarnessLauncher;
   integrated?: Pick<IntegratedAgentService, 'conversation' | 'olderMessages' | 'prompt' | 'files' | 'delivery' | 'interrupt' | 'stopTask' | 'taskOutput' | 'updateQueued' | 'replyPermission' | 'replyQuestion' | 'replyForm' | 'controls' | 'configure' | 'command' | 'isEmpty'>;
   transcriptImages?: Pick<TranscriptImageStore, 'read' | 'fromFile'>;
-  settings?: Pick<SettingsService, 'agentInterface' | 'updateAgentInterface'>;
+  settings?: Pick<SettingsService, 'agentInterface' | 'updateAgentInterface' | 'figuresEnabled' | 'updateFiguresEnabled'>;
   harnessPresets?: HarnessPresetService;
   modelCatalog?: HarnessModelCatalogService;
   // Hidden Integrated tools are called only by the UI, so their prompts count
@@ -467,6 +467,14 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
   registry.register(
     { name: 'patterm.settings.agent_interface.update', namespace: 'settings', description: 'Save the interface for later agent conversations.', hidden: true, changes: ['settings'], inputSchema: { type: 'object', required: ['interface_mode'] } },
     (args) => ({ interface_mode: requireSettings(services).updateAgentInterface(z.object({ interface_mode: z.enum(['tui', 'integrated']) }).parse(args).interface_mode) })
+  );
+  registry.register(
+    { name: 'patterm.settings.figures.get', namespace: 'settings', description: 'Read whether agents can save figures for their replies.', hidden: true, changes: [], inputSchema: { type: 'object' } },
+    () => ({ enabled: requireSettings(services).figuresEnabled() })
+  );
+  registry.register(
+    { name: 'patterm.settings.figures.update', namespace: 'settings', description: 'Turn figures in agent replies on or off.', hidden: true, changes: ['settings'], inputSchema: { type: 'object', required: ['enabled'] } },
+    (args) => ({ enabled: requireSettings(services).updateFiguresEnabled(z.object({ enabled: z.boolean() }).strict().parse(args).enabled) })
   );
   registry.register(
     { name: 'patterm.integrated.send', namespace: 'integrated', description: 'Queue one message for an Integrated agent session.', hidden: true, inputSchema: { type: 'object', required: ['process_id'] } },
@@ -993,6 +1001,13 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       }
     },
     changes: [],
+    unavailable: (context) => {
+      if (services.settings?.figuresEnabled() === false) return 'ui.save is turned off in Patterm settings. Answer in text instead.';
+      // Only Integrated transcripts draw figures. OpenCode's shared helpers
+      // carry no identity and serve only Integrated sessions.
+      const session = context.identity ? services.database.connection.prepare('select interface_mode from sessions where mcp_identity = ? and exited_at is null').get(context.identity) as { interface_mode: string | null } | undefined : undefined;
+      return session && session.interface_mode !== 'integrated' ? 'ui.save works only in Integrated mode. Answer in text instead.' : null;
+    },
     usageNotes: [
       'Send { claim, figure, source?, id? }; it returns ref [patterm_figure:id]. Put it on its own line in your reply and the figure appears there; unplaced, it never shows. figure is flat: { type: "chart", mark: "bar", ... }. Several: { sections: [...] }.',
       'chart: { mark: bar|line|area|point|interval|cell, fields: ["day","n"], data: [["Mon",3]], x, y }. A text field gives categories (text on y: bars run sideways). Options: color + colors {value: tone}, stack, x2 (interval/bin end), scale {x:"log"}, unit {x}, axis {x:{label,ticks,min,max}}, text, refs [{x|y,label}], bands [{x:[a,b]}], events [{x,label}], regions.',
@@ -2307,7 +2322,7 @@ function whoami(database: DatabaseService, identity: string | null, includeTools
     role: caller?.session_role === 'child' ? 'sub-agent' : caller?.session_role === 'assistant' ? 'assistant' : 'orchestrator',
     ...(caller?.parent_process_id ? { parent_process_id: caller.parent_process_id } : {}),
     project: caller ? { key: caller.project_id, path: caller.project_path ?? '' } : null,
-    ...(includeTools ? { available_tools: registry.publicTools().map(({ name }) => name) } : {})
+    ...(includeTools ? { available_tools: registry.publicTools({ identity }).map(({ name }) => name) } : {})
   };
 }
 

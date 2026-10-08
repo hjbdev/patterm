@@ -11,7 +11,7 @@ export const BROWSER_TOOLS = new Set([
   'patterm.harness.launch', 'patterm.harness.list', 'patterm.harness.discover', 'patterm.harness.presets',
   'patterm.integrated.get', 'patterm.integrated.history', 'patterm.integrated.image', 'patterm.integrated.send', 'patterm.integrated.controls', 'patterm.integrated.files.search', 'patterm.integrated.delivery', 'patterm.integrated.configure', 'patterm.integrated.command', 'patterm.integrated.interrupt',
   'patterm.integrated.permission.reply', 'patterm.integrated.question.reply', 'patterm.integrated.form.reply', 'patterm.integrated.task.stop', 'patterm.integrated.task.output', 'patterm.integrated.queue.update', 'patterm.integrated.new',
-  'patterm.settings.agent_interface.get', 'patterm.settings.agent_interface.update',
+  'patterm.settings.agent_interface.get', 'patterm.settings.agent_interface.update', 'patterm.settings.figures.get', 'patterm.settings.figures.update',
   'patterm.routine.list', 'patterm.routine.get', 'patterm.routine.create', 'patterm.routine.update', 'patterm.routine.delete', 'patterm.routine.run_now', 'patterm.routine.run', 'patterm.routine.runs', 'patterm.routine.log',
   'patterm.usage.summary',
   'patterm.assistant.get', 'patterm.assistant.ensure', 'patterm.assistant.voice.start', 'patterm.assistant.voice.stop', 'patterm.assistant.focus.set',
