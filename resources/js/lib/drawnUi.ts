@@ -19,6 +19,9 @@ export function toneWash(tone: DrawnTone | undefined): string {
 export interface DrawnUiAnswerChannel {
   canSend: ComputedRef<boolean>;
   send: (text: string) => Promise<void> | void;
+  // Answers waiting in the agent's queue, which the transcript leaves out
+  // until they are delivered.
+  queued: ComputedRef<Map<string, string>>;
 }
 export const drawnUiAnswerKey: InjectionKey<DrawnUiAnswerChannel> = Symbol('drawnUiAnswer');
 export const drawnUiAnsweredKey: InjectionKey<ComputedRef<Map<string, string>>> = Symbol('drawnUiAnswered');

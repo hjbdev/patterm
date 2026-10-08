@@ -80,9 +80,9 @@ const queueIndex = ref(0);
 const queueAnswers = ref<string[]>([]);
 const queueRef = ref<HTMLElement | null>(null);
 
-// The answer's own message row in the transcript locks the card, from the
-// moment it is sent and on every reload; a failed send unlocks it again.
-const answeredText = computed(() => props.choice.id ? answers?.value.get(props.choice.id) ?? null : null);
+// The answer's own message, in the transcript or the agent's queue, locks the
+// card from the moment it is sent and on every reload; a failed send unlocks it.
+const answeredText = computed(() => props.choice.id ? answers?.value.get(props.choice.id) ?? channel?.queued.value.get(props.choice.id) ?? null : null);
 const locked = computed(() => Boolean(answeredText.value));
 const chosen = computed(() => new Set(answeredText.value ? answeredValues(answeredText.value) : []));
 const canAnswer = computed(() => Boolean(props.choice.ask && channel?.canSend.value && !locked.value));

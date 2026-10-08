@@ -280,6 +280,7 @@ import {
   formQuestionState,
   buildQuestionAnswers,
   cachedConversation,
+  drawnUiAnswers,
   forgetConversation,
   formFieldVisible,
   HELD_QUEUE_EVENT_ID,
@@ -398,7 +399,8 @@ const canReply = computed(() => controlling.value && !ended.value);
 // and control check as the composer, without touching the draft.
 provide(drawnUiAnswerKey, {
   canSend: computed(() => canReply.value && !submissionFor(props.processId)),
-  send: (text: string) => sendRequest({ text, references: [], attachments: [], messageId: randomId(), hash: payloadHash(text, [], []) })
+  send: (text: string) => sendRequest({ text, references: [], attachments: [], messageId: randomId(), hash: payloadHash(text, [], []) }),
+  queued: computed(() => drawnUiAnswers(queue.value.map((item) => ({ role: 'user', text: item.text }))))
 });
 
 let timer: ReturnType<typeof setTimeout> | undefined;
