@@ -1,0 +1,15 @@
+node_modules/
+.opencode/
+dist/
+out/
+.vite/
+*.log
+*.tmp
+native/terminal-core/target/
+debug-pty-logs/
+.worktrees/
+.claude/
+.env*
+*.key
+minisign.key
+.DS_Store

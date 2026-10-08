@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "rootDir": ".",
+    "outDir": "dist/server",
+    "types": ["node"],
+    "esModuleInterop": true
+  },
+  "include": ["server/**/*.ts", "app/**/*.ts", "database/**/*.ts", "routes/application.ts", "routes/commands.ts"]
+}

@@ -1,0 +1,2209 @@
+{
+  "boundary": "Native CLI PTY input to loopback API request. Local mock rejects inference. 10 samples per case; order of 0ms/100ms alternates. Each sample follows previous acceptance/error recovery, so these are sequential rather than concurrent submissions. OpenCode adds one trailing space to multiline/large paste with both delay values; accepted and exact_text are separate.",
+  "results": [
+    {
+      "cli": "codex",
+      "version": "codex-cli 0.153.4",
+      "workload": "short",
+      "delay_ms": 0,
+      "correct": 10,
+      "samples": 10,
+      "median_ms": 25.797054499889782,
+      "p95_ms": 27.132766999784508,
+      "raw": [
+        {
+          "accepted": true,
+          "latency_ms": 27.132766999784508,
+          "after_enter_ms": 27.122207000047638,
+          "prompt_bytes": 65,
+          "prompt_sha256": "c2f9a7a056ed6d27c42a2a467986fbcb69ecaac27b7c6ddae5c9399b2a7097be"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 26.35928999961834,
+          "after_enter_ms": 26.347146999796678,
+          "prompt_bytes": 65,
+          "prompt_sha256": "f3c308b4bba7335808dbec3a5df808d6bacd0c179c1df093b833029cbae925d3"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 26.37858599973697,
+          "after_enter_ms": 26.36820699990494,
+          "prompt_bytes": 65,
+          "prompt_sha256": "3bb1a1d86d1fd7da13518d26a35594343ffc8bbc20211ea55bbfdf60668c7d45"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 25.825655000062397,
+          "after_enter_ms": 25.803001999975095,
+          "prompt_bytes": 65,
+          "prompt_sha256": "fdac5a9eeb95cd2bc90d9103b2c183d42ffc3533b7e0608bf4cc0e5834c87777"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 26.25102699994386,
+          "after_enter_ms": 26.240837999921496,
+          "prompt_bytes": 65,
+          "prompt_sha256": "be71966936740a345d04f8d6c870e996a7372157c8165dab9a3fcfe7d8b63e36"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 25.096071000007214,
+          "after_enter_ms": 25.08660300009069,
+          "prompt_bytes": 65,
+          "prompt_sha256": "38d45246d711bec6e4d17a9d381c2d273007d3440ad842379842734fbd2a6fd7"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 24.94353400015825,
+          "after_enter_ms": 24.934537000262935,
+          "prompt_bytes": 65,
+          "prompt_sha256": "a9422d389c201e434e415329509e1e962d67e77ef40e418d69774c1ec6784763"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 24.855160000242904,
+          "after_enter_ms": 24.84638299983999,
+          "prompt_bytes": 65,
+          "prompt_sha256": "6bfbbaa1f3846dc468eca4e8a9e55efb8e73733ac83463170e25a91d1937f30f"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 25.73443800019959,
+          "after_enter_ms": 25.725120000060997,
+          "prompt_bytes": 65,
+          "prompt_sha256": "ee9455eebb1c7e8d89f61d2150f380c2ea7e0ba2c130fdc823079da98c3831a0"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 25.768453999717167,
+          "after_enter_ms": 25.7569729997158,
+          "prompt_bytes": 65,
+          "prompt_sha256": "0429f80b7992b0d9ecdfbaa9578201e5ee4e7fc4bb2fd58adac7c3672b6cba9c"
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-codex-ra4pnpbe",
+      "kind": "paste",
+      "transport": "direct PTY",
+      "exact_text": 10
+    },
+    {
+      "cli": "codex",
+      "version": "codex-cli 0.153.4",
+      "workload": "short",
+      "delay_ms": 100,
+      "correct": 10,
+      "samples": 10,
+      "median_ms": 125.947728500023,
+      "p95_ms": 128.02319200000056,
+      "raw": [
+        {
+          "accepted": true,
+          "latency_ms": 126.31915300016772,
+          "after_enter_ms": 26.294024999970134,
+          "prompt_bytes": 65,
+          "prompt_sha256": "ec421748a396798a83267538c927a123b976a2a4e98fe7dedbe912df94cd3155"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 126.01485899995168,
+          "after_enter_ms": 25.987777999944228,
+          "prompt_bytes": 65,
+          "prompt_sha256": "42839414cb63edcea54e124e01321d5b5a90185043f362c3ca6bab0f2f47e911"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 126.53475800016167,
+          "after_enter_ms": 26.510255000175675,
+          "prompt_bytes": 65,
+          "prompt_sha256": "4c22b5aafa7623cfa84df2fa135687cf5293a3cbeea534dd01a3b1579f33a102"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 128.02319200000056,
+          "after_enter_ms": 27.99687000015183,
+          "prompt_bytes": 65,
+          "prompt_sha256": "a420ec5547ebfe885af6e348221094d48ce03c5d3377d5c4646c248ee818f1d1"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 126.4774450000914,
+          "after_enter_ms": 26.4424400002099,
+          "prompt_bytes": 65,
+          "prompt_sha256": "de7266e3ba5db77ae61fefc08e1c758d586e863efefdcd380e310c788e104ebe"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 125.41203599994333,
+          "after_enter_ms": 25.380907999988267,
+          "prompt_bytes": 65,
+          "prompt_sha256": "02643a315cd784b8d665bd8b968d129d721aaca56df69fb5ce7258f00e35a776"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 125.88059800009432,
+          "after_enter_ms": 25.85573599981217,
+          "prompt_bytes": 65,
+          "prompt_sha256": "c50035ce8e91f96cedc85b3d01ab2cba23e2e9aac200967d9637ff17caac89a0"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 125.13962000002721,
+          "after_enter_ms": 25.098037000134354,
+          "prompt_bytes": 65,
+          "prompt_sha256": "0f854451ca3215e98a6c1e236c9537a7e17eb4741fb0eb6797d9e8c7499dde74"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 125.79098600008365,
+          "after_enter_ms": 25.763742999970418,
+          "prompt_bytes": 65,
+          "prompt_sha256": "c02f58cba31a9bf312fd59784b2e2c843cdd825a73628359de7faaac4e2fc335"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 125.66238199997315,
+          "after_enter_ms": 25.63925999993444,
+          "prompt_bytes": 65,
+          "prompt_sha256": "1b4f58b621dbf0c8dd435b3db1b460b3b9186968d5cd82582bad1cb64a58522f"
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-codex-ra4pnpbe",
+      "kind": "paste",
+      "transport": "direct PTY",
+      "exact_text": 10
+    },
+    {
+      "cli": "codex",
+      "version": "codex-cli 0.153.4",
+      "workload": "multiline",
+      "delay_ms": 0,
+      "correct": 10,
+      "samples": 10,
+      "median_ms": 25.786505500036583,
+      "p95_ms": 26.884332000008726,
+      "raw": [
+        {
+          "accepted": true,
+          "latency_ms": 25.76815300017188,
+          "after_enter_ms": 25.759908000054565,
+          "prompt_bytes": 126,
+          "prompt_sha256": "ca8549af4b857cebfcf072d95873d97cac47dac4cde15b546704ea6c94ac1910"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 25.572376000127406,
+          "after_enter_ms": 25.561986000411707,
+          "prompt_bytes": 126,
+          "prompt_sha256": "feae5ea64b5812dc385c3f37957f63594957e46592196e33426b3c26617ccad2"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 26.884332000008726,
+          "after_enter_ms": 26.873692000208393,
+          "prompt_bytes": 126,
+          "prompt_sha256": "7159acb9a5c0cc3216532e3c1870013a410c555849b1a6162ad8f1dbacd553c3"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 25.804857999901287,
+          "after_enter_ms": 25.793596999847068,
+          "prompt_bytes": 126,
+          "prompt_sha256": "3b7ede68f2eb8a8901a7c9e2f6c52012623d0259f2c8b243908c24a3ae71894d"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 25.18252299978485,
+          "after_enter_ms": 25.17236399989997,
+          "prompt_bytes": 126,
+          "prompt_sha256": "848747023d70524ce93f14e702f474e56080e36d182dc3a4e5969d9ad4dcc790"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 26.65590400010842,
+          "after_enter_ms": 26.644813000075374,
+          "prompt_bytes": 126,
+          "prompt_sha256": "ed5134e2152ea6a2ac7b65938d9e2980e7ada0603b3de34e442e30f22159e7bd"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 25.869029000205046,
+          "after_enter_ms": 25.85916099997121,
+          "prompt_bytes": 126,
+          "prompt_sha256": "3b3b5b3f8e249c668f8e0d9912ca910ca44b3ac14fb208e89ad3b3963020676c"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 25.165704999835725,
+          "after_enter_ms": 25.154464000024745,
+          "prompt_bytes": 126,
+          "prompt_sha256": "d13dbc08968544e5810de1cd4372c102e9ad817df95c524964216b7de40c6f18"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 26.43299700002899,
+          "after_enter_ms": 26.422727999943163,
+          "prompt_bytes": 126,
+          "prompt_sha256": "15e91a15b9a75159d540002facb28064c9edbe5a3a6c7dcc2d19a699910fd8b6"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 25.497183999959816,
+          "after_enter_ms": 25.486764000106632,
+          "prompt_bytes": 126,
+          "prompt_sha256": "aed50c24fc9eb7af9108bdce05f09236382b6cfb5fee9f1982874b170eaf7285"
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-codex-ra4pnpbe",
+      "kind": "paste",
+      "transport": "direct PTY",
+      "exact_text": 10
+    },
+    {
+      "cli": "codex",
+      "version": "codex-cli 0.153.4",
+      "workload": "multiline",
+      "delay_ms": 100,
+      "correct": 10,
+      "samples": 10,
+      "median_ms": 125.63146049978968,
+      "p95_ms": 126.05561899999884,
+      "raw": [
+        {
+          "accepted": true,
+          "latency_ms": 125.89645100024427,
+          "after_enter_ms": 25.872392000110267,
+          "prompt_bytes": 126,
+          "prompt_sha256": "877aefd9e157a7129a8c02b9e8974ec71edb93fe1b8ae070f2c026e88f67f18c"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 125.74722999988808,
+          "after_enter_ms": 25.72267000005013,
+          "prompt_bytes": 126,
+          "prompt_sha256": "34965cac37184d1dd68b0c190a8d1f5c87e1ec994af9b22d3e47b2f57eaf98a0"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 126.05561899999884,
+          "after_enter_ms": 26.03550100002394,
+          "prompt_bytes": 126,
+          "prompt_sha256": "3a01f0cf1566a582491701dee961df59727fb183bf0417f50b65c33d498daadb"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 125.48767800035421,
+          "after_enter_ms": 25.463583000146173,
+          "prompt_bytes": 126,
+          "prompt_sha256": "6550d6f339aa1a63cc51e83acee99228f375788eb0196391a5c176cfce9ec453"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 125.95472599969071,
+          "after_enter_ms": 25.929902999905607,
+          "prompt_bytes": 126,
+          "prompt_sha256": "00332ad174f87c9d5197b7358a5465e26924b519581ca0fb9c465ba289151f81"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 124.51024900019547,
+          "after_enter_ms": 24.48687300011443,
+          "prompt_bytes": 126,
+          "prompt_sha256": "56084154c5bd1af0de653dbde4c6d442e3333e0594869112a9bf562c949641f2"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 125.35020099994654,
+          "after_enter_ms": 25.317902000097092,
+          "prompt_bytes": 126,
+          "prompt_sha256": "520eb964ad0f4b8f05346670f23479032a8b83552b052305c26418ddcdeed0f3"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 125.32598500001768,
+          "after_enter_ms": 25.291941999967094,
+          "prompt_bytes": 126,
+          "prompt_sha256": "a8b5b15cd9bfaec9078798366227859d9932d569a1ad1c6991c0a778c7db2a4c"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 125.79113099991446,
+          "after_enter_ms": 25.767411999822798,
+          "prompt_bytes": 126,
+          "prompt_sha256": "c7143c050e6987af20138b154498c1b0d3d5feb279dad8bad58b20df685a419e"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 125.51569099969129,
+          "after_enter_ms": 25.483545000042795,
+          "prompt_bytes": 126,
+          "prompt_sha256": "debfaecc8c35d07c1f2a9501b7d4cd2fc43486e7157353b8f3c2f4c1e09c33c5"
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-codex-ra4pnpbe",
+      "kind": "paste",
+      "transport": "direct PTY",
+      "exact_text": 10
+    },
+    {
+      "cli": "codex",
+      "version": "codex-cli 0.153.4",
+      "workload": "large",
+      "delay_ms": 0,
+      "correct": 10,
+      "samples": 10,
+      "median_ms": 40.177466499926595,
+      "p95_ms": 41.00402900030531,
+      "raw": [
+        {
+          "accepted": true,
+          "latency_ms": 39.432173000022885,
+          "after_enter_ms": 34.38613300022553,
+          "prompt_bytes": 16481,
+          "prompt_sha256": "9904d59a243a9f8f68a4fc8f45401c97fae61d06f10913e5b71c2819aa210ca4"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 40.19528499975422,
+          "after_enter_ms": 35.14454599962846,
+          "prompt_bytes": 16481,
+          "prompt_sha256": "95f30fcc04ec41a703b25c1876e692aab84e24893faa5b6ab78e776817f29ef9"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 40.15964800009897,
+          "after_enter_ms": 35.10993100007909,
+          "prompt_bytes": 16481,
+          "prompt_sha256": "7e36a97e071ec83a2eb2d5ef1306128e0ba1a2d109584212591f500d78e6fd29"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 40.890830000080314,
+          "after_enter_ms": 35.85163300022032,
+          "prompt_bytes": 16481,
+          "prompt_sha256": "fb5e6ba7705c34a0adca1dcacb7eb5416097808a920d8723e2a591f94880374a"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 40.99470800019844,
+          "after_enter_ms": 35.94719500006249,
+          "prompt_bytes": 16481,
+          "prompt_sha256": "f5842802516cf3523c89d1ea1034fe5a3d321cd946dbd4646b680b1752ac5484"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 41.00402900030531,
+          "after_enter_ms": 35.96692400014945,
+          "prompt_bytes": 16481,
+          "prompt_sha256": "2a4a12de3ecb1161b95bee930fbfc865061fe1f8460ebd5181e06b2ebd3ba17d"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 40.78788100014208,
+          "after_enter_ms": 35.74037699991095,
+          "prompt_bytes": 16481,
+          "prompt_sha256": "e4d016539437e8c59d21fb0a564c13765b7fdfa2505a9c6017df2f6937aa5630"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 37.28359100023226,
+          "after_enter_ms": 37.26408400007131,
+          "prompt_bytes": 16481,
+          "prompt_sha256": "01c328292b6dd0712242aa7dacbb3a7dde709ff2e5e576b1152dae4e83727a79"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 36.03718900012609,
+          "after_enter_ms": 36.00656100024935,
+          "prompt_bytes": 16481,
+          "prompt_sha256": "6203dfbd67cfcb691db30f9a63d7e3c3ab230517a1063dbfca2540291cbe1761"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 36.731643000166514,
+          "after_enter_ms": 36.71420999990005,
+          "prompt_bytes": 16481,
+          "prompt_sha256": "69d2e265c14f41cefc14ea183a604c54e9225f1009c8e202e9f470176bb449f0"
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-codex-ra4pnpbe",
+      "kind": "paste",
+      "transport": "direct PTY",
+      "exact_text": 10
+    },
+    {
+      "cli": "codex",
+      "version": "codex-cli 0.153.4",
+      "workload": "large",
+      "delay_ms": 100,
+      "correct": 10,
+      "samples": 10,
+      "median_ms": 139.43359499990038,
+      "p95_ms": 142.0481860000109,
+      "raw": [
+        {
+          "accepted": true,
+          "latency_ms": 138.94097699994745,
+          "after_enter_ms": 33.8761009998052,
+          "prompt_bytes": 16481,
+          "prompt_sha256": "dbd69c8bfae426aa72d6b8b449be51d60d147f494717777421fd6a3362e82cdc"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 138.7536719998934,
+          "after_enter_ms": 33.68065399990883,
+          "prompt_bytes": 16481,
+          "prompt_sha256": "56473214dd922580123ac96b96757e50df3cb2325b100d3bfdc74351297429ba"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 135.13927099984357,
+          "after_enter_ms": 35.09426300024643,
+          "prompt_bytes": 16481,
+          "prompt_sha256": "8151e3f79e3af499469e9bca26154150a2143560bcf1a6a416009ddea2e053c0"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 139.9262129998533,
+          "after_enter_ms": 34.85442100009095,
+          "prompt_bytes": 16481,
+          "prompt_sha256": "6bb44a3ce0bc7d2c825bd29ba40d90457efb49b2ce97d91bb2a4e1dc68388277"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 142.0481860000109,
+          "after_enter_ms": 36.97502400018493,
+          "prompt_bytes": 16481,
+          "prompt_sha256": "b505672e152bed16a2aa24678103301827e08d53d0c6b86405ffffd3465b7352"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 140.4456420000315,
+          "after_enter_ms": 35.34110100008547,
+          "prompt_bytes": 16481,
+          "prompt_sha256": "b9596138ea85d024f363f454d316930680ae2705c45e95599014e2a407f66193"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 141.51161099971432,
+          "after_enter_ms": 36.45264099986889,
+          "prompt_bytes": 16481,
+          "prompt_sha256": "0eec634953f4d33395006513525a06dc0779b87b2f3df5f87044a1e107ecc6fe"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 140.50545199961562,
+          "after_enter_ms": 35.43813799979034,
+          "prompt_bytes": 16481,
+          "prompt_sha256": "a3660ad40596489505169d971b212e56bd31a7ada96018c6930c8facb5e446ba"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 136.36252299966145,
+          "after_enter_ms": 36.32820999973774,
+          "prompt_bytes": 16481,
+          "prompt_sha256": "b5c549bc10986151bcfb9b8366963586f55948a1fced72842c801cac99bb42a9"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 137.63035500005572,
+          "after_enter_ms": 37.59830700028033,
+          "prompt_bytes": 16481,
+          "prompt_sha256": "cd033cf7d865af62fe583a79d1666afa9e602570c5b83fa3976ac6376e2092b9"
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-codex-ra4pnpbe",
+      "kind": "paste",
+      "transport": "direct PTY",
+      "exact_text": 10
+    },
+    {
+      "cli": "claude",
+      "version": "2.1.263 (Claude Code)",
+      "kind": "paste",
+      "workload": "short",
+      "delay_ms": 0,
+      "correct": 10,
+      "samples": 10,
+      "median_ms": 8.451058999980887,
+      "p95_ms": 10.039035999852786,
+      "raw": [
+        {
+          "accepted": true,
+          "latency_ms": 10.039035999852786,
+          "after_enter_ms": 10.029298000063136,
+          "prompt_bytes": 66,
+          "prompt_sha256": "638dac724ddd46f0990041a6a0dcfcb628293e47352f62bc5a9b7d246785f87e"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 8.96585700002106,
+          "after_enter_ms": 8.956789999956527,
+          "prompt_bytes": 66,
+          "prompt_sha256": "d6f671ccb6873b2ed0896a70764e6fd00291fbb1453b09b4f2ecc03e9b47ff32"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 8.768493999923521,
+          "after_enter_ms": 8.759776999795577,
+          "prompt_bytes": 66,
+          "prompt_sha256": "c4914e39e33a75094fc7037736e317ae336e5da0c48bd450b19deca4da9191d7"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 8.680176999860123,
+          "after_enter_ms": 8.670588999848405,
+          "prompt_bytes": 66,
+          "prompt_sha256": "cb26e44558db767d75ad1970ee0e0cb6f748d719fc9962e73f5b4c6d341f076f"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 7.994580999820755,
+          "after_enter_ms": 7.986665999851539,
+          "prompt_bytes": 66,
+          "prompt_sha256": "373cd79c68c1aeba495754a22ef48a43c96588c23990ce012242e2a8b1b107f6"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 8.252609000010125,
+          "after_enter_ms": 8.2436319999033,
+          "prompt_bytes": 66,
+          "prompt_sha256": "6614cf7bba641cb234222670c25f08765291cc53257a2c374161ccbd8c00fb2b"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 8.64950899995165,
+          "after_enter_ms": 8.641835000162246,
+          "prompt_bytes": 66,
+          "prompt_sha256": "73f431609159d6a591f2600105cad18a701a5f34cce729d2c7649059b0de1596"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 7.930219000172656,
+          "after_enter_ms": 7.920601000023453,
+          "prompt_bytes": 66,
+          "prompt_sha256": "db5d2ea88e2ad82a7c75a336b48e3ec2ea55222d5d946732fca47edbe5bdcb82"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 8.022624000204814,
+          "after_enter_ms": 8.015330000034737,
+          "prompt_bytes": 66,
+          "prompt_sha256": "731a2bd558b7e08c2ff1428ae4469c7e7022c6c15a46359bb0f05b8d90330e15"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 8.11502999977165,
+          "after_enter_ms": 8.10689399986586,
+          "prompt_bytes": 66,
+          "prompt_sha256": "8037b53b2e9c78d2cba29320d45e40db28c4431a68fa6a0a93f13dd5756c0a17"
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-claude-l3oyq2lt",
+      "transport": "direct PTY",
+      "exact_text": 10
+    },
+    {
+      "cli": "claude",
+      "version": "2.1.263 (Claude Code)",
+      "kind": "paste",
+      "workload": "short",
+      "delay_ms": 100,
+      "correct": 10,
+      "samples": 10,
+      "median_ms": 105.32759650004664,
+      "p95_ms": 109.65752499987502,
+      "raw": [
+        {
+          "accepted": true,
+          "latency_ms": 105.23736699997244,
+          "after_enter_ms": 5.2178379996803415,
+          "prompt_bytes": 66,
+          "prompt_sha256": "139c8bc5ec17c315789eb0ba23ea11d1b9f20f431056be9e0827ee54434cef77"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 105.48718899963205,
+          "after_enter_ms": 5.4575419999309815,
+          "prompt_bytes": 66,
+          "prompt_sha256": "1839134886769be131246d747b4cf8e1dae458d120658d8d0bd07dfc26c89ee5"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 105.23721100025796,
+          "after_enter_ms": 5.206927000017458,
+          "prompt_bytes": 66,
+          "prompt_sha256": "6c6d904ef87c3fd75c4e220f9c00ed1ea223c8776a6e0faf0ea7725397b1bf1b"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 105.47659999974712,
+          "after_enter_ms": 5.455227999846102,
+          "prompt_bytes": 66,
+          "prompt_sha256": "094da672099427a4f1d5e4d640f3e58d4e995929f00a572d290c04ec4013fef8"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 105.58352299995022,
+          "after_enter_ms": 5.566036999880453,
+          "prompt_bytes": 66,
+          "prompt_sha256": "26439ec381acc95825d32f9ae360e970e52e72c7f4fc0b086917f0be6e5a83c1"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 105.01070400005119,
+          "after_enter_ms": 4.990840000118624,
+          "prompt_bytes": 66,
+          "prompt_sha256": "e176d669837e838f774739f9b2cbea8c37e6fb935ae25b4208bd38f64dc85efc"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 105.26763500001834,
+          "after_enter_ms": 5.245481000201835,
+          "prompt_bytes": 66,
+          "prompt_sha256": "46b874ea30897024184dc9b8188f20a77b6c562d5e95a8607c2f29094b650120"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 104.8402870001155,
+          "after_enter_ms": 4.821388999971532,
+          "prompt_bytes": 66,
+          "prompt_sha256": "93d2be3c29bb106670133d8ca4296259655f7c833f141af25c4ee0b49506f2a5"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 105.38755800007493,
+          "after_enter_ms": 5.368294000163587,
+          "prompt_bytes": 66,
+          "prompt_sha256": "93be3d8f80caed704d77d939441a1785f7995eabb806fdc5fe2bb0489b7f382d"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 109.65752499987502,
+          "after_enter_ms": 9.638620999794512,
+          "prompt_bytes": 66,
+          "prompt_sha256": "f5c726da40556688dfd0fb75848fbaaddd227141cff73eba6a04cfc77debb549"
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-claude-l3oyq2lt",
+      "transport": "direct PTY",
+      "exact_text": 10
+    },
+    {
+      "cli": "claude",
+      "version": "2.1.263 (Claude Code)",
+      "kind": "paste",
+      "workload": "multiline",
+      "delay_ms": 0,
+      "correct": 10,
+      "samples": 10,
+      "median_ms": 9.144542499825548,
+      "p95_ms": 14.450464999754331,
+      "raw": [
+        {
+          "accepted": true,
+          "latency_ms": 9.133836999808409,
+          "after_enter_ms": 9.127485000135493,
+          "prompt_bytes": 127,
+          "prompt_sha256": "f75c7ec5a765397d2607148c1e552efe00732dd0aee6cb91dd2f2511dc1a9105"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 9.155247999842686,
+          "after_enter_ms": 9.144957999978942,
+          "prompt_bytes": 127,
+          "prompt_sha256": "8a7403a1fa8cf3c2b717ed798d848889435e1d56e6b5e6b0f72e26d9ca55014f"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 8.063261999723181,
+          "after_enter_ms": 8.05518699962704,
+          "prompt_bytes": 127,
+          "prompt_sha256": "224ad419b58522e8396f2ec7b74262fcfa9ddc8c6f7bc447d716d654284cc1f9"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 12.567542999931902,
+          "after_enter_ms": 12.558184999761579,
+          "prompt_bytes": 127,
+          "prompt_sha256": "2fa6cfcd8d7031270913463d0fdf0b17363ad1aae89f8da8b2cc303b4243daec"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 14.450464999754331,
+          "after_enter_ms": 14.442168999721616,
+          "prompt_bytes": 127,
+          "prompt_sha256": "62a5133a8d0127f42be2f0c6fc3767d379fdc0b52b25698e263f44d886adb707"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 13.181725999857008,
+          "after_enter_ms": 13.171225999940361,
+          "prompt_bytes": 127,
+          "prompt_sha256": "bd19d09fe1733b5107727973de7f22dea6bac3e52da4fac322cc00ee84263efa"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 9.17497699992964,
+          "after_enter_ms": 9.165137999843864,
+          "prompt_bytes": 127,
+          "prompt_sha256": "9e8291d107a22fd9d7f52011d438538dddda83dd8065f8b9340f847713a5f64f"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 8.984525999949255,
+          "after_enter_ms": 8.975198999905842,
+          "prompt_bytes": 127,
+          "prompt_sha256": "7e9f035b95c54843369af043ca7e64d8d2a64f84cde62bacf10fb93d4a6ead40"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 8.792523000010988,
+          "after_enter_ms": 8.783706000031088,
+          "prompt_bytes": 127,
+          "prompt_sha256": "de8e9ca47d9563c56e2db2be5a900b3d0e395eea850bac75e21cb9b7bf967fe4"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 8.906389999992825,
+          "after_enter_ms": 8.891791999758425,
+          "prompt_bytes": 127,
+          "prompt_sha256": "16347f9c90e22c40c7e1c3e1aaea073e8726c36e570716c8dcfc5d417fe997c3"
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-claude-l3oyq2lt",
+      "transport": "direct PTY",
+      "exact_text": 10
+    },
+    {
+      "cli": "claude",
+      "version": "2.1.263 (Claude Code)",
+      "kind": "paste",
+      "workload": "multiline",
+      "delay_ms": 100,
+      "correct": 10,
+      "samples": 10,
+      "median_ms": 105.20390000010593,
+      "p95_ms": 109.67175899986614,
+      "raw": [
+        {
+          "accepted": true,
+          "latency_ms": 104.89298699985738,
+          "after_enter_ms": 4.863138000018807,
+          "prompt_bytes": 127,
+          "prompt_sha256": "d329822287147ffd7dfbd7407cbf2d4d8b154be25837b688dd15d199917e6728"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 105.10721800028477,
+          "after_enter_ms": 5.088605000310054,
+          "prompt_bytes": 127,
+          "prompt_sha256": "246b863e5fa3b5e248d0f4e33f16fd2cb59a82037d76c0991e8844faf7040ee8"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 105.01639699987209,
+          "after_enter_ms": 4.985650999969948,
+          "prompt_bytes": 127,
+          "prompt_sha256": "41454df334b269acbde6e4824a319c7d961c9db27ce2e1a1ceaf376408fb0634"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 105.13098899991746,
+          "after_enter_ms": 5.112640999868745,
+          "prompt_bytes": 127,
+          "prompt_sha256": "3a74ca78819b1961f7afb12a4d1f2bdf1e2040294fb15b766965ff8ab8d0ba9c"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 105.64225199959765,
+          "after_enter_ms": 5.619369999749324,
+          "prompt_bytes": 127,
+          "prompt_sha256": "01d6cfa5d907eb1602fe7a004bd09a6580ba7db909df87ff64da002917ed1459"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 105.2768110002944,
+          "after_enter_ms": 5.256774000372388,
+          "prompt_bytes": 127,
+          "prompt_sha256": "afaaf59398ecdaa84f9081fd621e9ad25ceaad6471bb82ca909c071ed5f4295f"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 105.40295400005562,
+          "after_enter_ms": 5.372873999931471,
+          "prompt_bytes": 127,
+          "prompt_sha256": "2535c2eb96b7880a7fb466ca1a2600d0fda87e434a6198a2b8cfe48e1a650bd1"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 109.67175899986614,
+          "after_enter_ms": 9.64929400015535,
+          "prompt_bytes": 127,
+          "prompt_sha256": "9d29384a7d190f5794e34c2a02bf70972150bbd2d852a2bcfebb7163a37586a6"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 104.61875599958148,
+          "after_enter_ms": 4.598738999902707,
+          "prompt_bytes": 127,
+          "prompt_sha256": "61b056076a4e8e537570144e50f1f0bc9af4f965edfe684c332d49b59cf54410"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 105.32503800004633,
+          "after_enter_ms": 5.299837000166008,
+          "prompt_bytes": 127,
+          "prompt_sha256": "4c38a4b4d725de2cb9cba47acc373e85095462d3e17bb82a1746f6dfa6a63f64"
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-claude-l3oyq2lt",
+      "transport": "direct PTY",
+      "exact_text": 10
+    },
+    {
+      "cli": "claude",
+      "version": "2.1.263 (Claude Code)",
+      "kind": "paste",
+      "workload": "large",
+      "delay_ms": 0,
+      "correct": 10,
+      "samples": 10,
+      "median_ms": 14.044456999954491,
+      "p95_ms": 14.245353999740473,
+      "raw": [
+        {
+          "accepted": true,
+          "latency_ms": 14.140441000108694,
+          "after_enter_ms": 9.099114000036934,
+          "prompt_bytes": 16483,
+          "prompt_sha256": "99b6a17b8604e9b23a7d2adfc7fc0ee81e4b7c187a80cec286f8ac2e8a66bcd4"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 13.629034000132378,
+          "after_enter_ms": 8.581505000165635,
+          "prompt_bytes": 16483,
+          "prompt_sha256": "69bd809792bcf37ce2b8457fc8f7d75de17992c1ccfe172490eaefdb96949535"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 13.729113999943365,
+          "after_enter_ms": 8.675413000219123,
+          "prompt_bytes": 16483,
+          "prompt_sha256": "943954122c9f9e0b4ecffda8f0c7c650bf74b673cc97eaad3d1b1794ab35ee7d"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 13.542632000280719,
+          "after_enter_ms": 13.527352999972209,
+          "prompt_bytes": 16483,
+          "prompt_sha256": "b50296ea597693d4e2651ee3bd34ddebba456e7e2124f12dde815e4bfad60704"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 14.12915199989584,
+          "after_enter_ms": 9.07776499980173,
+          "prompt_bytes": 16483,
+          "prompt_sha256": "98c845038c99842dbd8868b341d0bb53a21f31837e9a4e84affcfdef47419c35"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 8.941607999986445,
+          "after_enter_ms": 8.92815299994254,
+          "prompt_bytes": 16483,
+          "prompt_sha256": "15f3e353894fb05ccc6e5ca058c2af8a9dfbce7ff15654a38545b7e374a68d37"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 13.959762000013143,
+          "after_enter_ms": 8.92201099986778,
+          "prompt_bytes": 16483,
+          "prompt_sha256": "b38f056bfd42830857b101b9e8aaf09d19ecba9085004871693a10a4db68dc15"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 14.209626000138087,
+          "after_enter_ms": 9.160362999864446,
+          "prompt_bytes": 16483,
+          "prompt_sha256": "91d9f07603494a0955c423f8b174537afc3866da2701d47469ecfc8ce8c945e3"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 14.245353999740473,
+          "after_enter_ms": 9.205737999764096,
+          "prompt_bytes": 16483,
+          "prompt_sha256": "03016e46a3b8d901d53d9508f9759cc6e1a35121d3d8ea195876116a16c1fc8d"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 14.141308000034769,
+          "after_enter_ms": 9.097023000322224,
+          "prompt_bytes": 16483,
+          "prompt_sha256": "967161e15641c36a39d7df479d06df3ee17c7370c84874017707b524bd13838c"
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-claude-l3oyq2lt",
+      "transport": "direct PTY",
+      "exact_text": 10
+    },
+    {
+      "cli": "claude",
+      "version": "2.1.263 (Claude Code)",
+      "kind": "paste",
+      "workload": "large",
+      "delay_ms": 100,
+      "correct": 10,
+      "samples": 10,
+      "median_ms": 110.56513150015235,
+      "p95_ms": 115.26761499999338,
+      "raw": [
+        {
+          "accepted": true,
+          "latency_ms": 110.64002200009782,
+          "after_enter_ms": 5.5834919999142585,
+          "prompt_bytes": 16483,
+          "prompt_sha256": "2e23f1109cd80491d4dd60f592c29646a5a9f5194d7f858bbc9aa250503f5699"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 105.40951299981316,
+          "after_enter_ms": 5.379707999964012,
+          "prompt_bytes": 16483,
+          "prompt_sha256": "75dea1bcf3e59276b9ba6d71505f1f2625660678c3a1c71c7cda6ca3b1ebb64e"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 110.49024100020688,
+          "after_enter_ms": 5.42918200017084,
+          "prompt_bytes": 16483,
+          "prompt_sha256": "d642b8454af26a3a7d629f9cecc3bdaf9b351ada524b0f72e8fab1ea606a5a2c"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 106.03527200009921,
+          "after_enter_ms": 6.006123000133812,
+          "prompt_bytes": 16483,
+          "prompt_sha256": "2691f853b7fd95c84a2bcc93430ba41cc6514fda6ae9c402e75d6b59f89278ba"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 111.12256299975343,
+          "after_enter_ms": 6.049736000022676,
+          "prompt_bytes": 16483,
+          "prompt_sha256": "57082bf51750fb3bc069afa367f7218fd063371fde71576cd5d7edd625431a18"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 115.26761499999338,
+          "after_enter_ms": 10.215045999757422,
+          "prompt_bytes": 16483,
+          "prompt_sha256": "bb70da21f0b6a4cb3ad2c5d534eaff60c713bc0228892e171da8d787674e49e0"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 106.18686999987403,
+          "after_enter_ms": 6.160475999877235,
+          "prompt_bytes": 16483,
+          "prompt_sha256": "5e68af6c376cbb8309835bf7dfbeeca794ef0424cd5349960675fdb87092e135"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 111.52184000002308,
+          "after_enter_ms": 6.473699000252964,
+          "prompt_bytes": 16483,
+          "prompt_sha256": "551456a819a7f7afd0d5855ed0fb4fc0e42aaa8d639c63da4a6d8849f63369df"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 106.94740500002808,
+          "after_enter_ms": 6.911085999945499,
+          "prompt_bytes": 16483,
+          "prompt_sha256": "82089fce17cbceba89bb3791ec80f213384353d896c4e2de3f6095d55849d20d"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 111.7251400000896,
+          "after_enter_ms": 6.6760119998434675,
+          "prompt_bytes": 16483,
+          "prompt_sha256": "f3057511cb8e285081c47c183bce6cbffa6ec0f312752e1194b6591bb662dc72"
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-claude-l3oyq2lt",
+      "transport": "direct PTY",
+      "exact_text": 10
+    },
+    {
+      "cli": "opencode",
+      "version": "1.18.29",
+      "kind": "paste",
+      "workload": "short",
+      "delay_ms": 0,
+      "correct": 10,
+      "samples": 10,
+      "exact_text": 10,
+      "median_ms": 20.584764499972152,
+      "p95_ms": 23.521378000168625,
+      "raw": [
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 23.521378000168625,
+          "after_enter_ms": 23.51148000025205,
+          "prompt_bytes": 68,
+          "prompt_sha256": "243b3308c1f348e21bf8ce45b1b851253fda5a93b88979b97af65bab8a820e22"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 21.67371599989565,
+          "after_enter_ms": 21.663356999852112,
+          "prompt_bytes": 68,
+          "prompt_sha256": "771e93368e3db0268c12d102410799508f467301839dd0657d6f6a4bffe1bfef"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 21.446175000164658,
+          "after_enter_ms": 21.438049000153114,
+          "prompt_bytes": 68,
+          "prompt_sha256": "3ad50c4ccb57e3acc66d9f7b2bac2d7fc31bb4657d83c80cf7dbf060d4c94da3"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 20.96202499978972,
+          "after_enter_ms": 20.952005999788526,
+          "prompt_bytes": 68,
+          "prompt_sha256": "966d779e1e2b5729f471670e043b15d2ed40a1d83a9fdde99245730ba6e2465f"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 19.747845999972924,
+          "after_enter_ms": 19.73833800002467,
+          "prompt_bytes": 68,
+          "prompt_sha256": "9376730529ada63f1b93f16060dd43773ba3329bb6f7641de237ce08ba186ac1"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 19.938069000090763,
+          "after_enter_ms": 19.928380999772344,
+          "prompt_bytes": 68,
+          "prompt_sha256": "f21e91f8093acd0983d9bf360dfa4fbc8c62ed2f6e39052f12755226b7c04ee8"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 20.994326999698387,
+          "after_enter_ms": 20.985890999781986,
+          "prompt_bytes": 68,
+          "prompt_sha256": "fa3ac67d3aea816cce425df41af2a7bfe90dc1a12438b18a2573696f6c074207"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 19.94452100007038,
+          "after_enter_ms": 19.935654000164504,
+          "prompt_bytes": 68,
+          "prompt_sha256": "a10a9a8d636dbb3c60b8809ec386bdb1cb4ad815c056d13d08d699b2a701f3e0"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 19.40408500013291,
+          "after_enter_ms": 19.39577900020595,
+          "prompt_bytes": 68,
+          "prompt_sha256": "29e481fd58d3a56cb2daa895f31bcddc2ddcba7a976b95449e196f37a24598e0"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 20.207504000154586,
+          "after_enter_ms": 20.198486000026605,
+          "prompt_bytes": 68,
+          "prompt_sha256": "ce40d39584a28d47361fdeed537a5f9447e53e0d99f6c6a0ed4da927ec8e4391"
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-opencode-rxvcp92b",
+      "transport": "direct PTY"
+    },
+    {
+      "cli": "opencode",
+      "version": "1.18.29",
+      "kind": "paste",
+      "workload": "short",
+      "delay_ms": 100,
+      "correct": 10,
+      "samples": 10,
+      "exact_text": 10,
+      "median_ms": 119.25086349992853,
+      "p95_ms": 123.53793400006907,
+      "raw": [
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 120.52937299995392,
+          "after_enter_ms": 20.509293000031903,
+          "prompt_bytes": 68,
+          "prompt_sha256": "a019a4c2a59c6cde55d1bd4b6f063896fe8bc9ff3c81f12ae47a9c52fa1bae4a"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 123.53793400006907,
+          "after_enter_ms": 23.515167999903497,
+          "prompt_bytes": 68,
+          "prompt_sha256": "8965d896e96d331eb215d8bfadabc1f54cc6eaf13b6c8962e1b35b5fe01fcebb"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 119.31314499997825,
+          "after_enter_ms": 19.294363999961206,
+          "prompt_bytes": 68,
+          "prompt_sha256": "60eb4eece7fe602ecd16ffe5f924dd7e6b2b599eb31dc6aa1fcf08800cff22c2"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 120.35971500017695,
+          "after_enter_ms": 20.341244000064762,
+          "prompt_bytes": 68,
+          "prompt_sha256": "eee155c0562da7ea10888a194eddccde178ad9db9269a77843939ca9d4d38649"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 119.1885819998788,
+          "after_enter_ms": 19.16720200006239,
+          "prompt_bytes": 68,
+          "prompt_sha256": "b1a0336d0b9a8109d668e208833358dd6d4083a130e4bcad0e9524bbaaa872f5"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 118.4696889999941,
+          "after_enter_ms": 18.443797000145423,
+          "prompt_bytes": 68,
+          "prompt_sha256": "3027e9b9e7d451dc79dce0e55b4a7a3f534211c6aae027f358e1ff69d499b584"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 119.52786500023649,
+          "after_enter_ms": 19.51202899999771,
+          "prompt_bytes": 68,
+          "prompt_sha256": "0d851435a17642f776321a323df47198c19fdf8ac554ada65a43636a70d5a181"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 118.5836599997856,
+          "after_enter_ms": 18.56119200010653,
+          "prompt_bytes": 68,
+          "prompt_sha256": "c495c958bc2504b020a6758bb58a26d6e05e3dd2bbb1e71314c7664615616fe8"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 118.98606800014022,
+          "after_enter_ms": 18.967725000038627,
+          "prompt_bytes": 68,
+          "prompt_sha256": "156f24a680845d8d5c0690b89ccf54596dc98613829ead6906d2b14562a63d7b"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 118.3699869998236,
+          "after_enter_ms": 18.350761999954557,
+          "prompt_bytes": 68,
+          "prompt_sha256": "1d8a49762b76fbb3672d4fbb274483d96ab83e7c0d13a36c95c3f0ad8e52abb4"
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-opencode-rxvcp92b",
+      "transport": "direct PTY"
+    },
+    {
+      "cli": "opencode",
+      "version": "1.18.29",
+      "kind": "paste",
+      "workload": "multiline",
+      "delay_ms": 0,
+      "correct": 10,
+      "samples": 10,
+      "exact_text": 0,
+      "median_ms": 20.711985000161803,
+      "p95_ms": 24.278285000036703,
+      "raw": [
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 20.349662999706197,
+          "after_enter_ms": 20.343200999832334,
+          "prompt_bytes": 129,
+          "prompt_sha256": "a96f045041358c2531345b6d53d7574a61001013a3b3d44bd4d8a1aeaab05179"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 19.679068999721494,
+          "after_enter_ms": 19.669420999889553,
+          "prompt_bytes": 129,
+          "prompt_sha256": "15c2f2247078880e28ff80f0f2c7423a0e3c2ba1e50694f49ede6d46a62b9b5f"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 23.930332999952952,
+          "after_enter_ms": 23.921224999867263,
+          "prompt_bytes": 129,
+          "prompt_sha256": "772adcda4dc98769377caf0c6eca6b59d564b2134c91be7c4b5cba5c766a41e6"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 24.278285000036703,
+          "after_enter_ms": 24.26689300000362,
+          "prompt_bytes": 129,
+          "prompt_sha256": "75cc9e27766909bf47b5fbc7d7783698dcef44ba802c33f38bc1e2b9472f4223"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 20.73864500016498,
+          "after_enter_ms": 20.728456000142614,
+          "prompt_bytes": 129,
+          "prompt_sha256": "79bc4de2c26c05bc082a835b424e3c2648403baa80174e6aa6db185f4d4e097e"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 21.911565999744198,
+          "after_enter_ms": 21.902468000007502,
+          "prompt_bytes": 129,
+          "prompt_sha256": "de41ed4af407862020e2c4b80feb0773b4971ad1c179805c16d34be0267cd789"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 22.093451999808167,
+          "after_enter_ms": 22.084634999828268,
+          "prompt_bytes": 129,
+          "prompt_sha256": "fcb8ff645547585a79b089d571c6fc7b53002343de04c97bb6811611ce73e268"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 20.470717000080185,
+          "after_enter_ms": 20.461909999994532,
+          "prompt_bytes": 129,
+          "prompt_sha256": "01abb5a72afce7500d2bed979c559c18be0c3c712594dd15693f11f58cb7c9eb"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 20.685325000158628,
+          "after_enter_ms": 20.67582700010462,
+          "prompt_bytes": 129,
+          "prompt_sha256": "c47e43fbdd06435ba5750b5e134e8b473fb4e7235e72961c1f1f8127e5694554"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 20.54423699973995,
+          "after_enter_ms": 20.534579000013764,
+          "prompt_bytes": 129,
+          "prompt_sha256": "35046749d600c5ccc4783a792859ebdc7132a59908e18c11169cc5fdbb74b454"
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-opencode-rxvcp92b",
+      "transport": "direct PTY"
+    },
+    {
+      "cli": "opencode",
+      "version": "1.18.29",
+      "kind": "paste",
+      "workload": "multiline",
+      "delay_ms": 100,
+      "correct": 10,
+      "samples": 10,
+      "exact_text": 0,
+      "median_ms": 120.09566649999215,
+      "p95_ms": 122.5690129999748,
+      "raw": [
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 119.51992800004518,
+          "after_enter_ms": 19.500909999806026,
+          "prompt_bytes": 129,
+          "prompt_sha256": "8290a78db1c7b8aa19a87c76de84eaa8e5d2cf6e63300b571081c6411532d92a"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 117.99788799999078,
+          "after_enter_ms": 17.980388999603747,
+          "prompt_bytes": 129,
+          "prompt_sha256": "fabf60742f430854e9e99860cb7067e3c85e764099a2b81e824f8566c68c61a2"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 120.04103500021301,
+          "after_enter_ms": 20.02040900015345,
+          "prompt_bytes": 129,
+          "prompt_sha256": "bd1ad8433a6edaf14ca371d46b737566732be2e98f283b2583010df583e8fc26"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 122.5690129999748,
+          "after_enter_ms": 22.54968800025381,
+          "prompt_bytes": 129,
+          "prompt_sha256": "0ef74e7a40ca857d5dbf32b4b2c117163fe1bba1703f24a5061848a3afbba8b6"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 120.15029799977128,
+          "after_enter_ms": 20.131980999849475,
+          "prompt_bytes": 129,
+          "prompt_sha256": "95517c0d34b77f8d869444b60d3e36f5950fc5c6a82ed23b6ce25e75239bc99d"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 120.28539499988256,
+          "after_enter_ms": 20.25903300000209,
+          "prompt_bytes": 129,
+          "prompt_sha256": "c36def72eb0f80df8fdbdc4aa366b1556561b745caa11e41a763f62c9a9bb093"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 120.83765899978971,
+          "after_enter_ms": 20.808938999834936,
+          "prompt_bytes": 129,
+          "prompt_sha256": "caf62bc41257e0a49839d3587dda54370125345318f4e847b295e86b5c8200f8"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 120.3501850000066,
+          "after_enter_ms": 20.33297499974651,
+          "prompt_bytes": 129,
+          "prompt_sha256": "99bf68b23a3afbe7bf369bf5ce8ff265998bdb97bf886536e41d7d801aa6f8b5"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 119.79602299970793,
+          "after_enter_ms": 19.776196999828244,
+          "prompt_bytes": 129,
+          "prompt_sha256": "bfda436733f9f8e00288723c72f0a0c52d2fa95dc795b0efe6090772a00df2e5"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 120.02362900011576,
+          "after_enter_ms": 20.001205000426125,
+          "prompt_bytes": 129,
+          "prompt_sha256": "648b87b6e5aa9e9febf04f4990d696830b7b719d73333f847764ae1d4642a1b8"
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-opencode-rxvcp92b",
+      "transport": "direct PTY"
+    },
+    {
+      "cli": "opencode",
+      "version": "1.18.29",
+      "kind": "paste",
+      "workload": "large",
+      "delay_ms": 0,
+      "correct": 10,
+      "samples": 10,
+      "exact_text": 0,
+      "median_ms": 30.7742294999116,
+      "p95_ms": 38.01210199981142,
+      "raw": [
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 27.267141999800515,
+          "after_enter_ms": 22.214043000076344,
+          "prompt_bytes": 16487,
+          "prompt_sha256": "4c2674a5e72c4b37f35f9e8ba9d884e4a7d1ccff7bcbc978be138825a865d623"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 28.22152799990363,
+          "after_enter_ms": 23.177575999852706,
+          "prompt_bytes": 16487,
+          "prompt_sha256": "172542a661bba6513d2c68b98256aeaaa66b8b9c4405bbe05592303ce8df7334"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 28.73299099974247,
+          "after_enter_ms": 23.699518999819702,
+          "prompt_bytes": 16487,
+          "prompt_sha256": "59cf812a2aca782d4a98ac7019c1bdf84e3947317be22455d0feb988756e440a"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 30.118035999748827,
+          "after_enter_ms": 25.074775000121008,
+          "prompt_bytes": 16487,
+          "prompt_sha256": "3d881fb50c2003309a5f2d66e5795b1950abbfd4c411c54d88f8b35e1f5661e1"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 30.524547999903007,
+          "after_enter_ms": 25.48416299987366,
+          "prompt_bytes": 16487,
+          "prompt_sha256": "8d7cb26daa679edf154ffe759b3595524480ac78ef54f6046d4e13009beb0650"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 33.33466399999452,
+          "after_enter_ms": 28.28972999986945,
+          "prompt_bytes": 16487,
+          "prompt_sha256": "7f7912615f42ba624f17b22d396d760518f1ef57112cdb62a1ec048d34bae212"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 33.47827699963091,
+          "after_enter_ms": 28.44090700000379,
+          "prompt_bytes": 16487,
+          "prompt_sha256": "db1890e98e957471cd7c5f25b82de84fda7f6d85ec21a27ad6d956f298d0cebe"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 31.02391099992019,
+          "after_enter_ms": 31.008621999717434,
+          "prompt_bytes": 16487,
+          "prompt_sha256": "f5359f618e0f381591568bfe01a2b9e98debce474d0d1c75647633dc4276eeda"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 36.28263199971116,
+          "after_enter_ms": 31.24298800003089,
+          "prompt_bytes": 16487,
+          "prompt_sha256": "7496321e45fc2d569e8d508b71a9eea0c8d6e66048f25ccec53ca5a28eaa9b02"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 38.01210199981142,
+          "after_enter_ms": 37.99633199969321,
+          "prompt_bytes": 16487,
+          "prompt_sha256": "5b0a5fdb82d707fc93a332b5b15346fad507ece0699235e2681effde10681a54"
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-opencode-rxvcp92b",
+      "transport": "direct PTY"
+    },
+    {
+      "cli": "opencode",
+      "version": "1.18.29",
+      "kind": "paste",
+      "workload": "large",
+      "delay_ms": 100,
+      "correct": 10,
+      "samples": 10,
+      "exact_text": 0,
+      "median_ms": 131.1952174999078,
+      "p95_ms": 135.66211299985298,
+      "raw": [
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 125.89275300024383,
+          "after_enter_ms": 20.826725000006263,
+          "prompt_bytes": 16487,
+          "prompt_sha256": "8e84eed4a111fc9ea1915a60971e67296defd41a9980e704a9b42f09ea627e7c"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 121.41612999994322,
+          "after_enter_ms": 21.377281000241055,
+          "prompt_bytes": 16487,
+          "prompt_sha256": "c4edf84000259abf71c9e4ad4be9e117619e29bd43a80804ae368b1e5835b826"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 123.28896600001826,
+          "after_enter_ms": 23.261936999915633,
+          "prompt_bytes": 16487,
+          "prompt_sha256": "67b169faad9bbe5fbce3d34e9fe110437f75ca3abdd05f5849a0917d3aa01fee"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 123.28875699995478,
+          "after_enter_ms": 23.26117600023281,
+          "prompt_bytes": 16487,
+          "prompt_sha256": "4d45669e68e23f10cdb79d990e63f72d2eb00a7ba5d73dd224fec6a9965918e9"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 131.57206200003202,
+          "after_enter_ms": 26.50710900024933,
+          "prompt_bytes": 16487,
+          "prompt_sha256": "fca612d064e237432701226a52598bcb92722409a4e1da6957bc84ed5b46c164"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 130.8183729997836,
+          "after_enter_ms": 30.78375299992331,
+          "prompt_bytes": 16487,
+          "prompt_sha256": "159d43904242b2d52b1f78c776aed24ffdef18b87c4774f954593722eec80465"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 133.77289600020958,
+          "after_enter_ms": 28.726963000281103,
+          "prompt_bytes": 16487,
+          "prompt_sha256": "d21dddf1799259b1a55defd5ca41e37ea227ecb214122df144f0e3f798618989"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 133.55161500021495,
+          "after_enter_ms": 28.487917999882484,
+          "prompt_bytes": 16487,
+          "prompt_sha256": "02811d837d1b5d75f6135ad6d3b6ce60b274b6e4d500d764dacce0e14fb44e9e"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 135.66211299985298,
+          "after_enter_ms": 30.615655000019615,
+          "prompt_bytes": 16487,
+          "prompt_sha256": "43aa83b4e31de50cde7f406f031afdfd9689569b2bc99896d18b33a727e2fae5"
+        },
+        {
+          "accepted": true,
+          "exact_text": false,
+          "native_trailing_space": true,
+          "latency_ms": 135.52074700010053,
+          "after_enter_ms": 30.455871999947703,
+          "prompt_bytes": 16487,
+          "prompt_sha256": "3e1528e025bd075b0dea62aa5b3ff85d526ab5b8416ac4a3877be8ba9c642dae"
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-opencode-rxvcp92b",
+      "transport": "direct PTY"
+    },
+    {
+      "cli": "codex",
+      "version": "codex-cli 0.153.4",
+      "kind": "text",
+      "workload": "short",
+      "delay_ms": 0,
+      "correct": 0,
+      "samples": 10,
+      "median_ms": null,
+      "p95_ms": null,
+      "raw": [
+        {
+          "accepted": false,
+          "latency_ms": null,
+          "after_enter_ms": null,
+          "prompt_bytes": 65,
+          "prompt_sha256": "c2f9a7a056ed6d27c42a2a467986fbcb69ecaac27b7c6ddae5c9399b2a7097be",
+          "accepted_after_second_enter": true
+        },
+        {
+          "accepted": false,
+          "latency_ms": null,
+          "after_enter_ms": null,
+          "prompt_bytes": 65,
+          "prompt_sha256": "f3c308b4bba7335808dbec3a5df808d6bacd0c179c1df093b833029cbae925d3",
+          "accepted_after_second_enter": true
+        },
+        {
+          "accepted": false,
+          "latency_ms": null,
+          "after_enter_ms": null,
+          "prompt_bytes": 65,
+          "prompt_sha256": "3bb1a1d86d1fd7da13518d26a35594343ffc8bbc20211ea55bbfdf60668c7d45",
+          "accepted_after_second_enter": true
+        },
+        {
+          "accepted": false,
+          "latency_ms": null,
+          "after_enter_ms": null,
+          "prompt_bytes": 65,
+          "prompt_sha256": "fdac5a9eeb95cd2bc90d9103b2c183d42ffc3533b7e0608bf4cc0e5834c87777",
+          "accepted_after_second_enter": true
+        },
+        {
+          "accepted": false,
+          "latency_ms": null,
+          "after_enter_ms": null,
+          "prompt_bytes": 65,
+          "prompt_sha256": "be71966936740a345d04f8d6c870e996a7372157c8165dab9a3fcfe7d8b63e36",
+          "accepted_after_second_enter": true
+        },
+        {
+          "accepted": false,
+          "latency_ms": null,
+          "after_enter_ms": null,
+          "prompt_bytes": 65,
+          "prompt_sha256": "38d45246d711bec6e4d17a9d381c2d273007d3440ad842379842734fbd2a6fd7",
+          "accepted_after_second_enter": true
+        },
+        {
+          "accepted": false,
+          "latency_ms": null,
+          "after_enter_ms": null,
+          "prompt_bytes": 65,
+          "prompt_sha256": "a9422d389c201e434e415329509e1e962d67e77ef40e418d69774c1ec6784763",
+          "accepted_after_second_enter": true
+        },
+        {
+          "accepted": false,
+          "latency_ms": null,
+          "after_enter_ms": null,
+          "prompt_bytes": 65,
+          "prompt_sha256": "6bfbbaa1f3846dc468eca4e8a9e55efb8e73733ac83463170e25a91d1937f30f",
+          "accepted_after_second_enter": true
+        },
+        {
+          "accepted": false,
+          "latency_ms": null,
+          "after_enter_ms": null,
+          "prompt_bytes": 65,
+          "prompt_sha256": "ee9455eebb1c7e8d89f61d2150f380c2ea7e0ba2c130fdc823079da98c3831a0",
+          "accepted_after_second_enter": true
+        },
+        {
+          "accepted": false,
+          "latency_ms": null,
+          "after_enter_ms": null,
+          "prompt_bytes": 65,
+          "prompt_sha256": "0429f80b7992b0d9ecdfbaa9578201e5ee4e7fc4bb2fd58adac7c3672b6cba9c",
+          "accepted_after_second_enter": true
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-codex-oulryy9p",
+      "transport": "direct PTY",
+      "exact_text": 0
+    },
+    {
+      "cli": "codex",
+      "version": "codex-cli 0.153.4",
+      "kind": "text",
+      "workload": "short",
+      "delay_ms": 100,
+      "correct": 10,
+      "samples": 10,
+      "median_ms": 123.88167750009416,
+      "p95_ms": 124.73176099956618,
+      "raw": [
+        {
+          "accepted": true,
+          "latency_ms": 124.03272699975787,
+          "after_enter_ms": 24.01360699968791,
+          "prompt_bytes": 65,
+          "prompt_sha256": "ec421748a396798a83267538c927a123b976a2a4e98fe7dedbe912df94cd3155"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 123.77864700010832,
+          "after_enter_ms": 23.761940999975195,
+          "prompt_bytes": 65,
+          "prompt_sha256": "42839414cb63edcea54e124e01321d5b5a90185043f362c3ca6bab0f2f47e911"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 123.84724300000016,
+          "after_enter_ms": 23.82795299990903,
+          "prompt_bytes": 65,
+          "prompt_sha256": "4c22b5aafa7623cfa84df2fa135687cf5293a3cbeea534dd01a3b1579f33a102"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 123.88214000020525,
+          "after_enter_ms": 23.86279900019872,
+          "prompt_bytes": 65,
+          "prompt_sha256": "a420ec5547ebfe885af6e348221094d48ce03c5d3377d5c4646c248ee818f1d1"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 123.88121499998306,
+          "after_enter_ms": 23.862014999849634,
+          "prompt_bytes": 65,
+          "prompt_sha256": "de7266e3ba5db77ae61fefc08e1c758d586e863efefdcd380e310c788e104ebe"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 124.73176099956618,
+          "after_enter_ms": 24.715490999824397,
+          "prompt_bytes": 65,
+          "prompt_sha256": "02643a315cd784b8d665bd8b968d129d721aaca56df69fb5ce7258f00e35a776"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 123.87636799985557,
+          "after_enter_ms": 23.85828600017703,
+          "prompt_bytes": 65,
+          "prompt_sha256": "c50035ce8e91f96cedc85b3d01ab2cba23e2e9aac200967d9637ff17caac89a0"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 124.72643799992511,
+          "after_enter_ms": 24.709416999940004,
+          "prompt_bytes": 65,
+          "prompt_sha256": "0f854451ca3215e98a6c1e236c9537a7e17eb4741fb0eb6797d9e8c7499dde74"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 124.62809800035757,
+          "after_enter_ms": 24.611920000097598,
+          "prompt_bytes": 65,
+          "prompt_sha256": "c02f58cba31a9bf312fd59784b2e2c843cdd825a73628359de7faaac4e2fc335"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 123.81313500009128,
+          "after_enter_ms": 23.793540000042412,
+          "prompt_bytes": 65,
+          "prompt_sha256": "1b4f58b621dbf0c8dd435b3db1b460b3b9186968d5cd82582bad1cb64a58522f"
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-codex-oulryy9p",
+      "transport": "direct PTY",
+      "exact_text": 10
+    },
+    {
+      "cli": "claude",
+      "version": "2.1.263 (Claude Code)",
+      "kind": "text",
+      "workload": "short",
+      "delay_ms": 0,
+      "correct": 0,
+      "samples": 10,
+      "median_ms": null,
+      "p95_ms": null,
+      "raw": [
+        {
+          "accepted": false,
+          "latency_ms": null,
+          "after_enter_ms": null,
+          "prompt_bytes": 66,
+          "prompt_sha256": "638dac724ddd46f0990041a6a0dcfcb628293e47352f62bc5a9b7d246785f87e",
+          "accepted_after_second_enter": true
+        },
+        {
+          "accepted": false,
+          "latency_ms": null,
+          "after_enter_ms": null,
+          "prompt_bytes": 66,
+          "prompt_sha256": "d6f671ccb6873b2ed0896a70764e6fd00291fbb1453b09b4f2ecc03e9b47ff32",
+          "accepted_after_second_enter": true
+        },
+        {
+          "accepted": false,
+          "latency_ms": null,
+          "after_enter_ms": null,
+          "prompt_bytes": 66,
+          "prompt_sha256": "c4914e39e33a75094fc7037736e317ae336e5da0c48bd450b19deca4da9191d7",
+          "accepted_after_second_enter": true
+        },
+        {
+          "accepted": false,
+          "latency_ms": null,
+          "after_enter_ms": null,
+          "prompt_bytes": 66,
+          "prompt_sha256": "cb26e44558db767d75ad1970ee0e0cb6f748d719fc9962e73f5b4c6d341f076f",
+          "accepted_after_second_enter": true
+        },
+        {
+          "accepted": false,
+          "latency_ms": null,
+          "after_enter_ms": null,
+          "prompt_bytes": 66,
+          "prompt_sha256": "373cd79c68c1aeba495754a22ef48a43c96588c23990ce012242e2a8b1b107f6",
+          "accepted_after_second_enter": true
+        },
+        {
+          "accepted": false,
+          "latency_ms": null,
+          "after_enter_ms": null,
+          "prompt_bytes": 66,
+          "prompt_sha256": "6614cf7bba641cb234222670c25f08765291cc53257a2c374161ccbd8c00fb2b",
+          "accepted_after_second_enter": true
+        },
+        {
+          "accepted": false,
+          "latency_ms": null,
+          "after_enter_ms": null,
+          "prompt_bytes": 66,
+          "prompt_sha256": "73f431609159d6a591f2600105cad18a701a5f34cce729d2c7649059b0de1596",
+          "accepted_after_second_enter": true
+        },
+        {
+          "accepted": false,
+          "latency_ms": null,
+          "after_enter_ms": null,
+          "prompt_bytes": 66,
+          "prompt_sha256": "db5d2ea88e2ad82a7c75a336b48e3ec2ea55222d5d946732fca47edbe5bdcb82",
+          "accepted_after_second_enter": true
+        },
+        {
+          "accepted": false,
+          "latency_ms": null,
+          "after_enter_ms": null,
+          "prompt_bytes": 66,
+          "prompt_sha256": "731a2bd558b7e08c2ff1428ae4469c7e7022c6c15a46359bb0f05b8d90330e15",
+          "accepted_after_second_enter": true
+        },
+        {
+          "accepted": false,
+          "latency_ms": null,
+          "after_enter_ms": null,
+          "prompt_bytes": 66,
+          "prompt_sha256": "8037b53b2e9c78d2cba29320d45e40db28c4431a68fa6a0a93f13dd5756c0a17",
+          "accepted_after_second_enter": true
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-claude-883435bf",
+      "transport": "direct PTY",
+      "exact_text": 0
+    },
+    {
+      "cli": "claude",
+      "version": "2.1.263 (Claude Code)",
+      "kind": "text",
+      "workload": "short",
+      "delay_ms": 100,
+      "correct": 10,
+      "samples": 10,
+      "median_ms": 105.16244499990535,
+      "p95_ms": 105.73328500004209,
+      "raw": [
+        {
+          "accepted": true,
+          "latency_ms": 105.55485900022177,
+          "after_enter_ms": 5.528950000098121,
+          "prompt_bytes": 66,
+          "prompt_sha256": "139c8bc5ec17c315789eb0ba23ea11d1b9f20f431056be9e0827ee54434cef77"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 105.19012799977645,
+          "after_enter_ms": 5.177363999791851,
+          "prompt_bytes": 66,
+          "prompt_sha256": "1839134886769be131246d747b4cf8e1dae458d120658d8d0bd07dfc26c89ee5"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 105.73328500004209,
+          "after_enter_ms": 5.713961999845196,
+          "prompt_bytes": 66,
+          "prompt_sha256": "6c6d904ef87c3fd75c4e220f9c00ed1ea223c8776a6e0faf0ea7725397b1bf1b"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 105.27822199992443,
+          "after_enter_ms": 5.257367000012891,
+          "prompt_bytes": 66,
+          "prompt_sha256": "094da672099427a4f1d5e4d640f3e58d4e995929f00a572d290c04ec4013fef8"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 105.51056000031167,
+          "after_enter_ms": 5.493526000009297,
+          "prompt_bytes": 66,
+          "prompt_sha256": "26439ec381acc95825d32f9ae360e970e52e72c7f4fc0b086917f0be6e5a83c1"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 105.13476200003424,
+          "after_enter_ms": 5.116541000006691,
+          "prompt_bytes": 66,
+          "prompt_sha256": "e176d669837e838f774739f9b2cbea8c37e6fb935ae25b4208bd38f64dc85efc"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 104.92738199991436,
+          "after_enter_ms": 4.911374000130309,
+          "prompt_bytes": 66,
+          "prompt_sha256": "46b874ea30897024184dc9b8188f20a77b6c562d5e95a8607c2f29094b650120"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 104.87593800007744,
+          "after_enter_ms": 4.847312000038073,
+          "prompt_bytes": 66,
+          "prompt_sha256": "93d2be3c29bb106670133d8ca4296259655f7c833f141af25c4ee0b49506f2a5"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 104.8182050003561,
+          "after_enter_ms": 4.799602000275627,
+          "prompt_bytes": 66,
+          "prompt_sha256": "93be3d8f80caed704d77d939441a1785f7995eabb806fdc5fe2bb0489b7f382d"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 104.85955400008606,
+          "after_enter_ms": 4.842995000217343,
+          "prompt_bytes": 66,
+          "prompt_sha256": "f5c726da40556688dfd0fb75848fbaaddd227141cff73eba6a04cfc77debb549"
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-claude-883435bf",
+      "transport": "direct PTY",
+      "exact_text": 10
+    },
+    {
+      "cli": "opencode",
+      "version": "1.18.29",
+      "kind": "text",
+      "workload": "short",
+      "delay_ms": 0,
+      "correct": 10,
+      "samples": 10,
+      "median_ms": 64.01992699989023,
+      "p95_ms": 80.82792300001529,
+      "raw": [
+        {
+          "accepted": true,
+          "latency_ms": 80.82792300001529,
+          "after_enter_ms": 80.81953700002487,
+          "prompt_bytes": 68,
+          "prompt_sha256": "243b3308c1f348e21bf8ce45b1b851253fda5a93b88979b97af65bab8a820e22"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 63.958774999719026,
+          "after_enter_ms": 63.95105000001422,
+          "prompt_bytes": 68,
+          "prompt_sha256": "771e93368e3db0268c12d102410799508f467301839dd0657d6f6a4bffe1bfef"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 64.25622799997655,
+          "after_enter_ms": 64.2472810000072,
+          "prompt_bytes": 68,
+          "prompt_sha256": "3ad50c4ccb57e3acc66d9f7b2bac2d7fc31bb4657d83c80cf7dbf060d4c94da3"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 61.24458800013599,
+          "after_enter_ms": 61.23703299999761,
+          "prompt_bytes": 68,
+          "prompt_sha256": "966d779e1e2b5729f471670e043b15d2ed40a1d83a9fdde99245730ba6e2465f"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 64.08107900006144,
+          "after_enter_ms": 64.07308400002876,
+          "prompt_bytes": 68,
+          "prompt_sha256": "9376730529ada63f1b93f16060dd43773ba3329bb6f7641de237ce08ba186ac1"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 59.77330099995015,
+          "after_enter_ms": 59.76581699997041,
+          "prompt_bytes": 68,
+          "prompt_sha256": "f21e91f8093acd0983d9bf360dfa4fbc8c62ed2f6e39052f12755226b7c04ee8"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 65.12230899988936,
+          "after_enter_ms": 65.11434399999416,
+          "prompt_bytes": 68,
+          "prompt_sha256": "fa3ac67d3aea816cce425df41af2a7bfe90dc1a12438b18a2573696f6c074207"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 61.913473999993585,
+          "after_enter_ms": 61.90708199983419,
+          "prompt_bytes": 68,
+          "prompt_sha256": "a10a9a8d636dbb3c60b8809ec386bdb1cb4ad815c056d13d08d699b2a701f3e0"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 62.0726460001606,
+          "after_enter_ms": 62.063588999990316,
+          "prompt_bytes": 68,
+          "prompt_sha256": "29e481fd58d3a56cb2daa895f31bcddc2ddcba7a976b95449e196f37a24598e0"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 70.70718100021622,
+          "after_enter_ms": 70.69902600005662,
+          "prompt_bytes": 68,
+          "prompt_sha256": "ce40d39584a28d47361fdeed537a5f9447e53e0d99f6c6a0ed4da927ec8e4391"
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-opencode-980pgir6",
+      "transport": "direct PTY",
+      "exact_text": 10
+    },
+    {
+      "cli": "opencode",
+      "version": "1.18.29",
+      "kind": "text",
+      "workload": "short",
+      "delay_ms": 100,
+      "correct": 10,
+      "samples": 10,
+      "median_ms": 118.30762550016516,
+      "p95_ms": 121.75034399979268,
+      "raw": [
+        {
+          "accepted": true,
+          "latency_ms": 120.04151199971602,
+          "after_enter_ms": 20.012954999856447,
+          "prompt_bytes": 68,
+          "prompt_sha256": "a019a4c2a59c6cde55d1bd4b6f063896fe8bc9ff3c81f12ae47a9c52fa1bae4a"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 117.9637210002511,
+          "after_enter_ms": 17.944702000022517,
+          "prompt_bytes": 68,
+          "prompt_sha256": "8965d896e96d331eb215d8bfadabc1f54cc6eaf13b6c8962e1b35b5fe01fcebb"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 118.65153000007922,
+          "after_enter_ms": 18.630652999945596,
+          "prompt_bytes": 68,
+          "prompt_sha256": "60eb4eece7fe602ecd16ffe5f924dd7e6b2b599eb31dc6aa1fcf08800cff22c2"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 121.75034399979268,
+          "after_enter_ms": 21.72161899989078,
+          "prompt_bytes": 68,
+          "prompt_sha256": "eee155c0562da7ea10888a194eddccde178ad9db9269a77843939ca9d4d38649"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 115.96138599998085,
+          "after_enter_ms": 15.931825000279787,
+          "prompt_bytes": 68,
+          "prompt_sha256": "b1a0336d0b9a8109d668e208833358dd6d4083a130e4bcad0e9524bbaaa872f5"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 115.86776900003315,
+          "after_enter_ms": 15.852644999995391,
+          "prompt_bytes": 68,
+          "prompt_sha256": "3027e9b9e7d451dc79dce0e55b4a7a3f534211c6aae027f358e1ff69d499b584"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 119.19828200007032,
+          "after_enter_ms": 19.178896000084933,
+          "prompt_bytes": 68,
+          "prompt_sha256": "0d851435a17642f776321a323df47198c19fdf8ac554ada65a43636a70d5a181"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 116.18014099985885,
+          "after_enter_ms": 16.158465999978944,
+          "prompt_bytes": 68,
+          "prompt_sha256": "c495c958bc2504b020a6758bb58a26d6e05e3dd2bbb1e71314c7664615616fe8"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 116.21760699972583,
+          "after_enter_ms": 16.199355000026117,
+          "prompt_bytes": 68,
+          "prompt_sha256": "156f24a680845d8d5c0690b89ccf54596dc98613829ead6906d2b14562a63d7b"
+        },
+        {
+          "accepted": true,
+          "latency_ms": 119.07808299974931,
+          "after_enter_ms": 19.051715999921726,
+          "prompt_bytes": 68,
+          "prompt_sha256": "1d8a49762b76fbb3672d4fbb274483d96ab83e7c0d13a36c95c3f0ad8e52abb4"
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-opencode-980pgir6",
+      "transport": "direct PTY",
+      "exact_text": 10
+    }
+  ]
+}

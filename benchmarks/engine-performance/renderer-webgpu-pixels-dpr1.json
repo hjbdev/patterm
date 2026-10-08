@@ -1,0 +1,15 @@
+{
+  "backend": "webgpu",
+  "baselineAdjustment": "Required RENDER_ATTACHMENT atlas texture flag only",
+  "checked": [
+    "text",
+    "styled",
+    "blocks",
+    "variants",
+    "unicode",
+    "wide"
+  ],
+  "devicePixelRatio": 1,
+  "errors": [],
+  "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/145.0.0.0 Safari/537.36"
+}

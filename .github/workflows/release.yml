@@ -1,0 +1,136 @@
+name: Release
+
+# A plain tag (v1.2.0) publishes a stable Linux release. A tag with a suffix
+# (v1.3.0-beta.1) publishes a pre-release; untested macOS and Windows builds
+# will only ever ship as pre-releases.
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    # Gitea Actions also runs .github/workflows; its mirror must not.
+    if: github.server_url == 'https://github.com'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Check the tag
+        run: |
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::$GITHUB_REF_NAME is not a semantic version tag"; exit 1; }
+          test -s scripts/release/minisign.pub || { echo '::error::scripts/release/minisign.pub is missing'; exit 1; }
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo '::error::Release tags must point at a commit on main'; exit 1; }
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - name: Configure git for tests that commit
+        run: |
+          git config --global user.name 'Patterm CI'
+          git config --global user.email 'ci@invalid'
+          git config --global init.defaultBranch main
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - run: pnpm run check
+      - run: pnpm run build:server
+
+  build:
+    needs: check
+    strategy:
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - name: Build the static sidecar
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          rustup target add ${{ matrix.target }}
+          cargo build --release --locked --target ${{ matrix.target }} --manifest-path native/terminal-core/Cargo.toml
+          cargo test --release --locked --target ${{ matrix.target }} --manifest-path native/terminal-core/Cargo.toml
+      - run: pnpm install --frozen-lockfile
+      - name: Build the application
+        run: |
+          pnpm run build:main
+          pnpm exec tsc -p tsconfig.server.json
+          pnpm run build:renderer
+          pnpm run build:mcp
+      - name: Package
+        run: scripts/release/package.sh --version "${GITHUB_REF_NAME#v}" --arch ${{ matrix.arch }} --sidecar native/terminal-core/target/${{ matrix.target }}/release/patterm-terminal-core --repo "$GITHUB_REPOSITORY" --out "$RUNNER_TEMP/release"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/release/patterm-*
+            ${{ runner.temp }}/release/install.sh
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: release
+          merge-multiple: true
+      - name: Write and sign the manifest
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          node scripts/release/manifest.mjs "$version" "$GITHUB_SHA" release/*.tar.gz.sha256 > release/manifest.json
+          sudo apt-get update
+          sudo apt-get install -y minisign
+          umask 077
+          key="$(mktemp)"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key"
+          printf '%s\n' "$MINISIGN_PASSWORD" | minisign -S -s "$key" -m release/manifest.json -t "patterm $version"
+          # Check the signature with the key installs trust before publishing it.
+          node scripts/release/verify-minisign.mjs "$(tail -n 1 scripts/release/minisign.pub)" release/manifest.json release/manifest.json.minisig
+      - name: Prepare the installer scripts
+        run: |
+          # Both architectures render the same install.sh as the one in their tarballs.
+          cp scripts/release/uninstall.sh release/uninstall.sh
+          if grep -n '@PATTERM_REPO@\|@MINISIGN_PUBLIC_KEY@' release/install.sh; then exit 1; fi
+          (cd release && sha256sum install.sh uninstall.sh > scripts.sha256)
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=()
+          [[ "$GITHUB_REF_NAME" == *-* ]] && prerelease=(--prerelease)
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "Patterm ${GITHUB_REF_NAME#v}" "${prerelease[@]}" \
+            release/*.tar.gz release/*.tar.gz.sha256 release/manifest.json release/manifest.json.minisig release/install.sh release/uninstall.sh release/scripts.sha256

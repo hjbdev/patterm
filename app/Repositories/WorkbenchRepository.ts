@@ -1,0 +1,374 @@
+import type { DatabaseService } from '../Services/DatabaseService';
+import { SettingsService, type SidebarState } from '../Services/SettingsService';
+import type { TimerRecord, TimerService } from '../Services/TimerService';
+
+// Renderer-facing (camelCase) shapes. These intentionally mirror the interfaces
+// in resources/js/types.ts so the IPC payload drops straight into the UI.
+
+export interface AutoSummaryDto { text: string; generatedAt: string; provider: string; model: string; }
+
+export interface ProjectSummaryDto {
+  id: string;
+  name: string;
+  path: string;
+  logo: string | null;
+  // The paired host that owns this record; absent for this host's own.
+  host?: string;
+  // Connected paired hosts this project is linked with, and the qualified ID
+  // of the linked project there, for launching on that host.
+  remotes?: Array<{ host: string; projectId: string }>;
+}
+
+export interface CloseRequestDto { summary: string; requestedAt: string; }
+
+export interface SessionDto {
+  summary?: AutoSummaryDto | null;
+  host?: string;
+  // The agent asked to be closed and is waiting for the user's answer.
+  closeRequest?: CloseRequestDto | null;
+  id: string;
+  parentId: string | null;
+  processId: string | null;
+  ptyProcessId: string | null;
+  worktreeId: string | null;
+  harness: string | null;
+  interfaceMode: 'tui' | 'integrated';
+  sessionRole: string;
+  resumeStatus: string;
+  activity: string;
+  lastTitle: string | null;
+  displayName: string | null;
+  model: string | null;
+  reasoning: string | null;
+  startedAt: string;
+  exitedAt: string | null;
+}
+
+export interface ProcessDto {
+  summary?: AutoSummaryDto | null;
+  host?: string;
+  id: string;
+  parentProcessId: string | null;
+  kind: string;
+  name: string;
+  command: string;
+  cwd: string | null;
+  argv: string[];
+  status: string;
+  activity: string;
+  ptyProcessId: string | null;
+  worktreeId: string | null;
+  autoRestart: boolean;
+  exitedAt: string | null;
+  exitCode: number | null;
+}
+
+export interface WorktreeDto {
+  host?: string;
+  id: string;
+  repoPath: string;
+  worktreePath: string;
+  branch: string | null;
+}
+
+export interface HarnessInstallationDto {
+  id: string;
+  harness: string;
+  executablePath: string;
+  version: string | null;
+  status: string;
+  discoveredAt: string;
+  lastCheckedAt: string;
+}
+
+export interface ProjectWorkbenchDto {
+  project: ProjectSummaryDto;
+  projectSessions: SessionDto[];
+  processes: ProcessDto[];
+  worktrees: WorktreeDto[];
+  // Pending and paused timers that call back into this project's processes.
+  timers: TimerRecord[];
+}
+
+export interface WorkbenchSnapshotDto {
+  projects: ProjectWorkbenchDto[];
+  harnesses: HarnessInstallationDto[];
+  sidebarState: SidebarState;
+}
+
+interface ProjectRow {
+  id: string;
+  name: string;
+  path: string;
+  logo: string | null;
+}
+
+interface SessionRow {
+  id: string;
+  process_id: string | null;
+  pty_process_id?: string | null;
+  worktree_id: string | null;
+  harness: string | null;
+  interface_mode: 'tui' | 'integrated';
+  session_role: string;
+  resume_status: string;
+  last_title: string | null;
+  display_name: string | null;
+  model: string | null;
+  reasoning: string | null;
+  started_at: string;
+  exited_at: string | null;
+}
+
+interface ProcessRow {
+  auto_summary: string | null;
+  auto_summary_at: string | null;
+  auto_summary_provider: string | null;
+  auto_summary_model: string | null;
+  close_requested_at: string | null;
+  close_request_summary: string | null;
+  id: string;
+  parent_process_id: string | null;
+  kind: string;
+  name: string;
+  cwd: string | null;
+  argv: string | null;
+  status: string;
+  activity: string;
+  pty_process_id: string | null;
+  worktree_id: string | null;
+  auto_restart: number;
+  exited_at: string | null;
+  exit_code: number | null;
+}
+
+interface WorktreeRow {
+  id: string;
+  repo_path: string;
+  worktree_path: string;
+  branch: string | null;
+}
+
+interface HarnessInstallationRow {
+  id: string;
+  harness: string;
+  executable_path: string;
+  version: string | null;
+  status: string;
+  discovered_at: string;
+  last_checked_at: string;
+}
+
+// Sessions and processes that ended longer ago than this are left out of the
+// snapshot that clients load and patch. Views read them on demand.
+export const WORKBENCH_HISTORY_MS = 24 * 60 * 60 * 1000;
+
+export class WorkbenchRepository {
+  constructor(
+    private readonly database: DatabaseService,
+    private readonly settings = new SettingsService(database),
+    private readonly timers?: Pick<TimerService, 'list'>,
+    private readonly now: () => number = Date.now
+  ) {}
+
+  private get db() {
+    return this.database.connection;
+  }
+
+  listProjects(): ProjectSummaryDto[] {
+    return (this.db.prepare(`select id, name, path, logo from projects where kind = 'workspace' order by created_at asc`).all() as ProjectRow[]).map((row) => ({
+      id: row.id,
+      name: row.name,
+      path: row.path,
+      logo: row.logo
+    }));
+  }
+
+  getProject(id: string): ProjectSummaryDto | null {
+    const row = this.db.prepare(`select id, name, path, logo from projects where id = ?`).get(id) as ProjectRow | undefined;
+    return row ? { id: row.id, name: row.name, path: row.path, logo: row.logo } : null;
+  }
+
+  listHarnesses(): HarnessInstallationDto[] {
+    const rows = this.db
+      .prepare(`select * from harness_installations order by harness asc`)
+      .all() as HarnessInstallationRow[];
+    return rows.map(mapHarness);
+  }
+
+  snapshot(): WorkbenchSnapshotDto {
+    const harnesses = this.listHarnesses();
+    const projectRows = this.db.prepare(`select id, name, path, logo from projects where kind = 'workspace' order by created_at asc`).all() as ProjectRow[];
+    const timers = this.timers?.list() ?? [];
+
+    return { projects: projectRows.map((project) => this.projectWorkbench(project, timers)), harnesses, sidebarState: this.settings.sidebarState() };
+  }
+
+  updateSidebarState(input: SidebarState): SidebarState {
+    return this.settings.updateSidebarState(input);
+  }
+
+  // One session or process, whether or not the snapshot still lists it. An
+  // agent's process ID alone reads its latest session.
+  record(input: { project_id: string; session_id?: string | undefined; process_id?: string | undefined }): { session: SessionDto | null; process: ProcessDto | null } {
+    const processRows = this.db
+      .prepare(`select * from processes where project_id = ? order by created_at asc`)
+      .all(input.project_id) as ProcessRow[];
+    const sessionRow = input.session_id
+      ? this.db.prepare(`select sessions.*, processes.pty_process_id from sessions left join processes on processes.id = sessions.process_id where sessions.project_id = ? and sessions.id = ?`)
+        .get(input.project_id, input.session_id) as SessionRow | undefined
+      : input.process_id
+        ? this.db.prepare(`select sessions.*, processes.pty_process_id from sessions join processes on processes.id = sessions.process_id
+            where sessions.project_id = ? and sessions.process_id = ? and processes.kind = 'agent' order by sessions.started_at desc limit 1`)
+          .get(input.project_id, input.process_id) as SessionRow | undefined
+        : undefined;
+    const processRow = input.process_id ? processRows.find((row) => row.id === input.process_id && row.kind !== 'agent') : undefined;
+    return {
+      session: sessionRow ? mapSessions([sessionRow], processRows)[0] ?? null : null,
+      process: processRow ? mapProcess(processRow) : null
+    };
+  }
+
+  private projectWorkbench(project: ProjectRow, timers: TimerRecord[]): ProjectWorkbenchDto {
+    // Assigned sessions stay listed, so todos can name their assignees.
+    const since = this.now() - WORKBENCH_HISTORY_MS;
+    const sessionRows = this.db
+      .prepare(`select sessions.*, processes.pty_process_id from sessions left join processes on processes.id = sessions.process_id
+        where sessions.project_id = ? and (sessions.exited_at is null or julianday(sessions.exited_at) >= julianday(?)
+          or exists (select 1 from todo_assignments where todo_assignments.session_id = sessions.id))
+        order by sessions.started_at asc`)
+      .all(project.id, new Date(since).toISOString()) as SessionRow[];
+    // Every process is read: parents and timers may belong to ended ones.
+    const processRows = this.db
+      .prepare(`select * from processes where project_id = ? order by created_at asc`)
+      .all(project.id) as ProcessRow[];
+    const sessions = mapSessions(sessionRows, processRows);
+    const processIds = new Set(processRows.map((row) => row.id));
+    const recent = (row: ProcessRow) => row.status === 'running' || !row.exited_at || Date.parse(row.exited_at) >= since;
+
+    return {
+      project: { id: project.id, name: project.name, path: project.path, logo: project.logo },
+      projectSessions: sessions,
+      processes: processRows.filter((row) => row.kind !== 'agent' && recent(row)).map(mapProcess),
+      worktrees: (this.db.prepare('select * from worktrees where project_id = ? order by created_at').all(project.id) as WorktreeRow[]).map(mapWorktree),
+      timers: timers.filter((timer) => timer.ownerProcessId !== null && processIds.has(timer.ownerProcessId))
+    };
+  }
+
+}
+
+// Derive each session's parent session via the backing process tree:
+// session → process → parent_process → the session owning that process.
+function mapSessions(sessions: SessionRow[], processes: ProcessRow[]): SessionDto[] {
+  const summaries = new Map(processes.map((process) => [process.id, mapAutoSummary(process)]));
+  const closeRequests = new Map(processes.map((process) => [process.id, mapCloseRequest(process)]));
+  const parentProcessByProcessId = new Map<string, string | null>();
+  const activityByProcessId = new Map<string, string>();
+  for (const process of processes) {
+    parentProcessByProcessId.set(process.id, process.parent_process_id);
+    activityByProcessId.set(process.id, process.activity);
+  }
+  const sessionByProcessId = new Map<string, string>();
+  for (const session of sessions) {
+    if (session.process_id) {
+      sessionByProcessId.set(session.process_id, session.id);
+    }
+  }
+
+  return sessions.map((session) => {
+    const parentProcessId = session.process_id ? parentProcessByProcessId.get(session.process_id) ?? null : null;
+    const parentId = parentProcessId ? sessionByProcessId.get(parentProcessId) ?? null : null;
+    return {
+      id: session.id,
+      parentId,
+      processId: session.process_id,
+      summary: session.process_id ? summaries.get(session.process_id) ?? null : null,
+      closeRequest: session.process_id ? closeRequests.get(session.process_id) ?? null : null,
+      ptyProcessId: session.pty_process_id ?? null,
+      worktreeId: session.worktree_id,
+      harness: session.harness,
+      interfaceMode: session.interface_mode,
+      sessionRole: session.session_role,
+      resumeStatus: session.resume_status,
+      activity: session.process_id ? activityByProcessId.get(session.process_id) ?? 'idle' : 'idle',
+      lastTitle: session.last_title,
+      displayName: session.display_name,
+      model: session.model,
+      reasoning: session.reasoning,
+      startedAt: session.started_at,
+      exitedAt: session.exited_at
+    };
+  });
+}
+
+function mapProcess(row: ProcessRow): ProcessDto {
+  const argv = parseArgv(row.argv);
+  return {
+    id: row.id,
+    summary: mapAutoSummary(row),
+    parentProcessId: row.parent_process_id,
+    kind: row.kind,
+    name: row.name,
+    command: commandFromArgv(argv),
+    cwd: row.cwd,
+    argv,
+    status: row.status,
+    activity: row.activity,
+    ptyProcessId: row.pty_process_id,
+    worktreeId: row.worktree_id,
+    autoRestart: row.auto_restart === 1,
+    exitedAt: row.exited_at,
+    exitCode: row.exit_code
+  };
+}
+
+function mapAutoSummary(row: ProcessRow): AutoSummaryDto | null {
+  return row.auto_summary && row.auto_summary_at && row.auto_summary_provider && row.auto_summary_model
+    ? { text: row.auto_summary, generatedAt: row.auto_summary_at, provider: row.auto_summary_provider, model: row.auto_summary_model } : null;
+}
+
+// Shown once the turn that asked has finished.
+function mapCloseRequest(row: ProcessRow): CloseRequestDto | null {
+  if (!row.close_requested_at || row.status !== 'running' || row.activity === 'working' || row.activity === 'thinking') return null;
+  return { summary: row.close_request_summary ?? '', requestedAt: row.close_requested_at };
+}
+
+function parseArgv(raw: string | null): string[] {
+  if (!raw) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function commandFromArgv(argv: string[]): string {
+  if (argv.length >= 3 && argv[1] === '-lc') {
+    return argv.slice(2).join(' ');
+  }
+  return '';
+}
+
+function mapWorktree(row: WorktreeRow): WorktreeDto {
+  return {
+    id: row.id,
+    repoPath: row.repo_path,
+    worktreePath: row.worktree_path,
+    branch: row.branch
+  };
+}
+
+function mapHarness(row: HarnessInstallationRow): HarnessInstallationDto {
+  return {
+    id: row.id,
+    harness: row.harness,
+    executablePath: row.executable_path,
+    version: row.version,
+    status: row.status,
+    discoveredAt: row.discovered_at,
+    lastCheckedAt: row.last_checked_at
+  };
+}

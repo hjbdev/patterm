@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#151515">
+    <title>Patterm · Offline</title>
+    <link rel="icon" href="/icon.svg" type="image/svg+xml">
+    <style>
+      :root { color-scheme: dark; font-family: system-ui, sans-serif; background: hsl(0 0% 8.2%); color: #e5e7eb; }
+      body { margin: 0; min-height: 100dvh; display: grid; place-items: center; }
+      main { max-width: 25rem; padding: 2rem; text-align: center; }
+      img { width: 64px; height: 64px; }
+      h1 { font-size: 1.5rem; letter-spacing: -.03em; }
+      p { color: #a1a1aa; line-height: 1.6; }
+      a { display: inline-block; margin-top: .75rem; padding: .65rem 1rem; border: 1px solid #3f3f46; border-radius: .5rem; color: #e5e7eb; text-decoration: none; }
+      a:hover, a:focus-visible { background: #18181b; outline: 2px solid #86efac; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <img src="/icons/icon-192.png" alt="">
+      <h1>Can’t reach your Patterm server</h1>
+      <p>Patterm needs a connection to your server. Check your network and Tailscale, then try again.</p>
+      <p>Closing this app does not stop agents on the server. Commands are never queued offline.</p>
+      <a href="/">Try again</a>
+    </main>
+  </body>
+</html>

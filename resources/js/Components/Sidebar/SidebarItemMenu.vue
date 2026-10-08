@@ -1,0 +1,49 @@
+<template>
+  <ContextMenu>
+    <ContextMenuTrigger as-child>
+      <slot />
+    </ContextMenuTrigger>
+    <ContextMenuContent class="w-52">
+      <ContextMenuItem @select="rename">
+        <Pencil class="h-4 w-4" /><span>Rename</span>
+      </ContextMenuItem>
+      <ContextMenuItem v-if="tab" @select="sidebar.setPinned(tab, !tab.pinned)">
+        <PinOff v-if="tab.pinned" class="h-4 w-4" /><Pin v-else class="h-4 w-4" />
+        <span>{{ tab.pinned ? 'Unpin' : 'Pin to top' }}</span>
+      </ContextMenuItem>
+      <ContextMenuItem v-if="session" :disabled="!session.processId" @select="openTimer(session)">
+        <Clock class="h-4 w-4" /><span>Set timer</span>
+      </ContextMenuItem>
+      <ContextMenuItem :disabled="!targetId" @select="copyId(targetId)">
+        <Copy class="h-4 w-4" /><span>Copy process ID</span>
+      </ContextMenuItem>
+      <ContextMenuItem class="text-destructive focus:text-destructive" @select="close">
+        <X class="h-4 w-4" /><span>Close</span>
+      </ContextMenuItem>
+    </ContextMenuContent>
+  </ContextMenu>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue';
+import { Clock, Copy, Pencil, Pin, PinOff, X } from 'lucide-vue-next';
+import type { StripTab } from '../../lib/tabStrip';
+import type { ProcessRecord, SessionRecord } from '../../types';
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '../ui/context-menu';
+import { closeSession, closeTarget, copyId, openRename, openTimer } from './sidebarActions';
+import { useSidebar } from './sidebarContext';
+
+const props = defineProps<{ session?: SessionRecord | undefined; process?: ProcessRecord | undefined; tab?: StripTab | undefined }>();
+const sidebar = useSidebar();
+const targetId = computed(() => props.session ? props.session.processId : props.process?.id ?? null);
+
+function rename(): void {
+  if (props.session) openRename({ session: props.session });
+  else if (props.process) openRename({ process: props.process });
+}
+
+function close(): void {
+  if (props.session) void closeSession(props.session);
+  else if (props.process) void closeTarget(props.process.id, 'process');
+}
+</script>

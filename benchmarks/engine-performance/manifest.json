@@ -1,0 +1,30 @@
+{
+  "baseline": "pre-release revision, not in the public history",
+  "date": "2026-09-08",
+  "system": "Linux x86-64, AMD Ryzen 7 7800X3D",
+  "node": "26.8.1",
+  "rust": "1.96.0",
+  "alacritty_terminal": "0.26.0",
+  "candidate_sha256": {
+    "native/terminal-core/src/main.rs": "1855e88ae778c26f4b49fe3d9e54ca404334e7c213b44726b44dbbd242e19f7f",
+    "native/terminal-core/src/terminal.rs": "a2aa2b500b0e9a15364cc17f04b37e454a03e0d9d721b5297d72b395371bce1b",
+    "resources/js/terminal/TerminalRenderer.ts": "d05c7584871f8ac7f49bf3189f3ecbc22cc4ca12dc3dd97522f85e546dc45fed",
+    "app/Services/ProcessLauncher.ts": "f21c85471a16012ac44df18deca9a369e0a9d0d5f9a0a21cfc05e2fafc5bb3c9",
+    "app/Services/HarnessLauncher.ts": "19a0751b71ad88f1ea40fdb04d63230ab6c65fd1916c1cac80e640d3e8049e49",
+    "app/Actions/CloseProcessAction.ts": "408d6b6f399e4074629f349950ae8adfee22564b7ff5622401defa9adfe02f45"
+  },
+  "baseline_sha256": {
+    "native/terminal-core/src/main.rs": "939e058e785731ff05d19fcb55834cc4c2ec2e7d3916809dfc8410ecc8c4fce0",
+    "native/terminal-core/src/terminal.rs": "5f88640db51a26e0cc80c88fcec2ba849c728d2359553db369e63fffe6609159",
+    "resources/js/terminal/TerminalRenderer.ts": "bfe04dec3dbf2b95a79f551c4e9e86eade36496835b0a2cfd833fbdb9f9d9884",
+    "app/Services/ProcessLauncher.ts": "6e70c0b9569d51a7e9a0eae71bcf78878d171e646257acbe61afc80e990b5db7",
+    "app/Services/HarnessLauncher.ts": "c7845a3d3ba3bb7e0a6251e9c67be398d0b8af9dd6f0fb1635a37793ea8d516c",
+    "app/Actions/CloseProcessAction.ts": "a7156cf62b984f27f546dcb4d4ea81f9efe42fd00fb9a8ebe22dfcd6f30479fd"
+  },
+  "notes": [
+    "Renderer CPU baseline is unmodified. Browser WebGPU baseline receives only the required RENDER_ATTACHMENT texture usage flag.",
+    "Native tests use Codex 0.153.4, Claude Code 2.1.263, OpenCode 1.18.29.",
+    "Native acceptance and output/RSS measurements preceded final equivalent scheduler cleanup and mouse/wheel FIFO routing; runtime and regression tests cover the final sidecar.",
+    "No CPU pinning; benchmark suites separated from project builds."
+  ]
+}

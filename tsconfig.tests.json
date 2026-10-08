@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "rootDir": ".",
+    "outDir": "dist/tests",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "esModuleInterop": true
+  },
+  "include": ["resources/js/env.d.ts", "resources/js/terminal/**/*.ts", "resources/js/lib/agentMentions.ts", "resources/js/lib/composerDocument.ts", "resources/js/lib/agentTabs.ts", "resources/js/lib/agentTree.ts", "resources/js/lib/integratedConversation.ts", "resources/js/lib/integratedTasks.ts", "resources/js/lib/integratedUsage.ts", "resources/js/lib/integratedComposer.ts", "resources/js/lib/historyTranscript.ts", "resources/js/lib/streamReveal.ts", "tests/**/*.ts", "app/**/*.ts", "database/**/*.ts"]
+}

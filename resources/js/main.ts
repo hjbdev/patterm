@@ -1,0 +1,35 @@
+import { browserSession } from './browser';
+import { createApp } from 'vue';
+import 'vue-sonner/style.css';
+import App from './App.vue';
+import { createWebHashHistory, createWebHistory } from 'vue-router';
+import { createWorkbenchRouter, prefetchPages } from './router';
+import { warmHighlightWorker } from './lib/markdownHighlightWorker';
+import './styles.css';
+
+// A server with a password shows only the sign-in page until this browser
+// signs in.
+void browserSession.then(async (session) => {
+  if (session?.password_set && !session.signed_in) {
+    const { default: SignInPage } = await import('./Pages/SignInPage.vue');
+    createApp(SignInPage).mount('#app');
+  } else {
+    mountWorkbench();
+  }
+});
+
+function mountWorkbench(): void {
+  const router = createWorkbenchRouter(window.patterm.runtime === 'desktop' ? createWebHashHistory() : createWebHistory());
+  const app = createApp(App).use(router);
+  // Once the first page is up, load the other pages, the diff viewer, and the
+  // code highlighter, so later navigation doesn't wait for them.
+  void router.isReady().then(() => {
+    app.mount('#app');
+    setTimeout(() => {
+      prefetchPages();
+      void import('./Components/WorktreeFileDiff.vue');
+      void import('./lib/diffHighlighter');
+      warmHighlightWorker();
+    }, 0);
+  });
+}

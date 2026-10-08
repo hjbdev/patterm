@@ -1,0 +1,353 @@
+{
+  "boundary": "Native CLI PTY input start to matching prompt in the loopback API request; no inference; sequential submissions with 250ms error recovery between samples",
+  "results": [
+    {
+      "cli": "codex",
+      "version": "codex-cli 0.153.4",
+      "transport": "/tmp/patterm-engine-perf/native/terminal-core/target/release/patterm-terminal-core",
+      "kind": "text",
+      "workload": "short",
+      "delay_ms": null,
+      "correct": 10,
+      "samples": 10,
+      "exact_text": 10,
+      "median_ms": 123.74580999994578,
+      "p95_ms": 125.09912199993778,
+      "raw": [
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 123.65052199993443,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.1006519996735733,
+          "prompt_bytes": 66,
+          "prompt_sha256": "0641c8f34b7b526763b42a7a60ac609d01b2b1e735fb297ab9345d40ff04e9ae"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 123.57365500020023,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.10013100018113619,
+          "prompt_bytes": 66,
+          "prompt_sha256": "b749e3e72f50b4b16d683d1e5109cd6269334f50e240442c3c6eef95d98aa120"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 123.56791499996689,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.11100299980171258,
+          "prompt_bytes": 66,
+          "prompt_sha256": "4b281277042727df0d3d5d802226ee810bc09add0aae3d1dba34e55b96e25b45"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 125.09912199993778,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.09735599996929523,
+          "prompt_bytes": 66,
+          "prompt_sha256": "c694ad37489aab847da950400622a3022e89f2b2c0e415600c6ecf424e5919b5"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 123.84109799995713,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.0933680003072368,
+          "prompt_bytes": 66,
+          "prompt_sha256": "9074ec6f577c2169eeaac32522996cb69d2940705ab8376ab63a9bc5baba2bc2"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 123.15884600002391,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.09751700008564512,
+          "prompt_bytes": 66,
+          "prompt_sha256": "60042fafc1274761b0da885f4bf370e899c810d68c98acf7cf5ef36806d0f630"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 123.6040270000558,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.10395899971626932,
+          "prompt_bytes": 66,
+          "prompt_sha256": "b88dff8d08516d16ecc25e4f2201043007d8a5966eed2bbb12d9493482dc0da4"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 124.04498900014005,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.10429000030853786,
+          "prompt_bytes": 66,
+          "prompt_sha256": "9af7fa0eb0395a6eb9c2291d7fd7a42c9465b97de5cc2ed43ce841434f46782a"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 123.84880599984172,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.10339799973735353,
+          "prompt_bytes": 66,
+          "prompt_sha256": "335017e1c1c8a8ecbf62abf65139f78a9e43ebcb6f5d35f1299c18a9d6a4ad9a"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 124.23098600038429,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.08742700038055773,
+          "prompt_bytes": 66,
+          "prompt_sha256": "9a67c6025d1ea5bb39b33bf2adef550fd4b3d001d758e15d595346ae45dafcbe"
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-codex-cxpcrkct"
+    },
+    {
+      "cli": "claude",
+      "version": "2.1.263 (Claude Code)",
+      "transport": "/tmp/patterm-engine-perf/native/terminal-core/target/release/patterm-terminal-core",
+      "kind": "text",
+      "workload": "short",
+      "delay_ms": null,
+      "correct": 10,
+      "samples": 10,
+      "exact_text": 10,
+      "median_ms": 105.39677449969531,
+      "p95_ms": 105.90075199979765,
+      "raw": [
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 105.85718700031066,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.11556000026757829,
+          "prompt_bytes": 67,
+          "prompt_sha256": "c6b6fb44e8bb7710346aacc38bf3a08cf4f333d6693970d2a26a21f6a2c9dc6c"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 105.23255299995071,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.10974900033033919,
+          "prompt_bytes": 67,
+          "prompt_sha256": "26f5e6f37e5a12acdbdc90399b2d6cfb96a2be53b0a0c23738abc4637687056a"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 105.90075199979765,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.11075199972765404,
+          "prompt_bytes": 67,
+          "prompt_sha256": "65b26a29f82783b6252bcbd405f372c4240c61ed064d1d9e64d5066c6538bcdf"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 105.37221199956548,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.11925799981327145,
+          "prompt_bytes": 67,
+          "prompt_sha256": "323c7d09dd91a0e41fb40623926d3aab4efb87678c73e9a98b3a5b429601e684"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 105.48371400000178,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.107554999885906,
+          "prompt_bytes": 67,
+          "prompt_sha256": "690e5eea164cd018e0196f75ce643f4af640e6dea8dd56436805661c4f3ada80"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 105.42133699982514,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.11506000009831041,
+          "prompt_bytes": 67,
+          "prompt_sha256": "edfad71eb105df5e131634cbf985f87169b8bb7c8418d6b2adf7dca6204b0246"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 105.17279200030316,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.10589200019239797,
+          "prompt_bytes": 67,
+          "prompt_sha256": "93ed26fbdd97cf98035aa081187a9031870c5905e4d888b01aa2a04a8c84f683"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 105.52867300020807,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.10108300011779647,
+          "prompt_bytes": 67,
+          "prompt_sha256": "bb412950042f4c22517b505c584bed30008257cb3a8a335445b89a8263687cec"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 105.10211800010438,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.10900900042543071,
+          "prompt_bytes": 67,
+          "prompt_sha256": "fc1fd9dab2398aa89fbc3a53904c5cdd9661622cf2453bdb03c12babee5a193a"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 105.27659100034725,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.09831800025494886,
+          "prompt_bytes": 67,
+          "prompt_sha256": "9f839cacfc92ccd660db4e31ad5ee2e5341a40f974782bbf3a0194a9168c1a82"
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-claude-5k3hssk8"
+    },
+    {
+      "cli": "opencode",
+      "version": "1.18.29",
+      "transport": "/tmp/patterm-engine-perf/native/terminal-core/target/release/patterm-terminal-core",
+      "kind": "text",
+      "workload": "short",
+      "delay_ms": null,
+      "correct": 10,
+      "samples": 10,
+      "exact_text": 10,
+      "median_ms": 118.4371795000061,
+      "p95_ms": 119.71082199988814,
+      "raw": [
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 119.12629300013577,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.13877500032322132,
+          "prompt_bytes": 69,
+          "prompt_sha256": "95283e31acb09b14980207f8665856c55f3ca46f2a4a7c62ebec048f950f2211"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 118.92552900008013,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.11676299982354976,
+          "prompt_bytes": 69,
+          "prompt_sha256": "d090909ea6ac10593bf2761fe8f37d6e964cde7691413834ef37134bf1d4277f"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 118.17807299985361,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.11147299983349512,
+          "prompt_bytes": 69,
+          "prompt_sha256": "8febeba227f6c2be81938facdb75de41421f70eb945497456f4a9f38cf458dc1"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 119.71082199988814,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.10982999992847908,
+          "prompt_bytes": 69,
+          "prompt_sha256": "4014ec874c747ff85d70468c077339a9a723489045e0b960cd43cafc7bb4ce83"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 117.93445900002553,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.11348699990776367,
+          "prompt_bytes": 69,
+          "prompt_sha256": "38f32e8cc628eaa258997a8ee487131d58a6b0cdb7749276911994ac805e512b"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 117.87556599983873,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.12672200000451994,
+          "prompt_bytes": 69,
+          "prompt_sha256": "70a0c8691010dbe5292274303af5bafa89e0b04471e61479b07a31f54a1790bb"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 118.93210599964732,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.12022999999317108,
+          "prompt_bytes": 69,
+          "prompt_sha256": "428844a6fdd44b10979335078577d257883d73d3bec0ac12b7b011653d14111c"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 116.9844149999335,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.1267920001737366,
+          "prompt_bytes": 69,
+          "prompt_sha256": "6be2560c2d76d72f11a635e98a07eb9dc94787b4908330696e14fd3b60e889de"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 118.69628600015858,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.10959000019283849,
+          "prompt_bytes": 69,
+          "prompt_sha256": "d374bd2dde90c65897991689c011c761527498b379a6c6f0b90f323b856d1290"
+        },
+        {
+          "accepted": true,
+          "exact_text": true,
+          "native_trailing_space": false,
+          "latency_ms": 116.7247779999343,
+          "after_enter_ms": null,
+          "control_reply_ms": 0.1148390001617372,
+          "prompt_bytes": 69,
+          "prompt_sha256": "60d151da6c637f6c0b143af675069b5d37df4496880351d5f5cf9f3df8b9c38e"
+        }
+      ],
+      "evidence_directory": "/tmp/patterm-submit-opencode-ifthyw6u"
+    }
+  ]
+}
