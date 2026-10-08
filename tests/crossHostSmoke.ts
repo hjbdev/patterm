@@ -349,6 +349,9 @@ async function main(): Promise<void> {
     assert.equal((workstation.app.database.connection.prepare(`select count(*) as n from timeline_events where event_type = 'message.received' and json_extract(metadata, '$.peer_message_id') = 'pmsg_retry'`).get() as { n: number }).n, 1);
 
     // The developer asks the benchmarker for results and waits for a reply.
+    // A timer counts messages from the millisecond it starts, so let the clock
+    // pass the message above, or it would count as the reply.
+    await new Promise((resolve) => setTimeout(resolve, 5));
     const timer = await developer.call('timer_fire_when_reported_any', { watched: [`desktop:${benchmarker.process_id}`], body: 'BENCHMARK-REPLY-ARRIVED' }) as { status: string };
     assert.equal(timer.status, 'pending');
     await assert.rejects(developer.call('timer_fire_when_idle_any', { watched: [`desktop:${benchmarker.process_id}`], body: 'x' }), /Idle timers cannot watch/);
