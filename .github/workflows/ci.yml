@@ -32,6 +32,7 @@ jobs:
           git config --global init.defaultBranch main
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
-      - run: pnpm run check
+      # remoteAccessSmoke, in check, runs the installer, which needs the server build.
       - run: pnpm run build:server
+      - run: pnpm run check
       - run: node --test tests/serviceInstallerSmoke.mjs
