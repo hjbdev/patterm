@@ -32,7 +32,8 @@ test('small Markdown appears immediately and stays visible while highlighting lo
   const pending = [];
   globalThis.window = { requestIdleCallback(callback) { pending.push(callback); return pending.length; }, cancelIdleCallback() {} };
   const renderer = createRenderer({
-    createElement: (tag) => ({ tag, props: {}, children: [] }),
+    // Markdown.vue looks for mentions and code blocks in its rendered HTML.
+    createElement: (tag) => ({ tag, props: {}, children: [], querySelectorAll: () => [] }),
     createText: (text) => ({ text }), createComment: () => ({}),
     insert(node, parent, anchor) {
       const index = anchor ? parent.children.indexOf(anchor) : -1;

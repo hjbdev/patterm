@@ -208,10 +208,16 @@ impl Target {
     }
 }
 
+// A process can exit between opening a /proc file and reading it. The read then
+// fails with ESRCH rather than ENOENT.
+fn gone(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::NotFound || error.raw_os_error() == Some(libc::ESRCH)
+}
+
 fn identity(pid: u32, parent: Option<u32>) -> Result<Option<Identity>> {
     let stat = match fs::read_to_string(format!("/proc/{pid}/stat")) {
         Ok(stat) => stat,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if gone(&error) => return Ok(None),
         Err(error) => return Err(error.into()),
     };
     // The command name can itself contain spaces and parentheses.
@@ -235,14 +241,14 @@ fn identity(pid: u32, parent: Option<u32>) -> Result<Option<Identity>> {
 fn direct_children(pid: u32) -> Result<HashSet<u32>> {
     let tasks = match fs::read_dir(format!("/proc/{pid}/task")) {
         Ok(tasks) => tasks,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(HashSet::new()),
+        Err(error) if gone(&error) => return Ok(HashSet::new()),
         Err(error) => return Err(error.into()),
     };
     let mut children = HashSet::new();
     for task in tasks {
         let text = match fs::read_to_string(task?.path().join("children")) {
             Ok(text) => text,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) if gone(&error) => continue,
             Err(error) => return Err(error.into()),
         };
         children.extend(
@@ -275,4 +281,16 @@ fn descendants() -> Result<HashSet<Identity>> {
         }
     }
     Ok(descendants)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    #[test]
+    fn a_process_that_exits_mid_read_counts_as_gone() {
+        assert!(super::gone(&io::Error::from_raw_os_error(libc::ESRCH)));
+        assert!(super::gone(&io::Error::from(io::ErrorKind::NotFound)));
+        assert!(!super::gone(&io::Error::from_raw_os_error(libc::EACCES)));
+    }
 }

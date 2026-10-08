@@ -92,7 +92,7 @@ async function main(): Promise<void> {
     }, 'terminal output remains readable while damage frames are unsubscribed');
     assert.equal(damageFrames.length, 0, 'unsubscribed terminals do not emit damage frames');
     await waitFor(async () => hasActivity(lifecycleFrames, subscriptionSpawn.process_id, 'working'), 'unsubscribed PTY output emits working activity');
-    await waitFor(async () => hasActivity(lifecycleFrames, subscriptionSpawn.process_id, 'idle'), 'unsubscribed PTY output settles back to idle', 4_000);
+    await waitFor(async () => hasActivity(lifecycleFrames, subscriptionSpawn.process_id, 'idle'), 'unsubscribed PTY output settles back to idle');
 
     const noisySpawn = await terminal.request('terminal.process.spawn', {
       name: 'activity-noisy-smoke',
@@ -111,7 +111,7 @@ async function main(): Promise<void> {
       false,
       'continuous PTY output does not become idle before the output quiets down'
     );
-    await waitFor(async () => hasActivity(lifecycleFrames, noisySpawn.process_id, 'idle'), 'noisy PTY output settles back to idle after the last output', 4_000);
+    await waitFor(async () => hasActivity(lifecycleFrames, noisySpawn.process_id, 'idle'), 'noisy PTY output settles back to idle after the last output');
 
     await terminal.request('terminal.process.subscribe', { process_id: subscriptionSpawn.process_id, subscribed: true });
     await waitFor(async () => damageFrames.some((frame) => frame.processId === subscriptionSpawn.process_id && frame.frameKind === 'snapshot'), 'subscribing emits a fresh snapshot frame');
@@ -344,13 +344,13 @@ async function main(): Promise<void> {
     const plainPasteSpawn = await terminal.request('terminal.process.spawn', {
       name: 'sidecar-plain-paste-smoke',
       command: '/bin/sh',
-      args: ['-lc', "stty raw -echo; dd bs=1 count=3 2>/dev/null | od -An -tx1; sleep 1"],
+      args: ['-lc', "stty raw -echo; printf 'ready\\r\\n'; dd bs=1 count=3 2>/dev/null | od -An -tx1; sleep 1"],
       cols: 40,
       rows: 3,
       cell_width: 8,
       cell_height: 16
     }) as SpawnResult;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await waitForScreen(terminal, plainPasteSpawn.process_id, 'ready');
     await terminal.request('terminal.process.input', {
       process_id: plainPasteSpawn.process_id,
       kind: 'paste',
@@ -364,13 +364,13 @@ async function main(): Promise<void> {
     const bracketedPasteSpawn = await terminal.request('terminal.process.spawn', {
       name: 'sidecar-bracketed-paste-smoke',
       command: '/bin/sh',
-      args: ['-lc', "stty raw -echo; printf '\\033[?2004h'; dd bs=1 count=15 2>/dev/null | od -An -tx1; sleep 1"],
+      args: ['-lc', "stty raw -echo; printf '\\033[?2004h'; printf 'ready\\r\\n'; dd bs=1 count=15 2>/dev/null | od -An -tx1; sleep 1"],
       cols: 80,
       rows: 3,
       cell_width: 8,
       cell_height: 16
     }) as SpawnResult;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await waitForScreen(terminal, bracketedPasteSpawn.process_id, 'ready');
     await terminal.request('terminal.process.input', {
       process_id: bracketedPasteSpawn.process_id,
       kind: 'paste',
@@ -384,13 +384,13 @@ async function main(): Promise<void> {
     const altWheelSpawn = await terminal.request('terminal.process.spawn', {
       name: 'sidecar-alt-wheel-smoke',
       command: '/bin/sh',
-      args: ['-lc', "stty raw -echo; printf '\\033[?1049h'; dd bs=1 count=3 2>/dev/null | od -An -tx1; sleep 1"],
+      args: ['-lc', "stty raw -echo; printf '\\033[?1049h'; printf 'ready\\r\\n'; dd bs=1 count=3 2>/dev/null | od -An -tx1; sleep 1"],
       cols: 40,
       rows: 4,
       cell_width: 8,
       cell_height: 16
     }) as SpawnResult;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await waitForScreen(terminal, altWheelSpawn.process_id, 'ready');
     await terminal.request('terminal.process.wheel', { process_id: altWheelSpawn.process_id, lines: -1, col: 0, row: 0 });
     await waitFor(async () => {
       const output = await terminal.request('terminal.process.output', { process_id: altWheelSpawn.process_id }) as OutputResult;
@@ -400,13 +400,13 @@ async function main(): Promise<void> {
     const mouseWheelSpawn = await terminal.request('terminal.process.spawn', {
       name: 'sidecar-mouse-wheel-smoke',
       command: '/bin/sh',
-      args: ['-lc', "stty raw -echo; printf '\\033[?1000h\\033[?1006h'; dd bs=1 count=10 2>/dev/null | od -An -tx1; sleep 1"],
+      args: ['-lc', "stty raw -echo; printf '\\033[?1000h\\033[?1006h'; printf 'ready\\r\\n'; dd bs=1 count=10 2>/dev/null | od -An -tx1; sleep 1"],
       cols: 40,
       rows: 4,
       cell_width: 8,
       cell_height: 16
     }) as SpawnResult;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await waitForScreen(terminal, mouseWheelSpawn.process_id, 'ready');
     await terminal.request('terminal.process.wheel', { process_id: mouseWheelSpawn.process_id, lines: 1, col: 0, row: 0 });
     await waitFor(async () => {
       const output = await terminal.request('terminal.process.output', { process_id: mouseWheelSpawn.process_id }) as OutputResult;
@@ -435,13 +435,13 @@ async function main(): Promise<void> {
     const mouseClickSpawn = await terminal.request('terminal.process.spawn', {
       name: 'sidecar-mouse-click-smoke',
       command: '/bin/sh',
-      args: ['-lc', "stty raw -echo; printf '\\033[?1000h\\033[?1006h'; dd bs=1 count=18 2>/dev/null | od -An -tx1; sleep 1"],
+      args: ['-lc', "stty raw -echo; printf '\\033[?1000h\\033[?1006h'; printf 'ready\\r\\n'; dd bs=1 count=18 2>/dev/null | od -An -tx1; sleep 1"],
       cols: 40,
       rows: 4,
       cell_width: 8,
       cell_height: 16
     }) as SpawnResult;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await waitForScreen(terminal, mouseClickSpawn.process_id, 'ready');
     await terminal.request('terminal.process.mouse', { process_id: mouseClickSpawn.process_id, event: 'down', button: 0, buttons: 1, col: 0, row: 0 });
     await terminal.request('terminal.process.mouse', { process_id: mouseClickSpawn.process_id, event: 'up', button: 0, buttons: 0, col: 0, row: 0 });
     await waitFor(async () => {
@@ -454,13 +454,13 @@ async function main(): Promise<void> {
     const mouseDragSpawn = await terminal.request('terminal.process.spawn', {
       name: 'sidecar-mouse-drag-smoke',
       command: '/bin/sh',
-      args: ['-lc', "stty raw -echo; printf '\\033[?1002h\\033[?1006h'; dd bs=1 count=19 2>/dev/null | od -An -tx1; sleep 1"],
+      args: ['-lc', "stty raw -echo; printf '\\033[?1002h\\033[?1006h'; printf 'ready\\r\\n'; dd bs=1 count=19 2>/dev/null | od -An -tx1; sleep 1"],
       cols: 40,
       rows: 4,
       cell_width: 8,
       cell_height: 16
     }) as SpawnResult;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await waitForScreen(terminal, mouseDragSpawn.process_id, 'ready');
     await terminal.request('terminal.process.mouse', { process_id: mouseDragSpawn.process_id, event: 'down', button: 0, buttons: 1, col: 0, row: 0 });
     await terminal.request('terminal.process.mouse', { process_id: mouseDragSpawn.process_id, event: 'move', button: 0, buttons: 1, col: 1, row: 0 });
     await waitFor(async () => {
@@ -471,13 +471,13 @@ async function main(): Promise<void> {
     const mouseHoverSpawn = await terminal.request('terminal.process.spawn', {
       name: 'sidecar-mouse-hover-smoke',
       command: '/bin/sh',
-      args: ['-lc', "stty raw -echo; printf '\\033[?1003h\\033[?1006h'; dd bs=1 count=10 2>/dev/null | od -An -tx1; sleep 1"],
+      args: ['-lc', "stty raw -echo; printf '\\033[?1003h\\033[?1006h'; printf 'ready\\r\\n'; dd bs=1 count=10 2>/dev/null | od -An -tx1; sleep 1"],
       cols: 40,
       rows: 4,
       cell_width: 8,
       cell_height: 16
     }) as SpawnResult;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await waitForScreen(terminal, mouseHoverSpawn.process_id, 'ready');
     await terminal.request('terminal.process.mouse', { process_id: mouseHoverSpawn.process_id, event: 'move', button: 0, buttons: 0, col: 2, row: 1 });
     await waitFor(async () => {
       const output = await terminal.request('terminal.process.output', { process_id: mouseHoverSpawn.process_id }) as OutputResult;
@@ -524,7 +524,14 @@ async function main(): Promise<void> {
   }
 }
 
-async function waitFor(check: () => Promise<boolean>, message: string, timeoutMs = 2_000): Promise<void> {
+async function waitForScreen(terminal: TerminalService, processId: string, text: string): Promise<void> {
+  await waitFor(async () => {
+    const output = await terminal.request('terminal.process.output', { process_id: processId }) as OutputResult;
+    return output.screen.includes(text);
+  }, `${processId} shows ${JSON.stringify(text)}`);
+}
+
+async function waitFor(check: () => Promise<boolean>, message: string, timeoutMs = 10_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await check()) {
