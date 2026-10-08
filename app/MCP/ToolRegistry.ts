@@ -10,6 +10,9 @@ export interface McpToolDescriptor {
   // Client-visible data a successful call can change. Reads declare none.
   // Tools that omit it count as changing workbench and context data.
   changes?: readonly ChangeTopic[];
+  // Why the tool is off for this caller, or null while it is on. An
+  // unavailable tool leaves the caller's catalog and rejects its calls.
+  unavailable?: (context: McpCallContext) => string | null;
 }
 
 export interface McpCallContext {
@@ -78,15 +81,16 @@ export class McpToolRegistry {
 
   register(descriptor: McpToolDescriptor, handler: McpToolHandler): void {
     if (this.tools.has(descriptor.name)) throw new Error(`duplicate MCP tool ${descriptor.name}`);
-    if (!descriptor.hidden && this.publicTools().some(({ name }) => name === publicName(descriptor.name))) {
+    if (!descriptor.hidden && [...this.tools.values()].some((tool) => !tool.descriptor.hidden && publicName(tool.descriptor.name) === publicName(descriptor.name))) {
       throw new Error(`duplicate public MCP tool ${publicName(descriptor.name)}`);
     }
     this.tools.set(descriptor.name, { descriptor, handler });
   }
 
-  publicTools(): McpToolDescriptor[] {
-    return [...this.tools.values()].map(({ descriptor }) => descriptor).filter(({ hidden }) => !hidden)
-      .map((descriptor) => ({ ...descriptor, name: publicName(descriptor.name) }))
+  // Without a caller, every public tool is listed.
+  publicTools(context?: McpCallContext): McpToolDescriptor[] {
+    return [...this.tools.values()].map(({ descriptor }) => descriptor).filter(({ hidden, unavailable }) => !hidden && !(context && unavailable?.(context)))
+      .map(({ unavailable: _unavailable, ...descriptor }) => ({ ...descriptor, name: publicName(descriptor.name) }))
       .sort((a, b) => a.name.localeCompare(b.name, 'en'));
   }
 
@@ -106,12 +110,14 @@ export class McpToolRegistry {
   }
 
   helpPublic(toolName: string): McpToolDescriptor {
-    const tool = this.publicTool(toolName);
-    return { ...tool.descriptor, name: toolName };
+    const { unavailable: _unavailable, ...descriptor } = this.publicTool(toolName).descriptor;
+    return { ...descriptor, name: toolName };
   }
 
   async callPublic(toolName: string, args: unknown, context: McpCallContext = {}): Promise<unknown> {
     const tool = this.publicTool(toolName);
+    const reason = tool.descriptor.unavailable?.(context);
+    if (reason) throw new Error(reason);
     this.checkCaller?.(context);
     return this.router?.(tool.descriptor.name, args, context) ?? tool.handler(args, context);
   }

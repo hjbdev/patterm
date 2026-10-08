@@ -7,6 +7,7 @@
 
 import { agentLabel, buildAgentTabFamilies } from './agentTabs';
 import { HARNESS_LABELS, harnessLabel, launchableHarnesses } from './harnessLabels';
+import { DRAWN_ID } from '../../../app/Services/TranscriptProjection';
 import type { HarnessInstallationRecord, ProcessRecord, ProjectWorkbench, SessionRecord } from '../types';
 
 export interface MentionAgent {
@@ -30,11 +31,13 @@ export interface MentionPart {
   text: string;
   processId?: string | undefined;
   launch?: { kind: 'preset' | 'harness'; name: string; harness: string | null } | undefined;
+  // A drawn figure the reply places here.
+  figure?: string | undefined;
 }
 
 // A process ID may name an agent on a paired host, such as `beta:process_7`;
 // host names are lowercase letters, digits, and hyphens.
-const MENTION = /(?<![\w-])(?:[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?:)?process_\d+\b|\[patterm_(preset|harness):([^\]\n]+)\]/g;
+const MENTION = new RegExp(String.raw`(?<![\w-])(?:[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?:)?process_\d+\b|\[patterm_(preset|harness):([^\]\n]+)\]|\[patterm_figure:(${DRAWN_ID})\]`, 'g');
 
 export function launchToken(kind: 'preset' | 'harness', value: string): string {
   return `[patterm_${kind}:${value}]`;
@@ -83,7 +86,7 @@ export function splitProcessMentions(text: string): MentionPart[] {
   for (const match of text.matchAll(MENTION)) {
     if (match.index > last) parts.push({ text: text.slice(last, match.index) });
     const kind = match[1] as 'preset' | 'harness' | undefined;
-    parts.push(kind ? { text: match[0], launch: launchPart(kind, match[2]!) } : { text: match[0], processId: match[0] });
+    parts.push(match[3] ? { text: match[0], figure: match[3] } : kind ? { text: match[0], launch: launchPart(kind, match[2]!) } : { text: match[0], processId: match[0] });
     last = match.index + match[0].length;
   }
   if (last < text.length || !parts.length) parts.push({ text: text.slice(last) });

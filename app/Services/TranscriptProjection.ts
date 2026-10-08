@@ -1227,7 +1227,9 @@ export function groupTranscriptMessages(input: TranscriptMessage[]): TranscriptR
     if (message.role === 'assistant' && message.kind !== 'tool' && !message.text.trim()) continue;
     const tool = message.tool;
     // A subagent row keeps its own row so its nested transcript stays visible.
-    if (message.kind === 'reasoning' || (message.kind === 'tool' && tool && tool.status !== 'failed' && !message.children?.length)) {
+    // A ui.save call is a step like any other, rejected or not: its figure
+    // appears only where the reply places it.
+    if (message.kind === 'reasoning' || (message.kind === 'tool' && tool && (tool.status !== 'failed' || isDrawnUiTool(tool)) && !message.children?.length)) {
       group.push(message);
       continue;
     }
@@ -1238,6 +1240,76 @@ export function groupTranscriptMessages(input: TranscriptMessage[]): TranscriptR
   flush();
   return result;
 }
+
+// A call to Patterm's ui.save. Claude shows mcp__patterm__ui_save,
+// OpenCode patterm_<hash>_ui_save, and Codex server "patterm" with tool
+// "ui.save"; all reach the target "patterm: ui_save" or similar.
+export function isDrawnUiTool(tool: TranscriptTool | undefined): boolean {
+  return Boolean(tool && tool.family === 'mcp' && /^patterm[\w-]*:\s*ui[._]save$/i.test(tool.target ?? ''));
+}
+
+// The figure an agent sent. Codex nests MCP arguments, sometimes as JSON text.
+export function drawnUiToolInput(tool: TranscriptTool): unknown {
+  const input = tool.input && typeof tool.input === 'object' ? tool.input as Record<string, unknown> : null;
+  const args = input && typeof input.server === 'string' && 'arguments' in input ? input.arguments : tool.input;
+  if (typeof args !== 'string') return args;
+  try { return JSON.parse(args); } catch { return null; }
+}
+
+// Figure and answer ids: letters, digits, _ and -.
+export const DRAWN_ID = '[A-Za-z0-9_][A-Za-z0-9_-]{0,47}';
+const FIGURE_TOKEN = new RegExp(`\\[patterm_figure:(${DRAWN_ID})\\]`);
+const ANSWER = new RegExp(`^Answer to (${DRAWN_ID}):`);
+
+// Agents place a saved figure in their reply with this token.
+export function figureToken(id: string): string {
+  return `[patterm_figure:${id}]`;
+}
+
+// A ui.save call that went through; rejected ones never draw.
+export function isSavedFigure(tool: TranscriptTool | undefined): tool is TranscriptTool {
+  return Boolean(tool && tool.status !== 'failed' && isDrawnUiTool(tool));
+}
+
+// A saved figure's id: the one the agent chose, else the one ui.save returned.
+// Streamed appends keep other rows' tool objects, so this is cached per tool.
+const figureIds = new WeakMap<TranscriptTool, string | null>();
+export function drawnUiId(tool: TranscriptTool): string | null {
+  if (figureIds.has(tool)) return figureIds.get(tool)!;
+  let id: string | null = null;
+  const input = drawnUiToolInput(tool);
+  if (input && typeof input === 'object' && typeof (input as Record<string, unknown>).id === 'string') id = (input as Record<string, string>).id!;
+  for (const reply of [tool.result, tool.output]) {
+    if (id || reply === undefined || reply === null) continue;
+    id = FIGURE_TOKEN.exec(typeof reply === 'string' ? reply : JSON.stringify(reply))?.[1] ?? null;
+  }
+  figureIds.set(tool, id);
+  return id;
+}
+
+// A drawn choice's answer: one line per pick, so the agent reads the label and the value.
+export function drawnUiAnswerText(id: string, answers: Array<{ item?: string; label: string; value: string }>): string {
+  if (answers.length === 1 && !answers[0]!.item) return `Answer to ${id}: ${answers[0]!.label} (${answers[0]!.value})`;
+  return `Answer to ${id}:\n${answers.map((answer) => `- ${answer.item ? `${answer.item}: ` : ''}${answer.label} (${answer.value})`).join('\n')}`;
+}
+
+// Which choices the user already answered, from the user messages after them.
+// A failed send is not an answer; one still sending or unconfirmed is, so the
+// card cannot send it twice while the message row offers its own retry.
+export function drawnUiAnswers(messages: Array<{ role: string; text: string; delivery?: { state: string } | undefined }>): Map<string, string> {
+  const answers = new Map<string, string>();
+  for (const message of messages) {
+    if (message.role !== 'user' || message.delivery?.state === 'failed') continue;
+    const match = ANSWER.exec(message.text.trimStart());
+    if (match) answers.set(match[1]!, message.text.trim());
+  }
+  return answers;
+}
+
+export function answeredValues(text: string): string[] {
+  return [...text.matchAll(/\(([^()\n]+)\)\s*$/gm)].map((match) => match[1]!);
+}
+
 
 // Native Codex item IDs differ from the client ID used by the optimistic row.
 export function transcriptMessageKey(message: TranscriptMessage): string {

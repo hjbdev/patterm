@@ -255,7 +255,7 @@
 
 <script setup lang="ts">
 import { randomId } from '../lib/randomId';
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, shallowRef, watch } from 'vue';
 import { Button } from './ui/button';
 import CloseRequestCard from './CloseRequestCard.vue';
 import ConversationTranscript from './ConversationTranscript.vue';
@@ -280,6 +280,7 @@ import {
   formQuestionState,
   buildQuestionAnswers,
   cachedConversation,
+  drawnUiAnswers,
   forgetConversation,
   formFieldVisible,
   HELD_QUEUE_EVENT_ID,
@@ -300,7 +301,8 @@ import {
   type IntegratedQuestionRequest,
   type TranscriptMessage
 } from '../lib/integratedConversation';
-import { completeSend, discardOutgoingMessage, beginSubmission, beginOutgoingMessage, outgoingFor, outgoingTranscript, reconcileOutgoingMessages, failOutgoingMessage, markSubmissionUncertain, clearSubmission, isAmbiguousTransportError, submissionFor, type ComposerSendPayload } from '../lib/integratedComposer';
+import { completeSend, discardOutgoingMessage, beginSubmission, beginOutgoingMessage, outgoingFor, outgoingTranscript, reconcileOutgoingMessages, failOutgoingMessage, markSubmissionUncertain, clearSubmission, isAmbiguousTransportError, submissionFor, payloadHash, type ComposerSendPayload } from '../lib/integratedComposer';
+import { drawnUiAnswerKey } from '../lib/drawnUi';
 import { publishIntegratedControls } from '../lib/integratedControlsRegistry';
 import { onWorkspaceRequest, type WorkspaceRequest } from '../lib/workspaceRequests';
 
@@ -393,6 +395,13 @@ const resumeQuery = ref('');
 let startingNew = false;
 const displayError = computed(() => error.value || refreshError.value || controlsError.value);
 const canReply = computed(() => controlling.value && !ended.value);
+// A drawn choice answers as an ordinary message, through the same send path
+// and control check as the composer, without touching the draft.
+provide(drawnUiAnswerKey, {
+  canSend: computed(() => canReply.value && !submissionFor(props.processId)),
+  send: (text: string) => sendRequest({ text, references: [], attachments: [], messageId: randomId(), hash: payloadHash(text, [], []) }),
+  queued: computed(() => drawnUiAnswers(queue.value.map((item) => ({ role: 'user', text: item.text }))))
+});
 
 let timer: ReturnType<typeof setTimeout> | undefined;
 let controlsRetry: ReturnType<typeof setTimeout> | undefined;

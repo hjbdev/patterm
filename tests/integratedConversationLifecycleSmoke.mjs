@@ -45,6 +45,7 @@ function createHarness({ processId = 'process_a', exited = false, keepCache = fa
   let controlHandler = null;
   const workspaceHandlers = [];
   const published = new Map();
+  const provided = new Map();
   const props = reactive({ processId, exited });
   const windowMock = {
     patterm: {
@@ -111,6 +112,9 @@ function createHarness({ processId = 'process_a', exited = false, keepCache = fa
     failOutgoingMessage: composer.failOutgoingMessage,
     archiveTranscript,
     randomId: () => crypto.randomUUID(),
+    payloadHash: composer.payloadHash,
+    provide: (key, value) => provided.set(key, value),
+    drawnUiAnswerKey: Symbol('drawnUiAnswer'),
     publishIntegratedControls: (id, controls) => { if (controls) published.set(id, controls); else published.delete(id); },
     onWorkspaceRequest: (handler) => {
       workspaceHandlers.push(handler);
@@ -144,6 +148,7 @@ return {
   return {
     pane, props, subscriptions, requests, mutations, timers, lifecycle, scope, windowMock,
     conversationSubscriptions, published,
+    answerChannel: () => provided.get(bindings.drawnUiAnswerKey),
     workspaceRequest: request => workspaceHandlers.some(handler => handler(request)),
     emitConversationEvent: event => conversationHandler?.(event)
   };
@@ -583,6 +588,24 @@ test('a definitive rejection clears the submission and stays recoverable', async
   assert.equal(harness.pane.transcriptMessages.value.at(-1).delivery.state, 'sending');
   assert.equal(harness.mutations.at(-1).args.message_id, prepared.payload.messageId, 'retry retains the submission identity');
   assert.equal(composer.draftFor('reject_A').text, 'A newer draft', 'retry leaves new text alone');
+  harness.scope.stop();
+});
+
+test('a choice answer held in the queue stays answered and cannot be sent twice', async () => {
+  composer.clearDrafts();
+  const harness = createHarness({ processId: 'choice_A' });
+  await mountPush(harness, 1, 'Which one?');
+  const channel = harness.answerChannel();
+  const answer = 'Answer to pick: First (a)';
+  void channel.send(answer);
+  await flush();
+  const send = harness.mutations.find(entry => entry.tool === 'patterm.integrated.send');
+  assert.equal(channel.canSend.value, false, 'a second answer waits for the first');
+  send.resolve({ delivery: 'held' });
+  await flush();
+  await resolveGets(harness, { ...pushConversation(1, 'Which one?'), queue: [{ id: send.args.message_id, text: answer, delivery: 'held', reason: 'compact' }] });
+  assert.equal(harness.pane.transcriptMessages.value.some(message => message.role === 'user'), false, 'the queue shows the held answer, not the transcript');
+  assert.equal(channel.queued.value.get('pick'), answer, 'the held answer still locks its card');
   harness.scope.stop();
 });
 

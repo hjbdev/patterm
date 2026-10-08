@@ -151,6 +151,10 @@
                 <IdleCompactionSettings />
               </TabsContent>
 
+              <TabsContent value="figures" class="m-0">
+                <FigureSettings />
+              </TabsContent>
+
               <TabsContent value="harnesses" class="m-0">
                 <HarnessPresetSettings />
               </TabsContent>
@@ -180,7 +184,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref } from 'vue';
-import { ArrowLeft, AudioLines, Bell, ChevronDown, Cpu, History, Info, KeyRound, Palette, Plug, Server, Shrink, Sparkles } from 'lucide-vue-next';
+import { ArrowLeft, AudioLines, Bell, ChartColumn, ChevronDown, Cpu, History, Info, KeyRound, Palette, Plug, Server, Shrink, Sparkles } from 'lucide-vue-next';
 import {
   DIFF_VIEWER_OPTIONS,
   NAVIGATION_OPTIONS,
@@ -201,6 +205,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../Components/ui/tabs'
 import AboutSettings from '../Components/AboutSettings.vue';
 import AgentIcon from '../Components/AgentIcon.vue';
 import AutoSummarySettings from '../Components/AutoSummarySettings.vue';
+import FigureSettings from '../Components/FigureSettings.vue';
 import HarnessPresetSettings from '../Components/HarnessPresetSettings.vue';
 import IdleCompactionSettings from '../Components/IdleCompactionSettings.vue';
 import AssistantSettings from '../Components/AssistantSettings.vue';
@@ -226,6 +231,7 @@ const NAV = [
   { value: 'notifications', label: 'Notifications', icon: Bell },
   { value: 'assistant', label: 'Assistant', icon: AudioLines },
   { value: 'compaction', label: 'Idle compaction', icon: Shrink },
+  { value: 'figures', label: 'Figures', icon: ChartColumn },
   { value: 'harnesses', label: 'Harnesses', icon: Cpu },
   { value: 'mcp', label: 'MCP servers', icon: Plug },
   { value: 'hosts', label: 'Hosts', icon: Server },

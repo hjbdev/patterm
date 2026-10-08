@@ -35,7 +35,7 @@ md.renderer.rules.fence = (tokens, index, options, env, self) =>
 // leaves it as text until the reply stops changing.
 export interface MarkdownOptions { mentions?: boolean; holdTrailing?: boolean }
 
-const isMention = (part: { processId?: string | undefined; launch?: unknown }) => Boolean(part.processId || part.launch);
+const isMention = (part: { processId?: string | undefined; launch?: unknown; figure?: string | undefined }) => Boolean(part.processId || part.launch || part.figure);
 
 md.core.ruler.push('mentions', (state) => {
   const { mentions, holdTrailing } = state.env as MarkdownOptions;
