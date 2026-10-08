@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseService } from '../app/Services/DatabaseService';
-import { CodexAppServerService } from '../app/Services/CodexAppServerService';
+import net from 'node:net';
+import { CodexAppServerService, CodexRpcClient } from '../app/Services/CodexAppServerService';
 import { projectCodexItem, projectCodexPlan, restoreCodexWindowGap, trimCodexWindow, CODEX_MESSAGE_WINDOW, CODEX_CHILD_WINDOW, type CodexConversationState } from '../app/Services/CodexTranscript';
 import { elicitationForm } from '../app/Services/McpElicitation';
 import { TranscriptImageStore } from '../app/Services/TranscriptImageStore';
@@ -11,7 +12,51 @@ import { TurnBusyError, UncertainDeliveryError } from '../app/Services/Integrate
 import type { IntegratedConversationEvent } from '../app/Services/IntegratedConversation';
 import { IntegratedAgentService } from '../app/Services/IntegratedAgentService';
 
+// A turn/start reply can arrive in the same chunk as the turn's completion.
+// prompt() marks the turn active after awaiting the reply, which runs after
+// the completion; that must not leave the finished turn active.
+async function turnCompletedWithItsReply(): Promise<void> {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-codex-turn-'));
+  const socketPath = path.join(directory, 'app.sock');
+  const server = net.createServer((socket) => {
+    let buffer = '';
+    let turns = 0;
+    socket.on('data', (chunk) => {
+      buffer += chunk.toString();
+      for (let newline = buffer.indexOf('\n'); newline >= 0; newline = buffer.indexOf('\n')) {
+        const request = JSON.parse(buffer.slice(0, newline)) as { id: number };
+        buffer = buffer.slice(newline + 1);
+        const id = `turn_${++turns}`;
+        const lines = [
+          { jsonrpc: '2.0', id: request.id, result: { turn: { id } } },
+          { jsonrpc: '2.0', method: 'turn/started', params: { threadId: 'thread', turn: { id, status: 'inProgress' } } },
+          // The second turn keeps running.
+          ...(turns === 1 ? [{ jsonrpc: '2.0', method: 'turn/completed', params: { threadId: 'thread', turn: { id, status: 'completed' } } }] : [])
+        ];
+        socket.write(lines.map((line) => JSON.stringify(line) + '\n').join(''));
+      }
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+  const client = await CodexRpcClient.connect(socketPath, () => {});
+  try {
+    const startTurn = async () => {
+      const response = await client.request('turn/start', { threadId: 'thread' }) as { turn: { id: string } };
+      client.setActiveTurn('thread', response.turn.id);
+    };
+    await startTurn();
+    assert.equal(client.activeTurn('thread'), null, 'a turn that ended with its reply is not active');
+    await startTurn();
+    assert.equal(client.activeTurn('thread'), 'turn_2', 'a later turn on the thread is active');
+  } finally {
+    client.close();
+    server.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
 async function main(): Promise<void> {
+  await turnCompletedWithItsReply();
   assert.equal(projectCodexItem({ type: 'userMessage', id: 'native-user', clientId: 'client-user', content: [] })?.clientMessageId, 'client-user', 'native rows preserve the optimistic message correlation');
   assert.deepEqual(projectCodexItem({
     type: 'userMessage', id: 'user_image', content: [
