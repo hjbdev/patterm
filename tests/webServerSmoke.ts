@@ -11,7 +11,6 @@ import { WebServer, boundedReply } from '../app/Http/WebServer';
 import { browserToolsOnly } from '../routes/application';
 import { loopbackPeerUid, ServerAccess } from '../app/Http/ServerAccess';
 import { acquireApplicationLock } from '../app/Runtime/ApplicationLock';
-import { launchNodeHistoryWorker } from '../app/Runtime/NodeHistoryWorker';
 import { parseDamageFrame } from '../resources/js/terminal/TerminalRenderer';
 
 const origin = 'http://patterm.test';
@@ -341,11 +340,13 @@ async function main(): Promise<void> {
     const contextRpc = (tool: string, args: Record<string, unknown>) => rpc('patterm:mcp:call', {
       tool, arguments: { project_id: project.project_id, ...args }
     });
-    const patchesBeforeTodo = a.events.filter((event) => event.event === 'workbench-patch').length;
     const todoResponse = await contextRpc('patterm.todo.create', { title: 'Browser context' });
     assert.equal(todoResponse.status, 200);
     await until(() => a.events.some((event) => event.event === 'data-changed' && (event.payload as { topics: string[] }).topics.includes('context')), 'context change signal');
-    assert.equal(a.events.filter((event) => event.event === 'workbench-patch').length, patchesBeforeTodo, 'context writes publish no workbench patch');
+    // Patches up to the current version may still be on their way over the
+    // socket; only a later one would come from the todo.
+    const currentVersion = currentReply!.version;
+    assert.ok(!a.events.some((event) => event.event === 'workbench-patch' && (event.payload as { to: number }).to > currentVersion), 'context writes publish no workbench patch');
     assert.ok(!a.events.some((event) => event.event === 'workbench-changed'), 'clients are never told to refetch the whole workbench');
     const browserTodo = (await todoResponse.json() as { result: { id: string; created_by_actor: string } }).result;
     const storedTodo = await app.mcp.call('patterm.todo.get', { project_id: project.project_id, todo_id: browserTodo.id }) as { title: string; created_by_actor: string };
@@ -455,15 +456,15 @@ async function main(): Promise<void> {
     const overloadClosed = once(overloaded.socket, 'close');
     for (let id = 1; id <= 140; id++) overloaded.socket.send(JSON.stringify({ id, channel: 'patterm:terminal:output', args: { process_id: firstId } }));
     await overloadClosed;
-    const worker = launchNodeHistoryWorker(path.resolve('dist/tests/app/Services/AgentHistory/AgentHistoryImportWorker.js'));
-    const result = new Promise<unknown>((resolve, reject) => {
-      worker.on('message', (message) => { if (message && typeof message === 'object' && 'ok' in message) resolve(message); });
-      worker.once('error', reject);
-    });
-    const exited = once(worker, 'exit');
-    worker.postMessage({ action: 'import', appDataPath: options.appDataPath, input: { trigger: 'manual' } });
-    assert.equal((await result as { ok: boolean }).ok, true);
-    await exited;
+    // Imports go through the app's queue, which runs the Node worker one job at
+    // a time; a worker launched beside it would race the startup import.
+    const job = await app.mcp.call('patterm.history.import', { trigger: 'manual' }) as { job_id: string };
+    const importJob = async () => (await app.mcp.call('patterm.history.import_status', {}) as { queue: { recent: Array<{ id: string; status: string; error: string | null }> } })
+      .queue.recent.find((recent) => recent.id === job.job_id);
+    const importDeadline = Date.now() + 20_000;
+    while (!await importJob() && Date.now() < importDeadline) await new Promise((resolve) => setTimeout(resolve, 50));
+    const imported = await importJob();
+    assert.deepEqual([imported?.status, imported?.error], ['succeeded', null], 'the Node history worker imports');
     await app.mcp.call('stop_process', { process_id: first.process_id });
     await app.mcp.call('stop_process', { process_id: second.process_id });
     console.log(`web server smoke passed: two clients, reconnect, control transfer, origin validation, uploads, Node worker (${c.frames.length} reconnect frames)`);

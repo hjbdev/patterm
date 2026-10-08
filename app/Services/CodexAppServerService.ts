@@ -1263,7 +1263,7 @@ function realtimeErrorMessage(message: unknown): string {
   return message;
 }
 
-class CodexRpcClient {
+export class CodexRpcClient {
   private sequence = 0;
   private buffer = '';
   private readonly requests = new Map<RequestId, { resolve(value: unknown): void; reject(error: Error): void; timeout: NodeJS.Timeout }>();
@@ -1275,6 +1275,9 @@ class CodexRpcClient {
   // How each thread's latest turn ended, so a subagent whose turn finished is
   // not shown as running forever.
   private readonly endedTurns = new Map<string, string>();
+  // Turns that have completed. A turn/start reply can arrive in the same chunk
+  // as the turn's completion and be handled after it; it must not revive it.
+  private readonly completedTurns = new Set<string>();
 
   lastTurnStatus(threadId: string): string | null { return this.endedTurns.get(threadId) ?? null; }
 
@@ -1306,6 +1309,7 @@ class CodexRpcClient {
   activeTurn(threadId: string): string | null { return this.turns.get(threadId) ?? null; }
 
   setActiveTurn(threadId: string, turnId: string | null): void {
+    if (turnId && this.completedTurns.has(turnId)) return;
     if (turnId) this.turns.set(threadId, turnId);
     else this.turns.delete(threadId);
   }
@@ -1406,6 +1410,11 @@ class CodexRpcClient {
           if (typeof turn.id === 'string') this.setActiveTurn(threadId, turn.id);
         } else if (method === 'turn/completed' && threadId) {
           this.setActiveTurn(threadId, null);
+          const turnId = record(params.turn).id;
+          if (typeof turnId === 'string') {
+            this.completedTurns.add(turnId);
+            if (this.completedTurns.size > 500) this.completedTurns.delete(this.completedTurns.values().next().value!);
+          }
           this.endedTurns.set(threadId, typeof record(params.turn).status === 'string' ? String(record(params.turn).status) : 'completed');
           if (this.endedTurns.size > 500) this.endedTurns.delete(this.endedTurns.keys().next().value!);
         } else if (method === 'thread/tokenUsage/updated' && threadId) {

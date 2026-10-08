@@ -31,3 +31,10 @@ in the archived pre-release repository.
 - Code blocks and diffs highlight a fixed set of common languages; other
   languages show as plain text. Patterm no longer bundles Shiki's GPL-3.0
   grammars and theme.
+
+### Fixed
+
+- Stopping a terminal no longer fails when one of its processes exits while
+  Patterm is reading its details from `/proc`.
+- A Codex agent no longer keeps showing as working after a turn that ended
+  immediately.
