@@ -94,7 +94,9 @@
         <p v-for="file in tool.files" :key="file.name" class="truncate font-mono text-[11px] text-muted-foreground">{{ file.name }}</p>
       </div>
 
-      <div v-if="tool.output" class="min-w-0">
+      <!-- A saved figure shows here, in case the reply never placed it. -->
+      <DrawnUiCard v-if="drawn" :message="message" />
+      <div v-else-if="tool.output" class="min-w-0">
         <div class="flex items-center justify-between gap-2">
           <span class="text-[10px] uppercase tracking-wide text-muted-foreground">Output</span>
           <button type="button" class="rounded p-0.5 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50" :aria-label="`Copy output`" @click="copy(tool.output)">
@@ -118,12 +120,13 @@
 import { computed, defineAsyncComponent, ref, watch } from 'vue';
 import { Check, ChevronRight, Circle, Copy, Loader2, X } from 'lucide-vue-next';
 import TranscriptImage from './TranscriptImage.vue';
-import { subagentSummary, toggleTranscriptRow, transcriptRowOpen, type TranscriptMessage } from '../lib/integratedConversation';
+import { isSavedFigure, subagentSummary, toggleTranscriptRow, transcriptRowOpen, type TranscriptMessage } from '../lib/integratedConversation';
 import { toolProcessCall } from '../lib/assistantFocus';
 import ProcessMention from './ProcessMention.vue';
 
 // Pierre and Shiki load with the first patch rather than with the app.
 const DiffPatchView = defineAsyncComponent(() => import('./DiffPatchView.vue'));
+const DrawnUiCard = defineAsyncComponent(() => import('./DrawnUi/DrawnUiCard.vue'));
 
 const props = withDefaults(defineProps<{ message: TranscriptMessage; processId: string; active?: boolean }>(), { active: false });
 
@@ -137,6 +140,7 @@ const open = ref(props.active || transcriptRowOpen(props.processId, props.messag
 watch(() => props.active, (active) => { if (active) open.value = true; });
 const copied = ref(false);
 const children = computed(() => props.message.children ?? []);
+const drawn = computed(() => isSavedFigure(tool.value));
 const latest = computed(() => subagentSummary(children.value));
 const toolProcess = computed(() => toolProcessCall(tool.value, props.message.text)?.processId ?? null);
 const expandable = computed(() => Boolean(children.value.length || props.message.archived || props.message.redactionCount || tool.value.command || tool.value.output || tool.value.patch || tool.value.error

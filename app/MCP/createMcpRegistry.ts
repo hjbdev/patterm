@@ -42,6 +42,8 @@ import type { HarnessModelCatalogService } from '../Services/HarnessModelCatalog
 import type { AutoSummaryService } from '../Services/AutoSummaryService';
 import type { TranscriptImageStore } from '../Services/TranscriptImageStore';
 import { McpToolRegistry, type McpCallContext } from './ToolRegistry';
+import { SaveDrawnUiAction } from '../Actions/SaveDrawnUiAction';
+import { DRAWN_UI_TOOL } from '../Services/DrawnUi';
 import { registerProjectContextTools } from './registerProjectContextTools';
 import { registerUsageTools } from './registerUsageTools';
 import { registerRoutineTools } from './registerRoutineTools';
@@ -67,7 +69,7 @@ interface RegistryServices {
   harnessDiscovery: HarnessDiscoveryService;
   harnessLauncher: HarnessLauncher;
   integrated?: Pick<IntegratedAgentService, 'conversation' | 'olderMessages' | 'prompt' | 'files' | 'delivery' | 'interrupt' | 'stopTask' | 'taskOutput' | 'updateQueued' | 'replyPermission' | 'replyQuestion' | 'replyForm' | 'controls' | 'configure' | 'command' | 'isEmpty'>;
-  transcriptImages?: Pick<TranscriptImageStore, 'read'>;
+  transcriptImages?: Pick<TranscriptImageStore, 'read' | 'fromFile'>;
   settings?: Pick<SettingsService, 'agentInterface' | 'updateAgentInterface'>;
   harnessPresets?: HarnessPresetService;
   modelCatalog?: HarnessModelCatalogService;
@@ -970,6 +972,41 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     if (!current?.process_id) throw new Error('notify_user requires an authenticated agent process');
     const result = await services.notifications.notifyUser(current.process_id, args);
     return 'notification' in result ? { status: result.status, notification_id: result.notification.id } : result;
+  });
+  const saveDrawnUi = new SaveDrawnUiAction(services.transcriptImages);
+  registry.register({
+    name: DRAWN_UI_TOOL,
+    namespace: 'cli.ui',
+    // Claude Code cuts tool descriptions at about 2,000 characters, notes included.
+    description: 'Save a figure and get a reference to place in your text reply, where Patterm draws it from your data and meanings.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        claim: { type: 'string' },
+        figure: { type: 'object' },
+        source: { type: 'string' },
+        inputs: { type: 'array', items: { type: 'object' } },
+        constants: { type: 'object' },
+        sections: { type: 'array', items: { type: 'object' } },
+        title: { type: 'string' }
+      }
+    },
+    changes: [],
+    usageNotes: [
+      'Send { claim, figure, source?, id? }; it returns ref [patterm_figure:id]. Put it on its own line in your reply and the figure appears there; unplaced, it never shows. figure is flat: { type: "chart", mark: "bar", ... }. Several: { sections: [...] }.',
+      'chart: { mark: bar|line|area|point|interval|cell, fields: ["day","n"], data: [["Mon",3]], x, y }. A text field gives categories (text on y: bars run sideways). Options: color + colors {value: tone}, stack, x2 (interval/bin end), scale {x:"log"}, unit {x}, axis {x:{label,ticks,min,max}}, text, refs [{x|y,label}], bands [{x:[a,b]}], events [{x,label}], regions.',
+      'table: { columns: [{key,label,kind: text|number|status|verdict|mono}], rows: [[...]] }; status yes|partial|no|unknown, verdict better|worse|same.',
+      'Row options: end an array row with { state, tone, note }. state measured|projected|unknown, tone neutral|accent|good|warn|bad|muted; stats items take them too. highlight {field: value} picks one.',
+      'diagram: { layout: flow|sequence|nest, nodes: [{id,label,sub?,kind?: store|external,parent?}], edges: [{from,to,label?,text?}] }. A flow cannot loop; use sequence. stepThrough adds Back/Next along the edges.',
+      'stats: { items: [{label,value,unit?,format?,delta?:{text,tone},of?,detail?:[lines]}] }. steps: { items: [{title,body?,status: done|now|next,date?}] }. image: { path, caption } in your cwd.',
+      'choice: { question?, options: [{value,label,detail?,pros?,cons?,pick?,key?}] }. ask:true + id sends the pick back as "Answer to <id>: <label> (<value>)"; end your turn to wait. Add items [{id,body}] for a queue; key is one letter.',
+      'Sliders: inputs [{id,label,min,max,value}] and constants {} go in a section, or at the top level to share. Numbers may be "=formula" (arithmetic, min, max); claim may embed {formula|format}. format: compact, percent (0-100), duration (minutes).'
+    ]
+  }, (args, context) => {
+    // Screenshots are read on the caller's own host, never across hosts.
+    const current = context.remote ? null : caller(context);
+    return saveDrawnUi.execute(args, { cwd: current?.cwd ?? null, project_path: current?.project_path ?? null });
   });
   registry.register({
     name: 'request_close',

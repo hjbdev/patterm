@@ -111,6 +111,9 @@ function createHarness({ processId = 'process_a', exited = false, keepCache = fa
     failOutgoingMessage: composer.failOutgoingMessage,
     archiveTranscript,
     randomId: () => crypto.randomUUID(),
+    payloadHash: composer.payloadHash,
+    provide: () => {},
+    drawnUiAnswerKey: Symbol('drawnUiAnswer'),
     publishIntegratedControls: (id, controls) => { if (controls) published.set(id, controls); else published.delete(id); },
     onWorkspaceRequest: (handler) => {
       workspaceHandlers.push(handler);

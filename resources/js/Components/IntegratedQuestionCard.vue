@@ -115,10 +115,9 @@ import { computed, nextTick, ref } from 'vue';
 import { Check } from 'lucide-vue-next';
 import { Button } from './ui/button';
 import { Checkbox } from './ui/checkbox';
+import { RADIO_CLASS } from '../lib/utils';
 import type { IntegratedQuestion, IntegratedQuestionRequest } from '../lib/integratedConversation';
 
-// Matches the radio buttons in Settings.
-const RADIO_CLASS = 'mt-0.5 h-4 w-4 shrink-0 cursor-pointer appearance-none rounded-full border border-white/25 transition-[border-width,border-color] checked:border-[5px] checked:border-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring';
 
 const props = defineProps<{
   request: IntegratedQuestionRequest;

@@ -38,14 +38,14 @@ function mountTranscript() {
   });
   const setup = new Function(
     'computed', 'ref', 'watch', 'onMounted', 'nextTick', 'useVirtualizer',
-    'elapsedLabel', 'groupTranscriptMessages', 'toggleTranscriptRow', 'transcriptRowIndexForMessage', 'transcriptRowOpen', 'transcriptThoughtDurations', 'transcriptToolGroupSummary', 'transcriptTurnDurations', 'defineProps', 'defineEmits', 'defineExpose', 'withDefaults', 'measureElement', 'elementScroll',
+    'elapsedLabel', 'groupTranscriptMessages', 'toggleTranscriptRow', 'transcriptRowIndexForMessage', 'transcriptRowOpen', 'transcriptThoughtDurations', 'transcriptToolGroupSummary', 'transcriptTurnDurations', 'defineProps', 'defineEmits', 'defineExpose', 'withDefaults', 'measureElement', 'elementScroll', 'provide', 'drawnUiAnsweredKey', 'drawnUiAnswers', 'isSavedFigure', 'drawnUiId', 'drawnUiFiguresKey',
     `${outputText}\nreturn { rows, renderedRows, totalSize, rowOpen, toggleRow, sizerRef, scrollerRef };`
   );
   const pane = setup(
     computed, ref, () => {}, () => {}, () => Promise.resolve(),
     (value) => { options = value; return virtual; },
     elapsedLabel, groupTranscriptMessages, toggleTranscriptRow, transcriptRowIndexForMessage, transcriptRowOpen, transcriptThoughtDurations, transcriptToolGroupSummary, transcriptTurnDurations, () => props, () => () => {}, () => {}, (value) => value,
-    measureElement, elementScroll
+    measureElement, elementScroll, () => {}, Symbol('drawnUiAnswered'), () => new Map(), () => false, () => null, Symbol('drawnUiFigures')
   );
   return { pane, props, options, virtual };
 }
