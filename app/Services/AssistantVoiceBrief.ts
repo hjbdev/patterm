@@ -21,7 +21,7 @@ export interface VoiceBriefAgent {
   activity: string | null;
 }
 
-export function voiceBrief(messages: readonly IntegratedConversationMessage[], agents: readonly VoiceBriefAgent[]): string | null {
+export function voiceBrief(messages: readonly IntegratedConversationMessage[], agents: readonly VoiceBriefAgent[], memory = ''): string | null {
   const lines = messages
     .filter((message) => message.kind === 'text' && !message.parentId)
     .flatMap((message) => {
@@ -32,10 +32,10 @@ export function voiceBrief(messages: readonly IntegratedConversationMessage[], a
     .slice(-MESSAGE_LIMIT);
   const running = agents.slice(0, VOICE_BRIEF_AGENT_LIMIT).map((agent) =>
     clip(squash(`- ${agent.name}${agent.project ? ` (${agent.project})` : ''}${agent.activity ? `: ${agent.activity}` : ''}`), AGENT_CHARS));
-  if (!lines.length && !running.length) return null;
+  if (!lines.length && !running.length && !memory) return null;
 
   const head = '[Context from earlier, not from the user. This is a new voice call, so you do not remember earlier calls. Use this for continuity, do not read it out, and hand over anything that needs the current state.]';
-  const tail = running.length ? `\n\nAgents the assistant started that are still running:\n${running.join('\n')}` : '';
+  const tail = (running.length ? `\n\nAgents the assistant started that are still running:\n${running.join('\n')}` : '') + (memory ? `\n\n${memory}` : '');
   // The oldest lines go first when the brief is too long. Agent rows are
   // clipped, so they alone always fit.
   while (lines.length && briefText(head, lines, tail).length > BRIEF_CHARS) lines.shift();

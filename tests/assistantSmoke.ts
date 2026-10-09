@@ -38,12 +38,17 @@ async function main(): Promise<void> {
     assert.deepEqual(settings.assistantSettings(), DEFAULT_ASSISTANT_SETTINGS);
     // Clients that predate the voice profile settings save Codex's defaults.
     assert.deepEqual(settings.updateAssistantSettings({ voice: 'maple', presetId: 'preset_fast', forwardNotifications: true }),
-      { voice: 'maple', presetId: 'preset_fast', forwardNotifications: true, voiceProfile: 'codex', voiceAcknowledgements: 'default', userName: null });
+      { ...DEFAULT_ASSISTANT_SETTINGS, voice: 'maple', presetId: 'preset_fast' });
     assert.throws(() => settings.updateAssistantSettings({ voice: 'robot', presetId: null, forwardNotifications: true }));
     assert.throws(() => settings.updateAssistantSettings({ voice: null, presetId: null, forwardNotifications: true, voiceProfile: 'chatty' }));
     assert.throws(() => settings.updateAssistantSettings({ voice: null, presetId: null, forwardNotifications: true, voiceAcknowledgements: 'loud' }));
     // Names are trimmed, a blank one is cleared, and long ones are rejected.
     const base = { voice: null, presetId: null, forwardNotifications: true };
+    settings.updateAssistantSettings({ ...base, memoryEnabled: true, memoryBudgetTokens: 8000 });
+    assert.equal(settings.assistantSettings().memoryEnabled, true);
+    assert.equal(settings.assistantSettings().memoryBudgetTokens, 8000);
+    assert.throws(() => settings.updateAssistantSettings({ ...base, memoryEnabled: 'yes' }));
+    assert.throws(() => settings.updateAssistantSettings({ ...base, memoryBudgetTokens: 0 }));
     assert.equal(settings.updateAssistantSettings({ ...base, userName: '  Alex ' }).userName, 'Alex');
     assert.equal(settings.updateAssistantSettings({ ...base, userName: '   ' }).userName, null);
     assert.throws(() => settings.updateAssistantSettings({ ...base, userName: 'x'.repeat(61) }));

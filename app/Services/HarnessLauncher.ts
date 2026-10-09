@@ -24,6 +24,7 @@ import { prepareOpenCodeTheme } from './OpenCodeThemeService';
 import type { McpServerRegistry } from './McpServerRegistry';
 import { CLAUDE_MCP_CONFIG } from '../Harness/providers';
 import type { LaunchingMcpIdentities } from '../MCP/McpHelperAccess';
+import type { AssistantMemoryService } from './AssistantMemoryService';
 
 export const launchHarnessInput = z.object({
   harness: z.enum(['claude', 'codex', 'opencode', 'amp', 'rawpty']).optional(),
@@ -103,6 +104,7 @@ export interface HarnessLauncherDeps {
   remoteClients?: boolean;
   // Lets MCP helpers of a launch that is still starting use its identity.
   launchingIdentities?: Pick<LaunchingMcpIdentities, 'reserve'>;
+  assistantMemory?: Pick<AssistantMemoryService, 'snapshot'>;
 }
 
 // Launches an installed harness with the Patterm MCP server injected, spawns it
@@ -128,7 +130,7 @@ export class HarnessLauncher {
     // The session is registered once the harness has started, and holds the
     // identity from then on.
     const identity = `mcp_${randomUUID()}`;
-    const release = this.deps.launchingIdentities?.reserve(identity, selection.harness);
+    const release = this.deps.launchingIdentities?.reserve(identity, selection.harness, input.session_role);
     try { return await this.startPrepared(input, selection, resume, identity); }
     finally {
       release?.();
@@ -191,7 +193,7 @@ export class HarnessLauncher {
     const mcpServers = harness === 'rawpty' ? [] : this.deps.mcpServers?.forHarness(harness) ?? [];
     const contextService = new AgentContextService();
     const agentContext = harness === 'rawpty' ? ''
-      : input.session_role === 'assistant' ? contextService.buildAssistant().trim()
+      : input.session_role === 'assistant' ? contextService.buildAssistant(this.deps.assistantMemory?.snapshot()).trim()
       : input.session_role === 'routine' ? contextService.buildRoutine().trim()
       : contextService.build(input.project_id).trim();
     timing.mark('context.built', { context_chars: agentContext.length });
