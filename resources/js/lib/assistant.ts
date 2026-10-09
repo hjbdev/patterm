@@ -138,6 +138,8 @@ export interface AssistantSettings {
   voiceProfile: AssistantVoiceProfile;
   voiceAcknowledgements: AssistantVoiceAcknowledgements;
   userName: string | null;
+  memoryEnabled: boolean;
+  memoryBudgetTokens: number;
 }
 
 export async function loadAssistantSettings(): Promise<{ settings: AssistantSettings; voices: string[] }> {

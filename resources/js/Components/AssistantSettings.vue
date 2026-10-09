@@ -2,6 +2,14 @@
   <SettingsPanel title="Assistant">
     <template #description>One Codex session that oversees agents across your projects. Open it from the button in the bottom-right corner.</template>
     <p v-if="error" role="alert" class="text-xs text-destructive">{{ error }}</p>
+    <SettingsSection title="Memory" description="Start a new assistant conversation to apply changes." scope="assistant.memory">
+      <SettingsRow label="Saved memory" description="Keep useful facts across conversations. Older notes are gradually compressed; high-importance notes last longer." html-for="assistant-memory-enabled" save-key="assistant.memory.enabled" toggle>
+        <Switch id="assistant-memory-enabled" :model-value="settings?.memoryEnabled ?? false" :disabled="!settings" @update:model-value="save('assistant.memory.enabled', { memoryEnabled: $event })" />
+      </SettingsRow>
+      <SettingsRow label="Context budget" description="Approximate space for saved memory in the assistant's context. Starting a new conversation keeps saved memory." html-for="assistant-memory-budget" save-key="assistant.memory.budget" :disabled="!settings?.memoryEnabled">
+        <SettingsChoice id="assistant-memory-budget" :model-value="settings?.memoryBudgetTokens ?? 4000" :options="memoryBudgetOptions" :disabled="!settings?.memoryEnabled" aria-label="Memory context budget" @update:model-value="save('assistant.memory.budget', { memoryBudgetTokens: $event })" />
+      </SettingsRow>
+    </SettingsSection>
     <SettingsSection title="Voice" scope="assistant.voice">
       <SettingsRow label="Voice" description="The voice that speaks the assistant's replies in voice mode. Applies to the next voice session." html-for="assistant-voice" save-key="assistant.voice">
         <SettingsChoice id="assistant-voice" :model-value="settings?.voice ?? null" :options="voiceOptions" :disabled="!settings" aria-label="Assistant voice" @update:model-value="save('assistant.voice', { voice: $event })" />
@@ -44,6 +52,12 @@ const settings = shallowRef<AssistantSettings | null>(null);
 const voices = ref<string[]>([]);
 const presets = ref<Preset[]>([]);
 const error = ref('');
+
+const memoryBudgetOptions = [
+  { value: 2000, label: '≈ 2,000 tokens' },
+  { value: 4000, label: '≈ 4,000 tokens' },
+  { value: 8000, label: '≈ 8,000 tokens' }
+];
 
 const voiceOptions = computed(() => [
   { value: null as string | null, label: 'Default' },

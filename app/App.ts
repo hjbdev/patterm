@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { AssistantService, type AssistantEvent } from './Services/AssistantService';
+import { AssistantMemoryService } from './Services/AssistantMemoryService';
 import { registerAssistantTools } from './MCP/registerAssistantTools';
 import { registerIdleCompactionTools } from './MCP/registerIdleCompactionTools';
 import { registerHostTools } from './MCP/registerHostTools';
@@ -241,6 +242,7 @@ async function createApplicationResources(
   debugLog.write('startup', 'terminal.ready', { elapsed_ms: Date.now() - terminalStartedAt, available: terminal.isAvailable() });
 
   const settings = new SettingsService(database);
+  const assistantMemory = new AssistantMemoryService(database, settings);
   const harnessPresets = new HarnessPresetService(settings);
   const persistent = Boolean(options.terminalHosts);
   const events = new EventEmitter();
@@ -438,6 +440,7 @@ async function createApplicationResources(
   const harnessLauncher = new HarnessLauncher({
     mcpServers: mcpServerRegistry,
     launchingIdentities,
+    assistantMemory,
     remoteClients: Boolean(options.publicOrigin),
     openCodeServer,
     ampThreads,
@@ -594,6 +597,7 @@ async function createApplicationResources(
     assistant: assistantService,
     assistantInbox,
     routines,
+    assistantMemory,
     crossHost
   });
   registerMcpServerTools(mcp, mcpServers);

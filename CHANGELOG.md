@@ -12,6 +12,11 @@ in the archived pre-release repository.
 
 ### Added
 
+- Optional saved memory for the assistant, enabled in Settings › Assistant.
+  A bounded snapshot keeps useful facts across fresh conversations, with
+  approximately 2,000, 4,000 or 8,000 tokens of space. Low, medium and high
+  importance slow forgetting by different amounts; older notes can be
+  compressed repeatedly. Native conversation compaction stays in Codex.
 - Agents in Integrated mode can put figures in their replies. The new
   `ui.save` tool takes a claim and a figure: a chart (bar, line, area, point,
   interval or cell, with reference lines, bands, events and regions), a table,

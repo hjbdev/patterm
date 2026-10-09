@@ -14,6 +14,7 @@ import type { AssistantFocusState, AssistantInbox, AssistantInboxItem } from './
 // The assistant's internal project. It is never listed with workspace projects.
 export { ASSISTANT_PROJECT_ID } from './AssistantProject';
 import { ASSISTANT_PROJECT_ID } from './AssistantProject';
+import { AssistantMemoryService } from './AssistantMemoryService';
 // Notifications arriving together are summarised in one message.
 const DIGEST_DELAY_MS = 5_000;
 const DIGEST_LIMIT = 12;
@@ -162,7 +163,8 @@ export class AssistantService {
         from processes left join projects on projects.id = processes.project_id
         where processes.parent_process_id = ? and processes.status = 'running'
         order by processes.updated_at desc limit ?`).all(processId, VOICE_BRIEF_AGENT_LIMIT) as unknown as VoiceBriefAgent[];
-      return voiceBrief(conversation?.messages?.data ?? [], agents);
+      const memory = new AssistantMemoryService(this.database, this.settings).snapshot(2400);
+      return voiceBrief(conversation?.messages?.data ?? [], agents, memory);
     } catch (error) {
       this.log('voice.brief_failed', { message: errorMessage(error) });
       return null;

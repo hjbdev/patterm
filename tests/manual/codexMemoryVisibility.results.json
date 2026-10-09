@@ -1,0 +1,467 @@
+{
+  "cli": "codex-cli 0.159.2",
+  "observations": [
+    {
+      "phase": "local:fresh-A",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [
+          "developer"
+        ],
+        "PATTERM_MEMORY_B_915bc2": [],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "local:resume-B",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [
+          "developer"
+        ],
+        "PATTERM_MEMORY_B_915bc2": [],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "local:manual-compaction",
+      "url": "/v1/responses",
+      "compaction": true,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [
+          "developer"
+        ],
+        "PATTERM_MEMORY_B_915bc2": [],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "local:after-manual-compaction",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [],
+        "PATTERM_MEMORY_B_915bc2": [
+          "developer"
+        ],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "local:second-manual-compaction",
+      "url": "/v1/responses",
+      "compaction": true,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [],
+        "PATTERM_MEMORY_B_915bc2": [
+          "developer"
+        ],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "local:after-second-compaction",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [],
+        "PATTERM_MEMORY_B_915bc2": [
+          "developer"
+        ],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "local:fresh-B",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [],
+        "PATTERM_MEMORY_B_915bc2": [
+          "developer"
+        ],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "local:additional-C",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [],
+        "PATTERM_MEMORY_B_915bc2": [
+          "developer"
+        ],
+        "PATTERM_CONTEXT_C_c801a3": [
+          "developer"
+        ],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "local:additional-D",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [],
+        "PATTERM_MEMORY_B_915bc2": [
+          "developer"
+        ],
+        "PATTERM_CONTEXT_C_c801a3": [
+          "developer"
+        ],
+        "PATTERM_CONTEXT_D_82adf1": [
+          "developer"
+        ]
+      }
+    },
+    {
+      "phase": "local:additional-unchanged",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [],
+        "PATTERM_MEMORY_B_915bc2": [
+          "developer"
+        ],
+        "PATTERM_CONTEXT_C_c801a3": [
+          "developer"
+        ],
+        "PATTERM_CONTEXT_D_82adf1": [
+          "developer"
+        ]
+      }
+    },
+    {
+      "phase": "remote:fresh-A",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [
+          "developer"
+        ],
+        "PATTERM_MEMORY_B_915bc2": [],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "remote:resume-B",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [
+          "developer"
+        ],
+        "PATTERM_MEMORY_B_915bc2": [],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "remote:manual-compaction",
+      "url": "/v1/responses",
+      "compaction": true,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [
+          "developer"
+        ],
+        "PATTERM_MEMORY_B_915bc2": [],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "remote:after-manual-compaction",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [],
+        "PATTERM_MEMORY_B_915bc2": [
+          "developer"
+        ],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "remote:second-manual-compaction",
+      "url": "/v1/responses",
+      "compaction": true,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [],
+        "PATTERM_MEMORY_B_915bc2": [
+          "developer"
+        ],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "remote:after-second-compaction",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [],
+        "PATTERM_MEMORY_B_915bc2": [
+          "developer"
+        ],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "remote:fresh-B",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [],
+        "PATTERM_MEMORY_B_915bc2": [
+          "developer"
+        ],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "remote:additional-C",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [],
+        "PATTERM_MEMORY_B_915bc2": [
+          "developer"
+        ],
+        "PATTERM_CONTEXT_C_c801a3": [
+          "developer"
+        ],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "remote:additional-D",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [],
+        "PATTERM_MEMORY_B_915bc2": [
+          "developer"
+        ],
+        "PATTERM_CONTEXT_C_c801a3": [
+          "developer"
+        ],
+        "PATTERM_CONTEXT_D_82adf1": [
+          "developer"
+        ]
+      }
+    },
+    {
+      "phase": "remote:additional-unchanged",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [],
+        "PATTERM_MEMORY_B_915bc2": [
+          "developer"
+        ],
+        "PATTERM_CONTEXT_C_c801a3": [
+          "developer"
+        ],
+        "PATTERM_CONTEXT_D_82adf1": [
+          "developer"
+        ]
+      }
+    },
+    {
+      "phase": "local:auto-seed-A",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [
+          "developer"
+        ],
+        "PATTERM_MEMORY_B_915bc2": [],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "local:auto-resume-B",
+      "url": "/v1/responses",
+      "compaction": true,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [
+          "developer"
+        ],
+        "PATTERM_MEMORY_B_915bc2": [],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "local:auto-resume-B",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [],
+        "PATTERM_MEMORY_B_915bc2": [
+          "developer"
+        ],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "remote:auto-seed-A",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [
+          "developer"
+        ],
+        "PATTERM_MEMORY_B_915bc2": [],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "remote:auto-resume-B",
+      "url": "/v1/responses",
+      "compaction": true,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [
+          "developer"
+        ],
+        "PATTERM_MEMORY_B_915bc2": [],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "remote:auto-resume-B",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [],
+        "PATTERM_MEMORY_B_915bc2": [
+          "developer"
+        ],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "local:mid-seed-A",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [
+          "developer"
+        ],
+        "PATTERM_MEMORY_B_915bc2": [],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "local:mid-resume-B",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [
+          "developer"
+        ],
+        "PATTERM_MEMORY_B_915bc2": [],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "local:mid-resume-B",
+      "url": "/v1/responses",
+      "compaction": true,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [
+          "developer"
+        ],
+        "PATTERM_MEMORY_B_915bc2": [],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "local:mid-resume-B",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [],
+        "PATTERM_MEMORY_B_915bc2": [
+          "developer"
+        ],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "remote:mid-seed-A",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [
+          "developer"
+        ],
+        "PATTERM_MEMORY_B_915bc2": [],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "remote:mid-resume-B",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [
+          "developer"
+        ],
+        "PATTERM_MEMORY_B_915bc2": [],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "remote:mid-resume-B",
+      "url": "/v1/responses",
+      "compaction": true,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [
+          "developer"
+        ],
+        "PATTERM_MEMORY_B_915bc2": [],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    },
+    {
+      "phase": "remote:mid-resume-B",
+      "url": "/v1/responses",
+      "compaction": false,
+      "markers": {
+        "PATTERM_MEMORY_A_813af0": [],
+        "PATTERM_MEMORY_B_915bc2": [
+          "developer"
+        ],
+        "PATTERM_CONTEXT_C_c801a3": [],
+        "PATTERM_CONTEXT_D_82adf1": []
+      }
+    }
+  ]
+}

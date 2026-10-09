@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
+import { registerAssistantMemoryTools } from './registerAssistantMemoryTools';
+import type { AssistantMemoryService } from '../Services/AssistantMemoryService';
 import { RenameProcessAction, renameSessionInput } from '../Actions/RenameProcessAction';
 import { closeRequestAnswerInput, requestCloseInput, type CloseRequestActions } from '../Actions/CloseRequestActions';
 import { createProjectInput } from '../Actions/CreateProjectAction';
@@ -90,6 +92,7 @@ interface RegistryServices {
   usage?: GetUsageSummaryAction;
   assistant?: Pick<AssistantService, 'deliverAgentMessage'> & Partial<Pick<AssistantService, 'setFocus' | 'focusItems'>>;
   assistantInbox?: Pick<AssistantInbox, 'hold'>;
+  assistantMemory?: AssistantMemoryService;
   routines?: RoutineService;
   crossHost?: CrossHostService;
 }
@@ -295,6 +298,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
   const caller = (context: McpCallContext) => context.remote ? remoteCaller(services.database, context.remote) : resolveCaller(services.database, context.identity ?? null);
   // An identity must name a running agent, even for tools that ignore it.
   registry.setCallerCheck((context) => { if (!context.remote) resolveCaller(services.database, context.identity ?? null); });
+  if (services.assistantMemory) registerAssistantMemoryTools(registry, services.assistantMemory, (context) => !context.remote && isAssistant(caller(context)));
   if (services.routines) {
     const routines = services.routines;
     registerRoutineTools(registry, routines, (context) => {

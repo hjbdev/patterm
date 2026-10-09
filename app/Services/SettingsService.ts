@@ -77,10 +77,12 @@ export const assistantSettingsInput = z.object({
   voiceProfile: z.enum(ASSISTANT_VOICE_PROFILES).default('codex'),
   voiceAcknowledgements: z.enum(ASSISTANT_VOICE_ACKNOWLEDGEMENTS).default('default'),
   // What the Patterm voice profile calls the user; blank leaves the name out.
-  userName: z.string().trim().max(60).transform((name) => name || null).nullable().default(null)
+  userName: z.string().trim().max(60).transform((name) => name || null).nullable().default(null),
+  memoryEnabled: z.boolean().default(false),
+  memoryBudgetTokens: z.union([z.literal(2000), z.literal(4000), z.literal(8000)]).default(4000)
 }).strict();
 export type AssistantSettings = z.infer<typeof assistantSettingsInput>;
-export const DEFAULT_ASSISTANT_SETTINGS: AssistantSettings = { voice: null, presetId: null, forwardNotifications: true, voiceProfile: 'codex', voiceAcknowledgements: 'default', userName: null };
+export const DEFAULT_ASSISTANT_SETTINGS: AssistantSettings = { voice: null, presetId: null, forwardNotifications: true, voiceProfile: 'codex', voiceAcknowledgements: 'default', userName: null, memoryEnabled: false, memoryBudgetTokens: 4000 };
 // Harnesses whose idle agents are compacted before their prompt cache expires.
 export const idleCompactionSettingsInput = z.object({ claude: z.boolean(), codex: z.boolean(), opencode: z.boolean() }).strict();
 export type IdleCompactionSettings = z.infer<typeof idleCompactionSettingsInput>;
