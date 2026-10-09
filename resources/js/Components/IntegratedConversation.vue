@@ -310,7 +310,7 @@ import { onWorkspaceRequest, type WorkspaceRequest } from '../lib/workspaceReque
 // `onLaunched` is a prop rather than an emit: /new and /resume close this tab
 // before they answer, which can unmount the pane, and Vue drops emits from an
 // unmounted component.
-const props = defineProps<{ processId: string; projectId?: string | null; projectPath?: string | null; exited?: boolean; mentionAgents?: MentionAgent[]; mentionLaunchers?: MentionLauncher[]; embedded?: boolean; closeRequest?: CloseRequestRecord | null | undefined; closeSubagents?: number | undefined; onLaunched?: (sessionId: string) => void }>();
+const props = defineProps<{ processId: string; projectId?: string | null; projectPath?: string | null; exited?: boolean; mentionAgents?: MentionAgent[]; mentionLaunchers?: MentionLauncher[]; embedded?: boolean; closeRequest?: CloseRequestRecord | null | undefined; closeSubagents?: number | undefined; onLaunched?: (sessionId: string) => void; onNewSession?: (processId: string) => Promise<void> }>();
 const emit = defineEmits<{ transcript: [messages: TranscriptMessage[], status: string, loaded: boolean] }>();
 // Conversation state is replaced, never mutated in place (stream events and
 // snapshots produce new arrays), so shallow refs skip deep proxying of every
@@ -881,14 +881,18 @@ function runPattermCommand(name: string, text: string): void {
   resumeOpen.value = true;
 }
 
-// The backend replaces this tab when the agent is idle and opens the new
-// session beside it otherwise. Either way the new session is shown.
+// Embedded owners such as the assistant replace their own session. Workspace
+// agents replace an idle tab or open the new session beside a working one.
 async function startNewSession(): Promise<void> {
-  if (startingNew || !props.projectId) return;
+  if (startingNew || (!props.onNewSession && !props.projectId)) return;
   const token = generation;
   startingNew = true;
   error.value = '';
   try {
+    if (props.onNewSession) {
+      await props.onNewSession(props.processId);
+      return;
+    }
     const result = await mutate('patterm.integrated.new', { process_id: props.processId, project_id: props.projectId }) as { session_id?: unknown };
     if (typeof result?.session_id === 'string') props.onLaunched?.(result.session_id);
   } catch (cause) {

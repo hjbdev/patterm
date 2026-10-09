@@ -387,6 +387,8 @@ async function main(): Promise<void> {
     // Restarting the assistant needs control of it, like sending it a message,
     // so plain HTTP calls cannot reach it.
     await assert.rejects(b.call('patterm:integrated:call', { tool: 'patterm.assistant.restart', arguments: { process_id: firstId } }), /Take control/);
+    await assert.rejects(b.call('patterm:integrated:call', { tool: 'patterm.assistant.new', arguments: { process_id: firstId } }), /Take control/);
+    assert.match((await (await rpc('patterm:mcp:call', { tool: 'patterm.assistant.new', arguments: { process_id: firstId } })).json() as { error: string }).error, /not available through the browser/);
     assert.match((await (await rpc('patterm:mcp:call', { tool: 'patterm.assistant.restart', arguments: { process_id: firstId } })).json() as { error: string }).error, /not available through the browser/);
     await assert.rejects(a.request('resize', { process_id: firstId, cols: 1e9, rows: 20 }), /1000/);
     await a.request('resize', { process_id: firstId, cols: 90, rows: 30, resize_seq: 50 });

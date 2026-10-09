@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { McpToolRegistry } from '../app/MCP/ToolRegistry';
+import { registerAssistantTools } from '../app/MCP/registerAssistantTools';
+import { INTEGRATED_CONTROL_TOOLS } from '../app/Http/BrowserTools';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import { ASSISTANT_PROJECT_ID, AssistantService, type AssistantEvent } from '../app/Services/AssistantService';
 import { AssistantInbox } from '../app/Services/AssistantInbox';
@@ -290,6 +293,7 @@ async function main(): Promise<void> {
     let openGate!: () => void;
     launchGate = new Promise((resolve) => { openGate = resolve; });
     const gated = assistant.restart('proc-assistant-4');
+    const freshRejected = assert.rejects(assistant.newSession('proc-assistant-4'), /already restarting/, '/new cannot succeed by joining a resume');
     await wait(5);
     assert.equal(assistant.state().process_id, null, 'the old process has stopped');
     assert.ok(inbox.hold('proc-assistant-4', { kind: 'report', sourceProcessId: 'proc-helper', title: 'Report from proc-helper: completed', body: 'Done during the restart', dedupeKey: 'report:restart' }));
@@ -297,6 +301,7 @@ async function main(): Promise<void> {
     const promptsBefore = prompts.length;
     openGate();
     assert.equal((await gated).process_id, 'proc-assistant-5');
+    await freshRejected;
     await wait(20);
     assert.match(prompts.slice(promptsBefore).join('\n'), /held while Focus mode was on or the assistant was not running[\s\S]*Report from proc-helper/);
 
@@ -311,6 +316,30 @@ async function main(): Promise<void> {
     assert.equal((db.prepare(`select parent_process_id from processes where id = 'proc-helper'`).get() as { parent_process_id: string }).parent_process_id, 'proc-assistant-6');
     assert.match(timerTransfers.at(-1)!, /proc-assistant-5.*->proc-assistant-6$/);
     db.prepare(`update processes set status = 'exited' where id = 'proc-helper'`).run();
+    // /new keeps the assistant role and its dependants, but starts a fresh
+    // thread. The previous thread remains available in history.
+    const ui = new McpToolRegistry();
+    registerAssistantTools(ui, assistant, settings);
+    assert.equal(ui.help('patterm.assistant.new').hidden, true);
+    assert.ok(INTEGRATED_CONTROL_TOOLS.has('patterm.assistant.new'));
+    db.prepare(`update processes set parent_process_id = 'proc-assistant-6', status = 'running' where id = 'proc-helper'`).run();
+    await assistant.startVoice('before-new');
+    await assert.rejects(ui.call('patterm.assistant.new', { process_id: 'proc-assistant-5' }), /already restarted/);
+    const [fresh, whileNew] = await Promise.all([
+      ui.call('patterm.assistant.new', { process_id: 'proc-assistant-6' }) as Promise<{ process_id: string }>,
+      assistant.ensure()
+    ]);
+    assert.equal(fresh.process_id, 'proc-assistant-7');
+    assert.equal(whileNew.process_id, fresh.process_id, 'ensure cannot race a fresh launch');
+    assert.equal(launches.length, 7);
+    assert.equal(launches[6]!.resume, null, 'new does not resume the old thread');
+    assert.equal(launches[6]!.input.session_role, 'assistant');
+    assert.equal(assistant.state().voice.active, false);
+    assert.equal((db.prepare(`select parent_process_id from processes where id = 'proc-helper'`).get() as { parent_process_id: string }).parent_process_id, fresh.process_id);
+    assert.match(timerTransfers.at(-1)!, /proc-assistant-6.*->proc-assistant-7$/);
+    assert.equal((db.prepare(`select resume_id from sessions where id = 'session-assistant-6'`).get() as { resume_id: string }).resume_id, 'thread-1');
+    await assistant.restart('proc-assistant-7');
+    assert.equal(launches[7]!.resume?.resume_id, 'thread-7', 'later restarts resume the fresh thread');
     assistant.dispose();
 
     // The assistant's context names its cross-project role.
@@ -328,7 +357,7 @@ async function main(): Promise<void> {
     agent('worker-q', 'q', 'orchestrator');
     const timeline = new TimelineService(database);
     const registry = createTestMcpRegistry({ tempDir: dir, database, timeline, terminal: { request: async () => ({}) } as unknown as TerminalService, workbench });
-    const assistantIdentity = { identity: 'mcp-assistant-6' };
+    const assistantIdentity = { identity: 'mcp-assistant-8' };
 
     const overview = await registry.callPublic('assistant.overview', {}, assistantIdentity) as { projects: Array<{ project_id: string; processes: Array<{ process_id: string }> }> };
     assert.deepEqual(overview.projects.map((project) => project.project_id), ['p', 'q']);

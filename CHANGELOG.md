@@ -52,6 +52,8 @@ in the archived pre-release repository.
 
 ### Fixed
 
+- `/new` in the assistant starts a fresh conversation with empty context.
+
 - Stopping a terminal no longer fails when one of its processes exits while
   Patterm is reading its details from `/proc`.
 - A Codex agent no longer keeps showing as working after a turn that ended
