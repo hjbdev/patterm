@@ -31,7 +31,7 @@ const questionConversation = () => ({
   ] }
 });
 
-function createHarness({ processId = 'process_a', exited = false, keepCache = false, subscribeReply = () => ({ ok: true }) } = {}) {
+function createHarness({ processId = 'process_a', exited = false, keepCache = false, onNewSession, subscribeReply = () => ({ ok: true }) } = {}) {
   // Tests reuse process IDs; each starts without another test's cached pane.
   if (!keepCache) helpers.forgetConversation();
   const lifecycle = { mounted: [], beforeUnmount: [] };
@@ -46,7 +46,7 @@ function createHarness({ processId = 'process_a', exited = false, keepCache = fa
   const workspaceHandlers = [];
   const published = new Map();
   const provided = new Map();
-  const props = reactive({ processId, exited });
+  const props = reactive({ processId, exited, onNewSession });
   const windowMock = {
     patterm: {
       runtime: 'browser',
@@ -1143,4 +1143,18 @@ test('several follow-ups keep their send order as native echoes arrive', async (
     assert.deepEqual(rows().map(message => message.text), expected, `echo ${index + 1} does not reorder later sends`);
   }
   h.scope.stop();
+});
+
+test('/new in the assistant starts a fresh assistant without a workspace project', async () => {
+  const calls = [];
+  const harness = createHarness({ processId: 'assistant_new', onNewSession: async id => { calls.push(id); } });
+  await mountSettled(harness);
+  harness.pane.controls.value = { selectors: [], commands: [{ name: 'new', source: 'patterm' }] };
+  composer.draftFor('assistant_new').text = '/new';
+  const prepared = composer.payloadFor('assistant_new');
+  await harness.pane.sendRequest({ ...prepared.payload, hash: prepared.hash });
+  await flush();
+  assert.deepEqual(calls, ['assistant_new']);
+  assert.deepEqual(harness.mutations, [], 'the workspace new-agent tool is not used');
+  harness.scope.stop();
 });

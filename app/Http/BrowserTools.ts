@@ -30,4 +30,4 @@ export const BROWSER_TOOLS = new Set([
 // Terminal operations and Integrated tools that change what everyone viewing
 // a process sees, so only the client controlling it may send them.
 export const CONTROL_OPERATIONS = new Set(['input', 'resize', 'configure', 'select', 'scroll', 'wheel', 'mouse']);
-export const INTEGRATED_CONTROL_TOOLS = new Set(['patterm.integrated.send', 'patterm.integrated.configure', 'patterm.integrated.command', 'patterm.integrated.interrupt', 'patterm.integrated.task.stop', 'patterm.integrated.queue.update', 'patterm.integrated.permission.reply', 'patterm.integrated.question.reply', 'patterm.integrated.form.reply', 'patterm.integrated.new', 'patterm.assistant.restart']);
+export const INTEGRATED_CONTROL_TOOLS = new Set(['patterm.integrated.send', 'patterm.integrated.configure', 'patterm.integrated.command', 'patterm.integrated.interrupt', 'patterm.integrated.task.stop', 'patterm.integrated.queue.update', 'patterm.integrated.permission.reply', 'patterm.integrated.question.reply', 'patterm.integrated.form.reply', 'patterm.integrated.new', 'patterm.assistant.restart', 'patterm.assistant.new']);

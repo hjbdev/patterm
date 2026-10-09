@@ -23,6 +23,10 @@ export function registerAssistantTools(registry: McpToolRegistry, assistant: Ass
     (args) => assistant.restart(restartInput.parse(args).process_id)
   );
   registry.register(
+    { name: 'patterm.assistant.new', namespace: 'assistant', description: 'Stop the global assistant and start a fresh conversation with empty context.', hidden: true, changes: ['workbench'], inputSchema: { type: 'object', required: ['process_id'] } },
+    (args) => assistant.newSession(restartInput.parse(args).process_id)
+  );
+  registry.register(
     { name: 'patterm.assistant.voice.start', namespace: 'assistant', description: 'Answer a WebRTC offer with a GPT-Live voice session on the assistant thread.', hidden: true, changes: [], inputSchema: { type: 'object', required: ['sdp'] } },
     (args) => assistant.startVoice(voiceStartInput.parse(args).sdp)
   );

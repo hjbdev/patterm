@@ -131,7 +131,7 @@
         <!-- Chat stays mounted in voice mode so the conversation subscription
              and composer draft survive the switch. -->
         <div v-show="mode === 'chat'" class="h-full">
-          <IntegratedConversation :key="assistant.processId" :process-id="assistant.processId" embedded @transcript="onTranscript" />
+          <IntegratedConversation :key="assistant.processId" :process-id="assistant.processId" :on-new-session="newAssistantSession" embedded @transcript="onTranscript" />
         </div>
         <AssistantVoice v-if="mode === 'voice'" :transcript="transcript" :stream-status="streamStatus" :wide="page" @end="mode = 'chat'" />
       </template>
@@ -167,7 +167,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import AssistantVoice from './AssistantVoice.vue';
 import type { TranscriptMessage } from '../../lib/integratedConversation';
-import { assistant, ensureAssistant, message, restartAssistant, setAssistantFocus, startAssistantEvents } from '../../lib/assistant';
+import { assistant, ensureAssistant, message, newAssistantSession, restartAssistant, setAssistantFocus, startAssistantEvents } from '../../lib/assistant';
 import { assistantLayout, setAssistantLayout } from '../../lib/assistantLayout';
 import { useAssistantFollow } from '../../Composables/useAssistantFollow';
 

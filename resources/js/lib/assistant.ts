@@ -88,16 +88,25 @@ export async function ensureAssistant(): Promise<string | null> {
 // it a message, this needs control of its conversation. Throws, so the caller
 // can say what failed.
 export async function restartAssistant(processId: string): Promise<void> {
+  return replaceAssistant(processId, 'patterm.assistant.restart');
+}
+
+export async function newAssistantSession(processId: string): Promise<void> {
+  return replaceAssistant(processId, 'patterm.assistant.new');
+}
+
+async function replaceAssistant(processId: string, tool: string): Promise<void> {
   if (assistant.restarting) return;
   assistant.restarting = true;
   assistant.error = '';
   try {
     const args = { process_id: processId };
-    const state = await (window.patterm.integratedCall ? window.patterm.integratedCall('patterm.assistant.restart', args) : window.patterm.call('patterm.assistant.restart', args));
+    const state = await (window.patterm.integratedCall ? window.patterm.integratedCall(tool, args) : window.patterm.call(tool, args));
     if (isState(state)) apply(state);
   } catch (error) {
     // The old process may already have stopped.
     await refreshAssistant();
+    assistant.error = message(error);
     throw error;
   } finally {
     assistant.restarting = false;

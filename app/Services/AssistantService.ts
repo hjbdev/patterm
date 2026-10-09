@@ -104,6 +104,15 @@ export class AssistantService {
   // process adopts the old one's agents and timers. The caller names the
   // process it saw, so a stale request cannot restart a new one.
   async restart(processId: string): Promise<AssistantState> {
+    return this.replace(processId, false);
+  }
+
+  // A fresh native thread carries none of the previous conversation context.
+  async newSession(processId: string): Promise<AssistantState> {
+    return this.replace(processId, true);
+  }
+
+  private async replace(processId: string, fresh: boolean): Promise<AssistantState> {
     if (this.restarting) return this.restarting;
     const current = this.current();
     if (current?.process_id !== processId) throw new Error('The assistant has already restarted');
@@ -111,9 +120,9 @@ export class AssistantService {
       await this.launching?.catch(() => undefined);
       if (this.voiceProcessId) await this.stopVoice();
       await this.processes.stop(processId);
-      this.launching = this.launch().finally(() => { this.launching = null; });
+      this.launching = this.launch(fresh).finally(() => { this.launching = null; });
       const state = await this.launching;
-      this.log('restarted', { from: processId, to: state.process_id });
+      this.log(fresh ? 'new_session' : 'restarted', { from: processId, to: state.process_id });
       return state;
     })().finally(() => { this.restarting = null; });
     return this.restarting;
@@ -323,9 +332,9 @@ export class AssistantService {
     }
   }
 
-  private async launch(): Promise<AssistantState> {
+  private async launch(fresh = false): Promise<AssistantState> {
     const cwd = this.ensureProject();
-    const previous = this.previous();
+    const previous = fresh ? null : this.previous();
     const preset = this.settings.assistantSettings().presetId;
     const input = {
       harness: 'codex' as const,
