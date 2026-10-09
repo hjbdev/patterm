@@ -74,7 +74,7 @@ export function registerRoutineTools(registry: McpToolRegistry, routines: Routin
     if (!forward) return registry.register(descriptor, handler);
     if (descriptor.name === 'routine_run_now') {
       return registry.register(descriptor, (args, context) => {
-        if (args && typeof args === 'object' && 'host' in args) throw new Error('routine.run_now cannot start a run on another host. Routines there run on their schedule; ask the user to run one now.');
+        if (args && typeof args === 'object' && 'host' in args) throw new Error('routine_run_now cannot start a run on another host. Routines there run on their schedule; ask the user to run one now.');
         return handler(args, context);
       });
     }

@@ -7,7 +7,7 @@ import { createApplication, type PattermApplication } from '../app/App';
 import { WebServer } from '../app/Http/WebServer';
 import { WebSocket } from 'ws';
 import { registerApplicationRoutes } from '../routes/application';
-import { relayingRegistrar, servePeerRoutes } from '../routes/remote';
+import { readIntegrated, relayingRegistrar, servePeerRoutes } from '../routes/remote';
 import { parseDamageFrame } from '../resources/js/terminal/TerminalRenderer';
 import type { VersionedWorkbench } from '../app/Services/WorkbenchSyncService';
 
@@ -179,6 +179,10 @@ async function main(): Promise<void> {
     assert.equal((workstation.app.database.connection.prepare('select name from processes where id = ?').get(developer.process_id) as { name: string }).name, 'Developer');
     await until(() => { const session = deskWorkbench()?.projectSessions.find((row) => row.processId === `workstation:${developer.process_id}`); return session?.displayName === 'Developer' || session?.lastTitle === 'Developer'; }, 'the rename to reach the desktop workbench');
     await assert.rejects(rpc(desktop, 'patterm:mcp:call', { tool: 'hosts_unpair', arguments: { host_id: desktopId, process_id: `workstation:${developer.process_id}` } }), /not available to another host/);
+    // Transcript snapshots name a tool that exists here and passes the peer gate.
+    const integratedRead = (read: Promise<unknown>) => read.then(() => 'read', (error: unknown) => String(error));
+    assert.doesNotMatch(await integratedRead(readIntegrated(workstation.app, developer.process_id)), /unknown MCP tool/, 'local transcript reads reach integrated_get');
+    assert.doesNotMatch(await integratedRead(readIntegrated(desktop.app, `workstation:${developer.process_id}`)), /unknown MCP tool|not available to another host/, 'remote transcript reads reach integrated_get');
 
     // A browser on the desktop streams and types into the dev box terminal.
     const browser = await browserClient(desktop);

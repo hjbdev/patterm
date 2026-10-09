@@ -161,7 +161,7 @@ const integratedSendInput = processIdInput.extend({
   message_id: z.string().min(1).max(80).optional()
 }).superRefine((input, context) => {
   if (!input.text && !input.references?.length && !input.attachments?.length) {
-    context.addIssue({ code: z.ZodIssueCode.custom, message: 'integrated.send requires text, references, or attachments' });
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'integrated_send requires text, references, or attachments' });
   }
 });
 const integratedFilesSearchInput = processIdInput.extend({
@@ -690,7 +690,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     usageNotes: ['Only the global assistant session can call this. Other agents use get_project_status.']
   }, (_args, context) => {
     const current = caller(context);
-    if (!current || !hasWorkspaceScope(current)) throw new Error('assistant.overview: only the assistant and workspace routines can call this');
+    if (!current || !hasWorkspaceScope(current)) throw new Error('assistant_overview: only the assistant and workspace routines can call this');
     return assistantOverview(services, current);
   });
 
@@ -864,7 +864,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
   }, (args, context) => {
     const input = renameSessionInput.parse(args);
     const current = caller(context);
-    if (!current) throw new Error('session.rename requires an authenticated agent session');
+    if (!current) throw new Error('session_rename requires an authenticated agent session');
     return renameProcess.execute(current.session_id, input.name, 'agent');
   });
 
@@ -1015,11 +1015,11 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     },
     changes: [],
     unavailable: (context) => {
-      if (services.settings?.figuresEnabled() === false) return 'ui.save is turned off in Patterm settings. Answer in text instead.';
+      if (services.settings?.figuresEnabled() === false) return 'ui_save is turned off in Patterm settings. Answer in text instead.';
       // Only Integrated transcripts draw figures. OpenCode's shared helpers
       // carry no identity and serve only Integrated sessions.
       const session = context.identity ? services.database.connection.prepare('select interface_mode from sessions where mcp_identity = ? and exited_at is null').get(context.identity) as { interface_mode: string | null } | undefined : undefined;
-      return session && session.interface_mode !== 'integrated' ? 'ui.save works only in Integrated mode. Answer in text instead.' : null;
+      return session && session.interface_mode !== 'integrated' ? 'ui_save works only in Integrated mode. Answer in text instead.' : null;
     },
     usageNotes: [
       'Send { claim, figure, source?, id? }; it returns ref [patterm_figure:id]. Put it on its own line in your reply and the figure appears there; unplaced, it never shows. figure is flat: { type: "chart", mark: "bar", ... }. Several: { sections: [...] }.',
@@ -1055,7 +1055,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
   registry.register(
     { name: 'close_request_answer', namespace: 'process', description: 'Close an agent that asked to be closed, or keep it open.', hidden: true, inputSchema: { type: 'object', required: ['process_id', 'decision'] } },
     (args, context) => {
-      if (!services.closeRequests) throw new Error('close_request.answer: close requests are unavailable');
+      if (!services.closeRequests) throw new Error('close_request_answer: close requests are unavailable');
       const input = closeRequestAnswerInput.parse(args);
       return services.closeRequests.answer({ ...input, process_id: processFor(context, input.process_id) });
     }
@@ -1068,14 +1068,14 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     changes: [],
     usageNotes: ['Read-only. Agents cannot mark notifications read or resolved; the user does that.']
   }, (args, context) => {
-    if (!services.notifications) throw new Error('notification.list: notifications are unavailable');
+    if (!services.notifications) throw new Error('notification_list: notifications are unavailable');
     const input = notificationListInput.parse(args ?? {});
     const projectId = projectFor(context, input.project_id);
     if (!projectId && hasWorkspaceScope(caller(context))) {
       const { project_id: _omitted, ...rest } = input;
       return services.notifications.list(rest);
     }
-    if (!projectId) throw new Error('notification.list: no project is available');
+    if (!projectId) throw new Error('notification_list: no project is available');
     return services.notifications.list({ ...input, project_id: projectId });
   });
   registry.register({
@@ -1397,7 +1397,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       inputSchema: { type: 'object', required: ['conversation_id'] }
     },
     (args, context) => {
-      if (caller(context)) throw new Error('patterm.history.resume is for the user; agents resume with spawn_agent and conversation_id');
+      if (caller(context)) throw new Error('history_resume is for the user; agents resume with spawn_agent and conversation_id');
       if (!resumeConversationAgent) throw new Error('conversation history is not available');
       const input = historyResumeInput.parse(args);
       const projectId = projectFor(context, input.project_id);
@@ -1420,7 +1420,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       inputSchema: { type: 'object', required: ['process_id'] }
     },
     (args, context) => {
-      if (caller(context)) throw new Error('patterm.integrated.new is for the user; agents start sessions with spawn_agent');
+      if (caller(context)) throw new Error('integrated_new is for the user; agents start sessions with spawn_agent');
       const input = newAgentSessionInput.parse(args);
       const projectId = projectFor(context, input.project_id);
       if (!projectId) throw new Error('no project is available');

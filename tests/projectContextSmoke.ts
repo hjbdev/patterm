@@ -73,6 +73,7 @@ async function main(): Promise<void> {
     assert.throws(() => call('todo_assign', { todo_id: a.id, assignee_id: outsider }), /not found/);
     assert.equal(call<Page<Todo>>('todo_list', { assignee_id: alice }).total, 1);
     call('todo_unassign', { todo_id: a.id, assignee_id: 'user' });
+    assert.deepEqual(get(a.id).assignments, [alice], 'unassign removes only that assignee');
 
     const first = call<Lease>('todo_lease_acquire', { todo_id: a.id }, 'alice');
     assert.equal(first.expires_at, now + 300_000);

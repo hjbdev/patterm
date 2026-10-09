@@ -83,7 +83,7 @@ export class ProjectContextAction {
       case 'todo_update': return service.updateTodo(actor, contextSchemas[operation].parse(raw));
       case 'todo_delete': { const p = contextSchemas[operation].parse(raw); return service.deleteTodo(actor, p.todo_id, p.revision); }
       case 'todo_assign': case 'todo_unassign': {
-        const p = contextSchemas[operation].parse(raw); return service.assign(actor, p.todo_id, p.assignee_id ?? actor.actorId, operation.endsWith('.unassign'));
+        const p = contextSchemas[operation].parse(raw); return service.assign(actor, p.todo_id, p.assignee_id ?? actor.actorId, operation === 'todo_unassign');
       }
       case 'todo_dependency_add': case 'todo_dependency_remove': {
         const p = contextSchemas[operation].parse(raw); return service.dependency(actor, p.todo_id, p.blocker_id, operation.endsWith('_remove'));
