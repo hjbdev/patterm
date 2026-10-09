@@ -23,7 +23,7 @@ export function transcriptImageUrl(sha256: string): Promise<string> {
 }
 
 async function fetchImage(sha256: string): Promise<string> {
-  const result = await window.patterm.call('patterm.integrated.image', { sha256 }) as { mime?: unknown; data?: unknown } | null;
+  const result = await window.patterm.call('integrated_image', { sha256 }) as { mime?: unknown; data?: unknown } | null;
   if (typeof result?.data !== 'string' || typeof result.mime !== 'string' || !result.mime.startsWith('image/')) {
     throw new Error('This image is no longer stored');
   }

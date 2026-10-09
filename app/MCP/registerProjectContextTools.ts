@@ -4,14 +4,14 @@ import type { McpToolRegistry } from './ToolRegistry';
 
 // The workbench keeps ended sessions that a todo is assigned to, so changing
 // assignments can change it too.
-const assignmentOperations = new Set<ContextOperation>(['patterm.todo.create', 'patterm.todo.assign', 'patterm.todo.unassign', 'patterm.todo.delete']);
+const assignmentOperations = new Set<ContextOperation>(['todo_create', 'todo_assign', 'todo_unassign', 'todo_delete']);
 
 export function registerProjectContextTools(registry: McpToolRegistry, action: ProjectContextAction) {
   for (const operation of Object.keys(contextSchemas) as ContextOperation[]) {
     registry.register({
-      name: operation, namespace: operation.split('.').slice(1, -1).join('.'),
-      hidden: operation === 'patterm.todo.lease_revoke',
-      description: descriptions[operation] ?? `${operation.split('.').slice(1).join(' ')} within the caller's project.`,
+      name: operation, namespace: operation.split('_')[0]!,
+      hidden: operation === 'todo_lease_revoke',
+      description: descriptions[operation] ?? `${operation.replaceAll('_', ' ')} within the caller's project.`,
       inputSchema: objectSchema(contextSchemas[operation]),
       changes: contextReadOperations.has(operation) ? [] : assignmentOperations.has(operation) ? ['workbench', 'context'] : ['context'],
       usageNotes: [
@@ -24,22 +24,22 @@ export function registerProjectContextTools(registry: McpToolRegistry, action: P
         'Titles allow 500 characters and note bodies 262144. Only requested content is loaded; terminal output is never collected automatically.',
         'Resolve external identifiers with your provider MCP or CLI first, then attach the verified URL. Patterm stores references and does not fetch or synchronise external resources.',
         'Session scratchpad and worktree attachments, session references, and session context infer the caller\'s session for agents; owner requests require it.',
-        'After opening or finding a PR or issue for your work, attach it to your session, for example reference.attach {target_type:"session", url, provider:"github", resource_type:"pull_request", identifier:"#42"}. Providers are github, linear, and generic; resource types are pull_request, issue, and generic.'
+        'After opening or finding a PR or issue for your work, attach it to your session, for example reference_attach {target_type:"session", url, provider:"github", resource_type:"pull_request", identifier:"#42"}. Providers are github, linear, and generic; resource types are pull_request, issue, and generic.'
       ]
     }, (args, context) => action.execute(operation, args, context.identity));
   }
 }
 
 const descriptions: Partial<Record<ContextOperation, string>> = {
-  'patterm.todo.create': 'Create a todo. Pass assignee_id to assign it in the same call; the todo is not created if the assignment fails.',
-  'patterm.scratchpad.create': 'Create a scratchpad. Pass session_id to attach it to that session in the same call; the scratchpad is not created if the attachment fails.',
-  'patterm.session.context': 'Read an agent session\'s worktrees (its own working directory first, then up to 10 linked worktrees, unpaginated), plus paginated assigned todos, attached scratchpads, and external references.',
-  'patterm.worktree.attach': 'Link a project worktree to a session so it is listed with that session and its diff can be reviewed. Agents may omit session_id for their own session. Repeated attachment is idempotent; a session links at most 10 worktrees. worktree.create and worktree.link already link the worktree to the calling agent.',
-  'patterm.worktree.detach': 'Unlink a worktree from a session without changing its files, branch, or project registration. Agents may omit session_id for their own session. A session\'s own working directory cannot be detached.',
-  'patterm.todo.update': 'Edit a todo with a revision guard; set status to completed to complete, or open to reopen. Completion releases its lease.',
-  'patterm.todo.lease_acquire': 'Acquire exclusive, expiring work ownership of a todo. Returns the token required for renewal and release.',
-  'patterm.reference.attach': 'Attach a verified HTTP(S) external reference, such as a PR or issue, to a todo, scratchpad, or session. Agents may omit target_id for their own session. Repeated attachment is idempotent.',
-  'patterm.scratchpad.update': 'Replace scratchpad content or metadata with a revision guard; set status to archived or active to archive or restore.'
+  'todo_create': 'Create a todo. Pass assignee_id to assign it in the same call; the todo is not created if the assignment fails.',
+  'scratchpad_create': 'Create a scratchpad. Pass session_id to attach it to that session in the same call; the scratchpad is not created if the attachment fails.',
+  'session_context': 'Read an agent session\'s worktrees (its own working directory first, then up to 10 linked worktrees, unpaginated), plus paginated assigned todos, attached scratchpads, and external references.',
+  'worktree_attach': 'Link a project worktree to a session so it is listed with that session and its diff can be reviewed. Agents may omit session_id for their own session. Repeated attachment is idempotent; a session links at most 10 worktrees. worktree_create and worktree_link already link the worktree to the calling agent.',
+  'worktree_detach': 'Unlink a worktree from a session without changing its files, branch, or project registration. Agents may omit session_id for their own session. A session\'s own working directory cannot be detached.',
+  'todo_update': 'Edit a todo with a revision guard; set status to completed to complete, or open to reopen. Completion releases its lease.',
+  'todo_lease_acquire': 'Acquire exclusive, expiring work ownership of a todo. Returns the token required for renewal and release.',
+  'reference_attach': 'Attach a verified HTTP(S) external reference, such as a PR or issue, to a todo, scratchpad, or session. Agents may omit target_id for their own session. Repeated attachment is idempotent.',
+  'scratchpad_update': 'Replace scratchpad content or metadata with a revision guard; set status to archived or active to archive or restore.'
 };
 
 // The context schemas contain only flat primitive fields. Keeping this small

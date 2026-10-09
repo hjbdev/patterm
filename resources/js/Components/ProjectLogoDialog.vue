@@ -64,7 +64,7 @@ watch(open, async (isOpen) => {
   candidates.value = [];
   loading.value = true;
   try {
-    const result = await window.patterm.call('patterm.project.logo_candidates', { project_id: props.project.id }) as { candidates?: Candidate[] } | null;
+    const result = await window.patterm.call('project_logo_candidates', { project_id: props.project.id }) as { candidates?: Candidate[] } | null;
     candidates.value = result?.candidates ?? [];
   } catch (caught) {
     error.value = message(caught);
@@ -93,7 +93,7 @@ async function write(logo: () => Promise<string | null>): Promise<void> {
   busy.value = true;
   error.value = '';
   try {
-    await window.patterm.call('patterm.project.set_logo', { project_id: props.project.id, logo: await logo() });
+    await window.patterm.call('project_set_logo', { project_id: props.project.id, logo: await logo() });
     open.value = false;
   } catch (caught) {
     error.value = message(caught);

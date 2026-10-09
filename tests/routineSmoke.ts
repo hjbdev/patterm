@@ -135,13 +135,13 @@ test('edits outside the schedule keep a due run, and runs keep their project', a
   let caller: RoutineCaller | null = { sessionId: 'session_other', projectId: 'other', workspace: false };
   registerRoutineTools(registry, fixture.routines, () => caller);
   const runId = moved.last_run!.run_id;
-  assert.equal((await registry.call('patterm.routine.get', { routine_id: routine.routine_id }) as RoutineRecord).last_run, null);
-  assert.equal((await registry.call('patterm.routine.list', {}) as { routines: RoutineRecord[] }).routines[0]!.last_run, null);
-  assert.deepEqual((await registry.call('patterm.routine.runs', { routine_id: routine.routine_id }) as { runs: unknown[] }).runs, []);
-  assert.deepEqual((await registry.call('patterm.routine.log', {}) as { runs: unknown[] }).runs, []);
-  await assert.rejects(registry.call('patterm.routine.run', { run_id: runId }), /outside the current caller scope/);
+  assert.equal((await registry.call('routine_get', { routine_id: routine.routine_id }) as RoutineRecord).last_run, null);
+  assert.equal((await registry.call('routine_list', {}) as { routines: RoutineRecord[] }).routines[0]!.last_run, null);
+  assert.deepEqual((await registry.call('routine_runs', { routine_id: routine.routine_id }) as { runs: unknown[] }).runs, []);
+  assert.deepEqual((await registry.call('routine_log', {}) as { runs: unknown[] }).runs, []);
+  await assert.rejects(registry.call('routine_run', { run_id: runId }), /outside the current caller scope/);
   caller = null;
-  assert.equal((await registry.call('patterm.routine.run', { run_id: runId }) as { run_id: string }).run_id, runId, 'the owner still reads every run');
+  assert.equal((await registry.call('routine_run', { run_id: runId }) as { run_id: string }).run_id, runId, 'the owner still reads every run');
 });
 
 test('reports are ordered by when they reported, not when they were scheduled', (t) => {
@@ -258,7 +258,7 @@ test('an agent hands work to a one-off that runs once in its worktree and then t
   let caller: RoutineCaller | null = { sessionId: scheduler, projectId: 'project', workspace: false };
   registerRoutineTools(registry, fixture.routines, () => caller);
 
-  const routine = await registry.call('patterm.routine.schedule_once', { name: 'Check deploy', prompt: 'See whether the deploy finished', in_minutes: 90, worktree_id: worktree }) as RoutineRecord;
+  const routine = await registry.call('routine_schedule_once', { name: 'Check deploy', prompt: 'See whether the deploy finished', in_minutes: 90, worktree_id: worktree }) as RoutineRecord;
   assert.equal(routine.project_id, 'project', 'a project agent schedules into its own project');
   assert.equal(routine.run_at, '2026-10-05T11:30:00.000Z');
   assert.equal(routine.next_run_at, routine.run_at);
@@ -282,17 +282,17 @@ test('an agent hands work to a one-off that runs once in its worktree and then t
   minutes(t, 60 * 24 * 8);
   await settle();
   assert.equal(fixture.launches.length, 1, 'it never runs again');
-  await assert.rejects(registry.call('patterm.routine.update', { routine_id: routine.routine_id, enabled: true }), /in the future/);
+  await assert.rejects(registry.call('routine_update', { routine_id: routine.routine_id, enabled: true }), /in the future/);
 
   // Agents cannot place one-offs elsewhere, in the past, or without end.
-  await assert.rejects(registry.call('patterm.routine.schedule_once', { name: 'x', prompt: 'x', in_minutes: 5, project_id: 'other' }), /their own project/);
-  await assert.rejects(registry.call('patterm.routine.schedule_once', { name: 'x', prompt: 'x', run_at: '2026-01-01T00:00:00Z' }), /in the future/);
-  await assert.rejects(registry.call('patterm.routine.schedule_once', { name: 'x', prompt: 'x' }), /run_at or in_minutes/);
-  await assert.rejects(registry.call('patterm.routine.schedule_once', { name: 'x', prompt: 'x', in_minutes: 5, worktree_id: 'missing' }), /unknown worktree/);
+  await assert.rejects(registry.call('routine_schedule_once', { name: 'x', prompt: 'x', in_minutes: 5, project_id: 'other' }), /their own project/);
+  await assert.rejects(registry.call('routine_schedule_once', { name: 'x', prompt: 'x', run_at: '2026-01-01T00:00:00Z' }), /in the future/);
+  await assert.rejects(registry.call('routine_schedule_once', { name: 'x', prompt: 'x' }), /run_at or in_minutes/);
+  await assert.rejects(registry.call('routine_schedule_once', { name: 'x', prompt: 'x', in_minutes: 5, worktree_id: 'missing' }), /unknown worktree/);
   for (let index = 0; index < MAX_PENDING_ONCE; index += 1) {
-    await registry.call('patterm.routine.schedule_once', { name: `Follow-up ${index}`, prompt: 'x', in_minutes: 60 });
+    await registry.call('routine_schedule_once', { name: `Follow-up ${index}`, prompt: 'x', in_minutes: 60 });
   }
-  await assert.rejects(registry.call('patterm.routine.schedule_once', { name: 'One more', prompt: 'x', in_minutes: 60 }), /already has 20/);
+  await assert.rejects(registry.call('routine_schedule_once', { name: 'One more', prompt: 'x', in_minutes: 60 }), /already has 20/);
   caller = null;
   fixture.addProject('other');
   const elsewhere = fixture.routines.create({ name: 'Elsewhere', project_id: 'other', run_at: '2026-10-20T09:00:00Z', days: [] }, { type: 'user', id: null });

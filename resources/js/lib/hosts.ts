@@ -51,16 +51,16 @@ export interface PairingCode { code: string; expires_at: string }
 
 const call = <T>(tool: string, args: Record<string, unknown> = {}) => window.patterm.call(tool, args) as Promise<T>;
 
-export const readHosts = () => call<HostOverview>('patterm.hosts.get');
-export const renameHost = (name: string) => call<HostOverview>('patterm.hosts.rename', { name });
-export const pairHost = (url: string, code: string) => call<HostOverview>('patterm.hosts.pair', { url, code });
-export const unpairHost = (hostId: string) => call<HostOverview>('patterm.hosts.unpair', { host_id: hostId });
-export const setShowAgents = (hostId: string, show: boolean) => call<HostOverview>('patterm.hosts.show_agents', { host_id: hostId, show_agents: show });
-export const createPairingCode = () => call<PairingCode>('patterm.hosts.code.create');
-export const cancelPairingCode = () => call<{ ok: true }>('patterm.hosts.code.cancel');
-export const readHostProjects = (hostId: string) => call<HostProjects>('patterm.hosts.projects', { host_id: hostId });
-export const linkProject = (hostId: string, projectId: string, remoteProjectId: string) => call<ProjectLink[]>('patterm.hosts.link', { host_id: hostId, project_id: projectId, remote_project_id: remoteProjectId });
-export const unlinkProject = (hostId: string, projectId: string) => call<ProjectLink[]>('patterm.hosts.unlink', { host_id: hostId, project_id: projectId });
+export const readHosts = () => call<HostOverview>('hosts_get');
+export const renameHost = (name: string) => call<HostOverview>('hosts_rename', { name });
+export const pairHost = (url: string, code: string) => call<HostOverview>('hosts_pair', { url, code });
+export const unpairHost = (hostId: string) => call<HostOverview>('hosts_unpair', { host_id: hostId });
+export const setShowAgents = (hostId: string, show: boolean) => call<HostOverview>('hosts_show_agents', { host_id: hostId, show_agents: show });
+export const createPairingCode = () => call<PairingCode>('hosts_code_create');
+export const cancelPairingCode = () => call<{ ok: true }>('hosts_code_cancel');
+export const readHostProjects = (hostId: string) => call<HostProjects>('hosts_projects', { host_id: hostId });
+export const linkProject = (hostId: string, projectId: string, remoteProjectId: string) => call<ProjectLink[]>('hosts_link', { host_id: hostId, project_id: projectId, remote_project_id: remoteProjectId });
+export const unlinkProject = (hostId: string, projectId: string) => call<ProjectLink[]>('hosts_unlink', { host_id: hostId, project_id: projectId });
 
 // Names an agent or process on a paired host, for labels without room for a
 // separate host marker.

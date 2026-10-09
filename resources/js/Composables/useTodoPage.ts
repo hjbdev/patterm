@@ -24,7 +24,7 @@ export function useTodoPage() {
     const text = title.trim();
     if (!text) return null;
     try {
-      const todo = await contextCall<Todo>('todo.create', projectId.value, { title: text, ...fields });
+      const todo = await contextCall<Todo>('todo_create', projectId.value, { title: text, ...fields });
       await collection.refresh();
       if (openAfter) await open(todo.id);
       return todo;

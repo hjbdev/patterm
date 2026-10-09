@@ -167,20 +167,21 @@ async function main(): Promise<void> {
     await assert.rejects(runCommandPaletteCommand(paletteApplication, { id: 'task:create', context: paletteContext }), /unknown command/);
 
     assert.deepEqual(registry.changedTopics('get_project_status'), [], 'project status reads do not force workbench refreshes');
-    assert.deepEqual(registry.changedTopics('patterm.history.import_status'), [], 'history import status polling is read-only');
+    assert.deepEqual(registry.changedTopics('history_import_status'), [], 'history import status polling is read-only');
     assert.deepEqual(registry.changedTopics('search_conversation_history'), [], 'history search is read-only');
-    assert.deepEqual(registry.changedTopics('patterm.integrated.get'), [], 'integrated transcript polling is read-only');
-    assert.deepEqual(registry.changedTopics('patterm.integrated.history'), [], 'older transcript pages are read-only');
-    assert.deepEqual(registry.changedTopics('patterm.integrated.controls'), [], 'integrated control reads are read-only');
+    assert.deepEqual(registry.changedTopics('integrated_get'), [], 'integrated transcript polling is read-only');
+    assert.deepEqual(registry.changedTopics('integrated_history'), [], 'older transcript pages are read-only');
+    assert.deepEqual(registry.changedTopics('integrated_controls'), [], 'integrated control reads are read-only');
     const publicTools = registry.publicTools();
     const publicNames = publicTools.map(({ name }) => name);
     assert.equal(publicNames.length, 77, 'the catalogue contains only agent-facing tools');
     assert.equal(new Set(publicNames).size, publicNames.length, 'each tool has a unique public name');
-    assert.ok(publicNames.every((name) => !name.startsWith('patterm.')), 'public names have no redundant brand prefix');
-    for (const name of ['spawn_agent', 'get_conversation_output', 'report_to_parent', 'notify_user', 'request_close', 'notification.list', 'timer_fire_when_reported_all', 'search_conversation_history', 'help', 'todo.create', 'reference.attach', 'session.context', 'history.get', 'assistant.overview', 'assistant.focus', 'assistant.focus.set', 'host_read']) {
+    assert.ok(publicNames.every((name) => /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/.test(name)), 'every tool name is snake_case');
+    for (const name of ['spawn_agent', 'get_conversation_output', 'report_to_parent', 'notify_user', 'request_close', 'notification_list', 'timer_fire_when_reported_all', 'search_conversation_history', 'help', 'todo_create', 'reference_attach', 'session_context', 'history_get', 'assistant_overview', 'assistant_focus', 'assistant_focus_set', 'host_read']) {
       assert.ok(publicNames.includes(name), `${name} is advertised directly`);
     }
-    for (const name of ['patterm.call', 'patterm.discover', 'patterm.whoami', 'patterm.help', 'patterm.todo.create', 'start_process', 'get_process_raw_output', 'timer_wait', 'history.search', 'terminal.process.spawn', 'terminal.process.scroll', 'project.status', 'project.list', 'project.create', 'harness.discover', 'harness.models.refresh', 'harness.preset.update', 'history.reset_imports', 'history.delete', 'todo.lease_revoke', 'request_human_attention']) {
+    // Hidden tools stay off the catalogue, and the old dotted spellings are gone.
+    for (const name of ['patterm.call', 'patterm.discover', 'patterm.whoami', 'patterm.help', 'patterm.todo.create', 'todo.create', 'ui.save', 'session.context', 'start_process', 'get_process_raw_output', 'timer_wait', 'history_search', 'terminal_process_spawn', 'terminal_process_scroll', 'project_list', 'project_create', 'harness_discover', 'harness_models_refresh', 'harness_preset_update', 'history_reset_imports', 'history_delete', 'todo_lease_revoke', 'request_human_attention']) {
       assert.ok(!publicNames.includes(name), `${name} is not advertised`);
       await assert.rejects(registry.callPublic(name, {}), /unknown MCP tool/);
     }
@@ -192,9 +193,12 @@ async function main(): Promise<void> {
     }
     assert.ok((registry.helpPublic('help').inputSchema.properties as Record<string, unknown>).tool, 'help advertises its required argument');
     assert.ok((registry.helpPublic('spawn_agent').inputSchema.properties as Record<string, unknown>).preset, 'agent launch advertises preset selection');
-    assert.ok((registry.helpPublic('reference.attach').inputSchema.properties as Record<string, unknown>).target_id, 'project context tools advertise their input');
+    assert.ok((registry.helpPublic('reference_attach').inputSchema.properties as Record<string, unknown>).target_id, 'project context tools advertise their input');
     assert.deepEqual(registry.helpPublic('timer_set').inputSchema.required, ['seconds'], 'elapsed timers do not require a custom message');
-    assert.throws(() => registry.helpPublic('patterm.integrated.send'), /unknown MCP tool/);
+    assert.throws(() => registry.helpPublic('integrated_send'), /unknown MCP tool/);
+    assert.equal(registry.helpPublic('ui_save').name, 'ui_save', 'help takes the name every harness shows');
+    assert.throws(() => registry.helpPublic('ui.save'), /unknown MCP tool/);
+    assert.throws(() => registry.register({ name: 'todo.archive', namespace: 'todo', description: 'x', inputSchema: { type: 'object' } }, () => null), /must be snake_case/);
 
     // Messages sent from the composer, even mid-turn, withdraw a close request.
     const clearedCloseRequests: string[] = [];
@@ -207,9 +211,9 @@ async function main(): Promise<void> {
       integrated: { prompt: async () => ({}), updateQueued: async () => ({}) } as unknown as Parameters<typeof createTestMcpRegistry>[0]['integrated'],
       closeRequests: { request: async () => ({ status: 'requested' as const }), answer: async () => ({ kept_open: true as const }), clear: (processId: string) => { clearedCloseRequests.push(processId); return true; } }
     });
-    await composerRegistry.call('patterm.integrated.send', { process_id: 'proc_composer', text: 'One more thing' });
-    await composerRegistry.call('patterm.integrated.queue.update', { process_id: 'proc_composer', message_id: 'message_1', action: 'steer' });
-    await composerRegistry.call('patterm.integrated.queue.update', { process_id: 'proc_composer', message_id: 'message_2', action: 'cancel' });
+    await composerRegistry.call('integrated_send', { process_id: 'proc_composer', text: 'One more thing' });
+    await composerRegistry.call('integrated_queue_update', { process_id: 'proc_composer', message_id: 'message_1', action: 'steer' });
+    await composerRegistry.call('integrated_queue_update', { process_id: 'proc_composer', message_id: 'message_2', action: 'cancel' });
     assert.deepEqual(clearedCloseRequests, ['proc_composer', 'proc_composer'], 'sending and steering withdraw a close request; cancelling does not');
 
     const mcpNow = new Date().toISOString();
@@ -271,27 +275,27 @@ async function main(): Promise<void> {
     };
     assert.equal(scopedProcessesByNamespace.current_process_id, 'proc_identity', 'direct MCP calls preserve caller identity');
     await assert.rejects(
-      registry.call('patterm.process.create', { project_id: projectSnapshot.project.id, worktree_id: 'worktree_other' }, identityContext),
+      registry.call('process_create', { project_id: projectSnapshot.project.id, worktree_id: 'worktree_other' }, identityContext),
       /outside the current caller scope/,
       'process spawn rejects foreign worktree cwd'
     );
-    await assert.rejects(registry.call('patterm.diff.current', { worktree_id: 'worktree_other' }, identityContext), /outside the current caller scope/, 'diffs reject foreign worktrees');
-    await assert.rejects(registry.call('patterm.diff.file', { worktree_id: 'worktree_other', path: 'README.md' }, identityContext), /outside the current caller scope/, 'diff files reject foreign worktrees');
-    await assert.rejects(registry.call('patterm.diff.current', {}), /worktree_id is required for owner requests/);
-    assert.ok(publicNames.includes('session.rename'));
-    await assert.rejects(registry.call('patterm.session.rename', { name: 'Unauthenticated' }), /authenticated/);
-    await assert.rejects(registry.call('patterm.session.rename', { name: 'Unknown' }, { identity: 'invalid' }));
-    await assert.rejects(registry.call('patterm.session.rename', { name: '   ' }, identityContext));
-    await assert.rejects(registry.call('patterm.session.rename', { name: 'x'.repeat(501) }, identityContext));
-    await assert.rejects(registry.call('patterm.session.rename', { name: 'Other', process_id: 'proc_other' }, identityContext));
+    await assert.rejects(registry.call('diff_current', { worktree_id: 'worktree_other' }, identityContext), /outside the current caller scope/, 'diffs reject foreign worktrees');
+    await assert.rejects(registry.call('diff_file', { worktree_id: 'worktree_other', path: 'README.md' }, identityContext), /outside the current caller scope/, 'diff files reject foreign worktrees');
+    await assert.rejects(registry.call('diff_current', {}), /worktree_id is required for owner requests/);
+    assert.ok(publicNames.includes('session_rename'));
+    await assert.rejects(registry.call('session_rename', { name: 'Unauthenticated' }), /authenticated/);
+    await assert.rejects(registry.call('session_rename', { name: 'Unknown' }, { identity: 'invalid' }));
+    await assert.rejects(registry.call('session_rename', { name: '   ' }, identityContext));
+    await assert.rejects(registry.call('session_rename', { name: 'x'.repeat(501) }, identityContext));
+    await assert.rejects(registry.call('session_rename', { name: 'Other', process_id: 'proc_other' }, identityContext));
     for (const name of ['Investigating titles', 'Implementing titles']) {
-      assert.deepEqual(await registry.callPublic('session.rename', { name: ` ${name} ` }, identityContext), { renamed: true });
+      assert.deepEqual(await registry.callPublic('session_rename', { name: ` ${name} ` }, identityContext), { renamed: true });
       assert.equal(repo.snapshot().projects[0]?.projectSessions.find((session) => session.processId === 'proc_identity')?.displayName, name);
       assert.equal((database.connection.prepare("select name from processes where id = 'proc_identity'").get() as { name: string }).name, name);
     }
     await registry.call('rename_process', { process_id: 'proc_identity', name: 'renamed orchestrator' });
     const discarded = { renamed: false, reason: 'user_override' };
-    assert.deepEqual(await registry.call('patterm.session.rename', { name: 'Agent replacement' }, identityContext), discarded);
+    assert.deepEqual(await registry.call('session_rename', { name: 'Agent replacement' }, identityContext), discarded);
     assert.deepEqual(await registry.call('rename_process', { process_id: 'proc_identity', name: 'Legacy replacement' }, identityContext), discarded);
     assert.equal((database.connection.prepare("select title_set_by_user from sessions where id = 'session_identity'").get() as { title_set_by_user: number }).title_set_by_user, 1);
     assert.equal((database.connection.prepare("select name from processes where id = 'proc_identity'").get() as { name: string }).name, 'renamed orchestrator');
@@ -687,12 +691,12 @@ async function main(): Promise<void> {
     const catalog = (await callOverSocket(socketPath, { id: 0, version: 2, op: 'catalog' })) as { result: Array<{ name: string }> };
     assert.deepEqual(catalog.result.map(({ name }) => name), publicNames, 'the shim receives the canonical public catalogue');
     const tuiCatalog = (await callOverSocket(socketPath, { id: 1, version: 2, op: 'catalog', identity: 'identity_test' })) as { result: Array<{ name: string }> };
-    assert.deepEqual(tuiCatalog.result.map(({ name }) => name), publicNames.filter((name) => name !== 'ui.save'), 'TUI agents are not offered figures');
-    const tuiFigure = (await callOverSocket(socketPath, { id: 2, version: 2, tool: 'ui.save', args: {}, identity: 'identity_test' })) as { error: string };
+    assert.deepEqual(tuiCatalog.result.map(({ name }) => name), publicNames.filter((name) => name !== 'ui_save'), 'TUI agents are not offered figures');
+    const tuiFigure = (await callOverSocket(socketPath, { id: 2, version: 2, tool: 'ui_save', args: {}, identity: 'identity_test' })) as { error: string };
     assert.match(tuiFigure.error, /only in Integrated mode/, 'TUI agents cannot save figures');
     database.connection.prepare(`update sessions set interface_mode = 'integrated' where mcp_identity = 'identity_test'`).run();
     const integratedCatalog = (await callOverSocket(socketPath, { id: 3, version: 2, op: 'catalog', identity: 'identity_test' })) as { result: Array<{ name: string }> };
-    assert.ok(integratedCatalog.result.some(({ name }) => name === 'ui.save'), 'Integrated agents are offered figures');
+    assert.ok(integratedCatalog.result.some(({ name }) => name === 'ui_save'), 'Integrated agents are offered figures');
     database.connection.prepare(`update sessions set interface_mode = 'tui' where mcp_identity = 'identity_test'`).run();
     const directContext = (await callOverSocket(socketPath, { id: 4, version: 2, tool: 'get_project_status', args: {}, identity: 'identity_test' })) as {
       result: { current_process_id: string };
@@ -710,10 +714,10 @@ async function main(): Promise<void> {
     try {
       await client.connect(new StdioClientTransport({ command: process.execPath, args: [shimPath], env: { PATTERM_MCP_SOCKET: socketPath, PATTERM_MCP_IDENTITY: 'identity_test' }, stderr: 'pipe' }));
       const listed = await client.listTools();
-      assert.deepEqual(listed.tools.map(({ name }) => name), publicNames.filter((name) => name !== 'ui.save'), 'the catalogue a TUI agent lists is valid over modern MCP tools/list');
+      assert.deepEqual(listed.tools.map(({ name }) => name), publicNames.filter((name) => name !== 'ui_save'), 'the catalogue a TUI agent lists is valid over modern MCP tools/list');
       assert.match(JSON.stringify(await client.callTool({ name: 'list_processes', arguments: {} })), /proc_identity/, 'new clients call the backend directly with caller identity');
       assert.equal((await client.callTool({ name: 'spawn_agent', arguments: {} })).isError, true, 'agent launch validates its cross-field requirement before forwarding');
-      assert.match(JSON.stringify(await client.callTool({ name: 'help', arguments: { tool: 'todo.create' } })), /title/, 'help reads the public catalogue');
+      assert.match(JSON.stringify(await client.callTool({ name: 'help', arguments: { tool: 'todo_create' } })), /title/, 'help reads the public catalogue');
     } finally {
       await client.close();
     }

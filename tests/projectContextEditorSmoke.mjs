@@ -62,9 +62,9 @@ for (const kind of ['todos', 'scratchpads']) {
     let saved = kind === 'todos' ? todo() : note();
     const pending = [];
     const call = async (name, project, args) => {
-      if (name.endsWith('.get')) return { ...saved };
-      if (name.endsWith('.list')) return { items: [], total: 0 };
-      if (name.endsWith('.update')) return new Promise((resolve, reject) => pending.push({ args, resolve, reject }));
+      if (name.endsWith('_get')) return { ...saved };
+      if (name.endsWith('_list')) return { items: [], total: 0 };
+      if (name.endsWith('_update')) return new Promise((resolve, reject) => pending.push({ args, resolve, reject }));
       throw new Error(`Unexpected call ${name}`);
     };
     const a = mount(t, call, storage(), kind);
@@ -95,8 +95,8 @@ for (const kind of ['todos', 'scratchpads']) {
     let finishRefresh;
     let gets = 0;
     const call = async (name) => {
-      if (name.endsWith('.get')) return ++gets === 1 ? { ...saved } : new Promise(resolve => { finishRefresh = () => resolve({ ...saved }); });
-      if (name.endsWith('.list')) return { items: [], total: 0 };
+      if (name.endsWith('_get')) return ++gets === 1 ? { ...saved } : new Promise(resolve => { finishRefresh = () => resolve({ ...saved }); });
+      if (name.endsWith('_list')) return { items: [], total: 0 };
       throw new Error(`Unexpected call ${name}`);
     };
     const tab = mount(t, call, storage(), kind);
@@ -115,9 +115,9 @@ for (const kind of ['todos', 'scratchpads']) {
   test(`${kind}: leaving a record saves its pending edits and clears the draft`, async t => {
     const updates = [];
     const call = async (name, project, args) => {
-      if (name.endsWith('.get')) return kind === 'todos' ? todo(args.todo_id) : note(args.scratchpad_id);
-      if (name.endsWith('.list')) return { items: [], total: 0 };
-      if (name.endsWith('.update')) {
+      if (name.endsWith('_get')) return kind === 'todos' ? todo(args.todo_id) : note(args.scratchpad_id);
+      if (name.endsWith('_list')) return { items: [], total: 0 };
+      if (name.endsWith('_update')) {
         updates.push(args);
         return { ...(kind === 'todos' ? todo() : note()), ...args, revision: 2 };
       }
@@ -146,9 +146,9 @@ for (const kind of ['todos', 'scratchpads']) {
   test(`${kind}: a closed editor does not retry its failed save`, async t => {
     const pending = [];
     const call = async (name, project, args) => {
-      if (name.endsWith('.get')) return fresh(args[idKey]);
-      if (name.endsWith('.list')) return { items: [], total: 0 };
-      if (name.endsWith('.update')) return new Promise((resolve, reject) => pending.push({ resolve, reject }));
+      if (name.endsWith('_get')) return fresh(args[idKey]);
+      if (name.endsWith('_list')) return { items: [], total: 0 };
+      if (name.endsWith('_update')) return new Promise((resolve, reject) => pending.push({ resolve, reject }));
       throw new Error(`Unexpected call ${name}`);
     };
     const tabStorage = storage();
@@ -170,9 +170,9 @@ for (const kind of ['todos', 'scratchpads']) {
       let finish;
       let saved = fresh();
       const call = async (name, project, args) => {
-        if (name.endsWith('.get')) return args[idKey] === 'a' ? { ...saved } : fresh(args[idKey]);
-        if (name.endsWith('.list')) return { items: [], total: 0 };
-        if (name.endsWith('.update')) return new Promise(resolve => { finish = () => { saved = { ...saved, ...args, revision: 2 }; resolve({ ...saved }); }; });
+        if (name.endsWith('_get')) return args[idKey] === 'a' ? { ...saved } : fresh(args[idKey]);
+        if (name.endsWith('_list')) return { items: [], total: 0 };
+        if (name.endsWith('_update')) return new Promise(resolve => { finish = () => { saved = { ...saved, ...args, revision: 2 }; resolve({ ...saved }); }; });
         throw new Error(`Unexpected call ${name}`);
       };
       const tabStorage = storage();
@@ -206,9 +206,9 @@ for (const operation of ['assign', 'dependency_add', 'lease_revoke']) {
       let finishSave;
       const mutations = [];
       const call = async (name, project, args) => {
-        if (name === 'todo.get') return todo(args.todo_id);
-        if (name === 'todo.list') return { items: [], total: 0 };
-        if (name === 'todo.update') return new Promise(resolve => { finishSave = () => resolve({ ...todo(), ...args, revision: 2 }); });
+        if (name === 'todo_get') return todo(args.todo_id);
+        if (name === 'todo_list') return { items: [], total: 0 };
+        if (name === 'todo_update') return new Promise(resolve => { finishSave = () => resolve({ ...todo(), ...args, revision: 2 }); });
         mutations.push({ name, project, args });
         return {};
       };
@@ -231,9 +231,9 @@ for (const operation of ['assign', 'dependency_add', 'lease_revoke']) {
 test('assignment still runs on the original todo when navigation does not change', async t => {
   const mutations = [];
   const call = async (name, project, args) => {
-    if (name === 'todo.get') return todo(args.todo_id);
-    if (name === 'todo.list') return { items: [], total: 0 };
-    if (name === 'todo.update') return { ...todo(), ...args, revision: 2 };
+    if (name === 'todo_get') return todo(args.todo_id);
+    if (name === 'todo_list') return { items: [], total: 0 };
+    if (name === 'todo_update') return { ...todo(), ...args, revision: 2 };
     mutations.push({ name, project, args });
     return {};
   };
@@ -241,5 +241,5 @@ test('assignment still runs on the original todo when navigation does not change
   await flush();
   tab.editor.body.value = 'edited a';
   await tab.editor.relation('assign', { assignee_id: 'user' });
-  assert.deepEqual(mutations, [{ name: 'todo.assign', project: 'p', args: { todo_id: 'a', assignee_id: 'user' } }]);
+  assert.deepEqual(mutations, [{ name: 'todo_assign', project: 'p', args: { todo_id: 'a', assignee_id: 'user' } }]);
 });

@@ -104,10 +104,10 @@ async function main() {
   // Launch choices, resuming, and timers go through the same tools as the rest of the UI.
   calls.length = 0;
   await runCommandPaletteCommand(recording, { id: 'spawn:agent:codex', context: integratedContext, input: { preset: 'fast', worktree_id: 'w', interface_mode: 'tui', initial_prompt: ' Fix the tests ', name: 'ignored', model: 'ignored' } });
-  assert.deepEqual(calls, [{ name: 'patterm.harness.launch', args: { harness: 'codex', project_id: 'p', preset: 'fast', worktree_id: 'w', initial_prompt: 'Fix the tests', interface_mode: 'tui' } }]);
+  assert.deepEqual(calls, [{ name: 'harness_launch', args: { harness: 'codex', project_id: 'p', preset: 'fast', worktree_id: 'w', initial_prompt: 'Fix the tests', interface_mode: 'tui' } }]);
   calls.length = 0;
   await runCommandPaletteCommand(recording, { id: 'history:resume:conversation_1', context: integratedContext, input: { interface_mode: 'integrated', replace_process_id: 'root_process' } });
-  assert.deepEqual(calls, [{ name: 'patterm.history.resume', args: { conversation_id: 'conversation_1', project_id: 'p', interface_mode: 'integrated', replace_process_id: 'root_process' } }]);
+  assert.deepEqual(calls, [{ name: 'history_resume', args: { conversation_id: 'conversation_1', project_id: 'p', interface_mode: 'integrated', replace_process_id: 'root_process' } }]);
   calls.length = 0;
   for (const action of ['cancel', 'pause', 'resume']) await runCommandPaletteCommand(recording, { id: `timer:${action}:timer_1`, context: integratedContext });
   assert.deepEqual(calls.map(call => call.name), ['timer_cancel', 'timer_pause', 'timer_resume']);
@@ -121,7 +121,7 @@ async function main() {
   const withAssistant = {
     ...integratedApplication,
     database: { connection: { prepare: () => ({ get: () => ({ activity: assistantActivity }), all: () => [] }) } },
-    mcp: { call: async (name: string) => name === 'patterm.assistant.get' ? { process_id: 'assistant_1' } : {} }
+    mcp: { call: async (name: string) => name === 'assistant_get' ? { process_id: 'assistant_1' } : {} }
   } as unknown as typeof application;
   const restartRow = () => listCommandPaletteCommands(withAssistant, integratedContext).then(result => result.commands.find(item => item.id === 'assistant:restart'));
   assert.deepEqual(await restartRow(), { id: 'assistant:restart', label: 'Restart assistant', hint: 'Resume its conversation in a new Codex process', group: 'app', kind: 'renderer', result: { rendererAction: 'restartAssistant', processId: 'assistant_1' } });
@@ -207,7 +207,7 @@ async function main() {
   for (const kind of ['todo', 'scratchpad'] as const) {
     const calls: unknown[] = [];
     const target = await createPaletteDocument(kind, 'p', async (name, args) => { calls.push({ name, args }); return { id: 'created' }; });
-    assert.deepEqual(calls, [{ name: `patterm.${kind}.create`, args: { project_id: 'p', title: `Untitled ${kind}` } }]);
+    assert.deepEqual(calls, [{ name: `${kind}_create`, args: { project_id: 'p', title: `Untitled ${kind}` } }]);
     assert.deepEqual(target, { projectId: 'p', tab: `${kind}s`, recordId: 'created' });
   }
   await assert.rejects(createPaletteDocument('todo', null, async () => { throw new Error('Must not call'); }), /Select a project/);

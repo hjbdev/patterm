@@ -65,7 +65,7 @@ export function onAssistantRealtime(listener: (event: AssistantRealtimeEvent) =>
 
 export async function refreshAssistant(): Promise<void> {
   try {
-    const state = await window.patterm.call('patterm.assistant.get', {});
+    const state = await window.patterm.call('assistant_get', {});
     if (isState(state)) apply(state);
   } catch (error) {
     assistant.error = message(error);
@@ -76,7 +76,7 @@ export async function refreshAssistant(): Promise<void> {
 export async function ensureAssistant(): Promise<string | null> {
   assistant.error = '';
   try {
-    const state = await window.patterm.call('patterm.assistant.ensure', {});
+    const state = await window.patterm.call('assistant_ensure', {});
     if (isState(state)) apply(state);
   } catch (error) {
     assistant.error = message(error);
@@ -88,11 +88,11 @@ export async function ensureAssistant(): Promise<string | null> {
 // it a message, this needs control of its conversation. Throws, so the caller
 // can say what failed.
 export async function restartAssistant(processId: string): Promise<void> {
-  return replaceAssistant(processId, 'patterm.assistant.restart');
+  return replaceAssistant(processId, 'assistant_restart');
 }
 
 export async function newAssistantSession(processId: string): Promise<void> {
-  return replaceAssistant(processId, 'patterm.assistant.new');
+  return replaceAssistant(processId, 'assistant_new');
 }
 
 async function replaceAssistant(processId: string, tool: string): Promise<void> {
@@ -117,7 +117,7 @@ async function replaceAssistant(processId: string, tool: string): Promise<void> 
 export async function setAssistantFocus(enabled: boolean): Promise<void> {
   assistant.error = '';
   try {
-    const state = await window.patterm.call('patterm.assistant.focus.set', { enabled });
+    const state = await window.patterm.call('assistant_set_focus_mode', { enabled });
     if (isState(state)) apply(state);
   } catch (error) {
     assistant.error = message(error);
@@ -143,9 +143,9 @@ export interface AssistantSettings {
 }
 
 export async function loadAssistantSettings(): Promise<{ settings: AssistantSettings; voices: string[] }> {
-  return await window.patterm.call('patterm.settings.assistant.get', {}) as { settings: AssistantSettings; voices: string[] };
+  return await window.patterm.call('settings_assistant_get', {}) as { settings: AssistantSettings; voices: string[] };
 }
 
 export async function saveAssistantSettings(settings: AssistantSettings): Promise<AssistantSettings> {
-  return await window.patterm.call('patterm.settings.assistant.update', settings) as AssistantSettings;
+  return await window.patterm.call('settings_assistant_update', settings) as AssistantSettings;
 }

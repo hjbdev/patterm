@@ -122,7 +122,7 @@ export function usePaletteSources(options: { open: Ref<boolean>; projectId: Ref<
   async function loadLaunchSettings(): Promise<void> {
     const [presets, interfaceSetting] = await Promise.allSettled([
       window.patterm.harnessPresets() as Promise<PresetSettings | null>,
-      window.patterm.call('patterm.settings.agent_interface.get', {}) as Promise<{ interface_mode?: unknown }>
+      window.patterm.call('settings_agent_interface_get', {}) as Promise<{ interface_mode?: unknown }>
     ]);
     if (presets.status === 'fulfilled' && presets.value) presetSettings.value = presets.value;
     if (interfaceSetting.status === 'fulfilled') {
@@ -140,7 +140,7 @@ export function usePaletteSources(options: { open: Ref<boolean>; projectId: Ref<
       return;
     }
     try {
-      const result = await window.patterm.call('patterm.history.list', { project_id: projectId, limit: RECENT_CONVERSATIONS }) as { conversations?: ConversationRecord[] };
+      const result = await window.patterm.call('history_list', { project_id: projectId, limit: RECENT_CONVERSATIONS }) as { conversations?: ConversationRecord[] };
       if (token === conversationToken) conversations.value = result.conversations ?? [];
     } catch {
       // The palette still works without recent conversations.
@@ -151,7 +151,7 @@ export function usePaletteSources(options: { open: Ref<boolean>; projectId: Ref<
   async function search(text: string): Promise<void> {
     const token = ++searchToken;
     try {
-      const result = await window.patterm.call('patterm.search', { query: text, limit: SEARCH_LIMIT }) as { results?: WorkspaceSearchResult[] };
+      const result = await window.patterm.call('search', { query: text, limit: SEARCH_LIMIT }) as { results?: WorkspaceSearchResult[] };
       if (token === searchToken) searchResults.value = result.results ?? [];
     } catch {
       if (token === searchToken) searchResults.value = [];

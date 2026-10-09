@@ -8,7 +8,7 @@ import { computed, inject } from 'vue';
 import DrawnUiCard from './DrawnUiCard.vue';
 import { drawnUiFiguresKey } from '../../lib/drawnUi';
 
-// A [patterm_figure:<id>] token in a reply, drawn from the ui.save call
+// A [patterm_figure:<id>] token in a reply, drawn from the ui_save call
 // that defined it earlier in the same conversation.
 const props = defineProps<{ figureId: string; text: string }>();
 const figures = inject(drawnUiFiguresKey, null);

@@ -85,7 +85,7 @@ async function reload(): Promise<void> {
   error.value = '';
   try {
     if (text) {
-      const result = await window.patterm.call('patterm.history.search', { query: text, project_id: props.projectId, provider: props.provider, resumable: true, limit: SEARCH_LIMIT }) as { conversations?: ConversationResult[] };
+      const result = await window.patterm.call('history_search', { query: text, project_id: props.projectId, provider: props.provider, resumable: true, limit: SEARCH_LIMIT }) as { conversations?: ConversationResult[] };
       if (token !== loadToken) return;
       results.value = result.conversations ?? [];
       hasMore.value = false;
@@ -122,7 +122,7 @@ async function loadMore(): Promise<void> {
 }
 
 async function listPage(offset: number): Promise<ConversationResult[]> {
-  const result = await window.patterm.call('patterm.history.list', { project_id: props.projectId, provider: props.provider, resumable: true, limit: PAGE_SIZE, offset }) as { conversations?: ConversationResult[] };
+  const result = await window.patterm.call('history_list', { project_id: props.projectId, provider: props.provider, resumable: true, limit: PAGE_SIZE, offset }) as { conversations?: ConversationResult[] };
   return result.conversations ?? [];
 }
 
@@ -153,7 +153,7 @@ async function resume(conversation: ConversationRecord | undefined): Promise<voi
   busy.value = true;
   error.value = '';
   try {
-    const result = await window.patterm.call('patterm.history.resume', {
+    const result = await window.patterm.call('history_resume', {
       conversation_id: conversation.id,
       project_id: props.projectId,
       interface_mode: 'integrated',

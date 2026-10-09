@@ -254,24 +254,24 @@ async function main(): Promise<void> {
     };
     agent('worktree_agent', tree.id);
     agent('linking_agent', null);
-    const agentDiff = (await registry.callPublic('diff.current', {}, { identity: 'worktree_agent' })) as DiffSummary;
+    const agentDiff = (await registry.callPublic('diff_current', {}, { identity: 'worktree_agent' })) as DiffSummary;
     assert.equal(agentDiff.worktree.id, tree.id, 'agents default to their own worktree');
-    assert.equal(((await registry.callPublic('diff.file', { path: 'README.md' }, { identity: 'worktree_agent' })) as DiffFileContents).newContents, 'hello\nworld\n');
-    await assert.rejects(registry.callPublic('diff.current', {}, { identity: 'linking_agent' }), /no worktree/);
-    await registry.callPublic('worktree.attach', { worktree_id: mainCheckout.id }, { identity: 'linking_agent' });
-    await registry.callPublic('worktree.attach', { worktree_id: empty.id }, { identity: 'linking_agent' });
-    assert.equal(((await registry.callPublic('diff.current', {}, { identity: 'linking_agent' })) as DiffSummary).worktree.id, mainCheckout.id, 'without an own worktree, agents default to their first link');
-    const ownerDiff = (await registry.call('patterm.diff.current', { worktree_id: tree.id, scope: 'uncommitted' })) as DiffSummary;
+    assert.equal(((await registry.callPublic('diff_file', { path: 'README.md' }, { identity: 'worktree_agent' })) as DiffFileContents).newContents, 'hello\nworld\n');
+    await assert.rejects(registry.callPublic('diff_current', {}, { identity: 'linking_agent' }), /no worktree/);
+    await registry.callPublic('worktree_attach', { worktree_id: mainCheckout.id }, { identity: 'linking_agent' });
+    await registry.callPublic('worktree_attach', { worktree_id: empty.id }, { identity: 'linking_agent' });
+    assert.equal(((await registry.callPublic('diff_current', {}, { identity: 'linking_agent' })) as DiffSummary).worktree.id, mainCheckout.id, 'without an own worktree, agents default to their first link');
+    const ownerDiff = (await registry.call('diff_current', { worktree_id: tree.id, scope: 'uncommitted' })) as DiffSummary;
     assert.equal(ownerDiff.scope, 'uncommitted');
-    await assert.rejects(registry.call('patterm.diff.current', { worktree_id: tree.id, scope: 'all' }));
-    await assert.rejects(registry.call('patterm.diff.file', { worktree_id: tree.id, path: '/etc/passwd' }), /relative/);
-    for (const name of ['patterm.diff.current', 'patterm.diff.file']) {
+    await assert.rejects(registry.call('diff_current', { worktree_id: tree.id, scope: 'all' }));
+    await assert.rejects(registry.call('diff_file', { worktree_id: tree.id, path: '/etc/passwd' }), /relative/);
+    for (const name of ['diff_current', 'diff_file']) {
       assert.deepEqual(registry.changedTopics(name), [], `${name} polling does not refresh the workbench`);
     }
     const publicNames = registry.publicTools().map(({ name }) => name);
     for (const removed of ['diff.snapshot', 'diff.list', 'diff.get']) {
       assert.ok(!publicNames.includes(removed), `${removed} is removed`);
-      await assert.rejects(registry.call(`patterm.${removed}`, {}), /unknown MCP tool/);
+      await assert.rejects(registry.call(`${removed}`, {}), /unknown MCP tool/);
     }
 
     // eslint-disable-next-line no-console

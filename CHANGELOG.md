@@ -18,7 +18,7 @@ in the archived pre-release repository.
   importance slow forgetting by different amounts; older notes can be
   compressed repeatedly. Native conversation compaction stays in Codex.
 - Agents in Integrated mode can put figures in their replies. The new
-  `ui.save` tool takes a claim and a figure: a chart (bar, line, area, point,
+  `ui_save` tool takes a claim and a figure: a chart (bar, line, area, point,
   interval or cell, with reference lines, bands, events and regions), a table,
   a diagram (flow, sequence or nested boxes, laid out by Patterm, with
   optional Back/Next steps), stats, steps, a choice, or a screenshot from the
@@ -33,7 +33,7 @@ in the archived pre-release repository.
   from the window in control, and stays answered when the conversation
   reloads. Figures can show their source and never run agent code. Bad input
   is rejected with the exact path to fix. Charts use TanStack Charts, loaded
-  with the first figure. Only Integrated agents are offered `ui.save`.
+  with the first figure. Only Integrated agents are offered `ui_save`.
   Settings › Figures turns it off and shows example figures.
 - An Electron desktop app and a Linux browser service that host Claude Code,
   Codex, opencode, and Amp through PTYs, keeping each CLI's own permissions,
@@ -51,6 +51,10 @@ in the archived pre-release repository.
 
 ### Changed
 
+- Every Patterm tool name is now snake_case, such as `todo_list`, `ui_save`
+  and `session_context`, so agents see the same name in every harness and can
+  pass it to `help`. The dotted names, such as `todo.list`, are gone. Paired
+  hosts must run the same version to read each other.
 - Code blocks and diffs highlight a fixed set of common languages; other
   languages show as plain text. Patterm no longer bundles Shiki's GPL-3.0
   grammars and theme.

@@ -357,8 +357,8 @@ async function main(): Promise<void> {
     assert.match(projectContext, /never to satisfy host-internal planning\/review requirements/, 'project-level claude is told not to use Patterm delegation for host workflows');
     assert.match(projectContext, /report_to_parent/, 'project-level claude receives child completion report guidance');
     assert.match(projectContext, /send_message the child that already reported instead of spawning a replacement/, 'project-level claude reuses reported children for follow-ups');
-    assert.match(projectContext, /reference\.attach its URL to your session/, 'project-level claude links PRs and issues to its session');
-    assert.match(projectContext, /Link every git worktree you work in to your session \(at most 10\): worktree\.create and worktree\.link do this automatically; otherwise call worktree\.attach/, 'project-level claude links its worktrees to its session');
+    assert.match(projectContext, /reference_attach its URL to your session/, 'project-level claude links PRs and issues to its session');
+    assert.match(projectContext, /Link every git worktree you work in to your session \(at most 10\): worktree_create and worktree_link do this automatically; otherwise call worktree_attach/, 'project-level claude links its worktrees to its session');
     assert.match(projectContext, /Do not send a running child status checks, hurry-up messages, or requests to wrap up/, 'project-level claude is told not to nudge running children');
     assert.match(projectContext, /genuinely new task information or to cancel at the user's request/, 'project-level claude receives the allowed messaging exceptions');
     assert.doesNotMatch(projectContext, /Context Task/, 'project-level claude does not receive task records');
@@ -553,7 +553,7 @@ async function main(): Promise<void> {
       /Patterm MCP shim is missing/
     );
 
-    // The registry exposes launch through patterm.harness.launch.
+    // The registry exposes launch through harness_launch.
     const harnessDiscovery = new HarnessDiscoveryService(harnessProviders);
     const registry = createTestMcpRegistry({
       tempDir,
@@ -564,7 +564,7 @@ async function main(): Promise<void> {
       harnessDiscovery,
       harnessLauncher: launcher
     });
-    const viaRegistry = (await registry.call('patterm.harness.launch', {
+    const viaRegistry = (await registry.call('harness_launch', {
       harness: 'claude',
       project_id: projectId
     })) as { session_id: string; pty_process_id: string };
@@ -715,11 +715,11 @@ async function main(): Promise<void> {
       'concurrent resume requests create one PTY'
     );
     await assert.rejects(
-      resumeRegistry.call('patterm.history.resume', { conversation_id: 'conversation_user' }, { identity: parentIdentity.mcp_identity }),
+      resumeRegistry.call('history_resume', { conversation_id: 'conversation_user' }, { identity: parentIdentity.mcp_identity }),
       /agents resume with spawn_agent/,
       'agents cannot start top-level resumes'
     );
-    const userResume = (await resumeRegistry.call('patterm.history.resume', { conversation_id: 'conversation_user', project_id: projectId, interface_mode: 'tui' }, {})) as { process_id: string; replaced_process_id: string | null };
+    const userResume = (await resumeRegistry.call('history_resume', { conversation_id: 'conversation_user', project_id: projectId, interface_mode: 'tui' }, {})) as { process_id: string; replaced_process_id: string | null };
     assert.equal(userResume.replaced_process_id, null);
     assert.deepEqual(database.connection.prepare(`
       select sessions.session_role, sessions.interface_mode, processes.parent_process_id

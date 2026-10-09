@@ -47,9 +47,9 @@ export function useSessionContext(props: { projectId: string; sessionId: string 
     const current = ++generation;
     try {
       const [result, todoPage, notePage] = await Promise.all([
-        contextCall<SessionContext>('session.context', props.projectId, { session_id: props.sessionId, limit: 100 }),
-        contextCall<Page<Todo>>('todo.list', ownerProjectId.value, { limit: 100, query: todoQuery.value }),
-        contextCall<Page<Scratchpad>>('scratchpad.list', ownerProjectId.value, { limit: 100, status: 'active', query: noteQuery.value })
+        contextCall<SessionContext>('session_context', props.projectId, { session_id: props.sessionId, limit: 100 }),
+        contextCall<Page<Todo>>('todo_list', ownerProjectId.value, { limit: 100, query: todoQuery.value }),
+        contextCall<Page<Scratchpad>>('scratchpad_list', ownerProjectId.value, { limit: 100, status: 'active', query: noteQuery.value })
       ]);
       if (generation !== current) return;
       context.value = result;
@@ -84,16 +84,16 @@ export function useSessionContext(props: { projectId: string; sessionId: string 
   const session = () => ({ session_id: props.sessionId });
   const sessionTarget = () => ({ target_type: 'session', target_id: props.sessionId });
   const actions = {
-    linkWorktree: (worktreeId: string) => mutate('worktree.attach', { worktree_id: worktreeId, ...session() }),
-    unlinkWorktree: (worktreeId: string) => mutate('worktree.detach', { worktree_id: worktreeId, ...session() }),
-    assignTodo: (todoId: string) => mutate('todo.assign', { todo_id: todoId, assignee_id: props.sessionId }),
-    unassignTodo: (todoId: string) => mutate('todo.unassign', { todo_id: todoId, assignee_id: props.sessionId }),
-    setTodoStatus: (todo: Todo, status: string) => mutate('todo.update', { todo_id: todo.id, revision: todo.revision, status }),
-    attachScratchpad: (scratchpadId: string) => mutate('scratchpad.attach', { scratchpad_id: scratchpadId, ...session() }),
-    detachScratchpad: (scratchpadId: string) => mutate('scratchpad.detach', { scratchpad_id: scratchpadId, ...session() }),
-    attachLink: (url: string) => url.trim() ? mutate('reference.attach', { ...sessionTarget(), url: url.trim(), provider: 'generic', resource_type: 'generic' }) : Promise.resolve(false),
-    updateLink: (link: Reference, changes: LinkChanges) => mutate('reference.update', { reference_id: link.id, revision: link.revision, ...changes }),
-    detachLink: (linkId: string) => mutate('reference.detach', { ...sessionTarget(), reference_id: linkId })
+    linkWorktree: (worktreeId: string) => mutate('worktree_attach', { worktree_id: worktreeId, ...session() }),
+    unlinkWorktree: (worktreeId: string) => mutate('worktree_detach', { worktree_id: worktreeId, ...session() }),
+    assignTodo: (todoId: string) => mutate('todo_assign', { todo_id: todoId, assignee_id: props.sessionId }),
+    unassignTodo: (todoId: string) => mutate('todo_unassign', { todo_id: todoId, assignee_id: props.sessionId }),
+    setTodoStatus: (todo: Todo, status: string) => mutate('todo_update', { todo_id: todo.id, revision: todo.revision, status }),
+    attachScratchpad: (scratchpadId: string) => mutate('scratchpad_attach', { scratchpad_id: scratchpadId, ...session() }),
+    detachScratchpad: (scratchpadId: string) => mutate('scratchpad_detach', { scratchpad_id: scratchpadId, ...session() }),
+    attachLink: (url: string) => url.trim() ? mutate('reference_attach', { ...sessionTarget(), url: url.trim(), provider: 'generic', resource_type: 'generic' }) : Promise.resolve(false),
+    updateLink: (link: Reference, changes: LinkChanges) => mutate('reference_update', { reference_id: link.id, revision: link.revision, ...changes }),
+    detachLink: (linkId: string) => mutate('reference_detach', { ...sessionTarget(), reference_id: linkId })
   };
 
   watch(() => [props.projectId, props.sessionId], () => {

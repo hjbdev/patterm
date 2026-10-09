@@ -10,19 +10,19 @@ import type { TimelineService } from './TimelineService';
 // through tools that change nothing. Context reads run as the owner within
 // the linked project; the rest run as a caller scoped to it.
 export const REMOTE_CONTEXT_READ_TOOLS = new Set([
-  'patterm.todo.list', 'patterm.todo.get', 'patterm.scratchpad.list', 'patterm.scratchpad.get', 'patterm.reference.list'
+  'todo_list', 'todo_get', 'scratchpad_list', 'scratchpad_get', 'reference_list'
 ]);
 export const REMOTE_READ_TOOLS = new Set([
   'list_processes', 'get_process_status', 'get_project_status', 'get_process_output', 'get_conversation_output',
-  'search_output', 'get_process_ports', 'patterm.worktree.list', 'patterm.diff.current', 'patterm.diff.file',
+  'search_output', 'get_process_ports', 'worktree_list', 'diff_current', 'diff_file',
   ...REMOTE_CONTEXT_READ_TOOLS
 ]);
 
 // Routine tools an agent may call on a paired host. The routine is saved,
 // owned, and run there; starting a run from another host is not allowed.
 export const REMOTE_ROUTINE_TOOLS = new Set([
-  'patterm.routine.list', 'patterm.routine.get', 'patterm.routine.create', 'patterm.routine.schedule_once',
-  'patterm.routine.update', 'patterm.routine.delete', 'patterm.routine.runs', 'patterm.routine.log', 'patterm.routine.run'
+  'routine_list', 'routine_get', 'routine_create', 'routine_schedule_once',
+  'routine_update', 'routine_delete', 'routine_runs', 'routine_log', 'routine_run'
 ]);
 
 const READ_TIMEOUT_MS = 20_000;
@@ -126,7 +126,7 @@ export class CrossHostService {
   // Saves or reads routines on another host, in the project linked with the
   // caller's.
   async routine(projectId: string, hostId: string, tool: string, args: Record<string, unknown>, agent: RoutineAgent): Promise<unknown> {
-    if (!REMOTE_ROUTINE_TOOLS.has(tool)) throw new Error(`${tool.replace(/^patterm\./, '')} cannot run on another host.`);
+    if (!REMOTE_ROUTINE_TOOLS.has(tool)) throw new Error(`${tool} cannot run on another host.`);
     return this.peers.request(hostId, 'agents.routine', { project_id: this.remoteProject(hostId, projectId), tool, arguments: args, agent }, READ_TIMEOUT_MS);
   }
 

@@ -94,7 +94,7 @@ async function browse(): Promise<void> {
 
 async function submit(): Promise<void> {
   await run(async () => {
-    await window.patterm.call(`patterm.worktree.${formMode.value}`, {
+    await window.patterm.call(`worktree_${formMode.value}`, {
       project_id: props.project.project.id,
       ...(formMode.value === 'create' ? { name: name.value.trim() } : {}),
       ...(path.value.trim() ? { worktree_path: path.value.trim() } : {})
@@ -106,7 +106,7 @@ async function submit(): Promise<void> {
 
 async function openShell(worktreeId: string): Promise<void> {
   await run(async () => {
-    const result = await window.patterm.call('patterm.process.create', { project_id: props.project.project.id, worktree_id: worktreeId }) as { pty_process_id?: string };
+    const result = await window.patterm.call('process_create', { project_id: props.project.project.id, worktree_id: worktreeId }) as { pty_process_id?: string };
     await refresh();
     if (result.pty_process_id) emit('selectTerminal', result.pty_process_id);
   });
@@ -114,7 +114,7 @@ async function openShell(worktreeId: string): Promise<void> {
 
 async function unlink(worktreeId: string): Promise<void> {
   await run(async () => {
-    await window.patterm.call('patterm.worktree.abandon', { worktree_id: worktreeId });
+    await window.patterm.call('worktree_abandon', { worktree_id: worktreeId });
     await refresh();
   });
 }

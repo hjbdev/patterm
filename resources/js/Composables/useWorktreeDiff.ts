@@ -31,7 +31,7 @@ export function loadDiffFile(worktreeId: string, scope: DiffScope, baseCommit: s
     fileContents.set(key, cached);
     return cached;
   }
-  const request = window.patterm.call('patterm.diff.file', { worktree_id: worktreeId, path: file.path, scope }) as Promise<WorktreeDiffFileContents>;
+  const request = window.patterm.call('diff_file', { worktree_id: worktreeId, path: file.path, scope }) as Promise<WorktreeDiffFileContents>;
   fileContents.set(key, request);
   request.catch(() => { if (fileContents.get(key) === request) fileContents.delete(key); });
   while (fileContents.size > FILE_CACHE_SIZE) fileContents.delete(fileContents.keys().next().value!);
@@ -120,7 +120,7 @@ export function useWorktreeDiffViewer(worktreeId: Readonly<Ref<string>>) {
     const requestedScope = scope.value;
     loading.value = summary.value === null || summary.value.scope !== requestedScope;
     try {
-      const result = await window.patterm.call('patterm.diff.current', { worktree_id: worktreeId.value, scope: requestedScope }) as WorktreeDiffSummary;
+      const result = await window.patterm.call('diff_current', { worktree_id: worktreeId.value, scope: requestedScope }) as WorktreeDiffSummary;
       if (current !== generation) return;
       error.value = '';
       // Most polls find nothing new; keep the same summary so nothing re-renders.
@@ -228,7 +228,7 @@ export function useWorktreeDiffTotals(worktreeIds: Ref<string[]>) {
     const ids = [...worktreeIds.value];
     const results = await Promise.all(ids.map(async (id): Promise<[string, WorktreeDiffTotalsState]> => {
       try {
-        const result = await window.patterm.call('patterm.diff.current', { worktree_id: id, scope: 'branch' }) as WorktreeDiffSummary;
+        const result = await window.patterm.call('diff_current', { worktree_id: id, scope: 'branch' }) as WorktreeDiffSummary;
         return [id, { totals: result.totals, error: '' }];
       } catch (cause) {
         return [id, { totals: null, error: errorMessage(cause) }];

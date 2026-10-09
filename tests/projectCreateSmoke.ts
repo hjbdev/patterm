@@ -47,7 +47,7 @@ async function main(): Promise<void> {
     fs.writeFileSync(filePath, 'x');
     assert.throws(() => action.execute({ path: filePath, name: '', actor_type: 'user', actor_id: null }), /not a directory/);
 
-    // The registry exposes project creation through patterm.project.create.
+    // The registry exposes project creation through project_create.
     const fakeTerminal = { isAvailable: () => false } as unknown as TerminalService;
     const registry = createTestMcpRegistry({
       tempDir,
@@ -59,7 +59,7 @@ async function main(): Promise<void> {
 
     const otherDir = path.join(tempDir, 'other');
     fs.mkdirSync(otherDir);
-    const viaRegistry = (await registry.call('patterm.project.create', { path: otherDir })) as { project_id: string; name: string };
+    const viaRegistry = (await registry.call('project_create', { path: otherDir })) as { project_id: string; name: string };
     assert.equal(viaRegistry.name, 'other', 'registry create derives the name');
     assert.ok(viaRegistry.project_id.startsWith('project_'));
     assert.deepEqual(
@@ -77,17 +77,17 @@ async function main(): Promise<void> {
     fs.writeFileSync(path.join(repoDir, 'public', 'favicon.ico'), '');
     fs.writeFileSync(path.join(repoDir, 'public', 'icons', 'icon_headshot.svg'), '<svg></svg>');
     fs.writeFileSync(path.join(repoDir, 'node_modules', 'pkg', 'logo.svg'), '<svg></svg>');
-    const { candidates } = (await registry.call('patterm.project.logo_candidates', { project_id: created.project_id })) as { candidates: Array<{ path: string; data_url: string }> };
+    const { candidates } = (await registry.call('project_logo_candidates', { project_id: created.project_id })) as { candidates: Array<{ path: string; data_url: string }> };
     assert.deepEqual(candidates.map((candidate) => candidate.path), [path.join('public', 'icons', 'icon-512.png'), path.join('public', 'favicon.svg')], 'icons before favicons; empty files, glyphs, and dependencies skipped');
     assert.match(candidates[1]!.data_url, /^data:image\/svg\+xml;base64,/);
 
     // Logos are stored as small raster data URLs whose content matches their type.
     const logo = `data:image/png;base64,${png.toString('base64')}`;
-    await registry.call('patterm.project.set_logo', { project_id: created.project_id, logo });
+    await registry.call('project_set_logo', { project_id: created.project_id, logo });
     assert.equal(repo.snapshot().projects[0]?.project.logo, logo, 'snapshot carries the logo');
-    await assert.rejects(registry.call('patterm.project.set_logo', { project_id: created.project_id, logo: 'data:image/svg+xml;base64,PHN2Zz4=' }), /PNG, JPEG, or WebP/);
-    await assert.rejects(registry.call('patterm.project.set_logo', { project_id: created.project_id, logo: 'data:image/jpeg;base64,' + png.toString('base64') }), /does not match/);
-    await registry.call('patterm.project.set_logo', { project_id: created.project_id, logo: null });
+    await assert.rejects(registry.call('project_set_logo', { project_id: created.project_id, logo: 'data:image/svg+xml;base64,PHN2Zz4=' }), /PNG, JPEG, or WebP/);
+    await assert.rejects(registry.call('project_set_logo', { project_id: created.project_id, logo: 'data:image/jpeg;base64,' + png.toString('base64') }), /does not match/);
+    await registry.call('project_set_logo', { project_id: created.project_id, logo: null });
     assert.equal(repo.getProject(created.project_id)?.logo, null, 'logo cleared');
 
     // The browser path picker lists subdirectories, marking repositories.
@@ -116,7 +116,7 @@ async function main(): Promise<void> {
     const narrowed = lister.execute(listDirectoriesInput.parse({ path: bulkRoot, filter: 'DIR500' }));
     assert.deepEqual(narrowed.entries.map((entry) => entry.name), ['dir500'], 'the filter applies before the cap, ignoring case');
     assert.equal(narrowed.truncated, false);
-    const viaTool = (await registry.call('patterm.fs.directories', { path: browseRoot })) as { entries: unknown[] };
+    const viaTool = (await registry.call('fs_directories', { path: browseRoot })) as { entries: unknown[] };
     assert.equal(viaTool.entries.length, 3, 'the registry exposes patterm.fs.directories');
 
     database.dispose();

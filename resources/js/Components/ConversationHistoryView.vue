@@ -238,7 +238,7 @@ async function loadNextConversations(): Promise<void> {
   try {
     const responses = await Promise.all(providers.map(async (provider) => {
       const state = providerState.value[provider];
-      const response = await window.patterm.call('patterm.history.list', {
+      const response = await window.patterm.call('history_list', {
         provider,
         project_id: props.projectId ?? undefined,
         limit: CONVERSATION_PAGE_SIZE,
@@ -261,7 +261,7 @@ async function refreshConversations(): Promise<void> {
   const projectId = props.projectId;
   try {
     const responses = await Promise.all(historyProviders.map(async (provider) => {
-      const response = await window.patterm.call('patterm.history.list', {
+      const response = await window.patterm.call('history_list', {
         provider,
         project_id: projectId ?? undefined,
         limit: CONVERSATION_PAGE_SIZE,
@@ -322,7 +322,7 @@ async function selectConversation(id: string, anchorMessageId: string | null = n
   const conversation = conversations.value.find((item) => item.id === id);
   const offset = anchorMessageId ? 0 : Math.max(0, (conversation?.messageCount ?? 0) - MESSAGE_PAGE_SIZE);
   try {
-    const response = await window.patterm.call('patterm.history.get', {
+    const response = await window.patterm.call('history_get', {
       conversation_id: id,
       anchor_message_id: anchorMessageId ?? undefined,
       limit: MESSAGE_PAGE_SIZE,
@@ -350,7 +350,7 @@ async function loadOlderMessages(): Promise<void> {
   const nextOffset = Math.max(0, messageWindowOffset.value - MESSAGE_PAGE_SIZE);
   const limit = messageWindowOffset.value - nextOffset;
   try {
-    const response = await window.patterm.call('patterm.history.get', {
+    const response = await window.patterm.call('history_get', {
       conversation_id: selectedId.value,
       limit,
       offset: nextOffset
@@ -385,7 +385,7 @@ async function resumeSelected(): Promise<void> {
   if (!conversation || !canResume.value || resuming.value) return;
   resuming.value = true;
   try {
-    const result = await window.patterm.call('patterm.history.resume', { conversation_id: conversation.id, project_id: props.projectId }) as { session_id?: unknown };
+    const result = await window.patterm.call('history_resume', { conversation_id: conversation.id, project_id: props.projectId }) as { session_id?: unknown };
     if (typeof result?.session_id === 'string') emit('launched', result.session_id);
   } catch (cause) {
     toast.error('Could not resume the conversation', { description: cause instanceof Error ? cause.message : String(cause) });

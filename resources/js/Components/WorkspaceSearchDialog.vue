@@ -110,7 +110,7 @@ async function runSearch(): Promise<void> {
   searching.value = true;
   hasSearched.value = true;
   try {
-    const response = (await window.patterm.call('patterm.search', { query: text, limit: 40 })) as { results?: SearchResult[] };
+    const response = (await window.patterm.call('search', { query: text, limit: 40 })) as { results?: SearchResult[] };
     if (generation === searchGeneration) results.value = response.results ?? [];
   } catch (caught) {
     if (generation !== searchGeneration) return;

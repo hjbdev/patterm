@@ -17,7 +17,7 @@ async function main() {
     for (const name of ['patterm.task.create', 'patterm.task.get', 'patterm.task.plan.update', 'patterm.issue.import', 'patterm.issue.link']) {
       await assert.rejects(registry.call(name, {}), /unknown MCP tool/i);
     }
-    assert.ok(!registry.publicTools().some(({ name }) => name.startsWith('patterm.task.') || name.startsWith('patterm.issue.')));
+    assert.ok(!registry.publicTools().some(({ name }) => name.startsWith('task_') || name.startsWith('issue_')));
     console.log('removed task and issue tools smoke ok');
   } finally {
     database.dispose();

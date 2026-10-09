@@ -10,7 +10,7 @@ export interface SessionWorktree { id: string; branch: string | null; worktree_p
 export interface SessionContext { todos: Page<Todo>; scratchpads: Page<Scratchpad>; references: Page<Reference>; worktrees: Page<SessionWorktree> }
 
 export function contextCall<T>(name: string, projectId: string, args: Record<string, unknown> = {}): Promise<T> {
-  return window.patterm.call(`patterm.${name}`, { project_id: projectId, ...args }) as Promise<T>;
+  return window.patterm.call(name, { project_id: projectId, ...args }) as Promise<T>;
 }
 
 export type RefreshTopic = 'context' | 'settings' | 'mcp-servers' | 'routines';

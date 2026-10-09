@@ -66,7 +66,7 @@ async function submit(): Promise<void> {
   busy.value = true;
   error.value = '';
   try {
-    const result = (await window.patterm?.call?.('patterm.project.create', {
+    const result = (await window.patterm?.call?.('project_create', {
       path: path.value.trim(),
       name: name.value.trim(),
     })) as { project_id?: string } | null;

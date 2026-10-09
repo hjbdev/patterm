@@ -231,9 +231,9 @@ async function capture(text: string) {
     return;
   captureError.value = '';
   try {
-    const note = await contextCall<Scratchpad>('scratchpad.create', projectId, { title: text.split('\n')[0]?.trim().slice(0, 120) || 'Terminal selection', body: text });
+    const note = await contextCall<Scratchpad>('scratchpad_create', projectId, { title: text.split('\n')[0]?.trim().slice(0, 120) || 'Terminal selection', body: text });
     if (sessionId)
-      await contextCall('scratchpad.attach', projectId, { scratchpad_id: note.id, session_id: sessionId });
+      await contextCall('scratchpad_attach', projectId, { scratchpad_id: note.id, session_id: sessionId });
     await router.push({ name: 'scratchpads', params: { projectId, recordId: note.id } });
   }
   catch (cause) {

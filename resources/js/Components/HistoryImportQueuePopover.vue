@@ -205,7 +205,7 @@ async function loadStatus(): Promise<void> {
   loading.value = true;
   error.value = '';
   try {
-    const response = await window.patterm.call('patterm.history.import_status', {}) as ImportStatusResponse;
+    const response = await window.patterm.call('history_import_status', {}) as ImportStatusResponse;
     if (current !== requestId) return;
     const nextStatus = { batches: response.batches ?? [], files: response.files ?? [], queue: response.queue ?? emptyQueue() };
     processQueueNotifications(nextStatus.queue);
@@ -376,7 +376,7 @@ function toggleExpandedPath(path: string): void {
 
 async function retryProblemFile(file: ImportFile): Promise<void> {
   try {
-    await window.patterm.call('patterm.history.import', file.provider === 'amp'
+    await window.patterm.call('history_import', file.provider === 'amp'
       ? { provider: 'amp', trigger: 'manual' }
       : { provider: file.provider, path: file.path, trigger: 'manual' });
     void loadStatus();

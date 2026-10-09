@@ -166,12 +166,12 @@ async function resolveSubscriptions(harness) {
 }
 
 async function resolveControls(harness) {
-  for (const entry of pending(harness, 'patterm.integrated.controls')) entry.resolve({ selectors: [], commands: [] });
+  for (const entry of pending(harness, 'integrated_controls')) entry.resolve({ selectors: [], commands: [] });
   await flush();
 }
 
 async function resolveGets(harness, payload) {
-  for (const entry of pending(harness, 'patterm.integrated.get')) entry.resolve(payload);
+  for (const entry of pending(harness, 'integrated_get')) entry.resolve(payload);
   await flush();
 }
 
@@ -191,7 +191,7 @@ test('older pages survive live refreshes and stale page replies cannot cross ses
   assert.equal(harness.pane.historyCursor.value, 'page-2');
   void harness.pane.loadOlder();
   await flush();
-  const history = pending(harness, 'patterm.integrated.history').at(-1);
+  const history = pending(harness, 'integrated_history').at(-1);
   assert.deepEqual(history.args, { process_id: 'A', cursor: 'page-2' });
   history.resolve({ messages: { data: [{ id: 'old', type: 'user', text: 'earlier' }] }, cursor: null });
   await flush();
@@ -219,7 +219,7 @@ test('a resumed conversation loads its imported turns without a scroll', async (
   const harness = createHarness({ processId: 'resumed' });
   await mountSettled(harness, { ...emptyConversation(), provider: 'claude', history_truncated: true, history_cursor: { next: 'archive:page' } });
   await flush();
-  const history = pending(harness, 'patterm.integrated.history').at(-1);
+  const history = pending(harness, 'integrated_history').at(-1);
   assert.deepEqual(history?.args, { process_id: 'resumed', cursor: 'archive:page' }, 'the first archived page loads on its own');
   const archived = (id, extra) => ({ id, seq: 1, role: 'assistant', kind: 'message', text: '', metadata: {}, toolName: null, toolInputSummary: null, toolOutputSummary: null, toolStatus: null, redactionCount: 0, ...extra });
   history.resolve({ messages: [], cursor: null, archived_messages: [
@@ -281,7 +281,7 @@ test('a late response from the previous process cannot enter the new transcript'
   const harness = createHarness({ processId: 'A' });
   await resolveSubscriptions(harness);
   await resolveControls(harness);
-  const late = pending(harness, 'patterm.integrated.get').at(-1);
+  const late = pending(harness, 'integrated_get').at(-1);
   harness.props.processId = 'B';
   await nextTick();
   await mountSettled(harness, replyConversation('b-reply'));
@@ -295,15 +295,15 @@ test('a late response from the previous process cannot enter the new transcript'
 test('overlapping refreshes read once more after the read in flight', async () => {
   const harness = createHarness({ processId: 'A' });
   await mountSettled(harness);
-  const reads = () => harness.requests.filter(entry => entry.tool === 'patterm.integrated.get').length;
+  const reads = () => harness.requests.filter(entry => entry.tool === 'integrated_get').length;
   const before = reads();
   void harness.pane.refresh();
   void harness.pane.refresh();
   void harness.pane.refresh();
   await flush();
-  assert.equal(pending(harness, 'patterm.integrated.get').length, 1, 'requests during a read share one follow-up read');
+  assert.equal(pending(harness, 'integrated_get').length, 1, 'requests during a read share one follow-up read');
   await resolveGets(harness, replyConversation('older'));
-  assert.equal(pending(harness, 'patterm.integrated.get').length, 1, 'the follow-up read starts after the first settles');
+  assert.equal(pending(harness, 'integrated_get').length, 1, 'the follow-up read starts after the first settles');
   await resolveGets(harness, replyConversation('newer'));
   assert.equal(reads() - before, 2);
   assert.deepEqual(harness.pane.messages.value.map(message => message.text), ['newer']);
@@ -328,7 +328,7 @@ test('send and manual refresh keep a single polling chain', async () => {
     hash: 'hash'
   });
   await flush();
-  const send = harness.mutations.filter(entry => entry.tool === 'patterm.integrated.send' && !entry.settled)[0];
+  const send = harness.mutations.filter(entry => entry.tool === 'integrated_send' && !entry.settled)[0];
   assert.ok(send, 'send reaches the native control call');
   send.resolve({ id: 'message_test' });
   await flush();
@@ -412,7 +412,7 @@ test('a session-unavailable read stops polling and shows the ended state', async
   assert.equal(harness.timers.size, 1);
   void harness.pane.refresh();
   await flush();
-  const get = pending(harness, 'patterm.integrated.get').at(-1);
+  const get = pending(harness, 'integrated_get').at(-1);
   get.reject(new Error('OpenCode Integrated session is not active'));
   await flush();
   assert.equal(harness.pane.state().ended, true);
@@ -430,10 +430,10 @@ test('an uncertain send keeps a recoverable message until native admission is pr
   assert.equal(prepared.ok, true);
   void harness.pane.sendRequest({ ...prepared.payload, hash: prepared.hash });
   await flush();
-  const send = harness.mutations.find(entry => entry.tool === 'patterm.integrated.send' && !entry.settled);
+  const send = harness.mutations.find(entry => entry.tool === 'integrated_send' && !entry.settled);
   send.resolve({ delivery: 'uncertain', message_id: prepared.payload.messageId, error: 'connection lost' });
   await flush();
-  const firstLook = harness.requests.filter(entry => entry.tool === 'patterm.integrated.delivery' && !entry.settled)[0];
+  const firstLook = harness.requests.filter(entry => entry.tool === 'integrated_delivery' && !entry.settled)[0];
   assert.ok(firstLook, 'an uncertain result reconciles before offering a retry');
   assert.equal(harness.pane.state().uncertain, true);
   assert.equal(composer.draftFor('uncertain_delivery').text, '', 'the submitted text lives in the transcript');
@@ -445,7 +445,7 @@ test('an uncertain send keeps a recoverable message until native admission is pr
 
   void harness.pane.reconcileDelivery();
   await flush();
-  const secondLook = harness.requests.filter(entry => entry.tool === 'patterm.integrated.delivery' && !entry.settled)[0];
+  const secondLook = harness.requests.filter(entry => entry.tool === 'integrated_delivery' && !entry.settled)[0];
   secondLook.resolve({ state: 'accepted' });
   await flush();
   assert.equal(harness.pane.state().uncertain, false);
@@ -462,7 +462,7 @@ test('an accepted send completes the originating draft while another pane is mou
   assert.equal(prepared.ok, true);
   void harness.pane.sendRequest({ ...prepared.payload, hash: prepared.hash });
   await flush();
-  const send = harness.mutations.find(entry => entry.tool === 'patterm.integrated.send' && !entry.settled);
+  const send = harness.mutations.find(entry => entry.tool === 'integrated_send' && !entry.settled);
   harness.props.processId = 'out_B';
   await nextTick();
   await mountSettled(harness);
@@ -489,7 +489,7 @@ test('a Patterm slash command runs locally and never reaches the native agent', 
   assert.equal(harness.pane.resumeQuery.value, 'auth refactor');
   assert.equal(composer.draftFor('resume_A').text, '', 'the command draft is consumed');
   assert.equal(composer.submissionFor('resume_A'), undefined);
-  assert.equal(harness.mutations.some(entry => entry.tool === 'patterm.integrated.command' || entry.tool === 'patterm.integrated.send'), false);
+  assert.equal(harness.mutations.some(entry => entry.tool === 'integrated_command' || entry.tool === 'integrated_send'), false);
   harness.scope.stop();
 });
 
@@ -502,8 +502,8 @@ test('a message starting with "!" is a prompt, never an unsandboxed shell comman
   const plainPrepared = composer.payloadFor('bang_B');
   void plain.pane.sendRequest({ ...plainPrepared.payload, hash: plainPrepared.hash });
   await flush();
-  assert.ok(plain.mutations.some(entry => entry.tool === 'patterm.integrated.send'), 'the text is an ordinary prompt');
-  assert.ok(!plain.mutations.some(entry => entry.tool === 'patterm.integrated.command'));
+  assert.ok(plain.mutations.some(entry => entry.tool === 'integrated_send'), 'the text is an ordinary prompt');
+  assert.ok(!plain.mutations.some(entry => entry.tool === 'integrated_command'));
   plain.scope.stop();
 });
 
@@ -515,10 +515,10 @@ test('uncertain delivery survives switching and blocks an ordinary resend', asyn
   const prepared = composer.payloadFor('uncertain_A');
   void harness.pane.sendRequest({ ...prepared.payload, hash: prepared.hash });
   await flush();
-  harness.mutations.find(entry => entry.tool === 'patterm.integrated.send' && !entry.settled)
+  harness.mutations.find(entry => entry.tool === 'integrated_send' && !entry.settled)
     .resolve({ delivery: 'uncertain', message_id: prepared.payload.messageId, error: 'connection lost' });
   await flush();
-  harness.requests.find(entry => entry.tool === 'patterm.integrated.delivery' && !entry.settled).resolve({ state: 'unknown' });
+  harness.requests.find(entry => entry.tool === 'integrated_delivery' && !entry.settled).resolve({ state: 'unknown' });
   await flush();
   assert.equal(harness.pane.state().uncertain, true);
 
@@ -530,7 +530,7 @@ test('uncertain delivery survives switching and blocks an ordinary resend', asyn
   await nextTick();
   await mountSettled(harness);
   assert.equal(harness.pane.state().uncertain, true, 'the uncertainty returns with the process');
-  harness.requests.filter(entry => entry.tool === 'patterm.integrated.delivery' && !entry.settled).at(-1)?.resolve({ state: 'unknown' });
+  harness.requests.filter(entry => entry.tool === 'integrated_delivery' && !entry.settled).at(-1)?.resolve({ state: 'unknown' });
   await flush();
   const count = harness.mutations.length;
   void harness.pane.sendRequest({ ...prepared.payload, hash: prepared.hash });
@@ -550,7 +550,7 @@ test('a lost transport reply stays uncertain instead of becoming a retryable err
   const prepared = composer.payloadFor('lost_A');
   void harness.pane.sendRequest({ ...prepared.payload, hash: prepared.hash });
   await flush();
-  harness.mutations.find(entry => entry.tool === 'patterm.integrated.send' && !entry.settled)
+  harness.mutations.find(entry => entry.tool === 'integrated_send' && !entry.settled)
     .reject(new Error('Connection lost. The command was not retried.'));
   await flush();
   assert.equal(harness.pane.state().uncertain, true);
@@ -558,7 +558,7 @@ test('a lost transport reply stays uncertain instead of becoming a retryable err
   assert.equal(composer.draftFor('lost_A').text, '');
   assert.equal(harness.pane.transcriptMessages.value.at(-1).text, 'maybe accepted');
   assert.equal(harness.pane.transcriptMessages.value.at(-1).delivery.state, 'uncertain');
-  harness.requests.find(entry => entry.tool === 'patterm.integrated.delivery' && !entry.settled)?.resolve({ state: 'unknown' });
+  harness.requests.find(entry => entry.tool === 'integrated_delivery' && !entry.settled)?.resolve({ state: 'unknown' });
   await flush();
   harness.scope.stop();
 });
@@ -571,7 +571,7 @@ test('a definitive rejection clears the submission and stays recoverable', async
   const prepared = composer.payloadFor('reject_A');
   void harness.pane.sendRequest({ ...prepared.payload, hash: prepared.hash });
   await flush();
-  harness.mutations.find(entry => entry.tool === 'patterm.integrated.send' && !entry.settled)
+  harness.mutations.find(entry => entry.tool === 'integrated_send' && !entry.settled)
     .reject(new Error('Message is empty'));
   await flush();
   assert.equal(harness.pane.state().pending, false, 'a definitive rejection can be retried');
@@ -599,7 +599,7 @@ test('a choice answer held in the queue stays answered and cannot be sent twice'
   const answer = 'Answer to pick: First (a)';
   void channel.send(answer);
   await flush();
-  const send = harness.mutations.find(entry => entry.tool === 'patterm.integrated.send');
+  const send = harness.mutations.find(entry => entry.tool === 'integrated_send');
   assert.equal(channel.canSend.value, false, 'a second answer waits for the first');
   send.resolve({ delivery: 'held' });
   await flush();
@@ -624,10 +624,10 @@ async function mountPush(harness, revision, text) {
   await resolveSubscriptions(harness);
   await resolveControls(harness);
   // The stream subscribes first and then takes one authoritative snapshot.
-  assert.equal(pending(harness, 'patterm.integrated.get').length, 1, 'a push-capable mount reads one snapshot');
+  assert.equal(pending(harness, 'integrated_get').length, 1, 'a push-capable mount reads one snapshot');
   await resolveGets(harness, pushConversation(revision, text));
   await flush();
-  assert.equal(pending(harness, 'patterm.integrated.get').length, 0, 'no second snapshot follows the subscription');
+  assert.equal(pending(harness, 'integrated_get').length, 0, 'no second snapshot follows the subscription');
 }
 
 test('a snapshot that lands after live deltas keeps them exactly once', async () => {
@@ -671,10 +671,10 @@ test('a revision gap re-reads the authoritative snapshot', async () => {
   composer.clearDrafts();
   const harness = createHarness({ processId: 'gap_A' });
   await mountPush(harness, 1, 'Initial response.');
-  const before = pending(harness, 'patterm.integrated.get').length;
+  const before = pending(harness, 'integrated_get').length;
   harness.emitConversationEvent({ processId: 'gap_A', revision: 5, kind: 'append', id: 'assistant_1', delta: ' partial' });
   await flush();
-  assert.equal(pending(harness, 'patterm.integrated.get').length, before + 1, 'a skipped revision triggers a snapshot read');
+  assert.equal(pending(harness, 'integrated_get').length, before + 1, 'a skipped revision triggers a snapshot read');
   await resolveGets(harness, pushConversation(5, 'Initial response. authoritative'));
   await flush();
   assert.equal(harness.pane.messages.value.find(message => message.id === 'assistant_1')?.text, 'Initial response. authoritative');
@@ -746,7 +746,7 @@ test('typed forms validate, submit native values, and honour conditional fields'
   harness.pane.setFormAnswer('frm_1', 'labels:custom', 'custom');
   void harness.pane.replyForm(form);
   await flush();
-  const reply = harness.mutations.find(entry => entry.tool === 'patterm.integrated.form.reply');
+  const reply = harness.mutations.find(entry => entry.tool === 'integrated_form_reply');
   assert.deepEqual(reply.args, {
     process_id: 'forms_A',
     form_id: 'frm_1',
@@ -785,7 +785,7 @@ test('a numeric condition matches the typed integer editor value', async () => {
   harness.pane.setFormAnswer('frm_num', 'detail', 'Two');
   void harness.pane.replyForm(form);
   await flush();
-  const reply = harness.mutations.find(entry => entry.tool === 'patterm.integrated.form.reply');
+  const reply = harness.mutations.find(entry => entry.tool === 'integrated_form_reply');
   assert.deepEqual(reply.args.answer, { count: 2, detail: 'Two' }, 'the typed integer submits as a number');
   reply.resolve({ ok: true });
   await flush();
@@ -809,7 +809,7 @@ test('a pending request reply cannot be submitted twice', async () => {
   void harness.pane.replyPermission('per_1', 'always');
   void harness.pane.replyPermission('per_1', 'once');
   await flush();
-  assert.equal(harness.mutations.filter(entry => entry.tool === 'patterm.integrated.permission.reply').length, 1, 'the second click is ignored while awaiting');
+  assert.equal(harness.mutations.filter(entry => entry.tool === 'integrated_permission_reply').length, 1, 'the second click is ignored while awaiting');
   assert.equal(harness.pane.isResponding('per_1'), true);
   harness.mutations[0].resolve({ ok: true });
   await flush();
@@ -906,8 +906,8 @@ test('controls and control ownership do not gate the first transcript read', asy
   composer.clearDrafts();
   const harness = createHarness({ processId: 'parallel_A' });
   await flush();
-  assert.equal(pending(harness, 'patterm.integrated.controls').length, 1);
-  assert.equal(pending(harness, 'patterm.integrated.get').length, 1, 'the transcript read starts before controls or subscription settle');
+  assert.equal(pending(harness, 'integrated_controls').length, 1);
+  assert.equal(pending(harness, 'integrated_get').length, 1, 'the transcript read starts before controls or subscription settle');
   assert.deepEqual(harness.conversationSubscriptions, [{ process_id: 'parallel_A', subscribed: true, snapshot: true }], 'the stream subscribes before its snapshot');
   await resolveGets(harness, replyConversation('first paint'));
   assert.deepEqual(harness.pane.messages.value.map(message => message.text), ['first paint']);
@@ -960,7 +960,7 @@ test('a subscription reply with a snapshot opens the pane without a separate rea
   await resolveSubscriptions(harness);
   await resolveControls(harness);
   await flush();
-  assert.equal(harness.requests.filter(entry => entry.tool === 'patterm.integrated.get').length, 0, 'no transcript read follows the subscription');
+  assert.equal(harness.requests.filter(entry => entry.tool === 'integrated_get').length, 0, 'no transcript read follows the subscription');
   assert.equal(harness.pane.messages.value[0]?.text, 'reply_A from the reply');
   harness.emitConversationEvent({ processId: 'reply_A', revision: 2, kind: 'append', id: 'assistant_1', delta: ' STALE' });
   harness.emitConversationEvent({ processId: 'reply_A', revision: 3, kind: 'append', id: 'assistant_1', delta: ' LIVE' });
@@ -970,7 +970,7 @@ test('a subscription reply with a snapshot opens the pane without a separate rea
   await nextTick();
   await flush();
   assert.equal(harness.pane.messages.value[0]?.text, 'reply_B from the reply', 'a switch also takes one round trip');
-  assert.equal(harness.requests.filter(entry => entry.tool === 'patterm.integrated.get').length, 0);
+  assert.equal(harness.requests.filter(entry => entry.tool === 'integrated_get').length, 0);
   harness.scope.stop();
 });
 
@@ -982,7 +982,7 @@ test('a subscription reply that cannot read an ended session shows the ended sta
   await flush();
   assert.equal(harness.pane.state().ended, true);
   assert.equal(harness.pane.state().refreshError, '');
-  assert.equal(harness.requests.filter(entry => entry.tool === 'patterm.integrated.get').length, 0);
+  assert.equal(harness.requests.filter(entry => entry.tool === 'integrated_get').length, 0);
   harness.scope.stop();
 });
 
@@ -1013,7 +1013,7 @@ test('an unmounted pane is cached for its next mount', async () => {
 test('palette requests run through the open conversation and its controls are published', async () => {
   const harness = createHarness({ processId: 'A' });
   await resolveSubscriptions(harness);
-  for (const entry of pending(harness, 'patterm.integrated.controls')) {
+  for (const entry of pending(harness, 'integrated_controls')) {
     entry.resolve({ selectors: [{ id: 'model', label: 'Model', value: 'opus', options: [{ value: 'opus', label: 'Opus' }, { value: 'sonnet', label: 'Sonnet' }] }], commands: [] });
   }
   await flush();
@@ -1022,7 +1022,7 @@ test('palette requests run through the open conversation and its controls are pu
   assert.equal(harness.workspaceRequest({ kind: 'integrated', processId: 'B', action: 'interrupt' }), false, 'another agent\'s request is not handled here');
   assert.equal(harness.workspaceRequest({ kind: 'integrated', processId: 'A', action: 'interrupt' }), true);
   await flush();
-  assert.deepEqual(harness.mutations.map(entry => [entry.tool, entry.args]), [['patterm.integrated.interrupt', { process_id: 'A' }]], 'Stop response uses the controlled mutation path');
+  assert.deepEqual(harness.mutations.map(entry => [entry.tool, entry.args]), [['integrated_interrupt', { process_id: 'A' }]], 'Stop response uses the controlled mutation path');
   harness.lifecycle.beforeUnmount.forEach(callback => callback());
   assert.equal(harness.published.has('A'), false, 'closing the conversation withdraws its selectors');
   assert.equal(harness.workspaceRequest({ kind: 'integrated', processId: 'A', action: 'interrupt' }), false);
@@ -1043,7 +1043,7 @@ test('a submitted message stays visible from sending through acknowledgement and
   assert.equal(composer.draftFor('optimistic_A').text, '', 'the composer clears immediately');
   const rowId = helpers.groupTranscriptMessages(harness.pane.transcriptMessages.value).at(-1).id;
   composer.draftFor('optimistic_A').text = 'A newer draft';
-  harness.mutations.find(entry => entry.tool === 'patterm.integrated.send').resolve({ turnId: 'active-turn' });
+  harness.mutations.find(entry => entry.tool === 'integrated_send').resolve({ turnId: 'active-turn' });
   await flush();
   await resolveGets(harness, pushConversation(1, 'I am checking the implementation.'));
   assert.equal(userRows().length, 1, 'acknowledgement does not remove the local row');
@@ -1176,7 +1176,7 @@ test('/new during an assistant restart surfaces an error instead of succeeding',
   await harness.pane.sendRequest({ ...prepared.payload, hash: prepared.hash });
   await flush();
   assert.match(harness.pane.state().error, /already restarting/);
-  assert.deepEqual(calls, ['patterm.assistant.restart']);
+  assert.deepEqual(calls, ['assistant_restart']);
   finish({ process_id: 'assistant_resumed', voice: { active: false } });
   await restarting;
   harness.scope.stop();

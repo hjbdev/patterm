@@ -180,7 +180,7 @@ let blockerGeneration = 0, blockerTimer: ReturnType<typeof setTimeout> | undefin
 async function refreshBlockers() {
   const generation = ++blockerGeneration;
   try {
-    const options = await contextCall<Page<Todo>>('todo.list', props.projectId, { limit: 100, query: blockerQuery.value });
+    const options = await contextCall<Page<Todo>>('todo_list', props.projectId, { limit: 100, query: blockerQuery.value });
     if (generation === blockerGeneration) blockerOptions.value = options.items.filter(item => item.id !== props.recordId);
   }
   catch (cause) { if (generation === blockerGeneration) error.value = String(cause); }

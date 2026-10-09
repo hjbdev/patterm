@@ -37,7 +37,7 @@ const target = () => ({ target_type: props.targetType, target_id: props.targetId
 async function refresh() {
   const current = ++generation;
   try {
-    const result = await contextCall<{ items: Reference[]; total: number }>('reference.list', props.projectId, { ...target(), offset: offset.value, limit: 50 });
+    const result = await contextCall<{ items: Reference[]; total: number }>('reference_list', props.projectId, { ...target(), offset: offset.value, limit: 50 });
     if (current === generation) {
       links.value = result.items;
       total.value = result.total;
@@ -64,13 +64,13 @@ async function mutate(operation: string, args: Record<string, unknown>) {
   }
 }
 function attach(url: string) {
-  return url.trim() ? mutate('reference.attach', { ...target(), url: url.trim(), provider: 'generic', resource_type: 'generic' }) : Promise.resolve(false);
+  return url.trim() ? mutate('reference_attach', { ...target(), url: url.trim(), provider: 'generic', resource_type: 'generic' }) : Promise.resolve(false);
 }
 function update(link: Reference, changes: LinkChanges) {
-  return mutate('reference.update', { reference_id: link.id, revision: link.revision, ...changes });
+  return mutate('reference_update', { reference_id: link.id, revision: link.revision, ...changes });
 }
 function detach(id: string) {
-  return mutate('reference.detach', { ...target(), reference_id: id });
+  return mutate('reference_detach', { ...target(), reference_id: id });
 }
 watch(() => [props.projectId, props.targetId], () => {
   links.value = [];

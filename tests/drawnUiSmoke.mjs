@@ -88,7 +88,7 @@ test('formulas are arithmetic only', () => {
 test('drawn calls are found across harness naming and stay out of tool groups', () => {
   const spec = figure({ type: 'steps', items: [{ title: 'One' }] });
   const claude = { name: 'mcp__patterm__ui_save', family: 'mcp', status: 'completed', title: 'MCP', target: 'patterm: ui_save', input: spec };
-  const codex = { name: 'mcpToolCall', family: 'mcp', status: 'completed', title: 'MCP', target: 'patterm: ui.save', input: { server: 'patterm', tool: 'ui.save', arguments: JSON.stringify(spec) } };
+  const codex = { name: 'mcpToolCall', family: 'mcp', status: 'completed', title: 'MCP', target: 'patterm: ui.save', input: { server: 'patterm', tool: 'ui_save', arguments: JSON.stringify(spec) } };
   const other = { name: 'mcp__patterm__todo_list', family: 'mcp', status: 'completed', title: 'MCP', target: 'patterm: todo_list' };
   assert.ok(ui.isDrawnUiTool(claude) && ui.isDrawnUiTool(codex));
   assert.ok(!ui.isDrawnUiTool(other) && !ui.isDrawnUiTool({ ...claude, family: 'generic' }));
@@ -134,7 +134,7 @@ test('answers go back as one readable message and lock the card', () => {
 test('Codex replies map screenshots to their stored copies', () => {
   const sha = 'a'.repeat(64);
   const reply = { ok: true, ref: '[patterm_figure:shot]', images: { 'shot.png': sha } };
-  const projected = ui.projectCodexItem({ type: 'mcpToolCall', id: 'call_1', server: 'patterm', tool: 'ui.save', status: 'completed', arguments: { id: 'shot', claim: 'x', figure: { type: 'image', path: 'shot.png' } }, result: { content: [{ type: 'text', text: JSON.stringify(reply, null, 2) }], structuredContent: null } });
+  const projected = ui.projectCodexItem({ type: 'mcpToolCall', id: 'call_1', server: 'patterm', tool: 'ui_save', status: 'completed', arguments: { id: 'shot', claim: 'x', figure: { type: 'image', path: 'shot.png' } }, result: { content: [{ type: 'text', text: JSON.stringify(reply, null, 2) }], structuredContent: null } });
   const [message] = ui.normaliseMessages([projected]);
   assert.ok(ui.isDrawnUiTool(message.tool));
   assert.deepEqual(ui.drawnUiImages(message.tool), { 'shot.png': sha });
@@ -147,17 +147,17 @@ test('the Settings examples are valid figures', () => {
   }
 });
 
-test('the setting takes ui.save out of the catalog and rejects calls', async () => {
+test('the setting takes ui_save out of the catalog and rejects calls', async () => {
   const registry = new ui.McpToolRegistry();
   let enabled = true;
   registry.register({ name: ui.DRAWN_UI_TOOL, namespace: 'cli.ui', description: 'Save a figure.', inputSchema: { type: 'object' }, unavailable: () => enabled ? null : 'ui.save is turned off' }, () => ({ ok: true }));
-  assert.deepEqual(registry.publicTools({}).map(({ name }) => name), ['ui.save']);
+  assert.deepEqual(registry.publicTools({}).map(({ name }) => name), ['ui_save']);
   assert.equal('unavailable' in registry.publicTools({})[0], false, 'the catalog carries no functions');
-  assert.deepEqual(await registry.callPublic('ui.save', {}), { ok: true });
+  assert.deepEqual(await registry.callPublic('ui_save', {}), { ok: true });
   enabled = false;
   assert.deepEqual(registry.publicTools({}), []);
   assert.equal(registry.publicTools().length, 1, 'internal listings without a caller keep every tool');
-  await assert.rejects(registry.callPublic('ui.save', {}), /turned off/);
+  await assert.rejects(registry.callPublic('ui_save', {}), /turned off/);
 });
 
 test('screenshots must live in the caller\'s directories', () => {

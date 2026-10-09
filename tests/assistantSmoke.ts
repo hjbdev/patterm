@@ -325,13 +325,13 @@ async function main(): Promise<void> {
     // thread. The previous thread remains available in history.
     const ui = new McpToolRegistry();
     registerAssistantTools(ui, assistant, settings);
-    assert.equal(ui.help('patterm.assistant.new').hidden, true);
-    assert.ok(INTEGRATED_CONTROL_TOOLS.has('patterm.assistant.new'));
+    assert.equal(ui.help('assistant_new').hidden, true);
+    assert.ok(INTEGRATED_CONTROL_TOOLS.has('assistant_new'));
     db.prepare(`update processes set parent_process_id = 'proc-assistant-6', status = 'running' where id = 'proc-helper'`).run();
     await assistant.startVoice('before-new');
-    await assert.rejects(ui.call('patterm.assistant.new', { process_id: 'proc-assistant-5' }), /already restarted/);
+    await assert.rejects(ui.call('assistant_new', { process_id: 'proc-assistant-5' }), /already restarted/);
     const [fresh, whileNew] = await Promise.all([
-      ui.call('patterm.assistant.new', { process_id: 'proc-assistant-6' }) as Promise<{ process_id: string }>,
+      ui.call('assistant_new', { process_id: 'proc-assistant-6' }) as Promise<{ process_id: string }>,
       assistant.ensure()
     ]);
     assert.equal(fresh.process_id, 'proc-assistant-7');
@@ -348,7 +348,7 @@ async function main(): Promise<void> {
     assistant.dispose();
 
     // The assistant's context names its cross-project role.
-    assert.match(new AgentContextService().buildAssistant(), /assistant\.overview/);
+    assert.match(new AgentContextService().buildAssistant(), /assistant_overview/);
     assert.match(new AgentContextService().buildAssistant(), /never invent labels from IDs/);
 
     // MCP: the assistant is scoped like the owner across workspace projects,
@@ -364,10 +364,10 @@ async function main(): Promise<void> {
     const registry = createTestMcpRegistry({ tempDir: dir, database, timeline, terminal: { request: async () => ({}) } as unknown as TerminalService, workbench });
     const assistantIdentity = { identity: 'mcp-assistant-8' };
 
-    const overview = await registry.callPublic('assistant.overview', {}, assistantIdentity) as { projects: Array<{ project_id: string; processes: Array<{ process_id: string }> }> };
+    const overview = await registry.callPublic('assistant_overview', {}, assistantIdentity) as { projects: Array<{ project_id: string; processes: Array<{ process_id: string }> }> };
     assert.deepEqual(overview.projects.map((project) => project.project_id), ['p', 'q']);
     assert.ok(overview.projects[0]!.processes.some((process) => process.process_id === 'proc-worker-p'));
-    await assert.rejects(registry.callPublic('assistant.overview', {}, { identity: 'mcp-worker-p' }), /only the assistant/);
+    await assert.rejects(registry.callPublic('assistant_overview', {}, { identity: 'mcp-worker-p' }), /only the assistant/);
 
     const listed = await registry.callPublic('list_processes', { project_id: 'q' }, assistantIdentity) as { processes: Array<{ process_id: string }> };
     assert.ok(listed.processes.some((process) => process.process_id === 'proc-worker-q'));
@@ -382,11 +382,11 @@ async function main(): Promise<void> {
     await assert.rejects(registry.callPublic('get_process_status', { process_id: 'proc-worker-q' }, { identity: 'mcp-worker-p' }), /outside the current caller scope/);
     await assert.rejects(registry.callPublic('spawn_agent', { agent: 'claude', project_id: 'q' }, { identity: 'mcp-worker-p' }), /outside the current caller scope/);
     // Todos and other project context work in a named workspace project.
-    const todo = await registry.callPublic('todo.create', { project_id: 'q', title: 'Follow up on the build' }, assistantIdentity) as { todo?: { id: string; project_id: string } } & { id?: string; project_id?: string };
+    const todo = await registry.callPublic('todo_create', { project_id: 'q', title: 'Follow up on the build' }, assistantIdentity) as { todo?: { id: string; project_id: string } } & { id?: string; project_id?: string };
     assert.equal((todo.todo ?? todo).project_id, 'q');
-    await assert.rejects(registry.callPublic('todo.list', {}, assistantIdentity), /must pass a workspace project_id/);
-    await assert.rejects(registry.callPublic('todo.list', { project_id: ASSISTANT_PROJECT_ID }, assistantIdentity), /must pass a workspace project_id/);
-    await assert.rejects(registry.callPublic('todo.list', { project_id: 'q' }, { identity: 'mcp-worker-p' }), /outside the caller scope/);
+    await assert.rejects(registry.callPublic('todo_list', {}, assistantIdentity), /must pass a workspace project_id/);
+    await assert.rejects(registry.callPublic('todo_list', { project_id: ASSISTANT_PROJECT_ID }, assistantIdentity), /must pass a workspace project_id/);
+    await assert.rejects(registry.callPublic('todo_list', { project_id: 'q' }, { identity: 'mcp-worker-p' }), /outside the caller scope/);
     const whoami = await registry.callPublic('whoami', {}, assistantIdentity) as { role: string };
     assert.equal(whoami.role, 'assistant');
     console.log('assistant smoke passed');

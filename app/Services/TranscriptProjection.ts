@@ -1227,7 +1227,7 @@ export function groupTranscriptMessages(input: TranscriptMessage[]): TranscriptR
     if (message.role === 'assistant' && message.kind !== 'tool' && !message.text.trim()) continue;
     const tool = message.tool;
     // A subagent row keeps its own row so its nested transcript stays visible.
-    // A ui.save call is a step like any other, rejected or not: its figure
+    // A ui_save call is a step like any other, rejected or not: its figure
     // appears only where the reply places it.
     if (message.kind === 'reasoning' || (message.kind === 'tool' && tool && (tool.status !== 'failed' || isDrawnUiTool(tool)) && !message.children?.length)) {
       group.push(message);
@@ -1241,9 +1241,10 @@ export function groupTranscriptMessages(input: TranscriptMessage[]): TranscriptR
   return result;
 }
 
-// A call to Patterm's ui.save. Claude shows mcp__patterm__ui_save,
+// A call to Patterm's ui_save. Claude shows mcp__patterm__ui_save,
 // OpenCode patterm_<hash>_ui_save, and Codex server "patterm" with tool
-// "ui.save"; all reach the target "patterm: ui_save" or similar.
+// "ui_save"; all reach the target "patterm: ui_save" or similar. Older
+// Codex transcripts name it ui.save.
 export function isDrawnUiTool(tool: TranscriptTool | undefined): boolean {
   return Boolean(tool && tool.family === 'mcp' && /^patterm[\w-]*:\s*ui[._]save$/i.test(tool.target ?? ''));
 }
@@ -1266,12 +1267,12 @@ export function figureToken(id: string): string {
   return `[patterm_figure:${id}]`;
 }
 
-// A ui.save call that went through; rejected ones never draw.
+// A ui_save call that went through; rejected ones never draw.
 export function isSavedFigure(tool: TranscriptTool | undefined): tool is TranscriptTool {
   return Boolean(tool && tool.status !== 'failed' && isDrawnUiTool(tool));
 }
 
-// A saved figure's id: the one the agent chose, else the one ui.save returned.
+// A saved figure's id: the one the agent chose, else the one ui_save returned.
 // Streamed appends keep other rows' tool objects, so this is cached per tool.
 const figureIds = new WeakMap<TranscriptTool, string | null>();
 export function drawnUiId(tool: TranscriptTool): string | null {

@@ -23,7 +23,7 @@ export function useScratchpadPage() {
   }
   async function create() {
     try {
-      const pad = await contextCall<Scratchpad>('scratchpad.create', projectId.value, { title: 'Untitled' });
+      const pad = await contextCall<Scratchpad>('scratchpad_create', projectId.value, { title: 'Untitled' });
       await collection.refresh();
       await open(pad.id);
       return pad;
@@ -40,7 +40,7 @@ export function useScratchpadPage() {
       return;
     }
     try {
-      await contextCall('scratchpad.update', projectId.value, { scratchpad_id: pad.id, revision: pad.revision, status: archive ? 'archived' : 'active' });
+      await contextCall('scratchpad_update', projectId.value, { scratchpad_id: pad.id, revision: pad.revision, status: archive ? 'archived' : 'active' });
     }
     catch (cause) {
       error.value = String(cause);

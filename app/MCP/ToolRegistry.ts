@@ -41,24 +41,26 @@ const READ_ONLY_TOOL_NAMES = new Set([
   'get_process_ports',
   'timer_list',
   'whoami',
-  'patterm.help',
-  'patterm.search',
-  'patterm.history.sources',
-  'patterm.history.import_status',
-  'patterm.history.list',
-  'patterm.history.get',
-  'patterm.project.list',
-  'patterm.project.get',
-  'patterm.terminal.process.output',
-  'patterm.terminal.process.search',
-  'patterm.terminal.process.selection_text',
-  'patterm.harness.list',
-  'patterm.worktree.list',
-  'patterm.diff.current',
-  'patterm.diff.file',
-  'patterm.harness.presets',
-  'patterm.harness.models'
+  'help',
+  'search',
+  'history_sources',
+  'history_import_status',
+  'history_list',
+  'history_get',
+  'project_list',
+  'project_get',
+  'terminal_process_output',
+  'terminal_process_search',
+  'terminal_process_selection_text',
+  'harness_list',
+  'worktree_list',
+  'diff_current',
+  'diff_file',
+  'harness_presets',
+  'harness_models'
 ]);
+
+const TOOL_NAME = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
 
 interface RegisteredTool {
   descriptor: McpToolDescriptor;
@@ -79,18 +81,18 @@ export class McpToolRegistry {
     this.checkCaller = check;
   }
 
+  // Every tool name is snake_case, so harnesses that cannot pass dots show
+  // the name agents call and pass to help.
   register(descriptor: McpToolDescriptor, handler: McpToolHandler): void {
+    if (!TOOL_NAME.test(descriptor.name)) throw new Error(`MCP tool ${descriptor.name} must be snake_case`);
     if (this.tools.has(descriptor.name)) throw new Error(`duplicate MCP tool ${descriptor.name}`);
-    if (!descriptor.hidden && [...this.tools.values()].some((tool) => !tool.descriptor.hidden && publicName(tool.descriptor.name) === publicName(descriptor.name))) {
-      throw new Error(`duplicate public MCP tool ${publicName(descriptor.name)}`);
-    }
     this.tools.set(descriptor.name, { descriptor, handler });
   }
 
   // Without a caller, every public tool is listed.
   publicTools(context?: McpCallContext): McpToolDescriptor[] {
     return [...this.tools.values()].map(({ descriptor }) => descriptor).filter(({ hidden, unavailable }) => !hidden && !(context && unavailable?.(context)))
-      .map(({ unavailable: _unavailable, ...descriptor }) => ({ ...descriptor, name: publicName(descriptor.name) }))
+      .map(({ unavailable: _unavailable, ...descriptor }) => descriptor)
       .sort((a, b) => a.name.localeCompare(b.name, 'en'));
   }
 
@@ -111,7 +113,7 @@ export class McpToolRegistry {
 
   helpPublic(toolName: string): McpToolDescriptor {
     const { unavailable: _unavailable, ...descriptor } = this.publicTool(toolName).descriptor;
-    return { ...descriptor, name: toolName };
+    return descriptor;
   }
 
   async callPublic(toolName: string, args: unknown, context: McpCallContext = {}): Promise<unknown> {
@@ -134,20 +136,16 @@ export class McpToolRegistry {
   // The topics clients must update after a successful call. Calls ignore their
   // arguments and results, so a write that changes nothing still reports them.
   changedTopics(toolName: string): readonly ChangeTopic[] {
-    const tool = this.tools.get(toolName) ?? this.tools.get(`patterm.${toolName}`);
+    const tool = this.tools.get(toolName);
     if (!tool) return [];
     return tool.descriptor.changes ?? (READ_ONLY_TOOL_NAMES.has(tool.descriptor.name) ? [] : DEFAULT_CHANGE_TOPICS);
   }
 
   private publicTool(name: string): RegisteredTool {
-    const tool = this.tools.get(name) ?? this.tools.get(`patterm.${name}`);
-    if (!tool || tool.descriptor.hidden || publicName(tool.descriptor.name) !== name) {
+    const tool = this.tools.get(name);
+    if (!tool || tool.descriptor.hidden) {
       throw new Error(`unknown MCP tool ${name}`);
     }
     return tool;
   }
-}
-
-function publicName(name: string): string {
-  return name.startsWith('patterm.') ? name.slice('patterm.'.length) : name;
 }

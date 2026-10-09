@@ -74,24 +74,24 @@ async function main(): Promise<void> {
     // mutating-tool broadcaster, so the service itself must notify.
     const registry = new McpToolRegistry();
     registry.register(
-      { name: 'patterm.integrated.send', namespace: 'integrated', description: 'Browser control fixture.', inputSchema: { type: 'object' } },
+      { name: 'integrated_send', namespace: 'integrated', description: 'Browser control fixture.', inputSchema: { type: 'object' } },
       async (args) => service.prompt((args as { process_id: string }).process_id, 'Browser send')
     );
     database.connection.prepare(`update processes set activity = 'idle' where id = 'process_test'`).run();
     const before = changes.length;
-    await registry.call('patterm.integrated.send', { process_id: 'process_test', text: 'Browser send' });
+    await registry.call('integrated_send', { process_id: 'process_test', text: 'Browser send' });
     assert.equal(changes.length, before + 1, 'the browser registry path notifies without a route broadcaster');
     assert.equal(activity(), 'working');
 
     // Unchanged transcript reads stay silent on the same path.
     const reads = new McpToolRegistry();
     reads.register(
-      { name: 'patterm.integrated.get', namespace: 'integrated', description: 'Read fixture.', changes: [], inputSchema: { type: 'object' } },
+      { name: 'integrated_get', namespace: 'integrated', description: 'Read fixture.', changes: [], inputSchema: { type: 'object' } },
       async () => service.conversation('process_test')
     );
     status = 'working';
     const readCount = changes.length;
-    await reads.call('patterm.integrated.get', { process_id: 'process_test' });
+    await reads.call('integrated_get', { process_id: 'process_test' });
     assert.equal(changes.length, readCount, 'unchanged transcript reads do not notify');
 
     // Ambiguous delivery is a visible uncertain result, never a thrown error,

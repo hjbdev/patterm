@@ -536,7 +536,7 @@ async function createApplicationResources(
     // A paired host's UI runs the same tools as a browser, except ones that
     // change this host's settings or pairing.
     allowedTools: new Set([
-      ...[...BROWSER_TOOLS].filter((tool) => !tool.startsWith('patterm.hosts.') && !tool.startsWith('patterm.settings.') && !(MCP_SERVER_TOOLS as readonly string[]).includes(tool)),
+      ...[...BROWSER_TOOLS].filter((tool) => !tool.startsWith('hosts_') && !tool.startsWith('settings_') && !(MCP_SERVER_TOOLS as readonly string[]).includes(tool)),
       // The command palette pauses, resumes, and cancels timers.
       'timer_cancel', 'timer_pause', 'timer_resume'
     ])

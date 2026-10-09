@@ -1,4 +1,4 @@
-// Shapes returned by patterm.diff.current and patterm.diff.file, plus the pure
+// Shapes returned by diff_current and diff_file, plus the pure
 // view helpers the worktree diff viewer shares. The service classifies files as
 // docs or tests; the viewer only filters and arranges them.
 

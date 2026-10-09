@@ -22,16 +22,16 @@ const scheduleOnceInput = z.object({
 const runsInput = z.object({ routine_id: z.string().min(1), limit: z.number().int().min(1).max(100).default(20) }).strict();
 
 const launchProperties = {
-  harness: { type: 'string', enum: [...ROUTINE_HARNESSES], description: 'Agent CLI to start. harness.list shows which are installed.' },
-  preset: { type: ['string', 'null'], description: 'A configured preset name for this harness (harness.presets). Leave null to pick a model instead, or for the harness default.' },
-  model: { type: ['string', 'null'], description: 'A model ID from harness.models, used instead of a preset.' },
+  harness: { type: 'string', enum: [...ROUTINE_HARNESSES], description: 'Agent CLI to start. harness_list shows which are installed.' },
+  preset: { type: ['string', 'null'], description: 'A configured preset name for this harness (harness_presets). Leave null to pick a model instead, or for the harness default.' },
+  model: { type: ['string', 'null'], description: 'A model ID from harness_models, used instead of a preset.' },
   reasoning: { type: ['string', 'null'], description: 'Effort level for the chosen model.' },
   service_tier: { type: ['string', 'null'], description: 'Codex only: priority for Fast, default for Standard.' }
 };
 
 const routineProperties = {
   name: { type: 'string', maxLength: 120 },
-  enabled: { type: 'boolean', description: 'Whether it runs on schedule. Paused routines can still run with routine.run_now.' },
+  enabled: { type: 'boolean', description: 'Whether it runs on schedule. Paused routines can still run with routine_run_now.' },
   project_id: { type: ['string', 'null'], description: 'Project the run belongs to. Null makes a workspace routine that reads across every project; only the user, the assistant, and workspace routines can choose this.' },
   days: { type: 'array', items: { type: 'integer', minimum: 0, maximum: 6 }, description: 'Weekdays to run on: 0 is Sunday, 1 Monday, through 6 Saturday.' },
   time: { type: 'string', description: 'Local 24-hour time, HH:MM.' },
@@ -40,7 +40,7 @@ const routineProperties = {
   ...launchProperties,
   delivery: { type: 'string', enum: ['notification', 'none'], description: 'What happens when a run reports: notify the user, or nothing.' },
   run_at: { type: ['string', 'null'], description: 'ISO time with an offset. Set it to run once at that time instead of on days; null makes it repeat again.' },
-  worktree_id: { type: ['string', 'null'], description: 'A project worktree to start each run in, from worktree.list.' }
+  worktree_id: { type: ['string', 'null'], description: 'A project worktree to start each run in, from worktree_list.' }
 };
 
 const { days: _days, time: _time, enabled: _enabled, run_at: _runAt, ...onceProperties } = routineProperties;
@@ -51,7 +51,7 @@ const USAGE_NOTES = [
   'Choose either a preset or a model with optional reasoning and service_tier, as spawn_agent accepts.',
   'Agents create and manage routines in their own project. The assistant and workspace routines may pass project_id, or null for a workspace routine.',
   'Create routines only when the user asks for recurring work; tell them what you scheduled and when it next runs.',
-  'For a single later run, use routine.schedule_once.'
+  'For a single later run, use routine_schedule_once.'
 ];
 
 const ONCE_NOTES = [
@@ -65,14 +65,14 @@ const ONCE_NOTES = [
 // Saves or reads routines on a paired host for the calling agent.
 export type RoutineForward = (host: string, tool: string, args: Record<string, unknown>, context: McpCallContext) => Promise<unknown>;
 
-const HOST_NOTE = 'Pass host, a paired host\'s name, to save or read routines on that host in the project linked with yours. They are owned by that host and run there, and routine IDs are that host\'s. Its worktree IDs come from host_read worktree.list.';
+const HOST_NOTE = 'Pass host, a paired host\'s name, to save or read routines on that host in the project linked with yours. They are owned by that host and run there, and routine IDs are that host\'s. Its worktree IDs come from host_read worktree_list.';
 
 export function registerRoutineTools(registry: McpToolRegistry, routines: RoutineService, callerOf: (context: McpCallContext) => RoutineCaller | null, forward?: RoutineForward) {
   // Every routine tool except run_now also works on a paired host. Runs
   // start only on the host that owns the routine.
   const register = (descriptor: McpToolDescriptor, handler: McpToolHandler) => {
     if (!forward) return registry.register(descriptor, handler);
-    if (descriptor.name === 'patterm.routine.run_now') {
+    if (descriptor.name === 'routine_run_now') {
       return registry.register(descriptor, (args, context) => {
         if (args && typeof args === 'object' && 'host' in args) throw new Error('routine.run_now cannot start a run on another host. Routines there run on their schedule; ask the user to run one now.');
         return handler(args, context);
@@ -129,7 +129,7 @@ export function registerRoutineTools(registry: McpToolRegistry, routines: Routin
   };
 
   register({
-    name: 'patterm.routine.list',
+    name: 'routine_list',
     namespace: 'routine',
     description: 'List scheduled routines with their next run and latest run.',
     changes: [],
@@ -143,7 +143,7 @@ export function registerRoutineTools(registry: McpToolRegistry, routines: Routin
   });
 
   register({
-    name: 'patterm.routine.get',
+    name: 'routine_get',
     namespace: 'routine',
     description: 'Read one routine, including its prompt and launch settings.',
     changes: [],
@@ -151,7 +151,7 @@ export function registerRoutineTools(registry: McpToolRegistry, routines: Routin
   }, (args, context) => withVisibleRuns(context, scoped(context, routineIdInput.parse(args).routine_id)));
 
   register({
-    name: 'patterm.routine.create',
+    name: 'routine_create',
     namespace: 'routine',
     description: 'Schedule a routine: an agent that starts on chosen weekdays at a local time with a prompt.',
     changes: ['routines'],
@@ -165,7 +165,7 @@ export function registerRoutineTools(registry: McpToolRegistry, routines: Routin
   });
 
   register({
-    name: 'patterm.routine.schedule_once',
+    name: 'routine_schedule_once',
     namespace: 'routine',
     description: 'Schedule a fresh agent to run once, later, with a prompt. It reports to the user and appears under Scheduled.',
     changes: ['routines'],
@@ -183,7 +183,7 @@ export function registerRoutineTools(registry: McpToolRegistry, routines: Routin
   });
 
   register({
-    name: 'patterm.routine.update',
+    name: 'routine_update',
     namespace: 'routine',
     description: 'Change a routine. Pass only the fields to change; set enabled false to pause it.',
     changes: ['routines'],
@@ -197,7 +197,7 @@ export function registerRoutineTools(registry: McpToolRegistry, routines: Routin
   });
 
   register({
-    name: 'patterm.routine.delete',
+    name: 'routine_delete',
     namespace: 'routine',
     description: 'Delete a routine and its run history. Running agents keep running.',
     changes: ['routines'],
@@ -205,7 +205,7 @@ export function registerRoutineTools(registry: McpToolRegistry, routines: Routin
   }, (args, context) => routines.delete(scoped(context, routineIdInput.parse(args).routine_id).routine_id));
 
   register({
-    name: 'patterm.routine.run_now',
+    name: 'routine_run_now',
     namespace: 'routine',
     description: 'Start a run of a routine immediately, outside its schedule.',
     changes: ['routines', 'workbench'],
@@ -213,7 +213,7 @@ export function registerRoutineTools(registry: McpToolRegistry, routines: Routin
   }, (args, context) => routines.runNow(scoped(context, routineIdInput.parse(args).routine_id).routine_id));
 
   register({
-    name: 'patterm.routine.runs',
+    name: 'routine_runs',
     namespace: 'routine',
     description: 'List a routine\'s runs, newest first, with each report excerpt and session.',
     changes: [],
@@ -225,7 +225,7 @@ export function registerRoutineTools(registry: McpToolRegistry, routines: Routin
   });
 
   register({
-    name: 'patterm.routine.log',
+    name: 'routine_log',
     namespace: 'routine',
     description: 'Page through recent routine reports, newest first, across routines or for one routine. Skipped runs are left out.',
     changes: [],
@@ -238,7 +238,7 @@ export function registerRoutineTools(registry: McpToolRegistry, routines: Routin
   });
 
   register({
-    name: 'patterm.routine.run',
+    name: 'routine_run',
     namespace: 'routine',
     description: 'Read one routine run, including its full report.',
     changes: [],

@@ -160,7 +160,7 @@ export async function runCommandPaletteCommand(application: PattermApplication, 
   if (id.startsWith('spawn:agent:')) {
     if (!projectId) throw new Error('No active project');
     const harness = id.slice('spawn:agent:'.length);
-    const result = (await callTool(application, 'patterm.harness.launch', { harness, project_id: projectId, ...launchOptions(input) })) as { session_id?: string; pty_process_id?: string | null };
+    const result = (await callTool(application, 'harness_launch', { harness, project_id: projectId, ...launchOptions(input) })) as { session_id?: string; pty_process_id?: string | null };
     return { navigate: { projectId, ...(result.pty_process_id ? { terminalProcessId: result.pty_process_id } : { sessionId: result.session_id }) }, refresh: true };
   }
   if (id.startsWith('history:resume:')) {
@@ -168,7 +168,7 @@ export async function runCommandPaletteCommand(application: PattermApplication, 
     const interfaceMode = input.interface_mode === 'tui' || input.interface_mode === 'integrated' ? input.interface_mode : undefined;
     // An empty Integrated agent can be replaced by the resumed conversation.
     const replace = stringInput(input.replace_process_id);
-    const result = (await callTool(application, 'patterm.history.resume', {
+    const result = (await callTool(application, 'history_resume', {
       conversation_id: id.slice('history:resume:'.length),
       project_id: projectId,
       ...(interfaceMode ? { interface_mode: interfaceMode } : {}),
@@ -186,14 +186,14 @@ export async function runCommandPaletteCommand(application: PattermApplication, 
   }
   if (id === 'spawn:terminal') {
     if (!projectId) throw new Error('No active project');
-    const result = (await callTool(application, 'patterm.process.create', { project_id: projectId })) as { pty_process_id?: string };
+    const result = (await callTool(application, 'process_create', { project_id: projectId })) as { pty_process_id?: string };
     return { navigate: { projectId, terminalProcessId: result.pty_process_id }, refresh: true };
   }
   if (id === 'spawn:process') {
     if (!projectId) throw new Error('No active project');
     const command = stringInput(input.command);
     if (!command) throw new Error('Command is required');
-    const result = (await callTool(application, 'patterm.process.create', {
+    const result = (await callTool(application, 'process_create', {
       project_id: projectId,
       name: stringInput(input.name),
       command,
@@ -204,7 +204,7 @@ export async function runCommandPaletteCommand(application: PattermApplication, 
   if (id === 'project:create') {
     const path = stringInput(input.path);
     if (!path) throw new Error('Project path is required');
-    const result = (await callTool(application, 'patterm.project.create', { path })) as { project_id?: string };
+    const result = (await callTool(application, 'project_create', { path })) as { project_id?: string };
     return { navigate: { projectId: result.project_id }, refresh: true };
   }
   if (id.startsWith('process:')) {
@@ -212,24 +212,24 @@ export async function runCommandPaletteCommand(application: PattermApplication, 
   }
   if (id === 'worktree:create') {
     if (!projectId) throw new Error('No active project');
-    await callTool(application, 'patterm.worktree.create', { project_id: projectId, name: stringInput(input.name) || stringInput(input.value) });
+    await callTool(application, 'worktree_create', { project_id: projectId, name: stringInput(input.name) || stringInput(input.value) });
     return { navigate: { projectId, tab: 'worktrees' }, refresh: true };
   }
   if (id === 'worktree:link') {
     if (!projectId) throw new Error('No active project');
     const worktreePath = stringInput(input.worktree_path) || stringInput(input.value);
     if (!worktreePath) throw new Error('Worktree path is required');
-    await callTool(application, 'patterm.worktree.link', { project_id: projectId, worktree_path: worktreePath });
+    await callTool(application, 'worktree_link', { project_id: projectId, worktree_path: worktreePath });
     return { navigate: { projectId, tab: 'worktrees' }, refresh: true };
   }
   if (id.startsWith('worktree:shell:')) {
     if (!projectId) throw new Error('No active project');
     const worktreeId = id.slice('worktree:shell:'.length);
-    const result = (await callTool(application, 'patterm.process.create', { project_id: projectId, worktree_id: worktreeId })) as { pty_process_id?: string };
+    const result = (await callTool(application, 'process_create', { project_id: projectId, worktree_id: worktreeId })) as { pty_process_id?: string };
     return { navigate: { projectId, terminalProcessId: result.pty_process_id }, refresh: true };
   }
   if (id.startsWith('worktree:abandon:')) {
-    await callTool(application, 'patterm.worktree.abandon', { worktree_id: id.slice('worktree:abandon:'.length) });
+    await callTool(application, 'worktree_abandon', { worktree_id: id.slice('worktree:abandon:'.length) });
     return { refresh: true };
   }
 
@@ -243,7 +243,7 @@ async function assistantRestartCommand(application: PattermApplication): Promise
   let processId: string | null;
   let row: { activity: string | null } | undefined;
   try {
-    ({ process_id: processId } = await callTool(application, 'patterm.assistant.get', {}) as { process_id: string | null });
+    ({ process_id: processId } = await callTool(application, 'assistant_get', {}) as { process_id: string | null });
     if (!processId) return null;
     row = application.database.connection.prepare('select activity from processes where id = ?').get(processId) as { activity: string | null } | undefined;
   } catch {
@@ -512,7 +512,7 @@ async function runProcessCommand(application: PattermApplication, id: string, in
     return { refresh: true };
   }
   if (action === 'restart') {
-    await callTool(application, 'patterm.process.restart', { process_id: processId });
+    await callTool(application, 'process_restart', { process_id: processId });
     return { refresh: true };
   }
   throw new Error(`unknown process command ${id}`);
@@ -592,7 +592,7 @@ function liveAgents(project: ProjectWorkbenchDto): SessionDto[] {
 async function sessionWorktrees(application: PattermApplication, projectId: string, sessionId: string): Promise<SessionWorktreeRef[]> {
   if (!application.mcp) return [];
   try {
-    const context = (await callTool(application, 'patterm.session.context', { project_id: projectId, session_id: sessionId, limit: 1 })) as { worktrees?: { items?: SessionWorktreeRef[] } };
+    const context = (await callTool(application, 'session_context', { project_id: projectId, session_id: sessionId, limit: 1 })) as { worktrees?: { items?: SessionWorktreeRef[] } };
     return context.worktrees?.items ?? [];
   } catch {
     // The rest of the palette is still useful without diff review.

@@ -462,7 +462,7 @@ assert.equal(attachments[2]?.detail, '/tmp/report.pdf');
   assert.deepEqual(task.children?.[1]?.children?.map((row) => row.id), ['grandchild'], 'nesting is recursive');
   assert.equal(subagentSummary(task.children!), 'Read c.ts');
   // Activity lists name the MCP server and tool, or the command, not just the family.
-  assert.equal(toolActivityLabel(buildTranscriptTool('mcpToolCall', { input: { server: 'patterm', tool: 'assistant.overview', arguments: {} } }, '')), 'patterm: assistant.overview');
+  assert.equal(toolActivityLabel(buildTranscriptTool('mcpToolCall', { input: { server: 'patterm', tool: 'assistant_overview', arguments: {} } }, '')), 'patterm: assistant_overview');
   assert.equal(toolActivityLabel(buildTranscriptTool('mcpToolCall', { input: {} }, '')), 'MCP');
   assert.equal(toolActivityLabel(buildTranscriptTool('bash', { input: { command: 'cat notes.txt\necho done' } }, '')), 'Bash: cat notes.txt');
   assert.equal(toolActivityLabel(buildTranscriptTool('read', { input: { file_path: 'src/app.ts' } }, '')), 'Read src/app.ts');

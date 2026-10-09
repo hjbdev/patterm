@@ -117,7 +117,7 @@ async function main(): Promise<void> {
     }
     const launchingIdentities = new LaunchingMcpIdentities();
     const registry = createTestMcpRegistry({ tempDir: dir, database, timeline: new TimelineService(database), terminal: { request: async () => ({}) } as unknown as TerminalService, workbench: new WorkbenchRepository(database, settings), assistantMemory: memory, launchingIdentities });
-    const tool = 'assistant.memory.read';
+    const tool = 'assistant_memory_read';
     const assistantCaller = { identity: 'mcp-assistant' };
     const releaseWorker = launchingIdentities.reserve('mcp-starting-worker', 'codex', 'orchestrator');
     const releaseAssistant = launchingIdentities.reserve('mcp-starting-assistant', 'codex', 'assistant');
@@ -143,22 +143,22 @@ async function main(): Promise<void> {
     // The oldest low group goes first; after forgetting it, the older high
     // candidates are omitted but must still be accessible by their IDs.
     const lowPressure = await registry.callPublic(tool, {}, assistantCaller) as ReturnType<AssistantMemoryService['read']>;
-    await registry.callPublic('assistant.memory.write', { mode: 'compress', replaces: lowPressure.pressure!.candidates.slice(0, 2), lines: [] }, assistantCaller);
+    await registry.callPublic('assistant_memory_write', { mode: 'compress', replaces: lowPressure.pressure!.candidates.slice(0, 2), lines: [] }, assistantCaller);
     const omittedCandidates = await registry.callPublic(tool, {}, assistantCaller) as ReturnType<AssistantMemoryService['read']>;
     assert.ok(omittedCandidates.pressure!.candidates.every((id) => !omittedCandidates.text.includes(id)), 'pressure candidates can all be absent from the loaded snapshot');
     for (let cycle = 0; cycle < 4; cycle++) {
       const current = await registry.callPublic(tool, {}, assistantCaller) as ReturnType<AssistantMemoryService['read']>;
       const ids = current.pressure!.candidates.slice(0, 2);
-      const fetched = await registry.callPublic('assistant.memory.search', { ids }, assistantCaller) as ReturnType<AssistantMemoryService['search']>;
+      const fetched = await registry.callPublic('assistant_memory_search', { ids }, assistantCaller) as ReturnType<AssistantMemoryService['search']>;
       assert.ok(ids.every((id) => fetched.text.includes(id)), 'omitted candidate content is retrievable');
       assert.match(fetched.text, /\[high; workspace;/);
       assert.ok(Buffer.byteLength(fetched.text) <= 6000);
-      await registry.callPublic('assistant.memory.write', { mode: 'compress', replaces: ids, lines: [{ text: `Concise related facts ${cycle}.`, importance: 'high' }] }, assistantCaller);
+      await registry.callPublic('assistant_memory_write', { mode: 'compress', replaces: ids, lines: [{ text: `Concise related facts ${cycle}.`, importance: 'high' }] }, assistantCaller);
     }
     const forget = await registry.callPublic(tool, {}, assistantCaller) as ReturnType<AssistantMemoryService['read']>;
     const pressureIds = forget.pressure!.candidates.slice(0, 2);
-    await registry.callPublic('assistant.memory.write', { mode: 'compress', replaces: pressureIds, lines: [] }, assistantCaller);
-    const retired = await registry.callPublic('assistant.memory.search', { ids: pressureIds, history: true }, assistantCaller) as ReturnType<AssistantMemoryService['search']>;
+    await registry.callPublic('assistant_memory_write', { mode: 'compress', replaces: pressureIds, lines: [] }, assistantCaller);
+    const retired = await registry.callPublic('assistant_memory_search', { ids: pressureIds, history: true }, assistantCaller) as ReturnType<AssistantMemoryService['search']>;
     assert.match(retired.text, /\[forgotten\]/);
     assert.ok(!memory.search({ ids: pressureIds }).text.includes(pressureIds[0]!));
     assert.throws(() => memory.search({ ids: [] }));

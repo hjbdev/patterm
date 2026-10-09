@@ -83,7 +83,7 @@ async function read(): Promise<void> {
   const current = generation;
   loading.value = format.value === null;
   try {
-    const result = await window.patterm.call('patterm.integrated.task.output', { process_id: props.processId, task_id: props.task.id, since: version }) as Record<string, unknown>;
+    const result = await window.patterm.call('integrated_task_output', { process_id: props.processId, task_id: props.task.id, since: version }) as Record<string, unknown>;
     if (current !== generation || result.format === 'unchanged') return;
     version = typeof result.version === 'string' ? result.version : null;
     truncated.value = result.truncated === true;
@@ -119,7 +119,7 @@ async function loadOlder(): Promise<void> {
   loadingOlder.value = true;
   olderError.value = '';
   try {
-    const result = await window.patterm.call('patterm.integrated.task.output', { process_id: props.processId, task_id: props.task.id, cursor }) as Record<string, unknown>;
+    const result = await window.patterm.call('integrated_task_output', { process_id: props.processId, task_id: props.task.id, cursor }) as Record<string, unknown>;
     if (current !== generation) return;
     const page = pageMessages(result) ?? [];
     messages.value = mergeTranscriptWindows(page, messages.value);

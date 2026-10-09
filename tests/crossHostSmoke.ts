@@ -59,8 +59,8 @@ async function main(): Promise<void> {
     const host: Host = { app, server: null, port, dir, origin };
     hosts.push(host);
     await serve(host);
-    await app.mcp.call('patterm.hosts.rename', { name });
-    await app.mcp.call('patterm.harness.discover', {});
+    await app.mcp.call('hosts_rename', { name });
+    await app.mcp.call('harness_discover', {});
     servePeerRoutes(app);
     return host;
   };
@@ -75,7 +75,7 @@ async function main(): Promise<void> {
       runtime: 'node',
       publicOrigin: host.origin
     });
-    await host.app.mcp.call('patterm.harness.discover', {});
+    await host.app.mcp.call('harness_discover', {});
     servePeerRoutes(host.app);
     await serve(host);
   };
@@ -85,9 +85,9 @@ async function main(): Promise<void> {
   };
   // An agent: a raw terminal with its own MCP identity.
   const agent = async (host: Host, projectId: string) => {
-    const launched = await host.app.mcp.call('patterm.harness.launch', { project_id: projectId, harness: 'rawpty', interface_mode: 'tui' }) as { process_id: string };
+    const launched = await host.app.mcp.call('harness_launch', { project_id: projectId, harness: 'rawpty', interface_mode: 'tui' }) as { process_id: string };
     // UI routes announce changes after each call; these direct calls do too.
-    host.app.notifyChanged(host.app.mcp.changedTopics('patterm.harness.launch'));
+    host.app.notifyChanged(host.app.mcp.changedTopics('harness_launch'));
     const { mcp_identity } = host.app.database.connection.prepare('select mcp_identity from sessions where process_id = ?').get(launched.process_id) as { mcp_identity: string };
     const call = (tool: string, args: unknown) => host.app.mcp.callPublic(tool, args, { identity: mcp_identity });
     const output = async () => (await host.app.mcp.call('get_process_output', { process_id: launched.process_id }) as { content?: string }).content ?? '';
@@ -120,8 +120,8 @@ async function main(): Promise<void> {
   const project = async (host: Host, name: string) => {
     const directory = path.join(host.dir, 'project', name);
     fs.mkdirSync(directory, { recursive: true });
-    const created = await host.app.mcp.call('patterm.project.create', { name, path: directory }) as { project_id: string };
-    host.app.notifyChanged(host.app.mcp.changedTopics('patterm.project.create'));
+    const created = await host.app.mcp.call('project_create', { name, path: directory }) as { project_id: string };
+    host.app.notifyChanged(host.app.mcp.changedTopics('project_create'));
     return created.project_id;
   };
 
@@ -132,13 +132,13 @@ async function main(): Promise<void> {
     const desktopId = (desktop.app.hosts.overview()).self.host_id;
 
     // Pair and link.
-    const { code } = await workstation.app.mcp.call('patterm.hosts.code.create', {}) as { code: string };
-    await desktop.app.mcp.call('patterm.hosts.pair', { url: workstation.origin, code });
+    const { code } = await workstation.app.mcp.call('hosts_code_create', {}) as { code: string };
+    await desktop.app.mcp.call('hosts_pair', { url: workstation.origin, code });
     await until(() => desktop.app.peers.connected(workstationId) && workstation.app.peers.connected(desktopId), 'the link');
     const devProject = await project(workstation, 'web-app');
     const deskProject = await project(desktop, 'web-app');
     const unlinked = await project(desktop, 'elsewhere');
-    await desktop.app.mcp.call('patterm.hosts.link', { host_id: workstationId, project_id: deskProject, remote_project_id: devProject });
+    await desktop.app.mcp.call('hosts_link', { host_id: workstationId, project_id: deskProject, remote_project_id: devProject });
 
     const developer = await agent(workstation, devProject);
     let benchmarker = await agent(desktop, deskProject);
@@ -178,7 +178,7 @@ async function main(): Promise<void> {
     await rpc(desktop, 'patterm:mcp:call', { tool: 'rename_process', arguments: { process_id: `workstation:${developer.process_id}`, name: 'Developer' } });
     assert.equal((workstation.app.database.connection.prepare('select name from processes where id = ?').get(developer.process_id) as { name: string }).name, 'Developer');
     await until(() => { const session = deskWorkbench()?.projectSessions.find((row) => row.processId === `workstation:${developer.process_id}`); return session?.displayName === 'Developer' || session?.lastTitle === 'Developer'; }, 'the rename to reach the desktop workbench');
-    await assert.rejects(rpc(desktop, 'patterm:mcp:call', { tool: 'patterm.hosts.unpair', arguments: { host_id: desktopId, process_id: `workstation:${developer.process_id}` } }), /not available to another host/);
+    await assert.rejects(rpc(desktop, 'patterm:mcp:call', { tool: 'hosts_unpair', arguments: { host_id: desktopId, process_id: `workstation:${developer.process_id}` } }), /not available to another host/);
 
     // A browser on the desktop streams and types into the dev box terminal.
     const browser = await browserClient(desktop);
@@ -260,7 +260,7 @@ async function main(): Promise<void> {
 
     // A linked project can launch on the other host.
     assert.deepEqual(deskWorkbench()!.project.remotes, [{ host: 'workstation', projectId: `workstation:${devProject}` }]);
-    const launchedRemote = await rpc(desktop, 'patterm:mcp:call', { tool: 'patterm.harness.launch', arguments: { project_id: `workstation:${devProject}`, harness: 'rawpty', interface_mode: 'tui' } }) as { session_id: string; process_id: string };
+    const launchedRemote = await rpc(desktop, 'patterm:mcp:call', { tool: 'harness_launch', arguments: { project_id: `workstation:${devProject}`, harness: 'rawpty', interface_mode: 'tui' } }) as { session_id: string; process_id: string };
     assert.match(launchedRemote.session_id, /^workstation:session_/);
     assert.ok(workstation.app.database.connection.prepare('select 1 from sessions where id = ? and project_id = ?').get(launchedRemote.session_id.slice('workstation:'.length), devProject));
     await until(() => deskWorkbench()?.projectSessions.some((session) => session.id === launchedRemote.session_id), 'the launched agent in the desktop workbench');
@@ -268,24 +268,24 @@ async function main(): Promise<void> {
     await until(() => !deskWorkbench()?.projectSessions.some((session) => session.id === launchedRemote.session_id && !session.exitedAt), 'the remote agent to close');
 
     // An agent saves a routine on the other host, which owns and runs it.
-    const scheduled = await benchmarker.call('routine.schedule_once', { host: 'workstation', name: 'Recheck the allocator', prompt: 'Rerun the allocator benchmarks.', harness: 'claude', in_minutes: 60 }) as { routine_id: string; project_id: string; created_by: { type: string; name: string } };
+    const scheduled = await benchmarker.call('routine_schedule_once', { host: 'workstation', name: 'Recheck the allocator', prompt: 'Rerun the allocator benchmarks.', harness: 'claude', in_minutes: 60 }) as { routine_id: string; project_id: string; created_by: { type: string; name: string } };
     assert.equal(scheduled.project_id, devProject, 'the routine lands in the linked project there');
     assert.match(scheduled.created_by.name, / on desktop$/);
     const stored = workstation.app.database.connection.prepare('select project_id, created_by_type, created_by_remote_process_id from routines where id = ?').get(scheduled.routine_id) as { project_id: string; created_by_type: string; created_by_remote_process_id: string } | undefined;
     assert.deepEqual(stored, { project_id: devProject, created_by_type: 'agent', created_by_remote_process_id: `desktop:${benchmarker.process_id}` });
     assert.ok(!desktop.app.database.connection.prepare('select 1 from routines where id = ?').get(scheduled.routine_id), 'the routine is not stored here');
-    const remoteRoutines = await benchmarker.call('routine.list', { host: 'workstation' }) as { routines: Array<{ routine_id: string }> };
+    const remoteRoutines = await benchmarker.call('routine_list', { host: 'workstation' }) as { routines: Array<{ routine_id: string }> };
     assert.deepEqual(remoteRoutines.routines.map((routine) => routine.routine_id), [scheduled.routine_id]);
-    assert.deepEqual((await benchmarker.call('routine.list', {}) as { routines: unknown[] }).routines, [], 'this host has no routines');
-    await benchmarker.call('routine.update', { host: 'workstation', routine_id: scheduled.routine_id, name: 'Recheck allocator benchmarks' });
-    await assert.rejects(() => benchmarker.call('routine.run_now', { host: 'workstation', routine_id: scheduled.routine_id }), /cannot start a run on another host/);
-    await benchmarker.call('routine.delete', { host: 'workstation', routine_id: scheduled.routine_id });
+    assert.deepEqual((await benchmarker.call('routine_list', {}) as { routines: unknown[] }).routines, [], 'this host has no routines');
+    await benchmarker.call('routine_update', { host: 'workstation', routine_id: scheduled.routine_id, name: 'Recheck allocator benchmarks' });
+    await assert.rejects(() => benchmarker.call('routine_run_now', { host: 'workstation', routine_id: scheduled.routine_id }), /cannot start a run on another host/);
+    await benchmarker.call('routine_delete', { host: 'workstation', routine_id: scheduled.routine_id });
     assert.ok(!workstation.app.database.connection.prepare('select 1 from routines where id = ?').get(scheduled.routine_id));
 
     // Changes to the other host's todos refresh views here.
     const topicsSeen: string[] = [];
     const stopTopics = desktop.app.onDataChanged((topics) => topicsSeen.push(...topics));
-    await rpc(workstation, 'patterm:mcp:call', { tool: 'patterm.todo.create', arguments: { project_id: devProject, title: 'Profile the hot path' } });
+    await rpc(workstation, 'patterm:mcp:call', { tool: 'todo_create', arguments: { project_id: devProject, title: 'Profile the hot path' } });
     await until(() => topicsSeen.includes('context'), 'a forwarded context change');
     stopTopics();
 
@@ -293,11 +293,11 @@ async function main(): Promise<void> {
     // and the change is published without anyone asking for a snapshot.
     const patches: unknown[] = [];
     const stopPatches = desktop.app.onWorkbenchPatch((patch) => patches.push(patch));
-    await rpc(desktop, 'patterm:mcp:call', { tool: 'patterm.hosts.show_agents', arguments: { host_id: workstationId, show_agents: false } });
+    await rpc(desktop, 'patterm:mcp:call', { tool: 'hosts_show_agents', arguments: { host_id: workstationId, show_agents: false } });
     await until(() => patches.some((patch) => JSON.stringify(patch).includes('workstation:session_')), 'a published patch removing the hidden agents');
     stopPatches();
     assert.ok(!deskWorkbench()?.projectSessions.some((row) => row.host === 'workstation'));
-    await rpc(desktop, 'patterm:mcp:call', { tool: 'patterm.hosts.show_agents', arguments: { host_id: workstationId, show_agents: true } });
+    await rpc(desktop, 'patterm:mcp:call', { tool: 'hosts_show_agents', arguments: { host_id: workstationId, show_agents: true } });
     await until(() => deskWorkbench()?.projectSessions.some((row) => row.host === 'workstation'), 'shown agents to return');
 
     // Reads work; control does not.
@@ -310,21 +310,21 @@ async function main(): Promise<void> {
     await assert.rejects(benchmarker.call('get_process_status', { process_id: 'workstation:process_999' }), /outside the current caller scope|unknown process/);
 
     // Context on the other host is readable through host_read.
-    await workstation.app.mcp.call('patterm.todo.create', { project_id: devProject, title: 'Benchmark the branch' });
-    const todos = await benchmarker.call('host_read', { host: 'workstation', tool: 'todo.list', arguments: {} }) as { items: Array<{ title: string }> };
+    await workstation.app.mcp.call('todo_create', { project_id: devProject, title: 'Benchmark the branch' });
+    const todos = await benchmarker.call('host_read', { host: 'workstation', tool: 'todo_list', arguments: {} }) as { items: Array<{ title: string }> };
     assert.deepEqual(todos.items.map((todo) => todo.title).sort(), ['Benchmark the branch', 'Profile the hot path']);
-    await assert.rejects(benchmarker.call('host_read', { host: 'workstation', tool: 'todo.create', arguments: { title: 'x' } }), /cannot run on another host/);
+    await assert.rejects(benchmarker.call('host_read', { host: 'workstation', tool: 'todo_create', arguments: { title: 'x' } }), /cannot run on another host/);
 
     // The other host's records keep their host in every reply, so follow-up
     // requests reach it: session context, todo updates, references, timers.
     const developerSession = (workstation.app.database.connection.prepare('select id from sessions where process_id = ?').get(developer.process_id) as { id: string }).id;
-    const assigned = await rpc(workstation, 'patterm:mcp:call', { tool: 'patterm.todo.create', arguments: { project_id: devProject, title: 'Assigned remotely', assignee_id: developerSession } }) as { id: string };
-    const context = await rpc(desktop, 'patterm:mcp:call', { tool: 'patterm.session.context', arguments: { project_id: deskProject, session_id: `workstation:${developerSession}` } }) as { todos: { items: Array<{ id: string; revision: number }> } };
+    const assigned = await rpc(workstation, 'patterm:mcp:call', { tool: 'todo_create', arguments: { project_id: devProject, title: 'Assigned remotely', assignee_id: developerSession } }) as { id: string };
+    const context = await rpc(desktop, 'patterm:mcp:call', { tool: 'session_context', arguments: { project_id: deskProject, session_id: `workstation:${developerSession}` } }) as { todos: { items: Array<{ id: string; revision: number }> } };
     const remoteTodo = context.todos.items.find((todo) => todo.id === `workstation:${assigned.id}`);
     assert.ok(remoteTodo, JSON.stringify(context.todos));
-    await rpc(desktop, 'patterm:mcp:call', { tool: 'patterm.todo.update', arguments: { project_id: deskProject, todo_id: remoteTodo.id, revision: remoteTodo.revision, status: 'in_progress' } });
+    await rpc(desktop, 'patterm:mcp:call', { tool: 'todo_update', arguments: { project_id: deskProject, todo_id: remoteTodo.id, revision: remoteTodo.revision, status: 'in_progress' } });
     assert.equal((workstation.app.database.connection.prepare('select status from todos where id = ?').get(assigned.id) as { status: string }).status, 'in_progress');
-    await rpc(desktop, 'patterm:mcp:call', { tool: 'patterm.reference.attach', arguments: { project_id: deskProject, target_type: 'session', target_id: `workstation:${developerSession}`, url: 'https://example.com/pulls/34' } });
+    await rpc(desktop, 'patterm:mcp:call', { tool: 'reference_attach', arguments: { project_id: deskProject, target_type: 'session', target_id: `workstation:${developerSession}`, url: 'https://example.com/pulls/34' } });
     assert.ok(workstation.app.database.connection.prepare('select 1 from external_references where url = ?').get('https://example.com/pulls/34'));
     assert.equal(desktop.app.database.connection.prepare('select 1 from external_references where url = ?').get('https://example.com/pulls/34'), undefined);
     const devTimer = await developer.call('timer_set', { seconds: 3600, body: 'never' }) as { timer_id: string };
@@ -334,7 +334,7 @@ async function main(): Promise<void> {
     if (archived?.session) assert.equal(archived.session.id, `workstation:${developerSession}`);
 
     // Messages reach agents only: typed into a shell they would run.
-    await rpc(workstation, 'patterm:mcp:call', { tool: 'patterm.process.create', arguments: { project_id: devProject } });
+    await rpc(workstation, 'patterm:mcp:call', { tool: 'process_create', arguments: { project_id: devProject } });
     const shell = (workstation.app.database.connection.prepare(`select id from processes where project_id = ? and kind <> 'agent' order by created_at desc limit 1`).get(devProject) as { id: string }).id;
     const toShell = await benchmarker.call('send_message', { target_process_id: `workstation:${shell}`, message: 'echo SHOULD-NOT-RUN' }) as { status: string; detail: string };
     assert.equal(toShell.status, 'bounced');
@@ -356,11 +356,11 @@ async function main(): Promise<void> {
     assert.equal(timer.status, 'pending');
     await assert.rejects(developer.call('timer_fire_when_idle_any', { watched: [`desktop:${benchmarker.process_id}`], body: 'x' }), /Idle timers cannot watch/);
     // Renaming the watched host does not fire the timer.
-    await rpc(desktop, 'patterm:mcp:call', { tool: 'patterm.hosts.rename', arguments: { name: 'desktop-two' } });
+    await rpc(desktop, 'patterm:mcp:call', { tool: 'hosts_rename', arguments: { name: 'desktop-two' } });
     await until(() => workstation.app.hosts.overview().peers[0]?.name === 'desktop-two', 'the rename to reach the dev box');
     await new Promise((resolve) => setTimeout(resolve, 1500));
     assert.ok(!(await developer.output()).includes('BENCHMARK-REPLY-ARRIVED'), 'a rename is not a reply');
-    await rpc(desktop, 'patterm:mcp:call', { tool: 'patterm.hosts.rename', arguments: { name: 'desktop' } });
+    await rpc(desktop, 'patterm:mcp:call', { tool: 'hosts_rename', arguments: { name: 'desktop' } });
     await until(() => workstation.app.hosts.overview().peers[0]?.name === 'desktop', 'the name to return');
     const sent = await developer.call('send_message', { target_process_id: `desktop:${benchmarker.process_id}`, message: 'echo RUN-BENCHMARKS' }) as { status: string; ok: boolean };
     assert.deepEqual([sent.ok, sent.status], [true, 'delivered']);
@@ -378,7 +378,7 @@ async function main(): Promise<void> {
     assert.equal(bounced.status, 'bounced');
     assert.match(bounced.detail, /no process process_999/);
     await until(async () => (await benchmarker.output()).includes('[delivery failed'), 'the bounce in the sender terminal');
-    const notices = await desktop.app.mcp.call('patterm.notification.list', {}) as { items: Array<{ title: string }> };
+    const notices = await desktop.app.mcp.call('notification_list', {}) as { items: Array<{ title: string }> };
     assert.ok(notices.items.some((item) => /bounced/.test(item.title)), JSON.stringify(notices));
 
     // While the dev box is down, messages wait and are delivered once.
@@ -396,13 +396,13 @@ async function main(): Promise<void> {
     // up later messages for other projects.
     const devSide = await project(workstation, 'side-project');
     const deskSide = await project(desktop, 'side-project');
-    await desktop.app.mcp.call('patterm.hosts.link', { host_id: workstationId, project_id: deskSide, remote_project_id: devSide });
+    await desktop.app.mcp.call('hosts_link', { host_id: workstationId, project_id: deskSide, remote_project_id: devSide });
     const sideAgent = await agent(desktop, deskSide);
     await workstation.server!.stop();
     await until(() => !desktop.app.peers.connected(workstationId), 'the link to drop before unlinking');
     await sideAgent.call('send_message', { target_process_id: `workstation:${developer.process_id}`, message: 'echo UNLINKED' });
     await benchmarker.call('send_message', { target_process_id: `workstation:${developer.process_id}`, message: 'echo BEHIND-IT' });
-    await desktop.app.mcp.call('patterm.hosts.unlink', { host_id: workstationId, project_id: deskSide });
+    await desktop.app.mcp.call('hosts_unlink', { host_id: workstationId, project_id: deskSide });
     await serve(workstation);
     const outStatus = (body: string) => (desktop.app.database.connection.prepare(`select status from peer_messages where direction = 'out' and body = ?`).get(body) as { status: string }).status;
     await until(() => outStatus('echo UNLINKED') === 'bounced' && outStatus('echo BEHIND-IT') === 'delivered', 'the unlinked message to bounce and the next to arrive', 30_000);
@@ -426,11 +426,11 @@ async function main(): Promise<void> {
     await workstation.server!.stop();
     await until(() => !desktop.app.peers.connected(workstationId), 'the link to drop again');
     await benchmarker.call('send_message', { target_process_id: `workstation:${developer.process_id}`, message: 'echo NEVER' });
-    await workstation.app.mcp.call('patterm.hosts.unpair', { host_id: desktopId });
+    await workstation.app.mcp.call('hosts_unpair', { host_id: desktopId });
     await serve(workstation);
     // The UI's list, which includes notices about hosts rather than agents.
     await until(() => desktop.app.notifications.list({}).items.some((item) => item.title === 'Cannot connect to workstation'), 'the refusal notice', 30_000);
-    await desktop.app.mcp.call('patterm.hosts.unpair', { host_id: workstationId });
+    await desktop.app.mcp.call('hosts_unpair', { host_id: workstationId });
     await until(() => (desktop.app.database.connection.prepare(`select status from peer_messages where direction = 'out' and body = 'echo NEVER'`).get() as { status: string }).status === 'bounced', 'the unpair bounce');
     console.log('cross-host smoke passed');
   } finally {

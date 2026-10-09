@@ -171,7 +171,7 @@ assert.equal(deriveAssistantFocus([], projects), null);
 // Tool names arrive bare, prefixed, or namespaced.
 assert.equal(bareToolName('get_process_output'), 'get_process_output');
 assert.equal(bareToolName('mcp__patterm__send_message'), 'send_message');
-assert.equal(bareToolName('patterm.worktree.list'), 'worktree_list');
+assert.equal(bareToolName('worktree_list'), 'worktree_list');
 assert.equal(bareToolName('patterm_f37653dcf531_send_message'), 'send_message');
 
 // Tool rows name the process they act on or read, for links.
