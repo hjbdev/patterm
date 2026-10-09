@@ -293,6 +293,7 @@ async function main(): Promise<void> {
     let openGate!: () => void;
     launchGate = new Promise((resolve) => { openGate = resolve; });
     const gated = assistant.restart('proc-assistant-4');
+    const freshRejected = assert.rejects(assistant.newSession('proc-assistant-4'), /already restarting/, '/new cannot succeed by joining a resume');
     await wait(5);
     assert.equal(assistant.state().process_id, null, 'the old process has stopped');
     assert.ok(inbox.hold('proc-assistant-4', { kind: 'report', sourceProcessId: 'proc-helper', title: 'Report from proc-helper: completed', body: 'Done during the restart', dedupeKey: 'report:restart' }));
@@ -300,6 +301,7 @@ async function main(): Promise<void> {
     const promptsBefore = prompts.length;
     openGate();
     assert.equal((await gated).process_id, 'proc-assistant-5');
+    await freshRejected;
     await wait(20);
     assert.match(prompts.slice(promptsBefore).join('\n'), /held while Focus mode was on or the assistant was not running[\s\S]*Report from proc-helper/);
 

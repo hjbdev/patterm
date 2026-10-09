@@ -113,7 +113,7 @@ export class AssistantService {
   }
 
   private async replace(processId: string, fresh: boolean): Promise<AssistantState> {
-    if (this.restarting) return this.restarting;
+    if (this.restarting) throw new Error('The assistant is already restarting. Wait for it to finish, then try again.');
     const current = this.current();
     if (current?.process_id !== processId) throw new Error('The assistant has already restarted');
     this.restarting = (async () => {

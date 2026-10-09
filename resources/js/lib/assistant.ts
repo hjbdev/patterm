@@ -96,7 +96,7 @@ export async function newAssistantSession(processId: string): Promise<void> {
 }
 
 async function replaceAssistant(processId: string, tool: string): Promise<void> {
-  if (assistant.restarting) return;
+  if (assistant.restarting) throw new Error('The assistant is already restarting. Wait for it to finish, then try again.');
   assistant.restarting = true;
   assistant.error = '';
   try {
