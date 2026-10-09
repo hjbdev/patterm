@@ -130,7 +130,7 @@ export class HarnessLauncher {
     // The session is registered once the harness has started, and holds the
     // identity from then on.
     const identity = `mcp_${randomUUID()}`;
-    const release = this.deps.launchingIdentities?.reserve(identity, selection.harness);
+    const release = this.deps.launchingIdentities?.reserve(identity, selection.harness, input.session_role);
     try { return await this.startPrepared(input, selection, resume, identity); }
     finally {
       release?.();

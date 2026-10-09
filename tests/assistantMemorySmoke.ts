@@ -11,6 +11,7 @@ import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import { TimelineService } from '../app/Services/TimelineService';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
+import { LaunchingMcpIdentities } from '../app/MCP/McpHelperAccess';
 
 async function main(): Promise<void> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-memory-'));
@@ -99,18 +100,6 @@ async function main(): Promise<void> {
       assert.ok(Buffer.byteLength(memory.search({ query: 'code', limit: 20 }).text) <= budget * 3);
     }
     assert.ok(memory.read({}).pressure?.candidates.length);
-    // Native compaction does not run memory compression; the assistant owns
-    // these explicit cycles. Summaries remain eligible for later cycles.
-    for (let cycle = 0; cycle < 4; cycle++) {
-      const candidates = memory.read({}).pressure!.candidates;
-      const source = row(candidates[0]!);
-      const result = memory.write({ mode: 'compress', replaces: candidates.slice(0, 2), lines: [{ text: `Concise related test facts ${cycle}.`, importance: source.importance, project_id: source.project_id }] });
-      assert.ok(result.retired.length === 2);
-    }
-    const pressureIds = memory.read({}).pressure!.candidates.slice(0, 2);
-    memory.write({ mode: 'compress', replaces: pressureIds, lines: [] });
-    assert.ok(pressureIds.every((id) => row(id).status === 'forgotten'));
-
     const snapshot = memory.snapshot(2400);
     const voice = voiceBrief(Array.from({ length: 20 }, (_, i) => ({ id: String(i), role: 'user' as const, kind: 'text' as const, text: 'long input '.repeat(40) })), Array.from({ length: 12 }, () => ({ name: 'agent '.repeat(40), project: 'p', activity: 'working' })), snapshot)!;
     assert.ok(voice.length <= 6000);
@@ -126,14 +115,62 @@ async function main(): Promise<void> {
       db.prepare("insert into processes(id,project_id,kind,name,status,created_at,updated_at) values(?,?,'agent',?,'running',?,?)").run(`proc-${role}`, 'p', role, now, now);
       db.prepare('insert into sessions(id,project_id,process_id,harness,session_role,started_at,cwd,mcp_identity) values(?,?,?,?,?,?,?,?)').run(role, 'p', `proc-${role}`, 'codex', role, now, dir, `mcp-${role}`);
     }
-    const registry = createTestMcpRegistry({ tempDir: dir, database, timeline: new TimelineService(database), terminal: { request: async () => ({}) } as unknown as TerminalService, workbench: new WorkbenchRepository(database, settings), assistantMemory: memory });
+    const launchingIdentities = new LaunchingMcpIdentities();
+    const registry = createTestMcpRegistry({ tempDir: dir, database, timeline: new TimelineService(database), terminal: { request: async () => ({}) } as unknown as TerminalService, workbench: new WorkbenchRepository(database, settings), assistantMemory: memory, launchingIdentities });
     const tool = 'assistant.memory.read';
+    const assistantCaller = { identity: 'mcp-assistant' };
+    const releaseWorker = launchingIdentities.reserve('mcp-starting-worker', 'codex', 'orchestrator');
+    const releaseAssistant = launchingIdentities.reserve('mcp-starting-assistant', 'codex', 'assistant');
+    for (const memoryEnabled of [false, true]) {
+      settings.updateAssistantSettings({ ...settings.assistantSettings(), memoryEnabled });
+      const ordinaryCatalog = registry.publicTools({ identity: 'mcp-starting-worker' });
+      assert.ok(ordinaryCatalog.length > 0, 'pre-registration catalogue discovery remains available');
+      assert.ok(!ordinaryCatalog.some((item) => item.name === tool));
+      assert.equal(registry.publicTools({ identity: 'mcp-starting-assistant' }).some((item) => item.name === tool), memoryEnabled, 'launching assistants discover enabled memory tools before registration');
+      assert.ok(registry.publicTools({ identity: 'unregistered' }).length > 0);
+    }
+    await assert.rejects(registry.callPublic(tool, {}, { identity: 'mcp-starting-assistant' }), /identity/);
+    await assert.rejects(registry.call(tool, {}, { identity: 'mcp-starting-assistant' }), /identity/, 'discovery does not authorize tool calls');
+    releaseWorker(); releaseAssistant();
+    assert.ok(!registry.publicTools({ identity: 'mcp-starting-assistant' }).some((item) => item.name === tool));
+
+    // Reproduce omitted candidates, then compress using only public operations.
+    // A fresh/compacted assistant has no direct database access to these facts.
+    settings.updateAssistantSettings({ ...settings.assistantSettings(), memoryBudgetTokens: 2000 });
+    time = new Date('2026-08-01T12:00:00Z');
+    memory.write({ lines: Array.from({ length: 20 }, (_, i) => ({ text: `Old related candidate ${i} ${'x'.repeat(270)}`, importance: 'high' })) });
+    time = new Date('2026-10-01T12:00:00Z');
+    // The oldest low group goes first; after forgetting it, the older high
+    // candidates are omitted but must still be accessible by their IDs.
+    const lowPressure = await registry.callPublic(tool, {}, assistantCaller) as ReturnType<AssistantMemoryService['read']>;
+    await registry.callPublic('assistant.memory.write', { mode: 'compress', replaces: lowPressure.pressure!.candidates.slice(0, 2), lines: [] }, assistantCaller);
+    const omittedCandidates = await registry.callPublic(tool, {}, assistantCaller) as ReturnType<AssistantMemoryService['read']>;
+    assert.ok(omittedCandidates.pressure!.candidates.every((id) => !omittedCandidates.text.includes(id)), 'pressure candidates can all be absent from the loaded snapshot');
+    for (let cycle = 0; cycle < 4; cycle++) {
+      const current = await registry.callPublic(tool, {}, assistantCaller) as ReturnType<AssistantMemoryService['read']>;
+      const ids = current.pressure!.candidates.slice(0, 2);
+      const fetched = await registry.callPublic('assistant.memory.search', { ids }, assistantCaller) as ReturnType<AssistantMemoryService['search']>;
+      assert.ok(ids.every((id) => fetched.text.includes(id)), 'omitted candidate content is retrievable');
+      assert.match(fetched.text, /\[high; workspace;/);
+      assert.ok(Buffer.byteLength(fetched.text) <= 6000);
+      await registry.callPublic('assistant.memory.write', { mode: 'compress', replaces: ids, lines: [{ text: `Concise related facts ${cycle}.`, importance: 'high' }] }, assistantCaller);
+    }
+    const forget = await registry.callPublic(tool, {}, assistantCaller) as ReturnType<AssistantMemoryService['read']>;
+    const pressureIds = forget.pressure!.candidates.slice(0, 2);
+    await registry.callPublic('assistant.memory.write', { mode: 'compress', replaces: pressureIds, lines: [] }, assistantCaller);
+    const retired = await registry.callPublic('assistant.memory.search', { ids: pressureIds, history: true }, assistantCaller) as ReturnType<AssistantMemoryService['search']>;
+    assert.match(retired.text, /\[forgotten\]/);
+    assert.ok(!memory.search({ ids: pressureIds }).text.includes(pressureIds[0]!));
+    assert.throws(() => memory.search({ ids: [] }));
+    assert.throws(() => memory.search({ ids: Array(7).fill('id') }));
+    assert.throws(() => memory.search({ ids: ['id'], query: 'also query' }));
+    assert.throws(() => memory.search({}));
     assert.ok(registry.publicTools({ identity: 'mcp-assistant' }).some((item) => item.name === tool));
     for (const identity of ['mcp-routine', 'mcp-orchestrator', null]) {
       assert.ok(!registry.publicTools({ identity }).some((item) => item.name === tool));
       await assert.rejects(registry.callPublic(tool, {}, { identity }), /Only the assistant/);
     }
-    await assert.rejects(registry.callPublic(tool, {}, { identity: 'expired' }), /identity/);
+    await assert.rejects(registry.callPublic(tool, {}, { identity: 'expired' }), /Only the assistant|identity/);
     await assert.rejects(registry.call(tool, {}, { remote: { host_id: 'remote', host_name: 'remote', project_id: 'p' } }), /Only the assistant/);
     settings.updateAssistantSettings({ ...settings.assistantSettings(), memoryEnabled: false });
     assert.equal(memory.snapshot(), '');

@@ -40,6 +40,7 @@ export function createTestMcpRegistry(input: {
   assistant?: Parameters<typeof createMcpRegistry>[0]['assistant'];
   assistantInbox?: Parameters<typeof createMcpRegistry>[0]['assistantInbox'];
   assistantMemory?: Parameters<typeof createMcpRegistry>[0]['assistantMemory'];
+  launchingIdentities?: Parameters<typeof createMcpRegistry>[0]['launchingIdentities'];
   timers?: Parameters<typeof createMcpRegistry>[0]['timers'];
   closeRequests?: Parameters<typeof createMcpRegistry>[0]['closeRequests'];
 }): McpToolRegistry {
@@ -90,6 +91,7 @@ export function createTestMcpRegistry(input: {
     ...(input.assistant ? { assistant: input.assistant } : {}),
     ...(input.assistantInbox ? { assistantInbox: input.assistantInbox } : {}),
     ...(input.assistantMemory ? { assistantMemory: input.assistantMemory } : {}),
+    ...(input.launchingIdentities ? { launchingIdentities: input.launchingIdentities } : {}),
     ...(input.timers ? { timers: input.timers } : {}),
     ...(input.closeRequests ? { closeRequests: input.closeRequests } : {})
   });

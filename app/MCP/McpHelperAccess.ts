@@ -44,14 +44,18 @@ export class McpHelperAccess {
 // helpers before Patterm registers the session, so those helpers are
 // recognised from the moment the identity is made.
 export class LaunchingMcpIdentities {
-  private readonly launching = new Map<string, string>();
+  private readonly launching = new Map<string, { harness: string; role: string | null }>();
 
-  reserve(identity: string, harness: string): () => void {
-    this.launching.set(identity, harness);
+  reserve(identity: string, harness: string, role: string | null = null): () => void {
+    this.launching.set(identity, { harness, role });
     return () => { this.launching.delete(identity); };
   }
 
   harness(identity: string): string | null {
-    return this.launching.get(identity) ?? null;
+    return this.launching.get(identity)?.harness ?? null;
+  }
+
+  role(identity: string): string | null {
+    return this.launching.get(identity)?.role ?? null;
   }
 }

@@ -6,10 +6,13 @@ import type { McpCallContext, McpToolRegistry } from './ToolRegistry';
 // Match createMcpRegistry's Zod 3 compatibility boundary.
 const jsonSchema = zodToJsonSchema as unknown as (schema: z.ZodTypeAny, options: { $refStrategy: 'none' }) => Record<string, unknown>;
 
-export function registerAssistantMemoryTools(registry: McpToolRegistry, memory: AssistantMemoryService, isAssistant: (context: McpCallContext) => boolean): void {
-  const unavailable = (context: McpCallContext) => !isAssistant(context) ? 'Only the assistant session can access saved memory.'
-    : !memory.enabled() ? 'Saved assistant memory is disabled in Settings › Assistant.' : null;
-  const check = (context: McpCallContext) => { const reason = unavailable(context); if (reason) throw new Error(reason); };
+export function registerAssistantMemoryTools(registry: McpToolRegistry, memory: AssistantMemoryService, isAssistant: (context: McpCallContext) => boolean, visibleToAssistant: (context: McpCallContext) => boolean): void {
+  const unavailable = (context: McpCallContext) => !memory.enabled() ? 'Saved assistant memory is disabled in Settings › Assistant.'
+    : !visibleToAssistant(context) ? 'Only the assistant session can access saved memory.' : null;
+  const check = (context: McpCallContext) => {
+    if (!isAssistant(context)) throw new Error('Only the assistant session can access saved memory.');
+    const reason = unavailable(context); if (reason) throw new Error(reason);
+  };
   registry.register({
     name: 'assistant.memory.read', namespace: 'assistant.memory', changes: [], unavailable,
     description: 'Assistant only: a bounded snapshot, or complete changes since a revision. Never advance the revision if requiresRefresh is true.',
@@ -17,7 +20,7 @@ export function registerAssistantMemoryTools(registry: McpToolRegistry, memory: 
   }, (args, context) => { check(context); return memory.read(args ?? {}); });
   registry.register({
     name: 'assistant.memory.search', namespace: 'assistant.memory', changes: [], unavailable,
-    description: 'Assistant only: targeted text search. Active notes by default; history:true includes labelled outdated records. project_id:null restricts to workspace notes.',
+    description: 'Assistant only: targeted text search with query, or retrieve up to six records with ids (including pressure candidates omitted from the snapshot). Active notes by default; history:true includes labelled outdated records. project_id:null restricts to workspace notes.',
     inputSchema: jsonSchema(memorySearchInput, { $refStrategy: 'none' })
   }, (args, context) => { check(context); return memory.search(args); });
   registry.register({

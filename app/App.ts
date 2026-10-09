@@ -598,6 +598,7 @@ async function createApplicationResources(
     assistantInbox,
     routines,
     assistantMemory,
+    launchingIdentities,
     crossHost
   });
   registerMcpServerTools(mcp, mcpServers);

@@ -14,11 +14,12 @@ const lineInput = z.object({
 }).strict();
 export const memoryReadInput = z.object({ since_revision: z.number().int().nonnegative().optional() }).strict();
 export const memorySearchInput = z.object({
-  query: z.string().trim().min(1).max(200),
+  query: z.string().trim().min(1).max(200).optional(),
+  ids: z.array(z.string().min(1).max(80)).min(1).max(6).optional(),
   project_id: z.string().min(1).max(160).nullable().optional(),
   history: z.boolean().default(false),
   limit: z.number().int().min(1).max(20).default(10)
-}).strict();
+}).strict().refine((input) => Boolean(input.query) !== Boolean(input.ids), 'Provide query or ids, exclusively.');
 export const memoryWriteInput = z.object({
   mode: z.enum(['note', 'supersede', 'compress']).default('note'),
   lines: z.array(lineInput).max(20),
@@ -83,8 +84,9 @@ export class AssistantMemoryService {
     this.requireEnabled();
     const input = memorySearchInput.parse(raw);
     const scope = input.project_id === undefined ? '' : ' and project_id is ?';
-    const rows = this.database.connection.prepare(`select * from assistant_memory where instr(lower(text), lower(?)) > 0${input.history ? '' : " and status = 'active'"}${scope} order by recorded_at desc, id limit ?`)
-      .all(input.query, ...(input.project_id === undefined ? [] : [input.project_id]), input.limit) as MemoryRow[];
+    const match = input.ids ? `id in (${input.ids.map(() => '?').join(',')})` : 'instr(lower(text), lower(?)) > 0';
+    const rows = this.database.connection.prepare(`select * from assistant_memory where ${match}${input.history ? '' : " and status = 'active'"}${scope} order by recorded_at desc, id limit ?`)
+      .all(...(input.ids ?? [input.query]), ...(input.project_id === undefined ? [] : [input.project_id]), input.limit) as MemoryRow[];
     const { text, omitted } = this.render(rows, `[Targeted memory search. ${input.history ? 'History included: replaced/forgotten records are outdated and must never be treated as current.' : 'Active facts only.'}]`, this.budget() - 1024, true);
     return { revision: this.revision(), text, omitted };
   }
