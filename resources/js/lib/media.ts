@@ -1,0 +1,31 @@
+import type { RouteLocationRaw } from 'vue-router';
+
+// An image pasted into or viewed in an imported conversation, listed once per
+// conversation at its first appearance.
+export interface MediaItem {
+  sha256: string;
+  mime: string;
+  sizeBytes: number;
+  kind: 'pasted' | 'viewed';
+  name: string | null;
+  occurredAt: string | null;
+  conversationId: string;
+  conversationTitle: string | null;
+  sessionId: string | null;
+  messageId: string | null;
+}
+
+export interface MediaPage { items: MediaItem[]; total: number }
+
+export function listMedia(projectId: string, args: { session_id?: string; kind?: MediaItem['kind']; limit?: number; offset?: number } = {}): Promise<MediaPage> {
+  return window.patterm.call('patterm.media.list', { project_id: projectId, ...args }) as Promise<MediaPage>;
+}
+
+// Lightbox entries that open the message each image came from.
+export function mediaGallery(items: MediaItem[], projectId: string): Array<{ sha256: string; name?: string; to: RouteLocationRaw }> {
+  return items.map((item) => ({
+    sha256: item.sha256,
+    ...(item.name ?? item.conversationTitle ? { name: (item.name ?? item.conversationTitle)! } : {}),
+    to: { name: 'history', params: { projectId }, query: { conversation: item.conversationId, ...(item.messageId ? { message: item.messageId } : {}) } }
+  }));
+}

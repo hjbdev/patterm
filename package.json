@@ -31,7 +31,7 @@
     "test:project": "tsc -p tsconfig.tests.json && node dist/tests/tests/projectCreateSmoke.js && node --test tests/directoryPickerSmoke.mjs",
     "test:process": "tsc -p tsconfig.tests.json && node dist/tests/tests/shellEnvironmentSmoke.js && node dist/tests/tests/processLaunchSmoke.js",
     "test:search": "tsc -p tsconfig.tests.json && node dist/tests/tests/searchSmoke.js",
-    "test:history": "tsc -p tsconfig.tests.json && node dist/tests/tests/historySourceOrderSmoke.js && node dist/tests/tests/agentHistoryImportSmoke.js && node dist/tests/tests/usageSmoke.js && node dist/tests/tests/ampHistoryImportSmoke.js && node dist/tests/tests/historyTranscriptSmoke.js && node dist/tests/tests/claudeTaskOutputSmoke.js && node --test tests/conversationHistoryViewSmoke.mjs",
+    "test:history": "tsc -p tsconfig.tests.json && node dist/tests/tests/historySourceOrderSmoke.js && node dist/tests/tests/agentHistoryImportSmoke.js && node dist/tests/tests/usageSmoke.js && node dist/tests/tests/conversationMediaSmoke.js && node dist/tests/tests/ampHistoryImportSmoke.js && node dist/tests/tests/historyTranscriptSmoke.js && node dist/tests/tests/claudeTaskOutputSmoke.js && node --test tests/conversationHistoryViewSmoke.mjs",
     "test:worktree": "tsc -p tsconfig.tests.json && node dist/tests/tests/worktreeDiffSmoke.js",
     "test:hosts": "tsc -p tsconfig.tests.json && node dist/tests/tests/hostPairingSmoke.js && pnpm run build:sidecar && node dist/tests/tests/crossHostSmoke.js",
     "test:launch": "tsc -p tsconfig.tests.json && node dist/tests/tests/launchIdentitySmoke.js && node dist/tests/tests/nestedAgentsSmoke.js",

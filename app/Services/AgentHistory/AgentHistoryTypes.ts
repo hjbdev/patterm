@@ -22,6 +22,28 @@ export interface ParsedConversation {
   rateLimits?: ParsedRateLimit[];
   // Each time a skill was loaded, by the agent or by the user's command.
   skills?: ParsedSkillUse[];
+  // Images the user pasted or the agent viewed, in transcript order.
+  media?: ParsedMedia[];
+}
+
+// An image stays in the native transcript; the index records where to read
+// it back. A JSONL image is a string at `pointer` inside the record at
+// `offset`; an OpenCode image is one in a row's JSON data.
+export type MediaLocator =
+  | { type: 'jsonl'; offset: number; length: number; pointer: Array<string | number> }
+  | { type: 'sqlite'; table: 'part' | 'session_message'; rowId: string; pointer: Array<string | number> };
+
+export interface ParsedMedia {
+  // The seq of the message the image belongs to, or the one before it.
+  messageSeq: number | null;
+  kind: 'pasted' | 'viewed';
+  mime: string;
+  sha256: string;
+  sizeBytes: number;
+  // The image's file path or name, when the transcript records one.
+  name: string | null;
+  occurredAt: string | null;
+  locator: MediaLocator;
 }
 
 export interface ParsedSkillUse {

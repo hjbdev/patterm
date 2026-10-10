@@ -39,7 +39,7 @@ import { sidebarLayout } from './sidebarLayout';
 import SidebarList from './SidebarList.vue';
 
 const sidebar = useSidebar();
-const PAGE_LABELS = { worktrees: 'Worktrees', history: 'History', todos: 'Todos', scratchpads: 'Scratchpads' } as const;
+const PAGE_LABELS = { worktrees: 'Worktrees', history: 'History', todos: 'Todos', scratchpads: 'Scratchpads', media: 'Media' } as const;
 
 const current = computed<{ label: string; root?: SessionRecord; rootSelect?: () => void; child?: string; session?: SessionRecord; host?: string | undefined }>(() => {
   const page = sidebar.page.value;

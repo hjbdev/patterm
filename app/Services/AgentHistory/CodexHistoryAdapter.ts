@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { HistoryFileFingerprint, HistorySourceCandidate, ParsedConversation, ParsedHistoryFile, ParsedMessage, ParsedRateLimit, ParsedUsage, ProviderHistoryAdapter } from './AgentHistoryTypes';
-import { defaultFileFingerprint, isoFromString, nonNegative, readJsonl, skillUsesFromMessages, statOnlyFingerprint, stringValue, textFromUnknown, walkFiles } from './HistoryAdapterUtils';
+import type { HistoryFileFingerprint, HistorySourceCandidate, ParsedConversation, ParsedHistoryFile, ParsedMedia, ParsedMessage, ParsedRateLimit, ParsedUsage, ProviderHistoryAdapter } from './AgentHistoryTypes';
+import { defaultFileFingerprint, isoFromString, nonNegative, parsedImage, readJsonl, skillUsesFromMessages, statOnlyFingerprint, stringValue, textFromUnknown, walkFiles } from './HistoryAdapterUtils';
 
 export class CodexHistoryAdapter implements ProviderHistoryAdapter {
   readonly provider = 'codex' as const;
-  readonly parserVersion = 'codex-jsonl-v5';
+  readonly parserVersion = 'codex-jsonl-v6';
 
   defaultSources(homeDir: string): HistorySourceCandidate[] {
     const sessions = path.join(homeDir, '.codex', 'sessions');
@@ -48,6 +48,9 @@ export class CodexHistoryAdapter implements ProviderHistoryAdapter {
     const usage = new CodexUsageReader();
     // Tool calls carry no turn_id; the turn_context before them names the turn.
     let currentTurnId: string | null = null;
+    const media: ParsedMedia[] = [];
+    // Each tool call's input, to name the images its output returns.
+    const callInputs = new Map<string, string>();
     for (const record of readJsonl(filePath).records) {
       if (!record || typeof record !== 'object') continue;
       const row = record as Record<string, unknown>;
@@ -79,6 +82,7 @@ export class CodexHistoryAdapter implements ProviderHistoryAdapter {
       if (rowType === 'turn_context') currentTurnId = stringValue(payload.turn_id) ?? currentTurnId;
 
       const extracted = extractCodexItems(payload, rowType);
+      const rowSeq = seq;
       for (const item of extracted) {
         if (rowType === 'event_msg' && hasResponseMessages) continue;
         if (!item.text && !item.toolName && !item.toolInputSummary && !item.toolOutputSummary) continue;
@@ -100,6 +104,10 @@ export class CodexHistoryAdapter implements ProviderHistoryAdapter {
           metadata: { type: rowType, payloadType: stringValue(payload.type), callId: item.callId ?? null, source: 'codex-jsonl' }
         });
       }
+      if (rowType === 'response_item') {
+        const messageSeq = seq > rowSeq ? rowSeq : seq ? seq - 1 : null;
+        media.push(...codexImages(payload, callInputs, { messageSeq, occurredAt: createdAt, position: parsed.position }));
+      }
     }
 
     warnings.push(...parsed.warnings);
@@ -118,6 +126,7 @@ export class CodexHistoryAdapter implements ProviderHistoryAdapter {
       sourcePath: filePath,
       metadata: { source: 'codex-jsonl' },
       messages,
+      media,
       usage: usage.usage,
       rateLimits: usage.rateLimits,
       skills: skillUsesFromMessages(messages, { skillFileReads: true })
@@ -282,6 +291,43 @@ function extractCodexItems(payload: Record<string, unknown>, rowType: string): C
     toolInputSummary: textFromCodexContent(payload.input) || null,
     toolOutputSummary: textFromCodexContent(payload.output) || null
   }];
+}
+
+const IMAGE_PATH = /["'`]([^"'`\s]+\.(?:png|jpe?g|gif|webp))["'`]/gi;
+
+// A pasted image follows an input_text naming its upload path; a viewed image
+// is returned in a tool call's output, and the call's input names its file
+// when it opens images in order, as view_image does.
+function codexImages(payload: Record<string, unknown>, callInputs: Map<string, string>, context: { messageSeq: number | null; occurredAt: string | null; position: { offset: number; length: number } }): ParsedMedia[] {
+  const type = stringValue(payload.type);
+  const callId = stringValue(payload.call_id);
+  if ((type === 'function_call' || type === 'custom_tool_call') && callId) {
+    callInputs.set(callId, textFromUnknown(payload.arguments ?? payload.input));
+    return [];
+  }
+  const field = type === 'message' ? 'content' : type === 'function_call_output' || type === 'custom_tool_call_output' ? 'output' : null;
+  const items = field ? payload[field] : null;
+  if (!field || !Array.isArray(items) || payload.role === 'developer' || payload.role === 'system') return [];
+  const kind = type === 'message' && payload.role === 'user' ? 'pasted' : 'viewed';
+  const paths = kind === 'viewed' ? [...(callInputs.get(callId ?? '') ?? '').matchAll(IMAGE_PATH)].map((match) => match[1]!) : [];
+  const out: ParsedMedia[] = [];
+  let label: string | null = null;
+  items.forEach((item, index) => {
+    if (!item || typeof item !== 'object') return;
+    const record = item as Record<string, unknown>;
+    if (record.type === 'input_text') {
+      label = /^<image name=[^>]*?path="([^"]+)"/.exec(textFromUnknown(record.text))?.[1] ?? null;
+      return;
+    }
+    if (record.type !== 'input_image') return;
+    const name = kind === 'pasted' ? label : paths[out.length] ?? null;
+    const image = parsedImage(record.image_url, null, {
+      messageSeq: context.messageSeq, kind, name, occurredAt: context.occurredAt,
+      locator: { type: 'jsonl', ...context.position, pointer: ['payload', field, index, 'image_url'] }
+    });
+    if (image) out.push(image);
+  });
+  return out;
 }
 
 function isGeneratedContext(payload: Record<string, unknown>, text: string): boolean {

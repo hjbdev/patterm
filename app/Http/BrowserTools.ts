@@ -23,6 +23,7 @@ export const BROWSER_TOOLS = new Set([
   'patterm.history.sources', 'patterm.history.configure', 'patterm.history.import',
   'patterm.history.import_status', 'patterm.history.reset_imports', 'patterm.history.list',
   'patterm.history.get', 'patterm.history.search', 'patterm.history.delete', 'patterm.history.resume',
+  'patterm.media.list', 'patterm.media.get',
   'patterm.search', 'patterm.worktree.create', 'patterm.worktree.link', 'patterm.worktree.list',
   'patterm.worktree.abandon', 'patterm.diff.current', 'patterm.diff.file'
 ]);

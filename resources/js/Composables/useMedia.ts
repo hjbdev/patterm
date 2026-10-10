@@ -1,0 +1,43 @@
+import { computed, ref, watch, type Ref } from 'vue';
+import { listMedia, mediaGallery, type MediaItem } from '../lib/media';
+import { useContextRefresh } from '../lib/projectContext';
+
+// A project's or one session's images, newest first, a page at a time. The
+// list reloads when an import lands, keeping the pages already shown.
+export function useMedia(props: { projectId: string; sessionId?: string | undefined }, options: { kind?: Ref<MediaItem['kind'] | null>; pageSize: number }) {
+  const items = ref<MediaItem[]>([]), total = ref(0), loaded = ref(false), loading = ref(false), error = ref('');
+  const gallery = computed(() => mediaGallery(items.value, props.projectId));
+  let generation = 0;
+
+  async function load(offset: number, limit: number) {
+    const current = ++generation;
+    loading.value = true;
+    try {
+      const page = await listMedia(props.projectId, { ...(props.sessionId ? { session_id: props.sessionId } : {}), ...(options.kind?.value ? { kind: options.kind.value } : {}), limit, offset });
+      if (current !== generation) return;
+      items.value = offset ? [...items.value, ...page.items] : page.items;
+      total.value = page.total;
+      error.value = '';
+      loaded.value = true;
+    }
+    catch (cause) {
+      if (current === generation) error.value = String(cause);
+    }
+    finally {
+      if (current === generation) loading.value = false;
+    }
+  }
+
+  const refresh = () => load(0, Math.min(100, Math.max(options.pageSize, items.value.length)));
+  const loadMore = () => loading.value || items.value.length >= total.value ? Promise.resolve() : load(items.value.length, options.pageSize);
+
+  watch(() => [props.projectId, props.sessionId, options.kind?.value], () => {
+    items.value = [];
+    total.value = 0;
+    loaded.value = false;
+    void load(0, options.pageSize);
+  }, { immediate: true });
+  useContextRefresh(() => void refresh(), { topics: ['history'], lifecycle: false });
+
+  return { items, gallery, total, loaded, loading, error, loadMore, refresh };
+}
