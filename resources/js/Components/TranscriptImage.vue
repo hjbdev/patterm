@@ -59,7 +59,7 @@
           </DialogClose>
         </div>
         <div v-if="items.length > 1 && items.length <= MAX_DOTS" :class="chrome ? 'opacity-100' : 'opacity-0'" class="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center gap-1.5 pb-[calc(1rem+env(safe-area-inset-bottom))] transition-opacity" aria-hidden="true">
-          <span v-for="(item, position) in items" :key="item.sha256" :class="position === index ? 'bg-white' : 'bg-white/35'" class="h-1.5 w-1.5 rounded-full transition-colors" />
+          <span v-for="(item, position) in items" :key="identity(item)" :class="position === index ? 'bg-white' : 'bg-white/35'" class="h-1.5 w-1.5 rounded-full transition-colors" />
         </div>
       </template>
       <template v-else>
@@ -97,7 +97,10 @@ import { useLightboxGestures } from '../Composables/useLightboxGestures';
 import type { TranscriptImage } from '../lib/integratedConversation';
 import { transcriptImageUrl } from '../lib/transcriptImages';
 
-type GalleryImage = TranscriptImage & { to?: RouteLocationRaw };
+// The same image can appear more than once in a gallery; `key` tells the
+// occurrences apart.
+type GalleryImage = TranscriptImage & { key?: string; to?: RouteLocationRaw };
+const identity = (image: GalleryImage) => image.key ?? image.sha256;
 
 // Images shown together pass the whole group as the gallery so the lightbox
 // can step between them. A project reads images indexed from its history; a
@@ -135,7 +138,7 @@ const gestures = useLightboxGestures(stage, stageImage, {
 watch(expanded, (open) => {
   gestures.reset();
   chrome.value = true;
-  if (open) index.value = Math.max(0, items.value.findIndex((item) => item.sha256 === props.image.sha256));
+  if (open) index.value = Math.max(0, items.value.findIndex((item) => identity(item) === identity(props.image)));
 });
 
 function step(delta: number): void {

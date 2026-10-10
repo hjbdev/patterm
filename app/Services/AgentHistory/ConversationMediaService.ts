@@ -81,7 +81,7 @@ export class ConversationMediaService {
       select conversation_media.mime, conversation_media.source_path, conversation_media.locator from conversation_media
       join conversations on conversations.id = conversation_media.conversation_id
       where conversation_media.sha256 = ? and conversations.project_id = ?
-      order by conversation_media.id desc limit 5
+      order by conversation_media.id desc
     `).all(input.sha256, input.project_id) as Array<{ mime: string; source_path: string; locator: string }>;
     for (const source of sources) {
       const bytes = readImage(source.source_path, JSON.parse(source.locator) as MediaLocator);

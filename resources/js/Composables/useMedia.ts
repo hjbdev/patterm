@@ -9,14 +9,23 @@ export function useMedia(props: { projectId: string; sessionId?: string | undefi
   const gallery = computed(() => mediaGallery(items.value, props.projectId));
   let generation = 0;
 
-  async function load(offset: number, limit: number) {
+  // Reads `count` items from `offset` in requests the service accepts.
+  async function load(offset: number, count: number) {
     const current = ++generation;
     loading.value = true;
     try {
-      const page = await listMedia(props.projectId, { ...(props.sessionId ? { session_id: props.sessionId } : {}), ...(options.kind?.value ? { kind: options.kind.value } : {}), limit, offset });
-      if (current !== generation) return;
-      items.value = offset ? [...items.value, ...page.items] : page.items;
-      total.value = page.total;
+      const filters = { ...(props.sessionId ? { session_id: props.sessionId } : {}), ...(options.kind?.value ? { kind: options.kind.value } : {}) };
+      const fetched: MediaItem[] = [];
+      let pageTotal = 0;
+      do {
+        const page = await listMedia(props.projectId, { ...filters, limit: Math.min(100, count - fetched.length), offset: offset + fetched.length });
+        if (current !== generation) return;
+        fetched.push(...page.items);
+        pageTotal = page.total;
+        if (!page.items.length) break;
+      } while (fetched.length < count && offset + fetched.length < pageTotal);
+      items.value = offset ? [...items.value, ...fetched] : fetched;
+      total.value = pageTotal;
       error.value = '';
       loaded.value = true;
     }
@@ -28,7 +37,8 @@ export function useMedia(props: { projectId: string; sessionId?: string | undefi
     }
   }
 
-  const refresh = () => load(0, Math.min(100, Math.max(options.pageSize, items.value.length)));
+  // Reloads everything already shown, so an import does not drop later pages.
+  const refresh = () => load(0, Math.max(options.pageSize, items.value.length));
   const loadMore = () => loading.value || items.value.length >= total.value ? Promise.resolve() : load(items.value.length, options.pageSize);
 
   watch(() => [props.projectId, props.sessionId, options.kind?.value], () => {

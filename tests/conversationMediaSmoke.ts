@@ -88,6 +88,12 @@ try {
   }
   assert.throws(() => media.read({ project_id: 'other_project', sha256: sha(PNG) }), /no longer stored/);
 
+  // Newer occurrences in a missing transcript do not hide an intact one.
+  const stale = historyDatabase.connection.prepare(`insert into conversation_media (conversation_id, message_seq, kind, mime, sha256, size_bytes, name, occurred_at, source_path, locator)
+    select conversation_id, message_seq, kind, mime, sha256, size_bytes, name, occurred_at, ?, locator from conversation_media where sha256 = ? limit 1`);
+  for (let index = 0; index < 6; index += 1) stale.run(path.join(directory, 'missing.jsonl'), sha(PNG));
+  assert.equal(media.read({ project_id: 'media_project', sha256: sha(PNG) }).data, PNG, 'an intact transcript is found past unreadable ones');
+
   // A rewritten transcript no longer matches the indexed hash.
   const codexFile = path.join(codexDir, 'rollout.jsonl');
   fs.writeFileSync(codexFile, fs.readFileSync(codexFile, 'utf8').replace(THIRD, Buffer.from('changed').toString('base64')));

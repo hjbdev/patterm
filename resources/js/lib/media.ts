@@ -22,8 +22,9 @@ export function listMedia(projectId: string, args: { session_id?: string; kind?:
 }
 
 // Lightbox entries that open the message each image came from.
-export function mediaGallery(items: MediaItem[], projectId: string): Array<{ sha256: string; name?: string; to: RouteLocationRaw }> {
+export function mediaGallery(items: MediaItem[], projectId: string): Array<{ key: string; sha256: string; name?: string; to: RouteLocationRaw }> {
   return items.map((item) => ({
+    key: `${item.conversationId}:${item.sha256}`,
     sha256: item.sha256,
     ...(item.name ?? item.conversationTitle ? { name: (item.name ?? item.conversationTitle)! } : {}),
     to: { name: 'history', params: { projectId }, query: { conversation: item.conversationId, ...(item.messageId ? { message: item.messageId } : {}) } }
