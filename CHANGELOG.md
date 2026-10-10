@@ -63,6 +63,9 @@ in the archived pre-release repository.
 
 ### Fixed
 
+- In the browser, the folder picker opened from the New project dialog now
+  appears above it instead of hidden underneath, which on phones covered it
+  completely.
 - Imported Claude Code history no longer stores an image tool result as
   truncated base64 text; it shows `[Image]` instead.
 - `/new` in the assistant starts a fresh conversation with empty context.
