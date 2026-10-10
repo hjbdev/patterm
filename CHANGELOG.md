@@ -12,6 +12,12 @@ in the archived pre-release repository.
 
 ### Added
 
+- A Media section in the session context sidebar shows the images pasted into
+  or viewed in that session. The new project Media page lists every image in
+  the project's conversations, filtered by pasted or viewed. Images open in a
+  lightbox that links to their message in conversation history. Claude Code,
+  Codex and OpenCode history is indexed on import; the images stay in the
+  native transcripts and are read back from them.
 - Optional saved memory for the assistant, enabled in Settings › Assistant.
   A bounded snapshot keeps useful facts across fresh conversations, with
   approximately 2,000, 4,000 or 8,000 tokens of space. Low, medium and high
@@ -57,6 +63,8 @@ in the archived pre-release repository.
 
 ### Fixed
 
+- Imported Claude Code history no longer stores an image tool result as
+  truncated base64 text; it shows `[Image]` instead.
 - `/new` in the assistant starts a fresh conversation with empty context.
 
 - Stopping a terminal no longer fails when one of its processes exits while

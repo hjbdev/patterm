@@ -8,7 +8,7 @@ import { unreadUrgency } from '../../Composables/useNotifications';
 import { familyAttention, sessionAttention, type SidebarAttention, type SidebarTreeView } from '../../lib/sidebarTree';
 import type { ProcessRecord, SessionRecord, TimerRecord } from '../../types';
 
-export type SidebarPage = 'worktrees' | 'history' | 'todos' | 'scratchpads';
+export type SidebarPage = 'worktrees' | 'history' | 'todos' | 'scratchpads' | 'media';
 export type AgentTab = Extract<StripTab, { kind: 'agent' }>;
 
 // Everything the sidebar reads or does, built once by the workbench layout.

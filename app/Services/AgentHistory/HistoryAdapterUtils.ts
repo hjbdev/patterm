@@ -2,12 +2,14 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
-import type { HistoryFileFingerprint, ParsedMessage, ParsedSkillUse } from './AgentHistoryTypes';
+import type { HistoryFileFingerprint, MediaLocator, ParsedMedia, ParsedMessage, ParsedSkillUse } from './AgentHistoryTypes';
 
 const MAX_SYNC_FINGERPRINT_HASH_BYTES = 8 * 1024 * 1024;
 
-export function readJsonl(filePath: string): { records: Iterable<unknown>; warnings: string[]; partialTrailingLine: boolean } {
-  const parsed = { records: parseRecords(), warnings: [] as string[], partialTrailingLine: false };
+// `position` is the byte range of the record last yielded, so an image found
+// in it can be read back later without rescanning the file.
+export function readJsonl(filePath: string): { records: Iterable<unknown>; warnings: string[]; partialTrailingLine: boolean; position: { offset: number; length: number } } {
+  const parsed = { records: parseRecords(), warnings: [] as string[], partialTrailingLine: false, position: { offset: 0, length: 0 } };
   return parsed;
 
   function* parseRecords(): Generator<unknown> {
@@ -16,6 +18,7 @@ export function readJsonl(filePath: string): { records: Iterable<unknown>; warni
     const decoder = new StringDecoder('utf8');
     let pending = '';
     let lineNumber = 0;
+    let offset = 0;
     try {
       while (true) {
         const bytes = fs.readSync(fd, chunk, 0, chunk.length, null);
@@ -24,25 +27,38 @@ export function readJsonl(filePath: string): { records: Iterable<unknown>; warni
         let start = 0;
         let end: number;
         while ((end = pending.indexOf('\n', start)) !== -1) {
-          const line = pending.slice(start, end).replace(/\r$/, '');
+          const raw = pending.slice(start, end);
+          const line = raw.replace(/\r$/, '');
+          const length = Buffer.byteLength(raw);
           lineNumber += 1;
           if (line.trim()) {
+            let record: unknown;
             try {
-              yield JSON.parse(line) as unknown;
+              record = JSON.parse(line) as unknown;
             } catch (error) {
               parsed.warnings.push(`line ${lineNumber}: ${error instanceof Error ? error.message : String(error)}`);
             }
+            if (record !== undefined) {
+              parsed.position = { offset, length };
+              yield record;
+            }
           }
+          offset += length + 1;
           start = end + 1;
         }
         pending = pending.slice(start);
         if (!bytes) break;
       }
       if (pending.trim()) {
+        let record: unknown;
         try {
-          yield JSON.parse(pending) as unknown;
+          record = JSON.parse(pending) as unknown;
         } catch {
           parsed.partialTrailingLine = true;
+        }
+        if (record !== undefined) {
+          parsed.position = { offset, length: Buffer.byteLength(pending) };
+          yield record;
         }
       }
     } finally {
@@ -290,4 +306,28 @@ function skillToolName(input: string | null): string | null {
   } catch {
     return null;
   }
+}
+
+const IMAGE_DATA_URI = /^data:(image\/[\w.+-]+);base64,/;
+
+// Indexes one inline image: base64 data, or a data URI that names its type.
+// Returns null for anything that is not an image.
+export function parsedImage(value: unknown, fallbackMime: unknown, fields: { messageSeq: number | null; kind: ParsedMedia['kind']; name: string | null; occurredAt: string | null; locator: MediaLocator }): ParsedMedia | null {
+  if (typeof value !== 'string' || !value) return null;
+  const uri = IMAGE_DATA_URI.exec(value);
+  const mime = uri?.[1] ?? (typeof fallbackMime === 'string' ? fallbackMime : '');
+  if (!mime.startsWith('image/') || (!uri && value.startsWith('data:'))) return null;
+  const bytes = Buffer.from(uri ? value.slice(uri[0].length) : value, 'base64');
+  if (!bytes.length) return null;
+  return { ...fields, mime, sha256: crypto.createHash('sha256').update(bytes).digest('hex'), sizeBytes: bytes.length };
+}
+
+// Follows a locator's pointer into a parsed record.
+export function valueAt(value: unknown, pointer: ReadonlyArray<string | number>): unknown {
+  let current = value;
+  for (const key of pointer) {
+    if (!current || typeof current !== 'object') return undefined;
+    current = (current as Record<string | number, unknown>)[key];
+  }
+  return current;
 }

@@ -35,6 +35,7 @@ import { harnessProviders } from './Harness/providers';
 import { AgentHistoryImportService } from './Services/AgentHistory/AgentHistoryImportService';
 import { AgentHistoryImportQueueService } from './Services/AgentHistory/AgentHistoryImportQueueService';
 import { AgentHistoryReadService } from './Services/AgentHistory/AgentHistoryReadService';
+import { ConversationMediaService } from './Services/AgentHistory/ConversationMediaService';
 import { AgentHistorySourceService } from './Services/AgentHistory/AgentHistorySourceService';
 import { ResumeIdCaptureService } from './Services/AgentHistory/ResumeIdCaptureService';
 import { AgentHistoryWatcherService } from './Services/AgentHistory/AgentHistoryWatcherService';
@@ -406,6 +407,7 @@ async function createApplicationResources(
   const historyImportQueue = new AgentHistoryImportQueueService(options.appDataPath, undefined, options.runtime === 'node' ? launchNodeHistoryWorker : undefined, debugLog, {
     onResult: (result) => {
       if (applyHistoryImportEffects(result, timeline, resumeCapture)) notifyWorkbenchChanged();
+      if (importedConversations(result)) notifyChanged(['history']);
     }
   });
   defer(() => historyImportQueue.dispose());
@@ -590,6 +592,7 @@ async function createApplicationResources(
     historySourceService,
     historyImportQueue,
     historyReadService,
+    historyMedia: new ConversationMediaService(historyDatabase),
     historyWatcher,
     timers,
     notifications,
@@ -733,6 +736,12 @@ async function createApplicationResources(
     requestQuit: () => options.onQuitRequested?.(),
     isShuttingDown: () => shuttingDown
   } satisfies PattermApplication;
+}
+
+function importedConversations(result: unknown): boolean {
+  const row = result && typeof result === 'object' ? result as Record<string, unknown> : {};
+  const importResult = row.import && typeof row.import === 'object' ? row.import as Record<string, unknown> : row;
+  return typeof importResult.conversationsImported === 'number' && importResult.conversationsImported > 0;
 }
 
 function applyHistoryImportEffects(result: unknown, timeline: TimelineService, resumeCapture: ResumeIdCaptureService): boolean {

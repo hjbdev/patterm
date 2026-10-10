@@ -44,6 +44,7 @@ export class AgentHistoryImportService {
   private readonly watermarks: AgentHistoryWatermarkService;
   private resumeMarks: ResumeMark[] = [];
   private usageTables: boolean | null = null;
+  private mediaTable: boolean | null = null;
 
   constructor(
     private readonly database: AgentHistoryDb,
@@ -132,11 +133,13 @@ export class AgentHistoryImportService {
               if (!parserChanged && !recovering && this.isConversationUnchanged(conversation, link)) {
                 // Usage can grow without a new message, for example a late token count.
                 this.syncUsage(conversation);
+                this.syncMedia(conversation);
                 totals.skippedCount += 1;
                 continue;
               }
               const result = this.upsertConversation(conversation, importFileId, linkScope, true, link);
               this.syncUsage(conversation);
+              this.syncMedia(conversation);
               totals.conversationsImported += 1;
               totals.messagesImported += result.messages;
               importedFromFile = true;
@@ -256,11 +259,13 @@ export class AgentHistoryImportService {
               }
               if (!parserChanged && !recovering && this.isConversationUnchanged(conversation, link)) {
                 this.syncUsage(conversation);
+                this.syncMedia(conversation);
                 totals.skippedCount += 1;
                 continue;
               }
               const result = await this.upsertConversationChunked(conversation, importFileId, linkScope, true, link);
               this.syncUsage(conversation);
+              this.syncMedia(conversation);
               totals.conversationsImported += 1;
               totals.messagesImported += result.messages;
               importedFromFile = true;
@@ -743,6 +748,23 @@ export class AgentHistoryImportService {
       for (const entry of conversation.rateLimits ?? []) {
         limit.run(conversation.provider, entry.key, entry.label, entry.usedPercent, entry.windowMinutes, entry.resetsAt, entry.observedAt);
       }
+    })();
+  }
+
+  // Replaces the conversation's image index when it differs.
+  private syncMedia(conversation: ParsedConversation): void {
+    const db = this.database.connection;
+    this.mediaTable ??= Boolean(db.prepare(`select 1 from sqlite_master where type = 'table' and name = 'conversation_media'`).get());
+    if (!this.mediaTable) return;
+    const row = db.prepare(`select id from conversations where provider = ? and provider_conversation_id = ?`).get(conversation.provider, conversation.providerConversationId) as { id: string } | undefined;
+    if (!row) return;
+    const parsed = (conversation.media ?? []).map((entry) => [entry.messageSeq, entry.kind, entry.mime, entry.sha256, entry.sizeBytes, entry.name, entry.occurredAt, conversation.sourcePath, stableJson(entry.locator)]);
+    const stored = db.prepare(`select message_seq, kind, mime, sha256, size_bytes, name, occurred_at, source_path, locator from conversation_media where conversation_id = ? order by id`).all(row.id) as Array<Record<string, unknown>>;
+    if (stableJson(stored.map((item) => Object.values(item))) === stableJson(parsed)) return;
+    db.transaction(() => {
+      db.prepare(`delete from conversation_media where conversation_id = ?`).run(row.id);
+      const insert = db.prepare(`insert into conversation_media (conversation_id, message_seq, kind, mime, sha256, size_bytes, name, occurred_at, source_path, locator) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      for (const values of parsed) insert.run(row.id, ...values as Array<string | number | null>);
     })();
   }
 
