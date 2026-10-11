@@ -48,9 +48,9 @@ if (gate) {
     };
     app = await createApplication(options);
     assert.equal(app.bootstrap().sidecarAvailable, true);
-    const project = await app.mcp.call('patterm.project.create', { path: directory, name: 'Runtime fixture' }) as { project_id: string };
+    const project = await app.mcp.call('project_create', { path: directory, name: 'Runtime fixture' }) as { project_id: string };
     const originalRecord = path.join(directory, 'original.json');
-    const original = await app.mcp.call('patterm.process.create', {
+    const original = await app.mcp.call('process_create', {
       project_id: project.project_id,
       name: 'Uninterrupted sleep',
       command: command(fixture, originalRecord),
@@ -65,7 +65,7 @@ if (gate) {
 
     const offlineRecord = path.join(directory, 'offline.json');
     const gate = path.join(directory, 'exit-gate');
-    const offline = await app.mcp.call('patterm.process.create', {
+    const offline = await app.mcp.call('process_create', {
       project_id: project.project_id, name: 'Exit while disconnected', command: command(fixture, offlineRecord, gate)
     }) as ProcessLauncherResult;
     await until(() => fs.existsSync(offlineRecord), 'offline command starts');
@@ -104,7 +104,7 @@ if (gate) {
     assert.equal(supervisor.starts, 2, 'an updated binary starts another host generation');
     assert.equal(supervisor.activeCount(), 2, 'the previous generation stays supervised while it has live processes');
     const nextRecord = path.join(directory, 'updated.json');
-    const next = await app.mcp.call('patterm.process.create', {
+    const next = await app.mcp.call('process_create', {
       project_id: project.project_id, name: 'Updated host', command: command(fixture, nextRecord), auto_restart: true
     }) as ProcessLauncherResult;
     await until(() => fs.existsSync(nextRecord), 'updated command starts');

@@ -1,4 +1,4 @@
-// Sample ui.save inputs for Settings › Figures, drawn by the same components
+// Sample ui_save inputs for Settings › Figures, drawn by the same components
 // as figures in replies.
 export const DRAWN_UI_EXAMPLES: ReadonlyArray<{ label: string; spec: unknown }> = [
   {
@@ -31,7 +31,7 @@ export const DRAWN_UI_EXAMPLES: ReadonlyArray<{ label: string; spec: unknown }> 
       claim: 'A figure travels as data and is drawn by Patterm',
       figure: {
         type: 'diagram', layout: 'flow', stepThrough: true,
-        nodes: [{ id: 'agent', label: 'Agent', sub: 'ui.save' }, { id: 'check', label: 'Patterm', sub: 'checks' }, { id: 'reply', label: 'Reply', sub: 'reference' }, { id: 'draw', label: 'Transcript', sub: 'draws' }],
+        nodes: [{ id: 'agent', label: 'Agent', sub: 'ui_save' }, { id: 'check', label: 'Patterm', sub: 'checks' }, { id: 'reply', label: 'Reply', sub: 'reference' }, { id: 'draw', label: 'Transcript', sub: 'draws' }],
         edges: [
           { from: 'agent', to: 'check', label: 'data', text: 'The agent sends data and meanings, never markup or scripts.' },
           { from: 'check', to: 'reply', label: 'ref', text: 'Patterm validates it and returns a reference such as [patterm_figure:flow].' },

@@ -33,7 +33,7 @@ async function answer(decision: 'close' | 'keep_open'): Promise<void> {
   busy.value = true;
   const reason = feedback.value.trim();
   try {
-    await window.patterm.call('patterm.close_request.answer', { process_id: props.processId, decision, ...(decision === 'keep_open' && reason ? { feedback: reason } : {}) });
+    await window.patterm.call('close_request_answer', { process_id: props.processId, decision, ...(decision === 'keep_open' && reason ? { feedback: reason } : {}) });
   } catch (caught) {
     toast.error(caught instanceof Error ? caught.message : 'Could not answer the close request');
   } finally {

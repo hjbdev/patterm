@@ -77,7 +77,7 @@ const tests = shallowRef<Record<string, McpTestState>>({});
 let listRequest: Promise<void> | null = null;
 
 export function loadMcpServers(): Promise<void> {
-  listRequest ??= call<{ servers: McpServerView[]; redirect: McpRedirectMode }>('patterm.mcp_servers.list')
+  listRequest ??= call<{ servers: McpServerView[]; redirect: McpRedirectMode }>('mcp_servers_list')
     .then((value) => {
       servers.value = value.servers;
       redirect.value = value.redirect;
@@ -101,25 +101,25 @@ export function useMcpServers() {
 }
 
 export async function saveMcpServer(draft: McpServerDraft): Promise<McpServerView> {
-  const saved = await call<McpServerView>('patterm.mcp_servers.save', payloadFromDraft(draft));
+  const saved = await call<McpServerView>('mcp_servers_save', payloadFromDraft(draft));
   await loadMcpServers();
   return saved;
 }
 
 export async function setMcpServerEnabled(server: McpServerView, enabled: boolean): Promise<void> {
-  await call('patterm.mcp_servers.save', { ...payloadFromDraft(draftFromServer(server)), enabled });
+  await call('mcp_servers_save', { ...payloadFromDraft(draftFromServer(server)), enabled });
   await loadMcpServers();
 }
 
 export async function deleteMcpServer(id: string): Promise<void> {
-  await call('patterm.mcp_servers.delete', { id });
+  await call('mcp_servers_delete', { id });
   const { [id]: _removed, ...rest } = tests.value;
   tests.value = rest;
   await loadMcpServers();
 }
 
 export async function importMcpServers(): Promise<McpImportResult> {
-  const result = await call<McpImportResult>('patterm.mcp_servers.import');
+  const result = await call<McpImportResult>('mcp_servers_import');
   await loadMcpServers();
   return result;
 }
@@ -128,7 +128,7 @@ export async function testMcpServer(id: string): Promise<void> {
   tests.value = { ...tests.value, [id]: { status: 'running' } };
   let result: McpTestResult;
   try {
-    result = await call<McpTestResult>('patterm.mcp_servers.test', { id });
+    result = await call<McpTestResult>('mcp_servers_test', { id });
   } catch (caught) {
     result = { ok: false, tools: [], error: errorMessage(caught) };
   }
@@ -138,7 +138,7 @@ export async function testMcpServer(id: string): Promise<void> {
 // Opens the service's sign-in page. With `loopback`, the service sends the
 // browser to a local address that the user pastes back into Patterm.
 export async function startMcpSignIn(id: string, via: 'auto' | 'loopback' = 'auto'): Promise<void> {
-  const started = await call<{ authorization_url: string | null; signed_in: boolean }>('patterm.mcp_servers.signin.start', { id, via });
+  const started = await call<{ authorization_url: string | null; signed_in: boolean }>('mcp_servers_signin_start', { id, via });
   if (started.authorization_url) openSignInPage(started.authorization_url);
   await loadMcpServers();
 }
@@ -148,18 +148,18 @@ export function openSignInPage(url: string): void {
 }
 
 export async function completeMcpSignIn(url: string): Promise<string> {
-  const result = await call<{ server_id: string; name: string }>('patterm.mcp_servers.signin.complete', { url: url.trim() });
+  const result = await call<{ server_id: string; name: string }>('mcp_servers_signin_complete', { url: url.trim() });
   await loadMcpServers();
   return result.name;
 }
 
 export async function cancelMcpSignIn(id: string): Promise<void> {
-  await call('patterm.mcp_servers.signin.cancel', { id });
+  await call('mcp_servers_signin_cancel', { id });
   await loadMcpServers();
 }
 
 export async function signOutMcpServer(id: string): Promise<void> {
-  await call('patterm.mcp_servers.signout', { id });
+  await call('mcp_servers_signout', { id });
   await loadMcpServers();
 }
 

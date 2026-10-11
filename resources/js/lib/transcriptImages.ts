@@ -25,8 +25,8 @@ export function transcriptImageUrl(sha256: string, projectId?: string): Promise<
 
 async function fetchImage(sha256: string, projectId: string | undefined): Promise<string> {
   const result = await (projectId
-    ? window.patterm.call('patterm.media.get', { project_id: projectId, sha256 })
-    : window.patterm.call('patterm.integrated.image', { sha256 })) as { mime?: unknown; data?: unknown } | null;
+    ? window.patterm.call('media_get', { project_id: projectId, sha256 })
+    : window.patterm.call('integrated_image', { sha256 })) as { mime?: unknown; data?: unknown } | null;
   if (typeof result?.data !== 'string' || typeof result.mime !== 'string' || !result.mime.startsWith('image/')) {
     throw new Error('This image is no longer stored');
   }

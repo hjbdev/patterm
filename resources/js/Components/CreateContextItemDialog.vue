@@ -85,7 +85,7 @@ async function submit() {
   busy.value = true;
   error.value = '';
   try {
-    await contextCall(`${props.kind}.create`, props.projectId, isTodo.value
+    await contextCall(`${props.kind}_create`, props.projectId, isTodo.value
       ? { title: title.value, notes: body.value, status: status.value, priority: priority.value, assignee_id: props.sessionId }
       : { title: title.value, body: body.value, session_id: props.sessionId });
     open.value = false;

@@ -209,7 +209,7 @@ export class SettingsService {
     return value;
   }
 
-  // Whether agents may save figures for their Integrated replies with ui.save.
+  // Whether agents may save figures for their Integrated replies with ui_save.
   figuresEnabled(): boolean {
     const row = this.database.connection.prepare('select value from settings where key = ?').get(AGENT_FIGURES_KEY) as { value: string } | undefined;
     return row?.value !== 'off';

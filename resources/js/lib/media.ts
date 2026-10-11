@@ -18,7 +18,7 @@ export interface MediaItem {
 export interface MediaPage { items: MediaItem[]; total: number }
 
 export function listMedia(projectId: string, args: { session_id?: string; kind?: MediaItem['kind']; limit?: number; offset?: number } = {}): Promise<MediaPage> {
-  return window.patterm.call('patterm.media.list', { project_id: projectId, ...args }) as Promise<MediaPage>;
+  return window.patterm.call('media_list', { project_id: projectId, ...args }) as Promise<MediaPage>;
 }
 
 // Lightbox entries that open the message each image came from.

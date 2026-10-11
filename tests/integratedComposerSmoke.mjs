@@ -184,7 +184,7 @@ test('mention search is bounded, debounced, and keyboard selectable', async () =
   assert.equal([...harness.timers.values()][0]?.delay, 120);
   runTimers(harness);
   await flush();
-  assert.equal(harness.calls[0]?.tool, 'patterm.integrated.files.search');
+  assert.equal(harness.calls[0]?.tool, 'integrated_files_search');
   assert.deepEqual(harness.calls[0]?.args, { process_id: 'composer_mention', query: 'ap', limit: 20 });
   harness.calls[0].resolve([
     { path: 'src/app.ts', name: 'app.ts' },

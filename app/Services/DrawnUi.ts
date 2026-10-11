@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import { DRAWN_ID, type TranscriptTool } from './TranscriptProjection';
 
-export const DRAWN_UI_TOOL = 'patterm.ui.save';
+export const DRAWN_UI_TOOL = 'ui_save';
 export const MAX_DRAWN_UI_BYTES = 200_000;
 
 const short = z.string().trim().min(1).max(120);

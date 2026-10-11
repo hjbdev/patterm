@@ -77,31 +77,31 @@ export interface RoutineChoiceOption {
 export const ROUTINE_HARNESSES = ['claude', 'codex', 'opencode', 'amp'] as const;
 
 export function listRoutines(): Promise<RoutineRecord[]> {
-  return (window.patterm.call('patterm.routine.list', {}) as Promise<{ routines: RoutineRecord[] }>).then((result) => result.routines);
+  return (window.patterm.call('routine_list', {}) as Promise<{ routines: RoutineRecord[] }>).then((result) => result.routines);
 }
 
 export function createRoutine(input: RoutinePatch & { name: string }): Promise<RoutineRecord> {
-  return window.patterm.call('patterm.routine.create', input) as Promise<RoutineRecord>;
+  return window.patterm.call('routine_create', input) as Promise<RoutineRecord>;
 }
 
 export function updateRoutine(routineId: string, patch: RoutinePatch): Promise<RoutineRecord> {
-  return window.patterm.call('patterm.routine.update', { routine_id: routineId, ...patch }) as Promise<RoutineRecord>;
+  return window.patterm.call('routine_update', { routine_id: routineId, ...patch }) as Promise<RoutineRecord>;
 }
 
 export function deleteRoutine(routineId: string): Promise<unknown> {
-  return window.patterm.call('patterm.routine.delete', { routine_id: routineId });
+  return window.patterm.call('routine_delete', { routine_id: routineId });
 }
 
 export function runRoutineNow(routineId: string): Promise<RoutineRunRecord> {
-  return window.patterm.call('patterm.routine.run_now', { routine_id: routineId }) as Promise<RoutineRunRecord>;
+  return window.patterm.call('routine_run_now', { routine_id: routineId }) as Promise<RoutineRunRecord>;
 }
 
 export function routineRun(runId: string): Promise<RoutineRunRecord> {
-  return window.patterm.call('patterm.routine.run', { run_id: runId }) as Promise<RoutineRunRecord>;
+  return window.patterm.call('routine_run', { run_id: runId }) as Promise<RoutineRunRecord>;
 }
 
 export function routineLog(input: { limit?: number; offset?: number; routine_id?: string } = {}): Promise<RoutineRunRecord[]> {
-  return (window.patterm.call('patterm.routine.log', input) as Promise<{ runs: RoutineRunRecord[] }>).then((result) => result.runs);
+  return (window.patterm.call('routine_log', input) as Promise<{ runs: RoutineRunRecord[] }>).then((result) => result.runs);
 }
 
 // A run sits at the time it reported, or when it started if it has not.
@@ -110,7 +110,7 @@ export function runTime(run: RoutineRunRecord): number {
 }
 
 export function routineRuns(routineId: string, limit = 20): Promise<RoutineRunRecord[]> {
-  return (window.patterm.call('patterm.routine.runs', { routine_id: routineId, limit }) as Promise<{ runs: RoutineRunRecord[] }>).then((result) => result.runs);
+  return (window.patterm.call('routine_runs', { routine_id: routineId, limit }) as Promise<{ runs: RoutineRunRecord[] }>).then((result) => result.runs);
 }
 
 export const WEEKDAYS = [

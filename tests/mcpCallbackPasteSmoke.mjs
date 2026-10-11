@@ -51,7 +51,7 @@ test('handled pastes toast; unhandled or failed pastes fall back to a normal pas
 
   assert.equal(interceptMcpCallbackPaste(` ${url} `, (text) => fallback.push(text)), true);
   await flush();
-  assert.deepEqual(calls[0], ['patterm.mcp.callback.paste', { url }]);
+  assert.deepEqual(calls[0], ['mcp_callback_paste', { url }]);
   assert.deepEqual(globalThis.toasts, ['Signed in to linear']);
 
   reply = async () => ({ handled: true, kind: 'agent' });

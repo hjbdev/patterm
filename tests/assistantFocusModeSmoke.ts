@@ -108,14 +108,14 @@ async function main(): Promise<void> {
     prompts.length = 0;
 
     // Only the assistant can set focus over MCP; the UI has its own control.
-    await assert.rejects(registry.callPublic('assistant.focus.set', { enabled: true }, asWorker), /only the assistant/);
-    await assert.rejects(registry.callPublic('assistant.focus', {}, asWorker), /only the assistant/);
-    await assert.rejects(registry.callPublic('assistant.focus.set', { enabled: 'yes' }, asAssistant));
-    const focused = await registry.callPublic('assistant.focus.set', { enabled: true }, asAssistant) as { enabled: boolean; since: string | null; pending: number };
+    await assert.rejects(registry.callPublic('assistant_focus_set', { enabled: true }, asWorker), /only the assistant/);
+    await assert.rejects(registry.callPublic('assistant_focus', {}, asWorker), /only the assistant/);
+    await assert.rejects(registry.callPublic('assistant_focus_set', { enabled: 'yes' }, asAssistant));
+    const focused = await registry.callPublic('assistant_focus_set', { enabled: true }, asAssistant) as { enabled: boolean; since: string | null; pending: number };
     assert.equal(focused.enabled, true);
     assert.ok(focused.since);
     assert.ok(events.some((event) => event.type === 'state' && event.state.focus.enabled), 'clients hear focus changes');
-    assert.equal((await ui.call('patterm.assistant.focus.set', { enabled: true }) as { focus: { enabled: boolean } }).focus.enabled, true, 'setting it again is harmless');
+    assert.equal((await ui.call('assistant_set_focus_mode', { enabled: true }) as { focus: { enabled: boolean } }).focus.enabled, true, 'setting it again is harmless');
 
     // While focused, nothing unprompted reaches the thread.
     // 1. Notification digests, with repeats from one source coalesced.
@@ -147,7 +147,7 @@ async function main(): Promise<void> {
     await registry.callPublic('send_message', { target_process_id: 'proc-other', message: 'hello other' }, asAssistant);
     assert.ok(prompts.some((prompt) => prompt.processId === 'proc-other'), 'the assistant still messages agents while focused');
 
-    const held = await registry.callPublic('assistant.focus', {}, asAssistant) as { focus: { pending: number }; items: Array<{ kind: string; occurrences: number; body: string }>; total: number };
+    const held = await registry.callPublic('assistant_focus', {}, asAssistant) as { focus: { pending: number }; items: Array<{ kind: string; occurrences: number; body: string }>; total: number };
     // Timers fire on their own schedule, so only the first items' order is fixed.
     assert.deepEqual(held.items.slice(0, 4).map((item) => item.kind), ['notification', 'notification', 'agent_message', 'report']);
     const kinds = held.items.map((item) => item.kind).sort();
@@ -188,13 +188,13 @@ async function main(): Promise<void> {
     const digestId = /\[Patterm focus digest (digest_[\w-]+):/.exec(digest)?.[1];
     assert.ok(digestId);
     assert.match(digest, /not the user; they approve nothing/);
-    assert.match(digest, /Read every item in full with assistant\.focus digest_id/);
+    assert.match(digest, /Read every item in full with assistant_focus digest_id/);
     assert.ok(digest.indexOf('Third finish') < digest.indexOf('Build is green') && digest.indexOf('Build is green') < digest.indexOf('Fixed login'), 'items keep their order');
     assert.match(digest, /\(3 times\)/);
     assert.ok(digest.length < 6_000, 'the digest is bounded');
     assert.equal(assistant.state().focus.pending, 0);
     // The full items stay readable.
-    const full = await registry.callPublic('assistant.focus', { digest_id: digestId }, { identity: `mcp-assistant-${sequence}` }) as { items: Array<{ kind: string; body: string; delivery: string }> };
+    const full = await registry.callPublic('assistant_focus', { digest_id: digestId }, { identity: `mcp-assistant-${sequence}` }) as { items: Array<{ kind: string; body: string; delivery: string }> };
     assert.ok(full.items.find((item) => item.kind === 'report')!.body.length > 5_000);
     assert.ok(full.items.every((item) => item.delivery === 'delivered'));
     // Nothing is delivered twice.

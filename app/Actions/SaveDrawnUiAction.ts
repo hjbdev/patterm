@@ -54,5 +54,5 @@ export class SaveDrawnUiAction {
 }
 
 function rejected(errors: string[]): Error {
-  return new Error(`ui.save: nothing was saved. Fix these and call again:\n${errors.map((error) => `- ${error}`).join('\n')}`);
+  return new Error(`ui_save: nothing was saved. Fix these and call again:\n${errors.map((error) => `- ${error}`).join('\n')}`);
 }

@@ -25,7 +25,7 @@ Panel preferences belong to the client. Explicit native resume carries links,
 notes, and incomplete assignments forward; the resumed agent acquires fresh leases.
 
 Agents can call the `todo`, `scratchpad`, `reference`, and `session` MCP tools directly.
-`session.context` infers the calling session and returns its `session_id`
+`session_context` infers the calling session and returns its `session_id`
 alongside paginated context. Owner/UI calls provide `project_id` and `session_id`.
 For an external identifier such as `PAT-1`, resolve it through the provider MCP or
 CLI first, then attach the verified URL:
@@ -41,8 +41,8 @@ CLI first, then attach the verified URL:
 }
 ```
 
-Replace `SESSION_ID` with the ID from `session.context`, and use the URL
-returned by the provider. Pass these arguments directly to `reference.attach`. Patterm
+Replace `SESSION_ID` with the ID from `session_context`, and use the URL
+returned by the provider. Pass these arguments directly to `reference_attach`. Patterm
 stores the reference; it does not fetch or synchronise provider data.
 
 Tool help documents revision guards and pagination. Todo leases default to 300
@@ -199,7 +199,7 @@ Amp denies configured `ask` rules in execute mode instead of requesting approval
 through Patterm; use **TUI** if you need interactive permission prompts.
 Patterm prefixes prompts it sends to Amp with session orientation;
 prompts typed in Amp's TUI use its native `AGENTS.md` guidance and can call
-`session.context` for current Patterm assignments. Enable the discovered Amp
+`session_context` for current Patterm assignments. Enable the discovered Amp
 source under **Settings > History** to import project threads through the native
 CLI. Imports keep the redacted transcript in Patterm and use Amp's `T-…` ID for
 exact resume. Amp sources sync at startup, on manual import, and after an Amp
@@ -701,7 +701,7 @@ Harness launches advertise all agent-facing tools directly, including `spawn_age
 diffs, and history. Use `help` for detailed guidance. Children report completion explicitly; parents
 wait on report timers rather than terminal idle or repeated output reads.
 
-`search_conversation_history` finds prior work. `history.get` reads a
+`search_conversation_history` finds prior work. `history_get` reads a
 bounded transcript window. Passing a Patterm `conversation_id` to `spawn_agent`
 resumes that exact native conversation with its original project context;
 duplicate live managed conversations are rejected.

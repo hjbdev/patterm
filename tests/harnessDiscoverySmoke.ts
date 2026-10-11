@@ -106,10 +106,10 @@ async function main(): Promise<void> {
       harnessDiscovery: discovery
     });
 
-    const viaList = (await registry.call('patterm.harness.list', {})) as { harnesses: Array<{ harness: string }> };
+    const viaList = (await registry.call('harness_list', {})) as { harnesses: Array<{ harness: string }> };
     assert.ok(viaList.harnesses.some((row) => row.harness === 'rawpty'), 'harness.list surfaces rawpty');
 
-    const viaDiscover = (await registry.call('patterm.harness.discover', {})) as { harnesses: Array<{ harness: string }> };
+    const viaDiscover = (await registry.call('harness_discover', {})) as { harnesses: Array<{ harness: string }> };
     assert.equal(viaDiscover.harnesses.length, harnessProviders.length, 'harness.discover re-runs discovery');
 
     database.dispose();

@@ -344,8 +344,8 @@ const historyStatus = ref<HistoryStatus>({ batches: [], files: [] });
 
 async function loadHistorySettings(): Promise<void> {
   const [sourcesResponse, statusResponse] = await Promise.all([
-    window.patterm.call('patterm.history.sources', {}) as Promise<{ sources?: HistorySource[] }>,
-    window.patterm.call('patterm.history.import_status', {}) as Promise<HistoryStatus>
+    window.patterm.call('history_sources', {}) as Promise<{ sources?: HistorySource[] }>,
+    window.patterm.call('history_import_status', {}) as Promise<HistoryStatus>
   ]);
   historySources.value = sourcesResponse.sources ?? [];
   historyStatus.value = statusResponse ?? { batches: [], files: [] };
@@ -361,7 +361,7 @@ async function addHistoryPath(provider: HistoryProvider): Promise<void> {
   historyBusy.value = true;
   try {
     await autosave(`history.sources.${provider}:${selected}`, async () => {
-      await window.patterm.call('patterm.history.configure', { provider, path: selected, enabled: true, watch_enabled: provider !== 'amp' });
+      await window.patterm.call('history_configure', { provider, path: selected, enabled: true, watch_enabled: provider !== 'amp' });
       await loadHistorySettings();
     });
   } finally {
@@ -374,7 +374,7 @@ async function toggleHistorySource(source: HistorySource): Promise<void> {
   historyBusy.value = true;
   try {
     await autosave(sourceKey(source), async () => {
-      await window.patterm.call('patterm.history.configure', {
+      await window.patterm.call('history_configure', {
         provider: source.provider,
         path: source.path,
         source_kind: source.sourceKind,
@@ -392,7 +392,7 @@ async function importHistoryNow(): Promise<void> {
   historyBusy.value = true;
   historyError.value = '';
   try {
-    await window.patterm.call('patterm.history.import', { trigger: 'manual' });
+    await window.patterm.call('history_import', { trigger: 'manual' });
     await loadHistorySettings();
   } catch (caught) {
     historyError.value = caught instanceof Error ? caught.message : String(caught);
@@ -406,7 +406,7 @@ async function resetAndReimportHistory(): Promise<void> {
   historyBusy.value = true;
   historyError.value = '';
   try {
-    await window.patterm.call('patterm.history.reset_imports', { reimport: true });
+    await window.patterm.call('history_reset_imports', { reimport: true });
     await loadHistorySettings();
   } catch (caught) {
     historyError.value = caught instanceof Error ? caught.message : String(caught);

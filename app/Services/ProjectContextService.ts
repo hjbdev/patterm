@@ -309,7 +309,7 @@ export class ProjectContextService {
   // Diff tools default to the caller's own worktree, else its first link.
   defaultWorktreeId(session: string): string {
     const worktree = this.sessionWorktrees(session).items[0];
-    if (!worktree) throw new Error('This session has no worktree. Pass worktree_id, or link one with worktree.attach.');
+    if (!worktree) throw new Error('This session has no worktree. Pass worktree_id, or link one with worktree_attach.');
     return worktree.id;
   }
 

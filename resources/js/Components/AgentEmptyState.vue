@@ -51,7 +51,7 @@ async function launchHarness(harness: string): Promise<void> {
   if (launching.value) return;
   launching.value = true;
   try {
-    const result = (await window.patterm?.call?.('patterm.harness.launch', {
+    const result = (await window.patterm?.call?.('harness_launch', {
       harness,
       project_id: props.projectId,
     })) as { session_id?: unknown; pty_process_id?: unknown } | null | undefined;

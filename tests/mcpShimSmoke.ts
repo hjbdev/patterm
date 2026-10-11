@@ -14,7 +14,7 @@ import { buildSync } from 'esbuild';
 const descriptors: Array<{ name: string; namespace: string; description: string; inputSchema: Record<string, unknown>; changes?: string[] }> = [
   { name: 'whoami', namespace: 'cli.meta', description: 'Return caller identity.', inputSchema: { type: 'object', additionalProperties: false } },
   { name: 'spawn_process', namespace: 'cli.process', description: 'Start a process.', inputSchema: { type: 'object', properties: { argv: { type: 'array', items: { type: 'string' } } } } },
-  { name: 'todo.create', namespace: 'todo', description: 'Create a todo.', inputSchema: { type: 'object', properties: { title: { type: 'string', minLength: 1 } }, required: ['title'] } },
+  { name: 'todo_create', namespace: 'todo', description: 'Create a todo.', inputSchema: { type: 'object', properties: { title: { type: 'string', minLength: 1 } }, required: ['title'] } },
   { name: 'help', namespace: 'meta', description: 'Describe a tool.', inputSchema: { type: 'object', properties: { tool: { type: 'string' } }, required: ['tool'] } }
 ];
 
@@ -72,13 +72,13 @@ async function main(): Promise<void> {
     assert.equal(modern.getProtocolEra(), 'modern', 'modern clients use the 2026-07-28 protocol');
     const list = await modern.listTools();
     assert.deepEqual(list.tools.map(({ name }) => name), descriptors.map(({ name }) => name), 'every public registry tool is directly listed');
-    assert.deepEqual(list.tools.find(({ name }) => name === 'todo.create')?.inputSchema.required, ['title']);
-    const created = await modern.callTool({ name: 'todo.create', arguments: { title: 'Direct MCP' } });
+    assert.deepEqual(list.tools.find(({ name }) => name === 'todo_create')?.inputSchema.required, ['title']);
+    const created = await modern.callTool({ name: 'todo_create', arguments: { title: 'Direct MCP' } });
     assert.equal(created.isError, undefined);
     assert.match(JSON.stringify(created), /Direct MCP/);
-    const missing = await modern.callTool({ name: 'todo.create', arguments: {} });
+    const missing = await modern.callTool({ name: 'todo_create', arguments: {} });
     assert.equal(missing.isError, true, 'advertised schemas validate before forwarding');
-    assert.equal(calls.some(({ tool, args }) => tool === 'todo.create' && !Object.keys(args as object).length), false);
+    assert.equal(calls.some(({ tool, args }) => tool === 'todo_create' && !Object.keys(args as object).length), false);
 
     // The shim doubles as xdg-open in agent terminals.
     const openEnv = { ...process.env, PATTERM_MCP_SOCKET: socketPath, PATTERM_MCP_IDENTITY: 'mcp_opener' };
@@ -107,7 +107,7 @@ async function main(): Promise<void> {
     const recovered = await modern.callTool({ name: 'whoami', arguments: {} }, { timeout: 2_000 });
     assert.notEqual(recovered.isError, true, 'the next request reconnects to the restarted registry');
     assert.equal(modernTransport.pid, pid, 'recovery keeps the same shim process');
-    assert.deepEqual(calls.map(({ tool }) => tool), ['todo.create', 'whoami', 'spawn_process', 'whoami']);
+    assert.deepEqual(calls.map(({ tool }) => tool), ['todo_create', 'whoami', 'spawn_process', 'whoami']);
 
     await legacy.connect(legacyTransport);
     assert.deepEqual((await legacy.listTools()).tools.map(({ name }) => name), descriptors.map(({ name }) => name), 'legacy initialize clients see the same direct tools');
@@ -127,29 +127,29 @@ async function main(): Promise<void> {
     };
     const texts = (result: unknown) => ((result as { content: Array<{ text: string }> }).content).map(({ text }) => text);
     catalogue = descriptors.filter(({ name }) => name !== 'help').map((tool) =>
-      tool.name === 'todo.create' ? { ...tool, inputSchema: { type: 'object', properties: { title: { type: 'string' }, priority: { type: 'number' } }, required: ['title', 'priority'] } }
+      tool.name === 'todo_create' ? { ...tool, inputSchema: { type: 'object', properties: { title: { type: 'string' }, priority: { type: 'number' } }, required: ['title', 'priority'] } }
         : tool.name === 'spawn_process' ? { ...tool, changes: ['context'] } : tool);
     await announced(1);
-    const rejectedCall = await legacy.callTool({ name: 'todo.create', arguments: { title: 'Old schema' } });
+    const rejectedCall = await legacy.callTool({ name: 'todo_create', arguments: { title: 'Old schema' } });
     assert.equal(rejectedCall.isError, true, 'a call the new schema refuses still fails');
-    assert.match(texts(rejectedCall).at(-1)!, /\(changed: todo\.create; removed: help\)\. This session cannot see the changes/, 'and carries the note; unadvertised fields are not changes');
+    assert.match(texts(rejectedCall).at(-1)!, /\(changed: todo_create; removed: help\)\. This session cannot see the changes/, 'and carries the note; unadvertised fields are not changes');
     assert.equal(texts(await legacy.callTool({ name: 'whoami', arguments: {} })).length, 1, 'the note is not repeated');
 
     const seen = listChanged;
     catalogue = [
       ...catalogue.map((tool) => tool.name === 'whoami' ? { ...tool, description: 'Return caller identity and role.' } : tool),
-      { name: 'routine.schedule_once', namespace: 'routine', description: 'Run a routine once.', inputSchema: { type: 'object', properties: { at: { type: 'string' } }, required: ['at'] } }
+      { name: 'routine_schedule_once', namespace: 'routine', description: 'Run a routine once.', inputSchema: { type: 'object', properties: { at: { type: 'string' } }, required: ['at'] } }
     ];
     await announced(seen + 1);
     await assert.rejects(legacy.callTool({ name: 'help', arguments: { tool: 'whoami' } }),
-      /new: routine\.schedule_once; changed: whoami, todo\.create; removed: help/, 'a call to a removed tool carries the next note');
+      /new: routine_schedule_once; changed: whoami, todo_create; removed: help/, 'a call to a removed tool carries the next note');
 
     const relisted = await modern.listTools();
     assert.deepEqual(relisted.tools.map(({ name }) => name), catalogue.map(({ name }) => name), 'a re-list sees added and removed tools');
     assert.equal(relisted.tools.find(({ name }) => name === 'whoami')?.description, 'Return caller identity and role.', 'and changed descriptions');
-    assert.equal(texts(await modern.callTool({ name: 'routine.schedule_once', arguments: { at: 'tomorrow' } })).length, 1, 'a client that re-listed gets no note');
-    assert.equal((await modern.callTool({ name: 'routine.schedule_once', arguments: {} })).isError, true, 'new tools validate against their schema');
-    assert.deepEqual(calls.at(-1), { tool: 'routine.schedule_once', args: { at: 'tomorrow' }, version: 2 });
+    assert.equal(texts(await modern.callTool({ name: 'routine_schedule_once', arguments: { at: 'tomorrow' } })).length, 1, 'a client that re-listed gets no note');
+    assert.equal((await modern.callTool({ name: 'routine_schedule_once', arguments: {} })).isError, true, 'new tools validate against their schema');
+    assert.deepEqual(calls.at(-1), { tool: 'routine_schedule_once', args: { at: 'tomorrow' }, version: 2 });
   } finally {
     await modern.close();
     await legacy.close();

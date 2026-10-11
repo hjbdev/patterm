@@ -73,12 +73,12 @@ export function useContextRecord(kind: Ref<ContextKind>, projectId: Ref<string>,
     await pendingSaves.get(draftKeyFor(project, namespace, id));
     if (generation !== readGeneration) return;
     try {
-      const result = await contextCall<Todo | Scratchpad>(`${namespace}.get`, project, { [`${namespace}_id`]: id, ...(namespace === 'scratchpad' ? { mode: 'full', limit: 1000 } : {}) });
+      const result = await contextCall<Todo | Scratchpad>(`${namespace}_get`, project, { [`${namespace}_id`]: id, ...(namespace === 'scratchpad' ? { mode: 'full', limit: 1000 } : {}) });
       if (!('notes' in result) && result.total_lines && result.total_lines > 1000) {
         const chunks = [result.body ?? ''];
         for (let start = 1000; start < result.total_lines; start += 1000) {
           if (generation !== readGeneration) return;
-          const part = await contextCall<Scratchpad>('scratchpad.get', project, { scratchpad_id: result.id, mode: 'content', offset: start, limit: 1000 });
+          const part = await contextCall<Scratchpad>('scratchpad_get', project, { scratchpad_id: result.id, mode: 'content', offset: start, limit: 1000 });
           if (part.revision !== result.revision) throw new Error('The note changed while loading. Reopen it to load the latest revision.');
           chunks.push(part.body ?? '');
         }
@@ -138,7 +138,7 @@ export function useContextRecord(kind: Ref<ContextKind>, projectId: Ref<string>,
     const pending = new Promise<void>(resolve => { settle = resolve; });
     pendingSaves.set(key, pending);
     try {
-      const result = await contextCall<Todo | Scratchpad>(`${namespace}.update`, project, { [`${namespace}_id`]: id, revision: record.value.revision, ...values });
+      const result = await contextCall<Todo | Scratchpad>(`${namespace}_update`, project, { [`${namespace}_id`]: id, revision: record.value.revision, ...values });
       if (generation === readGeneration) {
         record.value = result;
         saveError.value = '';
@@ -171,7 +171,7 @@ export function useContextRecord(kind: Ref<ContextKind>, projectId: Ref<string>,
     try {
       await save();
       if (!isCurrent() || dirty.value) return;
-      await contextCall(`todo.${operation}`, project, { todo_id: id, ...args });
+      await contextCall(`todo_${operation}`, project, { todo_id: id, ...args });
       if (isCurrent() && !dirty.value && !saving.value) await load();
       options.onChanged?.();
     }
@@ -182,7 +182,7 @@ export function useContextRecord(kind: Ref<ContextKind>, projectId: Ref<string>,
   async function remove() {
     if (!record.value || !window.confirm(`Delete “${record.value.title}”?`)) return false;
     try {
-      await contextCall(`${kind.value}.delete`, projectId.value, { [`${kind.value}_id`]: recordId.value, revision: record.value.revision });
+      await contextCall(`${kind.value}_delete`, projectId.value, { [`${kind.value}_id`]: recordId.value, revision: record.value.revision });
       removeDraft();
       options.onChanged?.();
       return true;
@@ -232,7 +232,7 @@ export function useContextCollection<T extends Todo | Scratchpad>(kind: ContextK
     try {
       const all: T[] = [];
       for (let offset = 0; ; offset += 100) {
-        const page = await contextCall<Page<T>>(`${kind}.list`, project, { limit: 100, offset, ...args });
+        const page = await contextCall<Page<T>>(`${kind}_list`, project, { limit: 100, offset, ...args });
         if (current !== generation) return;
         all.push(...page.items);
         if (offset + 100 >= page.total) break;

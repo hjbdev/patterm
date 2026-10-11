@@ -163,7 +163,7 @@ const integratedSendInput = processIdInput.extend({
   message_id: z.string().min(1).max(80).optional()
 }).superRefine((input, context) => {
   if (!input.text && !input.references?.length && !input.attachments?.length) {
-    context.addIssue({ code: z.ZodIssueCode.custom, message: 'integrated.send requires text, references, or attachments' });
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'integrated_send requires text, references, or attachments' });
   }
 });
 const integratedFilesSearchInput = processIdInput.extend({
@@ -320,7 +320,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       // Agents in a linked project save routines on the other host; it owns
       // and runs them.
       const current = caller(context);
-      if (!current || !current.process_id || hasWorkspaceScope(current) || context.remote) throw new Error(`${tool.replace(/^patterm\./, '')}: only agents in a linked project can use routines on other hosts`);
+      if (!current || !current.process_id || hasWorkspaceScope(current) || context.remote) throw new Error(`${tool}: only agents in a linked project can use routines on other hosts`);
       const peer = services.crossHost!.host(host);
       return services.crossHost!.routine(current.project_id, peer.host_id, tool, args, { session_id: current.session_id, process_id: current.process_id, name: current.title ?? 'An agent' });
     } : undefined);
@@ -344,7 +344,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     const target = remoteAddress(processId);
     if (!target) return null;
     if (!REMOTE_READ_TOOLS.has(toolName)) {
-      return Promise.reject(new Error(`${toolName.replace(/^patterm\./, '')} cannot act on ${target.address}, an agent on another host. Send it a message with send_message instead.`));
+      return Promise.reject(new Error(`${toolName} cannot act on ${target.address}, an agent on another host. Send it a message with send_message instead.`));
     }
     const current = caller(context);
     if (!current || hasWorkspaceScope(current)) return Promise.reject(new Error('Only agents in a linked project can read agents on other hosts.'));
@@ -400,15 +400,15 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       description: 'Spawn a new Patterm-managed sub-agent, optionally with a configured model preset, or resume an imported conversation by conversation_id.',
       inputSchema: { type: 'object', anyOf: [{ required: ['agent'] }, { required: ['preset'] }, { required: ['conversation_id'] }] },
       usageNotes: [
-        'Pass agent (claude, codex, opencode, amp, or rawpty), a preset, or a conversation_id. harness.list shows which agents are installed.',
+        'Pass agent (claude, codex, opencode, amp, or rawpty), a preset, or a conversation_id. harness_list shows which agents are installed.',
         'Any agent can spawn child agents, including a sub-agent splitting up its own delegated task. The new agent is your child: it reports to you, and closing you closes it.',
         'Spawn only for work within your current task. A delegated sub-agent must not start unrelated work; ask your parent or the user first.',
         'Do not use this to replace an unavailable host-native subagent; continue planning directly unless the user explicitly requests Patterm delegation.',
         'Children join the caller\'s project, and their worktree must belong to it. Only the assistant passes project_id, to choose a workspace project.',
         'Before spawning, check list_processes for a running child that already worked on this, such as a reviewer that reported. Send it the follow-up with send_message instead of spawning a replacement; it keeps its earlier context.',
-        'Pass preset to launch with one of the user\'s configured model presets by name (case-insensitive); call harness.presets to list them. Omit preset to use the harness default.',
+        'Pass preset to launch with one of the user\'s configured model presets by name (case-insensitive); call harness_presets to list them. Omit preset to use the harness default.',
         'A user message token such as [patterm_preset:<name>], [patterm_preset:<harness>/<name>], or [patterm_harness:<agent>] asks you to spawn with that preset or agent.',
-        'Codex only: pass service_tier to override the preset speed, such as priority for Fast or default for Standard. harness.models lists the tiers each model supports.',
+        'Codex only: pass service_tier to override the preset speed, such as priority for Fast or default for Standard. harness_models lists the tiers each model supports.',
         'To continue prior work, pass a conversation_id returned by search_conversation_history. Provider, worktree, and cwd are inferred; presets cannot be switched while resuming.',
         'Pass detached: true to open the agent as a regular top-level tab that outlives the calling agent. It also works with conversation_id. A detached agent has no parent: it cannot call report_to_parent, its notify_user requests go straight to the user, and you cannot wait for it with timer_fire_when_reported_any/all.',
         'Only spawn detached agents when the user has specifically asked for one; never detach on your own initiative.'
@@ -457,18 +457,18 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
   );
 
   registry.register(
-    { name: 'patterm.integrated.get', namespace: 'integrated', description: 'Read the bounded native transcript and pending requests for an Integrated agent session.', hidden: true, changes: [], inputSchema: { type: 'object', required: ['process_id'] } },
+    { name: 'integrated_get', namespace: 'integrated', description: 'Read the bounded native transcript and pending requests for an Integrated agent session.', hidden: true, changes: [], inputSchema: { type: 'object', required: ['process_id'] } },
     (args, context) => requireIntegrated(services).conversation(processFor(context, processIdInput.parse(args).process_id))
   );
   registry.register(
-    { name: 'patterm.integrated.history', namespace: 'integrated', description: 'Load an older page of native Integrated conversation messages.', hidden: true, changes: [], inputSchema: { type: 'object', required: ['process_id', 'cursor'] } },
+    { name: 'integrated_history', namespace: 'integrated', description: 'Load an older page of native Integrated conversation messages.', hidden: true, changes: [], inputSchema: { type: 'object', required: ['process_id', 'cursor'] } },
     (args, context) => {
       const input = integratedHistoryInput.parse(args);
       return requireIntegrated(services).olderMessages(processFor(context, input.process_id), input.cursor);
     }
   );
   registry.register(
-    { name: 'patterm.integrated.image', namespace: 'integrated', description: 'Read one stored Integrated transcript image by its hash.', hidden: true, changes: [], inputSchema: { type: 'object', required: ['sha256'] } },
+    { name: 'integrated_image', namespace: 'integrated', description: 'Read one stored Integrated transcript image by its hash.', hidden: true, changes: [], inputSchema: { type: 'object', required: ['sha256'] } },
     (args) => {
       const { sha256 } = z.object({ sha256: z.string().regex(/^[0-9a-f]{64}$/) }).parse(args);
       const image = services.transcriptImages?.read(sha256);
@@ -477,23 +477,23 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     }
   );
   registry.register(
-    { name: 'patterm.settings.agent_interface.get', namespace: 'settings', description: 'Read the saved interface for new agent conversations.', hidden: true, changes: [], inputSchema: { type: 'object' } },
+    { name: 'settings_agent_interface_get', namespace: 'settings', description: 'Read the saved interface for new agent conversations.', hidden: true, changes: [], inputSchema: { type: 'object' } },
     () => ({ interface_mode: requireSettings(services).agentInterface() })
   );
   registry.register(
-    { name: 'patterm.settings.agent_interface.update', namespace: 'settings', description: 'Save the interface for later agent conversations.', hidden: true, changes: ['settings'], inputSchema: { type: 'object', required: ['interface_mode'] } },
+    { name: 'settings_agent_interface_update', namespace: 'settings', description: 'Save the interface for later agent conversations.', hidden: true, changes: ['settings'], inputSchema: { type: 'object', required: ['interface_mode'] } },
     (args) => ({ interface_mode: requireSettings(services).updateAgentInterface(z.object({ interface_mode: z.enum(['tui', 'integrated']) }).parse(args).interface_mode) })
   );
   registry.register(
-    { name: 'patterm.settings.figures.get', namespace: 'settings', description: 'Read whether agents can save figures for their replies.', hidden: true, changes: [], inputSchema: { type: 'object' } },
+    { name: 'settings_figures_get', namespace: 'settings', description: 'Read whether agents can save figures for their replies.', hidden: true, changes: [], inputSchema: { type: 'object' } },
     () => ({ enabled: requireSettings(services).figuresEnabled() })
   );
   registry.register(
-    { name: 'patterm.settings.figures.update', namespace: 'settings', description: 'Turn figures in agent replies on or off.', hidden: true, changes: ['settings'], inputSchema: { type: 'object', required: ['enabled'] } },
+    { name: 'settings_figures_update', namespace: 'settings', description: 'Turn figures in agent replies on or off.', hidden: true, changes: ['settings'], inputSchema: { type: 'object', required: ['enabled'] } },
     (args) => ({ enabled: requireSettings(services).updateFiguresEnabled(z.object({ enabled: z.boolean() }).strict().parse(args).enabled) })
   );
   registry.register(
-    { name: 'patterm.integrated.send', namespace: 'integrated', description: 'Queue one message for an Integrated agent session.', hidden: true, inputSchema: { type: 'object', required: ['process_id'] } },
+    { name: 'integrated_send', namespace: 'integrated', description: 'Queue one message for an Integrated agent session.', hidden: true, inputSchema: { type: 'object', required: ['process_id'] } },
     (args, context) => {
       const input = integratedSendInput.parse(args);
       const processId = processFor(context, input.process_id);
@@ -509,37 +509,37 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     }
   );
   registry.register(
-    { name: 'patterm.integrated.files.search', namespace: 'integrated', description: 'Search files in an Integrated agent worktree for @ references.', hidden: true, changes: [], inputSchema: { type: 'object', required: ['process_id'] } },
+    { name: 'integrated_files_search', namespace: 'integrated', description: 'Search files in an Integrated agent worktree for @ references.', hidden: true, changes: [], inputSchema: { type: 'object', required: ['process_id'] } },
     (args, context) => {
       const input = integratedFilesSearchInput.parse(args);
       return requireIntegrated(services).files(processFor(context, input.process_id), input.query, input.limit);
     }
   );
   registry.register(
-    { name: 'patterm.integrated.delivery', namespace: 'integrated', description: 'Reconcile an ambiguous Integrated prompt against native admission evidence.', hidden: true, changes: [], inputSchema: { type: 'object', required: ['process_id', 'message_id'] } },
+    { name: 'integrated_delivery', namespace: 'integrated', description: 'Reconcile an ambiguous Integrated prompt against native admission evidence.', hidden: true, changes: [], inputSchema: { type: 'object', required: ['process_id', 'message_id'] } },
     (args, context) => {
       const input = integratedDeliveryInput.parse(args);
       return requireIntegrated(services).delivery(processFor(context, input.process_id), input.message_id);
     }
   );
   registry.register(
-    { name: 'patterm.integrated.controls', namespace: 'integrated', description: 'List native controls and slash commands for an Integrated agent session.', hidden: true, changes: [], inputSchema: { type: 'object', required: ['process_id'] } },
+    { name: 'integrated_controls', namespace: 'integrated', description: 'List native controls and slash commands for an Integrated agent session.', hidden: true, changes: [], inputSchema: { type: 'object', required: ['process_id'] } },
     (args, context) => requireIntegrated(services).controls(processFor(context, processIdInput.parse(args).process_id))
   );
   registry.register(
-    { name: 'patterm.integrated.configure', namespace: 'integrated', description: 'Change one native Integrated agent setting.', hidden: true, inputSchema: { type: 'object', required: ['process_id', 'selector', 'value'] } },
+    { name: 'integrated_configure', namespace: 'integrated', description: 'Change one native Integrated agent setting.', hidden: true, inputSchema: { type: 'object', required: ['process_id', 'selector', 'value'] } },
     (args, context) => { const input = integratedConfigureInput.parse(args); return requireIntegrated(services).configure(processFor(context, input.process_id), input.selector, input.value); }
   );
   registry.register(
-    { name: 'patterm.integrated.command', namespace: 'integrated', description: 'Run one native slash command for an Integrated agent session.', hidden: true, inputSchema: { type: 'object', required: ['process_id', 'name'] } },
+    { name: 'integrated_command', namespace: 'integrated', description: 'Run one native slash command for an Integrated agent session.', hidden: true, inputSchema: { type: 'object', required: ['process_id', 'name'] } },
     (args, context) => { const input = integratedCommandInput.parse(args); return requireIntegrated(services).command(processFor(context, input.process_id), input.name, input.text); }
   );
   registry.register(
-    { name: 'patterm.integrated.interrupt', namespace: 'integrated', description: 'Interrupt the active turn for an Integrated agent session.', hidden: true, inputSchema: { type: 'object', required: ['process_id'] } },
+    { name: 'integrated_interrupt', namespace: 'integrated', description: 'Interrupt the active turn for an Integrated agent session.', hidden: true, inputSchema: { type: 'object', required: ['process_id'] } },
     (args, context) => requireIntegrated(services).interrupt(processFor(context, processIdInput.parse(args).process_id))
   );
   registry.register(
-    { name: 'patterm.integrated.queue.update', namespace: 'integrated', description: 'Steer or cancel one queued prompt of an Integrated agent session.', hidden: true, inputSchema: { type: 'object', required: ['process_id', 'message_id', 'action'] } },
+    { name: 'integrated_queue_update', namespace: 'integrated', description: 'Steer or cancel one queued prompt of an Integrated agent session.', hidden: true, inputSchema: { type: 'object', required: ['process_id', 'message_id', 'action'] } },
     (args, context) => {
       const input = integratedQueueInput.parse(args);
       const processId = processFor(context, input.process_id);
@@ -551,23 +551,23 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     }
   );
   registry.register(
-    { name: 'patterm.integrated.task.output', namespace: 'integrated', description: 'Read the transcript or output of one background task of an Integrated agent session.', hidden: true, changes: [], inputSchema: { type: 'object', required: ['process_id', 'task_id'] } },
+    { name: 'integrated_task_output', namespace: 'integrated', description: 'Read the transcript or output of one background task of an Integrated agent session.', hidden: true, changes: [], inputSchema: { type: 'object', required: ['process_id', 'task_id'] } },
     (args, context) => { const input = integratedTaskOutputInput.parse(args); return requireIntegrated(services).taskOutput(processFor(context, input.process_id), input.task_id, input.since, input.cursor); }
   );
   registry.register(
-    { name: 'patterm.integrated.task.stop', namespace: 'integrated', description: 'Stop one background task of an Integrated agent session.', hidden: true, inputSchema: { type: 'object', required: ['process_id', 'task_id'] } },
+    { name: 'integrated_task_stop', namespace: 'integrated', description: 'Stop one background task of an Integrated agent session.', hidden: true, inputSchema: { type: 'object', required: ['process_id', 'task_id'] } },
     (args, context) => { const input = integratedTaskInput.parse(args); return requireIntegrated(services).stopTask(processFor(context, input.process_id), input.task_id); }
   );
   registry.register(
-    { name: 'patterm.integrated.permission.reply', namespace: 'integrated', description: 'Resolve a pending native permission request.', hidden: true, inputSchema: { type: 'object', required: ['process_id', 'request_id', 'reply'] } },
+    { name: 'integrated_permission_reply', namespace: 'integrated', description: 'Resolve a pending native permission request.', hidden: true, inputSchema: { type: 'object', required: ['process_id', 'request_id', 'reply'] } },
     (args, context) => { const input = integratedPermissionInput.parse(args); return requireIntegrated(services).replyPermission(processFor(context, input.process_id), input.request_id, input.reply, input.message); }
   );
   registry.register(
-    { name: 'patterm.integrated.question.reply', namespace: 'integrated', description: 'Answer a pending native question request.', hidden: true, inputSchema: { type: 'object', required: ['process_id', 'request_id', 'answers'] } },
+    { name: 'integrated_question_reply', namespace: 'integrated', description: 'Answer a pending native question request.', hidden: true, inputSchema: { type: 'object', required: ['process_id', 'request_id', 'answers'] } },
     (args, context) => { const input = integratedQuestionInput.parse(args); return requireIntegrated(services).replyQuestion(processFor(context, input.process_id), input.request_id, input.answers); }
   );
   registry.register(
-    { name: 'patterm.integrated.form.reply', namespace: 'integrated', description: 'Answer a pending native form with typed field values.', hidden: true, inputSchema: { type: 'object', required: ['process_id', 'form_id', 'answer'] } },
+    { name: 'integrated_form_reply', namespace: 'integrated', description: 'Answer a pending native form with typed field values.', hidden: true, inputSchema: { type: 'object', required: ['process_id', 'form_id', 'answer'] } },
     (args, context) => { const input = integratedFormInput.parse(args); return requireIntegrated(services).replyForm(processFor(context, input.process_id), input.form_id, input.answer, input.action); }
   );
 
@@ -620,7 +620,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     const input = listProcessesInput.parse(args ?? {});
     const current = caller(context);
     const projectId = hasWorkspaceScope(current) ? projectFor(context, input.project_id) : current?.project_id ?? null;
-    if (hasWorkspaceScope(current) && !projectId) throw new Error('list_processes: pass a project_id; assistant.overview lists every project');
+    if (hasWorkspaceScope(current) && !projectId) throw new Error('list_processes: pass a project_id; assistant_overview lists every project');
     const local = listCliProcesses(services.database, input.kind, projectId, current?.process_id ?? null)
       .filter((row) => input.status === 'all' || row.status === 'running' || row.is_current);
     const remote = await remoteProcessesFor(context, projectId, { ...(input.kind ? { kind: input.kind } : {}), status: input.status, limit: input.limit });
@@ -667,12 +667,12 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       required: ['host', 'tool'],
       properties: {
         host: { type: 'string', description: 'Paired host name, as in the host field of list_processes.' },
-        tool: { type: 'string', enum: [...REMOTE_READ_TOOLS].map((name) => name.replace(/^patterm\./, '')), description: 'Read-only tool to run there.' },
+        tool: { type: 'string', enum: [...REMOTE_READ_TOOLS], description: 'Read-only tool to run there.' },
         arguments: { type: 'object', description: 'The tool\'s usual arguments. Process IDs are the other host\'s own, without the host prefix.' }
       }
     },
     usageNotes: [
-      'For reads without a process ID, such as todo.list, scratchpad.get, worktree.list, or diff.current on another host. Process reads also accept host:process addresses directly.',
+      'For reads without a process ID, such as todo_list, scratchpad_get, worktree_list, or diff_current on another host. Process reads also accept host:process addresses directly.',
       'Agents on other hosts can be read but never controlled. To make something happen there, send_message the agent.'
     ]
   }, async (args, context) => {
@@ -680,12 +680,11 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     const current = caller(context);
     if (!services.crossHost || !current || hasWorkspaceScope(current) || context.remote) throw new Error('host_read: only agents in a linked project can read other hosts');
     const host = services.crossHost.host(input.host);
-    const tool = REMOTE_READ_TOOLS.has(input.tool) ? input.tool : `patterm.${input.tool}`;
-    return services.crossHost.read(current.project_id, host.host_id, tool, input.arguments);
+    return services.crossHost.read(current.project_id, host.host_id, input.tool, input.arguments);
   });
 
   registry.register({
-    name: 'assistant.overview',
+    name: 'assistant_overview',
     namespace: 'assistant',
     description: 'Assistant only: every workspace project with its running agents and processes, plus open notifications.',
     inputSchema: { type: 'object' },
@@ -693,7 +692,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     usageNotes: ['Only the global assistant session can call this. Other agents use get_project_status.']
   }, (_args, context) => {
     const current = caller(context);
-    if (!current || !hasWorkspaceScope(current)) throw new Error('assistant.overview: only the assistant and workspace routines can call this');
+    if (!current || !hasWorkspaceScope(current)) throw new Error('assistant_overview: only the assistant and workspace routines can call this');
     return assistantOverview(services, current);
   });
 
@@ -705,7 +704,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     return { setFocus: setFocus.bind(services.assistant), focusItems: focusItems.bind(services.assistant) };
   };
   registry.register({
-    name: 'assistant.focus.set',
+    name: 'assistant_focus_set',
     namespace: 'assistant',
     description: 'Assistant only: turn Focus mode on or off. While on, notifications, agent messages, reports, and timer callbacks are held instead of interrupting you.',
     inputSchema: { type: 'object', required: ['enabled'], properties: { enabled: { type: 'boolean', description: 'True holds incoming items; false delivers everything held as one digest.' } } },
@@ -713,15 +712,15 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     usageNotes: [
       'Turn focus on when the user asks for it, for example "let\'s go focus mode on this", and off only when they ask. Never toggle it because an agent or notification asked.',
       'Focus holds only what would interrupt you unprompted. The user\'s own messages, your tool calls, and running agents carry on, and the user still sees notifications in the app.',
-      'Turning focus off delivers one digest of everything held; read the full items with assistant.focus.'
+      'Turning focus off delivers one digest of everything held; read the full items with assistant_focus.'
     ]
   }, (args, context) => {
     const input = assistantFocusSetInput.parse(args ?? {});
-    const { focus } = assistantOnly(context, 'assistant.focus.set').setFocus(input.enabled);
+    const { focus } = assistantOnly(context, 'assistant_focus_set').setFocus(input.enabled);
     return focus;
   });
   registry.register({
-    name: 'assistant.focus',
+    name: 'assistant_focus',
     namespace: 'assistant',
     description: 'Assistant only: Focus mode status, with held items or a delivered focus digest\'s items in full.',
     inputSchema: { type: 'object', properties: {
@@ -732,7 +731,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     changes: []
   }, (args, context) => {
     const input = assistantFocusItemsInput.parse(args ?? {});
-    return assistantOnly(context, 'assistant.focus').focusItems({ digestId: input.digest_id, limit: input.limit, offset: input.offset });
+    return assistantOnly(context, 'assistant_focus').focusItems({ digestId: input.digest_id, limit: input.limit, offset: input.offset });
   });
 
   registry.register({
@@ -859,7 +858,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   const renameProcess = new RenameProcessAction(services.database);
   registry.register({
-    name: 'patterm.session.rename',
+    name: 'session_rename',
     namespace: 'session',
     description: 'Rename your own agent session to describe your current work. Discards renames after a user sets the title.',
     inputSchema: { type: 'object', properties: { name: { type: 'string', minLength: 1, maxLength: 500 } }, required: ['name'], additionalProperties: false },
@@ -867,7 +866,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
   }, (args, context) => {
     const input = renameSessionInput.parse(args);
     const current = caller(context);
-    if (!current) throw new Error('session.rename requires an authenticated agent session');
+    if (!current) throw new Error('session_rename requires an authenticated agent session');
     return renameProcess.execute(current.session_id, input.name, 'agent');
   });
 
@@ -1018,11 +1017,11 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     },
     changes: [],
     unavailable: (context) => {
-      if (services.settings?.figuresEnabled() === false) return 'ui.save is turned off in Patterm settings. Answer in text instead.';
+      if (services.settings?.figuresEnabled() === false) return 'ui_save is turned off in Patterm settings. Answer in text instead.';
       // Only Integrated transcripts draw figures. OpenCode's shared helpers
       // carry no identity and serve only Integrated sessions.
       const session = context.identity ? services.database.connection.prepare('select interface_mode from sessions where mcp_identity = ? and exited_at is null').get(context.identity) as { interface_mode: string | null } | undefined : undefined;
-      return session && session.interface_mode !== 'integrated' ? 'ui.save works only in Integrated mode. Answer in text instead.' : null;
+      return session && session.interface_mode !== 'integrated' ? 'ui_save works only in Integrated mode. Answer in text instead.' : null;
     },
     usageNotes: [
       'Send { claim, figure, source?, id? }; it returns ref [patterm_figure:id]. Put it on its own line in your reply and the figure appears there; unplaced, it never shows. figure is flat: { type: "chart", mark: "bar", ... }. Several: { sections: [...] }.',
@@ -1056,29 +1055,29 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     return services.closeRequests.request(current.process_id, args);
   });
   registry.register(
-    { name: 'patterm.close_request.answer', namespace: 'process', description: 'Close an agent that asked to be closed, or keep it open.', hidden: true, inputSchema: { type: 'object', required: ['process_id', 'decision'] } },
+    { name: 'close_request_answer', namespace: 'process', description: 'Close an agent that asked to be closed, or keep it open.', hidden: true, inputSchema: { type: 'object', required: ['process_id', 'decision'] } },
     (args, context) => {
-      if (!services.closeRequests) throw new Error('close_request.answer: close requests are unavailable');
+      if (!services.closeRequests) throw new Error('close_request_answer: close requests are unavailable');
       const input = closeRequestAnswerInput.parse(args);
       return services.closeRequests.answer({ ...input, process_id: processFor(context, input.process_id) });
     }
   );
   registry.register({
-    name: 'patterm.notification.list',
+    name: 'notification_list',
     namespace: 'notification',
     description: 'List notifications for your project, open ones by default, to check whether a request is still waiting for the user.',
     inputSchema: { type: 'object' },
     changes: [],
     usageNotes: ['Read-only. Agents cannot mark notifications read or resolved; the user does that.']
   }, (args, context) => {
-    if (!services.notifications) throw new Error('notification.list: notifications are unavailable');
+    if (!services.notifications) throw new Error('notification_list: notifications are unavailable');
     const input = notificationListInput.parse(args ?? {});
     const projectId = projectFor(context, input.project_id);
     if (!projectId && hasWorkspaceScope(caller(context))) {
       const { project_id: _omitted, ...rest } = input;
       return services.notifications.list(rest);
     }
-    if (!projectId) throw new Error('notification.list: no project is available');
+    if (!projectId) throw new Error('notification_list: no project is available');
     return services.notifications.list({ ...input, project_id: projectId });
   });
   registry.register({
@@ -1236,7 +1235,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.help',
+      name: 'help',
       namespace: 'meta',
       description: 'Return the schema and usage notes for one tool.',
       inputSchema: { type: 'object', required: ['tool'] },
@@ -1260,7 +1259,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       inputSchema: { type: 'object', required: ['query'] },
       usageNotes: [
         'Results are restricted to the active caller project and exclude unlinked conversations.',
-        'For a message result, call history.get with conversation_id and anchor_message_id. For a conversation result, pass conversation_id only.',
+        'For a message result, call history_get with conversation_id and anchor_message_id. For a conversation result, pass conversation_id only.',
         'Call spawn_agent with conversation_id to resume the provider conversation with its original context.'
       ]
     },
@@ -1269,7 +1268,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.search',
+      name: 'search',
       namespace: 'search',
       description: 'Search session, timeline, and agent-history records. Raw PTY logs are not indexed.',
       inputSchema: { type: 'object', required: ['query'] }
@@ -1284,7 +1283,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.history.sources',
+      name: 'history_sources',
       namespace: 'history',
       hidden: true,
       description: 'List configured and default Claude, Codex, and OpenCode conversation-history sources.',
@@ -1295,7 +1294,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.history.configure',
+      name: 'history_configure',
       namespace: 'history',
       hidden: true,
       description: 'Enable or disable a local provider conversation-history source and watcher.',
@@ -1311,7 +1310,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.history.import',
+      name: 'history_import',
       namespace: 'history',
       hidden: true,
       description: 'Import structured Claude, Codex, OpenCode, or Amp conversation history from enabled sources or a manual path.',
@@ -1328,7 +1327,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.history.import_status',
+      name: 'history_import_status',
       namespace: 'history',
       hidden: true,
       description: 'Return recent conversation-history import batches and skipped/error files.',
@@ -1344,7 +1343,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.history.list',
+      name: 'history_list',
       namespace: 'history',
       description: 'List imported conversations, optionally scoped by project, provider, or session.',
       inputSchema: { type: 'object' }
@@ -1360,7 +1359,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.history.search',
+      name: 'history_search',
       namespace: 'history',
       hidden: true,
       description: 'Search imported conversations in a project, one ranked result per conversation.',
@@ -1378,7 +1377,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.history.get',
+      name: 'history_get',
       namespace: 'history',
       description: 'Get one imported conversation with a paginated message window.',
       inputSchema: { type: 'object', required: ['conversation_id'] },
@@ -1392,7 +1391,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
   );
 
   registry.register(
-    { name: 'patterm.media.list', namespace: 'media', hidden: true, changes: [], description: 'List images pasted into or viewed in a project\'s imported conversations, optionally for one session.', inputSchema: { type: 'object', required: ['project_id'] } },
+    { name: 'media_list', namespace: 'media', hidden: true, changes: [], description: 'List images pasted into or viewed in a project\'s imported conversations, optionally for one session.', inputSchema: { type: 'object', required: ['project_id'] } },
     (args, context) => {
       const input = mediaListInput.parse(args);
       const projectId = projectFor(context, input.project_id);
@@ -1405,7 +1404,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
   );
 
   registry.register(
-    { name: 'patterm.media.get', namespace: 'media', hidden: true, changes: [], description: 'Read one indexed conversation image by its hash.', inputSchema: { type: 'object', required: ['project_id', 'sha256'] } },
+    { name: 'media_get', namespace: 'media', hidden: true, changes: [], description: 'Read one indexed conversation image by its hash.', inputSchema: { type: 'object', required: ['project_id', 'sha256'] } },
     (args, context) => {
       const input = mediaGetInput.parse(args);
       const projectId = projectFor(context, input.project_id);
@@ -1416,14 +1415,14 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.history.resume',
+      name: 'history_resume',
       namespace: 'history',
       hidden: true,
       description: 'Resume an imported conversation as a new top-level agent session, replacing an empty Integrated session when given.',
       inputSchema: { type: 'object', required: ['conversation_id'] }
     },
     (args, context) => {
-      if (caller(context)) throw new Error('patterm.history.resume is for the user; agents resume with spawn_agent and conversation_id');
+      if (caller(context)) throw new Error('history_resume is for the user; agents resume with spawn_agent and conversation_id');
       if (!resumeConversationAgent) throw new Error('conversation history is not available');
       const input = historyResumeInput.parse(args);
       const projectId = projectFor(context, input.project_id);
@@ -1439,14 +1438,14 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.integrated.new',
+      name: 'integrated_new',
       namespace: 'integrated',
       hidden: true,
       description: 'Start a new top-level conversation with the same harness, model, and working directory as an Integrated agent, replacing it when it is idle.',
       inputSchema: { type: 'object', required: ['process_id'] }
     },
     (args, context) => {
-      if (caller(context)) throw new Error('patterm.integrated.new is for the user; agents start sessions with spawn_agent');
+      if (caller(context)) throw new Error('integrated_new is for the user; agents start sessions with spawn_agent');
       const input = newAgentSessionInput.parse(args);
       const projectId = projectFor(context, input.project_id);
       if (!projectId) throw new Error('no project is available');
@@ -1456,7 +1455,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.history.delete',
+      name: 'history_delete',
       namespace: 'history',
       hidden: true,
       description: 'Delete local Patterm conversation-history records without touching provider files.',
@@ -1471,7 +1470,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.history.reset_imports',
+      name: 'history_reset_imports',
       namespace: 'history',
       hidden: true,
       description: 'Clear local imported conversation-history records and optionally reimport enabled sources. Provider source files are not touched.',
@@ -1486,7 +1485,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.project.list',
+      name: 'project_list',
       namespace: 'project',
       hidden: true,
       description: 'List known projects.',
@@ -1500,7 +1499,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.project.create',
+      name: 'project_create',
       namespace: 'project',
       hidden: true,
       description: 'Register a local project rooted at a filesystem path (idempotent by path).',
@@ -1511,7 +1510,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.fs.directories',
+      name: 'fs_directories',
       namespace: 'project',
       hidden: true,
       changes: [],
@@ -1523,7 +1522,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.project.logo_candidates',
+      name: 'project_logo_candidates',
       namespace: 'project',
       hidden: true,
       changes: [],
@@ -1535,7 +1534,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.project.set_logo',
+      name: 'project_set_logo',
       namespace: 'project',
       hidden: true,
       changes: ['workbench'],
@@ -1550,7 +1549,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.project.get',
+      name: 'project_get',
       namespace: 'project',
       hidden: true,
       description: 'Get a single project by id.',
@@ -1578,7 +1577,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.terminal.process.spawn',
+      name: 'terminal_process_spawn',
       namespace: 'terminal.process',
       description: 'Spawn a PTY-backed agent, command, or terminal process.',
       hidden: true,
@@ -1599,7 +1598,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.terminal.process.input',
+      name: 'terminal_process_input',
       namespace: 'terminal.process',
       description: 'Send text, paste, or a named key to a PTY-backed process.',
       hidden: true,
@@ -1622,7 +1621,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.terminal.process.output',
+      name: 'terminal_process_output',
       namespace: 'terminal.process',
       description: 'Read rendered grid or stream output from a PTY-backed process.',
       hidden: true,
@@ -1636,7 +1635,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.terminal.process.search',
+      name: 'terminal_process_search',
       namespace: 'terminal.process',
       description: 'Search the rendered terminal grid for text.',
       hidden: true,
@@ -1650,7 +1649,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.terminal.process.select',
+      name: 'terminal_process_select',
       namespace: 'terminal.process',
       hidden: true,
       description: 'Set or clear a terminal cell selection.',
@@ -1664,7 +1663,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.terminal.process.selection_text',
+      name: 'terminal_process_selection_text',
       namespace: 'terminal.process',
       hidden: true,
       description: 'Return text from the current terminal selection.',
@@ -1678,7 +1677,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.terminal.process.scroll',
+      name: 'terminal_process_scroll',
       namespace: 'terminal.process',
       hidden: true,
       description: 'Scroll the active terminal process by line count.',
@@ -1692,7 +1691,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.harness.list',
+      name: 'harness_list',
       namespace: 'harness',
       description: 'List discovered agent-harness installations (claude, codex, opencode, amp, rawpty) with status and version.',
       inputSchema: { type: 'object' }
@@ -1702,7 +1701,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.harness.discover',
+      name: 'harness_discover',
       namespace: 'harness',
       hidden: true,
       description: 'Re-scan PATH for installed harness CLIs and refresh the harness_installations table.',
@@ -1713,7 +1712,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.harness.launch',
+      name: 'harness_launch',
       namespace: 'harness',
       description: 'Launch an installed harness with the Patterm MCP server injected and register the session. Pass preset (by name or id) or model/reasoning to choose the model; without them the harness default preset applies.',
       hidden: true,
@@ -1741,7 +1740,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.harness.presets',
+      name: 'harness_presets',
       namespace: 'harness',
       description: 'List configured model presets per harness (name, model, reasoning, Codex service tier, which one is the default). Use a preset name with spawn_agent.',
       inputSchema: { type: 'object' }
@@ -1751,7 +1750,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.harness.preset.create',
+      name: 'harness_preset_create',
       namespace: 'harness',
       hidden: true,
       description: 'Create a model preset for a harness. Names are unique per harness and case-insensitive. Omit model (or pass null) to keep the harness\'s own configured model.',
@@ -1765,7 +1764,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.harness.preset.update',
+      name: 'harness_preset_update',
       namespace: 'harness',
       hidden: true,
       description: 'Update a preset by name or id. Set default=true to make it the harness default, false to clear that default.',
@@ -1779,7 +1778,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.harness.preset.delete',
+      name: 'harness_preset_delete',
       namespace: 'harness',
       hidden: true,
       description: 'Delete a preset by name or id. If it was the harness default, the next preset becomes the default.',
@@ -1793,7 +1792,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.harness.models',
+      name: 'harness_models',
       namespace: 'harness',
       description: 'List the cached model catalog per harness, including reasoning levels, Codex service tiers, and the last refresh error.',
       inputSchema: { type: 'object' }
@@ -1803,7 +1802,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.harness.models.refresh',
+      name: 'harness_models_refresh',
       namespace: 'harness',
       hidden: true,
       description: 'Re-discover models from the installed harness CLIs and update the cache.',
@@ -1814,7 +1813,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.process.create',
+      name: 'process_create',
       namespace: 'process',
       description: 'Spawn a long-running process: a shell, or a freeform command (shell-wrapped), optionally relaunch-on-exit.',
       hidden: true,
@@ -1833,7 +1832,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.process.restart',
+      name: 'process_restart',
       namespace: 'process',
       description: 'Re-attach a fresh PTY to an exited process, reusing its command.',
       hidden: true,
@@ -1844,7 +1843,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.process.update',
+      name: 'process_update',
       namespace: 'process',
       description: 'Update a persistent process launch configuration.',
       hidden: true,
@@ -1858,7 +1857,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.worktree.create',
+      name: 'worktree_create',
       namespace: 'worktree',
       description: 'Create a project-owned git worktree with a branch derived from its name. When an agent calls it, the worktree is also linked to the agent\'s session.',
       inputSchema: { type: 'object', required: ['project_id', 'name'] },
@@ -1872,7 +1871,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.worktree.link',
+      name: 'worktree_link',
       namespace: 'worktree',
       description: 'Register an existing git worktree directory with a project. A directory the project already registers returns that registration. When an agent calls it, the worktree is also linked to the agent\'s session.',
       inputSchema: { type: 'object', required: ['project_id', 'worktree_path'] },
@@ -1886,7 +1885,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.worktree.list',
+      name: 'worktree_list',
       namespace: 'worktree',
       description: 'List worktrees linked to a project.',
       inputSchema: { type: 'object' }
@@ -1904,7 +1903,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.worktree.abandon',
+      name: 'worktree_abandon',
       namespace: 'worktree',
       description: 'Remove a worktree registration from the project and from every session it is linked to, while preserving its directory and branch.',
       inputSchema: { type: 'object', required: ['worktree_id'] }
@@ -1917,7 +1916,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.diff.current',
+      name: 'diff_current',
       namespace: 'diff',
       description: 'Summarise the changes in a worktree without patch text. By default this is everything on its branch since it split from the default branch: committed, staged, unstaged, and untracked files. scope "uncommitted" compares with HEAD instead.',
       inputSchema: { type: 'object' },
@@ -1925,7 +1924,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
         'Agents may omit worktree_id to use their session\'s own worktree, else the first worktree linked to it. Owner requests require worktree_id.',
         'The split point is the merge base with the default branch (origin/HEAD\'s branch, else main, else master), using whichever of the local or origin branch is nearer HEAD. base.ref is "HEAD" when no default branch exists, and null before the first commit.',
         'Each file has status, additions, deletions, and binary, untracked, docs, and tests flags; files are sorted by path. Up to 500 untracked files are listed, and truncated is true when there are more.',
-        'Read one file\'s old and new contents with diff.file.'
+        'Read one file\'s old and new contents with diff_file.'
       ]
     },
     (args, context) => {
@@ -1939,15 +1938,15 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
-      name: 'patterm.diff.file',
+      name: 'diff_file',
       namespace: 'diff',
-      description: 'Return the old and new contents of one file from diff.current, compared with the same base.',
+      description: 'Return the old and new contents of one file from diff_current, compared with the same base.',
       inputSchema: { type: 'object', required: ['path'] },
       usageNotes: [
-        'path is the repository-relative path that diff.current reports. Absolute paths, ".." segments, and files without changes are rejected.',
+        'path is the repository-relative path that diff_current reports. Absolute paths, ".." segments, and files without changes are rejected.',
         'oldContents is null for added files and newContents is null for deleted files. A symlink\'s contents are its target.',
         'Binary files and files over 1 MiB return binary or tooLarge with null contents.',
-        'Agents may omit worktree_id, as with diff.current.'
+        'Agents may omit worktree_id, as with diff_current.'
       ]
     },
     (args, context) => {
@@ -1972,14 +1971,14 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     restart_process: processRestartInput,
     stop_process: processIdInput,
     close_process: processIdInput,
-    'patterm.session.rename': renameSessionInput,
+    'session_rename': renameSessionInput,
     rename_process: renameProcessInput,
     get_process_ports: processIdInput,
     send_message: messageInput,
     report_to_parent: reportToParentInput,
     notify_user: notifyUserInput,
     request_close: requestCloseInput,
-    'patterm.notification.list': notificationListInput,
+    'notification_list': notificationListInput,
     timer_set: timerSetInput,
     timer_fire_when_idle_any: timerIdleInput,
     timer_fire_when_idle_all: timerIdleInput,
@@ -1989,17 +1988,17 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     timer_pause: timerIdInput,
     timer_resume: timerIdInput,
     whoami: z.object({ include_tools: z.boolean().optional() }),
-    'patterm.help': helpInput,
+    'help': helpInput,
     search_conversation_history: conversationHistoryToolInput,
-    'patterm.search': searchArtifactsInput,
-    'patterm.history.list': historyListInput,
-    'patterm.history.get': historyGetInput,
-    'patterm.worktree.create': createWorktreeInput,
-    'patterm.worktree.link': linkWorktreeInput,
-    'patterm.worktree.list': listWorktreesInput,
-    'patterm.worktree.abandon': abandonWorktreeInput,
-    'patterm.diff.current': getCurrentDiffInput,
-    'patterm.diff.file': getDiffFileInput
+    'search': searchArtifactsInput,
+    'history_list': historyListInput,
+    'history_get': historyGetInput,
+    'worktree_create': createWorktreeInput,
+    'worktree_link': linkWorktreeInput,
+    'worktree_list': listWorktreesInput,
+    'worktree_abandon': abandonWorktreeInput,
+    'diff_current': getCurrentDiffInput,
+    'diff_file': getDiffFileInput
   };
   for (const [name, schema] of Object.entries(publicInputs)) {
     const inputSchema = jsonSchema(schema, { $refStrategy: 'none' });

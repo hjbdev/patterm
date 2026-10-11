@@ -261,12 +261,12 @@ async function main(): Promise<void> {
       modelCatalog: new HarnessModelCatalogService({ database, settings, env: process.env, openCodeServer: { listModels: async () => ({ data: [] }) } })
     });
     interface PresetList { presets: Array<{ id: string; harness: string; name: string; default: boolean }> }
-    const listed = await registry.call('patterm.harness.presets', {}) as PresetList;
+    const listed = await registry.call('harness_presets', {}) as PresetList;
     assert.ok(listed.presets.some((preset) => preset.name === 'smartypants' && preset.harness === 'claude' && preset.default), 'MCP lists preset names with default flags');
-    await registry.call('patterm.harness.preset.create', { harness: 'codex', name: 'quick', model: 'gpt-5.5', reasoning: 'low' });
-    const switched = await registry.call('patterm.harness.preset.update', { ref: 'quick', default: true }) as PresetList;
+    await registry.call('harness_preset_create', { harness: 'codex', name: 'quick', model: 'gpt-5.5', reasoning: 'low' });
+    const switched = await registry.call('harness_preset_update', { ref: 'quick', default: true }) as PresetList;
     assert.equal(switched.presets.find((preset) => preset.name === 'quick')?.default, true, 'MCP preset updates can set the harness default');
-    const afterDelete = await registry.call('patterm.harness.preset.delete', { ref: 'quick' }) as PresetList;
+    const afterDelete = await registry.call('harness_preset_delete', { ref: 'quick' }) as PresetList;
     assert.ok(!afterDelete.presets.some((preset) => preset.name === 'quick'), 'MCP preset deletion removes the preset');
 
     console.log('harnessPresetSmoke: ok');

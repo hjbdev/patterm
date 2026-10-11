@@ -72,9 +72,9 @@ async function main(): Promise<void> {
   const desktop = browserToolsOnly({ handle: (channel, handler) => desktopRoutes.set(channel, handler), on: (channel, handler) => desktopRoutes.set(channel, handler) });
   desktop.handle('patterm:mcp:call', (_event, raw) => raw);
   desktop.handle('patterm:workbench:snapshot', () => 'snapshot');
-  assert.deepEqual(desktopRoutes.get('patterm:mcp:call')!(null, { tool: 'patterm.project.list', arguments: {} }), { tool: 'patterm.project.list', arguments: {} });
+  assert.deepEqual(desktopRoutes.get('patterm:mcp:call')!(null, { tool: 'project_list', arguments: {} }), { tool: 'project_list', arguments: {} });
   assert.throws(() => desktopRoutes.get('patterm:mcp:call')!(null, { tool: 'spawn_agent', arguments: {} }), /not available in the Patterm window/, 'agent-only tools are refused');
-  assert.deepEqual(desktopRoutes.get('patterm:mcp:call')!(null, { tool: 'patterm.assistant.restart', arguments: { process_id: 'a' } }), { tool: 'patterm.assistant.restart', arguments: { process_id: 'a' } }, 'socket-only control tools work in the window');
+  assert.deepEqual(desktopRoutes.get('patterm:mcp:call')!(null, { tool: 'assistant_restart', arguments: { process_id: 'a' } }), { tool: 'assistant_restart', arguments: { process_id: 'a' } }, 'socket-only control tools work in the window');
   assert.equal(desktopRoutes.get('patterm:workbench:snapshot')!(null), 'snapshot', 'other channels are unchanged');
   // An oversized socket reply must not close the socket, or the browser
   // reconnects and asks for it again forever.
@@ -154,8 +154,8 @@ async function main(): Promise<void> {
     assert.equal(peer.status, 400);
     assert.match((await peer.json() as { error: string }).error, /No pairing code is active/);
     assert.equal((await fetch(`${base}/api/peer/pair`, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: pairBody })).status, 403);
-    assert.equal((await rpc('patterm:mcp:call', { tool: 'patterm.hosts.code.create', arguments: {} })).status, 400, 'only a server with a public origin shows pairing codes');
-    assert.equal((await rpc('patterm:mcp:call', { tool: 'patterm.hosts.get', arguments: {} })).status, 200);
+    assert.equal((await rpc('patterm:mcp:call', { tool: 'hosts_code_create', arguments: {} })).status, 400, 'only a server with a public origin shows pairing codes');
+    assert.equal((await rpc('patterm:mcp:call', { tool: 'hosts_get', arguments: {} })).status, 200);
     // Peer links need a credential, and browsers cannot open them.
     const linkStatus = (headers: Record<string, string>) => new Promise<number | undefined>((resolve) => {
       const attempt = new WebSocket(`ws://127.0.0.1:${port}/api/peer/link`, { headers });
@@ -318,9 +318,9 @@ async function main(): Promise<void> {
     assert.equal(script.vary, 'Accept-Encoding');
     assert.equal(zlib.gunzipSync(script.body).toString('utf8'), appScript);
     assert.equal((await compressed('/assets/app.js', 'identity')).body.toString('utf8'), appScript, 'clients that refuse compression get the file as it is');
-    const project = await app.mcp.call('patterm.project.create', { path: temp }) as { project_id: string };
+    const project = await app.mcp.call('project_create', { path: temp }) as { project_id: string };
     for (let index = 0; index < 6; index++) {
-      await app.mcp.call('patterm.process.create', { project_id: project.project_id, command: 'true', name: `history ${index}` });
+      await app.mcp.call('process_create', { project_id: project.project_id, command: 'true', name: `history ${index}` });
     }
     const snapshotReply = await compressed('/api/rpc', 'br, gzip', { id: 1, channel: 'patterm:workbench:snapshot' });
     assert.equal(snapshotReply.encoding, 'br', 'large RPC replies prefer Brotli');
@@ -340,7 +340,7 @@ async function main(): Promise<void> {
     const contextRpc = (tool: string, args: Record<string, unknown>) => rpc('patterm:mcp:call', {
       tool, arguments: { project_id: project.project_id, ...args }
     });
-    const todoResponse = await contextRpc('patterm.todo.create', { title: 'Browser context' });
+    const todoResponse = await contextRpc('todo_create', { title: 'Browser context' });
     assert.equal(todoResponse.status, 200);
     await until(() => a.events.some((event) => event.event === 'data-changed' && (event.payload as { topics: string[] }).topics.includes('context')), 'context change signal');
     // Patches up to the current version may still be on their way over the
@@ -349,18 +349,18 @@ async function main(): Promise<void> {
     assert.ok(!a.events.some((event) => event.event === 'workbench-patch' && (event.payload as { to: number }).to > currentVersion), 'context writes publish no workbench patch');
     assert.ok(!a.events.some((event) => event.event === 'workbench-changed'), 'clients are never told to refetch the whole workbench');
     const browserTodo = (await todoResponse.json() as { result: { id: string; created_by_actor: string } }).result;
-    const storedTodo = await app.mcp.call('patterm.todo.get', { project_id: project.project_id, todo_id: browserTodo.id }) as { title: string; created_by_actor: string };
+    const storedTodo = await app.mcp.call('todo_get', { project_id: project.project_id, todo_id: browserTodo.id }) as { title: string; created_by_actor: string };
     assert.equal(storedTodo.title, 'Browser context');
     assert.equal(storedTodo.created_by_actor, 'user');
-    assert.equal((await contextRpc('patterm.todo.assign', { todo_id: browserTodo.id, actor_id: 'spoofed' })).status, 400);
-    const noteResponse = await contextRpc('patterm.scratchpad.create', { title: 'Browser note', body: 'Shared context' });
+    assert.equal((await contextRpc('todo_assign', { todo_id: browserTodo.id, actor_id: 'spoofed' })).status, 400);
+    const noteResponse = await contextRpc('scratchpad_create', { title: 'Browser note', body: 'Shared context' });
     assert.equal(noteResponse.status, 200);
-    const referenceResponse = await contextRpc('patterm.reference.attach', {
+    const referenceResponse = await contextRpc('reference_attach', {
       target_type: 'todo', target_id: browserTodo.id, url: 'https://example.test/issues/1'
     });
     assert.equal(referenceResponse.status, 200);
-    assert.equal((await contextRpc('patterm.reference.list', { target_type: 'todo', target_id: browserTodo.id })).status, 200);
-    const launch = async () => app.mcp.call('patterm.process.create', {
+    assert.equal((await contextRpc('reference_list', { target_type: 'todo', target_id: browserTodo.id })).status, 200);
+    const launch = async () => app.mcp.call('process_create', {
       project_id: project.project_id, command: "exec /bin/sh -c 'printf \"ready\\n\"; while IFS= read -r line; do printf \"echo:%s\\n\" \"$line\"; done'"
     }) as Promise<{ process_id: string; pty_process_id: string }>;
     const first = await launch();
@@ -386,10 +386,10 @@ async function main(): Promise<void> {
     await assert.rejects(b.request('input', { process_id: firstId, text: 'not-owner\n' }), /Take control/);
     // Restarting the assistant needs control of it, like sending it a message,
     // so plain HTTP calls cannot reach it.
-    await assert.rejects(b.call('patterm:integrated:call', { tool: 'patterm.assistant.restart', arguments: { process_id: firstId } }), /Take control/);
-    await assert.rejects(b.call('patterm:integrated:call', { tool: 'patterm.assistant.new', arguments: { process_id: firstId } }), /Take control/);
-    assert.match((await (await rpc('patterm:mcp:call', { tool: 'patterm.assistant.new', arguments: { process_id: firstId } })).json() as { error: string }).error, /not available through the browser/);
-    assert.match((await (await rpc('patterm:mcp:call', { tool: 'patterm.assistant.restart', arguments: { process_id: firstId } })).json() as { error: string }).error, /not available through the browser/);
+    await assert.rejects(b.call('patterm:integrated:call', { tool: 'assistant_restart', arguments: { process_id: firstId } }), /Take control/);
+    await assert.rejects(b.call('patterm:integrated:call', { tool: 'assistant_new', arguments: { process_id: firstId } }), /Take control/);
+    assert.match((await (await rpc('patterm:mcp:call', { tool: 'assistant_new', arguments: { process_id: firstId } })).json() as { error: string }).error, /not available through the browser/);
+    assert.match((await (await rpc('patterm:mcp:call', { tool: 'assistant_restart', arguments: { process_id: firstId } })).json() as { error: string }).error, /not available through the browser/);
     await assert.rejects(a.request('resize', { process_id: firstId, cols: 1e9, rows: 20 }), /1000/);
     await a.request('resize', { process_id: firstId, cols: 90, rows: 30, resize_seq: 50 });
     await b.request('take-control', { process_id: firstId });
@@ -460,8 +460,8 @@ async function main(): Promise<void> {
     await overloadClosed;
     // Imports go through the app's queue, which runs the Node worker one job at
     // a time; a worker launched beside it would race the startup import.
-    const job = await app.mcp.call('patterm.history.import', { trigger: 'manual' }) as { job_id: string };
-    const importJob = async () => (await app.mcp.call('patterm.history.import_status', {}) as { queue: { recent: Array<{ id: string; status: string; error: string | null }> } })
+    const job = await app.mcp.call('history_import', { trigger: 'manual' }) as { job_id: string };
+    const importJob = async () => (await app.mcp.call('history_import_status', {}) as { queue: { recent: Array<{ id: string; status: string; error: string | null }> } })
       .queue.recent.find((recent) => recent.id === job.job_id);
     const importDeadline = Date.now() + 20_000;
     while (!await importJob() && Date.now() < importDeadline) await new Promise((resolve) => setTimeout(resolve, 50));

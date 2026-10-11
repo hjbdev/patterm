@@ -90,7 +90,7 @@ export function useUsage(days: Ref<UsageRange>) {
   async function refresh(): Promise<void> {
     const current = ++request;
     try {
-      const result = await window.patterm.call('patterm.usage.summary', { days: days.value }) as UsageSummary;
+      const result = await window.patterm.call('usage_summary', { days: days.value }) as UsageSummary;
       if (current !== request) return;
       summary.value = result;
       error.value = '';

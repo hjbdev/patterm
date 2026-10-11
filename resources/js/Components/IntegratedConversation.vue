@@ -615,7 +615,7 @@ function resetState(): void {
   lastConversation = '';
 }
 
-const readConversation = () => window.patterm.call('patterm.integrated.get', { process_id: props.processId }) as Promise<Record<string, unknown>>;
+const readConversation = () => window.patterm.call('integrated_get', { process_id: props.processId }) as Promise<Record<string, unknown>>;
 let refreshInFlight: { generation: number; done: Promise<void> } | null = null;
 let refreshAgain = false;
 
@@ -718,7 +718,7 @@ async function loadOlder(): Promise<void> {
   loadingOlder.value = true;
   historyError.value = '';
   try {
-    const page = await window.patterm.call('patterm.integrated.history', { process_id: props.processId, cursor }) as Record<string, unknown>;
+    const page = await window.patterm.call('integrated_history', { process_id: props.processId, cursor }) as Record<string, unknown>;
     if (token !== generation || stopped || historyCursor.value !== cursor) return;
     const older = Array.isArray(page.archived_messages)
       ? archiveTranscript(page.archived_messages as ConversationMessageRecord[], { projectPath: props.projectPath ?? null, showReasoning: true })
@@ -758,7 +758,7 @@ async function reconcileDelivery(): Promise<void> {
   if (!pending || pending.state !== 'uncertain' || reconciling) return;
   reconciling = true;
   try {
-    const result = await window.patterm.call('patterm.integrated.delivery', { process_id: processId, message_id: pending.payload.messageId }) as { state?: string };
+    const result = await window.patterm.call('integrated_delivery', { process_id: processId, message_id: pending.payload.messageId }) as { state?: string };
     if (token !== generation || props.processId !== processId) return;
     if (result?.state === 'accepted') {
       completeSend(processId, pending.payload, { preserveDraft: Boolean(pending.optimistic) });
@@ -799,9 +799,9 @@ async function sendRequest(request: ComposerSendPayload & { hash: string }, opti
   try {
     let result: unknown;
     if (command) {
-      result = await mutate('patterm.integrated.command', { process_id: processId, name: command.name, text: command.text });
+      result = await mutate('integrated_command', { process_id: processId, name: command.name, text: command.text });
     } else {
-      result = await mutate('patterm.integrated.send', {
+      result = await mutate('integrated_send', {
         process_id: processId,
         text: outgoing.text,
         ...(outgoing.references.length ? { references: outgoing.references } : {}),
@@ -893,7 +893,7 @@ async function startNewSession(): Promise<void> {
       await props.onNewSession(props.processId);
       return;
     }
-    const result = await mutate('patterm.integrated.new', { process_id: props.processId, project_id: props.projectId }) as { session_id?: unknown };
+    const result = await mutate('integrated_new', { process_id: props.processId, project_id: props.projectId }) as { session_id?: unknown };
     if (typeof result?.session_id === 'string') props.onLaunched?.(result.session_id);
   } catch (cause) {
     if (token === generation) error.value = cause instanceof Error ? cause.message : String(cause);
@@ -906,7 +906,7 @@ async function loadControls(): Promise<void> {
   if (stopped || ended.value) return;
   const token = generation;
   try {
-    const result = await window.patterm.call('patterm.integrated.controls', { process_id: props.processId }) as Partial<IntegratedControls>;
+    const result = await window.patterm.call('integrated_controls', { process_id: props.processId }) as Partial<IntegratedControls>;
     if (token !== generation || stopped || ended.value) return;
     controls.value = { selectors: Array.isArray(result.selectors) ? result.selectors : [], commands: Array.isArray(result.commands) ? result.commands : [] };
     controlsError.value = '';
@@ -918,7 +918,7 @@ async function loadControls(): Promise<void> {
 }
 
 async function configure(selectorId: string, value: string): Promise<void> {
-  await runMutation('patterm.integrated.configure', { process_id: props.processId, selector: selectorId, value });
+  await runMutation('integrated_configure', { process_id: props.processId, selector: selectorId, value });
   const selector = controls.value.selectors.find((item) => item.id === selectorId);
   if (!error.value && selector) {
     controls.value = { ...controls.value, selectors: controls.value.selectors.map((item) => item === selector ? { ...item, value } : item) };
@@ -928,7 +928,7 @@ async function configure(selectorId: string, value: string): Promise<void> {
 
 async function updateQueued(item: IntegratedQueuedMessage, action: 'steer' | 'cancel'): Promise<void> {
   await respond(`queue:${item.id}`, async () => {
-    await runMutation('patterm.integrated.queue.update', { process_id: props.processId, message_id: item.id, action });
+    await runMutation('integrated_queue_update', { process_id: props.processId, message_id: item.id, action });
     // A cancelled held message never reaches the agent, so no native row will
     // replace its local copy.
     if (action === 'cancel' && (item.delivery === 'held' || item.delivery === 'unconfirmed') && !error.value) discardOutgoingMessage(props.processId, item.id);
@@ -939,7 +939,7 @@ async function updateQueued(item: IntegratedQueuedMessage, action: 'steer' | 'ca
 async function checkHeldDelivery(item: IntegratedQueuedMessage): Promise<void> {
   await respond(`queue:${item.id}`, async () => {
     try {
-      await window.patterm.call('patterm.integrated.delivery', { process_id: props.processId, message_id: item.id });
+      await window.patterm.call('integrated_delivery', { process_id: props.processId, message_id: item.id });
       await refresh();
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : String(cause);
@@ -960,11 +960,11 @@ function closeTask(): void {
 }
 
 async function stopTask(taskId: string): Promise<void> {
-  await respond(`task:${taskId}`, () => runMutation('patterm.integrated.task.stop', { process_id: props.processId, task_id: taskId }));
+  await respond(`task:${taskId}`, () => runMutation('integrated_task_stop', { process_id: props.processId, task_id: taskId }));
 }
 
 async function interrupt(): Promise<void> {
-  await runMutation('patterm.integrated.interrupt', { process_id: props.processId });
+  await runMutation('integrated_interrupt', { process_id: props.processId });
 }
 
 // Palette actions for this conversation run here, through the same control
@@ -980,7 +980,7 @@ function handleWorkspaceRequest(request: WorkspaceRequest): boolean {
 async function replyPermission(requestId: string, reply: 'once' | 'always' | 'reject'): Promise<void> {
   transcriptRef.value?.followEnd();
   const message = reply === 'reject' ? denyFeedback.value[requestId]?.trim() : '';
-  await respond(requestId, () => runMutation('patterm.integrated.permission.reply', { process_id: props.processId, request_id: requestId, reply, ...(message ? { message } : {}) }));
+  await respond(requestId, () => runMutation('integrated_permission_reply', { process_id: props.processId, request_id: requestId, reply, ...(message ? { message } : {}) }));
 }
 
 // Inputs inside request cards read as rows, without a border until used.
@@ -1027,7 +1027,7 @@ async function replyQuestion(request: IntegratedQuestionRequest): Promise<void> 
     return;
   }
   transcriptRef.value?.followEnd();
-  await respond(request.id, () => runMutation('patterm.integrated.question.reply', { process_id: props.processId, request_id: request.id, answers: built.answers }));
+  await respond(request.id, () => runMutation('integrated_question_reply', { process_id: props.processId, request_id: request.id, answers: built.answers }));
 }
 
 function isResponding(id: string): boolean {
@@ -1120,7 +1120,7 @@ async function replyForm(form: IntegratedFormRequest): Promise<void> {
   transcriptRef.value?.followEnd();
   await respond(form.id, async () => {
     try {
-      await mutate('patterm.integrated.form.reply', { process_id: props.processId, form_id: form.id, answer: built.answer });
+      await mutate('integrated_form_reply', { process_id: props.processId, form_id: form.id, answer: built.answer });
       await refresh();
     } catch (cause) {
       formErrors.value = { ...formErrors.value, [form.id]: cause instanceof Error ? cause.message : String(cause) };
@@ -1132,7 +1132,7 @@ async function declineForm(form: IntegratedFormRequest): Promise<void> {
   formErrors.value = { ...formErrors.value, [form.id]: '' };
   await respond(form.id, async () => {
     try {
-      await mutate('patterm.integrated.form.reply', { process_id: props.processId, form_id: form.id, answer: {}, action: 'decline' });
+      await mutate('integrated_form_reply', { process_id: props.processId, form_id: form.id, answer: {}, action: 'decline' });
       await refresh();
     } catch (cause) {
       formErrors.value = { ...formErrors.value, [form.id]: cause instanceof Error ? cause.message : String(cause) };

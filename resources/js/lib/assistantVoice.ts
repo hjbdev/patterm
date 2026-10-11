@@ -52,7 +52,7 @@ export class AssistantVoiceSession {
     // OpenAI's WebRTC endpoint expects the client to open its events channel.
     peer.createDataChannel('oai-events');
     await peer.setLocalDescription(await peer.createOffer());
-    const answer = await window.patterm.call('patterm.assistant.voice.start', { sdp: peer.localDescription?.sdp ?? '' }) as { sdp?: unknown };
+    const answer = await window.patterm.call('assistant_voice_start', { sdp: peer.localDescription?.sdp ?? '' }) as { sdp?: unknown };
     if (this.stopped) return;
     if (typeof answer?.sdp !== 'string') throw new Error('The assistant did not answer the voice call');
     await peer.setRemoteDescription({ type: 'answer', sdp: answer.sdp });
@@ -73,7 +73,7 @@ export class AssistantVoiceSession {
     this.stopped = true;
     this.release();
     this.onStatus('ended');
-    await window.patterm.call('patterm.assistant.voice.stop', {}).catch(() => undefined);
+    await window.patterm.call('assistant_voice_stop', {}).catch(() => undefined);
   }
 
   private fail(detail: string): void {
@@ -81,7 +81,7 @@ export class AssistantVoiceSession {
     this.stopped = true;
     this.release();
     this.onStatus('failed', detail);
-    void window.patterm.call('patterm.assistant.voice.stop', {}).catch(() => undefined);
+    void window.patterm.call('assistant_voice_stop', {}).catch(() => undefined);
   }
 
   private analyser(source: MediaStreamAudioSourceNode): AnalyserNode {

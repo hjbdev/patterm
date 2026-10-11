@@ -7,28 +7,28 @@ import { HOST_TOOLS } from '../MCP/registerHostTools';
 // not listed.
 export const BROWSER_TOOLS = new Set([
   ...Object.keys(contextSchemas),
-  'patterm.project.create', 'patterm.fs.directories', 'patterm.project.list', 'patterm.project.get', 'patterm.project.logo_candidates', 'patterm.project.set_logo',
-  'patterm.harness.launch', 'patterm.harness.list', 'patterm.harness.discover', 'patterm.harness.presets',
-  'patterm.integrated.get', 'patterm.integrated.history', 'patterm.integrated.image', 'patterm.integrated.send', 'patterm.integrated.controls', 'patterm.integrated.files.search', 'patterm.integrated.delivery', 'patterm.integrated.configure', 'patterm.integrated.command', 'patterm.integrated.interrupt',
-  'patterm.integrated.permission.reply', 'patterm.integrated.question.reply', 'patterm.integrated.form.reply', 'patterm.integrated.task.stop', 'patterm.integrated.task.output', 'patterm.integrated.queue.update', 'patterm.integrated.new',
-  'patterm.settings.agent_interface.get', 'patterm.settings.agent_interface.update', 'patterm.settings.figures.get', 'patterm.settings.figures.update',
-  'patterm.routine.list', 'patterm.routine.get', 'patterm.routine.create', 'patterm.routine.update', 'patterm.routine.delete', 'patterm.routine.run_now', 'patterm.routine.run', 'patterm.routine.runs', 'patterm.routine.log',
-  'patterm.usage.summary',
-  'patterm.assistant.get', 'patterm.assistant.ensure', 'patterm.assistant.voice.start', 'patterm.assistant.voice.stop', 'patterm.assistant.focus.set',
-  'patterm.settings.assistant.get', 'patterm.settings.assistant.update',
-  'patterm.settings.idle_compaction.get', 'patterm.settings.idle_compaction.update',
+  'project_create', 'fs_directories', 'project_list', 'project_get', 'project_logo_candidates', 'project_set_logo',
+  'harness_launch', 'harness_list', 'harness_discover', 'harness_presets',
+  'integrated_get', 'integrated_history', 'integrated_image', 'integrated_send', 'integrated_controls', 'integrated_files_search', 'integrated_delivery', 'integrated_configure', 'integrated_command', 'integrated_interrupt',
+  'integrated_permission_reply', 'integrated_question_reply', 'integrated_form_reply', 'integrated_task_stop', 'integrated_task_output', 'integrated_queue_update', 'integrated_new',
+  'settings_agent_interface_get', 'settings_agent_interface_update', 'settings_figures_get', 'settings_figures_update',
+  'routine_list', 'routine_get', 'routine_create', 'routine_update', 'routine_delete', 'routine_run_now', 'routine_run', 'routine_runs', 'routine_log',
+  'usage_summary',
+  'assistant_get', 'assistant_ensure', 'assistant_voice_start', 'assistant_voice_stop', 'assistant_set_focus_mode',
+  'settings_assistant_get', 'settings_assistant_update',
+  'settings_idle_compaction_get', 'settings_idle_compaction_update',
   ...MCP_SERVER_TOOLS,
   ...HOST_TOOLS,
-  'patterm.process.create', 'patterm.process.restart', 'stop_process', 'close_process', 'patterm.close_request.answer', 'rename_process',
-  'patterm.history.sources', 'patterm.history.configure', 'patterm.history.import',
-  'patterm.history.import_status', 'patterm.history.reset_imports', 'patterm.history.list',
-  'patterm.history.get', 'patterm.history.search', 'patterm.history.delete', 'patterm.history.resume',
-  'patterm.media.list', 'patterm.media.get',
-  'patterm.search', 'patterm.worktree.create', 'patterm.worktree.link', 'patterm.worktree.list',
-  'patterm.worktree.abandon', 'patterm.diff.current', 'patterm.diff.file'
+  'process_create', 'process_restart', 'stop_process', 'close_process', 'close_request_answer', 'rename_process',
+  'history_sources', 'history_configure', 'history_import',
+  'history_import_status', 'history_reset_imports', 'history_list',
+  'history_get', 'history_search', 'history_delete', 'history_resume',
+  'media_list', 'media_get',
+  'search', 'worktree_create', 'worktree_link', 'worktree_list',
+  'worktree_abandon', 'diff_current', 'diff_file'
 ]);
 
 // Terminal operations and Integrated tools that change what everyone viewing
 // a process sees, so only the client controlling it may send them.
 export const CONTROL_OPERATIONS = new Set(['input', 'resize', 'configure', 'select', 'scroll', 'wheel', 'mouse']);
-export const INTEGRATED_CONTROL_TOOLS = new Set(['patterm.integrated.send', 'patterm.integrated.configure', 'patterm.integrated.command', 'patterm.integrated.interrupt', 'patterm.integrated.task.stop', 'patterm.integrated.queue.update', 'patterm.integrated.permission.reply', 'patterm.integrated.question.reply', 'patterm.integrated.form.reply', 'patterm.integrated.new', 'patterm.assistant.restart', 'patterm.assistant.new']);
+export const INTEGRATED_CONTROL_TOOLS = new Set(['integrated_send', 'integrated_configure', 'integrated_command', 'integrated_interrupt', 'integrated_task_stop', 'integrated_queue_update', 'integrated_permission_reply', 'integrated_question_reply', 'integrated_form_reply', 'integrated_new', 'assistant_restart', 'assistant_new']);

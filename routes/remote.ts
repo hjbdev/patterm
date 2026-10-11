@@ -65,7 +65,7 @@ export function servePeerRoutes(application: PattermApplication): void {
 // An Integrated agent's transcript, read from whichever host runs it.
 export function readIntegrated(application: PattermApplication, processId: string): Promise<unknown> {
   const host = application.remote.target({ process_id: processId });
-  const args = { tool: 'patterm.integrated.get', arguments: { process_id: processId } };
+  const args = { tool: 'integrated_get', arguments: { process_id: processId } };
   return host ? application.remote.relay(host, 'patterm:mcp:call', args) : application.mcp.call(args.tool, args.arguments);
 }
 

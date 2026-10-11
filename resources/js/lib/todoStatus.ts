@@ -34,5 +34,5 @@ export function waitingFor(todo: Pick<Todo, 'blockers'>) {
 
 // Quick edits from a list row use the row's revision; a conflict surfaces as an error.
 export function updateTodoFields(projectId: string, todo: Pick<Todo, 'id' | 'revision'>, fields: { status?: string; priority?: string; title?: string }) {
-  return contextCall<Todo>('todo.update', projectId, { todo_id: todo.id, revision: todo.revision, ...fields });
+  return contextCall<Todo>('todo_update', projectId, { todo_id: todo.id, revision: todo.revision, ...fields });
 }

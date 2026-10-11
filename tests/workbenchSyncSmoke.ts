@@ -218,14 +218,14 @@ async function syncService(): Promise<void> {
 function topics(): void {
   const registry = new McpToolRegistry();
   const handler = () => null;
-  registry.register({ name: 'patterm.example.write', namespace: 'example', description: 'Write.', inputSchema: {} }, handler);
-  registry.register({ name: 'patterm.example.read', namespace: 'example', description: 'Read.', inputSchema: {}, changes: [] }, handler);
-  registry.register({ name: 'patterm.example.post', namespace: 'example', description: 'Post.', inputSchema: {}, changes: ['settings'] }, handler);
+  registry.register({ name: 'example_write', namespace: 'example', description: 'Write.', inputSchema: {} }, handler);
+  registry.register({ name: 'example_read', namespace: 'example', description: 'Read.', inputSchema: {}, changes: [] }, handler);
+  registry.register({ name: 'example_post', namespace: 'example', description: 'Post.', inputSchema: {}, changes: ['settings'] }, handler);
   registry.register({ name: 'whoami', namespace: 'cli', description: 'Identity.', inputSchema: {} }, handler);
-  assert.deepEqual(registry.changedTopics('patterm.example.write'), ['workbench', 'context'], 'undeclared writes refresh workbench and context data');
-  assert.deepEqual(registry.changedTopics('example.write'), ['workbench', 'context'], 'public names resolve to the same tool');
-  assert.deepEqual(registry.changedTopics('patterm.example.read'), []);
-  assert.deepEqual(registry.changedTopics('patterm.example.post'), ['settings']);
+  assert.deepEqual(registry.changedTopics('example_write'), ['workbench', 'context'], 'undeclared writes refresh workbench and context data');
+  assert.deepEqual(registry.changedTopics('example.write'), [], 'dotted names are not tools');
+  assert.deepEqual(registry.changedTopics('example_read'), []);
+  assert.deepEqual(registry.changedTopics('example_post'), ['settings']);
   assert.deepEqual(registry.changedTopics('whoami'), [], 'known reads announce nothing');
   assert.deepEqual(registry.changedTopics('missing'), [], 'unknown tools announce nothing');
 }

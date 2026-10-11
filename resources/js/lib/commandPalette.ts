@@ -331,6 +331,6 @@ export async function createPaletteDocument(
   call: (name: string, args: Record<string, unknown>) => Promise<unknown>
 ) {
   if (!projectId) throw new Error('Select a project first.');
-  const record = await call(`patterm.${kind}.create`, { project_id: projectId, title: `Untitled ${kind}` }) as { id: string };
+  const record = await call(`${kind}_create`, { project_id: projectId, title: `Untitled ${kind}` }) as { id: string };
   return { projectId, tab: kind === 'todo' ? 'todos' : 'scratchpads', recordId: record.id };
 }

@@ -112,22 +112,23 @@ stop_process
 close_process
 whoami
 help
-session.context
+session_context
 ```
 
-Call namespaced tools directly, such as:
+Every tool name is snake_case, so it reads the same in every harness. Never
+register a tool with dots in its name. Call namespaced tools directly, such as:
 
-- `todo.list`
-- `reference.attach`
-- `worktree.list`
-- `worktree.attach`
-- `diff.current`
+- `todo_list`
+- `reference_attach`
+- `worktree_list`
+- `worktree_attach`
+- `diff_current`
 
 Child agents should call `report_to_parent` when done, blocked, failed, or when they have no findings. Agents call `notify_user` only when blocked on a human decision; a child's `notify_user` request is routed to its parent, which decides whether to escalate. Agents call `request_close` when their task is fully complete; the user allows or declines it, and a child's request is routed to its parent. When an agent is waiting on delegated work, prefer `timer_fire_when_reported_all` with watched process IDs, then wait for the timer callback. Use `timer_fire_when_idle_any/all` only for readiness checks, first-result-wins work, or quietness checks where idle detection is more reliable than elapsed polling. `max_wait_seconds` is a rescue timeout, not a polling interval; LLM-heavy work such as adversarial reviews can be quiet for 20+ minutes, so omit it for normal delegated waits or use a true rescue value such as 1200+ seconds. Do not loop `get_process_output` while waiting. Use `timer_set` only for elapsed-time reminders that are not tied to process activity.
 
-Agents on a paired host, in a project linked with the caller's, appear in `list_processes` as `host:process`, such as `workstation:process_7`. Read tools accept those addresses and `host_read` runs other reads there. Agents never control another host's agents; they `send_message` them instead. The one write across hosts is routines: routine tools take `host` to save a routine on the other host, in the linked project, where it is owned and runs. `routine.run_now` stays local.
+Agents on a paired host, in a project linked with the caller's, appear in `list_processes` as `host:process`, such as `workstation:process_7`. Read tools accept those addresses and `host_read` runs other reads there. Agents never control another host's agents; they `send_message` them instead. The one write across hosts is routines: routine tools take `host` to save a routine on the other host, in the linked project, where it is owned and runs. `routine_run_now` stays local.
 
-Agents link each git worktree they work in to their session, up to 10. `worktree.create` and `worktree.link` do this for the calling agent; `worktree.attach` links an existing project worktree.
+Agents link each git worktree they work in to their session, up to 10. `worktree_create` and `worktree_link` do this for the calling agent; `worktree_attach` links an existing project worktree.
 
 MCP calls must validate inputs and route through actions/services, not mutate state ad hoc.
 

@@ -137,7 +137,7 @@ const remoteHarnesses = ref<HarnessInstallationRecord[]>([]);
 watch([targetProjectId, () => menuOpen.value], async ([target, open]) => {
   if (!open || !remoteTarget.value) return;
   try {
-    const result = await window.patterm.call('patterm.harness.list', { project_id: target }) as { harnesses?: HarnessInstallationRecord[] } | HarnessInstallationRecord[];
+    const result = await window.patterm.call('harness_list', { project_id: target }) as { harnesses?: HarnessInstallationRecord[] } | HarnessInstallationRecord[];
     remoteHarnesses.value = Array.isArray(result) ? result : result.harnesses ?? [];
   } catch (caught) {
     remoteHarnesses.value = [];
@@ -153,7 +153,7 @@ const savedInterfaceMode = ref<AgentInterface>('integrated');
 
 onMounted(async () => {
   try {
-    const result = await window.patterm.call('patterm.settings.agent_interface.get', {}) as { interface_mode?: unknown };
+    const result = await window.patterm.call('settings_agent_interface_get', {}) as { interface_mode?: unknown };
     if (result.interface_mode === 'tui' || result.interface_mode === 'integrated') interfaceMode.value = savedInterfaceMode.value = result.interface_mode;
   } catch (caught) {
     toast.error(caught instanceof Error ? caught.message : 'Failed to load the agent interface preference');
@@ -164,7 +164,7 @@ async function saveInterface(value: unknown): Promise<void> {
   if (value !== 'tui' && value !== 'integrated') return;
   interfaceMode.value = value;
   try {
-    await window.patterm.call('patterm.settings.agent_interface.update', { interface_mode: value });
+    await window.patterm.call('settings_agent_interface_update', { interface_mode: value });
     savedInterfaceMode.value = value;
   } catch (caught) {
     interfaceMode.value = savedInterfaceMode.value;
@@ -214,7 +214,7 @@ async function launchHarness(harness: string, presetId: string | null): Promise<
   launching.value = true;
   menuOpen.value = false;
   try {
-    const result = (await window.patterm?.call?.('patterm.harness.launch', {
+    const result = (await window.patterm?.call?.('harness_launch', {
       harness,
       project_id: targetProjectId.value,
       ...(presetId && !remoteTarget.value ? { preset: presetId } : {}),

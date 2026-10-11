@@ -156,7 +156,7 @@ test('Resume starts the selected conversation and opens its agent', async () => 
   assert.equal(history.canResume.value, true);
   const resumed = history.resumeSelected();
   const call = pending.at(-1);
-  assert.equal(call.name, 'patterm.history.resume');
+  assert.equal(call.name, 'history_resume');
   assert.deepEqual(call.args, { conversation_id: 'a', project_id: 'project_a' }, 'the agent opens in the saved or default interface');
   call.resolve({ session_id: 'session_new' });
   await resumed;

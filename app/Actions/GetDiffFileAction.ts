@@ -3,7 +3,7 @@ import { diffFileInput, type DiffService } from '../Services/DiffService';
 import type { ProjectContextService } from '../Services/ProjectContextService';
 import { defaultDiffWorktree } from './GetCurrentDiffAction';
 
-// As for diff.current, agents may omit worktree_id.
+// As for diff_current, agents may omit worktree_id.
 export const getDiffFileInput = diffFileInput.extend({ worktree_id: z.string().min(1).optional() });
 export type GetDiffFileInput = z.input<typeof getDiffFileInput>;
 

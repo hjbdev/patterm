@@ -363,7 +363,7 @@ function scheduleSearch(query: string): void {
 async function searchFiles(query: string, token: number): Promise<void> {
   const processId = props.processId;
   try {
-    const result = await window.patterm.call('patterm.integrated.files.search', { process_id: processId, query, limit: 20 }) as WorktreeFile[];
+    const result = await window.patterm.call('integrated_files_search', { process_id: processId, query, limit: 20 }) as WorktreeFile[];
     if (!searchCurrent(token, processId, query)) return;
     files.value = Array.isArray(result) ? result.filter((file) => file && typeof file.path === 'string' && typeof file.name === 'string') : [];
     resetFileSelection();

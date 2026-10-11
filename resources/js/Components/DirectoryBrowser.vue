@@ -95,7 +95,7 @@ async function load(directory: string, typed: string): Promise<void> {
   if (key === requested) return;
   requested = key;
   try {
-    const result = await window.patterm.call('patterm.fs.directories', { path: directory, filter: typed, show_hidden: typed.startsWith('.') }) as DirectoryListing;
+    const result = await window.patterm.call('fs_directories', { path: directory, filter: typed, show_hidden: typed.startsWith('.') }) as DirectoryListing;
     if (requested !== key) return;
     listing.value = result;
     loadedDirectory.value = directoryKey(directory, typed);

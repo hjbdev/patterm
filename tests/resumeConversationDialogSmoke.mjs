@@ -40,7 +40,7 @@ test('without a query the picker pages through recent conversations', async () =
   open.value = true;
   await flush();
   const first = calls.at(-1);
-  assert.equal(first.tool, 'patterm.history.list');
+  assert.equal(first.tool, 'history_list');
   assert.deepEqual(first.args, { project_id: 'project_a', provider: 'claude', resumable: true, limit: 50, offset: 0 });
   first.resolve({ conversations: [...Array.from({ length: 49 }, (_, index) => conversation(`c${index}`)), conversation('own', { processId: 'process_self' })] });
   await flush();
@@ -61,7 +61,7 @@ test('a query searches the whole history and a stale reply cannot win', async ()
   open.value = true;
   await runTimers();
   const firstSearch = calls.at(-1);
-  assert.equal(firstSearch.tool, 'patterm.history.search');
+  assert.equal(firstSearch.tool, 'history_search');
   assert.deepEqual(firstSearch.args, { query: 'webgpu', project_id: 'project_a', provider: 'claude', resumable: true, limit: 30 });
   dialog.query.value = 'webgpu renderer';
   await runTimers();
@@ -71,10 +71,10 @@ test('a query searches the whole history and a stale reply cannot win', async ()
   firstSearch.resolve({ conversations: [conversation('stale')] });
   await flush();
   assert.deepEqual(dialog.results.value.map((row) => row.id), ['renderer'], 'the older search reply is dropped');
-  const listCalls = calls.filter((call) => call.tool === 'patterm.history.list').length;
+  const listCalls = calls.filter((call) => call.tool === 'history_list').length;
   dialog.onScroll({ target: { scrollTop: 900, clientHeight: 350, scrollHeight: 1300 } });
   await flush();
-  assert.equal(calls.filter((call) => call.tool === 'patterm.history.list').length, listCalls, 'search results do not page the recent list');
+  assert.equal(calls.filter((call) => call.tool === 'history_list').length, listCalls, 'search results do not page the recent list');
 });
 
 test('a resume that replaces the tab still opens the new session', async () => {
@@ -88,7 +88,7 @@ test('a resume that replaces the tab still opens the new session', async () => {
   await flush();
   const resuming = dialog.resume(dialog.visible.value[0]);
   const request = calls.at(-1);
-  assert.equal(request.tool, 'patterm.history.resume');
+  assert.equal(request.tool, 'history_resume');
   assert.equal(request.args.replace_process_id, 'process_self');
   request.resolve({ session_id: 'session_new' });
   await resuming;
