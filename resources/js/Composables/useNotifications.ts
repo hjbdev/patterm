@@ -34,7 +34,7 @@ interface Unread {
   urgency: NotificationUrgency;
 }
 
-type Change =
+export type NotificationChange =
   | { type: 'raised' | 'updated'; notification: NotificationRecord }
   | { type: 'read' | 'resolved'; ids: string[] }
   | { type: 'reconnected' };
@@ -160,7 +160,7 @@ export function startNotifications(router: Router): void {
   }
 
   api.onNotificationsChanged((raw) => {
-    const change = raw as Change;
+    const change = raw as NotificationChange;
     if (change.type === 'raised') {
       show(change.notification);
       if (inView(change.notification)) void api.notificationsRead({ ids: [change.notification.id] }).catch(() => {});

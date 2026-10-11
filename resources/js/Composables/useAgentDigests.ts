@@ -9,7 +9,7 @@ import type { DiffTotals } from '../lib/worktreeDiff';
 import { useSidebar, type AgentTab } from '../Components/Sidebar/sidebarContext';
 import { useWorkbench } from './useWorkbench';
 import { useWorktreeDiffTotals } from './useWorktreeDiff';
-import { projectUnread, type NotificationRecord } from './useNotifications';
+import type { NotificationChange, NotificationRecord } from './useNotifications';
 
 export interface AgentDigests {
   digests: ComputedRef<AgentDigest[]>;
@@ -82,13 +82,29 @@ function createAgentDigests(): AgentDigests {
   async function loadNotices(): Promise<void> {
     const current = ++noticeGeneration;
     try {
-      const page = await window.patterm.notificationsList({ project_id: sidebar.projectId.value, limit: 100 }) as { items: NotificationRecord[] };
-      const next = page.items.filter((item) => !item.read_at && !item.resolved_at);
-      if (current === noticeGeneration && !unchanged(next, notices.value)) notices.value = next;
+      // Read notices stay listed until they're resolved, so page past them to every unread one.
+      const items: NotificationRecord[] = [];
+      let cursor: string | null = null;
+      do {
+        const page = await window.patterm.notificationsList({ project_id: sidebar.projectId.value, limit: 200, ...(cursor ? { cursor } : {}) }) as { items: NotificationRecord[]; next_cursor: string | null };
+        if (current !== noticeGeneration) return;
+        items.push(...page.items);
+        cursor = page.next_cursor;
+      } while (cursor);
+      const next = items.filter((item) => !item.read_at && !item.resolved_at);
+      if (!unchanged(next, notices.value)) notices.value = next;
     } catch { /* The cards still work from the workbench alone. */ }
   }
   const refreshNotices = whenShown(loadNotices);
-  watch(() => projectUnread(sidebar.projectId.value), refreshNotices);
+  // Every change to this project's notices, even one that leaves the unread
+  // count as it was, and a reconnect, which may have missed some.
+  const stopNotices = window.patterm.onNotificationsChanged((raw) => {
+    const change = raw as NotificationChange;
+    if (change.type === 'reconnected'
+      || ((change.type === 'raised' || change.type === 'updated') && change.notification.project_id === sidebar.projectId.value)
+      || ((change.type === 'read' || change.type === 'resolved') && change.ids.some((id) => notices.value.some((notice) => notice.id === id)))) refreshNotices();
+  });
+  onBeforeUnmount(stopNotices);
 
   // Each root's todos, links and worktrees.
   const contexts = shallowRef(new Map<string, SessionContext>());
