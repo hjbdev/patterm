@@ -79,8 +79,10 @@ function createAgentDigests(): AgentDigests {
   // Unread notifications for the project, newest first, keyed by process.
   const notices = shallowRef<NotificationRecord[]>([]);
   let noticeGeneration = 0;
+  let noticesLoading = false;
   async function loadNotices(): Promise<void> {
     const current = ++noticeGeneration;
+    noticesLoading = true;
     try {
       // Read notices stay listed until they're resolved, so page past them to every unread one.
       const items: NotificationRecord[] = [];
@@ -93,16 +95,26 @@ function createAgentDigests(): AgentDigests {
       } while (cursor);
       const next = items.filter((item) => !item.read_at && !item.resolved_at);
       if (!unchanged(next, notices.value)) notices.value = next;
-    } catch { /* The cards still work from the workbench alone. */ }
+    } catch { /* The cards still work from the workbench alone. */ } finally {
+      if (current === noticeGeneration) noticesLoading = false;
+    }
   }
   const refreshNotices = whenShown(loadNotices);
+  // A change outdates any load under way too, so that load is dropped rather
+  // than installing what it read before the change.
+  function invalidateNotices(): void {
+    noticeGeneration += 1;
+    noticesLoading = false;
+    refreshNotices();
+  }
   // Every change to this project's notices, even one that leaves the unread
-  // count as it was, and a reconnect, which may have missed some.
+  // count as it was, and a reconnect, which may have missed some. A notice
+  // handled during a load may be in a page still on its way.
   const stopNotices = window.patterm.onNotificationsChanged((raw) => {
     const change = raw as NotificationChange;
     if (change.type === 'reconnected'
       || ((change.type === 'raised' || change.type === 'updated') && change.notification.project_id === sidebar.projectId.value)
-      || ((change.type === 'read' || change.type === 'resolved') && change.ids.some((id) => notices.value.some((notice) => notice.id === id)))) refreshNotices();
+      || ((change.type === 'read' || change.type === 'resolved') && (noticesLoading || change.ids.some((id) => notices.value.some((notice) => notice.id === id))))) invalidateNotices();
   });
   onBeforeUnmount(stopNotices);
 
