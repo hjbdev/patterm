@@ -393,6 +393,7 @@ const INITIAL_HISTORY_MESSAGES = 30;
 const resumeOpen = ref(false);
 const resumeQuery = ref('');
 let startingNew = false;
+let restarting = false;
 const displayError = computed(() => error.value || refreshError.value || controlsError.value);
 const canReply = computed(() => controlling.value && !ended.value);
 // A drawn choice answers as an ordinary message, through the same send path
@@ -876,6 +877,10 @@ function runPattermCommand(name: string, text: string): void {
     void startNewSession();
     return;
   }
+  if (name === 'restart') {
+    void restartSession(false);
+    return;
+  }
   if (name !== 'resume') return;
   resumeQuery.value = text.trim();
   resumeOpen.value = true;
@@ -899,6 +904,23 @@ async function startNewSession(): Promise<void> {
     if (token === generation) error.value = cause instanceof Error ? cause.message : String(cause);
   } finally {
     startingNew = false;
+  }
+}
+
+// Resumes this conversation in a new process, which replaces this tab. The
+// composer refuses mid-turn; the palette confirms first and forces it.
+async function restartSession(force: boolean): Promise<void> {
+  if (restarting || !props.projectId) return;
+  const token = generation;
+  restarting = true;
+  error.value = '';
+  try {
+    const result = await mutate('integrated_restart', { process_id: props.processId, project_id: props.projectId, ...(force ? { force: true } : {}) }) as { session_id?: unknown };
+    if (typeof result?.session_id === 'string') props.onLaunched?.(result.session_id);
+  } catch (cause) {
+    if (token === generation) error.value = cause instanceof Error ? cause.message : String(cause);
+  } finally {
+    restarting = false;
   }
 }
 
@@ -973,6 +995,7 @@ function handleWorkspaceRequest(request: WorkspaceRequest): boolean {
   if (request.kind !== 'integrated' || request.processId !== props.processId || ended.value) return false;
   if (request.action === 'interrupt') void interrupt();
   else if (request.action === 'new') void startNewSession();
+  else if (request.action === 'restart') void restartSession(true);
   else if (request.action === 'configure') void configure(request.selector, request.value);
   return true;
 }

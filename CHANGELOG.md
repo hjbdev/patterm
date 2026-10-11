@@ -12,6 +12,13 @@ in the archived pre-release repository.
 
 ### Added
 
+- `/restart` in an Integrated conversation stops the agent and resumes the
+  same conversation in a new process, so it picks up MCP server, login and
+  settings changes. The new session keeps its worktrees, todos, scratchpads,
+  links, subagents and timers. It waits for the current turn to finish; the
+  palette's Restart agent asks before stopping a response. Restart all agents
+  in the palette restarts every idle top-level Integrated agent and leaves
+  working ones running.
 - A Media section in the session context sidebar shows the images pasted into
   or viewed in that session. The new project Media page lists every image in
   the project's conversations, filtered by pasted or viewed. Images open in a

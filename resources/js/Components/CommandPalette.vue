@@ -654,6 +654,7 @@ async function handleResult(result: CommandRunResult): Promise<void> {
     else afterClose = send;
   }
   if (result.rendererAction === 'restartAssistant' && result.processId) await restartAssistant(result.processId);
+  if (result.message) toast.success(result.message);
   if (result.rendererAction === 'copy' && result.text) {
     await window.patterm.writeClipboardText(result.text);
     toast.success('Copied to the clipboard');
@@ -830,7 +831,7 @@ function commandIcon(command: CommandDescriptor): Component | null {
   if (id === 'page:current-actions') return Ellipsis;
   if (id.startsWith('goto:') || id.startsWith('page:subagents:') || id.startsWith('navigate:agent:') || id.startsWith('navigate:process:')) return ArrowUpRight;
   if (id.startsWith('process:rename:')) return Pencil;
-  if (id.startsWith('process:restart:') || id === 'assistant:restart') return RotateCcw;
+  if (id.startsWith('process:restart:') || id.startsWith('integrated:restart:') || id === 'assistant:restart' || id === 'app:restart-agents') return RotateCcw;
   if (id.startsWith('process:stop:')) return Square;
   if (id.startsWith('process:close')) return X;
   if (id === 'spawn:process' && command.params?.auto_restart) return RotateCcw;

@@ -12,6 +12,7 @@ import { DatabaseService } from '../app/Services/DatabaseService';
 import { HarnessDiscoveryService } from '../app/Services/HarnessDiscoveryService';
 import type { AgentHistoryReadService } from '../app/Services/AgentHistory/AgentHistoryReadService';
 import { NewAgentSessionAction } from '../app/Actions/NewAgentSessionAction';
+import { RestartAgentSessionAction } from '../app/Actions/RestartAgentSessionAction';
 import { ResumeConversationAgentAction } from '../app/Actions/ResumeConversationAgentAction';
 import { HarnessLauncher, type SpawnSink } from '../app/Services/HarnessLauncher';
 import { AmpThreadService } from '../app/Services/AmpThreadService';
@@ -756,6 +757,46 @@ async function main(): Promise<void> {
     assert.equal(fresh.replaced_process_id, sourceTab.process_id, 'an idle tab is replaced');
     assert.deepEqual(newClosed, [sourceTab.process_id]);
     await assert.rejects(newSession.execute({ process_id: sourceTab.process_id, project_id: 'project_other' }), /unknown Integrated agent/);
+
+    // `/restart` resumes the same conversation in a new process, which takes
+    // over the old one's context, subagents, and timers.
+    const restartSteps: string[] = [];
+    const timerTransfers: Array<[readonly string[], string]> = [];
+    const restart = new RestartAgentSessionAction(database, launcher, {
+      stop: async (processId: string) => {
+        restartSteps.push(`stop:${processId}`);
+        database.connection.prepare(`update processes set status = 'stopped' where id = ?`).run(processId);
+        database.connection.prepare(`update sessions set exited_at = ? where process_id = ?`).run(new Date().toISOString(), processId);
+      },
+      close: async (processId: string) => { restartSteps.push(`close:${processId}`); },
+      transferTimers: (from, to) => { timerTransfers.push([from, to]); }
+    });
+    const restartTab = await launcher.launch({ harness: 'claude', model: 'claude-opus-5-5', project_id: projectId, interface_mode: 'integrated' });
+    const restartChild = await launcher.launch({ harness: 'claude', project_id: projectId, interface_mode: 'integrated', parent_process_id: restartTab.process_id, session_role: 'child' });
+    // The fake Integrated host reports this native conversation for every launch.
+    database.connection.prepare(`update sessions set title_set_by_user = 1 where process_id = ?`).run(restartTab.process_id);
+    database.connection.prepare(`update processes set activity = 'working' where id = ?`).run(restartTab.process_id);
+    await assert.rejects(restart.execute({ process_id: restartTab.process_id, project_id: projectId }), /working/, 'a turn in progress is not cut short');
+    await assert.rejects(restart.execute({ process_id: restartChild.process_id, project_id: projectId }), /Only top-level agents/);
+    database.connection.prepare(`update processes set activity = 'idle' where id = ?`).run(restartTab.process_id);
+    const restarted = await restart.execute({ process_id: restartTab.process_id, project_id: projectId });
+    assert.equal(restarted.replaced_process_id, restartTab.process_id);
+    assert.deepEqual(restartSteps, [`stop:${restartTab.process_id}`, `close:${restartTab.process_id}`], 'the old process stops before the resume and closes after it');
+    assert.deepEqual(timerTransfers, [[[restartTab.process_id], restarted.process_id]]);
+    assert.deepEqual(database.connection.prepare(`select harness, model, interface_mode, session_role, resume_id, resumed_from_session_id, title_set_by_user from sessions where id = ?`).get(restarted.session_id), {
+      harness: 'claude', model: 'claude-opus-5-5', interface_mode: 'integrated', session_role: 'orchestrator', resume_id: 'ses_prepared', resumed_from_session_id: restartTab.session_id, title_set_by_user: 1
+    }, 'the new session resumes the same conversation and keeps a user-chosen name');
+    assert.equal((database.connection.prepare('select parent_process_id from processes where id = ?').get(restartChild.process_id) as { parent_process_id: string }).parent_process_id,
+      restarted.process_id, 'subagents report to the new process');
+
+    // Restart all leaves working agents running.
+    const idleTab = await launcher.launch({ harness: 'claude', project_id: projectId, interface_mode: 'integrated' });
+    database.connection.prepare(`update processes set activity = 'idle' where id = ?`).run(idleTab.process_id);
+    database.connection.prepare(`update processes set activity = 'working' where id = ?`).run(restarted.process_id);
+    const all = await restart.executeAll();
+    assert.ok(all.restarted.some((item) => item.from === idleTab.process_id), 'an idle agent restarts');
+    assert.ok(all.skipped.some((item) => item.process_id === restarted.process_id && item.reason === 'working'), 'a working agent is skipped');
+    assert.ok(!all.skipped.some((item) => item.process_id === restartChild.process_id) && !all.restarted.some((item) => item.from === restartChild.process_id), 'subagents are not considered');
 
     await waitFor(async () => terminalRequests.filter((request) => request.method === 'terminal.process.input').length >= inputCountBeforeSpawnAgent + 1, 'initial prompt injection sends pasted prompt and submit request');
     const inputRequests = terminalRequests.filter((request) => request.method === 'terminal.process.input').slice(inputCountBeforeSpawnAgent, inputCountBeforeSpawnAgent + 1);
