@@ -126,7 +126,7 @@ function createAgentDigests(): AgentDigests {
     const ids = agentTabs.value.map((tab) => tab.family.rootId);
     const results = await Promise.all(ids.map(async (id) => {
       try {
-        return [id, await contextCall<SessionContext>('session.context', sidebar.projectId.value, { session_id: id, limit: 20 })] as const;
+        return [id, await contextCall<SessionContext>('session_context', sidebar.projectId.value, { session_id: id, limit: 20 })] as const;
       } catch {
         return null;
       }
