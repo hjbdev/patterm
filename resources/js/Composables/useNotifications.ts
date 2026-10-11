@@ -9,6 +9,8 @@ export interface NotificationRecord {
   project_id: string | null;
   process_id: string | null;
   session_id: string | null;
+  // Who raised it: an agent's own notify_user or close request comes from mcp.
+  source: 'mcp' | 'terminal' | 'integrated' | 'runtime' | 'system';
   kind: string;
   urgency: NotificationUrgency;
   delivery: 'in_app' | 'all';
@@ -32,7 +34,7 @@ interface Unread {
   urgency: NotificationUrgency;
 }
 
-type Change =
+export type NotificationChange =
   | { type: 'raised' | 'updated'; notification: NotificationRecord }
   | { type: 'read' | 'resolved'; ids: string[] }
   | { type: 'reconnected' };
@@ -158,7 +160,7 @@ export function startNotifications(router: Router): void {
   }
 
   api.onNotificationsChanged((raw) => {
-    const change = raw as Change;
+    const change = raw as NotificationChange;
     if (change.type === 'raised') {
       show(change.notification);
       if (inView(change.notification)) void api.notificationsRead({ ids: [change.notification.id] }).catch(() => {});

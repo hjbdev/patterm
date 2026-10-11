@@ -3,7 +3,7 @@ import type { AgentNode } from './agentTree';
 import type { LiveProcessRecord } from './processTabs';
 import type { RowActivity } from './rowActivity';
 import type { StripTab } from './tabStrip';
-import { timerLabel, timerRemaining } from './timers';
+import { timerLabel, timerRemaining, timerRemainingToMinute } from './timers';
 import type { ProcessRecord, SessionRecord, TimerRecord } from '../types';
 
 export type SidebarUrgency = 'low' | 'normal' | 'high';
@@ -138,12 +138,12 @@ export function familyTimerSummary(timers: readonly TimerRecord[], now: number, 
   if (!timers.length) return null;
   const shown = timers.find((timer) => timer.status === 'pending' && timer.firesAtUnixMs !== null) ?? timers[0]!;
   return {
-    remaining: timerRemaining(shown, now).replace(/(\d+[hm]) \d+s$/, '$1'),
+    remaining: timerRemainingToMinute(shown, now),
     title: timers.map((timer) => [timerLabel(timer), ownerName(timer.ownerProcessId), timerRemaining(timer, now)].filter(Boolean).join(' · ')).join('\n')
   };
 }
 
-function mostUrgent(urgencies: readonly (SidebarUrgency | null)[]): SidebarUrgency | null {
+export function mostUrgent(urgencies: readonly (SidebarUrgency | null)[]): SidebarUrgency | null {
   if (urgencies.includes('high')) return 'high';
   if (urgencies.includes('normal')) return 'normal';
   return urgencies.find(Boolean) ?? null;

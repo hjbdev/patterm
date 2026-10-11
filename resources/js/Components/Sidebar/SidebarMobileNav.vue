@@ -1,8 +1,9 @@
 <template>
-  <!-- Narrow screens: the current item opens the sidebar in a sheet. -->
+  <!-- Narrow screens: the current item opens the sidebar's list in the same
+       drawer as tabs mode, rising from the bottom within reach of a thumb. -->
   <div class="min-w-0 flex-1 sm:hidden">
-    <Sheet v-model:open="sidebarLayout.mobileOpen">
-      <SheetTrigger as-child>
+    <ResponsiveMenu v-model:open="sidebarLayout.mobileOpen" mobile-only title="Agents">
+      <template #trigger>
         <button type="button" class="relative isolate flex h-[30px] w-full min-w-0 items-center gap-2 rounded-tab bg-primary/10 px-2 text-left text-[13px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="Open navigation">
           <template v-if="current.session">
             <TabWash :activity="sidebar.activity(current.session)" />
@@ -12,13 +13,21 @@
           <span v-if="attentionCount" class="flex shrink-0 items-center gap-1 text-xs tabular-nums text-muted-foreground"><span class="font-semibold text-warning">?</span>{{ attentionCount }}</span>
           <ChevronDown class="h-4 w-4 shrink-0 text-muted-foreground" />
         </button>
-      </SheetTrigger>
-      <SheetContent side="left" @open-auto-focus.prevent class="flex w-[85vw] max-w-80 flex-col border-white/5 bg-[#0c0c0c] p-0 pb-[env(safe-area-inset-bottom)] pt-12">
-        <SheetTitle class="sr-only">Agents</SheetTitle>
-        <SheetDescription class="sr-only">Agents, processes, and project pages</SheetDescription>
-        <SidebarList placement="sheet" class="min-h-0 flex-1" />
-      </SheetContent>
-    </Sheet>
+      </template>
+      <template #header-actions>
+        <div class="flex items-center gap-0.5">
+          <BoardButton />
+          <SidebarViewOptions />
+          <LaunchAgentMenu :project-id="sidebar.projectId.value" nested @launched="sidebar.launched" />
+        </div>
+      </template>
+      <template #mobile>
+        <SidebarList placement="mobile" />
+      </template>
+      <template #mobile-footer>
+        <SidebarPages class="mt-1 border-t border-white/5 px-1 pt-2" />
+      </template>
+    </ResponsiveMenu>
   </div>
 
   <div class="hidden flex-1 sm:block" />
@@ -31,12 +40,16 @@ import { ChevronDown } from 'lucide-vue-next';
 import { agentLabel } from '../../lib/agentTabs';
 import type { SessionRecord } from '../../types';
 import AgentIcon from '../AgentIcon.vue';
+import LaunchAgentMenu from '../LaunchAgentMenu.vue';
+import ResponsiveMenu from '../ResponsiveMenu.vue';
 import TabIcon from '../TabIcon.vue';
 import TabWash from '../TabWash.vue';
-import { Sheet, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from '../ui/sheet';
+import BoardButton from './BoardButton.vue';
 import { useSidebar } from './sidebarContext';
 import { sidebarLayout } from './sidebarLayout';
 import SidebarList from './SidebarList.vue';
+import SidebarPages from './SidebarPages.vue';
+import SidebarViewOptions from './SidebarViewOptions.vue';
 
 const sidebar = useSidebar();
 const PAGE_LABELS = { worktrees: 'Worktrees', history: 'History', todos: 'Todos', scratchpads: 'Scratchpads', media: 'Media' } as const;

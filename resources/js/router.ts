@@ -2,6 +2,7 @@ import { createRouter, type RouterHistory } from 'vue-router';
 // Each page loads with its first visit, so the app starts without every
 // page's code. `prefetchPages` loads the rest once the first page is up.
 const ProjectsPage = () => import('./Pages/ProjectsPage.vue');
+const ProjectPage = () => import('./Pages/ProjectPage.vue');
 const TerminalPage = () => import('./Pages/TerminalPage.vue');
 const ResourcesPage = () => import('./Pages/ResourcesPage.vue');
 const HistoryPage = () => import('./Pages/HistoryPage.vue');
@@ -25,7 +26,7 @@ export function createWorkbenchRouter(history: RouterHistory) {
       { path: '/routines', name: 'routines', component: RoutinesPage },
       { path: '/routines/log', name: 'routineLog', component: RoutineLogPage },
       { path: '/projects', name: 'projects', component: ProjectsPage },
-      { path: '/projects/:projectId', name: 'project', component: TerminalPage },
+      { path: '/projects/:projectId', name: 'project', component: ProjectPage },
       { path: '/projects/:projectId/agents/:sessionId', name: 'agent', component: TerminalPage },
       { path: '/projects/:projectId/processes/:processId', name: 'process', component: TerminalPage },
       { path: '/projects/:projectId/worktrees', name: 'worktrees', component: ResourcesPage },
@@ -43,7 +44,7 @@ export function createWorkbenchRouter(history: RouterHistory) {
 }
 
 export function prefetchPages(): void {
-  for (const page of [TerminalPage, ProjectsPage, HistoryPage, TodosPage, ScratchpadsPage, MediaPage, ResourcesPage, SettingsPage, UsagePage, RoutinesPage, RoutineLogPage]) void page().catch(() => {
+  for (const page of [TerminalPage, ProjectPage, ProjectsPage, HistoryPage, TodosPage, ScratchpadsPage, MediaPage, ResourcesPage, SettingsPage, UsagePage, RoutinesPage, RoutineLogPage]) void page().catch(() => {
     // The page reports a failed load when it is opened.
   });
 }
