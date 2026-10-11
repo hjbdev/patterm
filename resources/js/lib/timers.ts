@@ -26,6 +26,11 @@ export function timerRemaining(timer: TimerRecord, now: number): string {
   return timer.kind === 'delay' ? remaining : `≤ ${remaining}`;
 }
 
+// To the minute, for text that shouldn't change every second.
+export function timerRemainingToMinute(timer: TimerRecord, now: number): string {
+  return timerRemaining(timer, now).replace(/(\d+[hm]) \d+s$/, '$1');
+}
+
 export function formatDuration(ms: number): string {
   const seconds = Math.max(0, Math.ceil(ms / 1_000));
   if (seconds < 60) return `${seconds}s`;

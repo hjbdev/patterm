@@ -1,22 +1,10 @@
 <template>
   <div class="flex h-full min-h-0 flex-col">
-    <div class="flex h-8 shrink-0 items-center gap-0.5 pl-3 pr-1">
+    <!-- The phone drawer has a header and footer of its own. -->
+    <div v-if="placement !== 'mobile'" class="flex h-8 shrink-0 items-center gap-0.5 pl-3 pr-1">
       <span class="flex-1 text-xs text-muted-foreground">Agents</span>
-      <DropdownMenu>
-        <DropdownMenuTrigger as-child>
-          <button type="button" aria-label="Sidebar view options" title="View options" class="flex h-7 w-7 shrink-0 items-center justify-center rounded-tab text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
-            <SlidersHorizontal class="h-3.5 w-3.5" aria-hidden="true" />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" class="w-56">
-          <DropdownMenuItem class="pl-8 text-[13px]" @select="expansion.setAll(true)">Expand all</DropdownMenuItem>
-          <DropdownMenuItem class="pl-8 text-[13px]" @select="expansion.setAll(false)">Collapse all</DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuCheckboxItem v-model="expansion.state.value.groupByStatus" class="text-[13px]" @select.prevent>Group by status</DropdownMenuCheckboxItem>
-          <DropdownMenuCheckboxItem v-model="expansion.state.value.followActive" class="text-[13px]" @select.prevent>Open the agent I'm in</DropdownMenuCheckboxItem>
-          <DropdownMenuCheckboxItem v-model="expansion.state.value.summaries" class="text-[13px]" @select.prevent>Show every summary</DropdownMenuCheckboxItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <BoardButton />
+      <SidebarViewOptions />
       <LaunchAgentMenu :project-id="sidebar.projectId.value" @launched="sidebar.launched" />
     </div>
     <div ref="list" class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1 pb-2 [scrollbar-width:thin]" @keydown="onKeydown">
@@ -88,7 +76,7 @@
         </Transition>
       </template>
     </div>
-    <div class="flex shrink-0 items-center border-t border-white/5 px-1 pt-1">
+    <div v-if="placement !== 'mobile'" class="flex shrink-0 items-center border-t border-white/5 px-1 pt-1">
       <SidebarPages class="flex-1">
         <template #end>
           <span class="flex-1" />
@@ -96,19 +84,24 @@
         </template>
       </SidebarPages>
     </div>
+    <!-- The agent you point at gets a card beside it. Phones have no pointer
+         to rest, so the phone drawer goes without. -->
+    <SidebarAgentCard v-if="placement !== 'mobile'" :list="list" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, provide, ref, watch } from 'vue';
-import { ChevronRight, SlidersHorizontal } from 'lucide-vue-next';
+import { ChevronRight } from 'lucide-vue-next';
 import type { StripTab } from '../../lib/tabStrip';
 import LaunchAgentMenu from '../LaunchAgentMenu.vue';
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '../ui/dropdown-menu';
+import BoardButton from './BoardButton.vue';
+import SidebarAgentCard from './SidebarAgentCard.vue';
 import SidebarCollapseButton from './SidebarCollapseButton.vue';
 import SidebarFamily from './SidebarFamily.vue';
 import SidebarMemberRow from './SidebarMemberRow.vue';
 import SidebarPages from './SidebarPages.vue';
+import SidebarViewOptions from './SidebarViewOptions.vue';
 import { useSidebar, type AgentTab } from './sidebarContext';
 import { familyStatus, familyWaitingOn, selectedThread, SIDEBAR_STATUSES, type SidebarStatus } from '../../lib/sidebarTree';
 import { collapseOut, expandIn, rowTops, slideFrom } from '../../lib/sidebarMotion';
@@ -123,7 +116,7 @@ import { useSettledValues } from '../../Composables/useSettledValues';
 // they matter, and which families are open is the user's choice, remembered
 // on this device. Selecting an agent opens it; Alt-click a count to open or
 // close every family.
-withDefaults(defineProps<{ placement?: 'docked' | 'drawer' | 'sheet' }>(), { placement: 'docked' });
+withDefaults(defineProps<{ placement?: 'docked' | 'drawer' | 'mobile' }>(), { placement: 'docked' });
 const sidebar = useSidebar();
 const expansion = useSidebarExpansion(() => sidebar.projectId.value);
 

@@ -54,12 +54,28 @@ in the archived pre-release repository.
 - Paired hosts, so agents on a second machine appear beside local ones.
 - Linux release tarballs with bundled Node and Electron, a signed release
   manifest, and `curl | bash` install, update, and uninstall scripts.
+- In sidebar mode, resting the pointer on an agent in the sidebar, or reaching
+  it with the keyboard, opens a card beside it: what the agent needs from you
+  or is doing, its summary, its subagents and processes, and its branch, diff,
+  todo, links and timers.
+- In sidebar mode, a project's page is a board of its agents, grouped into
+  what needs you, working, waiting, done and quiet, each with its full summary.
+  The grid button in the sidebar or Ctrl+Shift+Space opens it, Esc goes back
+  to where you were, and Back and Forward reach it like any other page.
 
 ### Changed
 
 - Code blocks and diffs highlight a fixed set of common languages; other
   languages show as plain text. Patterm no longer bundles Shiki's GPL-3.0
   grammars and theme.
+- On phones, sidebar mode opens its agents in the same drawer from the bottom
+  as tabs mode, instead of a sheet from the left. The drawer keeps the
+  sidebar's rows, view options and launch button, with the project pages
+  pinned below the list.
+- In sidebar mode, a project opens on its board: switching to a project you
+  haven't visited, an agent exiting while you view it, and leaving Settings or
+  Usage show the board rather than the project's first agent. A project you
+  left from its board reopens there.
 
 ### Fixed
 

@@ -291,6 +291,7 @@ const sidebarMode = computed(() => navigation.value === 'sidebar' && Boolean(act
 const agentPage = computed(() => activeWorkspacePage.value === 'workbench' && projectViewMode.value === 'agents');
 provideSidebarContext({
   projectId: () => activeProjectId.value ?? '',
+  shown: () => sidebarMode.value,
   tabs: () => currentStripTabs.value,
   processes: () => activeProject.value?.processes ?? [],
   timers: () => activeProject.value?.timers ?? [],

@@ -9,6 +9,8 @@ export interface NotificationRecord {
   project_id: string | null;
   process_id: string | null;
   session_id: string | null;
+  // Who raised it: an agent's own notify_user or close request comes from mcp.
+  source: 'mcp' | 'terminal' | 'integrated' | 'runtime' | 'system';
   kind: string;
   urgency: NotificationUrgency;
   delivery: 'in_app' | 'all';
