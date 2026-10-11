@@ -66,7 +66,8 @@ export interface IntegratedControls {
 
 const PATTERM_COMMANDS: IntegratedCommand[] = [
   { name: 'new', description: 'Start a new conversation with the same agent', source: 'patterm' },
-  { name: 'resume', description: 'Resume a previous conversation', source: 'patterm' }
+  { name: 'resume', description: 'Resume a previous conversation', source: 'patterm' },
+  { name: 'restart', description: 'Restart the agent and resume this conversation, picking up MCP and settings changes', source: 'patterm' }
 ];
 
 export interface IntegratedProviderService {  prepare(input: IntegratedLaunchInput): Promise<IntegratedLaunchResult>;

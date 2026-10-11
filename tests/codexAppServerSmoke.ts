@@ -930,7 +930,7 @@ server.listen(socketPath);
   // Built-in commands map to thread methods, not prompt text.
   const commands = await launch({ ...process.env, COMMANDS: '1', NO_PENDING: '1' });
   const commandIntegrated = new IntegratedAgentService(database, { codex: commands.service });
-  assert.deepEqual((await commandIntegrated.controls(commands.processId)).commands.map((command) => command.name), ['new', 'resume', 'compact', 'fast', 'review', 'undo', 'rename', 'goal', 'shell']);
+  assert.deepEqual((await commandIntegrated.controls(commands.processId)).commands.map((command) => command.name), ['new', 'resume', 'restart', 'compact', 'fast', 'review', 'undo', 'rename', 'goal', 'shell']);
   await commands.service.command(commands.processId, 'review', 'base main');
   await commands.service.command(commands.processId, 'review', 'commit abc1234');
   await commands.service.command(commands.processId, 'rename', 'Auth refactor');

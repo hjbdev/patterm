@@ -540,7 +540,9 @@ async function createApplicationResources(
     allowedTools: new Set([
       ...[...BROWSER_TOOLS].filter((tool) => !tool.startsWith('hosts_') && !tool.startsWith('settings_') && !(MCP_SERVER_TOOLS as readonly string[]).includes(tool)),
       // The command palette pauses, resumes, and cancels timers.
-      'timer_cancel', 'timer_pause', 'timer_resume'
+      'timer_cancel', 'timer_pause', 'timer_resume',
+      // Socket-only for browsers; the peer route checks control itself.
+      'integrated_restart'
     ])
   });
   const remote = remoteClient;

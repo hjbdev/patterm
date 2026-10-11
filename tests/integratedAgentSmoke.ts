@@ -258,8 +258,8 @@ async function main(): Promise<void> {
     const commands = new IntegratedAgentService(database, {
       codex: { ...provider, controls: async () => ({ selectors: [], commands: [{ name: 'new' }, { name: 'resume' }, { name: 'compact' }] }) }
     });
-    assert.deepEqual((await commands.controls('process_test')).commands.map((command) => [command.name, command.source ?? 'native']), [['new', 'patterm'], ['resume', 'patterm'], ['compact', 'native']]);
-    assert.deepEqual((await service.controls('process_test')).commands.map((command) => command.name), ['new', 'resume']);
+    assert.deepEqual((await commands.controls('process_test')).commands.map((command) => [command.name, command.source ?? 'native']), [['new', 'patterm'], ['resume', 'patterm'], ['restart', 'patterm'], ['compact', 'native']]);
+    assert.deepEqual((await service.controls('process_test')).commands.map((command) => command.name), ['new', 'resume', 'restart']);
 
     // Only a transcript with no messages and nothing older to page in is empty.
     const withConversation = (conversation: unknown) => new IntegratedAgentService(database, { codex: { ...provider, conversation: async () => conversation } });

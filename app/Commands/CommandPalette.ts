@@ -1,5 +1,6 @@
 import type { PattermApplication } from '../App';
 import { FinishedSubagentsAction, type FinishedSubagent } from '../Actions/FinishedSubagentsAction';
+import type { RestartAllResult } from '../Actions/RestartAgentSessionAction';
 import type { HarnessInstallationDto, ProcessDto, ProjectWorkbenchDto, SessionDto, WorktreeDto } from '../Repositories/WorkbenchRepository';
 
 export type CommandGroup = 'current' | 'agent' | 'process' | 'create' | 'navigation' | 'worktree' | 'project' | 'app';
@@ -81,13 +82,15 @@ export interface CommandRunResult {
   rendererAction?: 'settings' | 'workspaceSearch' | 'terminalSearch' | 'pickProjectDirectory' | 'quit'
     | 'copy' | 'integrated' | 'sessionContext' | 'reviewChanges' | 'restartAssistant';
   // Parameters for renderer actions.
-  integrated?: 'interrupt' | 'new';
+  integrated?: 'interrupt' | 'new' | 'restart';
   processId?: string;
   sessionId?: string;
   name?: string;
   text?: string;
   worktree?: SessionWorktreeRef;
   refresh?: boolean;
+  // Shown once the command has run.
+  message?: string;
 }
 
 const HARNESS_LABELS: Record<string, string> = {
@@ -126,6 +129,8 @@ export async function listCommandPaletteCommands(application: PattermApplication
 
   const assistantRestart = await assistantRestartCommand(application);
   if (assistantRestart) commands.push(assistantRestart);
+  const restartAll = restartAgentsCommand(snapshot.projects);
+  if (restartAll) commands.push(restartAll);
 
   commands.push(
     { id: 'renderer:workspace-search', label: 'Search workspace content…', hint: 'Agents, conversations, and history', group: 'navigation', kind: 'renderer' },
@@ -154,6 +159,12 @@ export async function runCommandPaletteCommand(application: PattermApplication, 
     if (input.confirmed !== true) throw new Error('Confirm Quit and stop all before shutting down');
     await application.shutdown();
     return { rendererAction: 'quit' };
+  }
+
+  if (id === 'app:restart-agents') {
+    if (input.confirmed !== true) throw new Error('Confirm restarting the agents first');
+    const result = await application.mcp.call('integrated_restart_all', {}) as RestartAllResult;
+    return { refresh: true, message: restartAllMessage(result) };
   }
 
   const projectId = activeProject?.project.id;
@@ -261,6 +272,26 @@ async function assistantRestartCommand(application: PattermApplication): Promise
   };
 }
 
+// Restarts idle top-level Integrated agents everywhere, so they pick up MCP
+// and settings changes. Working agents are left to finish.
+function restartAgentsCommand(projects: ProjectWorkbenchDto[]): CommandDescriptor | null {
+  const agents = projects.flatMap((project) => project.projectSessions)
+    .filter((session) => !session.exitedAt && session.processId && !session.host && session.sessionRole === 'orchestrator' && session.interfaceMode === 'integrated');
+  if (!agents.length) return null;
+  // As the restart decides: only a finished turn is safe to stop.
+  const working = agents.filter((session) => session.activity !== 'idle' && session.activity !== 'error').length;
+  const idle = agents.length - working;
+  return {
+    id: 'app:restart-agents',
+    label: 'Restart all agents',
+    hint: 'Resume each Integrated conversation in a new process',
+    group: 'app',
+    kind: 'backend',
+    confirmation: `This restarts ${countLabel(idle, 'idle agent')} across all projects and resumes their conversations.${working ? ` ${countLabel(working, 'working agent')} keep${working === 1 ? 's' : ''} running.` : ''}`,
+    confirmVerb: 'restart them'
+  };
+}
+
 export function quitConfirmation(application: PattermApplication, projects = application.currentWorkbench().projects): string {
   const agents = new Set(projects.flatMap((project) => project.projectSessions.filter((session) => !session.exitedAt && session.processId).map((session) => session.processId)));
   const commands = new Set(projects.flatMap((project) => project.processes.filter((process) => process.status === 'running' && !agents.has(process.id)).map((process) => process.id)));
@@ -306,6 +337,14 @@ function agentActions(
   }
   if (extra.current && integrated) {
     commands.push({ id: `integrated:new:${processId}`, label: 'New conversation', hint: name, group, kind: 'renderer', result: { rendererAction: 'integrated', integrated: 'new', processId } });
+    // Top-level agents only: a subagent's parent watches it by process ID.
+    if (session.sessionRole === 'orchestrator' && !session.host) {
+      commands.push({
+        id: `integrated:restart:${processId}`, label: 'Restart agent', hint: 'Resume this conversation in a new process', group, kind: 'renderer',
+        result: { rendererAction: 'integrated', integrated: 'restart', processId },
+        ...(RESPONDING.has(session.activity) ? { confirmation: 'This agent is responding, and restarting stops it.', confirmVerb: 'restart it' } : {})
+      });
+    }
   }
   if (extra.current) {
     commands.push({ id: `renderer:session-context:${session.id}`, label: 'Open session context', hint: 'Worktrees, todos, scratchpads, and links', group, kind: 'renderer', result: { rendererAction: 'sessionContext', sessionId: session.id } });
@@ -523,6 +562,13 @@ function pendingCloseConfirmation(application: PattermApplication, processId: st
     if (project.projectSessions.some((candidate) => candidate.processId === processId)) return Boolean(closeConfirmation(project, processId).confirmation);
   }
   return false;
+}
+
+function restartAllMessage(result: RestartAllResult): string {
+  const restarted = `Restarted ${countLabel(result.restarted.length, 'agent')}`;
+  const working = result.skipped.filter((item) => item.reason === 'working').length;
+  const failed = result.skipped.filter((item) => item.reason !== 'working');
+  return [restarted, working ? `${working} still working` : '', failed.length ? `${failed.length} could not restart: ${failed.map((item) => `${item.name} (${item.reason})`).join('; ')}` : ''].filter(Boolean).join(' · ');
 }
 
 // Navigation IDs encode each ID, because a paired host's IDs contain a colon,

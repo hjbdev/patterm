@@ -8,9 +8,10 @@ export const openCommandPaletteKey: InjectionKey<() => void> = Symbol('openComma
 export interface CommandRunResult {
   navigate?: { projectId?: string | undefined; tab?: string | undefined; terminalProcessId?: string | undefined; sessionId?: string | undefined; processId?: string | undefined; recordId?: string | undefined };
   refresh?: boolean;
+  message?: string;
   rendererAction?: 'settings' | 'usage' | 'routines' | 'workspaceSearch' | 'terminalSearch' | 'pickProjectDirectory' | 'quit' | 'createTodo' | 'createScratchpad'
     | 'copy' | 'integrated' | 'sessionContext' | 'reviewChanges' | 'openTarget' | 'launchSet' | 'restartAssistant';
-  integrated?: 'interrupt' | 'new' | 'configure';
+  integrated?: 'interrupt' | 'new' | 'restart' | 'configure';
   processId?: string;
   sessionId?: string;
   name?: string;

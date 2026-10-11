@@ -10,6 +10,7 @@ import { listDirectoriesInput } from '../Actions/ListDirectoriesAction';
 import { projectLogoCandidatesInput, setProjectLogoInput } from '../Actions/ProjectLogoAction';
 import { NewAgentSessionAction } from '../Actions/NewAgentSessionAction';
 import { ResumeConversationAgentAction } from '../Actions/ResumeConversationAgentAction';
+import { RestartAgentSessionAction } from '../Actions/RestartAgentSessionAction';
 import { abandonWorktreeInput } from '../Actions/AbandonWorktreeAction';
 import { createWorktreeInput } from '../Actions/CreateWorktreeAction';
 import { getCurrentDiffInput } from '../Actions/GetCurrentDiffAction';
@@ -289,6 +290,7 @@ const historyResumeInput = z.object({
   interface_mode: z.enum(['tui', 'integrated']).optional(),
   replace_process_id: z.string().min(1).optional()
 });
+const restartAgentSessionInput = z.object({ process_id: z.string().min(1), project_id: z.string().min(1).optional(), force: z.boolean().optional() });
 const newAgentSessionInput = z.object({
   process_id: z.string().min(1),
   project_id: z.string().min(1).optional()
@@ -331,6 +333,13 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       services.integrated ? { integrated: services.integrated, closeProcess: services.actions.closeProcess } : undefined)
     : null;
   const newAgentSession = new NewAgentSessionAction(services.database, services.harnessLauncher, services.actions.closeProcess);
+  const restartAgentSession = new RestartAgentSessionAction(services.database, services.harnessLauncher, {
+    stop: (processId) => services.actions.stopProcess.execute(processId),
+    close: (processId) => services.actions.closeProcess.execute(processId),
+    holdTimers: (processId) => timerService.holdOwner(processId),
+    releaseTimers: (timerIds) => { for (const id of timerIds) timerService.resume(id); },
+    transferTimers: (from, to) => timerService.transferOwner(from, to)
+  });
   const sendMessage = new SendMessageAction(services.database, services.terminal, services.timeline,
     { integrated: services.integrated, assistant: services.assistant, notifications: services.notifications });
   const conversationOutput = new ConversationOutputService(services.database, services.integrated ?? null, services.historyReadService ?? null);
@@ -1450,6 +1459,36 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       const projectId = projectFor(context, input.project_id);
       if (!projectId) throw new Error('no project is available');
       return newAgentSession.execute({ process_id: processFor(context, input.process_id), project_id: projectId });
+    }
+  );
+
+  registry.register(
+    {
+      name: 'integrated_restart',
+      namespace: 'integrated',
+      hidden: true,
+      description: 'Stop a top-level Integrated agent and resume its conversation in a new process, keeping its session context, subagents, and timers.',
+      inputSchema: { type: 'object', required: ['process_id'] }
+    },
+    (args, context) => {
+      if (caller(context)) throw new Error('integrated_restart is for the user');
+      const input = restartAgentSessionInput.parse(args);
+      const projectId = projectFor(context, input.project_id);
+      if (!projectId) throw new Error('no project is available');
+      return restartAgentSession.execute({ process_id: processFor(context, input.process_id), project_id: projectId, force: input.force === true });
+    }
+  );
+  registry.register(
+    {
+      name: 'integrated_restart_all',
+      namespace: 'integrated',
+      hidden: true,
+      description: 'Restart every idle top-level Integrated agent across all projects, resuming each conversation in a new process.',
+      inputSchema: { type: 'object' }
+    },
+    (_args, context) => {
+      if (caller(context) || context.remote) throw new Error('integrated_restart_all is for the user');
+      return restartAgentSession.executeAll();
     }
   );
 
