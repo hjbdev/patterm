@@ -336,6 +336,8 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
   const restartAgentSession = new RestartAgentSessionAction(services.database, services.harnessLauncher, {
     stop: (processId) => services.actions.stopProcess.execute(processId),
     close: (processId) => services.actions.closeProcess.execute(processId),
+    holdTimers: (processId) => timerService.holdOwner(processId),
+    releaseTimers: (timerIds) => { for (const id of timerIds) timerService.resume(id); },
     transferTimers: (from, to) => timerService.transferOwner(from, to)
   });
   const sendMessage = new SendMessageAction(services.database, services.terminal, services.timeline,

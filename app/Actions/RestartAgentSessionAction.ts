@@ -25,6 +25,9 @@ export interface RestartAllResult {
 
 export interface RestartProcesses {
   stop(processId: string): Promise<unknown>;
+  // Pauses the process's pending timers and returns their IDs.
+  holdTimers(processId: string): string[];
+  releaseTimers(timerIds: readonly string[]): void;
   close(processId: string): Promise<unknown>;
   transferTimers(fromProcessIds: readonly string[], toProcessId: string): void;
 }
@@ -48,6 +51,7 @@ interface SourceSession {
 
 const SOURCE_COLUMNS = `sessions.id as session_id, sessions.project_id, sessions.harness, sessions.model, sessions.reasoning, sessions.service_tier,
   sessions.cwd, sessions.worktree_id, sessions.resume_id, sessions.session_role, sessions.title_set_by_user, processes.name, processes.activity, processes.id as process_id`;
+const WORKING = 'This agent is working, and restarting would stop its turn. Wait for it to finish or stop the response first.';
 const LIVE_INTEGRATED = `sessions.interface_mode = 'integrated' and sessions.exited_at is null and processes.status = 'running'`;
 
 export class RestartAgentSessionAction {
@@ -61,50 +65,48 @@ export class RestartAgentSessionAction {
 
   async execute(raw: RestartAgentSessionInput): Promise<RestartAgentSessionResult> {
     const input = restartAgentSessionInput.parse(raw);
-    const source = this.database.connection.prepare(`select ${SOURCE_COLUMNS}
-      from sessions join processes on processes.id = sessions.process_id
-      where sessions.process_id = ? and sessions.project_id = ? and ${LIVE_INTEGRATED}
-      order by sessions.started_at desc limit 1`).get(input.process_id, input.project_id) as SourceSession | undefined;
-    if (!source) throw new Error(`This agent is not a running Integrated agent: ${input.process_id}`);
-    const refusal = restartRefusal(source);
-    if (refusal) throw new Error(refusal);
-    if (!input.force && isWorking(source)) throw new Error('This agent is working, and restarting would stop its turn. Wait for it to finish or stop the response first.');
-    return this.restart(input.process_id, source);
+    return this.restart(input.process_id, input.project_id, input.force);
   }
 
   // Restarts every idle top-level Integrated agent, one at a time. Working
   // agents keep running, so no turn is cut short.
   async executeAll(): Promise<RestartAllResult> {
-    const rows = this.database.connection.prepare(`select ${SOURCE_COLUMNS}
+    const rows = this.database.connection.prepare(`select processes.id as process_id, sessions.project_id, processes.name
       from sessions join processes on processes.id = sessions.process_id
       where ${LIVE_INTEGRATED} and sessions.session_role = 'orchestrator'
-      order by sessions.started_at`).all() as unknown as SourceSession[];
+      order by sessions.started_at`).all() as unknown as Array<{ process_id: string; project_id: string; name: string }>;
     const result: RestartAllResult = { restarted: [], skipped: [] };
     for (const row of rows) {
-      const reason = restartRefusal(row) ?? (isWorking(row) ? 'working' : null);
-      if (reason) {
-        result.skipped.push({ process_id: row.process_id, name: row.name, reason });
-        continue;
-      }
       try {
-        const launched = await this.restart(row.process_id, row);
+        const launched = await this.restart(row.process_id, row.project_id, false);
         result.restarted.push({ from: row.process_id, to: launched.process_id, name: row.name });
       } catch (error) {
-        result.skipped.push({ process_id: row.process_id, name: row.name, reason: error instanceof Error ? error.message : String(error) });
+        const reason = error instanceof Error ? error.message : String(error);
+        result.skipped.push({ process_id: row.process_id, name: row.name, reason: reason === WORKING ? 'working' : reason });
       }
     }
     return result;
   }
 
-  private async restart(processId: string, source: SourceSession): Promise<RestartAgentSessionResult> {
+  private async restart(processId: string, projectId: string, force: boolean): Promise<RestartAgentSessionResult> {
+    // Read and locked in one step, so a restart that already replaced the
+    // agent, or a turn that has since started, is seen.
     if (this.restarting.has(processId)) throw new Error('This agent is already restarting');
+    const source = this.liveSource(processId, projectId);
+    if (!source) throw new Error(`This agent is not a running Integrated agent: ${processId}`);
+    const refusal = restartRefusal(source) ?? (!force && isWorking(source) ? WORKING : null);
+    if (refusal) throw new Error(refusal);
     this.restarting.add(processId);
+    // Its timers wait until the new process owns them, so none fires into
+    // the gap. If the resume fails they resume on the stopped agent, as
+    // after any stop.
+    const held = this.processes.holdTimers(processId);
     try {
-      // The native conversation can only be open in one process, so the old
-      // one stops before the new one resumes it.
-      await this.processes.stop(processId);
       let launched: LaunchHarnessResult;
       try {
+        // The native conversation can only be open in one process, so the
+        // old one stops before the new one resumes it.
+        await this.processes.stop(processId);
         launched = await this.launcher.resume({
           harness: source.harness as 'claude' | 'codex' | 'opencode' | 'amp',
           model: source.model,
@@ -118,8 +120,9 @@ export class RestartAgentSessionAction {
           interface_mode: 'integrated'
         }, { resume_id: source.resume_id!, conversation_id: '', source_session_id: source.session_id });
       } catch (error) {
+        this.processes.releaseTimers(held);
         const reason = error instanceof Error ? error.message : String(error);
-        throw new Error(`The agent stopped but did not resume: ${reason}. Its conversation is saved; resume it from history.`);
+        throw new Error(`The agent did not restart: ${reason}. Its conversation is saved; resume it from history.`);
       }
       const db = this.database.connection;
       db.transaction(() => {
@@ -127,12 +130,20 @@ export class RestartAgentSessionAction {
         if (source.title_set_by_user) db.prepare('update sessions set title_set_by_user = 1 where id = ?').run(launched.session_id);
       })();
       this.processes.transferTimers([processId], launched.process_id);
+      this.processes.releaseTimers(held);
       // Its subagents now belong to the new process, so closing stops nothing else.
       await this.processes.close(processId);
       return { ...launched, replaced_process_id: processId };
     } finally {
       this.restarting.delete(processId);
     }
+  }
+
+  private liveSource(processId: string, projectId: string): SourceSession | undefined {
+    return this.database.connection.prepare(`select ${SOURCE_COLUMNS}
+      from sessions join processes on processes.id = sessions.process_id
+      where sessions.process_id = ? and sessions.project_id = ? and ${LIVE_INTEGRATED}
+      order by sessions.started_at desc limit 1`).get(processId, projectId) as SourceSession | undefined;
   }
 
   private liveWorktree(worktreeId: string | null, projectId: string): string | null {

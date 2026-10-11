@@ -229,6 +229,14 @@ export class TimerService {
     return 'ok';
   }
 
+  // Pauses a process's pending timers while it is replaced, so none fires
+  // into the gap. Returns the IDs to resume once the replacement owns them.
+  holdOwner(processId: string): string[] {
+    const held = [...this.timers.values()].filter((entry) => entry.ownerProcessId === processId && entry.status === 'pending').map((entry) => entry.id);
+    for (const id of held) this.pause(id);
+    return held;
+  }
+
   // Pending callbacks of replaced processes go to the process replacing them.
   transferOwner(fromProcessIds: readonly string[], toProcessId: string): void {
     const from = new Set(fromProcessIds);
