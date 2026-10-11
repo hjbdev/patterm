@@ -12,6 +12,8 @@
         <div class="min-h-0 overflow-y-auto overscroll-contain">
           <slot name="mobile" />
         </div>
+        <!-- Stays below the list while it scrolls. -->
+        <slot name="mobile-footer" />
       </DrawerContent>
     </DrawerPortal>
   </DrawerRoot>

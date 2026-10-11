@@ -11,7 +11,6 @@
           :data-expandable="memberCount ? 'true' : undefined"
           :data-expanded="memberCount ? String(expanded) : undefined"
           :data-patterm-tab-id="tab.key"
-          :title="hostLabel(label, root.host)"
           :aria-current="active ? 'page' : undefined"
           :class="cn(
             'relative isolate flex w-full min-w-0 select-none items-start gap-2 rounded-tab px-2 text-left text-[13px] transition-[padding,color,background-color,box-shadow] duration-200 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring motion-reduce:transition-none',
@@ -82,7 +81,6 @@ import { computed } from 'vue';
 import { ChevronRight, Timer as TimerIcon } from 'lucide-vue-next';
 import { cn } from '@/lib/utils';
 import { agentLabel, familyOwnerLabel } from '../../lib/agentTabs';
-import { hostLabel } from '../../lib/hosts';
 import { subagentCountClass } from '../../lib/rowActivity';
 import AgentIcon from '../AgentIcon.vue';
 import TabIcon from '../TabIcon.vue';

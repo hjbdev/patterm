@@ -1,7 +1,10 @@
 <template>
   <!-- The collapsed sidebar: one button per tab. Hovering one shows what it's doing. -->
   <div class="flex h-full min-h-0 w-12 flex-col items-center">
-    <div class="flex h-8 shrink-0 items-center"><LaunchAgentMenu :project-id="sidebar.projectId.value" @launched="sidebar.launched" /></div>
+    <div class="flex shrink-0 flex-col items-center gap-0.5 py-0.5">
+      <BoardButton side="right" />
+      <LaunchAgentMenu :project-id="sidebar.projectId.value" @launched="sidebar.launched" />
+    </div>
     <div ref="list" class="flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-y-auto overflow-x-hidden py-1 [scrollbar-width:none]">
       <template v-for="(tab, index) in tabs" :key="tab.key">
         <div v-if="index > 0 && tab.pinned !== tabs[index - 1]!.pinned" class="my-1 w-5 border-t border-white/10" />
@@ -104,6 +107,7 @@ import TabWash from '../TabWash.vue';
 import UnreadDot from '../UnreadDot.vue';
 import { Popover, PopoverAnchor, PopoverContent } from '../ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
+import BoardButton from './BoardButton.vue';
 import SidebarItemMenu from './SidebarItemMenu.vue';
 import SidebarNavLinks from './SidebarNavLinks.vue';
 import { closeSession, copyId, openRename, openTimer } from './sidebarActions';

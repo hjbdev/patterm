@@ -26,6 +26,7 @@ import { notificationListInput, notifyUserInput, type NotificationActions } from
 import { AgentHistoryDeleteService } from '../Services/AgentHistory/AgentHistoryDeleteService';
 import { AgentHistoryImportService, historyConfigureInput, historyImportInput } from '../Services/AgentHistory/AgentHistoryImportService';
 import type { AgentHistoryImportQueueService } from '../Services/AgentHistory/AgentHistoryImportQueueService';
+import { ConversationMediaService, mediaGetInput, mediaListInput } from '../Services/AgentHistory/ConversationMediaService';
 import { AgentHistoryReadService, type ConversationSessionState, conversationHistorySearchInput, conversationSearchInput, historyGetInput, historyListInput } from '../Services/AgentHistory/AgentHistoryReadService';
 import type { AgentHistorySourceService } from '../Services/AgentHistory/AgentHistorySourceService';
 import type { AgentHistoryWatcherService } from '../Services/AgentHistory/AgentHistoryWatcherService';
@@ -85,6 +86,7 @@ interface RegistryServices {
   historySourceService?: AgentHistorySourceService;
   historyImportQueue?: AgentHistoryImportQueueService;
   historyReadService?: AgentHistoryReadService;
+  historyMedia?: ConversationMediaService;
   historyDeleteService?: AgentHistoryDeleteService;
   historyWatcher?: AgentHistoryWatcherService;
   timers?: TimerService;
@@ -1385,6 +1387,29 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       const input = historyGetInput.parse(args);
       assertConversationAccess(services, context, input.conversation_id);
       return requireHistoryRead(services).get(input);
+    }
+  );
+
+  registry.register(
+    { name: 'media_list', namespace: 'media', hidden: true, changes: [], description: 'List images pasted into or viewed in a project\'s imported conversations, optionally for one session.', inputSchema: { type: 'object', required: ['project_id'] } },
+    (args, context) => {
+      const input = mediaListInput.parse(args);
+      const projectId = projectFor(context, input.project_id);
+      if (!projectId || !services.historyMedia) return { items: [], total: 0 };
+      const session = input.session_id
+        ? services.database.connection.prepare(`select harness as provider, resume_id as resumeId from sessions where id = ? and project_id = ?`).get(input.session_id, projectId) as { provider: string | null; resumeId: string | null } | undefined
+        : undefined;
+      return services.historyMedia.list({ ...input, project_id: projectId }, session);
+    }
+  );
+
+  registry.register(
+    { name: 'media_get', namespace: 'media', hidden: true, changes: [], description: 'Read one indexed conversation image by its hash.', inputSchema: { type: 'object', required: ['project_id', 'sha256'] } },
+    (args, context) => {
+      const input = mediaGetInput.parse(args);
+      const projectId = projectFor(context, input.project_id);
+      if (!projectId || !services.historyMedia) throw new Error('This image is no longer stored');
+      return services.historyMedia.read({ ...input, project_id: projectId });
     }
   );
 

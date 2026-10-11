@@ -62,6 +62,9 @@
             <ContextLinkRow v-for="link in links" :key="link.id" :link="link" :busy="busy" @update="(changes, done) => updateLink(link, changes).then(done)" @detach="detachLink(link.id)" />
           </div>
         </section>
+
+        <!-- A paired host's history stays on that host. -->
+        <ContextMedia v-if="!sessionId.includes(':')" :project-id="projectId" :session-id="sessionId" />
       </div>
 
       <p v-if="truncated" class="mt-5 text-[11px] text-muted-foreground">Showing the first 100 items. Open the project views for more.</p>
@@ -78,6 +81,7 @@ import { Plus, X } from 'lucide-vue-next';
 import CreateContextItemDialog from '../CreateContextItemDialog.vue';
 import { Button } from '../ui/button';
 import ContextLinkRow from './ContextLinkRow.vue';
+import ContextMedia from './ContextMedia.vue';
 import ContextPicker from './ContextPicker.vue';
 import ContextScratchpadRow from './ContextScratchpadRow.vue';
 import ContextTodoRow from './ContextTodoRow.vue';

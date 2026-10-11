@@ -1,4 +1,4 @@
-import { ref, watch } from 'vue';
+import { computed, effectScope, ref, watch, type Ref } from 'vue';
 
 // Which agent families are open is the user's choice, remembered per project
 // on this device. Families follow `all` until opened or closed one by one;
@@ -24,14 +24,24 @@ function read(projectId: string): SidebarExpansion {
   }
 }
 
+// One state per project, shared by everything showing it, so the view options
+// in the mobile drawer's header change the list below them.
+const states = new Map<string, Ref<SidebarExpansion>>();
+const scope = effectScope(true);
+
+function stateFor(projectId: string): Ref<SidebarExpansion> {
+  let state = states.get(projectId);
+  if (!state) {
+    const created = ref<SidebarExpansion>(read(projectId));
+    scope.run(() => watch(created, (value) => localStorage.setItem(KEY_PREFIX + projectId, JSON.stringify(value)), { deep: true }));
+    states.set(projectId, created);
+    state = created;
+  }
+  return state;
+}
+
 export function useSidebarExpansion(projectId: () => string) {
-  let project = projectId();
-  const state = ref<SidebarExpansion>(read(project));
-  watch(projectId, (id) => {
-    project = id;
-    state.value = read(id);
-  });
-  watch(state, (value) => localStorage.setItem(KEY_PREFIX + project, JSON.stringify(value)), { deep: true });
+  const state = computed(() => stateFor(projectId()).value);
 
   function isOpen(rootId: string, holdsSelection: boolean): boolean {
     return state.value.overrides[rootId] ?? (state.value.all || (state.value.followActive && holdsSelection));

@@ -17,10 +17,12 @@ interface RouteLike {
 
 const lastLocations = new Map<string, ProjectLocation>();
 
-// The bare project route redirects to the first tab, so it is not a place to return to.
+// The bare project route is a place to return to when it shows a page of its
+// own, such as the board; when it redirects to the first tab, that tab is
+// remembered over it straight away.
 export function rememberProjectLocation(route: RouteLike): void {
   const { projectId, sessionId, processId } = route.params;
-  if (typeof projectId !== 'string' || typeof route.name !== 'string' || route.name === 'project') return;
+  if (typeof projectId !== 'string' || typeof route.name !== 'string') return;
   lastLocations.set(projectId, {
     name: route.name,
     fullPath: route.fullPath,

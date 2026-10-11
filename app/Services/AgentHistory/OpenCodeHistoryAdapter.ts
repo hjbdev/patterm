@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { HistoryFileFingerprint, HistorySourceCandidate, ParseHistoryFileOptions, ParsedConversation, ParsedHistoryFile, ParsedHistoryStream, ParsedMessage, ParsedUsage, ProviderHistoryAdapter } from './AgentHistoryTypes';
-import { digestJson, isoFromMillis, nonNegative, sqliteSidecarFingerprint, skillUsesFromMessages, sqliteSidecarStatFingerprint, stableJson, stringValue, textFromUnknown } from './HistoryAdapterUtils';
+import type { HistoryFileFingerprint, HistorySourceCandidate, ParseHistoryFileOptions, ParsedConversation, ParsedHistoryFile, ParsedHistoryStream, ParsedMedia, ParsedMessage, ParsedUsage, ProviderHistoryAdapter } from './AgentHistoryTypes';
+import { digestJson, isoFromMillis, nonNegative, parsedImage, sqliteSidecarFingerprint, skillUsesFromMessages, sqliteSidecarStatFingerprint, stableJson, stringValue, textFromUnknown } from './HistoryAdapterUtils';
 
 interface OpenCodeSessionRow {
   id: string;
@@ -37,7 +37,7 @@ interface OpenCodePartRow {
 
 export class OpenCodeHistoryAdapter implements ProviderHistoryAdapter {
   readonly provider = 'opencode' as const;
-  readonly parserVersion = 'opencode-sqlite-v7';
+  readonly parserVersion = 'opencode-sqlite-v8';
 
   defaultSources(homeDir: string): HistorySourceCandidate[] {
     const db = path.join(homeDir, '.local', 'share', 'opencode', 'opencode.db');
@@ -174,6 +174,14 @@ export class OpenCodeHistoryAdapter implements ProviderHistoryAdapter {
       });
     }
 
+    // v2 parts are cut from their message row, so its images are read from
+    // the row; legacy parts are rows of their own.
+    const firstSeq = new Map<string, number>();
+    for (const message of messages) if (message.turnId && !firstSeq.has(message.turnId)) firstSeq.set(message.turnId, message.seq);
+    const media = (v2 ? messageRows.map((row) => ({ table: 'session_message' as const, id: row.id, messageId: row.id, created: row.time_created, data: row.data }))
+      : partRows.map((row) => ({ table: 'part' as const, id: row.id, messageId: row.message_id, created: row.time_created, data: row.data })))
+      .flatMap((row) => openCodeImages(row, messageDataById.get(row.messageId)?.role === 'user' ? 'pasted' : 'viewed', firstSeq.get(row.messageId) ?? null));
+
     return {
       provider: this.provider,
       providerConversationId: session.id,
@@ -187,6 +195,7 @@ export class OpenCodeHistoryAdapter implements ProviderHistoryAdapter {
       sourcePath,
       metadata: { parentId: session.parent_id, agent: session.agent, model: session.model, providerMetadata: safeJson(session.metadata) },
       messages,
+      media,
       usage: messageRows.flatMap((row) => openCodeUsage(row, messageDataById.get(row.id), Boolean(session.parent_id))),
       skills: skillUsesFromMessages(messages, { subagent: Boolean(session.parent_id), finishedCalls: true })
     };
@@ -214,6 +223,34 @@ function openCodeUsage(row: OpenCodeMessageRow, data: Record<string, unknown> | 
     subagent
   };
   return usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens + usage.outputTokens > 0 ? [usage] : [];
+}
+
+// User files keep base64 in `data`; tool results and legacy file parts keep a
+// data URI in `uri` or `url`.
+function openCodeImages(row: { table: 'part' | 'session_message'; id: string; created: number; data: string }, kind: ParsedMedia['kind'], messageSeq: number | null): ParsedMedia[] {
+  if (!row.data.includes('image/')) return [];
+  let data: unknown;
+  try {
+    data = JSON.parse(row.data);
+  } catch {
+    return [];
+  }
+  const out: ParsedMedia[] = [];
+  const visit = (value: unknown, pointer: Array<string | number>) => {
+    if (Array.isArray(value)) return value.forEach((item, index) => visit(item, [...pointer, index]));
+    if (!value || typeof value !== 'object') return;
+    const record = value as Record<string, unknown>;
+    const field = typeof record.mime === 'string' && record.mime.startsWith('image/') ? (['data', 'uri', 'url'] as const).find((key) => typeof record[key] === 'string') : undefined;
+    if (field) {
+      const name = stringValue(record.name) ?? stringValue(record.filename);
+      const image = parsedImage(record[field], record.mime, { messageSeq, kind, name, occurredAt: isoFromMillis(row.created), locator: { type: 'sqlite', table: row.table, rowId: row.id, pointer: [...pointer, field] } });
+      if (image) out.push(image);
+      return;
+    }
+    for (const [key, child] of Object.entries(record)) visit(child, [...pointer, key]);
+  };
+  visit(data, []);
+  return out;
 }
 
 function openCode2Parts(messages: OpenCodeMessageRow[], warnings: string[]): OpenCodePartRow[] {

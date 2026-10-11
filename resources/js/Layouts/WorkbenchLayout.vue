@@ -291,13 +291,14 @@ const sidebarMode = computed(() => navigation.value === 'sidebar' && Boolean(act
 const agentPage = computed(() => activeWorkspacePage.value === 'workbench' && projectViewMode.value === 'agents');
 provideSidebarContext({
   projectId: () => activeProjectId.value ?? '',
+  shown: () => sidebarMode.value,
   tabs: () => currentStripTabs.value,
   processes: () => activeProject.value?.processes ?? [],
   timers: () => activeProject.value?.timers ?? [],
   worktreeCount: () => activeProject.value?.worktrees.length ?? 0,
   activeTerminalId: () => agentPage.value ? activeTerminalId.value : null,
   activeSessionId: () => agentPage.value ? selectedAgent.value?.id ?? null : null,
-  page: () => route.name === 'worktrees' || route.name === 'history' || route.name === 'todos' || route.name === 'scratchpads' ? route.name : null,
+  page: () => route.name === 'worktrees' || route.name === 'history' || route.name === 'todos' || route.name === 'scratchpads' || route.name === 'media' ? route.name : null,
   selectSession: (rootId, session) => selectAgentTabTarget({ rootId, session }),
   selectProcess: selectAgentProcess,
   navigate: (page) => { if (activeProjectId.value) void router.push({ name: page, params: { projectId: activeProjectId.value } }); },
@@ -346,7 +347,7 @@ function navigateSearchResult(target: SearchResultTarget): void {
     } });
   } else if (target.terminal_process_id) {
     void selectTerminal(projectId, target.terminal_process_id);
-  } else if (target.tab === 'worktrees' || target.tab === 'todos' || target.tab === 'scratchpads') {
+  } else if (target.tab === 'worktrees' || target.tab === 'todos' || target.tab === 'scratchpads' || target.tab === 'media') {
     void router.push({ name: target.tab, params: { projectId, ...((target.tab === 'todos' || target.tab === 'scratchpads') && target.record_id ? { recordId: target.record_id } : {}) } });
   } else {
     void selectProject(projectId);

@@ -16,11 +16,9 @@
 import { computed } from 'vue';
 import { cn } from '@/lib/utils';
 import { describeActivity, type RowActivity } from '../lib/rowActivity';
-import { activityIcon, type IconSpec } from '../lib/statusIcons';
+import { activityIcon, CLOSING_MARK } from '../lib/statusIcons';
 import ArcSpinner from './ArcSpinner.vue';
 import StatusIcon from './StatusIcon.vue';
-
-const CLOSING_MARK: IconSpec = { glyph: '✓', class: 'text-foreground/75', spin: false, label: 'Ready to close' };
 
 const props = defineProps<{ activity: RowActivity; compact?: boolean | undefined; muted?: boolean | undefined }>();
 

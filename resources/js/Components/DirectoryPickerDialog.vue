@@ -1,6 +1,7 @@
 <template>
   <Dialog :open="request !== null" @update:open="(open) => { if (!open) finishDirectoryPicker(null); }">
-    <DialogContent class="sm:max-w-lg">
+    <!-- Its portal mounts with the app, so a dialog on a page opened later comes after it in the DOM. A higher layer keeps the picker on top. -->
+    <DialogContent class="z-[60] sm:max-w-lg" overlay-class="z-[60]">
       <DialogHeader>
         <DialogTitle>Choose a folder</DialogTitle>
         <DialogDescription>Folders on the server. Type to filter, Tab to complete.</DialogDescription>

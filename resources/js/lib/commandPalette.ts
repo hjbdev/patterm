@@ -80,7 +80,7 @@ export interface PaletteRow {
 // the backend is loading, disconnected, or running an older command catalogue.
 export function rendererCommands(projectId: string | null) {
   return [
-    ...(projectId ? ['Agents', 'Todos', 'Scratchpads', 'Worktrees', 'History'].map(label => ({
+    ...(projectId ? ['Agents', 'Todos', 'Scratchpads', 'Worktrees', 'History', 'Media'].map(label => ({
       id: `navigate:project-tab:${encodeURIComponent(projectId)}:${label.toLowerCase()}`,
       label: label === 'History' ? 'Conversation history' : label,
       group: 'navigation', kind: 'navigate',

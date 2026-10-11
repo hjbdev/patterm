@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { HistoryFileFingerprint, HistorySourceCandidate, ParsedConversation, ParsedHistoryFile, ParsedMessage, ParsedSkillUse, ParsedUsage, ProviderHistoryAdapter } from './AgentHistoryTypes';
-import { defaultFileFingerprint, digestJson, isoFromString, nonNegative, readJsonl, statOnlyFingerprint, stringValue, textFromUnknown, walkFiles } from './HistoryAdapterUtils';
+import type { HistoryFileFingerprint, HistorySourceCandidate, ParsedConversation, ParsedHistoryFile, ParsedMedia, ParsedMessage, ParsedSkillUse, ParsedUsage, ProviderHistoryAdapter } from './AgentHistoryTypes';
+import { defaultFileFingerprint, digestJson, isoFromString, nonNegative, parsedImage, readJsonl, statOnlyFingerprint, stringValue, textFromUnknown, walkFiles } from './HistoryAdapterUtils';
 
 export class ClaudeHistoryAdapter implements ProviderHistoryAdapter {
   readonly provider = 'claude' as const;
-  readonly parserVersion = 'claude-jsonl-v9';
+  readonly parserVersion = 'claude-jsonl-v10';
 
   defaultSources(homeDir: string): HistorySourceCandidate[] {
     const projects = path.join(homeDir, '.claude', 'projects');
@@ -54,6 +54,9 @@ export class ClaudeHistoryAdapter implements ProviderHistoryAdapter {
     const usage = new Map<string, ParsedUsage>();
     const seenUuids = new Set<string>();
     const skills: ParsedSkillUse[] = [];
+    const media: ParsedMedia[] = [];
+    // The file each Read call opened, to name the image it returned.
+    const readPaths = new Map<string, string>();
 
     for (const record of parsed.records) {
       if (!record || typeof record !== 'object') {
@@ -88,7 +91,7 @@ export class ClaudeHistoryAdapter implements ProviderHistoryAdapter {
       const message = row.message && typeof row.message === 'object' ? row.message as Record<string, unknown> : null;
       const role = mapRole(stringValue(message?.role) ?? stringValue(row.role));
       const extracted = extractClaudeContent(message?.content ?? row.content, type, row, toolNamesByUseId);
-      if (extracted.length === 0) continue;
+      const rowSeq = seq;
       for (const item of extracted) {
         const text = item.text;
         const itemRole = item.role ?? role;
@@ -111,6 +114,8 @@ export class ClaudeHistoryAdapter implements ProviderHistoryAdapter {
           metadata: { type, contentType: item.contentType, isSidechain: row.isSidechain ?? null, toolUseId: item.toolUseId ?? null, source: 'claude-jsonl' }
         });
       }
+      const messageSeq = seq > rowSeq ? rowSeq : seq ? seq - 1 : null;
+      media.push(...claudeImages(message?.content, readPaths, { messageSeq, occurredAt: createdAt, position: parsed.position }));
     }
 
     warnings.push(...parsed.warnings);
@@ -129,6 +134,7 @@ export class ClaudeHistoryAdapter implements ProviderHistoryAdapter {
       sourcePath: filePath,
       metadata: { source: 'claude-jsonl', relativePath: filePath },
       messages,
+      media,
       ...subagentActivity(filePath, usage, skills)
     };
     // Retain the session identity when filtering leaves no messages, so reimport
@@ -261,7 +267,10 @@ function extractClaudeContent(content: unknown, rowType: string, row: Record<str
     }
     if (contentType === 'tool_result') {
       const toolUseId = stringValue(record.tool_use_id);
-      const output = textFromUnknown(record.content) || null;
+      // Image blocks are indexed as media; as text they are only base64.
+      const parts = Array.isArray(record.content) ? record.content : [record.content];
+      const images = parts.filter(isImageBlock).length;
+      const output = textFromUnknown(parts.filter((part) => !isImageBlock(part))) || (images ? `[${images === 1 ? 'Image' : `${images} images`}]` : null);
       if (!output && record.is_error !== true) return;
       out.push({
         index,
@@ -286,6 +295,44 @@ function extractClaudeContent(content: unknown, rowType: string, row: Record<str
     return [{ index: 0, role: 'tool', kind: row.output ? 'tool_result' : 'tool_call', contentType: rowType, text: '', toolName, toolStatus: stringValue(row.status), toolInputSummary: textFromUnknown(row.input) || null, toolOutputSummary: textFromUnknown(row.output) || null }];
   }
   return [];
+}
+
+function isImageBlock(value: unknown): boolean {
+  return Boolean(value && typeof value === 'object' && (value as Record<string, unknown>).type === 'image');
+}
+
+// Pasted images sit in a user message's content; a Read of an image file
+// returns it inside the tool_result. Pointers are relative to the row.
+function claudeImages(content: unknown, readPaths: Map<string, string>, context: { messageSeq: number | null; occurredAt: string | null; position: { offset: number; length: number } }): ParsedMedia[] {
+  if (!Array.isArray(content)) return [];
+  const out: ParsedMedia[] = [];
+  const add = (block: unknown, pointer: Array<string | number>, kind: ParsedMedia['kind'], name: string | null) => {
+    if (!isImageBlock(block)) return;
+    const source = (block as Record<string, unknown>).source;
+    if (!source || typeof source !== 'object' || (source as Record<string, unknown>).type !== 'base64') return;
+    const image = parsedImage((source as Record<string, unknown>).data, (source as Record<string, unknown>).media_type, {
+      messageSeq: context.messageSeq, kind, name, occurredAt: context.occurredAt,
+      locator: { type: 'jsonl', ...context.position, pointer: ['message', 'content', ...pointer, 'source', 'data'] }
+    });
+    if (image) out.push(image);
+  };
+  content.forEach((block, index) => {
+    if (!block || typeof block !== 'object') return;
+    const record = block as Record<string, unknown>;
+    if (record.type === 'tool_use' && record.input && typeof record.input === 'object') {
+      const filePath = stringValue((record.input as Record<string, unknown>).file_path);
+      const id = stringValue(record.id);
+      if (id && filePath) readPaths.set(id, filePath);
+      return;
+    }
+    if (record.type === 'tool_result' && Array.isArray(record.content)) {
+      const name = readPaths.get(stringValue(record.tool_use_id) ?? '') ?? null;
+      record.content.forEach((part, partIndex) => add(part, [index, 'content', partIndex], 'viewed', name));
+      return;
+    }
+    add(block, [index], 'pasted', null);
+  });
+  return out;
 }
 
 function messageItem(index: number, kind: ParsedMessage['kind'], contentType: string | null, text: string): ClaudeContentItem {

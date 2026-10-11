@@ -97,3 +97,16 @@ test('the typed filter goes to the server', async () => {
   await vue.nextTick();
   assert.deepEqual(calls.at(-1).args, { path: '/srv/', filter: '.con', show_hidden: true });
 });
+
+test('the picker stacks above the dialog that opens it', () => {
+  // The picker's portal mounts with the app, so a dialog on a page opened
+  // later comes after it in the DOM; only a higher layer than z-50 wins.
+  const picker = fs.readFileSync(new URL('../resources/js/Components/DirectoryPickerDialog.vue', import.meta.url), 'utf8');
+  const content = picker.match(/<DialogContent\b[^>]*>/)[0];
+  const layer = (attribute) => Number(content.match(new RegExp(`\\b${attribute}="[^"]*\\bz-\\[(\\d+)\\]`))?.[1] ?? 0);
+  assert.ok(layer('class') > 50, 'panel sits above other dialogs');
+  assert.ok(layer('overlay-class') > 50, 'backdrop dims the dialog underneath');
+
+  const dialogContent = fs.readFileSync(new URL('../resources/js/Components/ui/dialog/DialogContent.vue', import.meta.url), 'utf8');
+  assert.match(dialogContent, /<DialogOverlay[^>]*props\.overlayClass/, 'DialogContent applies overlayClass to its overlay');
+});

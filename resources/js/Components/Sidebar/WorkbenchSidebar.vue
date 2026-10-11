@@ -41,6 +41,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useWindowSize } from '@vueuse/core';
 import { assistantLayout } from '../../lib/assistantLayout';
+import { provideAgentDigests } from '../../Composables/useAgentDigests';
+import { useBoardKeys } from '../../Composables/useBoard';
 import SidebarDrawer from './SidebarDrawer.vue';
 import SidebarRail from './SidebarRail.vue';
 import { useSidebar } from './sidebarContext';
@@ -48,6 +50,9 @@ import { clampSidebarWidth, SIDEBAR_WIDTH, sidebarLayout } from './sidebarLayout
 import SidebarList from './SidebarList.vue';
 
 const sidebar = useSidebar();
+// Read once for every list's agent cards and for the board.
+provideAgentDigests();
+useBoardKeys();
 const { width } = useWindowSize();
 // A docked assistant takes its column first. The sidebar narrows to keep
 // 720 px of workspace, then rails once even its minimum width doesn't fit.
@@ -99,7 +104,7 @@ function dock(): void {
   sidebarLayout.collapsed = false;
 }
 
-// Choosing something dismisses the overlay and the mobile sheet.
+// Choosing something dismisses the overlay and the phone drawer.
 watch(() => [sidebar.page.value, ...sidebar.tabs.value.flatMap((tab) => tab.kind === 'agent'
   ? [...tab.family.options.filter((option) => sidebar.sessionActive(option.session)).map((option) => option.session.id), ...sidebar.ownedProcesses(tab.family).filter(sidebar.processActive).map((process) => process.id)]
   : sidebar.processActive(tab.process) ? [tab.key] : [])].join(),

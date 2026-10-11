@@ -8,12 +8,14 @@ import { unreadUrgency } from '../../Composables/useNotifications';
 import { familyAttention, sessionAttention, type SidebarAttention, type SidebarTreeView } from '../../lib/sidebarTree';
 import type { ProcessRecord, SessionRecord, TimerRecord } from '../../types';
 
-export type SidebarPage = 'worktrees' | 'history' | 'todos' | 'scratchpads';
+export type SidebarPage = 'worktrees' | 'history' | 'todos' | 'scratchpads' | 'media';
 export type AgentTab = Extract<StripTab, { kind: 'agent' }>;
 
 // Everything the sidebar reads or does, built once by the workbench layout.
 export interface SidebarContext extends SidebarTreeView {
   projectId: ComputedRef<string>;
+  // Whether agents show in the sidebar, rather than as tabs.
+  shown: ComputedRef<boolean>;
   tabs: ComputedRef<StripTab[]>;
   page: ComputedRef<SidebarPage | null>;
   worktreeCount: ComputedRef<number>;
@@ -46,6 +48,7 @@ export function useSidebar(): SidebarContext {
 
 export interface SidebarInput {
   projectId: () => string;
+  shown: () => boolean;
   tabs: () => StripTab[];
   processes: () => ProcessRecord[];
   timers: () => TimerRecord[];
@@ -81,6 +84,7 @@ export function provideSidebarContext(input: SidebarInput): SidebarContext {
 
   const context: SidebarContext = {
     projectId: computed(input.projectId),
+    shown: computed(input.shown),
     tabs: computed(input.tabs),
     page: computed(input.page),
     worktreeCount: computed(input.worktreeCount),

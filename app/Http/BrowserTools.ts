@@ -23,6 +23,7 @@ export const BROWSER_TOOLS = new Set([
   'history_sources', 'history_configure', 'history_import',
   'history_import_status', 'history_reset_imports', 'history_list',
   'history_get', 'history_search', 'history_delete', 'history_resume',
+  'media_list', 'media_get',
   'search', 'worktree_create', 'worktree_link', 'worktree_list',
   'worktree_abandon', 'diff_current', 'diff_file'
 ]);
