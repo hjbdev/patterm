@@ -8,9 +8,9 @@
         <div class="min-h-0 flex-1">
           <ConversationTranscript ref="transcriptRef" :key="processId" :messages="transcriptMessages" :truncated="historyTruncated" :history-unavailable="historyUnavailable" :has-older="Boolean(historyCursor)" :loading-older="loadingOlder" :history-error="historyError" :process-id="processId" :live="streaming" :working="streamStatus === 'working' && !ended" :settling="loadingTranscript" :can-retry="canReply && !submission" auto-load-older @load-older="loadOlder" @retry-message="retryMessage" />
         </div>
-        <p v-if="displayError" role="alert" class="shrink-0 break-words px-5 pb-4 text-sm text-destructive">{{ displayError }}</p>
+        <p v-if="displayError" role="alert" class="mx-auto w-full max-w-[50rem] shrink-0 break-words px-4 pb-4 text-sm text-destructive 2xl:max-w-[1000px]">{{ displayError }}</p>
       </div>
-      <p v-if="ended" role="status" class="shrink-0 border-t border-border/60 px-5 py-3 text-sm text-muted-foreground">This agent session has ended. The transcript is read-only.</p>
+      <div v-if="ended" class="mx-auto w-full max-w-[50rem] shrink-0 px-4 2xl:max-w-[1000px]"><p role="status" class="border-t border-border/60 py-3 text-sm text-muted-foreground">This agent session has ended. The transcript is read-only.</p></div>
       <div v-if="permissions.length || questions.length || forms.length || (closeRequest && !ended)" class="shrink-0 pb-2">
         <!-- The same width and inset as the composer below. -->
         <div class="mx-auto max-h-[55vh] w-full max-w-[50rem] space-y-2 overflow-y-auto overscroll-contain px-4 2xl:max-w-[1000px]" role="group" aria-label="Pending requests">

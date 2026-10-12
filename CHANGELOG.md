@@ -95,6 +95,10 @@ in the archived pre-release repository.
 
 ### Fixed
 
+- In Integrated conversations, the session context button sits at the edge of
+  the conversation column, as it does beside a terminal, instead of at the far
+  right of the window. Errors and the ended-session notice line up with the
+  conversation too.
 - A restarted or resumed agent keeps its auto-summary instead of waiting for
   your next message to get a new one.
 - Idle agents are no longer re-read every interval just to find their recap
