@@ -1,7 +1,8 @@
 import { execFile, spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import net from 'node:net';
 
 export interface IntegratedHostSpawn {
   harness: string;
@@ -85,4 +86,38 @@ export function hostConnectionError(error: Error, label: string): Error {
   const code = (error as NodeJS.ErrnoException).code;
   if (code !== 'ENOENT' && code !== 'ECONNREFUSED') return error;
   return Object.assign(new Error(`The ${label} host is no longer running. Resume the conversation to continue.`, { cause: error }), { code });
+}
+
+// Transport failures cannot establish whether the host accepted a request.
+// Explicit host error responses stay ordinary Errors and remain definitive.
+export class IntegratedHostTransportError extends Error {
+  override name = 'IntegratedHostTransportError';
+}
+
+export function callIntegratedHost(socketPath: string, method: string, params: unknown): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const id = randomUUID();
+    const socket = net.createConnection(socketPath);
+    let buffer = '';
+    const timeout = setTimeout(() => { socket.destroy(); reject(new IntegratedHostTransportError(`Integrated host timed out: ${method}`)); }, 10_000);
+    socket.setEncoding('utf8');
+    socket.once('error', (error) => { clearTimeout(timeout); socket.destroy(); reject(hostConnectionError(error, 'Integrated agent')); });
+    socket.once('close', () => { clearTimeout(timeout); reject(new IntegratedHostTransportError(`Integrated host closed before replying: ${method}`)); });
+    socket.once('connect', () => socket.write(`${JSON.stringify({ id, method, params })}\n`));
+    socket.on('data', (chunk: string) => {
+      buffer += chunk;
+      const newline = buffer.indexOf('\n');
+      if (newline < 0) return;
+      clearTimeout(timeout);
+      socket.end();
+      try {
+        const response = JSON.parse(buffer.slice(0, newline)) as { id?: unknown; error?: unknown; result?: unknown };
+        if (!response || response.id !== id) throw new IntegratedHostTransportError('Invalid Integrated host response');
+        if (response.error) reject(new Error(String(response.error)));
+        else resolve(response.result);
+      } catch (error) {
+        reject(error instanceof IntegratedHostTransportError ? error : new IntegratedHostTransportError('Invalid Integrated host response', { cause: error }));
+      }
+    });
+  });
 }

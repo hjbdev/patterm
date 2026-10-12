@@ -334,7 +334,7 @@ function evaluate(): void {
     scheduleSearch(mention.query);
     return;
   }
-  // Agents without native commands, such as Amp, send `/text` as a prompt.
+  // Agents without native commands send `/text` as a prompt.
   if (props.controls.commands.length && slashQuery(draft.value.text)) {
     mode.value = 'slash';
     menuIndex.value = 0;

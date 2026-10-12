@@ -26,7 +26,6 @@ test('summary settings save and test send plain, deeply cloneable payloads', asy
     claude: { error: null, models: [model('haiku'), model('sonnet', ['low', 'high'])] },
     codex: { error: null, models: [model('gpt-5.6-luna', ['low', 'medium'], 'medium')] },
     opencode: { error: null, models: [model('openai/gpt-5.6-luna'), model('openai/gpt-5.6-luna'), model('anthropic/claude-haiku')] },
-    amp: null
   } };
   const received = [];
   const capture = (value) => {

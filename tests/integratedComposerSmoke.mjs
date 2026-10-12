@@ -808,7 +808,7 @@ test('optimistic image previews survive acceptance and are released after native
 });
 
 test('provider rows and native queues replace optimistic rows by identity', () => {
-  for (const provider of ['claude', 'amp', 'opencode']) {
+  for (const provider of ['claude', 'opencode']) {
     composer.clearDrafts();
     composer.draftFor(provider).text = 'hello';
     const prepared = composer.payloadFor(provider);

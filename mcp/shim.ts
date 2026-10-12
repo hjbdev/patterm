@@ -212,7 +212,7 @@ async function printHeaders(serverId: string): Promise<void> {
 }
 
 // Relays JSON-RPC between stdio and a remote server's Streamable HTTP endpoint
-// for harnesses that only take fixed headers (OpenCode and Amp). Headers come
+// for harnesses that only take fixed headers (OpenCode). Headers come
 // from Patterm per request, so a refreshed token is used without a restart.
 async function bridge(serverId: string): Promise<void> {
   let endpoint = await registryRequest({ op: 'mcp-endpoint', server: serverId }) as { url: string; headers: Record<string, string> };

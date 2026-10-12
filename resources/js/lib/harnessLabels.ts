@@ -6,7 +6,6 @@ export const HARNESS_LABELS: Record<string, string> = {
   claude: 'Claude Code',
   codex: 'Codex',
   opencode: 'OpenCode',
-  amp: 'Amp',
   rawpty: 'Raw terminal'
 };
 

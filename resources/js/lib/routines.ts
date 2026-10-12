@@ -74,7 +74,7 @@ export interface RoutineChoiceOption {
   group?: string;
 }
 
-export const ROUTINE_HARNESSES = ['claude', 'codex', 'opencode', 'amp'] as const;
+export const ROUTINE_HARNESSES = ['claude', 'codex', 'opencode'] as const;
 
 export function listRoutines(): Promise<RoutineRecord[]> {
   return (window.patterm.call('routine_list', {}) as Promise<{ routines: RoutineRecord[] }>).then((result) => result.routines);

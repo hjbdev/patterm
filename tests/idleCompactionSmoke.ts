@@ -79,7 +79,7 @@ async function main() {
   const count = (id: string) => compacted.filter((item) => item === id).length;
   try {
     db.exec("insert into projects(id,name,path,created_at,updated_at) values('project','Test','/tmp','now','now')");
-    for (const [id, harness] of [['claude', 'claude'], ['amp', 'amp'], ['codex', 'codex'], ['old', 'codex'], ['openai', 'opencode'], ['go', 'opencode'], ['assistant', 'codex'], ['second', 'claude']]) add(id!, harness!);
+    for (const [id, harness] of [['claude', 'claude'], ['codex', 'codex'], ['old', 'codex'], ['openai', 'opencode'], ['go', 'opencode'], ['assistant', 'codex'], ['second', 'claude']]) add(id!, harness!);
     db.prepare("update sessions set session_role = 'assistant' where process_id = 'assistant'").run();
     service.start();
 
@@ -239,9 +239,7 @@ async function main() {
     assert.deepEqual(state('claude'), cleared);
 
     // Harnesses without a known cache lifetime are left alone.
-    turn('amp');
-    signalListener?.('amp', 'compact');
-    assert.deepEqual(state('amp'), cleared);
+
 
     // Codex and OpenCode compact only on models with a 30-minute cache.
     for (const id of ['codex', 'old', 'openai', 'go']) turn(id);

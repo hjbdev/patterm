@@ -339,7 +339,7 @@ function goBack(): void {
   }
 }
 
-const HISTORY_PROVIDERS: HistoryProvider[] = ['claude', 'codex', 'opencode', 'amp'];
+const HISTORY_PROVIDERS: HistoryProvider[] = ['claude', 'codex', 'opencode'];
 const historyBusy = ref(false);
 const historyError = ref('');
 const historySources = ref<HistorySource[]>([]);
@@ -364,7 +364,7 @@ async function addHistoryPath(provider: HistoryProvider): Promise<void> {
   historyBusy.value = true;
   try {
     await autosave(`history.sources.${provider}:${selected}`, async () => {
-      await window.patterm.call('history_configure', { provider, path: selected, enabled: true, watch_enabled: provider !== 'amp' });
+      await window.patterm.call('history_configure', { provider, path: selected, enabled: true, watch_enabled: true });
       await loadHistorySettings();
     });
   } finally {
@@ -382,7 +382,7 @@ async function toggleHistorySource(source: HistorySource): Promise<void> {
         path: source.path,
         source_kind: source.sourceKind,
         enabled: !source.enabled,
-        watch_enabled: source.provider === 'amp' ? false : !source.enabled
+        watch_enabled: !source.enabled
       });
       await loadHistorySettings();
     });
@@ -418,10 +418,10 @@ async function resetAndReimportHistory(): Promise<void> {
   }
 }
 
-type HistoryProvider = 'claude' | 'codex' | 'opencode' | 'amp';
+type HistoryProvider = 'claude' | 'codex' | 'opencode';
 
 function providerLabel(provider: HistoryProvider): string {
-  return { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode', amp: 'Amp' }[provider];
+  return { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' }[provider];
 }
 
 interface HistorySource {

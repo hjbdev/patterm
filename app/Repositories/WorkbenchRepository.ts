@@ -1,3 +1,4 @@
+import { harnessProviders } from '../Harness/providers';
 import type { DatabaseService } from '../Services/DatabaseService';
 import { USER_PROJECT_KINDS_SQL } from '../Services/PersonalProject';
 import { SettingsService, type SidebarState } from '../Services/SettingsService';
@@ -208,7 +209,7 @@ export class WorkbenchRepository {
     const rows = this.db
       .prepare(`select * from harness_installations order by harness asc`)
       .all() as HarnessInstallationRow[];
-    return rows.map(mapHarness);
+    return rows.filter((row) => harnessProviders.some((provider) => provider.id === row.harness)).map(mapHarness);
   }
 
   snapshot(): WorkbenchSnapshotDto {

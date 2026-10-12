@@ -138,7 +138,6 @@ const spawnLabels: Record<string, string> = {
   'spawn:agent:claude': 'Spawn Claude',
   'spawn:agent:codex': 'Spawn Codex',
   'spawn:agent:opencode': 'Spawn OpenCode',
-  'spawn:agent:amp': 'Spawn Amp'
 };
 
 // Groups from older backends map onto the current sections.

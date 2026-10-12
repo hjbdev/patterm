@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import type { DatabaseService } from './DatabaseService';
-import { detachedHostLauncher, hostConnectionError, type IntegratedHostLauncher } from './IntegratedHostLauncher';
+import { callIntegratedHost as callHost, IntegratedHostTransportError, detachedHostLauncher, hostConnectionError, type IntegratedHostLauncher } from './IntegratedHostLauncher';
 import type { IntegratedControlSelector, IntegratedControls, IntegratedFormAction, IntegratedLaunchInput, IntegratedLaunchResult } from './IntegratedAgentService';
 import { UncertainDeliveryError, type IntegratedDeliveryState } from './IntegratedDelivery';
 import type { IntegratedConversationEvent, IntegratedConversationListener } from './IntegratedConversation';
@@ -11,7 +11,7 @@ import type { ResolvedIntegratedPrompt } from './IntegratedInput';
 import { readClaudeTaskOutput, type ClaudeTaskOutput } from './ClaudeTaskOutput';
 import { containsReferenceToken, referenceToken } from './PromptReferences';
 import type { TranscriptImageStore } from './TranscriptImageStore';
-import { ampMcpServers, claudeMcpServers } from '../Harness/McpDelivery';
+import { claudeMcpServers } from '../Harness/McpDelivery';
 
 const CLAUDE_RECONNECT_ATTEMPTS = 8;
 
@@ -35,29 +35,24 @@ export class ClaudeStreamService {
     private readonly nodePath: string,
     private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly hostScript = path.resolve(__dirname, '../Runtime/ClaudeIntegratedHost.js'),
-    private readonly harness: 'claude' | 'amp' = 'claude',
     private readonly launcher: IntegratedHostLauncher = detachedHostLauncher,
     private readonly images: TranscriptImageStore | null = null
   ) {}
 
   async prepare(input: IntegratedLaunchInput): Promise<IntegratedLaunchResult> {
-    const directory = path.join(this.runtimeDir, this.harness);
+    const directory = path.join(this.runtimeDir, 'claude');
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     const key = randomUUID();
     const sessionId = input.resumeId ?? randomUUID();
     if (input.resumeId) {
-      const attached = this.database.connection.prepare('select id from sessions where harness = ? and resume_id = ? and exited_at is null').get(this.harness, input.resumeId);
-      if (attached) throw new Error(`${this.harness === 'amp' ? 'Amp thread' : 'Claude session'} is already attached to Patterm`);
+      const attached = this.database.connection.prepare('select id from sessions where harness = ? and resume_id = ? and exited_at is null').get('claude', input.resumeId);
+      if (attached) throw new Error('Claude session is already attached to Patterm');
     }
     const socketPath = path.join(directory, `${key}.sock`);
     const configPath = path.join(directory, `${key}.json`);
     const mcpConfigPath = path.join(directory, `${key}-mcp.json`);
     const patterm = { command: input.mcp.command, args: input.mcp.args, env: input.mcp.env };
-    // Claude Code wants an `mcpServers` object; Amp rejects that wrapper and
-    // takes the bare name-to-server map.
-    const mcpConfig = this.harness === 'amp'
-      ? { ...ampMcpServers(input.mcpServers ?? [], input.mcp), patterm }
-      : { mcpServers: { ...claudeMcpServers(input.mcpServers ?? [], input.mcp), patterm } };
+    const mcpConfig = { mcpServers: { ...claudeMcpServers(input.mcpServers ?? [], input.mcp), patterm } };
     fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2), { mode: 0o600 });
     fs.writeFileSync(configPath, JSON.stringify({
       socketPath, executable: input.executable, cwd: input.cwd, sessionId,
@@ -65,7 +60,7 @@ export class ClaudeStreamService {
       model: input.model ?? null, reasoning: input.reasoning ?? null,
       ...(this.images ? { imageDirectory: this.images.directory } : {})
     }), { mode: 0o600 });
-    const pid = await this.launcher.launch({ harness: this.harness, key, nodePath: this.nodePath, script: this.hostScript, configPath, cwd: input.cwd, env: this.env });
+    const pid = await this.launcher.launch({ harness: 'claude', key, nodePath: this.nodePath, script: this.hostScript, configPath, cwd: input.cwd, env: this.env });
     try {
       await waitForSocket(socketPath, pid);
       // Wait briefly for the child spawn outcome so a missing executable fails
@@ -85,9 +80,9 @@ export class ClaudeStreamService {
           const text = typeof message.text === 'string' ? message.text : '';
           return text.startsWith('Claude Code could not start') || ((id.startsWith('error_') || id.startsWith('stderr_')) && text.length > 0);
         }).at(-1);
-        throw new Error(String(failure?.text ?? `${this.harness === 'amp' ? 'Amp' : 'Claude Code'} could not start; check the executable and authentication`));
+        throw new Error(String(failure?.text ?? 'Claude Code could not start; check the executable and authentication'));
       }
-      return { resumeId: sessionId, argv: [input.executable, `${this.harness}-host`, socketPath, String(pid ?? ''), configPath] };
+      return { resumeId: sessionId, argv: [input.executable, 'claude-host', socketPath, String(pid ?? ''), configPath] };
     } catch (error) {
       stopPid(pid);
       throw error;
@@ -99,7 +94,7 @@ export class ClaudeStreamService {
     const result = record(await callHost(runtime.socketPath, 'conversation', {}));
     const messages = record(result.messages);
     return {
-      process_id: processId, session_id: runtime.pattermSessionId, provider_session_id: runtime.sessionId, provider: this.harness,
+      process_id: processId, session_id: runtime.pattermSessionId, provider_session_id: runtime.sessionId, provider: 'claude',
       ...result,
       ...(Array.isArray(messages.data) ? { messages: { ...messages, data: messages.data.map(withoutOriginalFile) } } : {}),
       streaming: true,
@@ -196,7 +191,7 @@ export class ClaudeStreamService {
     // it has no generic file block, so other attachments are rejected clearly.
     const unsupported = input.attachments.filter((attachment) => !attachment.mime.startsWith('image/'));
     if (unsupported.length) {
-      throw new Error(`${this.harness === 'amp' ? 'Amp' : 'Claude Code'} can attach images and @ file references, not ${unsupported.map((attachment) => attachment.name).join(', ')}`);
+      throw new Error(`Claude Code can attach images and @ file references, not ${unsupported.map((attachment) => attachment.name).join(', ')}`);
     }
     const references = input.references.filter((reference) => !containsReferenceToken(input.text, reference.relativePath));
     const text = [input.text.trim(), ...references.map((reference) => referenceToken(reference.relativePath))].filter(Boolean).join(' ');
@@ -286,7 +281,6 @@ export class ClaudeStreamService {
   }
 
   async taskOutput(processId: string, taskId: string, since?: string | null, cursor?: string | null): Promise<ClaudeTaskOutput> {
-    if (this.harness !== 'claude') throw new Error('This agent cannot show background task output');
     const runtime = this.runtime(processId);
     return readClaudeTaskOutput({ cwd: runtime.cwd, sessionId: runtime.sessionId, env: this.env }, taskId, since, cursor);
   }
@@ -323,13 +317,13 @@ export class ClaudeStreamService {
     const rows = this.database.connection.prepare(`
       select processes.id from processes join sessions on sessions.process_id = processes.id
       where sessions.harness = ? and sessions.interface_mode = 'integrated' and sessions.exited_at is null
-    `).all(this.harness) as Array<{ id: string }>;
+    `).all('claude') as Array<{ id: string }>;
     const results = await Promise.allSettled(rows.map(async (row) => {
       // The Claude stop owns the best-effort interrupt and the host stop.
       await this.stop(row.id);
     }));
     // Also stop hosts whose sessions were already reconciled as failed.
-    results.push(...await Promise.allSettled([this.launcher.stopAll(this.harness)]));
+    results.push(...await Promise.allSettled([this.launcher.stopAll('claude')]));
     const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
     if (failures.length) throw new AggregateError(failures.map((failure) => failure.reason), 'Could not stop every Claude host');
   }
@@ -352,42 +346,20 @@ export class ClaudeStreamService {
     return state;
   }
 
-  protected runtime(processId: string): ClaudeRuntime {
+  private runtime(processId: string): ClaudeRuntime {
     const row = this.database.connection.prepare(`
       select processes.argv, sessions.resume_id, sessions.id as session_id, coalesce(sessions.cwd, processes.cwd) as cwd
       from sessions join processes on processes.id = sessions.process_id
       where (sessions.process_id = ? or sessions.id = ?) and sessions.harness = ?
         and sessions.interface_mode = 'integrated' and sessions.resume_id is not null
       order by sessions.exited_at is null desc, sessions.started_at desc limit 1
-    `).get(processId, processId, this.harness) as { argv: string; resume_id: string; session_id: string; cwd: string | null } | undefined;
-    if (!row) throw new Error(`${this.harness === 'amp' ? 'Amp' : 'Claude'} Integrated session not found`);
+    `).get(processId, processId, 'claude') as { argv: string; resume_id: string; session_id: string; cwd: string | null } | undefined;
+    if (!row) throw new Error('Claude Integrated session not found');
     const argv = JSON.parse(row.argv) as unknown;
-    if (!Array.isArray(argv) || argv[1] !== `${this.harness}-host` || typeof argv[2] !== 'string') throw new Error('Integrated runtime metadata is invalid');
+    if (!Array.isArray(argv) || argv[1] !== 'claude-host' || typeof argv[2] !== 'string') throw new Error('Integrated runtime metadata is invalid');
     const pid = typeof argv[3] === 'string' && /^\d+$/.test(argv[3]) ? Number(argv[3]) : null;
     return { executable: String(argv[0]), cwd: row.cwd ?? process.cwd(), socketPath: argv[2], pid, sessionId: row.resume_id, pattermSessionId: row.session_id };
   }
-}
-
-function callHost(socketPath: string, method: string, params: unknown): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const id = randomUUID();
-    const socket = net.createConnection(socketPath);
-    let buffer = '';
-    const timeout = setTimeout(() => { socket.destroy(); reject(new Error(`Claude host timed out: ${method}`)); }, 10_000);
-    socket.setEncoding('utf8');
-    socket.once('error', (error) => { clearTimeout(timeout); reject(hostConnectionError(error, 'Integrated agent')); });
-    socket.once('connect', () => socket.write(`${JSON.stringify({ id, method, params })}\n`));
-    socket.on('data', (chunk: string) => {
-      buffer += chunk;
-      const newline = buffer.indexOf('\n');
-      if (newline < 0) return;
-      clearTimeout(timeout);
-      socket.end();
-      const response = record(JSON.parse(buffer.slice(0, newline)));
-      if (response.error) reject(new Error(String(response.error)));
-      else resolve(response.result);
-    });
-  });
 }
 
 // Hosts from an older generation have no `controls` method; their full
@@ -516,7 +488,7 @@ function record(value: unknown): Record<string, unknown> {
 // session; host error responses are definitive.
 function isUncertainHostFailure(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  if (/^Claude host timed out:/.test(error.message)) return true;
+  if (error instanceof IntegratedHostTransportError) return true;
   const code = (error as NodeJS.ErrnoException).code;
   return typeof code === 'string' && ['ECONNREFUSED', 'ECONNRESET', 'EPIPE', 'ETIMEDOUT'].includes(code);
 }
