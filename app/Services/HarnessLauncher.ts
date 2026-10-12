@@ -93,7 +93,7 @@ export interface HarnessLauncherDeps {
   openCodeServer?: Pick<OpenCodeServerService, 'prepare'> & Partial<Pick<OpenCodeServerService, 'prompt'>>;
   ampThreads?: Pick<AmpThreadService, 'prepare'>;
   integrated?: Pick<IntegratedAgentService, 'prepare' | 'prompt' | 'stop' | 'cleanupLaunch' | 'observe'>;
-  settings?: Pick<SettingsService, 'agentInterface'>;
+  settings?: Pick<SettingsService, 'agentInterface' | 'figuresEnabled'>;
   // Preset lookup for defaulting the model/reasoning at launch. Defaults to the
   // application settings table.
   presetSettings?: Pick<SettingsService, 'harnessPresets'>;
@@ -195,7 +195,7 @@ export class HarnessLauncher {
     const agentContext = harness === 'rawpty' ? ''
       : input.session_role === 'assistant' ? contextService.buildAssistant(this.deps.assistantMemory?.snapshot()).trim()
       : input.session_role === 'routine' ? contextService.buildRoutine().trim()
-      : contextService.build(input.project_id).trim();
+      : contextService.build(input.project_id, { figures: interfaceMode === 'integrated' && this.deps.settings?.figuresEnabled() !== false }).trim();
     timing.mark('context.built', { context_chars: agentContext.length });
     const project = this.deps.workbench.getProject(input.project_id);
     const worktree = input.worktree_id ? this.worktree(input.worktree_id) : null;

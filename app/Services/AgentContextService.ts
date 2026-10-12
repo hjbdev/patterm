@@ -1,5 +1,8 @@
 export class AgentContextService {
-  build(projectId: string): string {
+  // figures: Integrated sessions where ui_save is on. Claude Code defers MCP
+  // tools to a bare name, so without this line agents reach for the host's
+  // own charting (artifacts, HTML pages) and never find ui_save.
+  build(projectId: string, { figures = false }: { figures?: boolean } = {}): string {
     return `Patterm hosts native agent CLIs through PTYs.
 
 Project: ${projectId}
@@ -13,7 +16,7 @@ Project: ${projectId}
 - When your task is fully complete and nothing is left to do, call request_close with a short summary; the user (or your parent) decides whether to close you.
 - For follow-ups or re-reviews, send_message the child that already reported instead of spawning a replacement; it keeps its earlier context.
 - Do not send a running child status checks, hurry-up messages, or requests to wrap up. Only message it with genuinely new task information or to cancel at the user's request.
-- ${PROCESS_NAME_INSTRUCTION}`;
+- ${PROCESS_NAME_INSTRUCTION}${figures ? `\n- ${FIGURE_INSTRUCTION}` : ''}`;
   }
 
   // The global assistant sits between the user and every project's agents.
@@ -45,4 +48,5 @@ Project: ${projectId}
   }
 }
 
+const FIGURE_INSTRUCTION = 'Patterm draws your replies. When the user asks for a chart, graph, table, or diagram, or one would explain better than prose, call ui_save (load it through tool search if it is deferred) and put the [patterm_figure:id] it returns on its own line. Use it instead of artifacts, HTML pages, image files, or ASCII charts.';
 const PROCESS_NAME_INSTRUCTION = 'Use exact process names; never invent labels from IDs, like "Agent 789".';

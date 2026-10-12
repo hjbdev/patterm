@@ -1010,7 +1010,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     name: DRAWN_UI_TOOL,
     namespace: 'cli.ui',
     // Claude Code cuts tool descriptions at about 2,000 characters, notes included.
-    description: 'Save a figure and get a reference to place in your text reply, where Patterm draws it from your data and meanings.',
+    description: 'Show a chart, table, or diagram in your reply: save it as a figure, then place the reference it returns in your text.',
     inputSchema: {
       type: 'object',
       properties: {
