@@ -3,13 +3,14 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { Client as LegacyClient } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport as LegacyTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { buildSync } from 'esbuild';
+import { ipcPath } from '../app/Platform/Ipc';
 
 const descriptors: Array<{ name: string; namespace: string; description: string; inputSchema: Record<string, unknown>; changes?: string[] }> = [
   { name: 'whoami', namespace: 'cli.meta', description: 'Return caller identity.', inputSchema: { type: 'object', additionalProperties: false } },
@@ -28,6 +29,7 @@ async function main(): Promise<void> {
   const opened: Array<{ url: string; identity: string }> = [];
   let receiveInterrupted!: (socket: net.Socket) => void;
   const received = new Promise<net.Socket>((resolve) => { receiveInterrupted = resolve; });
+  let execTarget: { command: string; args: string[]; env: Record<string, string> } | null = null;
   const registry = net.createServer((socket) => {
     sockets.add(socket);
     socket.once('close', () => sockets.delete(socket));
@@ -45,6 +47,7 @@ async function main(): Promise<void> {
         opened.push({ url: request.url!, identity: request.identity! });
         socket.end(`${JSON.stringify(request.url!.startsWith('file:') ? { error: 'Patterm does not open file: links' } : { result: { opened: true } })}\n`);
       }
+      else if (request.op === 'mcp-exec') socket.end(`${JSON.stringify({ result: execTarget })}\n`);
       else {
         calls.push({ tool: request.tool!, args: request.args, version: request.version });
         if (request.tool === 'spawn_process') receiveInterrupted(socket);
@@ -54,7 +57,7 @@ async function main(): Promise<void> {
   });
   const listen = () => new Promise<void>((resolve, reject) => {
     registry.once('error', reject);
-    registry.listen(socketPath, () => { registry.off('error', reject); resolve(); });
+    registry.listen(ipcPath(socketPath), () => { registry.off('error', reject); resolve(); });
   });
   const close = () => new Promise<void>((resolve, reject) => {
     for (const socket of sockets) socket.destroy();
@@ -93,6 +96,51 @@ async function main(): Promise<void> {
     const refused = await runOpener('file:///etc/passwd');
     assert.equal(refused.status, 1, 'a refused open fails so the CLI can fall back');
     assert.match(refused.stderr, /^xdg-open: Patterm does not open file: links/);
+
+    // --mcp-exec starts a server with environment Patterm holds. On Windows a
+    // batch file runs through cmd.exe, and closing stdin ends the server's
+    // whole tree; POSIX forwards signals instead.
+    const serverScript = path.join(directory, 'exec-server.js');
+    fs.writeFileSync(serverScript, [
+      "process.stdout.write(JSON.stringify({ argv: process.argv.slice(2), secret: process.env.EXEC_SECRET, pid: process.pid }) + '\\n');",
+      "process.stdin.on('data', (chunk) => process.stdout.write('echo:' + chunk));",
+      // Outlive stdin, like a server that ignores EOF.
+      'setInterval(() => {}, 1000);',
+      ''
+    ].join('\n'));
+    const serverArgs = ['two words', 'a&b'];
+    const serverEnv = { EXEC_SECRET: 'held by patterm' };
+    if (process.platform === 'win32') {
+      const batch = path.join(directory, 'exec server.cmd');
+      fs.writeFileSync(batch, `@"${process.execPath}" "${serverScript}" %*\r\n`);
+      execTarget = { command: batch, args: serverArgs, env: serverEnv };
+    } else {
+      execTarget = { command: process.execPath, args: [serverScript, ...serverArgs], env: serverEnv };
+    }
+    const execShim = spawn(process.execPath, [executable, '--mcp-exec', 'srv_exec'], { env: { ...process.env, PATTERM_MCP_SOCKET: socketPath, PATTERM_MCP_IDENTITY: 'mcp_exec' } });
+    const execExited = new Promise<void>((resolve) => execShim.once('exit', () => resolve()));
+    let execOutput = '';
+    execShim.stdout.setEncoding('utf8');
+    execShim.stdout.on('data', (chunk: string) => { execOutput += chunk; });
+    const execLine = async (pattern: RegExp): Promise<string> => {
+      const deadline = Date.now() + 10_000;
+      while (!pattern.test(execOutput) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
+      const match = pattern.exec(execOutput);
+      assert.ok(match, `exec server output matches ${pattern}: ${execOutput}`);
+      return match[0];
+    };
+    const started = JSON.parse(await execLine(/^\{.*\}$/m)) as { argv: string[]; secret: string; pid: number };
+    assert.deepEqual(started.argv, serverArgs, 'arguments reach the server unchanged');
+    assert.equal(started.secret, 'held by patterm', 'the server gets the environment from Patterm');
+    execShim.stdin.write('ping\n');
+    await execLine(/^echo:ping$/m);
+    if (process.platform === 'win32') execShim.stdin.end();
+    else execShim.kill('SIGTERM');
+    await execExited;
+    const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    const serverDeadline = Date.now() + 5_000;
+    while (alive(started.pid) && Date.now() < serverDeadline) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(alive(started.pid), false, 'the server ends with the shim');
 
     const pid = modernTransport.pid;
     const initial = await modern.callTool({ name: 'whoami', arguments: {} }, { timeout: 2_000 });

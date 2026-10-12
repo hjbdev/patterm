@@ -21,7 +21,7 @@ import { SettingsService, type AgentInterface } from './SettingsService';
 import type { OpenCodeServerService } from './OpenCodeServerService';
 import { prepareOpenCodeTheme } from './OpenCodeThemeService';
 import type { McpServerRegistry } from './McpServerRegistry';
-import { CLAUDE_MCP_CONFIG } from '../Harness/providers';
+import { CLAUDE_CONTEXT_FILE, CLAUDE_MCP_CONFIG } from '../Harness/providers';
 import type { LaunchingMcpIdentities } from '../MCP/McpHelperAccess';
 import type { AssistantMemoryService } from './AssistantMemoryService';
 
@@ -407,9 +407,10 @@ export class HarnessLauncher {
   // and would open on the wrong machine for remote browsers. The shim routes
   // web and mail links to whichever Patterm client controls this terminal and
   // leaves files and other targets to the system opener, if there is one.
-  // Claude reads its MCP config at start. Once its agent has exited, the
-  // identity in it is refused, so the file only takes up space. Recent files
-  // may belong to a launch that hasn't registered its session yet.
+  // Claude reads its MCP config, and on Windows its context file, at start.
+  // Once its agent has exited, the identity in it is refused, so the file only
+  // takes up space. Recent files may belong to a launch that hasn't
+  // registered its session yet.
   private removeStaleClaudeMcpConfigs(): void {
     let names: string[];
     try {
@@ -420,7 +421,7 @@ export class HarnessLauncher {
     const live = this.deps.database.connection.prepare('select 1 from sessions where mcp_identity = ? and exited_at is null');
     const cutoff = Date.now() - 10 * 60_000;
     for (const name of names) {
-      const identity = CLAUDE_MCP_CONFIG.exec(name)?.[1];
+      const identity = (CLAUDE_MCP_CONFIG.exec(name) ?? CLAUDE_CONTEXT_FILE.exec(name))?.[1];
       if (!identity || live.get(identity)) continue;
       const file = path.join(this.deps.runtimeDir, name);
       try {
@@ -432,6 +433,10 @@ export class HarnessLauncher {
   }
 
   private linkOpenerEnv(identity: string): Record<string, string> {
+    // Windows CLIs open links through the shell (`start`, explorer.exe), not
+    // xdg-open, so a PATH shim is never consulted. The desktop app shows its
+    // terminals on this machine, where the shell opens them, and the remote
+    // server that needs the redirect runs on Linux.
     if (process.platform === 'win32') return {};
     const binDir = path.join(this.deps.runtimeDir, 'bin');
     const opener = path.join(binDir, 'xdg-open');

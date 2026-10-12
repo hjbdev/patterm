@@ -10,7 +10,7 @@ import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { McpServerActions } from '../app/Actions/McpServerActions';
 import { harnessProviders } from '../app/Harness/providers';
-import { claudeMcpServers, codexMcpOverrides, codexMcpStartupNotice, openCodeMcpConfigs } from '../app/Harness/McpDelivery';
+import { claudeMcpServers, codexMcpOverrides, codexMcpStartupNotice, headersHelperCommand, openCodeMcpConfigs } from '../app/Harness/McpDelivery';
 import { McpHelperAccess, MCP_HELPER_CUTOVER_KEY } from '../app/MCP/McpHelperAccess';
 import { McpSocketServer } from '../app/MCP/McpSocketServer';
 import { McpToolRegistry } from '../app/MCP/ToolRegistry';
@@ -125,8 +125,14 @@ async function main(): Promise<void> {
     const servers = registry.forHarness('codex');
     const claude = claudeMcpServers(servers, patterm) as Record<string, Record<string, unknown>>;
     assert.equal(claude['linear-acme']!.type, 'http');
-    assert.match(String(claude['linear-acme']!.headersHelper), /^ELECTRON_RUN_AS_NODE=1 PATTERM_MCP_SOCKET=\/tmp\/p.sock PATTERM_MCP_IDENTITY=mcp_1 \/usr\/bin\/node \/opt\/patterm\/shim.js --mcp-headers mcpsrv_/,
-      'helpers carry the agent identity, so Patterm answers only for its harness');
+    if (process.platform === 'win32') {
+      // cmd.exe runs Windows helpers; every token is caret-escaped.
+      assert.match(String(claude['linear-acme']!.headersHelper), /^set \^"ELECTRON_RUN_AS_NODE=1\^" && set \^"PATTERM_MCP_SOCKET=\/tmp\/p.sock\^" && set \^"PATTERM_MCP_IDENTITY=mcp_1\^" && \^"\/usr\/bin\/node\^" \^"\/opt\/patterm\/shim.js\^" \^"--mcp-headers\^" \^"mcpsrv_/,
+        'helpers carry the agent identity, so Patterm answers only for its harness');
+    } else {
+      assert.match(String(claude['linear-acme']!.headersHelper), /^ELECTRON_RUN_AS_NODE=1 PATTERM_MCP_SOCKET=\/tmp\/p.sock PATTERM_MCP_IDENTITY=mcp_1 \/usr\/bin\/node \/opt\/patterm\/shim.js --mcp-headers mcpsrv_/,
+        'helpers carry the agent identity, so Patterm answers only for its harness');
+    }
     assert.equal(claude.open!.headersHelper, undefined);
     assert.deepEqual(claude.railway, { command: 'railway', args: ['mcp'], env: { RAILWAY_TOKEN: 'secret' } });
     const codex = codexMcpOverrides(servers, patterm);
@@ -139,7 +145,9 @@ async function main(): Promise<void> {
     const stale = codexMcpStartupNotice(linear, 'failed to refresh OAuth tokens for server linear-acme: invalid_grant');
     assert.equal(stale.title, 'linear-acme did not start in Codex');
     assert.match(stale.body, /own saved login for linear-acme/);
-    assert.ok(stale.body.includes(`codex -c 'mcp_servers.linear-acme.url="${service.base}/mcp"' mcp logout linear-acme`));
+    assert.ok(stale.body.includes(process.platform === 'win32'
+      ? `codex -c "mcp_servers.linear-acme.url='${service.base}/mcp'" mcp logout linear-acme`
+      : `codex -c 'mcp_servers.linear-acme.url="${service.base}/mcp"' mcp logout linear-acme`));
     const signedOut = codexMcpStartupNotice(linear, 'The linear-acme MCP server is not logged in. Run `codex mcp login linear-acme`.');
     assert.match(signedOut.body, /Sign in to linear-acme in Patterm's MCP server settings/, 'a server with neither login points at Patterm sign-in');
     assert.doesNotMatch(signedOut.body, /saved login/);
@@ -329,6 +337,22 @@ async function main(): Promise<void> {
       (error, stdout) => error ? reject(error) : resolve(stdout)));
     const helper = JSON.parse(output) as Record<string, string>;
     assert.equal(helper.Authorization, `Bearer ${service.state.access}`);
+    if (process.platform === 'win32') {
+      // Run the delivered helper the way each CLI does on Windows, without the
+      // shim's environment: Claude Code `cmd.exe /d /s /c "<helper>"`, Codex
+      // `%ComSpec% /Q /D /C "<helper>"`. The shim sits in a directory whose
+      // name cmd.exe would otherwise split or expand.
+      const awkward = path.join(dir, 'odd & (dir) %PATH%');
+      fs.mkdirSync(awkward);
+      fs.copyFileSync(shim, path.join(awkward, 'shim.cjs'));
+      const command = headersHelperCommand({ command: process.execPath, args: [path.join(awkward, 'shim.cjs')], env: { ELECTRON_RUN_AS_NODE: '1', PATTERM_MCP_SOCKET: socketPath, PATTERM_MCP_IDENTITY: 'mcp_claude' } }, remote.id);
+      const bare = { SystemRoot: process.env.SystemRoot!, PATH: process.env.PATH! };
+      const run = (file: string, args: string[], shell: boolean) => new Promise<string>((resolve, reject) => execFile(file, args,
+        { env: bare, encoding: 'utf8', timeout: 10_000, shell, windowsVerbatimArguments: !shell }, (error, stdout) => error ? reject(error) : resolve(stdout)));
+      for (const stdout of [await run(command, [], true), await run(process.env.ComSpec ?? 'cmd.exe', ['/Q', '/D', '/C', `"${command}"`], false)]) {
+        assert.equal((JSON.parse(stdout) as Record<string, string>).Authorization, `Bearer ${service.state.access}`, 'cmd.exe runs the Windows header helper');
+      }
+    }
     const bridged = new Client({ name: 'bridge-test', version: '1' });
     await bridged.connect(new StdioClientTransport({ command: process.execPath, args: [shim, '--mcp-bridge', remote.id], env }));
     // The server revokes the token; the bridge asks Patterm for a new one.
