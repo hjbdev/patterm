@@ -81,6 +81,9 @@ declare global {
       onAssistantEvent(handler: (event: unknown) => void): () => void;
       // Desktop only: a native notification was clicked.
       onNavigate?(handler: (url: string) => void): () => void;
+      // Desktop only: the window was closed; confirm quitting in the app.
+      onQuitRequest?(handler: (request: { id: number; detail: string }) => void): () => void;
+      quitRequestShown?(id: number): void;
       // Browser only: Web Push subscriptions for this server.
       pushKey?(): Promise<unknown>;
       pushSubscribe?(subscription: unknown): Promise<unknown>;
