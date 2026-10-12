@@ -31,10 +31,12 @@ export function agentState(session: SessionRecord): AgentState {
   return 'idle';
 }
 
-// Projects with live agents first, then the most recently active.
+// The Personal project first, then projects with live agents, then the most
+// recently active.
 export function projectOverviews(projects: readonly ProjectWorkbench[]): ProjectOverview[] {
   return projects.map(projectOverview)
-    .sort((a, b) => Number(b.agents.length > 0) - Number(a.agents.length > 0) || time(b.lastActiveAt) - time(a.lastActiveAt));
+    .sort((a, b) => Number(b.project.kind === 'personal') - Number(a.project.kind === 'personal')
+      || Number(b.agents.length > 0) - Number(a.agents.length > 0) || time(b.lastActiveAt) - time(a.lastActiveAt));
 }
 
 // A subagent at a prompt matters more than the root's summary.

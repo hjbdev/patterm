@@ -185,6 +185,8 @@ async function main() {
     assert.ok(rankedCommands(catalogue, item.label).some(row => row.command.id === item.id), `${item.label} is searchable`);
   }
   assert.ok(rendererCommands(null).some(item => item.id === 'renderer:settings'));
+  assert.ok(rendererCommands('p').some(item => item.label === 'Worktrees'), 'a repository project has a Worktrees page');
+  assert.ok(!rendererCommands('project_personal', false).some(item => item.label === 'Worktrees'), 'the Personal project has no Worktrees page');
   assert.ok(!rendererCommands(null).some(item => item.kind === 'navigate'), 'Project navigation needs a selected project');
   const creationCommands = [...available, ...(await listCommandPaletteCommands(application, context)).commands];
   for (const [noun, id] of [['worktree', 'worktree:create'], ['todo', 'renderer:todo-create'], ['scratchpad', 'renderer:scratchpad-create'], ['note', 'renderer:scratchpad-create'], ['project', 'renderer:project-create'], ['terminal', 'spawn:terminal'], ['process', 'spawn:process']]) {

@@ -79,9 +79,10 @@ export interface PaletteRow {
 
 // These destinations belong to the renderer and must remain available while
 // the backend is loading, disconnected, or running an older command catalogue.
-export function rendererCommands(projectId: string | null) {
+// The Personal project is not a repository, so it has no Worktrees page.
+export function rendererCommands(projectId: string | null, repository = true) {
   return [
-    ...(projectId ? ['Agents', 'Todos', 'Scratchpads', 'Worktrees', 'History', 'Media'].map(label => ({
+    ...(projectId ? ['Agents', 'Todos', 'Scratchpads', ...(repository ? ['Worktrees'] : []), 'History', 'Media'].map(label => ({
       id: `navigate:project-tab:${encodeURIComponent(projectId)}:${label.toLowerCase()}`,
       label: label === 'History' ? 'Conversation history' : label,
       group: 'navigation', kind: 'navigate',

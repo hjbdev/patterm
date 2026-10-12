@@ -199,7 +199,9 @@ export class RemoteClientService {
           local.processes = [...local.processes, ...qualified.processes];
           local.worktrees = [...local.worktrees, ...qualified.worktrees];
           local.timers = [...local.timers, ...qualified.timers];
-        } else if (!localId) {
+        } else if (!localId || running(qualified)) {
+          // A linked project hidden here, such as Personal, still shows the
+          // other host's running agents and processes.
           projects.push(qualified);
         }
       }
@@ -549,4 +551,8 @@ function collectPrefixes(value: unknown, names: Set<string>, depth: number): voi
       collectPrefixes(item, names, depth + 1);
     }
   }
+}
+
+function running(project: ProjectWorkbenchDto): boolean {
+  return project.projectSessions.some((session) => !session.exitedAt) || project.processes.some((process) => process.status === 'running');
 }
