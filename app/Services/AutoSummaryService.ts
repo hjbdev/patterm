@@ -189,9 +189,10 @@ export class AutoSummaryService {
       const now = this.now();
       const interval = this.settings.intervalSeconds * 1000;
       if (now < pending.retryAt || now - pending.attempted < interval) continue;
-      // Nothing has drawn or arrived since the last attempt matched or made a
-      // recap, so it would only match it again. A failed attempt still retries.
-      if (pending.hash !== null && pending.failures === 0 && pending.changed <= pending.attempted) continue;
+      // An idle agent that has drawn or received nothing since its last attempt
+      // matched or made a recap would only match it again. Working terminals
+      // keep their periodic recaps: without a viewer they send no frames.
+      if (row.activity === 'idle' && pending.hash !== null && pending.failures === 0 && pending.changed <= pending.attempted) continue;
       const quiet = row.activity === 'idle' && now - pending.changed >= 2000;
       if (!quiet && now - Math.max(pending.started, pending.attempted) < interval) continue;
       const settings = this.settings;

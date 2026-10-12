@@ -92,6 +92,7 @@ async function main() {
     assert.equal(workbench.snapshot().projects[0]?.processes.find((item) => item.id === 'shell')?.summary?.text, 'Server ready.');
     now += 29_999; service.tick(); await flush(); assert.equal(snapshots, 1, 'minimum interval');
     now++; service.tick(); await flush(); assert.equal(calls, 1, 'unchanged snapshot');
+    assert.equal(snapshots, 1, 'an idle agent that has drawn nothing is not re-read');
     output = 'short'; now += 30_000; service.tick(); await flush(); assert.equal(calls, 1, 'trivial output');
     output = 'A different build is running and compiling a large number of modules.';
     db.exec("update processes set activity = 'permission' where id = 'root'");
@@ -102,8 +103,7 @@ async function main() {
       insert into todos(id,project_id,title,status,created_at,updated_at,created_by_actor) values ('todo','project','Ship licence','in_progress','now','now','user');
       insert into todo_assignments(todo_id,assignee_id,session_id) values ('todo','session','session');
       update processes set activity = 'working' where id = 'root'`);
-    service.tick(); await flush(); assert.equal(calls, 1, 'nothing has drawn since the last recap');
-    draw('root'); service.tick(); await flush(); assert.equal(calls, 2, 'continuous output gets periodic summaries');
+    service.tick(); await flush(); assert.equal(calls, 2, 'continuous output gets periodic summaries, even with no viewer to draw frames');
     assert.deepEqual(lastContext, { thread_name: 'root', references: ['PAT-12: Release hygiene'], todos: ['Ship licence (in progress)'],
       user_messages: [], previous_summary: 'Build and tests passed.', previous_title: null, native_title: null }, 'the recap builds on the last one and the thread\'s goal');
 
