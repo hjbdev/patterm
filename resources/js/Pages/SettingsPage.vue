@@ -30,6 +30,9 @@
                       <SettingsChoice id="navigation-layout" :model-value="draft.navigation" :options="NAVIGATION_OPTIONS" aria-label="Agent navigation" segmented @update:model-value="(value) => { draft.navigation = value; void saveAppearance('appearance.navigation.layout'); }" />
                     </SettingsRow>
                     <NavigationPreview :layout="draft.navigation" />
+                    <SettingsRow label="Personal project" description="List a project for agents outside any repository. Hidden, it still shows while something runs there." html-for="personal-project" save-key="appearance.navigation.personal" toggle>
+                      <Switch id="personal-project" :model-value="draft.personalProject" @update:model-value="(value) => { draft.personalProject = value; void saveAppearance('appearance.navigation.personal'); }" />
+                    </SettingsRow>
                   </SettingsSection>
 
                   <SettingsSection title="Interface" description="Font for tabs, menus, and project views." scope="appearance.interface">

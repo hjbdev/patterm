@@ -7,6 +7,7 @@ import { CreateProjectAction } from '../app/Actions/CreateProjectAction';
 import { ListDirectoriesAction, listDirectoriesInput } from '../app/Actions/ListDirectoriesAction';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { ensurePersonalProject, PERSONAL_PROJECT_ID } from '../app/Services/PersonalProject';
+import { SettingsService } from '../app/Services/SettingsService';
 import { TimelineService } from '../app/Services/TimelineService';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import type { TerminalService } from '../app/Services/TerminalService';
@@ -128,6 +129,14 @@ async function main(): Promise<void> {
     assert.equal(fs.statSync(personalDir).mode & 0o777, 0o700, 'the Personal directory is private');
     assert.deepEqual(repo.listProjects()[0], { id: PERSONAL_PROJECT_ID, name: 'Personal', path: personalDir, logo: null, kind: 'personal' });
     assert.equal(repo.listProjects().filter((project) => project.kind === 'personal').length, 1, 'one Personal project');
+
+    // Settings can hide it from the project list without removing it.
+    const settings = new SettingsService(database);
+    settings.updateAppearanceSettings({ ...settings.appearanceSettings(), personalProject: false });
+    assert.ok(!repo.listProjects().some((project) => project.kind === 'personal'), 'a hidden Personal project is not listed');
+    assert.ok(!repo.snapshot().projects.some((project) => project.project.kind === 'personal'), 'nor in the snapshot');
+    settings.updateAppearanceSettings({ ...settings.appearanceSettings(), personalProject: true });
+    assert.equal(repo.listProjects()[0]?.id, PERSONAL_PROJECT_ID, 'showing it again lists it first');
 
     database.dispose();
     // eslint-disable-next-line no-console

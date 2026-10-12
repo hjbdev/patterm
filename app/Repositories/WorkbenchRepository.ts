@@ -186,9 +186,13 @@ export class WorkbenchRepository {
     return this.database.connection;
   }
 
-  // The user's projects, with the Personal project first.
+  // The user's projects, with the Personal project first. Hidden in Settings,
+  // Personal still lists while anything runs there, so no agent goes missing.
   private projectRows(): ProjectRow[] {
-    return this.db.prepare(`select id, name, path, logo, kind from projects where kind in ${USER_PROJECT_KINDS_SQL} order by kind = 'personal' desc, created_at asc`).all() as ProjectRow[];
+    const showPersonal = this.settings.appearanceSettings().personalProject;
+    return this.db.prepare(`select id, name, path, logo, kind from projects where kind in ${USER_PROJECT_KINDS_SQL}
+      and (kind <> 'personal' or ? or exists (select 1 from processes where processes.project_id = projects.id and processes.status = 'running'))
+      order by kind = 'personal' desc, created_at asc`).all(showPersonal ? 1 : 0) as ProjectRow[];
   }
 
   listProjects(): ProjectSummaryDto[] {
