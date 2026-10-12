@@ -193,13 +193,26 @@ async function handle(socket: net.Socket, request: JsonRecord): Promise<void> {
     respond(socket, id, { state: userMessages.get(clientMessageId) ? 'accepted' : 'unknown' });
     return;
   }
-  if (request.method === 'prompt') {
+  if (request.method === 'prompt' || request.method === 'promptDocuments') {
     const text = String(params.text ?? '').trim();
     const images = (Array.isArray(params.images) ? params.images : []).flatMap((value) => {
       const image = record(value);
       const mediaType = String(image.media_type ?? '');
       const data = String(image.data ?? '');
       return mediaType.startsWith('image/') && data ? [{ type: 'image', source: { type: 'base64', media_type: mediaType, data } }] : [];
+    });
+    // PDFs travel as base64 documents and text files as plain-text documents.
+    const documents = (Array.isArray(params.documents) ? params.documents : []).flatMap((value) => {
+      const item = record(value);
+      const title = typeof item.title === 'string' ? item.title.slice(0, 500) : undefined;
+      const titled = title ? { title } : {};
+      if (item.media_type === 'application/pdf' && typeof item.data === 'string' && item.data) {
+        return [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: item.data }, ...titled }];
+      }
+      if (item.media_type === 'text/plain' && typeof item.text === 'string') {
+        return [{ type: 'document', source: { type: 'text', media_type: 'text/plain', data: item.text }, ...titled }];
+      }
+      return [];
     });
     const attachments = (Array.isArray(params.attachments) ? params.attachments : []).slice(0, 40).flatMap((value) => {
       const item = record(value);
@@ -210,7 +223,7 @@ async function handle(socket: net.Socket, request: JsonRecord): Promise<void> {
         ...(typeof item.detail === 'string' ? { detail: item.detail.slice(0, 1000) } : {}),
         ...(isTranscriptImageHash(item.sha256) ? { sha256: item.sha256 } : {}) }];
     });
-    if (!text && !images.length) throw new Error('Message is empty');
+    if (!text && !images.length && !documents.length) throw new Error('Message is empty');
     if (!child || !child.stdin.writable) startClaude(true);
     // The submitted client uuid makes retries idempotent in the native session.
     const clientMessageId = typeof params.clientMessageId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(params.clientMessageId)
@@ -219,7 +232,7 @@ async function handle(socket: net.Socket, request: JsonRecord): Promise<void> {
     const messageId = `user_${clientMessageId}`;
     // A retried uuid must not add a second local transcript row.
     if (!messages.some((message) => message.id === messageId)) {
-      upsertMessage({ id: messageId, role: 'user', kind: 'text', text: text || `${images.length} image${images.length === 1 ? '' : 's'}`,
+      upsertMessage({ id: messageId, role: 'user', kind: 'text', text: text || uploadLabel(images.length, documents.length),
         ...(attachments.length ? { attachments } : {}) }, true, true);
     }
     if (!userMessages.has(clientMessageId)) userMessages.set(clientMessageId, false);
@@ -227,7 +240,7 @@ async function handle(socket: net.Socket, request: JsonRecord): Promise<void> {
     setStatus('working');
     writeClaude({
       type: 'user',
-      message: { role: 'user', content: [...(text ? [{ type: 'text', text }] : []), ...images] },
+      message: { role: 'user', content: [...(text ? [{ type: 'text', text }] : []), ...images, ...documents] },
       parent_tool_use_id: null,
       session_id: config.sessionId,
       uuid: clientMessageId
@@ -1112,3 +1125,8 @@ process.on('SIGTERM', () => {
   child?.kill('SIGTERM');
   server.close(() => process.exit(0));
 });
+
+function uploadLabel(images: number, documents: number): string {
+  const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+  return [images ? count(images, 'image') : '', documents ? count(documents, 'file') : ''].filter(Boolean).join(', ');
+}

@@ -187,40 +187,48 @@ export class ClaudeStreamService {
   }
 
   async prompt(processId: string, input: ResolvedIntegratedPrompt): Promise<unknown> {
-    // Claude accepts images as base64 content blocks and @path text references;
-    // it has no generic file block, so other attachments are rejected clearly.
-    const unsupported = input.attachments.filter((attachment) => !attachment.mime.startsWith('image/'));
-    if (unsupported.length) {
-      throw new Error(`Claude Code can attach images and @ file references, not ${unsupported.map((attachment) => attachment.name).join(', ')}`);
-    }
     const references = input.references.filter((reference) => !containsReferenceToken(input.text, reference.relativePath));
     const text = [input.text.trim(), ...references.map((reference) => referenceToken(reference.relativePath))].filter(Boolean).join(' ');
     // Inline the exact bytes validated by UploadService rather than re-reading.
-    const images = input.attachments.map((attachment) => ({
-      media_type: attachment.mime,
+    // Images become image blocks; PDFs and text become document blocks.
+    const uploads = input.attachments.map((attachment) => ({
+      attachment,
       data: attachment.data ?? fs.readFileSync(attachment.path).toString('base64')
     }));
+    const images = uploads.filter(({ attachment }) => attachment.mime.startsWith('image/'))
+      .map(({ attachment, data }) => ({ media_type: attachment.mime, data }));
+    const documents = uploads.filter(({ attachment }) => !attachment.mime.startsWith('image/'))
+      .map(({ attachment, data }) => attachment.mime === 'application/pdf'
+        ? { title: attachment.name, media_type: 'application/pdf', data }
+        : { title: attachment.name, media_type: 'text/plain', text: Buffer.from(data, 'base64').toString('utf8') });
     // These small descriptors are for Patterm's user row only. Never send
     // server paths or base64 bytes back through the browser transcript; a
     // stored image is shown by its hash.
     const displayAttachments = [
       ...input.references.map((reference) => ({ type: 'reference', name: reference.name, detail: `@${reference.relativePath}` })),
-      ...input.attachments.map((attachment, index) => {
-        const stored = this.images?.fromBase64(images[index]!.data);
+      ...uploads.map(({ attachment, data }) => {
+        if (!attachment.mime.startsWith('image/')) return { type: 'file', name: attachment.name, mime: attachment.mime };
+        const stored = this.images?.fromBase64(data);
         return { type: 'image', name: attachment.name, mime: attachment.mime, ...(stored ? { sha256: stored.sha256 } : {}) };
       })
     ];
-    if (!text && !images.length) throw new Error('Message is empty');
+    if (!text && !uploads.length) throw new Error('Message is empty');
     try {
-      return await callHost(this.runtime(processId).socketPath, 'prompt', {
+      // Hosts that predate documents reject promptDocuments as unknown
+      // instead of dropping the files from a plain prompt.
+      return await callHost(this.runtime(processId).socketPath, documents.length ? 'promptDocuments' : 'prompt', {
         text,
         images,
+        ...(documents.length ? { documents } : {}),
         attachments: displayAttachments,
         ...(input.messageId ? { clientMessageId: input.messageId } : {})
       });
     } catch (error) {
       if (isUncertainHostFailure(error)) {
         throw new UncertainDeliveryError(error instanceof Error ? error.message : String(error), input.messageId);
+      }
+      if (error instanceof Error && /Unknown Claude host method: promptDocuments/.test(error.message)) {
+        throw new Error('Restart this agent to attach PDFs and text files; it was started by an older Patterm');
       }
       throw error;
     }

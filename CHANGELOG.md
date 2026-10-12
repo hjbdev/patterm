@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   private folder in Patterm's data directory, has no Worktrees page, and never
   links to another host's project. The assistant and workspace routines can
   work in it. Turned off, it still shows while something runs there.
+- Integrated Claude Code agents accept PDFs and text files from the paperclip,
+  paste, and drop, sent as native document blocks. Agents started before this
+  update need a restart to attach them.
 - When an OpenCode launch fails because the shared server is older than the
   CLI, the error offers to restart the server and launch again. The restart
   interrupts running OpenCode turns, so it runs only when you click it.

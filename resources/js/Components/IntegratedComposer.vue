@@ -215,9 +215,7 @@ const menuIndex = ref(0);
 const files = ref<WorktreeFile[]>([]);
 const searchError = ref('');
 const searching = ref(false);
-const accept = computed(() => props.provider === 'claude'
-  ? 'image/png,image/jpeg,image/gif,image/webp'
-  : 'image/png,image/jpeg,image/gif,image/webp,.pdf,.md,.markdown,.txt,.json,.yaml,.yml,.toml,.ts,.tsx,.js,.jsx,.mjs,.cjs,.py,.rb,.go,.rs,.java,.c,.h,.cpp,.hpp,.sh,.zsh,.css,.scss,.html,.sql,.csv,.xml,.log,.ini,.conf,.env');
+const accept = 'image/png,image/jpeg,image/gif,image/webp,.pdf,.md,.markdown,.txt,.json,.yaml,.yml,.toml,.ts,.tsx,.js,.jsx,.mjs,.cjs,.py,.rb,.go,.rs,.java,.c,.h,.cpp,.hpp,.sh,.zsh,.css,.scss,.html,.sql,.csv,.xml,.log,.ini,.conf,.env';
 
 const agents = computed(() => props.agents ?? []);
 const launchers = computed(() => props.launchers ?? []);
@@ -512,7 +510,7 @@ function onPaste(event: ClipboardEvent): boolean {
   });
   if (pasted.length) {
     event.preventDefault();
-    void addFiles(props.processId, pasted, props.provider);
+    void addFiles(props.processId, pasted);
     return true;
   }
   const range = editor.value?.getSelection() ?? { start: draft.value.text.length, end: draft.value.text.length };
@@ -530,12 +528,12 @@ function insertText(text: string, range: { start: number; end: number }): void {
 function onDrop(event: DragEvent): void {
   dragging.value = false;
   const dropped = event.dataTransfer?.files;
-  if (dropped?.length) void addFiles(props.processId, Array.from(dropped), props.provider);
+  if (dropped?.length) void addFiles(props.processId, Array.from(dropped));
 }
 
 function onPick(event: Event): void {
   const input = event.target as HTMLInputElement;
-  if (input.files?.length) void addFiles(props.processId, Array.from(input.files), props.provider);
+  if (input.files?.length) void addFiles(props.processId, Array.from(input.files));
   input.value = '';
 }
 

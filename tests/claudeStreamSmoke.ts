@@ -473,12 +473,27 @@ process.stdin.on('data', (chunk) => {
     const source = submitted.content[1]?.source as { type: string; media_type: string; data: string };
     assert.equal(source.media_type, 'image/png');
     assert.equal(source.data, imageBytes.toString('base64'));
-    const documentFile = path.join(directory, 'doc.pdf');
-    fs.writeFileSync(documentFile, '%PDF');
-    await assert.rejects(
-      service.prompt('process_test', { text: 'attach', references: [], attachments: [{ path: documentFile, name: 'doc.pdf', mime: 'application/pdf', size: 4 }] }),
-      /can attach images and @ file references/
-    );
+    // PDFs and text files become native document blocks.
+    const documentId = '33333333-3333-3333-3333-333333333333';
+    await service.prompt('process_test', {
+      text: 'attach',
+      references: [],
+      attachments: [
+        { path: path.join(directory, 'doc.pdf'), name: 'doc.pdf', mime: 'application/pdf', size: 4, data: Buffer.from('%PDF').toString('base64') },
+        { path: path.join(directory, 'notes.md'), name: 'notes.md', mime: 'text/markdown', size: 5, data: Buffer.from('# Hi\n').toString('base64') }
+      ],
+      messageId: documentId
+    });
+    const documentRows = (await waitForConversation(service, 'process_test', /JVBERg/)).messages as { data: Array<{ id: string; text: string; attachments?: unknown }> };
+    assert.deepEqual(documentRows.data.find((message) => message.id === `user_${documentId}`)?.attachments, [
+      { name: 'doc.pdf', mime: 'application/pdf', type: 'file' },
+      { name: 'notes.md', mime: 'text/markdown', type: 'file' }
+    ], 'file chips carry no paths or bytes');
+    const documentEcho = JSON.parse(documentRows.data.filter((message) => message.id.startsWith('prompt_echo')).at(-1)!.text) as { content: unknown[] };
+    assert.deepEqual(documentEcho.content.slice(1), [
+      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: Buffer.from('%PDF').toString('base64') }, title: 'doc.pdf' },
+      { type: 'document', source: { type: 'text', media_type: 'text/plain', data: '# Hi\n' }, title: 'notes.md' }
+    ]);
 
     // A retry with the same uuid adds no second local transcript row, and the
     // native ack makes delivery reconcilable.
