@@ -109,6 +109,18 @@ function verifyScopedScanLinking(): void {
       .map((row) => [row.provider_conversation_id, row.project_id]));
     assert.deepEqual(links, { scope_mine: 'scope_asking', scope_theirs: 'scope_other', scope_elsewhere: null }, 'a scoped scan links conversations by path only');
 
+    if (process.platform === 'win32') {
+      // One directory reaches history as `c:/users/x`, `C:\Users\x`, or Git Bash's `/c/Users/x`.
+      const asking = path.join(directory, 'asking', 'src');
+      write('scope_lower', asking.toLowerCase().replace(/\\/g, '/'));
+      write('scope_msys', asking.replace(/^([A-Za-z]):/, (_match, drive: string) => `/${drive.toLowerCase()}`).replace(/\\/g, '/'));
+      write('scope_other_upper', path.join(directory, 'other').toUpperCase());
+      imports.import({ provider: 'claude', trigger: 'manual' });
+      const windowsLinks = Object.fromEntries((database.connection.prepare(`select provider_conversation_id, project_id from conversations where provider_conversation_id in ('scope_lower', 'scope_msys', 'scope_other_upper')`).all() as Array<{ provider_conversation_id: string; project_id: string | null }>)
+        .map((row) => [row.provider_conversation_id, row.project_id]));
+      assert.deepEqual(windowsLinks, { scope_lower: 'scope_asking', scope_msys: 'scope_asking', scope_other_upper: 'scope_other' }, 'Windows spellings of a project path link to it');
+    }
+
     const manualDir = path.join(directory, 'manual');
     fs.mkdirSync(manualDir);
     const explicitFile = path.join(manualDir, 'scope_explicit.jsonl');
@@ -734,13 +746,16 @@ async function runIncrementalScanEdgeCases(appDataPath: string, database: Databa
   writeSession(unreadableDir, 'edge-recent', 'edge-recent-needle');
   const unreadable = writeSession(unreadableDir, 'edge-unreadable', 'edge-unreadable-needle', old);
   imports.configure({ provider: 'claude', path: unreadableDir, enabled: true, watch_enabled: false });
-  fs.chmodSync(unreadable, 0o000);
-  try {
-    const failed = await imports.importWithParser(input(unreadableDir, 'watcher'), localParseFile);
-    assert.equal(failed.errorCount, 1, 'an unreadable transcript fails');
-    assert.equal(fileStatus(unreadable), 'error', 'an unreadable transcript still records an error row');
-  } finally {
-    fs.chmodSync(unreadable, 0o644);
+  // chmod 000 does not make a file unreadable on Windows, so the failure checks skip there.
+  if (process.platform !== 'win32') {
+    fs.chmodSync(unreadable, 0o000);
+    try {
+      const failed = await imports.importWithParser(input(unreadableDir, 'watcher'), localParseFile);
+      assert.equal(failed.errorCount, 1, 'an unreadable transcript fails');
+      assert.equal(fileStatus(unreadable), 'error', 'an unreadable transcript still records an error row');
+    } finally {
+      fs.chmodSync(unreadable, 0o644);
+    }
   }
   await imports.importWithParser(input(unreadableDir, 'watcher'), localParseFile);
   assert.ok(hasMessage('edge-unreadable-needle'), 'a transcript that becomes readable is imported after the watermark passed it');

@@ -1450,7 +1450,7 @@ export function normaliseTranscriptAttachments(attachments: Array<Record<string,
     const type = typeof row.type === 'string' ? row.type : '';
     const path = firstString(row.path, row.uri);
     const sha256 = imageHash(row.sha256);
-    const name = firstString(row.name) ?? path?.split('/').pop() ?? (sha256 ? 'Image' : '');
+    const name = firstString(row.name) ?? path?.split(/[\\/]/).pop() ?? (sha256 ? 'Image' : '');
     if (!name && !path) return [];
     const url = typeof row.url === 'string' && /^(https?:|blob:)/.test(row.url) ? row.url : undefined;
     const mime = firstString(row.mime);
