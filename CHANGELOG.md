@@ -12,6 +12,10 @@ in the archived pre-release repository.
 
 ### Added
 
+- Bundled interface and terminal fonts for desktop and browser use, including
+  Fira Sans and Comic Mono, with font selects and live previews in Settings.
+  The installed Nerd Font option falls back to bundled JetBrains Mono.
+
 - Auto-summaries also name agents you haven't named and give each one a
   short status line, from the same request. The sidebar shows the status line
   instead of the start of the recap; the full recap stays in the tooltip and

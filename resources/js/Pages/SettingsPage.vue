@@ -34,7 +34,7 @@
 
                   <SettingsSection title="Interface" description="Font for tabs, menus, and project views." scope="appearance.interface">
                     <SettingsRow label="Font" html-for="ui-font-preset" save-key="appearance.interface.font">
-                      <SettingsChoice id="ui-font-preset" :model-value="draft.uiFont.preset" :options="UI_FONT_OPTIONS" aria-label="Interface font" segmented @update:model-value="(value) => { draft.uiFont.preset = value; void saveAppearance('appearance.interface.font'); }" />
+                      <SettingsChoice id="ui-font-preset" :model-value="draft.uiFont.preset" :options="UI_FONT_OPTIONS" aria-label="Interface font" @update:model-value="(value) => { draft.uiFont.preset = value; void saveAppearance('appearance.interface.font'); }" />
                       <template v-if="draft.uiFont.preset === 'custom'" #below>
                         <Input id="ui-font-custom" :model-value="draft.uiFont.customFamily" class="h-8 text-xs sm:max-w-sm" placeholder="Aptos, ui-sans-serif, system-ui" aria-label="Custom interface font family" @update:model-value="(value) => { draft.uiFont.customFamily = String(value); saveAfterTyping('appearance.interface.font'); }" @blur="flushTyping" />
                       </template>
@@ -45,7 +45,7 @@
                     </div>
                   </SettingsSection>
 
-                  <SettingsSection title="Terminal" description="Presets use fonts installed on this device, with fallback families. Font changes resize running terminals." scope="appearance.terminal">
+                  <SettingsSection title="Terminal" description="Fonts are bundled with Patterm, except the installed Nerd Font option, which falls back to JetBrains Mono. Custom uses fonts installed on this device. Font changes resize running terminals." scope="appearance.terminal">
                     <SettingsRow label="Font" html-for="terminal-font-preset" save-key="appearance.terminal.font">
                       <SettingsChoice id="terminal-font-preset" :model-value="draft.terminalFont.preset" :options="TERMINAL_FONT_OPTIONS" aria-label="Terminal font" @update:model-value="(value) => { draft.terminalFont.preset = value; void saveAppearance('appearance.terminal.font'); }" />
                       <template v-if="draft.terminalFont.preset === 'custom'" #below>

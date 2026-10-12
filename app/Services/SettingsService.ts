@@ -15,8 +15,8 @@ export const sidebarStateInput = z.object({
 
 export type SidebarState = z.infer<typeof sidebarStateInput>;
 
-const uiFontPreset = z.enum(['inter', 'geist', 'system', 'custom']);
-const terminalFontPreset = z.enum(['jetbrains-nerd', 'geist-mono', 'system-mono', 'custom']);
+const uiFontPreset = z.enum(['inter', 'geist', 'fira-sans', 'ibm-plex-sans', 'system', 'custom']);
+const terminalFontPreset = z.enum(['jetbrains-nerd', 'jetbrains-mono', 'geist-mono', 'fira-code', 'iosevka', 'ibm-plex-mono', 'source-code-pro', 'comic-mono', 'system-mono', 'custom']);
 
 const fontFamilyInput = z.string().trim().max(240);
 

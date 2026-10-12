@@ -1,0 +1,79 @@
+[
+  {
+    "name": "inter",
+    "package": "@fontsource/inter",
+    "version": "5.3.0",
+    "license": "OFL-1.1",
+    "url": "https://registry.npmjs.org/@fontsource/inter/-/inter-5.3.0.tgz"
+  },
+  {
+    "name": "geist",
+    "package": "@fontsource/geist",
+    "version": "5.3.0",
+    "license": "OFL-1.1",
+    "url": "https://registry.npmjs.org/@fontsource/geist/-/geist-5.3.0.tgz"
+  },
+  {
+    "name": "fira-sans",
+    "package": "@fontsource/fira-sans",
+    "version": "5.3.0",
+    "license": "OFL-1.1",
+    "url": "https://registry.npmjs.org/@fontsource/fira-sans/-/fira-sans-5.3.0.tgz"
+  },
+  {
+    "name": "ibm-plex-sans",
+    "package": "@fontsource/ibm-plex-sans",
+    "version": "5.3.0",
+    "license": "OFL-1.1",
+    "url": "https://registry.npmjs.org/@fontsource/ibm-plex-sans/-/ibm-plex-sans-5.3.0.tgz"
+  },
+  {
+    "name": "geist-mono",
+    "package": "@fontsource/geist-mono",
+    "version": "5.3.0",
+    "license": "OFL-1.1",
+    "url": "https://registry.npmjs.org/@fontsource/geist-mono/-/geist-mono-5.3.0.tgz"
+  },
+  {
+    "name": "fira-code",
+    "package": "@fontsource/fira-code",
+    "version": "5.3.0",
+    "license": "OFL-1.1",
+    "url": "https://registry.npmjs.org/@fontsource/fira-code/-/fira-code-5.3.0.tgz"
+  },
+  {
+    "name": "iosevka",
+    "package": "@fontsource/iosevka",
+    "version": "5.3.0",
+    "license": "OFL-1.1",
+    "url": "https://registry.npmjs.org/@fontsource/iosevka/-/iosevka-5.3.0.tgz"
+  },
+  {
+    "name": "ibm-plex-mono",
+    "package": "@fontsource/ibm-plex-mono",
+    "version": "5.3.0",
+    "license": "OFL-1.1",
+    "url": "https://registry.npmjs.org/@fontsource/ibm-plex-mono/-/ibm-plex-mono-5.3.0.tgz"
+  },
+  {
+    "name": "source-code-pro",
+    "package": "@fontsource/source-code-pro",
+    "version": "5.3.1",
+    "license": "OFL-1.1",
+    "url": "https://registry.npmjs.org/@fontsource/source-code-pro/-/source-code-pro-5.3.1.tgz"
+  },
+  {
+    "name": "comic-mono",
+    "package": "@fontsource/comic-mono",
+    "version": "5.3.0",
+    "license": "mit",
+    "url": "https://registry.npmjs.org/@fontsource/comic-mono/-/comic-mono-5.3.0.tgz"
+  },
+  {
+    "name": "jetbrains-mono",
+    "package": "@fontsource/jetbrains-mono",
+    "version": "5.3.0",
+    "license": "OFL-1.1",
+    "url": "https://registry.npmjs.org/@fontsource/jetbrains-mono/-/jetbrains-mono-5.3.0.tgz"
+  }
+]
