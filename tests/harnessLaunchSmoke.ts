@@ -47,6 +47,18 @@ function providerById(id: string) {
   return provider;
 }
 
+// Windows links files with hard links and directories with junctions, which a
+// path comparison cannot follow, so compare the file identity there.
+function assertLinked(linked: string, source: string): void {
+  if (process.platform !== 'win32') {
+    assert.equal(fs.realpathSync(linked), source);
+    return;
+  }
+  const actual = fs.statSync(linked, { bigint: true });
+  const expected = fs.statSync(source, { bigint: true });
+  assert.ok(actual.ino === expected.ino && actual.dev === expected.dev, `${linked} is linked to ${source}`);
+}
+
 function assertOpenCodeTheme(tempDir: string): void {
   const source = path.join(tempDir, 'theme-source');
   const runtime = path.join(tempDir, 'theme-runtime');
@@ -62,9 +74,9 @@ function assertOpenCodeTheme(tempDir: string): void {
   assert.match(initial, /Preferences/);
   assert.deepEqual(parse(initial), { tabs: { enabled: true }, theme: { mode: 'dark', name: 'patterm-opencode' } });
   assert.equal(fs.readFileSync(path.join(source, 'cli.json'), 'utf8'), original);
-  assert.equal(fs.realpathSync(path.join(target, 'service.json')), path.join(source, 'service.json'));
-  assert.equal(fs.realpathSync(path.join(target, 'plugins')), path.join(source, 'plugins'));
-  assert.equal(fs.realpathSync(path.join(target, 'themes', 'custom.json')), path.join(source, 'themes', 'custom.json'));
+  assertLinked(path.join(target, 'service.json'), path.join(source, 'service.json'));
+  assertLinked(path.join(target, 'plugins'), path.join(source, 'plugins'));
+  assertLinked(path.join(target, 'themes', 'custom.json'), path.join(source, 'themes', 'custom.json'));
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(target, 'themes', 'patterm-opencode.json'), 'utf8')), openCodeTheme);
 
   // Bundled palette changes refresh the generated theme; matching content is left alone.
@@ -125,7 +137,8 @@ function assertOpenCodeTheme(tempDir: string): void {
   const oldTarget = path.join(oldRuntime, 'opencode-config');
   fs.mkdirSync(oldTarget, { recursive: true });
   fs.writeFileSync(path.join(oldTarget, 'cli.json'), '{"tabs":{"enabled":false},"theme":{"name":"system","mode":"dark"}}');
-  fs.symlinkSync(path.join(source, 'themes'), path.join(oldTarget, 'themes'));
+  // A junction needs no privilege on Windows.
+  fs.symlinkSync(path.join(source, 'themes'), path.join(oldTarget, 'themes'), process.platform === 'win32' ? 'junction' : undefined);
   prepareOpenCodeTheme(oldRuntime, { OPENCODE_CONFIG_DIR: source });
   assert.deepEqual(parse(fs.readFileSync(path.join(oldTarget, 'cli.json'), 'utf8')), { tabs: { enabled: false }, theme: { name: 'patterm-opencode', mode: 'dark' } });
   assert.equal(fs.existsSync(path.join(source, 'themes', 'patterm-opencode.json')), false, 'migration must not write through the old directory symlink');
@@ -135,19 +148,6 @@ function assertOpenCodeTheme(tempDir: string): void {
   fs.writeFileSync(cliPath, '{broken');
   assert.throws(() => prepareOpenCodeTheme(runtime, { OPENCODE_CONFIG_DIR: source }), /valid JSONC/);
   assert.equal(fs.readFileSync(cliPath, 'utf8'), '{broken', 'invalid saved preferences are never overwritten');
-}
-
-function symlinksAllowed(tempDir: string): boolean {
-  if (process.platform !== 'win32') return true;
-  const link = path.join(tempDir, 'symlink-probe');
-  try {
-    fs.symlinkSync(tempDir, link);
-    fs.unlinkSync(link);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EPERM') return false;
-    throw error;
-  }
 }
 
 function assertProviderPlans(runtimeDir: string): void {
@@ -223,10 +223,7 @@ async function main(): Promise<void> {
 
   try {
     assertProviderPlans(runtimeDir);
-    if (symlinksAllowed(tempDir)) assertOpenCodeTheme(tempDir);
-    // Windows refuses symlinks without Developer Mode, which the OpenCode
-    // theme links need; that service's Windows support is tested with it.
-    else console.log('skipping OpenCode theme links: this Windows account cannot create symlinks');
+    assertOpenCodeTheme(tempDir);
     fs.writeFileSync(shimPath, '');
 
     const database = new DatabaseService(tempDir);
