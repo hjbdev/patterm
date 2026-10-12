@@ -40,21 +40,29 @@ export class SummaryProseIndex {
     const messages = this.db.prepare(`select id, role, kind, text, metadata from conversation_messages
       where conversation_id = ? and kind = 'message' and role in ('user', 'assistant') order by seq`).all(conversationId) as ProseMessage[];
     let prefix = '', bytes = 0;
-    const rows = messages.flatMap((message) => {
-      const label = proseLabel(message), text = proseText(message.text);
-      if (!label || !text) return [];
+    const rows: Array<{ id: string; label: string; hash: string; prefix: string; size: number }> = [];
+    for (const message of messages) {
+      const label = proseLabel(message);
+      if (!label) continue;
+      const metadata = JSON.parse(message.metadata) as Record<string, unknown>;
+      // Mutable native text is a chronological boundary: skipping past it would
+      // insert the final version into already-covered history on the next import.
+      if (message.role === 'assistant' && metadata.source === 'opencode-sqlite' && metadata.prose_finalized !== true) break;
+      const text = proseText(message.text);
+      if (!text) continue;
       const hash = proseHash(`${label}\n${text}`);
       prefix = proseHash(`${prefix}\n${hash}`);
       const size = Buffer.byteLength(text);
       bytes += size;
-      return [{ id: message.id, label, hash, prefix, size }];
-    });
+      rows.push({ id: message.id, label, hash, prefix, size });
+    }
     this.db.transaction(() => {
       this.db.prepare('delete from summary_prose where conversation_id = ?').run(conversationId);
       const insert = this.db.prepare(`insert into summary_prose values (?, ?, ?, ?, ?, ?, ?)`);
       rows.forEach((row, position) => insert.run(conversationId, position, row.id, row.label, row.size, row.hash, row.prefix));
       this.db.prepare(`insert into summary_prose_sources values (?, 1, ?, ?, ?)
-        on conflict(conversation_id) do update set revision = revision + 1, message_count = excluded.message_count,
+        on conflict(conversation_id) do update set revision = case when content_hash != excluded.content_hash or message_count != excluded.message_count
+          then revision + 1 else revision end, message_count = excluded.message_count,
           total_bytes = excluded.total_bytes, content_hash = excluded.content_hash`).run(conversationId, rows.length, bytes, prefix);
     })();
   }

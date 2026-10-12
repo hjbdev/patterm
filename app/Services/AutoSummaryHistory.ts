@@ -34,13 +34,17 @@ export class AutoSummaryHistory {
   snapshot<T>(read: () => T): T { return this.history.transaction(read)(); }
 
   source(thread: SummaryThread): SummarySource | null {
-    const row = this.history.prepare(`select c.id as conversation_id, c.provider,
+    const rows = this.history.prepare(`select c.id as conversation_id, c.provider,
         coalesce(c.provider_conversation_id, c.id) as native_id, p.revision, p.message_count, p.total_bytes
       from conversations c join summary_prose_sources p on p.conversation_id = c.id
-      where c.project_id = ? and c.provider = ? and (c.session_id = ? or c.provider_conversation_id = ?)
+      where c.project_id = ? and c.provider = ? and ${thread.resume_id ? 'c.provider_conversation_id = ?' : `c.session_id = ?
+        and 1 = (select count(*) from conversations sibling where sibling.project_id = c.project_id
+          and sibling.provider = c.provider and sibling.session_id = c.session_id)`}
         and p.message_count = (select count(*) from summary_prose where conversation_id = c.id)
-      order by c.imported_at desc limit 1`).get(thread.project_id, thread.harness, thread.session_id, thread.resume_id) as SummarySource | undefined;
-    return row ?? null;
+      order by c.imported_at desc limit 2`).all(thread.project_id, thread.harness, thread.resume_id ?? thread.session_id) as SummarySource[];
+    // A known native identity is authoritative. Before it is captured, an
+    // ambiguous heuristic session link is insufficient evidence to spend usage.
+    return rows.length === 1 ? rows[0]! : null;
   }
 
   state(thread: SummaryThread, source: SummarySource): SummaryState {
@@ -76,7 +80,7 @@ export class AutoSummaryHistory {
       state = this.readState(thread.project_id, source)!;
     }
     if (!state.stale && !this.valid(source, state)) {
-      this.app.prepare(`update auto_summary_memory set stale = 1, revision = revision + 1
+      this.app.prepare(`update auto_summary_memory set stale = 1, rebuild_end = null, revision = revision + 1
         where project_id = ? and provider = ? and native_id = ?`).run(thread.project_id, source.provider, source.native_id);
       state = this.readState(thread.project_id, source)!;
     }

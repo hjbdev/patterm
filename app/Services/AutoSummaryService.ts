@@ -46,7 +46,7 @@ export class AutoSummaryService {
     private readonly terminal: Pick<TerminalService, 'request' | 'onFrame'>,
     private readonly runner: Pick<AutoSummaryRunner, 'run' | 'availability'>,
     private readonly notify: () => void, private readonly now: () => number = Date.now,
-    private readonly history: { readonly connection: SqliteConnection } | null = null) {
+    private readonly history: { readonly connection: SqliteConnection; ensureAvailable?: () => boolean } | null = null) {
     this.settings = settingsService.autoSummarySettings();
   }
 
@@ -130,7 +130,10 @@ export class AutoSummaryService {
   }
 
   private reader(): AutoSummaryHistory | null {
-    try { return this.history ? new AutoSummaryHistory(this.database.connection, this.history.connection) : null; }
+    try {
+      if (!this.history || this.history.ensureAvailable && !this.history.ensureAvailable()) return null;
+      return new AutoSummaryHistory(this.database.connection, this.history.connection);
+    }
     catch { return null; }
   }
 
@@ -179,23 +182,33 @@ export class AutoSummaryService {
               const result = summaryResult.parse(await this.runner.run(settings, batch.text, controller.signal, 'summary', batch.context));
               if (!result.memory) throw new Error('Summary returned no internal recap.');
               if (controller.signal.aborted || this.settings !== settings) return;
-              const current = reader.source(thread);
               const eligible = this.database.connection.prepare(`select 1 from processes p join sessions s on s.process_id = p.id
                 where p.id = ? and p.project_id = ? and p.kind = 'agent' and p.parent_process_id is null
                   and p.status != 'closed' and p.activity != 'permission' and s.id = ? and s.resume_id is ? and s.harness = ?
                   and s.id = (select id from sessions where process_id = p.id order by started_at desc, rowid desc limit 1)`).get(thread.id, thread.project_id, thread.session_id, thread.resume_id, thread.harness);
-              if (!eligible || !current || current.revision !== source.revision || current.native_id !== source.native_id) return;
+              if (!eligible) return;
+              // An append or tool-only import need not waste a successful call.
+              // Validate exactly the prefix consumed, including a split message.
+              const consumed = { ...batch.state, position: batch.position, byte_offset: batch.byte_offset,
+                prefix_hash: batch.prefix_hash, message_hash: batch.message_hash };
+              const coverage = reader.snapshot(() => {
+                const current = reader.source(thread);
+                if (!current || current.native_id !== source.native_id || current.conversation_id !== source.conversation_id || !reader.valid(current, consumed)) return null;
+                return reader.coverage(current, consumed);
+              });
+              if (coverage === null) return;
+              this.setCoverage(thread.id, coverage);
               const memory = summaryMemory.parse(Object.fromEntries(Object.entries(result.memory).map(([key, value]) => [key, proseText(value)])));
               const at = new Date(this.now()).toISOString();
               const saved = this.database.connection.transaction(() => {
                 if (!reader.save(batch, JSON.stringify(memory), at)) return false;
                 // Historical batches update memory, but never replace a current
                 // status with where the thread stood halfway through its history.
-                if (batch.coverage !== 'catching_up') {
+                if (coverage !== 'catching_up') {
                   this.database.connection.prepare(`update processes set auto_summary = ?, auto_status = ?, auto_summary_at = ?,
                     auto_summary_provider = ?, auto_summary_model = ?, auto_summary_coverage = ? where id = ?`)
-                    .run(summarySnapshot(result.summary), batch.coverage === 'complete' ? oneLine(result.status) : 'Partial conversation recap',
-                      at, settings.provider, settings.models[settings.provider], batch.coverage, thread.id);
+                    .run(summarySnapshot(result.summary), coverage === 'complete' ? oneLine(result.status) : 'Partial conversation recap',
+                      at, settings.provider, settings.models[settings.provider], coverage, thread.id);
                   if (settings.titles && result.title) this.database.connection.prepare('update sessions set auto_title = ? where id = ?')
                     .run(oneLine(result.title), thread.session_id);
                 }
@@ -298,7 +311,7 @@ export class AutoSummaryService {
     const state = reader.snapshot(() => reader.state(session, source)), coverage = reader.coverage(source, state);
     this.setCoverage(session.id, coverage);
     return { coverage, totalMessages: source.message_count, processedMessages: state.position,
-      estimatedCalls: Math.ceil(source.total_bytes / 6000), rebuilding: state.rebuild_end !== null, paused: state.paused === 1, enabled: this.settings.enabled,
+      estimatedCalls: Math.max(Math.ceil(source.total_bytes / 6000), Math.ceil(source.message_count / 64)), rebuilding: state.rebuild_end !== null, paused: state.paused === 1, enabled: this.settings.enabled,
       callsRemaining: Math.max(0, this.settings.maxCallsPerHour - this.status().usage.calls) };
   }
 

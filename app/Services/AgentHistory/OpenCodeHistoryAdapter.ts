@@ -37,7 +37,7 @@ interface OpenCodePartRow {
 
 export class OpenCodeHistoryAdapter implements ProviderHistoryAdapter {
   readonly provider = 'opencode' as const;
-  readonly parserVersion = 'opencode-sqlite-v8';
+  readonly parserVersion = 'opencode-sqlite-v9';
 
   defaultSources(homeDir: string): HistorySourceCandidate[] {
     const db = path.join(homeDir, '.local', 'share', 'opencode', 'opencode.db');
@@ -155,7 +155,7 @@ export class OpenCodeHistoryAdapter implements ProviderHistoryAdapter {
       const tool = parseToolPart(data);
       const textContent = summarizeInlineFiles(tool ? '' : textFromUnknown(data.text ?? data.content ?? data.summary));
       const text = textContent.text;
-      if (!text && !tool && type !== 'step-finish') continue;
+      if (!text && !tool && type !== 'step-finish' && !(role === 'assistant' && type === 'text' && !completedProse(data, parent))) continue;
       messages.push({
         providerMessageId: part.id,
         parentProviderMessageId: stringValue(parent?.parentID),
@@ -170,7 +170,7 @@ export class OpenCodeHistoryAdapter implements ProviderHistoryAdapter {
         toolOutputSummary: tool?.output ?? null,
         providerCreatedAt: isoFromMillis(part.time_created),
         tokenCount: tokenCount(data.tokens),
-        metadata: { type, messageId: part.message_id, fileReferences: [...textContent.fileReferences, ...(tool?.fileReferences ?? [])], toolMetadata: tool?.metadata ?? {}, source: 'opencode-sqlite' }
+        metadata: { type, prose_finalized: role !== 'assistant' || completedProse(data, parent), messageId: part.message_id, fileReferences: [...textContent.fileReferences, ...(tool?.fileReferences ?? [])], toolMetadata: tool?.metadata ?? {}, source: 'opencode-sqlite' }
       });
     }
 
@@ -200,6 +200,15 @@ export class OpenCodeHistoryAdapter implements ProviderHistoryAdapter {
       skills: skillUsesFromMessages(messages, { subagent: Boolean(session.parent_id), finishedCalls: true })
     };
   }
+}
+
+// V1 text parts use time.end; V2 content and its assistant envelope use
+// time.completed, matching OpenCodeServerService's native time projection.
+function completedProse(part: Record<string, unknown>, parent: Record<string, unknown> | undefined): boolean {
+  const partTime = part.time && typeof part.time === 'object' ? part.time as Record<string, unknown> : {};
+  const parentTime = parent?.time && typeof parent.time === 'object' ? parent.time as Record<string, unknown> : {};
+  return [partTime.end, partTime.completed, parentTime.completed].some(value =>
+    typeof value === 'number' && Number.isFinite(value) && value > 0);
 }
 
 // Assistant messages carry their own tokens and cost. OpenCode reports

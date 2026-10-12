@@ -13,6 +13,9 @@ import type { TerminalService } from '../app/Services/TerminalService';
 import { HistoryDatabaseService } from '../app/Services/HistoryDatabaseService';
 import { AgentHistoryImportService } from '../app/Services/AgentHistory/AgentHistoryImportService';
 import { ProviderHistoryDiscoveryService } from '../app/Services/AgentHistory/ProviderHistoryDiscoveryService';
+import { DatabaseSync } from 'node:sqlite';
+import { AutoSummaryHistory, type SummaryThread } from '../app/Services/AutoSummaryHistory';
+import { OpenCodeHistoryAdapter } from '../app/Services/AgentHistory/OpenCodeHistoryAdapter';
 import { ClaudeHistoryAdapter } from '../app/Services/AgentHistory/ClaudeHistoryAdapter';
 import { SummaryProseIndex } from '../app/Services/AgentHistory/SummaryProseIndex';
 import { SessionContextService } from '../app/Services/SessionContextService';
@@ -56,7 +59,7 @@ async function main() {
   const advance = async (ms = 30_000) => { now += ms; service.tick(); await flush(); };
   const discover = async () => { service.tick(); await advance(2000); };
   const summary = (id: string) => db.prepare('select auto_summary, auto_status, auto_summary_coverage from processes where id = ?').get(id) as Record<string, unknown>;
-  const state = (native: string) => db.prepare("select * from auto_summary_memory where project_id = 'project' and provider = 'claude' and native_id = ?").get(native) as { position: number; byte_offset: number; revision: number; stale: number; origin: string; paused: number; recap: string };
+  const state = (native: string, provider = 'claude') => db.prepare("select * from auto_summary_memory where project_id = 'project' and provider = ? and native_id = ?").get(provider, native) as { position: number; byte_offset: number; revision: number; stale: number; origin: string; paused: number; recap: string };
   try {
     db.exec("insert into projects(id,name,path,created_at,updated_at) values('project','Test','/tmp','now','now')");
     add('root'); add('child', 'root');
@@ -73,11 +76,23 @@ async function main() {
     message('root', 7, 'user', '[report from process_2: completed] Parser fixed.');
     message('root', 8, 'user', 'ANTHROPIC_API_KEY=sk-ant-' + 'a'.repeat(60));
     message('root', 9, 'assistant', 'Parser fixed. Review remains.'); index.publish('root');
+    hdb.prepare(`insert into conversations(id,provider,provider_conversation_id,project_id,session_id,status,created_at,imported_at)
+      values('collision','claude','unrelated-native','project','root-session','active','now','zzz-newest')`).run();
+    message('collision', 0, 'user', 'UNRELATED CONVERSATION'); index.publish('collision');
+    const rootThread = db.prepare(`select p.*, s.id as session_id, s.harness, s.resume_id, s.display_name, s.auto_title, s.last_title
+      from processes p join sessions s on s.process_id = p.id where p.id = 'root'`).get() as SummaryThread;
+    const historyReader = new AutoSummaryHistory(db, hdb);
+    assert.equal(historyReader.source(rootThread)?.native_id, 'root', 'exact native identity beats a newer heuristic session link');
+    assert.equal(historyReader.source({ ...rootThread, resume_id: 'missing-native' }), null, 'a conflicting native conversation is never a fallback');
+    assert.equal(historyReader.source({ ...rootThread, resume_id: null }), null, 'ambiguous session-only links do not spend usage');
+    hdb.prepare("delete from summary_prose_sources where conversation_id = 'collision'").run();
+    assert.equal(historyReader.source({ ...rootThread, resume_id: null }), null, 'unindexed conflicting links are still ambiguous'); index.publish('collision');
     service.userInput('root'); await discover(); assert.equal(calls.length, 0, 'disabled by default');
     service.update(enabled); service.userInput('child'); await discover(); assert.equal(calls.length, 0, 'children excluded');
     service.userInput('root'); await discover(); assert.equal(calls.length, 1);
     assert.equal(snapshots, 0, 'agent summaries never read the terminal screen');
     assert.ok(calls[0]!.text.includes('nested expressions'));
+    assert.ok(!calls[0]!.text.includes('UNRELATED CONVERSATION'));
     assert.ok(calls[0]!.text.includes('<T>'));
     assert.ok(calls[0]!.text.includes('Agent report:'));
     assert.ok(!/TOOL SECRET|PRIVATE REASONING|CLAUDE THINKING|timer reminder|a{60}/.test(calls[0]!.text));
@@ -146,6 +161,11 @@ async function main() {
     const info = service.control('huge-session', 'rebuild', 'project'); assert.ok(info.estimatedCalls > 1); assert.equal(info.rebuilding, true);
     await discover(); assert.ok(state('huge').position < 40);
     assert.equal(summary('huge').auto_summary_coverage, 'catching_up');
+    hdb.prepare("update conversation_messages set text = text || ' corrected' where conversation_id = 'huge' and seq = 0").run(); index.publish('huge');
+    const obsolete = service.control('huge-session', 'inspect', 'project');
+    assert.equal(obsolete.coverage, 'stale'); assert.equal(obsolete.rebuilding, false, 'an invalidated rebuild no longer blocks restart');
+    service.control('huge-session', 'rebuild', 'project'); await discover();
+    assert.equal(state('huge').stale, 0, 'the exposed rebuild operation recovers stale history');
     service.control('huge-session', 'cancel', 'project'); const pausedAt = calls.length;
     await advance(); assert.equal(calls.length, pausedAt); assert.equal(state('huge').paused, 1);
     const pausedPosition = state('huge').position;
@@ -153,14 +173,39 @@ async function main() {
     for (let i = 0; i < 20 && state('huge').position < 41; i++) await advance();
     assert.equal(state('huge').position, 41); assert.equal(summary('huge').auto_summary_coverage, 'complete');
 
+    // Imports that change only tools or UUIDs must not discard a paid recap.
+    add('paid'); message('paid', 0, 'user', 'Preserve paid summary progress'); index.publish('paid'); service.userInput('paid');
+    let paidRelease!: () => void;
+    run = () => new Promise(resolve => { paidRelease = () => resolve({ summary: 'Paid recap', memory }); });
+    const beforePaid = calls.length; await discover();
+    const contentRevision = (hdb.prepare("select revision from summary_prose_sources where conversation_id = 'paid'").get() as { revision: number }).revision;
+    message('paid', 1, 'tool', 'New tool result', 'tool_result'); index.publish('paid');
+    hdb.transaction(() => {
+      const rows = hdb.prepare("select * from conversation_messages where conversation_id = 'paid'").all() as Array<{ id: string; seq: number; role: string; kind: string; text: string; metadata: string }>;
+      hdb.prepare("delete from conversation_messages where conversation_id = 'paid'").run();
+      for (const row of rows) hdb.prepare("insert into conversation_messages(id,conversation_id,seq,role,kind,text,metadata,created_at) values (?, 'paid', ?, ?, ?, ?, ?, 'now')")
+        .run(row.id + '-replacement', row.seq, row.role, row.kind, row.text, row.metadata);
+      index.publish('paid');
+    })();
+    assert.equal((hdb.prepare("select revision from summary_prose_sources where conversation_id = 'paid'").get() as { revision: number }).revision, contentRevision);
+    paidRelease(); await flush(); assert.equal(state('paid').position, 1); assert.equal(calls.length, beforePaid + 1);
+    message('paid', 2, 'user', 'Also preserve the cursor'); index.publish('paid'); await advance(); await advance(2000);
+    message('paid', 3, 'assistant', 'New tail while recap runs'); index.publish('paid'); paidRelease(); await flush();
+    assert.equal(state('paid').position, 2, 'append-only activity preserves successfully summarized prefix');
+    assert.equal(summary('paid').auto_summary_coverage, 'catching_up');
+    run = async () => ({ summary: 'Updated', memory }); await advance(); await advance(2000);
+    assert.equal(state('paid').position, 3);
+
     // A successful but obsolete response may not move coverage, including cancel.
     add('race'); message('race', 0, 'user', 'Fix another thing.'); index.publish('race'); service.userInput('race');
     let release!: () => void, signal: AbortSignal | undefined;
     run = (s) => { signal = s; return new Promise(resolve => { release = () => resolve({ summary: 'Late recap', memory }); }); };
     await discover(); const raceRevision = state('race').revision;
-    message('race', 1, 'assistant', 'More progress'); index.publish('race'); release(); await flush();
+    message('race', 1, 'assistant', 'More progress');
+    hdb.prepare("update conversation_messages set text = 'Changed consumed goal' where conversation_id = 'race' and seq = 0").run();
+    index.publish('race'); release(); await flush();
     assert.equal(state('race').revision, raceRevision); assert.equal(state('race').position, 0, 'changed source rejects stale response');
-    await advance(); await advance(2000); service.control('race-session', 'cancel', 'project'); assert.equal(signal?.aborted, true); release(); await flush();
+    service.control('race-session', 'rebuild', 'project'); await discover(); service.control('race-session', 'cancel', 'project'); assert.equal(signal?.aborted, true); release(); await flush();
     assert.equal(state('race').position, 0);
     run = async () => ({ summary: 'Updated', memory });
 
@@ -175,6 +220,56 @@ async function main() {
     await advance(120_000); assert.equal(calls.length, beforeBusy + 1);
     db.prepare("update processes set activity = 'idle' where id = 'busy'").run();
     await advance(); await advance(2000); assert.equal(calls.length, beforeBusy + 2);
+
+    // Real OpenCode SQLite parts remain outside coverage until native completion.
+    add('stream'); db.prepare("update sessions set harness = 'opencode' where id = 'stream-session'").run();
+    hdb.prepare("update conversations set provider = 'opencode' where id = 'stream'").run();
+    const streamFile = path.join(directory, 'opencode-stream.db'), nativeDb = new DatabaseSync(streamFile);
+    const openCodeImports = new AgentHistoryImportService(history, new ProviderHistoryDiscoveryService(), null, undefined, database);
+    const streamInput = { provider: 'opencode' as const, path: streamFile, project_id: 'project', trigger: 'manual' as const };
+    try {
+      nativeDb.exec(`create table session (id text primary key, directory text, title text, version text, time_created integer, time_updated integer, parent_id text, agent text, model text, metadata text, time_archived integer);
+        create table message (id text primary key, session_id text, time_created integer, time_updated integer, data text);
+        create table part (id text primary key, message_id text, session_id text, time_created integer, time_updated integer, data text);
+        insert into session values('stream','/tmp','Streaming','test',1,1,null,null,null,'{}',null);
+        insert into message values('u','stream',1,1,'{"role":"user"}');
+        insert into message values('a','stream',2,2,'{"role":"assistant"}');
+        insert into part values('up','u','stream',1,1,'{"type":"text","text":"Fix streaming safely"}');
+        insert into part values('ap','a','stream',2,2,'{"type":"text","text":"","time":{"start":2}}');`);
+      assert.equal(openCodeImports.import(streamInput).errorCount, 0);
+      service.userInput('stream'); await discover(); assert.equal(state('stream', 'opencode').position, 1);
+      const beforeStreaming = calls.length;
+      nativeDb.exec(`insert into message values('later','stream',3,3,'{"role":"user"}');
+        insert into part values('laterp','later','stream',3,3,'{"type":"text","text":"Keep the original constraint"}');`);
+      const updatePart = (text: string, end?: number) => {
+        nativeDb.prepare("update part set data = ?, time_updated = ? where id = 'ap'")
+          .run(JSON.stringify({ type: 'text', text, time: { start: 2, ...(end ? { end } : {}) } }), ++now);
+        nativeDb.prepare("update session set time_updated = ? where id = 'stream'").run(now);
+      };
+      updatePart('Growing '.repeat(500)); assert.equal(openCodeImports.import(streamInput).errorCount, 0);
+      assert.ok((hdb.prepare("select text from conversation_messages where conversation_id = 'stream' and provider_message_id = 'ap'").get() as { text: string }).text.includes('Growing'));
+      await advance(); assert.equal(calls.length, beforeStreaming); assert.equal(state('stream', 'opencode').stale, 0);
+      assert.equal((hdb.prepare("select message_count from summary_prose_sources where conversation_id = 'stream'").get() as { message_count: number }).message_count, 1, 'later prompts do not jump an unfinished part');
+      updatePart('Growing '.repeat(600)); openCodeImports.import(streamInput); await advance();
+      assert.equal(calls.length, beforeStreaming); assert.equal(state('stream', 'opencode').stale, 0);
+      updatePart('Final result: stream is safe.', now); assert.equal(openCodeImports.import(streamInput).errorCount, 0);
+      await advance(); await advance(2000); assert.equal(state('stream', 'opencode').position, 3); assert.equal(state('stream', 'opencode').stale, 0);
+      assert.ok(calls.at(-1)!.text.includes('Final result')); assert.ok(calls.at(-1)!.text.includes('Keep the original constraint'));
+      const adapter = new OpenCodeHistoryAdapter();
+      assert.equal(adapter.parseFile(streamFile).conversations[0]!.messages.find(m => m.providerMessageId === 'ap')!.metadata.prose_finalized, true);
+      nativeDb.exec(`create table session_v2 as select * from session;
+        update session_v2 set id = 'stream-v2';
+        create table session_message (id text, session_id text, type text, seq integer, time_created integer, time_updated integer, data text);`);
+      const v2Data = (messageCompleted: boolean, partCompleted = false) => JSON.stringify({ time: { created: 2, ...(messageCompleted ? { completed: now } : {}) },
+        content: [{ type: 'text', text: 'V2 prose', time: { created: 2, ...(partCompleted ? { completed: now } : {}) } }] });
+      nativeDb.prepare("insert into session_message values('v2-a','stream-v2','assistant',0,2,2,?)").run(v2Data(false));
+      const finalizedV2 = () => adapter.parseFile(streamFile).conversations.find(c => c.providerConversationId === 'stream-v2')!.messages[0]!.metadata.prose_finalized;
+      assert.equal(finalizedV2(), false, 'V2 unfinished text is identified');
+      nativeDb.prepare("update session_message set data = ? where id = 'v2-a'").run(v2Data(true));
+      assert.equal(finalizedV2(), true, 'V2 envelope completion finalizes prose');
+      nativeDb.prepare("update session_message set data = ? where id = 'v2-a'").run(v2Data(false, true));
+      assert.equal(finalizedV2(), true, 'V2 part completion finalizes prose');
+    } finally { nativeDb.close(); }
 
     // The rolling allowance counts failed attempts and survives service restart.
     now += 3_600_001; service.update({ ...enabled, maxCallsPerHour: 1 });
@@ -194,6 +289,32 @@ async function main() {
     // Missing history never falls back to an agent's tool-filled terminal screen.
     const absent = new AutoSummaryService(database, settings, terminal, { availability: () => ({ available: true, reason: null }), run: async () => { throw new Error('must not call'); } }, () => {}, () => now);
     absent.userInput('failure'); absent.tick(); await flush(); await absent.dispose(); assert.equal(snapshots, 0);
+    // A fresh app opens history read-only before the import worker creates it.
+    // Summaries must discover that file without another history consumer.
+    const freshDirectory = path.join(directory, 'fresh-start');
+    const freshApp = new DatabaseService(freshDirectory); freshApp.initialize();
+    const freshHistory = new HistoryDatabaseService(freshDirectory, { mode: 'read' }); freshHistory.initialize({ migrate: false });
+    const freshWriter = new HistoryDatabaseService(freshDirectory);
+    const freshSettings = new SettingsService(freshApp); freshSettings.updateAutoSummarySettings(enabled);
+    let freshCalls = 0;
+    const freshService = new AutoSummaryService(freshApp, freshSettings, terminal, {
+      availability: () => ({ available: true, reason: null }), run: async () => { freshCalls++; return { summary: 'Parser fixed.', memory }; }
+    }, () => {}, () => now, freshHistory);
+    try {
+      freshApp.connection.exec(`insert into projects(id,name,path,created_at,updated_at) values('fresh','Fresh','/tmp','now','now');
+        insert into processes(id,project_id,kind,name,status,activity,created_at,updated_at) values('fresh-agent','fresh','agent','Fresh','running','idle','now','now');
+        insert into sessions(id,project_id,process_id,harness,session_role,resume_id,started_at) values('fresh-session','fresh','fresh-agent','claude','orchestrator','fresh-native','now');`);
+      freshService.userInput('fresh-agent'); freshService.tick(); assert.equal(freshCalls, 0);
+      freshWriter.initialize();
+      freshWriter.connection.exec(`insert into conversations(id,provider,provider_conversation_id,project_id,session_id,status,created_at,imported_at)
+        values('fresh-conversation','claude','fresh-native','fresh','fresh-session','active','now','now');
+        insert into conversation_messages(id,conversation_id,seq,role,kind,text,created_at)
+        values('fresh-message','fresh-conversation',0,'user','message','Fix parsing please','now');`);
+      new SummaryProseIndex(freshWriter.connection).publish('fresh-conversation');
+      freshService.historyChanged(); now += 2000; freshService.tick(); await flush();
+      assert.equal(freshCalls, 1, 'fresh history is discovered without opening the History page');
+    } finally { await freshService.dispose(); freshHistory.dispose(); freshWriter.dispose(); freshApp.dispose(); }
+
     // The real importer publishes hashes in both replacement and append paths,
     // and backfills projections even when an unchanged file is skipped.
     add('imported');
