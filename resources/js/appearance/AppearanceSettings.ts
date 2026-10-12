@@ -22,7 +22,7 @@ export const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
   historyImportToasts: true,
   diffViewer: 'drawer',
   navigation: 'tabs',
-  personalProject: true
+  personalProject: false
 };
 
 export const DIFF_VIEWER_OPTIONS: Array<{ value: DiffViewerLayout; label: string; description: string }> = [

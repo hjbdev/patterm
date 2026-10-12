@@ -325,7 +325,7 @@ async function main(): Promise<void> {
     const snapshotReply = await compressed('/api/rpc', 'br, gzip', { id: 1, channel: 'patterm:workbench:snapshot' });
     assert.equal(snapshotReply.encoding, 'br', 'large RPC replies prefer Brotli');
     const versioned = (JSON.parse(zlib.brotliDecompressSync(snapshotReply.body).toString('utf8')) as { result: { epoch: string; version: number; projects: Array<{ project: { id: string } }> } }).result;
-    assert.deepEqual(versioned.projects.map((item) => item.project.id), ['project_personal', project.project_id], 'the Personal project is listed first');
+    assert.deepEqual(versioned.projects.map((item) => item.project.id), [project.project_id], 'the opt-in Personal project starts hidden');
     // The short-lived processes keep publishing exits for a moment; catch up
     // until the server confirms this client is current.
     const since = { epoch: versioned.epoch, version: versioned.version };

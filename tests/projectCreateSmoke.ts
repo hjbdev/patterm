@@ -123,27 +123,31 @@ async function main(): Promise<void> {
     const viaTool = (await registry.call('fs_directories', { path: browseRoot })) as { entries: unknown[] };
     assert.equal(viaTool.entries.length, 3, 'the registry exposes patterm.fs.directories');
 
-    // The Personal project lives in the data directory, is listed first, and
-    // is created once however often startup ensures it.
+    // The Personal project lives in the data directory and is created once
+    // however often startup ensures it. It is opt-in, so it starts hidden.
     ensurePersonalProject(database, tempDir);
     ensurePersonalProject(database, tempDir);
     const personalDir = path.join(tempDir, 'personal');
     assert.equal(fs.statSync(personalDir).mode & 0o777, 0o700, 'the Personal directory is private');
+    assert.ok(!repo.listProjects().some((project) => project.kind === 'personal'), 'Personal is hidden until turned on');
+    assert.ok(!repo.snapshot().projects.some((project) => project.project.kind === 'personal'), 'nor in the snapshot');
+
+    // Turned on, it is listed first.
+    const settings = new SettingsService(database);
+    settings.updateAppearanceSettings({ ...settings.appearanceSettings(), personalProject: true });
     assert.deepEqual(repo.listProjects()[0], { id: PERSONAL_PROJECT_ID, name: 'Personal', path: personalDir, logo: null, kind: 'personal' });
     assert.equal(repo.listProjects().filter((project) => project.kind === 'personal').length, 1, 'one Personal project');
+    assert.equal(repo.snapshot().projects[0]?.project.id, PERSONAL_PROJECT_ID, 'first in the snapshot too');
 
     // It never links to another host's project, nor is it offered for linking.
     const projectLinks = new ProjectLinkService(database, { query: async () => { throw new Error('not a repository'); } } as unknown as GitService);
     assert.ok(!(await projectLinks.projects()).some((project) => project.id === PERSONAL_PROJECT_ID), 'Personal is not offered for linking');
     assert.throws(() => projectLinks.link('host_peer', PERSONAL_PROJECT_ID, { id: PERSONAL_PROJECT_ID, name: 'Personal' }), /does not exist/);
 
-    // Settings can hide it from the project list without removing it.
-    const settings = new SettingsService(database);
+    // Turned off again, it is hidden without being removed.
     settings.updateAppearanceSettings({ ...settings.appearanceSettings(), personalProject: false });
     assert.ok(!repo.listProjects().some((project) => project.kind === 'personal'), 'a hidden Personal project is not listed');
-    assert.ok(!repo.snapshot().projects.some((project) => project.project.kind === 'personal'), 'nor in the snapshot');
-    settings.updateAppearanceSettings({ ...settings.appearanceSettings(), personalProject: true });
-    assert.equal(repo.listProjects()[0]?.id, PERSONAL_PROJECT_ID, 'showing it again lists it first');
+    assert.ok(database.connection.prepare('select 1 from projects where id = ?').get(PERSONAL_PROJECT_ID), 'hiding keeps the project');
 
     database.dispose();
     // eslint-disable-next-line no-console
