@@ -9,15 +9,16 @@ import { DatabaseService } from '../app/Services/DatabaseService';
 import { ClaudeStreamService } from '../app/Services/ClaudeStreamService';
 import { TranscriptImageStore } from '../app/Services/TranscriptImageStore';
 import { IntegratedAgentService } from '../app/Services/IntegratedAgentService';
+import { integratedHostListening } from '../app/Services/IntegratedHostLauncher';
 import type { IntegratedConversationEvent } from '../app/Services/IntegratedConversation';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { normaliseMessages } from '../resources/js/lib/integratedConversation';
+import { ipcPath } from '../app/Platform/Ipc';
+import { writeNodeCli } from './fixtures/IntegratedFakeCli';
 
 async function main(): Promise<void> {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-claude-stream-'));
-  const executable = path.join(directory, 'claude');
-  fs.writeFileSync(executable, `#!/usr/bin/env node
-if (process.env.ARGV_FILE) require('node:fs').writeFileSync(process.env.ARGV_FILE, JSON.stringify(process.argv.slice(2)));
+  const executable = writeNodeCli(path.join(directory, 'claude'), `if (process.env.ARGV_FILE) require('node:fs').writeFileSync(process.env.ARGV_FILE, JSON.stringify(process.argv.slice(2)));
 let buffer = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (chunk) => {
@@ -236,7 +237,7 @@ process.stdin.on('data', (chunk) => {
     }
   }
 });
-`, { mode: 0o700 });
+`);
 
   const database = new DatabaseService(directory);
   try {
@@ -268,8 +269,8 @@ process.stdin.on('data', (chunk) => {
     const release = await service.subscribe('process_test', (event) => events.push(event));
 
     await service.prompt('process_test', { text: 'Hello', references: [], attachments: [] });
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    const first = JSON.stringify(await service.conversation('process_test'));
+    // The reply ends with the question request; a fresh CLI can take a while to start.
+    const first = JSON.stringify(await waitForConversation(service, 'process_test', /question_test/));
     assert.match(first, /Native Claude reply/);
     // The host asks Claude Code for its persisted title once, then serves it
     // until a slash command such as /rename could change it.
@@ -455,7 +456,8 @@ process.stdin.on('data', (chunk) => {
       attachments: [{ path: imageFile, name: 'pixel.png', mime: 'image/png', size: imageBytes.length, data: imageBytes.toString('base64') }],
       messageId: clientMessageId
     });
-    const echoed = await waitForConversation(service, 'process_test', /src dir\/my file\.ts/);
+    // The local user row shows the references at once; wait for the native echo.
+    const echoed = await waitForConversation(service, 'process_test', /\\"uuid\\":\\"22222222-2222-2222-2222-222222222222\\"/);
     const echoRows = (echoed.messages as { data: Array<{ id: string; text: string; attachments?: Array<{ name: string; type?: string; detail?: string; mime?: string }> }> }).data;
     const submittedUser = echoRows.find((message) => message.id === `user_${clientMessageId}`)!;
     assert.deepEqual(submittedUser.attachments, [
@@ -770,7 +772,7 @@ process.stdin.on('data', (chunk) => {
           : { id: request.id, error: `Unknown Claude host method: ${request.method}` })}\n`);
       });
     });
-    await new Promise<void>((resolve) => legacyHost.listen(legacySocket, resolve));
+    await new Promise<void>((resolve) => legacyHost.listen(ipcPath(legacySocket), resolve));
     try {
       database.connection.prepare(`insert into processes (id,project_id,kind,name,status,cwd,argv,created_at,updated_at) values ('process_legacy','project_test','agent','Claude','running',?,?,?,?)`)
         .run(directory, JSON.stringify([executable, 'claude-host', legacySocket, '', '']), now, now);
@@ -790,11 +792,15 @@ process.stdin.on('data', (chunk) => {
     assert.match(JSON.stringify(await reconnected.conversation('process_test')), /Native Claude reply/);
     await reconnected.stop('process_test');
     // A host that has ended reports a resumable state, not a raw socket error.
-    await waitFor(() => !fs.existsSync(prepared.argv[2]!));
+    // A named pipe leaves no file behind, so Windows waits for it to close.
+    if (process.platform === 'win32') {
+      for (let attempt = 0; attempt < 100 && await integratedHostListening(prepared.argv[2]!); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+    } else await waitFor(() => !fs.existsSync(prepared.argv[2]!));
     await assert.rejects(reconnected.conversation('process_test'), /host is no longer running\. Resume the conversation to continue\./);
   } finally {
     database.dispose();
-    fs.rmSync(directory, { recursive: true, force: true });
+    // Windows cannot remove a directory that an exiting host or CLI still runs in.
+    fs.rmSync(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 }
 

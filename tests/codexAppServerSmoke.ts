@@ -11,6 +11,8 @@ import { TranscriptImageStore } from '../app/Services/TranscriptImageStore';
 import { TurnBusyError, UncertainDeliveryError } from '../app/Services/IntegratedDelivery';
 import type { IntegratedConversationEvent } from '../app/Services/IntegratedConversation';
 import { IntegratedAgentService } from '../app/Services/IntegratedAgentService';
+import { ipcPath } from '../app/Platform/Ipc';
+import { writeNodeCli } from './fixtures/IntegratedFakeCli';
 
 // A turn/start reply can arrive in the same chunk as the turn's completion.
 // prompt() marks the turn active after awaiting the reply, which runs after
@@ -37,7 +39,7 @@ async function turnCompletedWithItsReply(): Promise<void> {
       }
     });
   });
-  await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+  await new Promise<void>((resolve) => server.listen(ipcPath(socketPath), resolve));
   const client = await CodexRpcClient.connect(socketPath, () => {});
   try {
     const startTurn = async () => {
@@ -127,14 +129,15 @@ async function main(): Promise<void> {
     while (!predicate() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
     assert.ok(predicate(), 'condition was not met before the timeout');
   };
-  const executable = path.join(directory, 'codex');
-fs.writeFileSync(executable, `#!/usr/bin/env node
-const http = require('node:http');
+  const executable = writeNodeCli(path.join(directory, 'codex'), `const http = require('node:http');
 const fs = require('node:fs');
 if (process.env.CODEX_ARGV_FILE) fs.writeFileSync(process.env.CODEX_ARGV_FILE, JSON.stringify(process.argv.slice(2)));
-const { WebSocketServer } = require('${require.resolve('ws')}');
-const target = process.argv.find((value) => value.startsWith('unix://'));
-const socketPath = target.slice('unix://'.length);
+const { WebSocketServer } = require(${JSON.stringify(require.resolve('ws'))});
+// Like codex app-server: WebSocket frames on unix://PATH, JSON lines on stdio://.
+const target = process.argv.find((value) => value.startsWith('unix://') || value === 'stdio://');
+const socketPath = target.startsWith('unix://') ? target.slice('unix://'.length) : null;
+// Marker files belong to this app-server instance.
+const stateBase = socketPath ?? require('node:path').join(process.env.CODEX_STATE_DIR, 'app-server-' + process.pid);
 const items = [];
 const childItems = [];
 // Newer Codex builds report a native subagent with subAgentActivity rows, and
@@ -147,10 +150,7 @@ if (process.env.NATIVE_TASKS) {
 }
 const nativeItems = Array.from({length:130},(_,index)=>({turnId:'turn_sub',item:{type:'agentMessage',id:'native_' + index,text:'step ' + index}}));
 let itemsListCalls = 0;
-try { fs.unlinkSync(socketPath); } catch {}
-const server = http.createServer();
-const wss = new WebSocketServer({ server });
-wss.on('connection', (socket) => {
+function serve(socket) {
   const notify = (method, params) => socket.send(JSON.stringify({jsonrpc:'2.0', method, params}));
   let initialized = false;
   socket.on('message', (chunk) => {
@@ -351,22 +351,22 @@ wss.on('connection', (socket) => {
       }
       else if (request.method === 'thread/backgroundTerminals/list') {
         // A new row that trims the full live window, leaving its cursor stale.
-        if (process.env.STALE_REFRESH && !fs.existsSync(socketPath + '.staled')) {
-          fs.writeFileSync(socketPath + '.staled', '1');
+        if (process.env.STALE_REFRESH && !fs.existsSync(stateBase + '.staled')) {
+          fs.writeFileSync(stateBase + '.staled', '1');
           items.push({turnId:'turn_test',item:{type:'agentMessage',id:'fresh_1',text:'Fresh'}});
           notify('item/completed', {threadId:'thread_test', turnId:'turn_test', item:{type:'agentMessage', id:'fresh_1', text:'Fresh'}, completedAtMs: 50});
         }
         // A row that completes while the snapshot awaits this lookup.
-        const running = process.env.NATIVE_TASKS && !fs.existsSync(socketPath + '.terminated');
+        const running = process.env.NATIVE_TASKS && !fs.existsSync(stateBase + '.terminated');
         const reply = () => send({jsonrpc:'2.0', id:request.id, result:{data:running ? [{itemId:'exec_bg',processId:'77',command:'ping -c 120 127.0.0.1',cwd:'/tmp'}] : [],nextCursor:null}});
-        if (process.env.TERMINAL_RACE && !fs.existsSync(socketPath + '.raced')) {
-          fs.writeFileSync(socketPath + '.raced', '1');
+        if (process.env.TERMINAL_RACE && !fs.existsSync(stateBase + '.raced')) {
+          fs.writeFileSync(stateBase + '.raced', '1');
           notify('item/completed', {threadId:'thread_test', turnId:'turn_test', item:{type:'agentMessage', id:'race_item', text:'Arrived meanwhile'}, completedAtMs: 40});
           setTimeout(reply, 150);
         } else reply();
       }
       else if (request.method === 'thread/backgroundTerminals/terminate') {
-        fs.writeFileSync(socketPath + '.terminated', JSON.stringify(request.params));
+        fs.writeFileSync(stateBase + '.terminated', JSON.stringify(request.params));
         send({jsonrpc:'2.0', id:request.id, result:{}});
       }
       else if (request.method === 'thread/compact/start' || request.method === 'review/start' || request.method === 'thread/name/set' || request.method === 'thread/goal/set' || request.method === 'thread/shellCommand' || request.method === 'thread/revert') {
@@ -374,9 +374,29 @@ wss.on('connection', (socket) => {
         send({jsonrpc:'2.0', id:request.id, result:{}});
       }
   });
-});
-server.listen(socketPath);
-`, { mode: 0o700 });
+}
+if (socketPath) {
+  try { fs.unlinkSync(socketPath); } catch {}
+  const server = http.createServer();
+  new WebSocketServer({ server }).on('connection', serve);
+  server.listen(socketPath);
+} else {
+  const socket = new (require('node:events').EventEmitter)();
+  socket.send = (text) => process.stdout.write(text + '\\n');
+  let input = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (chunk) => {
+    input += chunk;
+    for (let newline = input.indexOf('\\n'); newline >= 0; newline = input.indexOf('\\n')) {
+      const line = input.slice(0, newline);
+      input = input.slice(newline + 1);
+      if (line.trim()) socket.emit('message', line);
+    }
+  });
+  process.stdin.on('end', () => process.exit(0));
+  serve(socket);
+}
+`);
 
   const database = new DatabaseService(directory);
   try {
@@ -386,6 +406,7 @@ server.listen(socketPath);
   const runtimeDirectory = path.join(directory, 'runtime');
   const argvPath = path.join(directory, 'codex-argv.json');
   process.env.CODEX_ARGV_FILE = argvPath;
+  process.env.CODEX_STATE_DIR = runtimeDirectory;
   const service = new CodexAppServerService(database, runtimeDirectory);
   const prepared = await service.prepare({
     executable,
@@ -1004,7 +1025,8 @@ server.listen(socketPath);
   }
   } finally {
     database.dispose();
-    fs.rmSync(directory, { recursive: true, force: true });
+    // Windows cannot remove a directory that an exiting host or CLI still runs in.
+    fs.rmSync(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 }
 
