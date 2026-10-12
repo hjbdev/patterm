@@ -11,6 +11,7 @@ import { PushService, assertPushEndpoint, pushSubject } from '../app/Services/Pu
 import { NotificationActions } from '../app/Actions/NotificationActions';
 import { CloseProcessAction } from '../app/Actions/CloseProcessAction';
 import type { TerminalService } from '../app/Services/TerminalService';
+import { removeTree } from './fixtures/TempTree';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -217,7 +218,8 @@ async function main(): Promise<void> {
     push.subscribe({ endpoint: 'https://fcm.googleapis.com/fcm/send/flaky', keys });
     assert.throws(() => push.subscribe({ endpoint: 'https://example.com/push', keys }), /Unsupported push service/);
     assert.match(push.publicKey(), /^[A-Za-z0-9_-]{80,}$/);
-    assert.equal(fs.statSync(path.join(directory, 'push-vapid.json')).mode & 0o777, 0o600);
+    // Windows files have no owner-only mode bits.
+    if (process.platform !== 'win32') assert.equal(fs.statSync(path.join(directory, 'push-vapid.json')).mode & 0o777, 0o600);
     await push.deliver(record);
     assert.equal(sent.length, 3);
     const remaining = push.list();
@@ -281,7 +283,7 @@ async function main(): Promise<void> {
     assert.ok(changes.slice(before).some((change) => change.type === 'resolved'));
   } finally {
     database.dispose();
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   }
   console.log('notification smoke passed');
 }

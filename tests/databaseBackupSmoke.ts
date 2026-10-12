@@ -8,6 +8,7 @@ import { DatabaseService } from '../app/Services/DatabaseService';
 import { HistoryDatabaseService } from '../app/Services/HistoryDatabaseService';
 import { migrations } from '../database/migrations';
 import { historyMigrations } from '../database/historyMigrations';
+import { removeTree } from './fixtures/TempTree';
 
 export function assertDatabaseBackups(): void {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-backup-'));
@@ -35,7 +36,8 @@ export function assertDatabaseBackups(): void {
     assert.ok(first);
     assert.deepEqual(first.copied, ['app.db']);
     assert.equal(path.basename(first.directory), 'pre-migration-2026-10-04T10-00-00.000Z');
-    assert.equal(fs.statSync(backups).mode & 0o777, 0o700);
+    // Windows files have no owner-only mode bits.
+    if (process.platform !== 'win32') assert.equal(fs.statSync(backups).mode & 0o777, 0o700);
     assert.equal(fs.existsSync(path.join(backups, '.partial-crashed')), false, 'incomplete backups are removed');
     let manifest = readManifest(first.directory);
     assert.deepEqual(manifest.databases['app.db'].pending, [latest]);
@@ -52,7 +54,7 @@ export function assertDatabaseBackups(): void {
     assert.match(manifest.databases['history.db'].sha256, /^[0-9a-f]{64}$/);
     assert.deepEqual(fs.readdirSync(first.directory).sort(), ['app.db', 'history.db', 'manifest.json']);
     for (const file of ['app.db', 'history.db', 'manifest.json']) {
-      assert.equal(fs.statSync(path.join(first.directory, file)).mode & 0o777, 0o600, `${file} is private`);
+      if (process.platform !== 'win32') assert.equal(fs.statSync(path.join(first.directory, file)).mode & 0o777, 0o600, `${file} is private`);
     }
 
     // A failed update that is retried keeps its first backup as the restore point.
@@ -102,7 +104,7 @@ export function assertDatabaseBackups(): void {
       const set = backupBeforeMigrations(noHistory);
       assert.equal(readManifest(set!.directory).databases['history.db'], undefined);
     } finally {
-      fs.rmSync(noHistory, { recursive: true, force: true });
+      removeTree(noHistory);
     }
 
     // An older build refuses a database a newer build migrated, before backing up or migrating.
@@ -116,7 +118,7 @@ export function assertDatabaseBackups(): void {
     newer.dispose();
     assert.equal(historyMigrations.some((migration) => migration.name.startsWith('2099')), false);
   } finally {
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   }
 }
 

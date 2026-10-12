@@ -12,6 +12,7 @@ import { PresenceService } from '../app/Services/PresenceService';
 import type { PushService } from '../app/Services/PushService';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import type { TerminalService } from '../app/Services/TerminalService';
+import { removeTree } from './fixtures/TempTree';
 
 async function main(): Promise<void> {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-close-request-test-'));
@@ -92,7 +93,7 @@ async function main(): Promise<void> {
     await assert.rejects(requests.request('root', { summary: 'x' }), /not running/);
   } finally {
     database.dispose();
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   }
 }
 

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { DebugLogService } from '../app/Services/DebugLogService';
 import { TerminalService } from '../app/Services/TerminalService';
 import { parseDamageFrame } from '../resources/js/terminal/TerminalRenderer';
+import { debugSidecarPath } from './fixtures/Sidecar';
 
 interface SpawnResult {
   process_id: string;
@@ -48,7 +49,7 @@ interface LifecycleFrame {
 }
 
 async function main(): Promise<void> {
-  const sidecarPath = path.resolve('native/terminal-core/target/debug/patterm-terminal-core');
+  const sidecarPath = debugSidecarPath();
   assert.equal(fs.existsSync(sidecarPath), true, 'terminal sidecar must be built before running this smoke test');
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-terminal-sidecar-'));
@@ -78,8 +79,7 @@ async function main(): Promise<void> {
 
     const subscriptionSpawn = await terminal.request('terminal.process.spawn', {
       name: 'subscription-smoke',
-      command: '/bin/sh',
-      args: ['-lc', "printf 'subscription-ready\\n'; sleep 3"],
+      ...script("printf 'subscription-ready\\n'; sleep 3", [{ out: 'subscription-ready\r\n' }, { sleep: 3000 }]),
       cols: 30,
       rows: 3,
       cell_width: 8,
@@ -96,8 +96,7 @@ async function main(): Promise<void> {
 
     const noisySpawn = await terminal.request('terminal.process.spawn', {
       name: 'activity-noisy-smoke',
-      command: '/bin/sh',
-      args: ['-lc', "i=0; while [ \"$i\" -lt 8 ]; do printf 'tick%s\\n' \"$i\"; i=$((i + 1)); sleep 0.4; done; sleep 1"],
+      ...script("i=0; while [ \"$i\" -lt 8 ]; do printf 'tick%s\\n' \"$i\"; i=$((i + 1)); sleep 0.4; done; sleep 1", [{ ticks: 8, every: 400 }, { sleep: 1000 }]),
       cols: 30,
       rows: 3,
       cell_width: 8,
@@ -124,8 +123,7 @@ async function main(): Promise<void> {
     const linkUrl = 'https://example.com/pull/85';
     const linkSpawn = await terminal.request('terminal.process.spawn', {
       name: 'hyperlink-smoke',
-      command: '/bin/sh',
-      args: ['-lc', "printf 'PR \\033]8;;https://example.com/pull/85\\007\\033[4m#85\\033[0m\\033]8;;\\007'; sleep 1"],
+      ...script("printf 'PR \\033]8;;https://example.com/pull/85\\007\\033[4m#85\\033[0m\\033]8;;\\007'; sleep 1", [{ out: 'PR \x1b]8;;https://example.com/pull/85\x07\x1b[4m#85\x1b[0m\x1b]8;;\x07' }, { sleep: 1000 }]),
       cols: 20,
       rows: 2
     }) as SpawnResult;
@@ -139,13 +137,14 @@ async function main(): Promise<void> {
 
     const quietSpawn = await terminal.request('terminal.process.spawn', {
       name: 'quiet-subscription-smoke',
-      command: '/bin/sh',
-      args: ['-lc', 'sleep 1'],
+      ...script('sleep 1', [{ sleep: process.platform === 'win32' ? 5000 : 1000 }]),
       cols: 20,
       rows: 2,
       cell_width: 8,
       cell_height: 16
     }) as SpawnResult;
+    // ConPTY paints its own startup output, so let that settle before counting.
+    if (process.platform === 'win32') await waitFor(async () => hasActivity(lifecycleFrames, quietSpawn.process_id, 'idle'), 'ConPTY startup output settles');
     const quietActivityCount = lifecycleFrames.filter((frame) => frame.processId === quietSpawn.process_id && frame.event === 'activity').length;
     await terminal.request('terminal.process.subscribe', { process_id: quietSpawn.process_id, subscribed: true });
     await waitFor(async () => damageFrames.some((frame) => frame.processId === quietSpawn.process_id && frame.frameKind === 'snapshot'), 'subscribing a quiet terminal emits a snapshot frame');
@@ -160,8 +159,7 @@ async function main(): Promise<void> {
 
     const sparseSpawn = await terminal.request('terminal.process.spawn', {
       name: 'sparse-damage-smoke',
-      command: '/bin/sh',
-      args: ['-lc', "sleep 0.2; printf 'abc'; sleep 0.2; printf '\\rZ'; sleep 1"],
+      ...script("sleep 0.2; printf 'abc'; sleep 0.2; printf '\\rZ'; sleep 1", [{ sleep: 200 }, { out: 'abc' }, { sleep: 200 }, { out: '\rZ' }, { sleep: 1000 }]),
       cols: 20,
       rows: 2,
       cell_width: 8,
@@ -181,8 +179,7 @@ async function main(): Promise<void> {
 
     const spawn = await terminal.request('terminal.process.spawn', {
       name: 'sidecar-smoke',
-      command: '/bin/sh',
-      args: ['-lc', "printf 'line01\\nline02\\nline03\\nline04\\nline05\\nline06\\nline07\\nline08\\n'; sleep 1"],
+      ...script("printf 'line01\\nline02\\nline03\\nline04\\nline05\\nline06\\nline07\\nline08\\n'; sleep 1", [{ out: 'line01\r\nline02\r\nline03\r\nline04\r\nline05\r\nline06\r\nline07\r\nline08\r\n' }, { sleep: 1000 }]),
       cols: 40,
       rows: 4,
       cell_width: 8,
@@ -275,8 +272,7 @@ async function main(): Promise<void> {
 
     const wrappedSpawn = await terminal.request('terminal.process.spawn', {
       name: 'sidecar-wrap-smoke',
-      command: '/bin/sh',
-      args: ['-lc', "printf 'abcdefghij'; sleep 1"],
+      ...script("printf 'abcdefghij'; sleep 1", [{ out: 'abcdefghij' }, { sleep: 1000 }]),
       cols: 5,
       rows: 2,
       cell_width: 8,
@@ -303,8 +299,7 @@ async function main(): Promise<void> {
     const agentSubmitSpawn = await terminal.request('terminal.process.spawn', {
       name: 'sidecar-agent-submit-smoke',
       kind: 'agent',
-      command: '/bin/sh',
-      args: ['-lc', 'IFS= read -r line; printf "submitted:%s\n" "$line"; sleep 1'],
+      ...script('IFS= read -r line; printf "submitted:%s\n" "$line"; sleep 1', [{ line: true }, { sleep: 1000 }]),
       cols: 40,
       rows: 3,
       cell_width: 8,
@@ -325,26 +320,28 @@ async function main(): Promise<void> {
       return output.screen.includes('submitted:pizza joke');
     }, 'agent submit writes a separate carriage return that submits the line');
 
-    const colorQuerySpawn = await terminal.request('terminal.process.spawn', {
-      name: 'sidecar-color-query-smoke',
-      command: '/bin/sh',
-      args: ['-lc', "stty raw -echo; printf '\\033]10;?\\033\\\\'; dd bs=1 count=25 2>/dev/null | od -An -v -tx1 | tr -d ' \\n'; printf '\\r\\n'; printf '\\033]11;?\\033\\\\'; dd bs=1 count=25 2>/dev/null | od -An -v -tx1 | tr -d ' \\n'; printf '\\r\\n'; printf '\\033]4;0;?\\033\\\\'; dd bs=1 count=26 2>/dev/null | od -An -v -tx1 | tr -d ' \\n'; sleep 1"],
-      cols: 80,
-      rows: 6,
-      cell_width: 8,
-      cell_height: 16
-    }) as SpawnResult;
-    await waitFor(async () => {
-      const output = await terminal.request('terminal.process.output', { process_id: colorQuerySpawn.process_id }) as OutputResult;
-      return output.screen.includes('1b5d31303b7267623a666166612f666166612f666166611b5c')
-        && output.screen.includes('1b5d31313b7267623a313531352f313531352f313531351b5c')
-        && output.screen.includes('1b5d343b303b7267623a313831382f313831382f316231621b5c');
-    }, 'terminal answers OSC foreground and background color queries');
+    // ConPTY consumes OSC colour queries itself, so they never reach the sidecar.
+    if (process.platform !== 'win32') {
+      const colorQuerySpawn = await terminal.request('terminal.process.spawn', {
+        name: 'sidecar-color-query-smoke',
+        command: '/bin/sh',
+        args: ['-lc', "stty raw -echo; printf '\\033]10;?\\033\\\\'; dd bs=1 count=25 2>/dev/null | od -An -v -tx1 | tr -d ' \\n'; printf '\\r\\n'; printf '\\033]11;?\\033\\\\'; dd bs=1 count=25 2>/dev/null | od -An -v -tx1 | tr -d ' \\n'; printf '\\r\\n'; printf '\\033]4;0;?\\033\\\\'; dd bs=1 count=26 2>/dev/null | od -An -v -tx1 | tr -d ' \\n'; sleep 1"],
+        cols: 80,
+        rows: 6,
+        cell_width: 8,
+        cell_height: 16
+      }) as SpawnResult;
+      await waitFor(async () => {
+        const output = await terminal.request('terminal.process.output', { process_id: colorQuerySpawn.process_id }) as OutputResult;
+        return output.screen.includes('1b5d31303b7267623a666166612f666166612f666166611b5c')
+          && output.screen.includes('1b5d31313b7267623a313531352f313531352f313531351b5c')
+          && output.screen.includes('1b5d343b303b7267623a313831382f313831382f316231621b5c');
+      }, 'terminal answers OSC foreground and background color queries');
+    }
 
     const plainPasteSpawn = await terminal.request('terminal.process.spawn', {
       name: 'sidecar-plain-paste-smoke',
-      command: '/bin/sh',
-      args: ['-lc', "stty raw -echo; printf 'ready\\r\\n'; dd bs=1 count=3 2>/dev/null | od -An -tx1; sleep 1"],
+      ...script("stty raw -echo; printf 'ready\\r\\n'; dd bs=1 count=3 2>/dev/null | od -An -tx1; sleep 1", [{ raw: true }, { out: 'ready\r\n' }, { hex: 3 }, { sleep: 1000 }]),
       cols: 40,
       rows: 3,
       cell_width: 8,
@@ -363,8 +360,7 @@ async function main(): Promise<void> {
 
     const bracketedPasteSpawn = await terminal.request('terminal.process.spawn', {
       name: 'sidecar-bracketed-paste-smoke',
-      command: '/bin/sh',
-      args: ['-lc', "stty raw -echo; printf '\\033[?2004h'; printf 'ready\\r\\n'; dd bs=1 count=15 2>/dev/null | od -An -tx1; sleep 1"],
+      ...script("stty raw -echo; printf '\\033[?2004h'; printf 'ready\\r\\n'; dd bs=1 count=15 2>/dev/null | od -An -tx1; sleep 1", [{ raw: true }, { out: '\x1b[?2004hready\r\n' }, { hex: 15 }, { sleep: 1000 }]),
       cols: 80,
       rows: 3,
       cell_width: 8,
@@ -383,8 +379,7 @@ async function main(): Promise<void> {
 
     const altWheelSpawn = await terminal.request('terminal.process.spawn', {
       name: 'sidecar-alt-wheel-smoke',
-      command: '/bin/sh',
-      args: ['-lc', "stty raw -echo; printf '\\033[?1049h'; printf 'ready\\r\\n'; dd bs=1 count=3 2>/dev/null | od -An -tx1; sleep 1"],
+      ...script("stty raw -echo; printf '\\033[?1049h'; printf 'ready\\r\\n'; dd bs=1 count=3 2>/dev/null | od -An -tx1; sleep 1", [{ raw: true }, { out: '\x1b[?1049hready\r\n' }, { hex: 3 }, { sleep: 1000 }]),
       cols: 40,
       rows: 4,
       cell_width: 8,
@@ -399,8 +394,7 @@ async function main(): Promise<void> {
 
     const mouseWheelSpawn = await terminal.request('terminal.process.spawn', {
       name: 'sidecar-mouse-wheel-smoke',
-      command: '/bin/sh',
-      args: ['-lc', "stty raw -echo; printf '\\033[?1000h\\033[?1006h'; printf 'ready\\r\\n'; dd bs=1 count=10 2>/dev/null | od -An -tx1; sleep 1"],
+      ...script("stty raw -echo; printf '\\033[?1000h\\033[?1006h'; printf 'ready\\r\\n'; dd bs=1 count=10 2>/dev/null | od -An -tx1; sleep 1", [{ raw: true }, { out: '\x1b[?1000h\x1b[?1006hready\r\n' }, { hex: 10 }, { sleep: 1000 }]),
       cols: 40,
       rows: 4,
       cell_width: 8,
@@ -415,8 +409,7 @@ async function main(): Promise<void> {
 
     const noMouseSpawn = await terminal.request('terminal.process.spawn', {
       name: 'sidecar-no-mouse-smoke',
-      command: '/bin/sh',
-      args: ['-lc', 'sleep 1'],
+      ...script('sleep 1', [{ sleep: 1000 }]),
       cols: 40,
       rows: 4,
       cell_width: 8,
@@ -434,8 +427,7 @@ async function main(): Promise<void> {
 
     const mouseClickSpawn = await terminal.request('terminal.process.spawn', {
       name: 'sidecar-mouse-click-smoke',
-      command: '/bin/sh',
-      args: ['-lc', "stty raw -echo; printf '\\033[?1000h\\033[?1006h'; printf 'ready\\r\\n'; dd bs=1 count=18 2>/dev/null | od -An -tx1; sleep 1"],
+      ...script("stty raw -echo; printf '\\033[?1000h\\033[?1006h'; printf 'ready\\r\\n'; dd bs=1 count=18 2>/dev/null | od -An -tx1; sleep 1", [{ raw: true }, { out: '\x1b[?1000h\x1b[?1006hready\r\n' }, { hex: 18 }, { sleep: 1000 }]),
       cols: 40,
       rows: 4,
       cell_width: 8,
@@ -453,8 +445,7 @@ async function main(): Promise<void> {
 
     const mouseDragSpawn = await terminal.request('terminal.process.spawn', {
       name: 'sidecar-mouse-drag-smoke',
-      command: '/bin/sh',
-      args: ['-lc', "stty raw -echo; printf '\\033[?1002h\\033[?1006h'; printf 'ready\\r\\n'; dd bs=1 count=19 2>/dev/null | od -An -tx1; sleep 1"],
+      ...script("stty raw -echo; printf '\\033[?1002h\\033[?1006h'; printf 'ready\\r\\n'; dd bs=1 count=19 2>/dev/null | od -An -tx1; sleep 1", [{ raw: true }, { out: '\x1b[?1002h\x1b[?1006hready\r\n' }, { hex: 19 }, { sleep: 1000 }]),
       cols: 40,
       rows: 4,
       cell_width: 8,
@@ -470,8 +461,7 @@ async function main(): Promise<void> {
 
     const mouseHoverSpawn = await terminal.request('terminal.process.spawn', {
       name: 'sidecar-mouse-hover-smoke',
-      command: '/bin/sh',
-      args: ['-lc', "stty raw -echo; printf '\\033[?1003h\\033[?1006h'; printf 'ready\\r\\n'; dd bs=1 count=10 2>/dev/null | od -An -tx1; sleep 1"],
+      ...script("stty raw -echo; printf '\\033[?1003h\\033[?1006h'; printf 'ready\\r\\n'; dd bs=1 count=10 2>/dev/null | od -An -tx1; sleep 1", [{ raw: true }, { out: '\x1b[?1003h\x1b[?1006hready\r\n' }, { hex: 10 }, { sleep: 1000 }]),
       cols: 40,
       rows: 4,
       cell_width: 8,
@@ -486,8 +476,7 @@ async function main(): Promise<void> {
 
     const shortLivedSpawn = await terminal.request('terminal.process.spawn', {
       name: 'sidecar-stop-exited-smoke',
-      command: '/bin/sh',
-      args: ['-lc', 'exit 0'],
+      ...script('exit 0', [{ exit: 0 }]),
       cols: 10,
       rows: 2,
       cell_width: 8,
@@ -522,6 +511,22 @@ async function main(): Promise<void> {
     await terminal.dispose();
     debugLog.dispose();
   }
+}
+
+type ProbeStep =
+  | { out: string }
+  | { sleep: number }
+  | { raw: boolean }
+  | { hex: number; compact?: boolean }
+  | { line: true }
+  | { ticks: number; every: number }
+  | { exit: number };
+
+// What a terminal runs: the /bin/sh one-liner on POSIX. Windows has no /bin/sh,
+// stty, dd, or od, so the same steps run in a Node probe there.
+function script(posix: string, steps: ProbeStep[]): { command: string; args: string[] } {
+  if (process.platform !== 'win32') return { command: '/bin/sh', args: ['-lc', posix] };
+  return { command: process.execPath, args: [path.resolve('tests/fixtures/terminalProbe.cjs'), JSON.stringify(steps)] };
 }
 
 async function waitForScreen(terminal: TerminalService, processId: string, text: string): Promise<void> {

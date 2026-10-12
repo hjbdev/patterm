@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { readEnvironment, renderService, validateOrigin } from '../scripts/install-service.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const linuxOnly = process.platform === 'win32' && 'it drives systemd units and POSIX paths, which Windows does not have';
 
 test('installer validates origins before writing configuration', () => {
   assert.equal(validateOrigin('https://patterm.example.ts.net', 8787), 'https://patterm.example.ts.net');
@@ -17,7 +18,7 @@ test('installer validates origins before writing configuration', () => {
   }
 });
 
-test('unit preserves spaces, quotes, dollar signs, and percent signs without expansion', () => {
+test('unit preserves spaces, quotes, dollar signs, and percent signs without expansion', { skip: linuxOnly }, () => {
   const { unit, terminalUnit, config } = renderService({
     root: '/tmp/project with %n and $HOME', node: '/usr/bin/node', envFile: '/tmp/config %n/patterm.env',
     environment: { PATTERM_DATA_DIR: '/tmp/"quoted" %n $HOME `command` \\ data' }
@@ -35,7 +36,7 @@ test('unit preserves spaces, quotes, dollar signs, and percent signs without exp
   assert.throws(() => renderService({ root: '/tmp/project\nExecStart=/bad', node: '/usr/bin/node', envFile: '/tmp/config', environment: {} }));
 });
 
-test('preview writes only private files in the requested directory and produces a valid unit', () => {
+test('preview writes only private files in the requested directory and produces a valid unit', { skip: linuxOnly }, () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm install % '));
   try {
     const output = path.join(directory, 'preview');
@@ -80,7 +81,7 @@ test('preview writes only private files in the requested directory and produces 
   }
 });
 
-test('service updates preserve installed settings and preview does not change live configuration', () => {
+test('service updates preserve installed settings and preview does not change live configuration', { skip: linuxOnly }, () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-service-update-'));
   try {
     const configHome = path.join(directory, 'config');
@@ -115,7 +116,7 @@ test('service updates preserve installed settings and preview does not change li
   }
 });
 
-test('a release install names its bundled Node and files through the current symlink', () => {
+test('a release install names its bundled Node and files through the current symlink', { skip: linuxOnly }, () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-release-service-'));
   try {
     const home = path.join(directory, 'home');
@@ -151,7 +152,7 @@ test('a release install names its bundled Node and files through the current sym
   }
 });
 
-test('the installer chooses Remote access and sets the password the server reads', () => {
+test('the installer chooses Remote access and sets the password the server reads', { skip: linuxOnly }, () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-access-'));
   try {
     const data = path.join(directory, 'data');

@@ -1,0 +1,2 @@
+# Signed bytes must reach the verifier unchanged, so git must not rewrite line endings.
+* -text

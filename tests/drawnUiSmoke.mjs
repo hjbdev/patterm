@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import { build } from 'esbuild';
 
@@ -28,7 +29,7 @@ await build({
   },
   outfile, bundle: true, platform: 'node', format: 'esm', external: ['vue'], logLevel: 'error'
 });
-const ui = await import(outfile);
+const ui = await import(pathToFileURL(outfile).href);
 
 const figure = (fig) => ({ claim: 'A point', figure: fig });
 const errorsOf = (raw) => { const result = ui.parseDrawnUi(raw); assert.equal(result.ok, false, 'expected a rejection'); return result.errors.join('\n'); };
@@ -166,7 +167,14 @@ test('screenshots must live in the caller\'s directories', () => {
   fs.mkdirSync(work);
   fs.writeFileSync(path.join(work, 'shot.png'), 'png');
   fs.writeFileSync(path.join(root, 'secret.png'), 'png');
-  fs.symlinkSync(path.join(root, 'secret.png'), path.join(work, 'link.png'));
+  // Windows refuses symlinks without Developer Mode or elevation.
+  let linked = true;
+  try {
+    fs.symlinkSync(path.join(root, 'secret.png'), path.join(work, 'link.png'));
+  } catch (error) {
+    if (error.code !== 'EPERM' || process.platform !== 'win32') throw error;
+    linked = false;
+  }
   const stored = [];
   const action = new ui.SaveDrawnUiAction({ fromFile: (file) => { stored.push(file); return { type: 'image', sha256: 'c'.repeat(64), mime: 'image/png', size: 3 }; } });
   const caller = { cwd: work, project_path: null };
@@ -174,7 +182,7 @@ test('screenshots must live in the caller\'s directories', () => {
   assert.match(result.ref, /^\[patterm_figure:fig_[0-9a-f]{6}\]$/);
   assert.deepEqual(result.images, { 'shot.png': 'c'.repeat(64) });
   assert.match(result.shown, /^Not shown yet\. Put \[patterm_figure:fig_[0-9a-f]{6}\] on its own line in your reply/);
-  for (const outside of ['../secret.png', 'link.png', path.join(root, 'secret.png')]) {
+  for (const outside of ['../secret.png', ...(linked ? ['link.png'] : []), path.join(root, 'secret.png')]) {
     assert.throws(() => action.execute({ claim: 'x', figure: { type: 'image', path: outside } }, caller), /must be an existing file inside your working directory/);
   }
   assert.throws(() => action.execute({ claim: 'x', figure: { type: 'image', path: 'shot.png' } }, { cwd: null, project_path: null }), /inside your working directory/);

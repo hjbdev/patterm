@@ -13,6 +13,7 @@ import addSessionTitleOverride from '../database/migrations/2026_09_09_000019_ad
 import { historyMigrations } from '../database/historyMigrations';
 import { assertTaskRemovalMigration } from './taskRemovalMigrationSmoke';
 import { assertDatabaseBackups } from './databaseBackupSmoke';
+import { removeTree } from './fixtures/TempTree';
 
 function main(): void {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-db-'));
@@ -80,7 +81,7 @@ function main(): void {
     assertTaskRemovalMigration();
     assertDatabaseBackups();
   } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    removeTree(tempDir);
   }
 }
 
@@ -142,7 +143,7 @@ function assertTaskIdentifierBackfill(): void {
     );
     db.close();
   } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    removeTree(tempDir);
   }
 }
 
