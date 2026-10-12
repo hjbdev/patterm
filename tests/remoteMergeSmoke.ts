@@ -33,5 +33,10 @@ assert.equal(running[0]?.projectSessions[0]?.id, 'workstation:session_0');
 workbenches.set(peer.host_id, [personal([{ exitedAt: '2026-10-12T00:00:00.000Z' }])]);
 assert.deepEqual(remote.merge(hiddenHere).projects, [], 'an idle linked project stays hidden');
 
+// Restored next to a local repository, it is still listed first.
+const repository = { project: { id: 'project_repo', name: 'repo', path: '/repo', logo: null, kind: 'workspace' }, projectSessions: [], processes: [], worktrees: [], timers: [] } as ProjectWorkbenchDto;
+workbenches.set(peer.host_id, [personal([{}])]);
+assert.deepEqual(remote.merge({ ...hiddenHere, projects: [repository] }).projects.map((project) => project.project.id), ['workstation:project_personal', 'project_repo']);
+
 remote.dispose();
 console.log('remote merge smoke passed');

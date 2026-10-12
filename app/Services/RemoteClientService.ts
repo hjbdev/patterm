@@ -201,8 +201,10 @@ export class RemoteClientService {
           local.timers = [...local.timers, ...qualified.timers];
         } else if (!localId || running(qualified)) {
           // A linked project hidden here, such as Personal, still shows the
-          // other host's running agents and processes.
-          projects.push(qualified);
+          // other host's running agents and processes. Personal projects
+          // stay ahead of repositories.
+          const firstRepository = projects.findIndex((project) => project.project.kind !== 'personal');
+          projects.splice(qualified.project.kind === 'personal' && firstRepository >= 0 ? firstRepository : projects.length, 0, qualified);
         }
       }
     }
