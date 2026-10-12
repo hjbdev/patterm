@@ -197,7 +197,7 @@ export class ConversationOutputService {
 
   private process(processId: string): ProcessRow | null {
     return (this.database.connection.prepare(`
-      select processes.id, coalesce(sessions.display_name, sessions.last_title, processes.name) as name, processes.project_id, processes.status,
+      select processes.id, coalesce(sessions.title, processes.name) as name, processes.project_id, processes.status,
              processes.activity, processes.updated_at, processes.exited_at, sessions.id as session_id, sessions.harness, sessions.resume_id,
              sessions.interface_mode, sessions.exited_at as session_exited_at
       from processes left join sessions on sessions.process_id = processes.id

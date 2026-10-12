@@ -17,6 +17,15 @@ export class SessionContextService {
       return;
     }
     db.prepare('update sessions set resumed_from_session_id = ? where id = ?').run(predecessor.id, sessionId);
+    // A resumed conversation keeps its generated title and last recap until the next one replaces them.
+    db.prepare(`update sessions set auto_title = (select auto_title from sessions where id = ?)
+      where id = ? and auto_title is null`).run(predecessor.id, sessionId);
+    db.prepare(`update processes set (auto_summary, auto_status, auto_summary_at, auto_summary_provider, auto_summary_model) =
+        (select p.auto_summary, p.auto_status, p.auto_summary_at, p.auto_summary_provider, p.auto_summary_model
+          from processes p join sessions s on s.process_id = p.id where s.id = ?)
+      where id = (select process_id from sessions where id = ?) and auto_summary is null
+        and exists (select 1 from processes p join sessions s on s.process_id = p.id where s.id = ? and p.auto_summary is not null)`)
+      .run(predecessor.id, sessionId, predecessor.id);
     db.prepare(`insert into session_references (session_id, reference_id)
       select ?, a.reference_id from session_references a join external_references r on r.id = a.reference_id
       where a.session_id = ? and r.project_id = ?`).run(sessionId, predecessor.id, projectId);

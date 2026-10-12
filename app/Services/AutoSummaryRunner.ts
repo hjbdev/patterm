@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { DatabaseService } from './DatabaseService';
-import { SUMMARY_SYSTEM_PROMPT, SUMMARY_TEST_SYSTEM_PROMPT, summaryResult, type AutoSummarySettings, type SummaryContext } from './AutoSummarySettings';
+import { SUMMARY_SYSTEM_PROMPT, SUMMARY_TEST_SYSTEM_PROMPT, summaryResult, type AutoSummarySettings, type SummaryContext, type SummaryResult } from './AutoSummarySettings';
 
 const REQUIRED_FLAGS = ['--print', '--tools', '--strict-mcp-config', '--mcp-config', '--disable-slash-commands', '--no-session-persistence', '--setting-sources', '--settings', '--system-prompt', '--output-format', '--no-chrome'];
 
@@ -93,7 +93,7 @@ export class AutoSummaryRunner {
       : { available: false, reason: `${names[provider]} was not discovered. Install it and sign in with its native CLI.` };
   }
 
-  async run(settings: AutoSummarySettings, text: string, signal: AbortSignal, mode: 'summary' | 'test' = 'summary', context: SummaryContext = {}): Promise<string> {
+  async run(settings: AutoSummarySettings, text: string, signal: AbortSignal, mode: 'summary' | 'test' = 'summary', context: SummaryContext = {}): Promise<SummaryResult> {
     const input = JSON.stringify({ ...context, terminal_output: text });
     signal = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
     const available = this.availability(settings.provider);
@@ -141,7 +141,7 @@ export class AutoSummaryRunner {
         }
         result = envelope.result;
       }
-      try { return summaryResult.parse(JSON.parse(result)).summary; }
+      try { return summaryResult.parse(JSON.parse(result)); }
       catch { throw new Error('Summariser did not return a short summary in the required format.'); }
     } finally {
       // Only this invocation's freshly created, private directory is removed.

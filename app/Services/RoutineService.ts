@@ -544,7 +544,7 @@ export class RoutineService {
 }
 
 const ROUTINE_SELECT = `select routines.*, projects.name as project_name,
-    case when routines.created_by_type = 'agent' then coalesce(routines.created_by_remote_name, (select coalesce(sessions.display_name, sessions.last_title, sessions.harness) from sessions where sessions.id = routines.created_by_id)) end as created_by_name,
+    case when routines.created_by_type = 'agent' then coalesce(routines.created_by_remote_name, (select coalesce(sessions.title, sessions.harness) from sessions where sessions.id = routines.created_by_id)) end as created_by_name,
     case when routines.created_by_type = 'agent' then coalesce(routines.created_by_remote_process_id, (select sessions.process_id from sessions where sessions.id = routines.created_by_id)) end as created_by_process_id
   from routines left join projects on projects.id = routines.project_id`;
 

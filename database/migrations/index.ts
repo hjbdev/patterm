@@ -47,6 +47,7 @@ import addRoutineRemoteCreator from './2026_10_06_000044_add_routine_remote_crea
 import recordMcpHelperCutover from './2026_10_07_000045_record_mcp_helper_cutover';
 import addSessionModel from './2026_09_10_000021_add_session_model';
 import addAssistantMemory from './2026_10_09_000046_add_assistant_memory';
+import addAutoTitles from './2026_10_12_000047_add_auto_titles';
 
 export const migrations: Migration[] = [
   createInitialSchema,
@@ -96,5 +97,6 @@ export const migrations: Migration[] = [
   addPeerMessages,
   addRoutineRemoteCreator,
   recordMcpHelperCutover,
-  addAssistantMemory
+  addAssistantMemory,
+  addAutoTitles
 ];

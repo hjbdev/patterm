@@ -651,7 +651,7 @@ function projectForContext(projects: ProjectWorkbenchDto[], context: CommandPale
 }
 
 function agentLabel(session: SessionDto): string {
-  return session.displayName ?? session.lastTitle ?? session.harness ?? 'agent';
+  return session.title ?? session.displayName ?? session.lastTitle ?? session.harness ?? 'agent';
 }
 
 function worktreeLabel(worktree: WorktreeDto): string {

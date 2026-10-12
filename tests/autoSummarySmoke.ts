@@ -4,9 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { SettingsService } from '../app/Services/SettingsService';
+import { SessionContextService } from '../app/Services/SessionContextService';
+import type { TimelineService } from '../app/Services/TimelineService';
 import { AutoSummaryService, conversationSummaryText, ownerMessages, summarySnapshot, type IntegratedSummarySource } from '../app/Services/AutoSummaryService';
 import { AutoSummaryRunner, claudeSummaryArgs, codexSummaryArgs, runSummaryCommand, summaryEnvironment } from '../app/Services/AutoSummaryRunner';
-import { autoSummarySettingsInput, summaryResult, SUMMARY_SYSTEM_PROMPT, SUMMARY_TEST_SYSTEM_PROMPT, type SummaryContext } from '../app/Services/AutoSummarySettings';
+import { autoSummarySettingsInput, summaryResult, SUMMARY_SYSTEM_PROMPT, SUMMARY_TEST_SYSTEM_PROMPT, type SummaryContext, type SummaryResult } from '../app/Services/AutoSummarySettings';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import { HistoryDatabaseService } from '../app/Services/HistoryDatabaseService';
@@ -27,7 +29,7 @@ async function main() {
   let snapshots = 0;
   let output = 'The build completed successfully. All forty regression tests passed.';
   let snapshotGate: Promise<void> | null = null;
-  let run: (signal: AbortSignal) => Promise<string> = async () => 'Build and tests passed.';
+  let run: (signal: AbortSignal) => Promise<string | SummaryResult> = async () => 'Build and tests passed.';
   let frameListener: Parameters<TerminalService['onFrame']>[0] | undefined;
   const terminal = {
     onFrame(listener: Parameters<TerminalService['onFrame']>[0]) { frameListener = listener; return () => { frameListener = undefined; }; },
@@ -47,13 +49,15 @@ async function main() {
       lastInput = text;
       lastContext = context;
       assert.ok(Buffer.byteLength(text) <= 12 * 1024);
-      return run(signal);
+      const result = await run(signal);
+      return typeof result === 'string' ? { summary: result } : result;
     }
   }, () => {}, () => now);
   const db = database.connection;
   const add = (id: string, parent: string | null = null) => db.prepare(`insert into processes
     (id,project_id,parent_process_id,kind,name,status,activity,pty_process_id,created_at,updated_at)
     values (?, 'project', ?, 'agent', ?, 'running', 'idle', ?, 'now', 'now')`).run(id, parent, id, id);
+  const draw = (id: string) => frameListener?.({ type: 'terminal-frame', processId: id } as unknown as Parameters<NonNullable<typeof frameListener>>[0]);
   const recap = (id: string) => db.prepare('select auto_summary, auto_summary_provider, auto_summary_model from processes where id = ?').get(id) as Record<string, unknown>;
   try {
     db.exec("insert into projects(id,name,path,created_at,updated_at) values('project','Test','/tmp','now','now')");
@@ -88,6 +92,7 @@ async function main() {
     assert.equal(workbench.snapshot().projects[0]?.processes.find((item) => item.id === 'shell')?.summary?.text, 'Server ready.');
     now += 29_999; service.tick(); await flush(); assert.equal(snapshots, 1, 'minimum interval');
     now++; service.tick(); await flush(); assert.equal(calls, 1, 'unchanged snapshot');
+    assert.equal(snapshots, 1, 'an idle agent that has drawn nothing is not re-read');
     output = 'short'; now += 30_000; service.tick(); await flush(); assert.equal(calls, 1, 'trivial output');
     output = 'A different build is running and compiling a large number of modules.';
     db.exec("update processes set activity = 'permission' where id = 'root'");
@@ -98,9 +103,9 @@ async function main() {
       insert into todos(id,project_id,title,status,created_at,updated_at,created_by_actor) values ('todo','project','Ship licence','in_progress','now','now','user');
       insert into todo_assignments(todo_id,assignee_id,session_id) values ('todo','session','session');
       update processes set activity = 'working' where id = 'root'`);
-    service.tick(); await flush(); assert.equal(calls, 2, 'continuous output gets periodic summaries');
+    service.tick(); await flush(); assert.equal(calls, 2, 'continuous output gets periodic summaries, even with no viewer to draw frames');
     assert.deepEqual(lastContext, { thread_name: 'root', references: ['PAT-12: Release hygiene'], todos: ['Ship licence (in progress)'],
-      user_messages: [], previous_summary: 'Build and tests passed.' }, 'the recap builds on the last one and the thread\'s goal');
+      user_messages: [], previous_summary: 'Build and tests passed.', previous_title: null, native_title: null }, 'the recap builds on the last one and the thread\'s goal');
 
     // A terminal agent's own messages come from imported history.
     const history = new HistoryDatabaseService(directory);
@@ -117,7 +122,7 @@ async function main() {
     message.run('m200', 200, 'user', 'message', 'Now also cover the feed recap');
     message.run('m201', 201, 'user', 'message', 'ANTHROPIC_API_KEY=sk-ant-' + 'a'.repeat(60));
     db.prepare("update external_references set title = ? where id = 'ref'").run('Leaked sk-' + 'b'.repeat(40));
-    const withHistory = new AutoSummaryService(database, settings, terminal, { availability: () => ({ available: true, reason: null }), run: async () => '' },
+    const withHistory = new AutoSummaryService(database, settings, terminal, { availability: () => ({ available: true, reason: null }), run: async () => ({ summary: '' }) },
       () => {}, () => now, null, history);
     const context = (withHistory as unknown as { context(id: string, conversation: unknown): SummaryContext }).context('root', null);
     const messages = context.user_messages!;
@@ -130,14 +135,14 @@ async function main() {
     // A missing history database leaves the recap to the other context.
     const missing = new HistoryDatabaseService(path.join(directory, 'absent'), { mode: 'read' });
     missing.initialize({ migrate: false });
-    const withoutHistory = new AutoSummaryService(database, settings, terminal, { availability: () => ({ available: true, reason: null }), run: async () => '' },
+    const withoutHistory = new AutoSummaryService(database, settings, terminal, { availability: () => ({ available: true, reason: null }), run: async () => ({ summary: '' }) },
       () => {}, () => now, null, missing);
     assert.deepEqual((withoutHistory as unknown as { context(id: string, conversation: unknown): SummaryContext }).context('root', null).user_messages, []);
 
     // A rejected request backs off and never persists provider diagnostics.
     output += ' More output.';
     run = async () => { throw new Error('secret provider diagnostic'); };
-    now += 30_000; service.tick(); await flush(); assert.equal(calls, 3);
+    now += 30_000; draw('root'); service.tick(); await flush(); assert.equal(calls, 3);
     assert.ok(!JSON.stringify(service.status()).includes('secret provider'));
     now += 30_000; service.tick(); await flush(); assert.equal(calls, 3, 'failure backoff');
     now += 30_000; service.tick(); await flush(); assert.equal(calls, 4);
@@ -234,7 +239,7 @@ async function main() {
     const inputs: string[] = [];
     const integratedService = new AutoSummaryService(database, settings, terminal, {
       availability: () => ({ available: true, reason: null }),
-      async run(_settings, text) { inputs.push(text); return 'Parser test fixed.'; }
+      async run(_settings, text) { inputs.push(text); return { summary: 'Parser test fixed.' }; }
     }, () => {}, () => now, source);
     integratedService.start();
     assert.ok(conversationListener);
@@ -245,6 +250,47 @@ async function main() {
     assert.equal(recap('integrated').auto_summary, 'Parser test fixed.');
     await integratedService.dispose();
     assert.equal(conversationListener, undefined);
+
+    // The same request names the agent and gives the sidebar a one-line status.
+    db.exec("update sessions set last_title = 'Codex', resume_id = 'native' where id = 'integrated-session'");
+    let named: SummaryResult = { title: '  Fix the\nparser test ', status: 'Waiting on\nyour review', summary: 'Parser test fixed and waiting on review.' };
+    const titled = new AutoSummaryService(database, settings, terminal, {
+      availability: () => ({ available: true, reason: null }),
+      async run(_settings, _text, _signal, _mode, context) { lastContext = context; return named; }
+    }, () => {}, () => now, source);
+    titled.userInput('integrated'); now += 2000; titled.tick(); await flush();
+    assert.equal(lastContext?.native_title, 'Codex');
+    assert.equal(lastContext?.previous_title, null);
+    const titleOf = (id: string) => db.prepare('select auto_title, title from sessions where id = ?').get(id) as Record<string, unknown>;
+    assert.deepEqual({ ...titleOf('integrated-session') }, { auto_title: 'Fix the parser test', title: 'Fix the parser test' }, 'a generated title beats the native one');
+    const summaryOf = (id: string) => db.prepare('select auto_summary, auto_status from processes where id = ?').get(id) as Record<string, unknown>;
+    assert.deepEqual({ ...summaryOf('integrated') }, { auto_summary: 'Parser test fixed and waiting on review.', auto_status: 'Waiting on your review' });
+    const integratedDto = new WorkbenchRepository(database).snapshot().projects[0]?.projectSessions.find((session) => session.id === 'integrated-session');
+    assert.equal(integratedDto?.title, 'Fix the parser test');
+    assert.equal(integratedDto?.summary?.status, 'Waiting on your review');
+    assert.equal((titled as unknown as { context(id: string, conversation: unknown): SummaryContext }).context('integrated', null).previous_title, 'Fix the parser test');
+    db.exec("update sessions set display_name = 'parser' where id = 'integrated-session'");
+    assert.equal(titleOf('integrated-session').title, 'parser', 'a chosen name beats a generated one');
+    db.exec("update sessions set display_name = null where id = 'integrated-session'");
+
+    // A restarted or resumed conversation keeps its title and recap.
+    add('resumed');
+    db.exec(`update processes set pty_process_id = null where id = 'resumed';
+      insert into sessions(id,project_id,process_id,harness,session_role,interface_mode,resume_id,started_at)
+      values ('resumed-session','project','resumed','codex','orchestrator','integrated','native','later')`);
+    new SessionContextService(database).inherit('resumed-session', 'project', 'codex', 'native', { append() {} } as unknown as TimelineService, 'integrated-session');
+    assert.equal(titleOf('resumed-session').title, 'Fix the parser test');
+    assert.deepEqual({ ...summaryOf('resumed') }, { ...summaryOf('integrated') });
+
+    // Turning titles off removes generated ones and stops writing them.
+    titled.update({ ...enabled, titles: false });
+    assert.deepEqual({ ...titleOf('integrated-session') }, { auto_title: null, title: 'Codex' });
+    named = { ...named, title: 'Another title', summary: 'Parser test fixed.' };
+    titled.userInput('integrated'); now += 2000; titled.tick(); await flush();
+    assert.equal(summaryOf('integrated').auto_summary, 'Parser test fixed.');
+    assert.equal(titleOf('integrated-session').auto_title, null);
+    titled.update(enabled);
+    await titled.dispose();
 
     const runner = new AutoSummaryRunner(database, process.env);
     assert.equal(runner.availability('claude').available, false);
@@ -257,7 +303,7 @@ async function main() {
     fs.copyFileSync(path.resolve('tests/fixtures/summaryCli.cjs'), fixture);
     fs.chmodSync(fixture, 0o700);
     db.prepare("insert into harness_installations values ('fake', 'claude', ?, 'fixture', 'available', 'now', 'now')").run(fixture);
-    assert.equal(await runner.run(enabled, 'synthetic terminal text', new AbortController().signal), 'patterm okay');
+    assert.deepEqual(await runner.run(enabled, 'synthetic terminal text', new AbortController().signal), { summary: 'patterm okay' });
     const testSettings = { ...enabled, models: { ...enabled.models, claude: 'health-check' } };
     const health = new AutoSummaryService(database, settings, terminal, runner, () => {});
     assert.deepEqual(await health.test(testSettings), { ok: true });
@@ -288,14 +334,14 @@ async function main() {
       try {
         assert.equal(providerService.update(providerSettings).enabled, true);
         assert.deepEqual(await providerService.test(providerSettings), { ok: true });
-        assert.equal(await providers.run(providerSettings, 'synthetic terminal output', new AbortController().signal), 'patterm okay');
+        assert.deepEqual(await providers.run(providerSettings, 'synthetic terminal output', new AbortController().signal), { summary: 'patterm okay' });
         for (const model of ['bad-json', 'bad-schema', 'error']) {
           await assert.rejects(providers.run({ ...providerSettings, models: { ...providerSettings.models, [provider]: model } }, 'synthetic', new AbortController().signal), /Summari[sz]|Summary/);
         }
       } finally { await providerService.dispose(); }
     }
     const newer = { ...enabled, provider: 'codex' as const, models: { ...enabled.models, codex: 'newer-model' } };
-    assert.equal(await providers.run(newer, 'synthetic', new AbortController().signal), 'patterm okay', 'models missing from the bundled catalogue use the refreshed one');
+    assert.deepEqual(await providers.run(newer, 'synthetic', new AbortController().signal), { summary: 'patterm okay' }, 'models missing from the bundled catalogue use the refreshed one');
     await assert.rejects(providers.run({ ...newer, models: { ...newer.models, codex: 'unknown-model' } }, 'synthetic', new AbortController().signal), /not in this Codex build/);
     assert.equal(fs.readFileSync(path.join(codexHome, 'auth.json'), 'utf8'), '{}', 'native login survives temporary-home cleanup');
     const env = summaryEnvironment({ HOME: directory, PATH: process.env.PATH, ANTHROPIC_API_KEY: 'secret', PATTERM_PROCESS_ID: 'child', CLAUDE_CODE_OAUTH_TOKEN: 'oauth', NODE_OPTIONS: '--require evil' });

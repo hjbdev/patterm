@@ -97,7 +97,7 @@ export function agentOptionTargetByDelta(families: readonly AgentTabFamily[], ac
 }
 
 export function agentLabel(session: SessionRecord): string {
-  return session.displayName ?? session.lastTitle ?? session.harness ?? session.id;
+  return session.title ?? session.displayName ?? session.lastTitle ?? session.harness ?? session.id;
 }
 
 // Tab menus list a family below its root, so a direct child sits flush and each

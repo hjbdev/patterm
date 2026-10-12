@@ -199,12 +199,14 @@ function toggle(tab: AgentTab, event: MouseEvent): void {
   else setExpanded(tab.family.rootId, !expanded(tab));
 }
 
-// What a family waits on always shows; its summary shows when it's open, or
-// everywhere if the user asks for every summary.
+// What a family waits on always shows; its status line shows when it's open,
+// or everywhere if the user asks for every summary. Recaps from before status
+// lines existed show their first line instead.
 function subtitle(tab: AgentTab): string | null {
   const waitingOn = familyWaitingOn(sidebar, tab.family);
   if (waitingOn) return waitingOn;
-  return expansion.state.value.summaries || expanded(tab) ? tab.family.root.session.summary?.text ?? null : null;
+  const summary = tab.family.root.session.summary;
+  return summary && (expansion.state.value.summaries || expanded(tab)) ? summary.status || summary.text : null;
 }
 
 // Agents with a second line or open members get room around them; one-line

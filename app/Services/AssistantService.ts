@@ -222,7 +222,7 @@ export class AssistantService {
     const current = this.current();
     if (!current) throw new Error('send_message: the assistant is not running');
     if (current.process_id === fromProcessId) throw new Error('send_message: the assistant cannot message itself');
-    const sender = this.database.connection.prepare(`select coalesce(sessions.display_name, sessions.last_title, processes.name) as name, projects.name as project_name
+    const sender = this.database.connection.prepare(`select coalesce(sessions.title, processes.name) as name, projects.name as project_name
       from processes left join projects on projects.id = processes.project_id
       left join sessions on sessions.process_id = processes.id
       where processes.id = ? order by sessions.started_at desc limit 1`).get(fromProcessId) as { name: string | null; project_name: string | null } | undefined;

@@ -119,7 +119,7 @@ export class RestartAgentSessionAction {
           worktree_id: this.liveWorktree(source.worktree_id, source.project_id),
           ...(source.cwd && isDirectory(source.cwd) ? { cwd: source.cwd } : {}),
           actor_id: 'user',
-          // Only a chosen name is passed on; an unnamed agent keeps showing its native title.
+          // Only a chosen name is passed on; an unnamed agent keeps its generated or native title.
           name: source.display_name ?? undefined,
           interface_mode: 'integrated'
         }, { resume_id: source.resume_id!, conversation_id: '', source_session_id: source.session_id });

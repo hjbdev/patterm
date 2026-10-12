@@ -3,7 +3,7 @@
 // with `exactOptionalPropertyTypes`. Timestamps are ISO strings (stored as text).
 
 export type ActorType = 'human' | 'agent' | 'system';
-export interface AutoSummaryRecord { text: string; generatedAt: string; provider: string; model: string; }
+export interface AutoSummaryRecord { text: string; status?: string | null; generatedAt: string; provider: string; model: string; }
 
 export interface ProjectSummary {
   id: string;
@@ -64,6 +64,8 @@ export interface SessionRecord {
   activity: ActivityState;
   lastTitle: string | null;
   displayName: string | null;
+  // Chosen, then generated, then native name. Older paired hosts omit it.
+  title?: string | null;
   model: string | null;
   reasoning: string | null;
   startedAt: string;

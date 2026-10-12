@@ -2096,7 +2096,7 @@ function resolveCaller(database: DatabaseService, identity: string | null): Call
     database.connection
       .prepare(
         `select sessions.id as session_id, sessions.project_id, sessions.process_id,
-                sessions.session_role, sessions.cwd, sessions.worktree_id, coalesce(sessions.display_name, sessions.last_title) as title,
+                sessions.session_role, sessions.cwd, sessions.worktree_id, sessions.title,
                 processes.parent_process_id, projects.path as project_path
          from sessions
          left join processes on processes.id = sessions.process_id
@@ -2151,7 +2151,7 @@ function assistantOverview(services: RegistryServices, current: CallerRow) {
 // Running agents and processes only; the assistant asks for history explicitly.
 function listActiveProcesses(database: DatabaseService, projectId: string) {
   const agents = database.connection.prepare(
-    `select sessions.process_id, coalesce(sessions.display_name, sessions.last_title, sessions.harness) as name, sessions.harness,
+    `select sessions.process_id, coalesce(sessions.title, sessions.harness) as name, sessions.harness,
             sessions.session_role, processes.parent_process_id, processes.activity
      from sessions join processes on processes.id = sessions.process_id
      where sessions.project_id = ? and sessions.exited_at is null and processes.status = 'running' and processes.kind = 'agent'
@@ -2210,7 +2210,7 @@ function listCliProcesses(database: DatabaseService, kind?: string, projectId?: 
   const projectFilter = projectId ? ' and sessions.project_id = @project_id' : '';
   const sessions = database.connection
     .prepare(
-      `select sessions.process_id, sessions.display_name, sessions.last_title, sessions.harness, sessions.session_role, sessions.exited_at, sessions.exit_code,
+      `select sessions.process_id, sessions.title, sessions.harness, sessions.session_role, sessions.exited_at, sessions.exit_code,
               processes.parent_process_id, processes.status as process_status
        from sessions left join processes on processes.id = sessions.process_id
        where sessions.process_id is not null${projectFilter}
@@ -2218,8 +2218,7 @@ function listCliProcesses(database: DatabaseService, kind?: string, projectId?: 
     )
     .all(projectId ? { project_id: projectId } : {}) as Array<{
       process_id: string;
-      display_name: string | null;
-      last_title: string | null;
+      title: string | null;
       harness: string | null;
       session_role: string;
       exited_at: string | null;
@@ -2234,7 +2233,7 @@ function listCliProcesses(database: DatabaseService, kind?: string, projectId?: 
   const rows = [
     ...sessions.map((row) => ({
       process_id: row.process_id,
-      name: row.display_name ?? row.last_title ?? row.harness ?? 'agent',
+      name: row.title ?? row.harness ?? 'agent',
       kind: 'agent',
       status: row.process_status && row.process_status !== 'running' ? row.process_status : row.exited_at ? 'exited' : 'running',
       ...(row.process_id === currentProcessId ? { is_current: true } : {}),

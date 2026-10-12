@@ -5,7 +5,7 @@ import type { TimerRecord, TimerService } from '../Services/TimerService';
 // Renderer-facing (camelCase) shapes. These intentionally mirror the interfaces
 // in resources/js/types.ts so the IPC payload drops straight into the UI.
 
-export interface AutoSummaryDto { text: string; generatedAt: string; provider: string; model: string; }
+export interface AutoSummaryDto { text: string; status?: string | null; generatedAt: string; provider: string; model: string; }
 
 export interface ProjectSummaryDto {
   id: string;
@@ -38,6 +38,8 @@ export interface SessionDto {
   activity: string;
   lastTitle: string | null;
   displayName: string | null;
+  // The name to show: chosen, then generated, then native. Older paired hosts omit it.
+  title?: string | null;
   model: string | null;
   reasoning: string | null;
   startedAt: string;
@@ -114,6 +116,7 @@ interface SessionRow {
   resume_status: string;
   last_title: string | null;
   display_name: string | null;
+  title: string | null;
   model: string | null;
   reasoning: string | null;
   started_at: string;
@@ -122,6 +125,7 @@ interface SessionRow {
 
 interface ProcessRow {
   auto_summary: string | null;
+  auto_status: string | null;
   auto_summary_at: string | null;
   auto_summary_provider: string | null;
   auto_summary_model: string | null;
@@ -293,6 +297,7 @@ function mapSessions(sessions: SessionRow[], processes: ProcessRow[]): SessionDt
       activity: session.process_id ? activityByProcessId.get(session.process_id) ?? 'idle' : 'idle',
       lastTitle: session.last_title,
       displayName: session.display_name,
+      title: session.title,
       model: session.model,
       reasoning: session.reasoning,
       startedAt: session.started_at,
@@ -324,7 +329,7 @@ function mapProcess(row: ProcessRow): ProcessDto {
 
 function mapAutoSummary(row: ProcessRow): AutoSummaryDto | null {
   return row.auto_summary && row.auto_summary_at && row.auto_summary_provider && row.auto_summary_model
-    ? { text: row.auto_summary, generatedAt: row.auto_summary_at, provider: row.auto_summary_provider, model: row.auto_summary_model } : null;
+    ? { text: row.auto_summary, status: row.auto_status, generatedAt: row.auto_summary_at, provider: row.auto_summary_provider, model: row.auto_summary_model } : null;
 }
 
 // Shown once the turn that asked has finished.

@@ -5,6 +5,9 @@
       <SettingsRow label="Enable auto-summaries" html-for="summary-enabled" save-key="summaries.general.enabled" toggle :disabled="enableDisabled">
         <Switch id="summary-enabled" :model-value="draft.enabled" :disabled="enableDisabled" @update:model-value="(value) => { draft.enabled = value; persist('summaries.general.enabled'); }" />
       </SettingsRow>
+      <SettingsRow label="Generate titles" description="Names agents you haven't named from the same request. Names you or an agent choose always win." html-for="summary-titles" save-key="summaries.general.titles" toggle>
+        <Switch id="summary-titles" :model-value="draft.titles" :disabled="loading || busy" @update:model-value="(value) => { draft.titles = value; persist('summaries.general.titles'); }" />
+      </SettingsRow>
     </SettingsSection>
 
     <SettingsSection title="Summariser" description="Uses the selected CLI’s native login and model, without automatic fallback. Summaries have no tools or MCP access and do not create resumable conversations." scope="summaries.summariser">

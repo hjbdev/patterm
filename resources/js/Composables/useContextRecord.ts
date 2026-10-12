@@ -256,7 +256,7 @@ export function useAssignees() {
   const sessions = computed(() => activeProject.value?.projectSessions ?? []);
   function assigneeName(id: string) {
     const session = sessions.value.find(item => item.id === id);
-    return id === 'user' ? 'You' : session?.displayName || session?.lastTitle || id;
+    return id === 'user' ? 'You' : session?.title || session?.displayName || session?.lastTitle || id;
   }
   return { sessions, assigneeName };
 }
