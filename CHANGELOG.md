@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Agent auto-summaries now retain a bounded recap of conversation prose and read
+  new history in order, excluding tools and reasoning. A shared hourly call limit
+  bounds automatic usage. Large existing threads start with labelled partial
+  coverage; Session context offers an estimated, pausable rebuild from retained
+  history. Refreshes, resumes, and delayed final imports preserve coverage, while
+  edits to already-covered history require a deliberate rebuild.
+
 - Keep sidebar row spacing consistent when agents expand or show status lines.
 
 ### Removed

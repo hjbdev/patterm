@@ -13,7 +13,7 @@ export const BROWSER_TOOLS = new Set([
   'integrated_permission_reply', 'integrated_question_reply', 'integrated_form_reply', 'integrated_task_stop', 'integrated_task_output', 'integrated_queue_update', 'integrated_new',
   'settings_agent_interface_get', 'settings_agent_interface_update', 'settings_figures_get', 'settings_figures_update',
   'routine_list', 'routine_get', 'routine_create', 'routine_update', 'routine_delete', 'routine_run_now', 'routine_run', 'routine_runs', 'routine_log',
-  'usage_summary',
+  'usage_summary', 'auto_summary_control',
   'assistant_get', 'assistant_ensure', 'assistant_voice_start', 'assistant_voice_stop', 'assistant_set_focus_mode',
   'settings_assistant_get', 'settings_assistant_update',
   'settings_idle_compaction_get', 'settings_idle_compaction_update',

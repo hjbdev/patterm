@@ -1,7 +1,7 @@
 <template>
-  <SettingsPanel title="Auto-summaries" description="Short recaps of recent terminal output or Integrated conversation, without interrupting the agent.">
-    <SettingsSection title="General" description="Summaries begin after you type into a top-level terminal or message a top-level Integrated agent. Child agents are skipped." scope="summaries.general">
-      <p class="rounded-lg border border-warning/20 bg-warning/[0.04] px-3.5 py-3 text-xs leading-relaxed text-muted-foreground">Enabling this sends recent terminal text and Integrated conversation messages to the selected provider and consumes its usage allowance. Redaction is best-effort: this text can still contain secrets. Raw terminal snapshots are not saved.</p>
+  <SettingsPanel title="Auto-summaries" description="Conversation recaps that retain earlier goals and decisions, without interrupting the agent.">
+    <SettingsSection title="General" description="Summaries begin after you message a top-level agent. Imported conversation history can take a few minutes to arrive. Child agents are skipped." scope="summaries.general">
+      <p class="rounded-lg border border-warning/20 bg-warning/[0.04] px-3.5 py-3 text-xs leading-relaxed text-muted-foreground">Enabling this sends conversation prose and a compact recap to the selected provider and consumes its usage allowance. Tools and reasoning are excluded from agent recaps. Redaction is best-effort: this text can still contain secrets. Shell summaries use recent terminal output. Large existing conversations begin with partial coverage; rebuild them deliberately from Session context.</p>
       <SettingsRow label="Enable auto-summaries" html-for="summary-enabled" save-key="summaries.general.enabled" toggle :disabled="enableDisabled">
         <Switch id="summary-enabled" :model-value="draft.enabled" :disabled="enableDisabled" @update:model-value="(value) => { draft.enabled = value; persist('summaries.general.enabled'); }" />
       </SettingsRow>
@@ -29,6 +29,9 @@
       </SettingsRow>
       <SettingsRow label="Minimum interval" description="The shortest time between two summaries of one agent." html-for="summary-interval" save-key="summaries.summariser.interval">
         <SettingsChoice id="summary-interval" :model-value="draft.intervalSeconds" :options="INTERVALS" aria-label="Minimum interval" :disabled="loading || busy" segmented @update:model-value="(value) => { draft.intervalSeconds = value; persist('summaries.summariser.interval'); }" />
+      </SettingsRow>
+      <SettingsRow label="Calls per hour" description="Shared across all automatic summaries and rebuilds. Failed calls count. Set to zero to pause; connection tests are separate." html-for="summary-call-limit" save-key="summaries.summariser.call-limit">
+        <Input id="summary-call-limit" type="number" min="0" max="120" :model-value="draft.maxCallsPerHour" class="h-8 w-24 text-xs" :disabled="loading || busy" @update:model-value="(value) => { draft.maxCallsPerHour = Number(value); persistAfterTyping('summaries.summariser.call-limit'); }" @blur="flushTyping" />
       </SettingsRow>
       <SettingsRow label="Connection test" description="Makes one model request using synthetic text only.">
         <span v-if="testPassed" role="status" class="text-xs text-success">Test passed</span>
