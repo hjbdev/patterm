@@ -1,8 +1,10 @@
-#![cfg(unix)]
+#![cfg(any(unix, windows))]
 
 use std::fs;
 use std::io::{Read, Write};
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -14,6 +16,12 @@ use serde_json::{json, Value};
 
 static NEXT_HOST: AtomicU64 = AtomicU64::new(1);
 
+// A Windows host serves a named pipe; a client opens it like a file.
+#[cfg(unix)]
+type Stream = UnixStream;
+#[cfg(windows)]
+type Stream = fs::File;
+
 struct Host {
     child: Child,
     directory: PathBuf,
@@ -22,24 +30,33 @@ struct Host {
 
 impl Host {
     fn start() -> Self {
-        let directory = std::env::temp_dir().join(format!(
+        let name = format!(
             "patterm-host-test-{}-{}",
             std::process::id(),
             NEXT_HOST.fetch_add(1, Ordering::Relaxed),
-        ));
+        );
+        let directory = std::env::temp_dir().join(&name);
         fs::create_dir(&directory).unwrap();
+        #[cfg(unix)]
         fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+        #[cfg(unix)]
         let socket = directory.join("control.sock");
+        #[cfg(windows)]
+        let socket = PathBuf::from(format!(r"\\.\pipe\{name}"));
         let child = Self::command(&socket).spawn().unwrap();
         let host = Self {
             child,
             directory,
             socket,
         };
-        let deadline = Instant::now() + Duration::from_secs(3);
-        while !host.socket.exists() {
-            assert!(Instant::now() < deadline, "host created its socket");
-            thread::sleep(Duration::from_millis(5));
+        // Probing a pipe would connect to it, so Windows waits in connect().
+        #[cfg(unix)]
+        {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while !host.socket.exists() {
+                assert!(Instant::now() < deadline, "host created its socket");
+                thread::sleep(Duration::from_millis(5));
+            }
         }
         host
     }
@@ -54,7 +71,8 @@ impl Host {
         command
     }
 
-    fn connect(&self) -> UnixStream {
+    #[cfg(unix)]
+    fn connect(&self) -> Stream {
         let stream = UnixStream::connect(&self.socket).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(3)))
@@ -63,6 +81,28 @@ impl Host {
             .set_write_timeout(Some(Duration::from_secs(3)))
             .unwrap();
         stream
+    }
+
+    #[cfg(windows)]
+    fn connect(&self) -> Stream {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            match open_pipe(&self.socket) {
+                Ok(stream) => return stream,
+                Err(error) => {
+                    assert!(Instant::now() < deadline, "host serves its pipe: {error}");
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
+        }
+    }
+
+    // The endpoint is gone once the host has released it.
+    fn endpoint_exists(&self) -> bool {
+        #[cfg(unix)]
+        return self.socket.exists();
+        #[cfg(windows)]
+        return open_pipe(&self.socket).is_ok();
     }
 
     fn wait_for_exit(&mut self) {
@@ -85,7 +125,54 @@ impl Drop for Host {
     }
 }
 
-fn request(stream: &mut UnixStream, method: &str, params: Value) -> Value {
+#[cfg(windows)]
+fn open_pipe(path: &PathBuf) -> std::io::Result<Stream> {
+    fs::OpenOptions::new().read(true).write(true).open(path)
+}
+
+// A command that prints `before`, pauses, prints `after`, and exits 7, with how
+// long it takes to finish.
+fn surviving_command() -> (Value, Duration) {
+    #[cfg(unix)]
+    return (
+        json!({
+            "command": "/bin/sh",
+            "args": ["-c", "printf 'before\\n'; sleep 0.2; printf 'after\\n'; exit 7"],
+        }),
+        Duration::from_millis(350),
+    );
+    #[cfg(windows)]
+    return (
+        json!({
+            "command": "cmd.exe",
+            "args": ["/d", "/c", "echo before& ping -n 2 127.0.0.1 >nul& echo after& exit 7"],
+        }),
+        Duration::from_millis(2500),
+    );
+}
+
+// A command that reads a line, prints it back, and keeps running, with the
+// input that ends a line.
+fn reading_command() -> (Value, &'static str) {
+    #[cfg(unix)]
+    return (
+        json!({
+            "command": "/bin/sh",
+            "args": ["-c", "read input; printf 'received:%s' \"$input\"; sleep 30"],
+        }),
+        "hello\n",
+    );
+    #[cfg(windows)]
+    return (
+        json!({
+            "command": "cmd.exe",
+            "args": ["/d", "/v:on", "/c", "set /p input=& echo received:!input!& ping -n 30 127.0.0.1 >nul"],
+        }),
+        "hello\r",
+    );
+}
+
+fn request(stream: &mut Stream, method: &str, params: Value) -> Value {
     writeln!(
         stream,
         "{}",
@@ -114,21 +201,15 @@ fn reconnect_preserves_sleep_output_and_exit_status() {
     let handshake = request(&mut controller, "terminal.host.handshake", json!({}));
     assert_eq!(handshake["protocol_version"], 1);
     assert_eq!(handshake["host_id"], "test");
-    let id = request(
-        &mut controller,
-        "terminal.process.spawn",
-        json!({
-            "command": "/bin/sh",
-            "args": ["-c", "printf 'before\\n'; sleep 0.2; printf 'after\\n'; exit 7"],
-            "name": "surviving command",
-        }),
-    )["process_id"]
+    let (mut params, duration) = surviving_command();
+    params["name"] = json!("surviving command");
+    let id = request(&mut controller, "terminal.process.spawn", params)["process_id"]
         .as_str()
         .unwrap()
         .to_string();
     assert!(id.contains(handshake["incarnation"].as_str().unwrap()));
     drop(controller);
-    thread::sleep(Duration::from_millis(350));
+    thread::sleep(duration);
 
     let mut controller = host.connect();
     assert_eq!(
@@ -154,7 +235,7 @@ fn reconnect_preserves_sleep_output_and_exit_status() {
     );
     request(&mut controller, "terminal.host.shutdown", json!({}));
     host.wait_for_exit();
-    assert!(!host.socket.exists());
+    assert!(!host.endpoint_exists());
 }
 
 #[test]
@@ -177,9 +258,8 @@ fn rejects_competing_hosts_and_controllers_without_losing_ownership() {
 
     // Closing a live terminal after reconnect exercises ownership, not only
     // retained scrollback from processes that have already exited.
-    let id = request(&mut controller, "terminal.process.spawn", json!({
-        "command": "/bin/sh", "args": ["-c", "read input; printf 'received:%s' \"$input\"; sleep 30"],
-    }))["process_id"].clone();
+    let (params, line) = reading_command();
+    let id = request(&mut controller, "terminal.process.spawn", params)["process_id"].clone();
     drop(controller);
     thread::sleep(Duration::from_millis(25));
     let mut controller = host.connect();
@@ -187,7 +267,7 @@ fn rejects_competing_hosts_and_controllers_without_losing_ownership() {
         &mut controller,
         "terminal.process.input",
         json!({
-            "process_id": id, "text": "hello\n",
+            "process_id": id, "text": line,
         }),
     );
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -218,9 +298,12 @@ fn crashed_host_reclaims_stale_socket_with_a_new_incarnation() {
     host.child.kill().unwrap();
     host.child.wait().unwrap();
     drop(controller);
+    // A pipe vanishes with its server, so only a Unix socket file goes stale.
+    #[cfg(unix)]
     assert!(host.socket.exists(), "crash leaves a stale socket");
     host.child = Host::command(&host.socket).spawn().unwrap();
     let deadline = Instant::now() + Duration::from_secs(3);
+    #[cfg(unix)]
     let mut controller = loop {
         match UnixStream::connect(&host.socket) {
             Ok(stream) => break stream,
@@ -230,9 +313,15 @@ fn crashed_host_reclaims_stale_socket_with_a_new_incarnation() {
             }
         }
     };
+    #[cfg(unix)]
     controller
         .set_read_timeout(Some(Duration::from_secs(3)))
         .unwrap();
+    #[cfg(windows)]
+    let mut controller = {
+        assert!(Instant::now() < deadline);
+        host.connect()
+    };
     let new = request(&mut controller, "terminal.host.handshake", json!({}));
     assert_ne!(new["incarnation"], old["incarnation"]);
     request(&mut controller, "terminal.host.shutdown", json!({}));

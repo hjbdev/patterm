@@ -18,7 +18,7 @@ async function main(): Promise<void> {
   const port = Number(process.env.PATTERM_PORT ?? 8787);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PATTERM_PORT must be between 1 and 65535');
   const appDataPath = path.resolve(process.env.PATTERM_DATA_DIR ?? path.join(os.homedir(), '.local/share/patterm-server'));
-  const sidecarPath = process.env.PATTERM_SIDECAR ?? path.join(root, 'native/terminal-core/target/release/patterm-terminal-core');
+  const sidecarPath = process.env.PATTERM_SIDECAR ?? path.join(root, 'native/terminal-core/target/release', process.platform === 'win32' ? 'patterm-terminal-core.exe' : 'patterm-terminal-core');
   const mcpShimPath = process.env.PATTERM_MCP_SHIM ?? path.join(root, 'dist/mcp/patterm-mcp.js');
   const rendererPath = path.join(root, 'dist/renderer');
   for (const filename of [sidecarPath, mcpShimPath, path.join(rendererPath, 'index.html')]) fs.accessSync(filename, fs.constants.R_OK);
