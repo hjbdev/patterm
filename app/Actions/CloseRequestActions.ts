@@ -110,7 +110,7 @@ export class CloseRequestActions {
   private process(processId: string): ProcessContext | null {
     return (this.database.connection.prepare(`select processes.id, processes.project_id, processes.parent_process_id, processes.status, sessions.interface_mode = 'integrated' as integrated,
         processes.close_requested_at, processes.close_request_summary,
-        coalesce(sessions.display_name, sessions.last_title, processes.name) as name, sessions.id as session_id,
+        coalesce(sessions.title, processes.name) as name, sessions.id as session_id,
         exists(select 1 from processes parent where parent.id = processes.parent_process_id and parent.status = 'running') as parent_running
       from processes
       left join sessions on sessions.process_id = processes.id

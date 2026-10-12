@@ -319,7 +319,7 @@ export class TimerService {
     return this.database.connection
       .prepare(
         `select processes.id, processes.status, processes.activity, processes.created_at, processes.updated_at,
-                coalesce((select coalesce(sessions.display_name, sessions.last_title) from sessions
+                coalesce((select sessions.title from sessions
                           where sessions.process_id = processes.id order by sessions.started_at desc limit 1), processes.name) as name
          from processes
          where processes.id = ? or processes.pty_process_id = ?

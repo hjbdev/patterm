@@ -45,12 +45,14 @@ interface SourceSession {
   resume_id: string | null;
   session_role: string;
   title_set_by_user: number;
+  display_name: string | null;
   name: string;
   activity: string | null;
 }
 
 const SOURCE_COLUMNS = `sessions.id as session_id, sessions.project_id, sessions.harness, sessions.model, sessions.reasoning, sessions.service_tier,
-  sessions.cwd, sessions.worktree_id, sessions.resume_id, sessions.session_role, sessions.title_set_by_user, processes.name, processes.activity, processes.id as process_id`;
+  sessions.cwd, sessions.worktree_id, sessions.resume_id, sessions.session_role, sessions.title_set_by_user,
+  sessions.display_name, processes.name, processes.activity, processes.id as process_id`;
 const WORKING = 'This agent is working, and restarting would stop its turn. Wait for it to finish or stop the response first.';
 const LIVE_INTEGRATED = `sessions.interface_mode = 'integrated' and sessions.exited_at is null and processes.status = 'running'`;
 
@@ -116,7 +118,8 @@ export class RestartAgentSessionAction {
           worktree_id: this.liveWorktree(source.worktree_id, source.project_id),
           ...(source.cwd && isDirectory(source.cwd) ? { cwd: source.cwd } : {}),
           actor_id: 'user',
-          name: source.name,
+          // Only a chosen name is passed on; an unnamed agent keeps its generated or native title.
+          name: source.display_name ?? undefined,
           interface_mode: 'integrated'
         }, { resume_id: source.resume_id!, conversation_id: '', source_session_id: source.session_id });
       } catch (error) {

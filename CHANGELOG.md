@@ -12,6 +12,11 @@ in the archived pre-release repository.
 
 ### Added
 
+- Auto-summaries also name agents you haven't named and give each one a
+  short status line, from the same request. The sidebar shows the status line
+  instead of the start of the recap; the full recap stays in the tooltip and
+  session context. A name you or an agent choose always wins. Turn generated
+  titles off in Settings › Auto-summaries.
 - `/restart` in an Integrated conversation stops the agent and resumes the
   same conversation in a new process, so it picks up MCP server, login and
   settings changes. The new session keeps its worktrees, todos, scratchpads,
@@ -90,6 +95,12 @@ in the archived pre-release repository.
 
 ### Fixed
 
+- A restarted or resumed agent keeps its auto-summary instead of waiting for
+  your next message to get a new one.
+- Idle agents are no longer re-read every interval just to find their recap
+  unchanged.
+- Restarting an unnamed agent no longer freezes its placeholder name, such as
+  "Claude Code", over later titles. Names frozen this way are cleared.
 - In the browser, the folder picker opened from the New project dialog now
   appears above it instead of hidden underneath, which on phones covered it
   completely.

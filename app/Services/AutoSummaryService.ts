@@ -35,6 +35,11 @@ export function summarySnapshot(text: string): string {
   return points.slice(start).join('').replace(/^[\udc00-\udfff]/, '');
 }
 
+// Titles and status lines fill one line of the tab and sidebar.
+function oneLine(text: string | undefined): string | null {
+  return text ? summarySnapshot(text).replace(/\s+/g, ' ').trim() || null : null;
+}
+
 // Visible text and tool titles from the latest transcript rows. Reasoning and
 // subagent rows are left out; they are long and not what the user reads.
 export function conversationSummaryText(conversation: unknown): string {
@@ -141,6 +146,8 @@ export class AutoSummaryService {
       if (!availability.available) throw new Error(availability.reason!);
     }
     this.settings = this.settingsService.updateAutoSummarySettings(settings);
+    // Generated titles go when they are turned off; chosen and native names stay.
+    if (!settings.titles) this.database.connection.prepare('update sessions set auto_title = null where auto_title is not null').run();
     for (const controller of this.jobs.keys()) controller.abort();
     this.pending.clear();
     this.error = null;
@@ -156,9 +163,9 @@ export class AutoSummaryService {
     const job = this.runner.run(settings, 'patterm okay', controller.signal, 'test');
     this.jobs.set(controller, job);
     try {
-      const text = await job;
+      const { summary } = await job;
       if (controller.signal.aborted) throw new Error('Summary cancelled.');
-      if (text.trim().toLowerCase() !== 'patterm okay') throw new Error('Summariser health check did not return the expected phrase.');
+      if (summary.trim().toLowerCase() !== 'patterm okay') throw new Error('Summariser health check did not return the expected phrase.');
       return { ok: true };
     } finally { this.jobs.delete(controller); }
   }
@@ -182,6 +189,9 @@ export class AutoSummaryService {
       const now = this.now();
       const interval = this.settings.intervalSeconds * 1000;
       if (now < pending.retryAt || now - pending.attempted < interval) continue;
+      // Nothing has drawn or arrived since the last attempt matched or made a
+      // recap, so it would only match it again. A failed attempt still retries.
+      if (pending.hash !== null && pending.failures === 0 && pending.changed <= pending.attempted) continue;
       const quiet = row.activity === 'idle' && now - pending.changed >= 2000;
       if (!quiet && now - Math.max(pending.started, pending.attempted) < interval) continue;
       const settings = this.settings;
@@ -206,16 +216,25 @@ export class AutoSummaryService {
       const text = summarySnapshot(source);
       const context = this.context(row.id, conversation);
       const hash = createHash('sha256').update(text).update(JSON.stringify(context.user_messages)).digest('hex');
-      if (text.length < 40 || hash === pending.hash) return;
+      if (text.length < 40) return;
+      // A match means the recap is current, even after an earlier failure.
+      if (hash === pending.hash) { pending.failures = 0; return; }
       const eligible = this.database.connection.prepare(`select 1 from processes where id = ? and pty_process_id is ?
         and status = 'running' and parent_process_id is null and activity != 'permission'`).get(row.id, row.pty_process_id);
       if (!eligible) return;
-      const summary = summarySnapshot(await this.runner.run(settings, text, controller.signal, 'summary', context)).slice(0, 600);
+      const result = await this.runner.run(settings, text, controller.signal, 'summary', context);
+      const summary = summarySnapshot(result.summary);
       if (!summary || controller.signal.aborted || this.settings !== settings || this.pending.get(summaryKey(row)) !== pending) return;
-      const changed = this.database.connection.prepare(`update processes set auto_summary = ?, auto_summary_at = ?,
-        auto_summary_provider = ?, auto_summary_model = ? where id = ? and pty_process_id is ? and status = 'running'
-        and parent_process_id is null and activity != 'permission'`).run(
-        summary, new Date(this.now()).toISOString(), settings.provider, settings.models[settings.provider], row.id, row.pty_process_id).changes;
+      const title = settings.titles ? oneLine(result.title) : null;
+      const db = this.database.connection;
+      const changed = db.transaction(() => {
+        const updated = db.prepare(`update processes set auto_summary = ?, auto_status = ?, auto_summary_at = ?,
+          auto_summary_provider = ?, auto_summary_model = ? where id = ? and pty_process_id is ? and status = 'running'
+          and parent_process_id is null and activity != 'permission'`).run(summary, oneLine(result.status),
+          new Date(this.now()).toISOString(), settings.provider, settings.models[settings.provider], row.id, row.pty_process_id).changes;
+        if (updated && title) db.prepare('update sessions set auto_title = ? where process_id = ? and exited_at is null').run(title, row.id);
+        return updated;
+      })();
       if (changed) {
         pending.hash = hash;
         pending.failures = 0;
@@ -236,10 +255,12 @@ export class AutoSummaryService {
   // starting again from the latest screen.
   private context(processId: string, conversation: unknown): SummaryContext {
     const db = this.database.connection;
-    const thread = db.prepare(`select processes.name, processes.auto_summary, sessions.id as session_id, sessions.display_name
+    const thread = db.prepare(`select processes.name, processes.auto_summary, sessions.id as session_id, sessions.display_name,
+        sessions.auto_title, sessions.last_title
       from processes left join sessions on sessions.process_id = processes.id where processes.id = ?
       order by sessions.started_at desc limit 1`).get(processId) as
-      { name: string; auto_summary: string | null; session_id: string | null; display_name: string | null } | undefined;
+      { name: string; auto_summary: string | null; session_id: string | null; display_name: string | null;
+        auto_title: string | null; last_title: string | null } | undefined;
     if (!thread) return {};
     const references = thread.session_id ? (db.prepare(`select r.identifier, r.title, r.url from session_references sr
       join external_references r on r.id = sr.reference_id where sr.session_id = ? order by r.created_at limit 10`)
@@ -256,7 +277,9 @@ export class AutoSummaryService {
       thread_name: redact(thread.display_name ?? thread.name),
       references: references.map(redact), todos: todos.map(redact),
       user_messages: ownerMessages([...this.historyMessages(thread.session_id), ...live], redact),
-      previous_summary: thread.auto_summary === null ? null : redact(thread.auto_summary)
+      previous_summary: thread.auto_summary === null ? null : redact(thread.auto_summary),
+      previous_title: thread.auto_title === null ? null : redact(thread.auto_title),
+      native_title: thread.last_title === null ? null : redact(thread.last_title)
     };
   }
 

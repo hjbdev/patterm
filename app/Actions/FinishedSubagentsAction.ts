@@ -22,7 +22,7 @@ export class FinishedSubagentsAction {
            select descendants.candidate_id, processes.id, processes.status
            from processes join descendants on processes.parent_process_id = descendants.id
          )
-         select processes.id as process_id, coalesce(sessions.display_name, sessions.last_title, processes.name) as name
+         select processes.id as process_id, coalesce(sessions.title, processes.name) as name
          from processes
          join sessions on sessions.process_id = processes.id
          where processes.parent_process_id = ?
