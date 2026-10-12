@@ -9,6 +9,7 @@ import { LinkWorktreeAction } from './LinkWorktreeAction';
 import { ListDirectoriesAction } from './ListDirectoriesAction';
 import { ListWorktreesAction } from './ListWorktreesAction';
 import { ProjectLogoAction } from './ProjectLogoAction';
+import { RestartOpenCodeServiceAction } from './RestartOpenCodeServiceAction';
 import { SearchArtifactsAction } from './SearchArtifactsAction';
 import { StopProcessAction } from './StopProcessAction';
 import { ProjectContextAction } from './ProjectContextAction';
@@ -37,6 +38,7 @@ export interface RegistryActions {
   listDirectories: ListDirectoriesAction;
   listWorktrees: ListWorktreesAction;
   projectLogo: ProjectLogoAction;
+  restartOpenCodeService: RestartOpenCodeServiceAction;
   searchArtifacts: SearchArtifactsAction;
   stopProcess: StopProcessAction;
 }
@@ -50,7 +52,7 @@ export interface RegistryActionDeps {
   diffService: DiffService;
   searchService: SearchService;
   integrated?: Pick<IntegratedAgentService, 'stop' | 'stopIfLive'>;
-  openCodeServer?: Pick<OpenCodeServerService, 'interrupt'>;
+  openCodeServer?: Pick<OpenCodeServerService, 'interrupt' | 'restartService'>;
   notifications?: Pick<NotificationService, 'resolve'>;
 }
 
@@ -70,6 +72,7 @@ export function createRegistryActions(deps: RegistryActionDeps): RegistryActions
     linkWorktree: new LinkWorktreeAction(deps.worktreeService, projectContext),
     listDirectories: new ListDirectoriesAction(),
     listWorktrees: new ListWorktreesAction(deps.worktreeService),
+    restartOpenCodeService: new RestartOpenCodeServiceAction(deps.database, deps.timeline, deps.openCodeServer),
     searchArtifacts: new SearchArtifactsAction(deps.searchService),
     stopProcess: new StopProcessAction(deps.database, deps.terminal, deps.openCodeServer, deps.integrated),
   };

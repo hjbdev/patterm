@@ -84,6 +84,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { Check, ChevronDown, Plus } from 'lucide-vue-next';
 import { toast } from 'vue-sonner';
+import { toastLaunchError } from '../lib/launchErrors';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { harnessLabel, launchableHarnesses as filterLaunchableHarnesses } from '../lib/harnesses';
 import AgentIcon from './AgentIcon.vue';
@@ -224,7 +225,7 @@ async function launchHarness(harness: string, presetId: string | null): Promise<
       emit('launched', result.session_id, typeof result.pty_process_id === 'string' ? result.pty_process_id : null);
     }
   } catch (caught) {
-    toast.error(caught instanceof Error ? caught.message : `Failed to launch ${harnessLabel(harness)}`);
+    toastLaunchError(caught, `Failed to launch ${harnessLabel(harness)}`, remoteTarget.value ? undefined : () => launchHarness(harness, presetId));
   } finally {
     launching.value = false;
   }

@@ -8,7 +8,7 @@ import { HOST_TOOLS } from '../MCP/registerHostTools';
 export const BROWSER_TOOLS = new Set([
   ...Object.keys(contextSchemas),
   'project_create', 'fs_directories', 'project_list', 'project_get', 'project_logo_candidates', 'project_set_logo',
-  'harness_launch', 'harness_list', 'harness_discover', 'harness_presets',
+  'harness_launch', 'harness_list', 'harness_discover', 'harness_presets', 'opencode_service_restart',
   'integrated_get', 'integrated_history', 'integrated_image', 'integrated_send', 'integrated_controls', 'integrated_files_search', 'integrated_delivery', 'integrated_configure', 'integrated_command', 'integrated_interrupt',
   'integrated_permission_reply', 'integrated_question_reply', 'integrated_form_reply', 'integrated_task_stop', 'integrated_task_output', 'integrated_queue_update', 'integrated_new',
   'settings_agent_interface_get', 'settings_agent_interface_update', 'settings_figures_get', 'settings_figures_update',
