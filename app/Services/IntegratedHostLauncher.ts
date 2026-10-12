@@ -136,7 +136,9 @@ export function integratedHostListening(socketPath: string, timeoutMs = 2_000): 
     const done = (listening: boolean) => { socket.destroy(); resolve(listening); };
     socket.setTimeout(timeoutMs, () => done(false));
     socket.once('connect', () => done(true));
-    socket.once('error', () => done(false));
+    // A named pipe whose instances are all in use reports EBUSY: its host is
+    // alive, just busy.
+    socket.once('error', (error: NodeJS.ErrnoException) => done(error.code === 'EBUSY'));
   });
 }
 
@@ -161,6 +163,13 @@ export async function stopHostProcess(pid: number | null): Promise<void> {
 // only a host whose control socket still listens is stopped.
 export async function stopRecordedHostProcess(pid: number | null, socketPath: string): Promise<void> {
   if (!pid) return;
-  if (process.platform === 'win32' && !await integratedHostListening(socketPath)) return;
-  return stopHostProcess(pid);
+  if (process.platform !== 'win32') return stopHostProcess(pid);
+  if (!await integratedHostListening(socketPath)) return;
+  await stopHostProcess(pid);
+  // Termination completes asynchronously; return once the pipe has closed so
+  // callers never mistake a dying host for a live one.
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline && await integratedHostListening(socketPath, 250)) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
 }
