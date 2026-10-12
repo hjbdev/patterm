@@ -31,6 +31,11 @@ export default defineConfig({
   server: {
     host: '127.0.0.1',
     port: 5173,
-    strictPort: true
+    strictPort: true,
+    // Worktrees and build output hold other checkouts and running binaries.
+    // Windows refuses to watch a running .exe, which would crash the server.
+    watch: {
+      ignored: ['**/.worktrees/**', '**/.claude/**', '**/native/terminal-core/target/**', '**/dist/**']
+    }
   }
 });
