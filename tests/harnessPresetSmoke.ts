@@ -152,6 +152,10 @@ async function main(): Promise<void> {
   const shimPath = path.join(tempDir, 'patterm-mcp.js');
   fs.writeFileSync(shimPath, '');
   const runtimeDir = path.join(tempDir, 'runtime');
+  // OpenCode launches link the user's OpenCode config; keep the real one out.
+  const previousConfigDir = process.env.OPENCODE_CONFIG_DIR;
+  process.env.OPENCODE_CONFIG_DIR = path.join(tempDir, 'opencode-config');
+  fs.mkdirSync(process.env.OPENCODE_CONFIG_DIR);
   const terminalRequests: Array<{ method: string; params: Record<string, unknown> }> = [];
   let nextProcessNumber = 1;
   const terminal: SpawnSink = {
@@ -271,6 +275,8 @@ async function main(): Promise<void> {
 
     console.log('harnessPresetSmoke: ok');
   } finally {
+    if (previousConfigDir === undefined) delete process.env.OPENCODE_CONFIG_DIR;
+    else process.env.OPENCODE_CONFIG_DIR = previousConfigDir;
     database.dispose();
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

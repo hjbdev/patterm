@@ -1,5 +1,6 @@
 import type { McpServerSpec } from './HarnessProvider';
 import type { McpLaunchServer } from '../Services/McpServerRegistry';
+import { escapeCmdArgument } from '../Platform/Executable';
 
 // Turns Patterm's global MCP servers into each harness's own configuration.
 // Remote servers never carry secrets here: Claude Code and Codex run a header
@@ -25,9 +26,13 @@ function shim(patterm: McpServerSpec, mode: ShimMode, serverId: string): Invocat
   return { command: patterm.command, args: [...patterm.args, mode, serverId], env };
 }
 
-// Claude Code and Codex run header helpers through `sh -c`.
+// Claude Code and Codex run header helpers through `sh -c`. On Windows they
+// use cmd.exe: Claude runs `cmd.exe /d /s /c "<helper>"` and Codex
+// `%ComSpec% /Q /D /C "<helper>"`, which both strip the outer quotes. Neither
+// passes the shim's environment through, so the helper sets it first.
 export function headersHelperCommand(patterm: McpServerSpec, serverId: string): string {
   const helper = shim(patterm, '--mcp-headers', serverId);
+  if (process.platform === 'win32') return cmdHelperCommand(helper);
   return [
     ...Object.entries(helper.env).map(([key, value]) => `${key}=${shellQuote(value)}`),
     ...[helper.command, ...helper.args].map(shellQuote)
@@ -82,8 +87,14 @@ export function codexMcpStartupNotice(server: McpLaunchServer, error: string): {
   const managed = server.transport === 'http' && server.managedHeaders;
   const reason = error || 'Codex could not start this MCP server.';
   // Advice leads because notification lists show only the first lines.
+  // PowerShell and cmd.exe take the TOML values in double quotes, so Windows
+  // uses TOML literal strings inside them.
+  const url = server.transport === 'http' ? server.url : '';
+  const logout = process.platform === 'win32'
+    ? `codex -c "mcp_servers.${server.name}.url='${url}'" mcp logout ${server.name} (add -c "mcp_oauth_credentials_store='file'" if no keyring is available)`
+    : `codex -c 'mcp_servers.${server.name}.url="${url}"' mcp logout ${server.name} (add -c mcp_oauth_credentials_store="file" if no keyring is available)`;
   const advice = managed && /refresh/i.test(error)
-    ? `Codex has its own saved login for ${server.name}, which it uses instead of Patterm's. Remove it with codex -c 'mcp_servers.${server.name}.url="${server.url}"' mcp logout ${server.name} (add -c mcp_oauth_credentials_store="file" if no keyring is available), then restart the agent.`
+    ? `Codex has its own saved login for ${server.name}, which it uses instead of Patterm's. Remove it with ${logout}, then restart the agent.`
     : managed && /not logged in/i.test(error)
       ? `Sign in to ${server.name} in Patterm's MCP server settings, then restart the agent.`
       : null;
@@ -99,6 +110,16 @@ export function tomlString(value: string): string {
 
 export function tomlStringArray(values: string[]): string {
   return `[${values.map(tomlString).join(', ')}]`;
+}
+
+// Every token is caret-escaped, so spaces, parentheses, `&`, and `%` in paths
+// reach `set` and the shim literally. The values (paths and IDs) never end in a
+// backslash, which the escaping would double for `set`.
+function cmdHelperCommand(helper: Invocation): string {
+  return [
+    ...Object.entries(helper.env).map(([key, value]) => `set ${escapeCmdArgument(`${key}=${value}`)}`),
+    [helper.command, ...helper.args].map(escapeCmdArgument).join(' ')
+  ].join(' && ');
 }
 
 function shellQuote(value: string): string {

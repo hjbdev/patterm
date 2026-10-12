@@ -137,6 +137,19 @@ function assertOpenCodeTheme(tempDir: string): void {
   assert.equal(fs.readFileSync(cliPath, 'utf8'), '{broken', 'invalid saved preferences are never overwritten');
 }
 
+function symlinksAllowed(tempDir: string): boolean {
+  if (process.platform !== 'win32') return true;
+  const link = path.join(tempDir, 'symlink-probe');
+  try {
+    fs.symlinkSync(tempDir, link);
+    fs.unlinkSync(link);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EPERM') return false;
+    throw error;
+  }
+}
+
 function assertProviderPlans(runtimeDir: string): void {
   // Claude: MCP config file behind --mcp-config, socket lives in the file.
   const claude = providerById('claude').buildLaunch({ executablePath: '/usr/bin/claude', mcp: MCP, runtimeDir });
@@ -155,11 +168,17 @@ function assertProviderPlans(runtimeDir: string): void {
   assert.equal(claudeConfig.mcpServers.patterm.env.PATTERM_MCP_SOCKET, '/run/mcp.sock');
   const claudeWithContext = providerById('claude').buildLaunch({ executablePath: '/usr/bin/claude', mcp: MCP, runtimeDir, agentContext: 'Agent startup context' });
   assert.ok(claudeWithContext.agentContextInjected, 'claude reports agent context injection');
-  assert.deepEqual(
-    claudeWithContext.args.slice(-2),
-    ['--append-system-prompt', 'Agent startup context'],
-    'claude appends agent context to the system prompt'
-  );
+  if (process.platform === 'win32') {
+    const contextPath = path.join(runtimeDir, 'claude-context-patterm.md');
+    assert.deepEqual(claudeWithContext.args.slice(-2), ['--append-system-prompt-file', contextPath], 'Windows keeps the context off the command line');
+    assert.deepEqual(claudeWithContext.files.find((file) => file.path === contextPath)?.contents, 'Agent startup context');
+  } else {
+    assert.deepEqual(
+      claudeWithContext.args.slice(-2),
+      ['--append-system-prompt', 'Agent startup context'],
+      'claude appends agent context to the system prompt'
+    );
+  }
   const resumedClaude = providerById('claude').buildLaunch({ executablePath: '/usr/bin/claude', mcp: MCP, runtimeDir, resumeId: 'claude_resume_test' });
   assert.deepEqual(resumedClaude.args.slice(-2), ['--resume', 'claude_resume_test'], 'claude resumes the exact provider conversation');
 
@@ -204,7 +223,10 @@ async function main(): Promise<void> {
 
   try {
     assertProviderPlans(runtimeDir);
-    assertOpenCodeTheme(tempDir);
+    if (symlinksAllowed(tempDir)) assertOpenCodeTheme(tempDir);
+    // Windows refuses symlinks without Developer Mode, which the OpenCode
+    // theme links need; that service's Windows support is tested with it.
+    else console.log('skipping OpenCode theme links: this Windows account cannot create symlinks');
     fs.writeFileSync(shimPath, '');
 
     const database = new DatabaseService(tempDir);
@@ -321,14 +343,18 @@ async function main(): Promise<void> {
     fs.mkdirSync(runtimeDir, { recursive: true });
     const staleConfig = path.join(runtimeDir, 'claude-mcp-mcp_00000000-0000-4000-8000-000000000001.json');
     const recentConfig = path.join(runtimeDir, 'claude-mcp-mcp_00000000-0000-4000-8000-000000000002.json');
+    const staleContext = path.join(runtimeDir, 'claude-context-mcp_00000000-0000-4000-8000-000000000001.md');
     fs.writeFileSync(staleConfig, '{}');
     fs.writeFileSync(recentConfig, '{}');
+    fs.writeFileSync(staleContext, 'context');
     const hourAgo = new Date(Date.now() - 60 * 60_000);
     fs.utimesSync(staleConfig, hourAgo, hourAgo);
+    fs.utimesSync(staleContext, hourAgo, hourAgo);
 
     // Launch Claude: spawn carries the resolved plan; a session row is written.
     const launched = await launcher.launch({ harness: 'claude', project_id: projectId, actor_id: null });
     assert.equal(fs.existsSync(staleConfig), false, 'stale Claude MCP configs are removed');
+    assert.equal(fs.existsSync(staleContext), false, 'stale Claude context files are removed');
     assert.equal(fs.existsSync(recentConfig), true, 'recent Claude MCP configs are kept');
     assert.equal(launched.process_id, 'process_1');
     assert.equal(launched.pty_process_id, 'proc_1');
@@ -363,32 +389,39 @@ async function main(): Promise<void> {
     assert.equal(path.basename(claudeConfigPath), `claude-mcp-${claudeConfig.mcpServers.patterm.env.PATTERM_MCP_IDENTITY}.json`);
     const opener = path.join(runtimeDir, 'bin', 'xdg-open');
     const spawnEnv = spawn.env as Record<string, string>;
-    assert.equal(spawnEnv.PATH, `${path.dirname(opener)}:/usr/bin`, 'the xdg-open shim precedes the inherited PATH');
-    assert.equal(spawnEnv.BROWSER, opener);
-    assert.equal(spawnEnv.PATTERM_TERMINAL_IDENTITY, claudeConfig.mcpServers.patterm.env.PATTERM_MCP_IDENTITY, 'the opener reports as the agent session');
+    const agentIdentity = claudeConfig.mcpServers.patterm.env.PATTERM_MCP_IDENTITY!;
     assert.equal(spawnEnv.PATTERM_MCP_IDENTITY, undefined, 'nested MCP shims do not inherit the agent identity');
-    assert.ok(fs.statSync(opener).mode & 0o100, 'the xdg-open shim is executable');
-    // Stand-ins for the shim and the system opener show which path each target takes.
-    const fakeBin = path.join(tempDir, 'system-bin');
-    fs.mkdirSync(fakeBin);
-    fs.writeFileSync(path.join(fakeBin, 'xdg-open'), '#!/bin/sh\necho "system $*"\n', { mode: 0o700 });
-    const fakeShim = path.join(tempDir, 'fake-shim.sh');
-    fs.writeFileSync(fakeShim, 'echo "patterm $PATTERM_MCP_SOCKET $PATTERM_MCP_IDENTITY $*"\n');
-    const fakeOpener = fs.readFileSync(opener, 'utf8')
-      .replace(`'${MCP.command}' '${shimPath}'`, `/bin/sh '${fakeShim}'`)
-      .replace(`PATH='/usr/bin'`, `PATH='${fakeBin}'`);
-    const fakeOpenerPath = path.join(tempDir, 'xdg-open-test');
-    fs.writeFileSync(fakeOpenerPath, fakeOpener, { mode: 0o700 });
-    const runOpener = (target: string) => execFileSync(fakeOpenerPath, [target], { env: { PATTERM_TERMINAL_IDENTITY: 'mcp_x' }, encoding: 'utf8' }).trim();
-    assert.equal(runOpener('https://example.com/pulls/87'), `patterm ${MCP.env.PATTERM_MCP_SOCKET} mcp_x --open https://example.com/pulls/87`);
-    assert.equal(runOpener('/tmp/report.pdf'), 'system /tmp/report.pdf', 'files still go to the system opener');
+    if (process.platform === 'win32') {
+      // Windows CLIs open links through the shell, never xdg-open.
+      assert.deepEqual(spawnEnv, {}, 'Windows agents get no xdg-open shim');
+      assert.equal(fs.existsSync(opener), false);
+    } else {
+      assert.equal(spawnEnv.PATH, `${path.dirname(opener)}:/usr/bin`, 'the xdg-open shim precedes the inherited PATH');
+      assert.equal(spawnEnv.BROWSER, opener);
+      assert.equal(spawnEnv.PATTERM_TERMINAL_IDENTITY, agentIdentity, 'the opener reports as the agent session');
+      assert.ok(fs.statSync(opener).mode & 0o100, 'the xdg-open shim is executable');
+      // Stand-ins for the shim and the system opener show which path each target takes.
+      const fakeBin = path.join(tempDir, 'system-bin');
+      fs.mkdirSync(fakeBin);
+      fs.writeFileSync(path.join(fakeBin, 'xdg-open'), '#!/bin/sh\necho "system $*"\n', { mode: 0o700 });
+      const fakeShim = path.join(tempDir, 'fake-shim.sh');
+      fs.writeFileSync(fakeShim, 'echo "patterm $PATTERM_MCP_SOCKET $PATTERM_MCP_IDENTITY $*"\n');
+      const fakeOpener = fs.readFileSync(opener, 'utf8')
+        .replace(`'${MCP.command}' '${shimPath}'`, `/bin/sh '${fakeShim}'`)
+        .replace(`PATH='/usr/bin'`, `PATH='${fakeBin}'`);
+      const fakeOpenerPath = path.join(tempDir, 'xdg-open-test');
+      fs.writeFileSync(fakeOpenerPath, fakeOpener, { mode: 0o700 });
+      const runOpener = (target: string) => execFileSync(fakeOpenerPath, [target], { env: { PATTERM_TERMINAL_IDENTITY: 'mcp_x' }, encoding: 'utf8' }).trim();
+      assert.equal(runOpener('https://example.com/pulls/87'), `patterm ${MCP.env.PATTERM_MCP_SOCKET} mcp_x --open https://example.com/pulls/87`);
+      assert.equal(runOpener('/tmp/report.pdf'), 'system /tmp/report.pdf', 'files still go to the system opener');
+    }
     const clientRequests = new TerminalClientRequestService();
     const delivered: TerminalClientRequest[] = [];
     clientRequests.on((request) => delivered.push(request));
     const openUrl = new OpenExternalUrlAction(database, clientRequests);
-    openUrl.execute({ identity: spawnEnv.PATTERM_TERMINAL_IDENTITY, url: 'https://example.com/pulls/87' });
+    openUrl.execute({ identity: agentIdentity, url: 'https://example.com/pulls/87' });
     assert.deepEqual(delivered, [{ kind: 'open-url', processId: 'proc_1', url: 'https://example.com/pulls/87' }], 'links open on the client controlling the agent PTY');
-    assert.throws(() => openUrl.execute({ identity: spawnEnv.PATTERM_TERMINAL_IDENTITY, url: 'file:///etc/passwd' }), /does not open file: links/);
+    assert.throws(() => openUrl.execute({ identity: agentIdentity, url: 'file:///etc/passwd' }), /does not open file: links/);
     assert.throws(() => openUrl.execute({ identity: 'mcp_unknown', url: 'https://example.com' }), /not a running Patterm terminal/);
     assert.equal(delivered.length, 1);
 
@@ -423,10 +456,7 @@ async function main(): Promise<void> {
 
     const promptLaunch = await launcher.launch({ harness: 'claude', project_id: projectId, initial_prompt: 'Do the next step.' });
     const promptSpawn = lastRequest(terminalRequests, 'terminal.process.spawn');
-    const promptSpawnArgs = promptSpawn.args as string[];
-    const appendSystemPromptAt = promptSpawnArgs.indexOf('--append-system-prompt');
-    assert.notEqual(appendSystemPromptAt, -1, 'project-scoped claude launch appends task context to the system prompt');
-    const promptContext = promptSpawnArgs[appendSystemPromptAt + 1] ?? '';
+    const promptContext = claudeAppendSystemPrompt(promptSpawn.args as string[]);
     assert.match(promptContext, new RegExp(`Project: ${projectId}`), 'project-scoped claude receives project identity');
     for (const sentinel of [
       'Use the task description.',
@@ -860,10 +890,13 @@ function lastRequest(requests: Array<{ method: string; params: Record<string, un
   return request.params;
 }
 
+// Windows launches pass the context in a file the launcher has written.
 function claudeAppendSystemPrompt(args: string[]): string {
-  const index = args.indexOf('--append-system-prompt');
+  const file = process.platform === 'win32';
+  const index = args.indexOf(file ? '--append-system-prompt-file' : '--append-system-prompt');
   assert.notEqual(index, -1, 'claude args include appended system prompt');
-  return args[index + 1] ?? '';
+  const value = args[index + 1] ?? '';
+  return file ? fs.readFileSync(value, 'utf8') : value;
 }
 
 function conversationRecord(overrides: Partial<ReturnType<typeof conversationRecordBase>> = {}) {
