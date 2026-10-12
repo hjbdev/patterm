@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { DatabaseService } from './DatabaseService';
 import { autoSummarySettingsInput, type AutoSummarySettings } from './AutoSummarySettings';
 import { notificationSettingsInput, type NotificationSettings } from './NotificationSettings';
-import { emptyHarnessPresetSettings, harnessPresetSettingsInput, seededHarnessPresetSettings, type HarnessPresetSettings } from '../Harness/HarnessPresets';
+import { emptyHarnessPresetSettings, harnessPresetSettingsInput, presetHarnessInput, seededHarnessPresetSettings, type HarnessPresetSettings } from '../Harness/HarnessPresets';
 import { emptyHarnessModelCatalog, harnessModelCatalogInput, type HarnessModelCatalog } from '../Harness/ModelCatalog';
 import { ASSISTANT_VOICE_ACKNOWLEDGEMENTS, ASSISTANT_VOICE_PROFILES } from './AssistantVoiceProfile';
 
@@ -262,15 +262,10 @@ export class SettingsService {
     }
     try {
       const saved = JSON.parse(row.value);
-      const settings = harnessPresetSettingsInput.parse(saved);
-      // Add the new harness's Default without replacing any saved selections.
-      if (Object.hasOwn(saved.defaultPresetIdByHarness ?? {}, 'amp')) return settings;
-      const existing = settings.presets.find((preset) => preset.harness === 'amp');
-      if (!existing && settings.presets.length >= 100) return settings;
-      return {
-        presets: existing ? settings.presets : [...settings.presets, { id: 'preset_default_amp', harness: 'amp', name: 'Default', model: null, reasoning: null, serviceTier: null }],
-        defaultPresetIdByHarness: { ...settings.defaultPresetIdByHarness, amp: existing?.id ?? 'preset_default_amp' }
-      };
+      if (Array.isArray(saved.presets)) {
+        saved.presets = saved.presets.filter((preset: { harness?: unknown } | null) => preset && presetHarnessInput.safeParse(preset.harness).success);
+      }
+      return harnessPresetSettingsInput.parse(saved);
     } catch {
       return emptyHarnessPresetSettings();
     }

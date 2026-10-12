@@ -145,8 +145,8 @@ export class ResumeConversationAgentAction {
   }
 }
 
-function isResumableProvider(provider: string): provider is 'claude' | 'codex' | 'opencode' | 'amp' {
-  return provider === 'claude' || provider === 'codex' || provider === 'opencode' || provider === 'amp';
+function isResumableProvider(provider: string): provider is 'claude' | 'codex' | 'opencode' {
+  return provider === 'claude' || provider === 'codex' || provider === 'opencode';
 }
 
 function isDirectory(candidate: string): boolean {

@@ -8,11 +8,13 @@ import { HELD_QUEUE_EVENT_ID, type IntegratedConversationEvent, type IntegratedC
 import type { AgentHistoryReadService } from './AgentHistory/AgentHistoryReadService';
 import type { McpLaunchServer } from './McpServerRegistry';
 import type { UsageService } from './UsageService';
+import { callIntegratedHost, detachedHostLauncher, type IntegratedHostLauncher } from './IntegratedHostLauncher';
+import { presetHarnessInput } from '../Harness/HarnessPresets';
 
 const ARCHIVE_PAGE_SIZE = 80;
 const ARCHIVE_CURSOR_PREFIX = 'archive:';
 // Native titles appear asynchronously: Claude generates one on request, while
-// OpenCode and Amp name the conversation during the first turn. Retry a few
+// OpenCode names the conversation during the first turn. Retry a few
 // times after each accepted prompt, then wait for the next one.
 const TITLE_RETRY_DELAYS_MS = [1_000, 5_000, 15_000, 45_000, 120_000];
 // A live agent whose event stream could not be opened, or whose provider gave
@@ -120,14 +122,15 @@ export interface IntegratedActivityChange {
 export class IntegratedAgentService {
   constructor(
     private readonly database: DatabaseService,
-    private readonly providers: Partial<Record<'claude' | 'codex' | 'opencode' | 'amp', IntegratedProviderService>>,
+    private readonly providers: Partial<Record<'claude' | 'codex' | 'opencode', IntegratedProviderService>>,
     // Reading a conversation is not a workbench mutation, but providers report
     // activity and titles as a side effect. Notify only when either actually
     // changes so polling the transcript does not refetch the whole workspace.
     private readonly onWorkbenchChange?: () => void,
     // Trust boundary for @ references and uploaded attachments. Text-only
     // callers keep working without it.
-    private readonly inputs?: IntegratedInputResolver
+    private readonly inputs?: IntegratedInputResolver,
+    private readonly hostLauncher: IntegratedHostLauncher = detachedHostLauncher
   ) {}
 
   private readonly conversationSubscriptions = new Map<string, ConversationSubscription>();
@@ -229,11 +232,11 @@ export class IntegratedAgentService {
     }
   }
 
-  prepare(harness: 'claude' | 'codex' | 'opencode' | 'amp', input: IntegratedLaunchInput): Promise<IntegratedLaunchResult> {
+  prepare(harness: 'claude' | 'codex' | 'opencode', input: IntegratedLaunchInput): Promise<IntegratedLaunchResult> {
     return this.provider(harness).prepare(input);
   }
 
-  async cleanupLaunch(harness: 'claude' | 'codex' | 'opencode' | 'amp', input: IntegratedLaunchInput, result: IntegratedLaunchResult): Promise<void> {
+  async cleanupLaunch(harness: 'claude' | 'codex' | 'opencode', input: IntegratedLaunchInput, result: IntegratedLaunchResult): Promise<void> {
     await this.provider(harness).cleanupLaunch?.(input, result);
   }
 
@@ -873,6 +876,12 @@ export class IntegratedAgentService {
   }
 
   async stop(processId: string): Promise<void> {
+    const harness = this.sessionHarness(processId);
+    if (harness && !presetHarnessInput.safeParse(harness).success) {
+      await this.stopUnsupportedHosts([{ process_id: processId, harness }]);
+      this.unobserve(this.ledgerKey(processId));
+      return;
+    }
     const provider = this.forProcess(processId);
     // A provider's stop is authoritative. It owns whether an interrupt is
     // needed and whether a failure is fatal, so a live host that refused to
@@ -886,39 +895,65 @@ export class IntegratedAgentService {
     this.dispose();
     for (const refresh of this.titleRefreshes.values()) if (refresh.timer) clearTimeout(refresh.timer);
     this.titleRefreshes.clear();
-    const results = await Promise.allSettled(Object.values(this.providers).map((provider) => provider?.stopAll?.()));
+    const rows = this.database.connection.prepare(`select process_id, harness from sessions
+      where interface_mode = 'integrated' and process_id is not null and harness is not null`).all() as Array<{ process_id: string; harness: string }>;
+    const unsupported = rows.filter((row) => !presetHarnessInput.safeParse(row.harness).success);
+    const results = await Promise.allSettled([
+      ...Object.values(this.providers).map((provider) => provider?.stopAll?.()),
+      this.stopUnsupportedHosts(unsupported)
+    ]);
     const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
     if (failures.length) throw new AggregateError(failures.map((failure) => failure.reason), 'Could not stop every Integrated agent');
   }
 
   async reconcile(): Promise<{ checked: number; failed: number; unreachable: number }> {
     const rows = this.database.connection.prepare(`
-      select process_id from sessions
+      select process_id, harness from sessions
       where interface_mode = 'integrated' and exited_at is null and process_id is not null
-    `).all() as Array<{ process_id: string }>;
+    `).all() as Array<{ process_id: string; harness: string }>;
     const results = await Promise.all(rows.map(async (row): Promise<'ok' | 'failed' | 'unreachable'> => {
+      const unsupported = !presetHarnessInput.safeParse(row.harness).success;
       try {
-        await this.conversation(row.process_id);
-        this.observe(row.process_id);
-        return 'ok';
+        if (unsupported) await this.stopUnsupportedHosts([row]);
+        else {
+          await this.conversation(row.process_id);
+          this.observe(row.process_id);
+          return 'ok';
+        }
       } catch {
-        // A host that still listens is still running its agent. Keep it live
-        // and let observation retry instead of orphaning the host.
+        if (unsupported) return 'unreachable';
+        // A supported host that still listens is still running its agent.
+        // Keep it live and let observation retry instead of orphaning it.
         if (await this.hostListening(row.process_id)) {
           this.observe(row.process_id);
           return 'unreachable';
         }
-        const now = new Date().toISOString();
-        this.database.connection.prepare(`update processes set status = 'failed', exited_at = coalesce(exited_at, ?), updated_at = ? where id = ?`).run(now, now, row.process_id);
-        this.database.connection.prepare(`update sessions set exited_at = coalesce(exited_at, ?) where process_id = ?`).run(now, row.process_id);
-        return 'failed';
       }
+      const now = new Date().toISOString();
+      this.database.connection.prepare(`update processes set status = 'failed', exited_at = coalesce(exited_at, ?), updated_at = ? where id = ?`).run(now, now, row.process_id);
+      this.database.connection.prepare(`update sessions set exited_at = coalesce(exited_at, ?) where process_id = ?`).run(now, row.process_id);
+      return 'failed';
     }));
     return {
       checked: rows.length,
       failed: results.filter((result) => result === 'failed').length,
       unreachable: results.filter((result) => result === 'unreachable').length
     };
+  }
+
+  // Removed providers keep no launch or conversation adapter. Their hosts use
+  // the shared control protocol, and their supervised units still need cleanup.
+  private async stopUnsupportedHosts(rows: Array<{ process_id: string; harness: string }>): Promise<void> {
+    const stops = await Promise.allSettled(rows.map(async (row) => {
+      const socketPath = this.hostSocketPath(row.process_id);
+      if (socketPath) await callIntegratedHost(socketPath, 'stop', {});
+    }));
+    const supervised = await Promise.allSettled([...new Set(rows.map((row) => row.harness))].map((harness) => this.hostLauncher.stopAll(harness)));
+    const errors = supervised.flatMap((result) => result.status === 'rejected' ? [result.reason] : []);
+    for (const [index, result] of stops.entries()) {
+      if (result.status === 'rejected' && await this.hostListening(rows[index]!.process_id)) errors.push(result.reason);
+    }
+    if (errors.length) throw new AggregateError(errors, 'Could not stop unsupported Integrated hosts');
   }
 
   // Stops the host of an agent that is no longer marked running, such as one
@@ -929,11 +964,16 @@ export class IntegratedAgentService {
 
   // A host is alive when its control socket accepts a connection. Unlike a PID
   // check, this cannot match an unrelated process after a reboot.
-  private async hostListening(processId: string): Promise<boolean> {
-    const row = this.database.connection.prepare(`select argv from processes where id = ?`).get(processId) as { argv: string | null } | undefined;
+  private hostSocketPath(processId: string): string | null {
+    const row = this.database.connection.prepare(`select argv from processes where id = ?`).get(this.ledgerKey(processId)) as { argv: string | null } | undefined;
     let socketPath: unknown;
-    try { socketPath = (JSON.parse(row?.argv ?? 'null') as unknown[] | null)?.[2]; } catch { return false; }
-    if (typeof socketPath !== 'string' || !socketPath.endsWith('.sock')) return false;
+    try { socketPath = (JSON.parse(row?.argv ?? 'null') as unknown[] | null)?.[2]; } catch { return null; }
+    return typeof socketPath === 'string' && socketPath.endsWith('.sock') ? socketPath : null;
+  }
+
+  private async hostListening(processId: string): Promise<boolean> {
+    const socketPath = this.hostSocketPath(processId);
+    if (!socketPath) return false;
     return new Promise((resolve) => {
       const socket = net.createConnection(socketPath);
       const done = (listening: boolean) => { socket.destroy(); resolve(listening); };
@@ -947,25 +987,28 @@ export class IntegratedAgentService {
     return this.provider(this.harness(processId));
   }
 
-  private harness(processId: string): 'claude' | 'codex' | 'opencode' | 'amp' {
+  private sessionHarness(processId: string): string | null {
     const row = this.database.connection.prepare(`
       select harness from sessions
       where (process_id = ? or id = ?) and interface_mode = 'integrated'
       order by exited_at is null desc, started_at desc limit 1
     `).get(processId, processId) as { harness: string } | undefined;
-    if (!row || (row.harness !== 'claude' && row.harness !== 'codex' && row.harness !== 'opencode' && row.harness !== 'amp')) {
-      throw new Error('Integrated agent session not found');
-    }
-    return row.harness;
+    return row?.harness ?? null;
   }
 
-  // Claude and Amp runtimes only hold turns from their own run, so earlier
+  private harness(processId: string): 'claude' | 'codex' | 'opencode' {
+    const parsed = presetHarnessInput.safeParse(this.sessionHarness(processId));
+    if (!parsed.success) throw new Error('Integrated agent session not found');
+    return parsed.data;
+  }
+
+  // Claude runtimes only hold turns from their own run, so earlier
   // turns come from imported history. Codex pages natively and needs the
   // archive only on builds that cannot list thread items.
   private archiveSession(processId: string, conversation: unknown): { provider: string; resumeId: string; projectId: string; startedAt: string } | null {
     const row = this.database.connection.prepare(`
       select harness, resume_id, project_id, started_at from sessions
-      where (process_id = ? or id = ?) and interface_mode = 'integrated' and harness in ('claude', 'amp', 'codex') and resume_id is not null
+      where (process_id = ? or id = ?) and interface_mode = 'integrated' and harness in ('claude', 'codex') and resume_id is not null
       order by exited_at is null desc, started_at desc limit 1
     `).get(processId, processId) as { harness: string; resume_id: string; project_id: string; started_at: string } | undefined;
     if (!row) return null;
@@ -973,7 +1016,7 @@ export class IntegratedAgentService {
     return { provider: row.harness, resumeId: row.resume_id, projectId: row.project_id, startedAt: row.started_at };
   }
 
-  private provider(harness: 'claude' | 'codex' | 'opencode' | 'amp'): IntegratedProviderService {
+  private provider(harness: 'claude' | 'codex' | 'opencode'): IntegratedProviderService {
     const provider = this.providers[harness];
     if (!provider) throw new Error(`${harness} Integrated conversations are unavailable`);
     return provider;

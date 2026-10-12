@@ -1,3 +1,4 @@
+import { harnessProviders } from '../Harness/providers';
 import type { DatabaseService } from '../Services/DatabaseService';
 import { SettingsService, type SidebarState } from '../Services/SettingsService';
 import type { TimerRecord, TimerService } from '../Services/TimerService';
@@ -197,7 +198,7 @@ export class WorkbenchRepository {
     const rows = this.db
       .prepare(`select * from harness_installations order by harness asc`)
       .all() as HarnessInstallationRow[];
-    return rows.map(mapHarness);
+    return rows.filter((row) => harnessProviders.some((provider) => provider.id === row.harness)).map(mapHarness);
   }
 
   snapshot(): WorkbenchSnapshotDto {

@@ -12,7 +12,6 @@ import type { IntegratedConversationEvent } from './IntegratedConversation';
 // - Codex keys the cache by thread; GPT-5.6 and later keep it for 30 minutes.
 // - OpenCode on those OpenAI models keys it by session, as Codex does. Other
 //   providers, such as DeepSeek, keep it for hours.
-// Amp has no compaction request.
 // The lifetime runs from the last request, which starts before the turn ends.
 // Across two weeks of transcripts a turn's final request took at most about
 // 2.5 minutes (p99 under 30 seconds), so compaction leaves 3 minutes' margin.

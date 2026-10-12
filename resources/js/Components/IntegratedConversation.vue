@@ -329,7 +329,6 @@ watch([messages, queue, () => outgoingFor(props.processId).map((entry) => entry.
 // The drawer keeps the last known state of its task after Claude drops a
 // finished one from the snapshot.
 const openedTask = shallowRef<IntegratedTask | null>(null);
-// Amp keeps subagent conversations and shell output to itself.
 const canOpenTasks = computed(() => provider.value === 'claude' || provider.value === 'codex' || provider.value === 'opencode');
 watch(tasks, (current) => {
   const task = openedTask.value && current.find((item) => item.id === openedTask.value!.id);
@@ -384,7 +383,6 @@ const providerLabel = computed(() => {
   if (provider.value === 'codex') return 'Codex';
   if (provider.value === 'opencode') return 'OpenCode';
   if (provider.value === 'claude') return 'Claude';
-  if (provider.value === 'amp') return 'Amp';
   return 'The agent';
 });
 const controls = shallowRef<IntegratedControls>({ selectors: [], commands: [] });

@@ -10,7 +10,7 @@ import type { TimelineService } from './TimelineService';
 import { ASSISTANT_PROJECT_ID } from './AssistantProject';
 import { formatLocal, isTimeZone, nextRoutineRun, renderRoutinePrompt, ROUTINE_TIME_PATTERN } from './RoutineSchedule';
 
-export const ROUTINE_HARNESSES = ['claude', 'codex', 'opencode', 'amp'] as const;
+export const ROUTINE_HARNESSES = ['claude', 'codex', 'opencode'] as const;
 export type RoutineRunStatus = 'running' | 'reported' | 'failed' | 'skipped';
 export type RoutineReportStatus = 'completed' | 'blocked' | 'failed' | 'no_findings';
 

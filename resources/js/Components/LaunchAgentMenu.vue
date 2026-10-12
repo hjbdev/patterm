@@ -95,7 +95,7 @@ import { DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuS
 import SettingsChoice from './settings/SettingsChoice.vue';
 import type { AgentInterface, HarnessInstallationRecord } from '../types';
 
-type PresetHarness = 'claude' | 'codex' | 'opencode' | 'amp';
+type PresetHarness = 'claude' | 'codex' | 'opencode';
 
 interface HarnessPreset {
   id: string;

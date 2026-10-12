@@ -19,7 +19,6 @@ import type { DebugLogService } from './DebugLogService';
 import type { IntegratedAgentService, IntegratedLaunchInput, IntegratedLaunchResult } from './IntegratedAgentService';
 import { SettingsService, type AgentInterface } from './SettingsService';
 import type { OpenCodeServerService } from './OpenCodeServerService';
-import type { AmpThreadService } from './AmpThreadService';
 import { prepareOpenCodeTheme } from './OpenCodeThemeService';
 import type { McpServerRegistry } from './McpServerRegistry';
 import { CLAUDE_MCP_CONFIG } from '../Harness/providers';
@@ -27,7 +26,7 @@ import type { LaunchingMcpIdentities } from '../MCP/McpHelperAccess';
 import type { AssistantMemoryService } from './AssistantMemoryService';
 
 export const launchHarnessInput = z.object({
-  harness: z.enum(['claude', 'codex', 'opencode', 'amp', 'rawpty']).optional(),
+  harness: z.enum(['claude', 'codex', 'opencode', 'rawpty']).optional(),
   preset: z.string().trim().min(1).max(160).nullable().default(null),
   model: z.string().trim().min(1).max(160).nullable().default(null),
   reasoning: z.string().trim().min(1).max(60).nullable().default(null),
@@ -91,7 +90,6 @@ export interface HarnessLauncherDeps {
   search?: SearchService;
   debugLog?: Pick<DebugLogService, 'write'>;
   openCodeServer?: Pick<OpenCodeServerService, 'prepare'> & Partial<Pick<OpenCodeServerService, 'prompt'>>;
-  ampThreads?: Pick<AmpThreadService, 'prepare'>;
   integrated?: Pick<IntegratedAgentService, 'prepare' | 'prompt' | 'stop' | 'cleanupLaunch' | 'observe'>;
   settings?: Pick<SettingsService, 'agentInterface' | 'figuresEnabled'>;
   // Preset lookup for defaulting the model/reasoning at launch. Defaults to the
@@ -101,7 +99,6 @@ export interface HarnessLauncherDeps {
   mcpServers?: Pick<McpServerRegistry, 'forHarness'>;
   // Browsers on other machines view these terminals, so agent CLIs must not
   // expect a sign-in redirect to reach this machine's loopback listeners.
-  remoteClients?: boolean;
   // Lets MCP helpers of a launch that is still starting use its identity.
   launchingIdentities?: Pick<LaunchingMcpIdentities, 'reserve'>;
   assistantMemory?: Pick<AssistantMemoryService, 'snapshot'>;
@@ -124,7 +121,7 @@ export class HarnessLauncher {
   private async start(raw: LaunchHarnessInput, resume: HarnessResume | null): Promise<LaunchHarnessResult> {
     const input = launchHarnessInput.parse(raw);
     const selection = this.resolveSelection(input, Boolean(resume));
-    const key = selection.harness === 'opencode' || selection.harness === 'amp' ? resume?.resume_id : null;
+    const key = selection.harness === 'opencode' ? resume?.resume_id : null;
     if (key && this.attachingNativeSession.has(key)) throw new Error(`${providerName(selection.harness)} session is already being attached`);
     if (key) this.attachingNativeSession.add(key);
     // The session is registered once the harness has started, and holds the
@@ -210,7 +207,7 @@ export class HarnessLauncher {
         executable: install.executablePath, cwd, name: input.name?.trim() || null, context: agentContext, mcp, mcpServers, resumeId: providerSessionId,
         model: selection.model, reasoning: selection.reasoning, serviceTier: selection.serviceTier
       };
-      const prepared = await this.deps.integrated.prepare(harness as 'claude' | 'codex' | 'opencode' | 'amp', launchInput);
+      const prepared = await this.deps.integrated.prepare(harness as 'claude' | 'codex' | 'opencode', launchInput);
       integratedLaunch = { input: launchInput, result: prepared };
       providerSessionId = prepared.resumeId;
       integratedArgv = prepared.argv;
@@ -222,12 +219,6 @@ export class HarnessLauncher {
         model: selection.model, reasoning: selection.reasoning
       });
       providerSessionId = prepared.resumeId;
-    } else if (harness === 'amp') {
-      if (!this.deps.ampThreads) throw new Error('Amp thread integration is unavailable');
-      if (selection.reasoning) throw new Error('Amp does not support reasoning overrides');
-      const attached = providerSessionId && this.deps.database.connection.prepare(`select id from sessions where harness = 'amp' and resume_id = ? and exited_at is null`).get(providerSessionId);
-      if (attached) throw new Error('Amp thread is already attached to Patterm');
-      providerSessionId = await this.deps.ampThreads.prepare(install.executablePath, cwd, providerSessionId);
     }
 
     if (interfaceMode === 'integrated') {
@@ -249,8 +240,6 @@ export class HarnessLauncher {
       plan.env.OPENCODE_CONFIG_DIR = prepareOpenCodeTheme(this.deps.runtimeDir);
     }
     Object.assign(plan.env, this.linkOpenerEnv(identity));
-    // Amp then shows a paste field for the failed redirect address.
-    if (harness === 'amp' && this.deps.remoteClients) plan.env.AMP_HEADLESS_OAUTH = '1';
     timing.mark('plan.built', { file_count: plan.files.length });
 
     if (harness === 'claude') this.removeStaleClaudeMcpConfigs();
@@ -333,10 +322,7 @@ export class HarnessLauncher {
     timing.mark('session.registered', { session_id });
     const initialPrompt = this.initialPrompt(input.initial_prompt);
     if (initialPrompt.trim()) {
-      // Amp has no per-session instruction flag. Attach Patterm orientation to
-      // prompts submitted by Patterm; native TUI prompts use Amp's AGENTS.md.
-      const prompt = harness === 'amp' ? `${agentContext}\n\n${initialPrompt}` : initialPrompt;
-      void this.injectWhenReady(process_id, ptyProcessId, prompt).catch((error: unknown) => {
+      void this.injectWhenReady(process_id, ptyProcessId, initialPrompt).catch((error: unknown) => {
         this.deps.timeline.append({
           event_type: 'session.initial_prompt_failed',
           project_id: input.project_id,
@@ -393,7 +379,7 @@ export class HarnessLauncher {
       return { process_id, session_id };
       })();
     } catch (error) {
-      await this.deps.integrated?.cleanupLaunch(selection.harness as 'claude' | 'codex' | 'opencode' | 'amp', launch.input, launch.result).catch(() => undefined);
+      await this.deps.integrated?.cleanupLaunch(selection.harness as 'claude' | 'codex' | 'opencode', launch.input, launch.result).catch(() => undefined);
       throw error;
     }
     timing.mark('integrated.registered', registered);
@@ -501,7 +487,7 @@ export class HarnessLauncher {
 }
 
 function providerName(harness: string): string {
-  return harness === 'claude' ? 'Claude Code' : harness === 'codex' ? 'Codex' : harness === 'opencode' ? 'OpenCode' : harness === 'amp' ? 'Amp' : harness;
+  return harness === 'claude' ? 'Claude Code' : harness === 'codex' ? 'Codex' : harness === 'opencode' ? 'OpenCode' : harness;
 }
 
 async function waitForTerminalIdle(terminal: SpawnSink, processId: string, idleMs: number, maxMs: number): Promise<void> {

@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { IntegratedAgentService } from '../app/Services/IntegratedAgentService';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { ClaudeStreamService } from '../app/Services/ClaudeStreamService';
 import { applyConversationStreamEvent, normaliseMessages } from '../resources/js/lib/integratedConversation';
@@ -87,7 +88,70 @@ async function fixture(): Promise<Fixture> {
   };
 }
 
+async function verifyPromptDelivery(): Promise<void> {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-claude-delivery-'));
+  const socketPath = path.join(directory, 'host.sock');
+  const database = new DatabaseService(directory);
+  const sockets = new Set<net.Socket>();
+  let mode: 'timeout' | 'close' | 'malformed' | 'reject' = 'timeout';
+  let prompts = 0;
+  const server = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.once('close', () => sockets.delete(socket));
+    let buffer = '';
+    socket.setEncoding('utf8');
+    socket.on('data', (chunk: string) => {
+      buffer += chunk;
+      if (!buffer.includes('\n')) return;
+      const request = JSON.parse(buffer.split('\n')[0]!) as { id: string; method: string };
+      if (request.method === 'prompt') {
+        prompts++;
+        if (mode === 'timeout') return; // Accepted prompt, withheld acknowledgement.
+        if (mode === 'close') { socket.end(); return; }
+        if (mode === 'malformed') { socket.end('{invalid\n'); return; }
+        socket.end(`${JSON.stringify({ id: request.id, error: 'native rejection' })}\n`);
+      } else {
+        assert.equal(request.method, 'delivery');
+        socket.end(`${JSON.stringify({ id: request.id, result: { state: 'unknown' } })}\n`);
+      }
+    });
+  });
+  let integrated: IntegratedAgentService | undefined;
+  try {
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+    database.initialize();
+    const now = new Date().toISOString();
+    database.connection.prepare('insert into projects (id,name,path,created_at,updated_at) values (?,?,?,?,?)').run('project', 'Delivery', directory, now, now);
+    database.connection.prepare(`insert into processes (id,project_id,kind,name,status,activity,cwd,argv,created_at,updated_at)
+      values ('process','project','agent','Test','running','idle',?,?,?,?)`).run(directory, JSON.stringify(['/unused', 'claude-host', socketPath]), now, now);
+    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,resume_id,started_at,session_role,resume_status)
+      values ('session','project','process','claude','integrated','native',?,'orchestrator','found')`).run(now);
+    const claude = new ClaudeStreamService(database, directory, process.execPath);
+    integrated = new IntegratedAgentService(database, { claude });
+    const ledger = (id: string) => database.connection.prepare('select state from integrated_submissions where process_id = ? and message_id = ?').get('process', id) as { state: string } | undefined;
+    for (const failure of ['timeout', 'close', 'malformed'] as const) {
+      mode = failure;
+      const prompt = { text: `Lost ${failure} reply`, messageId: failure };
+      const before = prompts;
+      assert.equal((await integrated.prompt('process', prompt) as { delivery: string }).delivery, 'uncertain');
+      assert.equal(ledger(failure)?.state, 'uncertain', `${failure} keeps the submission reservation`);
+      assert.equal((await integrated.prompt('process', prompt) as { delivery: string }).delivery, 'uncertain');
+      assert.equal(prompts, before + 1, `${failure} never resends the same message ID`);
+    }
+    mode = 'reject';
+    await assert.rejects(integrated.prompt('process', { text: 'Rejected', messageId: 'reject' }), /native rejection/);
+    assert.equal(ledger('reject'), undefined, 'an explicit host rejection remains definitive');
+  } finally {
+    integrated?.dispose();
+    for (const socket of sockets) socket.destroy();
+    if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
+    database.dispose();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
 async function main(): Promise<void> {
+  await verifyPromptDelivery();
   // A reconnect attempt that fails before acknowledgement must keep the bounded
   // recovery alive until the host returns.
   const returning = await fixture();

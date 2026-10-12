@@ -127,7 +127,6 @@ async function runQueuedHistoryImport(payload: WorkerInput, reportProgress?: Pro
 function localParseFile(discovery: ProviderHistoryDiscoveryService): HistoryFileParser {
   return async (input) => {
     const adapter = discovery.adapter(input.candidate.provider);
-    if (adapter.parseFileAsync) return adapter.parseFileAsync(input.filePath, input.options);
     return adapter.parseFileStream?.(input.filePath, input.options) ?? adapter.parseFile(input.filePath, input.options);
   };
 }

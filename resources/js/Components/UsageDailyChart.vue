@@ -172,6 +172,5 @@ function longDate(day: string): string {
   --series-claude: #3987e5;
   --series-codex: #d95926;
   --series-opencode: #199e70;
-  --series-amp: #c98500;
 }
 </style>

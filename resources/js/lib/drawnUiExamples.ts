@@ -20,7 +20,7 @@ export const DRAWN_UI_EXAMPLES: ReadonlyArray<{ label: string; spec: unknown }> 
       figure: {
         type: 'table',
         columns: [{ key: 'harness', label: 'Harness' }, { key: 'resume', label: 'Resume', kind: 'status' }, { key: 'images', label: 'Images', kind: 'status' }, { key: 'trend', label: 'Since last month', kind: 'verdict' }],
-        rows: [['Claude Code', 'yes', 'yes', 'better'], ['Codex', 'yes', 'yes', 'same'], ['OpenCode', 'yes', 'partial', 'better'], ['Amp', 'yes', 'no', 'same']]
+        rows: [['Claude Code', 'yes', 'yes', 'better'], ['Codex', 'yes', 'yes', 'same'], ['OpenCode', 'yes', 'partial', 'better']]
       },
       source: 'Example data'
     }

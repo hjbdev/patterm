@@ -113,7 +113,7 @@ const emit = defineEmits<{ 'select-conversation': [id: string]; launched: [sessi
 
 const CONVERSATION_PAGE_SIZE = 50;
 const MESSAGE_PAGE_SIZE = 100;
-const historyProviders = ['claude', 'codex', 'opencode', 'amp'] as const;
+const historyProviders = ['claude', 'codex', 'opencode'] as const;
 type HistoryProvider = typeof historyProviders[number];
 
 interface ProviderPageState {
@@ -285,7 +285,6 @@ function initialProviderState(): Record<HistoryProvider, ProviderPageState> {
     claude: { offset: 0, hasMore: true, loading: false },
     codex: { offset: 0, hasMore: true, loading: false },
     opencode: { offset: 0, hasMore: true, loading: false },
-    amp: { offset: 0, hasMore: true, loading: false }
   };
 }
 
@@ -304,8 +303,7 @@ function isHistoryProvider(value: string): value is HistoryProvider {
 function providerLabel(provider: HistoryProvider): string {
   if (provider === 'claude') return 'Claude';
   if (provider === 'codex') return 'Codex';
-  if (provider === 'opencode') return 'OpenCode';
-  return 'Amp';
+  return 'OpenCode';
 }
 
 async function selectConversation(id: string, anchorMessageId: string | null = null): Promise<void> {

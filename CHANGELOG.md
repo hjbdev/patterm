@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- Amp harness support, including terminal and Integrated launches, presets, MCP
+  configuration import, and conversation history import.
+
 ## [0.1.0] - 2026-10-12
 
 The first public release. Earlier development history stays

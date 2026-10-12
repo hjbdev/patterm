@@ -53,8 +53,7 @@ async function main(): Promise<void> {
       assert.equal(claude?.status, 'available', 'fake claude on PATH discovered as available');
       assert.equal(claude?.version, '1.2.3', 'claude version parsed from banner');
       assert.ok(claude?.executablePath?.endsWith(path.join('bin', 'claude')), 'claude path points at the fixture');
-      assert.equal(byId.get('amp')?.status, 'available');
-      assert.equal(byId.get('amp')?.version, '0.0.1790164843-gc57770');
+      assert.ok(discovered.every((row) => (row.harness as string) !== 'amp'), 'Amp is not discovered even when installed');
     }
 
     assert.equal(byId.get('codex')?.status, 'missing', 'absent codex is missing');
@@ -91,7 +90,12 @@ async function main(): Promise<void> {
     const claudeAfter = secondRun.find((row) => row.harness === 'claude');
     assert.equal(claudeAfter?.discovered_at, originalDiscoveredAt, 'discovered_at preserved across re-runs');
 
-    // Read layer + registry surface the discovered harnesses.
+    database.connection.prepare(`insert into harness_installations
+      (id, harness, executable_path, version, status, discovered_at, last_checked_at)
+      values (?, ?, ?, ?, ?, ?, ?)`)
+      .run('old_amp', 'amp', '/usr/bin/amp', 'old', 'available', '2026-09-01', '2026-09-01');
+
+    // Read layer + registry surface only the supported harnesses.
     const repo = new WorkbenchRepository(database);
     const listed = repo.listHarnesses();
     assert.equal(listed.length, harnessProviders.length, 'repository lists every harness');
@@ -108,6 +112,8 @@ async function main(): Promise<void> {
 
     const viaList = (await registry.call('harness_list', {})) as { harnesses: Array<{ harness: string }> };
     assert.ok(viaList.harnesses.some((row) => row.harness === 'rawpty'), 'harness.list surfaces rawpty');
+    assert.ok(!viaList.harnesses.some((row) => row.harness === 'amp'), 'harness_list hides stale Amp installations');
+    await assert.rejects(registry.call('spawn_agent', { agent: 'amp' }), /Invalid enum value/);
 
     const viaDiscover = (await registry.call('harness_discover', {})) as { harnesses: Array<{ harness: string }> };
     assert.equal(viaDiscover.harnesses.length, harnessProviders.length, 'harness.discover re-runs discovery');

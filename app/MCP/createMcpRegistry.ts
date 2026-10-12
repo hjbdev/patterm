@@ -110,7 +110,7 @@ const assistantFocusItemsInput = z.object({
   offset: z.number().int().min(0).default(0)
 }).strict();
 const spawnAgentInput = z.object({
-  agent: z.enum(['claude', 'codex', 'opencode', 'amp', 'rawpty']).optional(),
+  agent: z.enum(['claude', 'codex', 'opencode', 'rawpty']).optional(),
   conversation_id: z.string().min(1).optional(),
   preset: z.string().trim().min(1).max(160).optional(),
   model: z.string().trim().min(1).max(160).optional(),
@@ -409,7 +409,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       description: 'Spawn a new Patterm-managed sub-agent, optionally with a configured model preset, or resume an imported conversation by conversation_id.',
       inputSchema: { type: 'object', anyOf: [{ required: ['agent'] }, { required: ['preset'] }, { required: ['conversation_id'] }] },
       usageNotes: [
-        'Pass agent (claude, codex, opencode, amp, or rawpty), a preset, or a conversation_id. harness_list shows which agents are installed.',
+        'Pass agent (claude, codex, opencode, or rawpty), a preset, or a conversation_id. harness_list shows which agents are installed.',
         'Any agent can spawn child agents, including a sub-agent splitting up its own delegated task. The new agent is your child: it reports to you, and closing you closes it.',
         'Spawn only for work within your current task. A delegated sub-agent must not start unrelated work; ask your parent or the user first.',
         'Do not use this to replace an unavailable host-native subagent; continue planning directly unless the user explicitly requests Patterm delegation.',
@@ -1322,7 +1322,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       name: 'history_import',
       namespace: 'history',
       hidden: true,
-      description: 'Import structured Claude, Codex, OpenCode, or Amp conversation history from enabled sources or a manual path.',
+      description: 'Import structured Claude, Codex, or OpenCode conversation history from enabled sources or a manual path.',
       inputSchema: { type: 'object' },
       changes: []
     },
@@ -1732,7 +1732,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     {
       name: 'harness_list',
       namespace: 'harness',
-      description: 'List discovered agent-harness installations (claude, codex, opencode, amp, rawpty) with status and version.',
+      description: 'List discovered agent-harness installations (claude, codex, opencode, rawpty) with status and version.',
       inputSchema: { type: 'object' }
     },
     () => ({ harnesses: services.workbench.listHarnesses() })

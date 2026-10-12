@@ -4,7 +4,7 @@ import type { McpLaunchServer } from '../Services/McpServerRegistry';
 // slice covers discovery only: which binary to look for on PATH and how to read
 // its version. Launch/resume/MCP-injection metadata lands in a later slice.
 
-export type HarnessId = 'claude' | 'codex' | 'opencode' | 'amp' | 'rawpty';
+export type HarnessId = 'claude' | 'codex' | 'opencode' | 'rawpty';
 
 export type HarnessStatus = 'available' | 'missing' | 'broken';
 

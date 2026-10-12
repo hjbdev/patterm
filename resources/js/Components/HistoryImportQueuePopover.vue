@@ -47,7 +47,7 @@
               <div class="mt-2 flex gap-1">
                 <Button type="button" variant="outline" size="sm" class="h-6 px-2 text-xs" @click="void retryProblemFile(file)">Retry</Button>
                 <Button type="button" variant="ghost" size="sm" class="h-6 px-2 text-xs" @click="ignoreProblemFile(file)">Dismiss</Button>
-                <Button type="button" variant="ghost" size="sm" class="h-6 px-2 text-xs" @click="void openProblemLocation(file)">{{ file.provider === 'amp' ? 'Copy thread link' : browserMode ? 'Copy path' : 'Open location' }}</Button>
+                <Button type="button" variant="ghost" size="sm" class="h-6 px-2 text-xs" @click="void openProblemLocation(file)">{{ browserMode ? 'Copy path' : 'Open location' }}</Button>
               </div>
             </div>
           </div>
@@ -376,9 +376,7 @@ function toggleExpandedPath(path: string): void {
 
 async function retryProblemFile(file: ImportFile): Promise<void> {
   try {
-    await window.patterm.call('history_import', file.provider === 'amp'
-      ? { provider: 'amp', trigger: 'manual' }
-      : { provider: file.provider, path: file.path, trigger: 'manual' });
+    await window.patterm.call('history_import', { provider: file.provider, path: file.path, trigger: 'manual' });
     void loadStatus();
   } catch (caught) {
     toast.error('Could not queue retry', { description: caught instanceof Error ? caught.message : String(caught) });
@@ -392,11 +390,6 @@ function ignoreProblemFile(file: ImportFile): void {
 }
 
 async function openProblemLocation(file: ImportFile): Promise<void> {
-  if (file.provider === 'amp') {
-    const threadId = file.path.replace(/^amp:\/\/thread\//, '');
-    await window.patterm.writeClipboardText(`https://ampcode.com/threads/${threadId}`);
-    return;
-  }
   if (browserMode) {
     await window.patterm.writeClipboardText(file.path);
     return;

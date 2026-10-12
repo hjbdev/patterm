@@ -42,7 +42,7 @@
           <Button type="button" size="sm" variant="ghost" class="h-7 px-2 text-destructive hover:text-destructive" @click="removePreset(harness, preset)">Delete</Button>
         </template>
       </SettingsItem>
-      <p v-if="!presetsFor(harness).length" class="px-3.5 py-3 text-xs text-muted-foreground">No presets. {{ harnessName(harness) }} launches with its own {{ harness === 'amp' ? 'mode' : 'model' }}.</p>
+      <p v-if="!presetsFor(harness).length" class="px-3.5 py-3 text-xs text-muted-foreground">No presets. {{ harnessName(harness) }} launches with its own model.</p>
     </SettingsSection>
 
     <Dialog v-model:open="editorOpen">
@@ -55,16 +55,14 @@
           <div class="grid items-center gap-3 sm:grid-cols-[90px_minmax(0,1fr)]">
             <label class="text-xs text-muted-foreground" for="preset-name">Name</label>
             <Input id="preset-name" v-model="editor.name" class="h-8 text-xs" placeholder="smartypants" autocomplete="off" />
-            <label class="text-xs text-muted-foreground" for="preset-model">{{ editor.harness === 'amp' ? 'Mode' : 'Model' }}</label>
-            <SettingsChoice id="preset-model" :model-value="editor.model" :options="modelChoices" :aria-label="editor.harness === 'amp' ? 'Mode' : 'Model'" @update:model-value="(value) => { editor!.model = value; onModelChange(); }" />
+            <label class="text-xs text-muted-foreground" for="preset-model">Model</label>
+            <SettingsChoice id="preset-model" :model-value="editor.model" :options="modelChoices" aria-label="Model" @update:model-value="(value) => { editor!.model = value; onModelChange(); }" />
             <template v-if="editor.model === CUSTOM_MODEL">
               <label class="text-xs text-muted-foreground" for="preset-custom">Custom ID</label>
               <Input id="preset-custom" v-model="editor.customModel" class="h-8 text-xs" placeholder="claude-opus-4-8" autocomplete="off" />
             </template>
-            <template v-if="editor.harness !== 'amp'">
-              <label class="text-xs text-muted-foreground" for="preset-reasoning">Reasoning</label>
-              <SettingsChoice id="preset-reasoning" :model-value="editor.reasoning" :options="reasoningChoices" aria-label="Reasoning" :disabled="editor.model === DEFAULT_MODEL" @update:model-value="(value) => { editor!.reasoning = value; }" />
-            </template>
+            <label class="text-xs text-muted-foreground" for="preset-reasoning">Reasoning</label>
+            <SettingsChoice id="preset-reasoning" :model-value="editor.reasoning" :options="reasoningChoices" aria-label="Reasoning" :disabled="editor.model === DEFAULT_MODEL" @update:model-value="(value) => { editor!.reasoning = value; }" />
             <template v-if="editor.harness === 'codex'">
               <label class="text-xs text-muted-foreground" for="preset-speed">Speed</label>
               <SettingsChoice id="preset-speed" :model-value="editor.serviceTier" :options="speedChoices" aria-label="Speed" @update:model-value="(value) => { editor!.serviceTier = value; }" />
@@ -102,7 +100,7 @@ import { autosave, settingSaveStatus } from '../Composables/useSettingsAutosave'
 import { useWorkbench } from '../Composables/useWorkbench';
 import { harnessLabel } from '../lib/harnesses';
 
-type PresetHarness = 'claude' | 'codex' | 'opencode' | 'amp';
+type PresetHarness = 'claude' | 'codex' | 'opencode';
 type Harness = PresetHarness | 'rawpty';
 
 interface HarnessPreset {
@@ -150,14 +148,14 @@ interface EditorState {
   isDefault: boolean;
 }
 
-const PRESET_HARNESSES: PresetHarness[] = ['claude', 'codex', 'opencode', 'amp'];
+const PRESET_HARNESSES: PresetHarness[] = ['claude', 'codex', 'opencode'];
 const CUSTOM_MODEL = '__custom__';
 const DEFAULT_MODEL = '__default__';
 
 const { harnesses } = useWorkbench();
 const presets = ref<HarnessPreset[]>([]);
-const defaults = reactive<Record<PresetHarness, string | null>>({ claude: null, codex: null, opencode: null, amp: null });
-const catalog = ref<ModelCatalog>({ providers: { claude: null, codex: null, opencode: null, amp: null } });
+const defaults = reactive<Record<PresetHarness, string | null>>({ claude: null, codex: null, opencode: null });
+const catalog = ref<ModelCatalog>({ providers: { claude: null, codex: null, opencode: null } });
 const editor = ref<EditorState | null>(null);
 const editorOpen = ref(false);
 const editorTitle = ref('');
@@ -172,7 +170,7 @@ const modelChoices = computed(() => {
   return [
     { value: DEFAULT_MODEL, label: 'Harness default (no override)' },
     ...modelsFor(current.harness).map((model) => ({ value: model.id, label: model.label })),
-    ...(current.harness !== 'amp' ? [{ value: CUSTOM_MODEL, label: 'Custom model ID…' }] : [])
+    { value: CUSTOM_MODEL, label: 'Custom model ID…' }
   ];
 });
 
@@ -223,14 +221,13 @@ function applySettings(settings: PresetSettings): void {
   defaults.claude = settings.defaultPresetIdByHarness?.claude ?? null;
   defaults.codex = settings.defaultPresetIdByHarness?.codex ?? null;
   defaults.opencode = settings.defaultPresetIdByHarness?.opencode ?? null;
-  defaults.amp = settings.defaultPresetIdByHarness?.amp ?? null;
 }
 
 function snapshot(): PresetSettings {
   return {
     // Electron IPC cannot clone Vue's reactive array or its proxy elements.
     presets: presets.value.map(({ id, harness, name, model, reasoning, serviceTier }) => ({ id, harness, name, model, reasoning, serviceTier: serviceTier ?? null })),
-    defaultPresetIdByHarness: { claude: defaults.claude, codex: defaults.codex, opencode: defaults.opencode, amp: defaults.amp }
+    defaultPresetIdByHarness: { claude: defaults.claude, codex: defaults.codex, opencode: defaults.opencode }
   };
 }
 

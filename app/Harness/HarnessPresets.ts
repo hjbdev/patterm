@@ -4,7 +4,7 @@ import type { HarnessId } from './HarnessProvider';
 // Named model/reasoning presets a user configures per agent harness. Presets are
 // resolved to provider flags at launch time (see HarnessLauncher). `rawpty` has
 // no model surface, so presets only cover agent CLIs.
-export const presetHarnessInput = z.enum(['claude', 'codex', 'opencode', 'amp']);
+export const presetHarnessInput = z.enum(['claude', 'codex', 'opencode']);
 export type PresetHarness = z.infer<typeof presetHarnessInput>;
 
 export const PRESET_HARNESSES = presetHarnessInput.options;
@@ -28,12 +28,11 @@ const defaultPresetIds = z.object({
   claude: z.string().nullable().default(null),
   codex: z.string().nullable().default(null),
   opencode: z.string().nullable().default(null),
-  amp: z.string().nullable().default(null)
 });
 
 export const harnessPresetSettingsInput = z.object({
   presets: z.array(harnessPresetInput).max(100).default([]),
-  defaultPresetIdByHarness: defaultPresetIds.default({ claude: null, codex: null, opencode: null, amp: null })
+  defaultPresetIdByHarness: defaultPresetIds.default({ claude: null, codex: null, opencode: null })
 }).superRefine((value, context) => {
   const ids = new Set<string>();
   const names = new Set<string>();
@@ -49,9 +48,6 @@ export const harnessPresetSettingsInput = z.object({
     names.add(nameKey);
     if (preset.model === null && preset.reasoning !== null) {
       context.addIssue({ code: z.ZodIssueCode.custom, path: ['presets', index, 'reasoning'], message: 'reasoning requires a model' });
-    }
-    if (preset.harness === 'amp' && (preset.reasoning !== null || (preset.model !== null && !['low', 'medium', 'high', 'ultra'].includes(preset.model)))) {
-      context.addIssue({ code: z.ZodIssueCode.custom, path: ['presets', index], message: 'Amp presets select a built-in mode without a reasoning override' });
     }
     if (preset.harness !== 'codex' && preset.serviceTier !== null) {
       context.addIssue({ code: z.ZodIssueCode.custom, path: ['presets', index, 'serviceTier'], message: 'only Codex presets select a service tier' });
@@ -74,7 +70,7 @@ export const harnessPresetSettingsInput = z.object({
 export type HarnessPresetSettings = z.infer<typeof harnessPresetSettingsInput>;
 
 export function emptyHarnessPresetSettings(): HarnessPresetSettings {
-  return { presets: [], defaultPresetIdByHarness: { claude: null, codex: null, opencode: null, amp: null } };
+  return { presets: [], defaultPresetIdByHarness: { claude: null, codex: null, opencode: null } };
 }
 
 // First-run defaults: one "Default" preset per harness that passes no model or
@@ -95,7 +91,6 @@ export function seededHarnessPresetSettings(): HarnessPresetSettings {
       claude: 'preset_default_claude',
       codex: 'preset_default_codex',
       opencode: 'preset_default_opencode',
-      amp: 'preset_default_amp'
     }
   };
 }
