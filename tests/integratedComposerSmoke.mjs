@@ -296,7 +296,7 @@ test('a successful upload enables the send and a retry recovers a failed one', a
   harness.scope.stop();
 });
 
-test('pasting a clipboard image creates an attachment, and provider limitations are explicit', async () => {
+test('pasting a clipboard image creates an attachment, and Claude accepts dropped text files', async () => {
   composer.clearDrafts();
   const harness = createHarness({ processId: 'composer_paste', provider: 'claude' });
   harness.setEditor('look');
@@ -314,10 +314,8 @@ test('pasting a clipboard image creates an attachment, and provider limitations 
 
   harness.pane.onDrop({ dataTransfer: { files: [file('notes.md', 'text/markdown')] } });
   await flush();
-  const limited = harness.pane.getDraft().attachments[1];
-  assert.equal(limited?.status, 'error');
-  assert.match(limited?.error ?? '', /Add code files with @/);
-  assert.equal(harness.uploads.length, 1, 'unsupported files never upload');
+  assert.equal(harness.pane.getDraft().attachments[1]?.status, 'uploading');
+  assert.equal(harness.uploads.length, 2, 'Claude uploads text files as documents');
   harness.scope.stop();
 });
 
@@ -472,8 +470,6 @@ test('composer helpers insert and remove references without touching other text'
   assert.equal(composer.attachmentMime({ name: 'pixel.png', type: 'image/png' }), 'image/png');
   assert.equal(composer.attachmentMime({ name: 'notes.md', type: '' }), 'text/markdown');
   assert.equal(composer.attachmentMime({ name: 'archive.zip', type: 'application/zip' }), null);
-  assert.equal(composer.providerAcceptsAttachment('claude', 'application/pdf'), false);
-  assert.equal(composer.providerAcceptsAttachment('codex', 'application/pdf'), true);
 });
 
 test('Enter or Tab before results arrive picks the first result for the current query', async () => {

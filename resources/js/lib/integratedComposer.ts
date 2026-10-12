@@ -89,20 +89,6 @@ export function attachmentMime(file: { name: string; type: string }): string | n
   return null;
 }
 
-// Claude Code accepts images inline and code files through @ references; the
-// others accept documented file types as attachments too.
-export function providerAcceptsAttachment(provider: string | null | undefined, mime: string): boolean {
-  if (provider === 'claude') return isImageMime(mime);
-  return true;
-}
-
-export function attachmentLimitation(provider: string | null | undefined, name: string, mime: string): string | null {
-  if (provider === 'claude' && !isImageMime(mime)) {
-    return `${name} cannot be attached to Claude Code. Add code files with @ instead.`;
-  }
-  return null;
-}
-
 // A mention starts at `@` after whitespace or at the start of the text, so an
 // email address such as `me@example.com` does not open the file menu.
 export function mentionQuery(text: string, caret: number): { query: string; start: number } | null {
@@ -310,18 +296,13 @@ export function addReference(processId: string, path: string, name: string): voi
   if (!draft.references.some((reference) => reference.path === path)) draft.references.push({ path, name });
 }
 
-export async function addFiles(processId: string, incoming: File[], provider?: string | null): Promise<void> {
+export async function addFiles(processId: string, incoming: File[]): Promise<void> {
   const draft = draftFor(processId);
   for (const file of incoming) {
     const mime = attachmentMime(file);
     const id = randomId();
     if (!mime) {
       draft.attachments.push({ id, name: file.name, mime: file.type || 'application/octet-stream', size: file.size, image: false, status: 'error', error: `${file.name} is not a supported attachment type` });
-      continue;
-    }
-    const limitation = attachmentLimitation(provider, file.name, mime);
-    if (limitation) {
-      draft.attachments.push({ id, name: file.name, mime, size: file.size, image: isImageMime(mime), status: 'error', error: limitation });
       continue;
     }
     files.set(id, file);
