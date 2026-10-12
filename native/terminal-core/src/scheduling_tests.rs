@@ -4,9 +4,7 @@ use std::sync::mpsc;
 fn fixture() -> (TerminalManager, String) {
     let (tx, _rx) = mpsc::channel();
     let mut manager = TerminalManager::new(tx);
-    let result = manager
-        .spawn(serde_json::json!({ "command": "/bin/cat", "cols": 20, "rows": 3 }))
-        .unwrap();
+    let result = manager.spawn(super::tests::cat_params(20, 3)).unwrap();
     let id = result["process_id"].as_str().unwrap().to_string();
     (manager, id)
 }
