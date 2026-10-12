@@ -10,6 +10,7 @@ import { SettingsService } from '../app/Services/SettingsService';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { TimelineService } from '../app/Services/TimelineService';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
+import { removeTree } from './fixtures/TempTree';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -371,7 +372,7 @@ async function main(): Promise<void> {
     console.log('agent results smoke passed');
   } finally {
     database.dispose();
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeTree(dir);
   }
 }
 

@@ -6,6 +6,7 @@ import { Migrator } from '../app/Database/Migrator';
 import { openSqliteConnection } from '../app/Database/SqliteConnection';
 import { migrations } from '../database/migrations';
 import { historyMigrations } from '../database/historyMigrations';
+import { removeTree } from './fixtures/TempTree';
 
 const previousAppMigrations = migrations.slice(0, migrations.findIndex((migration) => migration.name === '2026_09_08_000017_remove_tasks'));
 const previousHistoryMigrations = historyMigrations.slice(0, historyMigrations.findIndex((migration) => migration.name === '2026_09_08_000003_remove_task_scope'));
@@ -85,6 +86,6 @@ export function assertTaskRemovalMigration(): void {
   } finally {
     history.close();
     app.close();
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   }
 }

@@ -12,6 +12,7 @@ import { GitService } from '../app/Services/GitService';
 import { normaliseGitRemote, ProjectLinkService } from '../app/Services/ProjectLinkService';
 import { execFileSync } from 'node:child_process';
 import { WebSocket } from 'ws';
+import { removeTree } from './fixtures/TempTree';
 
 const ID = (digit: string) => `host_${digit.repeat(8)}-0000-0000-0000-${'0'.repeat(12)}`;
 
@@ -268,10 +269,15 @@ async function main(): Promise<void> {
     silent.on('message', () => undefined);
     await new Promise((resolve, reject) => { silent.once('open', resolve); silent.once('error', reject); });
     const silentClosed = new Promise((resolve) => silent.once('close', resolve));
+    // A closed link leaves each host's table a moment after its socket ends, so
+    // count the reconnect instead of trusting a stale entry.
+    let silentReconnects = 0;
+    const stopSilentCounting = laptop.links.onConnected(() => { silentReconnects++; });
     workstation.links.closeInbound();
     // Well before the ten-second hello timeout would close it anyway.
     await Promise.race([silentClosed, new Promise((_, reject) => setTimeout(() => reject(new Error('closeInbound left a socket that had not said hello')), 2000))]);
-    await until(() => laptop.links.connected(workstationId) && workstation.links.connected(laptopId), 'the reconnect after closing every inbound socket');
+    await until(() => silentReconnects > 0 && laptop.links.connected(workstationId) && workstation.links.connected(laptopId), 'the reconnect after closing every inbound socket');
+    stopSilentCounting();
 
     // Hiding a host's agents is a local choice.
     assert.equal(workstation.actions.setShowAgents({ host_id: laptopId, show_agents: false }).peers[0]!.show_agents, false);
@@ -322,7 +328,7 @@ async function main(): Promise<void> {
   } finally {
     for (const close of cleanup.reverse()) await close();
     for (const database of databases) database.dispose();
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeTree(dir);
   }
 }
 

@@ -19,6 +19,8 @@ import type { AgentHistoryReadService } from '../app/Services/AgentHistory/Agent
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
 import type { NotificationActions } from '../app/Actions/NotificationActions';
 import { WorkbenchSeeder } from './fixtures/WorkbenchSeeder';
+import { ipcPath } from '../app/Platform/Ipc';
+import { removeTree } from './fixtures/TempTree';
 
 async function main(): Promise<void> {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-workbench-'));
@@ -742,7 +744,7 @@ async function main(): Promise<void> {
     assert.ok(socketStoppedSession.exited_at, 'socket stop_process exits the stopped session so it drops from active tabs after refresh');
     const exited = (await callOverSocket(socketPath, { id: 10, version: 2, tool: 'get_project_status', args: {}, identity: 'identity_test' })) as { error: string };
     assert.match(exited.error, /Unknown or inactive agent identity/, 'an exited agent cannot call with its old identity');
-    const connectedClient = net.createConnection(socketPath);
+    const connectedClient = net.createConnection(ipcPath(socketPath));
     await new Promise<void>((resolve, reject) => { connectedClient.once('connect', resolve); connectedClient.once('error', reject); });
     const disconnected = new Promise<void>((resolve) => connectedClient.once('close', () => resolve()));
     socketServer.stop();
@@ -752,13 +754,13 @@ async function main(): Promise<void> {
     // eslint-disable-next-line no-console
     console.log('workbench read smoke ok');
   } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    removeTree(tempDir);
   }
 }
 
 function callOverSocket(socketPath: string, request: unknown): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const client = net.createConnection(socketPath, () => {
+    const client = net.createConnection(ipcPath(socketPath), () => {
       client.write(`${JSON.stringify(request)}\n`);
     });
     client.setEncoding('utf8');

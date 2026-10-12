@@ -5,7 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-test('launcher dispatches GUI and headless launches without restarting services', () => {
+const linuxOnly = process.platform === 'win32' && 'it runs the bash launcher script, which drives systemctl';
+
+test('launcher dispatches GUI and headless launches without restarting services', { skip: linuxOnly }, () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-launcher-'));
   try {
     for (const dir of ['scripts', 'bin', 'node_modules/.bin']) fs.mkdirSync(path.join(root, dir), { recursive: true });
@@ -59,7 +61,7 @@ test('launcher dispatches GUI and headless launches without restarting services'
   }
 });
 
-test('updates stage before stopping the app and preserve terminal hosts and installed settings', () => {
+test('updates stage before stopping the app and preserve terminal hosts and installed settings', { skip: linuxOnly }, () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-update-'));
   try {
     const source = path.join(root, 'source');

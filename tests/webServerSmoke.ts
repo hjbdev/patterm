@@ -12,6 +12,8 @@ import { browserToolsOnly } from '../routes/application';
 import { loopbackPeerUid, ServerAccess } from '../app/Http/ServerAccess';
 import { acquireApplicationLock } from '../app/Runtime/ApplicationLock';
 import { parseDamageFrame } from '../resources/js/terminal/TerminalRenderer';
+import { debugSidecarPath } from './fixtures/Sidecar';
+import { removeTree } from './fixtures/TempTree';
 
 const origin = 'http://patterm.test';
 
@@ -96,11 +98,12 @@ async function main(): Promise<void> {
   fs.writeFileSync(path.join(rendererPath, 'assets', 'app.js'), appScript);
   const options = {
     appDataPath: path.join(temp, 'data'),
-    sidecarPath: path.resolve('native/terminal-core/target/debug/patterm-terminal-core'),
+    sidecarPath: debugSidecarPath(),
     mcpShimPath: path.resolve('dist/mcp/patterm-mcp.js'),
     runtime: 'node' as const
   };
-  await assert.rejects(createApplication({ ...options, sidecarPath: temp }), /EACCES|permission denied/i);
+  // Spawning a directory is EACCES on Linux and ENOENT on Windows.
+  await assert.rejects(createApplication({ ...options, sidecarPath: temp }), /EACCES|ENOENT|permission denied/i);
   acquireApplicationLock(options.appDataPath)();
   const app = await createApplication(options);
   const server = new WebServer(app, { port: 0, publicOrigin: origin, rendererPath, appDataPath: options.appDataPath });
@@ -204,25 +207,28 @@ async function main(): Promise<void> {
     assert.equal(loopbackPeerUid([tcp, tcp6], ends('127.0.0.2', 0xC351)), 1002, 'other 127/8 sources are looked up too');
     assert.equal(loopbackPeerUid([tcp, tcp6], ends('::ffff:127.0.0.1', 0xC352)), 1003, 'IPv4-mapped clients are found in tcp6');
     assert.equal(loopbackPeerUid([tcp, tcp6], ends('127.0.0.2', 0xC350)), null, 'the whole address tuple must match');
-    const foreign = new WebServer(app, { port: 0, publicOrigin: origin, rendererPath, appDataPath: options.appDataPath, loopbackPeerUid: () => 4242 });
-    const foreignPort = await foreign.start();
-    try {
-      await assert.rejects(fetch(`http://127.0.0.1:${foreignPort}/health`), 'connections from another account are closed');
-      const fromOtherLoopback = await new Promise<string>((resolve) => {
-        http.get({ host: '127.0.0.1', port: foreignPort, path: '/health', localAddress: '127.0.0.2' }, (response) => { response.resume(); resolve(String(response.statusCode)); })
-          .on('error', (error: NodeJS.ErrnoException) => resolve(error.code ?? 'error'));
-      });
-      assert.equal(fromOtherLoopback, 'ECONNRESET', 'choosing another loopback source address does not skip the check');
-      const assigned = Object.values(os.networkInterfaces()).flat().find((entry) => entry && entry.family === 'IPv4' && !entry.internal)?.address;
-      if (assigned) {
-        const fromAssigned = await new Promise<string>((resolve) => {
-          http.get({ host: '127.0.0.1', port: foreignPort, path: '/health', localAddress: assigned }, (response) => { response.resume(); resolve(String(response.statusCode)); })
+    // The check compares against process.getuid(), which Windows does not have.
+    if (process.getuid) {
+      const foreign = new WebServer(app, { port: 0, publicOrigin: origin, rendererPath, appDataPath: options.appDataPath, loopbackPeerUid: () => 4242 });
+      const foreignPort = await foreign.start();
+      try {
+        await assert.rejects(fetch(`http://127.0.0.1:${foreignPort}/health`), 'connections from another account are closed');
+        const fromOtherLoopback = await new Promise<string>((resolve) => {
+          http.get({ host: '127.0.0.1', port: foreignPort, path: '/health', localAddress: '127.0.0.2' }, (response) => { response.resume(); resolve(String(response.statusCode)); })
             .on('error', (error: NodeJS.ErrnoException) => resolve(error.code ?? 'error'));
         });
-        assert.equal(fromAssigned, 'ECONNRESET', 'a source address assigned to this machine does not skip the check either');
+        assert.equal(fromOtherLoopback, 'ECONNRESET', 'choosing another loopback source address does not skip the check');
+        const assigned = Object.values(os.networkInterfaces()).flat().find((entry) => entry && entry.family === 'IPv4' && !entry.internal)?.address;
+        if (assigned) {
+          const fromAssigned = await new Promise<string>((resolve) => {
+            http.get({ host: '127.0.0.1', port: foreignPort, path: '/health', localAddress: assigned }, (response) => { response.resume(); resolve(String(response.statusCode)); })
+              .on('error', (error: NodeJS.ErrnoException) => resolve(error.code ?? 'error'));
+          });
+          assert.equal(fromAssigned, 'ECONNRESET', 'a source address assigned to this machine does not skip the check either');
+        }
+      } finally {
+        await foreign.stop();
       }
-    } finally {
-      await foreign.stop();
     }
     // Simultaneous guesses count towards the limit, and a sign-in checked
     // against a password that changed meanwhile gets no cookie.
@@ -248,7 +254,7 @@ async function main(): Promise<void> {
     assert.equal(setPassword.status, 200);
     const firstCookie = (setPassword.headers.get('set-cookie') ?? '').split(';')[0]!;
     assert.match(setPassword.headers.get('set-cookie') ?? '', /^patterm_session=\d+\.[\w-]+; Path=\/; Max-Age=31536000; HttpOnly; SameSite=Strict$/);
-    assert.equal(fs.statSync(path.join(options.appDataPath, 'server-access.json')).mode & 0o777, 0o600, 'the password file is private');
+    if (process.platform !== 'win32') assert.equal(fs.statSync(path.join(options.appDataPath, 'server-access.json')).mode & 0o777, 0o600, 'the password file is private');
     assert.doesNotMatch(fs.readFileSync(path.join(options.appDataPath, 'server-access.json'), 'utf8'), /correct horse/, 'only a hash is stored');
     assert.deepEqual(await session(), { password_set: true, signed_in: false, tailnet: false });
     assert.equal((await rpc('patterm:bootstrap')).status, 401, 'API calls need a sign-in');
@@ -360,8 +366,12 @@ async function main(): Promise<void> {
     });
     assert.equal(referenceResponse.status, 200);
     assert.equal((await contextRpc('reference_list', { target_type: 'todo', target_id: browserTodo.id })).status, 200);
+    // A process that prints "ready" and echoes each input line back as "echo:<line>".
+    const echoLoop = process.platform === 'win32'
+      ? 'Write-Output ready; while ($null -ne ($line = [Console]::In.ReadLine())) { Write-Output "echo:$line" }'
+      : "exec /bin/sh -c 'printf \"ready\\n\"; while IFS= read -r line; do printf \"echo:%s\\n\" \"$line\"; done'";
     const launch = async () => app.mcp.call('process_create', {
-      project_id: project.project_id, command: "exec /bin/sh -c 'printf \"ready\\n\"; while IFS= read -r line; do printf \"echo:%s\\n\" \"$line\"; done'"
+      project_id: project.project_id, command: echoLoop
     }) as Promise<{ process_id: string; pty_process_id: string }>;
     const first = await launch();
     const second = await launch();
@@ -395,7 +405,8 @@ async function main(): Promise<void> {
     await b.request('take-control', { process_id: firstId });
     await assert.rejects(a.request('input', { process_id: firstId, text: 'lost-owner\n' }), /Take control/);
     await b.request('resize', { process_id: firstId, cols: 80, rows: 24, resize_seq: 1 });
-    await b.request('input', { process_id: firstId, text: 'persisted\n' });
+    // Enter is a carriage return to a Windows console, which ignores a bare line feed.
+    await b.request('input', { process_id: firstId, text: process.platform === 'win32' ? 'persisted\r' : 'persisted\n' });
     await until(async () => {
       const output = await b.request('output', { process_id: firstId }) as { screen: string };
       return output.screen.includes('echo:persisted');
@@ -453,7 +464,7 @@ async function main(): Promise<void> {
     const uploaded = await upload.json() as { path: string };
     assert.equal(path.dirname(uploaded.path), path.join(options.appDataPath, 'uploads'));
     assert.equal(fs.readFileSync(uploaded.path, 'utf8'), 'image-fixture');
-    assert.equal(fs.statSync(uploaded.path).mode & 0o777, 0o600);
+    if (process.platform !== 'win32') assert.equal(fs.statSync(uploaded.path).mode & 0o777, 0o600);
     const overloaded = await connect();
     const overloadClosed = once(overloaded.socket, 'close');
     for (let id = 1; id <= 140; id++) overloaded.socket.send(JSON.stringify({ id, channel: 'patterm:terminal:output', args: { process_id: firstId } }));
@@ -475,7 +486,7 @@ async function main(): Promise<void> {
     await server.stop();
     await app.dispose();
     acquireApplicationLock(options.appDataPath)();
-    fs.rmSync(temp, { recursive: true, force: true });
+    removeTree(temp);
   }
 }
 

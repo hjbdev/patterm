@@ -11,6 +11,7 @@ import type { TerminalService } from '../app/Services/TerminalService';
 import { TimelineService } from '../app/Services/TimelineService';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
+import { removeTree } from './fixtures/TempTree';
 
 interface HarnessRow {
   harness: string;
@@ -27,20 +28,24 @@ async function main(): Promise<void> {
   const binDir = path.join(tempDir, 'bin');
   fs.mkdirSync(binDir);
 
-  // Fake CLI banners exercise PATH discovery and version parsing.
+  // Fake CLI banners exercise PATH discovery and version parsing. Windows
+  // finds .cmd shims through PATHEXT, and cmd.exe needs ComSpec in the PATH-only env.
   const isWindows = process.platform === 'win32';
-  if (!isWindows) {
-    const fakeClaude = path.join(binDir, 'claude');
-    fs.writeFileSync(fakeClaude, '#!/bin/sh\necho "1.2.3 (Claude Code)"\n');
-    fs.chmodSync(fakeClaude, 0o755);
-    const fakeAmp = path.join(binDir, 'amp');
-    fs.writeFileSync(fakeAmp, '#!/bin/sh\necho "0.0.1790164843-gc57770 (released 2026-09-23)"\n');
-    fs.chmodSync(fakeAmp, 0o755);
-  }
+  const fakeCli = (name: string, banner: string): void => {
+    if (isWindows) {
+      fs.writeFileSync(path.join(binDir, `${name}.cmd`), `@echo off\r\necho ${banner}\r\n`);
+      return;
+    }
+    const file = path.join(binDir, name);
+    fs.writeFileSync(file, `#!/bin/sh\necho "${banner}"\n`);
+    fs.chmodSync(file, 0o755);
+  };
+  fakeCli('claude', '1.2.3 (Claude Code)');
+  fakeCli('amp', '0.0.1790164843-gc57770 (released 2026-09-23)');
 
   try {
     const discovery = new HarnessDiscoveryService(harnessProviders, {
-      env: { PATH: binDir },
+      env: isWindows ? { PATH: binDir, PATHEXT: '.COM;.EXE;.BAT;.CMD', ComSpec: process.env.ComSpec, SystemRoot: process.env.SystemRoot } : { PATH: binDir },
       shell: '/bin/sh',
       versionTimeoutMs: 4000
     });
@@ -48,13 +53,11 @@ async function main(): Promise<void> {
     const discovered = await discovery.discover();
     const byId = new Map(discovered.map((row) => [row.harness, row]));
 
-    if (!isWindows) {
-      const claude = byId.get('claude');
-      assert.equal(claude?.status, 'available', 'fake claude on PATH discovered as available');
-      assert.equal(claude?.version, '1.2.3', 'claude version parsed from banner');
-      assert.ok(claude?.executablePath?.endsWith(path.join('bin', 'claude')), 'claude path points at the fixture');
-      assert.ok(discovered.every((row) => (row.harness as string) !== 'amp'), 'Amp is not discovered even when installed');
-    }
+    const claude = byId.get('claude');
+    assert.equal(claude?.status, 'available', 'fake claude on PATH discovered as available');
+    assert.equal(claude?.version, '1.2.3', 'claude version parsed from banner');
+    assert.ok(claude?.executablePath?.endsWith(path.join('bin', isWindows ? 'claude.cmd' : 'claude')), 'claude path points at the fixture');
+    assert.ok(discovered.every((row) => (row.harness as string) !== 'amp'), 'Amp is not discovered even when installed');
 
     assert.equal(byId.get('codex')?.status, 'missing', 'absent codex is missing');
     assert.equal(byId.get('opencode')?.status, 'missing', 'absent opencode is missing');
@@ -76,10 +79,8 @@ async function main(): Promise<void> {
       .all() as HarnessRow[];
     assert.equal(firstRun.length, harnessProviders.length, 'one row per provider');
     const claudeRow = firstRun.find((row) => row.harness === 'claude');
-    if (!isWindows) {
-      assert.equal(claudeRow?.status, 'available');
-      assert.equal(claudeRow?.version, '1.2.3');
-    }
+    assert.equal(claudeRow?.status, 'available');
+    assert.equal(claudeRow?.version, '1.2.3');
     const originalDiscoveredAt = claudeRow?.discovered_at;
 
     await action.execute();
@@ -122,7 +123,7 @@ async function main(): Promise<void> {
     // eslint-disable-next-line no-console
     console.log('harness discovery smoke ok');
   } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    removeTree(tempDir);
   }
 }
 

@@ -12,6 +12,8 @@ import { applyTailscaleRoute, planRemoteAccess } from '../app/Http/RemoteAccessP
 import { TailscaleService } from '../app/Services/TailscaleService';
 import { acquireApplicationLock } from '../app/Runtime/ApplicationLock';
 import { randomId } from '../resources/js/lib/randomId';
+import { debugSidecarPath } from './fixtures/Sidecar';
+import { removeTree } from './fixtures/TempTree';
 
 const HOST = 'patterm.tail123.ts.net';
 const STATUS = JSON.stringify({ BackendState: 'Running', Self: { DNSName: `${HOST}.`, UserID: 1 }, User: { 1: { LoginName: 'owner@example.com' } } });
@@ -84,26 +86,29 @@ async function main(): Promise<void> {
     assert.match(funnel.warnings[0]!, /Funnel/, 'a route that cannot be added becomes a warning');
     assert.deepEqual(tailscale.writes(), []);
 
-    // The installer writes the same password format the server reads.
-    const preview = path.join(temp, 'preview');
-    const installed = spawnSync(process.execPath, [path.resolve('scripts/install-service.mjs'), '--data-dir', path.join(temp, 'data'), '--output-dir', preview, '--remote-access', 'local', '--password-stdin'], {
-      encoding: 'utf8', input: 'correct horse\n', env: { ...process.env, PATTERM_PUBLIC_ORIGIN: '', PUBLIC_ORIGIN: '', PATTERM_PORT: '8787', XDG_CONFIG_HOME: path.join(temp, 'config') }
-    });
-    assert.equal(installed.status, 0, installed.stderr);
-    const fromInstaller = new ServerAccess(path.join(preview, 'server-access.json'));
-    assert.equal(fromInstaller.remoteAccess()?.mode, 'local');
-    assert.ok(await fromInstaller.signIn('correct horse'), 'a password set by the installer signs in');
-    assert.equal(await fromInstaller.signIn('wrong horse'), null);
-    // The installer changes the file only while no server holds the runtime lock.
-    const lockedData = path.join(temp, 'locked');
-    const releaseLocked = acquireApplicationLock(lockedData);
-    const locked = spawnSync(process.execPath, [path.resolve('scripts/install-service.mjs'), '--data-dir', lockedData, '--remote-access', 'local'], {
-      encoding: 'utf8', env: { ...process.env, PATTERM_PUBLIC_ORIGIN: '', PUBLIC_ORIGIN: '', PATTERM_PORT: '8787', XDG_CONFIG_HOME: path.join(temp, 'config') }
-    });
-    releaseLocked();
-    assert.notEqual(locked.status, 0);
-    assert.match(locked.stderr, /Patterm is using this data directory/);
-    assert.equal(fs.existsSync(path.join(lockedData, 'server-access.json')), false);
+    // install-service.mjs writes systemd units, so it only runs on Linux.
+    if (process.platform !== 'win32') {
+      // The installer writes the same password format the server reads.
+      const preview = path.join(temp, 'preview');
+      const installed = spawnSync(process.execPath, [path.resolve('scripts/install-service.mjs'), '--data-dir', path.join(temp, 'data'), '--output-dir', preview, '--remote-access', 'local', '--password-stdin'], {
+        encoding: 'utf8', input: 'correct horse\n', env: { ...process.env, PATTERM_PUBLIC_ORIGIN: '', PUBLIC_ORIGIN: '', PATTERM_PORT: '8787', XDG_CONFIG_HOME: path.join(temp, 'config') }
+      });
+      assert.equal(installed.status, 0, installed.stderr);
+      const fromInstaller = new ServerAccess(path.join(preview, 'server-access.json'));
+      assert.equal(fromInstaller.remoteAccess()?.mode, 'local');
+      assert.ok(await fromInstaller.signIn('correct horse'), 'a password set by the installer signs in');
+      assert.equal(await fromInstaller.signIn('wrong horse'), null);
+      // The installer changes the file only while no server holds the runtime lock.
+      const lockedData = path.join(temp, 'locked');
+      const releaseLocked = acquireApplicationLock(lockedData);
+      const locked = spawnSync(process.execPath, [path.resolve('scripts/install-service.mjs'), '--data-dir', lockedData, '--remote-access', 'local'], {
+        encoding: 'utf8', env: { ...process.env, PATTERM_PUBLIC_ORIGIN: '', PUBLIC_ORIGIN: '', PATTERM_PORT: '8787', XDG_CONFIG_HOME: path.join(temp, 'config') }
+      });
+      releaseLocked();
+      assert.notEqual(locked.status, 0);
+      assert.match(locked.stderr, /Patterm is using this data directory/);
+      assert.equal(fs.existsSync(path.join(lockedData, 'server-access.json')), false);
+    }
 
     // Pages served over plain HTTP have no crypto.randomUUID.
     const secure = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(crypto), 'randomUUID');
@@ -121,7 +126,7 @@ async function main(): Promise<void> {
     acquireApplicationLock(appDataPath)();
     const app = await createApplication({
       appDataPath, runtime: 'node',
-      sidecarPath: path.resolve('native/terminal-core/target/debug/patterm-terminal-core'),
+      sidecarPath: debugSidecarPath(),
       mcpShimPath: path.resolve('dist/mcp/patterm-mcp.js')
     });
     const port = await freePort();
@@ -180,7 +185,7 @@ async function main(): Promise<void> {
       // Another account on this machine reaching the network listener is
       // checked too: its connection comes from one of this machine's addresses.
       const assigned = Object.values(os.networkInterfaces()).flat().find((entry) => entry && !entry.internal && entry.family === 'IPv4')?.address;
-      if (assigned) {
+      if (assigned && process.getuid) {
         const networkPort = await freePort();
         const lookups: string[] = [];
         const network = new WebServer(app, {
@@ -201,7 +206,7 @@ async function main(): Promise<void> {
     }
     console.log('remote access smoke passed');
   } finally {
-    fs.rmSync(temp, { recursive: true, force: true });
+    removeTree(temp);
   }
 }
 

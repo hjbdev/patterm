@@ -12,6 +12,7 @@ import { RegisterSessionAction, registerSessionInput } from '../app/Actions/Regi
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
+import { removeTree } from './fixtures/TempTree';
 
 type Todo = TodoRow & { assignments: string[]; blocked: boolean; lease: { holder_actor: string; expires_at: number } | null };
 type Page<T> = { items: T[]; total: number };
@@ -187,7 +188,7 @@ async function main(): Promise<void> {
     console.log('project context smoke passed');
   } finally {
     database.dispose();
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeTree(dir);
   }
 }
 

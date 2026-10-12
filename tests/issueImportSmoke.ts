@@ -7,6 +7,7 @@ import { TimelineService } from '../app/Services/TimelineService';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
+import { removeTree } from './fixtures/TempTree';
 
 async function main() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-removed-tools-'));
@@ -21,7 +22,7 @@ async function main() {
     console.log('removed task and issue tools smoke ok');
   } finally {
     database.dispose();
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   }
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

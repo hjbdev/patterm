@@ -12,6 +12,7 @@ import { TimelineService } from '../app/Services/TimelineService';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
 import { LaunchingMcpIdentities } from '../app/MCP/McpHelperAccess';
+import { removeTree } from './fixtures/TempTree';
 
 async function main(): Promise<void> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-memory-'));
@@ -184,7 +185,7 @@ async function main(): Promise<void> {
     assert.equal(row(corrected).status, 'forgotten');
   } finally {
     database.dispose();
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeTree(dir);
   }
 }
 

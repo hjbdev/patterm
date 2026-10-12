@@ -6,6 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { checkServe, tailscaleOrigin, tailscaleOwner } from '../scripts/start-tailscale-service.mjs';
 
+const linuxOnly = process.platform === 'win32' && 'it runs the Tailscale launcher against a fake systemctl, which Windows does not have';
 const origin = 'https://patterm.tail123.ts.net';
 const endpoint = 'patterm.tail123.ts.net:443';
 const route = { TCP: { 443: { HTTPS: true } }, Web: { [endpoint]: { Handlers: { '/': { Proxy: 'http://127.0.0.1:8787' } } } } };
@@ -27,7 +28,7 @@ test('Tailscale discovery and route checks reject unsafe or conflicting configur
   assert.throws(() => checkServe({ Foreground: { session: route } }, origin, 8787), /foreground/);
 });
 
-test('Tailscale launcher prepares a fresh service, preserves settings, and avoids live restarts', () => {
+test('Tailscale launcher prepares a fresh service, preserves settings, and avoids live restarts', { skip: linuxOnly }, () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-tailscale-'));
   try {
     for (const dir of ['scripts', 'deploy', 'bin', 'config/patterm', 'dist/server/server', 'dist/renderer', 'dist/mcp', 'native/terminal-core/target/release']) {
