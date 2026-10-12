@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import type { DatabaseService } from './DatabaseService';
-import { callIntegratedHost as callHost, detachedHostLauncher, hostConnectionError, type IntegratedHostLauncher } from './IntegratedHostLauncher';
+import { callIntegratedHost as callHost, IntegratedHostTransportError, detachedHostLauncher, hostConnectionError, type IntegratedHostLauncher } from './IntegratedHostLauncher';
 import type { IntegratedControlSelector, IntegratedControls, IntegratedFormAction, IntegratedLaunchInput, IntegratedLaunchResult } from './IntegratedAgentService';
 import { UncertainDeliveryError, type IntegratedDeliveryState } from './IntegratedDelivery';
 import type { IntegratedConversationEvent, IntegratedConversationListener } from './IntegratedConversation';
@@ -488,7 +488,7 @@ function record(value: unknown): Record<string, unknown> {
 // session; host error responses are definitive.
 function isUncertainHostFailure(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  if (/^Claude host timed out:/.test(error.message)) return true;
+  if (error instanceof IntegratedHostTransportError) return true;
   const code = (error as NodeJS.ErrnoException).code;
   return typeof code === 'string' && ['ECONNREFUSED', 'ECONNRESET', 'EPIPE', 'ETIMEDOUT'].includes(code);
 }
