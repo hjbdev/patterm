@@ -141,7 +141,21 @@ export class DiffService {
     ]);
     if (before === TOO_LARGE || after === TOO_LARGE) return { ...contents, tooLarge: true };
     if (before === BINARY || after === BINARY) return { ...contents, binary: true };
-    return { ...contents, oldContents: before, newContents: after };
+    // A CRLF checkout of an LF blob differs on every line byte for byte, but
+    // git compares the working file after converting it back.
+    const converted = before && after && !before.includes('\r') && after.includes('\r\n') && await this.convertsLineEndings(loaded.root, file.path);
+    return { ...contents, oldContents: before, newContents: converted ? after.replace(/\r\n/g, '\n') : after };
+  }
+
+  // Whether git normalises this file's line endings to LF when comparing it:
+  // a text or eol attribute, or core.autocrlf, unless the file is marked -text.
+  private async convertsLineEndings(root: string, filePath: string): Promise<boolean> {
+    const eol = await this.query(root, ['ls-files', '--eol', '--', filePath]).catch(() => null);
+    const attributes = /\battr\/(.*?)\s*\t/.exec(eol ?? '')?.[1] ?? '';
+    if (/(^|\s)-text\b/.test(attributes)) return false;
+    if (/(^|\s)(text|eol=)/.test(attributes)) return true;
+    const autocrlf = (await this.query(root, ['config', '--get', 'core.autocrlf']).catch(() => null))?.trim().toLowerCase();
+    return autocrlf === 'true' || autocrlf === 'input';
   }
 
   private load(worktreeId: string, scope: DiffScope): Promise<LoadedDiff> {

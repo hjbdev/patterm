@@ -27,6 +27,9 @@ interface HostConfig {
 type JsonRecord = Record<string, unknown>;
 
 const config = JSON.parse(fs.readFileSync(process.argv[2]!, 'utf8')) as HostConfig;
+// Windows caps a command line at 32767 characters, which a large assistant
+// context can approach, so Claude reads it from a file there (as in terminal mode).
+const contextPath = config.mcpConfigPath.replace(/-mcp\.json$/, '-context.md');
 const images = config.imageDirectory ? new TranscriptImageStore(config.imageDirectory) : null;
 const messages: JsonRecord[] = [];
 const pending = new Map<string, JsonRecord>();
@@ -339,6 +342,12 @@ async function handle(socket: net.Socket, request: JsonRecord): Promise<void> {
   throw new Error(`Unknown Claude host method: ${String(request.method)}`);
 }
 
+function contextArgs(): string[] {
+  if (process.platform !== 'win32') return ['--append-system-prompt', config.context];
+  fs.writeFileSync(contextPath, config.context, { mode: 0o600 });
+  return ['--append-system-prompt-file', contextPath];
+}
+
 function startClaude(forceResume = false): void {
   const args = [
     '-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json', '--include-partial-messages',
@@ -347,7 +356,7 @@ function startClaude(forceResume = false): void {
     // Headless Claude registers AskUserQuestion, EnterPlanMode, and
     // ExitPlanMode only when a permission prompt tool is named, as the SDK does.
     '--permission-prompt-tool', 'stdio',
-    '--append-system-prompt', config.context,
+    ...contextArgs(),
     '--permission-mode', mode,
     ...(model !== 'default' ? ['--model', model] : []),
     ...(effort ? ['--effort', effort] : []),
@@ -1125,7 +1134,7 @@ function record(value: unknown): JsonRecord {
 }
 
 function cleanup(): void {
-  for (const filename of [config.socketPath, config.mcpConfigPath, process.argv[2]!]) {
+  for (const filename of [config.socketPath, config.mcpConfigPath, contextPath, process.argv[2]!]) {
     try { fs.unlinkSync(filename); } catch {}
   }
 }

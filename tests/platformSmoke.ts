@@ -50,7 +50,7 @@ function ipcNames(tempDir: string): void {
     assert.equal(ipcPath(socket), socket, 'POSIX listens on the socket path');
     return;
   }
-  assert.match(ipcPath(socket), /^\\\\\.\\pipe\\patterm-[0-9a-f]{16}-mcp\.sock$/);
+  assert.match(ipcPath(socket), /^\\\\\.\\pipe\\patterm-[0-9a-f]{32}-mcp\.sock$/);
   assert.notEqual(ipcPath(socket), ipcPath(path.join(tempDir, 'other', 'mcp.sock')), 'data directories get distinct pipes');
   assert.equal(ipcPath(socket.toUpperCase()), ipcPath(socket), 'pipe names ignore path case');
 }

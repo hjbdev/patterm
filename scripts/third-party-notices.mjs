@@ -99,7 +99,7 @@ function licenceTexts(dir) {
 }
 
 function npmPackages() {
-  const listed = JSON.parse(execFileSync('pnpm', ['licenses', 'list', '--prod', '--json'], { cwd: root, encoding: 'utf8', maxBuffer: 64 << 20 }));
+  const listed = JSON.parse(execFileSync('pnpm', ['licenses', 'list', '--prod', '--json'], { cwd: root, encoding: 'utf8', maxBuffer: 64 << 20, shell: process.platform === 'win32' }));
   const packages = [];
   for (const entries of Object.values(listed)) {
     for (const entry of entries) {

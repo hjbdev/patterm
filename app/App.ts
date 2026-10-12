@@ -389,7 +389,8 @@ async function createApplicationResources(
   defer(() => sync.dispose());
   const harnessDiscovery = new HarnessDiscoveryService(harnessProviders, {
     env: resolvedEnv,
-    ...(resolvedEnv.SHELL ? { shell: resolvedEnv.SHELL } : {})
+    // Windows ignores a $SHELL inherited from Git Bash or MSYS; raw terminals use PowerShell.
+    ...(resolvedEnv.SHELL && process.platform !== 'win32' ? { shell: resolvedEnv.SHELL } : {})
   });
   const git = new GitService();
   const worktreeService = new WorktreeService({ database, timeline, workbench, git });

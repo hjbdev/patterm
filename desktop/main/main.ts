@@ -70,6 +70,9 @@ async function createWindow(): Promise<void> {
     appDataPath: app.getPath('userData'),
     sidecarPath: resolveSidecarPath(app.isPackaged),
     mcpShimPath: resolveMcpShimPath(app.isPackaged),
+    // Windows terminals run in detached hosts that survive an app restart. The
+    // Linux desktop keeps its attached sidecar; its server uses systemd hosts.
+    ...(process.platform === 'win32' ? { terminalHosts: { appDataPath: app.getPath('userData') } } : {}),
     launchDiagnostics,
     launchIdentity
   });
