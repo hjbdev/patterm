@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import type { DatabaseService } from './DatabaseService';
-import { detachedHostLauncher, hostConnectionError, type IntegratedHostLauncher } from './IntegratedHostLauncher';
+import { detachedHostLauncher, hostConnectionError, integratedHostReady, stopHostProcess, stopRecordedHostProcess, type IntegratedHostLauncher } from './IntegratedHostLauncher';
 import type { IntegratedControls, IntegratedFormAction, IntegratedLaunchInput, IntegratedLaunchResult } from './IntegratedAgentService';
 import { elicitationContent, elicitationForm, type ElicitationForm } from './McpElicitation';
 import { TurnBusyError, UncertainDeliveryError, type IntegratedDeliveryState } from './IntegratedDelivery';
@@ -28,6 +28,7 @@ import {
 import type { TranscriptImageStore } from './TranscriptImageStore';
 import type { RealtimeVoiceOptions } from './AssistantVoiceProfile';
 import { codexMcpOverrides as globalCodexMcpOverrides } from '../Harness/McpDelivery';
+import { ipcPath } from '../Platform/Ipc';
 
 type JsonRecord = Record<string, unknown>;
 type RequestId = string | number;
@@ -36,6 +37,7 @@ interface CodexRuntime {
   executable: string;
   socketPath: string;
   pid: number | null;
+  configPath: string | null;
   threadId: string;
   sessionId: string;
   model: string | null;
@@ -137,7 +139,10 @@ export class CodexAppServerService {
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     const key = randomUUID();
     const socketPath = path.join(directory, `${key}.sock`);
-    const appServerSocketPath = path.join(directory, `${key}-app.sock`);
+    // Codex's unix:// listener binds an AF_UNIX socket file on Windows, which
+    // Node cannot connect to, so the host talks to app-server over stdio
+    // there. Its own control socket still survives a Patterm restart.
+    const appServerSocketPath = process.platform === 'win32' ? null : path.join(directory, `${key}-app.sock`);
     const logPath = path.join(directory, `${key}.log`);
     const overrides = [...globalCodexMcpOverrides(input.mcpServers ?? [], input.mcp), ...codexMcpOverrides(input.mcp)];
     const args = [
@@ -145,7 +150,7 @@ export class CodexAppServerService {
       ...(input.model ? ['-c', `model=${JSON.stringify(input.model)}`] : []),
       ...(input.reasoning ? ['-c', `model_reasoning_effort=${JSON.stringify(input.reasoning)}`] : []),
       ...(input.serviceTier ? ['-c', `service_tier=${JSON.stringify(input.serviceTier)}`] : []),
-      'app-server', '--listen', `unix://${appServerSocketPath}`
+      'app-server', '--listen', appServerSocketPath ? `unix://${appServerSocketPath}` : 'stdio://'
     ];
     const configPath = path.join(directory, `${key}.json`);
     fs.writeFileSync(configPath, JSON.stringify({
@@ -167,7 +172,7 @@ export class CodexAppServerService {
         argv: [input.executable, 'app-server', socketPath, String(pid ?? ''), configPath]
       };
     } catch (error) {
-      stopPid(pid);
+      await stopHostProcess(pid);
       this.clients.get(socketPath)?.close();
       this.clients.delete(socketPath);
       const detail = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8').trim().slice(-4_000) : '';
@@ -1043,12 +1048,13 @@ export class CodexAppServerService {
     const runtime = this.runtime(processId);
     this.clients.get(runtime.socketPath)?.close();
     this.clients.delete(runtime.socketPath);
-    stopPid(runtime.pid);
+    await stopRecordedHostProcess(runtime.pid, runtime.socketPath);
     try { fs.unlinkSync(runtime.socketPath); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    removeForcedHostConfig(runtime.configPath);
   }
 
   async cleanupLaunch(_input: IntegratedLaunchInput, result: IntegratedLaunchResult): Promise<void> {
-    stopRuntime(result.argv);
+    await stopRuntime(result.argv);
   }
 
   async stopAll(): Promise<void> {
@@ -1103,7 +1109,7 @@ export class CodexAppServerService {
       throw new Error('Codex Integrated runtime metadata is invalid');
     }
     const pid = typeof argv[3] === 'string' && /^\d+$/.test(argv[3]) ? Number(argv[3]) : null;
-    return { executable: argv[0], socketPath: argv[2], pid, threadId: row.resume_id, sessionId: row.session_id, model: row.model, reasoning: row.reasoning, serviceTier: row.service_tier };
+    return { executable: argv[0], socketPath: argv[2], pid, configPath: typeof argv[4] === 'string' ? argv[4] : null, threadId: row.resume_id, sessionId: row.session_id, model: row.model, reasoning: row.reasoning, serviceTier: row.service_tier };
   }
 
   private async client(runtime: CodexRuntime): Promise<CodexRpcClient> {
@@ -1323,7 +1329,7 @@ export class CodexRpcClient {
 
   static connect(socketPath: string, onClose: () => void, timeoutMs = 15_000): Promise<CodexRpcClient> {
     return new Promise((resolve, reject) => {
-      const socket = net.createConnection(socketPath);
+      const socket = net.createConnection(ipcPath(socketPath));
       const fail = (error: Error) => reject(hostConnectionError(error, 'Codex'));
       socket.once('error', fail);
       socket.once('connect', () => {
@@ -1711,7 +1717,7 @@ function record(value: unknown): JsonRecord {
 
 async function waitForSocket(socketPath: string, pid: number | null): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt++) {
-    if (fs.existsSync(socketPath)) return;
+    if (await integratedHostReady(socketPath)) return;
     if (pid) {
       try { process.kill(pid, 0); } catch { throw new Error('Codex app-server exited during startup'); }
     }
@@ -1720,15 +1726,17 @@ async function waitForSocket(socketPath: string, pid: number | null): Promise<vo
   throw new Error('Codex app-server did not create its control socket');
 }
 
-function stopPid(pid: number | null): void {
-  if (!pid) return;
-  try { process.kill(pid, 'SIGTERM'); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
-}
-
-function stopRuntime(argv: string[]): void {
+async function stopRuntime(argv: string[]): Promise<void> {
   const pid = typeof argv[3] === 'string' && /^\d+$/.test(argv[3]) ? Number(argv[3]) : null;
-  stopPid(pid);
+  await stopHostProcess(pid);
   if (typeof argv[2] === 'string') {
     try { fs.unlinkSync(argv[2]); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   }
+  removeForcedHostConfig(typeof argv[4] === 'string' ? argv[4] : null);
+}
+
+// A POSIX host removes its launch config as SIGTERM stops it. A Windows host
+// is ended without running its own cleanup.
+function removeForcedHostConfig(configPath: string | null): void {
+  if (process.platform === 'win32' && configPath?.endsWith('.json')) fs.rmSync(configPath, { force: true });
 }

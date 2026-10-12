@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto';
-import net from 'node:net';
 import { UpdateSessionTitleAction } from '../Actions/UpdateSessionTitleAction';
 import type { DatabaseService } from './DatabaseService';
 import type { IntegratedInputResolver, IntegratedPromptInput, IntegratedWorktreeFile, ResolvedIntegratedPrompt } from './IntegratedInput';
@@ -8,7 +7,7 @@ import { HELD_QUEUE_EVENT_ID, type IntegratedConversationEvent, type IntegratedC
 import type { AgentHistoryReadService } from './AgentHistory/AgentHistoryReadService';
 import type { McpLaunchServer } from './McpServerRegistry';
 import type { UsageService } from './UsageService';
-import { callIntegratedHost, detachedHostLauncher, type IntegratedHostLauncher } from './IntegratedHostLauncher';
+import { callIntegratedHost, detachedHostLauncher, integratedHostListening, type IntegratedHostLauncher } from './IntegratedHostLauncher';
 import { presetHarnessInput } from '../Harness/HarnessPresets';
 
 const ARCHIVE_PAGE_SIZE = 80;
@@ -974,13 +973,7 @@ export class IntegratedAgentService {
   private async hostListening(processId: string): Promise<boolean> {
     const socketPath = this.hostSocketPath(processId);
     if (!socketPath) return false;
-    return new Promise((resolve) => {
-      const socket = net.createConnection(socketPath);
-      const done = (listening: boolean) => { socket.destroy(); resolve(listening); };
-      socket.setTimeout(2_000, () => done(false));
-      socket.once('connect', () => done(true));
-      socket.once('error', () => done(false));
-    });
+    return integratedHostListening(socketPath);
   }
 
   private forProcess(processId: string): IntegratedProviderService {

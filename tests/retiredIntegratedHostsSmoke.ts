@@ -4,6 +4,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { CloseProcessAction } from '../app/Actions/CloseProcessAction';
+import { ipcPath } from '../app/Platform/Ipc';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { IntegratedAgentService, type IntegratedProviderService } from '../app/Services/IntegratedAgentService';
 import type { IntegratedHostLauncher } from '../app/Services/IntegratedHostLauncher';
@@ -64,7 +65,7 @@ async function main(): Promise<void> {
     servers.push(server);
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);
-      server.listen(path.join(directory, `${id}.sock`), resolve);
+      server.listen(ipcPath(path.join(directory, `${id}.sock`)), resolve);
     });
     return server;
   };

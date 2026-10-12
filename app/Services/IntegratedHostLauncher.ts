@@ -3,6 +3,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
+import { withEnv } from '../Platform/Environment';
+import { ipcPath } from '../Platform/Ipc';
+import { killProcessTree } from '../Platform/ProcessTree';
 
 export interface IntegratedHostSpawn {
   harness: string;
@@ -23,13 +26,17 @@ export interface IntegratedHostLauncher {
 }
 
 // Desktop mode: hosts are children of the application and end with it.
+// On Windows only a detached child escapes the job object that ends Node's
+// children with the application. It has no console, so the host starts each
+// CLI hidden.
 export const detachedHostLauncher: IntegratedHostLauncher = {
   async launch(input) {
     const child = spawn(input.nodePath, [input.script, input.configPath], {
       cwd: input.cwd,
-      env: { ...input.env, ELECTRON_RUN_AS_NODE: '1' },
+      env: withEnv(input.env, { ELECTRON_RUN_AS_NODE: '1' }),
       detached: true,
-      stdio: 'ignore'
+      stdio: 'ignore',
+      windowsHide: true
     });
     child.unref();
     return child.pid ?? null;
@@ -97,7 +104,7 @@ export class IntegratedHostTransportError extends Error {
 export function callIntegratedHost(socketPath: string, method: string, params: unknown): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const id = randomUUID();
-    const socket = net.createConnection(socketPath);
+    const socket = net.createConnection(ipcPath(socketPath));
     let buffer = '';
     const timeout = setTimeout(() => { socket.destroy(); reject(new IntegratedHostTransportError(`Integrated host timed out: ${method}`)); }, 10_000);
     socket.setEncoding('utf8');
@@ -120,4 +127,40 @@ export function callIntegratedHost(socketPath: string, method: string, params: u
       }
     });
   });
+}
+
+// Whether a host's control socket accepts a connection.
+export function integratedHostListening(socketPath: string, timeoutMs = 2_000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.createConnection(ipcPath(socketPath));
+    const done = (listening: boolean) => { socket.destroy(); resolve(listening); };
+    socket.setTimeout(timeoutMs, () => done(false));
+    socket.once('connect', () => done(true));
+    socket.once('error', () => done(false));
+  });
+}
+
+// Whether a starting host has created its control socket. A named pipe has no
+// file to look for, so Windows asks whether it accepts a connection.
+export async function integratedHostReady(socketPath: string): Promise<boolean> {
+  if (process.platform !== 'win32') return fs.existsSync(socketPath);
+  return integratedHostListening(socketPath, 1_000);
+}
+
+// Ends a host the caller just started. POSIX hosts handle SIGTERM by stopping
+// their CLI. Windows has no SIGTERM: ending only the host would orphan the CLI
+// with its MCP servers and tool shells, so the whole tree ends.
+export async function stopHostProcess(pid: number | null): Promise<void> {
+  if (!pid) return;
+  if (process.platform === 'win32') return killProcessTree(pid);
+  try { process.kill(pid, 'SIGTERM'); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
+}
+
+// Ends a host by a PID recorded earlier. Once that host has gone the PID may
+// name an unrelated process, so on Windows, where its whole tree would end,
+// only a host whose control socket still listens is stopped.
+export async function stopRecordedHostProcess(pid: number | null, socketPath: string): Promise<void> {
+  if (!pid) return;
+  if (process.platform === 'win32' && !await integratedHostListening(socketPath)) return;
+  return stopHostProcess(pid);
 }

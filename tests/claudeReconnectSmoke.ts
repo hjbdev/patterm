@@ -6,6 +6,7 @@ import path from 'node:path';
 import { IntegratedAgentService } from '../app/Services/IntegratedAgentService';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { ClaudeStreamService } from '../app/Services/ClaudeStreamService';
+import { ipcPath } from '../app/Platform/Ipc';
 import { applyConversationStreamEvent, normaliseMessages } from '../resources/js/lib/integratedConversation';
 import type { IntegratedConversationEvent } from '../app/Services/IntegratedConversation';
 
@@ -56,7 +57,7 @@ async function fixture(): Promise<Fixture> {
       }
     });
   });
-  await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+  await new Promise<void>((resolve) => server.listen(ipcPath(socketPath), resolve));
   const database = new DatabaseService(directory);
   database.initialize();
   const now = new Date().toISOString();
@@ -77,7 +78,7 @@ async function fixture(): Promise<Fixture> {
     append: (delta) => { text += delta; publish({ kind: 'append', id: 'message-1', delta }); },
     release,
     stopListening: () => new Promise((resolve) => server.close(() => resolve())),
-    listen: () => new Promise((resolve) => server.listen(socketPath, () => resolve())),
+    listen: () => new Promise((resolve) => server.listen(ipcPath(socketPath), () => resolve())),
     close: async () => {
       release();
       for (const socket of sockets) socket.destroy();
@@ -118,7 +119,7 @@ async function verifyPromptDelivery(): Promise<void> {
   });
   let integrated: IntegratedAgentService | undefined;
   try {
-    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+    await new Promise<void>((resolve) => server.listen(ipcPath(socketPath), resolve));
     database.initialize();
     const now = new Date().toISOString();
     database.connection.prepare('insert into projects (id,name,path,created_at,updated_at) values (?,?,?,?,?)').run('project', 'Delivery', directory, now, now);

@@ -3,12 +3,16 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import WebSocket from 'ws';
+import { resolveCommand } from '../Platform/Executable';
+import { ipcPath, removeStaleIpc, restrictIpc } from '../Platform/Ipc';
+import { killProcessTree } from '../Platform/ProcessTree';
 
 interface HostConfig {
   executable: string;
   args: string[];
   cwd: string;
-  appServerSocketPath: string;
+  // Null when app-server speaks JSON-RPC over stdio (`--listen stdio://`).
+  appServerSocketPath: string | null;
   controlSocketPath: string;
   logPath: string;
 }
@@ -16,11 +20,20 @@ interface HostConfig {
 type JsonRecord = Record<string, unknown>;
 
 const config = JSON.parse(fs.readFileSync(process.argv[2]!, 'utf8')) as HostConfig;
-for (const socketPath of [config.appServerSocketPath, config.controlSocketPath]) {
-  try { fs.unlinkSync(socketPath); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+const appServerSocketPath = config.appServerSocketPath ?? null;
+for (const socketPath of [appServerSocketPath, config.controlSocketPath]) {
+  if (socketPath) removeStaleIpc(socketPath);
 }
 const log = fs.openSync(config.logPath, 'a', 0o600);
-const appServer = spawn(config.executable, config.args, { cwd: config.cwd, env: process.env, stdio: ['ignore', log, log] });
+// npm installs Codex as a .cmd shim on Windows, which Node cannot spawn.
+const command = resolveCommand(config.executable, config.args, process.env);
+const appServer = spawn(command.command, command.args, {
+  cwd: config.cwd,
+  env: process.env,
+  stdio: appServerSocketPath ? ['ignore', log, log] : ['pipe', 'pipe', log],
+  windowsHide: true,
+  windowsVerbatimArguments: command.verbatim
+});
 fs.closeSync(log);
 // A missing or unexecutable binary must not crash the host with an unhandled
 // 'error' event; log it so the launch failure is actionable.
@@ -30,31 +43,33 @@ appServer.on('error', (error) => {
 });
 const clients = new Set<net.Socket>();
 const pendingServerRequests = new Map<string, string>();
-let appSocket: WebSocket;
+let sendAppServer: (line: string) => void = () => {};
+let shuttingDown = false;
 
 void start().catch((error) => {
   fs.appendFileSync(config.logPath, `${error instanceof Error ? error.stack : String(error)}\n`);
-  appServer.kill('SIGTERM');
-  process.exit(1);
+  void stopAppServer().finally(() => process.exit(1));
 });
 
 async function start(): Promise<void> {
-  await waitForSocket(config.appServerSocketPath);
-  appSocket = new WebSocket('ws://localhost/', {
-    createConnection: () => net.createConnection(config.appServerSocketPath),
-    perMessageDeflate: false
-  });
-  appSocket.on('message', receiveAppServer);
-  appSocket.on('error', shutdown);
-  appSocket.on('close', shutdown);
-  await new Promise<void>((resolve, reject) => { appSocket.once('open', resolve); appSocket.once('error', reject); });
+  if (appServerSocketPath) await connectWebSocket(appServerSocketPath);
+  else connectStdio();
 
   const server = net.createServer((socket) => {
-    clients.add(socket);
-    for (const line of pendingServerRequests.values()) socket.write(`${line}\n`);
+    let admitted = false;
+    const admit = (): void => {
+      admitted = true;
+      clients.add(socket);
+      for (const line of pendingServerRequests.values()) socket.write(`${line}\n`);
+    };
+    // A named pipe's default ACL lets every local user open it for reading but
+    // only its owner for writing, so on Windows a client receives app-server
+    // traffic once it has written (Patterm's first line is `initialize`).
+    if (process.platform !== 'win32') admit();
     socket.setEncoding('utf8');
     let buffer = '';
     socket.on('data', (chunk) => {
+      if (!admitted) admit();
       buffer += chunk;
       for (;;) {
         const newline = buffer.indexOf('\n');
@@ -64,18 +79,55 @@ async function start(): Promise<void> {
         if (!line) continue;
         const message = parse(line);
         if ('id' in message && !message.method) pendingServerRequests.delete(String(message.id));
-        appSocket.send(line);
+        sendAppServer(line);
       }
     });
     socket.on('close', () => clients.delete(socket));
     socket.on('error', () => clients.delete(socket));
   });
-  server.listen(config.controlSocketPath, () => fs.chmodSync(config.controlSocketPath, 0o600));
+  server.listen(ipcPath(config.controlSocketPath), () => restrictIpc(config.controlSocketPath));
   process.on('SIGTERM', () => server.close(shutdown));
+  // Windows never delivers SIGTERM; Ctrl+Break is its console stop request.
+  if (process.platform === 'win32') process.on('SIGBREAK', () => server.close(shutdown));
 }
 
-function receiveAppServer(chunk: WebSocket.RawData): void {
-  for (const line of chunk.toString().split('\n')) {
+// POSIX app-servers listen on a unix socket. On Windows Codex binds an AF_UNIX
+// socket file, which Node cannot connect to (it treats paths as named pipes),
+// so there the host owns app-server's stdio instead. Either way Patterm
+// reconnects to the host's control socket after a restart.
+async function connectWebSocket(socketPath: string): Promise<void> {
+  await waitForSocket(socketPath);
+  const appSocket = new WebSocket('ws://localhost/', {
+    createConnection: () => net.createConnection(socketPath),
+    perMessageDeflate: false
+  });
+  appSocket.on('message', (chunk: WebSocket.RawData) => receiveAppServer(chunk.toString()));
+  appSocket.on('error', shutdown);
+  appSocket.on('close', shutdown);
+  await new Promise<void>((resolve, reject) => { appSocket.once('open', resolve); appSocket.once('error', reject); });
+  sendAppServer = (line) => appSocket.send(line);
+}
+
+// The stdio transport carries one JSON-RPC message per line each way. Its
+// stdin closing on a forced host exit also ends app-server.
+function connectStdio(): void {
+  const output = appServer.stdout!;
+  let buffer = '';
+  output.setEncoding('utf8');
+  output.on('data', (chunk: string) => {
+    buffer += chunk;
+    const newline = buffer.lastIndexOf('\n');
+    if (newline < 0) return;
+    receiveAppServer(buffer.slice(0, newline));
+    buffer = buffer.slice(newline + 1);
+  });
+  output.on('close', shutdown);
+  appServer.stdin!.on('error', shutdown);
+  sendAppServer = (line) => { appServer.stdin!.write(`${line}\n`); };
+}
+
+function receiveAppServer(text: string): void {
+  for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     const message = parse(line);
     if ('id' in message && typeof message.method === 'string') pendingServerRequests.set(String(message.id), line);
@@ -100,10 +152,24 @@ async function waitForSocket(socketPath: string): Promise<void> {
 }
 
 function shutdown(): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
   for (const client of clients) client.destroy();
-  appServer.kill('SIGTERM');
-  for (const filename of [config.appServerSocketPath, config.controlSocketPath, process.argv[2]!]) {
-    try { fs.unlinkSync(filename); } catch {}
+  void stopAppServer().finally(() => {
+    for (const filename of [appServerSocketPath, config.controlSocketPath, process.argv[2]!]) {
+      if (!filename) continue;
+      try { fs.unlinkSync(filename); } catch {}
+    }
+    process.exit(0);
+  });
+}
+
+// Windows has no SIGTERM, and npm's codex launcher runs the native binary as
+// its own child, so the whole tree ends there.
+function stopAppServer(): Promise<void> {
+  if (process.platform !== 'win32') {
+    appServer.kill('SIGTERM');
+    return Promise.resolve();
   }
-  process.exit(0);
+  return appServer.pid && appServer.exitCode === null ? killProcessTree(appServer.pid) : Promise.resolve();
 }
