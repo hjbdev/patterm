@@ -10,7 +10,10 @@
         <IntegratedConversation v-if="integratedAgent" :process-id="integratedAgent.processId" :project-id="activeProject?.project.id ?? null" :project-path="activeProject?.project.path ?? null" :exited="integratedAgent.exited" :mention-agents="mentionAgents" :mention-launchers="mentionLaunchers" :close-request="selectedAgent?.closeRequest" :close-subagents="closeSubagents" class="h-full" @launched="selectLaunchedAgent" />
         <!-- Hidden rather than unmounted so switching back skips renderer setup. A null ID detaches the PTY. -->
         <TerminalPane v-show="!integratedAgent" title="Terminal" :process-id="integratedAgent ? null : activeTerminalId" :capture-enabled="!!activeProject" @capture-selection="capture" />
-        <Button v-if="selectedAgent && !visible" variant="ghost" size="icon" class="absolute right-3 top-3 z-10 h-8 w-8 text-muted-foreground" aria-label="Open session context" title="Open session context" @click="show"><PanelRight class="h-4 w-4" /></Button>
+        <!-- Integrated transcripts span the workspace, so align the button with the conversation column instead. -->
+        <div v-if="selectedAgent && !visible" class="pointer-events-none absolute inset-x-0 top-3 z-10 mx-auto flex justify-end px-3" :class="{ 'max-w-[50rem] 2xl:max-w-[1000px]': integratedAgent }">
+          <Button variant="ghost" size="icon" class="pointer-events-auto h-8 w-8 text-muted-foreground" aria-label="Open session context" title="Open session context" @click="show"><PanelRight class="h-4 w-4" /></Button>
+        </div>
       </div>
       <template v-if="selectedAgent && visible">
         <div v-if="narrow" class="absolute inset-0 z-20 bg-black/40" @click="close" />
