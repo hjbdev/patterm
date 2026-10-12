@@ -577,11 +577,12 @@ on the server.
    Keep HTTPS access restricted to your Tailscale identity.
 
 5. For the automatic summary update, open **Settings > Auto-summaries**, select
-   Codex or OpenCode, keep `gpt-5.6-luna` or choose an available model, and run
+   Claude Code, Codex, or OpenCode, keep the default model (`haiku` for Claude
+   Code, `gpt-5.6-luna` for the others) or choose an available one, and run
    **Test summariser** before enabling summaries. Each CLI needs its own native
    login on the server. Codex requires file-based ChatGPT authentication; see
-   [automatic summary setup](docs/automatic-summaries.md). After saving, type into
-   a top-level agent terminal to make it eligible for summaries.
+   [automatic summary setup](docs/automatic-summaries.md). Settings save as you
+   change them. Message a top-level agent to make it eligible for summaries.
 
 To restart without installing an update, run `systemctl --user restart
 patterm.service`. Tailscale Serve remains configured, and independent terminal
@@ -705,11 +706,14 @@ Neither the installer nor smoke tests alter live data, services, or Tailscale.
 
 ## Automatic summaries
 
-Opt-in terminal recaps are available in **Settings > Auto-summaries**. Claude Code
-uses Haiku through normal print-mode sign-in, without `--bare`. Enabling summaries
-sends redacted terminal text to the provider and consumes usage. Codex and OpenCode
-remain unavailable until their isolation contracts are verified. See
-[automatic summaries](docs/automatic-summaries.md) for limits, privacy, and testing.
+Opt-in recaps are available in **Settings > Auto-summaries** with Claude Code
+(the default, using Haiku through normal print-mode sign-in, without `--bare`),
+Codex, or OpenCode. Agent recaps summarise the user and assistant text of imported
+conversation history in chronological batches, with a compact memory and a
+coverage state; tools and reasoning are excluded. Shell processes use recent
+terminal output. Enabling summaries sends redacted text to the provider and
+consumes usage. See [automatic summaries](docs/automatic-summaries.md) for
+coverage, rebuilds, limits, privacy, and testing.
 
 ## Architecture and MCP
 
