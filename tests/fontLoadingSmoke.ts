@@ -25,6 +25,12 @@ async function main(): Promise<void> {
     faces[0]!.load = () => Promise.reject(new Error('asset unavailable'));
     await loadFontFamily('"JetBrains Mono"');
     await loadFontFamily('"Comic Code", monospace');
+
+    // Windows system fallbacks are not bundled faces, so a full stack loads only the selected bundled family.
+    calls.length = 0;
+    faces[0]!.load = () => { calls.push('latin'); return Promise.resolve(); };
+    await loadFontFamily('"JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace');
+    assert.deepEqual(calls, ['latin', 'cyrillic italic'], 'Cascadia Mono and Consolas never trigger a load');
   } finally {
     Reflect.deleteProperty(globalThis, 'document');
   }

@@ -48,7 +48,7 @@ export function agentStatusText(agent: ProjectAgent): string {
 
 // Home-relative, as a shell prompt shows it.
 export function displayPath(path: string): string {
-  return path.replace(/^\/(?:home|Users)\/[^/]+(?=\/|$)/, '~');
+  return path.replace(/^(?:\/(?:home|Users)\/[^/]+|[a-zA-Z]:[\\/]Users[\\/][^\\/]+)(?=[\\/]|$)/, '~');
 }
 
 function projectOverview(workbench: ProjectWorkbench): ProjectOverview {

@@ -21,8 +21,13 @@ class FakeKeyboardEvent implements TerminalKeyboardEventLike {
     public metaKey = false,
     public altKey = false,
     public shiftKey = false,
-    public code = ''
+    public code = '',
+    private readonly altGraph = false
   ) {}
+
+  getModifierState(key: string): boolean {
+    return key === 'AltGraph' && this.altGraph;
+  }
 
   preventDefault(): void {
     this.defaultPrevented = true;
@@ -91,6 +96,17 @@ async function main(): Promise<void> {
   const altX = new FakeKeyboardEvent('x', false, false, true);
   assert.equal(router.handleKeydown(altX), true);
   assert.equal(controls.pop(), '\u001bx');
+
+  // Windows reports AltGr as Ctrl+Alt; the character it types is text, not a control code.
+  for (const key of ['[', '\\', ']', '{', '}', '@', '|']) {
+    const altGr = new FakeKeyboardEvent(key, true, false, true, false, '', true);
+    assert.equal(keyToTerminalInput(altGr), null, `AltGr+${key} is left to text input`);
+    assert.equal(router.handleKeydown(altGr), false);
+    assert.equal(altGr.defaultPrevented, false, 'AltGr text keeps the browser insertion');
+  }
+  assert.equal(keyToTerminalInput(new FakeKeyboardEvent('[', true, false, true)), '\u001b\u001b', 'Ctrl+Alt without AltGr stays a control chord');
+  assert.equal(keyToTerminalInput(new FakeKeyboardEvent('c', true)), '\u0003', 'Ctrl+C stays a plain ^C');
+  assert.equal(controls.length, 0);
 
   const ctrlU = new FakeKeyboardEvent('u', true);
   assert.equal(keyToTerminalInput(ctrlU), '\u0015');

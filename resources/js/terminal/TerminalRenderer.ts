@@ -178,7 +178,7 @@ const TERMINAL_FOREGROUND = '#fafafa';
 const TERMINAL_MUTED_FOREGROUND = '#a1a1aa';
 const TERMINAL_CURSOR = '#fafafa';
 const TERMINAL_CURSOR_FOREGROUND = TERMINAL_BACKGROUND;
-const DEFAULT_TERMINAL_FONT_FAMILY = 'ui-monospace, SFMono-Regular, Menlo, monospace';
+const DEFAULT_TERMINAL_FONT_FAMILY = 'ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", Consolas, monospace';
 const MAX_CACHED_TERMINAL_GRIDS = 8;
 const MAX_CACHED_GPU_ATLASES = 4;
 // Damage frames carry a u32 epoch, so -1 never matches. A restored grid then

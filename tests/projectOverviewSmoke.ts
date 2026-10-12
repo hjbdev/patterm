@@ -64,3 +64,8 @@ assert.equal(quietOverview?.lastActiveAt, null);
 assert.equal(displayPath('/home/someone/Dev/project'), '~/Dev/project');
 assert.equal(displayPath('/Users/someone'), '~');
 assert.equal(displayPath('/srv/project'), '/srv/project');
+assert.equal(displayPath('C:\\Users\\someone\\Dev\\project'), '~\\Dev\\project', 'a Windows home abbreviates');
+assert.equal(displayPath('D:/Users/someone'), '~', 'a forward-slash Windows path abbreviates too');
+assert.equal(displayPath('C:\\Users\\someone2'), '~', 'any user directory under C:\\Users is a home');
+assert.equal(displayPath('C:\\Users'), 'C:\\Users');
+assert.equal(displayPath('C:\\work\\project'), 'C:\\work\\project');

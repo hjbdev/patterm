@@ -95,6 +95,7 @@ import { ChevronLeft, ChevronRight, ImageOff, X } from 'lucide-vue-next';
 import { Dialog, DialogClose, DialogContent, DialogTitle } from './ui/dialog';
 import { useLightboxGestures } from '../Composables/useLightboxGestures';
 import type { TranscriptImage } from '../lib/integratedConversation';
+import { baseName } from '../lib/serverPath';
 import { transcriptImageUrl } from '../lib/transcriptImages';
 
 // The same image can appear more than once in a gallery; `key` tells the
@@ -114,7 +115,7 @@ const url = ref<string | null>(null);
 const failed = ref(false);
 const expanded = ref(false);
 const natural = ref<{ width: number; height: number } | null>(null);
-const label = computed(() => props.image.name?.split('/').pop() || 'Image');
+const label = computed(() => (props.image.name && baseName(props.image.name)) || 'Image');
 const index = ref(0);
 const shownUrl = ref<string | null>(null);
 const shownFailed = ref(false);

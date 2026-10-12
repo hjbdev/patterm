@@ -48,16 +48,16 @@ export const TERMINAL_FONT_OPTIONS: Array<{ value: TerminalFontPreset; label: st
   {
     value: 'jetbrains-nerd',
     label: 'JetBrains Mono Nerd Font (installed)',
-    family: '"JetBrainsMono Nerd Font", "JetBrainsMono Nerd Font Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace'
+    family: '"JetBrainsMono Nerd Font", "JetBrainsMono Nerd Font Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", Consolas, monospace'
   },
-  { value: 'jetbrains-mono', label: 'JetBrains Mono', family: '"JetBrains Mono", ui-monospace, monospace' },
-  { value: 'geist-mono', label: 'Geist Mono', family: '"Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace' },
-  { value: 'fira-code', label: 'Fira Code', family: '"Fira Code", ui-monospace, monospace' },
-  { value: 'iosevka', label: 'Iosevka', family: '"Iosevka", ui-monospace, monospace' },
-  { value: 'ibm-plex-mono', label: 'IBM Plex Mono', family: '"IBM Plex Mono", ui-monospace, monospace' },
-  { value: 'source-code-pro', label: 'Source Code Pro', family: '"Source Code Pro", ui-monospace, monospace' },
-  { value: 'comic-mono', label: 'Comic Mono', family: '"Comic Mono", ui-monospace, monospace' },
-  { value: 'system-mono', label: 'System Mono', family: 'ui-monospace, SFMono-Regular, Menlo, monospace' },
+  { value: 'jetbrains-mono', label: 'JetBrains Mono', family: '"JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace' },
+  { value: 'geist-mono', label: 'Geist Mono', family: '"Geist Mono", ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", Consolas, monospace' },
+  { value: 'fira-code', label: 'Fira Code', family: '"Fira Code", ui-monospace, "Cascadia Mono", Consolas, monospace' },
+  { value: 'iosevka', label: 'Iosevka', family: '"Iosevka", ui-monospace, "Cascadia Mono", Consolas, monospace' },
+  { value: 'ibm-plex-mono', label: 'IBM Plex Mono', family: '"IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace' },
+  { value: 'source-code-pro', label: 'Source Code Pro', family: '"Source Code Pro", ui-monospace, "Cascadia Mono", Consolas, monospace' },
+  { value: 'comic-mono', label: 'Comic Mono', family: '"Comic Mono", ui-monospace, "Cascadia Mono", Consolas, monospace' },
+  { value: 'system-mono', label: 'System Mono', family: 'ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", Consolas, monospace' },
   { value: 'custom', label: 'Custom', family: '' }
 ];
 
@@ -88,8 +88,8 @@ export function resolveUiFontFamily(settings: AppearanceSettings): string {
 }
 
 export function resolveTerminalFontFamily(settings: AppearanceSettings): string {
-  if (settings.terminalFont.preset === 'custom') return settings.terminalFont.customFamily.trim() || TERMINAL_FONT_OPTIONS[0]?.family || 'ui-monospace, monospace';
-  return TERMINAL_FONT_OPTIONS.find((option) => option.value === settings.terminalFont.preset)?.family ?? TERMINAL_FONT_OPTIONS[0]?.family ?? 'ui-monospace, monospace';
+  if (settings.terminalFont.preset === 'custom') return settings.terminalFont.customFamily.trim() || TERMINAL_FONT_OPTIONS[0]?.family || 'ui-monospace, "Cascadia Mono", Consolas, monospace';
+  return TERMINAL_FONT_OPTIONS.find((option) => option.value === settings.terminalFont.preset)?.family ?? TERMINAL_FONT_OPTIONS[0]?.family ?? 'ui-monospace, "Cascadia Mono", Consolas, monospace';
 }
 
 export function applyUiFont(settings: AppearanceSettings): void {
