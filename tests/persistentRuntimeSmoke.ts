@@ -1,35 +1,46 @@
 import assert from 'node:assert/strict';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createApplication, type PattermApplication } from '../app/App';
 import { listCommandPaletteCommands, runCommandPaletteCommand } from '../app/Commands/CommandPalette';
+import type { DebugLogService } from '../app/Services/DebugLogService';
 import type { ProcessLauncherResult } from '../app/Services/ProcessLauncher';
-import type { TerminalHostOptions } from '../app/Services/TerminalHostService';
+import { DetachedHostSupervisor, type TerminalHostSupervisor } from '../app/Services/TerminalHostService';
+import type { TerminalService } from '../app/Services/TerminalService';
 
 interface FixturePids { pid: number; sleepPid: number }
 interface ProcessRow { id: string; status: string; pty_process_id: string | null; exit_code: number | null; auto_restart: number }
 interface ProcInfo { pid: number; parent: number; state: string; started: string }
 
+const windows = process.platform === 'win32';
+// PowerShell and ConPTY start more slowly than a POSIX shell.
+const WAIT_MS = windows ? 20_000 : 5000;
+
 async function main(): Promise<void> {
-  assert.equal(process.platform, 'linux', 'persistent runtime smoke requires Linux');
+  assert.ok(process.platform === 'linux' || windows, 'persistent runtime smoke requires Linux or Windows');
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-runtime-'));
-  const supervisor = new TestSupervisor();
+  const supervisor = windows ? new WindowsSupervisor() : new TestSupervisor();
   let app: PattermApplication | undefined;
   try {
     const fixture = path.join(directory, 'fixture.cjs');
+    // The sleep is detached from the fixture: on Linux it leaves the PTY's
+    // process group, and on Windows it gets no console, but both stay
+    // descendants of the terminal host.
     fs.writeFileSync(fixture, `
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 const { createInterface } = require('node:readline');
 const [, , record, gate] = process.argv;
 if (gate) {
-  fs.writeFileSync(record, JSON.stringify({ pid: process.pid }));
+  fs.writeFileSync(record, JSON.stringify({ pid: process.pid, parent: process.ppid }));
   setInterval(() => { if (fs.existsSync(gate)) process.exit(23); }, 10);
 } else {
-  const sleep = spawn('/bin/sleep', ['3600'], { detached: true, stdio: 'ignore' });
+  const sleep = process.platform === 'win32'
+    ? spawn(process.execPath, ['-e', 'setTimeout(() => {}, 3600000)'], { detached: true, stdio: 'ignore' })
+    : spawn('/bin/sleep', ['3600'], { detached: true, stdio: 'ignore' });
   fs.writeFileSync(record, JSON.stringify({ pid: process.pid, sleepPid: sleep.pid }));
   console.log('fixture ready');
   createInterface({ input: process.stdin }).on('line', line => console.log('reply:' + line));
@@ -37,13 +48,13 @@ if (gate) {
 `);
     const options = {
       appDataPath: path.join(directory, 'data'),
-      sidecarPath: path.resolve('native/terminal-core/target/debug/patterm-terminal-core'),
+      sidecarPath: path.resolve('native/terminal-core/target/debug', windows ? 'patterm-terminal-core.exe' : 'patterm-terminal-core'),
       mcpShimPath: path.resolve('dist/mcp/patterm-mcp.js'),
       runtime: 'node' as const,
       terminalHosts: {
         appDataPath: path.join(directory, 'data'),
         serviceName: 'patterm-test',
-        controlUnit: supervisor.control
+        supervisor
       }
     };
     app = await createApplication(options);
@@ -58,8 +69,8 @@ if (gate) {
     }) as ProcessLauncherResult;
     await until(() => fs.existsSync(originalRecord), 'original command starts');
     const originalPids = JSON.parse(fs.readFileSync(originalRecord, 'utf8')) as FixturePids;
-    const originalStart = procInfo(originalPids.pid)?.started;
-    const sleepStart = procInfo(originalPids.sleepPid)?.started;
+    const originalStart = started(originalPids.pid);
+    const sleepStart = started(originalPids.sleepPid);
     assert.ok(originalStart);
     assert.ok(sleepStart);
 
@@ -69,25 +80,27 @@ if (gate) {
       project_id: project.project_id, name: 'Exit while disconnected', command: command(fixture, offlineRecord, gate)
     }) as ProcessLauncherResult;
     await until(() => fs.existsSync(offlineRecord), 'offline command starts');
-    const offlinePid = (JSON.parse(fs.readFileSync(offlineRecord, 'utf8')) as { pid: number }).pid;
-    const originalHostPid = [...supervisor.children.values()][0]?.pid;
+    const offlinePids = JSON.parse(fs.readFileSync(offlineRecord, 'utf8')) as { pid: number; parent: number };
+    const originalHostPid = supervisor.hostPids()[0];
     assert.ok(originalHostPid);
     await app.dispose();
     app = undefined;
     assert.equal(supervisor.stops, 0, 'ordinary app disposal does not stop terminal hosts');
-    assert.equal(procInfo(originalPids.pid)?.started, originalStart);
-    assert.equal(procInfo(originalPids.sleepPid)?.started, sleepStart, 'a detached sleep keeps the same process and start time');
+    assert.equal(started(originalPids.pid), originalStart);
+    assert.equal(started(originalPids.sleepPid), sleepStart, 'a detached sleep keeps the same process and start time');
     fs.writeFileSync(gate, 'exit');
-    await until(() => !running(offlinePid), 'command exits while the application is disconnected');
+    await until(() => !running(offlinePids.pid), 'command exits while the application is disconnected');
+    // PowerShell wraps the command on Windows; the PTY exits with it.
+    if (windows) await until(() => !running(offlinePids.parent), 'command shell exits while the application is disconnected');
 
     app = await createApplication(options);
     assert.equal(supervisor.starts, 1, 'an unchanged binary reuses its existing host');
-    assert.equal([...supervisor.children.values()][0]?.pid, originalHostPid);
+    assert.equal(supervisor.hostPids()[0], originalHostPid);
     assert.deepEqual(processRow(app, original.process_id), {
       id: original.process_id, status: 'running', pty_process_id: original.pty_process_id, exit_code: null, auto_restart: 1
     });
-    assert.equal(procInfo(originalPids.pid)?.started, originalStart);
-    assert.equal(procInfo(originalPids.sleepPid)?.started, sleepStart);
+    assert.equal(started(originalPids.pid), originalStart);
+    assert.equal(started(originalPids.sleepPid), sleepStart);
     const exited = processRow(app, offline.process_id);
     assert.equal(exited.status, 'failed');
     assert.equal(exited.exit_code, 23, 'reconciliation captures exits that occurred without an app connection');
@@ -95,14 +108,14 @@ if (gate) {
 
     await app.dispose();
     app = undefined;
-    const updatedBinary = path.join(directory, 'updated-terminal-core');
+    const updatedBinary = path.join(directory, windows ? 'updated-terminal-core.exe' : 'updated-terminal-core');
     fs.copyFileSync(options.sidecarPath, updatedBinary);
-    // Trailing bytes leave this ELF executable valid while changing its hash.
+    // Trailing bytes leave this ELF or PE executable valid while changing its hash.
     fs.appendFileSync(updatedBinary, '\nfixture generation two\n');
     const updatedOptions = { ...options, sidecarPath: updatedBinary };
     app = await createApplication(updatedOptions);
     assert.equal(supervisor.starts, 2, 'an updated binary starts another host generation');
-    assert.equal(supervisor.activeCount(), 2, 'the previous generation stays supervised while it has live processes');
+    assert.equal(await supervisor.activeCount(), 2, 'the previous generation stays supervised while it has live processes');
     const nextRecord = path.join(directory, 'updated.json');
     const next = await app.mcp.call('process_create', {
       project_id: project.project_id, name: 'Updated host', command: command(fixture, nextRecord), auto_restart: true
@@ -110,8 +123,8 @@ if (gate) {
     await until(() => fs.existsSync(nextRecord), 'updated command starts');
     const nextPids = JSON.parse(fs.readFileSync(nextRecord, 'utf8')) as FixturePids;
     assert.notEqual(original.pty_process_id.split('_')[1], next.pty_process_id.split('_')[1], 'new launches use the updated host generation');
-    assert.equal(procInfo(originalPids.pid)?.started, originalStart, 'updating the host binary preserves existing processes');
-    assert.equal(procInfo(originalPids.sleepPid)?.started, sleepStart);
+    assert.equal(started(originalPids.pid), originalStart, 'updating the host binary preserves existing processes');
+    assert.equal(started(originalPids.sleepPid), sleepStart);
     await echo(app, original.pty_process_id, 'old-generation');
     await echo(app, next.pty_process_id, 'new-generation');
 
@@ -124,7 +137,7 @@ if (gate) {
     await assert.rejects(app.mcp.call('stop_process', { process_id: original.process_id }), /Terminal host is unavailable/);
     assert.equal(processRow(app, original.process_id).status, 'running');
     assert.equal(processRow(app, original.process_id).pty_process_id, original.pty_process_id);
-    assert.equal(procInfo(originalPids.pid)?.started, originalStart);
+    assert.equal(started(originalPids.pid), originalStart);
     await app.dispose();
     app = await createApplication(updatedOptions);
     await echo(app, original.pty_process_id, 'after-controller-loss');
@@ -136,13 +149,15 @@ if (gate) {
     assert.match(quit?.confirmation ?? '', /running sleeps.*Patterm timers/);
     await assert.rejects(runCommandPaletteCommand(app, { id: 'renderer:quit', context }), /Confirm Quit/);
     await assert.rejects(runCommandPaletteCommand(app, { id: 'renderer:quit', context, input: { confirmed: 'true' } }), /Confirm Quit/);
-    assert.equal(supervisor.activeCount(), 2, 'unconfirmed Quit has no shutdown side effects');
+    assert.equal(await supervisor.activeCount(), 2, 'unconfirmed Quit has no shutdown side effects');
     assert.equal(app.timers.listMcp().length, 1);
     assert.equal(app.isShuttingDown(), false);
     await runCommandPaletteCommand(app, { id: 'renderer:quit', context, input: { confirmed: true } });
     assert.equal(app.isShuttingDown(), true);
-    assert.equal(supervisor.activeCount(), 0, 'Quit stops every registered host generation');
+    assert.equal(await supervisor.activeCount(), 0, 'Quit stops every registered host generation');
     for (const pid of [originalPids.pid, originalPids.sleepPid, nextPids.pid, nextPids.sleepPid]) {
+      // A Windows host's job object ends its descendants as the host exits.
+      if (windows) await until(() => !running(pid), `Quit stops managed process ${pid}, including detached sleeps`);
       assert.equal(running(pid), false, `Quit stops managed process ${pid}, including detached sleeps`);
     }
     assert.equal(app.timers.listMcp().length, 0);
@@ -168,7 +183,11 @@ if (gate) {
   }
 }
 
+// Process commands run through the default shell: a POSIX shell, or
+// PowerShell on Windows, which returns only 0 or 1 unless told to exit with
+// the command's own code.
 function command(...args: string[]): string {
+  if (windows) return `& ${[process.execPath, ...args].map((value) => `'${value.replace(/'/g, "''")}'`).join(' ')}; exit $LASTEXITCODE`;
   return `exec ${[process.execPath, ...args].map((value) => `'${value.replace(/'/g, `'\\''`)}'`).join(' ')}`;
 }
 
@@ -177,18 +196,31 @@ function processRow(app: PattermApplication, processId: string): ProcessRow {
 }
 
 async function echo(app: PattermApplication, processId: string, text: string): Promise<void> {
-  await app.terminal.request('terminal.process.input', { process_id: processId, text: `${text}\n` });
+  // A console reads a line when Enter (CR) arrives.
+  await app.terminal.request('terminal.process.input', { process_id: processId, text: `${text}${windows ? '\r' : '\n'}` });
   await until(async () => {
     const output = await app.terminal.request('terminal.process.output', { process_id: processId }) as { lines: string[] };
     return output.lines.some((line) => line.includes(`reply:${text}`));
   }, `input and output reconnect for ${text}`);
 }
 
-async function until(check: () => boolean | Promise<boolean>, message: string, timeoutMs = 5000): Promise<void> {
+async function until(check: () => boolean | Promise<boolean>, message: string, timeoutMs = WAIT_MS): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!await check()) {
     if (Date.now() >= deadline) throw new Error(`Timed out: ${message}`);
     await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
+// A process start time, which tells a surviving process from a reused PID.
+function started(pid: number): string | undefined {
+  if (!windows) return procInfo(pid)?.started;
+  try {
+    return execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToFileTimeUtc()`], {
+      encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore']
+    }).trim() || undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -204,28 +236,36 @@ function procInfo(pid: number): ProcInfo | undefined {
 }
 
 function running(pid: number): boolean {
+  if (windows) return windowsRunning(pid);
   const process = procInfo(pid);
   return Boolean(process && process.state !== 'Z' && process.state !== 'X');
 }
 
+// Signal 0 reports a process that has exited as gone, even while open handles
+// keep its object alive.
+function windowsRunning(pid: number): boolean {
+  try { process.kill(pid, 0); return true; }
+  catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
+}
+
+interface SmokeSupervisor extends TerminalHostSupervisor {
+  readonly starts: number;
+  readonly stops: number;
+  hostPids(): number[];
+  activeCount(): Promise<number>;
+  dispose(): Promise<void>;
+}
+
 // Reproduce cgroup cleanup without invoking systemd or changing live services.
 // PTYs and detached children have separate process groups, so include the tree.
-class TestSupervisor {
+class TestSupervisor implements SmokeSupervisor {
   readonly children = new Map<string, ChildProcess>();
   starts = 0;
   stops = 0;
 
-  readonly control: NonNullable<TerminalHostOptions['controlUnit']> = async (action, unit, directory) => {
-    const previous = this.children.get(unit);
-    if (action === 'is-active') return Boolean(previous?.pid && running(previous.pid));
-    if (action === 'stop') {
-      if (previous?.pid && running(previous.pid)) {
-        this.stops++;
-        await this.stop(previous.pid);
-      }
-      return true;
-    }
-    if (previous?.pid && running(previous.pid)) return true;
+  async start(id: string, directory: string): Promise<void> {
+    const previous = this.children.get(id);
+    if (previous?.pid && running(previous.pid)) return;
     const log = fs.openSync(path.join(directory, 'fixture-host.log'), 'a', 0o600);
     let child: ChildProcess;
     try {
@@ -235,25 +275,45 @@ class TestSupervisor {
     } finally {
       fs.closeSync(log);
     }
-    this.children.set(unit, child);
+    this.children.set(id, child);
     this.starts++;
     await once(child, 'spawn');
-    return true;
-  };
+  }
 
-  activeCount(): number {
+  async isActive(id: string): Promise<boolean> {
+    const previous = this.children.get(id);
+    return Boolean(previous?.pid && running(previous.pid));
+  }
+
+  async stop(id: string): Promise<void> {
+    const previous = this.children.get(id);
+    if (previous?.pid && running(previous.pid)) {
+      this.stops++;
+      await this.kill(previous.pid);
+    }
+  }
+
+  async endpoint(_id: string, directory: string): Promise<string> {
+    return path.join(directory, 'control.sock');
+  }
+
+  hostPids(): number[] {
+    return [...this.children.values()].flatMap((child) => child.pid ? [child.pid] : []);
+  }
+
+  async activeCount(): Promise<number> {
     return [...this.children.values()].filter((child) => child.pid && running(child.pid)).length;
   }
 
   async dispose(): Promise<void> {
     const results = await Promise.allSettled([...this.children.values()].map(async (child) => {
-      if (child.pid && running(child.pid)) await this.stop(child.pid);
+      if (child.pid && running(child.pid)) await this.kill(child.pid);
     }));
     const errors = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
     if (errors.length) throw new AggregateError(errors.map((error) => error.reason), 'Test host cleanup failed');
   }
 
-  private async stop(pid: number): Promise<void> {
+  private async kill(pid: number): Promise<void> {
     const tree = new Map<number, ProcInfo>();
     const root = procInfo(pid);
     if (!root) return;
@@ -281,6 +341,54 @@ class TestSupervisor {
       signal('SIGKILL');
       await until(() => [...tree.keys()].every((id) => !running(id)), 'test host force cleanup', 1500);
     }
+  }
+}
+
+// The production Windows supervisor, counted. Hosts are real detached
+// processes in the test's data directory.
+class WindowsSupervisor implements SmokeSupervisor {
+  private readonly inner = new DetachedHostSupervisor({ write() {} } as unknown as DebugLogService, process.env);
+  private readonly directories = new Map<string, string>();
+  starts = 0;
+  stops = 0;
+
+  async start(id: string, directory: string): Promise<void> {
+    this.directories.set(id, directory);
+    if (!await this.inner.isActive(id, directory)) this.starts++;
+    await this.inner.start(id, directory);
+  }
+
+  isActive(id: string, directory: string): Promise<boolean> {
+    return this.inner.isActive(id, directory);
+  }
+
+  async stop(id: string, directory: string, connection: TerminalService | undefined): Promise<void> {
+    this.directories.set(id, directory);
+    if (await this.inner.isActive(id, directory)) this.stops++;
+    await this.inner.stop(id, directory, connection);
+  }
+
+  endpoint(id: string, directory: string): Promise<string> {
+    return this.inner.endpoint(id, directory);
+  }
+
+  hostPids(): number[] {
+    return [...this.directories.values()].flatMap((directory) => {
+      try { return [(JSON.parse(fs.readFileSync(path.join(directory, 'host.json'), 'utf8')) as { pid: number }).pid]; }
+      catch { return []; }
+    });
+  }
+
+  async activeCount(): Promise<number> {
+    let active = 0;
+    for (const [id, directory] of this.directories) if (await this.inner.isActive(id, directory)) active++;
+    return active;
+  }
+
+  async dispose(): Promise<void> {
+    const results = await Promise.allSettled([...this.directories].map(([id, directory]) => this.inner.stop(id, directory, undefined)));
+    const errors = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+    if (errors.length) throw new AggregateError(errors.map((error) => error.reason), 'Test host cleanup failed');
   }
 }
 
