@@ -58,7 +58,7 @@ test('launchers offer presets, then harnesses, for installed harnesses', () => {
   const preset = (id, harness, name) => ({ id, harness, name, model: null, reasoning: null });
   const launchers = mentionLaunchers(
     [installed('claude'), installed('codex'), installed('opencode', 'missing'), installed('rawpty')],
-    [preset('p1', 'claude', 'Smartypants'), preset('p2', 'claude', 'Fast'), preset('p3', 'codex', 'fast'), preset('p4', 'Deep')]
+    [preset('p1', 'claude', 'Smartypants'), preset('p2', 'claude', 'Fast'), preset('p3', 'codex', 'fast'), preset('p4', 'opencode', 'Deep')]
   );
   assert.deepEqual(launchers.map((launcher) => [launcher.kind, launcher.name, launcher.token]), [
     ['preset', 'Smartypants', '[patterm_preset:Smartypants]'],

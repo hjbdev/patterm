@@ -286,7 +286,7 @@ async function createApplicationResources(
   const codexAppServer = new CodexAppServerService(database, harnessRuntimeDir, resolvedEnv, nodePath, undefined, { launcher: hostLauncher, images: transcriptImages });
   const claudeStream = new ClaudeStreamService(database, harnessRuntimeDir, nodePath, resolvedEnv, undefined, hostLauncher, transcriptImages);
   const integratedInputs = new WorktreeFileService(database, new UploadService(path.join(options.appDataPath, 'uploads')));
-  const integrated = new IntegratedAgentService(database, { opencode: openCodeServer, codex: codexAppServer, claude: claudeStream }, () => notifyWorkbenchChanged(), integratedInputs);
+  const integrated = new IntegratedAgentService(database, { opencode: openCodeServer, codex: codexAppServer, claude: claudeStream }, () => notifyWorkbenchChanged(), integratedInputs, hostLauncher);
   integrated.setDebugLog(debugLog);
   // Holds unprompted input for the assistant while its Focus mode is on.
   const assistantInbox = new AssistantInbox(database);

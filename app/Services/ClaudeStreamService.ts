@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import type { DatabaseService } from './DatabaseService';
-import { detachedHostLauncher, hostConnectionError, type IntegratedHostLauncher } from './IntegratedHostLauncher';
+import { callIntegratedHost as callHost, detachedHostLauncher, hostConnectionError, type IntegratedHostLauncher } from './IntegratedHostLauncher';
 import type { IntegratedControlSelector, IntegratedControls, IntegratedFormAction, IntegratedLaunchInput, IntegratedLaunchResult } from './IntegratedAgentService';
 import { UncertainDeliveryError, type IntegratedDeliveryState } from './IntegratedDelivery';
 import type { IntegratedConversationEvent, IntegratedConversationListener } from './IntegratedConversation';
@@ -360,28 +360,6 @@ export class ClaudeStreamService {
     const pid = typeof argv[3] === 'string' && /^\d+$/.test(argv[3]) ? Number(argv[3]) : null;
     return { executable: String(argv[0]), cwd: row.cwd ?? process.cwd(), socketPath: argv[2], pid, sessionId: row.resume_id, pattermSessionId: row.session_id };
   }
-}
-
-function callHost(socketPath: string, method: string, params: unknown): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const id = randomUUID();
-    const socket = net.createConnection(socketPath);
-    let buffer = '';
-    const timeout = setTimeout(() => { socket.destroy(); reject(new Error(`Claude host timed out: ${method}`)); }, 10_000);
-    socket.setEncoding('utf8');
-    socket.once('error', (error) => { clearTimeout(timeout); reject(hostConnectionError(error, 'Integrated agent')); });
-    socket.once('connect', () => socket.write(`${JSON.stringify({ id, method, params })}\n`));
-    socket.on('data', (chunk: string) => {
-      buffer += chunk;
-      const newline = buffer.indexOf('\n');
-      if (newline < 0) return;
-      clearTimeout(timeout);
-      socket.end();
-      const response = record(JSON.parse(buffer.slice(0, newline)));
-      if (response.error) reject(new Error(String(response.error)));
-      else resolve(response.result);
-    });
-  });
 }
 
 // Hosts from an older generation have no `controls` method; their full
