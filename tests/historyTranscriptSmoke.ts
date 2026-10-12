@@ -23,6 +23,19 @@ try {
   assert.deepEqual(parsed.conversations[0]!.messages.map(m => m.text), ['Explain auto mode', 'Here is the explanation.']);
   assert.equal(claude.parseFile(jsonl('empty.jsonl', [guidance])).conversations.flatMap(c => c.messages).length, 0);
 
+  // Slash commands read as typed; their markup and the compaction summary stay out.
+  const userRow = (content: string, extra = {}) => ({ type: 'user', sessionId: 'commands', message: { role: 'user', content }, ...extra });
+  const commands = claude.parseFile(jsonl('commands.jsonl', [
+    userRow('<command-name>/compact</command-name>\n            <command-message>compact</command-message>\n            <command-args></command-args>'),
+    userRow('<local-command-stdout>Compacted </local-command-stdout>'),
+    userRow('This session is being continued from a previous conversation.', { isCompactSummary: true }),
+    userRow('<command-message>review-loop is running…</command-message>\n<command-name>/review-loop</command-name>\n<command-args>PR 9</command-args>'),
+    userRow('<local-command-stdout></local-command-stdout>'),
+    userRow('Carry on')
+  ])).conversations[0]!;
+  assert.deepEqual(commands.messages.map(m => [m.role, m.text]), [['user', '/compact'], ['assistant', 'Compacted'], ['user', '/review-loop PR 9'], ['user', 'Carry on']]);
+  assert.equal(commands.title, 'Carry on');
+
   const response = (role: string, text: string, kinds?: string[]) => ({ type: 'response_item', payload: { type: 'message', role, content: [{ type: 'input_text', text }], ...(kinds ? { internal_chat_message_metadata_passthrough: { content_item_kinds: kinds } } : {}) } });
   const codex = new CodexHistoryAdapter().parseFile(jsonl('codex.jsonl', [
     { type: 'session_meta', payload: { id: 'codex', cwd: root } },

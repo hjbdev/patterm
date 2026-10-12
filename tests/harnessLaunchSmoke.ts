@@ -777,7 +777,7 @@ async function main(): Promise<void> {
     const restartTab = await launcher.launch({ harness: 'claude', model: 'claude-opus-5-5', project_id: projectId, interface_mode: 'integrated' });
     const restartChild = await launcher.launch({ harness: 'claude', project_id: projectId, interface_mode: 'integrated', parent_process_id: restartTab.process_id, session_role: 'child' });
     // The fake Integrated host reports this native conversation for every launch.
-    database.connection.prepare(`update sessions set title_set_by_user = 1 where process_id = ?`).run(restartTab.process_id);
+    database.connection.prepare(`update sessions set title_set_by_user = 1, last_title = 'Fix the restart titles' where process_id = ?`).run(restartTab.process_id);
     database.connection.prepare(`update processes set activity = 'working' where id = ?`).run(restartTab.process_id);
     await assert.rejects(restart.execute({ process_id: restartTab.process_id, project_id: projectId }), /working/, 'a turn in progress is not cut short');
     await assert.rejects(restart.execute({ process_id: restartChild.process_id, project_id: projectId }), /Only top-level agents/);
@@ -787,8 +787,9 @@ async function main(): Promise<void> {
     assert.deepEqual(restartSteps, [`hold:${restartTab.process_id}`, `stop:${restartTab.process_id}`, 'transfer', `release:timer_${restartTab.process_id}`, `close:${restartTab.process_id}`],
       'timers wait through the gap, and the old process stops before the resume and closes after it');
     assert.deepEqual(timerTransfers, [[[restartTab.process_id], restarted.process_id]]);
-    assert.deepEqual(database.connection.prepare(`select harness, model, interface_mode, session_role, resume_id, resumed_from_session_id, title_set_by_user from sessions where id = ?`).get(restarted.session_id), {
-      harness: 'claude', model: 'claude-opus-5-5', interface_mode: 'integrated', session_role: 'orchestrator', resume_id: 'ses_prepared', resumed_from_session_id: restartTab.session_id, title_set_by_user: 1
+    assert.deepEqual(database.connection.prepare(`select harness, model, interface_mode, session_role, resume_id, resumed_from_session_id, title_set_by_user, display_name, last_title from sessions where id = ?`).get(restarted.session_id), {
+      harness: 'claude', model: 'claude-opus-5-5', interface_mode: 'integrated', session_role: 'orchestrator', resume_id: 'ses_prepared', resumed_from_session_id: restartTab.session_id, title_set_by_user: 1,
+      display_name: null, last_title: 'Fix the restart titles'
     }, 'the new session resumes the same conversation and keeps a user-chosen name');
     assert.equal((database.connection.prepare('select parent_process_id from processes where id = ?').get(restartChild.process_id) as { parent_process_id: string }).parent_process_id,
       restarted.process_id, 'subagents report to the new process');
