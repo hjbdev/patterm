@@ -13,14 +13,15 @@ pub(super) fn cat_params(cols: u16, rows: u16) -> Value {
     serde_json::json!({ "command": command, "args": args, "cols": cols, "rows": rows })
 }
 
+/// How long a scripted child may take to start, run, and exit. Cold
+/// PowerShell starts on a busy CI runner, with tests running in parallel,
+/// take many seconds.
+pub(super) const SCRIPT_DEADLINE: Duration =
+    Duration::from_secs(if cfg!(windows) { 30 } else { 2 });
+
 /// Spawn parameters that run `unix` under `/bin/sh -c`, or `windows` as a
 /// Windows PowerShell command (the Windows scripts build escapes with
 /// `[char]27`, which 5.1 and 7 both understand).
-// How long a scripted child may take to start, run, and exit. A cold
-// PowerShell start on a CI runner takes several seconds.
-pub(super) const SCRIPT_DEADLINE: Duration =
-    Duration::from_secs(if cfg!(windows) { 20 } else { 2 });
-
 pub(super) fn script_params(unix: &str, windows: &str, cols: u16, rows: u16) -> Value {
     let (command, args) = if cfg!(windows) {
         (
@@ -499,7 +500,7 @@ fn notification_frames(unix: &str, windows: &str) -> Vec<Value> {
     let result = manager.spawn(script_params(unix, windows, 20, 3)).unwrap();
     let process_id = result["process_id"].as_str().unwrap().to_string();
     let mut frames = Vec::new();
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + SCRIPT_DEADLINE.max(Duration::from_secs(10));
     let mut exited = false;
     while Instant::now() < deadline {
         // Alacritty reports the exit before draining the final output.
@@ -601,7 +602,11 @@ fn focus_reports_follow_client_focus_once_enabled() {
             manager.write_due_events(&mut Vec::new()).unwrap();
         }
     };
-    pump(&mut manager, Duration::from_millis(800));
+    // Wait for the child to turn focus reporting on; PowerShell starts slowly.
+    let deadline = Instant::now() + SCRIPT_DEADLINE;
+    while !manager.sessions[&process_id].focus_reporting && Instant::now() < deadline {
+        pump(&mut manager, Duration::from_millis(100));
+    }
     // Enabling focus reporting while unfocused reports focus-out once.
     let unchanged = manager
         .focus(serde_json::json!({ "process_id": process_id, "focused": false }))
