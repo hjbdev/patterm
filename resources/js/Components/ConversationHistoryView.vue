@@ -389,7 +389,9 @@ async function resumeSelected(): Promise<void> {
     if (typeof result?.session_id === 'string') emit('launched', result.session_id);
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
-    if (isOpenCodeVersionMismatch(message)) toastLaunchError(cause, message, resumeSelected);
+    // A paired host's conversation would need that host's server restarted.
+    const remote = conversation.id.includes(':') || Boolean(props.projectId?.includes(':'));
+    if (isOpenCodeVersionMismatch(message) && !remote) toastLaunchError(cause, message, resumeSelected);
     else toast.error('Could not resume the conversation', { description: message });
   } finally {
     resuming.value = false;

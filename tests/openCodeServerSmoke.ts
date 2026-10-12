@@ -771,6 +771,8 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     await assert.rejects(failing.prepare(input), (error: Error) => !error.message.includes('PATTERM_OPENCODE_BRIDGE') && !error.message.includes('config'));
     const mismatched = new OpenCodeServerService(database, { ...env, WRONG_VERSION: '1' });
     await assert.rejects(mismatched.prepare(input), (error: Error) => isOpenCodeVersionMismatch(error.message) && error.message.includes('CLI 2.0.14, server 2.0.13'));
+    // Desktop IPC rejections arrive wrapped in Electron's channel prefix.
+    assert.ok(isOpenCodeVersionMismatch("Error invoking remote method 'patterm:mcp:call': Error: OpenCode server version mismatch: CLI 2.0.14, server 2.0.13."));
     // The user-requested restart replaces the stale server; a restart that
     // leaves it stale reports that instead of letting launches retry blindly.
     await assert.rejects(mismatched.restartService(executable), /still reports 2\.0\.13/);
