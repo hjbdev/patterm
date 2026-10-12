@@ -1,0 +1,7 @@
+* text=auto
+# Shell scripts and systemd units run on Linux and break with CRLF endings.
+*.sh text eol=lf
+*.service text eol=lf
+install.sh text eol=lf
+update.sh text eol=lf
+build.sh text eol=lf

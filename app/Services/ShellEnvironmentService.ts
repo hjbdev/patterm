@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { caseInsensitiveEnv } from '../Platform/Environment';
 
 export interface ShellEnvironmentOptions {
   env?: NodeJS.ProcessEnv;
@@ -8,6 +9,7 @@ export interface ShellEnvironmentOptions {
 
 // Resolves the user's interactive shell environment once so desktop-launched
 // Patterm can see PATH/tool-manager shims that are normally added by shell init.
+// Windows apps already receive the user's environment, so it is used as is.
 export class ShellEnvironmentService {
   private readonly baseEnv: NodeJS.ProcessEnv;
   private readonly shell: string;
@@ -25,8 +27,8 @@ export class ShellEnvironmentService {
       return this.resolved;
     }
 
-    const shellEnv = await this.captureInteractiveEnv();
-    this.resolved = { ...this.baseEnv, ...shellEnv };
+    const shellEnv = process.platform === 'win32' ? {} : await this.captureInteractiveEnv();
+    this.resolved = caseInsensitiveEnv({ ...this.baseEnv, ...shellEnv });
     return this.resolved;
   }
 

@@ -271,6 +271,12 @@ impl TerminalManager {
                     .collect::<HashMap<String, String>>()
             })
             .unwrap_or_default();
+        let verbatim_args = params
+            .get("verbatim_args")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        #[cfg(not(windows))]
+        let _ = verbatim_args;
 
         let window_size = WindowSize {
             num_lines: rows,
@@ -295,11 +301,16 @@ impl TerminalManager {
             working_directory: cwd,
             drain_on_exit: true,
             env,
+            // ConPTY receives one command line. Quote arguments the way the
+            // child's C runtime parses them, unless the caller already built
+            // the command line tail (a cmd.exe invocation).
+            #[cfg(windows)]
+            escape_args: !verbatim_args,
             ..Options::default()
         };
 
         if let Some(command) = command {
-            options.shell = Some(Shell::new(command.to_string(), args));
+            options.shell = Some(Shell::new(program_for_command_line(command), args));
         }
 
         let pty = tty::new(&options, window_size, self.next_id).context("failed to spawn pty")?;
@@ -1875,6 +1886,22 @@ fn required_string<'a>(params: &'a Value, key: &str) -> Result<&'a str> {
         .get(key)
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("missing string param {key}"))
+}
+
+/// Alacritty writes the program into the Windows command line unescaped, so a
+/// path such as `C:\Program Files\...\pwsh.exe` would be split at the space.
+#[cfg(windows)]
+fn program_for_command_line(command: &str) -> String {
+    if command.contains([' ', '\t']) && !command.starts_with('"') {
+        format!("\"{command}\"")
+    } else {
+        command.to_string()
+    }
+}
+
+#[cfg(not(windows))]
+fn program_for_command_line(command: &str) -> String {
+    command.to_string()
 }
 
 fn optional_u16(params: &Value, key: &str, default: u16) -> u16 {

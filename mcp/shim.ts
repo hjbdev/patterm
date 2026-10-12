@@ -6,6 +6,7 @@ import { fromJsonSchema, McpServer, type JsonSchemaType, type RegisteredTool } f
 import { serveStdio, StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { StreamableHTTPClientTransport, type JSONRPCMessage } from '@modelcontextprotocol/client';
 import type { McpToolDescriptor } from '../app/MCP/ToolRegistry';
+import { ipcPath } from '../app/Platform/Ipc';
 
 // The stdio server forwards direct tool calls to the application's registry.
 // A catalogue request at startup keeps schemas and public names in one place.
@@ -23,8 +24,7 @@ function defaultSocketPath(): string {
 }
 
 function resolveSocketPath(): string {
-  const base = process.env.PATTERM_MCP_SOCKET ?? defaultSocketPath();
-  return process.platform === 'win32' ? `\\\\.\\pipe\\${path.basename(base)}` : base;
+  return ipcPath(process.env.PATTERM_MCP_SOCKET ?? defaultSocketPath());
 }
 
 type ShimRequest =

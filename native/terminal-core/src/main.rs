@@ -1,6 +1,8 @@
 mod notify_scan;
 #[cfg(target_os = "linux")]
 mod process_cleanup;
+#[cfg(windows)]
+mod process_job;
 mod protocol;
 #[cfg(unix)]
 mod socket;
@@ -18,6 +20,8 @@ use terminal::{SidecarMessage, TerminalManager};
 fn main() -> Result<()> {
     #[cfg(target_os = "linux")]
     process_cleanup::enable_subreaper()?;
+    #[cfg(windows)]
+    process_job::enable_kill_on_exit()?;
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if !args.is_empty() {
         #[cfg(unix)]

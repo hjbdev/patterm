@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
-import { accessSync, constants as fsConstants } from 'node:fs';
-import path from 'node:path';
 import type { HarnessId, HarnessProvider, HarnessStatus } from '../Harness/HarnessProvider';
+import { findExecutable, resolveCommand } from '../Platform/Executable';
+import { defaultShell } from '../Platform/Shell';
 
 export interface DiscoveredHarness {
   harness: HarnessId;
@@ -13,7 +13,7 @@ export interface DiscoveredHarness {
 export interface HarnessDiscoveryOptions {
   // Defaults to process.env. Injected in tests to point PATH at a fixture dir.
   env?: NodeJS.ProcessEnv;
-  // Shell the RawPty provider reports as available. Defaults to $SHELL or /bin/sh.
+  // Shell the RawPty provider reports as available. Defaults to defaultShell().
   shell?: string;
   // Milliseconds to wait for a `--version` probe before treating it as broken.
   versionTimeoutMs?: number;
@@ -31,7 +31,7 @@ export class HarnessDiscoveryService {
     options: HarnessDiscoveryOptions = {}
   ) {
     this.env = options.env ?? process.env;
-    this.shell = options.shell ?? this.env.SHELL ?? '/bin/sh';
+    this.shell = options.shell ?? defaultShell(this.env);
     this.versionTimeoutMs = options.versionTimeoutMs ?? 4000;
   }
 
@@ -69,34 +69,20 @@ export class HarnessDiscoveryService {
   }
 
   private resolveOnPath(candidates: string[]): string | null {
-    const rawPath = this.env.PATH ?? this.env.Path ?? '';
-    const dirs = rawPath.split(path.delimiter).filter(Boolean);
-    const extensions = process.platform === 'win32' ? this.windowsExtensions() : [''];
-
     for (const candidate of candidates) {
-      for (const dir of dirs) {
-        for (const ext of extensions) {
-          const full = path.join(dir, candidate + ext);
-          if (isExecutableFile(full)) {
-            return full;
-          }
-        }
-      }
+      const found = findExecutable(candidate, this.env);
+      if (found) return found;
     }
     return null;
   }
 
-  private windowsExtensions(): string[] {
-    const pathext = this.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD';
-    return ['', ...pathext.split(';').filter(Boolean).map((ext) => ext.toLowerCase())];
-  }
-
   private probeVersion(executablePath: string, args: string[]): Promise<{ ok: boolean; output: string }> {
+    const command = resolveCommand(executablePath, args, this.env);
     return new Promise((resolve) => {
       execFile(
-        executablePath,
-        args,
-        { timeout: this.versionTimeoutMs, env: this.env, windowsHide: true },
+        command.command,
+        command.args,
+        { timeout: this.versionTimeoutMs, env: this.env, windowsHide: true, windowsVerbatimArguments: command.verbatim },
         (error, stdout, stderr) => {
           const output = `${stdout ?? ''}${stderr ?? ''}`;
           // Some CLIs exit non-zero yet still print a usable version banner, so
@@ -105,14 +91,5 @@ export class HarnessDiscoveryService {
         }
       );
     });
-  }
-}
-
-function isExecutableFile(candidate: string): boolean {
-  try {
-    accessSync(candidate, fsConstants.X_OK);
-    return true;
-  } catch {
-    return false;
   }
 }

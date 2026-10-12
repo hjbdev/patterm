@@ -1,4 +1,5 @@
 import { harnessProviders } from '../Harness/providers';
+import { commandFromShellArgv } from '../Platform/Shell';
 import type { DatabaseService } from '../Services/DatabaseService';
 import { USER_PROJECT_KINDS_SQL } from '../Services/PersonalProject';
 import { SettingsService, type SidebarState } from '../Services/SettingsService';
@@ -330,7 +331,7 @@ function mapProcess(row: ProcessRow): ProcessDto {
     parentProcessId: row.parent_process_id,
     kind: row.kind,
     name: row.name,
-    command: commandFromArgv(argv),
+    command: commandFromShellArgv(argv),
     cwd: row.cwd,
     argv,
     status: row.status,
@@ -366,12 +367,7 @@ function parseArgv(raw: string | null): string[] {
   }
 }
 
-function commandFromArgv(argv: string[]): string {
-  if (argv.length >= 3 && argv[1] === '-lc') {
-    return argv.slice(2).join(' ');
-  }
-  return '';
-}
+
 
 function mapWorktree(row: WorktreeRow): WorktreeDto {
   return {

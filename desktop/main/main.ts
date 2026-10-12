@@ -19,7 +19,9 @@ interface LaunchDiagnostics {
 
 const launchDiagnostics = configureLinuxWindowing();
 const launchIdentity = resolveLaunchIdentity({
-  appDataRoot: app.getPath('appData'),
+  // Roaming AppData syncs between machines; databases, sockets, and terminal
+  // state belong to this machine.
+  appDataRoot: process.platform === 'win32' ? process.env.LOCALAPPDATA ?? app.getPath('appData') : app.getPath('appData'),
   env: process.env,
   isInstalledLaunch: isInstalledLaunch(),
   isPackaged: app.isPackaged
