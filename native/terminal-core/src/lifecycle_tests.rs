@@ -9,11 +9,7 @@ fn manager() -> TerminalManager {
 }
 
 fn spawn(manager: &mut TerminalManager, cols: u16, rows: u16) -> String {
-    manager
-        .spawn(serde_json::json!({
-            "command": "/bin/cat", "cols": cols, "rows": rows,
-        }))
-        .unwrap()["process_id"]
+    manager.spawn(super::tests::cat_params(cols, rows)).unwrap()["process_id"]
         .as_str()
         .unwrap()
         .to_string()
@@ -141,9 +137,12 @@ fn natural_exit_retains_output_until_explicit_close() {
     let (tx, rx) = mpsc::channel();
     let mut manager = TerminalManager::new(tx);
     let id = manager
-        .spawn(serde_json::json!({
-            "command": "/bin/sh", "args": ["-c", "printf 'final output'; exit 7"]
-        }))
+        .spawn(super::tests::script_params(
+            "printf 'final output'; exit 7",
+            "[Console]::Out.Write('final output'); exit 7",
+            100,
+            30,
+        ))
         .unwrap()["process_id"]
         .as_str()
         .unwrap()
@@ -240,20 +239,30 @@ fn benchmark_terminal_output() {
 
 // The runtime reconciler raises failure notifications for running processes
 // that exit non-zero. It relies on stop never producing an exit frame, even
-// when the program traps the hangup and exits with a code of its own.
+// when the program traps the hangup and exits with a code of its own. Windows
+// has no trappable hangup, so there the program just keeps running until the
+// pseudoconsole closes and ends it.
 #[test]
 fn stop_emits_no_exit_frame() {
     let (tx, rx) = mpsc::channel();
     let mut manager = TerminalManager::new(tx);
     let id = manager
-        .spawn(serde_json::json!({
-            "command": "/bin/sh", "args": ["-c", "trap 'exit 3' HUP TERM; while :; do sleep 0.05; done"]
-        }))
+        .spawn(super::tests::script_params(
+            "trap 'exit 3' HUP TERM; while :; do sleep 0.05; done",
+            "while ($true) { Start-Sleep -Milliseconds 50 }",
+            100,
+            30,
+        ))
         .unwrap()["process_id"]
         .as_str()
         .unwrap()
         .to_string();
-    thread::sleep(Duration::from_millis(200));
+    // PowerShell needs longer to reach its loop than a shell does.
+    thread::sleep(Duration::from_millis(if cfg!(windows) {
+        1500
+    } else {
+        200
+    }));
     manager
         .stop(serde_json::json!({ "process_id": id }))
         .unwrap();
