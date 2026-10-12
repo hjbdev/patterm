@@ -18,7 +18,7 @@ export class AutoSummaryActions {
 
 export function registerAutoSummaryControl(registry: McpToolRegistry, actions: AutoSummaryActions): void {
   registry.register({ name: 'auto_summary_control', namespace: 'settings', hidden: true,
-    description: 'Inspect, rebuild, or pause a conversation recap. Rebuild uses the automatic call allowance.',
+    description: 'Inspect, rebuild, or pause a conversation recap.',
     changes: ['workbench'], inputSchema: { type: 'object', properties: {
       session_id: { type: 'string' }, project_id: { type: 'string' }, operation: { type: 'string', enum: ['inspect', 'rebuild', 'cancel', 'resume'] }
     }, required: ['session_id', 'project_id'], additionalProperties: false } }, (raw) => actions.control(raw));

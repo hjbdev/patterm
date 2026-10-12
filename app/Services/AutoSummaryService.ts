@@ -83,13 +83,9 @@ export class AutoSummaryService {
   }
 
   status() {
-    const usage = this.database.connection.prepare(`select count(*) as calls, coalesce(sum(input_bytes), 0) as inputBytes,
-      coalesce(sum(output_bytes), 0) as outputBytes, min(started_at) as oldest from auto_summary_usage where started_at > ?`)
-      .get(this.now() - 3_600_000) as { calls: number; inputBytes: number; outputBytes: number; oldest: number | null };
     return { settings: this.settings, providers: ['claude', 'codex', 'opencode'].map((provider) => ({
       provider, ...this.runner.availability(provider as AutoSummarySettings['provider'])
-    })), inFlight: this.jobs.size, lastError: this.error, lastErrorAt: this.errorAt,
-      usage: { ...usage, paused: usage.calls >= this.settings.maxCallsPerHour } };
+    })), inFlight: this.jobs.size, lastError: this.error, lastErrorAt: this.errorAt };
   }
 
   update(raw: unknown): AutoSummarySettings {
@@ -173,8 +169,6 @@ export class AutoSummaryService {
           // Small changes during an active turn wait for a settled turn or a
           // minute of batching. Idle user corrections are never dropped.
           if (['working', 'thinking'].includes(thread.activity) && Buffer.byteLength(batch.text) < 2000 && now - (pending.batchStarted ?? now) < 60_000) continue;
-          const usageId = this.reserveUsage(batch.context, batch.text);
-          if (usageId === null) continue;
           const controller = new AbortController();
           pending.controller = controller; pending.attempted = now; pending.batchStarted = null;
           const job = (async () => {
@@ -212,8 +206,6 @@ export class AutoSummaryService {
                   if (settings.titles && result.title) this.database.connection.prepare('update sessions set auto_title = ? where id = ?')
                     .run(oneLine(result.title), thread.session_id);
                 }
-                this.database.connection.prepare('update auto_summary_usage set output_bytes = ? where id = ?')
-                  .run(Buffer.byteLength(JSON.stringify(result)), usageId);
                 return true;
               })();
               if (saved) { pending.failures = 0; this.notify(); }
@@ -236,8 +228,6 @@ export class AutoSummaryService {
           const screen = await this.terminal.request('terminal.process.output', { process_id: row.pty_process_id, max_lines: 100 }) as { screen?: string };
           const text = summarySnapshot(screen.screen ?? '');
           if (controller.signal.aborted || this.settings !== settings || text.length < 40 || pending.hash === text) return;
-          const usageId = this.reserveUsage({}, text);
-          if (usageId === null) return;
           const result = await this.runner.run(settings, text, controller.signal);
           if (controller.signal.aborted || this.settings !== settings) return;
           const changed = this.database.connection.prepare(`update processes set auto_summary = ?, auto_status = ?, auto_summary_at = ?,
@@ -252,17 +242,6 @@ export class AutoSummaryService {
 
   private setCoverage(id: string, coverage: string): void {
     if (this.database.connection.prepare('update processes set auto_summary_coverage = ? where id = ? and auto_summary_coverage is not ?').run(coverage, id, coverage).changes) this.notify();
-  }
-
-  private reserveUsage(context: SummaryContext, text: string): number | null {
-    const db = this.database.connection;
-    return db.transaction(() => {
-      db.prepare('delete from auto_summary_usage where started_at <= ?').run(this.now() - 86_400_000);
-      const count = (db.prepare('select count(*) as count from auto_summary_usage where started_at > ?').get(this.now() - 3_600_000) as { count: number }).count;
-      if (count >= this.settings.maxCallsPerHour) return null;
-      return Number(db.prepare('insert into auto_summary_usage(started_at, input_bytes) values (?, ?)')
-        .run(this.now(), Buffer.byteLength(JSON.stringify({ ...context, conversation_text: text }))).lastInsertRowid);
-    })();
   }
 
   private failed(pending: PendingSummary, settings: AutoSummarySettings, controller: AbortController, _error: unknown): void {
@@ -311,8 +290,7 @@ export class AutoSummaryService {
     const state = reader.snapshot(() => reader.state(session, source)), coverage = reader.coverage(source, state);
     this.setCoverage(session.id, coverage);
     return { coverage, totalMessages: source.message_count, processedMessages: state.position,
-      estimatedCalls: Math.max(Math.ceil(source.total_bytes / 6000), Math.ceil(source.message_count / 64)), rebuilding: state.rebuild_end !== null, paused: state.paused === 1, enabled: this.settings.enabled,
-      callsRemaining: Math.max(0, this.settings.maxCallsPerHour - this.status().usage.calls) };
+      estimatedCalls: Math.max(Math.ceil(source.total_bytes / 6000), Math.ceil(source.message_count / 64)), rebuilding: state.rebuild_end !== null, paused: state.paused === 1, enabled: this.settings.enabled };
   }
 
   async dispose(): Promise<void> {

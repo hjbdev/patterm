@@ -11,7 +11,7 @@
         </DialogHeader>
         <div v-if="details" class="space-y-2 text-sm text-muted-foreground">
           <p>{{ details.processedMessages }} of {{ details.totalMessages }} prose messages processed.</p>
-          <p>A full rebuild needs roughly {{ details.estimatedCalls }} calls, depending on message size. {{ details.callsRemaining }} calls remain in this hour’s shared allowance.</p>
+          <p>A full rebuild needs roughly {{ details.estimatedCalls }} calls, depending on message size.</p>
           <p v-if="!details.enabled">Enable auto-summaries in Settings to rebuild.</p>
           <p v-if="details.coverage === 'stale'">Earlier conversation text changed. Rebuild from beginning to refresh the recap.</p>
           <p v-else-if="details.rebuilding">Rebuilding in chronological batches. Your current recap stays visible until catch-up finishes.</p>
@@ -35,7 +35,7 @@ import { contextCall } from '../lib/projectContext';
 const props = defineProps<{ projectId: string; sessionId: string; coverage?: string | null | undefined }>();
 const open = ref(false), busy = ref(false), error = ref('');
 const details = ref<{ coverage: string; processedMessages: number; totalMessages: number; estimatedCalls: number;
-  callsRemaining: number; rebuilding: boolean; paused: boolean; enabled: boolean } | null>(null);
+  rebuilding: boolean; paused: boolean; enabled: boolean } | null>(null);
 const canRebuild = computed(() => Boolean(details.value?.enabled && details.value.totalMessages &&
   (!details.value.rebuilding || details.value.coverage === 'stale')));
 const coverageLabel = computed(() => ({ partial: 'Partial history coverage', catching_up: 'Catching up with conversation history',

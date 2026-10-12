@@ -43,7 +43,7 @@ async function main() {
     }
   }, () => {}, () => now, history);
   let service = makeService();
-  const enabled = { ...settings.autoSummarySettings(), enabled: true, maxCallsPerHour: 120 };
+  const enabled = { ...settings.autoSummarySettings(), enabled: true };
   const add = (id: string, parent: string | null = null, native = id) => {
     db.prepare(`insert into processes (id,project_id,parent_process_id,kind,name,status,activity,pty_process_id,created_at,updated_at)
       values (?, 'project', ?, 'agent', ?, 'running', 'idle', ?, 'now', 'now')`).run(id, parent, id, id);
@@ -282,18 +282,33 @@ async function main() {
       assert.equal(finalizedV2(), true, 'V2 part completion finalizes prose');
     } finally { nativeDb.close(); }
 
-    // The rolling allowance counts failed attempts and survives service restart.
-    now += 3_600_001; service.update({ ...enabled, maxCallsPerHour: 1 });
+    // No hourly cap: even an obsolete saved zero limit cannot pause summaries.
+    const uncappedSettings = service.update({ ...enabled, maxCallsPerHour: 0 });
+    assert.equal('maxCallsPerHour' in uncappedSettings, false);
+    add('uncapped'); message('uncapped', 0, 'user', 'Keep summarizing new conversation prose'); index.publish('uncapped'); service.userInput('uncapped');
+    const beforeUncapped = calls.length, startUncapped = now;
+    await discover();
+    for (let seq = 1; seq <= 13; seq++) {
+      message('uncapped', seq, 'assistant', `Meaningful update ${seq}`); index.publish('uncapped');
+      await advance(); await advance(2000);
+    }
+    assert.ok(now - startUncapped < 3_600_000);
+    assert.equal(calls.length, beforeUncapped + 14, 'more than twelve calls run in the same hour');
+    assert.equal(state('uncapped').position, 14);
+    assert.equal(db.prepare("select name from sqlite_master where name = 'auto_summary_usage'").get(), undefined);
+
+    // Failures still back off and never move coverage or expose diagnostics.
     add('failure'); message('failure', 0, 'user', 'Please fix this failure.'); index.publish('failure'); service.userInput('failure');
     run = async () => { throw new Error('secret diagnostic'); };
-    await discover(); assert.equal(service.status().usage.calls, 1); assert.equal(service.status().usage.paused, true);
+    const beforeFailure = calls.length;
+    await discover(); assert.equal(calls.length, beforeFailure + 1);
     assert.ok(!JSON.stringify(service.status()).includes('secret diagnostic')); assert.equal(state('failure').position, 0);
-    const beforeCap = calls.length; await advance(60_000); assert.equal(calls.length, beforeCap);
-    await service.dispose(); service = makeService(); await advance(); assert.equal(calls.length, beforeCap, 'restart cannot reset allowance');
+    await advance(); assert.equal(calls.length, beforeFailure + 1, 'failed calls retain retry backoff');
+    await advance(); assert.equal(calls.length, beforeFailure + 2);
+    await service.dispose(); service = makeService();
     run = async () => ({ summary: 'Updated', memory });
-    await advance(3_600_001); await advance(2000); assert.equal(state('failure').position, 1);
-    service.update({ ...enabled, maxCallsPerHour: 0 }); assert.equal(service.status().usage.paused, true);
-    assert.deepEqual(await service.test(enabled), { ok: true }, 'explicit health checks work while automatic allowance is paused');
+    await discover(); assert.equal(state('failure').position, 1, 'restart continues from retained coverage');
+    assert.deepEqual(await service.test(enabled), { ok: true });
     service.update({ ...enabled, titles: false });
     assert.equal((db.prepare("select count(*) as n from sessions where auto_title is not null").get() as { n: number }).n, 0);
 

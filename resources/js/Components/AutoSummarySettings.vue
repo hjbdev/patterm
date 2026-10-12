@@ -30,9 +30,6 @@
       <SettingsRow label="Minimum interval" description="The shortest time between two summaries of one agent." html-for="summary-interval" save-key="summaries.summariser.interval">
         <SettingsChoice id="summary-interval" :model-value="draft.intervalSeconds" :options="INTERVALS" aria-label="Minimum interval" :disabled="loading || busy" segmented @update:model-value="(value) => { draft.intervalSeconds = value; persist('summaries.summariser.interval'); }" />
       </SettingsRow>
-      <SettingsRow label="Calls per hour" description="Shared across all automatic summaries and rebuilds. Failed calls count. Set to zero to pause; connection tests are separate." html-for="summary-call-limit" save-key="summaries.summariser.call-limit">
-        <Input id="summary-call-limit" type="number" min="0" max="120" :model-value="draft.maxCallsPerHour" class="h-8 w-24 text-xs" :disabled="loading || busy" @update:model-value="(value) => { draft.maxCallsPerHour = Number(value); persistAfterTyping('summaries.summariser.call-limit'); }" @blur="flushTyping" />
-      </SettingsRow>
       <SettingsRow label="Connection test" description="Makes one model request using synthetic text only.">
         <span v-if="testPassed" role="status" class="text-xs text-success">Test passed</span>
         <Button type="button" variant="outline" size="sm" :disabled="loading || busy || !selectedAvailable" @click="test">{{ busy ? 'Testing…' : 'Test summariser' }}</Button>

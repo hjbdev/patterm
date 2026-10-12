@@ -20,8 +20,7 @@ export const autoSummarySettingsInput = z.object({
   }).default(SUMMARY_REASONING),
   intervalSeconds: z.union([z.literal(15), z.literal(30), z.literal(60)]).default(30),
   // Name agents nobody has named from the same request as their summary.
-  titles: z.boolean().default(true),
-  maxCallsPerHour: z.number().int().min(0).max(120).default(12)
+  titles: z.boolean().default(true)
 });
 export type AutoSummarySettings = z.infer<typeof autoSummarySettingsInput>;
 

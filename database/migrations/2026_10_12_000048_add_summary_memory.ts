@@ -25,19 +25,11 @@ export default {
         updated_at text,
         primary key (project_id, provider, native_id)
       );
-      create table auto_summary_usage (
-        id integer primary key,
-        started_at integer not null,
-        input_bytes integer not null,
-        output_bytes integer not null default 0
-      );
-      create index auto_summary_usage_started on auto_summary_usage(started_at);
       insert into auto_summary_enrollments select id from processes where kind = 'agent' and auto_summary is not null;
       update processes set auto_summary_coverage = 'partial' where kind = 'agent' and auto_summary is not null;
     `);
   },
   down(schema) {
-    schema.dropTableIfExists('auto_summary_usage');
     schema.dropTableIfExists('auto_summary_memory');
     schema.dropTableIfExists('auto_summary_enrollments');
     schema.sql('alter table processes drop column auto_summary_coverage');

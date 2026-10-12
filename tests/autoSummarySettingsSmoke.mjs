@@ -112,7 +112,7 @@ test('coverage controls allow restarting a stale rebuild and disable duplicate a
     } }]
   });
   let reply = { coverage: 'stale', rebuilding: true, paused: false, enabled: true,
-    totalMessages: 40, processedMessages: 6, estimatedCalls: 10, callsRemaining: 12 };
+    totalMessages: 40, processedMessages: 6, estimatedCalls: 10 };
   const operations = [];
   globalThis.window = { patterm: { call: async (name, args) => {
     assert.equal(name, 'auto_summary_control'); assert.equal(args.project_id, 'project'); assert.equal(args.session_id, 'session');
