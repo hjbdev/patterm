@@ -10,6 +10,7 @@ import {
   type HarnessLaunchSelection
 } from '../Harness/HarnessPresets';
 import type { WorkbenchRepository } from '../Repositories/WorkbenchRepository';
+import { nativePath, storedPath } from '../Platform/PathIdentity';
 import type { DatabaseService } from './DatabaseService';
 import type { SearchService } from './SearchService';
 import { sendAgentInput } from './AgentInputService';
@@ -196,7 +197,7 @@ export class HarnessLauncher {
     timing.mark('context.built', { context_chars: agentContext.length });
     const project = this.deps.workbench.getProject(input.project_id);
     const worktree = input.worktree_id ? this.worktree(input.worktree_id) : null;
-    const cwd = input.cwd ?? worktree?.worktree_path ?? project?.path ?? process.cwd();
+    const cwd = storedPath(input.cwd === undefined ? worktree?.worktree_path ?? project?.path ?? process.cwd() : nativePath(input.cwd));
     const displayName = input.name?.trim() || provider.displayName;
     let providerSessionId = resume?.resume_id ?? null;
     let integratedArgv: string[] | null = null;

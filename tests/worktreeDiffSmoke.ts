@@ -131,6 +131,7 @@ async function main(): Promise<void> {
     assert.deepEqual(await file(tree.id, 'src/new.ts'), contents('src/new.ts', 'src/old.ts', 'renamed', numbered(10), `${numbered(10)}added line\n`));
     assert.deepEqual(await file(tree.id, 'README.md'), contents('README.md', null, 'modified', 'hello\n', 'hello\nworld\n'));
     assert.deepEqual(await file(tree.id, 'src/app.ts', 'uncommitted'), contents('src/app.ts', null, 'modified', 'export const app = 1;\n', 'export const app = 2;\nexport const more = true;\n'));
+    if (process.platform === 'win32') assert.deepEqual(await file(tree.id, 'src\\app.ts', 'uncommitted'), await file(tree.id, 'src/app.ts', 'uncommitted'), 'a backslash path names the changed file git lists with a slash');
     assert.deepEqual(await file(tree.id, 'src/remove.ts'), contents('src/remove.ts', null, 'deleted', 'gone\n', null));
     assert.deepEqual(await file(tree.id, 'tests/app.test.ts'), contents('tests/app.test.ts', null, 'added', null, 'test("app", () => {});\n'));
     assert.deepEqual(await file(tree.id, 'docs/notes.md'), contents('docs/notes.md', null, 'added', null, 'one\ntwo\nthree'));

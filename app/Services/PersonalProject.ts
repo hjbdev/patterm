@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { storedPath } from '../Platform/PathIdentity';
 import type { DatabaseService } from './DatabaseService';
 
 // The Personal project holds agents that belong to no repository. It lives in
@@ -14,7 +15,7 @@ export function isUserProjectKind(kind: string | undefined): boolean {
 }
 
 export function ensurePersonalProject(database: DatabaseService, appDataPath: string): void {
-  const cwd = path.join(appDataPath, 'personal');
+  const cwd = storedPath(path.join(appDataPath, 'personal'));
   fs.mkdirSync(cwd, { recursive: true, mode: 0o700 });
   const at = new Date().toISOString();
   database.connection.prepare(`insert into projects (id, name, path, kind, created_at, updated_at) values (?, 'Personal', ?, 'personal', ?, ?)

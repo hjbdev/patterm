@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { RegisterProcessAction } from '../Actions/RegisterProcessAction';
 import type { WorkbenchRepository } from '../Repositories/WorkbenchRepository';
+import { nativePath, pathsMatch, storedPath } from '../Platform/PathIdentity';
 import { defaultShell, shellArgv } from '../Platform/Shell';
 import type { DatabaseService } from './DatabaseService';
 import type { SpawnSink } from './HarnessLauncher';
@@ -65,7 +66,7 @@ export class ProcessLauncher {
     const input = processCreateInput.parse(raw);
     const project = this.deps.workbench.getProject(input.project_id);
     const worktree = input.worktree_id ? this.worktree(input.worktree_id) : null;
-    const cwd = input.cwd ?? worktree?.worktree_path ?? project?.path ?? process.cwd();
+    const cwd = storedPath(input.cwd === undefined ? worktree?.worktree_path ?? project?.path ?? process.cwd() : nativePath(input.cwd));
 
     const command = input.command?.trim();
     const argv = shellArgv(defaultShell(), command);
@@ -103,8 +104,9 @@ export class ProcessLauncher {
     const row = this.process(input.process_id);
     const previousArgv = parseArgv(row.argv);
     const nextArgv = input.command === undefined ? previousArgv : argvFromCommand(input.command);
-    const nextCwd = input.cwd === undefined ? row.cwd ?? null : normalizeNullable(input.cwd);
-    const shouldRestart = Boolean(row.pty_process_id) && row.status === 'running' && (JSON.stringify(previousArgv) !== JSON.stringify(nextArgv) || (row.cwd ?? null) !== nextCwd);
+    const requestedCwd = normalizeNullable(input.cwd);
+    const nextCwd = input.cwd === undefined ? row.cwd ?? null : requestedCwd === null ? null : storedPath(nativePath(requestedCwd));
+    const shouldRestart = Boolean(row.pty_process_id) && row.status === 'running' && (JSON.stringify(previousArgv) !== JSON.stringify(nextArgv) || !pathsMatch(row.cwd ?? null, nextCwd));
     const now = new Date().toISOString();
 
     let nextPtyId = row.pty_process_id;

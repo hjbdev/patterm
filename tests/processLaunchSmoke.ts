@@ -217,6 +217,11 @@ async function main(): Promise<void> {
     const renamed = await launcher.update({ process_id: created.process_id, name: 'dev renamed', command: 'npm run dev', cwd: projectPath, auto_restart: false });
     assert.equal(renamed.restarted, false);
     assert.equal(spawns.length, 4, 'name/auto-restart-only updates do not spawn');
+    if (process.platform === 'win32') {
+      const respelled = await launcher.update({ process_id: created.process_id, name: 'dev renamed', command: 'npm run dev', cwd: projectPath.replace(/\\/g, '/').toUpperCase(), auto_restart: false });
+      assert.equal(respelled.restarted, false, 'the same directory spelled with another case and separators is not a cwd change');
+      assert.equal(spawns.length, 4);
+    }
     const renamedRow = database.connection.prepare(`select name, auto_restart from processes where id = ?`).get(created.process_id) as {
       name: string;
       auto_restart: number;

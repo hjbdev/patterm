@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { pathsMatch } from '../Platform/PathIdentity';
 import { commandLineTooLong, execFileResolved, resolveService } from '../Platform/ServiceProcess';
 import type { DatabaseService } from './DatabaseService';
 import { firstSemver, type McpServerSpec } from '../Harness/HarnessProvider';
@@ -1344,7 +1345,7 @@ export class OpenCodeServerService {
       const existing = await this.api(executable, cwd, 'GET', `/api/session/${encodeURIComponent(sessionId)}`) as {
         data?: { location?: { directory?: string } };
       };
-      if (existing.data?.location?.directory !== cwd) throw new Error('OpenCode session directory does not match the Patterm launch directory');
+      if (!pathsMatch(existing.data?.location?.directory, cwd)) throw new Error('OpenCode session directory does not match the Patterm launch directory');
       const attached = this.database.connection.prepare(`select id from sessions where harness = 'opencode' and resume_id = ? and exited_at is null`).get(sessionId);
       if (attached) throw new Error('OpenCode session is already attached to Patterm');
       if (selectedModel) {
