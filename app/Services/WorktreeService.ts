@@ -6,6 +6,8 @@ import type { DatabaseService } from './DatabaseService';
 import type { TimelineService } from './TimelineService';
 import type { WorkbenchRepository } from '../Repositories/WorkbenchRepository';
 import { GitService } from './GitService';
+import { pathsMatch, storedPath } from '../Platform/PathIdentity';
+import { normalizePath } from '../Platform/Paths';
 
 // Git would read a base ref or branch starting with "-" as an option.
 export const worktreeCreateInput = z.object({
@@ -72,10 +74,10 @@ export class WorktreeService {
     }
 
     const git = this.deps.git ?? new GitService();
-    const repoPath = await git.root(requestedRepoPath);
+    const repoPath = storedPath(await git.root(requestedRepoPath));
     const friendlyId = slug(input.name);
     const branch = input.branch?.trim() || `patterm/${friendlyId}`;
-    const worktreePath = path.resolve(input.worktree_path ?? path.join(repoPath, '.worktrees', friendlyId));
+    const worktreePath = normalizePath(input.worktree_path ?? path.join(repoPath, '.worktrees', friendlyId));
 
     if (fs.existsSync(worktreePath)) {
       throw new Error(`worktree path already exists: ${worktreePath}`);
@@ -99,7 +101,7 @@ export class WorktreeService {
   async link(raw: WorktreeLinkInput) {
     const input = worktreeLinkInput.parse(raw);
     this.project(input.project_id);
-    const worktreePath = path.resolve(input.worktree_path);
+    const worktreePath = normalizePath(input.worktree_path);
     if (!fs.existsSync(worktreePath) || !fs.statSync(worktreePath).isDirectory()) {
       throw new Error(`worktree path is not a directory: ${worktreePath}`);
     }
@@ -109,13 +111,13 @@ export class WorktreeService {
     const registered = this.deps.database.connection
       .prepare('select * from worktrees where project_id = ? order by created_at')
       .all(input.project_id) as WorktreeRow[];
-    const existing = registered.find((row) => row.worktree_path === worktreePath || realPathOrNull(row.worktree_path) === realPath);
+    const existing = registered.find((row) => pathsMatch(row.worktree_path, worktreePath) || pathsMatch(realPathOrNull(row.worktree_path), realPath));
     if (existing) {
       return { worktree: mapWorktree(existing) };
     }
 
     const git = this.deps.git ?? new GitService();
-    const repoPath = input.repo_path ? await git.root(input.repo_path) : await git.root(worktreePath);
+    const repoPath = storedPath(input.repo_path ? await git.root(input.repo_path) : await git.root(worktreePath));
     const branch = input.branch === undefined ? await git.branch(worktreePath) : input.branch;
 
     return this.insert({

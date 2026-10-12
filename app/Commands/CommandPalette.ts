@@ -658,7 +658,7 @@ function worktreeLabel(worktree: WorktreeDto): string {
 }
 
 function worktreeName(branch: string | null, path: string): string {
-  return branch ?? path.split('/').filter(Boolean).at(-1) ?? '';
+  return branch ?? path.split(/[\\/]/).filter(Boolean).at(-1) ?? '';
 }
 
 function countLabel(count: number, noun: string, plural = `${noun}s`): string {

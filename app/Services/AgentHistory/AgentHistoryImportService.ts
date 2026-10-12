@@ -5,7 +5,8 @@ import { z } from 'zod';
 import type { AgentHistoryDb } from './AgentHistoryDb';
 import type { HistorySearchIndexService } from './HistorySearchIndexService';
 import type { TimelineService } from '../TimelineService';
-import { ConversationLinker, type ConversationLink } from './ConversationLinker';
+import { pathIdentity } from '../../Platform/PathIdentity';
+import { ConversationLinker,type ConversationLink } from './ConversationLinker';
 import { MESSAGE_TEXT_CAP, TOOL_INPUT_CAP, TOOL_OUTPUT_CAP, type AgentHistoryProvider, type HistoryFileFingerprint, type HistorySourceCandidate, type ParseHistoryFileOptions, type ParsedConversation, type ParsedHistoryStream, type ParsedMessage, type ProviderHistoryAdapter } from './AgentHistoryTypes';
 import { defaultFileFingerprint, digestJson, stableJson, statDigest, statOnlyFingerprint } from './HistoryAdapterUtils';
 import { ProviderHistoryDiscoveryService } from './ProviderHistoryDiscoveryService';
@@ -334,10 +335,11 @@ export class AgentHistoryImportService {
   // Claude subagent file now read with its parent, retires its row. Otherwise
   // its old parser version would make every later scan full.
   private retireUndiscoveredFiles(candidate: HistorySourceCandidate, discovered: string[]): void {
-    const prefix = candidate.path.endsWith(path.sep) ? candidate.path : `${candidate.path}${path.sep}`;
+    const root = pathIdentity(candidate.path);
+    const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
     const found = new Set(discovered);
     const rows = this.database.connection.prepare(`select id, path from conversation_import_files where provider = ? and status != 'retired'`).all(candidate.provider) as Array<{ id: string; path: string }>;
-    const retired = rows.filter((row) => row.path.startsWith(prefix) && !found.has(row.path));
+    const retired = rows.filter((row) => pathIdentity(row.path).startsWith(prefix) && !found.has(row.path));
     if (!retired.length) return;
     const retire = this.database.connection.prepare(`update conversation_import_files set status = 'retired' where id = ?`);
     this.database.connection.transaction(() => {

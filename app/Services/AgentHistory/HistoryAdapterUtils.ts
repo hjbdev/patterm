@@ -284,15 +284,16 @@ export function skillUsesFromMessages(messages: ParsedMessage[], options: { suba
 }
 
 const SHELL_TOOLS = new Set(['exec', 'exec_command', 'shell', 'shell_command', 'local_shell']);
-const READ_COMMAND = /\b(?:cat|sed|head|tail|nl|bat|less|more|awk)\b/;
-const SKILL_FILE = /\/skills\/([A-Za-z0-9][\w.:-]*)\/SKILL\.md/g;
+const READ_COMMAND = /\b(?:cat|sed|head|tail|nl|bat|less|more|awk|[Gg]et-[Cc]ontent|gc)\b/;
+// Windows transcripts name the file with backslashes, doubled in the JSON arguments.
+const SKILL_FILE = /[\\/]skills[\\/]{1,2}([A-Za-z0-9][\w.:-]*)[\\/]{1,2}SKILL\.md/g;
 
 // Arguments keep the command JSON-escaped, so escaped newlines are decoded
 // before splitting it into commands. Separators inside quotes, such as
 // sed -n '1,200p;201q', stay in their command. A read command can load
 // several files, but a redirect target such as cat > SKILL.md is written.
 function skillFileReads(input: string): string[] {
-  const unquoted = input.replace(/\\n/g, '\n').replace(/'[^'\n]*'/g, (quoted) => quoted.replace(/[;&|]/g, ' '));
+  const unquoted = input.replace(/(?<!\\)\\n/g, '\n').replace(/'[^'\n]*'/g, (quoted) => quoted.replace(/[;&|]/g, ' '));
   return unquoted.split(/[;&|\n]/)
     .filter((command) => READ_COMMAND.test(command))
     .flatMap((command) => [...command.replace(/>>?\s*\S+/g, '').matchAll(SKILL_FILE)].map((match) => match[1]!));

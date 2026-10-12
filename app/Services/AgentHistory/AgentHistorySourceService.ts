@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { pathColumn, pathIdentity, pathParam, storedPath } from '../../Platform/PathIdentity';
 import type { AgentHistoryProvider, HistorySourceCandidate } from './AgentHistoryTypes';
 import { ProviderHistoryDiscoveryService } from './ProviderHistoryDiscoveryService';
 import type { AgentHistoryDb } from './AgentHistoryDb';
@@ -21,8 +22,8 @@ export class AgentHistorySourceService {
 
   sources() {
     const configured = this.database.connection.prepare(`select provider, source_kind, path, enabled, watch_enabled from conversation_import_sources order by provider, path`).all() as SourceRow[];
-    const configuredKeys = new Set(configured.map((row) => `${row.provider}:${row.path}`));
-    const defaults = this.discovery.defaultSources().filter((source) => !configuredKeys.has(`${source.provider}:${source.path}`));
+    const configuredKeys = new Set(configured.map((row) => `${row.provider}:${pathIdentity(row.path)}`));
+    const defaults = this.discovery.defaultSources().filter((source) => !configuredKeys.has(`${source.provider}:${pathIdentity(source.path)}`));
     return { sources: [...configured.filter((row) => this.discovery.adapters.some((adapter) => adapter.provider === row.provider)).map(mapSourceRow), ...defaults].sort((a, b) =>
       a.provider.localeCompare(b.provider) || a.path.localeCompare(b.path)) };
   }
@@ -30,12 +31,13 @@ export class AgentHistorySourceService {
   configure(raw: z.input<typeof historyConfigureInput>) {
     const input = historyConfigureInput.parse(raw);
     const now = new Date().toISOString();
-    const sourceKind = input.source_kind ?? this.discovery.candidateForPath(input.provider, input.path).sourceKind;
+    const sourcePath = this.canonicalPath(input.provider, input.path);
+    const sourceKind = input.source_kind ?? this.discovery.candidateForPath(input.provider, sourcePath).sourceKind;
     this.database.connection.prepare(`
       insert into conversation_import_sources (id, provider, source_kind, path, enabled, watch_enabled, created_at, updated_at)
       values (?, ?, ?, ?, ?, ?, ?, ?)
       on conflict(provider, path) do update set source_kind = excluded.source_kind, enabled = excluded.enabled, watch_enabled = excluded.watch_enabled, updated_at = excluded.updated_at
-    `).run(randomUUID(), input.provider, sourceKind, input.path, input.enabled ? 1 : 0, input.watch_enabled ? 1 : 0, now, now);
+    `).run(randomUUID(), input.provider, sourceKind, sourcePath, input.enabled ? 1 : 0, input.watch_enabled ? 1 : 0, now, now);
     return this.sources();
   }
 
@@ -46,7 +48,7 @@ export class AgentHistorySourceService {
 
   importCandidates(input: { provider?: AgentHistoryProvider; path?: string }): HistorySourceCandidate[] {
     if (input.path && input.provider) {
-      return [this.discovery.candidateForPath(input.provider, input.path)];
+      return [this.discovery.candidateForPath(input.provider, this.canonicalPath(input.provider, input.path))];
     }
     const configured = this.database.connection.prepare(`select provider, source_kind, path, enabled, watch_enabled from conversation_import_sources where enabled = 1`).all() as SourceRow[];
     const sources = configured.filter((row) => this.discovery.adapters.some((adapter) => adapter.provider === row.provider)).map(mapSourceRow).filter((source) => source.exists);
@@ -55,8 +57,16 @@ export class AgentHistorySourceService {
   }
 
   sourceId(candidate: HistorySourceCandidate): string | null {
-    const row = this.database.connection.prepare(`select id from conversation_import_sources where provider = ? and path = ?`).get(candidate.provider, candidate.path) as { id: string } | undefined;
+    const row = this.database.connection.prepare(`select id from conversation_import_sources where provider = ? and ${pathColumn('path')} = ?`).get(candidate.provider, pathParam(candidate.path)) as { id: string } | undefined;
     return row?.id ?? null;
+  }
+
+  // A source already saved under another spelling of the path (`c:\x`, `C:/x`)
+  // keeps that spelling, so its imported files keep matching their stored paths.
+  // Otherwise a new row stores the normalised path.
+  private canonicalPath(provider: AgentHistoryProvider, sourcePath: string): string {
+    const row = this.database.connection.prepare(`select path from conversation_import_sources where provider = ? and ${pathColumn('path')} = ?`).get(provider, pathParam(sourcePath)) as { path: string } | undefined;
+    return row?.path ?? storedPath(sourcePath);
   }
 }
 

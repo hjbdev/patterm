@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import ignore, { type Ignore } from 'ignore';
 import { matchPath } from './FuzzyPathMatch';
+import { endsWithSeparator, slashPath } from '../Platform/PathIdentity';
 import type { DatabaseService } from './DatabaseService';
 import type { UploadService } from '../Http/UploadService';
 import type {
@@ -29,8 +30,9 @@ const IGNORED_DIRECTORIES = new Set([
 const IGNORE_FILES = [{ name: '.gitignore', tier: 1 }, { name: '.ignore', tier: 2 }];
 const MAX_TIER = 2;
 // Git and ripgrep match ignore rules case-sensitively on Linux; the package
-// defaults to case-insensitive.
-const IGNORE_OPTIONS = { ignorecase: false };
+// defaults to case-insensitive. On Windows the filesystem ignores case and
+// `git init` sets core.ignorecase, so rules match without it there.
+const IGNORE_OPTIONS = { ignorecase: process.platform === 'win32' };
 const DIRECTORY_BATCH = 32;
 const STAT_BATCH = 128;
 const MAX_FILES = 50_000;
@@ -85,7 +87,7 @@ export class WorktreeFileService implements IntegratedInputResolver {
   async search(processId: string, query: string, limit = 20): Promise<IntegratedWorktreeFile[]> {
     const root = await this.scope(processId);
     const files = await this.list(root);
-    const needle = query.trim().slice(0, 200);
+    const needle = slashPath(query.trim().slice(0, 200));
     const bounded = Math.max(1, Math.min(50, limit));
     if (!needle) {
       return files.filter((file) => !file.directory)
@@ -135,21 +137,23 @@ export class WorktreeFileService implements IntegratedInputResolver {
       throw new Error('Invalid file reference');
     }
     const root = await this.scope(processId);
-    const relative = reference.path.startsWith('/') ? path.relative(root, reference.path) : reference.path;
+    const relative = path.isAbsolute(reference.path) ? path.relative(root, reference.path) : reference.path;
     if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
       throw new Error('File reference is outside the agent working directory');
     }
     const real = await fs.realpath(path.resolve(root, relative)).catch(() => null);
     if (!real) throw new Error(`File reference not found: ${relative}`);
-    const inside = path.relative(root, real);
-    if (inside.startsWith('..') || path.isAbsolute(inside)) {
+    const native = path.relative(root, real);
+    if (native.startsWith('..') || path.isAbsolute(native)) {
       throw new Error('File reference is outside the agent working directory');
     }
     // `./`, `src/../`, or a link back to the root name the working directory
     // itself, whose relative path would be empty or render as `/`.
-    if (!inside) throw new Error('File reference names the agent working directory itself');
+    if (!native) throw new Error('File reference names the agent working directory itself');
+    // Agents and the UI see `/` separators; filesystem access keeps `real`.
+    const inside = slashPath(native);
     const stat = await fs.stat(real);
-    const directory = reference.path.endsWith('/');
+    const directory = endsWithSeparator(reference.path);
     if (directory) {
       if (!stat.isDirectory()) throw new Error(`File reference is not a directory: ${relative}`);
       return { path: real, name: `${path.basename(real)}/`, relativePath: `${inside}/`, directory: true };
