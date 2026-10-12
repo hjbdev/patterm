@@ -1,3 +1,4 @@
+import { WINDOWS_PATH_KEY } from '../Database/SqliteConnection';
 import { isPathWithin, normalizePath, pathKey, samePath } from './Paths';
 
 // Project, worktree, session, and history paths are stored as text and compared
@@ -39,14 +40,14 @@ export function nativePath(value: string): string {
 }
 
 // SQL for comparing a path column with pathParam(value). The text is the bare
-// column on POSIX; on Windows it folds ASCII case and separators, matching
-// SQLite's lower(), which only folds ASCII.
+// column on POSIX; on Windows it folds separators and Unicode case with the
+// function every connection registers, matching pathKey().
 export function pathColumn(column: string): string {
-  return windows() ? `lower(replace(${column}, '/', '\\'))` : column;
+  return windows() ? `${WINDOWS_PATH_KEY}(${column})` : column;
 }
 
 export function pathParam(value: string): string {
-  return windows() ? normalizePath(nativePath(value)).replace(/[A-Z]/g, (letter) => letter.toLowerCase()) : value;
+  return windows() ? normalizePath(nativePath(value)).toLowerCase() : value;
 }
 
 // A path relative to a root, written with `/` for agents and the UI. Filesystem
