@@ -16,6 +16,11 @@ pub(super) fn cat_params(cols: u16, rows: u16) -> Value {
 /// Spawn parameters that run `unix` under `/bin/sh -c`, or `windows` as a
 /// Windows PowerShell command (the Windows scripts build escapes with
 /// `[char]27`, which 5.1 and 7 both understand).
+// How long a scripted child may take to start, run, and exit. A cold
+// PowerShell start on a CI runner takes several seconds.
+pub(super) const SCRIPT_DEADLINE: Duration =
+    Duration::from_secs(if cfg!(windows) { 20 } else { 2 });
+
 pub(super) fn script_params(unix: &str, windows: &str, cols: u16, rows: u16) -> Value {
     let (command, args) = if cfg!(windows) {
         (

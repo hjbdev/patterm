@@ -148,7 +148,7 @@ fn natural_exit_retains_output_until_explicit_close() {
         .unwrap()
         .to_string();
     let mut frames = Vec::new();
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + super::tests::SCRIPT_DEADLINE;
     while manager.sessions[&id].status != TerminalStatus::Exited {
         let message = rx
             .recv_timeout(deadline.saturating_duration_since(Instant::now()))

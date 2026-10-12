@@ -944,10 +944,12 @@ mod tests {
             .map(|index| (index % 251) as u8)
             .collect::<Vec<_>>();
         transport.write_all(&payload).unwrap();
+        // The reader hands the client back so it stays connected for the
+        // final check; dropping it would correctly read as a disconnect.
         let reader = std::thread::spawn(move || {
             let mut received = vec![0_u8; 256 * 1024];
             controller.read_exact(&mut received).unwrap();
-            received
+            (received, controller)
         });
         let deadline = Instant::now() + Duration::from_secs(5);
         while !reader.is_finished() {
@@ -955,7 +957,8 @@ mod tests {
             assert!(Instant::now() < deadline, "queued output drains");
             std::thread::sleep(Duration::from_millis(1));
         }
-        assert_eq!(reader.join().unwrap(), payload);
+        let (received, _controller) = reader.join().unwrap();
+        assert_eq!(received, payload);
         assert!(transport.connected());
     }
 }
