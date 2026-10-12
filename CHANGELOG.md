@@ -94,6 +94,10 @@ in the archived pre-release repository.
   instead of their `<command-name>` markup, and leaves out compaction
   summaries. This also cleans up the older turns of a restarted or resumed
   Integrated conversation. Claude Code history is reimported once.
+- Integrated agents asked for a chart now draw it with `ui_save` instead of
+  reaching for their own artifacts or HTML pages. Their launch instructions
+  name the tool, and its description mentions charts, tables and diagrams so
+  deferred-tool search finds it.
 - In the browser, the folder picker opened from the New project dialog now
   appears above it instead of hidden underneath, which on phones covered it
   completely.
