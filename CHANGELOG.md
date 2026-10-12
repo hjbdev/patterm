@@ -9,11 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- A Personal project for agents that belong to no repository. It is listed
-  first, works in a private folder in Patterm's data directory, and has no
-  Worktrees page. The assistant and workspace routines can work in it.
-  Settings › Appearance › Navigation can hide it; it still shows while
-  something runs there.
+- An optional Personal project for agents that belong to no repository. Turn
+  it on in Settings › Appearance › Navigation. It is listed first, works in a
+  private folder in Patterm's data directory, has no Worktrees page, and never
+  links to another host's project. The assistant and workspace routines can
+  work in it. Turned off, it still shows while something runs there.
+
+### Changed
+
+- Keep sidebar row spacing consistent when agents expand or show status lines.
 
 ### Removed
 
