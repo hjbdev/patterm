@@ -7,6 +7,8 @@ import { CreateProjectAction } from '../app/Actions/CreateProjectAction';
 import { ListDirectoriesAction, listDirectoriesInput } from '../app/Actions/ListDirectoriesAction';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { ensurePersonalProject, PERSONAL_PROJECT_ID } from '../app/Services/PersonalProject';
+import type { GitService } from '../app/Services/GitService';
+import { ProjectLinkService } from '../app/Services/ProjectLinkService';
 import { SettingsService } from '../app/Services/SettingsService';
 import { TimelineService } from '../app/Services/TimelineService';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
@@ -129,6 +131,11 @@ async function main(): Promise<void> {
     assert.equal(fs.statSync(personalDir).mode & 0o777, 0o700, 'the Personal directory is private');
     assert.deepEqual(repo.listProjects()[0], { id: PERSONAL_PROJECT_ID, name: 'Personal', path: personalDir, logo: null, kind: 'personal' });
     assert.equal(repo.listProjects().filter((project) => project.kind === 'personal').length, 1, 'one Personal project');
+
+    // It never links to another host's project, nor is it offered for linking.
+    const projectLinks = new ProjectLinkService(database, { query: async () => { throw new Error('not a repository'); } } as unknown as GitService);
+    assert.ok(!(await projectLinks.projects()).some((project) => project.id === PERSONAL_PROJECT_ID), 'Personal is not offered for linking');
+    assert.throws(() => projectLinks.link('host_peer', PERSONAL_PROJECT_ID, { id: PERSONAL_PROJECT_ID, name: 'Personal' }), /does not exist/);
 
     // Settings can hide it from the project list without removing it.
     const settings = new SettingsService(database);

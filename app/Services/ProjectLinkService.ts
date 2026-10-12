@@ -1,6 +1,5 @@
 import type { DatabaseService } from './DatabaseService';
 import type { GitService } from './GitService';
-import { USER_PROJECT_KINDS_SQL } from './PersonalProject';
 
 export interface LinkableProject {
   id: string;
@@ -41,8 +40,10 @@ export function normaliseGitRemote(value: string): string | null {
 export class ProjectLinkService {
   constructor(private readonly database: DatabaseService, private readonly git: GitService, private readonly now: () => number = Date.now) {}
 
+  // Only repository projects link. Each host's Personal project is its own
+  // folder, so it shows on other hosts on its own instead.
   async projects(): Promise<LinkableProject[]> {
-    const rows = this.database.connection.prepare(`select id, name, path from projects where kind in ${USER_PROJECT_KINDS_SQL} order by name collate nocase`).all() as Array<{ id: string; name: string; path: string }>;
+    const rows = this.database.connection.prepare(`select id, name, path from projects where kind = 'workspace' order by name collate nocase`).all() as Array<{ id: string; name: string; path: string }>;
     return Promise.all(rows.map(async (row) => {
       const url = await this.git.query(row.path, ['remote', 'get-url', 'origin']).catch(() => null);
       return { ...row, git_remote: url ? normaliseGitRemote(url) : null };
@@ -57,7 +58,7 @@ export class ProjectLinkService {
 
   link(hostId: string, projectId: string, remote: { id: string; name: string }): ProjectLink {
     const db = this.database.connection;
-    const project = db.prepare(`select id from projects where id = ? and kind in ${USER_PROJECT_KINDS_SQL}`).get(projectId);
+    const project = db.prepare(`select id from projects where id = ? and kind = 'workspace'`).get(projectId);
     if (!project) throw new Error('That project does not exist.');
     const clash = db.prepare('select project_id from project_links where host_id = ? and remote_project_id = ? and project_id <> ?').get(hostId, remote.id, projectId);
     if (clash) throw new Error(`${remote.name} is already linked to another project here.`);
