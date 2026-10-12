@@ -5,7 +5,7 @@ import { defaultFileFingerprint, digestJson, isoFromString, nonNegative, parsedI
 
 export class ClaudeHistoryAdapter implements ProviderHistoryAdapter {
   readonly provider = 'claude' as const;
-  readonly parserVersion = 'claude-jsonl-v10';
+  readonly parserVersion = 'claude-jsonl-v11';
 
   defaultSources(homeDir: string): HistorySourceCandidate[] {
     const projects = path.join(homeDir, '.claude', 'projects');
@@ -86,17 +86,20 @@ export class ClaudeHistoryAdapter implements ProviderHistoryAdapter {
 
       const type = stringValue(row.type) ?? 'event';
       // Queue operations echo a prompt before its real user row, so importing
-      // them shows every queued prompt twice.
-      if (type === 'attachment' || row.attachment || type === 'system' || type === 'queue-operation' || row.isMeta === true) continue;
+      // them shows every queued prompt twice. A compaction summary is context
+      // for the model, not something the user said.
+      if (type === 'attachment' || row.attachment || type === 'system' || type === 'queue-operation' || row.isMeta === true || row.isCompactSummary === true) continue;
       const message = row.message && typeof row.message === 'object' ? row.message as Record<string, unknown> : null;
       const role = mapRole(stringValue(message?.role) ?? stringValue(row.role));
-      const extracted = extractClaudeContent(message?.content ?? row.content, type, row, toolNamesByUseId);
+      const command = type === 'user' ? localCommand(message?.content ?? row.content) : null;
+      if (command === '') continue;
+      const extracted = command ? [command] : extractClaudeContent(message?.content ?? row.content, type, row, toolNamesByUseId);
       const rowSeq = seq;
       for (const item of extracted) {
         const text = item.text;
         const itemRole = item.role ?? role;
         if (item.kind.includes('tool') && !text && !item.toolName && !item.toolInputSummary && !item.toolOutputSummary) continue;
-        title ??= itemRole === 'user' && item.kind === 'message' && text ? firstLine(text) : null;
+        title ??= itemRole === 'user' && item.kind === 'message' && text && !command ? firstLine(text) : null;
         messages.push({
           providerMessageId: extracted.length > 1 ? `${stringValue(row.uuid) ?? stringValue(row.messageId) ?? `${conversationId}:${seq}`}:${item.index}` : stringValue(row.uuid) ?? stringValue(row.messageId) ?? `${conversationId}:${seq}`,
           parentProviderMessageId: stringValue(row.parentUuid),
@@ -333,6 +336,24 @@ function claudeImages(content: unknown, readPaths: Map<string, string>, context:
     add(block, [index], 'pasted', null);
   });
   return out;
+}
+
+// Claude Code records a slash command and its output as tagged user rows.
+// The command reads as the user typed it and the output as the agent's text,
+// as they appear live; an empty result yields '' and is dropped.
+function localCommand(content: unknown): ClaudeContentItem | '' | null {
+  const raw = typeof content === 'string' ? content : Array.isArray(content) && content.length === 1 ? textFromUnknown(content[0]) : '';
+  const text = raw.trim();
+  if (!text.startsWith('<command-') && !text.startsWith('<local-command-')) return null;
+  const tag = (name: string) => new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(text)?.[1]?.trim() ?? '';
+  const name = tag('command-name');
+  if (name) {
+    const args = tag('command-args');
+    return { ...messageItem(0, 'message', 'command', args ? `${name} ${args}` : name), role: 'user' };
+  }
+  const output = [tag('local-command-stdout'), tag('local-command-stderr')].filter(Boolean).join('\n');
+  if (output) return { ...messageItem(0, 'message', 'command_output', output), role: 'assistant' };
+  return '';
 }
 
 function messageItem(index: number, kind: ParsedMessage['kind'], contentType: string | null, text: string): ClaudeContentItem {

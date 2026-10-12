@@ -90,6 +90,10 @@ in the archived pre-release repository.
 
 ### Fixed
 
+- Claude Code history shows slash commands as typed, such as `/compact`,
+  instead of their `<command-name>` markup, and leaves out compaction
+  summaries. This also cleans up the older turns of a restarted or resumed
+  Integrated conversation. Claude Code history is reimported once.
 - In the browser, the folder picker opened from the New project dialog now
   appears above it instead of hidden underneath, which on phones covered it
   completely.
