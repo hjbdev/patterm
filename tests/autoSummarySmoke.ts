@@ -2,295 +2,365 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { AutoSummaryActions, registerAutoSummaryControl } from '../app/Actions/AutoSummaryActions';
+import { McpToolRegistry } from '../app/MCP/ToolRegistry';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { SettingsService } from '../app/Services/SettingsService';
+import { AutoSummaryService, summarySnapshot } from '../app/Services/AutoSummaryService';
+import { AutoSummaryRunner, claudeSummaryArgs, codexSummaryArgs, runSummaryCommand, summaryEnvironment } from '../app/Services/AutoSummaryRunner';
+import { autoSummarySettingsInput, SUMMARY_INPUT_BYTES, SUMMARY_SYSTEM_PROMPT, SUMMARY_TEST_SYSTEM_PROMPT, type SummaryContext, type SummaryResult } from '../app/Services/AutoSummarySettings';
+import type { TerminalService } from '../app/Services/TerminalService';
+import { HistoryDatabaseService } from '../app/Services/HistoryDatabaseService';
+import { AgentHistoryImportService } from '../app/Services/AgentHistory/AgentHistoryImportService';
+import { ProviderHistoryDiscoveryService } from '../app/Services/AgentHistory/ProviderHistoryDiscoveryService';
+import { DatabaseSync } from 'node:sqlite';
+import { AutoSummaryHistory, type SummaryThread } from '../app/Services/AutoSummaryHistory';
+import { OpenCodeHistoryAdapter } from '../app/Services/AgentHistory/OpenCodeHistoryAdapter';
+import { ClaudeHistoryAdapter } from '../app/Services/AgentHistory/ClaudeHistoryAdapter';
+import { SummaryProseIndex } from '../app/Services/AgentHistory/SummaryProseIndex';
 import { SessionContextService } from '../app/Services/SessionContextService';
 import type { TimelineService } from '../app/Services/TimelineService';
-import { AutoSummaryService, conversationSummaryText, ownerMessages, summarySnapshot, type IntegratedSummarySource } from '../app/Services/AutoSummaryService';
-import { AutoSummaryRunner, claudeSummaryArgs, codexSummaryArgs, runSummaryCommand, summaryEnvironment } from '../app/Services/AutoSummaryRunner';
-import { autoSummarySettingsInput, summaryResult, SUMMARY_SYSTEM_PROMPT, SUMMARY_TEST_SYSTEM_PROMPT, type SummaryContext, type SummaryResult } from '../app/Services/AutoSummarySettings';
-import type { TerminalService } from '../app/Services/TerminalService';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
-import { HistoryDatabaseService } from '../app/Services/HistoryDatabaseService';
-import { SecretRedactor } from '../app/Services/AgentHistory/SecretRedactor';
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
-
 async function main() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-summary-test-'));
-  const database = new DatabaseService(directory);
-  database.initialize();
-  const settings = new SettingsService(database);
-  let now = 0;
-  let calls = 0;
-  let lastMode: 'summary' | 'test' | undefined;
-  let lastInput = '';
-  let lastContext: SummaryContext | undefined;
-  let snapshots = 0;
-  let output = 'The build completed successfully. All forty regression tests passed.';
-  let snapshotGate: Promise<void> | null = null;
-  let run: (signal: AbortSignal) => Promise<string | SummaryResult> = async () => 'Build and tests passed.';
-  let frameListener: Parameters<TerminalService['onFrame']>[0] | undefined;
-  const terminal = {
-    onFrame(listener: Parameters<TerminalService['onFrame']>[0]) { frameListener = listener; return () => { frameListener = undefined; }; },
-    async request(method: string, params: Record<string, unknown>) {
-      assert.equal(method, 'terminal.process.output');
-      assert.equal(params.max_lines, 100);
-      snapshots++;
-      await snapshotGate;
-      return { screen: output };
-    }
-  } as Pick<TerminalService, 'request' | 'onFrame'>;
-  const service = new AutoSummaryService(database, settings, terminal, {
+  const database = new DatabaseService(directory); database.initialize();
+  const history = new HistoryDatabaseService(directory); history.initialize();
+  const settings = new SettingsService(database), db = database.connection, hdb = history.connection;
+  const index = new SummaryProseIndex(hdb);
+  let now = Date.UTC(2026, 9, 12), snapshots = 0;
+  const calls: Array<{ text: string; context: SummaryContext }> = [];
+  const memory = { goal: 'Fix parsing', decisions: 'Keep the public API', completed: 'Parser fixed', unresolved: 'Review remains' };
+  let run: (signal: AbortSignal) => Promise<SummaryResult> = async () => ({ summary: 'Fix parsing while keeping the public API. Parser fixed; review remains.', status: 'Waiting on review', title: 'Fix parsing', memory });
+  const terminal = { onFrame: () => () => {}, async request() { snapshots++; return { screen: 'Shell build completed successfully, with all tests passing.' }; } } as Pick<TerminalService, 'request' | 'onFrame'>;
+  const makeService = () => new AutoSummaryService(database, settings, terminal, {
     availability: () => ({ available: true, reason: null }),
-    async run(_settings, text, signal, mode, context) {
-      calls++;
-      lastMode = mode;
-      lastInput = text;
-      lastContext = context;
-      assert.ok(Buffer.byteLength(text) <= 12 * 1024);
-      const result = await run(signal);
-      return typeof result === 'string' ? { summary: result } : result;
+    async run(_settings, text, signal, mode, context = {}) {
+      if (mode === 'test') return { summary: 'patterm okay' };
+      assert.ok(Buffer.byteLength(JSON.stringify({ ...context, conversation_text: text })) + Buffer.byteLength(SUMMARY_SYSTEM_PROMPT) <= SUMMARY_INPUT_BYTES);
+      calls.push({ text, context }); return run(signal);
     }
-  }, () => {}, () => now);
-  const db = database.connection;
-  const add = (id: string, parent: string | null = null) => db.prepare(`insert into processes
-    (id,project_id,parent_process_id,kind,name,status,activity,pty_process_id,created_at,updated_at)
-    values (?, 'project', ?, 'agent', ?, 'running', 'idle', ?, 'now', 'now')`).run(id, parent, id, id);
-  const draw = (id: string) => frameListener?.({ type: 'terminal-frame', processId: id } as unknown as Parameters<NonNullable<typeof frameListener>>[0]);
-  const recap = (id: string) => db.prepare('select auto_summary, auto_summary_provider, auto_summary_model from processes where id = ?').get(id) as Record<string, unknown>;
+  }, () => {}, () => now, history);
+  let service = makeService();
+  const enabled = { ...settings.autoSummarySettings(), enabled: true };
+  const add = (id: string, parent: string | null = null, native = id) => {
+    db.prepare(`insert into processes (id,project_id,parent_process_id,kind,name,status,activity,pty_process_id,created_at,updated_at)
+      values (?, 'project', ?, 'agent', ?, 'running', 'idle', ?, 'now', 'now')`).run(id, parent, id, id);
+    db.prepare(`insert into sessions(id,project_id,process_id,harness,session_role,resume_id,started_at)
+      values (?, 'project', ?, 'claude', 'orchestrator', ?, ?)`).run(`${id}-session`, id, native, String(now));
+    hdb.prepare(`insert into conversations(id,provider,provider_conversation_id,project_id,session_id,process_id,status,created_at,imported_at)
+      values (?, 'claude', ?, 'project', ?, ?, 'active', 'now', 'now')`).run(id, native, `${id}-session`, id);
+  };
+  const message = (conv: string, seq: number, role: string, text: string, kind = 'message', metadata = '{}') => {
+    hdb.prepare(`insert into conversation_messages(id,conversation_id,seq,role,kind,text,metadata,created_at)
+      values (?, ?, ?, ?, ?, ?, ?, 'now')`).run(`${conv}-${seq}`, conv, seq, role, kind, text, metadata);
+  };
+  const advance = async (ms = 30_000) => { now += ms; service.tick(); await flush(); };
+  const discover = async () => { service.tick(); await advance(2000); };
+  const summary = (id: string) => db.prepare('select auto_summary, auto_status, auto_summary_coverage from processes where id = ?').get(id) as Record<string, unknown>;
+  const state = (native: string, provider = 'claude') => db.prepare("select * from auto_summary_memory where project_id = 'project' and provider = ? and native_id = ?").get(provider, native) as { position: number; byte_offset: number; revision: number; stale: number; origin: string; paused: number; recap: string };
   try {
     db.exec("insert into projects(id,name,path,created_at,updated_at) values('project','Test','/tmp','now','now')");
     add('root'); add('child', 'root');
-    assert.equal(settings.autoSummarySettings().enabled, false);
-    assert.equal(settings.autoSummarySettings().models.claude, 'haiku');
-    assert.equal(settings.autoSummarySettings().models.codex, 'gpt-5.6-luna');
-    assert.throws(() => autoSummarySettingsInput.parse({ intervalSeconds: 1 }));
-    assert.deepEqual(settings.autoSummarySettings().reasoning, { claude: null, codex: 'low' });
-    assert.throws(() => autoSummarySettingsInput.parse({ reasoning: { claude: '--dangerously-skip-permissions' } }), 'reasoning levels cannot be flags');
-    assert.throws(() => summaryResult.parse({ summary: 'x', command: 'run me' }));
-    assert.throws(() => summaryResult.parse({ summary: 'x'.repeat(601) }));
-    service.start();
-    service.userInput('root'); now = 100_000; service.tick(); await flush();
-    assert.equal(calls, 0, 'off by default');
-    const enabled = { ...settings.autoSummarySettings(), enabled: true };
-    service.update(enabled);
-    service.tick(); await flush();
-    assert.equal(calls, 0, 'requires human input');
-    service.userInput('child'); now += 2000; service.tick(); await flush();
-    assert.equal(calls, 0, 'child processes are excluded');
-    service.userInput('root'); now += 1999; service.tick(); await flush();
-    assert.equal(calls, 0, 'quiet window');
-    now++; service.tick(); await flush();
-    assert.equal(calls, 1);
-    assert.deepEqual({ ...recap('root') }, { auto_summary: 'Build and tests passed.', auto_summary_provider: 'claude', auto_summary_model: 'haiku' });
-    db.exec("insert into sessions(id,project_id,process_id,harness,session_role,started_at) values ('session','project','root','claude','orchestrator','now')");
-    const workbench = new WorkbenchRepository(database);
-    assert.equal(workbench.snapshot().projects[0]?.projectSessions[0]?.summary?.text, 'Build and tests passed.');
-    add('shell');
-    db.exec("update processes set kind = 'shell', auto_summary = 'Server ready.', auto_summary_at = 'now', auto_summary_provider = 'claude', auto_summary_model = 'haiku' where id = 'shell'");
-    assert.equal(workbench.snapshot().projects[0]?.processes.find((item) => item.id === 'shell')?.summary?.text, 'Server ready.');
-    now += 29_999; service.tick(); await flush(); assert.equal(snapshots, 1, 'minimum interval');
-    now++; service.tick(); await flush(); assert.equal(calls, 1, 'unchanged snapshot');
-    assert.equal(snapshots, 1, 'an idle agent that has drawn nothing is not re-read');
-    output = 'short'; now += 30_000; service.tick(); await flush(); assert.equal(calls, 1, 'trivial output');
-    output = 'A different build is running and compiling a large number of modules.';
-    db.exec("update processes set activity = 'permission' where id = 'root'");
-    now += 30_000; service.tick(); await flush(); assert.equal(calls, 1, 'permission prompts are not summarised');
-    db.exec(`insert into external_references(id,project_id,url,provider,resource_type,identifier,title,created_at,updated_at)
-        values ('ref','project','https://linear.app/x/PAT-12','linear','issue','PAT-12','Release hygiene','now','now');
-      insert into session_references values ('session','ref');
-      insert into todos(id,project_id,title,status,created_at,updated_at,created_by_actor) values ('todo','project','Ship licence','in_progress','now','now','user');
-      insert into todo_assignments(todo_id,assignee_id,session_id) values ('todo','session','session');
-      update processes set activity = 'working' where id = 'root'`);
-    service.tick(); await flush(); assert.equal(calls, 2, 'continuous output gets periodic summaries, even with no viewer to draw frames');
-    assert.deepEqual(lastContext, { thread_name: 'root', references: ['PAT-12: Release hygiene'], todos: ['Ship licence (in progress)'],
-      user_messages: [], previous_summary: 'Build and tests passed.', previous_title: null, native_title: null }, 'the recap builds on the last one and the thread\'s goal');
+    const registry = new McpToolRegistry();
+    registerAutoSummaryControl(registry, new AutoSummaryActions(service));
+    await assert.rejects(registry.callPublic('auto_summary_control', { session_id: 'root-session', project_id: 'project' }), /unknown MCP tool/);
+    message('root', 0, 'user', 'Fix parsing and retain the public API.');
+    message('root', 1, 'assistant', 'I found the issue in nested expressions.');
+    message('root', 2, 'assistant', 'TOOL SECRET', 'tool_call');
+    message('root', 3, 'assistant', 'PRIVATE REASONING', 'message', '{"type":"reasoning"}');
+    message('root', 4, 'assistant', 'CLAUDE THINKING', 'message', '{"contentType":"thinking"}');
+    message('root', 5, 'user', '[Patterm timer reminder] Noise');
+    message('root', 6, 'user', '<T> is the generic syntax to preserve.');
+    message('root', 7, 'user', '[report from process_2: completed] Parser fixed.');
+    message('root', 8, 'user', 'ANTHROPIC_API_KEY=sk-ant-' + 'a'.repeat(60));
+    message('root', 9, 'assistant', 'Parser fixed. Review remains.'); index.publish('root');
+    hdb.prepare(`insert into conversations(id,provider,provider_conversation_id,project_id,session_id,status,created_at,imported_at)
+      values('collision','claude','unrelated-native','project','root-session','active','now','zzz-newest')`).run();
+    message('collision', 0, 'user', 'UNRELATED CONVERSATION'); index.publish('collision');
+    const rootThread = db.prepare(`select p.*, s.id as session_id, s.harness, s.resume_id, s.display_name, s.auto_title, s.last_title
+      from processes p join sessions s on s.process_id = p.id where p.id = 'root'`).get() as SummaryThread;
+    const historyReader = new AutoSummaryHistory(db, hdb);
+    assert.equal(historyReader.source(rootThread)?.native_id, 'root', 'exact native identity beats a newer heuristic session link');
+    assert.equal(historyReader.source({ ...rootThread, resume_id: 'missing-native' }), null, 'a conflicting native conversation is never a fallback');
+    assert.equal(historyReader.source({ ...rootThread, resume_id: null }), null, 'ambiguous session-only links do not spend usage');
+    hdb.prepare("delete from summary_prose_sources where conversation_id = 'collision'").run();
+    assert.equal(historyReader.source({ ...rootThread, resume_id: null }), null, 'unindexed conflicting links are still ambiguous'); index.publish('collision');
+    service.userInput('root'); await discover(); assert.equal(calls.length, 0, 'disabled by default');
+    service.update(enabled); service.userInput('child'); await discover(); assert.equal(calls.length, 0, 'children excluded');
+    service.userInput('root'); await discover(); assert.equal(calls.length, 1);
+    assert.equal(snapshots, 0, 'agent summaries never read the terminal screen');
+    assert.ok(calls[0]!.text.includes('nested expressions'));
+    assert.ok(!calls[0]!.text.includes('UNRELATED CONVERSATION'));
+    assert.ok(calls[0]!.text.includes('<T>'));
+    assert.ok(calls[0]!.text.includes('Agent report:'));
+    assert.ok(!/TOOL SECRET|PRIVATE REASONING|CLAUDE THINKING|timer reminder|a{60}/.test(calls[0]!.text));
+    assert.equal(calls[0]!.context.coverage, 'complete');
+    assert.equal(summary('root').auto_summary_coverage, 'complete');
+    assert.equal(JSON.parse(state('root').recap).decisions, memory.decisions);
+    assert.equal(new WorkbenchRepository(database).snapshot().projects[0]?.projectSessions.find(s => s.processId === 'root')?.summary?.coverage, 'complete');
+    await advance(); assert.equal(calls.length, 1, 'unchanged content is free');
+    message('root', 10, 'assistant', 'TOOL ONLY CHANGE', 'tool_result'); index.publish('root');
+    await discover(); await advance(); assert.equal(calls.length, 1, 'tool-only imports never call');
+    message('root', 11, 'user', 'Keep the public API'); message('root', 12, 'user', 'Keep the public API'); index.publish('root');
+    await discover(); await advance();
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1]!.text.split('Keep the public API').length, 3, 'repeated instructions are not deduplicated');
+    assert.ok(!calls[1]!.text.includes('nested expressions'), 'old prose is not resent');
+    assert.deepEqual(calls[1]!.context.memory, memory, 'internal recap, not visible summary, carries earlier decisions');
 
-    // A terminal agent's own messages come from imported history.
-    const history = new HistoryDatabaseService(directory);
-    history.initialize();
-    history.connection.prepare(`insert into conversations(id,provider,session_id,status,created_at,imported_at)
-      values ('conversation','claude','session','imported','now','now')`).run();
-    const message = history.connection.prepare(`insert into conversation_messages(id,conversation_id,seq,role,kind,text,created_at)
-      values (?, 'conversation', ?, ?, ?, ?, 'now')`);
-    message.run('m1', 1, 'user', 'message', 'Make recaps say what the thread is for');
-    message.run('m2', 2, 'assistant', 'message', 'On it.');
-    message.run('m3', 3, 'user', 'tool_result', 'tool output');
-    // Agent reports share the owner's role; a long run of them must not hide a later change of direction.
-    for (let seq = 4; seq < 200; seq++) message.run(`r${seq}`, seq, 'user', 'message', `[report from process_9: completed]\nStep ${seq}`);
-    message.run('m200', 200, 'user', 'message', 'Now also cover the feed recap');
-    message.run('m201', 201, 'user', 'message', 'ANTHROPIC_API_KEY=sk-ant-' + 'a'.repeat(60));
-    db.prepare("update external_references set title = ? where id = 'ref'").run('Leaked sk-' + 'b'.repeat(40));
-    const withHistory = new AutoSummaryService(database, settings, terminal, { availability: () => ({ available: true, reason: null }), run: async () => ({ summary: '' }) },
-      () => {}, () => now, null, history);
-    const context = (withHistory as unknown as { context(id: string, conversation: unknown): SummaryContext }).context('root', null);
-    const messages = context.user_messages!;
-    assert.equal(messages.length, 3);
-    assert.equal(messages[0], 'Make recaps say what the thread is for');
-    assert.equal(messages[1], 'Now also cover the feed recap', 'owner messages after many agent reports are found');
-    assert.ok(!messages[2]!.includes('a'.repeat(60)), 'owner messages are redacted');
-    assert.ok(!context.references![0]!.includes('b'.repeat(40)), 'metadata is redacted too');
-    history.dispose();
-    // A missing history database leaves the recap to the other context.
-    const missing = new HistoryDatabaseService(path.join(directory, 'absent'), { mode: 'read' });
-    missing.initialize({ migrate: false });
-    const withoutHistory = new AutoSummaryService(database, settings, terminal, { availability: () => ({ available: true, reason: null }), run: async () => ({ summary: '' }) },
-      () => {}, () => now, null, missing);
-    assert.deepEqual((withoutHistory as unknown as { context(id: string, conversation: unknown): SummaryContext }).context('root', null).user_messages, []);
+    // Replacing UUIDs with identical source content preserves the hash cursor.
+    const oldRows = hdb.prepare("select * from conversation_messages where conversation_id = 'root'").all() as Array<{ id: string; seq: number; role: string; kind: string; text: string; metadata: string }>;
+    hdb.transaction(() => {
+      hdb.prepare("delete from conversation_messages where conversation_id = 'root'").run();
+      for (const row of oldRows) hdb.prepare("insert into conversation_messages(id,conversation_id,seq,role,kind,text,metadata,created_at) values (?, 'root', ?, ?, ?, ?, ?, 'now')")
+        .run(row.id + '-new', row.seq, row.role, row.kind, row.text, row.metadata);
+      index.publish('root');
+    })();
+    await advance(); assert.equal(calls.length, 2); assert.equal(state('root').stale, 0);
+    hdb.prepare("update conversation_messages set text = 'Changed original request' where conversation_id = 'root' and seq = 0").run(); index.publish('root');
+    await advance(); assert.equal(calls.length, 2); assert.equal(state('root').stale, 1);
+    assert.equal(summary('root').auto_summary_coverage, 'stale');
+    assert.throws(() => service.control('root-session', 'rebuild', 'wrong-project'), /not found/);
+    service.control('root-session', 'rebuild', 'project'); await discover(); assert.equal(state('root').stale, 0); assert.equal(calls.length, 3);
 
-    // A rejected request backs off and never persists provider diagnostics.
-    output += ' More output.';
-    run = async () => { throw new Error('secret provider diagnostic'); };
-    now += 30_000; draw('root'); service.tick(); await flush(); assert.equal(calls, 3);
-    assert.ok(!JSON.stringify(service.status()).includes('secret provider'));
-    now += 30_000; service.tick(); await flush(); assert.equal(calls, 3, 'failure backoff');
-    now += 30_000; service.tick(); await flush(); assert.equal(calls, 4);
+    // A new process with the same native conversation inherits durable coverage.
+    db.prepare("update processes set status = 'closed' where id = 'root'").run();
+    db.prepare("insert into processes(id,project_id,kind,name,status,activity,created_at,updated_at) values('resumed','project','agent','Resumed','running','idle','now','now')").run();
+    db.prepare("insert into sessions(id,project_id,process_id,harness,session_role,resume_id,started_at) values('resumed-session','project','resumed','claude','orchestrator','root','later')").run();
+    new SessionContextService(database).inherit('resumed-session', 'project', 'claude', 'root', { append() {} } as unknown as TimelineService, 'root-session');
+    hdb.prepare("update conversations set session_id = 'resumed-session', process_id = 'resumed' where id = 'root'").run();
+    service.userInput('resumed'); await discover(); assert.equal(calls.length, 3, 'resume does not reread history');
+    message('root', 13, 'assistant', 'Final result after exit.'); index.publish('root');
+    db.prepare("update processes set status = 'exited', activity = 'idle' where id = 'resumed'").run();
+    await advance(); await advance(2000); assert.equal(calls.length, 4, 'delayed exit import gets its final recap');
 
-    // Eligibility can change while the sidecar is preparing the snapshot.
-    service.update(enabled);
-    service.userInput('root');
-    db.exec("update processes set activity = 'idle' where id = 'root'");
-    now += 2000;
-    let releaseSnapshot!: () => void;
-    snapshotGate = new Promise<void>((resolve) => { releaseSnapshot = resolve; });
-    service.tick();
-    const callsBeforePermission = calls;
-    db.exec("update processes set activity = 'permission' where id = 'root'");
-    releaseSnapshot(); await flush();
-    assert.equal(calls, callsBeforePermission, 'recheck permission state after awaiting the snapshot');
-    snapshotGate = null;
-    db.exec("update processes set activity = 'working' where id = 'root'");
+    assert.throws(() => service.control('root-session', 'rebuild', 'project'), /not found|latest resumed/);
 
-    run = async () => 'patterm okay';
-    const snapshotsBeforeTest = snapshots;
+    // Byte offsets cover a long multibyte message without tail truncation.
+    add('long'); const longText = '🙂'.repeat(6000);
+    message('long', 0, 'user', longText); index.publish('long'); service.userInput('long');
+    const beforeLong = calls.length; await discover();
+    assert.ok(state('long').byte_offset > 0); assert.equal(state('long').position, 0);
+    assert.equal(summary('long').auto_summary, null, 'historical intermediate status is not displayed as current');
+    for (let i = 0; i < 20 && state('long').position < 1; i++) await advance();
+    const chunks = calls.slice(beforeLong).map(c => c.text.replace(/^User(?: \(continued\))?: /, ''));
+    assert.equal(chunks.join(''), longText); assert.ok(!chunks.join('').includes('�'));
+    assert.equal(state('long').position, 1); assert.equal(state('long').byte_offset, 0);
+
+    // Huge existing threads stay partial and cheap until a deliberate rebuild.
+    add('huge');
+    for (let seq = 0; seq < 40; seq++) message('huge', seq, seq % 2 ? 'assistant' : 'user', `Message ${seq}: ` + 'x'.repeat(1200));
+    index.publish('huge'); service.userInput('huge'); const beforeHuge = calls.length;
+    await discover(); for (let i = 0; i < 6 && state('huge').position < 40; i++) await advance();
+    assert.ok(calls.length - beforeHuge < 3, 'bootstrap samples a bounded tail');
+    assert.equal(state('huge').origin, 'partial'); assert.equal(summary('huge').auto_summary_coverage, 'partial');
+    message('huge', 40, 'user', 'New direction'); index.publish('huge'); await advance(); await advance(2000);
+    assert.equal(summary('huge').auto_summary_coverage, 'partial', 'new activity does not erase incomplete origin');
+    const info = service.control('huge-session', 'rebuild', 'project'); assert.ok(info.estimatedCalls > 1); assert.equal(info.rebuilding, true);
+    await discover(); assert.ok(state('huge').position < 40);
+    assert.equal(summary('huge').auto_summary_coverage, 'catching_up');
+    hdb.prepare("update conversation_messages set text = text || ' corrected' where conversation_id = 'huge' and seq = 0").run(); index.publish('huge');
+    const obsolete = service.control('huge-session', 'inspect', 'project');
+    assert.equal(obsolete.coverage, 'stale'); assert.equal(obsolete.rebuilding, false, 'an invalidated rebuild no longer blocks restart');
+    service.control('huge-session', 'rebuild', 'project'); await discover();
+    assert.equal(state('huge').stale, 0, 'the exposed rebuild operation recovers stale history');
+    service.control('huge-session', 'cancel', 'project'); const pausedAt = calls.length;
+    await advance(); assert.equal(calls.length, pausedAt); assert.equal(state('huge').paused, 1);
+    const pausedPosition = state('huge').position;
+    service.control('huge-session', 'resume', 'project'); assert.equal(state('huge').position, pausedPosition, 'resume preserves already-paid coverage'); await discover();
+    for (let i = 0; i < 20 && state('huge').position < 41; i++) await advance();
+    assert.equal(state('huge').position, 41); assert.equal(summary('huge').auto_summary_coverage, 'complete');
+
+    // Imports that change only tools or UUIDs must not discard a paid recap.
+    add('paid'); message('paid', 0, 'user', 'Preserve paid summary progress'); index.publish('paid'); service.userInput('paid');
+    let paidRelease!: () => void;
+    run = () => new Promise(resolve => { paidRelease = () => resolve({ summary: 'Paid recap', memory }); });
+    const beforePaid = calls.length; await discover();
+    const contentRevision = (hdb.prepare("select revision from summary_prose_sources where conversation_id = 'paid'").get() as { revision: number }).revision;
+    message('paid', 1, 'tool', 'New tool result', 'tool_result'); index.publish('paid');
+    hdb.transaction(() => {
+      const rows = hdb.prepare("select * from conversation_messages where conversation_id = 'paid'").all() as Array<{ id: string; seq: number; role: string; kind: string; text: string; metadata: string }>;
+      hdb.prepare("delete from conversation_messages where conversation_id = 'paid'").run();
+      for (const row of rows) hdb.prepare("insert into conversation_messages(id,conversation_id,seq,role,kind,text,metadata,created_at) values (?, 'paid', ?, ?, ?, ?, ?, 'now')")
+        .run(row.id + '-replacement', row.seq, row.role, row.kind, row.text, row.metadata);
+      index.publish('paid');
+    })();
+    assert.equal((hdb.prepare("select revision from summary_prose_sources where conversation_id = 'paid'").get() as { revision: number }).revision, contentRevision);
+    paidRelease(); await flush(); assert.equal(state('paid').position, 1); assert.equal(calls.length, beforePaid + 1);
+    message('paid', 2, 'user', 'Also preserve the cursor'); index.publish('paid'); await advance(); await advance(2000);
+    message('paid', 3, 'assistant', 'New tail while recap runs'); index.publish('paid'); paidRelease(); await flush();
+    assert.equal(state('paid').position, 2, 'append-only activity preserves successfully summarized prefix');
+    assert.equal(summary('paid').auto_summary_coverage, 'catching_up');
+    run = async () => ({ summary: 'Updated', memory }); await advance(); await advance(2000);
+    assert.equal(state('paid').position, 3);
+
+    // A successful but obsolete response may not move coverage, including cancel.
+    add('race'); message('race', 0, 'user', 'Fix another thing.'); index.publish('race'); service.userInput('race');
+    let release!: () => void, signal: AbortSignal | undefined;
+    run = (s) => { signal = s; return new Promise(resolve => { release = () => resolve({ summary: 'Late recap', memory }); }); };
+    await discover(); const raceRevision = state('race').revision;
+    message('race', 1, 'assistant', 'More progress');
+    hdb.prepare("update conversation_messages set text = 'Changed consumed goal' where conversation_id = 'race' and seq = 0").run();
+    index.publish('race'); release(); await flush();
+    assert.equal(state('race').revision, raceRevision); assert.equal(state('race').position, 0, 'changed source rejects stale response');
+    service.control('race-session', 'rebuild', 'project'); await discover(); service.control('race-session', 'cancel', 'project'); assert.equal(signal?.aborted, true); release(); await flush();
+    assert.equal(state('race').position, 0);
+    run = async () => ({ summary: 'Updated', memory });
+
+    // Small active-turn prose is batched locally; permission waits never call.
+    add('busy'); message('busy', 0, 'user', 'Fix the batching bug'); index.publish('busy');
+    db.prepare("update processes set activity = 'working' where id = 'busy'").run();
+    service.userInput('busy'); const beforeBusy = calls.length; await discover();
+    assert.equal(calls.length, beforeBusy); await advance(57_999); assert.equal(calls.length, beforeBusy);
+    await advance(1); assert.equal(calls.length, beforeBusy + 1);
+    message('busy', 1, 'assistant', 'Waiting for permission'); index.publish('busy');
+    db.prepare("update processes set activity = 'permission' where id = 'busy'").run();
+    await advance(120_000); assert.equal(calls.length, beforeBusy + 1);
+    db.prepare("update processes set activity = 'idle' where id = 'busy'").run();
+    await advance(); await advance(2000); assert.equal(calls.length, beforeBusy + 2);
+
+    // An unchanged multi-chunk source must not strand its small final slice
+    // while the agent remains active: each queued slice gets a batching clock.
+    add('working-tail'); message('working-tail', 0, 'user', 'w'.repeat(17_000)); index.publish('working-tail');
+    db.prepare("update processes set activity = 'working' where id = 'working-tail'").run();
+    service.userInput('working-tail'); const beforeTail = calls.length; await discover(); await advance();
+    assert.equal(calls.length, beforeTail + 2); assert.ok(state('working-tail').byte_offset > 16_000);
+    await advance(); await advance(59_999); assert.equal(calls.length, beforeTail + 2, 'small final slice is batched');
+    await advance(1); assert.equal(calls.length, beforeTail + 3);
+    assert.equal(state('working-tail').position, 1); assert.equal(state('working-tail').byte_offset, 0);
+    assert.equal(summary('working-tail').auto_summary_coverage, 'complete');
+
+    // Real OpenCode SQLite parts remain outside coverage until native completion.
+    add('stream'); db.prepare("update sessions set harness = 'opencode' where id = 'stream-session'").run();
+    hdb.prepare("update conversations set provider = 'opencode' where id = 'stream'").run();
+    const streamFile = path.join(directory, 'opencode-stream.db'), nativeDb = new DatabaseSync(streamFile);
+    const openCodeImports = new AgentHistoryImportService(history, new ProviderHistoryDiscoveryService(), null, undefined, database);
+    const streamInput = { provider: 'opencode' as const, path: streamFile, project_id: 'project', trigger: 'manual' as const };
+    try {
+      nativeDb.exec(`create table session (id text primary key, directory text, title text, version text, time_created integer, time_updated integer, parent_id text, agent text, model text, metadata text, time_archived integer);
+        create table message (id text primary key, session_id text, time_created integer, time_updated integer, data text);
+        create table part (id text primary key, message_id text, session_id text, time_created integer, time_updated integer, data text);
+        insert into session values('stream','/tmp','Streaming','test',1,1,null,null,null,'{}',null);
+        insert into message values('u','stream',1,1,'{"role":"user"}');
+        insert into message values('a','stream',2,2,'{"role":"assistant"}');
+        insert into part values('up','u','stream',1,1,'{"type":"text","text":"Fix streaming safely"}');
+        insert into part values('ap','a','stream',2,2,'{"type":"text","text":"","time":{"start":2}}');`);
+      assert.equal(openCodeImports.import(streamInput).errorCount, 0);
+      service.userInput('stream'); await discover(); assert.equal(state('stream', 'opencode').position, 1);
+      const beforeStreaming = calls.length;
+      nativeDb.exec(`insert into message values('later','stream',3,3,'{"role":"user"}');
+        insert into part values('laterp','later','stream',3,3,'{"type":"text","text":"Keep the original constraint"}');`);
+      const updatePart = (text: string, end?: number) => {
+        nativeDb.prepare("update part set data = ?, time_updated = ? where id = 'ap'")
+          .run(JSON.stringify({ type: 'text', text, time: { start: 2, ...(end ? { end } : {}) } }), ++now);
+        nativeDb.prepare("update session set time_updated = ? where id = 'stream'").run(now);
+      };
+      updatePart('Growing '.repeat(500)); assert.equal(openCodeImports.import(streamInput).errorCount, 0);
+      assert.ok((hdb.prepare("select text from conversation_messages where conversation_id = 'stream' and provider_message_id = 'ap'").get() as { text: string }).text.includes('Growing'));
+      await advance(); assert.equal(calls.length, beforeStreaming); assert.equal(state('stream', 'opencode').stale, 0);
+      assert.equal((hdb.prepare("select message_count from summary_prose_sources where conversation_id = 'stream'").get() as { message_count: number }).message_count, 1, 'later prompts do not jump an unfinished part');
+      updatePart('Growing '.repeat(600)); openCodeImports.import(streamInput); await advance();
+      assert.equal(calls.length, beforeStreaming); assert.equal(state('stream', 'opencode').stale, 0);
+      updatePart('Final result: stream is safe.', now); assert.equal(openCodeImports.import(streamInput).errorCount, 0);
+      await advance(); await advance(2000); assert.equal(state('stream', 'opencode').position, 3); assert.equal(state('stream', 'opencode').stale, 0);
+      assert.ok(calls.at(-1)!.text.includes('Final result')); assert.ok(calls.at(-1)!.text.includes('Keep the original constraint'));
+      const adapter = new OpenCodeHistoryAdapter();
+      assert.equal(adapter.parseFile(streamFile).conversations[0]!.messages.find(m => m.providerMessageId === 'ap')!.metadata.prose_finalized, true);
+      nativeDb.exec(`create table session_v2 as select * from session;
+        update session_v2 set id = 'stream-v2';
+        create table session_message (id text, session_id text, type text, seq integer, time_created integer, time_updated integer, data text);`);
+      const v2Data = (messageCompleted: boolean, partCompleted = false) => JSON.stringify({ time: { created: 2, ...(messageCompleted ? { completed: now } : {}) },
+        content: [{ type: 'text', text: 'V2 prose', time: { created: 2, ...(partCompleted ? { completed: now } : {}) } }] });
+      nativeDb.prepare("insert into session_message values('v2-a','stream-v2','assistant',0,2,2,?)").run(v2Data(false));
+      const finalizedV2 = () => adapter.parseFile(streamFile).conversations.find(c => c.providerConversationId === 'stream-v2')!.messages[0]!.metadata.prose_finalized;
+      assert.equal(finalizedV2(), false, 'V2 unfinished text is identified');
+      nativeDb.prepare("update session_message set data = ? where id = 'v2-a'").run(v2Data(true));
+      assert.equal(finalizedV2(), true, 'V2 envelope completion finalizes prose');
+      nativeDb.prepare("update session_message set data = ? where id = 'v2-a'").run(v2Data(false, true));
+      assert.equal(finalizedV2(), true, 'V2 part completion finalizes prose');
+    } finally { nativeDb.close(); }
+
+    // No hourly cap: even an obsolete saved zero limit cannot pause summaries.
+    const uncappedSettings = service.update({ ...enabled, maxCallsPerHour: 0 });
+    assert.equal('maxCallsPerHour' in uncappedSettings, false);
+    add('uncapped'); message('uncapped', 0, 'user', 'Keep summarizing new conversation prose'); index.publish('uncapped'); service.userInput('uncapped');
+    const beforeUncapped = calls.length, startUncapped = now;
+    await discover();
+    for (let seq = 1; seq <= 13; seq++) {
+      message('uncapped', seq, 'assistant', `Meaningful update ${seq}`); index.publish('uncapped');
+      await advance(); await advance(2000);
+    }
+    assert.ok(now - startUncapped < 3_600_000);
+    assert.equal(calls.length, beforeUncapped + 14, 'more than twelve calls run in the same hour');
+    assert.equal(state('uncapped').position, 14);
+    assert.equal(db.prepare("select name from sqlite_master where name = 'auto_summary_usage'").get(), undefined);
+
+    // Failures still back off and never move coverage or expose diagnostics.
+    add('failure'); message('failure', 0, 'user', 'Please fix this failure.'); index.publish('failure'); service.userInput('failure');
+    run = async () => { throw new Error('secret diagnostic'); };
+    const beforeFailure = calls.length;
+    await discover(); assert.equal(calls.length, beforeFailure + 1);
+    assert.ok(!JSON.stringify(service.status()).includes('secret diagnostic')); assert.equal(state('failure').position, 0);
+    await advance(); assert.equal(calls.length, beforeFailure + 1, 'failed calls retain retry backoff');
+    await advance(); assert.equal(calls.length, beforeFailure + 2);
+    await service.dispose(); service = makeService();
+    run = async () => ({ summary: 'Updated', memory });
+    await discover(); assert.equal(state('failure').position, 1, 'restart continues from retained coverage');
     assert.deepEqual(await service.test(enabled), { ok: true });
-    assert.equal(lastMode, 'test');
-    assert.equal(lastInput, 'patterm okay', 'synthetic data contains no test instructions');
-    assert.equal(snapshots, snapshotsBeforeTest, 'connection test never reads terminal output');
-    run = async () => 'unexpected';
-    await assert.rejects(service.test(enabled), /expected phrase/);
+    service.update({ ...enabled, titles: false });
+    assert.equal((db.prepare("select count(*) as n from sessions where auto_title is not null").get() as { n: number }).n, 0);
 
-    // Two global jobs, one per process; cancellation discards even a late success.
-    db.exec("update processes set activity = 'idle' where id = 'root'");
-    service.update(enabled);
-    const releases: Array<() => void> = [];
-    const signals: AbortSignal[] = [];
-    run = (signal) => new Promise((resolve) => { signals.push(signal); releases.push(() => resolve('Late summary.')); });
-    add('second'); add('third');
-    for (const id of ['root', 'second', 'third']) service.userInput(id);
-    now += 2000; service.tick(); await flush();
-    assert.equal(service.status().inFlight, 2);
-    service.tick(); await flush(); assert.equal(signals.length, 2);
-    service.update({ ...enabled, enabled: false });
-    assert.ok(signals.every((signal) => signal.aborted));
-    releases.splice(0).forEach((release) => release()); await flush();
-    assert.equal(recap('second').auto_summary, null);
-    assert.equal(recap('root').auto_summary, 'Build and tests passed.');
-    service.update(enabled); service.userInput('root'); now += 2000; service.tick(); await flush();
-    assert.equal(signals.at(-1)?.aborted, false);
-    frameListener?.({ type: 'terminal-lifecycle', processId: 'root', event: 'activity', activity: 'permission' } as Parameters<NonNullable<typeof frameListener>>[0]);
-    assert.equal(signals.at(-1)?.aborted, true, 'permission transition cancels an in-flight runner');
-    releases.splice(0).forEach((release) => release()); await flush();
-    assert.equal(recap('root').auto_summary, 'Build and tests passed.');
-    service.update(enabled); service.userInput('root'); now += 2000; service.tick(); await flush();
-    assert.equal(signals.at(-1)?.aborted, false);
-    frameListener?.({ type: 'terminal-lifecycle', processId: 'root', event: 'exit' } as Parameters<NonNullable<typeof frameListener>>[0]);
-    assert.equal(signals.at(-1)?.aborted, true);
-    releases.splice(0).forEach((release) => release()); await flush();
-    service.userInput('root'); now += 2000; service.tick(); await flush();
-    const disposed = service.dispose();
-    assert.equal(signals.at(-1)?.aborted, true);
-    releases.splice(0).forEach((release) => release()); await disposed;
-    assert.equal(frameListener, undefined);
+    // Missing history never falls back to an agent's tool-filled terminal screen.
+    const absent = new AutoSummaryService(database, settings, terminal, { availability: () => ({ available: true, reason: null }), run: async () => { throw new Error('must not call'); } }, () => {}, () => now);
+    absent.userInput('failure'); absent.tick(); await flush(); await absent.dispose(); assert.equal(snapshots, 0);
+    // A fresh app opens history read-only before the import worker creates it.
+    // Summaries must discover that file without another history consumer.
+    const freshDirectory = path.join(directory, 'fresh-start');
+    const freshApp = new DatabaseService(freshDirectory); freshApp.initialize();
+    const freshHistory = new HistoryDatabaseService(freshDirectory, { mode: 'read' }); freshHistory.initialize({ migrate: false });
+    const freshWriter = new HistoryDatabaseService(freshDirectory);
+    const freshSettings = new SettingsService(freshApp); freshSettings.updateAutoSummarySettings(enabled);
+    let freshCalls = 0;
+    const freshService = new AutoSummaryService(freshApp, freshSettings, terminal, {
+      availability: () => ({ available: true, reason: null }), run: async () => { freshCalls++; return { summary: 'Parser fixed.', memory }; }
+    }, () => {}, () => now, freshHistory);
+    try {
+      freshApp.connection.exec(`insert into projects(id,name,path,created_at,updated_at) values('fresh','Fresh','/tmp','now','now');
+        insert into processes(id,project_id,kind,name,status,activity,created_at,updated_at) values('fresh-agent','fresh','agent','Fresh','running','idle','now','now');
+        insert into sessions(id,project_id,process_id,harness,session_role,resume_id,started_at) values('fresh-session','fresh','fresh-agent','claude','orchestrator','fresh-native','now');`);
+      freshService.userInput('fresh-agent'); freshService.tick(); assert.equal(freshCalls, 0);
+      freshWriter.initialize();
+      freshWriter.connection.exec(`insert into conversations(id,provider,provider_conversation_id,project_id,session_id,status,created_at,imported_at)
+        values('fresh-conversation','claude','fresh-native','fresh','fresh-session','active','now','now');
+        insert into conversation_messages(id,conversation_id,seq,role,kind,text,created_at)
+        values('fresh-message','fresh-conversation',0,'user','message','Fix parsing please','now');`);
+      new SummaryProseIndex(freshWriter.connection).publish('fresh-conversation');
+      freshService.historyChanged(); now += 2000; freshService.tick(); await flush();
+      assert.equal(freshCalls, 1, 'fresh history is discovered without opening the History page');
+    } finally { await freshService.dispose(); freshHistory.dispose(); freshWriter.dispose(); freshApp.dispose(); }
 
-    // Integrated agents have no PTY: UI prompts make them eligible and the
-    // visible transcript, without reasoning or subagent rows, is summarised.
-    add('integrated');
-    db.exec("update processes set pty_process_id = null where id = 'integrated'");
-    db.exec(`insert into sessions(id,project_id,process_id,harness,session_role,interface_mode,started_at)
-      values ('integrated-session','project','integrated','codex','orchestrator','integrated','now')`);
-    // Providers wrap rows as { data: [...] }, as the renderer reads them.
-    const conversation = { messages: { data: [
-      { id: '1', role: 'user', kind: 'text', text: 'Fix the failing parser test.' },
-      { id: '2', role: 'assistant', kind: 'reasoning', text: 'private reasoning' },
-      { id: '3', role: 'assistant', kind: 'tool', text: '', title: 'Bash', tool: { name: 'Bash', input: { command: 'pnpm test', description: 'Run the tests' } } },
-      { id: '4', role: 'assistant', kind: 'text', text: 'Subagent detail', parentId: '3' },
-      { id: '5', role: 'assistant', kind: 'text', text: 'The parser test passes now.' }
-    ] } };
-    const expected = 'User: Fix the failing parser test.\nTool: Bash: Run the tests\nAssistant: The parser test passes now.';
-    assert.equal(conversationSummaryText(conversation), expected);
-    assert.equal(conversationSummaryText({ messages: conversation.messages.data }), expected, 'a bare row array is accepted too');
-    assert.equal(conversationSummaryText(null), '');
-    assert.deepEqual(ownerMessages(['Fix the login bug', '/compact', '<command-name>/clear</command-name>', '[report from process_2: completed]\nDone',
-      '[message from process_3]\nHi', '[Patterm timer t: condition met]', '[Attention requested by process_4 (Child)]\nPick one',
-      '[Failure reported by process_5 (Child)]', '[Attention needed by process_6 (Child)]', ' Fix the login bug ', 'Also the logout one']),
-    ['Fix the login bug', 'Also the logout one'], 'only the owner\'s own messages, once each');
-    const many = ownerMessages(Array.from({ length: 30 }, (_, i) => `message ${i} ${'x'.repeat(2000)}`));
-    assert.deepEqual(many.map((text) => text.split(' ')[1]), ['0', '1', '22', '23', '24', '25', '26', '27', '28', '29'], 'the first two and last eight');
-    assert.deepEqual(many.map((text) => text.length), [1500, ...Array(9).fill(500)]);
-    const key = `Use this key\n-----BEGIN PRIVATE KEY-----\n${'k'.repeat(3000)}\n-----END PRIVATE KEY-----`;
-    assert.ok(!ownerMessages([key], (text) => new SecretRedactor().redact(text).text)[0]!.includes('kkkk'), 'redaction runs before the cut');
-    let conversationListener: Parameters<IntegratedSummarySource['onConversationEvent']>[0] | undefined;
-    const source: IntegratedSummarySource = {
-      async conversation(id) { assert.equal(id, 'integrated'); return conversation; },
-      onConversationEvent(listener) { conversationListener = listener; return () => { conversationListener = undefined; }; }
-    };
-    const inputs: string[] = [];
-    const integratedService = new AutoSummaryService(database, settings, terminal, {
-      availability: () => ({ available: true, reason: null }),
-      async run(_settings, text) { inputs.push(text); return { summary: 'Parser test fixed.' }; }
-    }, () => {}, () => now, source);
-    integratedService.start();
-    assert.ok(conversationListener);
-    now += 2000; integratedService.tick(); await flush();
-    assert.equal(inputs.length, 0, 'Integrated agents also require user input');
-    integratedService.userInput('integrated'); now += 2000; integratedService.tick(); await flush();
-    assert.deepEqual(inputs, [expected]);
-    assert.equal(recap('integrated').auto_summary, 'Parser test fixed.');
-    await integratedService.dispose();
-    assert.equal(conversationListener, undefined);
-
-    // The same request names the agent and gives the sidebar a one-line status.
-    db.exec("update sessions set last_title = 'Codex', resume_id = 'native' where id = 'integrated-session'");
-    let named: SummaryResult = { title: '  Fix the\nparser test ', status: 'Waiting on\nyour review', summary: 'Parser test fixed and waiting on review.' };
-    const titled = new AutoSummaryService(database, settings, terminal, {
-      availability: () => ({ available: true, reason: null }),
-      async run(_settings, _text, _signal, _mode, context) { lastContext = context; return named; }
-    }, () => {}, () => now, source);
-    titled.userInput('integrated'); now += 2000; titled.tick(); await flush();
-    assert.equal(lastContext?.native_title, 'Codex');
-    assert.equal(lastContext?.previous_title, null);
-    const titleOf = (id: string) => db.prepare('select auto_title, title from sessions where id = ?').get(id) as Record<string, unknown>;
-    assert.deepEqual({ ...titleOf('integrated-session') }, { auto_title: 'Fix the parser test', title: 'Fix the parser test' }, 'a generated title beats the native one');
-    const summaryOf = (id: string) => db.prepare('select auto_summary, auto_status from processes where id = ?').get(id) as Record<string, unknown>;
-    assert.deepEqual({ ...summaryOf('integrated') }, { auto_summary: 'Parser test fixed and waiting on review.', auto_status: 'Waiting on your review' });
-    const integratedDto = new WorkbenchRepository(database).snapshot().projects[0]?.projectSessions.find((session) => session.id === 'integrated-session');
-    assert.equal(integratedDto?.title, 'Fix the parser test');
-    assert.equal(integratedDto?.summary?.status, 'Waiting on your review');
-    assert.equal((titled as unknown as { context(id: string, conversation: unknown): SummaryContext }).context('integrated', null).previous_title, 'Fix the parser test');
-    db.exec("update sessions set display_name = 'parser' where id = 'integrated-session'");
-    assert.equal(titleOf('integrated-session').title, 'parser', 'a chosen name beats a generated one');
-    db.exec("update sessions set display_name = null where id = 'integrated-session'");
-
-    // A restarted or resumed conversation keeps its title and recap.
-    add('resumed');
-    db.exec(`update processes set pty_process_id = null where id = 'resumed';
-      insert into sessions(id,project_id,process_id,harness,session_role,interface_mode,resume_id,started_at)
-      values ('resumed-session','project','resumed','codex','orchestrator','integrated','native','later')`);
-    new SessionContextService(database).inherit('resumed-session', 'project', 'codex', 'native', { append() {} } as unknown as TimelineService, 'integrated-session');
-    assert.equal(titleOf('resumed-session').title, 'Fix the parser test');
-    assert.deepEqual({ ...summaryOf('resumed') }, { ...summaryOf('integrated') });
-
-    // Turning titles off removes generated ones and stops writing them.
-    titled.update({ ...enabled, titles: false });
-    assert.deepEqual({ ...titleOf('integrated-session') }, { auto_title: null, title: 'Codex' });
-    named = { ...named, title: 'Another title', summary: 'Parser test fixed.' };
-    titled.userInput('integrated'); now += 2000; titled.tick(); await flush();
-    assert.equal(summaryOf('integrated').auto_summary, 'Parser test fixed.');
-    assert.equal(titleOf('integrated-session').auto_title, null);
-    titled.update(enabled);
-    await titled.dispose();
+    // The real importer publishes hashes in both replacement and append paths,
+    // and backfills projections even when an unchanged file is skipped.
+    add('imported');
+    const nativeFile = path.join(directory, 'imported.jsonl');
+    const nativeRow = (seq: number, role: string, text: string) => JSON.stringify({ type: role, uuid: `native-${seq}`,
+      sessionId: 'imported', cwd: '/tmp', timestamp: new Date(now).toISOString(), message: { role, content: text } }) + '\n';
+    fs.writeFileSync(nativeFile, nativeRow(0, 'user', 'Fix the real import path') + nativeRow(1, 'assistant', 'Import path fixed.'));
+    const imports = new AgentHistoryImportService(history, new ProviderHistoryDiscoveryService(), null, undefined, database);
+    const input = { provider: 'claude' as const, path: nativeFile, project_id: 'project', trigger: 'manual' as const };
+    assert.equal(imports.import(input).errorCount, 0);
+    const projection = () => hdb.prepare("select * from summary_prose_sources where conversation_id = 'imported'").get() as { message_count: number };
+    assert.equal(projection().message_count, 2);
+    const prefixBefore = (hdb.prepare("select prefix_hash from summary_prose where conversation_id = 'imported' and position = 1").get() as { prefix_hash: string }).prefix_hash;
+    fs.appendFileSync(nativeFile, nativeRow(2, 'user', 'Keep the earlier decision'));
+    const adapter = new ClaudeHistoryAdapter();
+    assert.equal((await imports.importWithParser(input, async ({ filePath }) => adapter.parseFile(filePath))).errorCount, 0);
+    assert.equal(projection().message_count, 3);
+    assert.equal((hdb.prepare("select prefix_hash from summary_prose where conversation_id = 'imported' and position = 1").get() as { prefix_hash: string }).prefix_hash, prefixBefore);
+    hdb.prepare("delete from summary_prose_sources where conversation_id = 'imported'").run();
+    assert.equal(imports.import(input).errorCount, 0); assert.equal(projection().message_count, 3);
 
     const runner = new AutoSummaryRunner(database, process.env);
     assert.equal(runner.availability('claude').available, false);
@@ -380,7 +450,7 @@ async function main() {
     assert.equal(summarySnapshot('ANTHROPIC_API_KEY=sk-ant-' + 'a'.repeat(60)).includes('a'.repeat(60)), false);
     console.log('auto-summary smoke tests passed');
   } finally {
-    await service.dispose(); database.dispose();
+    await service.dispose(); history.dispose(); database.dispose();
     fs.rmSync(directory, { recursive: true, force: true });
   }
 }
