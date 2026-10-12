@@ -10,7 +10,9 @@ import { WorktreeFileService } from '../app/Services/WorktreeFileService';
 import { trySymlink } from './fixtures/SymlinkFixture';
 
 async function main(): Promise<void> {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-integrated-files-'));
+  // The service resolves real paths natively, which expands a Windows 8.3
+  // temp path such as C:\Users\RUNNER~1; compare against the same long form.
+  const directory = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-integrated-files-')));
   const worktree = path.join(directory, 'worktree');
   const uploads = path.join(directory, 'uploads');
   const outside = path.join(directory, 'outside');
