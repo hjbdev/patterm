@@ -4,7 +4,7 @@
 // sidecar's runtime crates and static libraries, and source copied into the
 // repository. `--check` fails if the file is out of date or a
 // dependency's licence needs review.
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -99,7 +99,11 @@ function licenceTexts(dir) {
 }
 
 function npmPackages() {
-  const listed = JSON.parse(execFileSync('pnpm', ['licenses', 'list', '--prod', '--json'], { cwd: root, encoding: 'utf8', maxBuffer: 64 << 20, shell: process.platform === 'win32' }));
+  const options = { cwd: root, encoding: 'utf8', maxBuffer: 64 << 20 };
+  // pnpm is a .cmd shim on Windows, which only a shell can start.
+  const listed = JSON.parse(process.platform === 'win32'
+    ? execSync('pnpm licenses list --prod --json', options)
+    : execFileSync('pnpm', ['licenses', 'list', '--prod', '--json'], options));
   const packages = [];
   for (const entries of Object.values(listed)) {
     for (const entry of entries) {
@@ -152,11 +156,16 @@ function crates() {
   });
 }
 
+// A Windows checkout may hold text files with CRLF line endings.
+function readText(file) {
+  return readFileSync(file, 'utf8').replace(/\r\n/g, '\n').trim();
+}
+
 const problems = [];
 function resolve(pkg, ecosystem) {
   const override = overrides[pkg.name];
   const license = override?.license ?? pkg.license;
-  const texts = override ? [readFileSync(path.join(overridesDir, override.file), 'utf8').trim()] : licenceTexts(pkg.dir);
+  const texts = override ? [readText(path.join(overridesDir, override.file))] : licenceTexts(pkg.dir);
   const label = `${pkg.name}@${pkg.version}`;
   if (!license || /^unknown$/i.test(license)) problems.push(`${label} declares no licence; add an override`);
   else if (copyleft.test(license)) problems.push(`${label} is ${license}; review before shipping`);
@@ -191,7 +200,7 @@ function render(packages) {
 }
 
 function bundled(entry, ecosystem) {
-  return { ...entry, version: entry.version ?? '', ecosystem, texts: entry.files.map((file) => readFileSync(path.join(overridesDir, file), 'utf8').trim()) };
+  return { ...entry, version: entry.version ?? '', ecosystem, texts: entry.files.map((file) => readText(path.join(overridesDir, file))) };
 }
 
 const byName = (a, b) => compareText(a.name, b.name) || compareVersion(a.version, b.version);
@@ -211,7 +220,7 @@ if (problems.length) {
 if (check) {
   let current = '';
   try {
-    current = readFileSync(output, 'utf8');
+    current = readFileSync(output, 'utf8').replace(/\r\n/g, '\n');
   } catch {}
   if (current !== notices) {
     console.error('error: THIRD_PARTY_NOTICES.md is out of date; run node scripts/third-party-notices.mjs');
