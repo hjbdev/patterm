@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { createApplication } from '../app/App';
 import { WebServer } from '../app/Http/WebServer';
 import { ServerAccess } from '../app/Http/ServerAccess';
-import { applyTailscaleRoute, planRemoteAccess } from '../app/Http/RemoteAccessPlan';
+import { applyTailscaleRoute, machineAddresses, planRemoteAccess } from '../app/Http/RemoteAccessPlan';
 import { TailscaleService } from '../app/Services/TailscaleService';
 import { acquireApplicationLock } from '../app/Runtime/ApplicationLock';
 import { randomId } from '../resources/js/lib/randomId';
@@ -155,7 +155,9 @@ async function main(): Promise<void> {
       const post = (body: unknown) => fetch(`http://127.0.0.1:${port}/api/access/remote`, {
         method: 'POST', headers: { Origin: `http://127.0.0.1:${port}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body)
       });
-      const address = Object.values(os.networkInterfaces()).flat().find((entry) => entry && !entry.internal)?.address;
+      // The addresses the server offers, which leave out IPv6 link-local ones
+      // (Windows often lists those first).
+      const address = machineAddresses()[0];
       if (address) {
         const refused = await post({ mode: 'network', bind: address, owner_login: null });
         assert.equal(refused.status, 400);
