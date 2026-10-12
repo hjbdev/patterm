@@ -36,7 +36,10 @@ export const appearanceSettingsInput = z.object({
   diffViewer: z.enum(['drawer', 'deck']).default('drawer'),
   // Where a project's agents and processes are listed: tabs along the top bar,
   // or a sidebar beside the workspace.
-  navigation: z.enum(['tabs', 'sidebar']).default('tabs')
+  navigation: z.enum(['tabs', 'sidebar']).default('tabs'),
+  // Whether the Personal project is listed. It is opt-in. Hidden, it still
+  // lists while an agent or process runs there.
+  personalProject: z.boolean().default(false)
 });
 
 export type AppearanceSettings = z.infer<typeof appearanceSettingsInput>;
@@ -100,7 +103,8 @@ export const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
   terminalContainer: true,
   historyImportToasts: true,
   diffViewer: 'drawer',
-  navigation: 'tabs'
+  navigation: 'tabs',
+  personalProject: false
 };
 
 export const DEFAULT_WORKSPACE_LAYOUT: WorkspaceLayout = {

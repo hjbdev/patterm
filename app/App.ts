@@ -88,6 +88,7 @@ import { PushService, pushSubject } from './Services/PushService';
 import { NotificationActions } from './Actions/NotificationActions';
 import { sendAgentInput } from './Services/AgentInputService';
 import { AssistantInbox } from './Services/AssistantInbox';
+import { ensurePersonalProject } from './Services/PersonalProject';
 import { McpServerRegistry } from './Services/McpServerRegistry';
 import { codexMcpStartupNotice } from './Harness/McpDelivery';
 import { McpOAuthService } from './Services/McpOAuthService';
@@ -217,6 +218,7 @@ async function createApplicationResources(
   defer(() => database.dispose());
   const databaseStartedAt = Date.now();
   database.initialize();
+  ensurePersonalProject(database, options.appDataPath);
   debugLog.write('startup', 'database.ready', { elapsed_ms: Date.now() - databaseStartedAt });
 
   const shellEnvStartedAt = Date.now();

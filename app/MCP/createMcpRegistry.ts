@@ -58,6 +58,7 @@ import type { AssistantService } from '../Services/AssistantService';
 import type { AssistantInbox } from '../Services/AssistantInbox';
 import { queuedDetail, SendMessageAction } from '../Actions/SendMessageAction';
 import { REMOTE_READ_TOOLS, type CrossHostService } from '../Services/CrossHostService';
+import { isUserProjectKind } from '../Services/PersonalProject';
 
 const CONVERSATION_OUTPUT_HINT = 'Use get_conversation_output for the latest answer, turn state, last report, and older messages.';
 
@@ -359,7 +360,12 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     if (!current || hasWorkspaceScope(current)) return Promise.reject(new Error('Only agents in a linked project can read agents on other hosts.'));
     return services.crossHost.read(current.project_id, target.host.host_id, toolName, { ...(args as Record<string, unknown>), process_id: target.process_id });
   });
-  const defaultProjectId = () => services.workbench.listProjects()[0]?.id ?? null;
+  // Owner calls without a project fall back to the oldest repository project,
+  // so the Personal project, listed first, never catches them by accident.
+  const defaultProjectId = () => {
+    const projects = services.workbench.listProjects();
+    return (projects.find((project) => project.kind !== 'personal') ?? projects[0])?.id ?? null;
+  };
   const projectFor = (context: McpCallContext, explicit?: string) => {
     const current = caller(context);
     if (hasWorkspaceScope(current)) return explicit ? workspaceProjectId(services.database, explicit) : null;
@@ -2133,7 +2139,7 @@ function hasWorkspaceScope(caller: CallerRow | null): boolean {
 function workspaceProjectId(database: DatabaseService, projectId: string): string {
   const row = database.connection.prepare(`select kind from projects where id = ?`).get(projectId) as { kind: string } | undefined;
   if (!row) throw new Error(`unknown project: ${projectId}`);
-  if (row.kind !== 'workspace') throw new Error('project is not a workspace project');
+  if (!isUserProjectKind(row.kind)) throw new Error('project is not a workspace project');
   return projectId;
 }
 

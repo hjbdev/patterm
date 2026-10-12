@@ -1,5 +1,6 @@
 import { harnessProviders } from '../Harness/providers';
 import type { DatabaseService } from '../Services/DatabaseService';
+import { USER_PROJECT_KINDS_SQL } from '../Services/PersonalProject';
 import { SettingsService, type SidebarState } from '../Services/SettingsService';
 import type { TimerRecord, TimerService } from '../Services/TimerService';
 
@@ -13,6 +14,9 @@ export interface ProjectSummaryDto {
   name: string;
   path: string;
   logo: string | null;
+  // 'personal' marks the Personal project, which is not a repository. Absent
+  // on records from older paired hosts.
+  kind?: ProjectKind;
   // The paired host that owns this record; absent for this host's own.
   host?: string;
   // Connected paired hosts this project is linked with, and the qualified ID
@@ -99,11 +103,14 @@ export interface WorkbenchSnapshotDto {
   sidebarState: SidebarState;
 }
 
+export type ProjectKind = 'workspace' | 'personal' | 'assistant';
+
 interface ProjectRow {
   id: string;
   name: string;
   path: string;
   logo: string | null;
+  kind: ProjectKind;
 }
 
 interface SessionRow {
@@ -180,18 +187,22 @@ export class WorkbenchRepository {
     return this.database.connection;
   }
 
+  // The user's projects, with the Personal project first. Hidden in Settings,
+  // Personal still lists while anything runs there, so no agent goes missing.
+  private projectRows(): ProjectRow[] {
+    const showPersonal = this.settings.appearanceSettings().personalProject;
+    return this.db.prepare(`select id, name, path, logo, kind from projects where kind in ${USER_PROJECT_KINDS_SQL}
+      and (kind <> 'personal' or ? or exists (select 1 from processes where processes.project_id = projects.id and processes.status = 'running'))
+      order by kind = 'personal' desc, created_at asc`).all(showPersonal ? 1 : 0) as ProjectRow[];
+  }
+
   listProjects(): ProjectSummaryDto[] {
-    return (this.db.prepare(`select id, name, path, logo from projects where kind = 'workspace' order by created_at asc`).all() as ProjectRow[]).map((row) => ({
-      id: row.id,
-      name: row.name,
-      path: row.path,
-      logo: row.logo
-    }));
+    return this.projectRows().map(projectSummary);
   }
 
   getProject(id: string): ProjectSummaryDto | null {
-    const row = this.db.prepare(`select id, name, path, logo from projects where id = ?`).get(id) as ProjectRow | undefined;
-    return row ? { id: row.id, name: row.name, path: row.path, logo: row.logo } : null;
+    const row = this.db.prepare(`select id, name, path, logo, kind from projects where id = ?`).get(id) as ProjectRow | undefined;
+    return row ? projectSummary(row) : null;
   }
 
   listHarnesses(): HarnessInstallationDto[] {
@@ -203,7 +214,7 @@ export class WorkbenchRepository {
 
   snapshot(): WorkbenchSnapshotDto {
     const harnesses = this.listHarnesses();
-    const projectRows = this.db.prepare(`select id, name, path, logo from projects where kind = 'workspace' order by created_at asc`).all() as ProjectRow[];
+    const projectRows = this.projectRows();
     const timers = this.timers?.list() ?? [];
 
     return { projects: projectRows.map((project) => this.projectWorkbench(project, timers)), harnesses, sidebarState: this.settings.sidebarState() };
@@ -252,7 +263,7 @@ export class WorkbenchRepository {
     const recent = (row: ProcessRow) => row.status === 'running' || !row.exited_at || Date.parse(row.exited_at) >= since;
 
     return {
-      project: { id: project.id, name: project.name, path: project.path, logo: project.logo },
+      project: projectSummary(project),
       projectSessions: sessions,
       processes: processRows.filter((row) => row.kind !== 'agent' && recent(row)).map(mapProcess),
       worktrees: (this.db.prepare('select * from worktrees where project_id = ? order by created_at').all(project.id) as WorktreeRow[]).map(mapWorktree),
@@ -260,6 +271,10 @@ export class WorkbenchRepository {
     };
   }
 
+}
+
+function projectSummary(row: ProjectRow): ProjectSummaryDto {
+  return { id: row.id, name: row.name, path: row.path, logo: row.logo, kind: row.kind };
 }
 
 // Derive each session's parent session via the backing process tree:

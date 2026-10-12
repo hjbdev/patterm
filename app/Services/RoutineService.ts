@@ -8,6 +8,7 @@ import type { LaunchHarnessInput, LaunchHarnessResult } from './HarnessLauncher'
 import type { RaiseNotificationInput } from './NotificationService';
 import type { TimelineService } from './TimelineService';
 import { ASSISTANT_PROJECT_ID } from './AssistantProject';
+import { isUserProjectKind } from './PersonalProject';
 import { formatLocal, isTimeZone, nextRoutineRun, renderRoutinePrompt, ROUTINE_TIME_PATTERN } from './RoutineSchedule';
 
 export const ROUTINE_HARNESSES = ['claude', 'codex', 'opencode'] as const;
@@ -531,7 +532,7 @@ export class RoutineService {
   private validateProject(projectId: string | null): void {
     if (projectId === null) return;
     const row = this.db.prepare('select kind from projects where id = ?').get(projectId) as { kind: string } | undefined;
-    if (!row || row.kind !== 'workspace') throw new Error(`unknown project: ${projectId}`);
+    if (!isUserProjectKind(row?.kind)) throw new Error(`unknown project: ${projectId}`);
   }
 
   private changed(workbench = false): void {

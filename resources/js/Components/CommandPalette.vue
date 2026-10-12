@@ -177,7 +177,7 @@ const currentControls = computed(() => {
 const sessionsById = computed(() => new Map(projects.value.flatMap(project => project.projectSessions.map(session => [session.id, session] as const))));
 const processesById = computed(() => new Map(projects.value.flatMap(project => project.processes.map(process => [process.id, process] as const))));
 
-const localCommands = computed(() => rendererCommands(props.context.active_project_id));
+const localCommands = computed(() => rendererCommands(props.context.active_project_id, activeProject.value?.project.kind !== 'personal'));
 // Launching, resuming, and timers each open a page of their own.
 const sourceCommands = computed<CommandDescriptor[]>(() => {
   if (!props.context.active_project_id) return [];

@@ -41,6 +41,9 @@ const busy = project('busy', [
 const overviews = projectOverviews([quiet, recent, busy]);
 assert.deepEqual(overviews.map((overview) => overview.project.id), ['busy', 'recent', 'quiet'], 'projects with live agents come first, then the most recently active');
 
+const personal: ProjectWorkbench = { ...project('personal', []), project: { id: 'personal', name: 'Personal', path: '/data/personal', kind: 'personal' } };
+assert.equal(projectOverviews([busy, recent, personal])[0]?.project.id, 'personal', 'the Personal project stays first, even when idle');
+
 const [busyOverview, recentOverview, quietOverview] = overviews;
 assert.equal(busyOverview?.agents.length, 3, 'subagents nest under their root');
 assert.deepEqual([busyOverview?.waiting, busyOverview?.working, busyOverview?.idle], [1, 1, 1], 'families count once, by their most urgent state');

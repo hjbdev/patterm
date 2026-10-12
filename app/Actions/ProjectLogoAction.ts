@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { sniffMime } from '../Http/UploadService';
 import type { DatabaseService } from '../Services/DatabaseService';
 import type { TimelineService } from '../Services/TimelineService';
+import { USER_PROJECT_KINDS_SQL } from '../Services/PersonalProject';
 
 // The renderer scales logos down to a small raster before saving, so stored
 // logos stay small enough to ride along with every project summary.
@@ -104,7 +105,7 @@ export class ProjectLogoAction {
 
   private projectPath(projectId: string): string {
     const row = this.database.connection
-      .prepare(`select path from projects where id = ? and kind = 'workspace'`)
+      .prepare(`select path from projects where id = ? and kind in ${USER_PROJECT_KINDS_SQL}`)
       .get(projectId) as { path: string } | undefined;
     if (!row) throw new Error(`unknown project ${projectId}`);
     return row.path;

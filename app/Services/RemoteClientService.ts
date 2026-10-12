@@ -200,7 +200,10 @@ export class RemoteClientService {
           local.worktrees = [...local.worktrees, ...qualified.worktrees];
           local.timers = [...local.timers, ...qualified.timers];
         } else if (!localId) {
-          projects.push(qualified);
+          // Another host's Personal project goes with the Personal projects,
+          // ahead of repositories.
+          const firstRepository = projects.findIndex((project) => project.project.kind !== 'personal');
+          projects.splice(qualified.project.kind === 'personal' && firstRepository >= 0 ? firstRepository : projects.length, 0, qualified);
         }
       }
     }

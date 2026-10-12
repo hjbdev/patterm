@@ -19,6 +19,8 @@ export interface SidebarContext extends SidebarTreeView {
   tabs: ComputedRef<StripTab[]>;
   page: ComputedRef<SidebarPage | null>;
   worktreeCount: ComputedRef<number>;
+  // Whether the project is a repository, which the Personal project is not.
+  repository: ComputedRef<boolean>;
   now: Ref<number>;
   ownedProcesses: (family: AgentTabFamily) => LiveProcessRecord[];
   familyTimers: (family: AgentTabFamily) => TimerRecord[];
@@ -53,6 +55,7 @@ export interface SidebarInput {
   processes: () => ProcessRecord[];
   timers: () => TimerRecord[];
   worktreeCount: () => number;
+  repository: () => boolean;
   activeTerminalId: () => string | null;
   activeSessionId: () => string | null;
   page: () => SidebarPage | null;
@@ -88,6 +91,7 @@ export function provideSidebarContext(input: SidebarInput): SidebarContext {
     tabs: computed(input.tabs),
     page: computed(input.page),
     worktreeCount: computed(input.worktreeCount),
+    repository: computed(input.repository),
     now,
     ownedProcesses,
     familyTimers,

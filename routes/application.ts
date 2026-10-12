@@ -195,7 +195,12 @@ export function registerApplicationRoutes(ipcMain: RouteRegistrar, application: 
   ipcMain.handle('patterm:settings:summaries:update', (_event, raw) => application.autoSummaryActions.update(raw));
   ipcMain.handle('patterm:settings:summaries:test', (_event, raw) => application.autoSummaryActions.test(raw));
 
-  ipcMain.handle('patterm:settings:appearance:update', (_event, raw) => application.settings.updateAppearanceSettings(appearanceSettingsInput.parse(raw)));
+  ipcMain.handle('patterm:settings:appearance:update', (_event, raw) => {
+    const settings = application.settings.updateAppearanceSettings(appearanceSettingsInput.parse(raw));
+    // The Personal project setting changes the project list.
+    application.notifyChanged(['workbench']);
+    return settings;
+  });
 
   ipcMain.handle('patterm:settings:harness-presets:get', () => application.harnessPresets.list());
 

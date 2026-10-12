@@ -296,6 +296,7 @@ provideSidebarContext({
   processes: () => activeProject.value?.processes ?? [],
   timers: () => activeProject.value?.timers ?? [],
   worktreeCount: () => activeProject.value?.worktrees.length ?? 0,
+  repository: () => activeProject.value?.project.kind !== 'personal',
   activeTerminalId: () => agentPage.value ? activeTerminalId.value : null,
   activeSessionId: () => agentPage.value ? selectedAgent.value?.id ?? null : null,
   page: () => route.name === 'worktrees' || route.name === 'history' || route.name === 'todos' || route.name === 'scratchpads' || route.name === 'media' ? route.name : null,

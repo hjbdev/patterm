@@ -40,6 +40,8 @@ export function normaliseGitRemote(value: string): string | null {
 export class ProjectLinkService {
   constructor(private readonly database: DatabaseService, private readonly git: GitService, private readonly now: () => number = Date.now) {}
 
+  // Only repository projects link. Each host's Personal project is its own
+  // folder, so it shows on other hosts on its own instead.
   async projects(): Promise<LinkableProject[]> {
     const rows = this.database.connection.prepare(`select id, name, path from projects where kind = 'workspace' order by name collate nocase`).all() as Array<{ id: string; name: string; path: string }>;
     return Promise.all(rows.map(async (row) => {
