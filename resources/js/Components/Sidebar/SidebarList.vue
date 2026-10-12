@@ -24,7 +24,7 @@
             data-sidebar-block
             data-sidebar-slide
             :data-sidebar-group="entry.group"
-            class="relative transition-[margin] duration-200 ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none"
+            class="relative"
             :class="[draggingKey === entry.key && 'z-10 rounded-tab bg-[hsl(0_0%_12%)] shadow-lg', entry.gap]"
             @pointerdown="onPointerDown($event, entry.key)"
             @click.capture="consumeClick($event, entry.key)"
@@ -149,7 +149,7 @@ type Entry =
 const entries = computed<Entry[]>(() => groups.value.flatMap((group, groupIndex): Entry[] => [
   ...(group.label ? [{ kind: 'heading' as const, key: `heading:${group.id}`, label: group.label, count: group.tabs.length, first: groupIndex === 0 }]
     : groupIndex > 0 ? [{ kind: 'divider' as const, key: `divider:${group.id}` }] : []),
-  ...group.tabs.map((tab, index) => ({ kind: 'tab' as const, key: tab.key, tab, group: group.id, gap: index > 0 && gap(group.tabs, index) }))
+  ...group.tabs.map((tab, index) => ({ kind: 'tab' as const, key: tab.key, tab, group: group.id, gap: index > 0 && 'mt-0.5' }))
 ]));
 
 // When rows change group (a status settling, or pinning), measure them before
@@ -207,15 +207,6 @@ function subtitle(tab: AgentTab): string | null {
   if (waitingOn) return waitingOn;
   const summary = tab.family.root.session.summary;
   return summary && (expansion.state.value.summaries || expanded(tab)) ? summary.status || summary.text : null;
-}
-
-// Agents with a second line or open members get room around them; one-line
-// rows stay close together.
-function tall(tab: StripTab): boolean {
-  return tab.kind === 'agent' && (expanded(tab) || Boolean(subtitle(tab)));
-}
-function gap(tabs: StripTab[], index: number): string {
-  return tall(tabs[index]!) || tall(tabs[index - 1]!) ? 'mt-3' : 'mt-0.5';
 }
 
 const { onKeydown } = useSidebarKeys({ toggle: setExpanded, move: sidebar.moveTab });

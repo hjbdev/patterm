@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Keep sidebar row spacing consistent when agents expand or show status lines.
+
 ### Removed
 
 - Amp harness support, including terminal and Integrated launches, presets, MCP
