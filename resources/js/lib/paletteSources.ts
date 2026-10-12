@@ -1,6 +1,7 @@
 import { agentLabel } from './agentTabs';
 import { relativeTime } from './format';
 import { harnessLabel } from './harnesses';
+import { baseName } from './serverPath';
 import { timerLabel, timerRemaining } from './timers';
 import type { CommandDescriptor } from './commandPalette';
 import type { AgentInterface, ConversationRecord, ProjectWorkbench, TimerRecord, WorktreeRecord } from '../types';
@@ -151,7 +152,7 @@ export function presetLabel(preset: HarnessPreset | null | undefined): string {
 
 export function worktreeLabel(worktree: WorktreeRecord | null | undefined): string {
   if (!worktree) return 'Project directory';
-  return worktree.branch ?? worktree.worktreePath.split('/').filter(Boolean).at(-1) ?? worktree.id;
+  return worktree.branch ?? baseName(worktree.worktreePath) ?? worktree.id;
 }
 
 // Named as in the launch menu's toggle.

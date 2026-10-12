@@ -28,6 +28,7 @@ export interface TerminalKeyboardEventLike {
   metaKey: boolean;
   altKey: boolean;
   shiftKey: boolean;
+  getModifierState?(key: string): boolean;
   preventDefault(): void;
 }
 
@@ -175,7 +176,14 @@ export function isPasteShortcut(event: Pick<TerminalKeyboardEventLike, 'ctrlKey'
   return event.shiftKey && event.key === 'Insert';
 }
 
-export function keyToTerminalInput(event: Pick<TerminalKeyboardEventLike, 'key' | 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey'>): string | null {
+export function keyToTerminalInput(event: Pick<TerminalKeyboardEventLike, 'key' | 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey' | 'getModifierState'>): string | null {
+  // Chromium on Windows reports AltGr as Ctrl+Alt. Layouts that type [ \ ] { } @
+  // with AltGr would otherwise send control codes, so the character goes
+  // through text input instead.
+  if (event.key.length === 1 && event.getModifierState?.('AltGraph')) {
+    return null;
+  }
+
   const ctrlInput = controlKeyInput(event);
   if (ctrlInput) {
     return withAltPrefix(event, ctrlInput);

@@ -94,7 +94,7 @@ onBeforeUnmount(() => {
 .worktree-file-diff :deep(diffs-container) {
   --diffs-bg: hsl(var(--background));
   --diffs-bg-context-override: hsl(var(--background));
-  --diffs-font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --diffs-font-family: ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", Consolas, monospace;
   --diffs-header-font-family: var(--patterm-ui-font-family);
   --diffs-font-size: 12.5px;
   --diffs-line-height: 20px;

@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { actionCluster, createPaletteDocument, recordsRecent, rendererCommands, rankedCommands, withIntegratedSelectors, type CommandDescriptor } from '../resources/js/lib/commandPalette';
+import { baseName } from '../resources/js/lib/serverPath';
+import { worktreeName } from '../resources/js/lib/worktreeDiff';
 import { describeDuration } from '../resources/js/lib/timers';
 import { listCommandPaletteCommands, runCommandPaletteCommand } from '../app/Commands/CommandPalette';
 
@@ -17,6 +19,19 @@ assert.equal(crowded.filter(row => row.section === 'agent').length, 25, 'The ope
 assert.equal(crowded.at(-1)?.command.id, search.id);
 assert.deepEqual(rankedCommands([command('x', 'Switch to PAT-95')], 'stop'), [], 'Letters spread across words do not match');
 assert.equal(rankedCommands([command('x', 'Switch to PAT-95')], 'pat95').length, 1, 'Abbreviations inside one word still match');
+
+// Worktree labels come from server paths: a Windows one splits at backslashes, a POSIX one only at slashes.
+// (paletteSources.worktreeLabel and TranscriptImage use the same baseName.)
+assert.equal(baseName('/repo/.worktrees/feature/'), 'feature');
+assert.equal(baseName('C:\\repo\\.worktrees\\feature'), 'feature');
+assert.equal(baseName('C:\\repo\\.worktrees\\feature\\'), 'feature');
+assert.equal(baseName('C:/repo/.worktrees/feature'), 'feature');
+assert.equal(baseName('C:\\'), 'C:');
+assert.equal(baseName('/'), undefined);
+assert.equal(baseName('/srv/my repo'), 'my repo');
+assert.equal(baseName('shot.png'), 'shot.png');
+assert.equal(worktreeName({ branch: null, path: 'C:\\repo\\.worktrees\\detached\\' }), 'detached');
+assert.equal(worktreeName({ branch: null, path: '/repo/.worktrees/detached' }), 'detached');
 
 const project = { project: { id: 'p', name: 'Project', path: '/tmp/project' }, projectSessions: [], processes: [], worktrees: [], timers: [] };
 const application = { currentWorkbench: () => ({ projects: [project], harnesses: [] }) } as unknown as Parameters<typeof listCommandPaletteCommands>[0];

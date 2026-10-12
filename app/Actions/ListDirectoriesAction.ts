@@ -28,14 +28,20 @@ export interface DirectoryListing {
   truncated: boolean;
 }
 
+// On a Windows server the level above a drive root lists the drive letters.
+// Mirrors DRIVES_PATH in resources/js/lib/directoryPicker.
+export const DRIVES_PATH = '\\\\';
+
 // Lists the subdirectories of one server directory so the browser client can
 // pick a project path without a native dialog. Read-only.
 export class ListDirectoriesAction {
   constructor(private readonly home: string = os.homedir()) {}
 
   execute(input: ListDirectoriesInput): DirectoryListing {
+    const windows = process.platform === 'win32';
     const requested = input.path.trim();
-    const resolved = path.resolve(requested === '~' || requested === '' ? this.home : requested.replace(/^~(?=\/)/, this.home));
+    if (windows && requested === DRIVES_PATH) return this.listDrives(input.filter);
+    const resolved = path.resolve(requested === '~' || requested === '' ? this.home : requested.replace(windows ? /^~(?=[\\/])/ : /^~(?=\/)/, this.home));
 
     let stat: fs.Stats;
     try {
@@ -64,11 +70,23 @@ export class ListDirectoriesAction {
     const parent = path.dirname(resolved);
     return {
       path: resolved,
-      parent: parent === resolved ? null : parent,
+      // A drive root reaches the other drives; elsewhere the root has no parent.
+      parent: parent === resolved ? (windows ? DRIVES_PATH : null) : parent,
       home: this.home,
       entries,
       truncated: names.length > MAX_ENTRIES
     };
+  }
+
+  private listDrives(filter: string): DirectoryListing {
+    const needle = filter.toLowerCase();
+    const entries: DirectoryEntry[] = [];
+    for (let code = 65; code <= 90; code += 1) {
+      const name = `${String.fromCharCode(code)}:`;
+      if (needle && !name.toLowerCase().includes(needle)) continue;
+      if (isDirectory(`${name}\\`)) entries.push({ name, path: `${name}\\`, git: false });
+    }
+    return { path: DRIVES_PATH, parent: null, home: this.home, entries, truncated: false };
   }
 }
 

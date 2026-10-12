@@ -157,3 +157,11 @@ test('webgpu: device loss drops the shared device and reattaches mounted rendere
   assert.ok(harness.metrics().submittedVertices > 0, 'the renderer draws with the new device');
   renderer.dispose();
 });
+
+test('the default font stack falls back to Windows monospace fonts before the generic family', async () => {
+  const harness = await createRendererHarness(Renderer, { backend: 'webgl', cols: 16, rows: 4, capture: true });
+  harness.renderer.applyDamageFrame(snapshot(16, 4, 'variants'), 'p');
+  assert.ok(harness.glyphs.length > 0);
+  for (const [, font] of harness.glyphs) assert.match(font, /Menlo, "Cascadia Mono", Consolas, monospace$/);
+  harness.renderer.dispose();
+});

@@ -1,3 +1,5 @@
+import { baseName } from './serverPath';
+
 // Shapes returned by diff_current and diff_file, plus the pure
 // view helpers the worktree diff viewer shares. The service classifies files as
 // docs or tests; the viewer only filters and arranges them.
@@ -147,7 +149,7 @@ export function formatDiffCount(value: number): string {
 }
 
 export function worktreeName(worktree: { branch: string | null; path: string }): string {
-  return worktree.branch ?? worktree.path.split('/').filter(Boolean).at(-1) ?? worktree.path;
+  return worktree.branch ?? baseName(worktree.path) ?? worktree.path;
 }
 
 export function fileName(path: string): string {

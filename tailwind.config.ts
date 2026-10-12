@@ -60,7 +60,7 @@ export default {
       },
       fontFamily: {
         sans: ['var(--patterm-ui-font-family)', 'Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
-        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace']
+        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', '"Cascadia Mono"', 'Consolas', 'monospace']
       }
     }
   },
