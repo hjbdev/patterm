@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 
 // Removes a test directory. On Windows a just-stopped child or a closing SQLite
-// handle can hold a file for a moment (EBUSY/EPERM), so retry before giving up.
+// handle can hold a file for a moment (EBUSY/EPERM), and on a loaded CI runner
+// that moment lasts seconds, so retry for up to ten seconds before giving up.
 export function removeTree(target: string): void {
-  fs.rmSync(target, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  fs.rmSync(target, { recursive: true, force: true, maxRetries: 100, retryDelay: 100 });
 }
 
 // Creates a symlink, or returns false where the OS refuses (Windows without

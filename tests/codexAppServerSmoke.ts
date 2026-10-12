@@ -13,6 +13,7 @@ import type { IntegratedConversationEvent } from '../app/Services/IntegratedConv
 import { IntegratedAgentService } from '../app/Services/IntegratedAgentService';
 import { ipcPath } from '../app/Platform/Ipc';
 import { writeNodeCli } from './fixtures/IntegratedFakeCli';
+import { removeTree } from './fixtures/TempTree';
 
 // A turn/start reply can arrive in the same chunk as the turn's completion.
 // prompt() marks the turn active after awaiting the reply, which runs after
@@ -53,7 +54,7 @@ async function turnCompletedWithItsReply(): Promise<void> {
   } finally {
     client.close();
     server.close();
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   }
 }
 
@@ -81,7 +82,7 @@ async function main(): Promise<void> {
     assert.equal(projectCodexItem({ type: 'imageView', id: 'view', path: imageFile }, images)?.tool?.images?.[0]?.sha256, sha256, 'a viewed image is stored once by hash');
     assert.deepEqual(images.read(sha256), { mime: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==' });
     assert.equal(projectCodexItem({ type: 'imageView', id: 'missing', path: path.join(directory, 'gone.png') }, images)?.tool?.images, undefined, 'a missing file stays a plain read row');
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   }
   assert.deepEqual(projectCodexPlan({ threadId: 't', turnId: 'turn_1', explanation: 'Two steps', plan: [{ step: 'Read', status: 'completed' }, { step: 'Write', status: 'inProgress' }] }), {
     id: 'plan_turn_1', role: 'assistant', kind: 'tool', title: 'Plan', text: 'Two steps',
@@ -1026,7 +1027,7 @@ if (socketPath) {
   } finally {
     database.dispose();
     // Windows cannot remove a directory that an exiting host or CLI still runs in.
-    fs.rmSync(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+    removeTree(directory);
   }
 }
 
