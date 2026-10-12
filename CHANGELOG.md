@@ -99,8 +99,12 @@ in the archived pre-release repository.
   your next message to get a new one.
 - Idle agents are no longer re-read every interval just to find their recap
   unchanged.
-- Restarting an unnamed agent no longer freezes its placeholder name, such as
-  "Claude Code", over later titles. Names frozen this way are cleared.
+- Placeholder names such as "Claude Code" that earlier restarts froze over
+  later titles are cleared.
+- Claude Code history shows slash commands as typed, such as `/compact`,
+  instead of their `<command-name>` markup, and leaves out compaction
+  summaries. This also cleans up the older turns of a restarted or resumed
+  Integrated conversation. Claude Code history is reimported once.
 - In the browser, the folder picker opened from the New project dialog now
   appears above it instead of hidden underneath, which on phones covered it
   completely.

@@ -46,13 +46,14 @@ interface SourceSession {
   session_role: string;
   title_set_by_user: number;
   display_name: string | null;
+  last_title: string | null;
   name: string;
   activity: string | null;
 }
 
 const SOURCE_COLUMNS = `sessions.id as session_id, sessions.project_id, sessions.harness, sessions.model, sessions.reasoning, sessions.service_tier,
   sessions.cwd, sessions.worktree_id, sessions.resume_id, sessions.session_role, sessions.title_set_by_user,
-  sessions.display_name, processes.name, processes.activity, processes.id as process_id`;
+  sessions.display_name, sessions.last_title, processes.name, processes.activity, processes.id as process_id`;
 const WORKING = 'This agent is working, and restarting would stop its turn. Wait for it to finish or stop the response first.';
 const LIVE_INTEGRATED = `sessions.interface_mode = 'integrated' and sessions.exited_at is null and processes.status = 'running'`;
 
@@ -131,6 +132,8 @@ export class RestartAgentSessionAction {
       db.transaction(() => {
         db.prepare('update processes set parent_process_id = ? where parent_process_id = ?').run(launched.process_id, processId);
         if (source.title_set_by_user) db.prepare('update sessions set title_set_by_user = 1 where id = ?').run(launched.session_id);
+        // The resumed CLI may not report its title again until the next turn.
+        if (source.last_title) db.prepare('update sessions set last_title = ? where id = ?').run(source.last_title, launched.session_id);
       })();
       this.processes.transferTimers([processId], launched.process_id);
       this.processes.releaseTimers(held);
