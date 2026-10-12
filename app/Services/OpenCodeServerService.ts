@@ -1,9 +1,9 @@
-import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { commandLineTooLong, execFileResolved, resolveService } from '../Platform/ServiceProcess';
 import type { DatabaseService } from './DatabaseService';
 import { firstSemver, type McpServerSpec } from '../Harness/HarnessProvider';
 import { openCodeMcpConfigs } from '../Harness/McpDelivery';
@@ -17,7 +17,9 @@ import type { TranscriptImageRef, TranscriptImageStore } from './TranscriptImage
 // `opencode api` sends the JSON body as one argv entry: the kernel rejects any
 // single argument at or above 128 KiB (E2BIG) before the CLI starts. Managed
 // uploads bypass argv through the authenticated daemon; oversized CLI-only
-// text fails definitively instead of being truncated.
+// text fails definitively instead of being truncated. Windows has no
+// per-argument limit; it caps the whole command line instead (see
+// requestTooLarge).
 const MAX_ARGUMENT_BYTES = 131_072;
 // A native message listing echoes admitted base64 attachment content, so the
 // capture bound must cover realistic uploads (10 MiB raw -> ~13.4 MiB base64).
@@ -928,6 +930,8 @@ export class OpenCodeServerService {
   }
 
   private async discoverDaemon(): Promise<OpenCodeDaemon> {
+    // OpenCode reads xdg-basedir on every platform, so Windows keeps the
+    // registration at ~/.local/state/opencode/service.json, not under %LOCALAPPDATA%.
     const stateHome = this.env.XDG_STATE_HOME ?? path.join(os.homedir(), '.local', 'state');
     const filename = path.join(stateHome, 'opencode', 'service.json');
     let registration: unknown;
@@ -1472,13 +1476,20 @@ export class OpenCodeServerService {
 
   private async cliApi(executable: string, cwd: string, method: string, route: string, body?: unknown): Promise<unknown> {
     const payload = body === undefined ? undefined : JSON.stringify(body);
-    if (payload !== undefined && Buffer.byteLength(payload) >= MAX_ARGUMENT_BYTES) {
+    const args = ['api', method, route, ...(payload === undefined ? [] : ['--data', payload])];
+    if (payload !== undefined && this.requestTooLarge(executable, args, payload)) {
       throw new ProviderCommandError('The OpenCode request is too large for the native CLI transport; shorten the message or attach a file.', undefined, true);
     }
-    const args = ['api', method, route, ...(payload === undefined ? [] : ['--data', payload])];
     const stdout = await this.runCli(executable, cwd, args);
     try { return stdout.trim() ? JSON.parse(stdout) : null; }
     catch { throw new Error('OpenCode returned an invalid API response'); }
+  }
+
+  // POSIX rejects one argument at MAX_ARGUMENT_BYTES. Windows rejects a whole
+  // command line past its CreateProcess (or, through cmd.exe, shell) limit.
+  private requestTooLarge(executable: string, args: string[], payload: string): boolean {
+    if (process.platform !== 'win32') return Buffer.byteLength(payload) >= MAX_ARGUMENT_BYTES;
+    return commandLineTooLong(resolveService(executable, args, this.env));
   }
 
   private runtime(processId: string): { executable: string; cwd: string; resumeId: string; sessionId: string; model: string | null; reasoning: string | null } {
@@ -1499,7 +1510,7 @@ export class OpenCodeServerService {
   private runCli(executable: string, cwd: string, args: string[]): Promise<string> {
     return new Promise((resolve, reject) => {
       try {
-        execFile(executable, args, { cwd, env: this.env, timeout: 30_000, maxBuffer: MAX_RESPONSE_BYTES, windowsHide: true }, (error, stdout, stderr) => {
+        execFileResolved(executable, args, { cwd, env: this.env, timeout: 30_000, maxBuffer: MAX_RESPONSE_BYTES }, (error, stdout, stderr) => {
           // execFile errors contain argv, including the bridge credential. Never
           // expose those errors or an upstream config echo in logs/the renderer.
           const output = `${stdout}\n${stderr}`;
@@ -1619,11 +1630,20 @@ function openCodeActivity(value: unknown, sessionId: string): string | undefined
   return undefined;
 }
 
+// Windows defines no O_NOFOLLOW, and opening a link there always follows it, so
+// the file is checked with lstat first. Its mode bits are synthesised from the
+// read-only attribute, so the owner-only check below is POSIX-only too. What
+// protects the file on Windows is the data directory's ACL: it lives under the
+// user's profile (%LOCALAPPDATA%), which only that user, SYSTEM, and
+// administrators can open.
 function persistentBridgeToken(directory: string): string {
   const filename = path.join(directory, 'opencode-bridge-token');
   let descriptor: number;
   try {
-    descriptor = fs.openSync(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    if (process.platform === 'win32' && fs.lstatSync(filename, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      throw new Error('OpenCode bridge token must be an owner-only file');
+    }
+    descriptor = fs.openSync(filename, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     // The application runtime lock serialises creation. Keep this credential out
@@ -1643,7 +1663,7 @@ function persistentBridgeToken(directory: string): string {
   }
   try {
     const stat = fs.fstatSync(descriptor);
-    if (!stat.isFile() || (stat.mode & 0o077) !== 0 || (process.getuid && stat.uid !== process.getuid())) {
+    if (!stat.isFile() || (process.platform !== 'win32' && ((stat.mode & 0o077) !== 0 || (process.getuid && stat.uid !== process.getuid())))) {
       throw new Error('OpenCode bridge token must be an owner-only file');
     }
     const token = fs.readFileSync(descriptor, 'utf8');

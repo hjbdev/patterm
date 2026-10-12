@@ -1,10 +1,13 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { envValue } from '../Platform/Environment';
+import { userHome } from '../Platform/ServiceProcess';
 import { ClaudeHistoryAdapter } from './AgentHistory/ClaudeHistoryAdapter';
 
 // Claude writes every background task's output to
-// <tmp>/claude-<uid>/<project>/<session>/tasks/<task>.output. For a background
+// <tmp>/claude-<uid>/<project>/<session>/tasks/<task>.output, or on Windows to
+// %TEMP%\claude\<project>\<session>\tasks\<task>.output. For a background
 // agent that file links to its transcript at
 // <config>/projects/<project>/<session>/subagents/agent-<task>.jsonl, which
 // outlives the temporary directory. Shells write plain text.
@@ -42,18 +45,33 @@ export function readClaudeTaskOutput(location: ClaudeTaskLocation, taskId: strin
   return transcript(file, taskId, version, end);
 }
 
+// Claude Code appends `claude-<uid>` to CLAUDE_CODE_TMPDIR, or /tmp. Windows has
+// no uid, and Claude Code appends `claude` to CLAUDE_CODE_TMPDIR, or the user's
+// temp directory.
+function taskRoot(env: NodeJS.ProcessEnv): string {
+  const override = envValue(env, 'CLAUDE_CODE_TMPDIR');
+  if (process.platform !== 'win32') return path.join(override || '/tmp', `claude-${os.userInfo().uid}`);
+  return path.join(override || envValue(env, 'TEMP') || envValue(env, 'TMP') || os.tmpdir(), 'claude');
+}
+
 function taskFile(location: ClaudeTaskLocation, taskId: string): string | null {
-  const tmp = path.join(location.env.CLAUDE_CODE_TMPDIR || '/tmp', `claude-${os.userInfo().uid}`);
+  const tmp = taskRoot(location.env);
   const output = sessionFile(tmp, location, ['tasks', `${taskId}.output`]);
+  let empty: string | null = null;
   if (output) {
     try {
-      return fs.realpathSync(output);
+      const real = fs.realpathSync(output);
+      // Without symlink rights Windows leaves an agent's .output as an empty
+      // file instead of a link to its transcript, so look for the transcript.
+      if (process.platform !== 'win32' || real.endsWith('.jsonl') || fs.statSync(real).size > 0) return real;
+      empty = real;
     } catch {
       // A dangling link falls through to the transcript directory.
     }
   }
-  const config = location.env.CLAUDE_CONFIG_DIR || path.join(location.env.HOME || os.homedir(), '.claude');
-  return sessionFile(path.join(config, 'projects'), location, ['subagents', `agent-${taskId}.jsonl`]);
+  const config = envValue(location.env, 'CLAUDE_CONFIG_DIR') || path.join(process.platform === 'win32' ? userHome(location.env) : location.env.HOME || os.homedir(), '.claude');
+  const transcript = sessionFile(path.join(config, 'projects'), location, ['subagents', `agent-${taskId}.jsonl`]);
+  return transcript ?? empty;
 }
 
 // Claude names the project directory after the cwd with every other character

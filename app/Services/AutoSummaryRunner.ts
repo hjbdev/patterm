@@ -1,17 +1,30 @@
-import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { DatabaseService } from './DatabaseService';
+import { envValue } from '../Platform/Environment';
+import { linkOrCopy } from '../Platform/LinkedEntries';
+import { spawnResolved, stopChild, userHome } from '../Platform/ServiceProcess';
 import { SUMMARY_SYSTEM_PROMPT, SUMMARY_TEST_SYSTEM_PROMPT, summaryResult, type AutoSummarySettings, type SummaryContext, type SummaryResult } from './AutoSummarySettings';
 
 const REQUIRED_FLAGS = ['--print', '--tools', '--strict-mcp-config', '--mcp-config', '--disable-slash-commands', '--no-session-persistence', '--setting-sources', '--settings', '--system-prompt', '--output-format', '--no-chrome'];
 
+// Windows programs fail without these: SystemRoot for sockets and crypto, PATHEXT
+// and ComSpec to launch batch files, and the profile and temp locations that hold
+// native logins.
+const WINDOWS_ENVIRONMENT = ['SystemRoot', 'SystemDrive', 'windir', 'ComSpec', 'PATHEXT', 'USERNAME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH',
+  'APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP', 'ProgramData', 'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432', 'CommonProgramFiles',
+  'CommonProgramFiles(x86)', 'CommonProgramW6432', 'PROCESSOR_ARCHITECTURE'];
+
 export function summaryEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const result: NodeJS.ProcessEnv = {};
   // Preserve native login locations; exclude API keys, Patterm identities, and provider overrides.
-  for (const name of ['HOME', 'PATH', 'SHELL', 'LANG', 'LC_ALL', 'USER', 'LOGNAME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_OAUTH_TOKEN']) {
-    if (env[name] !== undefined) result[name] = env[name];
+  const names = ['HOME', 'PATH', 'SHELL', 'LANG', 'LC_ALL', 'USER', 'LOGNAME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_OAUTH_TOKEN'];
+  if (process.platform === 'win32') names.push(...WINDOWS_ENVIRONMENT);
+  // Windows spells PATH as `Path`; envValue finds it under either case.
+  for (const name of names) {
+    const value = envValue(env, name);
+    if (value !== undefined) result[name] = value;
   }
   result.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
   return result;
@@ -46,15 +59,39 @@ export function codexSummaryArgs(model: string, directory: string, reasoning: st
 }
 
 export async function codexSummaryEnvironment(directory: string, env: NodeJS.ProcessEnv): Promise<NodeJS.ProcessEnv> {
-  const authFile = path.resolve(env.CODEX_HOME ?? path.join(env.HOME ?? os.homedir(), '.codex'), 'auth.json');
+  const authFile = path.resolve(env.CODEX_HOME ?? path.join(userHome(env), '.codex'), 'auth.json');
   try { await fs.access(authFile); }
   catch { throw new Error('Summary requires Codex file-based ChatGPT login. Run codex -c cli_auth_credentials_store="file" login.'); }
   const home = path.join(directory, 'codex');
   await fs.mkdir(home, { mode: 0o700 });
   // Codex's file auth store writes through this link, so native token refresh is retained.
   // Link only auth.json: global AGENTS.md and user configuration stay outside this home.
-  await fs.symlink(authFile, path.join(home, 'auth.json'));
+  if (process.platform === 'win32') {
+    // Symlinks need Developer Mode on Windows. A hard link shares the file as a
+    // symlink does. Across volumes it is a copy, whose refreshed tokens are
+    // written back by finishCodexSummaryHome.
+    const link = path.join(home, 'auth.json');
+    if (!linkOrCopy(authFile, link)) copiedAuth.set(directory, { source: authFile, original: await fs.readFile(link) });
+  } else {
+    await fs.symlink(authFile, path.join(home, 'auth.json'));
+  }
   return { ...env, CODEX_HOME: home };
+}
+
+// Codex home auth files that are copies, by summary directory.
+const copiedAuth = new Map<string, { source: string; original: Buffer }>();
+
+// Returns tokens Codex refreshed in a copied auth.json to the user's file, in
+// place as Codex itself writes it. A file changed meanwhile by another Codex is
+// left alone: refresh tokens rotate, so the newer login is the valid one.
+export async function finishCodexSummaryHome(directory: string): Promise<void> {
+  const copy = copiedAuth.get(directory);
+  if (!copy) return;
+  copiedAuth.delete(directory);
+  try {
+    const current = await fs.readFile(path.join(directory, 'codex', 'auth.json'));
+    if (!current.equals(copy.original) && (await fs.readFile(copy.source)).equals(copy.original)) await fs.writeFile(copy.source, current);
+  } catch { /* The login is unchanged, or the next run refreshes it again. */ }
 }
 
 export function codexSummaryOutput(output: string): string {
@@ -144,6 +181,7 @@ export class AutoSummaryRunner {
       try { return summaryResult.parse(JSON.parse(result)); }
       catch { throw new Error('Summariser did not return a short summary in the required format.'); }
     } finally {
+      await finishCodexSummaryHome(directory);
       // Only this invocation's freshly created, private directory is removed.
       await fs.rm(directory, { recursive: true, force: true });
     }
@@ -158,16 +196,14 @@ export class AutoSummaryRunner {
 export function runSummaryCommand(executable: string, args: string[], input: string, cwd: string, env: NodeJS.ProcessEnv, signal: AbortSignal, limit = 16 * 1024): Promise<string> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) { reject(new Error('Summary cancelled.')); return; }
-    const child = spawn(executable, args, { cwd, env, shell: false, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
+    const child = spawnResolved(executable, args, { cwd, env, shell: false, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
     const chunks: Buffer[] = [];
     let size = 0;
     let failure: Error | null = null;
     const stop = (message: string) => {
       failure ??= new Error(message);
-      try {
-        if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, 'SIGKILL');
-        else child.kill('SIGKILL');
-      } catch { /* The owned process may already have exited. */ }
+      // POSIX ends the detached process group; Windows ends the process tree.
+      stopChild(child, 'SIGKILL', true);
     };
     const abort = () => stop('Summary cancelled.');
     const timer = setTimeout(() => stop('Summary timed out.'), 30_000);

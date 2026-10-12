@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { resolveService } from '../Platform/ServiceProcess';
 
 const execFileAsync = promisify(execFile);
 const MAX_OUTPUT_BYTES = 32 * 1024 * 1024;
@@ -19,10 +20,13 @@ export class GitError extends Error {
 export class GitService {
   async run(cwd: string, args: string[]): Promise<GitResult> {
     try {
-      const { stdout, stderr } = await execFileAsync('git', args, {
+      const git = resolveService('git', args);
+      const { stdout, stderr } = await execFileAsync(git.command, git.args, {
         cwd,
         encoding: 'utf8',
-        maxBuffer: MAX_OUTPUT_BYTES
+        maxBuffer: MAX_OUTPUT_BYTES,
+        windowsHide: true,
+        windowsVerbatimArguments: git.verbatim
       });
       return { stdout, stderr };
     } catch (error) {
@@ -44,7 +48,8 @@ export class GitService {
   // Raw bytes, for blob contents that may not be text.
   async buffer(cwd: string, args: string[], maxBuffer = MAX_OUTPUT_BYTES): Promise<Buffer> {
     try {
-      const { stdout } = await execFileAsync('git', args, { cwd, encoding: 'buffer', maxBuffer });
+      const git = resolveService('git', args);
+      const { stdout } = await execFileAsync(git.command, git.args, { cwd, encoding: 'buffer', maxBuffer, windowsHide: true, windowsVerbatimArguments: git.verbatim });
       return stdout;
     } catch (error) {
       // Never echo partial file contents into an error message.

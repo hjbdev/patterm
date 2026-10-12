@@ -415,9 +415,13 @@ async function lstatIfExists(target: string) {
 }
 
 // O_NOFOLLOW refuses a symlink swapped in after lstat; O_NONBLOCK keeps a
-// swapped-in FIFO from blocking.
+// swapped-in FIFO from blocking. Windows defines neither (it has no FIFOs, and
+// opening a link there always follows it), so the caller's lstat is the only
+// guard against a link swapped in afterwards. Callers pass regular files only.
+const READ_FLAGS = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0);
+
 async function readPrefix(file: string, length: number): Promise<Buffer> {
-  const handle = await fs.open(file, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
+  const handle = await fs.open(file, READ_FLAGS);
   try {
     const buffer = Buffer.alloc(length);
     let offset = 0;

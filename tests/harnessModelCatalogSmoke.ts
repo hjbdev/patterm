@@ -67,15 +67,26 @@ async function main(): Promise<void> {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-models-'));
   const binDir = path.join(tempDir, 'bin');
   fs.mkdirSync(binDir);
-  const codexPath = path.join(binDir, 'codex');
-  fs.writeFileSync(codexPath, `#!/bin/sh\ncat <<'CATALOG'\n${JSON.stringify(CODEX_CATALOG)}\nCATALOG\n`);
-  fs.chmodSync(codexPath, 0o755);
+  // POSIX runs a shell script. Windows cannot, so the same fake is a node script
+  // behind an npm-style .cmd shim, which also exercises the shim resolution.
+  const fake = (name: string, shell: string, script: string): string => {
+    const file = path.join(binDir, name);
+    if (process.platform !== 'win32') {
+      fs.writeFileSync(file, shell);
+      fs.chmodSync(file, 0o755);
+      return file;
+    }
+    fs.writeFileSync(`${file}.cjs`, script);
+    fs.writeFileSync(`${file}.cmd`, `@ECHO off\r\n"%~dp0\\${name}.cjs" %*\r\n`);
+    return `${file}.cmd`;
+  };
+  const codexPath = fake('codex', `#!/bin/sh\ncat <<'CATALOG'\n${JSON.stringify(CODEX_CATALOG)}\nCATALOG\n`,
+    `console.log(${JSON.stringify(JSON.stringify(CODEX_CATALOG))});\n`);
 
   // Fake Claude answers the initialize control request, then waits for stdin.
-  const claudePath = path.join(binDir, 'claude');
   const initializeReply = JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: 'patterm_models', response: CLAUDE_INITIALIZE } });
-  fs.writeFileSync(claudePath, `#!/bin/sh\nread line\ncat <<'REPLY'\n${initializeReply}\nREPLY\ncat >/dev/null\n`);
-  fs.chmodSync(claudePath, 0o755);
+  const claudePath = fake('claude', `#!/bin/sh\nread line\ncat <<'REPLY'\n${initializeReply}\nREPLY\ncat >/dev/null\n`,
+    `process.stdin.once('data', () => console.log(${JSON.stringify(initializeReply)}));\nprocess.stdin.resume();\n`);
 
   const database = new DatabaseService(path.join(tempDir, 'app-data'));
   database.initialize();
@@ -117,8 +128,11 @@ async function main(): Promise<void> {
     assert.deepEqual(settings.harnessModelCatalog(), catalog, 'catalog is cached in settings');
 
     // A failing provider keeps the previous models and records the error.
-    fs.writeFileSync(codexPath, '#!/bin/sh\nexit 1\n');
-    fs.chmodSync(codexPath, 0o755);
+    if (process.platform === 'win32') fs.writeFileSync(path.join(binDir, 'codex.cjs'), 'process.exit(1);\n');
+    else {
+      fs.writeFileSync(codexPath, '#!/bin/sh\nexit 1\n');
+      fs.chmodSync(codexPath, 0o755);
+    }
     const stale = await service.refresh();
     assert.deepEqual(stale.providers.codex?.models.map((model) => model.id), ['gpt-visible'], 'previous codex models survive a failed refresh');
     assert.match(stale.providers.codex?.error ?? '', /failed/);
