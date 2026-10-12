@@ -6,6 +6,50 @@ Electron or through a browser connected to a Linux background service.
 Native CLI permissions, delegation, messaging, reports, timers, and resume IDs
 remain part of each agent's workflow.
 
+Run Claude Code, Codex, OpenCode, and Amp alongside each other, with their native
+terminal interfaces or Patterm's Integrated conversation view. Keep each project's
+worktrees, local diffs, notes, and agent handoffs together. A background service
+keeps agents running when you close the browser; Tailscale can provide private
+access from your other devices.
+
+![Patterm workspace with a native terminal](docs/images/patterm-workspace.png)
+
+*A demo project with synthetic data.*
+
+## Quick start
+
+On Linux x64 or arm64 with systemd:
+
+```sh
+curl -fsSL https://github.com/hjbdev/patterm/releases/latest/download/install.sh | bash
+patterm
+```
+
+Install and sign into the agent CLIs you want to use separately. Add a project
+folder in Patterm, then choose a CLI from **Launch agent**. The release bundles
+Node, Electron, and the terminal engine; Node, pnpm, and Rust are only needed
+to build from source.
+
+For the background browser service, run `patterm --headless`, then open
+`http://localhost:8787` on that machine. See [Installation and updates](#installation-and-updates)
+below and [Linux background service](#linux-background-service) for private access
+from another device.
+
+## v0.1 support and limitations
+
+- Release packages support Linux x64 and arm64 with systemd. macOS and Windows
+  are not supported by this release. The desktop app needs a graphical session
+  and Electron's system libraries.
+- Patterm runs CLIs with your user account's permissions. Each CLI keeps its own
+  authentication and approval workflow.
+- Browser disconnection leaves agents running. A machine reboot requires explicit
+  native resume; Patterm does not automatically resume agents after reboot.
+- Local files and conversation history stay on the hosting machine. Optional
+  automatic summaries send selected text through your configured CLI; read
+  [the summary documentation](docs/automatic-summaries.md) before enabling them.
+
+## Project context
+
 Open **Todos** or **Scratchpads** from the project toolbar. Todos support priority,
 status, assignees, and blockers. Assignments describe responsibility; expiring
 leases identify active work. The user can revoke a lease. Completing a todo releases
@@ -51,7 +95,7 @@ List reads omit note bodies. Scratchpad reads return up to 200 lines by default
 (1,000 maximum per request); paginate and verify matching revisions before editing
 a complete document. Titles allow 500 characters and bodies allow 262,144.
 
-## Install
+## Installation and updates
 
 Patterm releases run on Linux (x64 and arm64) with systemd. They bundle their
 own Node and Electron, so you don't need Node, pnpm, or Rust. Install the latest
@@ -111,8 +155,8 @@ node --test tests/serviceInstallerSmoke.mjs
 
 `build:server` compiles the Node application, renderer, MCP shim, and release
 Rust sidecar. `start:server` runs the built server. For desktop development,
-use `pnpm run dev`; `pnpm run build` builds desktop artefacts. Existing
-Install the desktop app and background server with `./install.sh`. Launch the GUI
+use `pnpm run dev`; `pnpm run build` builds desktop artefacts.
+Install the desktop app and background server from source with `./install.sh`. Launch the GUI
 with `patterm`, or start the systemd user service without a window:
 
 ```sh

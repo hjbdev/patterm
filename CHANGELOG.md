@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-The first public release, planned as 0.1.0. Earlier development history stays
+## [0.1.0] - 2026-10-12
+
+The first public release. Earlier development history stays
 in the archived pre-release repository.
 
 ### Added
