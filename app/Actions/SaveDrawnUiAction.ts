@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathContains } from '../Platform/PathIdentity';
 import { figureToken, parseDrawnUi } from '../Services/DrawnUi';
 import type { TranscriptImageStore } from '../Services/TranscriptImageStore';
 
@@ -45,7 +46,7 @@ export class SaveDrawnUiAction {
       const real = fs.realpathSync(file);
       return roots.some((root) => {
         const base = fs.realpathSync(root);
-        return real === base || real.startsWith(`${base}${path.sep}`);
+        return pathContains(base, real);
       }) ? real : null;
     } catch {
       return null;

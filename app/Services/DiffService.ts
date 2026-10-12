@@ -2,6 +2,7 @@ import { constants as fsConstants, existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
+import { slashPath, storedPath } from '../Platform/PathIdentity';
 import { GitService } from './GitService';
 import type { WorktreeService } from './WorktreeService';
 
@@ -186,7 +187,7 @@ export class DiffService {
       this.query(cwd, ['symbolic-ref', '-q', '--short', 'HEAD']),
       scope === 'branch' ? this.query(cwd, ['symbolic-ref', '-q', 'refs/remotes/origin/HEAD']) : null
     ]);
-    const root = toplevel.trim() || cwd;
+    const root = storedPath(toplevel.trim() || cwd);
     const headCommit = head?.trim() || null;
     const base = !headCommit
       ? { ref: null, commit: await this.emptyTree(root) }
@@ -399,7 +400,8 @@ function relativeDiffPath(value: string): string {
     throw new Error('path must be relative to the worktree root');
   }
   if (value.split(/[\\/]/).includes('..')) throw new Error('path must not contain ".." segments');
-  return value;
+  // Git reports changed files with `/`, which an agent on Windows may not type.
+  return slashPath(value);
 }
 
 // Resolves the parent directory, so a symlinked directory cannot lead
