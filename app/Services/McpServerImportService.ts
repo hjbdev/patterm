@@ -1,8 +1,9 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { parse as parseJsonc } from 'jsonc-parser';
 import { parse as parseToml } from 'smol-toml';
+import { envValue } from '../Platform/Environment';
+import { userHome } from '../Platform/ServiceProcess';
 import type { McpHarness, McpServerInput, McpServerRegistry } from './McpServerRegistry';
 
 // Reads each harness's own MCP configuration and adds servers the registry
@@ -39,7 +40,7 @@ export class McpServerImportService {
 
   constructor(private readonly registry: Pick<McpServerRegistry, 'findByName' | 'save'>, options: McpImportOptions = {}) {
     this.env = options.env ?? process.env;
-    this.home = options.home ?? this.env.HOME ?? os.homedir();
+    this.home = options.home ?? userHome(this.env);
   }
 
   discover(): { candidates: McpImportCandidate[]; skipped: McpImportSkip[] } {
@@ -145,18 +146,18 @@ function convert(harness: McpHarness, name: string, raw: unknown, env: NodeJS.Pr
     if (harness === 'claude' && (entry.type === 'sse' || entry.type === 'ws')) return `${String(entry.type).toUpperCase()} servers are not supported by every harness`;
     if (harness === 'codex') {
       for (const [header, variable] of Object.entries(stringRecord(entry.env_http_headers))) {
-        const value = env[variable];
+        const value = envValue(env, variable);
         if (value === undefined) return `Header ${header} reads ${variable}, which is not set`;
         headers[header] = value;
       }
       const bearer = string(entry.bearer_token_env_var);
       if (bearer) {
-        const value = env[bearer];
+        const value = envValue(env, bearer);
         if (value === undefined) return `The bearer token variable ${bearer} is not set`;
         headers.Authorization = `Bearer ${value}`;
       }
       for (const variable of strings(entry.env_vars)) {
-        const value = env[variable];
+        const value = envValue(env, variable);
         if (value !== undefined) environment[variable] = value;
       }
     }

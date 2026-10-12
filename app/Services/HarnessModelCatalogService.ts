@@ -1,4 +1,3 @@
-import { execFile, spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -10,6 +9,7 @@ import {
   type HarnessModelCatalog,
   type HarnessProviderCatalog
 } from '../Harness/ModelCatalog';
+import { execFileResolved, spawnResolved, stopChild } from '../Platform/ServiceProcess';
 import type { DatabaseService } from './DatabaseService';
 import type { DebugLogService } from './DebugLogService';
 import type { OpenCodeServerService } from './OpenCodeServerService';
@@ -159,17 +159,17 @@ export class HarnessModelCatalogService {
   // and the session is not persisted.
   private initializeClaude(executable: string, timeoutMs: number): Promise<unknown> {
     return new Promise((resolve, reject) => {
-      const child = spawn(executable, [
+      const child = spawnResolved(executable, [
         '-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json',
         '--no-session-persistence', '--strict-mcp-config'
-      ], { env: this.deps.env, cwd: os.homedir(), stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
+      ], { env: this.deps.env, cwd: os.homedir(), stdio: ['pipe', 'pipe', 'ignore'] });
       let buffer = '';
       let settled = false;
       const finish = (error: Error | null, value?: unknown): void => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        child.kill('SIGTERM');
+        stopChild(child, 'SIGTERM');
         if (error) reject(error);
         else resolve(value);
       };
@@ -200,10 +200,10 @@ export class HarnessModelCatalogService {
 
   private run(executable: string, args: string[], timeoutMs: number): Promise<string> {
     return new Promise((resolve, reject) => {
-      execFile(
+      execFileResolved(
         executable,
         args,
-        { env: this.deps.env, cwd: os.homedir(), timeout: timeoutMs, maxBuffer: CODEX_OUTPUT_LIMIT, windowsHide: true },
+        { env: this.deps.env, cwd: os.homedir(), timeout: timeoutMs, maxBuffer: CODEX_OUTPUT_LIMIT },
         (error, stdout) => {
           if (error) {
             // execFile errors echo argv and provider diagnostics; keep them out of logs and IPC.

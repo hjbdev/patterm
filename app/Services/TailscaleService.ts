@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFileResolved } from '../Platform/ServiceProcess';
 
 // Runs the tailscale CLI. Tests pass a fake, so they never change real routes.
 export type TailscaleRunner = (args: string[]) => Promise<string>;
@@ -10,7 +10,7 @@ export interface TailscaleState {
 }
 
 const defaultRunner: TailscaleRunner = (args) => new Promise((resolve, reject) => {
-  execFile('tailscale', args, { timeout: 15_000, encoding: 'utf8' }, (error, stdout, stderr) => {
+  execFileResolved('tailscale', args, { timeout: 15_000 }, (error, stdout, stderr) => {
     if (error) reject(new Error(`tailscale ${args.join(' ')} failed: ${(stderr || error.message).trim()}`));
     else resolve(stdout);
   });
