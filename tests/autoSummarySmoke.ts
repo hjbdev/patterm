@@ -221,6 +221,17 @@ async function main() {
     db.prepare("update processes set activity = 'idle' where id = 'busy'").run();
     await advance(); await advance(2000); assert.equal(calls.length, beforeBusy + 2);
 
+    // An unchanged multi-chunk source must not strand its small final slice
+    // while the agent remains active: each queued slice gets a batching clock.
+    add('working-tail'); message('working-tail', 0, 'user', 'w'.repeat(17_000)); index.publish('working-tail');
+    db.prepare("update processes set activity = 'working' where id = 'working-tail'").run();
+    service.userInput('working-tail'); const beforeTail = calls.length; await discover(); await advance();
+    assert.equal(calls.length, beforeTail + 2); assert.ok(state('working-tail').byte_offset > 16_000);
+    await advance(); await advance(59_999); assert.equal(calls.length, beforeTail + 2, 'small final slice is batched');
+    await advance(1); assert.equal(calls.length, beforeTail + 3);
+    assert.equal(state('working-tail').position, 1); assert.equal(state('working-tail').byte_offset, 0);
+    assert.equal(summary('working-tail').auto_summary_coverage, 'complete');
+
     // Real OpenCode SQLite parts remain outside coverage until native completion.
     add('stream'); db.prepare("update sessions set harness = 'opencode' where id = 'stream-session'").run();
     hdb.prepare("update conversations set provider = 'opencode' where id = 'stream'").run();

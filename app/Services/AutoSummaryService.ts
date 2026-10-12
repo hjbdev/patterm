@@ -161,9 +161,9 @@ export class AutoSummaryService {
             const state = reader.state(thread, source);
             this.setCoverage(thread.id, reader.coverage(source, state));
             if (state.stale || state.paused || state.position >= source.message_count && state.byte_offset === 0) return null;
+            pending.batchStarted ??= now;
             if (source.revision !== pending.sourceRevision) {
               pending.sourceRevision = source.revision; pending.changed = now;
-              pending.batchStarted ??= now;
             }
             if (now - pending.changed < 2000) return null;
             return reader.batch(source, state, this.context(thread));
