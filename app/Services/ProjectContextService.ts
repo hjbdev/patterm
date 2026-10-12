@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { DatabaseService } from './DatabaseService';
 import type { TimelineService } from './TimelineService';
+import { isUserProjectKind } from './PersonalProject';
 
 export interface ContextActor { projectId: string; actorId: string; sessionId: string | null }
 export interface Page { limit: number; offset: number }
@@ -48,7 +49,7 @@ export class ProjectContextService {
       // project they name. They have no session there, so nothing links to them.
       if (session.session_role === 'assistant' || session.session_role === 'routine') {
         const project = projectId ? this.db.prepare(`select kind from projects where id=?`).get(projectId) as { kind: string } | undefined : undefined;
-        if (!project || project.kind !== 'workspace') throw new Error(`${session.session_role === 'routine' ? 'A workspace routine' : 'The assistant'} must pass a workspace project_id`);
+        if (!isUserProjectKind(project?.kind)) throw new Error(`${session.session_role === 'routine' ? 'A workspace routine' : 'The assistant'} must pass a workspace project_id`);
         return { projectId: projectId!, actorId: session.id, sessionId: null };
       }
       if (projectId && projectId !== session.project_id) throw new Error('Project is outside the caller scope');

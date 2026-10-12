@@ -6,6 +6,7 @@ import path from 'node:path';
 import { CreateProjectAction } from '../app/Actions/CreateProjectAction';
 import { ListDirectoriesAction, listDirectoriesInput } from '../app/Actions/ListDirectoriesAction';
 import { DatabaseService } from '../app/Services/DatabaseService';
+import { ensurePersonalProject, PERSONAL_PROJECT_ID } from '../app/Services/PersonalProject';
 import { TimelineService } from '../app/Services/TimelineService';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import type { TerminalService } from '../app/Services/TerminalService';
@@ -118,6 +119,15 @@ async function main(): Promise<void> {
     assert.equal(narrowed.truncated, false);
     const viaTool = (await registry.call('fs_directories', { path: browseRoot })) as { entries: unknown[] };
     assert.equal(viaTool.entries.length, 3, 'the registry exposes patterm.fs.directories');
+
+    // The Personal project lives in the data directory, is listed first, and
+    // is created once however often startup ensures it.
+    ensurePersonalProject(database, tempDir);
+    ensurePersonalProject(database, tempDir);
+    const personalDir = path.join(tempDir, 'personal');
+    assert.equal(fs.statSync(personalDir).mode & 0o777, 0o700, 'the Personal directory is private');
+    assert.deepEqual(repo.listProjects()[0], { id: PERSONAL_PROJECT_ID, name: 'Personal', path: personalDir, logo: null, kind: 'personal' });
+    assert.equal(repo.listProjects().filter((project) => project.kind === 'personal').length, 1, 'one Personal project');
 
     database.dispose();
     // eslint-disable-next-line no-console

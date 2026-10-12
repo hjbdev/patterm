@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A Personal project for agents that belong to no repository. It is listed
+  first, works in a private folder in Patterm's data directory, and has no
+  Worktrees page. The assistant and workspace routines can work in it.
+
 ## [0.1.0] - 2026-10-12
 
 The first public release. Earlier development history stays

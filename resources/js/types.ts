@@ -10,6 +10,8 @@ export interface ProjectSummary {
   name: string;
   path: string;
   logo?: string | null;
+  // 'personal' marks the Personal project, which is not a repository.
+  kind?: 'workspace' | 'personal' | 'assistant';
   // The paired host that owns a record, which then has a host-qualified ID
   // such as `workstation:process_7`. Absent for this host's own records.
   host?: string;
