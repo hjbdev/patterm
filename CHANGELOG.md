@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Codex agents run through named pipes, with Codex's app-server on stdio.
   Project, worktree, and history paths compare without regard to case or
   slash direction. Desktop data lives in `%LOCALAPPDATA%`. CI also runs on
-  Windows.
+  Windows and builds a portable Windows zip, which pre-releases attach.
 - An optional Personal project for agents that belong to no repository. Turn
   it on in Settings › Appearance › Navigation. It is listed first, works in a
   private folder in Patterm's data directory, has no Worktrees page, and never

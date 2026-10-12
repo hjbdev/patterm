@@ -40,9 +40,9 @@ from another device.
 - Release packages support Linux x64 and arm64 with systemd. macOS is not
   supported. The desktop app needs a graphical session and Electron's system
   libraries.
-- On Windows 10 or 11, the desktop app runs from source (see
-  [Windows](#windows)). There is no Windows release package, background
-  service, or Tailscale setup yet.
+- On Windows 10 or 11, the desktop app runs from source or from a portable zip
+  attached to pre-releases (see [Windows](#windows)). There is no Windows
+  installer, updater, background service, or Tailscale setup yet.
 - Patterm runs CLIs with your user account's permissions. Each CLI keeps its own
   authentication and approval workflow.
 - Browser disconnection leaves agents running. A machine reboot requires explicit
@@ -229,6 +229,15 @@ Integrated Codex agents talk to `codex app-server` over stdio on Windows.
 
 Some tests create symbolic links and skip those checks unless Windows allows
 it (Developer Mode or an elevated shell).
+
+Pre-releases attach `patterm-<version>-windows-x64.zip`, and each CI run
+uploads the same build as an artifact. Unzip it anywhere and run `Patterm.cmd`.
+Build one locally after `pnpm run build:main`, `build:renderer`, `build:mcp`,
+and `build:sidecar:release`:
+
+```powershell
+node scripts/release/package-windows.mjs --version 0.1.0-local.1 --sidecar native/terminal-core/target/release/patterm-terminal-core.exe --out release
+```
 
 ### OpenCode
 

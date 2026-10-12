@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { CreateProjectAction } from '../app/Actions/CreateProjectAction';
-import { ListDirectoriesAction, listDirectoriesInput } from '../app/Actions/ListDirectoriesAction';
+import { DRIVES_PATH, ListDirectoriesAction, listDirectoriesInput } from '../app/Actions/ListDirectoriesAction';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { ensurePersonalProject, PERSONAL_PROJECT_ID } from '../app/Services/PersonalProject';
 import type { GitService } from '../app/Services/GitService';
@@ -124,7 +124,8 @@ async function main(): Promise<void> {
     assert.deepEqual(listing.entries.map((entry) => [entry.name, entry.git]), [...linkEntries.map((name) => [name, false]), ['repo9', false], ['repo10', true]], 'directories and directory links only, numeric order, hidden skipped');
     assert.deepEqual(lister.execute(listDirectoriesInput.parse({ path: '~', show_hidden: true })).entries.map((entry) => entry.name), ['.hidden', ...linkEntries, 'repo9', 'repo10'], '~ is home; hidden folders on request');
     assert.equal(lister.execute(listDirectoriesInput.parse({ path: '~/repo10' })).path, path.join(browseRoot, 'repo10'), '~/ expands');
-    assert.equal(lister.execute(listDirectoriesInput.parse({ path: '/' })).parent, null, 'the root has no parent');
+    // A Windows drive root leads up to the list of drives.
+    assert.equal(lister.execute(listDirectoriesInput.parse({ path: '/' })).parent, process.platform === 'win32' ? DRIVES_PATH : null, 'the root has no parent');
     assert.throws(() => lister.execute(listDirectoriesInput.parse({ path: path.join(browseRoot, 'notes.txt') })), /not a directory/);
     assert.throws(() => lister.execute(listDirectoriesInput.parse({ path: path.join(browseRoot, 'missing') })), /does not exist/);
     const bulkRoot = path.join(tempDir, 'bulk');
