@@ -4,7 +4,7 @@ import type { DatabaseService } from './DatabaseService';
 
 // Global MCP servers that Patterm passes to every harness at launch. Names
 // stay the user's own so tool names and permission rules keep matching.
-export const MCP_HARNESSES = ['claude', 'codex', 'opencode', 'amp'] as const;
+export const MCP_HARNESSES = ['claude', 'codex', 'opencode'] as const;
 export type McpHarness = typeof MCP_HARNESSES[number];
 
 const name = z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/, 'Use 1–64 letters, digits, hyphens, or underscores')

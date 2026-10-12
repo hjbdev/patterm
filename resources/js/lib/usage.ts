@@ -45,8 +45,8 @@ export interface UsageSummary {
   skills: UsageSkill[];
 }
 
-export const HARNESSES = ['claude', 'codex', 'opencode', 'amp'] as const;
-export const HARNESS_LABELS: Record<string, string> = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', amp: 'Amp' };
+export const HARNESSES = ['claude', 'codex', 'opencode'] as const;
+export const HARNESS_LABELS: Record<string, string> = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' };
 
 // Fresh work the model processed: everything except cache reads, which are
 // cheap and dwarf the rest.

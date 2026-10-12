@@ -75,7 +75,6 @@
                 <p class="mt-2 text-[11px] text-muted-foreground/80">
                   {{ summary.totals.responses.toLocaleString() }} model responses. API prices are pay-as-you-go list rates, which your subscriptions replace; OpenCode's own figures cover models without one.
                   <template v-if="unpricedModels.length">{{ compactTokens(summary.totals.unpricedTokens) }} tokens from {{ unpricedModels.join(', ') }} have no public price and are left out.</template>
-                  Amp transcripts do not record tokens.
                 </p>
 
                 <div v-if="summary.days > 1" class="mt-6">

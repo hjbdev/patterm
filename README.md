@@ -6,7 +6,7 @@ Electron or through a browser connected to a Linux background service.
 Native CLI permissions, delegation, messaging, reports, timers, and resume IDs
 remain part of each agent's workflow.
 
-Run Claude Code, Codex, OpenCode, and Amp alongside each other, with their native
+Run Claude Code, Codex, and OpenCode alongside each other, with their native
 terminal interfaces or Patterm's Integrated conversation view. Keep each project's
 worktrees, local diffs, notes, and agent handoffs together. A background service
 keeps agents running when you close the browser; Tailscale can provide private
@@ -232,22 +232,6 @@ Run `pnpm run test:opencode` for the bridge regressions, or set
 `PATTERM_TEST_OPENCODE` to the absolute binary path for temporary-only shared-server
 acceptance tests without model calls.
 
-### Amp
-
-Install `amp` on the service account's `PATH` and sign in using the native CLI.
-Select **TUI** or **Integrated** before launching Amp. Patterm creates a native Amp thread, stores
-its `T-…` ID for exact resume, and passes its session-scoped MCP server through
-`--mcp-config`. Integrated uses Amp's execute JSON stream for the transcript,
-tool calls, and messages, without replacing Amp's authentication or settings.
-Amp denies configured `ask` rules in execute mode instead of requesting approval
-through Patterm; use **TUI** if you need interactive permission prompts.
-Patterm prefixes prompts it sends to Amp with session orientation;
-prompts typed in Amp's TUI use its native `AGENTS.md` guidance and can call
-`session_context` for current Patterm assignments. Enable the discovered Amp
-source under **Settings > History** to import project threads through the native
-CLI. Imports keep the redacted transcript in Patterm and use Amp's `T-…` ID for
-exact resume. Amp sources sync at startup, on manual import, and after an Amp
-session exits; they do not use filesystem watching.
 
 ## Linux background service
 
@@ -783,7 +767,7 @@ fails when the file is out of date, or when a dependency has no licence, no
 licence file, or a copyleft licence that needs review. Add missing licence texts
 to `scripts/third-party-licences/`.
 
-Claude Code, Codex, opencode, and Amp are trademarks of their respective
+Claude Code, Codex, and opencode are trademarks of their respective
 owners. Patterm uses these names, and the Claude Code, Codex, and opencode
 logos, only to identify the CLIs it hosts. Patterm is not affiliated with or
 endorsed by them.

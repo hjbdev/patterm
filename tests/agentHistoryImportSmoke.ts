@@ -8,6 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { AgentHistoryDeleteService } from '../app/Services/AgentHistory/AgentHistoryDeleteService';
 import { AgentHistoryImportService, type HistoryFileParser } from '../app/Services/AgentHistory/AgentHistoryImportService';
 import { AgentHistoryImportQueueService, type HistoryImportQueueRunner, type HistoryImportQueueSnapshot, type HistoryImportWorkerLauncher, type HistoryImportWorkerProcess } from '../app/Services/AgentHistory/AgentHistoryImportQueueService';
+import { AgentHistorySourceService } from '../app/Services/AgentHistory/AgentHistorySourceService';
 import { AgentHistoryReadService } from '../app/Services/AgentHistory/AgentHistoryReadService';
 import { AgentHistoryWatcherService } from '../app/Services/AgentHistory/AgentHistoryWatcherService';
 import { runHistoryImportWorker } from '../app/Services/AgentHistory/AgentHistoryImportWorker';
@@ -181,6 +182,16 @@ async function main(): Promise<void> {
     imports.configure({ provider: 'claude', path: claudeDir, enabled: true, watch_enabled: false });
     imports.configure({ provider: 'codex', path: codexDir, enabled: true, watch_enabled: false });
     imports.configure({ provider: 'opencode', path: opencodeDb, source_kind: 'opencode_db', enabled: true, watch_enabled: false });
+    const sources = new AgentHistorySourceService(database, new ProviderHistoryDiscoveryService());
+    database.connection.prepare(`insert into conversation_import_sources
+      (id, provider, source_kind, path, enabled, watch_enabled, created_at, updated_at)
+      values (?, ?, ?, ?, 1, 1, ?, ?)`)
+      .run('removed_source', 'amp', 'amp_cli', claudeDir, new Date().toISOString(), new Date().toISOString());
+    assert.ok(sources.sources().sources.every((source) => (source.provider as string) !== 'amp'), 'removed history sources stay out of settings');
+    assert.ok(sources.importCandidates({}).every((source) => (source.provider as string) !== 'amp'), 'removed history sources never enter the import queue');
+    assert.ok(sources.enabledWatchSources().every((source) => (source.provider as string) !== 'amp'), 'removed history sources never get watchers');
+    assert.throws(() => imports.configure({ provider: 'amp', path: claudeDir } as never), /Invalid enum value/);
+
     const result = imports.import({ trigger: 'manual', project_id: project.id });
     assert.equal(result.errorCount, 0);
     assert.ok(result.conversationsImported >= 3, 'imports all provider conversations');

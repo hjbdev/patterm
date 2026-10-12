@@ -66,20 +66,14 @@ function assertSelectionRules(): void {
     harness: 'codex', model: null, reasoning: null, serviceTier: null, presetId: 'preset_default_codex', presetName: 'Default'
   });
   assert.throws(() => harnessPresetSettingsInput.parse({ presets: [{ id: 'bad', harness: 'claude', name: 'bad', model: null, reasoning: 'high' }] }), /reasoning requires a model/);
-  assert.deepEqual(resolveHarnessLaunchSelection({ settings: seeded, harness: 'amp' }), {
-    harness: 'amp', model: null, reasoning: null, serviceTier: null, presetId: 'preset_default_amp', presetName: 'Default'
-  });
-  assert.throws(() => harnessPresetSettingsInput.parse({ presets: [{ id: 'bad_amp', harness: 'amp', name: 'bad', model: 'gpt-5', reasoning: null }] }), /built-in mode/);
 }
 
 function assertPresetService(database: DatabaseService): void {
   const service = new HarnessPresetService(new SettingsService(database));
   const seeded = service.list();
-  assert.deepEqual(seeded.presets.map((preset) => `${preset.harness}/${preset.name}`), ['claude/Default', 'codex/Default', 'opencode/Default', 'amp/Default']);
+  assert.deepEqual(seeded.presets.map((preset) => `${preset.harness}/${preset.name}`), ['claude/Default', 'codex/Default', 'opencode/Default']);
   assert.ok(seeded.presets.every((preset) => preset.model === null && preset.reasoning === null), 'seeded defaults keep the harness configuration');
   assert.equal(seeded.defaultPresetIdByHarness.claude, 'preset_default_claude');
-  assert.equal(seeded.defaultPresetIdByHarness.amp, 'preset_default_amp');
-  assert.equal(service.create({ harness: 'amp', name: 'Careful', model: 'high' }).presets.find((preset) => preset.harness === 'amp' && preset.name === 'Careful')?.model, 'high');
 
   const created = service.create({ harness: 'claude', name: 'smartypants', model: 'fable', reasoning: 'high' });
   assert.equal(created.defaultPresetIdByHarness.claude, 'preset_default_claude', 'creating a preset leaves the seeded default alone');
@@ -114,12 +108,18 @@ function assertPresetService(database: DatabaseService): void {
   const reloaded = new HarnessPresetService(new SettingsService(database)).list();
   assert.deepEqual(reloaded.presets.filter((preset) => preset.harness === 'claude').map((preset) => preset.name), ['Default', 'smartypants'], 'presets persist');
 
+  const savedWithRemovedHarness = {
+    ...reloaded,
+    presets: [...reloaded.presets, { id: 'removed', harness: 'amp', name: 'Old default', model: null, reasoning: null, serviceTier: null }],
+    defaultPresetIdByHarness: { ...reloaded.defaultPresetIdByHarness, amp: 'removed' }
+  };
+  database.connection.prepare('update settings set value = ? where key = ?').run(JSON.stringify(savedWithRemovedHarness), 'harness.presets.v1');
+  assert.deepEqual(new SettingsService(database).harnessPresets(), reloaded, 'removed harness settings leave retained presets and defaults intact');
+  assert.throws(() => service.create({ harness: 'amp', name: 'Removed' } as never), /Invalid enum value/);
+
   const described = new HarnessPresetService(new SettingsService(database)).describe();
   assert.equal(described.presets.find((preset) => preset.harness === 'claude' && preset.name === 'Default')?.default, true, 'describe marks the seeded default');
   assert.equal(described.presets.find((preset) => preset.name === 'smartypants')?.harness, 'claude');
-  service.remove({ ref: 'preset_default_amp' });
-  service.remove({ ref: 'Careful', harness: 'amp' });
-  assert.equal(new HarnessPresetService(new SettingsService(database)).list().presets.some((preset) => preset.harness === 'amp'), false, 'removing Amp presets remains saved');
 }
 
 async function main(): Promise<void> {

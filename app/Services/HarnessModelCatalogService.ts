@@ -122,10 +122,6 @@ export class HarnessModelCatalogService {
         models: parseClaudeCatalog(await this.initializeClaude(executable, this.claudeTimeoutMs))
       };
     }
-    if (harness === 'amp') {
-      return { harness, source: 'builtin', refreshedAt: this.now(), error: null,
-        models: ['low', 'medium', 'high', 'ultra'].map((mode) => ({ id: mode, label: mode[0]!.toUpperCase() + mode.slice(1), reasoning: [], defaultReasoning: null })) };
-    }
     const executable = this.executableFor(harness);
     if (!executable) {
       throw new Error(`${harness === 'codex' ? 'Codex' : 'OpenCode'} was not discovered.`);

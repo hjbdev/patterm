@@ -274,6 +274,6 @@ function isSqliteBusy(error: unknown): boolean {
   return code === 'SQLITE_BUSY' || code === 'SQLITE_LOCKED' || /database is locked|database table is locked/i.test(error.message);
 }
 
-function isHistoryProvider(value: string | null): value is 'claude' | 'codex' | 'opencode' | 'amp' {
-  return value === 'claude' || value === 'codex' || value === 'opencode' || value === 'amp';
+function isHistoryProvider(value: string | null): value is 'claude' | 'codex' | 'opencode' {
+  return value === 'claude' || value === 'codex' || value === 'opencode';
 }

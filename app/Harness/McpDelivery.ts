@@ -3,7 +3,7 @@ import type { McpLaunchServer } from '../Services/McpServerRegistry';
 
 // Turns Patterm's global MCP servers into each harness's own configuration.
 // Remote servers never carry secrets here: Claude Code and Codex run a header
-// helper, and OpenCode and Amp, which only take fixed headers, run a stdio
+// helper, and OpenCode, which only take fixed headers, run a stdio
 // bridge. Both ask Patterm for current headers over the local socket.
 
 type ShimMode = '--mcp-headers' | '--mcp-bridge' | '--mcp-exec';
@@ -38,13 +38,6 @@ export function claudeMcpServers(servers: McpLaunchServer[], patterm: McpServerS
   return Object.fromEntries(servers.map((server) => [server.name, server.transport === 'stdio'
     ? { command: server.command, args: server.args, env: server.env }
     : { type: 'http', url: server.url, ...(server.managedHeaders ? { headersHelper: headersHelperCommand(patterm, server.id) } : {}) }]));
-}
-
-// Amp's --mcp-config takes stdio specs of exactly {command, args, env}.
-export function ampMcpServers(servers: McpLaunchServer[], patterm: McpServerSpec): Record<string, unknown> {
-  return Object.fromEntries(servers.map((server) => [server.name, server.transport === 'stdio'
-    ? { command: server.command, args: server.args, env: server.env }
-    : server.managedHeaders ? shim(patterm, '--mcp-bridge', server.id) : { url: server.url }]));
 }
 
 // Codex `-c` values appear in `ps` and in Patterm's process records, so a

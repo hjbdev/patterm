@@ -3,7 +3,7 @@ import type { AgentHistoryDb } from './AgentHistoryDb';
 import type { AgentHistoryProvider, HistorySourceCandidate } from './AgentHistoryTypes';
 import type { AgentHistorySourceService } from './AgentHistorySourceService';
 
-export type HistoryWatermarkKind = 'jsonl_mtime_ms' | 'opencode_session_updated_ms' | 'amp_thread_updated_ms';
+export type HistoryWatermarkKind = 'jsonl_mtime_ms' | 'opencode_session_updated_ms';
 
 export interface HistoryWatermarkPlan {
   mode: 'full' | 'incremental';
@@ -79,7 +79,6 @@ export class AgentHistoryWatermarkService {
 
 export function watermarkKind(provider: AgentHistoryProvider): HistoryWatermarkKind {
   if (provider === 'opencode') return 'opencode_session_updated_ms';
-  if (provider === 'amp') return 'amp_thread_updated_ms';
   return 'jsonl_mtime_ms';
 }
 
@@ -90,5 +89,5 @@ function automaticTrigger(trigger: string): boolean {
 function watermarkLookbackMs(provider: AgentHistoryProvider): number {
   // OpenCode compares per-session logical fingerprints. Filesystem mtimes need
   // a wider safety window because directory notifications can be coalesced.
-  return provider === 'opencode' || provider === 'amp' ? 0 : JSONL_WATERMARK_LOOKBACK_MS;
+  return provider === 'opencode' ? 0 : JSONL_WATERMARK_LOOKBACK_MS;
 }

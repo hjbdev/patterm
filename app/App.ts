@@ -50,11 +50,9 @@ import { HarnessLauncher } from './Services/HarnessLauncher';
 import { HarnessModelCatalogService } from './Services/HarnessModelCatalogService';
 import { HarnessPresetService } from './Services/HarnessPresetService';
 import { OpenCodeServerService } from './Services/OpenCodeServerService';
-import { AmpThreadService } from './Services/AmpThreadService';
 import { CodexAppServerService } from './Services/CodexAppServerService';
 import { ClaudeStreamService } from './Services/ClaudeStreamService';
 import { detachedHostLauncher, systemdHostLauncher } from './Services/IntegratedHostLauncher';
-import { AmpStreamService } from './Services/AmpStreamService';
 import { IdleCompactionService } from './Services/IdleCompactionService';
 import type { IdleCompactionSettings } from './Services/SettingsService';
 import { IntegratedAgentService } from './Services/IntegratedAgentService';
@@ -278,7 +276,6 @@ async function createApplicationResources(
   const notifyWorkbenchChanged = () => notifyChanged(['workbench']);
   const transcriptImages = new TranscriptImageStore(path.join(options.appDataPath, 'transcript-images'));
   const openCodeServer = new OpenCodeServerService(database, resolvedEnv, { persistent, images: transcriptImages });
-  const ampThreads = new AmpThreadService(resolvedEnv);
   const harnessRuntimeDir = path.join(options.appDataPath, 'harness');
   // Installed services run Integrated hosts in their own systemd units so a
   // service restart reconnects to them instead of killing them.
@@ -287,10 +284,9 @@ async function createApplicationResources(
   // agents and hosts that outlive an update don't keep a replaced version's path.
   const nodePath = process.env.PATTERM_NODE || process.execPath;
   const codexAppServer = new CodexAppServerService(database, harnessRuntimeDir, resolvedEnv, nodePath, undefined, { launcher: hostLauncher, images: transcriptImages });
-  const claudeStream = new ClaudeStreamService(database, harnessRuntimeDir, nodePath, resolvedEnv, undefined, undefined, hostLauncher, transcriptImages);
-  const ampStream = new AmpStreamService(database, harnessRuntimeDir, nodePath, resolvedEnv, hostLauncher, transcriptImages);
+  const claudeStream = new ClaudeStreamService(database, harnessRuntimeDir, nodePath, resolvedEnv, undefined, hostLauncher, transcriptImages);
   const integratedInputs = new WorktreeFileService(database, new UploadService(path.join(options.appDataPath, 'uploads')));
-  const integrated = new IntegratedAgentService(database, { opencode: openCodeServer, codex: codexAppServer, claude: claudeStream, amp: ampStream }, () => notifyWorkbenchChanged(), integratedInputs);
+  const integrated = new IntegratedAgentService(database, { opencode: openCodeServer, codex: codexAppServer, claude: claudeStream }, () => notifyWorkbenchChanged(), integratedInputs);
   integrated.setDebugLog(debugLog);
   // Holds unprompted input for the assistant while its Focus mode is on.
   const assistantInbox = new AssistantInbox(database);
@@ -443,9 +439,7 @@ async function createApplicationResources(
     mcpServers: mcpServerRegistry,
     launchingIdentities,
     assistantMemory,
-    remoteClients: Boolean(options.publicOrigin),
     openCodeServer,
-    ampThreads,
     integrated,
     settings,
     database,

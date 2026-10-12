@@ -12,7 +12,7 @@ import type { UsageService } from './UsageService';
 const ARCHIVE_PAGE_SIZE = 80;
 const ARCHIVE_CURSOR_PREFIX = 'archive:';
 // Native titles appear asynchronously: Claude generates one on request, while
-// OpenCode and Amp name the conversation during the first turn. Retry a few
+// OpenCode names the conversation during the first turn. Retry a few
 // times after each accepted prompt, then wait for the next one.
 const TITLE_RETRY_DELAYS_MS = [1_000, 5_000, 15_000, 45_000, 120_000];
 // A live agent whose event stream could not be opened, or whose provider gave
@@ -120,7 +120,7 @@ export interface IntegratedActivityChange {
 export class IntegratedAgentService {
   constructor(
     private readonly database: DatabaseService,
-    private readonly providers: Partial<Record<'claude' | 'codex' | 'opencode' | 'amp', IntegratedProviderService>>,
+    private readonly providers: Partial<Record<'claude' | 'codex' | 'opencode', IntegratedProviderService>>,
     // Reading a conversation is not a workbench mutation, but providers report
     // activity and titles as a side effect. Notify only when either actually
     // changes so polling the transcript does not refetch the whole workspace.
@@ -229,11 +229,11 @@ export class IntegratedAgentService {
     }
   }
 
-  prepare(harness: 'claude' | 'codex' | 'opencode' | 'amp', input: IntegratedLaunchInput): Promise<IntegratedLaunchResult> {
+  prepare(harness: 'claude' | 'codex' | 'opencode', input: IntegratedLaunchInput): Promise<IntegratedLaunchResult> {
     return this.provider(harness).prepare(input);
   }
 
-  async cleanupLaunch(harness: 'claude' | 'codex' | 'opencode' | 'amp', input: IntegratedLaunchInput, result: IntegratedLaunchResult): Promise<void> {
+  async cleanupLaunch(harness: 'claude' | 'codex' | 'opencode', input: IntegratedLaunchInput, result: IntegratedLaunchResult): Promise<void> {
     await this.provider(harness).cleanupLaunch?.(input, result);
   }
 
@@ -947,25 +947,25 @@ export class IntegratedAgentService {
     return this.provider(this.harness(processId));
   }
 
-  private harness(processId: string): 'claude' | 'codex' | 'opencode' | 'amp' {
+  private harness(processId: string): 'claude' | 'codex' | 'opencode' {
     const row = this.database.connection.prepare(`
       select harness from sessions
       where (process_id = ? or id = ?) and interface_mode = 'integrated'
       order by exited_at is null desc, started_at desc limit 1
     `).get(processId, processId) as { harness: string } | undefined;
-    if (!row || (row.harness !== 'claude' && row.harness !== 'codex' && row.harness !== 'opencode' && row.harness !== 'amp')) {
+    if (!row || (row.harness !== 'claude' && row.harness !== 'codex' && row.harness !== 'opencode')) {
       throw new Error('Integrated agent session not found');
     }
     return row.harness;
   }
 
-  // Claude and Amp runtimes only hold turns from their own run, so earlier
+  // Claude runtimes only hold turns from their own run, so earlier
   // turns come from imported history. Codex pages natively and needs the
   // archive only on builds that cannot list thread items.
   private archiveSession(processId: string, conversation: unknown): { provider: string; resumeId: string; projectId: string; startedAt: string } | null {
     const row = this.database.connection.prepare(`
       select harness, resume_id, project_id, started_at from sessions
-      where (process_id = ? or id = ?) and interface_mode = 'integrated' and harness in ('claude', 'amp', 'codex') and resume_id is not null
+      where (process_id = ? or id = ?) and interface_mode = 'integrated' and harness in ('claude', 'codex') and resume_id is not null
       order by exited_at is null desc, started_at desc limit 1
     `).get(processId, processId) as { harness: string; resume_id: string; project_id: string; started_at: string } | undefined;
     if (!row) return null;
@@ -973,7 +973,7 @@ export class IntegratedAgentService {
     return { provider: row.harness, resumeId: row.resume_id, projectId: row.project_id, startedAt: row.started_at };
   }
 
-  private provider(harness: 'claude' | 'codex' | 'opencode' | 'amp'): IntegratedProviderService {
+  private provider(harness: 'claude' | 'codex' | 'opencode'): IntegratedProviderService {
     const provider = this.providers[harness];
     if (!provider) throw new Error(`${harness} Integrated conversations are unavailable`);
     return provider;

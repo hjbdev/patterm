@@ -83,8 +83,8 @@ export class NewAgentSessionAction {
   }
 }
 
-function isIntegratedHarness(harness: string): harness is 'claude' | 'codex' | 'opencode' | 'amp' {
-  return harness === 'claude' || harness === 'codex' || harness === 'opencode' || harness === 'amp';
+function isIntegratedHarness(harness: string): harness is 'claude' | 'codex' | 'opencode' {
+  return harness === 'claude' || harness === 'codex' || harness === 'opencode';
 }
 
 function isDirectory(candidate: string): boolean {

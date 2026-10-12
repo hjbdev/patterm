@@ -248,7 +248,7 @@ process.stdin.on('data', (chunk) => {
     process.env.ARGV_FILE = argvPath;
     process.env.STREAM_FRAMES = '1';
     const images = new TranscriptImageStore(path.join(directory, 'transcript-images'));
-    const service = new ClaudeStreamService(database, runtimeDirectory, process.execPath, process.env, undefined, undefined, undefined, images);
+    const service = new ClaudeStreamService(database, runtimeDirectory, process.execPath, process.env, undefined, undefined, images);
     const prepared = await service.prepare({
       executable,
       cwd: directory,

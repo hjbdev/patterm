@@ -31,7 +31,7 @@ export interface McpImportOptions {
 }
 
 // Earlier harnesses win when two define the same name differently.
-const ORDER: McpHarness[] = ['claude', 'codex', 'opencode', 'amp'];
+const ORDER: McpHarness[] = ['claude', 'codex', 'opencode'];
 
 export class McpServerImportService {
   private readonly home: string;
@@ -82,13 +82,6 @@ export class McpServerImportService {
       break;
     }
 
-    for (const file of ['settings.json', 'settings.jsonc']) {
-      const ampPath = path.join(configHome, 'amp', file);
-      const amp = readJson(ampPath);
-      if (!amp) continue;
-      for (const [name, entry] of Object.entries(record(amp['amp.mcpServers']))) add('amp', ampPath, name, entry);
-      break;
-    }
     return { candidates, skipped };
   }
 

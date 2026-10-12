@@ -5,10 +5,10 @@ import {
   type HarnessLaunchPlan,
   type HarnessProvider
 } from './HarnessProvider';
-import { ampMcpServers, claudeMcpServers, codexMcpOverrides, tomlString, tomlStringArray } from './McpDelivery';
+import { claudeMcpServers, codexMcpOverrides, tomlString, tomlStringArray } from './McpDelivery';
 
 // Built-in harness providers: the agent CLIs
-// (claude | codex | opencode | amp) plus the always-available raw PTY fallback. Each
+// (claude | codex | opencode) plus the always-available raw PTY fallback. Each
 // knows how to inject the Patterm MCP server in its harness's own dialect.
 
 export const CLAUDE_MCP_CONFIG = /^claude-mcp-(mcp_[0-9a-f-]+)\.json$/;
@@ -105,31 +105,6 @@ const opencode: HarnessProvider = {
   }
 };
 
-const amp: HarnessProvider = {
-  id: 'amp',
-  displayName: 'Amp',
-  executableCandidates: ['amp'],
-  versionArgs: ['--version'],
-  parseVersion: firstSemver,
-  buildLaunch({ executablePath, mcp, mcpServers = [], runtimeDir, resumeId, model, reasoning }: HarnessLaunchInput): HarnessLaunchPlan {
-    if (!resumeId) throw new Error('Amp needs a thread ID before launching');
-    if (!/^T-[A-Za-z0-9-]+$/.test(resumeId)) throw new Error('Invalid Amp thread ID');
-    if (reasoning) throw new Error('Amp does not support reasoning overrides in the TUI');
-    const configPath = path.join(runtimeDir, `amp-${resumeId}.json`);
-    return {
-      command: executablePath,
-      args: ['threads', 'continue', resumeId,
-        '--mcp-config', configPath,
-        ...(model ? ['--mode', model] : [])],
-      // Amp only copies through OSC 52 when it recognises the terminal, and
-      // otherwise needs xclip/wl-copy on the host. Amp's own web terminal sets
-      // this flag to force OSC 52, which Patterm relays to the viewing client.
-      env: { AMP_WEB_TERMINAL: '1' },
-      files: [{ path: configPath, contents: JSON.stringify({ ...ampMcpServers(mcpServers, mcp), patterm: mcp }) }]
-    };
-  }
-};
-
 // RawPty has no CLI to discover — it spawns the user's shell directly, so it is
 // always available, carries no version, and gets no MCP injection.
 const rawpty: HarnessProvider = {
@@ -146,5 +121,5 @@ const rawpty: HarnessProvider = {
   }
 };
 
-export const harnessProviders: HarnessProvider[] = [claude, codex, opencode, amp, rawpty];
+export const harnessProviders: HarnessProvider[] = [claude, codex, opencode, rawpty];
 

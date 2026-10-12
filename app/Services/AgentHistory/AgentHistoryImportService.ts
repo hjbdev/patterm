@@ -6,7 +6,7 @@ import type { AgentHistoryDb } from './AgentHistoryDb';
 import type { HistorySearchIndexService } from './HistorySearchIndexService';
 import type { TimelineService } from '../TimelineService';
 import { ConversationLinker, type ConversationLink } from './ConversationLinker';
-import { MESSAGE_TEXT_CAP, TOOL_INPUT_CAP, TOOL_OUTPUT_CAP, type AgentHistoryProvider, type HistoryFileFingerprint, type HistoryImportScope, type HistorySourceCandidate, type ParseHistoryFileOptions, type ParsedConversation, type ParsedHistoryStream, type ParsedMessage, type ProviderHistoryAdapter } from './AgentHistoryTypes';
+import { MESSAGE_TEXT_CAP, TOOL_INPUT_CAP, TOOL_OUTPUT_CAP, type AgentHistoryProvider, type HistoryFileFingerprint, type HistorySourceCandidate, type ParseHistoryFileOptions, type ParsedConversation, type ParsedHistoryStream, type ParsedMessage, type ProviderHistoryAdapter } from './AgentHistoryTypes';
 import { defaultFileFingerprint, digestJson, stableJson, statDigest, statOnlyFingerprint } from './HistoryAdapterUtils';
 import { ProviderHistoryDiscoveryService } from './ProviderHistoryDiscoveryService';
 import { SecretRedactor } from './SecretRedactor';
@@ -18,7 +18,7 @@ export { historyConfigureInput } from './AgentHistorySourceService';
 const IMPORT_MESSAGE_CHUNK_SIZE = 500;
 
 export const historyImportInput = z.object({
-  provider: z.enum(['claude', 'codex', 'opencode', 'amp']).optional(),
+  provider: z.enum(['claude', 'codex', 'opencode']).optional(),
   path: z.string().min(1).optional(),
   project_id: z.string().min(1).nullable().optional(),
   trigger: z.enum(['manual', 'startup', 'watcher', 'session_exit']).default('manual')
@@ -87,8 +87,7 @@ export class AgentHistoryImportService {
         const adapter = this.discovery.adapter(candidate.provider);
         const discovered = adapter.discoverFiles(candidate.path);
         this.retireUndiscoveredFiles(candidate, discovered);
-        const files = this.filterDiscoveredFiles(adapter, discovered, input.project_id ?? null);
-        for (const filePath of files) {
+        for (const filePath of discovered) {
           totals.filesSeen += 1;
           reportProgress(report, batchId, totals, filePath);
           try {
@@ -116,20 +115,14 @@ export class AgentHistoryImportService {
             const warnings = changedDuringImport ? [...parsed.warnings, 'source changed during import; queued retry will re-read'] : [...parsed.warnings];
             const importFileId = this.upsertImportFile(candidate, batchId, filePath, parsed.parserVersion, beforeFingerprint, warnings, null, false, 'importing');
             let importedFromFile = false;
-            let scopeRejected = false;
             for (const parsedConversation of parsed.conversations) {
               const conversation = withUniqueMessageIds(parsedConversation, warnings);
               if (this.isDeleted(conversation)) {
                 totals.skippedCount += 1;
                 continue;
               }
-              const linkScope = this.linkScope(conversation, input);
+              const linkScope = this.linkScope(input);
               const link = this.linker.link(conversation, linkScope);
-              if (!this.conversationMatchesProject(conversation, link, input.project_id ?? null)) {
-                scopeRejected = true;
-                totals.skippedCount += 1;
-                continue;
-              }
               if (!parserChanged && !recovering && this.isConversationUnchanged(conversation, link)) {
                 // Usage can grow without a new message, for example a late token count.
                 this.syncUsage(conversation);
@@ -144,7 +137,7 @@ export class AgentHistoryImportService {
               totals.messagesImported += result.messages;
               importedFromFile = true;
             }
-            this.finalizeImportFile(candidate.provider, filePath, warnings, parsed.conversations.length > 0, scopeRejected);
+            this.finalizeImportFile(candidate.provider, filePath, warnings, parsed.conversations.length > 0);
             if (importedFromFile) totals.filesImported += 1;
             if (parsed.conversations.length === 0) totals.skippedCount += 1;
             reportProgress(report, batchId, totals, filePath);
@@ -198,7 +191,7 @@ export class AgentHistoryImportService {
         }
         const adapter = this.discovery.adapter(candidate.provider);
         const watermarkPlan = this.watermarks.plan(candidate, adapter.parserVersion, input.trigger);
-        const files = await this.importFilePlans(candidate, adapter, watermarkPlan, input.project_id ?? null);
+        const files = await this.importFilePlans(candidate, adapter, watermarkPlan);
         let sourceUnstable = false;
         let sourceHasUnrecordedError = false;
         let sourceWatermarkMs: number | null = null;
@@ -238,7 +231,6 @@ export class AgentHistoryImportService {
             const importFileId = this.upsertImportFile(candidate, batchId, filePath, parsed.parserVersion, beforeFingerprint, parsed.warnings, null, false, 'importing');
             let importedFromFile = false;
             let conversationCount = 0;
-            let scopeRejected = false;
             const repeatWarnings: string[] = [];
             for (const parsedConversation of parsed.conversations) {
               const conversation = withUniqueMessageIds(parsedConversation, repeatWarnings);
@@ -250,13 +242,8 @@ export class AgentHistoryImportService {
                 totals.skippedCount += 1;
                 continue;
               }
-              const linkScope = this.linkScope(conversation, input);
+              const linkScope = this.linkScope(input);
               const link = this.linker.link(conversation, linkScope);
-              if (!this.conversationMatchesProject(conversation, link, input.project_id ?? null)) {
-                scopeRejected = true;
-                totals.skippedCount += 1;
-                continue;
-              }
               if (!parserChanged && !recovering && this.isConversationUnchanged(conversation, link)) {
                 this.syncUsage(conversation);
                 this.syncMedia(conversation);
@@ -277,7 +264,7 @@ export class AgentHistoryImportService {
               sourceUnstable = true;
             }
             const warnings = [...parsed.warnings, ...repeatWarnings, ...(changedDuringImport ? ['source changed during import; queued retry will re-read'] : [])];
-            this.finalizeImportFile(candidate.provider, filePath, warnings, conversationCount > 0, scopeRejected);
+            this.finalizeImportFile(candidate.provider, filePath, warnings, conversationCount > 0);
             if (importedFromFile) totals.filesImported += 1;
             if (conversationCount === 0) totals.skippedCount += 1;
             reportProgress(report, batchId, totals, filePath);
@@ -297,7 +284,7 @@ export class AgentHistoryImportService {
         }
         // Failed files with an error row stay in the watermark's force list until
         // they import, so they need not hold the watermark back.
-        if (candidate.provider !== 'amp' && !sourceUnstable && !sourceHasUnrecordedError) {
+        if (!sourceUnstable && !sourceHasUnrecordedError) {
           this.watermarks.advance({ candidate, sourceId: watermarkPlan.sourceId, parserVersion: adapter.parserVersion, kind: watermarkPlan.kind, valueMs: sourceWatermarkMs, batchId, metadata: { mode: watermarkPlan.mode } });
         }
       }
@@ -326,25 +313,21 @@ export class AgentHistoryImportService {
     return this.sourcesService.importCandidates({ ...(input.provider ? { provider: input.provider } : {}), ...(input.path ? { path: input.path } : {}) });
   }
 
-  private async importFilePlans(candidate: HistorySourceCandidate, adapter: ProviderHistoryAdapter, watermarkPlan: HistoryWatermarkPlan, projectId: string | null): Promise<ImportFilePlan[]> {
-    let plans: ImportFilePlan[];
+  private async importFilePlans(candidate: HistorySourceCandidate, adapter: ProviderHistoryAdapter, watermarkPlan: HistoryWatermarkPlan): Promise<ImportFilePlan[]> {
     if (watermarkPlan.mode === 'incremental' && watermarkPlan.sinceMs !== null) {
       const sinceMs = watermarkPlan.sinceMs;
       if (candidate.provider === 'opencode') {
-        const files = await this.discoverFiles(adapter, candidate.path);
+        const files = adapter.discoverFiles(candidate.path);
         const forced = new Set(watermarkPlan.forcePaths);
-        plans = files.map((filePath) => ({ filePath, incremental: !forced.has(filePath) }));
-        return this.filterImportPlans(adapter, plans, projectId);
+        return files.map((filePath) => ({ filePath, incremental: !forced.has(filePath) }));
       }
       if (adapter.discoverFilesSince) {
-        plans = adapter.discoverFilesSince(candidate.path, sinceMs, watermarkPlan.forcePaths).map((filePath) => ({ filePath }));
-        return this.filterImportPlans(adapter, plans, projectId);
+        return adapter.discoverFilesSince(candidate.path, sinceMs, watermarkPlan.forcePaths).map((filePath) => ({ filePath }));
       }
     }
-    const discovered = await this.discoverFiles(adapter, candidate.path);
+    const discovered = adapter.discoverFiles(candidate.path);
     this.retireUndiscoveredFiles(candidate, discovered);
-    plans = discovered.map((filePath) => ({ filePath }));
-    return this.filterImportPlans(adapter, plans, projectId);
+    return discovered.map((filePath) => ({ filePath }));
   }
 
   // A full scan that no longer finds a file, such as a deleted transcript or a
@@ -362,44 +345,13 @@ export class AgentHistoryImportService {
     })();
   }
 
-  private discoverFiles(adapter: ProviderHistoryAdapter, sourcePath: string): Promise<string[]> {
-    return adapter.discoverFilesAsync?.(sourcePath) ?? Promise.resolve(adapter.discoverFiles(sourcePath));
-  }
-
-  private filterImportPlans(adapter: ProviderHistoryAdapter, plans: ImportFilePlan[], projectId: string | null): ImportFilePlan[] {
-    const allowed = new Set(this.filterDiscoveredFiles(adapter, plans.map((plan) => plan.filePath), projectId));
-    return plans.filter((plan) => allowed.has(plan.filePath));
-  }
-
-  private filterDiscoveredFiles(adapter: ProviderHistoryAdapter, files: string[], projectId: string | null): string[] {
-    return adapter.filterDiscoveredFiles?.(files, this.historyImportScope(projectId)) ?? files;
-  }
-
-  private historyImportScope(projectId: string | null): HistoryImportScope {
-    const projectWhere = projectId ? 'where id = @project_id' : '';
-    const worktreeWhere = projectId ? 'where project_id = @project_id' : '';
-    const params = projectId ? { project_id: projectId } : {};
-    const projects = this.appDatabase.connection.prepare(`select path from projects ${projectWhere}`).all(params) as Array<{ path: string }>;
-    const worktrees = this.appDatabase.connection.prepare(`select worktree_path from worktrees ${worktreeWhere}`).all(params) as Array<{ worktree_path: string }>;
-    const sessions = this.appDatabase.connection.prepare(`select resume_id, project_id from sessions where harness = 'amp' and resume_id is not null`).all() as Array<{ resume_id: string; project_id: string }>;
-    return {
-      projectPaths: [...projects.map((row) => row.path), ...worktrees.map((row) => row.worktree_path)],
-      providerConversationIds: sessions.filter((row) => projectId === null || row.project_id === projectId).map((row) => row.resume_id),
-      excludedProviderConversationIds: projectId === null ? [] : sessions.filter((row) => row.project_id !== projectId).map((row) => row.resume_id)
-    };
-  }
-
   // Only an explicit file import assigns its conversations to the requested
   // project. A project-scoped source scan still reads every file, so it links
   // by resume ID and path like any other scan; otherwise every unmatched
   // conversation would land in whichever project asked.
-  private linkScope(conversation: ParsedConversation, input: z.infer<typeof historyImportInput>): { project_id: string | null } {
-    if (conversation.provider === 'amp' || !input.path) return { project_id: null };
+  private linkScope(input: z.infer<typeof historyImportInput>): { project_id: string | null } {
+    if (!input.path) return { project_id: null };
     return { project_id: input.project_id ?? null };
-  }
-
-  private conversationMatchesProject(conversation: ParsedConversation, link: ConversationLink, projectId: string | null): boolean {
-    return conversation.provider !== 'amp' || projectId === null || link.project_id === projectId;
   }
 
   private errorFingerprint(adapter: ProviderHistoryAdapter, filePath: string): HistoryFileFingerprint {
@@ -427,8 +379,8 @@ export class AgentHistoryImportService {
     return row.id;
   }
 
-  private finalizeImportFile(provider: AgentHistoryProvider, filePath: string, warnings: string[], imported: boolean, scopeRejected = false): void {
-    const status = scopeRejected ? 'scope_mismatch' : imported ? (warnings.length ? 'imported_with_warnings' : 'imported') : 'skipped';
+  private finalizeImportFile(provider: AgentHistoryProvider, filePath: string, warnings: string[], imported: boolean): void {
+    const status = imported ? (warnings.length ? 'imported_with_warnings' : 'imported') : 'skipped';
     this.database.connection.prepare(`
       update conversation_import_files
       set status = ?, warning = ?, error = null, last_imported_at = ?

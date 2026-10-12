@@ -10,7 +10,7 @@ import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { McpServerActions } from '../app/Actions/McpServerActions';
 import { harnessProviders } from '../app/Harness/providers';
-import { ampMcpServers, claudeMcpServers, codexMcpOverrides, codexMcpStartupNotice, openCodeMcpConfigs } from '../app/Harness/McpDelivery';
+import { claudeMcpServers, codexMcpOverrides, codexMcpStartupNotice, openCodeMcpConfigs } from '../app/Harness/McpDelivery';
 import { McpHelperAccess, MCP_HELPER_CUTOVER_KEY } from '../app/MCP/McpHelperAccess';
 import { McpSocketServer } from '../app/MCP/McpSocketServer';
 import { McpToolRegistry } from '../app/MCP/ToolRegistry';
@@ -117,7 +117,6 @@ async function main(): Promise<void> {
     const remote = registry.save({ name: 'linear-acme', transport: 'http', url: `${service.base}/mcp` });
     const open = registry.save({ name: 'open', transport: 'http', url: 'https://example.com/mcp', auth: 'none' });
     assert.throws(() => registry.save({ name: 'LINEAR-ACME', transport: 'stdio', command: 'x' }), /already exists/);
-    assert.deepEqual(registry.forHarness('amp').map((server) => server.name), ['linear-acme', 'open']);
     assert.deepEqual(registry.forHarness('codex').map((server) => server.name), ['linear-acme', 'open', 'railway']);
     assert.equal(registry.forHarness('codex').find((server) => server.name === 'open')?.transport === 'http' && (registry.forHarness('codex').find((server) => server.name === 'open') as { managedHeaders: boolean }).managedHeaders, false);
 
@@ -146,9 +145,6 @@ async function main(): Promise<void> {
     assert.doesNotMatch(signedOut.body, /saved login/);
     const missing = codexMcpStartupNotice(servers.find((server) => server.name === 'railway')!, 'No such file or directory (os error 2)');
     assert.doesNotMatch(missing.body, /saved login/, 'other failures carry no login advice');
-    const amp = ampMcpServers(registry.forHarness('amp'), patterm) as Record<string, Record<string, unknown>>;
-    assert.deepEqual(amp['linear-acme'], { command: '/usr/bin/node', args: ['/opt/patterm/shim.js', '--mcp-bridge', remote.id], env: { ELECTRON_RUN_AS_NODE: '1', PATTERM_MCP_SOCKET: '/tmp/p.sock', PATTERM_MCP_IDENTITY: 'mcp_1' } });
-    assert.deepEqual(amp.open, { url: 'https://example.com/mcp' });
     const openCode = openCodeMcpConfigs(registry.forHarness('opencode'), patterm);
     assert.deepEqual(openCode['linear-acme']!.command, ['/usr/bin/node', '/opt/patterm/shim.js', '--mcp-bridge', remote.id]);
     assert.equal(openCode.open!.type, 'remote');
@@ -161,8 +157,6 @@ async function main(): Promise<void> {
     assert.deepEqual(Object.keys(claudeConfig.mcpServers), ['linear-acme', 'open', 'railway', 'patterm']);
     const codexPlan = provider('codex').buildLaunch({ executablePath: 'codex', mcp: patterm, mcpServers: servers, runtimeDir });
     assert.ok(codexPlan.args.includes('mcp_servers.linear-acme.enabled=true'));
-    const ampPlan = provider('amp').buildLaunch({ executablePath: 'amp', mcp: patterm, mcpServers: registry.forHarness('amp'), runtimeDir, resumeId: 'T-1' });
-    assert.deepEqual(Object.keys(JSON.parse(ampPlan.files[0]!.contents) as object), ['linear-acme', 'open', 'patterm']);
 
     // Sign-in through a loopback redirect, completed by paste.
     let clock = Date.parse('2026-09-30T10:00:00.000Z');
@@ -255,9 +249,8 @@ async function main(): Promise<void> {
     const home = path.join(dir, 'home');
     fs.mkdirSync(path.join(home, '.codex'), { recursive: true });
     fs.mkdirSync(path.join(home, '.config', 'opencode'), { recursive: true });
-    fs.mkdirSync(path.join(home, '.config', 'amp'), { recursive: true });
     fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({
-      mcpServers: { posthog: { type: 'http', url: 'https://mcp.posthog.com/mcp' }, legacy: { type: 'sse', url: 'https://example.com/sse' } },
+      mcpServers: { railway: { command: 'railway', args: ['mcp'] }, posthog: { type: 'http', url: 'https://mcp.posthog.com/mcp' }, legacy: { type: 'sse', url: 'https://example.com/sse' } },
       projects: { '/work/app': { mcpServers: { cloudflare: { type: 'http', url: 'https://cf.example.com/mcp' } } } }
     }));
     fs.writeFileSync(path.join(home, '.codex', 'config.toml'), [
@@ -269,7 +262,6 @@ async function main(): Promise<void> {
       // OpenCode 2 nests servers; the legacy form is still read.
       "mcp": { "servers": { "posthog": { "type": "remote", "url": "https://other.example.com/mcp" } }, "local": { "type": "local", "command": ["run", "it"], "environment": { "A": "1" } } }
     }`);
-    fs.writeFileSync(path.join(home, '.config', 'amp', 'settings.json'), JSON.stringify({ 'amp.mcpServers': { railway: { command: 'railway', args: ['mcp'] } } }));
     const importer = new McpServerImportService(registry, { home, env: { CLICKHOUSE_TOKEN: 'ch-token', TOOL_KEY: 'k' } });
     const imported = importer.import();
     assert.deepEqual(imported.added.map((entry) => entry.name).sort(), ['clickhouse', 'local', 'posthog', 'tool']);
@@ -300,13 +292,13 @@ async function main(): Promise<void> {
       `insert into sessions (id, project_id, mcp_identity, harness, session_role, resume_status, started_at, exited_at) values (?, 'project_1', ?, ?, 'orchestrator', 'unknown', ?, ?)`
     ).run(`session_${identity}`, identity, harness, startedAt, exitedAt);
     agent('mcp_claude', 'claude');
-    agent('mcp_amp', 'amp');
+    agent('mcp_opencode', 'opencode');
     agent('mcp_gone', 'claude', stamp, stamp);
     const access = new McpHelperAccess(database, (token) => token === 'bridge-token');
     const handlers = actions.socketHandlers(access);
     const as = (identity: string | null, opencodeBridge?: unknown) => ({ identity, opencodeBridge });
     assert.deepEqual(handlers.exec(local.id, as('mcp_claude')), { command: 'railway', args: ['mcp'], env: { RAILWAY_TOKEN: 'secret' } });
-    assert.throws(() => handlers.exec(local.id, as('mcp_amp')), /not enabled for this agent/, 'servers not assigned to the harness are refused');
+    assert.throws(() => handlers.exec(local.id, as('mcp_opencode')), /not enabled for this agent/, 'servers not assigned to the harness are refused');
     assert.throws(() => handlers.exec(local.id, as('mcp_gone')), /Unknown or inactive agent identity/, 'exited agents are refused');
     assert.throws(() => handlers.exec(local.id, as('mcp_unknown')), /Unknown or inactive agent identity/);
     assert.throws(() => handlers.exec(local.id, as(null, 'bridge-token')), /not enabled for this agent/, 'OpenCode helpers act for the opencode harness');

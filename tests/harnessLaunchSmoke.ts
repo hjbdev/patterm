@@ -16,7 +16,6 @@ import { RestartAgentSessionAction } from '../app/Actions/RestartAgentSessionAct
 import { TimerService } from '../app/Services/TimerService';
 import { ResumeConversationAgentAction } from '../app/Actions/ResumeConversationAgentAction';
 import { HarnessLauncher, type SpawnSink } from '../app/Services/HarnessLauncher';
-import { AmpThreadService } from '../app/Services/AmpThreadService';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { TimelineService } from '../app/Services/TimelineService';
 import { prepareOpenCodeTheme } from '../app/Services/OpenCodeThemeService';
@@ -189,13 +188,6 @@ function assertProviderPlans(runtimeDir: string): void {
   const resumedOpenCode = providerById('opencode').buildLaunch({ executablePath: '/usr/bin/opencode', mcp: MCP, runtimeDir, resumeId: 'opencode_resume_test' });
   assert.deepEqual(resumedOpenCode.args, ['--session', 'opencode_resume_test'], 'opencode resumes the exact session');
 
-  const amp = providerById('amp').buildLaunch({ executablePath: '/usr/bin/amp', mcp: MCP, runtimeDir, resumeId: 'T-1234', model: 'high' });
-  assert.deepEqual(amp.args.slice(0, 3), ['threads', 'continue', 'T-1234']);
-  assert.deepEqual(JSON.parse(amp.files[0]!.contents), { patterm: MCP });
-  assert.equal(amp.args[4], amp.files[0]!.path);
-  assert.deepEqual(amp.args.slice(-2), ['--mode', 'high']);
-  assert.throws(() => providerById('amp').buildLaunch({ executablePath: '/usr/bin/amp', mcp: MCP, runtimeDir }), /thread ID/);
-
   // RawPty: bare shell, no injection.
   const raw = providerById('rawpty').buildLaunch({ executablePath: '/bin/zsh', mcp: MCP, runtimeDir });
   assert.deepEqual(raw, { command: '/bin/zsh', args: [], env: {}, files: [] });
@@ -212,12 +204,6 @@ async function main(): Promise<void> {
 
   try {
     assertProviderPlans(runtimeDir);
-    const ampExecutable = path.join(tempDir, 'amp-fixture');
-    fs.writeFileSync(ampExecutable, `#!${process.execPath}\nconsole.log('https://ampcode.com/threads/T-1234');\n`, { mode: 0o700 });
-    const ampThreads = new AmpThreadService();
-    assert.equal(await ampThreads.prepare(ampExecutable, tempDir, null), 'T-1234');
-    assert.equal(await ampThreads.prepare(ampExecutable, tempDir, 'T-5678'), 'T-5678');
-    await assert.rejects(ampThreads.prepare(ampExecutable, tempDir, 'not-a-thread'), /Invalid Amp thread ID/);
     assertOpenCodeTheme(tempDir);
     fs.writeFileSync(shimPath, '');
 
@@ -260,8 +246,8 @@ async function main(): Promise<void> {
       )
       .run(projectId, JSON.stringify({ body: 'timeline-sentinel-should-not-load-into-agent-context' }), now);
 
-    // Pretend discovery already found Claude, OpenCode, and Amp (Codex stays absent).
-    for (const [harness, exe] of [['claude', '/usr/bin/claude'], ['opencode', '/usr/bin/opencode'], ['amp', ampExecutable]] as const) {
+    // Pretend discovery already found Claude and OpenCode (Codex stays absent).
+    for (const [harness, exe] of [['claude', '/usr/bin/claude'], ['opencode', '/usr/bin/opencode']] as const) {
       database.connection
         .prepare(
           `insert into harness_installations (id, harness, executable_path, version, status, discovered_at, last_checked_at)
@@ -298,9 +284,9 @@ async function main(): Promise<void> {
     const helperAccess = new McpHelperAccess(database, () => false, launchingIdentities);
     const helperHarnesses: string[] = [];
     const integratedService = {
-      prepare: async (_harness: 'claude' | 'codex' | 'opencode' | 'amp', input: { context: string; mcp: { env: Record<string, string> } }) => {
+      prepare: async (_harness: 'claude' | 'codex' | 'opencode', input: { context: string; mcp: { env: Record<string, string> } }) => {
         helperHarnesses.push(helperAccess.harness({ identity: input.mcp.env.PATTERM_MCP_IDENTITY!, opencodeBridge: undefined })!);
-        openInstruction = input.context; return { resumeId: _harness === 'amp' ? 'T-prepared' : 'ses_prepared', argv: ['/usr/bin/opencode'] }; },
+        openInstruction = input.context; return { resumeId: 'ses_prepared', argv: ['/usr/bin/opencode'] }; },
       prompt: async (processId: string, text: string, context?: string) => {
         assert.ok(observedIntegrated.includes(processId), 'an Integrated agent is observed before its first prompt');
         integratedPrompts.push({ processId, text, ...(context ? { context } : {}) });
@@ -318,7 +304,6 @@ async function main(): Promise<void> {
       },
       integrated: integratedService,
       launchingIdentities,
-      ampThreads,
       database,
       timeline,
       terminal,
@@ -511,20 +496,9 @@ async function main(): Promise<void> {
       'opencode project context without explicit prompt is not sent through terminal input'
     );
 
-    const ampLaunched = await launcher.launch({ harness: 'amp', project_id: projectId, interface_mode: 'tui' });
-    const ampSpawn = lastRequest(terminalRequests, 'terminal.process.spawn');
-    assert.equal(ampSpawn.command, ampExecutable);
-    assert.deepEqual((ampSpawn.args as string[]).slice(0, 3), ['threads', 'continue', 'T-1234']);
-    assert.equal((ampSpawn.env as Record<string, string>).AMP_WEB_TERMINAL, '1', 'amp copies through OSC 52');
-    assert.ok(JSON.parse(fs.readFileSync((ampSpawn.args as string[])[4]!, 'utf8')).patterm.env.PATTERM_MCP_IDENTITY);
-    assert.equal((database.connection.prepare('select resume_id from sessions where id = ?').get(ampLaunched.session_id) as { resume_id: string }).resume_id, 'T-1234');
-    const ampIntegrated = await launcher.launch({ harness: 'amp', project_id: projectId, interface_mode: 'integrated' });
-    assert.equal(ampIntegrated.pty_process_id, null);
-    assert.equal((database.connection.prepare('select resume_id from sessions where id = ?').get(ampIntegrated.session_id) as { resume_id: string }).resume_id, 'T-prepared');
-    assert.deepEqual(helperHarnesses, ['amp'], 'helpers started while preparing are recognised before the session is registered');
-
     const spawnCountBeforeIntegrated = terminalRequests.filter((request) => request.method === 'terminal.process.spawn').length;
     const integrated = await launcher.launch({ harness: 'opencode', project_id: projectId, interface_mode: 'integrated', initial_prompt: 'Use Integrated mode.' });
+    assert.deepEqual(helperHarnesses, ['opencode'], 'helpers started while preparing are recognised before the session is registered');
     assert.equal(integrated.pty_process_id, null);
     assert.equal(integrated.interface_mode, 'integrated');
     assert.match(openInstruction, /call ui_save \(load it through tool search/, 'Integrated agents learn to draw figures with ui_save');

@@ -49,5 +49,5 @@ function isFullscreenTuiHarness(database: DatabaseService, processId: string): b
     )
     .get(processId, processId) as { harness: string | null } | undefined;
 
-  return row?.harness === 'claude' || row?.harness === 'codex' || row?.harness === 'opencode' || row?.harness === 'amp';
+  return row?.harness === 'claude' || row?.harness === 'codex' || row?.harness === 'opencode';
 }

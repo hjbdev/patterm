@@ -1,4 +1,4 @@
-export type AgentHistoryProvider = 'claude' | 'codex' | 'opencode' | 'amp';
+export type AgentHistoryProvider = 'claude' | 'codex' | 'opencode';
 
 export const HISTORY_IMPORT_STALE_MS = 5 * 60_000;
 
@@ -120,7 +120,7 @@ export interface HistoryFileFingerprint {
 
 export interface HistorySourceCandidate {
   provider: AgentHistoryProvider;
-  sourceKind: 'default' | 'manual_file' | 'manual_directory' | 'opencode_db' | 'amp_cli';
+  sourceKind: 'default' | 'manual_file' | 'manual_directory' | 'opencode_db';
   path: string;
   exists: boolean;
   enabled?: boolean;
@@ -132,21 +132,12 @@ export interface ProviderHistoryAdapter {
   readonly parserVersion: string;
   defaultSources(homeDir: string): HistorySourceCandidate[];
   discoverFiles(sourcePath: string): string[];
-  discoverFilesAsync?(sourcePath: string): Promise<string[]>;
   discoverFilesSince?(sourcePath: string, sinceMtimeMs: number, forcePaths?: string[]): string[];
   quickFingerprintFile?(filePath: string): HistoryFileFingerprint;
   changedProviderConversationIds?(previousFingerprint: Record<string, unknown> | null, currentFingerprint: Record<string, unknown>): string[] | null;
   parseFile(filePath: string, options?: ParseHistoryFileOptions): ParsedHistoryFile;
-  parseFileAsync?(filePath: string, options?: ParseHistoryFileOptions): Promise<ParsedHistoryFile>;
   parseFileStream?(filePath: string, options?: ParseHistoryFileOptions): ParsedHistoryStream;
   fingerprintFile?(filePath: string): HistoryFileFingerprint;
-  filterDiscoveredFiles?(filePaths: string[], scope: HistoryImportScope): string[];
-}
-
-export interface HistoryImportScope {
-  projectPaths: string[];
-  providerConversationIds: string[];
-  excludedProviderConversationIds: string[];
 }
 
 export interface RedactedText {

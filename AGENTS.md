@@ -139,7 +139,7 @@ Administrative and owner-only tools (settings, MCP servers, assistant) are
 registered `hidden: true`, so agents can neither list nor call them.
 
 Never edit a harness's own configuration (`~/.claude.json`,
-`~/.codex/config.toml`, OpenCode or Amp settings). Deliver Patterm's MCP servers
+`~/.codex/config.toml`, OpenCode settings). Deliver Patterm's MCP servers
 and settings per launch through files in Patterm's directories, `-c` overrides,
 or runtime APIs. Never put secrets such as MCP server env values, tokens, or
 headers in harness arguments, where `ps` and the `processes` table show them;
