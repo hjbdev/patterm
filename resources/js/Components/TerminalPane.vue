@@ -61,6 +61,7 @@ import {
   resolveTerminalFontFamily,
   type AppearanceSettings
 } from '../appearance/AppearanceSettings';
+import { loadFontFamily } from '../appearance/FontLoading';
 import { nextTerminalFontSize, terminalFontSizeShortcutDirection } from '../terminal/TerminalFontSize';
 import {
   shouldSubscribeTerminalFrames,
@@ -151,6 +152,7 @@ let terminalMouseMode: TerminalMouseMode = inactiveTerminalMouseMode();
 let pendingMouseMove: TerminalMouseDispatch | null = null;
 let mouseMoveFrame: number | null = null;
 let appearanceSettings = DEFAULT_APPEARANCE_SETTINGS;
+let fontChangeRevision = 0;
 const SELECTION_DRAG_THRESHOLD_PX = 4;
 
 interface TerminalResizeRequest {
@@ -237,6 +239,7 @@ onMounted(async () => {
   // the first paint. A background refresh still applies any change.
   const knownSettings = lastKnownAppearanceSettings();
   appearanceSettings = knownSettings ?? await loadAppearanceSettings();
+  await loadFontFamily(resolveTerminalFontFamily(appearanceSettings));
   // The pane can unmount while settings load.
   if (!canvas.value) return;
   renderer = new TerminalRenderer(canvas.value, {
@@ -400,6 +403,7 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  fontChangeRevision += 1;
   clearSelectionCapture();
   unsubscribeConnection?.();
   unsubscribeControl?.();
@@ -486,27 +490,15 @@ function handleTerminalFontSizeShortcut(event: KeyboardEvent): boolean {
   if (!direction) return false;
 
   event.preventDefault();
-  const nextFontSize = nextTerminalFontSize(renderer.fontSize(), direction);
-  if (nextFontSize === renderer.fontSize()) {
+  const nextFontSize = nextTerminalFontSize(appearanceSettings.terminalFontSizePx, direction);
+  if (nextFontSize === appearanceSettings.terminalFontSizePx) {
     return true;
   }
 
-  renderer.setFontSize(nextFontSize);
   appearanceSettings = { ...appearanceSettings, terminalFontSizePx: nextFontSize };
   rememberAppearanceSettings(appearanceSettings);
   void window.patterm.appearanceSettingsUpdate(appearanceSettings);
-  clearLocalSelection();
-
-  const resized = renderer.resizeSurface(false);
-  const resizedKey = `${resized.cols}:${resized.rows}:${resized.cellWidth}:${resized.cellHeight}`;
-  lastResizeKey = resizedKey;
-  debugLog('terminal-pane', 'font-size.changed', { processId, fontSize: nextFontSize, resized, resizedKey, renderer: renderer.debugState() });
-
-  if (processId) {
-    sendTerminalResize(resized, resizedKey);
-  } else {
-    renderer.renderCurrentState();
-  }
+  void applyTerminalAppearanceSettings(appearanceSettings);
 
   return true;
 }
@@ -517,16 +509,19 @@ async function refreshAppearanceSettings(): Promise<void> {
   const changed = next.terminalFontSizePx !== appearanceSettings.terminalFontSizePx
     || resolveTerminalFontFamily(next) !== resolveTerminalFontFamily(appearanceSettings);
   appearanceSettings = next;
-  if (changed) applyTerminalAppearanceSettings(next);
+  if (changed) void applyTerminalAppearanceSettings(next);
 }
 
 function handleAppearanceSettingsChanged(event: Event): void {
   const next = rememberAppearanceSettings(normalizeAppearanceSettings((event as CustomEvent<AppearanceSettings>).detail));
   appearanceSettings = next;
-  applyTerminalAppearanceSettings(next);
+  void applyTerminalAppearanceSettings(next);
 }
 
-function applyTerminalAppearanceSettings(settings: AppearanceSettings): void {
+async function applyTerminalAppearanceSettings(settings: AppearanceSettings): Promise<void> {
+  const revision = ++fontChangeRevision;
+  await loadFontFamily(resolveTerminalFontFamily(settings));
+  if (revision !== fontChangeRevision) return;
   if (!renderer) return;
   renderer.setFontSettings({ fontSize: settings.terminalFontSizePx, fontFamily: resolveTerminalFontFamily(settings) });
   clearLocalSelection();

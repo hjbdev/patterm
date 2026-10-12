@@ -1,6 +1,18 @@
 import assert from 'node:assert/strict';
 import { appearanceSettingsInput } from '../app/Services/SettingsService';
-import { applyUiFont, normalizeAppearanceSettings } from '../resources/js/appearance/AppearanceSettings';
+import { applyUiFont, normalizeAppearanceSettings, UI_FONT_OPTIONS, TERMINAL_FONT_OPTIONS, resolveTerminalFontFamily } from '../resources/js/appearance/AppearanceSettings';
+
+for (const [key, options] of [['uiFont', UI_FONT_OPTIONS], ['terminalFont', TERMINAL_FONT_OPTIONS]] as const) {
+  for (const option of options) {
+    const saved = appearanceSettingsInput.parse({ [key]: { preset: option.value, customFamily: 'Comic Code' } });
+    const restored = normalizeAppearanceSettings(JSON.parse(JSON.stringify(saved)));
+    assert.equal(restored[key].preset, option.value, `${key}: ${option.value} survives save and reload`);
+    assert.equal(restored[key].customFamily, 'Comic Code');
+  }
+  assert.throws(() => appearanceSettingsInput.parse({ [key]: { preset: 'unknown' } }));
+}
+assert.equal(appearanceSettingsInput.parse({}).terminalFont.preset, 'jetbrains-nerd', 'existing default is preserved');
+assert.match(resolveTerminalFontFamily(normalizeAppearanceSettings(null)), /"JetBrains Mono"/, 'installed Nerd Font falls back to bundled JetBrains Mono');
 
 assert.equal(appearanceSettingsInput.parse({}).terminalContainer, true);
 assert.equal(normalizeAppearanceSettings(null).terminalContainer, true);

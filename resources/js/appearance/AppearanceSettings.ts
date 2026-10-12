@@ -1,7 +1,7 @@
-export type UiFontPreset = 'inter' | 'geist' | 'system' | 'custom';
+export type UiFontPreset = 'inter' | 'geist' | 'fira-sans' | 'ibm-plex-sans' | 'system' | 'custom';
 export type DiffViewerLayout = 'drawer' | 'deck';
 export type NavigationLayout = 'tabs' | 'sidebar';
-export type TerminalFontPreset = 'jetbrains-nerd' | 'geist-mono' | 'system-mono' | 'custom';
+export type TerminalFontPreset = 'jetbrains-nerd' | 'jetbrains-mono' | 'geist-mono' | 'fira-code' | 'iosevka' | 'ibm-plex-mono' | 'source-code-pro' | 'comic-mono' | 'system-mono' | 'custom';
 
 export interface AppearanceSettings {
   uiFont: { preset: UiFontPreset; customFamily: string };
@@ -36,6 +36,8 @@ export const NAVIGATION_OPTIONS: Array<{ value: NavigationLayout; label: string 
 export const UI_FONT_OPTIONS: Array<{ value: UiFontPreset; label: string; family: string }> = [
   { value: 'inter', label: 'Inter', family: 'Inter, ui-sans-serif, system-ui, sans-serif' },
   { value: 'geist', label: 'Geist', family: 'Geist, ui-sans-serif, system-ui, sans-serif' },
+  { value: 'fira-sans', label: 'Fira Sans', family: '"Fira Sans", ui-sans-serif, system-ui, sans-serif' },
+  { value: 'ibm-plex-sans', label: 'IBM Plex Sans', family: '"IBM Plex Sans", ui-sans-serif, system-ui, sans-serif' },
   { value: 'system', label: 'System', family: 'ui-sans-serif, system-ui, sans-serif' },
   { value: 'custom', label: 'Custom', family: '' }
 ];
@@ -43,10 +45,16 @@ export const UI_FONT_OPTIONS: Array<{ value: UiFontPreset; label: string; family
 export const TERMINAL_FONT_OPTIONS: Array<{ value: TerminalFontPreset; label: string; family: string }> = [
   {
     value: 'jetbrains-nerd',
-    label: 'JetBrainsMono Nerd Font',
+    label: 'JetBrains Mono Nerd Font (installed)',
     family: '"JetBrainsMono Nerd Font", "JetBrainsMono Nerd Font Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace'
   },
+  { value: 'jetbrains-mono', label: 'JetBrains Mono', family: '"JetBrains Mono", ui-monospace, monospace' },
   { value: 'geist-mono', label: 'Geist Mono', family: '"Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace' },
+  { value: 'fira-code', label: 'Fira Code', family: '"Fira Code", ui-monospace, monospace' },
+  { value: 'iosevka', label: 'Iosevka', family: '"Iosevka", ui-monospace, monospace' },
+  { value: 'ibm-plex-mono', label: 'IBM Plex Mono', family: '"IBM Plex Mono", ui-monospace, monospace' },
+  { value: 'source-code-pro', label: 'Source Code Pro', family: '"Source Code Pro", ui-monospace, monospace' },
+  { value: 'comic-mono', label: 'Comic Mono', family: '"Comic Mono", ui-monospace, monospace' },
   { value: 'system-mono', label: 'System Mono', family: 'ui-monospace, SFMono-Regular, Menlo, monospace' },
   { value: 'custom', label: 'Custom', family: '' }
 ];
@@ -141,9 +149,9 @@ function clampTerminalFontSize(value: unknown): number {
 }
 
 function isUiFontPreset(value: unknown): value is UiFontPreset {
-  return value === 'inter' || value === 'geist' || value === 'system' || value === 'custom';
+  return UI_FONT_OPTIONS.some((option) => option.value === value);
 }
 
 function isTerminalFontPreset(value: unknown): value is TerminalFontPreset {
-  return value === 'jetbrains-nerd' || value === 'geist-mono' || value === 'system-mono' || value === 'custom';
+  return TERMINAL_FONT_OPTIONS.some((option) => option.value === value);
 }

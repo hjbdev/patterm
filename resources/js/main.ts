@@ -5,6 +5,7 @@ import App from './App.vue';
 import { createWebHashHistory, createWebHistory } from 'vue-router';
 import { createWorkbenchRouter, prefetchPages } from './router';
 import { warmHighlightWorker } from './lib/markdownHighlightWorker';
+import './assets/fonts/fonts.css';
 import './styles.css';
 
 // A server with a password shows only the sign-in page until this browser

@@ -73,6 +73,15 @@ const notes = {
   // MPL-2.0 requires telling recipients where to get the source.
   'web-push': 'Patterm ships it unmodified. Its source is available from https://github.com/web-push-libs/web-push and in the installed node_modules/web-push directory.'
 };
+// Font binaries are vendored unchanged from pinned Fontsource packages.
+const fonts = JSON.parse(readFileSync(path.join(root, 'resources/js/assets/fonts/manifest.json'), 'utf8')).map((font) => ({
+  name: font.package,
+  version: font.version,
+  license: font.license.toUpperCase() === 'MIT' ? 'MIT' : font.license,
+  files: [`${font.name}.FONT-LICENSE`],
+  note: `Bundled WOFF2 font files from ${font.url}.`
+}));
+
 // Release targets, matching .github/workflows/release.yml. The crate list must
 // not depend on the build machine.
 const platforms = ['x86_64-unknown-linux-musl', 'aarch64-unknown-linux-musl'];
@@ -182,7 +191,7 @@ function render(packages) {
 }
 
 function bundled(entry, ecosystem) {
-  return { ...entry, version: '', ecosystem, texts: entry.files.map((file) => readFileSync(path.join(overridesDir, file), 'utf8').trim()) };
+  return { ...entry, version: entry.version ?? '', ecosystem, texts: entry.files.map((file) => readFileSync(path.join(overridesDir, file), 'utf8').trim()) };
 }
 
 const byName = (a, b) => compareText(a.name, b.name) || compareVersion(a.version, b.version);
@@ -190,6 +199,7 @@ const packages = [
   ...npmPackages().map((pkg) => resolve(pkg, 'npm')),
   ...crates().map((pkg) => resolve(pkg, 'Rust crate')),
   ...copied.map((entry) => bundled(entry, 'copied source')),
+  ...fonts.map((entry) => bundled(entry, 'font')),
   ...linked.map((entry) => bundled(entry, 'statically linked'))
 ].sort(byName);
 const notices = render(packages);
