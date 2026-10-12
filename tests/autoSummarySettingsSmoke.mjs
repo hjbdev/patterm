@@ -94,3 +94,43 @@ test('checkboxes bind reka-ui modelValue, not the removed checked prop', () => {
     assert.doesNotMatch(source, /<Checkbox[^>]*(v-model:checked|:checked=|@update:checked)/, file);
   }
 });
+
+test('coverage controls allow restarting a stale rebuild and disable duplicate active rebuilds', async () => {
+  const filename = path.resolve('resources/js/Components/AutoSummaryControls.vue');
+  const { descriptor } = parse(fs.readFileSync(filename, 'utf8'), { filename });
+  const script = compileScript(descriptor, { id: 'summary-controls-test' });
+  const output = path.resolve('dist/tests/summary-controls-fixture.cjs');
+  await build({ stdin: { contents: script.content, resolveDir: path.dirname(filename), loader: 'ts' },
+    outfile: output, bundle: true, platform: 'node', format: 'cjs', external: ['vue'],
+    plugins: [{ name: 'controls-ui-stubs', setup(builder) {
+      builder.onResolve({ filter: /projectContext$/ }, args => ({ path: args.path, namespace: 'context-transport' }));
+      builder.onLoad({ filter: /.*/, namespace: 'context-transport' }, () => ({ contents:
+        'export const contextCall = (name, projectId, args) => window.patterm.call(name, {project_id: projectId, ...args});' }));
+      builder.onResolve({ filter: /^\.\/ui\// }, args => ({ path: args.path, namespace: 'stub' }));
+      builder.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({ contents:
+        'export const Button = {}; export const Dialog = {}; export const DialogContent = {}; export const DialogHeader = {}; export const DialogTitle = {}; export const DialogDescription = {}; export const DialogFooter = {};' }));
+    } }]
+  });
+  let reply = { coverage: 'stale', rebuilding: true, paused: false, enabled: true,
+    totalMessages: 40, processedMessages: 6, estimatedCalls: 10 };
+  const operations = [];
+  globalThis.window = { patterm: { call: async (name, args) => {
+    assert.equal(name, 'auto_summary_control'); assert.equal(args.project_id, 'project'); assert.equal(args.session_id, 'session');
+    operations.push(args.operation); return structuredClone(reply);
+  } } };
+  const component = createRequire(import.meta.url)(output).default;
+  component.render = () => null;
+  let state;
+  const setup = component.setup;
+  component.setup = (props, context) => (state = proxyRefs(setup(props, context)));
+  const renderer = createRenderer({ createComment: () => ({}), insert() {}, remove() {}, parentNode: () => null, nextSibling: () => null });
+  const app = renderer.createApp(component, { projectId: 'project', sessionId: 'session', coverage: 'stale' });
+  app.mount({});
+  try {
+    await state.inspect(); assert.equal(state.canRebuild, true, 'stale rebuilds always offer recovery');
+    reply = { ...reply, coverage: 'catching_up' };
+    await state.control('rebuild'); assert.equal(state.canRebuild, false, 'a valid active rebuild cannot be duplicated');
+    assert.deepEqual(operations, ['inspect', 'rebuild']);
+    assert.match(descriptor.template.content, /:disabled="busy \|\| !canRebuild"/);
+  } finally { app.unmount(); delete globalThis.window; fs.unlinkSync(output); }
+});

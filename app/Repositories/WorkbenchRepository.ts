@@ -8,7 +8,7 @@ import type { TimerRecord, TimerService } from '../Services/TimerService';
 // Renderer-facing (camelCase) shapes. These intentionally mirror the interfaces
 // in resources/js/types.ts so the IPC payload drops straight into the UI.
 
-export interface AutoSummaryDto { text: string; status?: string | null; generatedAt: string; provider: string; model: string; }
+export interface AutoSummaryDto { coverage?: string | null; text: string; status?: string | null; generatedAt: string; provider: string; model: string; }
 
 export interface ProjectSummaryDto {
   id: string;
@@ -134,6 +134,7 @@ interface SessionRow {
 
 interface ProcessRow {
   auto_summary: string | null;
+  auto_summary_coverage: string | null;
   auto_status: string | null;
   auto_summary_at: string | null;
   auto_summary_provider: string | null;
@@ -346,7 +347,7 @@ function mapProcess(row: ProcessRow): ProcessDto {
 
 function mapAutoSummary(row: ProcessRow): AutoSummaryDto | null {
   return row.auto_summary && row.auto_summary_at && row.auto_summary_provider && row.auto_summary_model
-    ? { text: row.auto_summary, status: row.auto_status, generatedAt: row.auto_summary_at, provider: row.auto_summary_provider, model: row.auto_summary_model } : null;
+    ? { text: row.auto_summary, coverage: row.auto_summary_coverage, status: row.auto_status, generatedAt: row.auto_summary_at, provider: row.auto_summary_provider, model: row.auto_summary_model } : null;
 }
 
 // Shown once the turn that asked has finished.

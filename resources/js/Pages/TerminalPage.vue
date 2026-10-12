@@ -19,7 +19,7 @@
         <div v-if="narrow" class="absolute inset-0 z-20 bg-black/40" @click="close" />
         <aside ref="panel" tabindex="-1" :role="narrow ? 'dialog' : 'complementary'" :aria-modal="narrow || undefined" aria-label="Session context" class="z-30 flex shrink-0 flex-col border-l border-border/30 bg-background outline-none" :class="narrow ? 'absolute inset-y-0 right-0 shadow-xl' : integratedAgent ? 'relative my-6' : 'relative'" :style="{ width: `${width}px`, maxWidth: '100%' }" @keydown.esc.stop.prevent="close" @keydown="trapFocus">
           <div v-if="!narrow" role="separator" tabindex="0" aria-label="Resize session context" aria-orientation="vertical" :aria-valuenow="width" :aria-valuemin="260" :aria-valuemax="480" class="absolute inset-y-0 -left-1 w-2 cursor-col-resize focus-visible:bg-primary/40" @pointerdown="startResize" @pointermove="resize" @pointerup="endResize" @pointercancel="endResize" @keydown.left.prevent="setWidth(width + 20)" @keydown.right.prevent="setWidth(width - 20)" />
-          <SessionContextPanel :key="selectedAgent.id" :project-id="activeProject!.project.id" :session-id="selectedAgent.id" :summary="selectedAgent.summary" :active-worktree-id="diffWorktree?.id ?? null" @open-worktree="openWorktree" @close="close" />
+          <SessionContextPanel :key="selectedAgent.id" :project-id="activeProject!.project.id" :session-id="selectedAgent.id" :summary="selectedAgent.summary" :can-summarize="!selectedAgent.parentId" :active-worktree-id="diffWorktree?.id ?? null" @open-worktree="openWorktree" @close="close" />
         </aside>
       </template>
     </div>

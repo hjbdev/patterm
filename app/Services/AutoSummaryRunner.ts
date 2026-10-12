@@ -5,7 +5,7 @@ import type { DatabaseService } from './DatabaseService';
 import { envValue } from '../Platform/Environment';
 import { linkOrCopy } from '../Platform/LinkedEntries';
 import { spawnResolved, stopChild, userHome } from '../Platform/ServiceProcess';
-import { SUMMARY_SYSTEM_PROMPT, SUMMARY_TEST_SYSTEM_PROMPT, summaryResult, type AutoSummarySettings, type SummaryContext, type SummaryResult } from './AutoSummarySettings';
+import { SUMMARY_SYSTEM_PROMPT, SUMMARY_TEST_SYSTEM_PROMPT, summaryResult, type AutoSummarySettings, type SummaryContext, type SummaryResult, SUMMARY_INPUT_BYTES } from './AutoSummarySettings';
 
 const REQUIRED_FLAGS = ['--print', '--tools', '--strict-mcp-config', '--mcp-config', '--disable-slash-commands', '--no-session-persistence', '--setting-sources', '--settings', '--system-prompt', '--output-format', '--no-chrome'];
 
@@ -131,7 +131,8 @@ export class AutoSummaryRunner {
   }
 
   async run(settings: AutoSummarySettings, text: string, signal: AbortSignal, mode: 'summary' | 'test' = 'summary', context: SummaryContext = {}): Promise<SummaryResult> {
-    const input = JSON.stringify({ ...context, terminal_output: text });
+    const input = JSON.stringify({ ...context, ...(context.memory ? { conversation_text: text } : { terminal_output: text }) });
+    if (Buffer.byteLength(input) + Buffer.byteLength(mode === 'test' ? SUMMARY_TEST_SYSTEM_PROMPT : SUMMARY_SYSTEM_PROMPT) > SUMMARY_INPUT_BYTES) throw new Error('Summary input exceeded the limit.');
     signal = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
     const available = this.availability(settings.provider);
     if (!available.available) throw new Error(available.reason!);
@@ -178,7 +179,11 @@ export class AutoSummaryRunner {
         }
         result = envelope.result;
       }
-      try { return summaryResult.parse(JSON.parse(result)); }
+      try {
+        const parsed = summaryResult.parse(JSON.parse(result));
+        if (context.memory && !parsed.memory) throw new Error();
+        return parsed;
+      }
       catch { throw new Error('Summariser did not return a short summary in the required format.'); }
     } finally {
       await finishCodexSummaryHome(directory);

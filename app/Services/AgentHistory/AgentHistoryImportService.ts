@@ -1,3 +1,4 @@
+import { SummaryProseIndex } from './SummaryProseIndex';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -165,6 +166,8 @@ export class AgentHistoryImportService {
         set finished_at = ?, status = ?, files_seen = ?, files_imported = ?, conversations_imported = ?, messages_imported = ?, skipped_count = ?, error_count = ?
         where id = ?
       `).run(finishedAt, status, totals.filesSeen, totals.filesImported, totals.conversationsImported, totals.messagesImported, totals.skippedCount, totals.errorCount, batchId);
+      const proseIndex = new SummaryProseIndex(this.database.connection);
+      for (const id of proseIndex.missing()) proseIndex.publish(id);
       this.timeline?.append({ event_type: 'conversation_history.imported', project_id: input.project_id ?? null, actor_type: 'system', metadata: { batch_id: batchId, trigger: input.trigger, ...totals, status } });
       reportProgress(report, batchId, totals, null);
     }
@@ -300,6 +303,8 @@ export class AgentHistoryImportService {
         set finished_at = ?, status = ?, files_seen = ?, files_imported = ?, conversations_imported = ?, messages_imported = ?, skipped_count = ?, error_count = ?
         where id = ?
       `).run(finishedAt, status, totals.filesSeen, totals.filesImported, totals.conversationsImported, totals.messagesImported, totals.skippedCount, totals.errorCount, batchId);
+      const proseIndex = new SummaryProseIndex(this.database.connection);
+      for (const id of proseIndex.missing()) proseIndex.publish(id);
       this.timeline?.append({ event_type: 'conversation_history.imported', project_id: input.project_id ?? null, actor_type: 'system', metadata: { batch_id: batchId, trigger: input.trigger, ...totals, status } });
       reportProgress(report, batchId, totals, null);
     }
@@ -468,6 +473,7 @@ export class AgentHistoryImportService {
       }
       return count;
     })();
+    new SummaryProseIndex(this.database.connection).publish(id);
     this.markResumeImported(link.session_id, conversation.providerConversationId);
     if (index) this.search?.indexConversation(id);
     return { id, messages };
@@ -490,6 +496,7 @@ export class AgentHistoryImportService {
       throw error;
     }
     if (existing) this.writeConversationRow(id, conversation, link, sourceFileId, now);
+    new SummaryProseIndex(this.database.connection).publish(id);
     this.markResumeImported(link.session_id, conversation.providerConversationId);
     // The search index reads the row's title and project, so index after it is written.
     if (index) {

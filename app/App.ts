@@ -19,7 +19,7 @@ import { ProjectLinkActions } from './Actions/ProjectLinkActions';
 import { CrossHostService, REMOTE_CONTEXT_READ_TOOLS } from './Services/CrossHostService';
 import { AutoSummaryService } from './Services/AutoSummaryService';
 import { AutoSummaryRunner } from './Services/AutoSummaryRunner';
-import { AutoSummaryActions } from './Actions/AutoSummaryActions';
+import { AutoSummaryActions, registerAutoSummaryControl } from './Actions/AutoSummaryActions';
 import { acquireApplicationLock } from './Runtime/ApplicationLock';
 import { launchNodeHistoryWorker } from './Runtime/NodeHistoryWorker';
 import path from 'node:path';
@@ -402,7 +402,7 @@ async function createApplicationResources(
   const historyReadService = new AgentHistoryReadService(historyDatabase);
   integrated.setHistoryReadService(historyReadService);
   const socketPath = path.join(options.appDataPath, 'mcp.sock');
-  const autoSummaries = new AutoSummaryService(database, settings, terminal, new AutoSummaryRunner(database, resolvedEnv), notifyWorkbenchChanged, Date.now, integrated, historyDatabase);
+  const autoSummaries = new AutoSummaryService(database, settings, terminal, new AutoSummaryRunner(database, resolvedEnv), notifyWorkbenchChanged, Date.now, historyDatabase);
   const autoSummaryActions = new AutoSummaryActions(autoSummaries);
   autoSummaries.start();
   defer(() => autoSummaries.dispose());
@@ -410,7 +410,7 @@ async function createApplicationResources(
   const historyImportQueue = new AgentHistoryImportQueueService(options.appDataPath, undefined, options.runtime === 'node' ? launchNodeHistoryWorker : undefined, debugLog, {
     onResult: (result) => {
       if (applyHistoryImportEffects(result, timeline, resumeCapture)) notifyWorkbenchChanged();
-      if (importedConversations(result)) notifyChanged(['history']);
+      if (importedConversations(result)) { autoSummaries.historyChanged(); notifyChanged(['history']); }
     }
   });
   defer(() => historyImportQueue.dispose());
@@ -607,6 +607,7 @@ async function createApplicationResources(
     launchingIdentities,
     crossHost
   });
+  registerAutoSummaryControl(mcp, autoSummaryActions);
   registerMcpServerTools(mcp, mcpServers);
   registerAssistantTools(mcp, assistantService, settings);
   registerIdleCompactionTools(mcp, settings);
