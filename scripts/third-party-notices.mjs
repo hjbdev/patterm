@@ -82,9 +82,10 @@ const fonts = JSON.parse(readFileSync(path.join(root, 'resources/js/assets/fonts
   note: `Bundled WOFF2 font files from ${font.url}.`
 }));
 
-// Release targets, matching .github/workflows/release.yml. The crate list must
-// not depend on the build machine.
-const platforms = ['x86_64-unknown-linux-musl', 'aarch64-unknown-linux-musl'];
+// Release targets, matching .github/workflows/release.yml; Windows builds for
+// the runner's default MSVC target. The crate list must not depend on the
+// build machine.
+const platforms = ['x86_64-unknown-linux-musl', 'aarch64-unknown-linux-musl', 'x86_64-pc-windows-msvc'];
 const copyleft = /\b(A?GPL|LGPL|SSPL|EUPL|CDDL|EPL|OSL)\b/i;
 const licenceFile = /^(licen[cs]e|copying|notice|unlicense)([-._].*)?$/i;
 // A fixed locale, so the output and --check don't depend on the machine's locale.
