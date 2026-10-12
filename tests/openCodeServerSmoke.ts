@@ -13,6 +13,7 @@ import { StdioClientTransport as ModernTransport } from '@modelcontextprotocol/c
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { UncertainDeliveryError } from '../app/Services/IntegratedDelivery';
 import { IntegratedAgentService } from '../app/Services/IntegratedAgentService';
+import { isOpenCodeVersionMismatch } from '../app/Services/OpenCodeServiceErrors';
 import { OpenCodeServerService, ProviderCommandError } from '../app/Services/OpenCodeServerService';
 import type { IntegratedConversationEvent } from '../app/Services/IntegratedConversation';
 import { McpSocketServer } from '../app/MCP/McpSocketServer';
@@ -43,13 +44,14 @@ async function main(): Promise<void> {
 const fs = require('node:fs');
 const [, , api, method, route, , json] = process.argv;
  if (api === '--version') { console.log('opencode v2.0.14'); process.exit(0); }
+if (api === 'service' && method === 'restart') { if (process.env.RESTARTED) fs.writeFileSync(process.env.RESTARTED, ''); process.exit(0); }
 if (api !== 'api') process.exit(2);
 const body = json ? JSON.parse(json) : undefined;
 const rows = fs.existsSync(process.env.RECORD) ? fs.readFileSync(process.env.RECORD, 'utf8').trim().split('\\n').filter(Boolean).map(JSON.parse) : [];
 if (process.env.REJECT_PROMPT && method === 'POST' && route.endsWith('/prompt')) { console.log('HTTP 400 Bad Request'); process.exit(1); }
 fs.appendFileSync(process.env.RECORD, JSON.stringify({method,route,body})+'\\n');
 if (process.env.FAIL_API) { console.error(json); process.exit(1); }
- if (route === '/api/info') console.log(JSON.stringify({version:process.env.WRONG_VERSION ? '2.0.13' : '2.0.14',pid:4242}));
+ if (route === '/api/info') console.log(JSON.stringify({version:process.env.WRONG_VERSION && !(process.env.RESTARTED && fs.existsSync(process.env.RESTARTED)) ? '2.0.13' : '2.0.14',pid:4242}));
 else if (method === 'GET' && route.startsWith('/api/model/default?')) console.log(JSON.stringify({data:{providerID:'openai',id:'gpt-other',modelID:'gpt-other'}}));
 else if (method === 'GET' && route.startsWith('/api/model?')) console.log(JSON.stringify({data:[
   {providerID:'openai',modelID:'gpt-other',name:'GPT Other',enabled:true,variants:[{id:'low'},{id:'high'}]},
@@ -768,7 +770,16 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const failing = new OpenCodeServerService(database, { ...env, FAIL_API: '1' });
     await assert.rejects(failing.prepare(input), (error: Error) => !error.message.includes('PATTERM_OPENCODE_BRIDGE') && !error.message.includes('config'));
     const mismatched = new OpenCodeServerService(database, { ...env, WRONG_VERSION: '1' });
-    await assert.rejects(mismatched.prepare(input), /versions differ/);
+    await assert.rejects(mismatched.prepare(input), (error: Error) => isOpenCodeVersionMismatch(error.message) && error.message.includes('CLI 2.0.14, server 2.0.13'));
+    // Desktop IPC rejections arrive wrapped in Electron's channel prefix.
+    assert.ok(isOpenCodeVersionMismatch("Error invoking remote method 'patterm:mcp:call': Error: OpenCode server version mismatch: CLI 2.0.14, server 2.0.13."));
+    // The user-requested restart replaces the stale server; a restart that
+    // leaves it stale reports that instead of letting launches retry blindly.
+    await assert.rejects(mismatched.restartService(executable), /still reports 2\.0\.13/);
+    const restarted = path.join(directory, 'restarted');
+    const restartable = new OpenCodeServerService(database, { ...env, WRONG_VERSION: '1', RESTARTED: restarted });
+    assert.deepEqual(await restartable.restartService(executable), { version: '2.0.14' });
+    assert.ok(fs.existsSync(restarted), 'the CLI restarted the shared server');
 
     // Optional real beta acceptance uses isolated native service state, no model
     // calls or credentials, and always stops only that temporary service.
