@@ -101,6 +101,8 @@ import ConversationTranscript from './ConversationTranscript.vue';
 import { archiveTranscript, isReasoningMessage, toolCallKey, type ArchiveDisplayCache } from '../lib/historyTranscript';
 import { relativeTime } from '../lib/format';
 import { toast } from 'vue-sonner';
+import { isOpenCodeVersionMismatch } from '../../../app/Services/OpenCodeServiceErrors';
+import { toastLaunchError } from '../lib/launchErrors';
 import { ScrollArea } from './ui/scroll-area';
 
 const props = defineProps<{
@@ -386,7 +388,11 @@ async function resumeSelected(): Promise<void> {
     const result = await window.patterm.call('history_resume', { conversation_id: conversation.id, project_id: props.projectId }) as { session_id?: unknown };
     if (typeof result?.session_id === 'string') emit('launched', result.session_id);
   } catch (cause) {
-    toast.error('Could not resume the conversation', { description: cause instanceof Error ? cause.message : String(cause) });
+    const message = cause instanceof Error ? cause.message : String(cause);
+    // A paired host's conversation would need that host's server restarted.
+    const remote = conversation.id.includes(':') || Boolean(props.projectId?.includes(':'));
+    if (isOpenCodeVersionMismatch(message) && !remote) toastLaunchError(cause, message, resumeSelected);
+    else toast.error('Could not resume the conversation', { description: message });
   } finally {
     resuming.value = false;
   }

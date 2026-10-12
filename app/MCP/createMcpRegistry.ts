@@ -1757,6 +1757,17 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
 
   registry.register(
     {
+      name: 'opencode_service_restart',
+      namespace: 'harness',
+      hidden: true,
+      description: 'Restart OpenCode\'s shared background server with the installed CLI. Interrupts every running OpenCode turn, including sessions outside Patterm.',
+      inputSchema: { type: 'object' }
+    },
+    () => services.actions.restartOpenCodeService.execute()
+  );
+
+  registry.register(
+    {
       name: 'harness_launch',
       namespace: 'harness',
       description: 'Launch an installed harness with the Patterm MCP server injected and register the session. Pass preset (by name or id) or model/reasoning to choose the model; without them the harness default preset applies.',

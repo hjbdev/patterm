@@ -8,6 +8,7 @@ import type { DatabaseService } from './DatabaseService';
 import { firstSemver, type McpServerSpec } from '../Harness/HarnessProvider';
 import { openCodeMcpConfigs } from '../Harness/McpDelivery';
 import type { IntegratedControls, IntegratedFormAction, IntegratedLaunchInput, IntegratedLaunchResult } from './IntegratedAgentService';
+import { OPENCODE_VERSION_MISMATCH } from './OpenCodeServiceErrors';
 import { UncertainDeliveryError, type IntegratedDeliveryState } from './IntegratedDelivery';
 import type { ResolvedIntegratedPrompt } from './IntegratedInput';
 import { messagesTaskOutput, textTaskOutput, type IntegratedConversationEvent, type IntegratedConversationListener, type IntegratedTaskOutput } from './IntegratedConversation';
@@ -1297,10 +1298,9 @@ export class OpenCodeServerService {
     const { executable, cwd, mcp } = input;
     // The native API caps each durable instruction entry at 8 KiB.
     if (Buffer.byteLength(JSON.stringify(input.context)) > 8 * 1024) throw new Error('Patterm context exceeds the OpenCode instruction limit');
-    const version = firstSemver(await this.runCli(executable, cwd, ['--version']));
-    const identity = record(await this.api(executable, cwd, 'GET', '/api/info'));
-    if (!version || identity.healthy === false || identity.version !== version) {
-      throw new Error('OpenCode CLI and shared-server versions differ. Update/restart OpenCode explicitly before launching; Patterm will not replace a server used by other sessions.');
+    const versions = await this.versions(executable, cwd);
+    if (!versions.matched) {
+      throw new Error(`${OPENCODE_VERSION_MISMATCH}: CLI ${versions.cli ?? 'unknown'}, server ${versions.server ?? 'unknown'}. Patterm restarts the shared server only when the user asks, because a restart interrupts every running OpenCode turn, including sessions outside Patterm.`);
     }
     const bridgeName = `patterm_${createHash('sha256').update(mcp.env.PATTERM_MCP_SOCKET ?? '').digest('hex').slice(0, 12)}`;
     const location = new URLSearchParams({ 'location[directory]': cwd });
@@ -1359,6 +1359,33 @@ export class OpenCodeServerService {
     if (!sessionId?.startsWith('ses')) throw new Error('OpenCode did not return a session ID');
     await this.api(executable, cwd, 'PUT', `/api/experimental/session/${encodeURIComponent(sessionId)}/instructions/entries/patterm`, { value: input.context });
     return { resumeId: sessionId, argv: [executable] };
+  }
+
+  private async versions(executable: string, cwd: string): Promise<{ matched: boolean; cli: string | null; server: string | null }> {
+    const cli = firstSemver(await this.runCli(executable, cwd, ['--version']));
+    const identity = record(await this.api(executable, cwd, 'GET', '/api/info'));
+    const server = typeof identity.version === 'string' ? identity.version : null;
+    return { matched: Boolean(cli) && identity.healthy !== false && server === cli, cli, server };
+  }
+
+  // Replaces a shared daemon left on an older version by a CLI update. This
+  // interrupts every running turn on the daemon, including sessions outside
+  // Patterm, so it runs only on the user's explicit request. Patterm's own
+  // conversation streams reconnect, and the next launch reinstalls the bridge.
+  async restartService(executable: string): Promise<{ version: string }> {
+    const cwd = os.homedir();
+    await this.runCli(executable, cwd, ['service', 'restart']);
+    this.forgetDaemon();
+    let versions = await this.versions(executable, cwd).catch(() => null);
+    for (let attempt = 0; !versions?.matched && attempt < 20; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      this.forgetDaemon();
+      versions = await this.versions(executable, cwd).catch(() => null);
+    }
+    if (!versions?.matched || !versions.cli) {
+      throw new Error(`OpenCode server still reports ${versions?.server ?? 'an unknown version'} after restarting; check \`opencode service status\``);
+    }
+    return { version: versions.cli };
   }
 
   // OpenCode runs one shared daemon for every session, so stopping the daemon
