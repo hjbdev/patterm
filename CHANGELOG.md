@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Notification toasts, the tray, and push notifications show routine reports
   and agent requests as plain text instead of raw Markdown.
+- Closing the desktop app after confirming Quit, or launching another instance
+  after its window has closed, no longer raises an "Object has been destroyed"
+  JavaScript error on Windows.
 
 ## [0.1.0] - 2026-10-13
 

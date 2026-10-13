@@ -172,6 +172,9 @@ async function createWindow(): Promise<void> {
   });
   mainWindow.on('focus', () => mainWindow?.flashFrame(false));
   mainWindow.on('closed', () => {
+    mainWindow = null;
+    if (quitPrompt) clearTimeout(quitPrompt.fallback);
+    quitPrompt = null;
     unsubscribeNotifications();
     unsubscribeAssistant();
     unsubscribeDesktopNotifications();
@@ -223,7 +226,8 @@ ipcMain.on('patterm:quit:shown', (event, id: unknown) => {
 // The window confirms quitting in the app. A window that cannot show the
 // dialog (loading, crashed, or unresponsive) falls back to the native one.
 function requestQuit(): void {
-  const contents = mainWindow?.webContents;
+  // BrowserWindow.webContents itself throws after the window is destroyed.
+  const contents = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : undefined;
   if (!patterm || patterm.isShuttingDown() || quitting || !contents || contents.isDestroyed() || contents.isLoading() || contents.isCrashed()) {
     void quitDesktop();
     return;
