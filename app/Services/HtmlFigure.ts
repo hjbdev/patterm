@@ -253,7 +253,9 @@ export function prepareFigureHtml(page: string, fontCss = ''): string {
 const IMG_SRC = /(<img\b[^>]*?\bsrc\s*=\s*)(["'])([^"']+)\2/gi;
 const CSS_URL = /(url\(\s*)(["']?)([^"')\s]+)\2(\s*\))/gi;
 
+// A path, not a URL. A Windows drive (C:\ or C:/) looks like a URL scheme.
 function isLocalPath(value: string): boolean {
+  if (/^[a-z]:[\\/]/i.test(value)) return true;
   return !/^[a-z][a-z0-9+.-]*:/i.test(value) && !value.startsWith('//') && !value.startsWith('#');
 }
 

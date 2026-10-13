@@ -85,6 +85,7 @@ test('local images are found and swapped for their stored copies', () => {
   const page = `<img src="shot.png"><img alt="x" src='/abs/a.webp'><img src="https://example.com/r.png"><img src="data:image/png;base64,AA">
 <style>.a{background:url(bg.png)}.b{background:url("https://cdn.example/x.png")}.c{background:url('#frag')}</style>`;
   assert.deepEqual(ui.figureImagePaths(page), ['shot.png', '/abs/a.webp', 'bg.png']);
+  assert.deepEqual(ui.figureImagePaths('<img src="C:\\Users\\me\\shot.png"><img src="d:/shots/b.png">'), ['C:\\Users\\me\\shot.png', 'd:/shots/b.png'], 'Windows drive paths are files, not URL schemes');
   const swapped = ui.replaceFigureImages(page, new Map([['shot.png', 'data:image/png;base64,S'], ['bg.png', 'data:image/png;base64,B']]));
   assert.match(swapped, /<img src="data:image\/png;base64,S">/);
   assert.match(swapped, /url\("data:image\/png;base64,B"\)/);
