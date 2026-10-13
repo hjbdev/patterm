@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Closing the desktop app after confirming Quit, or launching another instance
   after its window has closed, no longer raises an "Object has been destroyed"
   JavaScript error on Windows.
+- `/restart` keeps the model, effort, and speed an agent is running on,
+  instead of going back to the ones it launched with.
+- `/restart` on an OpenCode agent reconnects Patterm's MCP servers, so changed
+  tool lists show up. OpenCode's shared server kept the old connection.
 
 ## [0.1.0] - 2026-10-13
 

@@ -37,6 +37,17 @@ export interface IntegratedLaunchInput {
   model?: string | null;
   reasoning?: string | null;
   serviceTier?: string | null;
+  // A restart reconnects MCP servers a shared daemon keeps across sessions,
+  // so their tool lists are fetched again.
+  reconnectMcp?: boolean;
+}
+
+// Launch settings a running agent reports. A missing key is one it does not
+// report; null means the harness default.
+export interface LiveSettings {
+  model?: string | null;
+  reasoning?: string | null;
+  service_tier?: string | null;
 }
 
 export interface IntegratedLaunchResult {
@@ -97,6 +108,8 @@ export interface IntegratedProviderService {  prepare(input: IntegratedLaunchInp
   compact?(processId: string): Promise<unknown>;
   // The native session's current model, where Patterm's selection can be stale.
   currentModel?(processId: string): Promise<string | null>;
+  // The native session's model and reasoning, read together for the same reason.
+  nativeSettings?(processId: string): Promise<LiveSettings>;
   // Native evidence that a previously ambiguous prompt was admitted.
   reconcile?(processId: string, messageId: string): Promise<IntegratedDeliveryState>;
   // Event-driven conversation updates. Returned function releases the listener.
@@ -866,6 +879,29 @@ export class IntegratedAgentService {
     const provider = this.forProcess(processId);
     const native = provider.currentModel ? await provider.currentModel(processId) : null;
     return native ?? (await this.controls(processId)).selectors.find((selector) => selector.id === 'model')?.value ?? null;
+  }
+
+  // The settings the agent runs on now. The launch columns miss changes made
+  // mid-conversation, so a restart resumes with these instead. Only settings
+  // the agent reports are returned. A `default` model or effort means the
+  // harness default; Codex's `default` speed is an explicit Standard tier.
+  async liveSettings(processId: string): Promise<LiveSettings> {
+    const provider = this.forProcess(processId);
+    const native = provider.nativeSettings ? await provider.nativeSettings(processId) : {};
+    if (native.model) return native;
+    const { selectors } = await this.controls(processId);
+    const setting = (id: string, keepDefault = false) => {
+      const selector = selectors.find((item) => item.id === id);
+      return selector ? { value: selector.value && (keepDefault || selector.value !== 'default') ? selector.value : null } : undefined;
+    };
+    const model = setting('model');
+    const reasoning = setting('effort') ?? setting('variant');
+    const tier = setting('speed', true);
+    return {
+      ...(model ? { model: model.value } : {}),
+      ...(reasoning ? { reasoning: reasoning.value } : {}),
+      ...(tier ? { service_tier: tier.value } : {})
+    };
   }
 
   private signal(key: string, signal: CompactionSignal): void {

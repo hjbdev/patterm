@@ -8,7 +8,7 @@ import { commandLineTooLong, execFileResolved, resolveService } from '../Platfor
 import type { DatabaseService } from './DatabaseService';
 import { firstSemver, type McpServerSpec } from '../Harness/HarnessProvider';
 import { openCodeMcpConfigs } from '../Harness/McpDelivery';
-import type { IntegratedControls, IntegratedFormAction, IntegratedLaunchInput, IntegratedLaunchResult } from './IntegratedAgentService';
+import type { IntegratedControls, IntegratedFormAction, IntegratedLaunchInput, IntegratedLaunchResult, LiveSettings } from './IntegratedAgentService';
 import { OPENCODE_VERSION_MISMATCH } from './OpenCodeServiceErrors';
 import { UncertainDeliveryError, type IntegratedDeliveryState } from './IntegratedDelivery';
 import type { ResolvedIntegratedPrompt } from './IntegratedInput';
@@ -1061,12 +1061,17 @@ export class OpenCodeServerService {
   // The daemon keeps a model change across a Patterm restart; the selection
   // map and the launch model do not.
   async currentModel(processId: string): Promise<string | null> {
+    return (await this.nativeSettings(processId)).model ?? null;
+  }
+
+  // The variant lives on the native model too, and survives the same way.
+  async nativeSettings(processId: string): Promise<LiveSettings> {
     const runtime = this.runtime(processId);
     const session = record(await this.api(runtime.executable, runtime.cwd, 'GET', `/api/session/${encodeURIComponent(runtime.resumeId)}`));
     const model = record(record(session.data).model);
     const providerID = stringValue(model.providerID);
     const id = stringValue(model.id ?? model.modelID);
-    return providerID && id ? `${providerID}/${id}` : null;
+    return providerID && id ? { model: `${providerID}/${id}`, reasoning: stringValue(model.variant) ?? null } : {};
   }
 
   // The TUI's built-in commands are session API calls, not native commands.
@@ -1282,17 +1287,24 @@ export class OpenCodeServerService {
 
   // The daemon is shared by every session in a directory, so a server is only
   // replaced when its configuration changes or the daemon has restarted and
-  // forgotten it; a replacement reconnects it.
+  // forgotten it. Replacing an unchanged config is a no-op in OpenCode, and
+  // the cache of what was installed does not survive a Patterm restart, so a
+  // restart that wants fresh tool lists also reconnects every server the
+  // daemon already had. That starts a new client for every session in the
+  // directory.
   // A server that fails to start shows as failed in OpenCode and does not stop
   // the launch.
-  private async installGlobalMcpServers(executable: string, cwd: string, location: URLSearchParams, configs: Record<string, Record<string, unknown>>, daemonRestarted: boolean): Promise<void> {
+  private async installGlobalMcpServers(executable: string, cwd: string, location: URLSearchParams, configs: Record<string, Record<string, unknown>>, daemonRestarted: boolean, reconnect: boolean): Promise<void> {
     for (const [name, config] of Object.entries(configs)) {
       const key = `${cwd}\0${name}`;
       const body = JSON.stringify(config);
-      if (!daemonRestarted && this.installedMcp.get(key) === body) continue;
+      const route = `/api/experimental/mcp/${encodeURIComponent(name)}`;
       try {
-        await this.api(executable, cwd, 'PUT', `/api/experimental/mcp/${encodeURIComponent(name)}?${location}`, { config });
-        this.installedMcp.set(key, body);
+        if (daemonRestarted || this.installedMcp.get(key) !== body) {
+          await this.api(executable, cwd, 'PUT', `${route}?${location}`, { config });
+          this.installedMcp.set(key, body);
+        }
+        if (reconnect && !daemonRestarted) await this.api(executable, cwd, 'POST', `${route}/connect?${location}`);
       } catch {
         this.installedMcp.delete(key);
       }
@@ -1337,7 +1349,7 @@ export class OpenCodeServerService {
     // token rather than this agent's identity.
     const { PATTERM_MCP_IDENTITY: _identity, ...shared } = mcp.env;
     const helpers = { ...mcp, env: { ...shared, PATTERM_OPENCODE_BRIDGE: this.token } };
-    await this.installGlobalMcpServers(executable, cwd, location, openCodeMcpConfigs(input.mcpServers ?? [], helpers), daemonRestarted);
+    await this.installGlobalMcpServers(executable, cwd, location, openCodeMcpConfigs(input.mcpServers ?? [], helpers), daemonRestarted, input.reconnectMcp === true);
 
     let sessionId = input.resumeId;
     const selectedModel = input.model ? openCodeModelRef(input.model, input.reasoning ?? null) : null;

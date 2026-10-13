@@ -302,8 +302,10 @@ async function main(): Promise<void> {
     const launchingIdentities = new LaunchingMcpIdentities();
     const helperAccess = new McpHelperAccess(database, () => false, launchingIdentities);
     const helperHarnesses: string[] = [];
+    const reconnectedMcp: boolean[] = [];
     const integratedService = {
-      prepare: async (_harness: 'claude' | 'codex' | 'opencode', input: { context: string; mcp: { env: Record<string, string> } }) => {
+      prepare: async (_harness: 'claude' | 'codex' | 'opencode', input: { context: string; mcp: { env: Record<string, string> }; reconnectMcp?: boolean }) => {
+        reconnectedMcp.push(input.reconnectMcp === true);
         helperHarnesses.push(helperAccess.harness({ identity: input.mcp.env.PATTERM_MCP_IDENTITY!, opencodeBridge: undefined })!);
         openInstruction = input.context; return { resumeId: 'ses_prepared', argv: ['/usr/bin/opencode'] }; },
       prompt: async (processId: string, text: string, context?: string) => {
@@ -775,7 +777,9 @@ async function main(): Promise<void> {
       close: async (processId: string) => { restartSteps.push(`close:${processId}`); },
       holdTimers: (processId: string) => { restartSteps.push(`hold:${processId}`); return [`timer_${processId}`]; },
       releaseTimers: (timerIds) => { restartSteps.push(`release:${timerIds.join(',')}`); },
-      transferTimers: (from, to) => { timerTransfers.push([from, to]); restartSteps.push('transfer'); }
+      transferTimers: (from, to) => { timerTransfers.push([from, to]); restartSteps.push('transfer'); },
+      // The user switched model and effort after launch.
+      liveSettings: async () => ({ model: 'claude-fable-5-1', reasoning: 'high' })
     });
     const restartTab = await launcher.launch({ harness: 'claude', model: 'claude-opus-5-5', project_id: projectId, interface_mode: 'integrated' });
     const restartChild = await launcher.launch({ harness: 'claude', project_id: projectId, interface_mode: 'integrated', parent_process_id: restartTab.process_id, session_role: 'child' });
@@ -785,17 +789,49 @@ async function main(): Promise<void> {
     await assert.rejects(restart.execute({ process_id: restartTab.process_id, project_id: projectId }), /working/, 'a turn in progress is not cut short');
     await assert.rejects(restart.execute({ process_id: restartChild.process_id, project_id: projectId }), /Only top-level agents/);
     database.connection.prepare(`update processes set activity = 'idle' where id = ?`).run(restartTab.process_id);
+    reconnectedMcp.length = 0;
     const restarted = await restart.execute({ process_id: restartTab.process_id, project_id: projectId });
     assert.equal(restarted.replaced_process_id, restartTab.process_id);
+    assert.deepEqual(reconnectedMcp, [true], 'a restart reconnects shared MCP servers so their tool lists are fetched again');
     assert.deepEqual(restartSteps, [`hold:${restartTab.process_id}`, `stop:${restartTab.process_id}`, 'transfer', `release:timer_${restartTab.process_id}`, `close:${restartTab.process_id}`],
       'timers wait through the gap, and the old process stops before the resume and closes after it');
     assert.deepEqual(timerTransfers, [[[restartTab.process_id], restarted.process_id]]);
-    assert.deepEqual(database.connection.prepare(`select harness, model, interface_mode, session_role, resume_id, resumed_from_session_id, title_set_by_user, display_name, last_title from sessions where id = ?`).get(restarted.session_id), {
-      harness: 'claude', model: 'claude-opus-5-5', interface_mode: 'integrated', session_role: 'orchestrator', resume_id: 'ses_prepared', resumed_from_session_id: restartTab.session_id, title_set_by_user: 1,
+    assert.deepEqual(database.connection.prepare(`select harness, model, reasoning, interface_mode, session_role, resume_id, resumed_from_session_id, title_set_by_user, display_name, last_title from sessions where id = ?`).get(restarted.session_id), {
+      harness: 'claude', model: 'claude-fable-5-1', reasoning: 'high', interface_mode: 'integrated', session_role: 'orchestrator', resume_id: 'ses_prepared', resumed_from_session_id: restartTab.session_id, title_set_by_user: 1,
       display_name: null, last_title: 'Fix the restart titles'
-    }, 'the new session resumes the same conversation and keeps a user-chosen name');
+    }, 'the new session resumes the same conversation on the live model, and keeps a user-chosen name');
     assert.equal((database.connection.prepare('select parent_process_id from processes where id = ?').get(restartChild.process_id) as { parent_process_id: string }).parent_process_id,
       restarted.process_id, 'subagents report to the new process');
+
+    // A turn that starts while the settings are read is not cut short, and
+    // timers are held before that read.
+    const raceSteps: string[] = [];
+    const raceTab = await launcher.launch({ harness: 'claude', project_id: projectId, interface_mode: 'integrated' });
+    const racing2 = new RestartAgentSessionAction(database, launcher, {
+      stop: async (processId: string) => { raceSteps.push(`stop:${processId}`); },
+      close: async () => {},
+      holdTimers: () => { raceSteps.push('hold'); return ['timer_race']; },
+      releaseTimers: (timerIds) => { raceSteps.push(`release:${timerIds.join(',')}`); },
+      transferTimers: () => {},
+      liveSettings: async (processId: string) => {
+        raceSteps.push('read');
+        database.connection.prepare(`update processes set activity = 'working' where id = ?`).run(processId);
+        return {};
+      }
+    });
+    await assert.rejects(racing2.execute({ process_id: raceTab.process_id, project_id: projectId }), /working/);
+    assert.deepEqual(raceSteps, ['hold', 'read', 'release:timer_race']);
+    // A live effort on the default model resumes as given, not through a preset.
+    database.connection.prepare(`update processes set activity = 'idle' where id = ?`).run(raceTab.process_id);
+    const defaultModel = await new RestartAgentSessionAction(database, launcher, {
+      stop: async (processId: string) => {
+        database.connection.prepare(`update processes set status = 'stopped' where id = ?`).run(processId);
+        database.connection.prepare(`update sessions set exited_at = ? where process_id = ?`).run(new Date().toISOString(), processId);
+      },
+      close: async () => {}, holdTimers: () => [], releaseTimers: () => {}, transferTimers: () => {},
+      liveSettings: async () => ({ model: null, reasoning: 'high' })
+    }).execute({ process_id: raceTab.process_id, project_id: projectId });
+    assert.deepEqual(database.connection.prepare('select model, reasoning from sessions where id = ?').get(defaultModel.session_id), { model: null, reasoning: 'high' });
 
     // A failed resume resumes the held timers on the stopped agent and leaves its tab.
     const failing = new RestartAgentSessionAction(database, { resume: async () => { throw new Error('resume refused'); } }, {
