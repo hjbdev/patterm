@@ -9,8 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- CI reuses test compilation and caches Rust builds and macOS package downloads.
-  Linux checks build the renderer once for both the desktop and server.
+- CI runs smoke tests in parallel, prepares each test build once, and caches
+  Rust builds and macOS package downloads. Linux checks build the renderer once
+  for both the desktop and server. Desktop packaging reuses verified Electron
+  archives from the install cache.
+- Release packages build alongside validation, with publication still waiting
+  for every check and package. CI uploads compressed packages without recompressing them.
 - Session context shows summary coverage only when the recap is incomplete,
   and the status line itself opens the rebuild dialog.
 

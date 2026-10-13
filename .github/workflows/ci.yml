@@ -30,15 +30,15 @@ jobs:
           git config --global user.name 'Patterm CI'
           git config --global user.email 'ci@invalid'
           git config --global init.defaultBranch main
-      - run: pnpm install --frozen-lockfile
       - uses: ./.github/actions/cache-rust
         with:
           variant: check
+      - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       # remoteAccessSmoke, in check, runs the installer, which needs the server build.
       - name: Build the server using the existing renderer and MCP shim
         run: pnpm exec tsc -p tsconfig.server.json && pnpm run build:sidecar:release
-      - run: pnpm run check
+      - run: pnpm run check:ci
 
   check-windows:
     # Gitea Actions also runs .github/workflows; its mirror must not.
@@ -60,13 +60,13 @@ jobs:
           git config --global user.name 'Patterm CI'
           git config --global user.email 'ci@invalid'
           git config --global init.defaultBranch main
-      - run: pnpm install --frozen-lockfile
       - uses: ./.github/actions/cache-rust
         with:
           variant: check
+      - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       # Linux-only checks (systemd units, the bash installer and launchers) skip themselves on win32.
-      - run: pnpm run check
+      - run: pnpm run check:ci
 
   build-windows:
     # Gitea Actions also runs .github/workflows; its mirror must not.
@@ -80,8 +80,8 @@ jobs:
         with:
           node-version-file: .node-version
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
       - uses: ./.github/actions/cache-rust
+      - run: pnpm install --frozen-lockfile
       - run: pnpm run build:sidecar:release
       - name: Build the application
         run: |
@@ -102,6 +102,7 @@ jobs:
           path: ${{ runner.temp }}/release/patterm-*
           if-no-files-found: error
           retention-days: 7
+          compression-level: 0
 
   build-macos:
     if: github.server_url == 'https://github.com'
@@ -156,3 +157,4 @@ jobs:
           path: ${{ runner.temp }}/release/patterm-*
           if-no-files-found: error
           retention-days: 7
+          compression-level: 0

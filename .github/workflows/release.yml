@@ -38,18 +38,18 @@ jobs:
           git config --global user.name 'Patterm CI'
           git config --global user.email 'ci@invalid'
           git config --global init.defaultBranch main
-      - run: pnpm install --frozen-lockfile
       - uses: ./.github/actions/cache-rust
         with:
           variant: check
+      - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       # remoteAccessSmoke, in check, runs the installer, which needs the server build.
       - name: Build the server using the existing renderer and MCP shim
         run: pnpm exec tsc -p tsconfig.server.json && pnpm run build:sidecar:release
-      - run: pnpm run check
+      - run: pnpm run check:ci
 
   build:
-    needs: check
+    if: github.server_url == 'https://github.com'
     strategy:
       matrix:
         include:
@@ -99,10 +99,11 @@ jobs:
             ${{ runner.temp }}/release/install.sh
           if-no-files-found: error
           retention-days: 7
+          compression-level: 0
 
   build-windows:
     # Portable Windows packages stay outside the Linux installer manifest.
-    needs: check
+    if: github.server_url == 'https://github.com'
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -133,9 +134,10 @@ jobs:
           path: ${{ runner.temp }}/release/patterm-*
           if-no-files-found: error
           retention-days: 7
+          compression-level: 0
 
   build-macos:
-    needs: check
+    if: github.server_url == 'https://github.com'
     strategy:
       fail-fast: false
       matrix:
@@ -189,9 +191,10 @@ jobs:
           path: ${{ runner.temp }}/release/patterm-*
           if-no-files-found: error
           retention-days: 7
+          compression-level: 0
 
   publish:
-    needs: [build, build-windows, build-macos]
+    needs: [check, build, build-windows, build-macos]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: release

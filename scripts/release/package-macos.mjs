@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { downloadElectron } from './download-electron.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const USAGE = 'Usage: package-macos.mjs --version VERSION --sidecar PATH --out DIR';
@@ -47,7 +48,7 @@ try {
   const expected = JSON.parse(fs.readFileSync(path.join(ROOT, 'node_modules', 'electron', 'checksums.json'), 'utf8'))[electronZip];
   if (!expected) fail(`electron/checksums.json has no hash for ${electronZip}`);
   const downloaded = path.join(downloads, electronZip);
-  await download(`https://github.com/electron/electron/releases/download/v${electronVersion}/${electronZip}`, downloaded);
+  await downloadElectron(`https://github.com/electron/electron/releases/download/v${electronVersion}/${electronZip}`, downloaded, expected);
   if (sha256(downloaded) !== expected) fail(`${electronZip} failed SHA-256 verification`);
   execFileSync('ditto', ['-x', '-k', downloaded, downloads], { stdio: 'inherit' });
   fs.mkdirSync(stage, { recursive: true });
@@ -125,19 +126,6 @@ function parseArgs(args) {
     parsed[key] = args[index + 1];
   }
   return parsed;
-}
-
-async function download(url, file) {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      const response = await fetch(url, { redirect: 'follow' });
-      if (!response.ok) throw new Error(`${url} returned ${response.status}`);
-      fs.writeFileSync(file, Buffer.from(await response.arrayBuffer()));
-      return;
-    } catch (error) {
-      if (attempt === 3) throw error;
-    }
-  }
 }
 
 function filesContaining(dir, pattern) {
