@@ -121,7 +121,8 @@ export class NotificationService {
     const title = clean(input.title, TITLE_LIMIT) || (process ? displayName(process.name) : 'Patterm');
     // A child whose parent has gone asks the user directly, and says so.
     const orphaned = Boolean(process?.parent_process_id && !process.parent_running && input.source === 'mcp');
-    const body = clean(orphaned ? [`From ${displayName(process!.name)}, a child agent whose parent is no longer running.`, input.body].filter(Boolean).join('\n') : input.body, BODY_LIMIT);
+    const source = orphaned ? [`From ${displayName(process!.name)}, a child agent whose parent is no longer running.`, input.body].filter(Boolean).join('\n') : input.body;
+    const body = clean(source, BODY_LIMIT);
 
     // Child agents escalate through their parent, which decides whether to
     // involve the user.
@@ -132,7 +133,7 @@ export class NotificationService {
     }
 
     // Toasts, the tray, and push show plain text; parents above keep the Markdown.
-    const text = clean(markdownText(body), BODY_LIMIT);
+    const text = clean(markdownText(source ?? ''), BODY_LIMIT);
     const level = input.source === 'system' ? 'all' : this.level(categoryFor(input, process));
     if (level === 'off') return { status: 'suppressed' };
     const urgency = input.quiet ? 'low' : input.urgency ?? DEFAULT_URGENCY[input.kind];
