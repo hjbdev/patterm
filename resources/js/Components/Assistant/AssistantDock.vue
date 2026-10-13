@@ -3,6 +3,7 @@
        carry over when the panel docks or expands to a page. The page and the
        docked column slide in like the diff drawer; the panel rises out of the
        floating button. -->
+  <template v-if="assistant.enabled">
   <Transition
     :enter-active-class="page || docked ? 'transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none' : 'origin-bottom-right transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none'"
     :enter-from-class="page || docked ? 'translate-x-6 opacity-0' : 'translate-y-2 scale-[0.97] opacity-0'"
@@ -156,10 +157,11 @@
     </TooltipTrigger>
     <TooltipContent side="left">{{ open ? 'Hide assistant' : assistant.focus ? `Assistant · Focus${assistant.focusPending ? `, ${assistant.focusPending} held` : ''}` : 'Assistant' }}</TooltipContent>
   </Tooltip>
+  </template>
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onMounted, ref, shallowRef } from 'vue';
+import { computed, defineAsyncComponent, nextTick, onMounted, ref, shallowRef, watch } from 'vue';
 import { useMediaQuery } from '@vueuse/core';
 import { ArrowLeft, AudioLines, Check, ChevronDown, Ellipsis, Focus, Locate, LocateFixed, Maximize2, MessageSquare, Minimize2, Minus, PanelRight, PanelRightClose, RotateCcw, Sparkles } from 'lucide-vue-next';
 import { Button } from '../ui/button';
@@ -281,5 +283,13 @@ function toggleMode(): void {
 
 onMounted(() => {
   startAssistantEvents();
+});
+
+// Turning the assistant off closes it, so turning it back on shows only the
+// button. A voice call ends with it, so it comes back in chat.
+watch(() => assistant.loaded && !assistant.enabled, (off) => {
+  if (!off) return;
+  mode.value = 'chat';
+  if (assistantLayout.open) setAssistantLayout({ open: false });
 });
 </script>

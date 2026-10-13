@@ -44,6 +44,10 @@ export function registerAssistantTools(registry: McpToolRegistry, assistant: Ass
   );
   registry.register(
     { name: 'settings_assistant_update', namespace: 'settings', description: 'Save assistant settings.', hidden: true, changes: ['settings'], inputSchema: { type: 'object', required: ['voice', 'presetId', 'forwardNotifications'] } },
-    (args) => settings.updateAssistantSettings(args)
+    async (args) => {
+      const saved = settings.updateAssistantSettings(args);
+      await assistant.settingsChanged();
+      return saved;
+    }
   );
 }

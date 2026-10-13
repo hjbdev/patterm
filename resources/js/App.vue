@@ -9,8 +9,8 @@
   <WorkbenchLayout v-else />
   <DirectoryPickerDialog v-if="isBrowser" />
   <QuitDialog v-else />
-  <!-- Toasts sit above the assistant button in the same corner, or beside the docked assistant. -->
-  <Toaster position="bottom-right" rich-colors :offset="assistantLayout.open && assistantLayout.docked && !assistantLayout.expanded ? { bottom: 16, right: 'calc(var(--assistant-dock-width) + 1.375rem)' } : { bottom: 80, right: 16 }" :mobile-offset="{ bottom: 80 }" />
+  <!-- Toasts sit above the assistant button in the same corner, or beside the docked assistant, when it is on. -->
+  <Toaster position="bottom-right" rich-colors :offset="assistant.enabled && assistantLayout.open && assistantLayout.docked && !assistantLayout.expanded ? { bottom: 16, right: 'calc(var(--assistant-dock-width) + 1.375rem)' } : { bottom: assistant.enabled ? 80 : 16, right: 16 }" :mobile-offset="{ bottom: assistant.enabled ? 80 : 16 }" />
 </template>
 
 <script setup lang="ts">
@@ -19,6 +19,7 @@ import { Toaster } from './Components/ui/sonner';
 import DirectoryPickerDialog from './Components/DirectoryPickerDialog.vue';
 import QuitDialog from './Components/QuitDialog.vue';
 import { assistantLayout } from './lib/assistantLayout';
+import { assistant } from './lib/assistant';
 import { onBeforeUnmount, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { startNotifications } from './Composables/useNotifications';
