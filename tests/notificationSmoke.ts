@@ -58,11 +58,17 @@ async function main(): Promise<void> {
     assert.equal(routineRecord.audience, 'user');
     service.resolve({ ids: [routineRecord.id] });
 
-    // Child requests go to the parent instead of the user.
-    const routed = await service.raise({ processId: 'pty_child', source: 'mcp', kind: 'attention', title: 'Which branch?', dedupeKey: null });
+    // Routine reports are Markdown; toasts, the tray, and push show it as plain text.
+    const report = await service.raise({ processId: 'root', source: 'runtime', kind: 'message', title: 'Sweep: Done', body: '## Summary\nFixed **2** bugs in `app/Foo.ts`:\n\n- See [the PR](https://example.com)\n- Done', dedupeKey: 'test:markdown' });
+    assert.equal((report as { notification: NotificationRecord }).notification.body, 'Summary\nFixed 2 bugs in app/Foo.ts:\n• See the PR\n• Done');
+    service.resolve({ ids: [(report as { notification: NotificationRecord }).notification.id] });
+
+    // Child requests go to the parent instead of the user, Markdown intact.
+    const routed = await service.raise({ processId: 'pty_child', source: 'mcp', kind: 'attention', title: 'Which branch?', body: 'Use **main**?', dedupeKey: null });
     assert.deepEqual(routed, { status: 'routed_to_parent', parent_process_id: 'root' });
     assert.equal(messages.at(-1)?.processId, 'root');
     assert.match(messages.at(-1)!.text, /Attention requested by child/);
+    assert.match(messages.at(-1)!.text, /Use \*\*main\*\*\?/);
     assert.equal(service.list({ process_id: 'child' }).total, 0);
 
     // Child terminal prompts mark the tab, tell the parent once, and never toast or push.
