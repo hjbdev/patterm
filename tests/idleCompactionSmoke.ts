@@ -376,8 +376,19 @@ async function integratedSignals(database: DatabaseService): Promise<void> {
   await integrated.configure('oc', 'model', 'openai/gpt-5.6');
   assert.equal(signals.at(-1), 'oc:model');
   assert.equal(await integrated.model('oc'), 'opencode-go/deepseek-v4.1-flash');
-  // A restart keeps the live model and leaves settings the agent does not report.
-  assert.deepEqual(await integrated.liveSettings('oc'), { model: 'opencode-go/deepseek-v4.1-flash' });
+  // A restart keeps the live settings and leaves those the agent does not report.
+  assert.deepEqual(await integrated.liveSettings('oc'), { model: 'openai/gpt-5.6' });
+  // A default model or effort is the harness default; a default speed is an
+  // explicit Standard tier.
+  provider.controls = async () => ({ selectors: [
+    { id: 'model', label: 'Model', value: 'default', options: [] },
+    { id: 'effort', label: 'Effort', value: 'high', options: [] },
+    { id: 'speed', label: 'Speed', value: 'default', options: [] }
+  ], commands: [] });
+  assert.deepEqual(await integrated.liveSettings('oc'), { model: null, reasoning: 'high', service_tier: 'default' });
+  // Native settings win over selectors that can be stale after a Patterm restart.
+  provider.nativeSettings = async () => ({ model: 'opencode-go/deepseek-v4.1-flash', reasoning: 'low' });
+  assert.deepEqual(await integrated.liveSettings('oc'), { model: 'opencode-go/deepseek-v4.1-flash', reasoning: 'low' });
 
   await lateRejection(database);
   await reconnectDisarms(database);

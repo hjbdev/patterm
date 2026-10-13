@@ -104,15 +104,20 @@ export class RestartAgentSessionAction {
     const refusal = restartRefusal(source) ?? (!force && isWorking(source) ? WORKING : null);
     if (refusal) throw new Error(refusal);
     this.restarting.add(processId);
-    // Read before the stop, while the agent can still report them. The
-    // launch settings stand in for any it cannot.
-    const live: LiveSettings = await this.processes.liveSettings?.(processId).catch(() => ({})) ?? {};
     // Its timers wait until the new process owns them, so none fires into
     // the gap. If the resume fails they resume on the stopped agent, as
     // after any stop.
     const held = this.processes.holdTimers(processId);
     try {
       let launched: LaunchHarnessResult;
+      // Read before the stop, while the agent can still report them. The
+      // launch settings stand in for any it cannot.
+      const live: LiveSettings = await this.processes.liveSettings?.(processId).catch(() => ({})) ?? {};
+      // A prompt can start a turn during the read.
+      if (!force && isWorking(this.liveSource(processId, projectId) ?? source)) {
+        this.processes.releaseTimers(held);
+        throw new Error(WORKING);
+      }
       try {
         // The native conversation can only be open in one process, so the
         // old one stops before the new one resumes it.

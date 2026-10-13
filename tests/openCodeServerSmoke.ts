@@ -197,7 +197,7 @@ else if (method === 'PUT' && route.includes('/instructions/entries/')) {
   console.log(JSON.stringify({data:{key:'patterm',value:body.value}}));
 }
 else if (method === 'POST') console.log(JSON.stringify({data:{id:'ses_'+rows.filter(x=>x.method==='POST' && x.route==='/api/session').length}}));
-else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory:process.cwd()}}}));
+else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory:process.cwd()},model:{providerID:'openai',id:'gpt-test',variant:'low'}}}));
 `, { mode: 0o700 });
   // No discoverable background service: requests use the fake CLI and never
   // reach a real OpenCode daemon on the test machine.
@@ -241,6 +241,13 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const restartRequests = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line)).slice(requests.length);
     assert.deepEqual(restartRequests.filter((request) => request.route.startsWith('/api/experimental/mcp/helped')).map((request) => `${request.method} ${request.route.split('?')[0]}`),
       ['POST /api/experimental/mcp/helped/connect'], 'a restart reconnects an unchanged shared helper instead of replacing it');
+    // After a Patterm restart the install cache is empty; the replacement may
+    // be a no-op, so a restart still reconnects.
+    const coldCount = fs.readFileSync(record, 'utf8').trim().split('\n').length;
+    await new OpenCodeServerService(database, env, { persistent: true }).prepare({ ...input, resumeId: first, reconnectMcp: true });
+    const coldRequests = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line)).slice(coldCount);
+    assert.deepEqual(coldRequests.filter((request) => request.route.startsWith('/api/experimental/mcp/helped')).map((request) => `${request.method} ${request.route.split('?')[0]}`),
+      ['PUT /api/experimental/mcp/helped', 'POST /api/experimental/mcp/helped/connect'], 'a restart reconnects even when Patterm forgot what it installed');
     for (const [index, id] of [first, second].entries()) {
       database.connection.prepare(`insert into processes (id,project_id,kind,name,status,created_at,updated_at) values (?, 'project_test','agent','Fixture','running',?,?)`).run(`process_${index}`, now, now);
       database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor) values (?, 'project_test',?,'opencode',?,?,?,'orchestrator','found','user')`).run(`session_${index}`, `process_${index}`, `identity_${index}`, id, now);
@@ -252,6 +259,8 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const presetControls = await service.controls('process_1');
     assert.equal(presetControls.selectors.find((selector) => selector.id === 'model')?.value, 'openai/gpt-test', 'the composer shows the native session model, not the global default');
     assert.equal(presetControls.selectors.find((selector) => selector.id === 'variant')?.value, 'high', 'the composer shows the native session variant');
+    assert.deepEqual(await service.nativeSettings('process_1'), { model: 'openai/gpt-test', reasoning: 'low' },
+      'a restart reads the variant from the native session, not the launch value');
     database.connection.prepare(`update sessions set interface_mode = 'tui' where id = 'session_1'`).run();
     assert.deepEqual(await service.prompt('process_0', { text: 'hello', references: [], attachments: [] }), { id: 'msg_test' });
     const controls = await service.controls('process_0');

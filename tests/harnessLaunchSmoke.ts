@@ -803,6 +803,36 @@ async function main(): Promise<void> {
     assert.equal((database.connection.prepare('select parent_process_id from processes where id = ?').get(restartChild.process_id) as { parent_process_id: string }).parent_process_id,
       restarted.process_id, 'subagents report to the new process');
 
+    // A turn that starts while the settings are read is not cut short, and
+    // timers are held before that read.
+    const raceSteps: string[] = [];
+    const raceTab = await launcher.launch({ harness: 'claude', project_id: projectId, interface_mode: 'integrated' });
+    const racing2 = new RestartAgentSessionAction(database, launcher, {
+      stop: async (processId: string) => { raceSteps.push(`stop:${processId}`); },
+      close: async () => {},
+      holdTimers: () => { raceSteps.push('hold'); return ['timer_race']; },
+      releaseTimers: (timerIds) => { raceSteps.push(`release:${timerIds.join(',')}`); },
+      transferTimers: () => {},
+      liveSettings: async (processId: string) => {
+        raceSteps.push('read');
+        database.connection.prepare(`update processes set activity = 'working' where id = ?`).run(processId);
+        return {};
+      }
+    });
+    await assert.rejects(racing2.execute({ process_id: raceTab.process_id, project_id: projectId }), /working/);
+    assert.deepEqual(raceSteps, ['hold', 'read', 'release:timer_race']);
+    // A live effort on the default model resumes as given, not through a preset.
+    database.connection.prepare(`update processes set activity = 'idle' where id = ?`).run(raceTab.process_id);
+    const defaultModel = await new RestartAgentSessionAction(database, launcher, {
+      stop: async (processId: string) => {
+        database.connection.prepare(`update processes set status = 'stopped' where id = ?`).run(processId);
+        database.connection.prepare(`update sessions set exited_at = ? where process_id = ?`).run(new Date().toISOString(), processId);
+      },
+      close: async () => {}, holdTimers: () => [], releaseTimers: () => {}, transferTimers: () => {},
+      liveSettings: async () => ({ model: null, reasoning: 'high' })
+    }).execute({ process_id: raceTab.process_id, project_id: projectId });
+    assert.deepEqual(database.connection.prepare('select model, reasoning from sessions where id = ?').get(defaultModel.session_id), { model: null, reasoning: 'high' });
+
     // A failed resume resumes the held timers on the stopped agent and leaves its tab.
     const failing = new RestartAgentSessionAction(database, { resume: async () => { throw new Error('resume refused'); } }, {
       stop: async () => undefined, close: async (processId: string) => { restartSteps.push(`close:${processId}`); },

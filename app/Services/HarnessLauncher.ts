@@ -142,14 +142,15 @@ export class HarnessLauncher {
   }
 
   // Fresh launches fall back to the harness default preset. Resuming a stored
-  // conversation keeps its provider-side model unless the caller asks otherwise.
+  // conversation keeps its provider-side settings, overriding only those the
+  // caller gives, such as a restart's live effort on a default model.
   private resolveSelection(input: ParsedLaunchHarnessInput, resuming: boolean): HarnessLaunchSelection {
-    if (resuming && !input.preset && !input.model && !input.reasoning && !input.service_tier) {
+    if (resuming && !input.preset) {
       return {
         harness: input.harness!,
-        model: null,
-        reasoning: null,
-        serviceTier: null,
+        model: input.model?.trim() || null,
+        reasoning: input.reasoning?.trim() || null,
+        serviceTier: input.service_tier?.trim() || null,
         presetId: null,
         presetName: null
       };
