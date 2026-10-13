@@ -14,10 +14,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Portable Windows x64 packages on stable releases, with SHA-256 checksums.
 
+### Changed
+
+- Windows installs add Patterm to the current user's Start menu. The shortcut
+  follows updates and uses Patterm's icon and application identity.
+- The app icon now shows a white terminal mark on the UI's charcoal background,
+  including a Windows icon for the Start menu and taskbar. Desktop and browser
+  startup backgrounds use the same colour.
+
 ### Fixed
 
 - Notification toasts, the tray, and push notifications show routine reports
   and agent requests as plain text instead of raw Markdown.
+- Closing the desktop app after confirming Quit, or launching another instance
+  after its window has closed, no longer raises an "Object has been destroyed"
+  JavaScript error on Windows.
 - `/restart` keeps the model, effort, and speed an agent is running on,
   instead of going back to the ones it launched with.
 - `/restart` on an OpenCode agent reconnects Patterm's MCP servers, so changed

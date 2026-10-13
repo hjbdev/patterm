@@ -96,7 +96,7 @@ async function createWindow(): Promise<void> {
     title: 'Patterm',
     ...windowIcon(),
     autoHideMenuBar: true,
-    backgroundColor: '#080b10',
+    backgroundColor: '#151515',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -172,6 +172,9 @@ async function createWindow(): Promise<void> {
   });
   mainWindow.on('focus', () => mainWindow?.flashFrame(false));
   mainWindow.on('closed', () => {
+    mainWindow = null;
+    if (quitPrompt) clearTimeout(quitPrompt.fallback);
+    quitPrompt = null;
     unsubscribeNotifications();
     unsubscribeAssistant();
     unsubscribeDesktopNotifications();
@@ -223,7 +226,8 @@ ipcMain.on('patterm:quit:shown', (event, id: unknown) => {
 // The window confirms quitting in the app. A window that cannot show the
 // dialog (loading, crashed, or unresponsive) falls back to the native one.
 function requestQuit(): void {
-  const contents = mainWindow?.webContents;
+  // BrowserWindow.webContents itself throws after the window is destroyed.
+  const contents = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : undefined;
   if (!patterm || patterm.isShuttingDown() || quitting || !contents || contents.isDestroyed() || contents.isLoading() || contents.isCrashed()) {
     void quitDesktop();
     return;
@@ -310,9 +314,10 @@ function appendSwitch(diagnostics: LaunchDiagnostics, name: string, value?: stri
 }
 
 function windowIcon(): { icon?: string } {
+  const name = process.platform === 'win32' ? 'icon.ico' : 'icon-512.png';
   const icon = app.isPackaged || isInstalledLaunch()
-    ? path.join(__dirname, '../../../renderer/icons/icon-512.png')
-    : path.join(process.cwd(), 'public', 'icons', 'icon-512.png');
+    ? path.join(__dirname, '../../../renderer/icons', name)
+    : path.join(process.cwd(), 'public', 'icons', name);
   return fs.existsSync(icon) ? { icon } : {};
 }
 
