@@ -30,7 +30,7 @@ test('Mac zip preserves a runnable app, bundled dependencies, and renderer', {
     const app = path.join(resources, 'app');
     const executable = path.join(bundle, 'Contents', 'MacOS', 'Electron');
     execFileSync('codesign', ['--verify', '--deep', '--strict', bundle]);
-    execFileSync('lipo', ['-verify_arch', process.arch === 'arm64' ? 'arm64' : 'x86_64', path.join(resources, 'native', 'patterm-terminal-core')]);
+    execFileSync('lipo', [path.join(resources, 'native', 'patterm-terminal-core'), '-verify_arch', process.arch === 'arm64' ? 'arm64' : 'x86_64']);
     for (const file of ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'dist/main/desktop/main/main.js', 'dist/renderer/index.html']) {
       assert.ok(fs.statSync(path.join(app, file)).isFile(), file);
     }

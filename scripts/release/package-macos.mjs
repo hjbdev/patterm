@@ -78,13 +78,24 @@ try {
   fs.copyFileSync(options.sidecar, sidecar);
   fs.chmodSync(sidecar, 0o755);
   // Refuse a sidecar from the wrong architecture before signing the bundle.
-  execFileSync('lipo', ['-verify_arch', ARCH === 'arm64' ? 'arm64' : 'x86_64', sidecar], { stdio: 'inherit' });
+  execFileSync('lipo', [sidecar, '-verify_arch', ARCH === 'arm64' ? 'arm64' : 'x86_64'], { stdio: 'inherit' });
   fs.copyFileSync(path.join(ROOT, 'dist', 'mcp', 'patterm-mcp.js'), path.join(resources, 'mcp', 'patterm-mcp.js'));
   const plist = path.join(bundle, 'Contents', 'Info.plist');
   for (const [key, value] of Object.entries({
     CFBundleDisplayName: 'Patterm', CFBundleName: 'Patterm', CFBundleIdentifier: 'cloud.bayliss.patterm',
     CFBundleShortVersionString: options.version.split('-')[0], CFBundleVersion: options.version.split('-')[0]
   })) execFileSync('/usr/libexec/PlistBuddy', ['-c', `Set :${key} ${value}`, plist]);
+
+  const iconset = path.join(downloads, 'patterm.iconset');
+  fs.mkdirSync(iconset);
+  for (const size of [16, 32, 128, 256, 512]) {
+    for (const scale of [1, 2]) {
+      execFileSync('sips', ['-z', String(size * scale), String(size * scale),
+        path.join(ROOT, 'public', 'icons', 'icon-512.png'), '--out',
+        path.join(iconset, `icon_${size}x${size}${scale === 2 ? '@2x' : ''}.png`)], { stdio: 'ignore' });
+    }
+  }
+  execFileSync('iconutil', ['-c', 'icns', iconset, '-o', path.join(resources, 'electron.icns')]);
 
   const commit = git('rev-parse', 'HEAD');
   const dirty = git('status', '--porcelain') !== '';
