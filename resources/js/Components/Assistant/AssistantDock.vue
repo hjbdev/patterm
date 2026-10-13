@@ -285,6 +285,11 @@ onMounted(() => {
   startAssistantEvents();
 });
 
-// A voice call ends with the assistant, so it comes back in chat.
-watch(() => assistant.enabled, (enabled) => { if (!enabled) mode.value = 'chat'; });
+// Turning the assistant off closes it, so turning it back on shows only the
+// button. A voice call ends with it, so it comes back in chat.
+watch(() => assistant.loaded && !assistant.enabled, (off) => {
+  if (!off) return;
+  mode.value = 'chat';
+  if (assistantLayout.open) setAssistantLayout({ open: false });
+});
 </script>
