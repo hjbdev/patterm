@@ -3,6 +3,7 @@
 [CmdletBinding()]
 param(
     [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'Patterm'),
+    [string]$StartMenuDirectory = [Environment]::GetFolderPath('Programs'),
     [switch]$NoPath
 )
 
@@ -64,6 +65,75 @@ try {
     New-Item -ItemType Directory -Path $bin -Force | Out-Null
     $launcher = "@echo off`r`ncall `"%~dp0..\versions\$version\Patterm.cmd`" %*`r`n"
     [IO.File]::WriteAllText((Join-Path $bin 'patterm.cmd'), $launcher, [Text.Encoding]::ASCII)
+
+    # The stable launcher and icon keep Start menu and pinned shortcuts working
+    # when a later install selects another version. Older zips have no .ico yet.
+    $packageIcon = Join-Path $destination 'dist/renderer/icons/icon.ico'
+    $icon = Join-Path $destination 'electron/electron.exe'
+    if (Test-Path -LiteralPath $packageIcon -PathType Leaf) {
+        $icon = Join-Path $InstallRoot 'patterm.ico'
+        Copy-Item -LiteralPath $packageIcon -Destination $icon -Force
+    }
+    New-Item -ItemType Directory -Path $StartMenuDirectory -Force | Out-Null
+    $shortcutPath = Join-Path $StartMenuDirectory 'Patterm.lnk'
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    try {
+        $shortcut.TargetPath = Join-Path $bin 'patterm.cmd'
+        $shortcut.WorkingDirectory = $InstallRoot
+        $shortcut.Description = 'Patterm agent workbench'
+        $shortcut.IconLocation = "$icon,0"
+        $shortcut.WindowStyle = 7 # Minimise the brief command launcher, not the app.
+        $shortcut.Save()
+    } finally {
+        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shortcut)
+        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
+    }
+    # WScript.Shell cannot set the identity Electron uses for taskbar grouping
+    # and notifications. Write the shortcut's native property store instead.
+    if (-not ('PattermShortcut' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class PattermShortcut {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PropertyKey { public Guid Format; public uint Id; }
+    [StructLayout(LayoutKind.Explicit, Size = 24)]
+    public struct PropVariant {
+        [FieldOffset(0)] public ushort Type;
+        [FieldOffset(8)] public IntPtr Value;
+    }
+    [ComImport, Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IPropertyStore {
+        [PreserveSig] int GetCount(out uint count);
+        [PreserveSig] int GetAt(uint index, out PropertyKey key);
+        [PreserveSig] int GetValue(ref PropertyKey key, out PropVariant value);
+        [PreserveSig] int SetValue(ref PropertyKey key, ref PropVariant value);
+        [PreserveSig] int Commit();
+    }
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern int SHGetPropertyStoreFromParsingName(string path, IntPtr context, uint flags, ref Guid iid, out IPropertyStore store);
+
+    public static void SetAppId(string path, string appId) {
+        Guid iid = typeof(IPropertyStore).GUID;
+        IPropertyStore store;
+        Marshal.ThrowExceptionForHR(SHGetPropertyStoreFromParsingName(path, IntPtr.Zero, 2, ref iid, out store)); // GPS_READWRITE
+        var key = new PropertyKey { Format = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), Id = 5 }; // PKEY_AppUserModel_ID
+        var value = new PropVariant { Type = 31, Value = Marshal.StringToCoTaskMemUni(appId) }; // VT_LPWSTR
+        try {
+            Marshal.ThrowExceptionForHR(store.SetValue(ref key, ref value));
+            Marshal.ThrowExceptionForHR(store.Commit());
+        } finally {
+            Marshal.FreeCoTaskMem(value.Value);
+            Marshal.ReleaseComObject(store);
+        }
+    }
+}
+'@
+    }
+    [PattermShortcut]::SetAppId($shortcutPath, 'Patterm.Desktop')
+
     if (-not $NoPath) {
         $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
         if (($userPath -split ';') -notcontains $bin) {
@@ -73,7 +143,7 @@ try {
         if (($env:Path -split ';') -notcontains $bin) { $env:Path += ';' + $bin }
     }
     Write-Host "Patterm $version installed in $destination."
-    Write-Host 'Run patterm to open the desktop app. Install and sign into your agent CLIs separately.'
+    Write-Host 'Open Patterm from the Start menu or run patterm. Install and sign into your agent CLIs separately.'
 } finally {
     if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force }
 }

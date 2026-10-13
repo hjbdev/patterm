@@ -314,9 +314,10 @@ function appendSwitch(diagnostics: LaunchDiagnostics, name: string, value?: stri
 }
 
 function windowIcon(): { icon?: string } {
+  const name = process.platform === 'win32' ? 'icon.ico' : 'icon-512.png';
   const icon = app.isPackaged || isInstalledLaunch()
-    ? path.join(__dirname, '../../../renderer/icons/icon-512.png')
-    : path.join(process.cwd(), 'public', 'icons', 'icon-512.png');
+    ? path.join(__dirname, '../../../renderer/icons', name)
+    : path.join(process.cwd(), 'public', 'icons', name);
   return fs.existsSync(icon) ? { icon } : {};
 }
 

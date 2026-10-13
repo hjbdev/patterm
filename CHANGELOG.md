@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Portable Windows x64 packages on stable releases, with SHA-256 checksums.
 
+### Changed
+
+- Windows installs add Patterm to the current user's Start menu. The shortcut
+  follows updates and uses Patterm's icon and application identity.
+- The app icon now shows a white terminal mark on a black background, including
+  a Windows icon for the Start menu and taskbar.
+
 ### Fixed
 
 - Notification toasts, the tray, and push notifications show routine reports
