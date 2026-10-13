@@ -10,7 +10,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 test('Mac zip preserves a runnable app, bundled dependencies, and renderer', {
   skip: process.platform !== 'darwin' && 'requires macOS', timeout: 90_000
-}, async () => {
+}, async (t) => {
   const directory = process.env.MAC_PACKAGE_DIRECTORY;
   assert.ok(directory, 'set MAC_PACKAGE_DIRECTORY to the package output directory');
   const archives = fs.readdirSync(directory).filter(name => name.endsWith(`-macos-${process.arch}.zip`));
@@ -24,7 +24,8 @@ test('Mac zip preserves a runnable app, bundled dependencies, and renderer', {
   let socket;
   let log = '';
   try {
-    execFileSync('ditto', ['-x', '-k', archive, temporary]);
+    console.log('Extracting and checking the Mac bundle');
+    execFileSync('ditto', ['-x', '-k', archive, temporary], { timeout: 30_000 });
     const bundle = path.join(temporary, 'Patterm.app');
     const resources = path.join(bundle, 'Contents', 'Resources');
     const app = path.join(resources, 'app');
@@ -35,6 +36,7 @@ test('Mac zip preserves a runnable app, bundled dependencies, and renderer', {
       assert.ok(fs.statSync(path.join(app, file)).isFile(), file);
     }
     assert.ok(fs.statSync(path.join(resources, 'mcp', 'patterm-mcp.js')).isFile());
+    console.log('Checking bundled Node and SQLite');
     // Exercise Electron's bundled Node, including SQLite and dependency resolution.
     execFileSync(executable, ['-e', "const { DatabaseSync } = require('node:sqlite'); const db = new DatabaseSync(':memory:'); db.exec('SELECT 1'); db.close(); require('zod'); require('ws');"], {
       cwd: app, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 15_000
@@ -43,6 +45,7 @@ test('Mac zip preserves a runnable app, bundled dependencies, and renderer', {
     const env = { ...process.env, PATTERM_APP_DATA_PATH: data };
     delete env.ELECTRON_RUN_AS_NODE;
     delete env.PATTERM_DESKTOP_RESOURCES;
+    console.log('Launching the packaged app');
     child = spawn(executable, ['--remote-debugging-port=0'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     child.stdout.on('data', chunk => { log = (log + chunk).slice(-16_000); });
     child.stderr.on('data', chunk => { log = (log + chunk).slice(-16_000); });
@@ -56,16 +59,17 @@ test('Mac zip preserves a runnable app, bundled dependencies, and renderer', {
     const port = fs.readFileSync(activePort, 'utf8').split('\n')[0];
     let page;
     while (!page) {
-      const pages = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+      const pages = await (await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(5_000) })).json();
       page = pages.find(entry => entry.type === 'page' && entry.url.startsWith('file:') && entry.url.endsWith('/index.html'));
       assert.ok(Date.now() < deadline, `packaged renderer never loaded: ${log}`);
       if (!page) await delay(250);
     }
+    console.log('Connecting to the packaged renderer');
     socket = new WebSocket(page.webSocketDebuggerUrl);
-    await once(socket, 'open');
+    await once(socket, 'open', { signal: AbortSignal.any([t.signal, AbortSignal.timeout(10_000)]) });
     let id = 0;
     while (true) {
-      const response = once(socket, 'message');
+      const response = once(socket, 'message', { signal: AbortSignal.any([t.signal, AbortSignal.timeout(5_000)]) });
       socket.send(JSON.stringify({ id: ++id, method: 'Runtime.evaluate', params: {
         expression: "Boolean(document.querySelector('#app')?.children.length && window.patterm)", returnByValue: true
       } }));
@@ -75,8 +79,11 @@ test('Mac zip preserves a runnable app, bundled dependencies, and renderer', {
       assert.ok(Date.now() < deadline, `Vue app or preload never initialized: ${log}`);
       await delay(250);
     }
+    console.log('Packaged renderer and preload initialized');
     assert.equal(child.exitCode, null, log);
     assert.ok(fs.existsSync(path.join(data, 'app.db')), `app database missing: ${log}`);
+  } catch (error) {
+    throw new Error(`${error.message}\n${log}`, { cause: error });
   } finally {
     socket?.close();
     if (child && child.exitCode === null) {
@@ -84,6 +91,8 @@ test('Mac zip preserves a runnable app, bundled dependencies, and renderer', {
       child.kill('SIGKILL');
       await exited;
     }
+    child?.stdout.destroy();
+    child?.stderr.destroy();
     fs.rmSync(temporary, { recursive: true, force: true });
   }
 });
