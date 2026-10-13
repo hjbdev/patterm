@@ -21,7 +21,30 @@ test('PWA manifest has standalone scope and valid install icons', () => {
   assert(manifest.icons.some((icon) => icon.purpose === 'maskable'));
   const touchIcon = fs.readFileSync('public/icons/apple-touch-icon.png');
   assert.equal(touchIcon.readUInt32BE(16), 180);
-  assert.match(fs.readFileSync('index.html', 'utf8'), /rel="manifest"/);
+  const html = fs.readFileSync('index.html', 'utf8');
+  assert.match(html, /rel="manifest"/);
+  const themeColor = /<meta name="theme-color" content="([^"]+)"/.exec(html)?.[1];
+  assert.equal(themeColor, manifest.theme_color, 'the document must not override the manifest with another palette');
+});
+
+test('Windows icon contains PNG images at each shell display size', () => {
+  const ico = fs.readFileSync('public/icons/icon.ico');
+  assert.equal(ico.readUInt16LE(0), 0);
+  assert.equal(ico.readUInt16LE(2), 1);
+  const sizes = [16, 32, 48, 64, 128, 256];
+  assert.equal(ico.readUInt16LE(4), sizes.length);
+  sizes.forEach((size, index) => {
+    const entry = 6 + index * 16;
+    assert.equal(ico[entry] || 256, size);
+    assert.equal(ico[entry + 1] || 256, size);
+    const length = ico.readUInt32LE(entry + 8);
+    const offset = ico.readUInt32LE(entry + 12);
+    assert(offset >= 6 + sizes.length * 16 && offset + length <= ico.length);
+    const png = ico.subarray(offset, offset + length);
+    assert.equal(png.subarray(1, 4).toString(), 'PNG');
+    assert.equal(png.readUInt32BE(16), size);
+    assert.equal(png.readUInt32BE(20), size);
+  });
 });
 
 test('service worker caches only offline assets and never intercepts commands or API data', async () => {
@@ -33,7 +56,7 @@ test('service worker caches only offline assets and never intercepts commands or
   const caches = {
     open: async () => ({ addAll: async (urls) => urls.forEach((url) => stored.set(url, new Response(url))) }),
     match: async (url) => stored.get(url)?.clone(),
-    keys: async () => ['unrelated-cache', 'patterm-offline-old', 'patterm-offline-v2', 'patterm-offline-v3'],
+    keys: async () => ['unrelated-cache', 'patterm-offline-old', 'patterm-offline-v2', 'patterm-offline-v3', 'patterm-offline-v4'],
     delete: async (name) => { deleted.push(name); return true; }
   };
   vm.runInNewContext(fs.readFileSync('public/sw.js', 'utf8'), {
@@ -49,7 +72,7 @@ test('service worker caches only offline assets and never intercepts commands or
   await lifetime('install');
   assert.deepEqual([...stored.keys()], ['/offline.html', '/icon.svg', '/icons/icon-192.png']);
   await lifetime('activate');
-  assert.deepEqual(deleted, ['patterm-offline-old', 'patterm-offline-v2']);
+  assert.deepEqual(deleted, ['patterm-offline-old', 'patterm-offline-v2', 'patterm-offline-v3']);
   assert(claimed);
   const request = (pathname, method = 'GET', mode = 'cors') => {
     let response;

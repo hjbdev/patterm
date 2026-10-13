@@ -4,7 +4,7 @@
 //   pnpm run build:main && pnpm run build:renderer && pnpm run build:mcp
 //   pnpm run build:sidecar:release
 // Usage: node scripts/release/package-windows.mjs --version 1.2.0 --sidecar PATH --out DIR
-// Windows has no installer or service yet: unzip and run Patterm.cmd.
+// Unzip and run Patterm.cmd, or use the per-user PowerShell release installer.
 import { execFileSync, execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -24,7 +24,7 @@ if (process.platform !== 'win32') fail('package the Windows release on Windows, 
 if (!/^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$/.test(options.version ?? '')) fail('--version must be a semantic version without a leading v');
 if (!options.sidecar || !fs.statSync(options.sidecar, { throwIfNoEntry: false })?.isFile()) fail('--sidecar must name the built release sidecar');
 if (!options.out) fail('--out is required');
-for (const file of ['dist/main/desktop/main/main.js', 'dist/renderer/index.html', 'dist/mcp/patterm-mcp.js']) {
+for (const file of ['dist/main/desktop/main/main.js', 'dist/renderer/index.html', 'dist/renderer/icons/icon.ico', 'dist/mcp/patterm-mcp.js']) {
   if (!fs.existsSync(path.join(ROOT, file))) fail(`${file} is missing; build first`);
 }
 const tainted = filesContaining(path.join(ROOT, 'dist', 'renderer'), GPL_SHIKI_PATTERN);
