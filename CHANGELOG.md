@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An Assistant switch in Settings › Assistant. Turning it off stops the
   assistant, ends any voice call, and hides its button until it is back on.
 
+- Experimental macOS desktop app zips for Apple Silicon and Intel, with
+  SHA-256 checksums, packaged-app smoke checks, and CI and release builds.
+  These builds are ad-hoc signed and are not Apple notarized.
+
 - A per-user PowerShell installer for Windows x64 releases, with zip checksum
   verification and a `patterm` command on the user PATH.
 
