@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Session context shows summary coverage only when the recap is incomplete,
+  and the status line itself opens the rebuild dialog.
 - The command palette lists the open agent's everyday actions (New
   conversation, Restart agent, Open session context, and every setting such
   as Model, Effort, and Mode) at the top level. More actions keeps only the
