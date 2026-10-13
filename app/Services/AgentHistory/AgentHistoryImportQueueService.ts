@@ -127,10 +127,16 @@ export class AgentHistoryImportQueueService {
   // rejects if the job fails or the queue shuts down first.
   deleteProjectHistory(projectId: string): Promise<{ deletedConversations: number }> {
     const { job_id } = this.enqueue({ action: 'delete_project_history', input: { trigger: 'manual' }, project_id: projectId });
-    return new Promise((resolve, reject) => this.waiters.set(job_id, (job) => {
-      if (job.status === 'succeeded') resolve({ deletedConversations: Number((job.result as { deletedConversations?: unknown } | null)?.deletedConversations ?? 0) });
-      else reject(new Error(`Could not delete the project's conversation history: ${job.error ?? job.status}`));
-    }));
+    return new Promise((resolve, reject) => {
+      const settle = (job: QueuedJob) => {
+        if (job.status === 'succeeded') resolve({ deletedConversations: Number((job.result as { deletedConversations?: unknown } | null)?.deletedConversations ?? 0) });
+        else reject(new Error(`Could not delete the project's conversation history: ${job.error ?? job.status}`));
+      };
+      // A worker that fails to start finishes the job inside enqueue.
+      const finished = this.recent.find((job) => job.id === job_id);
+      if (finished) settle(finished);
+      else this.waiters.set(job_id, settle);
+    });
   }
 
   status(): HistoryImportQueueSnapshot {

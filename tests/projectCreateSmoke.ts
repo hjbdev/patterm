@@ -15,6 +15,7 @@ import { TimelineService } from '../app/Services/TimelineService';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { CloseProcessAction } from '../app/Actions/CloseProcessAction';
+import { nextProcessId } from '../app/Actions/RegisterProcessAction';
 import { AgentHistoryImportQueueService } from '../app/Services/AgentHistory/AgentHistoryImportQueueService';
 import { RemoveProjectAction } from '../app/Actions/RemoveProjectAction';
 import { RenameProjectAction } from '../app/Actions/RenameProjectAction';
@@ -210,6 +211,7 @@ async function main(): Promise<void> {
     };
     addProcess('process_live', 'running');
     addProcess('process_done', 'exited');
+    addProcess('process_41', 'exited');
     const worktreeDir = path.join(tempDir, 'other-worktree');
     fs.mkdirSync(worktreeDir);
     db.prepare(`insert into worktrees(id,project_id,repo_path,worktree_path,branch,created_by,created_at) values('worktree_x',?,?,?,'patterm/x','user',?)`).run(removedId, otherDir, worktreeDir, at);
@@ -276,6 +278,12 @@ async function main(): Promise<void> {
     purgeFails = true;
     await assert.rejects(queue.deleteProjectHistory(removedId), /conversation history: worker failed/);
     queue.dispose();
+    const unstartable = new AgentHistoryImportQueueService(tempDir, undefined, () => { throw new Error('no worker'); });
+    await assert.rejects(unstartable.deleteProjectHistory(removedId), /conversation history: no worker/, 'a worker that cannot start still settles the purge');
+    unstartable.dispose();
+
+    // Process IDs of a removed project are never handed out again.
+    assert.equal(nextProcessId(database), 'process_42');
 
     // Adding the folder again starts a fresh project.
     const readded = (await registry.call('project_create', { path: otherDir })) as { project_id: string; existed: boolean };

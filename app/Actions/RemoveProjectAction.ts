@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { CloseProcessAction } from './CloseProcessAction';
 import type { ProjectLinkActions } from './ProjectLinkActions';
+import { recordProcessIdHighWater } from './RegisterProcessAction';
 import type { AgentHistoryImportQueueService } from '../Services/AgentHistory/AgentHistoryImportQueueService';
 import type { DatabaseService } from '../Services/DatabaseService';
 import type { IntegratedAgentService } from '../Services/IntegratedAgentService';
@@ -37,9 +38,7 @@ const UNLINKED_ROWS = [
   'delete from assistant_inbox where source_process_id in (select id from processes where project_id = ?)',
   'delete from routine_runs where project_id = ?',
   'delete from peer_messages where project_id = ?',
-  'delete from app_artifacts_fts where project_id = ?',
-  // Conversation copies from before history moved to its own database.
-  'delete from conversations where project_id = ?'
+  'delete from app_artifacts_fts where project_id = ?'
 ];
 
 // Deletes everything Patterm holds for a project: its agents and processes
@@ -73,16 +72,21 @@ export class RemoveProjectAction {
       for (const process of processes) if (process.status !== 'closed') await this.deps.closeProcess.execute(process.id);
       this.deps.timers?.cancelOwnedBy(processes.map((process) => process.id));
 
-      // History is purged while the project still exists, so imports queued
-      // before it still link their conversations to the project.
-      await this.deps.history?.deleteProjectHistory(input.project_id);
       for (const link of this.deps.links?.links().filter((candidate) => candidate.project_id === input.project_id) ?? []) {
         await this.deps.unlink?.unlink({ host_id: link.host_id, project_id: input.project_id });
       }
+      // Conversation copies from before history moved to its own database go
+      // first: a worker copies them back whenever the history database is empty.
+      db.prepare('delete from conversations where project_id = ?').run(input.project_id);
+      // History is purged while the project still exists, so imports queued
+      // before it still link their conversations to the project. Nothing
+      // awaits between the purge and the deletion, so no import runs between.
+      await this.deps.history?.deleteProjectHistory(input.project_id);
 
       // Everything else cascades from the project row, including the
       // timeline, so the removal itself is recorded without a project.
       db.transaction(() => {
+        recordProcessIdHighWater(this.deps.database);
         for (const sql of UNLINKED_ROWS) db.prepare(sql).run(input.project_id);
         db.prepare(`delete from projects where id = ?`).run(input.project_id);
       })();
