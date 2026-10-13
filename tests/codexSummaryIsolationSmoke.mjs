@@ -5,7 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { execFile } from 'node:child_process';
-import { codexSummaryArgs, codexSummaryCatalog, codexSummaryOutput, codexSummaryEnvironment } from '../dist/tests/app/Services/AutoSummaryRunner.js';
+import { codexSummaryArgs, codexSummaryCatalog, codexSummaryOutput, codexSummaryEnvironment, summaryEnvironment } from '../dist/tests/app/Services/AutoSummaryRunner.js';
+import { resolveCommand } from '../dist/tests/app/Platform/Executable.js';
 
 test('native Codex sends no tools or inherited instructions', { skip: !process.env.PATTERM_TEST_CODEX }, async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'patterm-codex-isolation-'));
@@ -27,7 +28,9 @@ test('native Codex sends no tools or inherited instructions', { skip: !process.e
   try {
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     await fs.writeFile(path.join(directory, 'auth.json'), JSON.stringify({ OPENAI_API_KEY: 'local-fixture' }));
-    const env = await codexSummaryEnvironment(directory, { HOME: directory, CODEX_HOME: directory, PATH: process.env.PATH });
+    // Windows programs also need SystemRoot and the profile variables.
+    const base = process.platform === 'win32' ? summaryEnvironment(process.env) : {};
+    const env = await codexSummaryEnvironment(directory, { ...base, HOME: directory, CODEX_HOME: directory, PATH: process.env.PATH });
     await fs.writeFile(path.join(directory, 'AGENTS.md'), 'INHERITED_INSTRUCTION_CANARY');
     await fs.mkdir(path.join(directory, 'skills/poison'), { recursive: true });
     await fs.writeFile(path.join(directory, 'skills/poison/SKILL.md'), '---\nname: poison\ndescription: INHERITED_SKILL_CANARY\n---\nINHERITED_SKILL_CANARY');
@@ -58,8 +61,10 @@ test('native Codex sends no tools or inherited instructions', { skip: !process.e
 });
 
 function nativeCommand(executable, args, input, cwd, env, signal, maxBuffer) {
+  // Codex is an npm .cmd shim on Windows, which execFile cannot start directly.
+  const resolved = resolveCommand(executable, args, env);
   return new Promise((resolve, reject) => {
-    const child = execFile(executable, args, { cwd, env, signal, maxBuffer }, (error, stdout, stderr) => {
+    const child = execFile(resolved.command, resolved.args, { cwd, env, signal, maxBuffer, windowsHide: true, windowsVerbatimArguments: resolved.verbatim }, (error, stdout, stderr) => {
       if (error) reject(new Error(stderr)); else resolve(stdout);
     });
     child.stdin.end(input);

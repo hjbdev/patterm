@@ -1,8 +1,8 @@
 name: Release
 
 # A plain tag (v1.2.0) publishes a stable Linux release. A tag with a suffix
-# (v1.3.0-beta.1) publishes a pre-release; untested macOS and Windows builds
-# will only ever ship as pre-releases.
+# (v1.3.0-beta.1) publishes a pre-release, which also carries a portable
+# Windows zip; macOS and Windows builds ship only as pre-releases.
 on:
   push:
     tags: ['v[0-9]+.[0-9]+.[0-9]+*']
@@ -92,8 +92,45 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  build-windows:
+    # Windows ships only in pre-releases (a tag with a suffix) until it has an
+    # installer and updater; the zip stays out of the signed manifest.
+    needs: check
+    if: contains(github.ref_name, '-')
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - name: Build the sidecar
+        run: |
+          cargo build --release --locked --manifest-path native/terminal-core/Cargo.toml
+          cargo test --release --locked --manifest-path native/terminal-core/Cargo.toml
+      - run: pnpm install --frozen-lockfile
+      - name: Build the application
+        run: |
+          pnpm run build:main
+          pnpm run build:renderer
+          pnpm run build:mcp
+      - name: Package
+        run: node scripts/release/package-windows.mjs --version $("$env:GITHUB_REF_NAME".Substring(1)) --sidecar native/terminal-core/target/release/patterm-terminal-core.exe --out "${{ runner.temp }}/release"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-x64
+          path: ${{ runner.temp }}/release/patterm-*
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
-    needs: build
+    needs: [build, build-windows]
+    # Stable tags skip build-windows; publish still runs unless a build failed.
+    if: ${{ !cancelled() && !failure() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: release
@@ -133,5 +170,8 @@ jobs:
         run: |
           prerelease=()
           [[ "$GITHUB_REF_NAME" == *-* ]] && prerelease=(--prerelease)
+          # Only pre-releases carry the Windows zip.
+          shopt -s nullglob
+          windows=(release/*.zip release/*.zip.sha256)
           gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "Patterm ${GITHUB_REF_NAME#v}" "${prerelease[@]}" \
-            release/*.tar.gz release/*.tar.gz.sha256 release/manifest.json release/manifest.json.minisig release/install.sh release/uninstall.sh release/scripts.sha256
+            release/*.tar.gz release/*.tar.gz.sha256 release/manifest.json release/manifest.json.minisig release/install.sh release/uninstall.sh release/scripts.sha256 "${windows[@]}"

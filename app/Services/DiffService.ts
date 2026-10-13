@@ -2,6 +2,7 @@ import { constants as fsConstants, existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
+import { slashPath, storedPath } from '../Platform/PathIdentity';
 import { GitService } from './GitService';
 import type { WorktreeService } from './WorktreeService';
 
@@ -141,7 +142,21 @@ export class DiffService {
     ]);
     if (before === TOO_LARGE || after === TOO_LARGE) return { ...contents, tooLarge: true };
     if (before === BINARY || after === BINARY) return { ...contents, binary: true };
-    return { ...contents, oldContents: before, newContents: after };
+    // A CRLF checkout of an LF blob differs on every line byte for byte, but
+    // git compares the working file after converting it back.
+    const converted = before && after && !before.includes('\r') && after.includes('\r\n') && await this.convertsLineEndings(loaded.root, file.path);
+    return { ...contents, oldContents: before, newContents: converted ? after.replace(/\r\n/g, '\n') : after };
+  }
+
+  // Whether git normalises this file's line endings to LF when comparing it:
+  // a text or eol attribute, or core.autocrlf, unless the file is marked -text.
+  private async convertsLineEndings(root: string, filePath: string): Promise<boolean> {
+    const eol = await this.query(root, ['ls-files', '--eol', '--', filePath]).catch(() => null);
+    const attributes = /\battr\/(.*?)\s*\t/.exec(eol ?? '')?.[1] ?? '';
+    if (/(^|\s)-text\b/.test(attributes)) return false;
+    if (/(^|\s)(text|eol=)/.test(attributes)) return true;
+    const autocrlf = (await this.query(root, ['config', '--get', 'core.autocrlf']).catch(() => null))?.trim().toLowerCase();
+    return autocrlf === 'true' || autocrlf === 'input';
   }
 
   private load(worktreeId: string, scope: DiffScope): Promise<LoadedDiff> {
@@ -172,7 +187,7 @@ export class DiffService {
       this.query(cwd, ['symbolic-ref', '-q', '--short', 'HEAD']),
       scope === 'branch' ? this.query(cwd, ['symbolic-ref', '-q', 'refs/remotes/origin/HEAD']) : null
     ]);
-    const root = toplevel.trim() || cwd;
+    const root = storedPath(toplevel.trim() || cwd);
     const headCommit = head?.trim() || null;
     const base = !headCommit
       ? { ref: null, commit: await this.emptyTree(root) }
@@ -385,7 +400,8 @@ function relativeDiffPath(value: string): string {
     throw new Error('path must be relative to the worktree root');
   }
   if (value.split(/[\\/]/).includes('..')) throw new Error('path must not contain ".." segments');
-  return value;
+  // Git reports changed files with `/`, which an agent on Windows may not type.
+  return slashPath(value);
 }
 
 // Resolves the parent directory, so a symlinked directory cannot lead
@@ -415,9 +431,13 @@ async function lstatIfExists(target: string) {
 }
 
 // O_NOFOLLOW refuses a symlink swapped in after lstat; O_NONBLOCK keeps a
-// swapped-in FIFO from blocking.
+// swapped-in FIFO from blocking. Windows defines neither (it has no FIFOs, and
+// opening a link there always follows it), so the caller's lstat is the only
+// guard against a link swapped in afterwards. Callers pass regular files only.
+const READ_FLAGS = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0);
+
 async function readPrefix(file: string, length: number): Promise<Buffer> {
-  const handle = await fs.open(file, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
+  const handle = await fs.open(file, READ_FLAGS);
   try {
     const buffer = Buffer.alloc(length);
     let offset = 0;

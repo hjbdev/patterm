@@ -3,6 +3,43 @@ use alacritty_terminal::vte::ansi::Processor;
 use std::hint::black_box;
 use std::sync::mpsc;
 
+/// Spawn parameters for a child that stays alive, prints nothing of its own,
+/// and echoes what it is sent: `/bin/cat` on Unix, `findstr ^` on Windows.
+pub(super) fn cat_params(cols: u16, rows: u16) -> Value {
+    #[cfg(windows)]
+    let (command, args) = ("findstr.exe", vec!["^"]);
+    #[cfg(not(windows))]
+    let (command, args) = ("/bin/cat", Vec::<&str>::new());
+    serde_json::json!({ "command": command, "args": args, "cols": cols, "rows": rows })
+}
+
+/// How long a scripted child may take to start, run, and exit. Cold
+/// PowerShell starts on a busy CI runner, with tests running in parallel,
+/// take many seconds.
+pub(super) const SCRIPT_DEADLINE: Duration =
+    Duration::from_secs(if cfg!(windows) { 30 } else { 2 });
+
+/// Spawn parameters that run `unix` under `/bin/sh -c`, or `windows` as a
+/// Windows PowerShell command (the Windows scripts build escapes with
+/// `[char]27`, which 5.1 and 7 both understand).
+pub(super) fn script_params(unix: &str, windows: &str, cols: u16, rows: u16) -> Value {
+    let (command, args) = if cfg!(windows) {
+        (
+            "powershell.exe",
+            vec![
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                windows,
+            ],
+        )
+    } else {
+        ("/bin/sh", vec!["-c", unix])
+    };
+    serde_json::json!({ "command": command, "args": args, "cols": cols, "rows": rows })
+}
+
 struct Fixture {
     manager: TerminalManager,
     process_id: String,
@@ -13,11 +50,7 @@ impl Fixture {
     fn new(cols: u16, rows: u16) -> Self {
         let (tx, _rx) = mpsc::channel();
         let mut manager = TerminalManager::new(tx);
-        let result = manager
-            .spawn(serde_json::json!({
-                "command": "/bin/cat", "cols": cols, "rows": rows
-            }))
-            .unwrap();
+        let result = manager.spawn(cat_params(cols, rows)).unwrap();
         Self {
             manager,
             process_id: result["process_id"].as_str().unwrap().to_string(),
@@ -434,9 +467,7 @@ fn osc8_links_survive_wrapping_scrollback_and_alternate_screens() {
 fn osc52_copy_emits_clipboard_lifecycle_frame() {
     let (tx, rx) = mpsc::channel();
     let mut manager = TerminalManager::new(tx);
-    let result = manager
-        .spawn(serde_json::json!({ "command": "/bin/cat", "cols": 20, "rows": 3 }))
-        .unwrap();
+    let result = manager.spawn(cat_params(20, 3)).unwrap();
     let process_id = result["process_id"].as_str().unwrap().to_string();
     let session = manager.sessions.get_mut(&process_id).unwrap();
     // base64("copied text"); the OSC 52 read form must stay ignored.
@@ -463,17 +494,13 @@ fn osc52_copy_emits_clipboard_lifecycle_frame() {
 }
 
 // Runs a real PTY child and returns every notification lifecycle frame it caused.
-fn notification_frames(script: &str) -> Vec<Value> {
+fn notification_frames(unix: &str, windows: &str) -> Vec<Value> {
     let (tx, rx) = mpsc::channel();
     let mut manager = TerminalManager::new(tx);
-    let result = manager
-        .spawn(serde_json::json!({
-            "command": "/bin/sh", "args": ["-c", script], "cols": 20, "rows": 3
-        }))
-        .unwrap();
+    let result = manager.spawn(script_params(unix, windows, 20, 3)).unwrap();
     let process_id = result["process_id"].as_str().unwrap().to_string();
     let mut frames = Vec::new();
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + SCRIPT_DEADLINE.max(Duration::from_secs(10));
     let mut exited = false;
     while Instant::now() < deadline {
         // Alacritty reports the exit before draining the final output.
@@ -520,6 +547,7 @@ fn notification_frames(script: &str) -> Vec<Value> {
 fn osc_notifications_emit_lifecycle_frames() {
     let frames = notification_frames(
         r"printf '\033]9;hello\007\033]9;4;1;50\007\033]777;notify;Title;a;b\033\\'",
+        r#"$e = [char]27; $b = [char]7; [Console]::Out.Write("$e]9;hello$b$e]9;4;1;50$b$e]777;notify;Title;a;b$e\")"#,
     );
     let frames = frames
         .into_iter()
@@ -541,7 +569,10 @@ fn osc_notifications_emit_lifecycle_frames() {
 
 #[test]
 fn bell_floods_are_throttled() {
-    let frames = notification_frames(r"printf '\007\007\007'; printf '\007'");
+    let frames = notification_frames(
+        r"printf '\007\007\007'; printf '\007'",
+        r#"$b = [char]7; [Console]::Out.Write("$b$b$b"); [Console]::Out.Write($b)"#,
+    );
     assert_eq!(frames.len(), 1);
     assert_eq!(frames[0]["source"], "bell");
 }
@@ -552,11 +583,12 @@ fn focus_reports_follow_client_focus_once_enabled() {
     let mut manager = TerminalManager::new(tx);
     // The tty echoes control input as ^[, so focus reports show up on screen.
     let result = manager
-        .spawn(serde_json::json!({
-            "command": "/bin/sh",
-            "args": ["-c", r"printf '\033[?1004h'; exec sleep 5"],
-            "cols": 80, "rows": 6
-        }))
+        .spawn(script_params(
+            r"printf '\033[?1004h'; exec sleep 5",
+            r#"[Console]::Out.Write(([char]27) + '[?1004h'); Start-Sleep 5"#,
+            80,
+            6,
+        ))
         .unwrap();
     let process_id = result["process_id"].as_str().unwrap().to_string();
     let pump = |manager: &mut TerminalManager, until: Duration| {
@@ -570,7 +602,11 @@ fn focus_reports_follow_client_focus_once_enabled() {
             manager.write_due_events(&mut Vec::new()).unwrap();
         }
     };
-    pump(&mut manager, Duration::from_millis(800));
+    // Wait for the child to turn focus reporting on; PowerShell starts slowly.
+    let deadline = Instant::now() + SCRIPT_DEADLINE;
+    while !manager.sessions[&process_id].focus_reporting && Instant::now() < deadline {
+        pump(&mut manager, Duration::from_millis(100));
+    }
     // Enabling focus reporting while unfocused reports focus-out once.
     let unchanged = manager
         .focus(serde_json::json!({ "process_id": process_id, "focused": false }))
@@ -588,5 +624,38 @@ fn focus_reports_follow_client_focus_once_enabled() {
         .unwrap()
         .to_string();
     let _ = manager.stop(serde_json::json!({ "process_id": process_id }));
+    // ConPTY has no tty echo of control input, so only Unix can see the reports.
+    #[cfg(unix)]
     assert!(screen.contains("^[[O^[[I"), "screen was {screen:?}");
+    #[cfg(not(unix))]
+    let _ = screen;
+}
+
+#[test]
+fn echoing_child_shows_input_it_is_sent() {
+    let (tx, _rx) = mpsc::channel();
+    let mut manager = TerminalManager::new(tx);
+    let result = manager.spawn(cat_params(40, 5)).unwrap();
+    let process_id = result["process_id"].as_str().unwrap().to_string();
+    manager
+        .write_input(serde_json::json!({ "process_id": process_id, "text": "echoed-input-7\r" }))
+        .unwrap();
+    // ConPTY adds its own setup sequences around the echo, so match on content.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut screen = String::new();
+    while Instant::now() < deadline {
+        manager.write_due_events(&mut Vec::new()).unwrap();
+        screen = manager
+            .output(serde_json::json!({ "process_id": process_id }))
+            .unwrap()["screen"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        if screen.contains("echoed-input-7") {
+            break;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    let _ = manager.stop(serde_json::json!({ "process_id": process_id }));
+    assert!(screen.contains("echoed-input-7"), "screen was {screen:?}");
 }

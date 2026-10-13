@@ -15,6 +15,7 @@ import { WorktreeService } from '../app/Services/WorktreeService';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
+import { trySymlink } from './fixtures/SymlinkFixture';
 
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
@@ -98,8 +99,8 @@ async function main(): Promise<void> {
     write(worktreeDir, 'docs/notes.md', 'one\ntwo\nthree');
     fs.writeFileSync(path.join(worktreeDir, 'blob.dat'), Buffer.from([1, 0, 1]));
     write(tempDir, 'outside.txt', 'secret\n');
-    fs.symlinkSync(path.join(tempDir, 'outside.txt'), path.join(worktreeDir, 'outside-link'));
-    write(worktreeDir, 'big.txt', `${'x'.repeat(1024 * 1024)}\n`);
+    // Windows refuses symlinks without Developer Mode; the link assertions skip then.
+    const outsideLink = trySymlink(path.join(tempDir, 'outside.txt'), path.join(worktreeDir, 'outside-link'), 'file');    write(worktreeDir, 'big.txt', `${'x'.repeat(1024 * 1024)}\n`);
 
     const branch = await current(tree.id);
     assert.deepEqual(branch.worktree, { id: tree.id, repoPath: tree.repoPath, worktreePath: worktreeDir, branch: 'patterm/implement-worktree-diff' });
@@ -113,27 +114,28 @@ async function main(): Promise<void> {
       ['blob.dat', null, 'added', 0, 0, true, true, false, false],
       ['docs/notes.md', null, 'added', 3, 0, false, true, true, false],
       ['logo.bin', null, 'modified', 0, 0, true, false, false, false],
-      ['outside-link', null, 'added', 1, 0, false, true, false, false],
+      ...(outsideLink ? [['outside-link', null, 'added', 1, 0, false, true, false, false]] : []),
       ['src/app.ts', null, 'modified', 2, 1, false, false, false, false],
       ['src/new.ts', 'src/old.ts', 'renamed', 1, 0, false, false, false, false],
       ['src/remove.ts', null, 'deleted', 0, 1, false, false, false, false],
       ['tests/app.test.ts', null, 'added', 1, 0, false, false, false, true]
     ], 'committed, staged, unstaged, and untracked changes are listed by path');
-    assert.deepEqual(branch.totals, { files: 10, additions: 9, deletions: 2 });
+    assert.deepEqual(branch.totals, outsideLink ? { files: 10, additions: 9, deletions: 2 } : { files: 9, additions: 8, deletions: 2 });
     assert.ok(!('patch' in branch), 'summaries carry no patch text');
 
     const uncommitted = await current(tree.id, 'uncommitted');
     assert.deepEqual(uncommitted.base, { ref: 'HEAD', commit: branchHead });
-    assert.deepEqual(uncommitted.files.map((entry) => entry.path), ['README.md', 'big.txt', 'blob.dat', 'docs/notes.md', 'outside-link', 'src/app.ts'], 'uncommitted scope leaves out committed branch work');
+    assert.deepEqual(uncommitted.files.map((entry) => entry.path), ['README.md', 'big.txt', 'blob.dat', 'docs/notes.md', ...(outsideLink ? ['outside-link'] : []), 'src/app.ts'],'uncommitted scope leaves out committed branch work');
 
     // Contents for side-by-side review.
     assert.deepEqual(await file(tree.id, 'src/new.ts'), contents('src/new.ts', 'src/old.ts', 'renamed', numbered(10), `${numbered(10)}added line\n`));
     assert.deepEqual(await file(tree.id, 'README.md'), contents('README.md', null, 'modified', 'hello\n', 'hello\nworld\n'));
     assert.deepEqual(await file(tree.id, 'src/app.ts', 'uncommitted'), contents('src/app.ts', null, 'modified', 'export const app = 1;\n', 'export const app = 2;\nexport const more = true;\n'));
+    if (process.platform === 'win32') assert.deepEqual(await file(tree.id, 'src\\app.ts', 'uncommitted'), await file(tree.id, 'src/app.ts', 'uncommitted'), 'a backslash path names the changed file git lists with a slash');
     assert.deepEqual(await file(tree.id, 'src/remove.ts'), contents('src/remove.ts', null, 'deleted', 'gone\n', null));
     assert.deepEqual(await file(tree.id, 'tests/app.test.ts'), contents('tests/app.test.ts', null, 'added', null, 'test("app", () => {});\n'));
     assert.deepEqual(await file(tree.id, 'docs/notes.md'), contents('docs/notes.md', null, 'added', null, 'one\ntwo\nthree'));
-    assert.deepEqual(await file(tree.id, 'outside-link'), contents('outside-link', null, 'added', null, path.join(tempDir, 'outside.txt')), 'symlinks show their target, never the file outside');
+    if (outsideLink) assert.deepEqual(await file(tree.id, 'outside-link'), contents('outside-link', null, 'added', null, path.join(tempDir, 'outside.txt')), 'symlinks show their target, never the file outside');
     assert.deepEqual(await file(tree.id, 'logo.bin'), { ...contents('logo.bin', null, 'modified', null, null), binary: true });
     assert.deepEqual(await file(tree.id, 'blob.dat'), { ...contents('blob.dat', null, 'added', null, null), binary: true });
     assert.deepEqual(await file(tree.id, 'big.txt'), { ...contents('big.txt', null, 'added', null, null), tooLarge: true });
@@ -195,8 +197,14 @@ async function main(): Promise<void> {
     const count = () => (database.connection.prepare('select count(*) n from worktrees').get() as { n: number }).n;
     const before = count();
     assert.equal((await worktrees.link({ project_id: projectId, worktree_path: `${repoDir}${path.sep}` })).worktree.id, mainCheckout.id);
-    fs.symlinkSync(repoDir, path.join(tempDir, 'repo-alias'));
-    assert.equal((await worktrees.link({ project_id: projectId, worktree_path: path.join(tempDir, 'repo-alias') })).worktree.id, mainCheckout.id, 'a symlinked path matches the real directory');
+    if (trySymlink(repoDir, path.join(tempDir, 'repo-alias'), 'junction')) {
+      assert.equal((await worktrees.link({ project_id: projectId, worktree_path: path.join(tempDir, 'repo-alias') })).worktree.id, mainCheckout.id, 'a symlinked path matches the real directory');
+    }
+    if (process.platform === 'win32') {
+      for (const spelling of [repoDir.toLowerCase(), repoDir.replace(/\\/g, '/')]) {
+        assert.equal((await worktrees.link({ project_id: projectId, worktree_path: spelling })).worktree.id, mainCheckout.id, `${spelling} matches the registered directory`);
+      }
+    }
     assert.equal(count(), before, 'relinking does not duplicate the worktree');
 
     // A repository without commits compares with the empty tree.

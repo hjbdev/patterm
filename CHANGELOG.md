@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Windows support for the desktop app, run from source. Agents run in Windows
+  pseudoconsoles, raw terminals and commands use PowerShell, and npm or pnpm
+  `.cmd` shims for agent CLIs are started directly. Terminals live in detached
+  hosts that survive an app restart; Quit stops them. Integrated Claude and
+  Codex agents run through named pipes, with Codex's app-server on stdio.
+  Project, worktree, and history paths compare without regard to case or
+  slash direction. Desktop data lives in `%LOCALAPPDATA%`. CI also runs on
+  Windows and builds a portable Windows zip, which pre-releases attach.
 - Rename and remove projects from the menu on each project in Projects.
   Renaming changes only the name Patterm shows. Removing asks for
   confirmation, stops anything running in the project, and deletes
@@ -40,6 +48,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   edits to already-covered history require a deliberate rebuild.
 
 - Keep sidebar row spacing consistent when agents expand or show status lines.
+- Closing the desktop window confirms quitting in the app instead of a native
+  dialog. The native dialog remains only when the window cannot respond.
+- Package scripts run cargo through `scripts/cargo.mjs` instead of a POSIX
+  `PATH=` prefix.
+
+### Fixed
+
+- The diff view no longer marks every line as changed when git checks a file
+  out with CRLF line endings.
+- Directory paths, home abbreviations, and labels handle Windows paths and
+  drive letters, and AltGr characters such as `[`, `\`, and `@` type normally
+  in terminals.
+- Terminal and interface font stacks fall back to Cascadia Mono and Consolas.
 
 ### Removed
 

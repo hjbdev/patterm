@@ -7,9 +7,12 @@ import { UploadService } from '../app/Http/UploadService';
 import { IntegratedAgentService, type IntegratedProviderService } from '../app/Services/IntegratedAgentService';
 import type { ResolvedIntegratedPrompt } from '../app/Services/IntegratedInput';
 import { WorktreeFileService } from '../app/Services/WorktreeFileService';
+import { trySymlink } from './fixtures/SymlinkFixture';
 
 async function main(): Promise<void> {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-integrated-files-'));
+  // The service resolves real paths natively, which expands a Windows 8.3
+  // temp path such as C:\Users\RUNNER~1; compare against the same long form.
+  const directory = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-integrated-files-')));
   const worktree = path.join(directory, 'worktree');
   const uploads = path.join(directory, 'uploads');
   const outside = path.join(directory, 'outside');
@@ -41,9 +44,10 @@ async function main(): Promise<void> {
   fs.mkdirSync(path.join(worktree, 'odd[x]'));
   fs.writeFileSync(path.join(worktree, 'odd[x]', 'kept.txt'), 'shown');
   fs.writeFileSync(path.join(worktree, 'odd[x]', 'hidden.log'), 'hidden');
-  // Ignore rules are case-sensitive, as git and ripgrep are on Linux.
+  // Ignore rules are case-sensitive, as git and ripgrep are on Linux. On Windows
+  // the filesystem cannot hold both names, and git matches rules without case.
   fs.writeFileSync(path.join(worktree, 'CaseRule.md'), 'hidden');
-  fs.writeFileSync(path.join(worktree, 'caserule.md'), 'shown');
+  if (process.platform !== 'win32') fs.writeFileSync(path.join(worktree, 'caserule.md'), 'shown');
   fs.mkdirSync(path.join(worktree, 'generated'));
   fs.writeFileSync(path.join(worktree, 'generated', 'out.js'), 'noise');
   fs.writeFileSync(path.join(worktree, 'debug.log'), 'noise');
@@ -61,9 +65,11 @@ async function main(): Promise<void> {
   fs.writeFileSync(path.join(worktree, 'lib', 'UserProfileCard.vue'), '<template />');
   const future = new Date(Date.now() + 60_000);
   fs.utimesSync(path.join(worktree, 'README.md'), future, future);
-  fs.symlinkSync(path.join(outside, 'secret.ts'), path.join(worktree, 'src', 'link.ts'));
-  fs.symlinkSync(outside, path.join(worktree, 'linked-dir'));
-  fs.symlinkSync(worktree, path.join(worktree, 'src', 'self-link'));
+  // File symlinks need Developer Mode on Windows, so those assertions skip when
+  // creation is refused. Directory links use junctions, which need no privilege.
+  const fileLink = trySymlink(path.join(outside, 'secret.ts'), path.join(worktree, 'src', 'link.ts'), 'file');
+  fs.symlinkSync(outside, path.join(worktree, 'linked-dir'), 'junction');
+  fs.symlinkSync(worktree, path.join(worktree, 'src', 'self-link'), 'junction');
   // A linked worktree reads `info/exclude` from its repository's common
   // directory, found through the `.git` file and `commondir`.
   const repository = path.join(directory, 'repository');
@@ -111,7 +117,7 @@ async function main(): Promise<void> {
     for (const ignored of ['generated/out.js', 'debug.log', 'secret-notes.md', 'nested/x.tmp', 'nested/keep.bak', 'reinclude/debug.log', 'reinclude/.env', 'zzdir/zzfile.txt', 'odd[x]/hidden.log', 'CaseRule.md']) {
       assert.ok(!listed.has(ignored), `${ignored} is ignored`);
     }
-    for (const kept of ['keep.log', 'nested/debug.log', 'lib/UserProfileCard.vue', 'reinclude/kept.txt', 'zzdir/other.txt', 'odd[x]/kept.txt', 'caserule.md']) {
+    for (const kept of ['keep.log', 'nested/debug.log', 'lib/UserProfileCard.vue', 'reinclude/kept.txt', 'zzdir/other.txt', 'odd[x]/kept.txt', ...(process.platform === 'win32' ? [] : ['caserule.md'])]) {
       assert.ok(listed.has(kept), `${kept} is listed`);
     }
     assert.equal(all[0]?.path, 'README.md', 'an empty query lists the most recently modified files first');
@@ -141,6 +147,13 @@ async function main(): Promise<void> {
     assert.equal(resolved.references[0]?.name, 'app.ts');
     const directoryReference = await files.resolve('process_test', { text: 'x', references: [{ path: 'src/components/' }] });
     assert.deepEqual(directoryReference.references[0], { path: fs.realpathSync(path.join(worktree, 'src', 'components')), name: 'components/', relativePath: 'src/components/', directory: true });
+    if (process.platform === 'win32') {
+      // Windows paths resolve, but agents and the UI always see `/` separators.
+      const native = await files.resolve('process_test', { text: 'x', references: [{ path: 'src\\components\\button.ts' }, { path: path.join(worktree, 'src', 'app.ts') }, { path: 'src\\components\\' }] });
+      assert.deepEqual(native.references.map((reference) => reference.relativePath), ['src/components/button.ts', 'src/app.ts', 'src/components/']);
+      assert.equal(native.references[2]?.directory, true);
+      assert.equal((await files.search('process_test', 'src\\components\\')).every((file) => file.path.startsWith('src/components/')), true, 'a typed backslash scopes like a slash');
+    }
     await assert.rejects(files.resolve('process_test', { text: 'x', references: [{ path: 'src/components' }] }), /must end with \//);
     await assert.rejects(files.resolve('process_test', { text: 'x', references: [{ path: 'src/app.ts/' }] }), /not a directory|not found/);
     for (const root of ['./', 'src/../', 'src/self-link/']) {
@@ -149,7 +162,7 @@ async function main(): Promise<void> {
     const messageId = '44444444-4444-4444-4444-444444444444';
     assert.equal((await files.resolve('process_test', { text: 'x', messageId })).messageId, messageId);
     assert.equal((await files.resolve('process_test', { text: 'x', messageId: 'not-a-uuid' })).messageId, undefined);
-    for (const reference of ['../outside/secret.ts', path.join(outside, 'secret.ts'), '/etc/passwd', 'src/link.ts', 'linked-dir/secret.ts', 'linked-dir/']) {
+    for (const reference of ['../outside/secret.ts', path.join(outside, 'secret.ts'), '/etc/passwd', ...(fileLink ? ['src/link.ts'] : []), 'linked-dir/secret.ts', 'linked-dir/']) {
       await assert.rejects(
         files.resolve('process_test', { text: 'x', references: [{ path: reference }], attachments: [] }),
         /outside the agent working directory/,
@@ -186,8 +199,9 @@ async function main(): Promise<void> {
     fs.writeFileSync(disguisedZip, Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00]));
     await assert.rejects(files.resolve('process_test', { text: 'x', attachments: [{ path: disguisedZip, name: 'disguised-zip.png', mime: 'image/png' }] }), /not text or a supported image/);
     fs.writeFileSync(path.join(outside, 'upload-link.png'), 'x');
-    fs.symlinkSync(path.join(outside, 'upload-link.png'), path.join(uploads, 'escape.png'));
-    await assert.rejects(files.resolve('process_test', { text: 'x', attachments: [{ path: path.join(uploads, 'escape.png'), name: 'escape.png', mime: 'image/png' }] }), /not a managed upload/, 'symlinked uploads resolve outside the store');
+    if (trySymlink(path.join(outside, 'upload-link.png'), path.join(uploads, 'escape.png'), 'file')) {
+      await assert.rejects(files.resolve('process_test', { text: 'x', attachments: [{ path: path.join(uploads, 'escape.png'), name: 'escape.png', mime: 'image/png' }] }), /not a managed upload/, 'symlinked uploads resolve outside the store');
+    }
 
     // Full-content text validation: a NUL after the old sample window is
     // binary, a valid UTF-8 sequence split at that boundary is text, and a

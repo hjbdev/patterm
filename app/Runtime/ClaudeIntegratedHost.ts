@@ -4,6 +4,10 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import { elicitationContent, elicitationForm, type ElicitationForm } from '../Services/McpElicitation';
+import { envValue, withEnv } from '../Platform/Environment';
+import { resolveCommand } from '../Platform/Executable';
+import { ipcPath, removeStaleIpc, restrictIpc } from '../Platform/Ipc';
+import { killProcessTree } from '../Platform/ProcessTree';
 import { isTranscriptImageHash, TranscriptImageStore, type TranscriptImageRef } from '../Services/TranscriptImageStore';
 
 interface HostConfig {
@@ -23,6 +27,9 @@ interface HostConfig {
 type JsonRecord = Record<string, unknown>;
 
 const config = JSON.parse(fs.readFileSync(process.argv[2]!, 'utf8')) as HostConfig;
+// Windows caps a command line at 32767 characters, which a large assistant
+// context can approach, so Claude reads it from a file there (as in terminal mode).
+const contextPath = config.mcpConfigPath.replace(/-mcp\.json$/, '-context.md');
 const images = config.imageDirectory ? new TranscriptImageStore(config.imageDirectory) : null;
 const messages: JsonRecord[] = [];
 const pending = new Map<string, JsonRecord>();
@@ -107,7 +114,7 @@ const TITLE_TIMEOUT_MS = 8_000;
 const INITIALIZE_REQUEST_ID = 'patterm_initialize';
 const SETTINGS_REQUEST_ID = 'patterm_settings';
 
-try { fs.unlinkSync(config.socketPath); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+removeStaleIpc(config.socketPath);
 startClaude();
 
 const server = net.createServer((socket) => {
@@ -128,7 +135,7 @@ const server = net.createServer((socket) => {
     }
   });
 });
-server.listen(config.socketPath, () => fs.chmodSync(config.socketPath, 0o600));
+server.listen(ipcPath(config.socketPath), () => restrictIpc(config.socketPath));
 
 async function handle(socket: net.Socket, request: JsonRecord): Promise<void> {
   const id = request.id;
@@ -329,11 +336,16 @@ async function handle(socket: net.Socket, request: JsonRecord): Promise<void> {
     for (const subscriber of subscribers) subscriber.destroy();
     subscribers.clear();
     respond(socket, id, {});
-    child?.kill('SIGTERM');
-    server.close(() => process.exit(0));
+    shutdown();
     return;
   }
   throw new Error(`Unknown Claude host method: ${String(request.method)}`);
+}
+
+function contextArgs(): string[] {
+  if (process.platform !== 'win32') return ['--append-system-prompt', config.context];
+  fs.writeFileSync(contextPath, config.context, { mode: 0o600 });
+  return ['--append-system-prompt-file', contextPath];
 }
 
 function startClaude(forceResume = false): void {
@@ -344,13 +356,18 @@ function startClaude(forceResume = false): void {
     // Headless Claude registers AskUserQuestion, EnterPlanMode, and
     // ExitPlanMode only when a permission prompt tool is named, as the SDK does.
     '--permission-prompt-tool', 'stdio',
-    '--append-system-prompt', config.context,
+    ...contextArgs(),
     '--permission-mode', mode,
     ...(model !== 'default' ? ['--model', model] : []),
     ...(effort ? ['--effort', effort] : []),
     ...(config.resume || forceResume ? ['--resume', config.sessionId] : ['--session-id', config.sessionId])
   ];
-  child = spawn(config.executable, args, { cwd: config.cwd, env: claudeEnvironment(process.env), stdio: ['pipe', 'pipe', 'pipe'] });
+  const env = claudeEnvironment(process.env);
+  // npm installs Claude Code as a .cmd shim on Windows, which Node cannot spawn.
+  const command = resolveCommand(config.executable, args, env);
+  child = spawn(command.command, command.args, {
+    cwd: config.cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, windowsVerbatimArguments: command.verbatim
+  });
   setStatus('running');
   child.stdout.setEncoding('utf8');
   child.stdout.on('data', receiveClaude);
@@ -376,7 +393,10 @@ function startClaude(forceResume = false): void {
 // terminal sessions have it. enableArtifact settings and deny rules still
 // apply. Publishing must not open a browser on the machine hosting the agent.
 function claudeEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return { ...env, CLAUDE_CODE_ARTIFACT: env.CLAUDE_CODE_ARTIFACT ?? '1', CLAUDE_CODE_ARTIFACT_AUTO_OPEN: env.CLAUDE_CODE_ARTIFACT_AUTO_OPEN ?? '0' };
+  return withEnv(env, {
+    CLAUDE_CODE_ARTIFACT: envValue(env, 'CLAUDE_CODE_ARTIFACT') ?? '1',
+    CLAUDE_CODE_ARTIFACT_AUTO_OPEN: envValue(env, 'CLAUDE_CODE_ARTIFACT_AUTO_OPEN') ?? '0'
+  });
 }
 
 function requestTitle(description: string): Promise<string | null> {
@@ -1114,17 +1134,32 @@ function record(value: unknown): JsonRecord {
 }
 
 function cleanup(): void {
-  for (const filename of [config.socketPath, config.mcpConfigPath, process.argv[2]!]) {
+  for (const filename of [config.socketPath, config.mcpConfigPath, contextPath, process.argv[2]!]) {
     try { fs.unlinkSync(filename); } catch {}
   }
 }
 process.on('exit', cleanup);
-process.on('SIGTERM', () => {
+process.on('SIGTERM', shutdown);
+// Windows never delivers SIGTERM; Ctrl+Break is its console stop request. A
+// host ended outright takes claude.exe with it through Node's job object.
+if (process.platform === 'win32') process.on('SIGBREAK', shutdown);
+
+function shutdown(): void {
   for (const subscriber of subscribers) subscriber.destroy();
   subscribers.clear();
-  child?.kill('SIGTERM');
-  server.close(() => process.exit(0));
-});
+  const stopped = stopClaude();
+  server.close(() => void stopped.then(() => process.exit(0)));
+}
+
+// Windows has no SIGTERM, and ending claude.exe alone would orphan its MCP
+// servers and tool shells, so its whole tree ends there.
+function stopClaude(): Promise<void> {
+  if (process.platform !== 'win32') {
+    child?.kill('SIGTERM');
+    return Promise.resolve();
+  }
+  return child?.pid ? killProcessTree(child.pid) : Promise.resolve();
+}
 
 function uploadLabel(images: number, documents: number): string {
   const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;

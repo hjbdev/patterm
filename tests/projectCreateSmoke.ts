@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { CreateProjectAction } from '../app/Actions/CreateProjectAction';
-import { ListDirectoriesAction, listDirectoriesInput } from '../app/Actions/ListDirectoriesAction';
+import { DRIVES_PATH, ListDirectoriesAction, listDirectoriesInput } from '../app/Actions/ListDirectoriesAction';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { ensurePersonalProject, PERSONAL_PROJECT_ID } from '../app/Services/PersonalProject';
 import type { GitService } from '../app/Services/GitService';
@@ -26,11 +26,13 @@ import { registerProjectTools } from '../app/MCP/registerProjectTools';
 import { ProjectLaunchFence } from '../app/Services/ProjectLaunchFence';
 import { TimerService } from '../app/Services/TimerService';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
+import { trySymlink } from './fixtures/SymlinkFixture';
 
 async function main(): Promise<void> {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-project-'));
+  let database: DatabaseService | undefined;
   try {
-    const database = new DatabaseService(tempDir);
+    database = new DatabaseService(tempDir);
     database.initialize();
     const timeline = new TimelineService(database);
     const action = new CreateProjectAction(database, timeline);
@@ -52,6 +54,17 @@ async function main(): Promise<void> {
     const again = action.execute({ path: repoDir, name: 'Renamed', actor_type: 'user', actor_id: null });
     assert.equal(again.existed, true);
     assert.equal(again.project_id, created.project_id, 'same path returns the same project');
+
+    // Windows names one directory several ways: drive and folder case, and `/`
+    // for `\`. They all register the same project.
+    if (process.platform === 'win32') {
+      for (const spelling of [repoDir.toLowerCase(), repoDir.toUpperCase(), repoDir.replace(/\\/g, '/'), `${repoDir}\\`]) {
+        const variant = action.execute({ path: spelling, name: '', actor_type: 'user', actor_id: null });
+        assert.equal(variant.project_id, created.project_id, `${spelling} is the same project`);
+        assert.equal(variant.existed, true);
+      }
+      assert.match(created.path, /^[A-Z]:\\/, 'a new project stores the drive letter in upper case');
+    }
 
     // The snapshot surfaces registered projects as sidebar groups.
     const repo = new WorkbenchRepository(database);
@@ -112,16 +125,19 @@ async function main(): Promise<void> {
     fs.mkdirSync(path.join(browseRoot, 'repo9'));
     fs.mkdirSync(path.join(browseRoot, '.hidden'));
     fs.writeFileSync(path.join(browseRoot, 'notes.txt'), 'x');
-    fs.symlinkSync(path.join(browseRoot, 'repo9'), path.join(browseRoot, 'linked'));
-    fs.symlinkSync(path.join(browseRoot, 'notes.txt'), path.join(browseRoot, 'linked-file'));
+    // Windows refuses symlinks without Developer Mode; the link assertions skip then.
+    const linked = trySymlink(path.join(browseRoot, 'repo9'), path.join(browseRoot, 'linked'), 'dir')
+      && trySymlink(path.join(browseRoot, 'notes.txt'), path.join(browseRoot, 'linked-file'), 'file');
+    const linkEntries = linked ? ['linked'] : [];
     const lister = new ListDirectoriesAction(browseRoot);
     const listing = lister.execute(listDirectoriesInput.parse({}));
     assert.equal(listing.path, browseRoot, 'an empty path lists home');
     assert.equal(listing.parent, tempDir);
-    assert.deepEqual(listing.entries.map((entry) => [entry.name, entry.git]), [['linked', false], ['repo9', false], ['repo10', true]], 'directories and directory links only, numeric order, hidden skipped');
-    assert.deepEqual(lister.execute(listDirectoriesInput.parse({ path: '~', show_hidden: true })).entries.map((entry) => entry.name), ['.hidden', 'linked', 'repo9', 'repo10'], '~ is home; hidden folders on request');
+    assert.deepEqual(listing.entries.map((entry) => [entry.name, entry.git]), [...linkEntries.map((name) => [name, false]), ['repo9', false], ['repo10', true]], 'directories and directory links only, numeric order, hidden skipped');
+    assert.deepEqual(lister.execute(listDirectoriesInput.parse({ path: '~', show_hidden: true })).entries.map((entry) => entry.name), ['.hidden', ...linkEntries, 'repo9', 'repo10'], '~ is home; hidden folders on request');
     assert.equal(lister.execute(listDirectoriesInput.parse({ path: '~/repo10' })).path, path.join(browseRoot, 'repo10'), '~/ expands');
-    assert.equal(lister.execute(listDirectoriesInput.parse({ path: '/' })).parent, null, 'the root has no parent');
+    // A Windows drive root leads up to the list of drives.
+    assert.equal(lister.execute(listDirectoriesInput.parse({ path: '/' })).parent, process.platform === 'win32' ? DRIVES_PATH : null, 'the root has no parent');
     assert.throws(() => lister.execute(listDirectoriesInput.parse({ path: path.join(browseRoot, 'notes.txt') })), /not a directory/);
     assert.throws(() => lister.execute(listDirectoriesInput.parse({ path: path.join(browseRoot, 'missing') })), /does not exist/);
     const bulkRoot = path.join(tempDir, 'bulk');
@@ -133,14 +149,15 @@ async function main(): Promise<void> {
     assert.deepEqual(narrowed.entries.map((entry) => entry.name), ['dir500'], 'the filter applies before the cap, ignoring case');
     assert.equal(narrowed.truncated, false);
     const viaTool = (await registry.call('fs_directories', { path: browseRoot })) as { entries: unknown[] };
-    assert.equal(viaTool.entries.length, 3, 'the registry exposes patterm.fs.directories');
+    assert.equal(viaTool.entries.length, 2 + linkEntries.length,'the registry exposes patterm.fs.directories');
 
     // The Personal project lives in the data directory and is created once
     // however often startup ensures it. It is opt-in, so it starts hidden.
     ensurePersonalProject(database, tempDir);
     ensurePersonalProject(database, tempDir);
     const personalDir = path.join(tempDir, 'personal');
-    assert.equal(fs.statSync(personalDir).mode & 0o777, 0o700, 'the Personal directory is private');
+    // Windows has no POSIX permission bits.
+    if (process.platform !== 'win32') assert.equal(fs.statSync(personalDir).mode & 0o777, 0o700, 'the Personal directory is private');
     assert.ok(!repo.listProjects().some((project) => project.kind === 'personal'), 'Personal is hidden until turned on');
     assert.ok(!repo.snapshot().projects.some((project) => project.project.kind === 'personal'), 'nor in the snapshot');
 
@@ -313,6 +330,8 @@ async function main(): Promise<void> {
     // eslint-disable-next-line no-console
     console.log('project create smoke ok');
   } finally {
+    // Windows cannot delete a directory holding an open database.
+    try { database?.dispose(); } catch { /* already disposed */ }
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 }

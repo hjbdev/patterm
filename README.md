@@ -37,9 +37,12 @@ from another device.
 
 ## v0.1 support and limitations
 
-- Release packages support Linux x64 and arm64 with systemd. macOS and Windows
-  are not supported by this release. The desktop app needs a graphical session
-  and Electron's system libraries.
+- Release packages support Linux x64 and arm64 with systemd. macOS is not
+  supported. The desktop app needs a graphical session and Electron's system
+  libraries.
+- On Windows 10 or 11, the desktop app runs from source or from a portable zip
+  attached to pre-releases (see [Windows](#windows)). There is no Windows
+  installer, updater, background service, or Tailscale setup yet.
 - Patterm runs CLIs with your user account's permissions. Each CLI keeps its own
   authentication and approval workflow.
 - Browser disconnection leaves agents running. A machine reboot requires explicit
@@ -201,6 +204,40 @@ The installer replaces the `patterm-desktop` launcher with `patterm`. It retains
 the existing desktop application and data paths so projects and history remain
 available. Remove any unrelated `/usr/local/bin/patterm` installation before using
 the new command. Stop the background service before reinstalling.
+
+### Windows
+
+The desktop app runs natively on Windows 10 (1809 or later) and 11. Install Node
+24 or later, pnpm 11, Rust with the MSVC toolchain, and Git for Windows, then run
+from PowerShell:
+
+```powershell
+pnpm install
+pnpm run dev
+```
+
+Agents run in Windows pseudoconsoles. Raw terminals and commands use PowerShell
+7 when it is installed, otherwise Windows PowerShell. Agent CLIs installed by
+npm or pnpm as `.cmd` shims are started through their Node scripts. Data lives
+in `%LOCALAPPDATA%\patterm-desktop` (`patterm-desktop-dev` for development
+builds).
+
+Terminals run in detached hosts, so they keep running when the app restarts.
+**Quit Patterm** stops every host. If the app crashes, its hosts keep their
+agents until the next start reconnects to them or a quit stops them.
+Integrated Codex agents talk to `codex app-server` over stdio on Windows.
+
+Some tests create symbolic links and skip those checks unless Windows allows
+it (Developer Mode or an elevated shell).
+
+Pre-releases attach `patterm-<version>-windows-x64.zip`, and each CI run
+uploads the same build as an artifact. Unzip it anywhere and run `Patterm.cmd`.
+Build one locally after `pnpm run build:main`, `build:renderer`, `build:mcp`,
+and `build:sidecar:release`:
+
+```powershell
+node scripts/release/package-windows.mjs --version 0.1.0-local.1 --sidecar native/terminal-core/target/release/patterm-terminal-core.exe --out release
+```
 
 ### OpenCode
 

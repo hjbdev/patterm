@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import type { DatabaseService } from './DatabaseService';
-import { callIntegratedHost as callHost, IntegratedHostTransportError, detachedHostLauncher, hostConnectionError, type IntegratedHostLauncher } from './IntegratedHostLauncher';
+import { callIntegratedHost as callHost, IntegratedHostTransportError, detachedHostLauncher, hostConnectionError, integratedHostReady, stopHostProcess, stopRecordedHostProcess, type IntegratedHostLauncher } from './IntegratedHostLauncher';
 import type { IntegratedControlSelector, IntegratedControls, IntegratedFormAction, IntegratedLaunchInput, IntegratedLaunchResult } from './IntegratedAgentService';
 import { UncertainDeliveryError, type IntegratedDeliveryState } from './IntegratedDelivery';
 import type { IntegratedConversationEvent, IntegratedConversationListener } from './IntegratedConversation';
@@ -12,6 +12,7 @@ import { readClaudeTaskOutput, type ClaudeTaskOutput } from './ClaudeTaskOutput'
 import { containsReferenceToken, referenceToken } from './PromptReferences';
 import type { TranscriptImageStore } from './TranscriptImageStore';
 import { claudeMcpServers } from '../Harness/McpDelivery';
+import { ipcPath } from '../Platform/Ipc';
 
 const CLAUDE_RECONNECT_ATTEMPTS = 8;
 
@@ -84,7 +85,7 @@ export class ClaudeStreamService {
       }
       return { resumeId: sessionId, argv: [input.executable, 'claude-host', socketPath, String(pid ?? ''), configPath] };
     } catch (error) {
-      stopPid(pid);
+      await stopHostProcess(pid);
       throw error;
     }
   }
@@ -135,7 +136,7 @@ export class ClaudeStreamService {
       }, Math.min(250 * 2 ** (attempts - 1), 5_000));
     };
     const connect = (): Promise<void> => new Promise((resolve, reject) => {
-      const next = net.createConnection(runtime.socketPath);
+      const next = net.createConnection(ipcPath(runtime.socketPath));
       socket = next;
       let buffer = '';
       let acknowledged = false;
@@ -312,13 +313,13 @@ export class ClaudeStreamService {
     // interrupt, but the host stop below still runs and cleans it up. A
     // failure of the host stop itself still propagates.
     try { await this.interrupt(processId); } catch { /* the host stop decides */ }
-    try { await callHost(runtime.socketPath, 'stop', {}); } catch { stopPid(runtime.pid); }
+    try { await callHost(runtime.socketPath, 'stop', {}); } catch { await stopRecordedHostProcess(runtime.pid, runtime.socketPath); }
     this.catalogs.delete(runtime.socketPath);
   }
 
   async cleanupLaunch(_input: IntegratedLaunchInput, result: IntegratedLaunchResult): Promise<void> {
     const pid = typeof result.argv[3] === 'string' && /^\d+$/.test(result.argv[3]) ? Number(result.argv[3]) : null;
-    stopPid(pid);
+    await stopHostProcess(pid);
   }
 
   async stopAll(): Promise<void> {
@@ -383,18 +384,13 @@ async function readControls(socketPath: string): Promise<Record<string, unknown>
 
 async function waitForSocket(socketPath: string, pid: number | null): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt++) {
-    if (fs.existsSync(socketPath)) return;
+    if (await integratedHostReady(socketPath)) return;
     if (pid) {
       try { process.kill(pid, 0); } catch { throw new Error('Claude Integrated host exited during startup'); }
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error('Claude Integrated host did not create its control socket');
-}
-
-function stopPid(pid: number | null): void {
-  if (!pid) return;
-  try { process.kill(pid, 'SIGTERM'); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
 }
 
 const FALLBACK_CLAUDE_MODELS = ['default', 'fable', 'opus', 'sonnet', 'haiku'];

@@ -55,6 +55,13 @@ const api = {
     ipcRenderer.on('patterm:assistant:event', listener);
     return () => ipcRenderer.off('patterm:assistant:event', listener);
   },
+  // The window's close button asks the renderer to confirm quitting.
+  onQuitRequest: (handler: (request: { id: number; detail: string }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, request: { id: number; detail: string }) => handler(request);
+    ipcRenderer.on('patterm:quit:request', listener);
+    return () => ipcRenderer.off('patterm:quit:request', listener);
+  },
+  quitRequestShown: (id: number) => ipcRenderer.send('patterm:quit:shown', id),
   onNavigate: (handler: (url: string) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, url: string) => handler(url);
     ipcRenderer.on('patterm:navigate', listener);

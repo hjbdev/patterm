@@ -10,6 +10,8 @@ import { registerApplicationRoutes } from '../routes/application';
 import { readIntegrated, relayingRegistrar, servePeerRoutes } from '../routes/remote';
 import { parseDamageFrame } from '../resources/js/terminal/TerminalRenderer';
 import type { VersionedWorkbench } from '../app/Services/WorkbenchSyncService';
+import { debugSidecarPath } from './fixtures/Sidecar';
+import { removeTree } from './fixtures/TempTree';
 
 // Two complete Patterm hosts on loopback: a dev box server and a desktop
 // that pairs to it. Agents are raw terminals, so messages appear as typed
@@ -42,6 +44,9 @@ interface Host {
 }
 
 async function main(): Promise<void> {
+  // The agents here are raw shells and the test types PowerShell on Windows. A
+  // $SHELL inherited from Git Bash would otherwise pick bash for them.
+  if (process.platform === 'win32') delete process.env.SHELL;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ptx-'));
   const hosts: Host[] = [];
   const start = async (name: string): Promise<Host> => {
@@ -51,7 +56,7 @@ async function main(): Promise<void> {
     fs.mkdirSync(path.join(dir, 'project'), { recursive: true });
     const app = await createApplication({
       appDataPath: path.join(dir, 'data'),
-      sidecarPath: path.resolve('native/terminal-core/target/debug/patterm-terminal-core'),
+      sidecarPath: debugSidecarPath(),
       mcpShimPath: path.resolve('dist/mcp/patterm-mcp.js'),
       runtime: 'node',
       publicOrigin: origin
@@ -70,7 +75,7 @@ async function main(): Promise<void> {
     await host.app.dispose();
     host.app = await createApplication({
       appDataPath: path.join(host.dir, 'data'),
-      sidecarPath: path.resolve('native/terminal-core/target/debug/patterm-terminal-core'),
+      sidecarPath: debugSidecarPath(),
       mcpShimPath: path.resolve('dist/mcp/patterm-mcp.js'),
       runtime: 'node',
       publicOrigin: host.origin
@@ -90,7 +95,8 @@ async function main(): Promise<void> {
     host.app.notifyChanged(host.app.mcp.changedTopics('harness_launch'));
     const { mcp_identity } = host.app.database.connection.prepare('select mcp_identity from sessions where process_id = ?').get(launched.process_id) as { mcp_identity: string };
     const call = (tool: string, args: unknown) => host.app.mcp.callPublic(tool, args, { identity: mcp_identity });
-    const output = async () => (await host.app.mcp.call('get_process_output', { process_id: launched.process_id }) as { content?: string }).content ?? '';
+    // A long prompt wraps the text typed after it, so rejoin wrapped lines.
+    const output = async () => ((await host.app.mcp.call('get_process_output', { process_id: launched.process_id }) as { content?: string }).content ?? '').replace(/\r?\n/g, '');
     return { process_id: launched.process_id, call, output };
   };
   // A browser connected to a host's event socket.
@@ -195,7 +201,10 @@ async function main(): Promise<void> {
     await until(async () => (await developer.output()).includes('FROM-DESKTOP-UI'), 'input typed on the desktop to reach the dev box');
     await until(() => frames.some((frame) => frame?.processId === remotePty && frame.frameKind === 'damage'), 'damage frames from the dev box');
     // A copy made by the dev box program reaches the browser controlling it.
-    await socketCall('patterm:terminal:input', { process_id: remotePty, kind: 'text', text: "printf '\\033]52;c;SGVsbG8=\\a'", submit: true });
+    const copyCommand = process.platform === 'win32'
+      ? '[Console]::Out.Write("$([char]27)]52;c;SGVsbG8=$([char]7)")'
+      : "printf '\\033]52;c;SGVsbG8=\\a'";
+    await socketCall('patterm:terminal:input', { process_id: remotePty, kind: 'text', text: copyCommand, submit: true });
     await until(() => pushed.some((item) => item.event === 'terminal-client-request' && item.payload.kind === 'clipboard' && item.payload.text === 'Hello' && item.payload.processId === remotePty), 'a relayed clipboard copy');
 
     // Control of a terminal is decided by the host that runs it: one of its
@@ -442,7 +451,7 @@ async function main(): Promise<void> {
       await host.server?.stop().catch(() => undefined);
       await host.app.dispose();
     }
-    fs.rmSync(root, { recursive: true, force: true });
+    removeTree(root);
   }
 }
 

@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { WINDOWS_PATH_KEY } from '../Platform/PathIdentity';
 
 const nodeRequire = createRequire(__filename);
 const { DatabaseSync } = nodeRequire('node:sqlite') as {
@@ -27,10 +28,17 @@ interface NativeSqliteConnection {
   close(): void;
   exec(statement: string): void;
   prepare(statement: string): SqliteStatement;
+  function(name: string, options: { deterministic?: boolean }, fn: (value: unknown) => unknown): void;
 }
 
 export function openSqliteConnection(path: string, options: { readOnly?: boolean } = {}): SqliteConnection {
-  return new PattermSqliteConnection(new DatabaseSync(path, options));
+  const db = new DatabaseSync(path, options);
+  // pathColumn() folds Windows paths with this, since SQLite's lower() only
+  // folds ASCII and Windows compares paths case-insensitively in Unicode.
+  if (process.platform === 'win32') {
+    db.function(WINDOWS_PATH_KEY, { deterministic: true }, (value) => typeof value === 'string' ? value.replace(/\//g, '\\').toLowerCase() : value);
+  }
+  return new PattermSqliteConnection(db);
 }
 
 class PattermSqliteConnection implements SqliteConnection {

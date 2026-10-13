@@ -249,7 +249,11 @@ async function createApplicationResources(
   const settings = new SettingsService(database);
   const assistantMemory = new AssistantMemoryService(database, settings);
   const harnessPresets = new HarnessPresetService(settings);
-  const persistent = Boolean(options.terminalHosts);
+  // Terminal hosts outlive the app on installed Linux services and on Windows
+  // desktop. Only the Linux service also keeps Integrated hosts and the
+  // OpenCode bridge across restarts; Windows desktop ties them to the app.
+  const persistentTerminals = Boolean(options.terminalHosts);
+  const persistent = persistentTerminals && process.platform !== 'win32';
   const events = new EventEmitter();
   // Created once the workbench repository exists. Earlier changes need no
   // patch: the first read builds the whole snapshot.
@@ -296,7 +300,7 @@ async function createApplicationResources(
   integrated.setDebugLog(debugLog);
   // Holds unprompted input for the assistant while its Focus mode is on.
   const assistantInbox = new AssistantInbox(database);
-  const timers = new TimerService(database, terminal, { persistent, integrated, assistantInbox, onChanged: notifyWorkbenchChanged });
+  const timers = new TimerService(database, terminal, { persistent: persistentTerminals, integrated, assistantInbox, onChanged: notifyWorkbenchChanged });
   defer(() => timers.dispose());
   const historyDatabase = new HistoryDatabaseService(options.appDataPath, { mode: 'read', busyTimeoutMs: 250 });
   defer(() => historyDatabase.dispose());
@@ -374,7 +378,7 @@ async function createApplicationResources(
   idleCompaction.start();
   defer(() => idleCompaction.dispose());
 
-  const inventory = persistent ? terminalInventory.parse(await terminal.request('terminal.process.list')).processes : undefined;
+  const inventory = persistentTerminals ? terminalInventory.parse(await terminal.request('terminal.process.list')).processes : undefined;
   const reconciled = new ReconcileRuntimeAction(database).execute(inventory);
   debugLog.write('runtime', 'reconciled', reconciled);
   const integratedReconciled = await integrated.reconcile();
@@ -389,7 +393,8 @@ async function createApplicationResources(
   defer(() => sync.dispose());
   const harnessDiscovery = new HarnessDiscoveryService(harnessProviders, {
     env: resolvedEnv,
-    ...(resolvedEnv.SHELL ? { shell: resolvedEnv.SHELL } : {})
+    // Windows ignores a $SHELL inherited from Git Bash or MSYS; raw terminals use PowerShell.
+    ...(resolvedEnv.SHELL && process.platform !== 'win32' ? { shell: resolvedEnv.SHELL } : {})
   });
   const git = new GitService();
   const worktreeService = new WorktreeService({ database, timeline, workbench, git });

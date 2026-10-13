@@ -10,6 +10,7 @@ import { SessionContextService } from '../app/Services/SessionContextService';
 import { HarnessLauncher } from '../app/Services/HarnessLauncher';
 import { harnessProviders } from '../app/Harness/providers';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
+import { removeTree } from './fixtures/TempTree';
 
 async function main(): Promise<void> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-session-context-'));
@@ -93,7 +94,7 @@ async function main(): Promise<void> {
     console.log('session context smoke passed');
   } finally {
     database.dispose();
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeTree(dir);
   }
 }
 

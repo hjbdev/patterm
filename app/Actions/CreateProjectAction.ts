@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
+import { pathColumn, pathParam, storedPath } from '../Platform/PathIdentity';
 import type { DatabaseService } from '../Services/DatabaseService';
 import type { TimelineService } from '../Services/TimelineService';
 
@@ -29,7 +30,7 @@ export class CreateProjectAction {
   ) {}
 
   execute(input: CreateProjectInput): { project_id: string; name: string; path: string; existed: boolean } {
-    const resolved = path.resolve(input.path);
+    const resolved = storedPath(path.resolve(input.path));
 
     let stat: fs.Stats;
     try {
@@ -42,8 +43,8 @@ export class CreateProjectAction {
     }
 
     const existing = this.database.connection
-      .prepare(`select id, name, path from projects where path = ?`)
-      .get(resolved) as ProjectRow | undefined;
+      .prepare(`select id, name, path from projects where ${pathColumn('path')} = ?`)
+      .get(pathParam(resolved)) as ProjectRow | undefined;
     if (existing) {
       return { project_id: existing.id, name: existing.name, path: existing.path, existed: true };
     }

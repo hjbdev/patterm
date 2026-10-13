@@ -1,6 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
+import { withEnv } from '../Platform/Environment';
+import { resolveCommand } from '../Platform/Executable';
 import type { DebugLogService } from './DebugLogService';
 import { TerminalHostService, type TerminalHostOptions } from './TerminalHostService';
 
@@ -95,7 +97,8 @@ export class TerminalService {
     this.debugLog.write('terminal-service', 'sidecar.spawn', { sidecarPath: this.sidecarPath });
     this.process = spawn(this.sidecarPath, [], {
       env: this.env,
-      stdio: ['pipe', 'pipe', 'pipe']
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true
     });
 
     this.process.stdout.on('data', (chunk: Buffer) => this.handleStdout(chunk));
@@ -163,6 +166,7 @@ export class TerminalService {
     if (this.stopping && (method === 'terminal.process.spawn' || method === 'terminal.process.input')) {
       throw new Error('Patterm is shutting down');
     }
+    if (method === 'terminal.process.spawn') params = sidecarSpawnParams(params, this.env);
     if (this.hosts) return this.hosts.request(method, params);
     const input = this.socket ?? this.process?.stdin;
     if (!input) {
@@ -529,4 +533,16 @@ function decodeDamageFrameMetadata(payload: Buffer): Pick<TerminalDamageFrame, '
 
 function terminalDebugEnabled(): boolean {
   return process.env.PATTERM_DEBUG_TERMINAL === '1';
+}
+
+// ConPTY starts only .exe/.com files. Resolve npm-style .cmd shims to their
+// target, or wrap other batch files in cmd.exe with a prebuilt command line.
+function sidecarSpawnParams(params: unknown, env: NodeJS.ProcessEnv): unknown {
+  if (process.platform !== 'win32' || !params || typeof params !== 'object') return params;
+  const spawn = params as { command?: unknown; args?: unknown; env?: unknown };
+  if (typeof spawn.command !== 'string') return params;
+  const args = Array.isArray(spawn.args) ? spawn.args.filter((arg): arg is string => typeof arg === 'string') : [];
+  const extra = spawn.env && typeof spawn.env === 'object' ? spawn.env as NodeJS.ProcessEnv : {};
+  const resolved = resolveCommand(spawn.command, args, withEnv(env, extra));
+  return { ...spawn, command: resolved.command, args: resolved.args, ...(resolved.verbatim ? { verbatim_args: true } : {}) };
 }

@@ -1,5 +1,6 @@
+import fs from 'node:fs';
 import path from 'node:path';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, shell } from 'electron';
 import { createApplication, type PattermApplication } from '../../app/App';
 import { registerCommandRoutes } from '../../routes/commands';
 import { registerIpcRoutes } from '../../routes/ipc';
@@ -19,7 +20,9 @@ interface LaunchDiagnostics {
 
 const launchDiagnostics = configureLinuxWindowing();
 const launchIdentity = resolveLaunchIdentity({
-  appDataRoot: app.getPath('appData'),
+  // Roaming AppData syncs between machines; databases, sockets, and terminal
+  // state belong to this machine.
+  appDataRoot: process.platform === 'win32' ? process.env.LOCALAPPDATA ?? app.getPath('appData') : app.getPath('appData'),
   env: process.env,
   isInstalledLaunch: isInstalledLaunch(),
   isPackaged: app.isPackaged
@@ -30,12 +33,17 @@ const launchIdentity = resolveLaunchIdentity({
 // installed app's live PTY rows.
 app.setName(launchIdentity.appName);
 app.setPath('userData', launchIdentity.appDataPath);
+// Windows routes toast notifications and their clicks by this ID. An installer
+// must give its Start menu shortcut the same ID.
+if (process.platform === 'win32') app.setAppUserModelId(launchIdentity.mode === 'production' ? 'Patterm.Desktop' : 'Patterm.Desktop.Dev');
 Menu.setApplicationMenu(null);
 
 let mainWindow: BrowserWindow | null = null;
 let patterm: PattermApplication | null = null;
 let quitting: Promise<void> | undefined;
 let quitComplete = false;
+let quitPrompt: { id: number; fallback: NodeJS.Timeout } | null = null;
+let nextQuitPromptId = 0;
 
 const singleInstanceLock = app.requestSingleInstanceLock({
   appName: launchIdentity.appName,
@@ -62,6 +70,9 @@ async function createWindow(): Promise<void> {
     appDataPath: app.getPath('userData'),
     sidecarPath: resolveSidecarPath(app.isPackaged),
     mcpShimPath: resolveMcpShimPath(app.isPackaged),
+    // Windows terminals run in detached hosts that survive an app restart. The
+    // Linux desktop keeps its attached sidecar; its server uses systemd hosts.
+    ...(process.platform === 'win32' ? { terminalHosts: { appDataPath: app.getPath('userData') } } : {}),
     launchDiagnostics,
     launchIdentity
   });
@@ -83,6 +94,7 @@ async function createWindow(): Promise<void> {
     minWidth: 980,
     minHeight: 640,
     title: 'Patterm',
+    ...windowIcon(),
     autoHideMenuBar: true,
     backgroundColor: '#080b10',
     webPreferences: {
@@ -133,6 +145,8 @@ async function createWindow(): Promise<void> {
     mainWindow?.webContents.send('patterm:notifications:changed', change);
     const unread = patterm?.notifications.state().unread.reduce((total, row) => total + row.count, 0) ?? 0;
     app.setBadgeCount(unread);
+    // Windows taskbars have no badge count; show a dot over the icon instead.
+    if (process.platform === 'win32') mainWindow?.setOverlayIcon(unread > 0 ? unreadOverlay() : null, unread > 0 ? `${unread} unread notifications` : '');
   });
   const unsubscribeAssistant = patterm.onAssistantEvent((event) => {
     mainWindow?.webContents.send('patterm:assistant:event', event);
@@ -169,7 +183,7 @@ async function createWindow(): Promise<void> {
   mainWindow.on('close', (event) => {
     if (quitComplete) return;
     event.preventDefault();
-    void quitDesktop();
+    requestQuit();
   });
 
   if (!app.isPackaged && !isInstalledLaunch()) {
@@ -197,8 +211,38 @@ app.on('window-all-closed', () => {
 app.on('before-quit', (event) => {
   if (quitComplete || !patterm) return;
   event.preventDefault();
-  void quitDesktop();
+  requestQuit();
 });
+
+ipcMain.on('patterm:quit:shown', (event, id: unknown) => {
+  if (event.sender !== mainWindow?.webContents || !quitPrompt || id !== quitPrompt.id) return;
+  clearTimeout(quitPrompt.fallback);
+  quitPrompt = null;
+});
+
+// The window confirms quitting in the app. A window that cannot show the
+// dialog (loading, crashed, or unresponsive) falls back to the native one.
+function requestQuit(): void {
+  const contents = mainWindow?.webContents;
+  if (!patterm || patterm.isShuttingDown() || quitting || !contents || contents.isDestroyed() || contents.isLoading() || contents.isCrashed()) {
+    void quitDesktop();
+    return;
+  }
+  if (mainWindow!.isMinimized()) mainWindow!.restore();
+  mainWindow!.show();
+  mainWindow!.focus();
+  if (quitPrompt) clearTimeout(quitPrompt.fallback);
+  const id = ++nextQuitPromptId;
+  quitPrompt = {
+    id,
+    fallback: setTimeout(() => {
+      if (quitPrompt?.id !== id) return;
+      quitPrompt = null;
+      void quitDesktop();
+    }, 2000)
+  };
+  contents.send('patterm:quit:request', { id, detail: quitConfirmation(patterm) });
+}
 
 function quitDesktop(): Promise<void> {
   return quitting ??= (async () => {
@@ -263,4 +307,29 @@ function appendSwitch(diagnostics: LaunchDiagnostics, name: string, value?: stri
 
   app.commandLine.appendSwitch(name, value);
   diagnostics.switches.push({ name, value });
+}
+
+function windowIcon(): { icon?: string } {
+  const icon = app.isPackaged || isInstalledLaunch()
+    ? path.join(__dirname, '../../../renderer/icons/icon-512.png')
+    : path.join(process.cwd(), 'public', 'icons', 'icon-512.png');
+  return fs.existsSync(icon) ? { icon } : {};
+}
+
+let overlay: Electron.NativeImage | null = null;
+
+// A 16px filled dot, drawn once.
+function unreadOverlay(): Electron.NativeImage {
+  if (overlay) return overlay;
+  const size = 16;
+  const bitmap = Buffer.alloc(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const distance = Math.hypot(x + 0.5 - size / 2, y + 0.5 - size / 2);
+      const alpha = Math.round(255 * Math.min(1, Math.max(0, size / 2 - distance)));
+      bitmap.set([0x44, 0x44, 0xef, alpha], (y * size + x) * 4);
+    }
+  }
+  overlay = nativeImage.createFromBitmap(bitmap, { width: size, height: size });
+  return overlay;
 }

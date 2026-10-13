@@ -2,6 +2,7 @@ import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
+import { ipcPath, removeStaleIpc, restrictIpc } from '../Platform/Ipc';
 import type { McpToolRegistry } from './ToolRegistry';
 import type { ChangeTopic } from '../Services/ChangeTopics';
 
@@ -55,7 +56,7 @@ export class McpSocketServer {
   ) {}
 
   get address(): string {
-    return resolveListenPath(this.socketPath);
+    return ipcPath(this.socketPath);
   }
 
   start(): Promise<void> {
@@ -65,9 +66,9 @@ export class McpSocketServer {
     return new Promise((resolve, reject) => {
       const server = net.createServer((socket) => this.handleConnection(socket));
       server.once('error', reject);
-      server.listen(resolveListenPath(this.socketPath), () => {
+      server.listen(ipcPath(this.socketPath), () => {
         try {
-          if (process.platform !== 'win32') fs.chmodSync(this.socketPath, 0o600);
+          restrictIpc(this.socketPath);
         } catch (error) {
           server.close();
           reject(error);
@@ -157,17 +158,10 @@ export class McpSocketServer {
   }
 
   private cleanupStaleSocket(): void {
-    if (process.platform === 'win32') {
-      return; // named pipes are not filesystem entries
-    }
     try {
-      fs.rmSync(this.socketPath, { force: true });
+      removeStaleIpc(this.socketPath);
     } catch {
       /* best effort */
     }
   }
-}
-
-function resolveListenPath(socketPath: string): string {
-  return process.platform === 'win32' ? `\\\\.\\pipe\\${path.basename(socketPath)}` : socketPath;
 }

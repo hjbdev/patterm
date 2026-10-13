@@ -6,6 +6,10 @@ import { fromJsonSchema, McpServer, type JsonSchemaType, type RegisteredTool } f
 import { serveStdio, StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { StreamableHTTPClientTransport, type JSONRPCMessage } from '@modelcontextprotocol/client';
 import type { McpToolDescriptor } from '../app/MCP/ToolRegistry';
+import { withEnv } from '../app/Platform/Environment';
+import { resolveCommand } from '../app/Platform/Executable';
+import { ipcPath } from '../app/Platform/Ipc';
+import { killProcessTree } from '../app/Platform/ProcessTree';
 
 // The stdio server forwards direct tool calls to the application's registry.
 // A catalogue request at startup keeps schemas and public names in one place.
@@ -15,6 +19,9 @@ const CATALOGUE_REFRESH_MS = Number(process.env.PATTERM_MCP_CATALOGUE_REFRESH_MS
 // A client that honours tools/list_changed re-lists within this time.
 const RELIST_GRACE_MS = Math.min(CATALOGUE_REFRESH_MS, 10_000);
 function defaultSocketPath(): string {
+  if (process.platform === 'win32') {
+    return path.join(process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'), 'patterm-desktop', 'mcp.sock');
+  }
   if (process.platform === 'darwin') {
     return path.join(os.homedir(), 'Library', 'Application Support', 'patterm-desktop', 'mcp.sock');
   }
@@ -23,8 +30,7 @@ function defaultSocketPath(): string {
 }
 
 function resolveSocketPath(): string {
-  const base = process.env.PATTERM_MCP_SOCKET ?? defaultSocketPath();
-  return process.platform === 'win32' ? `\\\\.\\pipe\\${path.basename(base)}` : base;
+  return ipcPath(process.env.PATTERM_MCP_SOCKET ?? defaultSocketPath());
 }
 
 type ShimRequest =
@@ -267,12 +273,34 @@ async function bridge(serverId: string): Promise<void> {
   await downstream.start();
 }
 
+// How long a Windows exec server may run on after its stdin closes.
+const EXEC_STDIN_GRACE_MS = 2_000;
+
 // Runs a local server with environment held by Patterm, so secrets stay out
 // of the harness's command line.
 async function exec(serverId: string): Promise<void> {
   const target = await registryRequest({ op: 'mcp-exec', server: serverId }) as { command: string; args: string[]; env: Record<string, string> };
-  const child = spawn(target.command, target.args, { stdio: 'inherit', env: { ...process.env, ...target.env } });
-  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal, () => child.kill(signal));
+  const env = withEnv(process.env, target.env);
+  // npx and uvx are batch files on Windows.
+  const run = resolveCommand(target.command, target.args, env);
+  const windows = process.platform === 'win32';
+  const child = spawn(run.command, run.args, {
+    stdio: windows ? ['pipe', 'inherit', 'inherit'] : 'inherit',
+    env,
+    windowsHide: true,
+    windowsVerbatimArguments: run.verbatim
+  });
+  if (windows) {
+    // Windows has no signals to forward. Harnesses close stdin, then may end
+    // this process alone, which would orphan the server and any cmd.exe or
+    // node it started. Relay stdin to see it close, and end the tree if the
+    // server outlives it.
+    child.stdin!.on('error', () => {});
+    process.stdin.pipe(child.stdin!);
+    process.stdin.once('end', () => setTimeout(() => { if (child.pid) void killProcessTree(child.pid); }, EXEC_STDIN_GRACE_MS));
+  } else {
+    for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal, () => child.kill(signal));
+  }
   child.on('error', (error) => {
     process.stderr.write(`patterm-mcp: could not start ${target.command}: ${error.message}\n`);
     process.exit(127);

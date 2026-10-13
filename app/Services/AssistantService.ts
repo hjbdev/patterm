@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { storedPath } from '../Platform/PathIdentity';
 import type { DatabaseService } from './DatabaseService';
 import type { HarnessLauncher } from './HarnessLauncher';
 import type { CodexAppServerService, CodexRealtimeEvent } from './CodexAppServerService';
@@ -381,7 +382,7 @@ export class AssistantService {
   }
 
   private ensureProject(): string {
-    const cwd = path.join(this.appDataPath, 'assistant');
+    const cwd = storedPath(path.join(this.appDataPath, 'assistant'));
     fs.mkdirSync(cwd, { recursive: true, mode: 0o700 });
     const now = new Date().toISOString();
     this.database.connection.prepare(`insert into projects (id, name, path, kind, created_at, updated_at) values (?, 'Assistant', ?, 'assistant', ?, ?)

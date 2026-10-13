@@ -11,7 +11,8 @@ try {
   const env = { CLAUDE_CONFIG_DIR: path.join(root, 'config'), CLAUDE_CODE_TMPDIR: path.join(root, 'tmp') };
   const location = { cwd, sessionId, env };
   const project = cwd.replace(/[^a-zA-Z0-9]/g, '-');
-  const tasks = path.join(root, 'tmp', `claude-${os.userInfo().uid}`, project, sessionId, 'tasks');
+  // Claude Code appends claude-<uid> on POSIX and plain claude on Windows.
+  const tasks = path.join(root, 'tmp', process.platform === 'win32' ? 'claude' : `claude-${os.userInfo().uid}`, project, sessionId, 'tasks');
   const subagents = path.join(root, 'config', 'projects', project, sessionId, 'subagents');
   fs.mkdirSync(tasks, { recursive: true });
   fs.mkdirSync(subagents, { recursive: true });
@@ -22,7 +23,10 @@ try {
     { type: 'user', sessionId, isSidechain: true, agentId: 'a1b2c3', message: { role: 'user', content: 'Review the diff' } },
     { type: 'assistant', sessionId, isSidechain: true, agentId: 'a1b2c3', message: { role: 'assistant', content: [{ type: 'text', text: 'No findings.' }] } }
   ].map((row) => JSON.stringify(row)).join('\n'));
-  fs.symlinkSync(transcript, path.join(tasks, 'a1b2c3.output'));
+  // Without symlink rights, as on a default Windows account, Claude Code leaves
+  // the output file empty instead; the transcript is found beside it.
+  if (process.platform === 'win32') fs.writeFileSync(path.join(tasks, 'a1b2c3.output'), '');
+  else fs.symlinkSync(transcript, path.join(tasks, 'a1b2c3.output'));
   const agent = readClaudeTaskOutput(location, 'a1b2c3');
   assert.equal(agent.format, 'transcript');
   assert.ok(agent.format === 'transcript' && agent.version);
@@ -50,6 +54,10 @@ try {
   // After a reboot clears the temporary directory, the transcript remains.
   fs.rmSync(path.join(tasks, 'a1b2c3.output'));
   assert.equal(readClaudeTaskOutput(location, 'a1b2c3').format, 'transcript');
+
+  // A background shell that has not printed yet is an empty file, not a missing one.
+  fs.writeFileSync(path.join(tasks, 'bquiet1.output'), '');
+  assert.deepEqual(readClaudeTaskOutput(location, 'bquiet1').format, 'text');
 
   // A background shell writes plain text.
   fs.writeFileSync(path.join(tasks, 'bshell1.output'), 'building\ndone\n');

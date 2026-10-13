@@ -248,7 +248,10 @@ function removePartialBackups(directory: string): void {
 }
 
 function fsyncPath(target: string): void {
-  const descriptor = fs.openSync(target, 'r');
+  // Windows flushes a file only through a writable handle and cannot fsync a
+  // directory; NTFS journals the directory entries itself.
+  if (process.platform === 'win32' && fs.statSync(target).isDirectory()) return;
+  const descriptor = fs.openSync(target, process.platform === 'win32' ? 'r+' : 'r');
   try {
     fs.fsyncSync(descriptor);
   } finally {

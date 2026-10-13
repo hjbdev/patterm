@@ -11,6 +11,9 @@ import { TranscriptImageStore } from '../app/Services/TranscriptImageStore';
 import { TurnBusyError, UncertainDeliveryError } from '../app/Services/IntegratedDelivery';
 import type { IntegratedConversationEvent } from '../app/Services/IntegratedConversation';
 import { IntegratedAgentService } from '../app/Services/IntegratedAgentService';
+import { ipcPath } from '../app/Platform/Ipc';
+import { writeNodeCli } from './fixtures/IntegratedFakeCli';
+import { removeTree } from './fixtures/TempTree';
 
 // A turn/start reply can arrive in the same chunk as the turn's completion.
 // prompt() marks the turn active after awaiting the reply, which runs after
@@ -37,7 +40,7 @@ async function turnCompletedWithItsReply(): Promise<void> {
       }
     });
   });
-  await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+  await new Promise<void>((resolve) => server.listen(ipcPath(socketPath), resolve));
   const client = await CodexRpcClient.connect(socketPath, () => {});
   try {
     const startTurn = async () => {
@@ -51,7 +54,7 @@ async function turnCompletedWithItsReply(): Promise<void> {
   } finally {
     client.close();
     server.close();
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   }
 }
 
@@ -79,7 +82,7 @@ async function main(): Promise<void> {
     assert.equal(projectCodexItem({ type: 'imageView', id: 'view', path: imageFile }, images)?.tool?.images?.[0]?.sha256, sha256, 'a viewed image is stored once by hash');
     assert.deepEqual(images.read(sha256), { mime: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==' });
     assert.equal(projectCodexItem({ type: 'imageView', id: 'missing', path: path.join(directory, 'gone.png') }, images)?.tool?.images, undefined, 'a missing file stays a plain read row');
-    fs.rmSync(directory, { recursive: true, force: true });
+    removeTree(directory);
   }
   assert.deepEqual(projectCodexPlan({ threadId: 't', turnId: 'turn_1', explanation: 'Two steps', plan: [{ step: 'Read', status: 'completed' }, { step: 'Write', status: 'inProgress' }] }), {
     id: 'plan_turn_1', role: 'assistant', kind: 'tool', title: 'Plan', text: 'Two steps',
@@ -127,14 +130,15 @@ async function main(): Promise<void> {
     while (!predicate() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
     assert.ok(predicate(), 'condition was not met before the timeout');
   };
-  const executable = path.join(directory, 'codex');
-fs.writeFileSync(executable, `#!/usr/bin/env node
-const http = require('node:http');
+  const executable = writeNodeCli(path.join(directory, 'codex'), `const http = require('node:http');
 const fs = require('node:fs');
 if (process.env.CODEX_ARGV_FILE) fs.writeFileSync(process.env.CODEX_ARGV_FILE, JSON.stringify(process.argv.slice(2)));
-const { WebSocketServer } = require('${require.resolve('ws')}');
-const target = process.argv.find((value) => value.startsWith('unix://'));
-const socketPath = target.slice('unix://'.length);
+const { WebSocketServer } = require(${JSON.stringify(require.resolve('ws'))});
+// Like codex app-server: WebSocket frames on unix://PATH, JSON lines on stdio://.
+const target = process.argv.find((value) => value.startsWith('unix://') || value === 'stdio://');
+const socketPath = target.startsWith('unix://') ? target.slice('unix://'.length) : null;
+// Marker files belong to this app-server instance.
+const stateBase = socketPath ?? require('node:path').join(process.env.CODEX_STATE_DIR, 'app-server-' + process.pid);
 const items = [];
 const childItems = [];
 // Newer Codex builds report a native subagent with subAgentActivity rows, and
@@ -147,10 +151,7 @@ if (process.env.NATIVE_TASKS) {
 }
 const nativeItems = Array.from({length:130},(_,index)=>({turnId:'turn_sub',item:{type:'agentMessage',id:'native_' + index,text:'step ' + index}}));
 let itemsListCalls = 0;
-try { fs.unlinkSync(socketPath); } catch {}
-const server = http.createServer();
-const wss = new WebSocketServer({ server });
-wss.on('connection', (socket) => {
+function serve(socket) {
   const notify = (method, params) => socket.send(JSON.stringify({jsonrpc:'2.0', method, params}));
   let initialized = false;
   socket.on('message', (chunk) => {
@@ -351,22 +352,22 @@ wss.on('connection', (socket) => {
       }
       else if (request.method === 'thread/backgroundTerminals/list') {
         // A new row that trims the full live window, leaving its cursor stale.
-        if (process.env.STALE_REFRESH && !fs.existsSync(socketPath + '.staled')) {
-          fs.writeFileSync(socketPath + '.staled', '1');
+        if (process.env.STALE_REFRESH && !fs.existsSync(stateBase + '.staled')) {
+          fs.writeFileSync(stateBase + '.staled', '1');
           items.push({turnId:'turn_test',item:{type:'agentMessage',id:'fresh_1',text:'Fresh'}});
           notify('item/completed', {threadId:'thread_test', turnId:'turn_test', item:{type:'agentMessage', id:'fresh_1', text:'Fresh'}, completedAtMs: 50});
         }
         // A row that completes while the snapshot awaits this lookup.
-        const running = process.env.NATIVE_TASKS && !fs.existsSync(socketPath + '.terminated');
+        const running = process.env.NATIVE_TASKS && !fs.existsSync(stateBase + '.terminated');
         const reply = () => send({jsonrpc:'2.0', id:request.id, result:{data:running ? [{itemId:'exec_bg',processId:'77',command:'ping -c 120 127.0.0.1',cwd:'/tmp'}] : [],nextCursor:null}});
-        if (process.env.TERMINAL_RACE && !fs.existsSync(socketPath + '.raced')) {
-          fs.writeFileSync(socketPath + '.raced', '1');
+        if (process.env.TERMINAL_RACE && !fs.existsSync(stateBase + '.raced')) {
+          fs.writeFileSync(stateBase + '.raced', '1');
           notify('item/completed', {threadId:'thread_test', turnId:'turn_test', item:{type:'agentMessage', id:'race_item', text:'Arrived meanwhile'}, completedAtMs: 40});
           setTimeout(reply, 150);
         } else reply();
       }
       else if (request.method === 'thread/backgroundTerminals/terminate') {
-        fs.writeFileSync(socketPath + '.terminated', JSON.stringify(request.params));
+        fs.writeFileSync(stateBase + '.terminated', JSON.stringify(request.params));
         send({jsonrpc:'2.0', id:request.id, result:{}});
       }
       else if (request.method === 'thread/compact/start' || request.method === 'review/start' || request.method === 'thread/name/set' || request.method === 'thread/goal/set' || request.method === 'thread/shellCommand' || request.method === 'thread/revert') {
@@ -374,11 +375,32 @@ wss.on('connection', (socket) => {
         send({jsonrpc:'2.0', id:request.id, result:{}});
       }
   });
-});
-server.listen(socketPath);
-`, { mode: 0o700 });
+}
+if (socketPath) {
+  try { fs.unlinkSync(socketPath); } catch {}
+  const server = http.createServer();
+  new WebSocketServer({ server }).on('connection', serve);
+  server.listen(socketPath);
+} else {
+  const socket = new (require('node:events').EventEmitter)();
+  socket.send = (text) => process.stdout.write(text + '\\n');
+  let input = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (chunk) => {
+    input += chunk;
+    for (let newline = input.indexOf('\\n'); newline >= 0; newline = input.indexOf('\\n')) {
+      const line = input.slice(0, newline);
+      input = input.slice(newline + 1);
+      if (line.trim()) socket.emit('message', line);
+    }
+  });
+  process.stdin.on('end', () => process.exit(0));
+  serve(socket);
+}
+`);
 
   const database = new DatabaseService(directory);
+  let failed = false;
   try {
     database.initialize();
   const now = new Date().toISOString();
@@ -386,6 +408,7 @@ server.listen(socketPath);
   const runtimeDirectory = path.join(directory, 'runtime');
   const argvPath = path.join(directory, 'codex-argv.json');
   process.env.CODEX_ARGV_FILE = argvPath;
+  process.env.CODEX_STATE_DIR = runtimeDirectory;
   const service = new CodexAppServerService(database, runtimeDirectory);
   const prepared = await service.prepare({
     executable,
@@ -549,10 +572,12 @@ server.listen(socketPath);
 
   // Ambiguous, delayed, and definitive delivery evidence on fresh sessions.
   let launchCount = 0;
-  const launch = async (mode: NodeJS.ProcessEnv) => {
+  // Launch waits for app-server to start, which can take seconds on a busy
+  // Windows runner, so only the requests after it get a short timeout.
+  const launch = async (mode: NodeJS.ProcessEnv, requestTimeoutMs?: number) => {
     launchCount += 1;
-    const scoped = new CodexAppServerService(database, runtimeDirectory, mode, process.execPath, undefined, { requestTimeoutMs: 250 });
-    const launched = await scoped.prepare({
+    const launcher = new CodexAppServerService(database, runtimeDirectory, mode, process.execPath);
+    const launched = await launcher.prepare({
       executable,
       cwd: directory,
       name: 'Codex',
@@ -565,10 +590,12 @@ server.listen(socketPath);
       .run(processId, directory, JSON.stringify(launched.argv), now, now);
     database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor) values (?, 'project_test', ?, 'codex','integrated',?,?, ?, 'orchestrator','found','user')`)
       .run(`session_delivery_${launchCount}`, processId, `identity_delivery_${launchCount}`, launched.resumeId, now);
-    return { service: scoped, processId };
+    if (!requestTimeoutMs) return { service: launcher, processId };
+    launcher.disconnect();
+    return { service: new CodexAppServerService(database, runtimeDirectory, mode, process.execPath, undefined, { requestTimeoutMs }), processId };
   };
 
-  const lost = await launch({ ...process.env, HANG_TURN_RESPONSE: '1' });
+  const lost = await launch({ ...process.env, HANG_TURN_RESPONSE: '1' }, 1_000);
   const lostId = '55555555-5555-5555-5555-555555555555';
   await assert.rejects(
     lost.service.prompt(lost.processId, { text: 'lost turn', references: [], attachments: [], messageId: lostId }),
@@ -576,7 +603,7 @@ server.listen(socketPath);
   );
   assert.equal(await lost.service.reconcile(lost.processId, lostId), 'accepted', 'the native clientId proves admission');
 
-  const delayed = await launch({ ...process.env, HANG_TURN_RESPONSE: '1', DELAY_ITEMS: '1' });
+  const delayed = await launch({ ...process.env, HANG_TURN_RESPONSE: '1', DELAY_ITEMS: '1' }, 1_000);
   const delayedId = '66666666-6666-6666-6666-666666666666';
   await assert.rejects(
     delayed.service.prompt(delayed.processId, { text: 'delayed', references: [], attachments: [], messageId: delayedId }),
@@ -1002,9 +1029,19 @@ server.listen(socketPath);
     await extra.service.stop(extra.processId);
     extra.service.disconnect();
   }
+  } catch (error) {
+    failed = true;
+    throw error;
   } finally {
     database.dispose();
-    fs.rmSync(directory, { recursive: true, force: true });
+    // Windows cannot remove a directory that an exiting host or CLI still runs
+    // in. After a failure hosts may still run there; keep the real error.
+    try {
+      removeTree(directory);
+    } catch (error) {
+      if (!failed) throw error;
+      console.error(error);
+    }
   }
 }
 

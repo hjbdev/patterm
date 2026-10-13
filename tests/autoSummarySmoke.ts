@@ -7,7 +7,7 @@ import { McpToolRegistry } from '../app/MCP/ToolRegistry';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { SettingsService } from '../app/Services/SettingsService';
 import { AutoSummaryService, summarySnapshot } from '../app/Services/AutoSummaryService';
-import { AutoSummaryRunner, claudeSummaryArgs, codexSummaryArgs, runSummaryCommand, summaryEnvironment } from '../app/Services/AutoSummaryRunner';
+import { AutoSummaryRunner, claudeSummaryArgs, codexSummaryArgs, codexSummaryEnvironment, finishCodexSummaryHome, runSummaryCommand, summaryEnvironment } from '../app/Services/AutoSummaryRunner';
 import { autoSummarySettingsInput, SUMMARY_INPUT_BYTES, SUMMARY_SYSTEM_PROMPT, SUMMARY_TEST_SYSTEM_PROMPT, type SummaryContext, type SummaryResult } from '../app/Services/AutoSummarySettings';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { HistoryDatabaseService } from '../app/Services/HistoryDatabaseService';
@@ -369,9 +369,20 @@ async function main() {
     assert.throws(() => gated.update({ ...enabled, provider: 'codex' }), /not discovered/);
     await gated.dispose();
     await assert.rejects(runner.run({ ...enabled, provider: 'opencode' }, 'test', new AbortController().signal), /not discovered/);
-    const fixture = path.join(directory, 'claude');
-    fs.copyFileSync(path.resolve('tests/fixtures/summaryCli.cjs'), fixture);
-    fs.chmodSync(fixture, 0o700);
+    // Windows cannot execute a shebang script, so each fixture runs through an
+    // npm-style .cmd shim that starts it with node.
+    const installFixture = (name: string, source: string): string => {
+      const file = path.join(directory, name);
+      if (process.platform !== 'win32') {
+        fs.copyFileSync(path.resolve(source), file);
+        fs.chmodSync(file, 0o700);
+        return file;
+      }
+      fs.copyFileSync(path.resolve(source), `${file}.cjs`);
+      fs.writeFileSync(`${file}.cmd`, `@ECHO off\r\n"%~dp0\\${name}.cjs" %*\r\n`);
+      return `${file}.cmd`;
+    };
+    const fixture = installFixture('claude', 'tests/fixtures/summaryCli.cjs');
     db.prepare("insert into harness_installations values ('fake', 'claude', ?, 'fixture', 'available', 'now', 'now')").run(fixture);
     assert.deepEqual(await runner.run(enabled, 'synthetic terminal text', new AbortController().signal), { summary: 'patterm okay' });
     const testSettings = { ...enabled, models: { ...enabled.models, claude: 'health-check' } };
@@ -388,9 +399,7 @@ async function main() {
     for (const model of ['bad-json', 'bad-schema', 'error']) {
       await assert.rejects(runner.run({ ...enabled, models: { ...enabled.models, claude: model } }, 'synthetic', new AbortController().signal), /Summari[sz]|Summary/);
     }
-    const providerFixture = path.join(directory, 'summary-providers');
-    fs.copyFileSync(path.resolve('tests/fixtures/summaryProviders.cjs'), providerFixture);
-    fs.chmodSync(providerFixture, 0o700);
+    const providerFixture = installFixture('summary-providers', 'tests/fixtures/summaryProviders.cjs');
     const codexHome = path.join(directory, 'native-codex');
     fs.mkdirSync(codexHome);
     fs.writeFileSync(path.join(codexHome, 'auth.json'), '{}');
@@ -420,6 +429,44 @@ async function main() {
     assert.equal(env.ANTHROPIC_API_KEY, undefined);
     assert.equal(env.PATTERM_PROCESS_ID, undefined);
     assert.equal(env.NODE_OPTIONS, undefined);
+    if (process.platform === 'win32') {
+      // Windows spells PATH as `Path`, and its programs need the system variables.
+      const windows = summaryEnvironment({ Path: 'C:\\bin', systemroot: 'C:\\Windows', PATHEXT: '.EXE', LocalAppData: 'C:\\Users\\x\\AppData\\Local', ANTHROPIC_API_KEY: 'secret' });
+      assert.equal(windows.PATH, 'C:\\bin');
+      assert.equal(windows.SystemRoot, 'C:\\Windows');
+      assert.equal(windows.PATHEXT, '.EXE');
+      assert.equal(windows.LOCALAPPDATA, 'C:\\Users\\x\\AppData\\Local');
+      assert.equal(windows.ANTHROPIC_API_KEY, undefined);
+    }
+    // The summariser's Codex home shares the login: a refresh written there reaches the native file.
+    const linkedHome = path.join(directory, 'linked-codex');
+    fs.mkdirSync(linkedHome);
+    fs.writeFileSync(path.join(linkedHome, 'auth.json'), '{"token":"old"}');
+    const linkedDirectory = fs.mkdtempSync(path.join(directory, 'home-'));
+    const linkedEnv = await codexSummaryEnvironment(linkedDirectory, { CODEX_HOME: linkedHome });
+    fs.writeFileSync(path.join(linkedEnv.CODEX_HOME!, 'auth.json'), '{"token":"new"}');
+    await finishCodexSummaryHome(linkedDirectory);
+    assert.equal(fs.readFileSync(path.join(linkedHome, 'auth.json'), 'utf8'), '{"token":"new"}', 'token refresh is written through to the native login');
+    if (process.platform === 'win32') {
+      // Across volumes the login is a copy: a refresh is written back, unless the
+      // native file changed meanwhile, whose login is then the valid one.
+      const realLink = fs.linkSync;
+      (fs as unknown as { linkSync: unknown }).linkSync = () => { throw Object.assign(new Error('EXDEV'), { code: 'EXDEV' }); };
+      try {
+        for (const concurrent of [false, true]) {
+          const copyDirectory = fs.mkdtempSync(path.join(directory, 'home-'));
+          fs.writeFileSync(path.join(linkedHome, 'auth.json'), '{"token":"old"}');
+          const copyEnv = await codexSummaryEnvironment(copyDirectory, { CODEX_HOME: linkedHome });
+          assert.equal(fs.readFileSync(path.join(copyEnv.CODEX_HOME!, 'auth.json'), 'utf8'), '{"token":"old"}');
+          fs.writeFileSync(path.join(copyEnv.CODEX_HOME!, 'auth.json'), '{"token":"refreshed"}');
+          if (concurrent) fs.writeFileSync(path.join(linkedHome, 'auth.json'), '{"token":"other"}');
+          await finishCodexSummaryHome(copyDirectory);
+          assert.equal(fs.readFileSync(path.join(linkedHome, 'auth.json'), 'utf8'), concurrent ? '{"token":"other"}' : '{"token":"refreshed"}');
+        }
+      } finally {
+        (fs as unknown as { linkSync: unknown }).linkSync = realLink;
+      }
+    }
     const args = claudeSummaryArgs('haiku');
     assert.equal(args.includes('--effort'), false, 'no reasoning keeps the model default');
     const effortArgs = claudeSummaryArgs('sonnet', 'summary', 'low');

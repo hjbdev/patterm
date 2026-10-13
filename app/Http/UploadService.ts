@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { pathContains } from '../Platform/PathIdentity';
 
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const MAX_STORED_BYTES = 256 * 1024 * 1024;
@@ -60,7 +61,7 @@ export class UploadService {
     const root = await fs.realpath(this.directory).catch(() => null);
     if (!root) throw new Error('Attachment storage is unavailable');
     const real = await fs.realpath(candidate).catch(() => null);
-    if (!real || (real !== root && !real.startsWith(root + path.sep))) throw new Error('Attachment is not a managed upload');
+    if (!real || !pathContains(root, real)) throw new Error('Attachment is not a managed upload');
     const stat = await fs.stat(real);
     if (!stat.isFile()) throw new Error('Attachment is not a file');
     if (stat.size > MAX_UPLOAD_BYTES) throw new Error('Attachments must be at most 10 MiB');

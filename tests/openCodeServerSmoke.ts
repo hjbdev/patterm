@@ -39,8 +39,11 @@ async function main(): Promise<void> {
   database.connection.prepare('insert into projects (id,name,path,created_at,updated_at) values (?,?,?,?,?)').run('project_test', 'Test', directory, now, now);
   const record = path.join(directory, 'requests.jsonl');
    fs.mkdirSync(path.join(directory, 'bin'));
-   const executable = path.join(directory, 'bin', 'opencode');
-  fs.writeFileSync(executable, `#!${process.execPath}
+  // Windows cannot execute a shebang script, so an npm-style .cmd shim starts it with node.
+  const script = path.join(directory, 'bin', process.platform === 'win32' ? 'opencode.cjs' : 'opencode');
+  const executable = process.platform === 'win32' ? path.join(directory, 'bin', 'opencode.cmd') : script;
+  if (process.platform === 'win32') fs.writeFileSync(executable, '@ECHO off\r\n"%~dp0\\opencode.cjs" %*\r\n');
+  fs.writeFileSync(script, `#!${process.execPath}
 const fs = require('node:fs');
 const [, , api, method, route, , json] = process.argv;
  if (api === '--version') { console.log('opencode v2.0.14'); process.exit(0); }
@@ -298,6 +301,16 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
       promptCount,
       'the oversized body never reaches the CLI'
     );
+    if (process.platform === 'win32') {
+      // Windows caps the whole command line at 32767 characters, far below the
+      // 128 KiB POSIX argument limit, and every JSON quote costs two of them.
+      for (const text of ['x'.repeat(40_000), '"'.repeat(20_000)]) {
+        await assert.rejects(
+          service.prompt('process_0', { text, references: [], attachments: [], messageId: 'dddddddd-dddd-dddd-dddd-dddddddddddd' }),
+          (error: unknown) => error instanceof ProviderCommandError && error.definitive === true && /too large/.test(error.message)
+        );
+      }
+    }
 
     // Native message listings can exceed the old 2 MiB capture bound; a 3 MiB
     // row must stay readable instead of failing the transcript read.
@@ -729,10 +742,16 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     await socket.start();
     assert.match(JSON.stringify(await client.callTool({ name: 'whoami', arguments: {}, _meta: { sessionID: first } })), /identity_0/, 'existing bridge clients keep their identity after a backend restart');
     const tokenPath = path.join(directory, 'opencode-bridge-token');
-    assert.equal(fs.statSync(tokenPath).mode & 0o777, 0o600, 'the durable bridge credential is owner-only');
-    fs.chmodSync(tokenPath, 0o644);
-    assert.throws(() => new OpenCodeServerService(database, env, { persistent: true }), /owner-only/);
-    fs.chmodSync(tokenPath, 0o600);
+    // Windows has no POSIX modes; the data directory's profile ACL protects the credential there.
+    if (process.platform !== 'win32') {
+      assert.equal(fs.statSync(tokenPath).mode & 0o777, 0o600, 'the durable bridge credential is owner-only');
+      fs.chmodSync(tokenPath, 0o644);
+      assert.throws(() => new OpenCodeServerService(database, env, { persistent: true }), /owner-only/);
+      fs.chmodSync(tokenPath, 0o600);
+    } else {
+      assert.match(fs.readFileSync(tokenPath, 'utf8'), /^[0-9a-f-]{36}$/, 'the durable bridge credential is saved');
+      assert.doesNotThrow(() => new OpenCodeServerService(database, env, { persistent: true }), 'a saved credential is accepted despite synthesised modes');
+    }
     assert.equal((await client.callTool({ name: 'whoami', arguments: {} })).isError, true, 'missing metadata fails closed');
     assert.equal((await client.callTool({ name: 'whoami', arguments: {}, _meta: { sessionID: 'ses_unmanaged' } })).isError, true);
     database.connection.prepare(`update sessions set exited_at = ? where id = 'session_0'`).run(now);

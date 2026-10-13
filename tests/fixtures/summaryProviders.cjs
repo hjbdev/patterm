@@ -17,7 +17,9 @@ if (args.includes('--help')) {
   assert.ok(args.includes('--ignore-rules'));
   assert.ok(args.includes('--ephemeral'));
   assert.equal(args[args.indexOf('--sandbox') + 1], 'read-only');
-  assert.ok(fs.lstatSync(path.join(process.env.CODEX_HOME, 'auth.json')).isSymbolicLink());
+  // Windows links with a hard link or a copy, since symlinks need Developer Mode.
+  const auth = path.join(process.env.CODEX_HOME, 'auth.json');
+  assert.ok(process.platform === 'win32' ? fs.statSync(auth).isFile() : fs.lstatSync(auth).isSymbolicLink());
   assert.equal(fs.existsSync(path.join(process.env.CODEX_HOME, 'AGENTS.md')), false);
   const config = Object.fromEntries(args.flatMap((value, index) => value === '-c' ? [args[index + 1].split(/=(.*)/s).slice(0, 2)] : []));
   assert.equal(config.forced_login_method, '"chatgpt"');

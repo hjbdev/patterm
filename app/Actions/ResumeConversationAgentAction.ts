@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { z } from 'zod';
+import { nativePath, storedPath } from '../Platform/PathIdentity';
 import type { DatabaseService } from '../Services/DatabaseService';
 import type { AgentHistoryReadService } from '../Services/AgentHistory/AgentHistoryReadService';
 import type { HarnessLauncher, LaunchHarnessResult } from '../Services/HarnessLauncher';
@@ -135,8 +136,10 @@ export class ResumeConversationAgentAction {
 
   private resolveCwd(recordedCwd: string | null, worktreePath: string | null, projectId: string): string {
     if (recordedCwd?.trim()) {
-      if (!isDirectory(recordedCwd)) throw new Error(`conversation working directory is unavailable: ${recordedCwd}`);
-      return recordedCwd;
+      // Imported history can record a Git Bash form such as /c/Users/x.
+      const recorded = nativePath(recordedCwd);
+      if (!isDirectory(recorded)) throw new Error(`conversation working directory is unavailable: ${recordedCwd}`);
+      return storedPath(recorded);
     }
     if (worktreePath && isDirectory(worktreePath)) return worktreePath;
     const project = this.database.connection.prepare(`select path from projects where id = ?`).get(projectId) as { path: string } | undefined;

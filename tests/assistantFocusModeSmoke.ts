@@ -17,6 +17,7 @@ import { AgentContextService } from '../app/Services/AgentContextService';
 import { McpToolRegistry } from '../app/MCP/ToolRegistry';
 import { registerAssistantTools } from '../app/MCP/registerAssistantTools';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
+import { removeTree } from './fixtures/TempTree';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const DIGEST_MS = 10;
@@ -291,7 +292,7 @@ async function main(): Promise<void> {
     console.log('assistant focus mode smoke passed');
   } finally {
     database.dispose();
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeTree(dir);
   }
 }
 

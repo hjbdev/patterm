@@ -7,7 +7,7 @@
       spellcheck="false"
       autocomplete="off"
       aria-label="Server path"
-      placeholder="/path/to/repo"
+      :placeholder="placeholder"
       @keydown="onKeydown"
     />
 
@@ -43,10 +43,10 @@
     <p v-if="error" class="text-xs text-destructive">{{ error }}</p>
 
     <div class="flex items-center justify-between gap-3">
-      <span class="min-w-0 truncate font-mono text-xs text-muted-foreground" :title="current?.path">{{ current ? displayPath(current.path) : '' }}</span>
+      <span class="min-w-0 truncate font-mono text-xs text-muted-foreground" :title="current?.path">{{ current && !drives ? displayServerPath(current.path, current.home) : '' }}</span>
       <div class="flex shrink-0 gap-2">
         <Button type="button" variant="ghost" size="sm" @click="emit('cancel')">Cancel</Button>
-        <Button type="button" size="sm" :disabled="!current" @click="current && emit('select', current.path)">Select folder</Button>
+        <Button type="button" size="sm" :disabled="!current || drives" @click="current && !drives && emit('select', current.path)">Select folder</Button>
       </div>
     </div>
   </div>
@@ -58,7 +58,7 @@ import { CornerLeftUp, Folder } from 'lucide-vue-next';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { focusElement } from '../Composables/useAutofocus';
-import { splitDirectoryQuery, withTrailingSlash, type DirectoryListing } from '../lib/directoryPicker';
+import { DRIVES_PATH, directoryPlaceholder, displayServerPath, splitDirectoryQuery, withTrailingSlash, type DirectoryListing } from '../lib/directoryPicker';
 
 const props = defineProps<{ initial?: string }>();
 const emit = defineEmits<{ select: [path: string]; cancel: [] }>();
@@ -79,6 +79,9 @@ const filter = computed(() => split.value.filter);
 // never one left over from an earlier folder while the next loads or after it
 // failed.
 const current = computed(() => listing.value && loadedDirectory.value === directoryKey(split.value.directory, filter.value) ? listing.value : null);
+// A Windows server lists its drive letters above each drive root; they only navigate.
+const drives = computed(() => current.value?.path === DRIVES_PATH);
+const placeholder = computed(() => directoryPlaceholder(listing.value?.home));
 const visible = computed(() => {
   const needle = filter.value.toLowerCase();
   const entries = current.value?.entries ?? [];
@@ -124,11 +127,6 @@ function open(path: string): void {
   focusElement(queryInput);
 }
 
-function displayPath(path: string): string {
-  const home = listing.value?.home;
-  return home && (path === home || path.startsWith(`${home}/`)) ? `~${path.slice(home.length)}` : path;
-}
-
 function onKeydown(event: KeyboardEvent): void {
   const count = visible.value.length;
   if (event.key === 'ArrowDown' && count) {
@@ -147,7 +145,7 @@ function onKeydown(event: KeyboardEvent): void {
     const entry = filter.value ? visible.value[highlighted.value] : undefined;
     if (filter.value && !entry) return;
     if (entry && !(event.metaKey || event.ctrlKey)) open(entry.path);
-    else if (current.value) emit('select', entry?.path ?? current.value.path);
+    else if (current.value && (entry || !drives.value)) emit('select', entry?.path ?? current.value.path);
   }
 }
 

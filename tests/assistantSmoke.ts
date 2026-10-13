@@ -20,6 +20,7 @@ import { TimelineService } from '../app/Services/TimelineService';
 import { AgentContextService } from '../app/Services/AgentContextService';
 import { assistantVoiceOptions, type RealtimeVoiceOptions } from '../app/Services/AssistantVoiceProfile';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
+import { removeTree } from './fixtures/TempTree';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -392,7 +393,7 @@ async function main(): Promise<void> {
     console.log('assistant smoke passed');
   } finally {
     database.dispose();
-    fs.rmSync(dir, { recursive: true, force: true });
+    removeTree(dir);
   }
 }
 

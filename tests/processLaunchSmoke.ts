@@ -14,6 +14,8 @@ import type { TerminalService } from '../app/Services/TerminalService';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { TimelineService } from '../app/Services/TimelineService';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
+import { defaultShell, shellArgv } from '../app/Platform/Shell';
+import { removeTree } from './fixtures/TempTree';
 
 interface ProcessRow {
   id: string;
@@ -31,7 +33,9 @@ interface ProcessRow {
 
 type LifecycleFrame = { type: 'terminal-lifecycle'; processId: string; event: string; activity?: string; title?: string; exitCode?: number | null };
 
-const SHELL = process.env.SHELL ?? '/bin/sh';
+const SHELL = defaultShell();
+// Spawn arguments for the shell running `command`, or an interactive shell.
+const shellArgs = (command?: string): string[] => shellArgv(SHELL, command).slice(1);
 
 async function main(): Promise<void> {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-process-'));
@@ -84,7 +88,7 @@ async function main(): Promise<void> {
     assert.equal(created.pty_process_id, 'proc_1');
     const firstSpawn = spawns[0]!;
     assert.equal(firstSpawn.command, SHELL);
-    assert.deepEqual(firstSpawn.args, ['-lc', 'npm run dev']);
+    assert.deepEqual(firstSpawn.args, shellArgs('npm run dev'));
     assert.equal(firstSpawn.kind, 'command');
     assert.equal(firstSpawn.cwd, projectPath, 'cwd defaults to the project path');
 
@@ -95,7 +99,7 @@ async function main(): Promise<void> {
     assert.equal(row?.status, 'running');
     assert.equal(row?.pty_process_id, 'proc_1');
     assert.equal(row?.auto_restart, 1);
-    assert.deepEqual(JSON.parse(row?.argv ?? '[]'), [SHELL, '-lc', 'npm run dev']);
+    assert.deepEqual(JSON.parse(row?.argv ?? '[]'), [SHELL, ...shellArgs('npm run dev')]);
 
     // A worktree-associated process uses the worktree cwd and stores the association.
     const inWorktree = await launcher.create({ project_id: projectId, worktree_id: 'worktree_test' });
@@ -116,7 +120,7 @@ async function main(): Promise<void> {
     const shell = await launcher.create({ project_id: projectId });
     const shellSpawn = spawns[2]!;
     assert.equal(shellSpawn.command, SHELL);
-    assert.deepEqual(shellSpawn.args, []);
+    assert.deepEqual(shellSpawn.args, shellArgs());
     const shellRow = database.connection.prepare(`select name from processes where id = ?`).get(shell.process_id) as { name: string };
     assert.equal(shellRow.name, 'terminal');
 
@@ -138,7 +142,7 @@ async function main(): Promise<void> {
     assert.equal(activeProcess?.activity, 'working', 'activity frame updates process snapshot');
     assert.equal(activeProcess?.command, 'npm run dev', 'process snapshot exposes editable command text');
     assert.equal(activeProcess?.cwd, projectPath, 'process snapshot exposes editable cwd');
-    assert.deepEqual(activeProcess?.argv, [SHELL, '-lc', 'npm run dev'], 'process snapshot exposes stored argv');
+    assert.deepEqual(activeProcess?.argv, [SHELL, ...shellArgs('npm run dev')], 'process snapshot exposes stored argv');
     database.connection.exec('pragma busy_timeout = 1');
     try {
       withWriterLock(database.dbPath, () => {
@@ -199,7 +203,7 @@ async function main(): Promise<void> {
     const relaunched = await launcher.relaunch(created.process_id);
     assert.equal(relaunched.pty_process_id, 'proc_4');
     const lastSpawn = spawns[3]!;
-    assert.deepEqual(lastSpawn.args, ['-lc', 'npm run dev'], 'relaunch reuses the stored argv');
+    assert.deepEqual(lastSpawn.args, shellArgs('npm run dev'), 'relaunch reuses the stored argv');
     const afterRelaunch = database.connection
       .prepare(`select status, pty_process_id, exited_at, exit_code from processes where id = ?`)
       .get(created.process_id) as { status: string; pty_process_id: string; exited_at: string | null; exit_code: number | null };
@@ -213,6 +217,11 @@ async function main(): Promise<void> {
     const renamed = await launcher.update({ process_id: created.process_id, name: 'dev renamed', command: 'npm run dev', cwd: projectPath, auto_restart: false });
     assert.equal(renamed.restarted, false);
     assert.equal(spawns.length, 4, 'name/auto-restart-only updates do not spawn');
+    if (process.platform === 'win32') {
+      const respelled = await launcher.update({ process_id: created.process_id, name: 'dev renamed', command: 'npm run dev', cwd: projectPath.replace(/\\/g, '/').toUpperCase(), auto_restart: false });
+      assert.equal(respelled.restarted, false, 'the same directory spelled with another case and separators is not a cwd change');
+      assert.equal(spawns.length, 4);
+    }
     const renamedRow = database.connection.prepare(`select name, auto_restart from processes where id = ?`).get(created.process_id) as {
       name: string;
       auto_restart: number;
@@ -226,14 +235,14 @@ async function main(): Promise<void> {
     assert.deepEqual(stops.at(-1), { process_id: 'proc_4' }, 'editing command/cwd stops the previous PTY');
     const editedSpawn = spawns.at(-1)!;
     assert.equal(editedSpawn.command, SHELL);
-    assert.deepEqual(editedSpawn.args, ['-lc', 'pnpm dev']);
+    assert.deepEqual(editedSpawn.args, shellArgs('pnpm dev'));
     assert.equal(editedSpawn.cwd, worktreePath);
     const editedRow = database.connection
       .prepare(`select name, cwd, argv, auto_restart, pty_process_id, status, exited_at, exit_code from processes where id = ?`)
       .get(created.process_id) as ProcessRow;
     assert.equal(editedRow.name, 'dev edited');
     assert.equal(editedRow.cwd, worktreePath);
-    assert.deepEqual(JSON.parse(editedRow.argv ?? '[]'), [SHELL, '-lc', 'pnpm dev']);
+    assert.deepEqual(JSON.parse(editedRow.argv ?? '[]'), [SHELL, ...shellArgs('pnpm dev')]);
     assert.equal(editedRow.auto_restart, 1);
     assert.equal(editedRow.pty_process_id, 'proc_5');
     assert.equal(editedRow.status, 'running');
@@ -323,7 +332,7 @@ async function main(): Promise<void> {
     // eslint-disable-next-line no-console
     console.log('process launch smoke ok');
   } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    removeTree(tempDir);
   }
 }
 

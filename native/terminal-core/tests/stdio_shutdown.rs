@@ -1,3 +1,5 @@
+//! Linux relies on a subreaper and pidfds; `windows_job.rs` covers the same
+//! shutdown guarantees on Windows through its job object.
 #![cfg(target_os = "linux")]
 
 use std::fs;

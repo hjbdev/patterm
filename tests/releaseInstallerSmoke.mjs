@@ -9,6 +9,7 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { verifyMinisign } from '../scripts/release/verify-minisign.mjs';
 
 const fixtures = 'tests/fixtures/minisign';
+const linuxOnly = process.platform === 'win32' && 'it runs the bash release installer, which Windows does not use';
 
 test('the verifier accepts real minisign signatures and rejects tampering', () => {
   const key = fs.readFileSync(path.join(fixtures, 'test.pub'), 'utf8').trim().split('\n')[1];
@@ -38,7 +39,7 @@ function signer() {
   };
 }
 
-test('the downgrade guard follows semantic version precedence', () => {
+test('the downgrade guard follows semantic version precedence', { skip: linuxOnly }, () => {
   const script = fs.readFileSync('scripts/release/install.sh', 'utf8');
   const functions = ['identifiers_lt', 'version_lt'].map((name) => new RegExp(`^${name}\\(\\) \\{\\n[\\s\\S]*?^\\}$`, 'm').exec(script)[0]).join('\n');
   // Ascending, from semver.org item 11, plus multi-digit numbers.
@@ -62,7 +63,7 @@ function run(command, args, env) {
   });
 }
 
-test('the release installer verifies, swaps versions, updates the service, and uninstalls', { skip: !arch }, async () => {
+test('the release installer verifies, swaps versions, updates the service, and uninstalls', { skip: linuxOnly || !arch }, async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-release-'));
   const server = http.createServer((request, response) => { response.end(); });
   try {
