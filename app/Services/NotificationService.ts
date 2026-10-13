@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import MarkdownIt from 'markdown-it';
 import type { DatabaseService } from './DatabaseService';
 import type { SettingsService } from './SettingsService';
 import type { TimelineService } from './TimelineService';
@@ -120,7 +121,8 @@ export class NotificationService {
     const title = clean(input.title, TITLE_LIMIT) || (process ? displayName(process.name) : 'Patterm');
     // A child whose parent has gone asks the user directly, and says so.
     const orphaned = Boolean(process?.parent_process_id && !process.parent_running && input.source === 'mcp');
-    const body = clean(orphaned ? [`From ${displayName(process!.name)}, a child agent whose parent is no longer running.`, input.body].filter(Boolean).join('\n') : input.body, BODY_LIMIT);
+    const source = orphaned ? [`From ${displayName(process!.name)}, a child agent whose parent is no longer running.`, input.body].filter(Boolean).join('\n') : input.body;
+    const body = clean(source, BODY_LIMIT);
 
     // Child agents escalate through their parent, which decides whether to
     // involve the user.
@@ -130,25 +132,27 @@ export class NotificationService {
       return { status: 'routed_to_parent', parent_process_id: process.parent_process_id! };
     }
 
+    // Toasts, the tray, and push show plain text; parents above keep the Markdown.
+    const text = clean(markdownText(source ?? ''), BODY_LIMIT);
     const level = input.source === 'system' ? 'all' : this.level(categoryFor(input, process));
     if (level === 'off') return { status: 'suppressed' };
     const urgency = input.quiet ? 'low' : input.urgency ?? DEFAULT_URGENCY[input.kind];
     const minimum = this.settings.notificationSettings().minimumUrgency;
     const delivery: 'in_app' | 'all' = level === 'all' && !child && !input.quiet && URGENCY_RANK[urgency] >= URGENCY_RANK[minimum] ? 'all' : 'in_app';
-    const dedupeKey = input.dedupeKey === undefined ? defaultDedupeKey(input.kind, title, body) : input.dedupeKey;
+    const dedupeKey = input.dedupeKey === undefined ? defaultDedupeKey(input.kind, title, text) : input.dedupeKey;
     const at = new Date(this.now()).toISOString();
     const db = this.database.connection;
 
     if (process && dedupeKey) {
       const existing = db.prepare(`select * from notifications where process_id = ? and dedupe_key = ? and resolved_at is null order by created_at desc limit 1`)
         .get(process.id, dedupeKey) as NotificationRow | undefined;
-      if (existing) return { status: 'updated', notification: this.touch(existing.id, title, body, at, 'updated') };
+      if (existing) return { status: 'updated', notification: this.touch(existing.id, title, text, at, 'updated') };
     }
     if (process && input.source === 'mcp') {
       const since = new Date(this.now() - RATE_WINDOW_MS).toISOString();
       const recent = db.prepare(`select id from notifications where process_id = ? and source = 'mcp' and created_at >= ? order by created_at desc`)
         .all(process.id, since) as Array<{ id: string }>;
-      if (recent.length >= RATE_LIMIT) return { status: 'rate_limited', notification: this.touch(recent[0]!.id, title, body, at, 'updated') };
+      if (recent.length >= RATE_LIMIT) return { status: 'rate_limited', notification: this.touch(recent[0]!.id, title, text, at, 'updated') };
     }
 
     const id = `notification_${randomUUID()}`;
@@ -157,7 +161,7 @@ export class NotificationService {
     db.prepare(`insert into notifications
       (id, project_id, process_id, session_id, source, kind, urgency, delivery, audience, routed_to_process_id, title, body, dedupe_key, created_at, updated_at)
       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, projectId, process?.id ?? null, process?.session_id ?? null, input.source, input.kind, urgency, delivery, child ? 'parent' : 'user', routedTo, title, body, dedupeKey, at, at);
+      .run(id, projectId, process?.id ?? null, process?.session_id ?? null, input.source, input.kind, urgency, delivery, child ? 'parent' : 'user', routedTo, title, text, dedupeKey, at, at);
     this.timeline.append({ event_type: 'notification.raised', project_id: projectId, process_id: process?.id ?? null, session_id: process?.session_id ?? null, actor_type: input.source === 'mcp' ? 'agent' : 'system', metadata: { notification_id: id, source: input.source, kind: input.kind, urgency, title } });
     const notification = this.get(id)!;
     this.onChange({ type: 'raised', notification });
@@ -339,6 +343,32 @@ export function clean(value: string | undefined, limit: number): string {
   // eslint-disable-next-line no-control-regex
   const text = value.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, ' ').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
   return text.length > limit ? `${text.slice(0, limit - 1).trimEnd()}…` : text;
+}
+
+const markdown = new MarkdownIt({ html: false });
+
+// Reads Markdown the way it renders: link and code text without their
+// syntax, list items as bullets, and blocks on their own lines.
+export function markdownText(source: string): string {
+  const lines: string[] = [];
+  const lists: Array<number | null> = [];
+  let prefix = '';
+  for (const token of markdown.parse(source, {})) {
+    if (token.type === 'bullet_list_open') lists.push(null);
+    else if (token.type === 'ordered_list_open') lists.push(Number(token.attrGet('start') ?? 1));
+    else if (token.type === 'bullet_list_close' || token.type === 'ordered_list_close') lists.pop();
+    else if (token.type === 'list_item_open') {
+      const index = lists.length - 1;
+      const number = lists[index];
+      prefix = `${'  '.repeat(index)}${number == null ? '•' : `${number}.`} `;
+      if (number != null) lists[index] = number + 1;
+    } else if (token.type === 'inline') {
+      const inline = (token.children ?? []).map((child) => child.type === 'softbreak' || child.type === 'hardbreak' ? '\n' : child.content).join('');
+      lines.push(prefix + inline);
+      prefix = '';
+    } else if (token.type === 'fence' || token.type === 'code_block') lines.push(token.content.replace(/\n$/, ''));
+  }
+  return lines.join('\n');
 }
 
 const ROUTINE_REPORT_KEY = 'routine-report:';

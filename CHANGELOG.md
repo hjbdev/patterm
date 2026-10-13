@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Portable Windows x64 packages on stable releases, with SHA-256 checksums.
 
+### Fixed
+
+- Notification toasts, the tray, and push notifications show routine reports
+  and agent requests as plain text instead of raw Markdown.
+
 ## [0.1.0] - 2026-10-13
 
 The first public release. Earlier development history stays
