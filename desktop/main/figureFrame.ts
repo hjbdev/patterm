@@ -26,8 +26,8 @@ export function serveFigureFrames(): void {
   }
 }
 
-// A figure frame may not navigate itself away. Its links open as popups,
-// which the window's open handler sends to the browser after a click.
+// A figure frame may not navigate itself away; the user opens its links
+// from Patterm's confirm bar.
 export function guardFigureFrames(contents: WebContents): void {
   contents.on('will-frame-navigate', (event) => {
     if (event.isMainFrame || !event.frame?.url.startsWith(`${FIGURE_FRAME_SCHEME}:`) || event.url.startsWith(`${FIGURE_FRAME_SCHEME}:`)) return;

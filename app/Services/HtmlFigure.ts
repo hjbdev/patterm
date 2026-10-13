@@ -71,7 +71,7 @@ export const FIGURE_THEME: Readonly<Record<string, string>> = {
 
 export const FIGURE_LAYOUT_GUIDE = 'The page sits inside the reply, on the transcript background: no page background, no outer padding, no card or title banner (the title is shown for you), and fluid width (the column is 320 to 900 px). Give charts a fixed pixel height; never use 100vh. Boxes that need their own surface use var(--muted) or a 1px var(--border) with border-radius var(--radius) and 16px padding. Keep text 13 to 14 px; use muted text, not colour, for secondary detail.';
 export const FIGURE_THEME_GUIDE = `Theme variables are set on :root: ${Object.keys(FIGURE_THEME).join(', ')}. Use --chart-1..6 for series in order, --success/--warning/--destructive only for good/warn/bad meaning, --accent for one highlight. Tables, links and code already follow the theme.`;
-export const FIGURE_BRIDGE_GUIDE = 'To ask the user, call patterm.answer(id, { label, value }) (or an array of { item, label, value }) when they pick; Patterm asks them to confirm, and the pick reaches you as "Answer to <id>: <label> (<value>)", so end your turn to wait. The promise settles when they send or cancel. patterm.answered(id) gives the earlier answer text or null and patterm.canAnswer says whether this window may answer; patterm.onChange(fn) runs when either changes. http(s) links open in the browser.';
+export const FIGURE_BRIDGE_GUIDE = 'To ask the user, call patterm.answer(id, { label, value }) (or an array of { item, label, value }) when they pick; Patterm asks them to confirm, and the pick reaches you as "Answer to <id>: <label> (<value>)", so end your turn to wait. The promise settles when they send or cancel. patterm.answered(id) gives the earlier answer text or null and patterm.canAnswer says whether this window may answer; patterm.onChange(fn) runs when either changes. Clicked http(s) links open in the browser once the user confirms.';
 
 // Element defaults sit in :where() so any rule in the page wins.
 const BASE_CSS = `:root{color-scheme:dark;${Object.entries(FIGURE_THEME).map(([name, value]) => `${name}:${value}`).join(';')}}
@@ -169,9 +169,9 @@ addEventListener('message', function render(event) {
 parent.postMessage({ source: 'patterm-figure', type: 'ready' }, '*');
 </script></head><body></body></html>`;
 
-// Popups carry links: the browser opens one only after a click inside the
-// frame, and the opened page leaves the sandbox. Never allow-same-origin.
-export const FIGURE_FRAME_SANDBOX = 'allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox';
+// No popups: Electron does not hold them to a click, so links go through
+// Patterm's own confirm bar. Never allow-same-origin.
+export const FIGURE_FRAME_SANDBOX = 'allow-scripts allow-forms';
 
 export function figureFrameCsp(frameAncestors: string | null): string {
   return [
@@ -183,8 +183,8 @@ export function figureFrameCsp(frameAncestors: string | null): string {
   ].join('; ');
 }
 
-// Runs first in every page: reports its height, opens links in a new window
-// and exposes the answer bridge.
+// Runs first in every page: reports its height, hands links to Patterm and
+// exposes the answer bridge.
 const BOOTSTRAP = `(function () {
   var host = window.parent;
   var state = { answers: {}, canAnswer: false };
@@ -202,13 +202,13 @@ const BOOTSTRAP = `(function () {
   observer.observe(document.documentElement);
   document.addEventListener('DOMContentLoaded', function () { if (document.body) observer.observe(document.body); report(); });
   addEventListener('load', report);
-  // Web links open in a new window; anything else would navigate the frame.
+  // Web links ask Patterm, which shows the address for the user to open;
+  // anything else would navigate the frame.
   document.addEventListener('click', function (event) {
     var link = event.target && event.target.closest ? event.target.closest('a[href]') : null;
     if (!link || link.getAttribute('href').charAt(0) === '#') return;
-    if (!/^https?:/i.test(link.href)) { event.preventDefault(); return; }
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
+    event.preventDefault();
+    if (/^https?:/i.test(link.href)) post({ type: 'open-link', url: link.href });
   }, true);
   addEventListener('message', function (event) {
     if (event.source !== host || !event.data || event.data.source !== 'patterm-host') return;

@@ -39,7 +39,9 @@ td.num{text-align:right}
 <tr><td>Smoke tests</td><td class="good">Passed</td><td class="num">3 min 12 s</td></tr>
 <tr><td>Sidecar</td><td class="bad">1 failure</td><td class="num">58 s</td></tr>
 <tr><td>Notices</td><td class="note">Skipped, no dependency changes</td><td class="num">–</td></tr>
-</tbody></table></body></html>`;
+</tbody></table>
+<p class="note" style="margin:10px 0 0;font-size:12px"><a href="https://github.com/hjbdev/patterm/actions">Open the workflow runs</a></p>
+</body></html>`;
 
 const choice = `<!doctype html><html><head><style>
 .options{display:grid;gap:8px}
@@ -71,6 +73,6 @@ refresh();
 
 export const FIGURE_EXAMPLES: FigureExample[] = [
   { label: 'Chart', page: { title: 'Start time by harness', html: chart, height: 260 } },
-  { label: 'Table', page: { title: 'Checks on this branch', html: table, height: 180 } },
+  { label: 'Table', page: { title: 'Checks on this branch', html: table, height: 210 } },
   { label: 'Question', page: { title: 'How should figures be shared?', html: choice, height: 170 } }
 ];

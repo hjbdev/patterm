@@ -70,11 +70,11 @@ test('pages use the user\'s typefaces: bundled ones inline, installed ones by na
 
 test('the frame runs scripts in an opaque origin and cannot submit or navigate forms', () => {
   const csp = ui.figureFrameCsp("'self'");
-  assert.match(csp, /^sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox;/, 'links open as popups, which need a click in the frame');
-  assert.doesNotMatch(csp, /allow-same-origin|allow-top-navigation|allow-modals/);
+  assert.match(csp, /^sandbox allow-scripts allow-forms;/);
+  assert.doesNotMatch(csp, /allow-same-origin|allow-top-navigation|allow-popups|allow-modals/, 'Electron would let a page open popups without a click');
   const component = fs.readFileSync('resources/js/Components/HtmlFigureFrame.vue', 'utf8');
   assert.match(component, /:sandbox="FIGURE_FRAME_SANDBOX"/, 'the iframe and its policy share one sandbox');
-  assert.doesNotMatch(component, /open-link|window\.open/, 'the host never opens links a page asks for');
+  assert.match(component, /:key="request\.revision"/, 'confirm controls are rebuilt for each request');
   assert.match(csp, /form-action 'none'/);
   assert.match(csp, /frame-ancestors 'self'$/);
   assert.doesNotMatch(ui.figureFrameCsp(null), /frame-ancestors/);
@@ -211,7 +211,7 @@ test('a preview draws the prepared page with images inlined and returns the scre
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-// The frame component's own script, run against stub frames and channels.
+// The frame component's own script, run against stub frames, channels and clock.
 function mountFrame({ channel = null, answered = new Map() } = {}) {
   const file = fs.readFileSync('resources/js/Components/HtmlFigureFrame.vue', 'utf8');
   const blocks = [...file.matchAll(/<script(?: setup)? lang="ts">([\s\S]*?)<\/script>/g)].map((match) => match[1]);
@@ -221,16 +221,25 @@ function mountFrame({ channel = null, answered = new Map() } = {}) {
   };
   const { outputText } = ts.transpileModule(`${executable(blocks[1])}\n${executable(blocks[0])}`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } });
   const posted = [];
+  const opened = [];
   const contentWindow = { postMessage: (message) => posted.push(message) };
-  const window = { addEventListener: () => {}, removeEventListener: () => {} };
+  const clock = { now: 0 };
+  const window = { addEventListener: () => {}, removeEventListener: () => {}, open: (...args) => opened.push(args) };
   const answerKey = Symbol('answer');
   const answeredKey = Symbol('answered');
-  const setup = new Function('computed', 'inject', 'onBeforeUnmount', 'onMounted', 'ref', 'watch', 'window', 'FIGURE_FRAME_SANDBOX', 'FIGURE_HEIGHT', 'FIGURE_ID', 'figureAnswerText', 'figureAnswerKey', 'figureAnsweredKey', 'figureFrameUrl', 'defineProps',
-    `${outputText}\nframe.value = arguments[15];\nreturn { onMessage, confirm, proposal };`);
-  const api = setup(computed, (key) => key === answerKey ? channel : key === answeredKey ? computed(() => answered) : null, () => {}, () => {}, ref, watch, window,
+  const setup = new Function('computed', 'inject', 'onBeforeUnmount', 'onMounted', 'ref', 'watch', 'window', 'performance', 'FIGURE_FRAME_SANDBOX', 'FIGURE_HEIGHT', 'FIGURE_ID', 'figureAnswerText', 'figureAnswerKey', 'figureAnsweredKey', 'figureFrameUrl', 'defineProps', '__frame',
+    `${outputText}\nframe.value = __frame;\nreturn { onMessage, arm, confirm, request };`);
+  const api = setup(computed, (key) => key === answerKey ? channel : key === answeredKey ? computed(() => answered) : null, () => {}, () => {}, ref, watch, window, { now: () => clock.now },
     ui.FIGURE_FRAME_SANDBOX, ui.FIGURE_HEIGHT, ui.FIGURE_ID, ui.figureAnswerText, answerKey, answeredKey, () => '/figure-frame', () => ({ html: '<p>x</p>', title: 'x', initialHeight: 100 }), markRaw({ contentWindow }));
   const fromPage = (data) => api.onMessage({ source: contentWindow, data: { source: 'patterm-figure', ...data } });
-  return { ...api, posted, fromPage };
+  // A real press: pointer down on the button, later the click.
+  const press = async ({ trusted = true, wait = 600, between } = {}) => {
+    clock.now += wait;
+    api.arm({ isTrusted: trusted });
+    between?.();
+    await api.confirm({ isTrusted: trusted });
+  };
+  return { ...api, posted, opened, clock, fromPage, press };
 }
 
 function liveChannel() {
@@ -238,40 +247,72 @@ function liveChannel() {
   return { sent, channel: { canSend: computed(() => true), queued: computed(() => new Map()), send: async (text) => { sent.push(text); } } };
 }
 
+const pick = (id, label, value, requestId = 1) => ({ type: 'answer', requestId, id, picks: [{ label, value }] });
+
 test('a page cannot answer without the user pressing Send in Patterm', async () => {
   const { sent, channel } = liveChannel();
   const frame = mountFrame({ channel });
-
   // A page that keeps proposing while the user clicks elsewhere in the app.
-  for (let attempt = 0; attempt < 3; attempt++) frame.fromPage({ type: 'answer', requestId: attempt + 1, id: 'unauthorized', picks: [{ label: 'Yes', value: 'yes' }] });
+  for (let attempt = 0; attempt < 3; attempt++) frame.fromPage(pick('unauthorized', 'Yes', 'yes', attempt + 1));
   await nextTick();
-  assert.deepEqual(sent, [], 'proposals alone send nothing');
-  assert.equal(frame.proposal.value.text, 'Answer to unauthorized: Yes (yes)');
-  assert.deepEqual(frame.posted.filter((message) => message.type === 'answer-result').map((message) => [message.requestId, message.ok]), [[1, false], [2, false]], 'a newer proposal replaces the older one');
-  await frame.confirm({ isTrusted: false });
-  assert.deepEqual(sent, [], 'a synthetic click is not the user');
+  assert.deepEqual(sent, [], 'requests alone send nothing');
+  assert.equal(frame.request.value.text, 'Answer to unauthorized: Yes (yes)');
+  assert.deepEqual(frame.posted.filter((message) => message.type === 'answer-result').map((message) => [message.requestId, message.ok]), [[1, false], [2, false]], 'a newer request replaces the older one');
   await frame.confirm({ isTrusted: true });
+  assert.deepEqual(sent, [], 'a click that never pressed the button sends nothing');
+  await frame.press({ trusted: false });
+  assert.deepEqual(sent, [], 'a synthetic press is not the user');
+  await frame.press();
   assert.deepEqual(sent, ['Answer to unauthorized: Yes (yes)']);
-  assert.equal(frame.proposal.value, null);
+  assert.equal(frame.request.value, null);
   assert.deepEqual(frame.posted.at(-1), { source: 'patterm-host', type: 'answer-result', requestId: 3, ok: true });
-  await frame.confirm({ isTrusted: true });
+  await frame.press();
   assert.equal(sent.length, 1, 'a sent answer cannot be sent again');
 });
 
-test('pages outside a live conversation, or for answered questions, get no Send bar', () => {
+test('a press sends only the request it began on, after it has stood still', async () => {
+  const { sent, channel } = liveChannel();
+  const frame = mountFrame({ channel });
+  frame.fromPage(pick('q', 'Original', 'original'));
+  // The page swaps its answer while the button is held down.
+  await frame.press({ between: () => frame.fromPage(pick('q', 'Replaced', 'unauthorized', 2)) });
+  assert.deepEqual(sent, [], 'the swapped request needs its own press');
+  assert.equal(frame.request.value.text, 'Answer to q: Replaced (unauthorized)', 'the user sees what changed');
+  // The page swaps it again just before the user presses.
+  frame.fromPage(pick('q', 'Swapped late', 'late', 3));
+  await frame.press({ wait: 100 });
+  assert.deepEqual(sent, [], 'a request that only just appeared is not pressed yet');
+  await frame.press();
+  assert.deepEqual(sent, ['Answer to q: Swapped late (late)'], 'the user sent what they had time to read');
+});
+
+test('links open only after the user confirms the address in Patterm', async () => {
+  const frame = mountFrame();
+  frame.fromPage({ type: 'open-link', url: 'javascript:alert(1)' });
+  frame.fromPage({ type: 'open-link', url: 'file:///etc/passwd' });
+  assert.equal(frame.request.value, null, 'only web addresses are offered');
+  frame.fromPage({ type: 'open-link', url: 'https://example.com/report' });
+  assert.equal(frame.request.value.text, 'https://example.com/report');
+  assert.deepEqual(frame.opened, [], 'asking opens nothing');
+  await frame.press();
+  assert.deepEqual(frame.opened, [['https://example.com/report', '_blank', 'noopener,noreferrer']]);
+  assert.equal(frame.request.value, null);
+});
+
+test('pages outside a live conversation, or for answered questions, cannot ask for answers', () => {
   const readOnly = mountFrame();
-  readOnly.fromPage({ type: 'answer', requestId: 1, id: 'q', picks: [{ label: 'A', value: 'a' }] });
-  assert.equal(readOnly.proposal.value, null);
+  readOnly.fromPage(pick('q', 'A', 'a'));
+  assert.equal(readOnly.request.value, null);
   assert.match(readOnly.posted.at(-1).error, /live conversation/);
   const { channel } = liveChannel();
   const answered = mountFrame({ channel, answered: new Map([['q', 'Answer to q: A (a)']]) });
-  answered.fromPage({ type: 'answer', requestId: 1, id: 'q', picks: [{ label: 'B', value: 'b' }] });
-  assert.equal(answered.proposal.value, null);
+  answered.fromPage(pick('q', 'B', 'b'));
+  assert.equal(answered.request.value, null);
   assert.match(answered.posted.at(-1).error, /Already answered/);
   const invalid = mountFrame({ channel });
   invalid.fromPage({ type: 'answer', requestId: 1, id: 'bad id', picks: [] });
   assert.match(invalid.posted.at(-1).error, /needs an id/);
   const stranger = mountFrame({ channel });
   stranger.onMessage({ source: {}, data: { source: 'patterm-figure', type: 'answer', id: 'q', picks: [{ label: 'A', value: 'a' }] } });
-  assert.equal(stranger.proposal.value, null, 'only this page\'s own frame is heard');
+  assert.equal(stranger.request.value, null, 'only this page\'s own frame is heard');
 });
