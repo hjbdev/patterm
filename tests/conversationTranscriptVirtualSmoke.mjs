@@ -38,14 +38,14 @@ function mountTranscript() {
   });
   const setup = new Function(
     'computed', 'ref', 'watch', 'onMounted', 'nextTick', 'useVirtualizer',
-    'elapsedLabel', 'groupTranscriptMessages', 'toggleTranscriptRow', 'transcriptRowIndexForMessage', 'transcriptRowOpen', 'transcriptThoughtDurations', 'transcriptToolGroupSummary', 'transcriptTurnDurations', 'defineProps', 'defineEmits', 'defineExpose', 'withDefaults', 'measureElement', 'elementScroll', 'provide', 'drawnUiAnsweredKey', 'drawnUiAnswers', 'isSavedFigure', 'drawnUiId', 'drawnUiFiguresKey',
+    'elapsedLabel', 'groupTranscriptMessages', 'toggleTranscriptRow', 'transcriptRowIndexForMessage', 'transcriptRowOpen', 'transcriptThoughtDurations', 'transcriptToolGroupSummary', 'transcriptTurnDurations', 'defineProps', 'defineEmits', 'defineExpose', 'withDefaults', 'measureElement', 'elementScroll', 'provide', 'figureAnsweredKey', 'figureAnswers', 'isSavedFigure', 'figureId', 'figuresKey',
     `${outputText}\nreturn { rows, renderedRows, totalSize, rowOpen, toggleRow, sizerRef, scrollerRef };`
   );
   const pane = setup(
     computed, ref, () => {}, () => {}, () => Promise.resolve(),
     (value) => { options = value; return virtual; },
     elapsedLabel, groupTranscriptMessages, toggleTranscriptRow, transcriptRowIndexForMessage, transcriptRowOpen, transcriptThoughtDurations, transcriptToolGroupSummary, transcriptTurnDurations, () => props, () => () => {}, () => {}, (value) => value,
-    measureElement, elementScroll, () => {}, Symbol('drawnUiAnswered'), () => new Map(), () => false, () => null, Symbol('drawnUiFigures')
+    measureElement, elementScroll, () => {}, Symbol('figureAnswered'), () => new Map(), () => false, () => null, Symbol('figures')
   );
   return { pane, props, options, virtual };
 }

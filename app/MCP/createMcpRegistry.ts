@@ -47,8 +47,9 @@ import type { HarnessModelCatalogService } from '../Services/HarnessModelCatalog
 import type { AutoSummaryService } from '../Services/AutoSummaryService';
 import type { TranscriptImageStore } from '../Services/TranscriptImageStore';
 import { McpToolRegistry, type McpCallContext } from './ToolRegistry';
-import { SaveDrawnUiAction } from '../Actions/SaveDrawnUiAction';
-import { DRAWN_UI_TOOL } from '../Services/DrawnUi';
+import { RenderHtmlFigureAction } from '../Actions/RenderHtmlFigureAction';
+import { PreviewHtmlFigureAction, type PagePreviewer } from '../Actions/PreviewHtmlFigureAction';
+import { FIGURE_BRIDGE_GUIDE, FIGURE_HEIGHT, FIGURE_LAYOUT_GUIDE, FIGURE_THEME_GUIDE, HTML_PREVIEW_TOOL, HTML_RENDER_TOOL, MAX_FIGURE_HTML_CHARS, PREVIEW_WIDTH } from '../Services/HtmlFigure';
 import { registerProjectContextTools } from './registerProjectContextTools';
 import { registerUsageTools } from './registerUsageTools';
 import { registerRoutineTools } from './registerRoutineTools';
@@ -76,6 +77,8 @@ interface RegistryServices {
   harnessLauncher: HarnessLauncher;
   integrated?: Pick<IntegratedAgentService, 'conversation' | 'olderMessages' | 'prompt' | 'files' | 'delivery' | 'interrupt' | 'stopTask' | 'taskOutput' | 'updateQueued' | 'replyPermission' | 'replyQuestion' | 'replyForm' | 'controls' | 'configure' | 'command' | 'isEmpty' | 'liveSettings'>;
   transcriptImages?: Pick<TranscriptImageStore, 'read' | 'fromFile'>;
+  // Draws pages off screen for html_preview; only the desktop app has one.
+  pagePreviewer?: PagePreviewer;
   settings?: Pick<SettingsService, 'agentInterface' | 'updateAgentInterface' | 'figuresEnabled' | 'updateFiguresEnabled'>;
   harnessPresets?: HarnessPresetService;
   modelCatalog?: HarnessModelCatalogService;
@@ -1012,48 +1015,61 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     const result = await services.notifications.notifyUser(current.process_id, args);
     return 'notification' in result ? { status: result.status, notification_id: result.notification.id } : result;
   });
-  const saveDrawnUi = new SaveDrawnUiAction(services.transcriptImages);
+  const renderFigure = new RenderHtmlFigureAction(services.transcriptImages);
+  const figureUnavailable = (tool: string) => (context: McpCallContext): string | null => {
+    if (services.settings?.figuresEnabled() === false) return `${tool} is turned off in Patterm settings. Answer in text instead.`;
+    // Only Integrated transcripts draw pages. OpenCode's shared helpers
+    // carry no identity and serve only Integrated sessions.
+    const session = context.identity ? services.database.connection.prepare('select interface_mode from sessions where mcp_identity = ? and exited_at is null').get(context.identity) as { interface_mode: string | null } | undefined : undefined;
+    return session && session.interface_mode !== 'integrated' ? `${tool} works only in Integrated mode. Answer in text instead.` : null;
+  };
+  const html = { type: 'string', description: `A complete, self-contained HTML document, up to ${MAX_FIGURE_HTML_CHARS} characters. Inline <style> and <script>; CDN scripts load. Local images in <img src> or CSS url() must be in your working directory.` };
   registry.register({
-    name: DRAWN_UI_TOOL,
+    name: HTML_RENDER_TOOL,
     namespace: 'cli.ui',
     // Claude Code cuts tool descriptions at about 2,000 characters, notes included.
-    description: 'Show a chart, table, or diagram in your reply: save it as a figure, then place the reference it returns in your text.',
+    description: 'Show a chart, table, diagram, mockup, or small interactive tool in your reply as an HTML page. It returns ref [patterm_figure:id]; put it on its own line in your reply where the page belongs. Unplaced, it never shows.',
     inputSchema: {
       type: 'object',
+      required: ['title', 'html'],
       properties: {
-        id: { type: 'string' },
-        claim: { type: 'string' },
-        figure: { type: 'object' },
-        source: { type: 'string' },
-        inputs: { type: 'array', items: { type: 'object' } },
-        constants: { type: 'object' },
-        sections: { type: 'array', items: { type: 'object' } },
-        title: { type: 'string' }
+        id: { type: 'string', description: 'Reuse an id to replace that page everywhere it appears.' },
+        title: { type: 'string', description: 'Shown above the page; do not repeat it inside.' },
+        html,
+        height: { type: 'integer', description: `Initial height in px (${FIGURE_HEIGHT.min}-${FIGURE_HEIGHT.max}); the frame then follows the page.` }
       }
     },
     changes: [],
-    unavailable: (context) => {
-      if (services.settings?.figuresEnabled() === false) return 'ui_save is turned off in Patterm settings. Answer in text instead.';
-      // Only Integrated transcripts draw figures. OpenCode's shared helpers
-      // carry no identity and serve only Integrated sessions.
-      const session = context.identity ? services.database.connection.prepare('select interface_mode from sessions where mcp_identity = ? and exited_at is null').get(context.identity) as { interface_mode: string | null } | undefined : undefined;
-      return session && session.interface_mode !== 'integrated' ? 'ui_save works only in Integrated mode. Answer in text instead.' : null;
-    },
-    usageNotes: [
-      'Send { claim, figure, source?, id? }; it returns ref [patterm_figure:id]. Put it on its own line in your reply and the figure appears there; unplaced, it never shows. figure is flat: { type: "chart", mark: "bar", ... }. Several: { sections: [...] }.',
-      'chart: { mark: bar|line|area|point|interval|cell, fields: ["day","n"], data: [["Mon",3]], x, y }. A text field gives categories (text on y: bars run sideways). Options: color + colors {value: tone}, stack, x2 (interval/bin end), scale {x:"log"}, unit {x}, axis {x:{label,ticks,min,max}}, text, refs [{x|y,label}], bands [{x:[a,b]}], events [{x,label}], regions.',
-      'table: { columns: [{key,label,kind: text|number|status|verdict|mono}], rows: [[...]] }; status yes|partial|no|unknown, verdict better|worse|same.',
-      'Row options: end an array row with { state, tone, note }. state measured|projected|unknown, tone neutral|accent|good|warn|bad|muted; stats items take them too. highlight {field: value} picks one.',
-      'diagram: { layout: flow|sequence|nest, nodes: [{id,label,sub?,kind?: store|external,parent?}], edges: [{from,to,label?,text?}] }. A flow cannot loop; use sequence. stepThrough adds Back/Next along the edges.',
-      'stats: { items: [{label,value,unit?,format?,delta?:{text,tone},of?,detail?:[lines]}] }. steps: { items: [{title,body?,status: done|now|next,date?}] }. image: { path, caption } in your cwd.',
-      'choice: { question?, options: [{value,label,detail?,pros?,cons?,pick?,key?}] }. ask:true + id sends the pick back as "Answer to <id>: <label> (<value>)"; end your turn to wait. Add items [{id,body}] for a queue; key is one letter.',
-      'Sliders: inputs [{id,label,min,max,value}] and constants {} go in a section, or at the top level to share. Numbers may be "=formula" (arithmetic, min, max); claim may embed {formula|format}. format: compact, percent (0-100), duration (minutes).'
-    ]
+    unavailable: figureUnavailable(HTML_RENDER_TOOL),
+    usageNotes: [FIGURE_LAYOUT_GUIDE, FIGURE_THEME_GUIDE, FIGURE_BRIDGE_GUIDE, 'Do not describe or restate what the page shows.']
   }, (args, context) => {
-    // Screenshots are read on the caller's own host, never across hosts.
+    // Images are read on the caller's own host, never across hosts.
     const current = context.remote ? null : caller(context);
-    return saveDrawnUi.execute(args, { cwd: current?.cwd ?? null, project_path: current?.project_path ?? null });
+    return renderFigure.execute(args, { cwd: current?.cwd ?? null, project_path: current?.project_path ?? null });
   });
+  // Only the desktop app can draw a page off screen, so the server never lists it.
+  if (services.pagePreviewer) {
+    const previewFigure = new PreviewHtmlFigureAction(services.pagePreviewer, services.transcriptImages);
+    registry.register({
+      name: HTML_PREVIEW_TOOL,
+      namespace: 'cli.ui',
+      description: 'Screenshot an HTML page as html_render would show it, with its height and console output, before you render it. The user never sees a preview.',
+      inputSchema: {
+        type: 'object',
+        required: ['html'],
+        properties: {
+          html,
+          width: { type: 'integer', description: `Viewport width in px (${PREVIEW_WIDTH.min}-${PREVIEW_WIDTH.max}, default ${PREVIEW_WIDTH.initial}, the reply column).` }
+        }
+      },
+      changes: [],
+      unavailable: figureUnavailable(HTML_PREVIEW_TOOL),
+      usageNotes: ['Check a new or changed page once before html_render: fix console errors, overflow, and clipped text. Try width 360 for phones.']
+    }, (args, context) => {
+      const current = context.remote ? null : caller(context);
+      return previewFigure.execute(args, { cwd: current?.cwd ?? null, project_path: current?.project_path ?? null });
+    });
+  }
   registry.register({
     name: 'request_close',
     namespace: 'cli.coordination',

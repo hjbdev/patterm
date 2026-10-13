@@ -147,7 +147,8 @@ async function desktop({ nativeResponse = 1 } = {}) {
     '../../routes/remote': { servePeerRoutes: () => {} },
     './launchIdentity': { resolveLaunchIdentity: () => ({ appName: 'quit-test', appDataPath: '/tmp/patterm-desktop-quit-test', mode: 'production' }) },
     './sidecar': { isInstalledLaunch: () => true, resolveMcpShimPath: () => '', resolveSidecarPath: () => '' },
-    '../../app/Commands/CommandPalette': { quitConfirmation: () => 'Stop running processes.' }
+    '../../app/Commands/CommandPalette': { quitConfirmation: () => 'Stop running processes.' },
+    './figureFrame': { ElectronPagePreviewer: class {}, guardFigureFrames: () => {}, registerFigureFrameScheme: () => {}, serveFigureFrames: () => {} }
   };
   vm.runInNewContext(source, {
     require: (id) => Object.hasOwn(imports, id) ? imports[id] : require(id),

@@ -377,7 +377,7 @@ async function main(): Promise<void> {
     assert.match(projectContext, /never invent labels from IDs/, 'project-level claude keeps exact process names');
     assert.match(projectContext, /call request_close with a short summary/, 'project-level claude learns when to ask to be closed');
     assert.ok(projectContext.length < 2000, 'project-level context stays compact');
-    assert.doesNotMatch(projectContext, /ui_save/, 'TUI agents are not offered figures');
+    assert.doesNotMatch(projectContext, /html_render/, 'TUI agents are not offered figures');
     const claudeConfigPath = (spawn.args as string[])[3]!;
     assert.match(path.basename(claudeConfigPath), CLAUDE_MCP_CONFIG, 'claude mcp config is named for its launch');
     assert.equal(path.dirname(claudeConfigPath), runtimeDir, 'claude mcp config written to runtime dir');
@@ -530,7 +530,7 @@ async function main(): Promise<void> {
     assert.deepEqual(helperHarnesses, ['opencode'], 'helpers started while preparing are recognised before the session is registered');
     assert.equal(integrated.pty_process_id, null);
     assert.equal(integrated.interface_mode, 'integrated');
-    assert.match(openInstruction, /call ui_save \(load it through tool search/, 'Integrated agents learn to draw figures with ui_save');
+    assert.match(openInstruction, /call html_render \(load them through tool search/, 'Integrated agents learn to show pages with html_render');
     assert.equal(terminalRequests.filter((request) => request.method === 'terminal.process.spawn').length, spawnCountBeforeIntegrated, 'Integrated launch does not create a PTY');
     const integratedRow = database.connection.prepare(`select interface_mode from sessions where id = ?`).get(integrated.session_id) as { interface_mode: string };
     assert.equal(integratedRow.interface_mode, 'integrated');

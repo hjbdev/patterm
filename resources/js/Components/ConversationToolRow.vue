@@ -94,8 +94,8 @@
         <p v-for="file in tool.files" :key="file.name" class="truncate font-mono text-[11px] text-muted-foreground">{{ file.name }}</p>
       </div>
 
-      <!-- A saved figure shows here, in case the reply never placed it. -->
-      <DrawnUiCard v-if="drawn" :message="message" />
+      <!-- A rendered page shows here, in case the reply never placed it. -->
+      <HtmlFigureCard v-if="drawn" :message="message" />
       <div v-else-if="tool.output" class="min-w-0">
         <div class="flex items-center justify-between gap-2">
           <span class="text-[10px] uppercase tracking-wide text-muted-foreground">Output</span>
@@ -126,7 +126,7 @@ import ProcessMention from './ProcessMention.vue';
 
 // Pierre and Shiki load with the first patch rather than with the app.
 const DiffPatchView = defineAsyncComponent(() => import('./DiffPatchView.vue'));
-const DrawnUiCard = defineAsyncComponent(() => import('./DrawnUi/DrawnUiCard.vue'));
+const HtmlFigureCard = defineAsyncComponent(() => import('./HtmlFigureCard.vue'));
 
 const props = withDefaults(defineProps<{ message: TranscriptMessage; processId: string; active?: boolean }>(), { active: false });
 

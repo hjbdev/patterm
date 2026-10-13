@@ -8,6 +8,7 @@ import { servePeerRoutes } from '../../routes/remote';
 import { resolveLaunchIdentity } from './launchIdentity';
 import { isInstalledLaunch, resolveMcpShimPath, resolveSidecarPath } from './sidecar';
 import { quitConfirmation } from '../../app/Commands/CommandPalette';
+import { ElectronPagePreviewer, guardFigureFrames, registerFigureFrameScheme, serveFigureFrames } from './figureFrame';
 
 interface LaunchDiagnostics {
   platform: NodeJS.Platform;
@@ -37,6 +38,7 @@ app.setPath('userData', launchIdentity.appDataPath);
 // must give its Start menu shortcut the same ID.
 if (process.platform === 'win32') app.setAppUserModelId(launchIdentity.mode === 'production' ? 'Patterm.Desktop' : 'Patterm.Desktop.Dev');
 Menu.setApplicationMenu(null);
+registerFigureFrameScheme();
 
 let mainWindow: BrowserWindow | null = null;
 let patterm: PattermApplication | null = null;
@@ -66,6 +68,7 @@ if (!singleInstanceLock) {
 }
 
 async function createWindow(): Promise<void> {
+  serveFigureFrames();
   patterm = await createApplication({
     appDataPath: app.getPath('userData'),
     sidecarPath: resolveSidecarPath(app.isPackaged),
@@ -74,7 +77,10 @@ async function createWindow(): Promise<void> {
     // Linux desktop keeps its attached sidecar; its server uses systemd hosts.
     ...(process.platform === 'win32' ? { terminalHosts: { appDataPath: app.getPath('userData') } } : {}),
     launchDiagnostics,
-    launchIdentity
+    launchIdentity,
+    pagePreviewer: new ElectronPagePreviewer(!app.isPackaged && !isInstalledLaunch()
+      ? path.join(__dirname, '../../../../resources/js/assets/fonts/inter')
+      : path.join(__dirname, '../../../renderer/figure-fonts'))
   });
   registerIpcRoutes(ipcMain, patterm, path.join(app.getPath('userData'), 'uploads'));
   servePeerRoutes(patterm);
@@ -114,6 +120,7 @@ async function createWindow(): Promise<void> {
     }
     return { action: 'deny' };
   });
+  guardFigureFrames(mainWindow.webContents);
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (url === mainWindow?.webContents.getURL()) {
       return;

@@ -1,7 +1,7 @@
 export class AgentContextService {
-  // figures: Integrated sessions where ui_save is on. Claude Code defers MCP
+  // figures: Integrated sessions where html_render is on. Claude Code defers MCP
   // tools to a bare name, so without this line agents reach for the host's
-  // own charting (artifacts, HTML pages) and never find ui_save.
+  // own charting (artifacts, image files) and never find html_render.
   build(projectId: string, { figures = false }: { figures?: boolean } = {}): string {
     return `Patterm hosts native agent CLIs through PTYs.
 
@@ -48,5 +48,5 @@ Project: ${projectId}
   }
 }
 
-const FIGURE_INSTRUCTION = 'Patterm draws your replies. When the user asks for a chart, graph, table, or diagram, or one would explain better than prose, call ui_save (load it through tool search if it is deferred) and put the [patterm_figure:id] it returns on its own line. Use it instead of artifacts, HTML pages, image files, or ASCII charts.';
+const FIGURE_INSTRUCTION = 'Patterm shows HTML pages in your replies. When the user asks for a chart, graph, table, diagram, or mockup, or one would explain better than prose, write a self-contained page, check it with html_preview when that tool is available, then call html_render (load them through tool search if they are deferred) and put the [patterm_figure:id] it returns on its own line. Use it instead of artifacts, image files, or ASCII charts.';
 const PROCESS_NAME_INSTRUCTION = 'Use exact process names; never invent labels from IDs, like "Agent 789".';

@@ -215,7 +215,7 @@ export class SettingsService {
     return value;
   }
 
-  // Whether agents may save figures for their Integrated replies with ui_save.
+  // Whether agents may show HTML pages in their Integrated replies with html_render.
   figuresEnabled(): boolean {
     const row = this.database.connection.prepare('select value from settings where key = ?').get(AGENT_FIGURES_KEY) as { value: string } | undefined;
     return row?.value !== 'off';

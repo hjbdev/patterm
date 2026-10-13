@@ -22,6 +22,8 @@ import { WorkbenchSeeder } from './fixtures/WorkbenchSeeder';
 import { ipcPath } from '../app/Platform/Ipc';
 import { removeTree } from './fixtures/TempTree';
 
+const FIGURE_TOOLS = ['html_render'];
+
 async function main(): Promise<void> {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-workbench-'));
   try {
@@ -198,8 +200,9 @@ async function main(): Promise<void> {
     assert.ok((registry.helpPublic('reference_attach').inputSchema.properties as Record<string, unknown>).target_id, 'project context tools advertise their input');
     assert.deepEqual(registry.helpPublic('timer_set').inputSchema.required, ['seconds'], 'elapsed timers do not require a custom message');
     assert.throws(() => registry.helpPublic('integrated_send'), /unknown MCP tool/);
-    assert.equal(registry.helpPublic('ui_save').name, 'ui_save', 'help takes the name every harness shows');
-    assert.throws(() => registry.helpPublic('ui.save'), /unknown MCP tool/);
+    assert.equal(registry.helpPublic('html_render').name, 'html_render', 'help takes the name every harness shows');
+    assert.throws(() => registry.helpPublic('html.render'), /unknown MCP tool/);
+    assert.throws(() => registry.helpPublic('ui_save'), /unknown MCP tool/, 'ui_save is retired');
     assert.throws(() => registry.register({ name: 'todo.archive', namespace: 'todo', description: 'x', inputSchema: { type: 'object' } }, () => null), /must be snake_case/);
 
     // Messages sent from the composer, even mid-turn, withdraw a close request.
@@ -693,12 +696,13 @@ async function main(): Promise<void> {
     const catalog = (await callOverSocket(socketPath, { id: 0, version: 2, op: 'catalog' })) as { result: Array<{ name: string }> };
     assert.deepEqual(catalog.result.map(({ name }) => name), publicNames, 'the shim receives the canonical public catalogue');
     const tuiCatalog = (await callOverSocket(socketPath, { id: 1, version: 2, op: 'catalog', identity: 'identity_test' })) as { result: Array<{ name: string }> };
-    assert.deepEqual(tuiCatalog.result.map(({ name }) => name), publicNames.filter((name) => name !== 'ui_save'), 'TUI agents are not offered figures');
-    const tuiFigure = (await callOverSocket(socketPath, { id: 2, version: 2, tool: 'ui_save', args: {}, identity: 'identity_test' })) as { error: string };
+    assert.deepEqual(tuiCatalog.result.map(({ name }) => name), publicNames.filter((name) => !FIGURE_TOOLS.includes(name)), 'TUI agents are not offered figures');
+    const tuiFigure = (await callOverSocket(socketPath, { id: 2, version: 2, tool: 'html_render', args: {}, identity: 'identity_test' })) as { error: string };
     assert.match(tuiFigure.error, /only in Integrated mode/, 'TUI agents cannot save figures');
     database.connection.prepare(`update sessions set interface_mode = 'integrated' where mcp_identity = 'identity_test'`).run();
     const integratedCatalog = (await callOverSocket(socketPath, { id: 3, version: 2, op: 'catalog', identity: 'identity_test' })) as { result: Array<{ name: string }> };
-    assert.ok(integratedCatalog.result.some(({ name }) => name === 'ui_save'), 'Integrated agents are offered figures');
+    assert.ok(integratedCatalog.result.some(({ name }) => name === 'html_render'), 'Integrated agents are offered figures');
+    assert.ok(!publicNames.includes('html_preview'), 'only the desktop app, which can draw pages off screen, offers previews');
     database.connection.prepare(`update sessions set interface_mode = 'tui' where mcp_identity = 'identity_test'`).run();
     const directContext = (await callOverSocket(socketPath, { id: 4, version: 2, tool: 'get_project_status', args: {}, identity: 'identity_test' })) as {
       result: { current_process_id: string };
@@ -716,7 +720,7 @@ async function main(): Promise<void> {
     try {
       await client.connect(new StdioClientTransport({ command: process.execPath, args: [shimPath], env: { PATTERM_MCP_SOCKET: socketPath, PATTERM_MCP_IDENTITY: 'identity_test' }, stderr: 'pipe' }));
       const listed = await client.listTools();
-      assert.deepEqual(listed.tools.map(({ name }) => name), publicNames.filter((name) => name !== 'ui_save'), 'the catalogue a TUI agent lists is valid over modern MCP tools/list');
+      assert.deepEqual(listed.tools.map(({ name }) => name), publicNames.filter((name) => !FIGURE_TOOLS.includes(name)), 'the catalogue a TUI agent lists is valid over modern MCP tools/list');
       assert.match(JSON.stringify(await client.callTool({ name: 'list_processes', arguments: {} })), /proc_identity/, 'new clients call the backend directly with caller identity');
       assert.equal((await client.callTool({ name: 'spawn_agent', arguments: {} })).isError, true, 'agent launch validates its cross-field requirement before forwarding');
       assert.match(JSON.stringify(await client.callTool({ name: 'help', arguments: { tool: 'todo_create' } })), /title/, 'help reads the public catalogue');

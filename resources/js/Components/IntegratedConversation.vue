@@ -280,7 +280,7 @@ import {
   formQuestionState,
   buildQuestionAnswers,
   cachedConversation,
-  drawnUiAnswers,
+  figureAnswers,
   forgetConversation,
   formFieldVisible,
   HELD_QUEUE_EVENT_ID,
@@ -302,7 +302,7 @@ import {
   type TranscriptMessage
 } from '../lib/integratedConversation';
 import { completeSend, discardOutgoingMessage, beginSubmission, beginOutgoingMessage, outgoingFor, outgoingTranscript, reconcileOutgoingMessages, failOutgoingMessage, markSubmissionUncertain, clearSubmission, isAmbiguousTransportError, submissionFor, payloadHash, type ComposerSendPayload } from '../lib/integratedComposer';
-import { drawnUiAnswerKey } from '../lib/drawnUi';
+import { figureAnswerKey } from '../lib/htmlFigure';
 import { publishIntegratedControls } from '../lib/integratedControlsRegistry';
 import { onWorkspaceRequest, type WorkspaceRequest } from '../lib/workspaceRequests';
 
@@ -394,12 +394,12 @@ let startingNew = false;
 let restarting = false;
 const displayError = computed(() => error.value || refreshError.value || controlsError.value);
 const canReply = computed(() => controlling.value && !ended.value);
-// A drawn choice answers as an ordinary message, through the same send path
+// A page's answer is an ordinary message, through the same send path
 // and control check as the composer, without touching the draft.
-provide(drawnUiAnswerKey, {
+provide(figureAnswerKey, {
   canSend: computed(() => canReply.value && !submissionFor(props.processId)),
   send: (text: string) => sendRequest({ text, references: [], attachments: [], messageId: randomId(), hash: payloadHash(text, [], []) }),
-  queued: computed(() => drawnUiAnswers(queue.value.map((item) => ({ role: 'user', text: item.text }))))
+  queued: computed(() => figureAnswers(queue.value.map((item) => ({ role: 'user', text: item.text }))))
 });
 
 let timer: ReturnType<typeof setTimeout> | undefined;

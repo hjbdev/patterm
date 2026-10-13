@@ -7,7 +7,7 @@
 
 import { agentLabel, buildAgentTabFamilies } from './agentTabs';
 import { HARNESS_LABELS, harnessLabel, launchableHarnesses } from './harnessLabels';
-import { DRAWN_ID } from '../../../app/Services/TranscriptProjection';
+import { FIGURE_ID } from '../../../app/Services/TranscriptProjection';
 import type { HarnessInstallationRecord, ProcessRecord, ProjectWorkbench, SessionRecord } from '../types';
 
 export interface MentionAgent {
@@ -31,13 +31,13 @@ export interface MentionPart {
   text: string;
   processId?: string | undefined;
   launch?: { kind: 'preset' | 'harness'; name: string; harness: string | null } | undefined;
-  // A drawn figure the reply places here.
+  // A rendered page the reply places here.
   figure?: string | undefined;
 }
 
 // A process ID may name an agent on a paired host, such as `beta:process_7`;
 // host names are lowercase letters, digits, and hyphens.
-const MENTION = new RegExp(String.raw`(?<![\w-])(?:[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?:)?process_\d+\b|\[patterm_(preset|harness):([^\]\n]+)\]|\[patterm_figure:(${DRAWN_ID})\]`, 'g');
+const MENTION = new RegExp(String.raw`(?<![\w-])(?:[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?:)?process_\d+\b|\[patterm_(preset|harness):([^\]\n]+)\]|\[patterm_figure:(${FIGURE_ID})\]`, 'g');
 
 export function launchToken(kind: 'preset' | 'harness', value: string): string {
   return `[patterm_${kind}:${value}]`;

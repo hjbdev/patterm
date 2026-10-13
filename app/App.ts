@@ -61,6 +61,7 @@ import { IdleCompactionService } from './Services/IdleCompactionService';
 import type { IdleCompactionSettings } from './Services/SettingsService';
 import { IntegratedAgentService } from './Services/IntegratedAgentService';
 import type { IntegratedConversationEvent } from './Services/IntegratedConversation';
+import type { PagePreviewer } from './Actions/PreviewHtmlFigureAction';
 import { TranscriptImageStore } from './Services/TranscriptImageStore';
 import { WorktreeFileService } from './Services/WorktreeFileService';
 import { HistoryDatabaseService } from './Services/HistoryDatabaseService';
@@ -121,6 +122,8 @@ export interface AppOptions {
   // The runtime lock, when the caller already holds it; released on dispose.
   runtimeLock?: () => void;
   onQuitRequested?: () => void;
+  // Draws agent pages off screen for html_preview; the desktop app passes one.
+  pagePreviewer?: PagePreviewer;
 }
 
 export interface BootstrapPayload {
@@ -593,6 +596,7 @@ async function createApplicationResources(
     harnessLauncher,
     integrated,
     transcriptImages,
+    ...(options.pagePreviewer ? { pagePreviewer: options.pagePreviewer } : {}),
     settings,
     harnessPresets,
     modelCatalog,

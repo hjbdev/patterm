@@ -1,16 +1,35 @@
-import { readFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath, URL } from 'node:url';
 import vue from '@vitejs/plugin-vue';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
+import { FIGURE_FONT_SUBSETS, FIGURE_FONT_WEIGHTS, figureFontFile } from './app/Services/HtmlFigure';
 
 const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string };
+
+// The desktop app's page previews read Inter from the build, under stable names.
+function figureFonts(): Plugin {
+  return {
+    name: 'patterm-figure-fonts',
+    apply: 'build',
+    writeBundle(options) {
+      const target = `${options.dir ?? 'dist/renderer'}/figure-fonts`;
+      mkdirSync(target, { recursive: true });
+      for (const subset of Object.keys(FIGURE_FONT_SUBSETS) as Array<keyof typeof FIGURE_FONT_SUBSETS>) {
+        for (const weight of FIGURE_FONT_WEIGHTS) {
+          const file = figureFontFile(subset, weight);
+          copyFileSync(fileURLToPath(new URL(`./resources/js/assets/fonts/inter/${file}`, import.meta.url)), `${target}/${file}`);
+        }
+      }
+    }
+  };
+}
 
 export default defineConfig({
   base: './',
   define: {
     __PATTERM_VERSION__: JSON.stringify(version)
   },
-  plugins: [vue()],
+  plugins: [vue(), figureFonts()],
   resolve: {
     alias: [
       { find: '@', replacement: fileURLToPath(new URL('./resources/js', import.meta.url)) },

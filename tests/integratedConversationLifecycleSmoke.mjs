@@ -114,7 +114,7 @@ function createHarness({ processId = 'process_a', exited = false, keepCache = fa
     randomId: () => crypto.randomUUID(),
     payloadHash: composer.payloadHash,
     provide: (key, value) => provided.set(key, value),
-    drawnUiAnswerKey: Symbol('drawnUiAnswer'),
+    figureAnswerKey: Symbol('figureAnswer'),
     publishIntegratedControls: (id, controls) => { if (controls) published.set(id, controls); else published.delete(id); },
     onWorkspaceRequest: (handler) => {
       workspaceHandlers.push(handler);
@@ -148,7 +148,7 @@ return {
   return {
     pane, props, subscriptions, requests, mutations, timers, lifecycle, scope, windowMock,
     conversationSubscriptions, published,
-    answerChannel: () => provided.get(bindings.drawnUiAnswerKey),
+    answerChannel: () => provided.get(bindings.figureAnswerKey),
     workspaceRequest: request => workspaceHandlers.some(handler => handler(request)),
     emitConversationEvent: event => conversationHandler?.(event)
   };

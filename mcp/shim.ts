@@ -88,6 +88,10 @@ async function fetchCatalogue(): Promise<McpToolDescriptor[]> {
   return tools;
 }
 
+function isImage(value: unknown): value is { data: string; mimeType: string } {
+  return Boolean(value && typeof value === 'object' && typeof (value as { data?: unknown }).data === 'string' && typeof (value as { mimeType?: unknown }).mimeType === 'string');
+}
+
 function describe(tool: McpToolDescriptor): string {
   return [tool.description, ...(tool.namespace.startsWith('cli.') ? tool.usageNotes ?? [] : [])].join(' ');
 }
@@ -130,7 +134,11 @@ async function main(): Promise<void> {
 
   const handler = (name: string) => async (args: Record<string, unknown>, context: { mcpReq: { _meta?: Record<string, unknown> } }) => {
     const result = await registryRequest({ tool: name, args }, context.mcpReq._meta);
-    return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    // A result may carry screenshots for the agent to look at.
+    const { mcp_images: images, ...rest } = result && typeof result === 'object' && !Array.isArray(result) ? result as { mcp_images?: unknown } : { mcp_images: undefined };
+    const text = { type: 'text' as const, text: JSON.stringify(Array.isArray(images) ? rest : result, null, 2) };
+    if (!Array.isArray(images)) return { content: [text] };
+    return { content: [text, ...images.filter(isImage).map((image) => ({ type: 'image' as const, data: image.data, mimeType: image.mimeType }))] };
   };
   const pendingNotice = (): string | null => {
     if (!listed || noticed === signatures || Date.now() - changedAt < RELIST_GRACE_MS || sameSignatures(listed, signatures)) return null;
