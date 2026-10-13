@@ -146,9 +146,10 @@ async function main() {
   // The current item's actions come first and survive any number of rows.
   const legacyCommands = Array.from({ length: 500 }, (_, i) => command(`agent-${i}`, `Agent ${i}`));
   const opening = rankedCommands([...legacyCommands, ...listed], '', [], { page: 'agents' });
-  assert.deepEqual(opening.slice(0, 4).map(row => row.command.id), ['integrated:interrupt:root_process', 'process:rename:root_process', 'process:close:root_process', 'page:current-actions']);
-  assert.ok(opening.slice(0, 4).every(row => row.section === 'current'));
-  assert.equal(opening[4]?.section, 'agent');
+  const openingIds = ['integrated:interrupt:root_process', 'integrated:new:root_process', 'integrated:restart:root_process', 'renderer:session-context:root', 'process:rename:root_process', 'process:close:root_process', 'page:current-actions'];
+  assert.deepEqual(opening.slice(0, openingIds.length).map(row => row.command.id), openingIds, 'Everyday actions open without More actions');
+  assert.ok(opening.slice(0, openingIds.length).every(row => row.section === 'current'));
+  assert.equal(opening[openingIds.length]?.section, 'agent');
   const more = opening.find(row => row.command.id === 'page:current-actions')?.command;
   assert.equal(more?.kind, 'page');
   assert.equal(more?.actions?.length, current.length, 'More actions lists every action for the current agent');
@@ -171,9 +172,16 @@ async function main() {
   assert.equal(model?.inline, true);
   assert.deepEqual(model?.actions?.filter(action => action.current).map(action => action.label), ['Opus'], 'Only the current model is checked');
   assert.deepEqual(model?.actions?.[1]?.result, { rendererAction: 'integrated', integrated: 'configure', processId: 'root_process', selector: 'model', value: 'sonnet' });
-  assert.ok(withModel.some(item => item.label === 'Mode' && !item.inline));
+  assert.ok(withModel.some(item => item.label === 'Mode' && item.inline), 'Every setting opens without More actions');
   assert.equal(rankedCommands(withModel, 'change model')[0]?.command.id, model?.id, 'Settings are still found by the verb');
   assert.equal(rankedCommands(withModel, 'opus')[0]?.command.id, model?.id, 'and by their value');
+  const thinking = withIntegratedSelectors(current, 'root_process', {
+    selectors: [{ id: 'effort', label: 'Thinking', value: 'low', options: [{ value: 'low', label: 'Low' }, { value: 'high', label: 'High' }] }],
+    commands: []
+  });
+  for (const word of ['effort', 'reasoning', 'thinking', 'change reasoning']) {
+    assert.equal(rankedCommands(thinking, word)[0]?.command.id, 'integrated:selector:root_process:effort', `"${word}" finds the effort setting`);
+  }
 
   // Pages set settings and destructive actions apart.
   assert.deepEqual(withModel.map(actionCluster).filter((cluster, index, all) => cluster !== all[index - 1]), ['main', 'settings', 'main', 'danger']);

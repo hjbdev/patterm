@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The command palette lists the open agent's everyday actions (New
+  conversation, Restart agent, Open session context, and every setting such
+  as Model, Effort, and Mode) at the top level. More actions keeps only the
+  rarer ones, such as Set timer and Copy process ID.
+- Typing effort, reasoning, or thinking in the command palette finds the
+  effort setting, whichever name the agent's harness uses.
+
 ## [0.1.1] - 2026-10-13
 
 ### Added

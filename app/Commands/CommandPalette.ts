@@ -59,7 +59,8 @@ export interface CommandDescriptor {
   actions?: CommandDescriptor[];
   // Pages where the command is most useful. It ranks first there.
   pages?: string[];
-  // Shown in the current item's section. The rest sit under More actions.
+  // Shown in the current item's section. The rest, such as Copy process ID,
+  // sit under More actions.
   inline?: boolean;
   // Run by the renderer without a round trip.
   result?: CommandRunResult;
@@ -335,18 +336,18 @@ function agentActions(
     commands.push({ id: `renderer:review:${session.id}:${worktree.id}`, label: 'Review changes', hint: worktreeName(worktree.branch, worktree.worktree_path), group, kind: 'renderer', inline: index === 0, result: { rendererAction: 'reviewChanges', sessionId: session.id, worktree } });
   }
   if (extra.current && integrated) {
-    commands.push({ id: `integrated:new:${processId}`, label: 'New conversation', hint: name, group, kind: 'renderer', result: { rendererAction: 'integrated', integrated: 'new', processId } });
+    commands.push({ id: `integrated:new:${processId}`, label: 'New conversation', hint: name, group, kind: 'renderer', inline: true, result: { rendererAction: 'integrated', integrated: 'new', processId } });
     // Top-level agents only: a subagent's parent watches it by process ID.
     if (session.sessionRole === 'orchestrator' && !session.host) {
       commands.push({
-        id: `integrated:restart:${processId}`, label: 'Restart agent', hint: 'Resume this conversation in a new process', group, kind: 'renderer',
+        id: `integrated:restart:${processId}`, label: 'Restart agent', hint: 'Resume this conversation in a new process', group, kind: 'renderer', inline: true,
         result: { rendererAction: 'integrated', integrated: 'restart', processId },
         ...(RESPONDING.has(session.activity) ? { confirmation: 'This agent is responding, and restarting stops it.', confirmVerb: 'restart it' } : {})
       });
     }
   }
   if (extra.current) {
-    commands.push({ id: `renderer:session-context:${session.id}`, label: 'Open session context', hint: 'Worktrees, todos, scratchpads, and links', group, kind: 'renderer', result: { rendererAction: 'sessionContext', sessionId: session.id } });
+    commands.push({ id: `renderer:session-context:${session.id}`, label: 'Open session context', hint: 'Worktrees, todos, scratchpads, and links', group, kind: 'renderer', inline: true, result: { rendererAction: 'sessionContext', sessionId: session.id } });
   }
   // The open conversation's settings, such as the model, join here.
   commands.push({ id: `process:rename:${processId}`, label: 'Rename agent…', hint: name, group, kind: 'backend', inline: true, input: { type: 'text', title: 'Rename agent', placeholder: 'Agent name', value: name } });
