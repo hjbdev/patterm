@@ -1,7 +1,6 @@
 <template>
-  <div class="mt-2 text-[11px] text-muted-foreground">
-    <p v-if="coverage && coverage !== 'complete'">{{ coverageLabel }}</p>
-    <Button variant="ghost" size="sm" class="h-6 p-0 text-[11px] underline underline-offset-2" :disabled="busy" @click="inspect">Review summary coverage</Button>
+  <div v-if="coverageLabel" class="mt-2 text-[11px] text-muted-foreground">
+    <button type="button" class="text-left transition-colors hover:text-foreground disabled:opacity-50" title="Review summary coverage" :disabled="busy" @click="inspect">{{ coverageLabel }}</button>
     <p v-if="error" role="alert" class="text-destructive">{{ error }}</p>
     <Dialog v-model:open="open">
       <DialogContent class="sm:max-w-md">
