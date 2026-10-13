@@ -94,6 +94,7 @@ export class AgentHistoryImportQueueService {
   private staleTimer: NodeJS.Timeout | null = null;
   private readonly staleMs: number;
   private readonly dirtyWatcherKeys = new Map<string, HistoryImportWorkerMessage>();
+  private readonly waiters = new Map<string, (job: QueuedJob) => void>();
 
   constructor(
     private readonly appDataPath: string,
@@ -122,8 +123,14 @@ export class AgentHistoryImportQueueService {
     return this.enqueue({ action: 'delete_conversation', input: { trigger: 'manual' }, conversation_id: conversationId });
   }
 
-  deleteProjectHistory(projectId: string): HistoryImportQueueEnqueueResult {
-    return this.enqueue({ action: 'delete_project_history', input: { trigger: 'manual' }, project_id: projectId });
+  // Resolves once the worker has deleted the project's conversations, and
+  // rejects if the job fails or the queue shuts down first.
+  deleteProjectHistory(projectId: string): Promise<{ deletedConversations: number }> {
+    const { job_id } = this.enqueue({ action: 'delete_project_history', input: { trigger: 'manual' }, project_id: projectId });
+    return new Promise((resolve, reject) => this.waiters.set(job_id, (job) => {
+      if (job.status === 'succeeded') resolve({ deletedConversations: Number((job.result as { deletedConversations?: unknown } | null)?.deletedConversations ?? 0) });
+      else reject(new Error(`Could not delete the project's conversation history: ${job.error ?? job.status}`));
+    }));
   }
 
   status(): HistoryImportQueueSnapshot {
@@ -358,6 +365,8 @@ export class AgentHistoryImportQueueService {
     this.recent.unshift(job);
     this.recent.splice(RECENT_JOB_LIMIT);
     this.log(status === 'succeeded' ? 'job.succeeded' : status === 'cancelled' ? 'job.cancelled' : status === 'stale' ? 'job.stale' : 'job.failed', job, { error, result });
+    this.waiters.get(job.id)?.(job);
+    this.waiters.delete(job.id);
   }
 
   private applyResultEffects(result: unknown): void {
