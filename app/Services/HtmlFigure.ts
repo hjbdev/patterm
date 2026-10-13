@@ -5,6 +5,7 @@
 // desktop preview share it.
 
 import { z } from 'zod';
+import { resolveTerminalFontFamily, resolveUiFontFamily, type FontSettings } from './FontFamilies';
 import { FIGURE_ID, type TranscriptTool } from './TranscriptProjection';
 
 export const HTML_RENDER_TOOL = 'html_render';
@@ -70,7 +71,7 @@ export const FIGURE_THEME: Readonly<Record<string, string>> = {
 
 export const FIGURE_LAYOUT_GUIDE = 'The page sits inside the reply, on the transcript background: no page background, no outer padding, no card or title banner (the title is shown for you), and fluid width (the column is 320 to 900 px). Give charts a fixed pixel height; never use 100vh. Boxes that need their own surface use var(--muted) or a 1px var(--border) with border-radius var(--radius) and 16px padding. Keep text 13 to 14 px; use muted text, not colour, for secondary detail.';
 export const FIGURE_THEME_GUIDE = `Theme variables are set on :root: ${Object.keys(FIGURE_THEME).join(', ')}. Use --chart-1..6 for series in order, --success/--warning/--destructive only for good/warn/bad meaning, --accent for one highlight. Tables, links and code already follow the theme.`;
-export const FIGURE_BRIDGE_GUIDE = 'To ask the user, call patterm.answer(id, { label, value }) (or an array of { item, label, value }) from a click; the pick reaches you as "Answer to <id>: <label> (<value>)", so end your turn to wait. patterm.answered(id) gives the earlier answer text or null and patterm.canAnswer says whether this window may answer; patterm.onChange(fn) runs when either changes. http(s) links open in the browser.';
+export const FIGURE_BRIDGE_GUIDE = 'To ask the user, call patterm.answer(id, { label, value }) (or an array of { item, label, value }) when they pick; Patterm asks them to confirm, and the pick reaches you as "Answer to <id>: <label> (<value>)", so end your turn to wait. The promise settles when they send or cancel. patterm.answered(id) gives the earlier answer text or null and patterm.canAnswer says whether this window may answer; patterm.onChange(fn) runs when either changes. http(s) links open in the browser.';
 
 // Element defaults sit in :where() so any rule in the page wins.
 const BASE_CSS = `:root{color-scheme:dark;${Object.entries(FIGURE_THEME).map(([name, value]) => `${name}:${value}`).join(';')}}
@@ -86,30 +87,70 @@ const BASE_CSS = `:root{color-scheme:dark;${Object.entries(FIGURE_THEME).map(([n
 
 /* ---------- fonts ---------- */
 
-// The frame's opaque origin cannot load Patterm's bundled fonts, so pages
-// carry Inter's Latin faces inline. The renderer and the desktop preview read
-// the same files.
-export const FIGURE_FONT_WEIGHTS = [400, 500, 600, 700] as const;
+// Pages use the user's interface and terminal typefaces. The frame's opaque
+// origin cannot load Patterm's bundled fonts, so a bundled family's Latin
+// faces travel inline; system and custom families are installed, and load by
+// name. The renderer and the desktop preview read the same files.
 export const FIGURE_FONT_SUBSETS = {
   latin: 'U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD',
   'latin-ext': 'U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF'
 } as const;
 export type FigureFontSubset = keyof typeof FIGURE_FONT_SUBSETS;
+export const FIGURE_SANS_WEIGHTS = [400, 500, 600, 700] as const;
+export const FIGURE_MONO_WEIGHTS = [400, 700] as const;
+// Vendored under resources/js/assets/fonts/<slug>.
+export const BUNDLED_FIGURE_FONTS = ['inter', 'geist', 'fira-sans', 'ibm-plex-sans', 'jetbrains-mono', 'geist-mono', 'fira-code', 'iosevka', 'ibm-plex-mono', 'source-code-pro', 'comic-mono'] as const;
 
-export function figureFontFile(subset: FigureFontSubset, weight: number): string {
-  return `inter-${subset}-${weight}-normal.woff2`;
+export interface FigureFont { name: string; slug: string; weights: readonly number[] }
+
+// The first bundled family in a font stack, such as "JetBrains Mono" behind an
+// installed Nerd Font, so the page still has it when the first is missing.
+export function bundledFigureFont(family: string, weights: readonly number[]): FigureFont | null {
+  for (const part of family.split(',')) {
+    const name = part.trim().replace(/^["']|["']$/g, '');
+    const slug = name.toLowerCase().replace(/\s+/g, '-');
+    if ((BUNDLED_FIGURE_FONTS as readonly string[]).includes(slug)) return { name, slug, weights };
+  }
+  return null;
 }
 
-// @font-face rules for each face a source can give, as a data URL.
-export function figureFontCss(source: (subset: FigureFontSubset, weight: number) => string | null): string {
+// A face's path below the fonts directory.
+export function figureFontFile(slug: string, subset: FigureFontSubset, weight: number): string {
+  return `${slug}/${slug}-${subset}-${weight}-normal.woff2`;
+}
+
+// @font-face rules for each face the source gives as a data URL.
+export function figureFontFaces(font: FigureFont, source: (file: string) => string | null): string {
   const rules: string[] = [];
   for (const [subset, range] of Object.entries(FIGURE_FONT_SUBSETS) as Array<[FigureFontSubset, string]>) {
-    for (const weight of FIGURE_FONT_WEIGHTS) {
-      const url = source(subset, weight);
-      if (url) rules.push(`@font-face{font-family:'Inter';font-style:normal;font-display:block;font-weight:${weight};src:url(${url}) format('woff2');unicode-range:${range}}`);
+    for (const weight of font.weights) {
+      const url = source(figureFontFile(font.slug, subset, weight));
+      if (url) rules.push(`@font-face{font-family:${JSON.stringify(font.name)};font-style:normal;font-display:block;font-weight:${weight};src:url(${url}) format('woff2');unicode-range:${range}}`);
     }
   }
   return rules.join('\n');
+}
+
+// The families as theme variables, then their faces. A custom family is the
+// user's own text, so nothing in it can close the rule or the style.
+export function figureFontCss(sans: string, mono: string, faces: string): string {
+  const clean = (family: string) => family.replace(/[<>{};\\]/g, '');
+  return `:root{--font-sans:${clean(sans)};--font-mono:${clean(mono)}}${faces ? `\n${faces}` : ''}`;
+}
+
+// The faces a user's interface and terminal typefaces need inline.
+export function figureFontsFor(settings: FontSettings): { sans: string; mono: string; fonts: FigureFont[]; files: string[] } {
+  const sans = resolveUiFontFamily(settings);
+  const mono = resolveTerminalFontFamily(settings);
+  const fonts = [bundledFigureFont(sans, FIGURE_SANS_WEIGHTS), bundledFigureFont(mono, FIGURE_MONO_WEIGHTS)].filter((font): font is FigureFont => font !== null);
+  const files = fonts.flatMap((font) => (Object.keys(FIGURE_FONT_SUBSETS) as FigureFontSubset[]).flatMap((subset) => font.weights.map((weight) => figureFontFile(font.slug, subset, weight))));
+  return { sans, mono, fonts, files };
+}
+
+// The fonts style for a page, from faces already read as data URLs.
+export function figureFontStyle(settings: FontSettings, source: (file: string) => string | null): string {
+  const { sans, mono, fonts } = figureFontsFor(settings);
+  return figureFontCss(sans, mono, fonts.map((font) => figureFontFaces(font, source)).filter(Boolean).join('\n'));
 }
 
 /* ---------- frame ---------- */
@@ -128,9 +169,13 @@ addEventListener('message', function render(event) {
 parent.postMessage({ source: 'patterm-figure', type: 'ready' }, '*');
 </script></head><body></body></html>`;
 
+// Popups carry links: the browser opens one only after a click inside the
+// frame, and the opened page leaves the sandbox. Never allow-same-origin.
+export const FIGURE_FRAME_SANDBOX = 'allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox';
+
 export function figureFrameCsp(frameAncestors: string | null): string {
   return [
-    'sandbox allow-scripts allow-forms',
+    `sandbox ${FIGURE_FRAME_SANDBOX}`,
     "default-src * data: blob: 'unsafe-inline' 'unsafe-eval'",
     "form-action 'none'",
     "base-uri 'none'",
@@ -138,8 +183,8 @@ export function figureFrameCsp(frameAncestors: string | null): string {
   ].join('; ');
 }
 
-// Runs first in every page: reports its height, routes links to the host and
-// exposes the answer bridge.
+// Runs first in every page: reports its height, opens links in a new window
+// and exposes the answer bridge.
 const BOOTSTRAP = `(function () {
   var host = window.parent;
   var state = { answers: {}, canAnswer: false };
@@ -157,11 +202,13 @@ const BOOTSTRAP = `(function () {
   observer.observe(document.documentElement);
   document.addEventListener('DOMContentLoaded', function () { if (document.body) observer.observe(document.body); report(); });
   addEventListener('load', report);
+  // Web links open in a new window; anything else would navigate the frame.
   document.addEventListener('click', function (event) {
     var link = event.target && event.target.closest ? event.target.closest('a[href]') : null;
     if (!link || link.getAttribute('href').charAt(0) === '#') return;
-    event.preventDefault();
-    if (/^https?:/i.test(link.href)) post({ type: 'open-link', url: link.href });
+    if (!/^https?:/i.test(link.href)) { event.preventDefault(); return; }
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
   }, true);
   addEventListener('message', function (event) {
     if (event.source !== host || !event.data || event.data.source !== 'patterm-host') return;
@@ -192,7 +239,7 @@ const BOOTSTRAP = `(function () {
 // The agent's page with the theme and bootstrap first in <head>, so its own
 // rules and scripts follow them.
 export function prepareFigureHtml(page: string, fontCss = ''): string {
-  const head = `${fontCss ? `<style id="patterm-fonts">${fontCss}</style>` : ''}<style id="patterm-theme">${BASE_CSS}</style><script>${BOOTSTRAP}</script>`;
+  const head = `<style id="patterm-theme">${BASE_CSS}</style>${fontCss ? `<style id="patterm-fonts">${fontCss}</style>` : ''}<script>${BOOTSTRAP}</script>`;
   const opening = /<head\b[^>]*>/i.exec(page);
   if (opening) return page.slice(0, opening.index + opening[0].length) + head + page.slice(opening.index + opening[0].length);
   const html = /<html\b[^>]*>/i.exec(page);

@@ -1,13 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { BrowserWindow, protocol, session, shell, type WebContents } from 'electron';
+import { BrowserWindow, protocol, session, type WebContents } from 'electron';
 import type { PagePreview, PagePreviewer } from '../../app/Actions/PreviewHtmlFigureAction';
-import { FIGURE_FRAME_HTML, FIGURE_FRAME_SCHEME, figureFontCss, figureFontFile, figureFrameCsp } from '../../app/Services/HtmlFigure';
+import type { FontSettings } from '../../app/Services/FontFamilies';
+import { FIGURE_FRAME_HTML, FIGURE_FRAME_SCHEME, figureFontStyle, figureFrameCsp } from '../../app/Services/HtmlFigure';
 
 const FRAME_URL = `${FIGURE_FRAME_SCHEME}://figure/`;
 const PREVIEW_PARTITION = 'patterm-figure-preview';
 const MAX_CAPTURE_HEIGHT = 4000;
-const LOAD_TIMEOUT_MS = 15_000;
+const CAPTURE_TIMEOUT_MS = 20_000;
 const MAX_CONSOLE_MESSAGES = 20;
 const MAX_PREVIEWS = 2;
 
@@ -25,12 +26,12 @@ export function serveFigureFrames(): void {
   }
 }
 
-// A figure frame may not navigate itself away; its links go to the browser.
+// A figure frame may not navigate itself away. Its links open as popups,
+// which the window's open handler sends to the browser after a click.
 export function guardFigureFrames(contents: WebContents): void {
   contents.on('will-frame-navigate', (event) => {
     if (event.isMainFrame || !event.frame?.url.startsWith(`${FIGURE_FRAME_SCHEME}:`) || event.url.startsWith(`${FIGURE_FRAME_SCHEME}:`)) return;
     event.preventDefault();
-    if (event.url.startsWith('http://') || event.url.startsWith('https://')) void shell.openExternal(event.url);
   });
 }
 
@@ -39,21 +40,24 @@ export function guardFigureFrames(contents: WebContents): void {
 export class ElectronPagePreviewer implements PagePreviewer {
   private running = 0;
   private readonly waiting: Array<() => void> = [];
-  private fonts: string | null = null;
+  private readonly faces = new Map<string, string | null>();
 
-  // fontDirectory holds Inter's faces: the build's figure-fonts, or the
-  // vendored fonts in a development checkout.
-  constructor(private readonly fontDirectory: string) {}
+  // fontDirectory holds the bundled faces: the build's figure-fonts, or the
+  // vendored fonts in a development checkout. fontSettings gives the user's
+  // current typefaces.
+  constructor(private readonly fontDirectory: string, private readonly fontSettings: () => FontSettings) {}
 
   fontCss(): string {
-    this.fonts ??= figureFontCss((subset, weight) => {
-      try {
-        return `data:font/woff2;base64,${fs.readFileSync(path.join(this.fontDirectory, figureFontFile(subset, weight))).toString('base64')}`;
-      } catch {
-        return null;
+    return figureFontStyle(this.fontSettings(), (file) => {
+      if (!this.faces.has(file)) {
+        try {
+          this.faces.set(file, `data:font/woff2;base64,${fs.readFileSync(path.join(this.fontDirectory, file)).toString('base64')}`);
+        } catch {
+          this.faces.set(file, null);
+        }
       }
+      return this.faces.get(file)!;
     });
-    return this.fonts;
   }
 
   async capture(html: string, width: number): Promise<PagePreview> {
@@ -73,22 +77,28 @@ export class ElectronPagePreviewer implements PagePreviewer {
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     window.webContents.on('will-navigate', (event) => event.preventDefault());
     try {
-      await window.loadURL(FRAME_URL);
-      await window.webContents.executeJavaScript(`window.postMessage({ source: 'patterm-host', type: 'render', html: ${JSON.stringify(html)} }, '*'); undefined`);
-      await until(() => window.webContents.executeJavaScript(`document.readyState === 'complete' && Boolean(document.getElementById('patterm-theme'))`) as Promise<boolean>, LOAD_TIMEOUT_MS);
-      await window.webContents.executeJavaScript('document.fonts.ready.then(() => true)');
-      // First animation frames and chart libraries settle.
-      await delay(500);
-      const contentHeight = await window.webContents.executeJavaScript('Math.ceil(Math.max(document.documentElement.getBoundingClientRect().height, document.body ? document.body.scrollHeight : 0))') as number;
-      const capturedHeight = Math.min(MAX_CAPTURE_HEIGHT, Math.max(1, contentHeight));
-      window.setContentSize(width, capturedHeight);
-      await delay(200);
-      const image = await window.webContents.capturePage({ x: 0, y: 0, width, height: capturedHeight });
-      return { width, contentHeight, capturedHeight, png: image.toPNG(), consoleMessages };
+      // One deadline for the whole capture: a page that never finishes a
+      // script would otherwise hold its slot and window for good.
+      return await deadline(this.draw(window, html, width, consoleMessages), CAPTURE_TIMEOUT_MS);
     } finally {
       window.destroy();
       this.release();
     }
+  }
+
+  private async draw(window: BrowserWindow, html: string, width: number, consoleMessages: PagePreview['consoleMessages']): Promise<PagePreview> {
+    await window.loadURL(FRAME_URL);
+    await window.webContents.executeJavaScript(`window.postMessage({ source: 'patterm-host', type: 'render', html: ${JSON.stringify(html)} }, '*'); undefined`);
+    while (!await window.webContents.executeJavaScript(`document.readyState === 'complete' && Boolean(document.getElementById('patterm-theme'))`)) await delay(100);
+    await window.webContents.executeJavaScript('document.fonts.ready.then(() => true)');
+    // First animation frames and chart libraries settle.
+    await delay(500);
+    const contentHeight = await window.webContents.executeJavaScript('Math.ceil(Math.max(document.documentElement.getBoundingClientRect().height, document.body ? document.body.scrollHeight : 0))') as number;
+    const capturedHeight = Math.min(MAX_CAPTURE_HEIGHT, Math.max(1, contentHeight));
+    window.setContentSize(width, capturedHeight);
+    await delay(200);
+    const image = await window.webContents.capturePage({ x: 0, y: 0, width, height: capturedHeight });
+    return { width, contentHeight, capturedHeight, png: image.toPNG(), consoleMessages };
   }
 
   private async acquire(): Promise<void> {
@@ -103,12 +113,12 @@ export class ElectronPagePreviewer implements PagePreviewer {
   }
 }
 
-async function until(check: () => Promise<boolean>, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!(await check())) {
-    if (Date.now() > deadline) throw new Error(`html_preview: the page did not finish loading within ${timeoutMs / 1000} s`);
-    await delay(100);
-  }
+function deadline<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`html_preview: the page did not finish drawing within ${ms / 1000} s`)), ms);
+  });
+  return Promise.race([work, expired]).finally(() => clearTimeout(timer));
 }
 
 function delay(ms: number): Promise<void> {

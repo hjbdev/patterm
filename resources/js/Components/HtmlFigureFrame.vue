@@ -1,26 +1,39 @@
 <template>
-  <iframe
-    ref="frame"
-    :key="generation"
-    :src="src"
-    :title="title"
-    sandbox="allow-scripts allow-forms"
-    loading="lazy"
-    class="block w-full border-0 bg-transparent"
-    :style="{ height: `${height}px` }"
-    data-component="html-figure-frame"
-  />
+  <div class="min-w-0">
+    <iframe
+      ref="frame"
+      :key="generation"
+      :src="src"
+      :title="title"
+      :sandbox="FIGURE_FRAME_SANDBOX"
+      loading="lazy"
+      class="block w-full border-0 bg-transparent"
+      :style="{ height: `${height}px` }"
+      data-component="html-figure-frame"
+    />
+    <!-- Patterm's own controls: page script cannot press them, so an answer
+         reaches the agent only when the user sends it here. -->
+    <div v-if="proposal" class="mt-2 flex items-start gap-3 rounded-md bg-muted/30 px-3 py-2 text-xs" role="group" aria-label="Answer from this page" data-component="html-figure-answer">
+      <p class="min-w-0 flex-1 whitespace-pre-wrap break-words text-muted-foreground"><span class="text-foreground">Send to the agent:</span> {{ proposal.text }}</p>
+      <div class="flex shrink-0 items-center gap-1">
+        <Button size="sm" variant="ghost" class="h-6 px-2 text-xs text-muted-foreground" :disabled="sendingProposal" @click="settle(false, 'Cancelled.')">Cancel</Button>
+        <Button size="sm" class="h-6 px-2 text-xs" :disabled="sendingProposal" @click="confirm">Send</Button>
+      </div>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { FIGURE_HEIGHT } from '../../../app/Services/HtmlFigure';
+import { Button } from './ui/button';
+import { FIGURE_FRAME_SANDBOX, FIGURE_HEIGHT } from '../../../app/Services/HtmlFigure';
 import { FIGURE_ID, figureAnswerText } from '../../../app/Services/TranscriptProjection';
 import { figureAnswerKey, figureAnsweredKey, figureFrameUrl } from '../lib/htmlFigure';
 
 // One agent page in its sandboxed frame. The page reaches Patterm only by
-// messages: its height, links to open, and answers, which go through the
-// conversation's own send path.
+// messages: its height, and answers it proposes, which the user sends from
+// Patterm's own bar through the conversation's send path. Links open as
+// popups, which the browser allows only after a click inside the frame.
 // measureKey names the page for the height cache; the prepared html carries
 // inline fonts, too large to keep as keys. Without one, nothing is cached.
 const props = defineProps<{ html: string; measureKey?: string; title: string; initialHeight: number }>();
@@ -30,10 +43,13 @@ const frame = ref<HTMLIFrameElement | null>(null);
 const src = figureFrameUrl();
 const generation = ref(0);
 const height = ref(remembered() ?? props.initialHeight);
-const sending = new Set<string>();
+// The answer the page proposed, waiting for the user. A new proposal replaces it.
+const proposal = ref<{ id: string; text: string; requestId: unknown } | null>(null);
+const sendingProposal = ref(false);
 
 // A frame draws one page; a changed page gets a fresh frame.
 watch(() => props.html, () => {
+  settle(false, 'The page changed.');
   generation.value++;
   height.value = remembered() ?? props.initialHeight;
 });
@@ -68,36 +84,52 @@ function onMessage(event: MessageEvent): void {
   } else if (data.type === 'size' && typeof data.height === 'number' && Number.isFinite(data.height)) {
     height.value = Math.min(FIGURE_HEIGHT.max, Math.max(16, Math.ceil(data.height)));
     if (props.measureKey) remember(props.measureKey, height.value);
-  } else if (data.type === 'open-link' && typeof data.url === 'string' && /^https?:\/\//i.test(data.url) && navigator.userActivation?.isActive) {
-    window.open(data.url, '_blank', 'noopener,noreferrer');
   } else if (data.type === 'answer') {
-    void answer(data);
+    propose(data);
   }
 }
 
-async function answer(data: Record<string, unknown>): Promise<void> {
-  const reply = (ok: boolean, error?: string) => post({ type: 'answer-result', requestId: data.requestId, ok, ...(error ? { error } : {}) });
+function propose(data: Record<string, unknown>): void {
+  const reply = (error: string) => post({ type: 'answer-result', requestId: data.requestId, ok: false, error });
   const id = typeof data.id === 'string' && ID.test(data.id) ? data.id : null;
   const picks = readPicks(data.picks);
-  if (!id || !picks) { reply(false, 'patterm.answer needs an id and { label, value } picks'); return; }
-  if (!channel) { reply(false, 'Answer this in the live conversation.'); return; }
-  if (!channel.canSend.value) { reply(false, 'Only the window in control of this agent can answer.'); return; }
-  if (answers.value.has(id) || sending.has(id)) { reply(false, 'Already answered.'); return; }
-  // A page cannot answer for the user on its own; the pick follows a click.
-  if (!navigator.userActivation?.isActive) { reply(false, 'Answers must come from a click or key press.'); return; }
-  sending.add(id);
+  if (!id || !picks) { reply('patterm.answer needs an id and { label, value } picks'); return; }
+  if (!channel) { reply('Answer this in the live conversation.'); return; }
+  if (!channel.canSend.value) { reply('Only the window in control of this agent can answer.'); return; }
+  if (answers.value.has(id)) { reply('Already answered.'); return; }
+  if (sendingProposal.value) { reply('An answer is being sent.'); return; }
+  settle(false, 'Replaced by a newer answer.');
+  proposal.value = { id, text: figureAnswerText(id, picks), requestId: data.requestId };
+}
+
+// Tells the page how its proposal ended and clears the bar.
+function settle(ok: boolean, error?: string): void {
+  const current = proposal.value;
+  if (!current) return;
+  proposal.value = null;
+  post({ type: 'answer-result', requestId: current.requestId, ok, ...(error ? { error } : {}) });
+}
+
+async function confirm(event: MouseEvent): Promise<void> {
+  const current = proposal.value;
+  if (!event.isTrusted || !current || !channel || sendingProposal.value) return;
+  if (!channel.canSend.value || answers.value.has(current.id)) { settle(false, answers.value.has(current.id) ? 'Already answered.' : 'Only the window in control of this agent can answer.'); return; }
+  sendingProposal.value = true;
   try {
-    await channel.send(figureAnswerText(id, picks));
-    reply(true);
+    await channel.send(current.text);
+    settle(true);
   } catch (cause) {
-    reply(false, cause instanceof Error ? cause.message : String(cause));
+    settle(false, cause instanceof Error ? cause.message : String(cause));
   } finally {
-    sending.delete(id);
+    sendingProposal.value = false;
   }
 }
 
 onMounted(() => window.addEventListener('message', onMessage));
-onBeforeUnmount(() => window.removeEventListener('message', onMessage));
+onBeforeUnmount(() => {
+  window.removeEventListener('message', onMessage);
+  settle(false, 'The page closed.');
+});
 </script>
 
 <script lang="ts">

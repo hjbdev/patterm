@@ -14,12 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   agent places `[patterm_figure:<id>]` in its reply where the page belongs.
   Each page runs in a sandboxed frame with an opaque origin, so it can run
   inline and CDN scripts but cannot reach Patterm, its storage, or your files.
-  Pages get Patterm's theme as CSS variables and Inter inline, report their own height, open
-  http(s) links in the browser, and can ask the user a question with
-  `patterm.answer()`, which reaches the agent as an ordinary message. Only the
-  window in control of the agent can answer, and only from a click. Local
-  images in the page are copied when it is rendered. A page opens larger from
-  its card, and its source is one click away.
+  Pages get Patterm's theme as CSS variables and your interface and terminal
+  typefaces, report their own height, and open http(s) links in the browser
+  when clicked. A page can ask a question with `patterm.answer()`; Patterm
+  shows the answer with its own Send button, and only a press of that button,
+  in the window in control of the agent, sends it as an ordinary message.
+  Local images in the page are copied when it is rendered. A page opens larger
+  from its card, and its source is one click away.
 
 - The desktop app offers agents `html_preview`, which draws a page off screen
   and returns a screenshot, its height, and its console output, so the agent

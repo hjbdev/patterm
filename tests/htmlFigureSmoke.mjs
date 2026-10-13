@@ -5,6 +5,8 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import { build } from 'esbuild';
+import ts from 'typescript';
+import { computed, markRaw, nextTick, ref, watch } from 'vue';
 
 // The shared module, the action and the transcript helpers are bundled
 // together for Node.
@@ -17,7 +19,7 @@ await build({
       export { PreviewHtmlFigureAction } from './app/Actions/PreviewHtmlFigureAction';
       export { McpToolRegistry } from './app/MCP/ToolRegistry';
       export { FIGURE_EXAMPLES } from './resources/js/lib/figureExamples';
-      export { groupTranscriptMessages, normaliseMessages } from './app/Services/TranscriptProjection';
+      export { FIGURE_ID, groupTranscriptMessages, normaliseMessages } from './app/Services/TranscriptProjection';
       export { projectCodexItem } from './app/Services/CodexTranscript';
       export { splitProcessMentions } from './resources/js/lib/agentMentions';
       export { renderPlainMarkdown } from './resources/js/lib/markdown';
@@ -43,22 +45,36 @@ test('the theme and bootstrap come first, so the page overrides them', () => {
   assert.match(prepared, /window\.patterm = Object\.freeze/);
 });
 
-test('pages carry Inter inline, ahead of the theme, since the frame cannot load app fonts', () => {
-  const css = ui.figureFontCss((subset, weight) => subset === 'latin' && weight !== 700 ? `data:font/woff2;base64,${subset}${weight}` : null);
-  assert.equal(css.split('@font-face').length - 1, 3, 'a face the source lacks is left out');
-  assert.match(css, /font-family:'Inter';font-style:normal;font-display:block;font-weight:400;src:url\(data:font\/woff2;base64,latin400\) format\('woff2'\);unicode-range:U\+0000-00FF/);
+test('pages use the user\'s typefaces: bundled ones inline, installed ones by name', () => {
+  const settings = (ui, terminal, custom = '') => ({ uiFont: { preset: ui, customFamily: custom }, terminalFont: { preset: terminal, customFamily: custom } });
+  const fake = (file) => `data:font/woff2;base64,${file.replace(/\W/g, '')}`;
+  const geist = ui.figureFontsFor(settings('geist', 'fira-code'));
+  assert.deepEqual(geist.fonts.map((font) => [font.name, font.weights]), [['Geist', [400, 500, 600, 700]], ['Fira Code', [400, 700]]]);
+  assert.equal(geist.files.length, 8 + 4, 'Latin and Latin Extended faces for each weight');
+  const css = ui.figureFontStyle(settings('geist', 'fira-code'), fake);
+  assert.match(css, /^:root\{--font-sans:Geist, ui-sans-serif[^}]*;--font-mono:"Fira Code", ui-monospace/);
+  assert.match(css, /font-family:"Geist";font-style:normal;font-display:block;font-weight:600;src:url\(data:font\/woff2;base64,geistgeistlatin600normalwoff2\)/);
+  assert.equal(css.split('@font-face').length - 1, 12);
+  // The installed Nerd Font loads by name; JetBrains Mono behind it is bundled.
+  assert.deepEqual(ui.figureFontsFor(settings('system', 'jetbrains-nerd')).fonts.map((font) => font.slug), ['jetbrains-mono']);
+  const custom = ui.figureFontStyle(settings('custom', 'custom', 'My Font}</style><script>x()</script>'), fake);
+  assert.doesNotMatch(custom, /<|\}<|@font-face/, 'a custom family cannot leave the rule, and needs no faces');
+  assert.equal(ui.figureFontStyle(settings('inter', 'system-mono'), () => null).includes('@font-face'), false, 'missing files are left out');
   const prepared = ui.prepareFigureHtml('<head></head><p>x</p>', css);
-  assert.ok(prepared.indexOf('id="patterm-fonts"') < prepared.indexOf('id="patterm-theme"'));
+  assert.ok(prepared.indexOf('id="patterm-theme"') < prepared.indexOf('id="patterm-fonts"'), 'the chosen families override the theme default');
   assert.doesNotMatch(ui.prepareFigureHtml('<p>x</p>'), /patterm-fonts/, 'no fonts, no empty style');
-  for (const subset of Object.keys(ui.FIGURE_FONT_SUBSETS)) {
-    for (const weight of ui.FIGURE_FONT_WEIGHTS) assert.ok(fs.existsSync(path.join('resources/js/assets/fonts/inter', ui.figureFontFile(subset, weight))), `${subset} ${weight} is vendored`);
+  for (const slug of ui.BUNDLED_FIGURE_FONTS) {
+    assert.ok(fs.existsSync(path.join('resources/js/assets/fonts', ui.figureFontFile(slug, 'latin', 400))), `${slug} is vendored`);
   }
 });
 
 test('the frame runs scripts in an opaque origin and cannot submit or navigate forms', () => {
   const csp = ui.figureFrameCsp("'self'");
-  assert.match(csp, /^sandbox allow-scripts allow-forms;/);
-  assert.doesNotMatch(csp, /allow-same-origin|allow-top-navigation|allow-popups/);
+  assert.match(csp, /^sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox;/, 'links open as popups, which need a click in the frame');
+  assert.doesNotMatch(csp, /allow-same-origin|allow-top-navigation|allow-modals/);
+  const component = fs.readFileSync('resources/js/Components/HtmlFigureFrame.vue', 'utf8');
+  assert.match(component, /:sandbox="FIGURE_FRAME_SANDBOX"/, 'the iframe and its policy share one sandbox');
+  assert.doesNotMatch(component, /open-link|window\.open/, 'the host never opens links a page asks for');
   assert.match(csp, /form-action 'none'/);
   assert.match(csp, /frame-ancestors 'self'$/);
   assert.doesNotMatch(ui.figureFrameCsp(null), /frame-ancestors/);
@@ -193,4 +209,69 @@ test('a preview draws the prepared page with images inlined and returns the scre
   assert.equal((await action.execute({ html: '<p>x</p>' }, { cwd: root, project_path: null })).width, ui.PREVIEW_WIDTH.initial);
   await assert.rejects(action.execute({ html: '<p>x</p>', width: 10 }, { cwd: root, project_path: null }), /html_preview: width/);
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+// The frame component's own script, run against stub frames and channels.
+function mountFrame({ channel = null, answered = new Map() } = {}) {
+  const file = fs.readFileSync('resources/js/Components/HtmlFigureFrame.vue', 'utf8');
+  const blocks = [...file.matchAll(/<script(?: setup)? lang="ts">([\s\S]*?)<\/script>/g)].map((match) => match[1]);
+  const executable = (source) => {
+    const parsed = ts.createSourceFile('frame.ts', source, ts.ScriptTarget.Latest, true);
+    return parsed.statements.filter((statement) => !ts.isImportDeclaration(statement)).map((statement) => statement.getFullText(parsed)).join('\n');
+  };
+  const { outputText } = ts.transpileModule(`${executable(blocks[1])}\n${executable(blocks[0])}`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } });
+  const posted = [];
+  const contentWindow = { postMessage: (message) => posted.push(message) };
+  const window = { addEventListener: () => {}, removeEventListener: () => {} };
+  const answerKey = Symbol('answer');
+  const answeredKey = Symbol('answered');
+  const setup = new Function('computed', 'inject', 'onBeforeUnmount', 'onMounted', 'ref', 'watch', 'window', 'FIGURE_FRAME_SANDBOX', 'FIGURE_HEIGHT', 'FIGURE_ID', 'figureAnswerText', 'figureAnswerKey', 'figureAnsweredKey', 'figureFrameUrl', 'defineProps',
+    `${outputText}\nframe.value = arguments[15];\nreturn { onMessage, confirm, proposal };`);
+  const api = setup(computed, (key) => key === answerKey ? channel : key === answeredKey ? computed(() => answered) : null, () => {}, () => {}, ref, watch, window,
+    ui.FIGURE_FRAME_SANDBOX, ui.FIGURE_HEIGHT, ui.FIGURE_ID, ui.figureAnswerText, answerKey, answeredKey, () => '/figure-frame', () => ({ html: '<p>x</p>', title: 'x', initialHeight: 100 }), markRaw({ contentWindow }));
+  const fromPage = (data) => api.onMessage({ source: contentWindow, data: { source: 'patterm-figure', ...data } });
+  return { ...api, posted, fromPage };
+}
+
+function liveChannel() {
+  const sent = [];
+  return { sent, channel: { canSend: computed(() => true), queued: computed(() => new Map()), send: async (text) => { sent.push(text); } } };
+}
+
+test('a page cannot answer without the user pressing Send in Patterm', async () => {
+  const { sent, channel } = liveChannel();
+  const frame = mountFrame({ channel });
+
+  // A page that keeps proposing while the user clicks elsewhere in the app.
+  for (let attempt = 0; attempt < 3; attempt++) frame.fromPage({ type: 'answer', requestId: attempt + 1, id: 'unauthorized', picks: [{ label: 'Yes', value: 'yes' }] });
+  await nextTick();
+  assert.deepEqual(sent, [], 'proposals alone send nothing');
+  assert.equal(frame.proposal.value.text, 'Answer to unauthorized: Yes (yes)');
+  assert.deepEqual(frame.posted.filter((message) => message.type === 'answer-result').map((message) => [message.requestId, message.ok]), [[1, false], [2, false]], 'a newer proposal replaces the older one');
+  await frame.confirm({ isTrusted: false });
+  assert.deepEqual(sent, [], 'a synthetic click is not the user');
+  await frame.confirm({ isTrusted: true });
+  assert.deepEqual(sent, ['Answer to unauthorized: Yes (yes)']);
+  assert.equal(frame.proposal.value, null);
+  assert.deepEqual(frame.posted.at(-1), { source: 'patterm-host', type: 'answer-result', requestId: 3, ok: true });
+  await frame.confirm({ isTrusted: true });
+  assert.equal(sent.length, 1, 'a sent answer cannot be sent again');
+});
+
+test('pages outside a live conversation, or for answered questions, get no Send bar', () => {
+  const readOnly = mountFrame();
+  readOnly.fromPage({ type: 'answer', requestId: 1, id: 'q', picks: [{ label: 'A', value: 'a' }] });
+  assert.equal(readOnly.proposal.value, null);
+  assert.match(readOnly.posted.at(-1).error, /live conversation/);
+  const { channel } = liveChannel();
+  const answered = mountFrame({ channel, answered: new Map([['q', 'Answer to q: A (a)']]) });
+  answered.fromPage({ type: 'answer', requestId: 1, id: 'q', picks: [{ label: 'B', value: 'b' }] });
+  assert.equal(answered.proposal.value, null);
+  assert.match(answered.posted.at(-1).error, /Already answered/);
+  const invalid = mountFrame({ channel });
+  invalid.fromPage({ type: 'answer', requestId: 1, id: 'bad id', picks: [] });
+  assert.match(invalid.posted.at(-1).error, /needs an id/);
+  const stranger = mountFrame({ channel });
+  stranger.onMessage({ source: {}, data: { source: 'patterm-figure', type: 'answer', id: 'q', picks: [{ label: 'A', value: 'a' }] } });
+  assert.equal(stranger.proposal.value, null, 'only this page\'s own frame is heard');
 });

@@ -33,7 +33,7 @@ import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
 import HtmlFigureFrame from './HtmlFigureFrame.vue';
 import { clampFigureHeight, figureImages, figurePage, figureToolInput, prepareFigureHtml, replaceFigureImages } from '../../../app/Services/HtmlFigure';
-import { figureFontCss, figureImageUrls } from '../lib/htmlFigure';
+import { figureFontCss, figureFontVersion, figureImageUrls } from '../lib/htmlFigure';
 import type { TranscriptMessage } from '../lib/integratedConversation';
 
 // A rendered page from the transcript, or one given directly, such as the
@@ -46,10 +46,10 @@ const showSource = ref(false);
 const expanded = ref(false);
 const prepared = ref<string | null>(null);
 
-// Local images are swapped for their stored copies, and fonts added, before
-// the page is sent.
+// Local images are swapped for their stored copies, and the user's typefaces
+// added, before the page is sent.
 let preparing = 0;
-watch([() => page.value?.html, images], async ([html, stored]) => {
+watch([() => page.value?.html, images, figureFontVersion], async ([html, stored]) => {
   const run = ++preparing;
   if (!html) { prepared.value = null; return; }
   const [urls, fonts] = await Promise.all([Object.keys(stored).length ? figureImageUrls(stored) : new Map<string, string>(), figureFontCss()]);

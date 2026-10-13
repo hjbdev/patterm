@@ -1,24 +1,23 @@
-import { copyFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { cpSync, readFileSync } from 'node:fs';
 import { fileURLToPath, URL } from 'node:url';
 import vue from '@vitejs/plugin-vue';
 import { defineConfig, type Plugin } from 'vite';
-import { FIGURE_FONT_SUBSETS, FIGURE_FONT_WEIGHTS, figureFontFile } from './app/Services/HtmlFigure';
+import { BUNDLED_FIGURE_FONTS } from './app/Services/HtmlFigure';
 
 const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string };
 
-// The desktop app's page previews read Inter from the build, under stable names.
+// The desktop app's page previews read the bundled faces from the build,
+// under stable names: the Latin ones, which pages carry inline.
 function figureFonts(): Plugin {
   return {
     name: 'patterm-figure-fonts',
     apply: 'build',
     writeBundle(options) {
-      const target = `${options.dir ?? 'dist/renderer'}/figure-fonts`;
-      mkdirSync(target, { recursive: true });
-      for (const subset of Object.keys(FIGURE_FONT_SUBSETS) as Array<keyof typeof FIGURE_FONT_SUBSETS>) {
-        for (const weight of FIGURE_FONT_WEIGHTS) {
-          const file = figureFontFile(subset, weight);
-          copyFileSync(fileURLToPath(new URL(`./resources/js/assets/fonts/inter/${file}`, import.meta.url)), `${target}/${file}`);
-        }
+      for (const slug of BUNDLED_FIGURE_FONTS) {
+        cpSync(fileURLToPath(new URL(`./resources/js/assets/fonts/${slug}`, import.meta.url)), `${options.dir ?? 'dist/renderer'}/figure-fonts/${slug}`, {
+          recursive: true,
+          filter: (source) => !source.endsWith('.woff2') || /-latin(-ext)?-[4-7]00-normal\.woff2$/.test(source)
+        });
       }
     }
   };

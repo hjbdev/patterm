@@ -2,8 +2,10 @@
 // channel between the conversation and its pages. Components stay
 // presentational; pages themselves run in the sandboxed frame.
 
-import type { ComputedRef, InjectionKey } from 'vue';
+import { ref, type ComputedRef, type InjectionKey } from 'vue';
+import { APPEARANCE_SETTINGS_CHANGED_EVENT, DEFAULT_APPEARANCE_SETTINGS, lastKnownAppearanceSettings, loadAppearanceSettings } from '../appearance/AppearanceSettings';
 import { FIGURE_FRAME_PATH, FIGURE_FRAME_SCHEME } from '../../../app/Services/HtmlFigure';
+import type { FontSettings } from '../../../app/Services/FontFamilies';
 import type { TranscriptMessage } from '../../../app/Services/TranscriptProjection';
 import { transcriptImageData } from './transcriptImages';
 
@@ -42,9 +44,25 @@ export async function figureImageUrls(images: Record<string, string>): Promise<M
   return urls;
 }
 
-// Inter for pages, loaded once with the first page shown.
-let fonts: Promise<string> | null = null;
-export function figureFontCss(): Promise<string> {
-  fonts ??= import('./figureFonts').then((module) => module.FIGURE_FONT_CSS, () => { fonts = null; return ''; });
-  return fonts;
+// The fonts style for pages in the user's current typefaces. Changing them in
+// Settings bumps the version, so shown pages redraw in the new ones.
+export const figureFontVersion = ref(0);
+const fontKey = (settings: FontSettings) => JSON.stringify([settings.uiFont, settings.terminalFont]);
+let shownKey: string | null = null;
+window.addEventListener(APPEARANCE_SETTINGS_CHANGED_EVENT, (event) => {
+  const key = fontKey((event as CustomEvent<FontSettings>).detail);
+  if (shownKey !== null && key !== shownKey) figureFontVersion.value++;
+});
+const styles = new Map<string, Promise<string>>();
+export async function figureFontCss(): Promise<string> {
+  const settings = lastKnownAppearanceSettings() ?? await loadAppearanceSettings().catch(() => DEFAULT_APPEARANCE_SETTINGS);
+  const key = fontKey(settings);
+  shownKey = key;
+  let style = styles.get(key);
+  if (!style) {
+    style = import('./figureFonts').then((module) => module.figureFontStyleFor(settings));
+    style.catch(() => styles.delete(key));
+    styles.set(key, style);
+  }
+  return style.catch(() => '');
 }

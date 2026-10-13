@@ -78,9 +78,10 @@ async function createWindow(): Promise<void> {
     ...(process.platform === 'win32' ? { terminalHosts: { appDataPath: app.getPath('userData') } } : {}),
     launchDiagnostics,
     launchIdentity,
-    pagePreviewer: new ElectronPagePreviewer(!app.isPackaged && !isInstalledLaunch()
-      ? path.join(__dirname, '../../../../resources/js/assets/fonts/inter')
-      : path.join(__dirname, '../../../renderer/figure-fonts'))
+    pagePreviewer: new ElectronPagePreviewer(
+      !app.isPackaged && !isInstalledLaunch() ? path.join(__dirname, '../../../../resources/js/assets/fonts') : path.join(__dirname, '../../../renderer/figure-fonts'),
+      () => patterm?.settings.appearanceSettings() ?? { uiFont: { preset: 'inter', customFamily: '' }, terminalFont: { preset: 'jetbrains-nerd', customFamily: '' } }
+    )
   });
   registerIpcRoutes(ipcMain, patterm, path.join(app.getPath('userData'), 'uploads'));
   servePeerRoutes(patterm);
