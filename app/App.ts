@@ -4,6 +4,10 @@ import { AssistantMemoryService } from './Services/AssistantMemoryService';
 import { registerAssistantTools } from './MCP/registerAssistantTools';
 import { registerIdleCompactionTools } from './MCP/registerIdleCompactionTools';
 import { registerHostTools } from './MCP/registerHostTools';
+import { registerProjectTools } from './MCP/registerProjectTools';
+import { RemoveProjectAction } from './Actions/RemoveProjectAction';
+import { RenameProjectAction } from './Actions/RenameProjectAction';
+import { ProjectLaunchFence } from './Services/ProjectLaunchFence';
 import { HostActions } from './Actions/HostActions';
 import { HostService } from './Services/HostService';
 import { PeerLinkService } from './Services/PeerLinkService';
@@ -442,7 +446,10 @@ async function createApplicationResources(
     onChanged: () => notifyChanged(['mcp-servers'])
   });
   const launchingIdentities = new LaunchingMcpIdentities();
+  // Removing a project keeps launches out of it while it stops what runs there.
+  const launchFence = new ProjectLaunchFence();
   const harnessLauncher = new HarnessLauncher({
+    fence: launchFence,
     mcpServers: mcpServerRegistry,
     launchingIdentities,
     assistantMemory,
@@ -472,6 +479,7 @@ async function createApplicationResources(
   assistantService.start();
   events.on('notifications:changed', (change: NotificationChange) => assistantService.handleNotification(change));
   const processLauncher = new ProcessLauncher({
+    fence: launchFence,
     database,
     timeline,
     terminal,
@@ -612,6 +620,13 @@ async function createApplicationResources(
   registerAssistantTools(mcp, assistantService, settings);
   registerIdleCompactionTools(mcp, settings);
   registerHostTools(mcp, hosts, projectLinkActions);
+  registerProjectTools(mcp, {
+    rename: new RenameProjectAction(database, timeline),
+    remove: new RemoveProjectAction({
+      database, timeline, closeProcess: actions.closeProcess, fence: launchFence, integrated,
+      timers, links: projectLinks, unlink: projectLinkActions, history: historyImportQueue
+    })
+  });
   // Remote watches are stored as host ID and process ID.
   timers.setRemoteResolver((address) => {
     const separator = address.indexOf(':');

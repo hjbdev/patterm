@@ -1,15 +1,16 @@
-# Automatic terminal summaries
+# Automatic summaries
 
 Automatic summaries are off by default. In **Settings > Auto-summaries**, select
-a provider, choose a model and minimum interval, then enable summaries and save.
-The default model is `haiku` and the default interval is 30 seconds. The connection
-test sends synthetic text, consumes model usage, and does not read a terminal.
-The test supplies fixed instructions and synthetic text, without reading terminal
-output.
+a provider (Claude Code, Codex, or OpenCode), choose a model, reasoning level
+(Claude Code and Codex), and minimum interval, then enable summaries. Settings
+save as you change them. Defaults are Claude Code with `haiku`, `gpt-5.6-luna`
+for Codex and OpenCode, and a 30-second interval. **Generate titles** is on by
+default. The connection test sends fixed instructions and synthetic text, consumes
+model usage, and reads no conversation or terminal.
 
 ## Provider support
 
-Claude Code is the first supported runner. It uses `claude --print` without
+Claude Code is the default runner. It uses `claude --print` without
 `--bare`, preserving Claude's normal OAuth sign-in. The child environment excludes
 API keys and provider overrides. Patterm does not retry with another model or an
 API key. Your account's model access and usage limits still apply; print mode does
@@ -38,7 +39,7 @@ this endpoint does not include existing conversation or project instructions.
 The prompt is passed through the CLI's `--data` argument and can be visible in
 local process inspection while that command runs.
 
-Both providers become selectable when their CLI is discovered. Use **Test
+Each provider becomes selectable when its CLI is discovered. Use **Test
 summariser** to check the installed CLI, login, and model access before enabling
 background summaries. Older CLI builds that lack the required interfaces fail
 with an error rather than using an agent session as a fallback.
@@ -62,49 +63,99 @@ arguments, input, output validation, and cancellation. The Claude runner has not
 been validated with a live subscription request. Use **Test summariser** to check
 your installation before enabling background requests.
 
+## What is summarised
+
+Agents are summarised from their conversation, not their screen. Patterm reads the
+user and assistant text from imported conversation history. Tool calls, tool
+output, reasoning, subagent (sidechain) messages, Patterm notifications, system
+reminders, instruction preambles, and slash commands such as `/compact` are left
+out. Messages from other agents appear as "Agent report" rather than as you.
+
+New text is read in chronological slices of up to 8 KiB, each sent with a compact
+memory (goal, decisions, completed, unresolved; 500 characters each) from the
+previous call. A request is capped at 16 KiB in total. A long message is split
+across calls. Large threads are therefore recapped in several calls, and each
+call only reads text it has not covered yet. Nothing is sent when there is no new
+prose, such as after a tool-only turn.
+
+Each request also carries:
+
+- the session name and native title, and the titles of up to five linked
+  references and five assigned todos;
+- your first message, cut to 1,000 bytes, so the recap can lead with the goal;
+- the previous recap, until the first memory update replaces it.
+
+The summariser returns a goal-led paragraph, a one-line status, and (if
+**Generate titles** is on) a short title for agents nobody has named. A name you
+or an agent choose always wins. Turning titles off clears generated titles.
+
+Shell and other non-agent processes have no conversation history. They are
+summarised from the last 100 rows of the rendered terminal viewport, capped at
+12 KiB. Scrolling changes the viewport and can change that input. Snapshots
+under 40 characters, or unchanged since the last recap, make no request.
+
+### Coverage
+
+Each agent recap has a coverage state, shown in Session context:
+
+- **Complete**: everything retained has been read.
+- **Partial**: the thread was already larger than 32 KiB of prose when it was
+  first seen. Patterm does not rebuild it automatically. It starts from the most
+  recent text (about 6 KiB) and labels the status "Partial conversation recap".
+- **Catching up**: unread history remains, from a rebuild or a long import.
+  Intermediate batches update the memory but do not replace the visible recap or
+  status.
+- **Paused** and **needs rebuild**: described below.
+
+In Session context, **Review summary coverage** shows how many prose messages
+have been processed and a rough call estimate for a full rebuild. From there:
+
+- **Rebuild from beginning** reads all retained prose again in chronological
+  batches. It needs summaries enabled and uses usage, so it is never automatic.
+  Your current recap stays visible until catch-up finishes.
+- **Pause rebuild** and **Resume catch-up** stop and restart reading without
+  losing progress.
+- If earlier conversation text changes after it was covered (for example, a
+  history re-import with different content), coverage is marked stale and
+  nothing is sent until you rebuild.
+
+Rebuild, pause, and resume apply to the latest session of a resumed
+conversation. Imported history can lag behind the terminal by a few minutes;
+summaries wait for it.
+
 ## Scheduling and privacy
 
-Only running top-level terminals that receive input through Patterm's UI become
-eligible. Agent-spawned children and permission prompts are skipped. After at
-least two seconds of quiet, the scheduler can request a recap. Long-running output
-is also eligible at the selected interval. Unchanged and short snapshots do not
-make a model request. Restarting Patterm or changing summary settings requires
-fresh terminal input before background work resumes.
+An agent becomes eligible when you message it through Patterm (the terminal or
+Integrated input, or steering a queued message), and stays enrolled across
+restarts. Only top-level agents are summarised; children that other agents
+spawned are skipped. Shell processes need fresh input after Patterm restarts or
+settings change. An agent is skipped while a permission prompt is open.
 
-The input is the last 100 rows of the rendered viewport, capped at 12 KiB after
-control-sequence removal and best-effort secret redaction. It is not a complete
-transcript. Scrolling changes the rendered viewport and can change the input.
+A request starts when imported history has changed and been quiet for two
+seconds, and at least the minimum interval (15 s, 30 s, or 1 minute; default
+30 s) has passed since the agent's last request. While an agent is working or
+thinking, a small change (under 2 KB) waits for a settled turn or a minute of
+batching. There is no hourly or other call quota; usage is bounded by the
+interval and by the amount of new prose.
 
-So that a recap of a long thread says what the thread is for, not only its latest
-steps, the input also includes:
-
-- the session name, and the titles of linked references and assigned todos;
-- your own messages to the agent: the first two, which usually state the goal,
-  and the last eight, each cut to 500 characters (1,500 for the first). Messages
-  from other agents, Patterm timers and notifications, and slash commands are
-  left out. Terminal agents' messages come from imported history, which can lag
-  behind;
-- the previous recap, which the next one updates rather than replacing.
-
-The summariser is asked for one paragraph that opens with the goal, then says
-what is done, in progress, and waiting on you, and explains ticket or PR numbers
-instead of using them alone.
-**Terminal text and your messages can contain secrets that redaction misses.** Enabling this feature
-sends that text to the selected provider and consumes usage. Raw snapshots and
-provider diagnostics are not saved by the summary service.
+**Conversation text and your messages can contain secrets that redaction misses.**
+Redaction is best-effort. Enabling this feature sends that text to the selected
+provider and consumes usage. Raw prose, terminal snapshots, and provider
+diagnostics are not saved by the summary service.
 
 At most two jobs run globally, with one per process. Requests have a 30-second
-deadline and a 16 KiB output limit. Failures back off up to ten minutes and appear
-in summary settings. Disabling summaries, changing settings, exiting a process,
-or stopping Patterm cancels owned summariser processes. Entering a permission wait
-also cancels the job, and eligibility is rechecked after snapshot retrieval.
-Late results are discarded.
+deadline and a 16 KiB output limit. Failures back off exponentially up to ten
+minutes and appear in summary settings. Disabling summaries, changing settings,
+exiting a process, or stopping Patterm cancels owned summariser processes.
+Entering a permission wait also cancels the job, and eligibility is rechecked
+before results are saved. Late results are discarded.
 
-Only the latest recap, generation time, provider, and model are stored on the
-process record. These remain visible after disabling the feature. Agent-family
-hovers and process tooltips show the timestamp and warn that later output might
-not be included. Existing session-exit summaries are unchanged. Generated text
-never changes activity state, permission detection, or timers.
+Patterm stores the latest recap, status, generation time, provider, model, and
+coverage on the process record, the generated title on the session, and the
+compact memory per conversation. These remain visible after disabling the feature.
+Agent-family hovers and process tooltips show the timestamp and warn that later
+output might not be included. Existing session-exit summaries are unchanged.
+Generated text never changes activity state, permission detection, or timers.
 
 ## Verification
 

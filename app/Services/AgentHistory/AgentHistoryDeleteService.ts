@@ -29,6 +29,14 @@ export class AgentHistoryDeleteService {
     return { deleted: true };
   }
 
+  // Each conversation leaves a tombstone, so a later import does not bring it back.
+  deleteProjectConversations(projectId: string): { deletedConversations: number } {
+    const ids = this.database.connection.prepare(`select id from conversations where project_id = ?`).all(projectId) as Array<{ id: string }>;
+    for (const { id } of ids) this.deleteConversation(id);
+    this.database.connection.prepare(`delete from conversation_import_batches where project_id = ?`).run(projectId);
+    return { deletedConversations: ids.length };
+  }
+
   resetImportedHistory(): { deletedConversations: number } {
     const db = this.database.connection;
     const deletedConversations = db.transaction(() => {
