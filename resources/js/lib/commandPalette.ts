@@ -99,6 +99,9 @@ export function rendererCommands(projectId: string | null, repository = true) {
   ];
 }
 
+// Harnesses name some selectors differently, such as Codex's Thinking.
+const SELECTOR_ALIASES: Record<string, string[]> = { effort: ['Effort', 'Reasoning', 'Thinking'] };
+
 // The open conversation publishes its native selectors. Each becomes a setting
 // that opens its choices, placed after the agent's main actions.
 export function withIntegratedSelectors(commands: CommandDescriptor[], processId: string | null, controls: IntegratedControls | null): CommandDescriptor[] {
@@ -107,10 +110,10 @@ export function withIntegratedSelectors(commands: CommandDescriptor[], processId
     id: `integrated:selector:${processId}:${selector.id}`,
     label: selector.label,
     hint: selector.options.find(option => option.value === selector.value)?.label ?? selector.value,
-    aliases: [`Change ${selector.label.toLowerCase()}`],
+    aliases: [selector.label, ...(SELECTOR_ALIASES[selector.id] ?? [])].flatMap(name => [name, `Change ${name.toLowerCase()}`]),
     group: 'current',
     kind: 'page',
-    inline: selector.id === 'model',
+    inline: true,
     actions: selector.options.map(option => ({
       id: `integrated:configure:${processId}:${selector.id}:${option.value}`,
       label: option.label,
