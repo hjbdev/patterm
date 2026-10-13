@@ -157,8 +157,9 @@ jobs:
         run: |
           # Both architectures render the same install.sh as the one in their tarballs.
           cp scripts/release/uninstall.sh release/uninstall.sh
+          cp scripts/release/install.ps1 release/install.ps1
           if grep -n '@PATTERM_REPO@\|@MINISIGN_PUBLIC_KEY@' release/install.sh; then exit 1; fi
-          (cd release && sha256sum install.sh uninstall.sh > scripts.sha256)
+          (cd release && sha256sum install.sh uninstall.sh install.ps1 > scripts.sha256)
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -169,4 +170,4 @@ jobs:
           shopt -s nullglob
           windows=(release/*.zip release/*.zip.sha256)
           gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "Patterm ${GITHUB_REF_NAME#v}" "${prerelease[@]}" \
-            release/*.tar.gz release/*.tar.gz.sha256 release/manifest.json release/manifest.json.minisig release/install.sh release/uninstall.sh release/scripts.sha256 "${windows[@]}"
+            release/*.tar.gz release/*.tar.gz.sha256 release/manifest.json release/manifest.json.minisig release/install.sh release/install.ps1 release/uninstall.sh release/scripts.sha256 "${windows[@]}"
