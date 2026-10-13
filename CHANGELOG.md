@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Portable Windows x64 packages on stable releases, with SHA-256 checksums.
+
 ## [0.1.0] - 2026-10-13
 
 The first public release. Earlier development history stays
