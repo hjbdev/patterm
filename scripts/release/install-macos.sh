@@ -22,6 +22,19 @@ for command in curl shasum ditto plutil codesign unzip pgrep; do
   command -v "$command" >/dev/null 2>&1 || fail "$command is required"
 done
 
+assert_stopped() {
+  local status
+  # Match the process name independently of argv[0] directory spelling.
+  # Refuse while any Patterm app runs, including a manually installed copy.
+  if pgrep -x Patterm >/dev/null; then
+    fail 'Patterm is running. Quit it, then rerun this installer to update.'
+  else
+    status=$?
+    [[ "$status" == 1 ]] || fail 'cannot check running apps; quit Patterm and retry'
+  fi
+}
+assert_stopped
+
 # Keep staging on the destination filesystem so the final renames are atomic.
 mkdir -p "$APPLICATIONS_DIR"
 APPLICATIONS_DIR="$(cd "$APPLICATIONS_DIR" && pwd -P)"
@@ -104,17 +117,7 @@ version_lt() {
   else identifiers_lt "$a_pre" "$b_pre"
   fi
 }
-assert_stopped() {
-  local status
-  # Match the kernel process name, not argv[0], which may be ./Patterm.
-  # Refuse while any Patterm app runs, including a manually installed copy.
-  if pgrep -x Patterm >/dev/null; then
-    fail 'Patterm is running. Quit it, then rerun this installer to update.'
-  else
-    status=$?
-    [[ "$status" == 1 ]] || fail 'cannot check running apps; quit Patterm and retry'
-  fi
-}
+
 assert_stopped
 if [[ -e "$TARGET" ]]; then
   INSTALLED_BUILD="$TARGET/Contents/Resources/app/BUILD"

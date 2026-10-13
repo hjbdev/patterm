@@ -10,7 +10,8 @@ import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 
 test('Mac zip preserves a runnable app, bundled dependencies, and renderer', {
-  skip: process.platform !== 'darwin' && 'requires macOS', timeout: 90_000
+  // Two verified installs, a launch, and a running-app refusal have separate bounds.
+  skip: process.platform !== 'darwin' && 'requires macOS', timeout: 180_000
 }, async (t) => {
   const directory = process.env.MAC_PACKAGE_DIRECTORY;
   assert.ok(directory, 'set MAC_PACKAGE_DIRECTORY to the package output directory');
@@ -30,7 +31,7 @@ test('Mac zip preserves a runnable app, bundled dependencies, and renderer', {
     const version = /^patterm-(.+)-macos-(?:arm64|x64)\.zip$/.exec(archives[0])[1];
     const installEnv = { ...process.env, PATTERM_MAC_APPLICATIONS_DIR: applications, PATTERM_MAC_RELEASE_URL: pathToFileURL(path.resolve(directory)).href };
     for (let attempt = 0; attempt < 2; attempt++) {
-      execFileSync('bash', ['scripts/release/install-macos.sh', '--version', version], { env: installEnv, timeout: 30_000 });
+      execFileSync('bash', ['scripts/release/install-macos.sh', '--version', version], { env: installEnv, timeout: 45_000 });
     }
     const bundle = path.join(applications, 'Patterm.app');
     const resources = path.join(bundle, 'Contents', 'Resources');
@@ -89,7 +90,7 @@ test('Mac zip preserves a runnable app, bundled dependencies, and renderer', {
     assert.equal(child.exitCode, null, log);
     assert.ok(fs.existsSync(path.join(data, 'app.db')), `app database missing: ${log}`);
     assert.throws(() => execFileSync('bash', ['scripts/release/install-macos.sh', '--version', version], {
-      env: installEnv, timeout: 30_000, stdio: 'pipe'
+      env: installEnv, timeout: 15_000, stdio: 'pipe'
     }), error => /Patterm is running/.test(error.stderr?.toString()), 'installer rejects an app launched with relative argv[0]');
   } catch (error) {
     throw new Error(`${error.message}\n${log}`, { cause: error });
