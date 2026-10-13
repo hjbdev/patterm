@@ -33,6 +33,7 @@ export class AgentHistoryDeleteService {
   deleteProjectConversations(projectId: string): { deletedConversations: number } {
     const ids = this.database.connection.prepare(`select id from conversations where project_id = ?`).all(projectId) as Array<{ id: string }>;
     for (const { id } of ids) this.deleteConversation(id);
+    this.database.connection.prepare(`delete from conversation_import_batches where project_id = ?`).run(projectId);
     return { deletedConversations: ids.length };
   }
 

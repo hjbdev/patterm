@@ -17,6 +17,8 @@ import type { TerminalService } from '../app/Services/TerminalService';
 import { CloseProcessAction } from '../app/Actions/CloseProcessAction';
 import { nextProcessId } from '../app/Actions/RegisterProcessAction';
 import { AgentHistoryImportQueueService } from '../app/Services/AgentHistory/AgentHistoryImportQueueService';
+import { runHistoryImportWorker } from '../app/Services/AgentHistory/AgentHistoryImportWorker';
+import { HistoryDatabaseService } from '../app/Services/HistoryDatabaseService';
 import { RemoveProjectAction } from '../app/Actions/RemoveProjectAction';
 import { RenameProjectAction } from '../app/Actions/RenameProjectAction';
 import { BROWSER_TOOLS } from '../app/Http/BrowserTools';
@@ -281,6 +283,18 @@ async function main(): Promise<void> {
     const unstartable = new AgentHistoryImportQueueService(tempDir, undefined, () => { throw new Error('no worker'); });
     await assert.rejects(unstartable.deleteProjectHistory(removedId), /conversation history: no worker/, 'a worker that cannot start still settles the purge');
     unstartable.dispose();
+
+    // Before history had its own database, conversations lived in app.db. The
+    // worker copies them over before purging, so they get tombstones too.
+    db.prepare(`insert into projects(id,name,path,created_at,updated_at) values('project_legacy','Legacy',?,?,?)`).run(path.join(tempDir, 'legacy'), at, at);
+    db.prepare(`insert into conversations(id,provider,provider_conversation_id,project_id,status,created_at,imported_at) values('legacy_only','claude','legacy_native','project_legacy','ended',?,?)`).run(at, at);
+    const purge = await runHistoryImportWorker({ action: 'delete_project_history', appDataPath: tempDir, project_id: 'project_legacy' });
+    assert.equal(purge.ok, true, purge.error);
+    assert.equal((purge.result as { deletedConversations: number }).deletedConversations, 1, 'legacy-only history is copied, then purged');
+    const history = new HistoryDatabaseService(tempDir, { mode: 'read', busyTimeoutMs: 250 });
+    history.initialize({ migrate: false });
+    assert.ok(history.connection.prepare(`select 1 from conversation_deletions where provider_conversation_id = 'legacy_native'`).get(), 'with a tombstone');
+    history.dispose();
 
     // Process IDs of a removed project are never handed out again.
     assert.equal(nextProcessId(database), 'process_42');

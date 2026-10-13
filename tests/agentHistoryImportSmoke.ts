@@ -389,6 +389,7 @@ async function main(): Promise<void> {
     assert.ok(projectConversations > 0, 'the fixture project has imported history');
     assert.equal(del.deleteProjectConversations(project.id).deletedConversations, projectConversations);
     assert.equal(countProjectConversations(), 0, 'project history is deleted');
+    assert.equal(database!.connection.prepare(`select 1 from conversation_import_batches where project_id = ?`).get(project.id), undefined, 'with its import batches');
     imports.import({ trigger: 'manual', project_id: project.id });
     assert.equal(countProjectConversations(), 0, 'and not re-imported');
 

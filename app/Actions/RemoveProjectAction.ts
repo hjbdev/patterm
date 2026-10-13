@@ -38,7 +38,9 @@ const UNLINKED_ROWS = [
   'delete from assistant_inbox where source_process_id in (select id from processes where project_id = ?)',
   'delete from routine_runs where project_id = ?',
   'delete from peer_messages where project_id = ?',
-  'delete from app_artifacts_fts where project_id = ?'
+  'delete from app_artifacts_fts where project_id = ?',
+  // Copies from before history had its own database, purged there already.
+  'delete from conversations where project_id = ?'
 ];
 
 // Deletes everything Patterm holds for a project: its agents and processes
@@ -75,12 +77,11 @@ export class RemoveProjectAction {
       for (const link of this.deps.links?.links().filter((candidate) => candidate.project_id === input.project_id) ?? []) {
         await this.deps.unlink?.unlink({ host_id: link.host_id, project_id: input.project_id });
       }
-      // Conversation copies from before history moved to its own database go
-      // first: a worker copies them back whenever the history database is empty.
-      db.prepare('delete from conversations where project_id = ?').run(input.project_id);
       // History is purged while the project still exists, so imports queued
-      // before it still link their conversations to the project. Nothing
-      // awaits between the purge and the deletion, so no import runs between.
+      // before it still link their conversations to the project. The worker
+      // copies conversations left in app.db from before history had its own
+      // database before purging, so those get tombstones too. Nothing awaits
+      // between the purge and the deletion, so no import copies them back.
       await this.deps.history?.deleteProjectHistory(input.project_id);
 
       // Everything else cascades from the project row, including the
