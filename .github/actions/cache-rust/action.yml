@@ -14,6 +14,8 @@ runs:
       shell: bash
       run: echo "electron_config_cache=$RUNNER_TEMP/patterm-electron" >> "$GITHUB_ENV"
     - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+      # Validation uses Node and Electron stubs; only packaging needs the archive.
+      if: inputs.variant != 'check'
       with:
         path: ${{ runner.temp }}/patterm-electron
         key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
@@ -34,22 +36,24 @@ runs:
           native/terminal-core/target
         # Cargo validates restored artifacts; keep OS, architecture, target and
         # toolchain separate, and save fresh builds when sidecar sources change.
-        key: rust-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.target }}-${{ inputs.variant }}-${{ steps.toolchain.outputs.version }}-${{ hashFiles('native/terminal-core/Cargo.lock', 'native/terminal-core/Cargo.toml') }}-${{ hashFiles('native/terminal-core/src/**') }}
+        key: rust-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.target }}-${{ inputs.variant }}-${{ steps.toolchain.outputs.version }}-${{ hashFiles('native/terminal-core/Cargo.lock', 'native/terminal-core/Cargo.toml') }}-${{ hashFiles('native/terminal-core/src/**', 'native/terminal-core/tests/**') }}
         restore-keys: |
           rust-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.target }}-${{ inputs.variant }}-${{ steps.toolchain.outputs.version }}-${{ hashFiles('native/terminal-core/Cargo.lock', 'native/terminal-core/Cargo.toml') }}-
     - name: Preserve unchanged Rust source freshness on an exact cache hit
       if: steps.rust-cache.outputs.cache-hit == 'true'
       shell: bash
-      # Only rewind files covered by the exact key. Partial cache hits and the
-      # integration tests keep their checkout mtimes, so changes still rebuild.
+      # Only rewind files covered by the exact key. Changed sources or tests
+      # use a partial cache hit and keep checkout mtimes, so they still rebuild.
       run: |
         node --input-type=module <<'JS'
         import fs from 'node:fs';
         import path from 'node:path';
         const root = 'native/terminal-core';
         const files = ['Cargo.toml', 'Cargo.lock'].map(file => path.join(root, file));
-        for (const entry of fs.readdirSync(path.join(root, 'src'), { recursive: true, withFileTypes: true })) {
-          if (entry.isFile()) files.push(path.join(entry.parentPath, entry.name));
+        for (const directory of ['src', 'tests']) {
+          for (const entry of fs.readdirSync(path.join(root, directory), { recursive: true, withFileTypes: true })) {
+            if (entry.isFile()) files.push(path.join(entry.parentPath, entry.name));
+          }
         }
         for (const file of files) fs.utimesSync(file, 946684800, 946684800);
         JS

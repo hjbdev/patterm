@@ -8,12 +8,40 @@ importers:
 
   .:
     dependencies:
-      '@kitlangton/rolling-number':
-        specifier: ^0.4.1
-        version: 0.4.1(react@19.2.7)
       '@modelcontextprotocol/client':
         specifier: ^2.0.0
         version: 2.0.0
+      ignore:
+        specifier: ^7.0.10
+        version: 7.0.10
+      jsonc-parser:
+        specifier: ^3.3.1
+        version: 3.3.1
+      markdown-it:
+        specifier: ^14.2.0
+        version: 14.2.0
+      smol-toml:
+        specifier: ^1.9.0
+        version: 1.9.0
+      web-push:
+        specifier: ^3.6.7
+        version: 3.6.7
+      ws:
+        specifier: ^8.21.3
+        version: 8.21.3
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+      zod-to-json-schema:
+        specifier: ^3.25.2
+        version: 3.25.2(zod@3.25.76)
+    devDependencies:
+      '@kitlangton/rolling-number':
+        specifier: ^0.4.1
+        version: 0.4.1(react@19.2.7)
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@3.25.76)
       '@modelcontextprotocol/server':
         specifier: ^2.0.0
         version: 2.0.0
@@ -23,6 +51,9 @@ importers:
       '@radix-icons/vue':
         specifier: ^1.0.0
         version: 1.0.0(vue@3.5.35(typescript@5.9.3))
+      '@tailwindcss/typography':
+        specifier: ^0.5.20
+        version: 0.5.20(tailwindcss@3.4.19)
       '@tanstack/charts':
         specifier: 1.0.0
         version: 1.0.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(vue@3.5.35(typescript@5.9.3))
@@ -50,70 +81,6 @@ importers:
       '@tiptap/vue-3':
         specifier: ^3.31.4
         version: 3.31.4(@floating-ui/dom@1.7.6)(@tiptap/core@3.31.4(@tiptap/pm@3.31.4))(@tiptap/pm@3.31.4)(vue@3.5.35(typescript@5.9.3))
-      '@vueuse/core':
-        specifier: ^14.3.0
-        version: 14.3.0(vue@3.5.35(typescript@5.9.3))
-      class-variance-authority:
-        specifier: ^0.7.1
-        version: 0.7.1
-      clsx:
-        specifier: ^2.1.1
-        version: 2.1.1
-      ignore:
-        specifier: ^7.0.10
-        version: 7.0.10
-      jsonc-parser:
-        specifier: ^3.3.1
-        version: 3.3.1
-      lucide-vue-next:
-        specifier: ^0.468.0
-        version: 0.468.0(vue@3.5.35(typescript@5.9.3))
-      markdown-it:
-        specifier: ^14.2.0
-        version: 14.2.0
-      reka-ui:
-        specifier: ^2.9.8
-        version: 2.9.8(vue@3.5.35(typescript@5.9.3))
-      shiki:
-        specifier: 3.23.0
-        version: 3.23.0
-      smol-toml:
-        specifier: ^1.9.0
-        version: 1.9.0
-      tailwind-merge:
-        specifier: ^2.5.5
-        version: 2.6.1
-      vaul-vue:
-        specifier: ^0.4.1
-        version: 0.4.1(reka-ui@2.9.8(vue@3.5.35(typescript@5.9.3)))(vue@3.5.35(typescript@5.9.3))
-      vue:
-        specifier: ^3.5.13
-        version: 3.5.35(typescript@5.9.3)
-      vue-router:
-        specifier: ^4.6.4
-        version: 4.6.4(vue@3.5.35(typescript@5.9.3))
-      vue-sonner:
-        specifier: ^2.0.9
-        version: 2.0.9
-      web-push:
-        specifier: ^3.6.7
-        version: 3.6.7
-      ws:
-        specifier: ^8.21.3
-        version: 8.21.3
-      zod:
-        specifier: ^3.24.1
-        version: 3.25.76
-      zod-to-json-schema:
-        specifier: ^3.25.2
-        version: 3.25.2(zod@3.25.76)
-    devDependencies:
-      '@modelcontextprotocol/sdk':
-        specifier: ^1.29.0
-        version: 1.29.0(zod@3.25.76)
-      '@tailwindcss/typography':
-        specifier: ^0.5.20
-        version: 0.5.20(tailwindcss@3.4.19)
       '@types/markdown-it':
         specifier: ^14.1.2
         version: 14.1.2
@@ -129,6 +96,15 @@ importers:
       '@vitejs/plugin-vue':
         specifier: ^5.2.1
         version: 5.2.4(vite@6.4.3(@types/node@22.19.19)(jiti@1.21.7))(vue@3.5.35(typescript@5.9.3))
+      '@vueuse/core':
+        specifier: ^14.3.0
+        version: 14.3.0(vue@3.5.35(typescript@5.9.3))
+      class-variance-authority:
+        specifier: ^0.7.1
+        version: 0.7.1
+      clsx:
+        specifier: ^2.1.1
+        version: 2.1.1
       concurrently:
         specifier: ^9.1.0
         version: 9.2.1
@@ -138,9 +114,21 @@ importers:
       esbuild:
         specifier: ^0.28.0
         version: 0.28.0
+      lucide-vue-next:
+        specifier: ^0.468.0
+        version: 0.468.0(vue@3.5.35(typescript@5.9.3))
       postcss:
         specifier: ^8.4.49
         version: 8.5.15
+      reka-ui:
+        specifier: ^2.9.8
+        version: 2.9.8(vue@3.5.35(typescript@5.9.3))
+      shiki:
+        specifier: 3.23.0
+        version: 3.23.0
+      tailwind-merge:
+        specifier: ^2.5.5
+        version: 2.6.1
       tailwindcss:
         specifier: ^3.4.16
         version: 3.4.19
@@ -150,9 +138,21 @@ importers:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
+      vaul-vue:
+        specifier: ^0.4.1
+        version: 0.4.1(reka-ui@2.9.8(vue@3.5.35(typescript@5.9.3)))(vue@3.5.35(typescript@5.9.3))
       vite:
         specifier: ^6.0.3
         version: 6.4.3(@types/node@22.19.19)(jiti@1.21.7)
+      vue:
+        specifier: ^3.5.13
+        version: 3.5.35(typescript@5.9.3)
+      vue-router:
+        specifier: ^4.6.4
+        version: 4.6.4(vue@3.5.35(typescript@5.9.3))
+      vue-sonner:
+        specifier: ^2.0.9
+        version: 2.0.9
       vue-tsc:
         specifier: ^2.1.10
         version: 2.2.12(typescript@5.9.3)

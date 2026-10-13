@@ -78,8 +78,8 @@ fi
 # Electron for the desktop app, checked against the hashes in its npm package.
 ELECTRON_VERSION="$(node -p 'require(process.argv[1]).version' "$ROOT/node_modules/electron/package.json")"
 ELECTRON_ZIP="electron-v$ELECTRON_VERSION-linux-$ARCH.zip"
-curl --fail --silent --show-error --location --retry 3 --output "$DOWNLOADS/$ELECTRON_ZIP" "https://github.com/electron/electron/releases/download/v$ELECTRON_VERSION/$ELECTRON_ZIP"
 ELECTRON_SHA256="$(node -p 'require(process.argv[1])[process.argv[2]] ?? ""' "$ROOT/node_modules/electron/checksums.json" "$ELECTRON_ZIP")"
+node "$ROOT/scripts/release/download-electron.mjs" "https://github.com/electron/electron/releases/download/v$ELECTRON_VERSION/$ELECTRON_ZIP" "$DOWNLOADS/$ELECTRON_ZIP" "$ELECTRON_SHA256"
 printf '%s  %s\n' "$ELECTRON_SHA256" "$DOWNLOADS/$ELECTRON_ZIP" | sha256sum --check --quiet
 unzip -q "$DOWNLOADS/$ELECTRON_ZIP" -d "$STAGE/electron"
 
