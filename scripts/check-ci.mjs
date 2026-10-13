@@ -36,7 +36,9 @@ try {
 } catch (error) {
   process.exit(error.status ?? 1);
 }
-console.log(`Running ${files.size} Node smoke test files with eight workers.`);
-const result = spawnSync(process.execPath, ['--test', '--test-concurrency=8', '--test-reporter=spec', ...files], { stdio: 'inherit' });
+// Hosted Windows runs did not improve with eight workers; keep its earlier cap.
+const workers = process.platform === 'win32' ? 4 : 8;
+console.log(`Running ${files.size} Node smoke test files with ${workers} workers.`);
+const result = spawnSync(process.execPath, ['--test', `--test-concurrency=${workers}`, '--test-reporter=spec', ...files], { stdio: 'inherit' });
 if (result.error) throw result.error;
 process.exit(result.status ?? 1);

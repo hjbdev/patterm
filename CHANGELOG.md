@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - CI caches incremental TypeScript type checks and unchanged Rust integration
-  test builds, and runs smoke tests with eight workers. Linux, Windows and macOS
+  test builds, and runs smoke tests with up to eight workers. Linux, Windows and macOS
   packaging save verified Electron downloads for reuse, including with
   Electron's on-demand installer.
 - Release installs contain only the backend's runtime dependencies. Renderer
