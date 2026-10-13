@@ -69,6 +69,8 @@ export type AgentInterface = z.infer<typeof agentInterfaceInput>;
 // GPT-Live (realtime v3) voices, as listed by thread/realtime/listVoices.
 export const ASSISTANT_VOICES = ['cove', 'juniper', 'maple', 'spruce', 'ember', 'vale', 'breeze', 'arbor', 'sol'] as const;
 export const assistantSettingsInput = z.object({
+  // Off stops the assistant and hides it everywhere until turned back on.
+  enabled: z.boolean().default(true),
   // Null keeps Codex's default voice.
   voice: z.enum(ASSISTANT_VOICES).nullable(),
   // A Codex harness preset ID for the assistant's model; null uses the Codex default.
@@ -85,7 +87,7 @@ export const assistantSettingsInput = z.object({
   memoryBudgetTokens: z.union([z.literal(2000), z.literal(4000), z.literal(8000)]).default(4000)
 }).strict();
 export type AssistantSettings = z.infer<typeof assistantSettingsInput>;
-export const DEFAULT_ASSISTANT_SETTINGS: AssistantSettings = { voice: null, presetId: null, forwardNotifications: true, voiceProfile: 'codex', voiceAcknowledgements: 'default', userName: null, memoryEnabled: false, memoryBudgetTokens: 4000 };
+export const DEFAULT_ASSISTANT_SETTINGS: AssistantSettings = { enabled: true, voice: null, presetId: null, forwardNotifications: true, voiceProfile: 'codex', voiceAcknowledgements: 'default', userName: null, memoryEnabled: false, memoryBudgetTokens: 4000 };
 // Harnesses whose idle agents are compacted before their prompt cache expires.
 export const idleCompactionSettingsInput = z.object({ claude: z.boolean(), codex: z.boolean(), opencode: z.boolean() }).strict();
 export type IdleCompactionSettings = z.infer<typeof idleCompactionSettingsInput>;

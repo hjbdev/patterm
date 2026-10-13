@@ -135,6 +135,7 @@ import {
   type SelectedAgentByRoot
 } from '../lib/agentTabs';
 import { assistantLayout } from '../lib/assistantLayout';
+import { assistant } from '../lib/assistant';
 import { openCommandPaletteKey } from '../lib/commandPalette';
 import { isNavigationModeToggle, navigationModeAction } from '../lib/navigationMode';
 import { activeProcesses, topLevelProcessesForSessions } from '../lib/processTabs';
@@ -152,7 +153,7 @@ provide(openCommandPaletteKey, () => { paletteOpen.value = true; });
 const searchOpen = ref(false);
 const searchQuery = ref('');
 const mobile = useMediaQuery('(max-width: 639px)');
-const assistantDocked = computed(() => assistantLayout.open && assistantLayout.docked && !assistantLayout.expanded && !mobile.value);
+const assistantDocked = computed(() => assistant.enabled && assistantLayout.open && assistantLayout.docked && !assistantLayout.expanded && !mobile.value);
 const showStandalonePage = computed(() => !activeProjectId.value || route.name === 'settings' || route.name === 'usage' || route.name === 'routines' || route.name === 'routineLog');
 
 function openSettings(): void {

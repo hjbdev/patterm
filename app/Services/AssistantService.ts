@@ -25,6 +25,7 @@ const FOCUS_DIGEST_LIMIT = 12;
 const FOCUS_LINE_LIMIT = 240;
 
 export interface AssistantState {
+  enabled: boolean;
   process_id: string | null;
   voice: { active: boolean };
   focus: AssistantFocusState;
@@ -85,7 +86,7 @@ export class AssistantService {
 
   state(): AssistantState {
     const current = this.current();
-    return { process_id: current?.process_id ?? null, voice: { active: Boolean(current && this.voiceProcessId === current.process_id) }, focus: this.inbox.focus() };
+    return { enabled: this.enabled(), process_id: current?.process_id ?? null, voice: { active: Boolean(current && this.voiceProcessId === current.process_id) }, focus: this.inbox.focus() };
   }
 
   isAssistantProcess(processId: string): boolean {
@@ -94,6 +95,7 @@ export class AssistantService {
 
   // Returns the live assistant, launching or resuming it when none is running.
   async ensure(): Promise<AssistantState> {
+    this.assertEnabled();
     if (this.restarting) return this.restarting;
     if (this.current()) return this.state();
     this.launching ??= this.launch().finally(() => { this.launching = null; });
@@ -114,7 +116,32 @@ export class AssistantService {
     return this.replace(processId, true);
   }
 
+  // Turning the assistant off ends a voice call and stops its process once any
+  // launch or restart in flight settles. Held inbox items wait for it to return.
+  async settingsChanged(): Promise<AssistantState> {
+    if (!this.enabled()) {
+      await Promise.all([this.launching, this.restarting].map((pending) => pending?.catch(() => undefined)));
+      if (this.voiceProcessId) await this.stopVoice();
+      const current = this.current();
+      if (current && !this.enabled()) {
+        await this.processes.stop(current.process_id);
+        this.log('disabled', { process_id: current.process_id });
+      }
+    }
+    this.emitState();
+    return this.state();
+  }
+
+  private enabled(): boolean {
+    return this.settings.assistantSettings().enabled;
+  }
+
+  private assertEnabled(): void {
+    if (!this.enabled()) throw new Error('The assistant is turned off. Turn it on in Settings › Assistant.');
+  }
+
   private async replace(processId: string, fresh: boolean): Promise<AssistantState> {
+    this.assertEnabled();
     if (this.restarting) throw new Error('The assistant is already restarting. Wait for it to finish, then try again.');
     const current = this.current();
     if (current?.process_id !== processId) throw new Error('The assistant has already restarted');

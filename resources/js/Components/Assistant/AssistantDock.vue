@@ -3,6 +3,7 @@
        carry over when the panel docks or expands to a page. The page and the
        docked column slide in like the diff drawer; the panel rises out of the
        floating button. -->
+  <template v-if="assistant.enabled">
   <Transition
     :enter-active-class="page || docked ? 'transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none' : 'origin-bottom-right transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none'"
     :enter-from-class="page || docked ? 'translate-x-6 opacity-0' : 'translate-y-2 scale-[0.97] opacity-0'"
@@ -156,6 +157,7 @@
     </TooltipTrigger>
     <TooltipContent side="left">{{ open ? 'Hide assistant' : assistant.focus ? `Assistant · Focus${assistant.focusPending ? `, ${assistant.focusPending} held` : ''}` : 'Assistant' }}</TooltipContent>
   </Tooltip>
+  </template>
 </template>
 
 <script setup lang="ts">

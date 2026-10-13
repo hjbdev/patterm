@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- An Assistant switch in Settings › Assistant. Turning it off stops the
+  assistant, ends any voice call, and hides its button until it is back on.
+
 - A per-user PowerShell installer for Windows x64 releases, with zip checksum
   verification and a `patterm` command on the user PATH.
 

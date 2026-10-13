@@ -6,6 +6,8 @@ export interface AssistantRealtimeEvent {
 }
 
 interface AssistantStatePayload {
+  // Older servers have no off switch.
+  enabled?: boolean;
   process_id: string | null;
   voice: { active: boolean };
   // Older servers send no focus state.
@@ -15,6 +17,8 @@ interface AssistantStatePayload {
 // The global assistant, shared by the floating panel and settings.
 export const assistant = reactive({
   loaded: false,
+  // Hidden until the server says it is on, so a turned-off assistant never flashes in.
+  enabled: false,
   processId: null as string | null,
   voiceActive: false,
   // Focus mode holds notifications, agent messages, reports, and timer
@@ -30,6 +34,7 @@ const realtimeListeners = new Set<(event: AssistantRealtimeEvent) => void>();
 let listening = false;
 
 function apply(state: AssistantStatePayload): void {
+  assistant.enabled = state.enabled ?? true;
   assistant.processId = state.process_id;
   assistant.voiceActive = state.voice.active;
   assistant.focus = state.focus?.enabled ?? false;
@@ -132,6 +137,7 @@ export type AssistantVoiceProfile = 'codex' | 'patterm';
 export type AssistantVoiceAcknowledgements = 'default' | 'on' | 'off';
 
 export interface AssistantSettings {
+  enabled: boolean;
   voice: string | null;
   presetId: string | null;
   forwardNotifications: boolean;
