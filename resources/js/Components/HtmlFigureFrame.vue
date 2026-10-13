@@ -15,7 +15,7 @@
          page asks for happens until the user confirms it here. The key
          rebuilds them when the request changes, so a press that began on an
          older request cannot finish on this one. -->
-    <div v-if="request" :key="request.revision" class="mt-2 flex items-start gap-3 rounded-md bg-muted/30 px-3 py-2 text-xs" role="group" :aria-label="request.kind === 'link' ? 'Link from this page' : 'Answer from this page'" data-component="html-figure-request">
+    <div v-if="request" ref="bar" :key="request.revision" class="mt-2 flex items-start gap-3 rounded-md bg-muted/30 px-3 py-2 text-xs" role="group" :aria-label="request.kind === 'link' ? 'Link from this page' : 'Answer from this page'" data-component="html-figure-request">
       <p class="min-w-0 flex-1 whitespace-pre-wrap break-words text-muted-foreground"><span class="text-foreground">{{ request.kind === 'link' ? 'Open in your browser:' : 'Send to the agent:' }}</span> {{ request.text }}</p>
       <div class="flex shrink-0 items-center gap-1">
         <Button size="sm" variant="ghost" class="h-6 px-2 text-xs text-muted-foreground" :disabled="sending" @click="settle(false, 'Cancelled.')">Cancel</Button>
@@ -51,8 +51,14 @@ interface PageRequest { kind: 'answer' | 'link'; text: string; id?: string; url?
 const request = ref<PageRequest | null>(null);
 const sending = ref(false);
 let revision = 0;
-// The request a press of the confirm button began on, and when.
-let armed: { revision: number; at: number } | null = null;
+// The bar on screen. Anything can move it, including pages resizing or other
+// bars changing, so its position is watched while it is shown.
+const bar = ref<HTMLElement | null>(null);
+let place: string | null = null;
+let stillSince = 0;
+let watching = 0;
+// The request a press of the confirm button began on, and where the bar was.
+let armed: { revision: number; place: string } | null = null;
 
 // A frame draws one page; a changed page gets a fresh frame.
 watch(() => props.html, () => {
@@ -90,9 +96,6 @@ function onMessage(event: MessageEvent): void {
     pushState();
   } else if (data.type === 'size' && typeof data.height === 'number' && Number.isFinite(data.height)) {
     const next = Math.min(FIGURE_HEIGHT.max, Math.max(16, Math.ceil(data.height)));
-    // Resizing moves this bar and every page below it, so no confirm button
-    // in the conversation counts a press until the layout stands still again.
-    if (next !== height.value) lastFigureResize = performance.now();
     height.value = next;
     if (props.measureKey) remember(props.measureKey, height.value);
   } else if (data.type === 'answer') {
@@ -117,6 +120,7 @@ function show(next: Omit<PageRequest, 'revision' | 'shownAt'>): void {
   if (sending.value) { post({ type: 'answer-result', requestId: next.requestId, ok: false, error: 'Patterm is still sending the last answer.' }); return; }
   settle(false, 'Replaced by a newer request.');
   request.value = { ...next, revision: ++revision, shownAt: performance.now() };
+  watchPlace();
 }
 
 // Tells the page how its request ended and clears the bar.
@@ -128,21 +132,44 @@ function settle(ok: boolean, error?: string): void {
   post({ type: 'answer-result', requestId: current.requestId, ok, ...(error ? { error } : {}) });
 }
 
-// A press counts only once the request has stood unchanged, and the
-// conversation's pages unresized, long enough to read, so a page cannot swap
-// it in or slide it under the pointer just as the user reaches for something else.
+// A press counts only once the request has stood unchanged, and its bar
+// unmoved, long enough to read, so a page cannot swap it in or slide it under
+// the pointer just as the user reaches for something else.
 function arm(event: Event): void {
   const current = request.value;
   const now = performance.now();
-  armed = event.isTrusted && current && now - current.shownAt >= STEADY_MS && now - lastFigureResize >= STEADY_MS ? { revision: current.revision, at: now } : null;
+  measure();
+  armed = event.isTrusted && current && place !== null && now - current.shownAt >= STEADY_MS && now - stillSince >= STEADY_MS ? { revision: current.revision, place } : null;
+}
+
+// Notes where the bar is; a move restarts the wait and drops any press.
+function measure(): void {
+  const rect = bar.value?.getBoundingClientRect();
+  const next = rect ? `${rect.left},${rect.top},${rect.width},${rect.height}` : null;
+  if (next === place) return;
+  place = next;
+  stillSince = performance.now();
+  armed = null;
+}
+
+function watchPlace(): void {
+  const run = ++watching;
+  place = null;
+  const step = () => {
+    if (run !== watching || !request.value) return;
+    measure();
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
 }
 
 async function confirm(event: MouseEvent): Promise<void> {
   const current = request.value;
   const pressed = armed;
   armed = null;
-  // A press that began before a page moved the layout does not count.
-  if (!event.isTrusted || !current || pressed?.revision !== current.revision || pressed.at <= lastFigureResize || sending.value) return;
+  measure();
+  // A press counts only on the request it began on, with the bar where it was.
+  if (!event.isTrusted || !current || pressed?.revision !== current.revision || pressed.place !== place || sending.value) return;
   if (current.kind === 'link') {
     window.open(current.url, '_blank', 'noopener,noreferrer');
     settle(true);
@@ -162,6 +189,7 @@ async function confirm(event: MouseEvent): Promise<void> {
 
 onMounted(() => window.addEventListener('message', onMessage));
 onBeforeUnmount(() => {
+  watching++;
   window.removeEventListener('message', onMessage);
   settle(false, 'The page closed.');
 });
@@ -170,8 +198,6 @@ onBeforeUnmount(() => {
 <script lang="ts">
 const ID = new RegExp(`^${FIGURE_ID}$`);
 const STEADY_MS = 500;
-// When any page in this window last changed its height.
-let lastFigureResize = -Infinity;
 
 // Picks become one line each in the user's message.
 function readPicks(raw: unknown): Array<{ item?: string; label: string; value: string }> | null {

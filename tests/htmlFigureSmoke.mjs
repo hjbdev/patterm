@@ -225,29 +225,38 @@ function mountFrame({ channel = null, answered = new Map(), shared = null } = {}
   const contentWindow = { postMessage: (message) => posted.push(message) };
   const clock = shared?.clock ?? { now: 0 };
   const performance = { now: () => clock.now };
+  // The bar's place on screen, which tests move, and animation frames they step.
+  const rect = { left: 0, top: 500, width: 600, height: 32 };
+  const frames = [];
+  const requestAnimationFrame = (callback) => frames.push(callback);
   // The module block runs once per window, so frames that share one also
   // share its state, as in the app; each frame runs its own setup.
   const group = shared ?? {};
   group.module ??= new Function('FIGURE_ID', 'performance', `${transpile(executable(blocks[1]))}
-return function setup(computed, inject, onBeforeUnmount, onMounted, ref, watch, window, FIGURE_FRAME_SANDBOX, FIGURE_HEIGHT, figureAnswerText, figureAnswerKey, figureAnsweredKey, figureFrameUrl, defineProps, __frame) {
+return function setup(computed, inject, onBeforeUnmount, onMounted, ref, watch, window, requestAnimationFrame, FIGURE_FRAME_SANDBOX, FIGURE_HEIGHT, figureAnswerText, figureAnswerKey, figureAnsweredKey, figureFrameUrl, defineProps, __frame, __bar) {
 ${transpile(executable(blocks[0]))}
 frame.value = __frame;
+bar.value = __bar;
 return { onMessage, arm, confirm, request };
 };`)(ui.FIGURE_ID, performance);
   const window = { addEventListener: () => {}, removeEventListener: () => {}, open: (...args) => opened.push(args) };
   const answerKey = Symbol('answer');
   const answeredKey = Symbol('answered');
-  const api = group.module(computed, (key) => key === answerKey ? channel : key === answeredKey ? computed(() => answered) : null, () => {}, () => {}, ref, watch, window,
-    ui.FIGURE_FRAME_SANDBOX, ui.FIGURE_HEIGHT, ui.figureAnswerText, answerKey, answeredKey, () => '/figure-frame', () => ({ html: '<p>x</p>', title: 'x', initialHeight: 100 }), markRaw({ contentWindow }));
+  const api = group.module(computed, (key) => key === answerKey ? channel : key === answeredKey ? computed(() => answered) : null, () => {}, () => {}, ref, watch, window, requestAnimationFrame,
+    ui.FIGURE_FRAME_SANDBOX, ui.FIGURE_HEIGHT, ui.figureAnswerText, answerKey, answeredKey, () => '/figure-frame', () => ({ html: '<p>x</p>', title: 'x', initialHeight: 100 }), markRaw({ contentWindow }), markRaw({ getBoundingClientRect: () => ({ ...rect }) }));
+  // Runs the animation frames due now, as the browser would between events.
+  const tick = () => { for (const callback of frames.splice(0)) callback(); };
   const fromPage = (data) => api.onMessage({ source: contentWindow, data: { source: 'patterm-figure', ...data } });
   // A real press: pointer down on the button, later the click.
   const press = async ({ trusted = true, wait = 600, between } = {}) => {
+    tick();
     clock.now += wait;
+    tick();
     api.arm({ isTrusted: trusted });
     between?.();
     await api.confirm({ isTrusted: trusted });
   };
-  return { ...api, posted, opened, clock, fromPage, press };
+  return { ...api, posted, opened, clock, rect, tick, fromPage, press };
 }
 
 function liveChannel() {
@@ -294,35 +303,44 @@ test('a press sends only the request it began on, after it has stood still', asy
   assert.deepEqual(sent, ['Answer to q: Swapped late (late)'], 'the user sent what they had time to read');
 });
 
-test('a page cannot slide a waiting request under the pointer by resizing', async () => {
+test('a bar that moved, for any reason, waits again before a press counts', async () => {
   const { sent, channel } = liveChannel();
   const frame = mountFrame({ channel });
-  frame.fromPage({ type: 'size', height: 600 });
   frame.fromPage(pick('approval', 'Unrequested answer', 'unauthorized'));
+  frame.tick();
   frame.clock.now += 600;
-  // The request has stood long enough; now the page shrinks to move it.
-  frame.fromPage({ type: 'size', height: 144 });
+  frame.tick();
+  // The bar has stood still; now something moves it: this page shrinking,
+  // a page above resizing, a bar above going from several lines to one.
+  frame.rect.top = 176;
   await frame.press({ wait: 50 });
-  assert.deepEqual(sent, [], 'a request that just moved is not pressed yet');
-  // A shrink between pointer down and the click disarms the press too.
-  await frame.press({ between: () => frame.fromPage({ type: 'size', height: 300 }) });
+  assert.deepEqual(sent, [], 'a bar that just moved is not pressed yet');
+  // A move between pointer down and the click drops the press, even before
+  // the next animation frame notices it.
+  await frame.press({ between: () => { frame.rect.top = 300; } });
   assert.deepEqual(sent, [], 'a press that began before the move does not count');
-  frame.fromPage({ type: 'size', height: 300 });
   await frame.press();
   assert.deepEqual(sent, ['Answer to approval: Unrequested answer (unauthorized)'], 'once it stands still the user can send it');
 });
 
-test('another page resizing above a waiting request holds its button too', async () => {
+test('a page above that shrinks its own bar holds the bar below', async () => {
   const { sent, channel } = liveChannel();
   const shared = { clock: { now: 10_000 } };
-  const [above, below] = [mountFrame({ channel, shared }), mountFrame({ channel, shared })];
-  below.fromPage(pick('q', 'Below', 'below'));
+  const above = mountFrame({ channel, shared });
+  const below = mountFrame({ channel, shared });
+  above.fromPage(pick('a', 'A long answer\nover\nseveral lines', 'a'));
+  below.fromPage(pick('b', 'Below', 'below'));
+  below.tick();
   shared.clock.now += 600;
-  above.fromPage({ type: 'size', height: 400 });
+  below.tick();
+  // The page above swaps in a one-line answer; its bar shrinks and the bar
+  // below rises by the lines it lost.
+  above.fromPage(pick('a', 'Short', 'a', 2));
+  below.rect.top -= 40;
   await below.press({ wait: 50 });
-  assert.deepEqual(sent, [], 'the shift above moved this button');
+  assert.deepEqual(sent, [], 'the bar below moved, so it waits again');
   await below.press();
-  assert.deepEqual(sent, ['Answer to q: Below (below)']);
+  assert.deepEqual(sent, ['Answer to b: Below (below)']);
 });
 
 test('links open only after the user confirms the address in Patterm', async () => {
