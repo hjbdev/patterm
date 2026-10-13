@@ -400,6 +400,7 @@ if (socketPath) {
 `);
 
   const database = new DatabaseService(directory);
+  let failed = false;
   try {
     database.initialize();
   const now = new Date().toISOString();
@@ -571,10 +572,12 @@ if (socketPath) {
 
   // Ambiguous, delayed, and definitive delivery evidence on fresh sessions.
   let launchCount = 0;
-  const launch = async (mode: NodeJS.ProcessEnv) => {
+  // Launch waits for app-server to start, which can take seconds on a busy
+  // Windows runner, so only the requests after it get a short timeout.
+  const launch = async (mode: NodeJS.ProcessEnv, requestTimeoutMs?: number) => {
     launchCount += 1;
-    const scoped = new CodexAppServerService(database, runtimeDirectory, mode, process.execPath, undefined, { requestTimeoutMs: 250 });
-    const launched = await scoped.prepare({
+    const launcher = new CodexAppServerService(database, runtimeDirectory, mode, process.execPath);
+    const launched = await launcher.prepare({
       executable,
       cwd: directory,
       name: 'Codex',
@@ -587,10 +590,12 @@ if (socketPath) {
       .run(processId, directory, JSON.stringify(launched.argv), now, now);
     database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor) values (?, 'project_test', ?, 'codex','integrated',?,?, ?, 'orchestrator','found','user')`)
       .run(`session_delivery_${launchCount}`, processId, `identity_delivery_${launchCount}`, launched.resumeId, now);
-    return { service: scoped, processId };
+    if (!requestTimeoutMs) return { service: launcher, processId };
+    launcher.disconnect();
+    return { service: new CodexAppServerService(database, runtimeDirectory, mode, process.execPath, undefined, { requestTimeoutMs }), processId };
   };
 
-  const lost = await launch({ ...process.env, HANG_TURN_RESPONSE: '1' });
+  const lost = await launch({ ...process.env, HANG_TURN_RESPONSE: '1' }, 1_000);
   const lostId = '55555555-5555-5555-5555-555555555555';
   await assert.rejects(
     lost.service.prompt(lost.processId, { text: 'lost turn', references: [], attachments: [], messageId: lostId }),
@@ -598,7 +603,7 @@ if (socketPath) {
   );
   assert.equal(await lost.service.reconcile(lost.processId, lostId), 'accepted', 'the native clientId proves admission');
 
-  const delayed = await launch({ ...process.env, HANG_TURN_RESPONSE: '1', DELAY_ITEMS: '1' });
+  const delayed = await launch({ ...process.env, HANG_TURN_RESPONSE: '1', DELAY_ITEMS: '1' }, 1_000);
   const delayedId = '66666666-6666-6666-6666-666666666666';
   await assert.rejects(
     delayed.service.prompt(delayed.processId, { text: 'delayed', references: [], attachments: [], messageId: delayedId }),
@@ -1024,10 +1029,19 @@ if (socketPath) {
     await extra.service.stop(extra.processId);
     extra.service.disconnect();
   }
+  } catch (error) {
+    failed = true;
+    throw error;
   } finally {
     database.dispose();
-    // Windows cannot remove a directory that an exiting host or CLI still runs in.
-    removeTree(directory);
+    // Windows cannot remove a directory that an exiting host or CLI still runs
+    // in. After a failure hosts may still run there; keep the real error.
+    try {
+      removeTree(directory);
+    } catch (error) {
+      if (!failed) throw error;
+      console.error(error);
+    }
   }
 }
 
