@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-13
+
+The first public release. Earlier development history stays
+in the archived pre-release repository.
+
 ### Added
 
 - Windows support for the desktop app, run from source. Agents run in Windows
@@ -37,42 +42,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - When an OpenCode launch fails because the shared server is older than the
   CLI, the error offers to restart the server and launch again. The restart
   interrupts running OpenCode turns, so it runs only when you click it.
-
-### Changed
-
-- Agent auto-summaries now retain a bounded recap of conversation prose and read
-  new history in order, excluding tools and reasoning. Calls are batched and skip
-  unchanged prose. Large existing threads start with labelled partial
-  coverage; Session context offers an estimated, pausable rebuild from retained
-  history. Refreshes, resumes, and delayed final imports preserve coverage, while
-  edits to already-covered history require a deliberate rebuild.
-
-- Keep sidebar row spacing consistent when agents expand or show status lines.
-- Closing the desktop window confirms quitting in the app instead of a native
-  dialog. The native dialog remains only when the window cannot respond.
-- Package scripts run cargo through `scripts/cargo.mjs` instead of a POSIX
-  `PATH=` prefix.
-
-### Fixed
-
-- The diff view no longer marks every line as changed when git checks a file
-  out with CRLF line endings.
-- Directory paths, home abbreviations, and labels handle Windows paths and
-  drive letters, and AltGr characters such as `[`, `\`, and `@` type normally
-  in terminals.
-- Terminal and interface font stacks fall back to Cascadia Mono and Consolas.
-
-### Removed
-
-- Amp harness support, including terminal and Integrated launches, presets, MCP
-  configuration import, and conversation history import.
-
-## [0.1.0] - 2026-10-12
-
-The first public release. Earlier development history stays
-in the archived pre-release repository.
-
-### Added
 
 - Bundled interface and terminal fonts for desktop and browser use, including
   Fira Sans and Comic Mono, with font selects and live previews in Settings.
@@ -120,7 +89,7 @@ in the archived pre-release repository.
   with the first figure. Only Integrated agents are offered `ui_save`.
   Settings › Figures turns it off and shows example figures.
 - An Electron desktop app and a Linux browser service that host Claude Code,
-  Codex, opencode, and Amp through PTYs, keeping each CLI's own permissions,
+  Codex, and OpenCode through PTYs, keeping each CLI's own permissions,
   delegation, and resume.
 - A Rust terminal sidecar built on `alacritty_terminal`, drawn by a WebGPU
   renderer with a WebGL fallback.
@@ -143,6 +112,19 @@ in the archived pre-release repository.
 
 ### Changed
 
+- Agent auto-summaries now retain a bounded recap of conversation prose and read
+  new history in order, excluding tools and reasoning. Calls are batched and skip
+  unchanged prose. Large existing threads start with labelled partial
+  coverage; Session context offers an estimated, pausable rebuild from retained
+  history. Refreshes, resumes, and delayed final imports preserve coverage, while
+  edits to already-covered history require a deliberate rebuild.
+
+- Keep sidebar row spacing consistent when agents expand or show status lines.
+- Closing the desktop window confirms quitting in the app instead of a native
+  dialog. The native dialog remains only when the window cannot respond.
+- Package scripts run cargo through `scripts/cargo.mjs` instead of a POSIX
+  `PATH=` prefix.
+
 - Every Patterm tool name is now snake_case, such as `todo_list`, `ui_save`
   and `session_context`, so agents see the same name in every harness and can
   pass it to `help`. The dotted names, such as `todo.list`, are gone. Paired
@@ -159,7 +141,19 @@ in the archived pre-release repository.
   Usage show the board rather than the project's first agent. A project you
   left from its board reopens there.
 
+### Removed
+
+- Amp harness support, including terminal and Integrated launches, presets, MCP
+  configuration import, and conversation history import.
+
 ### Fixed
+
+- The diff view no longer marks every line as changed when git checks a file
+  out with CRLF line endings.
+- Directory paths, home abbreviations, and labels handle Windows paths and
+  drive letters, and AltGr characters such as `[`, `\`, and `@` type normally
+  in terminals.
+- Terminal and interface font stacks fall back to Cascadia Mono and Consolas.
 
 - In Integrated conversations, the session context button sits at the edge of
   the conversation column, as it does beside a terminal, instead of at the far
