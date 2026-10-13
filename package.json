@@ -46,7 +46,7 @@
     "install:service": "node scripts/install-service.mjs",
     "test:server": "tsc -p tsconfig.tests.json && pnpm run build:sidecar && node dist/tests/tests/webServerSmoke.js && node dist/tests/tests/remoteAccessSmoke.js",
     "test:runtime": "tsc -p tsconfig.tests.json && pnpm run build:sidecar && node dist/tests/tests/persistentRuntimeSmoke.js && node dist/tests/tests/timerRecoverySmoke.js && node --test dist/tests/tests/routineSmoke.js tests/routineAutosaveSmoke.mjs && node dist/tests/tests/runtimeShutdownSmoke.js && node tests/desktopQuitSmoke.mjs",
-    "test:service": "node --test tests/serviceInstallerSmoke.mjs tests/launcherSmoke.mjs tests/tailscaleLauncherSmoke.mjs tests/releaseInstallerSmoke.mjs",
+    "test:service": "node --test tests/serviceInstallerSmoke.mjs tests/launcherSmoke.mjs tests/tailscaleLauncherSmoke.mjs tests/releaseInstallerSmoke.mjs tests/macInstallerSmoke.mjs",
     "test:opencode": "tsc -p tsconfig.tests.json && pnpm run build:mcp && node dist/tests/tests/openCodeServerSmoke.js",
     "test:codex": "tsc -p tsconfig.tests.json && node dist/tests/tests/codexAppServerSmoke.js",
     "test:claude": "tsc -p tsconfig.tests.json && node dist/tests/tests/claudeStreamSmoke.js && node dist/tests/tests/claudeReconnectSmoke.js",
