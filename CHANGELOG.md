@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- CI reuses test compilation and caches Rust builds and macOS package downloads.
+  Linux checks build the renderer once for both the desktop and server.
+
 ## [0.1.1] - 2026-10-13
 
 ### Added
