@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Tagged releases include macOS and Windows desktop packages with an
+  experimental-platform notice above the generated release notes. Both
+  platforms remain experimental on stable releases and pre-releases.
+
 - Windows installs add Patterm to the current user's Start menu. The shortcut
   follows updates and uses Patterm's icon and application identity.
 - The app icon now shows a white terminal mark on the UI's charcoal background,

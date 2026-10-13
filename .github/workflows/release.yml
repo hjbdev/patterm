@@ -217,5 +217,5 @@ jobs:
           # Stable releases and prereleases carry Windows and macOS zips.
           shopt -s nullglob
           desktop=(release/*.zip release/*.zip.sha256)
-          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "Patterm ${GITHUB_REF_NAME#v}" "${prerelease[@]}" \
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --notes-file scripts/release/notes.md --title "Patterm ${GITHUB_REF_NAME#v}" "${prerelease[@]}" \
             release/*.tar.gz release/*.tar.gz.sha256 release/manifest.json release/manifest.json.minisig release/install.sh release/install.ps1 release/uninstall.sh release/scripts.sha256 "${desktop[@]}"
