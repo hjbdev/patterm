@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { mock } from 'node:test';
 import type { ProjectWorkbenchDto, SessionDto, WorkbenchSnapshotDto } from '../app/Repositories/WorkbenchRepository';
 import { McpToolRegistry } from '../app/MCP/ToolRegistry';
 import { diffWorkbench, type WorkbenchChanges as ServerChanges } from '../app/Services/WorkbenchPatch';
@@ -8,7 +9,6 @@ import { applyWorkbenchChanges, changesLifecycle, type WorkbenchChanges as Clien
 const clone = <T>(value: T): T => structuredClone(value);
 // Patches reach clients as JSON.
 const wire = (changes: ServerChanges): ClientChanges => JSON.parse(JSON.stringify(changes)) as ClientChanges;
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function seeded(seed: number): () => number {
   let state = seed;
@@ -162,7 +162,8 @@ function lifecycle(): void {
   assert.equal(check((next) => { next.projects[0]!.timers.pop(); }), false, 'timers are not lifecycle changes');
 }
 
-async function syncService(): Promise<void> {
+function syncService(): void {
+  mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1_000 });
   let data = workbench(2, 4);
   let builds = 0;
   const sync = new WorkbenchSyncService(() => { builds += 1; return clone(data); }, { delayMs: 5, maxDelayMs: 25, historySize: 3 });
@@ -178,10 +179,12 @@ async function syncService(): Promise<void> {
     sync.invalidate();
     sync.invalidate();
     sync.invalidate();
-    await sleep(40);
+    mock.timers.tick(4);
+    assert.equal(patches.length, 0, 'a burst waits for the debounce delay');
+    mock.timers.tick(1);
     assert.deepEqual(patches.map((patch) => [patch.from, patch.to]), [[0, 1]], 'a burst of changes publishes one patch');
     sync.invalidate();
-    await sleep(40);
+    mock.timers.tick(5);
     assert.equal(patches.length, 1, 'a rebuild that changes nothing publishes nothing');
 
     assert.deepEqual(sync.read({ epoch, version: 1 }), { epoch, version: 1, current: true }, 'a current client gets no data');
@@ -206,12 +209,19 @@ async function syncService(): Promise<void> {
 
     // A steady stream of changes still publishes within the maximum delay.
     const published = patches.length;
-    const stream = setInterval(() => { change(); sync.invalidate(); }, 2);
-    await sleep(60);
-    clearInterval(stream);
-    assert.ok(patches.length > published, 'continuous changes do not postpone publishing indefinitely');
+    change();
+    sync.invalidate();
+    for (let elapsed = 0; elapsed < 24; elapsed += 2) {
+      mock.timers.tick(2);
+      change();
+      sync.invalidate();
+    }
+    assert.equal(patches.length, published, 'continuous changes stay debounced before the maximum delay');
+    mock.timers.tick(1);
+    assert.equal(patches.length, published + 1, 'continuous changes publish at the maximum delay');
   } finally {
     sync.dispose();
+    mock.timers.reset();
   }
 }
 
