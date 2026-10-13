@@ -2,6 +2,11 @@
   <SettingsPanel title="Assistant">
     <template #description>One Codex session that oversees agents across your projects. Open it from the button in the bottom-right corner.</template>
     <p v-if="error" role="alert" class="text-xs text-destructive">{{ error }}</p>
+    <SettingsSection title="General" scope="assistant.general">
+      <SettingsRow label="Assistant" description="Show the assistant button and let it start. Turning it off stops a running assistant and ends any voice call; its conversation resumes when you turn it back on." html-for="assistant-enabled" save-key="assistant.general.enabled" toggle>
+        <Switch id="assistant-enabled" :model-value="settings?.enabled ?? true" :disabled="!settings" @update:model-value="save('assistant.general.enabled', { enabled: $event })" />
+      </SettingsRow>
+    </SettingsSection>
     <SettingsSection title="Memory" description="Start a new assistant conversation to apply changes." scope="assistant.memory">
       <SettingsRow label="Saved memory" description="Keep useful facts across conversations. Older notes are gradually compressed; high-importance notes last longer." html-for="assistant-memory-enabled" save-key="assistant.memory.enabled" toggle>
         <Switch id="assistant-memory-enabled" :model-value="settings?.memoryEnabled ?? false" :disabled="!settings" @update:model-value="save('assistant.memory.enabled', { memoryEnabled: $event })" />
