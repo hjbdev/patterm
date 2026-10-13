@@ -68,6 +68,12 @@ test('Mac installer repeats, updates, rejects downgrades, and preserves the old 
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /already installed/);
     assert.doesNotMatch(fs.readFileSync(downloads, 'utf8'), /\.zip/, 'a verified same-version rerun does not download the archive');
+    fs.rmSync(path.join(applications, 'Patterm.app/Contents/MacOS/Patterm'));
+    result = install('1.2.3');
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Downloading Patterm/);
+    assert.ok(fs.statSync(path.join(applications, 'Patterm.app/Contents/MacOS/Patterm')).isFile(), 'same-version rerun repairs an incomplete app');
+
     release('1.2.4');
     result = install('1.2.4', { RUNNING_APP: `${applications}/Patterm.app/Contents/MacOS/Patterm --flag` });
     assert.notEqual(result.status, 0);
