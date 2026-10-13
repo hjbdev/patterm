@@ -58,7 +58,7 @@ mkdir -p "$STAGE/dist" "$STAGE/runtime" "$STAGE/resources/native" "$STAGE/resour
 
 cp -a "$ROOT/dist/main" "$ROOT/dist/server" "$ROOT/dist/renderer" "$ROOT/dist/mcp" "$STAGE/dist/"
 cp "$ROOT/package.json" "$ROOT/LICENSE" "$ROOT/THIRD_PARTY_NOTICES.md" "$STAGE/"
-# The tag is the version; package.json in the repository stays at its placeholder.
+# The tag determines the packaged version, including prerelease suffixes.
 node -e 'const fs = require("fs"); const file = process.argv[1]; const data = JSON.parse(fs.readFileSync(file, "utf8")); data.version = process.argv[2]; fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);' "$STAGE/package.json" "$VERSION"
 
 # Production dependencies only. None are native, so one install serves both architectures.
