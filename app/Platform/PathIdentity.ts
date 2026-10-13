@@ -1,4 +1,3 @@
-import { WINDOWS_PATH_KEY } from '../Database/SqliteConnection';
 import { isPathWithin, normalizePath, pathKey, samePath } from './Paths';
 
 // Project, worktree, session, and history paths are stored as text and compared
@@ -38,6 +37,9 @@ export function nativePath(value: string): string {
   if (posix) return normalizePath(`${posix[1]!.toUpperCase()}:\\${(posix[2] ?? '').replace(/\//g, '\\')}`);
   return value;
 }
+
+// openSqliteConnection() registers this SQL function on Windows.
+export const WINDOWS_PATH_KEY = 'patterm_path_key';
 
 // SQL for comparing a path column with pathParam(value). The text is the bare
 // column on POSIX; on Windows it folds separators and Unicode case with the

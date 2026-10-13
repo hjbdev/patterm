@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { WINDOWS_PATH_KEY } from '../Platform/PathIdentity';
 
 const nodeRequire = createRequire(__filename);
 const { DatabaseSync } = nodeRequire('node:sqlite') as {
@@ -29,8 +30,6 @@ interface NativeSqliteConnection {
   prepare(statement: string): SqliteStatement;
   function(name: string, options: { deterministic?: boolean }, fn: (value: unknown) => unknown): void;
 }
-
-export const WINDOWS_PATH_KEY = 'patterm_path_key';
 
 export function openSqliteConnection(path: string, options: { readOnly?: boolean } = {}): SqliteConnection {
   const db = new DatabaseSync(path, options);
