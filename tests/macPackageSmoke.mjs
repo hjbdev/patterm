@@ -6,10 +6,12 @@ import { once } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 
 test('Mac zip preserves a runnable app, bundled dependencies, and renderer', {
-  skip: process.platform !== 'darwin' && 'requires macOS', timeout: 90_000
+  // Two verified installs, a launch, and a running-app refusal have separate bounds.
+  skip: process.platform !== 'darwin' && 'requires macOS', timeout: 360_000
 }, async (t) => {
   const directory = process.env.MAC_PACKAGE_DIRECTORY;
   assert.ok(directory, 'set MAC_PACKAGE_DIRECTORY to the package output directory');
@@ -24,9 +26,14 @@ test('Mac zip preserves a runnable app, bundled dependencies, and renderer', {
   let socket;
   let log = '';
   try {
-    console.log('Extracting and checking the Mac bundle');
-    execFileSync('ditto', ['-x', '-k', archive, temporary], { timeout: 30_000 });
-    const bundle = path.join(temporary, 'Patterm.app');
+    console.log('Installing and checking the Mac bundle');
+    const applications = path.join(temporary, 'Applications');
+    const version = /^patterm-(.+)-macos-(?:arm64|x64)\.zip$/.exec(archives[0])[1];
+    const installEnv = { ...process.env, PATTERM_MAC_APPLICATIONS_DIR: applications, PATTERM_MAC_RELEASE_URL: pathToFileURL(path.resolve(directory)).href };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      execFileSync('bash', ['scripts/release/install-macos.sh', '--version', version], { env: installEnv, timeout: 120_000, stdio: 'inherit' });
+    }
+    const bundle = path.join(applications, 'Patterm.app');
     const resources = path.join(bundle, 'Contents', 'Resources');
     const app = path.join(resources, 'app');
     const executable = path.join(bundle, 'Contents', 'MacOS', 'Patterm');
@@ -46,7 +53,7 @@ test('Mac zip preserves a runnable app, bundled dependencies, and renderer', {
     delete env.ELECTRON_RUN_AS_NODE;
     delete env.PATTERM_DESKTOP_RESOURCES;
     console.log('Launching the packaged app');
-    child = spawn(executable, ['--remote-debugging-port=0'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    child = spawn('./Patterm', ['--remote-debugging-port=0'], { cwd: path.dirname(executable), env, stdio: ['ignore', 'pipe', 'pipe'] });
     child.stdout.on('data', chunk => { log = (log + chunk).slice(-16_000); });
     child.stderr.on('data', chunk => { log = (log + chunk).slice(-16_000); });
     const deadline = Date.now() + 45_000;
@@ -82,6 +89,9 @@ test('Mac zip preserves a runnable app, bundled dependencies, and renderer', {
     console.log('Packaged renderer and preload initialized');
     assert.equal(child.exitCode, null, log);
     assert.ok(fs.existsSync(path.join(data, 'app.db')), `app database missing: ${log}`);
+    assert.throws(() => execFileSync('bash', ['scripts/release/install-macos.sh', '--version', version], {
+      env: installEnv, timeout: 15_000, stdio: 'pipe'
+    }), error => /Patterm is running/.test(error.stderr?.toString()), 'installer rejects an app launched with relative argv[0]');
   } catch (error) {
     throw new Error(`${error.message}\n${log}`, { cause: error });
   } finally {

@@ -119,7 +119,15 @@ somewhere other than `~/.local/share/patterm`. The `current` symlink beside
 them names the version in use, and the version before it is kept for a
 rollback. The installer links `~/.local/bin/patterm` and adds a desktop entry.
 
-To update a running background service, rerun the installer with `--update`.
+To update a running background service, rerun the installer with `--update`:
+
+```sh
+curl -fsSL https://github.com/hjbdev/patterm/releases/latest/download/install.sh | bash -s -- --update
+```
+
+Quit the desktop app before updating. Versions still used by running agents
+are retained until a later update can safely remove them. Concurrent installers
+are rejected.
 It stops the service, switches versions, restarts it, and waits for `/health`.
 If the service came from an earlier from-source install in
 `~/.local/share/patterm-desktop`, the installer moves it to the release and
@@ -211,7 +219,23 @@ the new command. Stop the background service before reinstalling.
 
 ### macOS
 
-Download `patterm-<version>-macos-arm64.zip` for Apple Silicon or
+Install or update the latest release without administrator access:
+
+```sh
+curl -fsSL https://github.com/hjbdev/patterm/releases/latest/download/install-macos.sh | bash
+```
+
+Quit Patterm and rerun the same command to update. The installer checks the
+archive checksum and app signature, installs in `~/Applications`, and keeps
+`Patterm.previous.app`. If Patterm is already in `/Applications`, it updates
+that copy instead; that directory must be writable. Set
+`PATTERM_MAC_APPLICATIONS_DIR` to choose another directory. It refuses updates
+while the installed app runs, accidental downgrades, and concurrent installs.
+A failed app switch restores the old app; app data stays separate. Use
+`--version` to select a release, and `--allow-downgrade` only with a matching
+pre-migration database backup. Gatekeeper approval may still be required.
+
+You can also download `patterm-<version>-macos-arm64.zip` for Apple Silicon or
 `patterm-<version>-macos-x64.zip` for Intel from the
 [release assets](https://github.com/hjbdev/patterm/releases). Each zip has a
 matching `.sha256` file. Unzip it, move `Patterm.app` to Applications, and open it.
@@ -253,8 +277,13 @@ patterm
 The installer checks the zip’s SHA-256 and installs under `%LOCALAPPDATA%\Patterm`,
 with a Patterm entry in your Start menu and a `patterm` command on your user PATH.
 Run the installer again to select the latest release; the Start menu shortcut
-follows the selected version. Quit Patterm before updating. App data and native
-CLI transcripts stay separate from the installed versions.
+follows the selected version. The installer refuses updates while the installed
+app runs; quit Patterm and rerun the same command. It blocks concurrent installs
+and accidental downgrades, and switches the launcher only after setup succeeds.
+If an update fails, the previous launcher remains usable; rerun to retry.
+App data and native CLI transcripts stay separate from the installed versions.
+For a specific release, download `install.ps1` and run it with `-Version 0.1.1`.
+Use `-AllowDowngrade` only with a matching pre-migration database backup.
 
 The desktop app runs natively on Windows 10 (1809 or later) and 11. To run from
 source instead, install Node 24 or later, pnpm 11, Rust with the MSVC toolchain,
