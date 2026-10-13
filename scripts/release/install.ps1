@@ -204,7 +204,7 @@ public static class PattermShortcut {
     # Switch only after installation, shortcut and PATH setup all succeeded.
     # Replace is atomic: a failed update leaves the previous launcher usable.
     Assert-AppStopped
-    if (Test-Path -LiteralPath $launcherPath) { [IO.File]::Replace($pendingLauncher, $launcherPath, $null) }
+    if (Test-Path -LiteralPath $launcherPath) { [IO.File]::Replace($pendingLauncher, $launcherPath, (Join-Path $bin 'patterm.previous.cmd')) }
     else { [IO.File]::Move($pendingLauncher, $launcherPath) }
     $pendingLauncher = $null
     Write-Host "Patterm $version installed in $destination."
