@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A rerunnable macOS installer with checksum and app-signature checks,
+  version selection, downgrade protection, and recovery from a failed app switch.
+
 - An Assistant switch in Settings › Assistant. Turning it off stops the
   assistant, ends any voice call, and hides its button until it is back on.
 
@@ -36,6 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   startup backgrounds use the same colour.
 
 ### Fixed
+
+- Linux updates retain older versions still used by running agents and reject
+  concurrent installers or replacement of a version still in use.
+- Windows updates refuse to switch while Patterm runs, block accidental
+  downgrades and concurrent installers, and preserve the previous launcher
+  when setup fails. Rerunning the installer safely retries the update.
 
 - Notification toasts, the tray, and push notifications show routine reports
   and agent requests as plain text instead of raw Markdown.

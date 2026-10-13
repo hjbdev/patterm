@@ -6,6 +6,7 @@ import { once } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 
 test('Mac zip preserves a runnable app, bundled dependencies, and renderer', {
@@ -24,9 +25,14 @@ test('Mac zip preserves a runnable app, bundled dependencies, and renderer', {
   let socket;
   let log = '';
   try {
-    console.log('Extracting and checking the Mac bundle');
-    execFileSync('ditto', ['-x', '-k', archive, temporary], { timeout: 30_000 });
-    const bundle = path.join(temporary, 'Patterm.app');
+    console.log('Installing and checking the Mac bundle');
+    const applications = path.join(temporary, 'Applications');
+    const version = /^patterm-(.+)-macos-(?:arm64|x64)\.zip$/.exec(archives[0])[1];
+    const installEnv = { ...process.env, PATTERM_MAC_APPLICATIONS_DIR: applications, PATTERM_MAC_RELEASE_URL: pathToFileURL(path.resolve(directory)).href };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      execFileSync('bash', ['scripts/release/install-macos.sh', '--version', version], { env: installEnv, timeout: 30_000 });
+    }
+    const bundle = path.join(applications, 'Patterm.app');
     const resources = path.join(bundle, 'Contents', 'Resources');
     const app = path.join(resources, 'app');
     const executable = path.join(bundle, 'Contents', 'MacOS', 'Patterm');
