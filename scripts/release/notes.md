@@ -8,7 +8,7 @@ testing with agent CLIs; bugs and platform differences may remain.
 
 - **macOS:** Apple Silicon (`macos-arm64`) and Intel (`macos-x64`) app zips.
   These builds are ad-hoc signed, not Apple Developer ID signed or notarized,
-  so macOS may block opening them.
+  so macOS may block opening them. Install or update with `install-macos.sh`.
 - **Windows:** a portable x64 zip (`windows-x64`) and the per-user PowerShell
   installer (`install.ps1`).
 - The background service installer and Tailscale setup are Linux-only.

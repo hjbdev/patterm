@@ -4,7 +4,9 @@
 param(
     [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'Patterm'),
     [string]$StartMenuDirectory = [Environment]::GetFolderPath('Programs'),
-    [switch]$NoPath
+    [switch]$NoPath,
+    [string]$Version,
+    [switch]$AllowDowngrade
 )
 
 $ErrorActionPreference = 'Stop'
@@ -13,13 +15,52 @@ $architecture = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 }
 if ($architecture -ne 'AMD64') { throw 'The Windows package currently supports x64 only.' }
 # Windows PowerShell 5.1 can otherwise negotiate an obsolete TLS version.
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-$release = Invoke-RestMethod -Uri 'https://api.github.com/repos/hjbdev/patterm/releases/latest' -Headers @{ 'User-Agent' = 'Patterm installer' }
+$requestedVersion = $null
+if ($Version) {
+    $requestedVersion = $Version.TrimStart('v')
+    if ($requestedVersion -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') { throw 'Invalid requested version.' }
+}
+$releaseUrl = if ($requestedVersion) { "https://api.github.com/repos/hjbdev/patterm/releases/tags/v$requestedVersion" } else { 'https://api.github.com/repos/hjbdev/patterm/releases/latest' }
+$release = Invoke-RestMethod -Uri $releaseUrl -Headers @{ 'User-Agent' = 'Patterm installer' }
 if ($release.tag_name -notmatch '^v([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$') { throw 'Invalid release version.' }
-$version = $Matches[1]
+$releaseVersion = $Matches[1]
+if ($requestedVersion -and $requestedVersion -ne $releaseVersion) { throw 'Release version does not match the requested version.' }
+$version = $releaseVersion
 $name = "patterm-$version-windows-x64"
 $asset = @($release.assets | Where-Object { $_.name -eq "$name.zip" })
 $checksum = @($release.assets | Where-Object { $_.name -eq "$name.zip.sha256" })
 if ($asset.Count -ne 1 -or $checksum.Count -ne 1) { throw "Release $version has no Windows x64 package and checksum." }
+
+function Test-VersionOlder([string]$Left, [string]$Right) {
+    $a = $Left -split '-', 2
+    $b = $Right -split '-', 2
+    $core = ([version]$a[0]).CompareTo([version]$b[0])
+    if ($core -ne 0) { return $core -lt 0 }
+    if ($a.Count -eq 1) { return $false }
+    if ($b.Count -eq 1) { return $true }
+    $ap = $a[1].Split('.')
+    $bp = $b[1].Split('.')
+    for ($i = 0; $i -lt [Math]::Min($ap.Count, $bp.Count); $i++) {
+        if ($ap[$i] -ceq $bp[$i]) { continue }
+        $an = $ap[$i] -match '^\d+$'
+        $bn = $bp[$i] -match '^\d+$'
+        if ($an -and $bn) { return [decimal]$ap[$i] -lt [decimal]$bp[$i] }
+        if ($an -ne $bn) { return $an }
+        return [string]::CompareOrdinal($ap[$i], $bp[$i]) -lt 0
+    }
+    return $ap.Count -lt $bp.Count
+}
+function Assert-AppStopped {
+    $prefix = [IO.Path]::GetFullPath($InstallRoot).TrimEnd('\') + '\'
+    foreach ($process in @(Get-CimInstance Win32_Process -Filter "Name = 'electron.exe'")) {
+        if ($process.ExecutablePath -and $process.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Patterm is running. Quit Patterm, then rerun this installer to update.'
+        }
+    }
+}
+$lock = $null
+$pendingLauncher = $null
+
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('patterm-install-' + [Guid]::NewGuid().ToString('N'))
 try {
     New-Item -ItemType Directory -Path $temp | Out-Null
@@ -53,18 +94,36 @@ try {
         if (-not (Test-Path -LiteralPath (Join-Path $package $file) -PathType Leaf)) { throw "Package is missing $file." }
     }
     if ((Get-Content -LiteralPath (Join-Path $package 'BUILD')) -notcontains "version=$version") { throw 'Package version does not match the release.' }
+    Assert-AppStopped
+    New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
+    try {
+        $lock = [IO.File]::Open((Join-Path $InstallRoot '.install.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    } catch { throw 'Another Patterm installer is running; retry when it finishes.' }
+    $launcherPath = Join-Path $InstallRoot 'bin/patterm.cmd'
+    if (Test-Path -LiteralPath $launcherPath) {
+        $previous = Get-Content -LiteralPath $launcherPath -Raw
+        if ($previous -notmatch 'versions\\(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\\Patterm\.cmd') { throw 'The existing launcher has an unrecognised version; update it manually.' }
+        $installedVersion = $Matches[1]
+        if ((Test-VersionOlder $version $installedVersion) -and -not $AllowDowngrade) {
+            throw "Patterm $installedVersion is newer than $version. Use -AllowDowngrade only with a matching database backup."
+        }
+    }
     $versions = Join-Path $InstallRoot 'versions'
     $destination = Join-Path $versions $version
     New-Item -ItemType Directory -Path $versions -Force | Out-Null
     if (Test-Path -LiteralPath $destination) {
-        if (-not (Test-Path -LiteralPath (Join-Path $destination 'Patterm.cmd') -PathType Leaf)) { throw "Incomplete install at $destination; remove it and retry." }
+        foreach ($file in @('Patterm.cmd', 'electron/electron.exe', 'resources/native/patterm-terminal-core.exe', 'BUILD')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $destination $file) -PathType Leaf)) { throw "Incomplete install at $destination; remove it and retry." }
+        }
+        if ((Get-Content -LiteralPath (Join-Path $destination 'BUILD')) -notcontains "version=$version") { throw "Invalid installed version at $destination." }
     } else {
         Move-Item -LiteralPath $package -Destination $destination
     }
     $bin = Join-Path $InstallRoot 'bin'
     New-Item -ItemType Directory -Path $bin -Force | Out-Null
     $launcher = "@echo off`r`ncall `"%~dp0..\versions\$version\Patterm.cmd`" %*`r`n"
-    [IO.File]::WriteAllText((Join-Path $bin 'patterm.cmd'), $launcher, [Text.Encoding]::ASCII)
+    $pendingLauncher = Join-Path $bin ('.patterm-' + [Guid]::NewGuid().ToString('N') + '.tmp')
+    [IO.File]::WriteAllText($pendingLauncher, $launcher, [Text.Encoding]::ASCII)
 
     # The stable launcher and icon keep Start menu and pinned shortcuts working
     # when a later install selects another version. Older zips have no .ico yet.
@@ -142,8 +201,16 @@ public static class PattermShortcut {
         }
         if (($env:Path -split ';') -notcontains $bin) { $env:Path += ';' + $bin }
     }
+    # Switch only after installation, shortcut and PATH setup all succeeded.
+    # Replace is atomic: a failed update leaves the previous launcher usable.
+    Assert-AppStopped
+    if (Test-Path -LiteralPath $launcherPath) { [IO.File]::Replace($pendingLauncher, $launcherPath, (Join-Path $bin 'patterm.previous.cmd')) }
+    else { [IO.File]::Move($pendingLauncher, $launcherPath) }
+    $pendingLauncher = $null
     Write-Host "Patterm $version installed in $destination."
     Write-Host 'Open Patterm from the Start menu or run patterm. Install and sign into your agent CLIs separately.'
 } finally {
+    if ($pendingLauncher -and (Test-Path -LiteralPath $pendingLauncher)) { Remove-Item -LiteralPath $pendingLauncher -Force }
+    if ($lock) { $lock.Dispose() }
     if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force }
 }

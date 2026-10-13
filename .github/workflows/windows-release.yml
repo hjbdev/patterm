@@ -56,3 +56,4 @@ jobs:
           path: ${{ runner.temp }}/release/patterm-*
           if-no-files-found: error
           retention-days: 7
+          compression-level: 0

@@ -10,6 +10,11 @@ $originalPath = $env:Path
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $startMenu = Join-Path $fixture 'Start menu with spaces'
 $global:pattermInstallerFixture = @{ Version = '1.2.3'; BadChecksum = $false; MissingAsset = $false; Directory = $fixture }
+function Get-CimInstance {
+    param($ClassName, $Filter)
+    if ($global:pattermInstallerFixture.RunningApp) { return [pscustomobject]@{ ExecutablePath = $global:pattermInstallerFixture.RunningApp } }
+    return @()
+}
 function Invoke-RestMethod {
     param($Uri, $Headers)
     $assets = @(
@@ -103,7 +108,50 @@ try {
     & $installer -InstallRoot $root -StartMenuDirectory $startMenu -NoPath
     Assert-Shortcut $root (Join-Path $root 'patterm.ico')
     if ((Get-Content -LiteralPath $launcher -Raw) -notlike '*versions\1.2.4\Patterm.cmd*') { throw 'Upgrade did not select the new version.' }
+    $previousLauncher = Get-Content -LiteralPath $launcher -Raw
+    function Expect-UpdateFailure([string]$Message, [string]$Menu = $startMenu) {
+        $failed = $false
+        try { & $installer -InstallRoot $root -StartMenuDirectory $Menu -NoPath } catch {
+            if ($_.Exception.Message -notlike "*$Message*") { throw }
+            $failed = $true
+        }
+        if (-not $failed) { throw "Expected update failure: $Message" }
+        if ((Get-Content -LiteralPath $launcher -Raw) -cne $previousLauncher) { throw 'A failed update changed the launcher.' }
+        if ((& $launcher 'still usable') -notlike 'launched:*') { throw 'Previous launcher stopped working.' }
+    }
+    $global:pattermInstallerFixture.Version = '1.2.3'
+    Make-Package
+    Expect-UpdateFailure 'newer than'
+    $global:pattermInstallerFixture.Version = '1.2.5'
+    Make-Package
+    $global:pattermInstallerFixture.RunningApp = Join-Path $root 'versions/1.2.4/electron/electron.exe'
+    Expect-UpdateFailure 'Patterm is running'
+    $global:pattermInstallerFixture.RunningApp = $null
+    $heldLock = [IO.File]::Open((Join-Path $root '.install.lock'), [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    try { Expect-UpdateFailure 'Another Patterm installer' } finally { $heldLock.Dispose() }
+    $blockedMenu = Join-Path $fixture 'not a directory'
+    [IO.File]::WriteAllText($blockedMenu, 'blocked')
+    # A late setup failure must leave the old version selected.
+    $failed = $false
+    try { & $installer -InstallRoot $root -StartMenuDirectory $blockedMenu -NoPath } catch { $failed = $true }
+    if (-not $failed -or (Get-Content -LiteralPath $launcher -Raw) -cne $previousLauncher) { throw 'A late setup failure switched versions.' }
+    if (@(Get-ChildItem -LiteralPath (Join-Path $root 'bin') -Filter '*.tmp').Count) { throw 'Failed update left a pending launcher.' }
+    & $installer -InstallRoot $root -StartMenuDirectory $startMenu -NoPath
+    if ((Get-Content -LiteralPath $launcher -Raw) -notlike '*versions\1.2.5\Patterm.cmd*') { throw 'Retry did not finish the update.' }
+    foreach ($nextVersion in @('1.2.6-beta.2', '1.2.6-beta.10', '1.2.6')) {
+        $global:pattermInstallerFixture.Version = $nextVersion
+        Make-Package
+        & $installer -InstallRoot $root -StartMenuDirectory $startMenu -NoPath -Version $nextVersion
+    }
+    $previousLauncher = Get-Content -LiteralPath $launcher -Raw
+    $global:pattermInstallerFixture.Version = '1.2.6-beta.10'
+    Make-Package
+    Expect-UpdateFailure 'newer than'
+    & $installer -InstallRoot $root -StartMenuDirectory $startMenu -NoPath -AllowDowngrade
+    if ((Get-Content -LiteralPath $launcher -Raw) -notlike '*versions\1.2.6-beta.10\Patterm.cmd*') { throw 'Explicit downgrade was not selected.' }
     if ($env:Path -ne $originalPath -or [Environment]::GetEnvironmentVariable('Path', 'User') -ne $userPath) { throw 'Isolated install changed PATH.' }
+    $global:pattermInstallerFixture.Version = '1.2.4'
+    Make-Package
     $global:pattermInstallerFixture.BadChecksum = $true
     Expect-Failure (Join-Path $fixture 'bad-hash') 'checksum verification failed'
     $global:pattermInstallerFixture.BadChecksum = $false

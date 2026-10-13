@@ -28,6 +28,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and returns a screenshot, its height, and its console output, so the agent
   can fix a page before the user sees it.
 
+### Changed
+
+- CI runs smoke tests in parallel, prepares each test build once, and caches
+  Rust builds and macOS package downloads. Linux checks build the renderer once
+  for both the desktop and server. Desktop packaging reuses verified Electron
+  archives from the install cache.
+- Release packages build alongside validation, with publication still waiting
+  for every check and package. CI uploads compressed packages without recompressing them.
+- Session context shows summary coverage only when the recap is incomplete,
+  and the status line itself opens the rebuild dialog.
+- The command palette lists the open agent's everyday actions (New
+  conversation, Restart agent, Open session context, and every setting such
+  as Model, Effort, and Mode) at the top level. More actions keeps only the
+  rarer ones, such as Set timer and Copy process ID.
+- Typing effort, reasoning, or thinking in the command palette finds the
+  effort setting, whichever name the agent's harness uses.
+
 ### Removed
 
 - `ui_save` and Patterm's own figure components. Figures already saved in
@@ -36,6 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.1] - 2026-10-13
 
 ### Added
+
+- A rerunnable macOS installer with checksum and app-signature checks,
+  version selection, downgrade protection, and recovery from a failed app switch.
 
 - An Assistant switch in Settings › Assistant. Turning it off stops the
   assistant, ends any voice call, and hides its button until it is back on.
@@ -62,6 +82,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   startup backgrounds use the same colour.
 
 ### Fixed
+
+- Linux updates retain older versions still used by running agents and reject
+  concurrent installers or replacement of a version still in use.
+- Windows updates refuse to switch while Patterm runs, block accidental
+  downgrades and concurrent installers, and preserve the previous launcher
+  when setup fails. Rerunning the installer safely retries the update.
 
 - Notification toasts, the tray, and push notifications show routine reports
   and agent requests as plain text instead of raw Markdown.
