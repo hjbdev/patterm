@@ -26,6 +26,7 @@
             </span>
           </button>
           <LaunchAgentMenu :project-id="overview.project.id" @launched="(sessionId, terminalId) => emit('launched', overview.project.id, sessionId, terminalId)" />
+          <ProjectMenu v-if="!overview.project.host" :project="overview.project" @change-logo="logoProjectId = overview.project.id" />
         </div>
         <div v-if="overview.agents.length" class="mt-1 space-y-px">
           <button
@@ -70,6 +71,7 @@ import AgentIcon from './AgentIcon.vue';
 import LaunchAgentMenu from './LaunchAgentMenu.vue';
 import ProjectLogo from './ProjectLogo.vue';
 import ProjectLogoDialog from './ProjectLogoDialog.vue';
+import ProjectMenu from './ProjectMenu.vue';
 import TabActivity from './TabActivity.vue';
 import UnreadDot from './UnreadDot.vue';
 import { projectUnread, unreadUrgency } from '../Composables/useNotifications';

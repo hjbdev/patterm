@@ -4,6 +4,9 @@ import { AssistantMemoryService } from './Services/AssistantMemoryService';
 import { registerAssistantTools } from './MCP/registerAssistantTools';
 import { registerIdleCompactionTools } from './MCP/registerIdleCompactionTools';
 import { registerHostTools } from './MCP/registerHostTools';
+import { registerProjectTools } from './MCP/registerProjectTools';
+import { RemoveProjectAction } from './Actions/RemoveProjectAction';
+import { RenameProjectAction } from './Actions/RenameProjectAction';
 import { HostActions } from './Actions/HostActions';
 import { HostService } from './Services/HostService';
 import { PeerLinkService } from './Services/PeerLinkService';
@@ -607,6 +610,10 @@ async function createApplicationResources(
   registerAssistantTools(mcp, assistantService, settings);
   registerIdleCompactionTools(mcp, settings);
   registerHostTools(mcp, hosts, projectLinkActions);
+  registerProjectTools(mcp, {
+    rename: new RenameProjectAction(database, timeline),
+    remove: new RemoveProjectAction({ database, timeline, timers, links: projectLinks, unlink: projectLinkActions })
+  });
   // Remote watches are stored as host ID and process ID.
   timers.setRemoteResolver((address) => {
     const separator = address.indexOf(':');

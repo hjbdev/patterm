@@ -43,7 +43,7 @@ export class ProjectLinkService {
   // Only repository projects link. Each host's Personal project is its own
   // folder, so it shows on other hosts on its own instead.
   async projects(): Promise<LinkableProject[]> {
-    const rows = this.database.connection.prepare(`select id, name, path from projects where kind = 'workspace' order by name collate nocase`).all() as Array<{ id: string; name: string; path: string }>;
+    const rows = this.database.connection.prepare(`select id, name, path from projects where kind = 'workspace' and removed_at is null order by name collate nocase`).all() as Array<{ id: string; name: string; path: string }>;
     return Promise.all(rows.map(async (row) => {
       const url = await this.git.query(row.path, ['remote', 'get-url', 'origin']).catch(() => null);
       return { ...row, git_remote: url ? normaliseGitRemote(url) : null };
@@ -58,7 +58,7 @@ export class ProjectLinkService {
 
   link(hostId: string, projectId: string, remote: { id: string; name: string }): ProjectLink {
     const db = this.database.connection;
-    const project = db.prepare(`select id from projects where id = ? and kind = 'workspace'`).get(projectId);
+    const project = db.prepare(`select id from projects where id = ? and kind = 'workspace' and removed_at is null`).get(projectId);
     if (!project) throw new Error('That project does not exist.');
     const clash = db.prepare('select project_id from project_links where host_id = ? and remote_project_id = ? and project_id <> ?').get(hostId, remote.id, projectId);
     if (clash) throw new Error(`${remote.name} is already linked to another project here.`);

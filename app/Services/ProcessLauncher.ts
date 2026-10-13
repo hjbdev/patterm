@@ -61,6 +61,7 @@ export class ProcessLauncher {
 
   async create(raw: ProcessCreateInput): Promise<ProcessLauncherResult> {
     const input = processCreateInput.parse(raw);
+    this.deps.workbench.assertProjectNotRemoved(input.project_id);
     const project = this.deps.workbench.getProject(input.project_id);
     const worktree = input.worktree_id ? this.worktree(input.worktree_id) : null;
     const cwd = input.cwd ?? worktree?.worktree_path ?? project?.path ?? process.cwd();

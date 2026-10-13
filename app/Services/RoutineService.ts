@@ -197,7 +197,8 @@ export class RoutineService {
   }
 
   list(filter: { projectId?: string | null; workspace?: boolean } = {}): RoutineRecord[] {
-    const where = filter.projectId ? 'where routines.project_id = ?' : filter.workspace === false ? 'where routines.project_id is not null' : '';
+    // A removed project's routines wait, hidden, until it is added again.
+    const where = `where projects.removed_at is null${filter.projectId ? ' and routines.project_id = ?' : filter.workspace === false ? ' and routines.project_id is not null' : ''}`;
     const rows = this.db.prepare(`${ROUTINE_SELECT} ${where} order by routines.created_at asc`).all(...(filter.projectId ? [filter.projectId] : [])) as unknown as RoutineRow[];
     return rows.map((row) => this.toRecord(row));
   }
@@ -335,12 +336,13 @@ export class RoutineService {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     const now = this.now();
-    const due = this.db.prepare(`${ROUTINE_SELECT} where routines.enabled = 1 and routines.next_run_at is not null and routines.next_run_at <= ?`).all(new Date(now).toISOString()) as unknown as RoutineRow[];
+    const due = this.db.prepare(`${ROUTINE_SELECT} where routines.enabled = 1 and routines.next_run_at is not null and routines.next_run_at <= ? and projects.removed_at is null`).all(new Date(now).toISOString()) as unknown as RoutineRow[];
     for (const row of due) {
       const scheduledFor = Date.parse(row.next_run_at!);
       void this.fire(row, scheduledFor, now - scheduledFor > CATCH_UP_GRACE_MS).catch((error: unknown) => this.log('fire.failed', { routine_id: row.id, message: message(error) }));
     }
-    const soonest = this.db.prepare(`select min(next_run_at) as at from routines where enabled = 1 and next_run_at is not null`).get() as { at: string | null };
+    const soonest = this.db.prepare(`select min(next_run_at) as at from routines left join projects on projects.id = routines.project_id
+      where routines.enabled = 1 and routines.next_run_at is not null and projects.removed_at is null`).get() as { at: string | null };
     const delay = soonest.at ? Math.min(MAX_TIMER_MS, Math.max(1_000, Date.parse(soonest.at) - this.now())) : MAX_TIMER_MS;
     this.timer = setTimeout(() => this.tick(), delay);
     this.timer.unref?.();
@@ -531,7 +533,7 @@ export class RoutineService {
 
   private validateProject(projectId: string | null): void {
     if (projectId === null) return;
-    const row = this.db.prepare('select kind from projects where id = ?').get(projectId) as { kind: string } | undefined;
+    const row = this.db.prepare('select kind from projects where id = ? and removed_at is null').get(projectId) as { kind: string } | undefined;
     if (!isUserProjectKind(row?.kind)) throw new Error(`unknown project: ${projectId}`);
   }
 

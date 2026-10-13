@@ -313,6 +313,24 @@ test('a one-off missed while Patterm was stopped runs once on catch-up', async (
   assert.equal(fixture.routines.get(routine.routine_id).enabled, false);
 });
 
+test('a removed project\'s routines wait, hidden, until it is added again', async (t) => {
+  const fixture = setup(t, Date.parse('2026-10-05T15:29:00Z'));
+  const routine = fixture.routines.create({ name: 'Daily roundup', project_id: 'project', days: weekdays, time: '16:30', timezone: 'Europe/London' }, { type: 'user', id: null });
+  fixture.database.connection.prepare('update projects set removed_at = ? where id = ?').run(new Date().toISOString(), 'project');
+  fixture.routines.activate();
+  t.mock.timers.tick(60_000);
+  await settle();
+  assert.equal(fixture.launches.length, 0, 'a removed project runs nothing');
+  assert.deepEqual(fixture.routines.list().map((record) => record.routine_id), [], 'nor lists its routines');
+  assert.throws(() => fixture.routines.create({ name: 'Another', project_id: 'project' }, { type: 'user', id: null }), /unknown project/);
+
+  fixture.database.connection.prepare('update projects set removed_at = null where id = ?').run('project');
+  t.mock.timers.tick(60_000);
+  await settle();
+  assert.equal(fixture.launches.length, 1, 'restored, the missed run catches up once');
+  assert.deepEqual(fixture.routines.list().map((record) => record.routine_id), [routine.routine_id]);
+});
+
 function setup(t: TestContext, now: number) {
   t.mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now });
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-routines-'));
