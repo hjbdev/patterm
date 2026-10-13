@@ -38,6 +38,7 @@ jobs:
       # remoteAccessSmoke, in check, runs the installer, which needs the server build.
       - name: Build the server using the existing renderer and MCP shim
         run: pnpm exec tsc -p tsconfig.server.json && pnpm run build:sidecar:release
+      - uses: ./.github/actions/cache-typecheck
       - run: pnpm run check:ci
 
   check-windows:
@@ -66,6 +67,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       # Linux-only checks (systemd units, the bash installer and launchers) skip themselves on win32.
+      - uses: ./.github/actions/cache-typecheck
       - run: pnpm run check:ci
 
   build-windows:

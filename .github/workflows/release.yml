@@ -46,6 +46,7 @@ jobs:
       # remoteAccessSmoke, in check, runs the installer, which needs the server build.
       - name: Build the server using the existing renderer and MCP shim
         run: pnpm exec tsc -p tsconfig.server.json && pnpm run build:sidecar:release
+      - uses: ./.github/actions/cache-typecheck
       - run: pnpm run check:ci
 
   build:

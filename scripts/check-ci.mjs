@@ -36,7 +36,7 @@ try {
 } catch (error) {
   process.exit(error.status ?? 1);
 }
-console.log(`Running ${files.size} Node smoke test files with four workers.`);
-const result = spawnSync(process.execPath, ['--test', '--test-concurrency=4', '--test-reporter=spec', ...files], { stdio: 'inherit' });
+console.log(`Running ${files.size} Node smoke test files with eight workers.`);
+const result = spawnSync(process.execPath, ['--test', '--test-concurrency=8', '--test-reporter=spec', ...files], { stdio: 'inherit' });
 if (result.error) throw result.error;
 process.exit(result.status ?? 1);
