@@ -9,7 +9,7 @@ import { HistorySearchIndexService } from './HistorySearchIndexService';
 import os from 'node:os';
 
 interface WorkerInput {
-  action?: 'parse_file' | 'import' | 'reset_imports' | 'delete_conversation';
+  action?: 'parse_file' | 'import' | 'reset_imports' | 'delete_conversation' | 'delete_project_history';
   appDataPath?: string;
   input?: Parameters<AgentHistoryImportService['importWithParser']>[0];
   reimport?: boolean;
@@ -19,6 +19,7 @@ interface WorkerInput {
   filePath?: string;
   options?: ParseHistoryFileOptions;
   conversation_id?: string;
+  project_id?: string;
 }
 
 interface ParentPort {
@@ -72,7 +73,7 @@ export async function runHistoryImportWorker(message: unknown, reportProgress?: 
     if (payload.action === 'parse_file') {
       return { ok: true, result: parseHistoryFile(payload) };
     }
-    if (payload.action === 'import' || payload.action === 'reset_imports' || payload.action === 'delete_conversation') {
+    if (payload.action === 'import' || payload.action === 'reset_imports' || payload.action === 'delete_conversation' || payload.action === 'delete_project_history') {
       return { ok: true, result: await runQueuedHistoryImport(payload, reportProgress) };
     }
     throw new Error('unknown history worker action');
@@ -116,6 +117,10 @@ async function runQueuedHistoryImport(payload: WorkerInput, reportProgress?: Pro
     if (payload.action === 'delete_conversation') {
       if (!payload.conversation_id) throw new Error('history delete is missing conversation_id');
       return new AgentHistoryDeleteService(historyDatabase, search).deleteConversation(payload.conversation_id);
+    }
+    if (payload.action === 'delete_project_history') {
+      if (!payload.project_id) throw new Error('history delete is missing project_id');
+      return new AgentHistoryDeleteService(historyDatabase, search).deleteProjectConversations(payload.project_id);
     }
     throw new Error('unknown history worker action');
   } finally {

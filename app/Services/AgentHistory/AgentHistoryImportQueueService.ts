@@ -11,7 +11,7 @@ type ImportInput = z.input<typeof historyImportInput>;
 const RECENT_JOB_LIMIT = 20;
 const LOG_SOURCE = 'history-import-queue';
 
-export type HistoryImportJobAction = 'import' | 'reset_imports' | 'delete_conversation';
+export type HistoryImportJobAction = 'import' | 'reset_imports' | 'delete_conversation' | 'delete_project_history';
 export type HistoryImportQueueJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'stale';
 
 export interface HistoryImportWorkerMessage {
@@ -19,6 +19,7 @@ export interface HistoryImportWorkerMessage {
   input: ImportInput;
   reimport?: boolean;
   conversation_id?: string;
+  project_id?: string;
 }
 
 export interface HistoryImportQueueJobSnapshot {
@@ -119,6 +120,10 @@ export class AgentHistoryImportQueueService {
 
   deleteConversation(conversationId: string): HistoryImportQueueEnqueueResult {
     return this.enqueue({ action: 'delete_conversation', input: { trigger: 'manual' }, conversation_id: conversationId });
+  }
+
+  deleteProjectHistory(projectId: string): HistoryImportQueueEnqueueResult {
+    return this.enqueue({ action: 'delete_project_history', input: { trigger: 'manual' }, project_id: projectId });
   }
 
   status(): HistoryImportQueueSnapshot {

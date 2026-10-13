@@ -18,19 +18,17 @@ interface ProjectRow {
   id: string;
   name: string;
   path: string;
-  removed_at: string | null;
 }
 
 // Registers a local project rooted at a real filesystem path. Re-registering an
-// existing path returns the existing project rather than duplicating it, and
-// brings back a removed one with everything it had.
+// existing path returns the existing project rather than duplicating it.
 export class CreateProjectAction {
   constructor(
     private readonly database: DatabaseService,
     private readonly timeline: TimelineService
   ) {}
 
-  execute(input: CreateProjectInput): { project_id: string; name: string; path: string; existed: boolean; restored?: true } {
+  execute(input: CreateProjectInput): { project_id: string; name: string; path: string; existed: boolean } {
     const resolved = path.resolve(input.path);
 
     let stat: fs.Stats;
@@ -44,19 +42,8 @@ export class CreateProjectAction {
     }
 
     const existing = this.database.connection
-      .prepare(`select id, name, path, removed_at from projects where path = ?`)
+      .prepare(`select id, name, path from projects where path = ?`)
       .get(resolved) as ProjectRow | undefined;
-    if (existing?.removed_at) {
-      this.database.connection.prepare(`update projects set removed_at = null, updated_at = ? where id = ?`).run(new Date().toISOString(), existing.id);
-      this.timeline.append({
-        event_type: 'project.restored',
-        project_id: existing.id,
-        actor_type: input.actor_type,
-        actor_id: input.actor_id,
-        metadata: { name: existing.name, path: existing.path }
-      });
-      return { project_id: existing.id, name: existing.name, path: existing.path, existed: true, restored: true };
-    }
     if (existing) {
       return { project_id: existing.id, name: existing.name, path: existing.path, existed: true };
     }

@@ -612,7 +612,7 @@ async function createApplicationResources(
   registerHostTools(mcp, hosts, projectLinkActions);
   registerProjectTools(mcp, {
     rename: new RenameProjectAction(database, timeline),
-    remove: new RemoveProjectAction({ database, timeline, timers, links: projectLinks, unlink: projectLinkActions })
+    remove: new RemoveProjectAction({ database, timeline, closeProcess: actions.closeProcess, timers, links: projectLinks, unlink: projectLinkActions, history: historyImportQueue })
   });
   // Remote watches are stored as host ID and process ID.
   timers.setRemoteResolver((address) => {

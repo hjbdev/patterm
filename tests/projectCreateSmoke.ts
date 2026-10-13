@@ -14,6 +14,7 @@ import { SettingsService } from '../app/Services/SettingsService';
 import { TimelineService } from '../app/Services/TimelineService';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import type { TerminalService } from '../app/Services/TerminalService';
+import { CloseProcessAction } from '../app/Actions/CloseProcessAction';
 import { RemoveProjectAction } from '../app/Actions/RemoveProjectAction';
 import { RenameProjectAction } from '../app/Actions/RenameProjectAction';
 import { BROWSER_TOOLS } from '../app/Http/BrowserTools';
@@ -156,13 +157,18 @@ async function main(): Promise<void> {
     assert.ok(database.connection.prepare('select 1 from projects where id = ?').get(PERSONAL_PROJECT_ID), 'hiding keeps the project');
 
     // Renaming and removing are owner-only tools the UI calls; agents see neither.
+    const terminalCalls: string[] = [];
+    const recordingTerminal = { request: async (method: string, params: { process_id: string }) => { terminalCalls.push(`${method} ${params.process_id}`); return { status: 'exited' }; } } as unknown as TerminalService;
     const timers = new TimerService(database, fakeTerminal);
     const unlinked: string[] = [];
+    const historyDeletes: string[] = [];
     registerProjectTools(registry, {
       rename: new RenameProjectAction(database, timeline),
       remove: new RemoveProjectAction({
         database, timeline, timers, links: projectLinks,
-        unlink: { unlink: async (raw) => { const input = raw as { host_id: string; project_id: string }; unlinked.push(input.host_id); projectLinks.unlink(input.host_id, input.project_id); return []; } }
+        closeProcess: new CloseProcessAction(database, recordingTerminal),
+        unlink: { unlink: async (raw) => { const input = raw as { host_id: string; project_id: string }; unlinked.push(input.host_id); projectLinks.unlink(input.host_id, input.project_id); return []; } },
+        history: { deleteProjectHistory: (projectId) => { historyDeletes.push(projectId); return { job_id: 'job', status: 'queued', position: 1 } as never; } }
       })
     });
     for (const tool of ['project_rename', 'project_remove']) {
@@ -182,40 +188,50 @@ async function main(): Promise<void> {
     ensurePersonalProject(database, tempDir);
     assert.equal(repo.getProject(PERSONAL_PROJECT_ID)?.name, 'Scratch', 'startup keeps a renamed Personal project');
     await assert.rejects(registry.call('project_remove', { project_id: PERSONAL_PROJECT_ID }), /Personal project cannot be removed/);
+    await assert.rejects(registry.call('project_remove', { project_id: 'project_missing' }), /unknown project/);
 
-    // Removal waits until nothing runs in the project.
+    // Removal stops what runs there and deletes every record Patterm holds for the project.
+    const removedId = viaRegistry.project_id;
+    const db = database.connection;
     const at = new Date().toISOString();
-    const addProcess = (id: string, status: string) => database.connection.prepare(`insert into processes(id,project_id,kind,name,status,created_at,updated_at) values(?,?,'agent',?,?,?,?)`)
-      .run(id, viaRegistry.project_id, id, status, at, at);
+    const addProcess = (id: string, status: string) => {
+      db.prepare(`insert into processes(id,project_id,kind,name,status,pty_process_id,created_at,updated_at) values(?,?,'agent',?,?,?,?,?)`).run(id, removedId, id, status, `pty_${id}`, at, at);
+      db.prepare(`insert into sessions(id,project_id,process_id,harness,interface_mode,session_role,started_at,resume_id) values(?,?,?,'claude','tui','orchestrator',?,?)`).run(`session_${id}`, removedId, id, at, `resume_${id}`);
+    };
     addProcess('process_live', 'running');
     addProcess('process_done', 'exited');
-    await assert.rejects(registry.call('project_remove', { project_id: viaRegistry.project_id }), /Stop the agent or process running in Other app/);
-    database.connection.prepare(`update processes set status = 'exited' where id = 'process_live'`).run();
-
+    const worktreeDir = path.join(tempDir, 'other-worktree');
+    fs.mkdirSync(worktreeDir);
+    db.prepare(`insert into worktrees(id,project_id,repo_path,worktree_path,branch,created_by,created_at) values('worktree_x',?,?,?,'patterm/x','user',?)`).run(removedId, otherDir, worktreeDir, at);
     const context = new ProjectContextService(database, timeline);
-    const todo = context.createTodo({ projectId: viaRegistry.project_id, actorId: 'user', sessionId: null }, { title: 'Keep me', notes: '', status: 'open', priority: 'medium' });
-    projectLinks.link('host_peer', viaRegistry.project_id, { id: 'project_remote', name: 'Other app' });
+    context.createTodo({ projectId: removedId, actorId: 'user', sessionId: null }, { title: 'Gone', notes: '', status: 'open', priority: 'medium' });
+    db.prepare(`insert into integrated_submissions(process_id,message_id,payload_hash,state,created_at) values('process_done','m1','h','accepted',?)`).run(at);
+    db.prepare(`insert into app_artifacts_fts(kind,owner_id,project_id,title,body) values('todo','todo_x',?,'Gone','')`).run(removedId);
+    projectLinks.link('host_peer', removedId, { id: 'project_remote', name: 'Other app' });
     timers.setDelay({ seconds: 600, ownerProcessId: 'process_done', body: 'wake up' });
     timers.setDelay({ seconds: 600, ownerProcessId: null, body: 'unrelated' });
 
-    await registry.call('project_remove', { project_id: viaRegistry.project_id });
-    assert.ok(!repo.listProjects().some((project) => project.id === viaRegistry.project_id), 'a removed project is not listed');
-    assert.equal(repo.getProject(viaRegistry.project_id), null, 'nor returned');
-    assert.ok(!(await projectLinks.projects()).some((project) => project.id === viaRegistry.project_id), 'nor offered for linking');
+    const removal = (await registry.call('project_remove', { project_id: removedId })) as { removed: boolean; stopped: number };
+    assert.deepEqual([removal.removed, removal.stopped], [true, 1]);
+    assert.ok(terminalCalls.includes('terminal.process.stop pty_process_live'), 'running processes are stopped');
+    assert.ok(terminalCalls.includes('terminal.process.close pty_process_done'), 'and every terminal is closed');
+    assert.equal(repo.getProject(removedId), null, 'the project is gone');
+    for (const { name } of db.prepare(`select name from sqlite_master where type = 'table' and name not like '%fts_%'`).all() as Array<{ name: string }>) {
+      const columns = (db.prepare(`pragma table_info("${name}")`).all() as Array<{ name: string }>).map((column) => column.name);
+      if (!columns.includes('project_id') || name === 'assistant_memory') continue;
+      assert.equal((db.prepare(`select count(*) as count from "${name}" where project_id = ?`).get(removedId) as { count: number }).count, 0, `${name} keeps nothing of a removed project`);
+    }
+    assert.equal((db.prepare(`select count(*) as count from integrated_submissions`).get() as { count: number }).count, 0, 'Integrated rows of its processes go too');
+    assert.deepEqual(historyDeletes, [removedId], 'its imported history is deleted');
     assert.deepEqual(unlinked, ['host_peer'], 'its links to other hosts are undone');
-    assert.deepEqual(timers.list().map((timer) => timer.body), ['unrelated'], 'timers its stopped agents owned are cancelled');
-    assert.throws(() => repo.assertProjectNotRemoved(viaRegistry.project_id), /removed from Patterm/, 'nothing launches there');
-    await assert.rejects(registry.call('project_rename', { project_id: viaRegistry.project_id, name: 'x' }), /unknown project/);
-    await assert.rejects(registry.call('project_remove', { project_id: viaRegistry.project_id }), /unknown project/, 'removing twice fails');
-    assert.ok(database.connection.prepare('select 1 from todos where id = ?').get(todo.id), 'its todos are kept');
-    assert.equal((database.connection.prepare(`select count(*) as count from processes where project_id = ?`).get(viaRegistry.project_id) as { count: number }).count, 2, 'and its agents');
-    assert.ok(fs.existsSync(otherDir), 'the folder is untouched');
+    assert.deepEqual(timers.list().map((timer) => timer.body), ['unrelated'], 'timers its agents owned are cancelled');
+    assert.ok(fs.existsSync(otherDir) && fs.existsSync(worktreeDir), 'files on disk are untouched');
+    assert.ok(db.prepare(`select 1 from timeline_events where event_type = 'project.removed' and project_id is null`).get(), 'the removal is recorded');
 
-    // Adding the same folder again restores it as it was.
-    const restored = (await registry.call('project_create', { path: otherDir })) as { project_id: string; name: string; existed: boolean; restored?: boolean };
-    assert.deepEqual([restored.project_id, restored.name, restored.existed, restored.restored], [viaRegistry.project_id, 'Other app', true, true]);
-    assert.ok(repo.listProjects().some((project) => project.id === viaRegistry.project_id), 'a restored project is listed again');
-    repo.assertProjectNotRemoved(viaRegistry.project_id);
+    // Adding the folder again starts a fresh project.
+    const readded = (await registry.call('project_create', { path: otherDir })) as { project_id: string; existed: boolean };
+    assert.equal(readded.existed, false);
+    assert.notEqual(readded.project_id, removedId);
     timers.dispose();
 
     database.dispose();

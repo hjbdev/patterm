@@ -22,8 +22,8 @@ export function registerProjectTools(registry: McpToolRegistry, actions: { renam
       name: 'project_remove',
       namespace: 'project',
       hidden: true,
-      changes: ['workbench', 'routines', 'settings'],
-      description: 'Remove a project from Patterm once nothing runs there. Nothing is deleted; adding its folder again restores it.',
+      changes: ['workbench', 'routines', 'settings', 'context', 'history'],
+      description: 'Remove a project and everything Patterm holds for it, stopping its agents and processes first. Files on disk are not touched.',
       inputSchema: { type: 'object', required: ['project_id'] }
     },
     (args) => actions.remove.execute(removeProjectInput.parse(args))

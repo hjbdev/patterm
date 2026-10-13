@@ -383,6 +383,15 @@ async function main(): Promise<void> {
     await runWatcherMaxWait(tempDir);
     await runLargeWatcherStart(tempDir);
 
+    // Removing a project deletes its conversations and keeps them from returning.
+    const countProjectConversations = () => (database!.connection.prepare(`select count(*) as count from conversations where project_id = ?`).get(project.id) as { count: number }).count;
+    const projectConversations = countProjectConversations();
+    assert.ok(projectConversations > 0, 'the fixture project has imported history');
+    assert.equal(del.deleteProjectConversations(project.id).deletedConversations, projectConversations);
+    assert.equal(countProjectConversations(), 0, 'project history is deleted');
+    imports.import({ trigger: 'manual', project_id: project.id });
+    assert.equal(countProjectConversations(), 0, 'and not re-imported');
+
     historyDatabase?.dispose();
     historyDatabase = null;
     database?.dispose();

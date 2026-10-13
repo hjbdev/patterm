@@ -2148,7 +2148,7 @@ function hasWorkspaceScope(caller: CallerRow | null): boolean {
 }
 
 function workspaceProjectId(database: DatabaseService, projectId: string): string {
-  const row = database.connection.prepare(`select kind from projects where id = ? and removed_at is null`).get(projectId) as { kind: string } | undefined;
+  const row = database.connection.prepare(`select kind from projects where id = ?`).get(projectId) as { kind: string } | undefined;
   if (!row) throw new Error(`unknown project: ${projectId}`);
   if (!isUserProjectKind(row.kind)) throw new Error('project is not a workspace project');
   return projectId;

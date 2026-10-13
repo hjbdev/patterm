@@ -160,7 +160,6 @@ export class HarnessLauncher {
   }
 
   private async startPrepared(input: ParsedLaunchHarnessInput, selection: HarnessLaunchSelection, resume: HarnessResume | null, identity: string): Promise<LaunchHarnessResult> {
-    this.deps.workbench.assertProjectNotRemoved(input.project_id);
     const timing = createLaunchTiming(this.deps.debugLog);
     const interfaceMode = input.interface_mode ?? this.deps.settings?.agentInterface() ?? 'tui';
     const harness = selection.harness;

@@ -33,12 +33,13 @@
     <DialogContent class="sm:max-w-md">
       <DialogHeader>
         <DialogTitle>Remove {{ project.name }}?</DialogTitle>
-        <DialogDescription>Nothing is deleted.</DialogDescription>
+        <DialogDescription>This deletes everything Patterm holds for it and can’t be undone.</DialogDescription>
       </DialogHeader>
-      <p class="text-sm text-muted-foreground">
-        Its folder, worktrees, branches, todos, scratchpads, and history are kept, and its routines pause. Links with other hosts are undone.
-        Add <span class="font-mono text-foreground">{{ project.path }}</span> again to restore it.
-      </p>
+      <div class="space-y-2 text-sm text-muted-foreground">
+        <p v-if="liveAgents" class="text-foreground">{{ liveAgents === 1 ? '1 agent is' : `${liveAgents} agents are` }} running and will be stopped.</p>
+        <p>Its agents and processes, worktree records, todos, scratchpads, links, routines, and conversation history are deleted.</p>
+        <p>Files on disk stay: <span class="font-mono text-foreground">{{ project.path }}</span>, its worktree folders, and its branches.</p>
+      </div>
       <p v-if="error" role="alert" class="text-sm text-destructive">{{ error }}</p>
       <DialogFooter class="gap-2">
         <Button type="button" variant="ghost" :disabled="busy" @click="removeOpen = false">Cancel</Button>
@@ -57,7 +58,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Input } from './ui/input';
 import type { ProjectSummary } from '../types';
 
-const props = defineProps<{ project: ProjectSummary }>();
+const props = defineProps<{ project: ProjectSummary; liveAgents?: number }>();
 const emit = defineEmits<{ changeLogo: [] }>();
 
 const renameOpen = ref(false);

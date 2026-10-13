@@ -26,7 +26,7 @@
             </span>
           </button>
           <LaunchAgentMenu :project-id="overview.project.id" @launched="(sessionId, terminalId) => emit('launched', overview.project.id, sessionId, terminalId)" />
-          <ProjectMenu v-if="!overview.project.host" :project="overview.project" @change-logo="logoProjectId = overview.project.id" />
+          <ProjectMenu v-if="!overview.project.host" :project="overview.project" :live-agents="overview.agents.length" @change-logo="logoProjectId = overview.project.id" />
         </div>
         <div v-if="overview.agents.length" class="mt-1 space-y-px">
           <button

@@ -192,7 +192,7 @@ export class WorkbenchRepository {
   // Personal still lists while anything runs there, so no agent goes missing.
   private projectRows(): ProjectRow[] {
     const showPersonal = this.settings.appearanceSettings().personalProject;
-    return this.db.prepare(`select id, name, path, logo, kind from projects where kind in ${USER_PROJECT_KINDS_SQL} and removed_at is null
+    return this.db.prepare(`select id, name, path, logo, kind from projects where kind in ${USER_PROJECT_KINDS_SQL}
       and (kind <> 'personal' or ? or exists (select 1 from processes where processes.project_id = projects.id and processes.status = 'running'))
       order by kind = 'personal' desc, created_at asc`).all(showPersonal ? 1 : 0) as ProjectRow[];
   }
@@ -202,15 +202,8 @@ export class WorkbenchRepository {
   }
 
   getProject(id: string): ProjectSummaryDto | null {
-    const row = this.db.prepare(`select id, name, path, logo, kind from projects where id = ? and removed_at is null`).get(id) as ProjectRow | undefined;
+    const row = this.db.prepare(`select id, name, path, logo, kind from projects where id = ?`).get(id) as ProjectRow | undefined;
     return row ? projectSummary(row) : null;
-  }
-
-  // Nothing launches in a removed project until its folder is added again.
-  assertProjectNotRemoved(id: string): void {
-    if (this.db.prepare(`select 1 from projects where id = ? and removed_at is not null`).get(id)) {
-      throw new Error('This project was removed from Patterm. Add its folder again to restore it.');
-    }
   }
 
   listHarnesses(): HarnessInstallationDto[] {

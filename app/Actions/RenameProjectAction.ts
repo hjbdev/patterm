@@ -22,7 +22,7 @@ export class RenameProjectAction {
 
   execute(input: RenameProjectInput): { project_id: string; name: string } {
     const row = this.database.connection
-      .prepare(`select name from projects where id = ? and kind in ${USER_PROJECT_KINDS_SQL} and removed_at is null`)
+      .prepare(`select name from projects where id = ? and kind in ${USER_PROJECT_KINDS_SQL}`)
       .get(input.project_id) as { name: string } | undefined;
     if (!row) throw new Error(`unknown project ${input.project_id}`);
     if (row.name === input.name) return { project_id: input.project_id, name: input.name };
