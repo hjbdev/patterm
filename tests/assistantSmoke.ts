@@ -366,8 +366,32 @@ async function main(): Promise<void> {
     await ui.call('settings_assistant_update', { ...settings.assistantSettings(), enabled: true });
     assert.equal(lastState()?.enabled, true);
     assert.equal(launches.length, 8, 'turning it on does not launch it');
-    await assistant.ensure();
+
+    // A launch already under way when it is turned off is stopped without
+    // delivering what the inbox holds; the next launch delivers it.
+    inbox.setFocus(true);
+    assert.ok(inbox.holdForAssistant({ kind: 'agent_message', sourceProcessId: 'proc-x', title: 'Held', body: 'Held while off' }));
+    inbox.setFocus(false);
+    assert.equal(inbox.focus().pending, 1);
+    let releaseLaunch!: () => void;
+    launchGate = new Promise((resolve) => { releaseLaunch = resolve; });
+    const promptsBeforeOff = prompts.length;
+    const racing = assistant.ensure();
+    const turningOff = ui.call('settings_assistant_update', { ...settings.assistantSettings(), enabled: false });
+    await wait(5);
+    releaseLaunch();
+    await racing;
+    await turningOff;
+    await wait(20);
     assert.equal(launches[8]!.resume?.resume_id, 'thread-7', 'turning it back on resumes the thread');
+    assert.equal(assistant.state().process_id, null);
+    assert.equal(prompts.length, promptsBeforeOff, 'nothing is delivered to a launch that is being stopped');
+    assert.equal(inbox.focus().pending, 1);
+    await ui.call('settings_assistant_update', { ...settings.assistantSettings(), enabled: true });
+    await assistant.ensure();
+    await wait(20);
+    assert.equal(inbox.focus().pending, 0);
+    assert.match(prompts.slice(promptsBeforeOff).join('\n'), /Held while off/);
     assistant.dispose();
 
     // The assistant's context names its cross-project role.
@@ -385,7 +409,7 @@ async function main(): Promise<void> {
     agent('worker-q', 'q', 'orchestrator');
     const timeline = new TimelineService(database);
     const registry = createTestMcpRegistry({ tempDir: dir, database, timeline, terminal: { request: async () => ({}) } as unknown as TerminalService, workbench });
-    const assistantIdentity = { identity: 'mcp-assistant-9' };
+    const assistantIdentity = { identity: 'mcp-assistant-10' };
 
     const overview = await registry.callPublic('assistant_overview', {}, assistantIdentity) as { projects: Array<{ project_id: string; processes: Array<{ process_id: string }> }> };
     assert.deepEqual(overview.projects.map((project) => project.project_id), ['p', 'q']);

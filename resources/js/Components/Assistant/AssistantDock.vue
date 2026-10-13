@@ -161,7 +161,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onMounted, ref, shallowRef } from 'vue';
+import { computed, defineAsyncComponent, nextTick, onMounted, ref, shallowRef, watch } from 'vue';
 import { useMediaQuery } from '@vueuse/core';
 import { ArrowLeft, AudioLines, Check, ChevronDown, Ellipsis, Focus, Locate, LocateFixed, Maximize2, MessageSquare, Minimize2, Minus, PanelRight, PanelRightClose, RotateCcw, Sparkles } from 'lucide-vue-next';
 import { Button } from '../ui/button';
@@ -284,4 +284,7 @@ function toggleMode(): void {
 onMounted(() => {
   startAssistantEvents();
 });
+
+// A voice call ends with the assistant, so it comes back in chat.
+watch(() => assistant.enabled, (enabled) => { if (!enabled) mode.value = 'chat'; });
 </script>

@@ -1,4 +1,5 @@
 import { reactive } from 'vue';
+import { assistantLayout, setAssistantLayout } from './assistantLayout';
 
 export interface AssistantRealtimeEvent {
   method: string;
@@ -35,6 +36,8 @@ let listening = false;
 
 function apply(state: AssistantStatePayload): void {
   assistant.enabled = state.enabled ?? true;
+  // Turning it back on shows only the button, not the panel it was closed with.
+  if (!assistant.enabled && assistantLayout.open) setAssistantLayout({ open: false });
   assistant.processId = state.process_id;
   assistant.voiceActive = state.voice.active;
   assistant.focus = state.focus?.enabled ?? false;

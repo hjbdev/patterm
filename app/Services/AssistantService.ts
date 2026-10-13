@@ -288,7 +288,7 @@ export class AssistantService {
     this.digestTimer = null;
     const batch = this.digest.splice(0);
     const current = this.current();
-    if (!batch.length || !current) return;
+    if (!batch.length || !current || !this.enabled()) return;
     // Focus may have started while the batch gathered.
     const focus = this.inbox.focus();
     if (focus.enabled || focus.pending) {
@@ -331,8 +331,10 @@ export class AssistantService {
 
   private async flushInbox(): Promise<void> {
     const current = this.current();
-    // Without a running assistant, held items wait for its next launch.
-    if (!current || this.inbox.focus().enabled) return;
+    // Without a running assistant, held items wait for its next launch. A
+    // launch that finishes after the assistant was turned off is stopped
+    // without delivering them.
+    if (!current || !this.enabled() || this.inbox.focus().enabled) return;
     const claimed = this.inbox.claim();
     if (!claimed) return;
     const lines = focusDigestLines(claimed.items);
