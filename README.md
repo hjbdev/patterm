@@ -41,8 +41,8 @@ from another device.
   supported. The desktop app needs a graphical session and Electron's system
   libraries.
 - On Windows 10 or 11, the desktop app runs from source or from a portable zip
-  attached to releases (see [Windows](#windows)). There is no Windows
-  installer, updater, background service, or Tailscale setup yet.
+  attached to releases (see [Windows](#windows)). The per-user PowerShell
+  installer is available; there is no background service or Tailscale setup yet.
 - Patterm runs CLIs with your user account's permissions. Each CLI keeps its own
   authentication and approval workflow.
 - Browser disconnection leaves agents running. A machine reboot requires explicit
@@ -207,9 +207,21 @@ the new command. Stop the background service before reinstalling.
 
 ### Windows
 
-The desktop app runs natively on Windows 10 (1809 or later) and 11. Install Node
-24 or later, pnpm 11, Rust with the MSVC toolchain, and Git for Windows, then run
-from PowerShell:
+Install the latest Windows x64 release from PowerShell (no administrator access needed):
+
+```powershell
+irm https://github.com/hjbdev/patterm/releases/latest/download/install.ps1 | iex
+patterm
+```
+
+The installer checks the zip’s SHA-256 and installs under `%LOCALAPPDATA%\Patterm`,
+with a `patterm` command on your user PATH. Run the installer again to select the
+latest release; quit Patterm before updating. App data and native CLI transcripts
+stay separate from the installed versions.
+
+The desktop app runs natively on Windows 10 (1809 or later) and 11. To run from
+source instead, install Node 24 or later, pnpm 11, Rust with the MSVC toolchain,
+and Git for Windows, then run from PowerShell:
 
 ```powershell
 pnpm install
