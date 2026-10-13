@@ -18,7 +18,7 @@ while (( $# )); do
 done
 [[ "$(uname -s)" == Darwin ]] || fail 'this installer requires macOS'
 case "$(uname -m)" in arm64) ARCH=arm64 ;; x86_64) ARCH=x64 ;; *) fail 'unsupported Mac architecture' ;; esac
-for command in curl shasum ditto plutil codesign unzip; do
+for command in curl shasum ditto plutil codesign unzip pgrep; do
   command -v "$command" >/dev/null 2>&1 || fail "$command is required"
 done
 
@@ -105,13 +105,15 @@ version_lt() {
   fi
 }
 assert_stopped() {
-  local bundle
-  ps -axo command= > "$STAGING/processes" || fail 'cannot check running apps; quit Patterm and retry'
-  for bundle in "$TARGET" "$PREVIOUS"; do
-    if awk -v executable="$bundle/Contents/MacOS/Patterm" '$0 == executable || index($0, executable " ") == 1 { found=1 } END { exit !found }' "$STAGING/processes"; then
-      fail 'Patterm is running. Quit it, then rerun this installer to update.'
-    fi
-  done
+  local status
+  # Match the kernel process name, not argv[0], which may be ./Patterm.
+  # Refuse while any Patterm app runs, including a manually installed copy.
+  if pgrep -x Patterm >/dev/null; then
+    fail 'Patterm is running. Quit it, then rerun this installer to update.'
+  else
+    status=$?
+    [[ "$status" == 1 ]] || fail 'cannot check running apps; quit Patterm and retry'
+  fi
 }
 assert_stopped
 if [[ -e "$TARGET" ]]; then

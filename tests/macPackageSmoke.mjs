@@ -52,7 +52,7 @@ test('Mac zip preserves a runnable app, bundled dependencies, and renderer', {
     delete env.ELECTRON_RUN_AS_NODE;
     delete env.PATTERM_DESKTOP_RESOURCES;
     console.log('Launching the packaged app');
-    child = spawn(executable, ['--remote-debugging-port=0'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    child = spawn('./Patterm', ['--remote-debugging-port=0'], { cwd: path.dirname(executable), env, stdio: ['ignore', 'pipe', 'pipe'] });
     child.stdout.on('data', chunk => { log = (log + chunk).slice(-16_000); });
     child.stderr.on('data', chunk => { log = (log + chunk).slice(-16_000); });
     const deadline = Date.now() + 45_000;
@@ -88,6 +88,9 @@ test('Mac zip preserves a runnable app, bundled dependencies, and renderer', {
     console.log('Packaged renderer and preload initialized');
     assert.equal(child.exitCode, null, log);
     assert.ok(fs.existsSync(path.join(data, 'app.db')), `app database missing: ${log}`);
+    assert.throws(() => execFileSync('bash', ['scripts/release/install-macos.sh', '--version', version], {
+      env: installEnv, timeout: 30_000, stdio: 'pipe'
+    }), error => /Patterm is running/.test(error.stderr?.toString()), 'installer rejects an app launched with relative argv[0]');
   } catch (error) {
     throw new Error(`${error.message}\n${log}`, { cause: error });
   } finally {

@@ -26,7 +26,7 @@ test('Mac installer repeats, updates, rejects downgrades, and preserves the old 
     executable(path.join(bin, 'codesign'), '[[ -z "${BAD_SIGNATURE:-}" ]]');
     executable(path.join(bin, 'plutil'), 'case "$2" in tag_name) echo "v$LATEST" ;; CFBundleIdentifier) echo cloud.bayliss.patterm ;; esac');
     executable(path.join(bin, 'ditto'), 'exec unzip -q "$3" -d "$4"');
-    executable(path.join(bin, 'ps'), '[[ -z "${PS_FAILED:-}" ]] || exit 1; printf "%s\\n" "${RUNNING_APP:-}"');
+    executable(path.join(bin, 'pgrep'), '[[ -z "${PS_FAILED:-}" ]] || exit 2; [[ -n "${RUNNING_APP:-}" ]]');
     executable(path.join(bin, 'curl'), `while (( $# )); do
       case "$1" in --output) output="$2"; shift ;; https://*|file://*) url="$1" ;; esac; shift
     done
@@ -66,6 +66,10 @@ test('Mac installer repeats, updates, rejects downgrades, and preserves the old 
     assert.match(result.stdout, /already installed/);
     release('1.2.4');
     result = install('1.2.4', { RUNNING_APP: `${applications}/Patterm.app/Contents/MacOS/Patterm --flag` });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Patterm is running/);
+    assert.equal(versionAt('Patterm.app'), 'version=1.2.3');
+    result = install('1.2.4', { RUNNING_APP: './Patterm --flag' });
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /Patterm is running/);
     assert.equal(versionAt('Patterm.app'), 'version=1.2.3');
