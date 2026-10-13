@@ -67,6 +67,8 @@ export interface HarnessResume {
   resume_id: string;
   conversation_id: string;
   source_session_id?: string;
+  // Set by a restart, which should pick up changed MCP servers.
+  reconnect_mcp?: boolean;
 }
 
 // Minimal slice of TerminalService the launcher needs, so tests can supply a
@@ -209,7 +211,8 @@ export class HarnessLauncher {
       if (!this.deps.integrated || harness === 'rawpty') throw new Error(`${providerName(harness)} Integrated conversations are unavailable`);
       const launchInput = {
         executable: install.executablePath, cwd, name: input.name?.trim() || null, context: agentContext, mcp, mcpServers, resumeId: providerSessionId,
-        model: selection.model, reasoning: selection.reasoning, serviceTier: selection.serviceTier
+        model: selection.model, reasoning: selection.reasoning, serviceTier: selection.serviceTier,
+        reconnectMcp: resume?.reconnect_mcp === true
       };
       const prepared = await this.deps.integrated.prepare(harness as 'claude' | 'codex' | 'opencode', launchInput);
       integratedLaunch = { input: launchInput, result: prepared };

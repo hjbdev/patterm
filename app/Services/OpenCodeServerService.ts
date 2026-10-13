@@ -1282,17 +1282,23 @@ export class OpenCodeServerService {
 
   // The daemon is shared by every session in a directory, so a server is only
   // replaced when its configuration changes or the daemon has restarted and
-  // forgotten it; a replacement reconnects it.
+  // forgotten it. Replacing an unchanged config is a no-op in OpenCode, so a
+  // restart that wants fresh tool lists reconnects the server instead, which
+  // starts a new client for every session in the directory.
   // A server that fails to start shows as failed in OpenCode and does not stop
   // the launch.
-  private async installGlobalMcpServers(executable: string, cwd: string, location: URLSearchParams, configs: Record<string, Record<string, unknown>>, daemonRestarted: boolean): Promise<void> {
+  private async installGlobalMcpServers(executable: string, cwd: string, location: URLSearchParams, configs: Record<string, Record<string, unknown>>, daemonRestarted: boolean, reconnect: boolean): Promise<void> {
     for (const [name, config] of Object.entries(configs)) {
       const key = `${cwd}\0${name}`;
       const body = JSON.stringify(config);
-      if (!daemonRestarted && this.installedMcp.get(key) === body) continue;
+      const route = `/api/experimental/mcp/${encodeURIComponent(name)}`;
       try {
-        await this.api(executable, cwd, 'PUT', `/api/experimental/mcp/${encodeURIComponent(name)}?${location}`, { config });
-        this.installedMcp.set(key, body);
+        if (daemonRestarted || this.installedMcp.get(key) !== body) {
+          await this.api(executable, cwd, 'PUT', `${route}?${location}`, { config });
+          this.installedMcp.set(key, body);
+        } else if (reconnect) {
+          await this.api(executable, cwd, 'POST', `${route}/connect?${location}`);
+        }
       } catch {
         this.installedMcp.delete(key);
       }
@@ -1337,7 +1343,7 @@ export class OpenCodeServerService {
     // token rather than this agent's identity.
     const { PATTERM_MCP_IDENTITY: _identity, ...shared } = mcp.env;
     const helpers = { ...mcp, env: { ...shared, PATTERM_OPENCODE_BRIDGE: this.token } };
-    await this.installGlobalMcpServers(executable, cwd, location, openCodeMcpConfigs(input.mcpServers ?? [], helpers), daemonRestarted);
+    await this.installGlobalMcpServers(executable, cwd, location, openCodeMcpConfigs(input.mcpServers ?? [], helpers), daemonRestarted, input.reconnectMcp === true);
 
     let sessionId = input.resumeId;
     const selectedModel = input.model ? openCodeModelRef(input.model, input.reasoning ?? null) : null;

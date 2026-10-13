@@ -37,6 +37,17 @@ export interface IntegratedLaunchInput {
   model?: string | null;
   reasoning?: string | null;
   serviceTier?: string | null;
+  // A restart reconnects MCP servers a shared daemon keeps across sessions,
+  // so their tool lists are fetched again.
+  reconnectMcp?: boolean;
+}
+
+// Launch settings a running agent reports. A missing key is one it does not
+// report; null means the harness default.
+export interface LiveSettings {
+  model?: string | null;
+  reasoning?: string | null;
+  service_tier?: string | null;
 }
 
 export interface IntegratedLaunchResult {
@@ -866,6 +877,29 @@ export class IntegratedAgentService {
     const provider = this.forProcess(processId);
     const native = provider.currentModel ? await provider.currentModel(processId) : null;
     return native ?? (await this.controls(processId)).selectors.find((selector) => selector.id === 'model')?.value ?? null;
+  }
+
+  // The settings the agent runs on now. The launch columns miss changes made
+  // mid-conversation, so a restart resumes with these instead. Only settings
+  // the agent reports are returned, and `default` means the harness default.
+  async liveSettings(processId: string): Promise<LiveSettings> {
+    const provider = this.forProcess(processId);
+    const [{ selectors }, native] = await Promise.all([
+      this.controls(processId),
+      provider.currentModel ? provider.currentModel(processId) : null
+    ]);
+    const setting = (id: string) => {
+      const selector = selectors.find((item) => item.id === id);
+      return selector ? { value: selector.value && selector.value !== 'default' ? selector.value : null } : undefined;
+    };
+    const model = native ? { value: native } : setting('model');
+    const reasoning = setting('effort') ?? setting('variant');
+    const tier = setting('speed');
+    return {
+      ...(model ? { model: model.value } : {}),
+      ...(reasoning ? { reasoning: reasoning.value } : {}),
+      ...(tier ? { service_tier: tier.value } : {})
+    };
   }
 
   private signal(key: string, signal: CompactionSignal): void {

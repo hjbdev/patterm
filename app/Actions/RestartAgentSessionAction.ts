@@ -2,12 +2,15 @@ import fs from 'node:fs';
 import { z } from 'zod';
 import type { DatabaseService } from '../Services/DatabaseService';
 import type { HarnessLauncher, LaunchHarnessResult } from '../Services/HarnessLauncher';
+import type { LiveSettings } from '../Services/IntegratedAgentService';
 
 // `/restart` stops a top-level Integrated agent and resumes its conversation
 // in a new process, as `/resume` would, so it picks up changed MCP servers,
-// settings, and logins. The new session inherits the old one's worktrees,
-// todos, scratchpads, and links; its subagents and timers move across. A
-// turn in progress needs `force`, because stopping the process ends it.
+// settings, and logins. It keeps the model, effort, and speed the agent runs
+// on now, including changes made since launch. The new session inherits the
+// old one's worktrees, todos, scratchpads, and links; its subagents and timers
+// move across. A turn in progress needs `force`, because stopping the process
+// ends it.
 export const restartAgentSessionInput = z.object({
   process_id: z.string().min(1),
   project_id: z.string().min(1),
@@ -30,6 +33,7 @@ export interface RestartProcesses {
   releaseTimers(timerIds: readonly string[]): void;
   close(processId: string): Promise<unknown>;
   transferTimers(fromProcessIds: readonly string[], toProcessId: string): void;
+  liveSettings?(processId: string): Promise<LiveSettings>;
 }
 
 interface SourceSession {
@@ -100,6 +104,9 @@ export class RestartAgentSessionAction {
     const refusal = restartRefusal(source) ?? (!force && isWorking(source) ? WORKING : null);
     if (refusal) throw new Error(refusal);
     this.restarting.add(processId);
+    // Read before the stop, while the agent can still report them. The
+    // launch settings stand in for any it cannot.
+    const live: LiveSettings = await this.processes.liveSettings?.(processId).catch(() => ({})) ?? {};
     // Its timers wait until the new process owns them, so none fires into
     // the gap. If the resume fails they resume on the stopped agent, as
     // after any stop.
@@ -115,6 +122,7 @@ export class RestartAgentSessionAction {
           model: source.model,
           reasoning: source.reasoning,
           service_tier: source.service_tier,
+          ...live,
           project_id: source.project_id,
           worktree_id: this.liveWorktree(source.worktree_id, source.project_id),
           ...(source.cwd && isDirectory(source.cwd) ? { cwd: source.cwd } : {}),
@@ -122,7 +130,7 @@ export class RestartAgentSessionAction {
           // Only a chosen name is passed on; an unnamed agent keeps its generated or native title.
           name: source.display_name ?? undefined,
           interface_mode: 'integrated'
-        }, { resume_id: source.resume_id!, conversation_id: '', source_session_id: source.session_id });
+        }, { resume_id: source.resume_id!, conversation_id: '', source_session_id: source.session_id, reconnect_mcp: true });
       } catch (error) {
         this.processes.releaseTimers(held);
         const reason = error instanceof Error ? error.message : String(error);

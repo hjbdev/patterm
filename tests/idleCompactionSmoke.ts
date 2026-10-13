@@ -376,6 +376,8 @@ async function integratedSignals(database: DatabaseService): Promise<void> {
   await integrated.configure('oc', 'model', 'openai/gpt-5.6');
   assert.equal(signals.at(-1), 'oc:model');
   assert.equal(await integrated.model('oc'), 'opencode-go/deepseek-v4.1-flash');
+  // A restart keeps the live model and leaves settings the agent does not report.
+  assert.deepEqual(await integrated.liveSettings('oc'), { model: 'opencode-go/deepseek-v4.1-flash' });
 
   await lateRejection(database);
   await reconnectDisarms(database);

@@ -63,8 +63,8 @@ else if (method === 'GET' && route.startsWith('/api/model?')) console.log(JSON.s
 else if (method === 'GET' && route.startsWith('/api/agent?')) console.log(JSON.stringify({data:[{name:'build',description:'Build'},{name:'plan',description:'Plan'}]}));
 else if (method === 'GET' && route.startsWith('/api/command?')) console.log(JSON.stringify({data:[{name:'review',description:'Review changes'}, ...(process.env.CUSTOM_UNDO ? [{name:'undo',description:'Custom undo'}] : [])]}));
 else if (method === 'GET' && route.startsWith('/api/mcp?')) {
-  const add = rows.findLast(x => x.method === 'PUT' && x.route.startsWith('/api/experimental/mcp/'));
-  console.log(JSON.stringify({data:add ? [{name:add.route.split('/').at(-1).split('?')[0],status:{status:'connected'}}] : []}));
+  const names = new Set(rows.filter(x => x.method === 'PUT' && x.route.startsWith('/api/experimental/mcp/')).map(x => x.route.split('/').at(-1).split('?')[0]));
+  console.log(JSON.stringify({data:[...names].map(name => ({name,status:{status:'connected'}}))}));
 } else if (method === 'POST' && route.endsWith('/interrupt')) {
   if (process.env.FAIL_INTERRUPT) { console.log('HTTP 500 Internal Server Error'); process.exit(1); }
   console.log(JSON.stringify({data:{}}));
@@ -235,6 +235,12 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     assert.equal(bridgeEnv.PATTERM_MCP_IDENTITY, undefined, 'never configure a shared MCP client with an agent identity');
     assert.equal(registrations[0].body.config.codemode, false, 'compact orchestration tools remain directly discoverable');
     assert.equal(requests.filter((request) => request.route.startsWith('/api/experimental/session/') && request.route.endsWith('/instructions/entries/patterm')).length, 2);
+    // Replacing an unchanged server is a no-op in OpenCode, so a restart
+    // reconnects it to fetch its tool list again.
+    await service.prepare({ ...input, resumeId: first, reconnectMcp: true });
+    const restartRequests = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line)).slice(requests.length);
+    assert.deepEqual(restartRequests.filter((request) => request.route.startsWith('/api/experimental/mcp/helped')).map((request) => `${request.method} ${request.route.split('?')[0]}`),
+      ['POST /api/experimental/mcp/helped/connect'], 'a restart reconnects an unchanged shared helper instead of replacing it');
     for (const [index, id] of [first, second].entries()) {
       database.connection.prepare(`insert into processes (id,project_id,kind,name,status,created_at,updated_at) values (?, 'project_test','agent','Fixture','running',?,?)`).run(`process_${index}`, now, now);
       database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor) values (?, 'project_test',?,'opencode',?,?,?,'orchestrator','found','user')`).run(`session_${index}`, `process_${index}`, `identity_${index}`, id, now);
