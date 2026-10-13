@@ -89,7 +89,15 @@ function onMessage(event: MessageEvent): void {
     post({ type: 'render', html: props.html });
     pushState();
   } else if (data.type === 'size' && typeof data.height === 'number' && Number.isFinite(data.height)) {
-    height.value = Math.min(FIGURE_HEIGHT.max, Math.max(16, Math.ceil(data.height)));
+    const next = Math.min(FIGURE_HEIGHT.max, Math.max(16, Math.ceil(data.height)));
+    // Resizing moves the bar below the page, so a waiting request has to
+    // stand still again before a press counts: the page cannot slide the
+    // button under a pointer aimed at its own content.
+    if (next !== height.value && request.value) {
+      request.value = { ...request.value, shownAt: performance.now() };
+      armed = null;
+    }
+    height.value = next;
     if (props.measureKey) remember(props.measureKey, height.value);
   } else if (data.type === 'answer') {
     proposeAnswer(data);
@@ -124,8 +132,9 @@ function settle(ok: boolean, error?: string): void {
   post({ type: 'answer-result', requestId: current.requestId, ok, ...(error ? { error } : {}) });
 }
 
-// A press counts only once the request has stood unchanged long enough to
-// read, so a page cannot swap it in just as the user reaches the button.
+// A press counts only once the request has stood unchanged, and unmoved,
+// long enough to read, so a page cannot swap it in or slide it under the
+// pointer just as the user reaches for something else.
 function arm(event: Event): void {
   const current = request.value;
   armed = event.isTrusted && current && performance.now() - current.shownAt >= STEADY_MS ? current.revision : null;

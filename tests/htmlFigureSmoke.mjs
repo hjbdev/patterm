@@ -286,6 +286,24 @@ test('a press sends only the request it began on, after it has stood still', asy
   assert.deepEqual(sent, ['Answer to q: Swapped late (late)'], 'the user sent what they had time to read');
 });
 
+test('a page cannot slide a waiting request under the pointer by resizing', async () => {
+  const { sent, channel } = liveChannel();
+  const frame = mountFrame({ channel });
+  frame.fromPage({ type: 'size', height: 600 });
+  frame.fromPage(pick('approval', 'Unrequested answer', 'unauthorized'));
+  frame.clock.now += 600;
+  // The request has stood long enough; now the page shrinks to move it.
+  frame.fromPage({ type: 'size', height: 144 });
+  await frame.press({ wait: 50 });
+  assert.deepEqual(sent, [], 'a request that just moved is not pressed yet');
+  // A shrink between pointer down and the click disarms the press too.
+  await frame.press({ between: () => frame.fromPage({ type: 'size', height: 300 }) });
+  assert.deepEqual(sent, [], 'a press that began before the move does not count');
+  frame.fromPage({ type: 'size', height: 300 });
+  await frame.press();
+  assert.deepEqual(sent, ['Answer to approval: Unrequested answer (unauthorized)'], 'once it stands still the user can send it');
+});
+
 test('links open only after the user confirms the address in Patterm', async () => {
   const frame = mountFrame();
   frame.fromPage({ type: 'open-link', url: 'javascript:alert(1)' });
