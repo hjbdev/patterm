@@ -38,14 +38,18 @@ jobs:
           git config --global user.name 'Patterm CI'
           git config --global user.email 'ci@invalid'
           git config --global init.defaultBranch main
+      - uses: ./.github/actions/cache-rust
+        with:
+          variant: check
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       # remoteAccessSmoke, in check, runs the installer, which needs the server build.
-      - run: pnpm run build:server
-      - run: pnpm run check
+      - name: Build the server using the existing renderer and MCP shim
+        run: pnpm exec tsc -p tsconfig.server.json && pnpm run build:sidecar:release
+      - run: pnpm run check:ci
 
   build:
-    needs: check
+    if: github.server_url == 'https://github.com'
     strategy:
       matrix:
         include:
@@ -71,6 +75,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools
           rustup target add ${{ matrix.target }}
+      - uses: ./.github/actions/cache-rust
+        with:
+          target: ${{ matrix.target }}
+      - name: Build and test the static sidecar
+        run: |
           cargo build --release --locked --target ${{ matrix.target }} --manifest-path native/terminal-core/Cargo.toml
           cargo test --release --locked --target ${{ matrix.target }} --manifest-path native/terminal-core/Cargo.toml
       - run: pnpm install --frozen-lockfile
@@ -90,10 +99,11 @@ jobs:
             ${{ runner.temp }}/release/install.sh
           if-no-files-found: error
           retention-days: 7
+          compression-level: 0
 
   build-windows:
     # Portable Windows packages stay outside the Linux installer manifest.
-    needs: check
+    if: github.server_url == 'https://github.com'
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -105,6 +115,7 @@ jobs:
         with:
           node-version-file: .node-version
           cache: pnpm
+      - uses: ./.github/actions/cache-rust
       - name: Build the sidecar
         run: |
           cargo build --release --locked --manifest-path native/terminal-core/Cargo.toml
@@ -126,9 +137,10 @@ jobs:
           path: ${{ runner.temp }}/release/patterm-*
           if-no-files-found: error
           retention-days: 7
+          compression-level: 0
 
   build-macos:
-    needs: check
+    if: github.server_url == 'https://github.com'
     strategy:
       fail-fast: false
       matrix:
@@ -150,6 +162,14 @@ jobs:
       # The pnpm action's self-update also selects a missing Intel native binary.
       - name: Install the pinned pnpm version through npm
         run: npm install --global "$(node -p "require('./package.json').packageManager")"
+      - name: Find the pnpm store
+        id: pnpm-store
+        run: echo "path=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+      - uses: ./.github/actions/cache-rust
       - name: Build and test the sidecar
         run: |
           cargo build --release --locked --manifest-path native/terminal-core/Cargo.toml
@@ -174,9 +194,10 @@ jobs:
           path: ${{ runner.temp }}/release/patterm-*
           if-no-files-found: error
           retention-days: 7
+          compression-level: 0
 
   publish:
-    needs: [build, build-windows, build-macos]
+    needs: [check, build, build-windows, build-macos]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: release

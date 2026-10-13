@@ -5,6 +5,8 @@
     "moduleResolution": "Node",
     "rootDir": ".",
     "outDir": "dist/tests",
+    "incremental": true,
+    "tsBuildInfoFile": "dist/tests/tsconfig.tsbuildinfo",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": ["node"],
     "esModuleInterop": true
