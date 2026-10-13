@@ -11,7 +11,7 @@ type ImportInput = z.input<typeof historyImportInput>;
 const RECENT_JOB_LIMIT = 20;
 const LOG_SOURCE = 'history-import-queue';
 
-export type HistoryImportJobAction = 'import' | 'reset_imports' | 'delete_conversation';
+export type HistoryImportJobAction = 'import' | 'reset_imports' | 'delete_conversation' | 'delete_project_history';
 export type HistoryImportQueueJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'stale';
 
 export interface HistoryImportWorkerMessage {
@@ -19,6 +19,7 @@ export interface HistoryImportWorkerMessage {
   input: ImportInput;
   reimport?: boolean;
   conversation_id?: string;
+  project_id?: string;
 }
 
 export interface HistoryImportQueueJobSnapshot {
@@ -93,6 +94,7 @@ export class AgentHistoryImportQueueService {
   private staleTimer: NodeJS.Timeout | null = null;
   private readonly staleMs: number;
   private readonly dirtyWatcherKeys = new Map<string, HistoryImportWorkerMessage>();
+  private readonly waiters = new Map<string, (job: QueuedJob) => void>();
 
   constructor(
     private readonly appDataPath: string,
@@ -119,6 +121,22 @@ export class AgentHistoryImportQueueService {
 
   deleteConversation(conversationId: string): HistoryImportQueueEnqueueResult {
     return this.enqueue({ action: 'delete_conversation', input: { trigger: 'manual' }, conversation_id: conversationId });
+  }
+
+  // Resolves once the worker has deleted the project's conversations, and
+  // rejects if the job fails or the queue shuts down first.
+  deleteProjectHistory(projectId: string): Promise<{ deletedConversations: number }> {
+    const { job_id } = this.enqueue({ action: 'delete_project_history', input: { trigger: 'manual' }, project_id: projectId });
+    return new Promise((resolve, reject) => {
+      const settle = (job: QueuedJob) => {
+        if (job.status === 'succeeded') resolve({ deletedConversations: Number((job.result as { deletedConversations?: unknown } | null)?.deletedConversations ?? 0) });
+        else reject(new Error(`Could not delete the project's conversation history: ${job.error ?? job.status}`));
+      };
+      // A worker that fails to start finishes the job inside enqueue.
+      const finished = this.recent.find((job) => job.id === job_id);
+      if (finished) settle(finished);
+      else this.waiters.set(job_id, settle);
+    });
   }
 
   status(): HistoryImportQueueSnapshot {
@@ -353,6 +371,8 @@ export class AgentHistoryImportQueueService {
     this.recent.unshift(job);
     this.recent.splice(RECENT_JOB_LIMIT);
     this.log(status === 'succeeded' ? 'job.succeeded' : status === 'cancelled' ? 'job.cancelled' : status === 'stale' ? 'job.stale' : 'job.failed', job, { error, result });
+    this.waiters.get(job.id)?.(job);
+    this.waiters.delete(job.id);
   }
 
   private applyResultEffects(result: unknown): void {

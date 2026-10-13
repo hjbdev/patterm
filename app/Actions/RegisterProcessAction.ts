@@ -70,15 +70,27 @@ export class RegisterProcessAction {
   }
 }
 
+// The highest process number ever allocated, kept when a removed project
+// deletes its processes so their IDs are never handed out again.
+export const PROCESS_ID_HIGH_WATER_KEY = 'processes.id_high_water';
+
 export function nextProcessId(database: DatabaseService): string {
   const row = database.connection
     .prepare(
-      `select coalesce(max(cast(substr(id, 9) as integer)), 0) as max
-       from processes
-       where id glob 'process_[0-9]*'
-         and substr(id, 9) not glob '*[^0-9]*'`
+      `select max(
+         coalesce((select max(cast(substr(id, 9) as integer)) from processes
+           where id glob 'process_[0-9]*' and substr(id, 9) not glob '*[^0-9]*'), 0),
+         coalesce((select cast(value as integer) from settings where key = '${PROCESS_ID_HIGH_WATER_KEY}'), 0)
+       ) as max`
     )
     .get() as { max: number } | undefined;
   const max = row?.max ?? 0;
   return `process_${max + 1}`;
+}
+
+export function recordProcessIdHighWater(database: DatabaseService): void {
+  const current = Number(nextProcessId(database).slice('process_'.length)) - 1;
+  database.connection.prepare(`insert into settings (key, value, updated_at) values (?, ?, ?)
+    on conflict(key) do update set value = excluded.value, updated_at = excluded.updated_at`)
+    .run(PROCESS_ID_HIGH_WATER_KEY, String(current), new Date().toISOString());
 }

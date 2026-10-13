@@ -194,6 +194,13 @@ export class TimerService {
     return 'ok';
   }
 
+  cancelOwnedBy(processIds: readonly string[]): void {
+    const owners = new Set(processIds);
+    for (const entry of [...this.timers.values()]) {
+      if (entry.ownerProcessId && owners.has(entry.ownerProcessId)) this.cancel(entry.id);
+    }
+  }
+
   cancelAll(): void {
     if (this.options.persistent) this.database.connection.prepare('delete from runtime_timers').run();
     for (const entry of this.timers.values()) this.clearHandles(entry);

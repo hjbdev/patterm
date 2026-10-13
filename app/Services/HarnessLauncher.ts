@@ -9,6 +9,7 @@ import {
   resolveHarnessLaunchSelection,
   type HarnessLaunchSelection
 } from '../Harness/HarnessPresets';
+import type { ProjectLaunchFence } from './ProjectLaunchFence';
 import type { WorkbenchRepository } from '../Repositories/WorkbenchRepository';
 import { nativePath, storedPath } from '../Platform/PathIdentity';
 import type { DatabaseService } from './DatabaseService';
@@ -80,6 +81,7 @@ export interface HarnessLauncherDeps {
   terminal: SpawnSink;
   workbench: WorkbenchRepository;
   providers: HarnessProvider[];
+  fence?: ProjectLaunchFence;
   // Node-capable binary to run the bundled MCP shim. In Electron this is the
   // Electron binary plus ELECTRON_RUN_AS_NODE=1.
   nodePath: string;
@@ -129,7 +131,8 @@ export class HarnessLauncher {
     // identity from then on.
     const identity = `mcp_${randomUUID()}`;
     const release = this.deps.launchingIdentities?.reserve(identity, selection.harness, input.session_role);
-    try { return await this.startPrepared(input, selection, resume, identity); }
+    const prepared = () => this.startPrepared(input, selection, resume, identity);
+    try { return await (this.deps.fence ? this.deps.fence.run(input.project_id, prepared) : prepared()); }
     finally {
       release?.();
       if (key) this.attachingNativeSession.delete(key);
