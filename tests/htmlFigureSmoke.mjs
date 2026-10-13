@@ -212,25 +212,33 @@ test('a preview draws the prepared page with images inlined and returns the scre
 });
 
 // The frame component's own script, run against stub frames, channels and clock.
-function mountFrame({ channel = null, answered = new Map() } = {}) {
+function mountFrame({ channel = null, answered = new Map(), shared = null } = {}) {
   const file = fs.readFileSync('resources/js/Components/HtmlFigureFrame.vue', 'utf8');
   const blocks = [...file.matchAll(/<script(?: setup)? lang="ts">([\s\S]*?)<\/script>/g)].map((match) => match[1]);
   const executable = (source) => {
     const parsed = ts.createSourceFile('frame.ts', source, ts.ScriptTarget.Latest, true);
     return parsed.statements.filter((statement) => !ts.isImportDeclaration(statement)).map((statement) => statement.getFullText(parsed)).join('\n');
   };
-  const { outputText } = ts.transpileModule(`${executable(blocks[1])}\n${executable(blocks[0])}`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } });
+  const transpile = (code) => ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
   const posted = [];
   const opened = [];
   const contentWindow = { postMessage: (message) => posted.push(message) };
-  const clock = { now: 0 };
+  const clock = shared?.clock ?? { now: 0 };
+  const performance = { now: () => clock.now };
+  // The module block runs once per window, so frames that share one also
+  // share its state, as in the app; each frame runs its own setup.
+  const group = shared ?? {};
+  group.module ??= new Function('FIGURE_ID', 'performance', `${transpile(executable(blocks[1]))}
+return function setup(computed, inject, onBeforeUnmount, onMounted, ref, watch, window, FIGURE_FRAME_SANDBOX, FIGURE_HEIGHT, figureAnswerText, figureAnswerKey, figureAnsweredKey, figureFrameUrl, defineProps, __frame) {
+${transpile(executable(blocks[0]))}
+frame.value = __frame;
+return { onMessage, arm, confirm, request };
+};`)(ui.FIGURE_ID, performance);
   const window = { addEventListener: () => {}, removeEventListener: () => {}, open: (...args) => opened.push(args) };
   const answerKey = Symbol('answer');
   const answeredKey = Symbol('answered');
-  const setup = new Function('computed', 'inject', 'onBeforeUnmount', 'onMounted', 'ref', 'watch', 'window', 'performance', 'FIGURE_FRAME_SANDBOX', 'FIGURE_HEIGHT', 'FIGURE_ID', 'figureAnswerText', 'figureAnswerKey', 'figureAnsweredKey', 'figureFrameUrl', 'defineProps', '__frame',
-    `${outputText}\nframe.value = __frame;\nreturn { onMessage, arm, confirm, request };`);
-  const api = setup(computed, (key) => key === answerKey ? channel : key === answeredKey ? computed(() => answered) : null, () => {}, () => {}, ref, watch, window, { now: () => clock.now },
-    ui.FIGURE_FRAME_SANDBOX, ui.FIGURE_HEIGHT, ui.FIGURE_ID, ui.figureAnswerText, answerKey, answeredKey, () => '/figure-frame', () => ({ html: '<p>x</p>', title: 'x', initialHeight: 100 }), markRaw({ contentWindow }));
+  const api = group.module(computed, (key) => key === answerKey ? channel : key === answeredKey ? computed(() => answered) : null, () => {}, () => {}, ref, watch, window,
+    ui.FIGURE_FRAME_SANDBOX, ui.FIGURE_HEIGHT, ui.figureAnswerText, answerKey, answeredKey, () => '/figure-frame', () => ({ html: '<p>x</p>', title: 'x', initialHeight: 100 }), markRaw({ contentWindow }));
   const fromPage = (data) => api.onMessage({ source: contentWindow, data: { source: 'patterm-figure', ...data } });
   // A real press: pointer down on the button, later the click.
   const press = async ({ trusted = true, wait = 600, between } = {}) => {
@@ -302,6 +310,19 @@ test('a page cannot slide a waiting request under the pointer by resizing', asyn
   frame.fromPage({ type: 'size', height: 300 });
   await frame.press();
   assert.deepEqual(sent, ['Answer to approval: Unrequested answer (unauthorized)'], 'once it stands still the user can send it');
+});
+
+test('another page resizing above a waiting request holds its button too', async () => {
+  const { sent, channel } = liveChannel();
+  const shared = { clock: { now: 10_000 } };
+  const [above, below] = [mountFrame({ channel, shared }), mountFrame({ channel, shared })];
+  below.fromPage(pick('q', 'Below', 'below'));
+  shared.clock.now += 600;
+  above.fromPage({ type: 'size', height: 400 });
+  await below.press({ wait: 50 });
+  assert.deepEqual(sent, [], 'the shift above moved this button');
+  await below.press();
+  assert.deepEqual(sent, ['Answer to q: Below (below)']);
 });
 
 test('links open only after the user confirms the address in Patterm', async () => {

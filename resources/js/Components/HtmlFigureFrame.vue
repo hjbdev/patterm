@@ -51,8 +51,8 @@ interface PageRequest { kind: 'answer' | 'link'; text: string; id?: string; url?
 const request = ref<PageRequest | null>(null);
 const sending = ref(false);
 let revision = 0;
-// The request a press of the confirm button began on.
-let armed: number | null = null;
+// The request a press of the confirm button began on, and when.
+let armed: { revision: number; at: number } | null = null;
 
 // A frame draws one page; a changed page gets a fresh frame.
 watch(() => props.html, () => {
@@ -90,13 +90,9 @@ function onMessage(event: MessageEvent): void {
     pushState();
   } else if (data.type === 'size' && typeof data.height === 'number' && Number.isFinite(data.height)) {
     const next = Math.min(FIGURE_HEIGHT.max, Math.max(16, Math.ceil(data.height)));
-    // Resizing moves the bar below the page, so a waiting request has to
-    // stand still again before a press counts: the page cannot slide the
-    // button under a pointer aimed at its own content.
-    if (next !== height.value && request.value) {
-      request.value = { ...request.value, shownAt: performance.now() };
-      armed = null;
-    }
+    // Resizing moves this bar and every page below it, so no confirm button
+    // in the conversation counts a press until the layout stands still again.
+    if (next !== height.value) lastFigureResize = performance.now();
     height.value = next;
     if (props.measureKey) remember(props.measureKey, height.value);
   } else if (data.type === 'answer') {
@@ -132,19 +128,21 @@ function settle(ok: boolean, error?: string): void {
   post({ type: 'answer-result', requestId: current.requestId, ok, ...(error ? { error } : {}) });
 }
 
-// A press counts only once the request has stood unchanged, and unmoved,
-// long enough to read, so a page cannot swap it in or slide it under the
-// pointer just as the user reaches for something else.
+// A press counts only once the request has stood unchanged, and the
+// conversation's pages unresized, long enough to read, so a page cannot swap
+// it in or slide it under the pointer just as the user reaches for something else.
 function arm(event: Event): void {
   const current = request.value;
-  armed = event.isTrusted && current && performance.now() - current.shownAt >= STEADY_MS ? current.revision : null;
+  const now = performance.now();
+  armed = event.isTrusted && current && now - current.shownAt >= STEADY_MS && now - lastFigureResize >= STEADY_MS ? { revision: current.revision, at: now } : null;
 }
 
 async function confirm(event: MouseEvent): Promise<void> {
   const current = request.value;
   const pressed = armed;
   armed = null;
-  if (!event.isTrusted || !current || pressed !== current.revision || sending.value) return;
+  // A press that began before a page moved the layout does not count.
+  if (!event.isTrusted || !current || pressed?.revision !== current.revision || pressed.at <= lastFigureResize || sending.value) return;
   if (current.kind === 'link') {
     window.open(current.url, '_blank', 'noopener,noreferrer');
     settle(true);
@@ -172,6 +170,8 @@ onBeforeUnmount(() => {
 <script lang="ts">
 const ID = new RegExp(`^${FIGURE_ID}$`);
 const STEADY_MS = 500;
+// When any page in this window last changed its height.
+let lastFigureResize = -Infinity;
 
 // Picks become one line each in the user's message.
 function readPicks(raw: unknown): Array<{ item?: string; label: string; value: string }> | null {
