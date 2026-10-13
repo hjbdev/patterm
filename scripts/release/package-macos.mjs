@@ -80,9 +80,11 @@ try {
   // Refuse a sidecar from the wrong architecture before signing the bundle.
   execFileSync('lipo', [sidecar, '-verify_arch', ARCH === 'arm64' ? 'arm64' : 'x86_64'], { stdio: 'inherit' });
   fs.copyFileSync(path.join(ROOT, 'dist', 'mcp', 'patterm-mcp.js'), path.join(resources, 'mcp', 'patterm-mcp.js'));
+  // Electron identifies its stock executable as a development launch.
+  fs.renameSync(path.join(bundle, 'Contents', 'MacOS', 'Electron'), path.join(bundle, 'Contents', 'MacOS', 'Patterm'));
   const plist = path.join(bundle, 'Contents', 'Info.plist');
   for (const [key, value] of Object.entries({
-    CFBundleDisplayName: 'Patterm', CFBundleName: 'Patterm', CFBundleIdentifier: 'cloud.bayliss.patterm',
+    CFBundleDisplayName: 'Patterm', CFBundleName: 'Patterm', CFBundleExecutable: 'Patterm', CFBundleIdentifier: 'cloud.bayliss.patterm',
     CFBundleShortVersionString: options.version.split('-')[0], CFBundleVersion: options.version.split('-')[0]
   })) execFileSync('/usr/libexec/PlistBuddy', ['-c', `Set :${key} ${value}`, plist]);
 

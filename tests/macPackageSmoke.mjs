@@ -29,7 +29,7 @@ test('Mac zip preserves a runnable app, bundled dependencies, and renderer', {
     const bundle = path.join(temporary, 'Patterm.app');
     const resources = path.join(bundle, 'Contents', 'Resources');
     const app = path.join(resources, 'app');
-    const executable = path.join(bundle, 'Contents', 'MacOS', 'Electron');
+    const executable = path.join(bundle, 'Contents', 'MacOS', 'Patterm');
     execFileSync('codesign', ['--verify', '--deep', '--strict', bundle]);
     execFileSync('lipo', [path.join(resources, 'native', 'patterm-terminal-core'), '-verify_arch', process.arch === 'arm64' ? 'arm64' : 'x86_64']);
     for (const file of ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'dist/main/desktop/main/main.js', 'dist/renderer/index.html']) {
