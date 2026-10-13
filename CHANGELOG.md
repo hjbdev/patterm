@@ -18,8 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Windows installs add Patterm to the current user's Start menu. The shortcut
   follows updates and uses Patterm's icon and application identity.
-- The app icon now shows a white terminal mark on a black background, including
-  a Windows icon for the Start menu and taskbar.
+- The app icon now shows a white terminal mark on the UI's charcoal background,
+  including a Windows icon for the Start menu and taskbar. Desktop and browser
+  startup backgrounds use the same colour.
 
 ### Fixed
 

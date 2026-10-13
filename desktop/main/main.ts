@@ -96,7 +96,7 @@ async function createWindow(): Promise<void> {
     title: 'Patterm',
     ...windowIcon(),
     autoHideMenuBar: true,
-    backgroundColor: '#080b10',
+    backgroundColor: '#151515',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
