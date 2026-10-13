@@ -63,12 +63,23 @@ if [[ -z "$VERSION" ]]; then
   VERSION="${VERSION#v}"
 fi
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || fail 'invalid release version'
+# A rerun should not download the whole archive when the installed app is sound.
+INSTALLED_BUILD="$TARGET/Contents/Resources/app/BUILD"
+if [[ -x "$TARGET/Contents/MacOS/Patterm" && -f "$INSTALLED_BUILD" ]] &&
+   [[ "$(sed -n 's/^version=//p' "$INSTALLED_BUILD")" == "$VERSION" ]] &&
+   [[ "$(plutil -extract CFBundleIdentifier raw -o - "$TARGET/Contents/Info.plist")" == cloud.bayliss.patterm ]] &&
+   codesign --verify --deep --strict "$TARGET"; then
+  printf 'Patterm %s is already installed.\n' "$VERSION"
+  exit 0
+fi
+
 RELEASE_URL="${PATTERM_MAC_RELEASE_URL:-https://github.com/$REPO/releases/download/v$VERSION}"
 NAME="patterm-$VERSION-macos-$ARCH.zip"
 printf 'Downloading Patterm %s for macos-%s...\n' "$VERSION" "$ARCH"
 for file in "$NAME" "$NAME.sha256"; do
   curl --fail --silent --show-error --location --retry 3 --output "$STAGING/$file" "${RELEASE_URL%/}/$file"
 done
+printf 'Verifying the download checksum...\n'
 read -r HASH HASH_NAME < "$STAGING/$NAME.sha256"
 [[ "$HASH" =~ ^[0-9a-fA-F]{64}$ && "$HASH_NAME" == "$NAME" ]] || fail 'invalid package checksum file'
 HASH="$(printf '%s' "$HASH" | tr '[:upper:]' '[:lower:]')"
@@ -82,12 +93,14 @@ while IFS= read -r entry; do
   esac
   case "/$entry" in *'/../'*|*'/./'*|*'\'*) fail "unsafe archive entry: $entry" ;; esac
 done < "$STAGING/entries"
+printf 'Extracting Patterm.app...\n'
 ditto -x -k "$STAGING/$NAME" "$STAGING/extracted"
 BUNDLE="$STAGING/extracted/Patterm.app"
 BUILD="$BUNDLE/Contents/Resources/app/BUILD"
 [[ -x "$BUNDLE/Contents/MacOS/Patterm" && -f "$BUILD" ]] || fail 'package is missing the Patterm app or BUILD'
 [[ "$(sed -n 's/^version=//p' "$BUILD")" == "$VERSION" ]] || fail 'package version does not match the release'
 [[ "$(plutil -extract CFBundleIdentifier raw -o - "$BUNDLE/Contents/Info.plist")" == cloud.bayliss.patterm ]] || fail 'unexpected app identity'
+printf 'Verifying the app signature...\n'
 codesign --verify --deep --strict "$BUNDLE" || fail 'app signature verification failed'
 
 # Semantic version precedence, including numeric prerelease identifiers.
@@ -126,10 +139,6 @@ if [[ -e "$TARGET" ]]; then
   [[ "$INSTALLED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || fail 'invalid installed version'
   if version_lt "$VERSION" "$INSTALLED_VERSION" && ! $ALLOW_DOWNGRADE; then
     fail "Patterm $INSTALLED_VERSION is newer than $VERSION. Use --allow-downgrade only with a matching database backup."
-  fi
-  if [[ "$INSTALLED_VERSION" == "$VERSION" ]]; then
-    printf 'Patterm %s is already installed.\n' "$VERSION"
-    exit 0
   fi
   rm -rf "$PREVIOUS"
   mv "$TARGET" "$PREVIOUS"

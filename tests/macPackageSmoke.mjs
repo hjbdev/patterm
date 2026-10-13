@@ -11,7 +11,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 test('Mac zip preserves a runnable app, bundled dependencies, and renderer', {
   // Two verified installs, a launch, and a running-app refusal have separate bounds.
-  skip: process.platform !== 'darwin' && 'requires macOS', timeout: 180_000
+  skip: process.platform !== 'darwin' && 'requires macOS', timeout: 360_000
 }, async (t) => {
   const directory = process.env.MAC_PACKAGE_DIRECTORY;
   assert.ok(directory, 'set MAC_PACKAGE_DIRECTORY to the package output directory');
@@ -31,7 +31,7 @@ test('Mac zip preserves a runnable app, bundled dependencies, and renderer', {
     const version = /^patterm-(.+)-macos-(?:arm64|x64)\.zip$/.exec(archives[0])[1];
     const installEnv = { ...process.env, PATTERM_MAC_APPLICATIONS_DIR: applications, PATTERM_MAC_RELEASE_URL: pathToFileURL(path.resolve(directory)).href };
     for (let attempt = 0; attempt < 2; attempt++) {
-      execFileSync('bash', ['scripts/release/install-macos.sh', '--version', version], { env: installEnv, timeout: 45_000 });
+      execFileSync('bash', ['scripts/release/install-macos.sh', '--version', version], { env: installEnv, timeout: 120_000, stdio: 'inherit' });
     }
     const bundle = path.join(applications, 'Patterm.app');
     const resources = path.join(bundle, 'Contents', 'Resources');

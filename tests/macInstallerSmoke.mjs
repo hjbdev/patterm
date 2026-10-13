@@ -15,6 +15,7 @@ test('Mac installer repeats, updates, rejects downgrades, and preserves the old 
   try {
     const bin = path.join(root, 'bin');
     const releases = path.join(root, 'releases');
+    const downloads = path.join(root, 'downloads');
     const applications = path.join(root, 'Applications with spaces');
     fs.mkdirSync(bin);
     fs.mkdirSync(releases);
@@ -30,6 +31,7 @@ test('Mac installer repeats, updates, rejects downgrades, and preserves the old 
     executable(path.join(bin, 'curl'), `while (( $# )); do
       case "$1" in --output) output="$2"; shift ;; https://*|file://*) url="$1" ;; esac; shift
     done
+    printf "%s\\n" "$url" >> "$DOWNLOAD_CALLS"
     if [[ "$url" == */releases/latest ]]; then printf '{}' > "$output"; else cp "$RELEASES/\${url##*/}" "$output"; fi`);
     // Fail only the final new-app rename; restoration must still work.
     executable(path.join(bin, 'mv'), 'if [[ -n "${FAIL_SWITCH:-}" && "$1" == */extracted/Patterm.app ]]; then exit 1; fi\nexec /bin/mv "$@"');
@@ -55,15 +57,17 @@ test('Mac installer repeats, updates, rejects downgrades, and preserves the old 
     };
     const install = (version, extra = {}, args = []) => spawnSync('bash', ['scripts/release/install-macos.sh', ...args], {
       encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, PATTERM_MAC_APPLICATIONS_DIR: applications,
-        PATTERM_MAC_RELEASE_URL: `file://${releases}`, LATEST: version, RELEASES: releases, ...extra }
+        PATTERM_MAC_RELEASE_URL: `file://${releases}`, LATEST: version, RELEASES: releases, DOWNLOAD_CALLS: downloads, ...extra }
     });
     release('1.2.3');
     let result = install('1.2.3');
     assert.equal(result.status, 0, result.stderr);
     assert.equal(versionAt('Patterm.app'), 'version=1.2.3');
+    fs.writeFileSync(downloads, '');
     result = install('1.2.3');
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /already installed/);
+    assert.doesNotMatch(fs.readFileSync(downloads, 'utf8'), /\.zip/, 'a verified same-version rerun does not download the archive');
     release('1.2.4');
     result = install('1.2.4', { RUNNING_APP: `${applications}/Patterm.app/Contents/MacOS/Patterm --flag` });
     assert.notEqual(result.status, 0);
