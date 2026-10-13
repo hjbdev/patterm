@@ -164,7 +164,13 @@ export async function stopHostProcess(pid: number | null): Promise<void> {
 export async function stopRecordedHostProcess(pid: number | null, socketPath: string): Promise<void> {
   if (!pid) return;
   if (process.platform !== 'win32') return stopHostProcess(pid);
-  if (!await integratedHostListening(socketPath)) return;
+  const probeStart = Date.now();
+  if (!await integratedHostListening(socketPath)) {
+    let alive = true;
+    try { process.kill(pid, 0); } catch { alive = false; }
+    console.error(`[probe] stop skipped: ${socketPath} not listening after ${Date.now() - probeStart}ms; pid ${pid} alive=${alive}`);
+    return;
+  }
   await stopHostProcess(pid);
   // Termination completes asynchronously; return once the pipe has closed so
   // callers never mistake a dying host for a live one.
@@ -172,4 +178,7 @@ export async function stopRecordedHostProcess(pid: number | null, socketPath: st
   while (Date.now() < deadline && await integratedHostListening(socketPath, 250)) {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
+  let alive = true;
+  try { process.kill(pid, 0); } catch { alive = false; }
+  if (alive || Date.now() >= deadline) console.error(`[probe] after stop pid ${pid} alive=${alive} took ${Date.now() - probeStart}ms`);
 }

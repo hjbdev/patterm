@@ -1024,6 +1024,9 @@ if (socketPath) {
     await extra.service.stop(extra.processId);
     extra.service.disconnect();
   }
+  } catch (error) {
+    console.error('[probe] body failed:', error);
+    throw error;
   } finally {
     database.dispose();
     // Windows cannot remove a directory that an exiting host or CLI still runs in.
