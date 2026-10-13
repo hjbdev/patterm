@@ -21,7 +21,10 @@ test('PWA manifest has standalone scope and valid install icons', () => {
   assert(manifest.icons.some((icon) => icon.purpose === 'maskable'));
   const touchIcon = fs.readFileSync('public/icons/apple-touch-icon.png');
   assert.equal(touchIcon.readUInt32BE(16), 180);
-  assert.match(fs.readFileSync('index.html', 'utf8'), /rel="manifest"/);
+  const html = fs.readFileSync('index.html', 'utf8');
+  assert.match(html, /rel="manifest"/);
+  const themeColor = /<meta name="theme-color" content="([^"]+)"/.exec(html)?.[1];
+  assert.equal(themeColor, manifest.theme_color, 'the document must not override the manifest with another palette');
 });
 
 test('Windows icon contains PNG images at each shell display size', () => {
