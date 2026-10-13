@@ -1,0 +1,58 @@
+name: Windows release build
+
+# Backfill a portable Windows package for an already-published tag.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag
+        required: true
+        default: v0.1.0
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+      - name: Validate release tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || exit 1
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "$RELEASE_TAG^{commit}")"
+          git merge-base --is-ancestor HEAD origin/main
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - name: Build and test the sidecar
+        run: |
+          cargo build --release --locked --manifest-path native/terminal-core/Cargo.toml
+          cargo test --release --locked --manifest-path native/terminal-core/Cargo.toml
+      - run: pnpm install --frozen-lockfile
+      - name: Build application
+        run: |
+          pnpm run build:main
+          pnpm run build:renderer
+          pnpm run build:mcp
+      - name: Package
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          $version = $env:RELEASE_TAG.Substring(1)
+          node scripts/release/package-windows.mjs --version $version --sidecar native/terminal-core/target/release/patterm-terminal-core.exe --out "${{ runner.temp }}/release"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: windows-release
+          path: ${{ runner.temp }}/release/patterm-*
+          if-no-files-found: error
+          retention-days: 7

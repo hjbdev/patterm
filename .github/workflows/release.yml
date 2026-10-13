@@ -1,8 +1,7 @@
 name: Release
 
-# A plain tag (v1.2.0) publishes a stable Linux release. A tag with a suffix
-# (v1.3.0-beta.1) publishes a pre-release, which also carries a portable
-# Windows zip; macOS and Windows builds ship only as pre-releases.
+# Tags publish Linux packages and a portable Windows zip. A suffix marks
+# a prerelease; macOS packages are not currently built.
 on:
   push:
     tags: ['v[0-9]+.[0-9]+.[0-9]+*']
@@ -93,10 +92,8 @@ jobs:
           retention-days: 7
 
   build-windows:
-    # Windows ships only in pre-releases (a tag with a suffix) until it has an
-    # installer and updater; the zip stays out of the signed manifest.
+    # Portable Windows packages stay outside the Linux installer manifest.
     needs: check
-    if: contains(github.ref_name, '-')
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -129,8 +126,6 @@ jobs:
 
   publish:
     needs: [build, build-windows]
-    # Stable tags skip build-windows; publish still runs unless a build failed.
-    if: ${{ !cancelled() && !failure() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: release
@@ -170,7 +165,7 @@ jobs:
         run: |
           prerelease=()
           [[ "$GITHUB_REF_NAME" == *-* ]] && prerelease=(--prerelease)
-          # Only pre-releases carry the Windows zip.
+          # Stable releases and prereleases carry the portable Windows zip.
           shopt -s nullglob
           windows=(release/*.zip release/*.zip.sha256)
           gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "Patterm ${GITHUB_REF_NAME#v}" "${prerelease[@]}" \
