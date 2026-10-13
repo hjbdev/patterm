@@ -67,6 +67,8 @@ export interface HarnessResume {
   resume_id: string;
   conversation_id: string;
   source_session_id?: string;
+  // Set by a restart, which should pick up changed MCP servers.
+  reconnect_mcp?: boolean;
 }
 
 // Minimal slice of TerminalService the launcher needs, so tests can supply a
@@ -140,14 +142,15 @@ export class HarnessLauncher {
   }
 
   // Fresh launches fall back to the harness default preset. Resuming a stored
-  // conversation keeps its provider-side model unless the caller asks otherwise.
+  // conversation keeps its provider-side settings, overriding only those the
+  // caller gives, such as a restart's live effort on a default model.
   private resolveSelection(input: ParsedLaunchHarnessInput, resuming: boolean): HarnessLaunchSelection {
-    if (resuming && !input.preset && !input.model && !input.reasoning && !input.service_tier) {
+    if (resuming && !input.preset) {
       return {
         harness: input.harness!,
-        model: null,
-        reasoning: null,
-        serviceTier: null,
+        model: input.model?.trim() || null,
+        reasoning: input.reasoning?.trim() || null,
+        serviceTier: input.service_tier?.trim() || null,
         presetId: null,
         presetName: null
       };
@@ -209,7 +212,8 @@ export class HarnessLauncher {
       if (!this.deps.integrated || harness === 'rawpty') throw new Error(`${providerName(harness)} Integrated conversations are unavailable`);
       const launchInput = {
         executable: install.executablePath, cwd, name: input.name?.trim() || null, context: agentContext, mcp, mcpServers, resumeId: providerSessionId,
-        model: selection.model, reasoning: selection.reasoning, serviceTier: selection.serviceTier
+        model: selection.model, reasoning: selection.reasoning, serviceTier: selection.serviceTier,
+        reconnectMcp: resume?.reconnect_mcp === true
       };
       const prepared = await this.deps.integrated.prepare(harness as 'claude' | 'codex' | 'opencode', launchInput);
       integratedLaunch = { input: launchInput, result: prepared };

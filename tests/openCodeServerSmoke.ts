@@ -63,8 +63,8 @@ else if (method === 'GET' && route.startsWith('/api/model?')) console.log(JSON.s
 else if (method === 'GET' && route.startsWith('/api/agent?')) console.log(JSON.stringify({data:[{name:'build',description:'Build'},{name:'plan',description:'Plan'}]}));
 else if (method === 'GET' && route.startsWith('/api/command?')) console.log(JSON.stringify({data:[{name:'review',description:'Review changes'}, ...(process.env.CUSTOM_UNDO ? [{name:'undo',description:'Custom undo'}] : [])]}));
 else if (method === 'GET' && route.startsWith('/api/mcp?')) {
-  const add = rows.findLast(x => x.method === 'PUT' && x.route.startsWith('/api/experimental/mcp/'));
-  console.log(JSON.stringify({data:add ? [{name:add.route.split('/').at(-1).split('?')[0],status:{status:'connected'}}] : []}));
+  const names = new Set(rows.filter(x => x.method === 'PUT' && x.route.startsWith('/api/experimental/mcp/')).map(x => x.route.split('/').at(-1).split('?')[0]));
+  console.log(JSON.stringify({data:[...names].map(name => ({name,status:{status:'connected'}}))}));
 } else if (method === 'POST' && route.endsWith('/interrupt')) {
   if (process.env.FAIL_INTERRUPT) { console.log('HTTP 500 Internal Server Error'); process.exit(1); }
   console.log(JSON.stringify({data:{}}));
@@ -197,7 +197,7 @@ else if (method === 'PUT' && route.includes('/instructions/entries/')) {
   console.log(JSON.stringify({data:{key:'patterm',value:body.value}}));
 }
 else if (method === 'POST') console.log(JSON.stringify({data:{id:'ses_'+rows.filter(x=>x.method==='POST' && x.route==='/api/session').length}}));
-else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory:process.cwd()}}}));
+else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory:process.cwd()},model:{providerID:'openai',id:'gpt-test',variant:'low'}}}));
 `, { mode: 0o700 });
   // No discoverable background service: requests use the fake CLI and never
   // reach a real OpenCode daemon on the test machine.
@@ -235,6 +235,19 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     assert.equal(bridgeEnv.PATTERM_MCP_IDENTITY, undefined, 'never configure a shared MCP client with an agent identity');
     assert.equal(registrations[0].body.config.codemode, false, 'compact orchestration tools remain directly discoverable');
     assert.equal(requests.filter((request) => request.route.startsWith('/api/experimental/session/') && request.route.endsWith('/instructions/entries/patterm')).length, 2);
+    // Replacing an unchanged server is a no-op in OpenCode, so a restart
+    // reconnects it to fetch its tool list again.
+    await service.prepare({ ...input, resumeId: first, reconnectMcp: true });
+    const restartRequests = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line)).slice(requests.length);
+    assert.deepEqual(restartRequests.filter((request) => request.route.startsWith('/api/experimental/mcp/helped')).map((request) => `${request.method} ${request.route.split('?')[0]}`),
+      ['POST /api/experimental/mcp/helped/connect'], 'a restart reconnects an unchanged shared helper instead of replacing it');
+    // After a Patterm restart the install cache is empty; the replacement may
+    // be a no-op, so a restart still reconnects.
+    const coldCount = fs.readFileSync(record, 'utf8').trim().split('\n').length;
+    await new OpenCodeServerService(database, env, { persistent: true }).prepare({ ...input, resumeId: first, reconnectMcp: true });
+    const coldRequests = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line)).slice(coldCount);
+    assert.deepEqual(coldRequests.filter((request) => request.route.startsWith('/api/experimental/mcp/helped')).map((request) => `${request.method} ${request.route.split('?')[0]}`),
+      ['PUT /api/experimental/mcp/helped', 'POST /api/experimental/mcp/helped/connect'], 'a restart reconnects even when Patterm forgot what it installed');
     for (const [index, id] of [first, second].entries()) {
       database.connection.prepare(`insert into processes (id,project_id,kind,name,status,created_at,updated_at) values (?, 'project_test','agent','Fixture','running',?,?)`).run(`process_${index}`, now, now);
       database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor) values (?, 'project_test',?,'opencode',?,?,?,'orchestrator','found','user')`).run(`session_${index}`, `process_${index}`, `identity_${index}`, id, now);
@@ -246,6 +259,8 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const presetControls = await service.controls('process_1');
     assert.equal(presetControls.selectors.find((selector) => selector.id === 'model')?.value, 'openai/gpt-test', 'the composer shows the native session model, not the global default');
     assert.equal(presetControls.selectors.find((selector) => selector.id === 'variant')?.value, 'high', 'the composer shows the native session variant');
+    assert.deepEqual(await service.nativeSettings('process_1'), { model: 'openai/gpt-test', reasoning: 'low' },
+      'a restart reads the variant from the native session, not the launch value');
     database.connection.prepare(`update sessions set interface_mode = 'tui' where id = 'session_1'`).run();
     assert.deepEqual(await service.prompt('process_0', { text: 'hello', references: [], attachments: [] }), { id: 'msg_test' });
     const controls = await service.controls('process_0');

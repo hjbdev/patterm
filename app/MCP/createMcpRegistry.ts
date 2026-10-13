@@ -74,7 +74,7 @@ interface RegistryServices {
   workbench: WorkbenchRepository;
   harnessDiscovery: HarnessDiscoveryService;
   harnessLauncher: HarnessLauncher;
-  integrated?: Pick<IntegratedAgentService, 'conversation' | 'olderMessages' | 'prompt' | 'files' | 'delivery' | 'interrupt' | 'stopTask' | 'taskOutput' | 'updateQueued' | 'replyPermission' | 'replyQuestion' | 'replyForm' | 'controls' | 'configure' | 'command' | 'isEmpty'>;
+  integrated?: Pick<IntegratedAgentService, 'conversation' | 'olderMessages' | 'prompt' | 'files' | 'delivery' | 'interrupt' | 'stopTask' | 'taskOutput' | 'updateQueued' | 'replyPermission' | 'replyQuestion' | 'replyForm' | 'controls' | 'configure' | 'command' | 'isEmpty' | 'liveSettings'>;
   transcriptImages?: Pick<TranscriptImageStore, 'read' | 'fromFile'>;
   settings?: Pick<SettingsService, 'agentInterface' | 'updateAgentInterface' | 'figuresEnabled' | 'updateFiguresEnabled'>;
   harnessPresets?: HarnessPresetService;
@@ -339,7 +339,8 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     close: (processId) => services.actions.closeProcess.execute(processId),
     holdTimers: (processId) => timerService.holdOwner(processId),
     releaseTimers: (timerIds) => { for (const id of timerIds) timerService.resume(id); },
-    transferTimers: (from, to) => timerService.transferOwner(from, to)
+    transferTimers: (from, to) => timerService.transferOwner(from, to),
+    ...(services.integrated ? { liveSettings: (processId: string) => services.integrated!.liveSettings(processId) } : {})
   });
   const sendMessage = new SendMessageAction(services.database, services.terminal, services.timeline,
     { integrated: services.integrated, assistant: services.assistant, notifications: services.notifications });
