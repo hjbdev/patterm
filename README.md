@@ -215,9 +215,10 @@ patterm
 ```
 
 The installer checks the zip’s SHA-256 and installs under `%LOCALAPPDATA%\Patterm`,
-with a `patterm` command on your user PATH. Run the installer again to select the
-latest release; quit Patterm before updating. App data and native CLI transcripts
-stay separate from the installed versions.
+with a Patterm entry in your Start menu and a `patterm` command on your user PATH.
+Run the installer again to select the latest release; the Start menu shortcut
+follows the selected version. Quit Patterm before updating. App data and native
+CLI transcripts stay separate from the installed versions.
 
 The desktop app runs natively on Windows 10 (1809 or later) and 11. To run from
 source instead, install Node 24 or later, pnpm 11, Rust with the MSVC toolchain,
