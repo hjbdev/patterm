@@ -9,7 +9,7 @@ import { HistorySearchIndexService } from './HistorySearchIndexService';
 import os from 'node:os';
 
 interface WorkerInput {
-  action?: 'parse_file' | 'import' | 'reset_imports' | 'delete_conversation';
+  action?: 'parse_file' | 'import' | 'reset_imports' | 'delete_conversation' | 'delete_project_history';
   appDataPath?: string;
   input?: Parameters<AgentHistoryImportService['importWithParser']>[0];
   reimport?: boolean;
@@ -19,6 +19,7 @@ interface WorkerInput {
   filePath?: string;
   options?: ParseHistoryFileOptions;
   conversation_id?: string;
+  project_id?: string;
 }
 
 interface ParentPort {
@@ -72,7 +73,7 @@ export async function runHistoryImportWorker(message: unknown, reportProgress?: 
     if (payload.action === 'parse_file') {
       return { ok: true, result: parseHistoryFile(payload) };
     }
-    if (payload.action === 'import' || payload.action === 'reset_imports' || payload.action === 'delete_conversation') {
+    if (payload.action === 'import' || payload.action === 'reset_imports' || payload.action === 'delete_conversation' || payload.action === 'delete_project_history') {
       return { ok: true, result: await runQueuedHistoryImport(payload, reportProgress) };
     }
     throw new Error('unknown history worker action');
@@ -117,6 +118,10 @@ async function runQueuedHistoryImport(payload: WorkerInput, reportProgress?: Pro
       if (!payload.conversation_id) throw new Error('history delete is missing conversation_id');
       return new AgentHistoryDeleteService(historyDatabase, search).deleteConversation(payload.conversation_id);
     }
+    if (payload.action === 'delete_project_history') {
+      if (!payload.project_id) throw new Error('history delete is missing project_id');
+      return new AgentHistoryDeleteService(historyDatabase, search).deleteProjectConversations(payload.project_id);
+    }
     throw new Error('unknown history worker action');
   } finally {
     historyDatabase.dispose();
@@ -146,8 +151,11 @@ function waitForAck(parentPort: ParentPort): void {
 }
 
 function copyLegacyHistoryIfNeeded(appDatabase: DatabaseService, historyDatabase: HistoryDatabaseService): void {
-  const historyCount = historyDatabase.connection.prepare(`select count(*) as count from conversations`).get() as { count: number };
-  if (historyCount.count > 0) return;
+  // Only a history database that has never been used is filled from app.db.
+  // One emptied by deletions keeps their tombstones and must stay empty.
+  const used = historyDatabase.connection.prepare(`select exists(select 1 from conversations) or exists(select 1 from conversation_deletions)
+    or exists(select 1 from conversation_import_files) as used`).get() as { used: number };
+  if (used.used) return;
   const legacy = appDatabase.connection.prepare(`select name from sqlite_master where type = 'table' and name = 'conversations'`).get();
   if (!legacy) return;
   const legacyCount = appDatabase.connection.prepare(`select count(*) as count from conversations`).get() as { count: number };

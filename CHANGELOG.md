@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Rename and remove projects from the menu on each project in Projects.
+  Renaming changes only the name Patterm shows. Removing asks for
+  confirmation, stops anything running in the project, and deletes
+  everything Patterm holds for it: agents and processes, worktree records,
+  todos, scratchpads, references, routines, timers, notifications, links with
+  other hosts, and imported conversation history. Files on disk are never
+  touched, including the project folder, worktree folders, branches, and the
+  CLIs' own transcripts. The Personal project can be renamed but not removed;
+  turn it off in Settings instead. Agents cannot rename or remove projects.
 - An optional Personal project for agents that belong to no repository. Turn
   it on in Settings › Appearance › Navigation. It is listed first, works in a
   private folder in Patterm's data directory, has no Worktrees page, and never

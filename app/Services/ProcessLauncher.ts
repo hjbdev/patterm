@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { RegisterProcessAction } from '../Actions/RegisterProcessAction';
+import type { ProjectLaunchFence } from './ProjectLaunchFence';
 import type { WorkbenchRepository } from '../Repositories/WorkbenchRepository';
 import type { DatabaseService } from './DatabaseService';
 import type { SpawnSink } from './HarnessLauncher';
@@ -51,6 +52,7 @@ export interface ProcessLauncherDeps {
   terminal: SpawnSink;
   workbench: WorkbenchRepository;
   notifyChanged?: () => void;
+  fence?: ProjectLaunchFence;
 }
 
 // Launches long-running "processes" (a shell or a freeform command) through the
@@ -61,6 +63,24 @@ export class ProcessLauncher {
 
   async create(raw: ProcessCreateInput): Promise<ProcessLauncherResult> {
     const input = processCreateInput.parse(raw);
+    return this.fenced(input.project_id, () => this.createInProject(input));
+  }
+
+  async update(raw: ProcessUpdateInput): Promise<{ process_id: string; pty_process_id: string | null; restarted: boolean }> {
+    const input = processUpdateInput.parse(raw);
+    return this.fenced(this.process(input.process_id).project_id, () => this.updateInProject(input));
+  }
+
+  // Re-attach a fresh PTY to an existing (exited) process row, reusing its argv.
+  async relaunch(processId: string): Promise<{ process_id: string; pty_process_id: string }> {
+    return this.fenced(this.process(processId).project_id, () => this.relaunchInProject(processId));
+  }
+
+  private fenced<T>(projectId: string, launch: () => Promise<T>): Promise<T> {
+    return this.deps.fence ? this.deps.fence.run(projectId, launch) : launch();
+  }
+
+  private async createInProject(input: z.output<typeof processCreateInput>): Promise<ProcessLauncherResult> {
     const project = this.deps.workbench.getProject(input.project_id);
     const worktree = input.worktree_id ? this.worktree(input.worktree_id) : null;
     const cwd = input.cwd ?? worktree?.worktree_path ?? project?.path ?? process.cwd();
@@ -97,8 +117,7 @@ export class ProcessLauncher {
     return { process_id, pty_process_id: ptyId };
   }
 
-  async update(raw: ProcessUpdateInput): Promise<{ process_id: string; pty_process_id: string | null; restarted: boolean }> {
-    const input = processUpdateInput.parse(raw);
+  private async updateInProject(input: z.output<typeof processUpdateInput>): Promise<{ process_id: string; pty_process_id: string | null; restarted: boolean }> {
     const row = this.process(input.process_id);
     const previousArgv = parseArgv(row.argv);
     const nextArgv = input.command === undefined ? previousArgv : argvFromCommand(input.command);
@@ -157,8 +176,7 @@ export class ProcessLauncher {
     return { process_id: row.id, pty_process_id: nextPtyId, restarted: shouldRestart };
   }
 
-  // Re-attach a fresh PTY to an existing (exited) process row, reusing its argv.
-  async relaunch(processId: string): Promise<{ process_id: string; pty_process_id: string }> {
+  private async relaunchInProject(processId: string): Promise<{ process_id: string; pty_process_id: string }> {
     const row = this.process(processId);
 
     const argv = parseArgv(row.argv);
