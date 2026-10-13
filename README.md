@@ -37,12 +37,14 @@ from another device.
 
 ## v0.1 support and limitations
 
-- Release packages support Linux x64 and arm64 with systemd. macOS is not
-  supported. The desktop app needs a graphical session and Electron's system
-  libraries.
-- On Windows 10 or 11, the desktop app runs from source or from a portable zip
-  attached to releases (see [Windows](#windows)). The per-user PowerShell
-  installer is available; there is no background service or Tailscale setup yet.
+- Release packages support Linux x64 and arm64 with systemd. The desktop app
+  needs a graphical session and Electron's system libraries.
+- Experimental macOS desktop packages are available for Apple Silicon and Intel
+  (see [macOS](#macos)). They are not Apple notarized; there is no Mac background
+  service installer.
+- Experimental Windows desktop packages support Windows 10 or 11, with a
+  portable zip and per-user PowerShell installer (see [Windows](#windows)).
+  There is no background service or Tailscale setup yet.
 - Patterm runs CLIs with your user account's permissions. Each CLI keeps its own
   authentication and approval workflow.
 - Browser disconnection leaves agents running. A machine reboot requires explicit
@@ -138,9 +140,11 @@ nothing:
 curl -fsSL https://github.com/hjbdev/patterm/releases/latest/download/uninstall.sh | bash
 ```
 
-Release tags build these tarballs in GitHub Actions. A plain tag such as
-`v1.2.0` is a stable Linux release. A tag with a suffix, such as `v1.3.0-beta.1`,
-is a pre-release.
+Release tags build Linux tarballs, Windows x64 packages, and macOS Apple Silicon
+and Intel app zips in GitHub Actions. A plain tag such as `v1.2.0` is a stable
+release; a suffix such as `v1.3.0-beta.1` marks a pre-release. **macOS and Windows
+builds remain experimental in both stable releases and pre-releases.** Every
+release includes this caveat above its generated change notes.
 
 ## Development
 
@@ -205,7 +209,39 @@ the existing desktop application and data paths so projects and history remain
 available. Remove any unrelated `/usr/local/bin/patterm` installation before using
 the new command. Stop the background service before reinstalling.
 
+### macOS
+
+Download `patterm-<version>-macos-arm64.zip` for Apple Silicon or
+`patterm-<version>-macos-x64.zip` for Intel from the
+[release assets](https://github.com/hjbdev/patterm/releases). Each zip has a
+matching `.sha256` file. Unzip it, move `Patterm.app` to Applications, and open it.
+Install and sign into your agent CLIs separately.
+
+These experimental builds are ad-hoc signed, not signed with an Apple Developer
+ID or notarized. macOS may block opening a downloaded app; after attempting to
+open it, use **System Settings → Privacy & Security → Open Anyway** if you trust
+the build. Hands-on testing with agent CLIs is still needed before treating
+these builds as supported. The Linux service installer does not apply to macOS.
+
+CI uploads both architectures as `macos-arm64` and `macos-x64` artifacts on pull
+requests and pushes to main. Tagged releases attach the same app zip format.
+To package locally on a Mac of the target architecture:
+
+```sh
+pnpm install --frozen-lockfile
+pnpm run build:main
+pnpm run build:renderer
+pnpm run build:mcp
+pnpm run build:sidecar:release
+node scripts/release/package-macos.mjs --version 0.1.0 --sidecar native/terminal-core/target/release/patterm-terminal-core --out out/release
+MAC_PACKAGE_DIRECTORY=out/release node --test tests/macPackageSmoke.mjs
+```
+
 ### Windows
+
+Windows desktop builds are experimental, including those attached to stable
+releases. Automated checks pass, but hands-on testing with agent CLIs is still
+needed before treating these builds as supported.
 
 Install the latest Windows x64 release from PowerShell (no administrator access needed):
 

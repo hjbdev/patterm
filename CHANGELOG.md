@@ -12,12 +12,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An Assistant switch in Settings › Assistant. Turning it off stops the
   assistant, ends any voice call, and hides its button until it is back on.
 
+- Experimental macOS desktop app zips for Apple Silicon and Intel, with
+  SHA-256 checksums, packaged-app smoke checks, and CI and release builds.
+  These builds are ad-hoc signed and are not Apple notarized.
+
 - A per-user PowerShell installer for Windows x64 releases, with zip checksum
   verification and a `patterm` command on the user PATH.
 
 - Portable Windows x64 packages on stable releases, with SHA-256 checksums.
 
 ### Changed
+
+- Tagged releases include macOS and Windows desktop packages with an
+  experimental-platform notice above the generated release notes. Both
+  platforms remain experimental on stable releases and pre-releases.
 
 - Windows installs add Patterm to the current user's Start menu. The shortcut
   follows updates and uses Patterm's icon and application identity.
