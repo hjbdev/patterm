@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A per-user PowerShell installer for Windows x64 releases, with zip checksum
+  verification and a `patterm` command on the user PATH.
+
 - Portable Windows x64 packages on stable releases, with SHA-256 checksums.
 
 ## [0.1.0] - 2026-10-13
