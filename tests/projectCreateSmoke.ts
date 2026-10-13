@@ -294,6 +294,10 @@ async function main(): Promise<void> {
     const history = new HistoryDatabaseService(tempDir, { mode: 'read', busyTimeoutMs: 250 });
     history.initialize({ migrate: false });
     assert.ok(history.connection.prepare(`select 1 from conversation_deletions where provider_conversation_id = 'legacy_native'`).get(), 'with a tombstone');
+    // The next worker can start before removal deletes the app.db copy; it must not copy it back.
+    const next = await runHistoryImportWorker({ action: 'import', appDataPath: tempDir, input: { trigger: 'manual', path: path.join(tempDir, 'missing-source') } });
+    assert.equal(next.ok, true, next.error);
+    assert.equal(history.connection.prepare(`select 1 from conversations where provider_conversation_id = 'legacy_native'`).get(), undefined, 'a purged history database is never refilled from app.db');
     history.dispose();
 
     // Process IDs of a removed project are never handed out again.

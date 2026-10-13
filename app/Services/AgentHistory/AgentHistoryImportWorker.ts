@@ -151,8 +151,11 @@ function waitForAck(parentPort: ParentPort): void {
 }
 
 function copyLegacyHistoryIfNeeded(appDatabase: DatabaseService, historyDatabase: HistoryDatabaseService): void {
-  const historyCount = historyDatabase.connection.prepare(`select count(*) as count from conversations`).get() as { count: number };
-  if (historyCount.count > 0) return;
+  // Only a history database that has never been used is filled from app.db.
+  // One emptied by deletions keeps their tombstones and must stay empty.
+  const used = historyDatabase.connection.prepare(`select exists(select 1 from conversations) or exists(select 1 from conversation_deletions)
+    or exists(select 1 from conversation_import_files) as used`).get() as { used: number };
+  if (used.used) return;
   const legacy = appDatabase.connection.prepare(`select name from sqlite_master where type = 'table' and name = 'conversations'`).get();
   if (!legacy) return;
   const legacyCount = appDatabase.connection.prepare(`select count(*) as count from conversations`).get() as { count: number };

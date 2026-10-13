@@ -80,8 +80,8 @@ export class RemoveProjectAction {
       // History is purged while the project still exists, so imports queued
       // before it still link their conversations to the project. The worker
       // copies conversations left in app.db from before history had its own
-      // database before purging, so those get tombstones too. Nothing awaits
-      // between the purge and the deletion, so no import copies them back.
+      // database before purging, so those get tombstones too, and it never
+      // copies them into a history database that has tombstones.
       await this.deps.history?.deleteProjectHistory(input.project_id);
 
       // Everything else cascades from the project row, including the
