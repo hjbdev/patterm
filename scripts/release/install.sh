@@ -86,9 +86,14 @@ case "$(uname -m)" in
   aarch64|arm64) ARCH=arm64 ;;
   *) fail "no Patterm release for $(uname -m)" ;;
 esac
-for command in curl tar gzip sha256sum; do
+for command in curl tar gzip sha256sum flock; do
   command -v "$command" >/dev/null 2>&1 || fail "$command is required"
 done
+
+# Serialise version switches and cleanup, including concurrent update commands.
+mkdir -p "$PATTERM_HOME"
+exec 9> "$PATTERM_HOME/.install.lock"
+flock -n 9 || fail 'another Patterm installer is running; retry when it finishes'
 
 if [[ -n "${PATTERM_RELEASE_URL:-}" ]]; then
   RELEASE_URL="${PATTERM_RELEASE_URL%/}"
@@ -197,6 +202,7 @@ PREVIOUS_TARGET=""
 [[ -L "$CURRENT" ]] && PREVIOUS_TARGET="$(readlink "$CURRENT")"
 # Never replace the directory the running version uses.
 [[ "versions/$RELEASE_VERSION" != "$PREVIOUS_TARGET" ]] || fail "$TARGET is in use"
+if [[ -d "$TARGET" ]] && in_use "$TARGET"; then fail "$TARGET is still used by a running process"; fi
 rm -rf "$TARGET"
 mv "$STAGING/patterm-$RELEASE_VERSION-linux-$ARCH" "$TARGET"
 
@@ -278,10 +284,15 @@ if $SERVICE_STOPPED; then
   HEALTHY=true
 fi
 
-# Keep the version in use and the one before it.
+# Keep current, previous, and every version still used by a desktop or agent.
 for directory in "$PATTERM_HOME"/versions/*/; do
   name="versions/$(basename "$directory")"
-  [[ "$name" == "versions/$RELEASE_VERSION" || "$name" == "$PREVIOUS_TARGET" ]] || rm -rf "$directory"
+  [[ "$name" == "versions/$RELEASE_VERSION" || "$name" == "$PREVIOUS_TARGET" ]] && continue
+  if in_use "$directory"; then
+    printf 'Kept %s: a running process still uses it. A later update removes it once those processes finish.\n' "$directory" >&2
+  else
+    rm -rf "$directory"
+  fi
 done
 
 printf 'Patterm %s installed in %s.\n' "$RELEASE_VERSION" "$TARGET"

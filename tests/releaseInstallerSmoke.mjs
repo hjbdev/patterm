@@ -63,7 +63,7 @@ function run(command, args, env) {
   });
 }
 
-test('the release installer verifies, swaps versions, updates the service, and uninstalls', { skip: linuxOnly || !arch }, async () => {
+test('the release installer verifies, swaps versions, updates the service, and uninstalls', { skip: linuxOnly || !arch }, async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-release-'));
   const server = http.createServer((request, response) => { response.end(); });
   try {
@@ -135,6 +135,15 @@ test('the release installer verifies, swaps versions, updates the service, and u
     assert.match(fs.readFileSync(path.join(home, '.local/share/applications/patterm.desktop'), 'utf8'), /^Exec=.*\/\.local\/bin\/patterm$/m);
     assert.doesNotMatch(result.calls, /stop|start/);
     assert.match((await install('1.2.0')).stdout, /already installed/);
+    const holder = spawn('flock', [path.join(share, 'patterm/.install.lock'), process.execPath, '-e', "process.stdout.write('locked'); process.stdin.resume();"], { stdio: ['pipe', 'pipe', 'inherit'] });
+    t.after(() => holder.stdin.end());
+    await new Promise((resolve, reject) => { holder.stdout.once('data', resolve); holder.once('error', reject); });
+    const concurrent = await install('1.2.0');
+    assert.notEqual(concurrent.status, 0);
+    assert.match(concurrent.stderr, /another Patterm installer/);
+    assert.equal(current(), 'versions/1.2.0');
+    await new Promise((resolve) => { holder.once('exit', resolve); holder.stdin.end(); });
+
 
     // A service installed by an earlier version is re-pointed and restarted.
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -183,10 +192,19 @@ test('the release installer verifies, swaps versions, updates the service, and u
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /newer than 1\.2\.0/);
 
+    const retained = spawn('sleep', ['60'], { cwd: path.join(share, 'patterm/versions/1.2.0'), stdio: 'ignore' });
+    t.after(() => retained.kill());
+    await new Promise((resolve, reject) => { retained.once('spawn', resolve); retained.once('error', reject); });
     release('1.4.0');
     result = await install('1.4.0', ['--update'], { ACTIVE: '0' });
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(versions(), ['1.3.0', '1.4.0'], 'only the previous version is kept');
+    assert.deepEqual(versions(), ['1.2.0', '1.3.0', '1.4.0'], 'a version still used by an agent is kept as well');
+    assert.match(result.stderr, /Kept .*1\.2\.0.*running process/);
+    await new Promise((resolve) => { retained.once('exit', resolve); retained.kill(); });
+    release('1.4.1');
+    result = await install('1.4.1', ['--update'], { ACTIVE: '0' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(versions(), ['1.4.0', '1.4.1'], 'unused older versions are removed on the next update');
 
     // A checksum mismatch changes nothing.
     release('1.5.0');
@@ -195,7 +213,7 @@ test('the release installer verifies, swaps versions, updates the service, and u
     result = await install('1.5.0', ['--update'], { ACTIVE: '0' });
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /does not match the release's SHA-256/);
-    assert.equal(current(), 'versions/1.4.0');
+    assert.equal(current(), 'versions/1.4.1');
 
     // A failed start keeps the new version: it may have migrated the databases.
     release('1.5.0');
@@ -203,7 +221,7 @@ test('the release installer verifies, swaps versions, updates the service, and u
     result = await install('1.5.0', ['--update'], { ACTIVE: '0', FAILED: '0' });
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /not healthy/);
-    assert.match(result.stderr, /To roll back, point .* at versions\/1\.4\.0/);
+    assert.match(result.stderr, /To roll back, point .* at versions\/1\.4\.1/);
     assert.equal(current(), 'versions/1.5.0');
 
     fs.writeFileSync(calls, '');
