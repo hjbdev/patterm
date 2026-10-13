@@ -107,8 +107,9 @@ Each agent recap has a coverage state, shown in Session context:
   status.
 - **Paused** and **needs rebuild**: described below.
 
-In Session context, **Review summary coverage** shows how many prose messages
-have been processed and a rough call estimate for a full rebuild. From there:
+When coverage is not complete, clicking its status in Session context shows
+how many prose messages have been processed and a rough call estimate for a
+full rebuild. From there:
 
 - **Rebuild from beginning** reads all retained prose again in chronological
   batches. It needs summaries enabled and uses usage, so it is never automatic.

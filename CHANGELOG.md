@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Session context shows summary coverage only when the recap is incomplete,
+  and the status line itself opens the rebuild dialog.
+
 ## [0.1.1] - 2026-10-13
 
 ### Added
