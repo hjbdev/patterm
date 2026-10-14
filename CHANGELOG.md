@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Development builds and CI type checks use a pinned native TypeScript checker,
+  including Vue component checks, while retaining the compiler API used by tooling.
 - CI caches incremental TypeScript type checks and unchanged Rust integration
   test builds, and runs smoke tests with up to eight workers. Linux, Windows and macOS
   packaging save verified Electron downloads for reuse, including with
