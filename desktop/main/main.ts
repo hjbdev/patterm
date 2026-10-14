@@ -228,7 +228,7 @@ ipcMain.on('patterm:quit:shown', (event, id: unknown) => {
 function requestQuit(): void {
   // BrowserWindow.webContents itself throws after the window is destroyed.
   const contents = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : undefined;
-  if (!patterm || patterm.isShuttingDown() || quitting || !contents || contents.isDestroyed() || contents.isLoading() || contents.isCrashed()) {
+  if (!patterm || patterm.isShuttingDown() || quitting || !quitConfirmation(patterm) || !contents || contents.isDestroyed() || contents.isLoading() || contents.isCrashed()) {
     void quitDesktop();
     return;
   }
@@ -251,12 +251,15 @@ function requestQuit(): void {
 function quitDesktop(): Promise<void> {
   return quitting ??= (async () => {
     if (patterm && !patterm.isShuttingDown()) {
-      const result = await dialog.showMessageBox({
-        type: 'warning', title: 'Quit Patterm and stop all processes?',
-        message: 'Quit Patterm and stop all processes?', detail: quitConfirmation(patterm),
-        buttons: ['Cancel', 'Quit and stop all'], defaultId: 0, cancelId: 0, noLink: true
-      });
-      if (result.response !== 1) return;
+      const detail = quitConfirmation(patterm);
+      if (detail) {
+        const result = await dialog.showMessageBox({
+          type: 'warning', title: 'Quit Patterm and stop all processes?',
+          message: 'Quit Patterm and stop all processes?', detail,
+          buttons: ['Cancel', 'Quit and stop all'], defaultId: 0, cancelId: 0, noLink: true
+        });
+        if (result.response !== 1) return;
+      }
     }
     await patterm?.shutdown();
     await patterm?.dispose();

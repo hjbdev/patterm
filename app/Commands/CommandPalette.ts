@@ -132,10 +132,11 @@ export async function listCommandPaletteCommands(application: PattermApplication
   const restartAll = restartAgentsCommand(snapshot.projects);
   if (restartAll) commands.push(restartAll);
 
+  const confirmation = quitConfirmation(application, snapshot.projects);
   commands.push(
     { id: 'renderer:workspace-search', label: 'Search workspace content…', hint: 'Agents, conversations, and history', group: 'navigation', kind: 'renderer' },
     { id: 'renderer:settings', label: 'Settings', group: 'navigation', kind: 'renderer' },
-    { id: 'renderer:quit', label: 'Quit Patterm', hint: 'Stop all agents, commands, and timers', confirmation: quitConfirmation(application, snapshot.projects), confirmVerb: 'quit and stop all', group: 'app', kind: 'renderer' }
+    { id: 'renderer:quit', label: 'Quit Patterm', hint: 'Stop all agents, commands, and timers', ...(confirmation ? { confirmation } : {}), confirmVerb: 'quit and stop all', group: 'app', kind: 'renderer' }
   );
 
   return { commands };
@@ -156,7 +157,7 @@ export async function runCommandPaletteCommand(application: PattermApplication, 
   if (id === 'renderer:terminal-search') return { rendererAction: 'terminalSearch' };
   if (id === 'renderer:project-create') return { rendererAction: 'pickProjectDirectory' };
   if (id === 'renderer:quit') {
-    if (input.confirmed !== true) throw new Error('Confirm Quit and stop all before shutting down');
+    if (input.confirmed !== true && quitConfirmation(application, snapshot.projects)) throw new Error('Confirm Quit and stop all before shutting down');
     await application.shutdown();
     return { rendererAction: 'quit' };
   }
@@ -292,9 +293,10 @@ function restartAgentsCommand(projects: ProjectWorkbenchDto[]): CommandDescripto
   };
 }
 
-export function quitConfirmation(application: PattermApplication, projects = application.currentWorkbench().projects): string {
+export function quitConfirmation(application: PattermApplication, projects = application.currentWorkbench().projects): string | undefined {
   const agents = new Set(projects.flatMap((project) => project.projectSessions.filter((session) => !session.exitedAt && session.processId).map((session) => session.processId)));
   const commands = new Set(projects.flatMap((project) => project.processes.filter((process) => process.status === 'running' && !agents.has(process.id)).map((process) => process.id)));
+  if (agents.size === 0 && commands.size === 0 && application.timers.list().length === 0) return undefined;
   return `This stops ${agents.size} agent${agents.size === 1 ? '' : 's'} and ${commands.size} command${commands.size === 1 ? '' : 's'} across all projects, including running sleeps and all Patterm timers. Saved conversations remain available to resume.`;
 }
 
