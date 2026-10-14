@@ -39,7 +39,8 @@ async function main(): Promise<void> {
     const terminalCalls: string[] = [];
     const terminal = { request: async (method: string) => { terminalCalls.push(method); return {}; } } as unknown as TerminalService;
     let changes = 0;
-    const requests = new CloseRequestActions(database, { append: () => 'event' }, new CloseProcessAction(database, terminal, undefined, undefined, notifications), messageProcess, () => { changes += 1; }, notifications);
+    let closeChanges = 0;
+    const requests = new CloseRequestActions(database, { append: () => 'event' }, new CloseProcessAction(database, terminal, undefined, undefined, notifications, () => { closeChanges += 1; }), messageProcess, () => { changes += 1; }, notifications);
     const sessions = () => new WorkbenchRepository(database).snapshot().projects[0]!.projectSessions;
     const closeRequest = (id: string) => sessions().find((session) => session.processId === id)?.closeRequest ?? null;
 
@@ -89,6 +90,8 @@ async function main(): Promise<void> {
     assert.deepEqual(await requests.answer({ process_id: 'root', decision: 'close' }), { closed: ['root', 'child'] });
     const statuses = db.prepare(`select id, status from processes where id in ('root', 'child') order by id`).all() as Array<{ id: string; status: string }>;
     assert.deepEqual(statuses.map((row) => ({ ...row })), [{ id: 'child', status: 'closed' }, { id: 'root', status: 'closed' }]);
+    // Clients learn of the close at once; Integrated agents have no terminal exit to announce it.
+    assert.equal(closeChanges, 1);
     assert.equal(notifications.list({ process_id: 'root' }).total, 0);
     await assert.rejects(requests.request('root', { summary: 'x' }), /not running/);
   } finally {

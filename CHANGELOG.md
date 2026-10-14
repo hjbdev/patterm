@@ -80,6 +80,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The browser loads projects as soon as the page opens and follows live
+  changes again. Since the Vite+ build, it read the workbench before its API
+  was installed, so it showed "Project not found" and ignored updates until a
+  focus check or reconnect.
+- Closing or stopping an Integrated agent now updates the workbench at once.
+  Before, the "Ready to close" card stayed up, with a "host is no longer
+  running" error, until an unrelated change refreshed the view.
 - The browser no longer reports "terminal core not started" after a service
   restart or update while the terminal core is running. The status now arrives
   with every workbench update instead of once at page load, and clients hear

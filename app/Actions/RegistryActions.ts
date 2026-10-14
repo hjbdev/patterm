@@ -54,6 +54,7 @@ export interface RegistryActionDeps {
   integrated?: Pick<IntegratedAgentService, 'stop' | 'stopIfLive'>;
   openCodeServer?: Pick<OpenCodeServerService, 'interrupt' | 'restartService'>;
   notifications?: Pick<NotificationService, 'resolve'>;
+  onProcessesChanged?: () => void;
 }
 
 export function createRegistryActions(deps: RegistryActionDeps): RegistryActions {
@@ -62,7 +63,7 @@ export function createRegistryActions(deps: RegistryActionDeps): RegistryActions
   return {
     projectContext,
     abandonWorktree: new AbandonWorktreeAction(deps.worktreeService),
-    closeProcess: new CloseProcessAction(deps.database, deps.terminal, deps.openCodeServer, deps.integrated, deps.notifications),
+    closeProcess: new CloseProcessAction(deps.database, deps.terminal, deps.openCodeServer, deps.integrated, deps.notifications, deps.onProcessesChanged),
     createProject: new CreateProjectAction(deps.database, deps.timeline),
     projectLogo: new ProjectLogoAction(deps.database, deps.timeline),
     createWorktree: new CreateWorktreeAction(deps.worktreeService, projectContext),
@@ -74,6 +75,6 @@ export function createRegistryActions(deps: RegistryActionDeps): RegistryActions
     listWorktrees: new ListWorktreesAction(deps.worktreeService),
     restartOpenCodeService: new RestartOpenCodeServiceAction(deps.database, deps.timeline, deps.openCodeServer),
     searchArtifacts: new SearchArtifactsAction(deps.searchService),
-    stopProcess: new StopProcessAction(deps.database, deps.terminal, deps.openCodeServer, deps.integrated),
+    stopProcess: new StopProcessAction(deps.database, deps.terminal, deps.openCodeServer, deps.integrated, deps.onProcessesChanged),
   };
 }

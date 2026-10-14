@@ -422,6 +422,35 @@ test('a session-unavailable read stops polling and shows the ended state', async
   harness.scope.stop();
 });
 
+test('a host-gone read clears once the agent ends, in either arrival order', async () => {
+  const gone = 'The Integrated agent host is no longer running. Resume the conversation to continue.';
+  // The read fails first, then the close reaches the pane.
+  const before = createHarness({ processId: 'A' });
+  await mountSettled(before);
+  void before.pane.refresh();
+  await flush();
+  pending(before, 'integrated_get').at(-1).reject(new Error(gone));
+  await flush();
+  assert.equal(before.pane.state().refreshError, gone);
+  before.props.exited = true;
+  await flush();
+  assert.equal(before.pane.state().refreshError, '');
+  before.scope.stop();
+
+  // The close reaches the pane while the read is still in flight.
+  const after = createHarness({ processId: 'B' });
+  await mountSettled(after);
+  void after.pane.refresh();
+  await flush();
+  after.props.exited = true;
+  await flush();
+  pending(after, 'integrated_get').at(-1).reject(new Error(gone));
+  await flush();
+  assert.equal(after.pane.state().ended, true);
+  assert.equal(after.pane.state().refreshError, '');
+  after.scope.stop();
+});
+
 test('an uncertain send keeps a recoverable message until native admission is proven', async () => {
   composer.clearDrafts();
   const harness = createHarness({ processId: 'uncertain_delivery' });

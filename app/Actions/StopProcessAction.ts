@@ -15,7 +15,9 @@ export class StopProcessAction {
     private readonly database: DatabaseService,
     private readonly terminal: TerminalService,
     private readonly openCode?: Pick<OpenCodeServerService, 'interrupt'>,
-    private readonly integrated?: Pick<IntegratedAgentService, 'stop'>
+    private readonly integrated?: Pick<IntegratedAgentService, 'stop'>,
+    // An Integrated agent has no terminal exit to announce its stop.
+    private readonly onChanged?: () => void
   ) {}
 
   async execute(processId: string): Promise<{ ok: true; process_id?: string; status: string }> {
@@ -34,6 +36,7 @@ export class StopProcessAction {
     db.prepare(`update processes set status = ?, exited_at = coalesce(exited_at, ?), updated_at = ? where id = ? and status = 'running'`).run(status, now, now, process.id);
     db.prepare(`update sessions set exited_at = coalesce(exited_at, ?) where process_id = ?`).run(now, process.id);
     new SessionContextService(this.database).releaseProcessLeases(process.id);
+    this.onChanged?.();
 
     return { ok: true, process_id: process.id, status };
   }

@@ -18,7 +18,9 @@ export class CloseProcessAction {
     private readonly terminal: TerminalService,
     private readonly openCode?: Pick<OpenCodeServerService, 'interrupt'>,
     private readonly integrated?: Pick<IntegratedAgentService, 'stop'> & Partial<Pick<IntegratedAgentService, 'stopIfLive'>>,
-    private readonly notifications?: Pick<NotificationService, 'resolve'>
+    private readonly notifications?: Pick<NotificationService, 'resolve'>,
+    // An Integrated agent has no terminal exit to announce its close.
+    private readonly onChanged?: () => void
   ) {}
 
   async execute(processId: string): Promise<{ closed: string[] }> {
@@ -51,6 +53,7 @@ export class CloseProcessAction {
     for (const id of processIds) this.notifications?.resolve({ process_id: id });
     const context = new SessionContextService(this.database);
     for (const id of processIds) context.releaseProcessLeases(id);
+    this.onChanged?.();
     for (const process of processes) {
       if (process.status === 'closed' || (!process.pty_process_id && process.status !== 'running')) continue;
       if (!process.integrated) await this.terminal.request('terminal.process.close', { process_id: process.pty_process_id ?? process.id });
