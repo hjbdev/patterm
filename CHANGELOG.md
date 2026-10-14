@@ -11,11 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The top bar shows the last three projects you visited beside the project
   switcher. Turn it off in Settings › Appearance.
+- Release installs check GitHub for a newer Patterm every few hours and
+  announce each new release once. Settings › About shows the result, can check
+  now, and offers pre-releases on request. Restart to update quits the desktop
+  app, installs the release with its installer, and opens it again; a server
+  restarts its service, and agents in its terminal hosts keep running. Source
+  checkouts never check. Turn automatic checks off in Settings › About.
+- The release manifest lists the Windows and macOS zips with their checksums,
+  so updates on every platform install a package the release signature covers.
+  `install-macos.sh --sha256` and `install.ps1 -Sha256` refuse a package with
+  any other checksum.
 
 ### Changed
 
 - Renderer development and production builds use the pinned Vite+ toolchain
   with Rolldown, retaining the existing browser targets and validation commands.
+- The assistant can auto-compact after the existing idle delay when voice is
+  inactive. Voice cannot start until an automatic compaction finishes.
 - Integrated OpenCode prompts steer by default, as in OpenCode: a message sent
   mid-turn joins the turn at its next model step. Its pending row shows only
   the message and Cancel.
@@ -32,8 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   archives from the install cache.
 - Release packages build alongside validation, with publication still waiting
   for every check and package. CI uploads compressed packages without recompressing them.
-- Session context shows summary coverage only when the recap is incomplete,
-  and the status line itself opens the rebuild dialog.
+- Session context has a regenerate icon beside Close, opening summary controls
+  with clearer wording instead of a coverage status button.
 - The command palette lists the open agent's everyday actions (New
   conversation, Restart agent, Open session context, and every setting such
   as Model, Effort, and Mode) at the top level. More actions keeps only the
@@ -51,6 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and zero commands. Running agents, commands, and timers still require confirmation.
 - Settings › Appearance shows the saved Personal project choice instead of
   always showing it off.
+- Agent launches open a Starting tab immediately and keep other harnesses available
+  while startup finishes. Completed launches do not steal focus after switching away.
 
 ## [0.1.1] - 2026-10-13
 

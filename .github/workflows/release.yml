@@ -218,7 +218,7 @@ jobs:
           MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
         run: |
           version="${GITHUB_REF_NAME#v}"
-          node scripts/release/manifest.mjs "$version" "$GITHUB_SHA" release/*.tar.gz.sha256 > release/manifest.json
+          node scripts/release/manifest.mjs "$version" "$GITHUB_SHA" release/*.tar.gz.sha256 release/*.zip.sha256 > release/manifest.json
           sudo apt-get update
           sudo apt-get install -y minisign
           umask 077

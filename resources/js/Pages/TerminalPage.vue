@@ -25,7 +25,7 @@
     </div>
     <div v-else-if="route.name !== 'project'" class="p-5 text-sm text-muted-foreground">This terminal is no longer available. Select another tab or launch an agent.</div>
     <div v-else-if="activeProject" class="flex min-h-0 flex-1 overflow-auto p-5">
-      <AgentEmptyState :project-id="activeProject.project.id" :project-name="activeProject.project.name" :remote="Boolean(activeProject.project.host)" :harnesses="harnesses" @launched="selectLaunchedAgent" />
+      <AgentEmptyState :project-id="activeProject.project.id" :project-name="activeProject.project.name" :remote="Boolean(activeProject.project.host)" :harnesses="harnesses" />
     </div>
     <!-- TUI agents have no composer; their close request sits under the terminal. -->
     <CloseRequestCard

@@ -74,7 +74,9 @@ async function createWindow(): Promise<void> {
     // Linux desktop keeps its attached sidecar; its server uses systemd hosts.
     ...(process.platform === 'win32' ? { terminalHosts: { appDataPath: app.getPath('userData') } } : {}),
     launchDiagnostics,
-    launchIdentity
+    launchIdentity,
+    // dist/main/desktop/main/ sits four levels below the install directory.
+    appRoot: path.resolve(__dirname, '../../../..')
   });
   registerIpcRoutes(ipcMain, patterm, path.join(app.getPath('userData'), 'uploads'));
   servePeerRoutes(patterm);

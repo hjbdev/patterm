@@ -25,7 +25,7 @@
               <span v-if="!overview.agents.length && overview.lastActiveAt" class="hidden sm:block">Active {{ relativeTime(overview.lastActiveAt, now) }}</span>
             </span>
           </button>
-          <LaunchAgentMenu :project-id="overview.project.id" @launched="(sessionId, terminalId) => emit('launched', overview.project.id, sessionId, terminalId)" />
+          <LaunchAgentMenu :project-id="overview.project.id" />
           <ProjectMenu v-if="!overview.project.host" :project="overview.project" :live-agents="overview.agents.length" @change-logo="logoProjectId = overview.project.id" />
         </div>
         <div v-if="overview.agents.length" class="mt-1 space-y-px">
@@ -87,7 +87,6 @@ const props = defineProps<{ overviews: ProjectOverview[]; now: number; loaded: b
 const emit = defineEmits<{
   openProject: [projectId: string];
   openSession: [projectId: string, session: SessionRecord];
-  launched: [projectId: string, sessionId: string, terminalId: string | null];
 }>();
 
 // The dialog reads the live project so it reflects a logo change made elsewhere.
