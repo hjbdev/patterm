@@ -104,10 +104,12 @@ function onMessage(event: MessageEvent): void {
   }
 }
 
-// A pick sends at once, but only as the user clicks or types in this page:
-// the window saw a moment ago, and focus is on this frame. A click anywhere
-// else takes focus from it, and a page that takes focus while the user types
-// elsewhere gets it taken back, so a page cannot answer on its own.
+// A pick sends at once, but only right after a click or key press, while
+// focus is on this frame, so a page cannot answer from a timer or on load.
+// The browser does not say where the click was: a page written to keep
+// taking focus back could catch a click elsewhere in the app. Answers reach
+// only the agent that wrote the page and never approve permissions, so that
+// is accepted rather than asking the user to confirm every pick.
 async function answer(data: Record<string, unknown>): Promise<void> {
   const reply = (ok: boolean, error?: string) => post({ type: 'answer-result', requestId: data.requestId, ok, ...(error ? { error } : {}) });
   const id = typeof data.id === 'string' && ID.test(data.id) ? data.id : null;

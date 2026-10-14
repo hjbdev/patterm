@@ -30,8 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Pages get Patterm's theme as CSS variables and your interface and terminal
   typefaces, and report their own height. A question asked with
   `patterm.answer()` sends your pick to the agent as an ordinary message as
-  you click it, and only then: a page cannot answer on its own, and only the
-  window in control of the agent can answer. A clicked link shows its address
+  you click it. A page can answer only right after a click or key press while
+  it has focus, and only the window in control of the agent can answer. A clicked link shows its address
   under the page and opens once you press Open.
   Local images in the page are copied when it is rendered. A page opens larger
   from its card, and its source is one click away.
