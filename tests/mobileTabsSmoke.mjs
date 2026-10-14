@@ -9,7 +9,7 @@ const source = page.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1];
 const parsed = ts.createSourceFile('mobile-tabs.ts', source, ts.ScriptTarget.Latest, true);
 const executable = parsed.statements.filter(statement => !ts.isImportDeclaration(statement)).map(statement => statement.getFullText(parsed)).join('\n');
 const { outputText } = ts.transpileModule(executable, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } });
-const setup = new Function('computed', 'ref', 'defineProps', 'defineEmits', 'ownedProcessesForSessions',
+const setup = new Function('computed', 'ref', 'useProjectHarnessLaunches', 'useSelectedHarnessLaunch', 'defineProps', 'defineEmits', 'ownedProcessesForSessions',
   `${outputText}\nreturn { open, activeAgent, activeProcess, isFamilyActive, selectFamily, selectSession, selectProcess };`);
 
 test('Mobile tabs select the family and expose its children without launching or losing the active title', () => {
@@ -20,7 +20,7 @@ test('Mobile tabs select the family and expose its children without launching or
   const family = { rootId: root.id, root: { session: root }, active: child, options: [{ session: root }, { session: child }] };
   const props = reactive({ families: [family], processes: [standalone], allProcesses: [owned, standalone], activeSessionId: child.id, activeTerminalId: child.ptyProcessId });
   const events = [];
-  const tabs = setup(computed, ref, () => props, () => (name, ...args) => events.push([name, ...args]),
+  const tabs = setup(computed, ref, () => computed(() => []), () => computed(() => null), () => props, () => (name, ...args) => events.push([name, ...args]),
     () => [owned]);
 
   assert.equal(tabs.activeAgent.value?.id, child.id, 'Child session supplies the current tab title');

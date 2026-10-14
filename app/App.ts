@@ -350,13 +350,14 @@ async function createApplicationResources(
   const triage = new NotificationTriage(turnDigests,
     (processId) => timers.list().some((timer) => timer.ownerProcessId === processId && timer.status === 'pending' && timer.kind !== 'delay'),
     () => settings.notificationSettings().quietRoutineTurns);
+  // Created once the launcher exists; earlier activity predates any assistant.
+  let assistant: AssistantService | null = null;
   // Started after the listener below, which must see a compaction's turn end
   // before the service clears its state.
   const idleCompaction = new IdleCompactionService(database, integrated,
     (harness) => settings.idleCompactionSettings()[harness as keyof IdleCompactionSettings] === true,
-    (event, data) => debugLog.write('idle-compaction', event, data));
-  // Created once the launcher exists; earlier activity predates any assistant.
-  let assistant: AssistantService | null = null;
+    (event, data) => debugLog.write('idle-compaction', event, data), Date.now,
+    (processId) => !assistant || assistant.voiceActive(processId));
   let closeRequests: CloseRequestActions | null = null;
   defer(integrated.onActivityChange(({ processId, previous, activity, snapshot }) => {
     const reportedThisTurn = notificationService.turnActivity(processId, previous, activity, snapshot);
@@ -483,7 +484,7 @@ async function createApplicationResources(
   // Restarts stop the assistant like any other agent; actions are created below.
   assistant = new AssistantService(database, options.appDataPath, harnessLauncher, codexAppServer, integrated, settings, assistantInbox,
     { stop: (processId) => actions.stopProcess.execute(processId), transferTimers: (from, to) => timers.transferOwner(from, to) },
-    { log: (event, data) => debugLog.write('assistant', event, data) });
+    { log: (event, data) => debugLog.write('assistant', event, data), compacting: (processId) => idleCompaction.compacting(processId) });
   const assistantService = assistant;
   defer(() => assistantService.dispose());
   assistantService.start();

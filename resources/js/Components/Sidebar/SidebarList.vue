@@ -5,10 +5,11 @@
       <span class="flex-1 text-xs text-muted-foreground">Agents</span>
       <BoardButton />
       <SidebarViewOptions />
-      <LaunchAgentMenu :project-id="sidebar.projectId.value" @launched="sidebar.launched" />
+      <LaunchAgentMenu :project-id="sidebar.projectId.value" />
     </div>
     <div ref="list" class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1 pb-2 [scrollbar-width:thin]" @keydown="onKeydown">
-      <p v-if="!sidebar.tabs.value.length" class="px-2 py-1 text-[13px] text-muted-foreground">No agents running</p>
+      <HarnessLaunchTabs :project-id="sidebar.projectId.value" vertical />
+      <p v-if="!sidebar.tabs.value.length && !pendingLaunches.length" class="px-2 py-1 text-[13px] text-muted-foreground">No agents running</p>
       <!-- One list, headings included, so a row that changes group keeps its
            element and slides there instead of leaving one group and entering another. -->
       <TransitionGroup tag="div" :css="false" @enter="expandIn" @leave="collapseOut">
@@ -92,9 +93,11 @@
 
 <script setup lang="ts">
 import { computed, nextTick, provide, ref, watch } from 'vue';
+import { useProjectHarnessLaunches } from '../../Composables/useHarnessLaunch';
 import { ChevronRight } from 'lucide-vue-next';
 import type { StripTab } from '../../lib/tabStrip';
 import LaunchAgentMenu from '../LaunchAgentMenu.vue';
+import HarnessLaunchTabs from '../HarnessLaunchTabs.vue';
 import BoardButton from './BoardButton.vue';
 import SidebarAgentCard from './SidebarAgentCard.vue';
 import SidebarCollapseButton from './SidebarCollapseButton.vue';
@@ -118,6 +121,7 @@ import { useSettledValues } from '../../Composables/useSettledValues';
 // close every family.
 withDefaults(defineProps<{ placement?: 'docked' | 'drawer' | 'mobile' }>(), { placement: 'docked' });
 const sidebar = useSidebar();
+const pendingLaunches = useProjectHarnessLaunches(() => sidebar.projectId.value);
 const expansion = useSidebarExpansion(() => sidebar.projectId.value);
 
 // Grouped by status, a family moves once its new status has lasted a moment,

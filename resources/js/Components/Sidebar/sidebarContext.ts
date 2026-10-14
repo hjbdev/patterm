@@ -37,7 +37,6 @@ export interface SidebarContext extends SidebarTreeView {
   navigate: (page: SidebarPage) => void;
   moveTab: (key: string, beforeKey: string | null, afterKey: string | null) => void;
   setPinned: (tab: StripTab, pinned: boolean) => void;
-  launched: (sessionId: string, terminalId: string | null) => void;
 }
 
 export const sidebarContextKey: InjectionKey<SidebarContext> = Symbol('sidebarContext');
@@ -63,7 +62,6 @@ export interface SidebarInput {
   selectProcess: (process: ProcessRecord) => void;
   navigate: (page: SidebarPage) => void;
   updateLayout: (layout: TabLayout) => void;
-  launched: (sessionId: string, terminalId: string | null) => void;
 }
 
 export function provideSidebarContext(input: SidebarInput): SidebarContext {
@@ -116,7 +114,6 @@ export function provideSidebarContext(input: SidebarInput): SidebarContext {
     },
     // The list slides the row to its new group.
     setPinned: (tab, pinned) => input.updateLayout(setStripTabPinned(input.tabs(), tab.key, pinned)),
-    launched: input.launched
   };
   provide(sidebarContextKey, context);
   return context;

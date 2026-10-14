@@ -79,6 +79,16 @@ async function main(): Promise<void> {
   await sessions.disconnect(client);
   assert.deepEqual(disposed, ['conversation'], 'a closed browser releases conversation listeners');
 
+  // A stale UI may believe it controls the conversation. A denied write must
+  // publish the authoritative state so the composer can show Take control.
+  const controlEvents: unknown[] = [];
+  const controlSessions = new BrowserTerminalSessions({ remote: {
+    ...remote, target: () => 'paired-host'
+  } } as unknown as PattermApplication);
+  const staleClient = { subscriptions: new Set<string>(), sendEvent: (event: string, payload: unknown) => controlEvents.push({ event, payload }) };
+  assert.throws(() => controlSessions.guard(staleClient, { process_id: 'host:assistant' }), /Take control/);
+  assert.deepEqual(controlEvents, [{ event: 'terminal-control', payload: { processId: 'host:assistant', controlling: false } }], 'a denied write restores the takeover prompt even if the subscription was lost');
+
   // The per-client cap is enforced synchronously.
   const capped = new ClientConversationSubscriptions(async () => () => {}, () => {}, 1);
   await capped.add('G');
