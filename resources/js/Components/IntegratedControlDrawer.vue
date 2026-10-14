@@ -55,8 +55,9 @@
                 @click="choose(selector, DEFAULT)"
               >Default</button>
             </div>
-            <!-- Reasoning runs from least to most, so it slides. -->
+            <!-- Reasoning runs from least to most, so it slides. Sliding it leaves the drawer still. -->
             <SliderRoot
+              data-vaul-no-drag
               :model-value="[dragging[selector.id] ?? levelIndex(selector)]"
               :min="0"
               :max="levelsOf(selector).length - 1"

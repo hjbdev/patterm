@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - On phones, menus and the notification tray slide away when you tap outside
   them instead of vanishing.
 - On phones, closing the session context panel no longer opens the keyboard.
+- On phones, sliding the reasoning level no longer drags the composer
+  settings drawer.
 
 ## [0.2.2] - 2026-10-15
 
