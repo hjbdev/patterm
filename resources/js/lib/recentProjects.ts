@@ -1,4 +1,4 @@
-// Projects this device visited, newest first. The top bar shows a few beside
+// Projects this device visited, newest first. The top bar shows a few left of
 // the project switcher.
 const RECENT_PROJECTS_KEY = 'patterm.projects.recent';
 const RECENT_PROJECTS_LIMIT = 10;

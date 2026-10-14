@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in a small dialog, and Escape closes it.
 - The image viewer shows its previous and next arrows only while the pointer
   is near the left or right edge of the image.
+- The recent projects in the top bar sit left of the project switcher, so
+  they stay put when the active project's name changes.
 
 ### Removed
 
