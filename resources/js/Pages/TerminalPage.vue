@@ -152,7 +152,8 @@ const width = ref(Number.isFinite(storedWidth) && storedWidth >= 260 ? Math.min(
 const visible = ref(preference('patterm.context.visible') === 'true'), captureError = ref('');
 // Integrated transcripts span the workspace; only a docked sidebar pulls the row in to the conversation column.
 const docked = computed(() => Boolean(selectedAgent.value && visible.value && !narrow.value));
-const sheetOpen = computed(() => Boolean((activeTerminalId.value || integratedAgent.value) && selectedAgent.value && visible.value && narrow.value));
+// The sheet steps aside while a worktree diff it opened is showing, and comes back when the diff closes.
+const sheetOpen = computed(() => Boolean((activeTerminalId.value || integratedAgent.value) && selectedAgent.value && visible.value && narrow.value && !diffWorktree.value));
 let observer: ResizeObserver | undefined, drag: {
   x: number;
   width: number;
@@ -199,7 +200,9 @@ function focusSheet(event: Event) {
 }
 function returnFocus(event: Event) {
   event.preventDefault();
-  focusEditor();
+  // A diff opened from the sheet takes focus itself.
+  if (!diffWorktree.value)
+    focusEditor();
 }
 function openWorktree(worktree: SessionWorktree) {
   worktreeOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
