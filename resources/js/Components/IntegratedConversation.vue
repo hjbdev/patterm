@@ -475,7 +475,11 @@ watch([() => props.processId, controls, ended], ([processId, value, isEnded], pr
   publishIntegratedControls(processId, isEnded ? null : value);
 }, { immediate: true });
 watch(() => props.exited, (value) => {
-  if (value) forgetConversation(props.processId);
+  if (value) {
+    forgetConversation(props.processId);
+    // A read that raced the close saw the host already gone.
+    refreshError.value = '';
+  }
   if (Boolean(value) === ended.value) return;
   ended.value = Boolean(value);
   clearTimeout(timer);

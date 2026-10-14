@@ -506,6 +506,7 @@ async function createApplicationResources(
     integrated,
     openCodeServer,
     notifications: notificationService,
+    onProcessesChanged: notifyWorkbenchChanged,
     database,
     timeline,
     terminal,
