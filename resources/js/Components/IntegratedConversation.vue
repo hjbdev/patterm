@@ -698,7 +698,8 @@ async function applySnapshot(load: () => Promise<Record<string, unknown>>): Prom
     // earlier turns without waiting for a scroll.
     if (!historyLoaded && historyCursor.value && messages.value.length < INITIAL_HISTORY_MESSAGES) void loadOlder();
   } catch (cause) {
-    if (token !== generation || stopped || request < appliedSequence) return;
+    // A read that fails after the agent ended only saw its host go away.
+    if (token !== generation || stopped || ended.value || request < appliedSequence) return;
     appliedSequence = request;
     const message = cause instanceof Error ? cause.message : String(cause);
     if (isSessionUnavailableError(message)) {
@@ -1262,7 +1263,7 @@ async function startConversationStream(processId: string, force = false): Promis
     await refreshAfter(replySnapshot(reply));
     if (token !== generation || conversationProcess !== processId) return;
   } catch (cause) {
-    if (token === generation && conversationProcess === processId) {
+    if (token === generation && conversationProcess === processId && !ended.value) {
       // A failed subscription must not freeze the pane; fall back to bounded
       // polling until a reconnect retries the stream.
       streamUnavailable = true;

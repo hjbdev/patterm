@@ -68,27 +68,34 @@ async function refresh(): Promise<void> {
   return refreshInFlight;
 }
 
-void refresh();
-
-// Live updates arrive as versioned patches. A missed patch, a reconnect, or a
-// server restart falls back to a refresh.
-window.patterm?.onWorkbenchPatch?.((patch) => {
-  applyPatch(patch as WorkbenchPatch);
-});
-let connection = window.patterm?.connectionState?.() ?? 'connected';
-window.patterm?.onConnectionChanged?.((state) => {
-  const reconnected = state === 'connected' && connection !== 'connected';
-  connection = state;
-  if (reconnected) void refresh();
-});
-let lastFocusCheck = Date.now();
-window.addEventListener('focus', () => {
-  if (Date.now() - lastFocusCheck < FOCUS_CHECK_INTERVAL_MS) return;
-  lastFocusCheck = Date.now();
+// Starts on first use, not at import: the bundler may evaluate this module
+// before browser.ts installs window.patterm.
+let started = false;
+function start(): void {
+  if (started) return;
+  started = true;
   void refresh();
-});
+  // Live updates arrive as versioned patches. A missed patch, a reconnect, or
+  // a server restart falls back to a refresh.
+  window.patterm?.onWorkbenchPatch?.((patch) => {
+    applyPatch(patch as WorkbenchPatch);
+  });
+  let connection = window.patterm?.connectionState?.() ?? 'connected';
+  window.patterm?.onConnectionChanged?.((state) => {
+    const reconnected = state === 'connected' && connection !== 'connected';
+    connection = state;
+    if (reconnected) void refresh();
+  });
+  let lastFocusCheck = Date.now();
+  window.addEventListener('focus', () => {
+    if (Date.now() - lastFocusCheck < FOCUS_CHECK_INTERVAL_MS) return;
+    lastFocusCheck = Date.now();
+    void refresh();
+  });
+}
 
 export function useWorkbench() {
+  start();
   const sidecarStatus = computed(() => (sidecarAvailable.value ? 'terminal core online' : 'terminal core not started'));
 
   const updateSidebarState = async (state: SidebarState): Promise<void> => {
