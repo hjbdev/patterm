@@ -27,7 +27,7 @@
           @click="openProcess(tab.process)"
         >
           <span class="flex h-4 w-4 shrink-0 items-center justify-center">
-            <TabIcon :activity="processActivity(tab.process)" compact muted><TerminalSquare class="h-3.5 w-3.5" /></TabIcon>
+            <RowStatus :activity="processActivity(tab.process)" />
           </span>
           <span class="truncate">{{ tab.process.name }}</span>
         </button>
@@ -73,7 +73,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { useElementSize } from '@vueuse/core';
-import { TerminalSquare, X } from 'lucide-vue-next';
+import { X } from 'lucide-vue-next';
 import { useAgentDigests } from '../../Composables/useAgentDigests';
 import { useBoardRoute } from '../../Composables/useBoard';
 import { useWorkbench } from '../../Composables/useWorkbench';
@@ -81,7 +81,7 @@ import { STATE_ORDER, type DigestState } from '../../lib/agentDigest';
 import { processActivity } from '../../lib/rowActivity';
 import type { StripTab } from '../../lib/tabStrip';
 import type { ProcessRecord } from '../../types';
-import TabIcon from '../TabIcon.vue';
+import RowStatus from '../RowStatus.vue';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { useSidebar } from '../Sidebar/sidebarContext';
 import BoardBlock from './BoardBlock.vue';

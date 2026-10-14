@@ -14,7 +14,7 @@
       :urgency="nodeUrgency(sidebar, node, owned, open)"
     />
     <Transition :css="false" @enter="expandIn" @leave="collapseOut">
-      <div v-if="count && open" :class="depth < MAX_INDENT_DEPTH ? 'ml-4 border-l border-white/[0.08] pl-1' : ''">
+      <div v-if="count && open" :class="depth < MAX_INDENT_DEPTH ? 'sidebar-tree' : ''">
         <TransitionGroup :css="false" @enter="expandIn" @leave="collapseOut">
           <SidebarNode v-for="child in node.children" :key="child.session.id" :node="child" :root-id="rootId" :parent-key="rowKey" :parent-host="node.session.host" :depth="depth + 1" :owned="owned" />
           <SidebarMemberRow v-for="process in processes" :key="process.id" :process="process" :root-id="rootId" :parent-key="rowKey" :parent-host="node.session.host" />

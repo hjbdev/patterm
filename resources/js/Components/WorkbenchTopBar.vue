@@ -4,8 +4,8 @@
     <div v-if="showRecentProjects && recentProjects.length" class="hidden shrink-0 items-center [@container(min-width:46rem)]:flex">
       <Tooltip v-for="projectGroup in [...recentProjects].reverse()" :key="projectGroup.project.id">
         <TooltipTrigger as-child>
-          <Button variant="ghost" size="icon" class="h-[26px] w-[26px] rounded-tab opacity-60 transition-opacity hover:opacity-100 focus-visible:opacity-100" :aria-label="`Switch to ${projectGroup.project.name}`" @click="emit('selectProject', projectGroup.project.id)">
-            <ProjectLogo :project="projectGroup.project" />
+          <Button variant="ghost" size="icon" class="group h-[26px] w-[26px] rounded-tab" :aria-label="`Switch to ${projectGroup.project.name}`" @click="emit('selectProject', projectGroup.project.id)">
+            <ProjectStatusLogo :project="projectGroup.project" :states="agentStates(projectGroup.project.id)" dim />
           </Button>
         </TooltipTrigger>
         <TooltipContent class="bg-popover text-popover-foreground">
@@ -18,7 +18,7 @@
     <ResponsiveMenu v-model:open="projectMenuOpen" title="Projects" desktop-class="w-72" @content-pointer-enter="cancelProjectMenuClose" @content-pointer-leave="scheduleProjectMenuClose" @content-keydown="stopProjectMenuHover" @open-auto-focus="keepHoverFocus" @close-auto-focus="keepHoverFocus">
       <template #trigger>
         <Button variant="ghost" size="sm" class="h-[26px] max-w-[38vw] shrink-0 justify-between gap-1 rounded-tab px-2 py-0.5 text-[13px] sm:max-w-64 sm:gap-2" @pointerenter="openProjectMenuOnHover" @pointerleave="scheduleProjectMenuClose" @pointerdown="stopProjectMenuHover" @keydown="stopProjectMenuHover">
-          <ProjectLogo v-if="activeProject" :project="activeProject.project" />
+          <ProjectStatusLogo v-if="activeProject" :project="activeProject.project" :states="agentStates(activeProject.project.id)" />
           <span class="truncate">{{ activeProject?.project.name ?? 'Projects' }}</span>
           <HostBadge v-if="activeProject?.project.host" :host="activeProject.project.host" />
           <Badge v-if="activeProjectAgentCount > 0" variant="secondary" class="ml-auto hidden h-5 px-1.5 text-[10px] tabular-nums sm:inline-flex">
@@ -31,10 +31,10 @@
         <DropdownMenuItem
           v-for="projectGroup in projects"
           :key="projectGroup.project.id"
-          class="py-1 text-[13px]"
+          class="py-1 text-[13px] data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
           @select="emit('selectProject', projectGroup.project.id)"
         >
-          <ProjectLogo :project="projectGroup.project" class="mr-2" />
+          <ProjectStatusLogo :project="projectGroup.project" :states="agentStates(projectGroup.project.id)" class="mr-2" />
           <span class="min-w-0 flex-1 truncate">{{ projectGroup.project.name }}</span>
           <HostBadge v-if="projectGroup.project.host" :host="projectGroup.project.host" class="ml-1.5" />
           <UnreadDot :urgency="projectUnread(projectGroup.project.id) ? 'normal' : null" />
@@ -43,7 +43,7 @@
           </Badge>
         </DropdownMenuItem>
         <DropdownMenuSeparator v-if="projects.length" />
-        <DropdownMenuItem class="py-1 text-[13px]" @select="emit('selectProject', null)">
+        <DropdownMenuItem class="py-1 text-[13px] data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground" @select="emit('selectProject', null)">
           <LayoutGrid class="mr-2 h-3.5 w-3.5" />
           Project selector
         </DropdownMenuItem>
@@ -51,7 +51,7 @@
       <template #mobile>
         <div class="space-y-1">
           <button v-for="projectGroup in projects" :key="projectGroup.project.id" type="button" class="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="projectGroup.project.id === activeProjectId ? 'bg-primary/10' : ''" @click="selectMobileProject(projectGroup.project.id)">
-            <ProjectLogo :project="projectGroup.project" :size="16" />
+            <ProjectStatusLogo :project="projectGroup.project" :states="agentStates(projectGroup.project.id)" :size="16" />
             <span class="min-w-0 flex-1 truncate">{{ projectGroup.project.name }}</span>
             <HostBadge v-if="projectGroup.project.host" :host="projectGroup.project.host" />
             <UnreadDot :urgency="projectUnread(projectGroup.project.id) ? 'normal' : null" />
@@ -107,7 +107,8 @@ import type { ProjectWorkbench, SessionRecord } from '../types';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import ResponsiveMenu from './ResponsiveMenu.vue';
-import ProjectLogo from './ProjectLogo.vue';
+import ProjectStatusLogo from './ProjectStatusLogo.vue';
+import { projectOverviews, type AgentState } from '../lib/projectOverview';
 import UnreadDot from './UnreadDot.vue';
 import { useUpdates } from '../lib/updates';
 import NotificationTray from './NotificationTray.vue';
@@ -135,6 +136,12 @@ const recentProjectIds = ref(readRecentProjectIds(globalThis.localStorage));
 watch(() => props.activeProjectId, (projectId) => {
   if (projectId) recentProjectIds.value = rememberRecentProject(recentProjectIds.value, projectId, globalThis.localStorage);
 }, { immediate: true });
+// The state of each project's live root agents, for the status on its logo.
+const projectAgentStates = computed(() => new Map(projectOverviews(props.projects).map((overview) => [overview.project.id, overview.agents.map((agent) => agent.state)])));
+const NO_AGENTS: AgentState[] = [];
+function agentStates(projectId: string): AgentState[] {
+  return projectAgentStates.value.get(projectId) ?? NO_AGENTS;
+}
 const recentProjects = computed(() => shownRecentProjects(recentProjectIds.value, props.projects, props.activeProjectId));
 
 const projectMenuOpen = ref(false);

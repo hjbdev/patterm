@@ -71,7 +71,7 @@ const activity = (id: string) => activityFor(byId.get(id)!);
   assert.deepEqual(triage, { self: 'idle', subagents: { working: 3, permission: 0, error: 0 } });
   assert.equal(describeActivity(triage), 'Idle, 3 subagents working');
   assert.equal(subagentPulse(triage), 'working');
-  assert.equal(subagentCountClass(triage), 'text-purple-300');
+  assert.equal(subagentCountClass(triage), 'text-muted-foreground');
 }
 
 {

@@ -22,13 +22,7 @@
       >
         <TabWash :activity="rowActivity" />
         <span class="flex h-4 w-4 shrink-0 items-center justify-center">
-          <!-- Subagents show only their status, a ring; the family's icon already names the harness. -->
-          <TabIcon :activity="rowActivity" compact muted>
-            <template #default="{ working }">
-              <span v-if="session" :class="cn('block h-3 w-3 rounded-full border-[1.75px] border-current', working ? 'opacity-90' : 'opacity-[0.55]')" />
-              <TerminalSquare v-else class="h-3.5 w-3.5" />
-            </template>
-          </TabIcon>
+          <RowStatus :activity="rowActivity" :count="count" />
         </span>
         <!-- Rows outside the selected thread dim their text until hovered; status stays bright. -->
         <span class="min-w-0 truncate transition-colors duration-200 motion-reduce:transition-none" :class="dimmed && 'text-muted-foreground/80 group-hover/row:text-foreground/85'">{{ label }}</span>
@@ -41,14 +35,14 @@
         v-if="nodeId && count"
         type="button"
         tabindex="-1"
-        :class="cn('flex h-5 items-center gap-0.5 rounded pl-1 pr-0.5 text-xs tabular-nums transition-colors hover:bg-white/10 hover:text-foreground', subagentCountClass(rowActivity))"
+        :class="cn('flex h-5 items-center rounded px-1 transition-colors hover:bg-white/10 hover:text-foreground', subagentCountClass(rowActivity))"
         :aria-expanded="expanded"
         :aria-label="`${expanded ? 'Hide' : 'Show'} ${countLabel}`"
         :title="countLabel"
         @pointerdown.stop
         @click.stop="nodes.setOpen(nodeId, !expanded)"
       >
-        {{ count }}<ChevronRight class="h-3 w-3 transition-transform duration-200 motion-reduce:transition-none" :class="expanded && 'rotate-90'" />
+        <MemberCount :count="count" :open="expanded" :shimmer="subagentPulse(rowActivity) === 'working'" :bare="countInRing(rowActivity)" />
       </button>
       <!-- The unread dot becomes the close button in place, so nothing moves on hover. -->
       <span class="relative flex h-5 w-5 items-center justify-center">
@@ -62,15 +56,16 @@
 <script setup lang="ts">
 import HostBadge from '../HostBadge.vue';
 import { computed } from 'vue';
-import { ChevronRight, TerminalSquare } from 'lucide-vue-next';
+
+import MemberCount from '../MemberCount.vue';
 import { cn } from '@/lib/utils';
 import { agentLabel } from '../../lib/agentTabs';
 import { hostLabel } from '../../lib/hosts';
-import { processActivity, subagentCountClass } from '../../lib/rowActivity';
+import { countInRing, processActivity, subagentCountClass, subagentPulse } from '../../lib/rowActivity';
 import type { StripTab } from '../../lib/tabStrip';
 import type { ProcessRecord, SessionRecord } from '../../types';
 import { unreadUrgency, type NotificationUrgency } from '../../Composables/useNotifications';
-import TabIcon from '../TabIcon.vue';
+import RowStatus from '../RowStatus.vue';
 import TabWash from '../TabWash.vue';
 import UnreadDot from '../UnreadDot.vue';
 import CloseRowButton from '../CloseRowButton.vue';

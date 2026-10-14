@@ -23,7 +23,7 @@
       <div class="relative min-w-0">
         <div class="flex min-w-0 items-center gap-2.5">
           <span class="flex h-5 w-4 shrink-0 items-center justify-center">
-            <TabIcon :activity="digest.activity" compact><AgentIcon :harness="digest.harness" class="h-4 w-4" /></TabIcon>
+            <RowStatus :activity="digest.activity" />
           </span>
           <span class="min-w-0 truncate text-sm font-medium leading-5 text-foreground" :title="hostLabel(digest.name, digest.session.host)">{{ digest.name }}</span>
           <HostBadge v-if="digest.session.host" :host="digest.session.host" />
@@ -59,13 +59,7 @@
               >
                 <TabWash class="opacity-70" :activity="member.activity" />
                 <span class="flex h-4 w-4 shrink-0 items-center justify-center">
-                  <!-- Subagents show only their status, a ring; the block's icon already names the harness. -->
-                  <TabIcon :activity="member.activity" compact muted>
-                    <template #default="{ working }">
-                      <span v-if="member.session" class="block h-3 w-3 rounded-full border-[1.75px] border-current" :class="working ? 'opacity-90' : 'opacity-[0.55]'" />
-                      <TerminalSquare v-else class="h-3.5 w-3.5" />
-                    </template>
-                  </TabIcon>
+                  <RowStatus :activity="member.activity" />
                 </span>
                 <span class="min-w-0 truncate">{{ member.name }}</span>
               </button>
@@ -100,17 +94,16 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { GitBranch, TerminalSquare, Timer as TimerIcon } from 'lucide-vue-next';
+import { GitBranch, Timer as TimerIcon } from 'lucide-vue-next';
 import { cn } from '@/lib/utils';
 import { ago, membersLabel, shortAgo, type AgentDigest, type DigestMember } from '../../lib/agentDigest';
 import { hostLabel } from '../../lib/hosts';
 import { MAX_INDENT_DEPTH } from '../../lib/sidebarTree';
 import { linkLabel } from '../../Composables/useSessionContext';
 import { timerLabel } from '../../lib/timers';
-import AgentIcon from '../AgentIcon.vue';
 import DiffStat from '../DiffStat.vue';
 import HostBadge from '../HostBadge.vue';
-import TabIcon from '../TabIcon.vue';
+import RowStatus from '../RowStatus.vue';
 import TabWash from '../TabWash.vue';
 import UnreadDot from '../UnreadDot.vue';
 import SidebarItemMenu from '../Sidebar/SidebarItemMenu.vue';

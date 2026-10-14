@@ -11,8 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Tabs and sidebar rows have a close button, shown on hover and on the active
   tab.
+- The project switcher, its menu, and the recent project icons show the state
+  of each project's agents: a comet under the logo while agents work, and an
+  amber bar while one needs you.
+- Sidebar subagent trees draw a right angle into each subagent.
 
 ### Changed
+
+- Tabs, sidebar rows, and the sidebar rail lead with the agent's status instead
+  of its harness icon: a ring at rest, a comet circling it while the agent
+  works, or `?`, `✕` and `✓`. A subagent count sits inside the ring, fitted to
+  the UI font.
+- Spinners, comets, and working shimmers all move in step.
+- Working is shown in white rather than purple, and a working subagent count
+  shimmers like other loading text.
+- Tighter spacing and matched sizes for a tab's timer, subagent count, and close
+  button.
 
 - Closing an agent or process from a tab, sidebar row, menu, or the command
   palette now asks for confirmation first.
@@ -26,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 - The `…` button on sidebar rows. Right-click opens the same menu.
+
+### Fixed
+
+- Rows in the project menu fill on hover again when the menu was opened by
+  hovering the switcher.
 
 ## [0.2.0] - 2026-10-14
 

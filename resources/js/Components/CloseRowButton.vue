@@ -9,7 +9,11 @@
     @pointerdown.stop
     @click.stop="emit('close')"
   >
-    <X class="h-3.5 w-3.5" />
+    <!-- Lucide's X fills only half its box, and its open corners make it look
+         smaller than a closed shape of the same size. At 18px it sits about a
+         pixel larger than the 13px timer, which reads as the same size. The
+         strokes are all 1.25px. -->
+    <X class="h-[18px] w-[18px]" :stroke-width="1.667" />
   </button>
 </template>
 

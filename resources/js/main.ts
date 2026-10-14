@@ -5,6 +5,7 @@ import App from './App.vue';
 import { createWebHashHistory, createWebHistory } from 'vue-router';
 import { createWorkbenchRouter, prefetchPages } from './router';
 import { warmHighlightWorker } from './lib/markdownHighlightWorker';
+import { syncLoaders } from './lib/loaderSync';
 import './assets/fonts/fonts.css';
 import './styles.css';
 
@@ -18,6 +19,8 @@ void browserSession.then(async (session) => {
     mountWorkbench();
   }
 });
+
+syncLoaders();
 
 function mountWorkbench(): void {
   const router = createWorkbenchRouter(window.patterm.runtime === 'desktop' ? createWebHashHistory() : createWebHistory());

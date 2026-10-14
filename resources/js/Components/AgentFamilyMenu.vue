@@ -19,9 +19,7 @@
         @click.stop="emit('selectSession', option.session)"
       >
         <TabWash :activity="activity(option.session)" />
-        <TabIcon :activity="activity(option.session)">
-          <AgentIcon :harness="option.session.harness" class="h-3.5 w-3.5" />
-        </TabIcon>
+        <RowStatus :activity="activity(option.session)" />
         <span class="min-w-0 flex-1 truncate">{{ agentLabel(option.session) }}</span>
         <HostBadge v-if="option.session.host" :host="option.session.host" />
         <UnreadDot :urgency="unreadUrgency(option.session.processId)" />
@@ -59,9 +57,7 @@
       @click.stop="emit('selectProcess', process)"
     >
       <TabWash :activity="processActivity(process)" />
-      <TabIcon :activity="processActivity(process)">
-        <TerminalSquare class="h-3.5 w-3.5 shrink-0" />
-      </TabIcon>
+      <RowStatus :activity="processActivity(process)" />
       <span class="min-w-0 flex-1 truncate">
         {{ process.name }}<span v-if="familyOwnerLabel(family, process.parentProcessId)" class="text-muted-foreground"> · {{ familyOwnerLabel(family, process.parentProcessId) }}</span>
       </span>
@@ -86,7 +82,7 @@
 </template>
 
 <script setup lang="ts">
-import { Clock, Copy, Pencil, TerminalSquare, Timer as TimerIcon, X } from 'lucide-vue-next';
+import { Clock, Copy, Pencil, Timer as TimerIcon, X } from 'lucide-vue-next';
 import { cn } from '@/lib/utils';
 import { agentLabel, agentOptionIndent, familyOwnerLabel, type AgentTabFamily } from '../lib/agentTabs';
 import { mentionPreview } from '../lib/integratedComposer';
@@ -95,10 +91,9 @@ import { hostLabel } from '../lib/hosts';
 import { timerLabel, timerRemaining } from '../lib/timers';
 import type { ProcessRecord, SessionRecord, TimerRecord } from '../types';
 import { unreadUrgency } from '../Composables/useNotifications';
-import AgentIcon from './AgentIcon.vue';
 import AutoSummaryPreview from './AutoSummaryPreview.vue';
 import HostBadge from './HostBadge.vue';
-import TabIcon from './TabIcon.vue';
+import RowStatus from './RowStatus.vue';
 import TabWash from './TabWash.vue';
 import UnreadDot from './UnreadDot.vue';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from './ui/context-menu';

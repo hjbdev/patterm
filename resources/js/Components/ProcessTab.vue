@@ -11,7 +11,7 @@
             :aria-label="pinned ? `${hostLabel(process.name, process.host)}, ${describeActivity(processActivity(process))}` : undefined"
             :class="cn(
               'relative isolate flex h-[26px] w-full touch-none select-none items-center gap-1.5 overflow-hidden rounded-tab bg-transparent text-left text-[13px] transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
-              pinned ? 'justify-center' : 'pl-2 pr-7',
+              pinned ? 'justify-center' : 'pl-2 pr-6',
               active && 'bg-primary/10'
             )"
             @click="emit('select')"
@@ -19,9 +19,7 @@
             @contextmenu="moveCursor"
           >
             <TabWash :activity="processActivity(process)" />
-            <TabIcon :activity="processActivity(process)" :compact="pinned">
-              <TerminalSquare class="h-3.5 w-3.5 shrink-0" aria-label="Process" />
-            </TabIcon>
+            <RowStatus :activity="processActivity(process)" />
             <span v-if="!pinned" class="min-w-0 flex-1 truncate">{{ process.name }}</span>
             <HostBadge v-if="!pinned && process.host" :host="process.host" />
             <UnreadDot :class="pinned && 'absolute right-1 top-1'" :urgency="unreadUrgency(process.id)" />
@@ -70,12 +68,12 @@
 <script setup lang="ts">
 import HostBadge from './HostBadge.vue';
 import { computed, ref } from 'vue';
-import { Copy, Pencil, Pin, PinOff, TerminalSquare, X } from 'lucide-vue-next';
+import { Copy, Pencil, Pin, PinOff, X } from 'lucide-vue-next';
 import { toast } from 'vue-sonner';
 import { cn } from '@/lib/utils';
 import { describeActivity, processActivity } from '../lib/rowActivity';
 import type { ProcessRecord } from '../types';
-import TabIcon from './TabIcon.vue';
+import RowStatus from './RowStatus.vue';
 import TabWash from './TabWash.vue';
 import UnreadDot from './UnreadDot.vue';
 import { unreadUrgency } from '../Composables/useNotifications';
