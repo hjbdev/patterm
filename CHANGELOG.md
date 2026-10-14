@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Tool groups in conversation transcripts count each tool on its own, so a Skill followed by seven Bash calls reads "Skill (implement), 7 Bash" rather than "8 Skill (implement), Bash".
 - Assistant `/restart` resumes its conversation through the assistant controls.
   Rejected browser writes restore the Take control button, which reconnects
   the terminal subscription before taking over.
