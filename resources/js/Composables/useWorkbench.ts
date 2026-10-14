@@ -44,7 +44,10 @@ const archivedSessions = shallowRef(new Map<string, SessionRecord>());
 const archivedProcesses = shallowRef(new Map<string, ProcessRecord>());
 const archiveReads = new Set<string>();
 
-const sidecarAvailable = ref(false);
+// Each snapshot and patch carries the server's terminal state, so a client
+// that loaded or reconnected while the server restarted still corrects it.
+// Assumed online until the first snapshot, so loading does not flash a warning.
+const sidecarAvailable = ref(true);
 // The snapshot behind the refs above, as plain objects. Patches apply to it.
 let held: HeldWorkbench | null = null;
 let refreshInFlight: Promise<void> | null = null;
@@ -83,12 +86,6 @@ window.addEventListener('focus', () => {
   if (Date.now() - lastFocusCheck < FOCUS_CHECK_INTERVAL_MS) return;
   lastFocusCheck = Date.now();
   void refresh();
-});
-
-void window.patterm?.bootstrap?.().then((payload) => {
-  if (payload && typeof payload === 'object' && 'sidecarAvailable' in payload) {
-    sidecarAvailable.value = Boolean(payload.sidecarAvailable);
-  }
 });
 
 export function useWorkbench() {
@@ -158,6 +155,7 @@ function publish(lifecycle: boolean): void {
   if (!held) return;
   projects.value = held.projects;
   harnesses.value = held.harnesses;
+  sidecarAvailable.value = held.terminalAvailable;
   revision.value += 1;
   if (lifecycle) lifecycleRevision.value += 1;
 }

@@ -24,6 +24,7 @@ export interface WorkbenchChanges {
   };
   harnesses?: KeyedPatch<HarnessInstallationRecord>;
   sidebarState?: SidebarState;
+  terminalAvailable?: boolean;
 }
 
 export interface WorkbenchPatch {
@@ -37,6 +38,7 @@ export interface WorkbenchSnapshot {
   projects: ProjectWorkbench[];
   harnesses: HarnessInstallationRecord[];
   sidebarState: SidebarState;
+  terminalAvailable: boolean;
 }
 
 const PROJECT_LISTS: readonly ProjectList[] = ['projectSessions', 'processes', 'worktrees', 'timers'];
@@ -102,7 +104,8 @@ export function applyWorkbenchChanges(snapshot: WorkbenchSnapshot, changes: Work
   return {
     projects,
     harnesses: applyKeyed(snapshot.harnesses, changes.harnesses, byId),
-    sidebarState: changes.sidebarState ?? snapshot.sidebarState
+    sidebarState: changes.sidebarState ?? snapshot.sidebarState,
+    terminalAvailable: changes.terminalAvailable ?? snapshot.terminalAvailable
   };
 }
 
