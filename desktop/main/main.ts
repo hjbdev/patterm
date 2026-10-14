@@ -81,7 +81,9 @@ async function createWindow(): Promise<void> {
     pagePreviewer: new ElectronPagePreviewer(
       !app.isPackaged && !isInstalledLaunch() ? path.join(__dirname, '../../../../resources/js/assets/fonts') : path.join(__dirname, '../../../renderer/figure-fonts'),
       () => patterm?.settings.appearanceSettings() ?? { uiFont: { preset: 'inter', customFamily: '' }, terminalFont: { preset: 'jetbrains-nerd', customFamily: '' } }
-    )
+    ),
+    // dist/main/desktop/main/ sits four levels below the install directory.
+    appRoot: path.resolve(__dirname, '../../../..')
   });
   registerIpcRoutes(ipcMain, patterm, path.join(app.getPath('userData'), 'uploads'));
   servePeerRoutes(patterm);

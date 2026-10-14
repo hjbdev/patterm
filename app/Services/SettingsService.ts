@@ -95,6 +95,21 @@ export const idleCompactionSettingsInput = z.object({ claude: z.boolean(), codex
 export type IdleCompactionSettings = z.infer<typeof idleCompactionSettingsInput>;
 export const DEFAULT_IDLE_COMPACTION_SETTINGS: IdleCompactionSettings = { claude: true, codex: true, opencode: true };
 const IDLE_COMPACTION_SETTINGS_KEY = 'idle_compaction.settings.v1';
+// Release installs check for updates unless the owner turns it off.
+export const updateSettingsInput = z.object({
+  autoCheck: z.boolean().default(true),
+  channel: z.enum(['stable', 'prerelease']).default('stable')
+}).strict();
+export type UpdateSettings = z.infer<typeof updateSettingsInput>;
+// What the updater remembers between launches: the releases it announced,
+// and an update handed to an installer that the next launch should confirm.
+export const updateRecordInput = z.object({
+  notifiedVersions: z.array(z.string()).default([]),
+  pending: z.object({ version: z.string(), from: z.string(), startedAt: z.string(), log: z.string() }).nullable().default(null)
+});
+export type UpdateRecord = z.infer<typeof updateRecordInput>;
+const UPDATE_SETTINGS_KEY = 'updates.v1';
+const UPDATE_RECORD_KEY = 'updates.record.v1';
 
 const ASSISTANT_SETTINGS_KEY = 'assistant.settings.v1';
 const HARNESS_PRESETS_KEY = 'harness.presets.v1';
@@ -260,6 +275,24 @@ export class SettingsService {
     return settings;
   }
 
+  updateSettings(): UpdateSettings {
+    return this.readParsed(UPDATE_SETTINGS_KEY, updateSettingsInput);
+  }
+
+  saveUpdateSettings(input: unknown): UpdateSettings {
+    const settings = updateSettingsInput.parse(input);
+    this.write(UPDATE_SETTINGS_KEY, JSON.stringify(settings));
+    return settings;
+  }
+
+  updateRecord(): UpdateRecord {
+    return this.readParsed(UPDATE_RECORD_KEY, updateRecordInput);
+  }
+
+  saveUpdateRecord(record: UpdateRecord): void {
+    this.write(UPDATE_RECORD_KEY, JSON.stringify(updateRecordInput.parse(record)));
+  }
+
   harnessPresets(): HarnessPresetSettings {
     const row = this.database.connection.prepare('select value from settings where key = ?').get(HARNESS_PRESETS_KEY) as
       | { value: string }
@@ -304,6 +337,13 @@ export class SettingsService {
     const catalog = harnessModelCatalogInput.parse(raw);
     this.write(HARNESS_MODEL_CATALOG_KEY, JSON.stringify(catalog));
     return catalog;
+  }
+
+  // A missing or unreadable row reads as the schema's defaults.
+  private readParsed<T>(key: string, schema: z.ZodType<T, z.ZodTypeDef, unknown>): T {
+    const row = this.database.connection.prepare('select value from settings where key = ?').get(key) as { value: string } | undefined;
+    try { return schema.parse(row ? JSON.parse(row.value) : {}); }
+    catch { return schema.parse({}); }
   }
 
   private write(key: string, value: string): void {
