@@ -218,7 +218,7 @@
              comet shows the work. -->
         <template v-if="!ended" #status>
           <span v-if="streamStatus === 'working'" role="status" class="sr-only text-xs text-muted-foreground sm:not-sr-only"><ShimmerText text="Working…" /></span>
-          <IntegratedModelActivity v-else-if="modelActivityAt" :at="modelActivityAt" class="text-xs text-muted-foreground" />
+          <IntegratedModelActivity v-else-if="modelActivityAt" :at="modelActivityAt" class="min-w-0 truncate whitespace-nowrap text-xs text-muted-foreground" />
           <!-- Phones lead with the context ring, then the time. -->
           <IntegratedUsageMeter v-if="usage" :usage="usage" class="max-sm:order-first" />
         </template>

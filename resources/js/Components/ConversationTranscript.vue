@@ -178,6 +178,7 @@ import OdometerNumber from './OdometerNumber.vue';
 import MentionPart from './MentionPart.vue';
 import ConversationAgentMessage from './ConversationAgentMessage.vue';
 import { splitProcessMentions } from '../lib/agentMentions';
+import { touchScreen } from '../lib/touch';
 import {
   groupTranscriptMessages,
   isSavedFigure,
@@ -223,7 +224,7 @@ const groupState = ref<Record<string, boolean>>({});
 // time; tapping it again, or another message, moves them on.
 const tappedRowId = ref<string | null>(null);
 function tapRow(id: string, event: MouseEvent): void {
-  if (!window.matchMedia('(hover: none)').matches) return;
+  if (!touchScreen()) return;
   if ((event.target as Element | null)?.closest('button, a, input, textarea, summary, [role="button"]')) return;
   if (!window.getSelection()?.isCollapsed) return;
   tappedRowId.value = tappedRowId.value === id ? null : id;

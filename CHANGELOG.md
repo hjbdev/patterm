@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - On phones, the composer fits on one row. Model, reasoning and mode move to
   a settings drawer, with reasoning as a slider and long lists on their own
   page with search. A message's copy button and time show when you tap it.
+- On phones and tablets, opening or switching to an agent no longer focuses
+  its composer or terminal, so the keyboard stays closed until you tap.
 
 ### Fixed
 

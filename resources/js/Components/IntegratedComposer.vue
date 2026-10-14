@@ -130,7 +130,8 @@
         </div>
         <span class="flex-1" />
         <!-- The agent's state and usage, from the conversation. -->
-        <div class="flex min-w-0 items-center gap-2 max-sm:order-first">
+        <!-- On narrow phones it clips rather than run under the buttons. -->
+        <div class="flex min-w-0 items-center gap-2 overflow-hidden max-sm:order-first">
           <slot name="status" />
         </div>
         <span v-if="sending" class="text-xs text-muted-foreground" role="status">Sending…</span>
@@ -183,6 +184,7 @@ import type { ComposerChip } from '../lib/composerDocument';
 import { createComposerEditor, type ComposerEditor } from '../lib/composerEditor';
 import { interceptMcpCallbackPaste } from '../lib/mcpCallbackPaste';
 import { sessionStatusIcon } from '../lib/statusIcons';
+import { touchScreen } from '../lib/touch';
 
 interface Selector { id: string; label: string; value: string; options: Array<{ value: string; label: string }> }
 interface NativeCommand { name: string; description?: string; source?: 'patterm' }
@@ -592,16 +594,22 @@ watch(() => draft.value.text, (text) => {
   if (editor.value && editor.value.getText() !== text) editor.value.setText(text, draft.value.chips);
 });
 watch([placeholder, editorAttributes], () => editor.value?.refresh());
+// Arriving at an agent focuses its composer, except on touch screens, where
+// that would reopen the keyboard the user just closed.
+function focusOnArrival(): void {
+  if (!touchScreen()) focusEditor();
+}
+
 watch(() => props.processId, () => {
   closeMenus();
   mountEditor();
-  void nextTick(focusEditor);
+  void nextTick(focusOnArrival);
 });
 watch(previewSessionId, (sessionId) => { mentionPreview.value = sessionId; });
 // Created last so the editor's callbacks can read everything above, and
 // before the first render so the composer never renders without it.
 mountEditor();
-onMounted(() => void nextTick(focusEditor));
+onMounted(() => void nextTick(focusOnArrival));
 onBeforeUnmount(() => {
   invalidateSearch();
   mentionPreview.value = null;

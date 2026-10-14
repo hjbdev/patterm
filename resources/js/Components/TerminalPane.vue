@@ -71,6 +71,7 @@ import {
 } from '../terminal/TerminalFrameCadence';
 import { isPasteShortcut, TerminalInputRouter, type TerminalInputDispatch } from '../terminal/TerminalInputRouter';
 import { interceptMcpCallbackPaste } from '../lib/mcpCallbackPaste';
+import { touchScreen } from '../lib/touch';
 import { parseDamageFrame, TerminalRenderer, type ParsedDamageFrame, type TerminalGridSize } from '../terminal/TerminalRenderer';
 
 const props = defineProps<{ title: string; processId?: string | null; captureEnabled?: boolean }>();
@@ -382,7 +383,9 @@ function applyTarget(next: string): void {
   configureTerminalFrameInterval(next);
   refreshTerminalStatus(next);
   debugLog('terminal-pane', 'attach', { next, measured });
-  focusInputSink();
+  // Touch screens focus the terminal on a tap, so switching to it doesn't
+  // reopen the keyboard.
+  if (!touchScreen()) focusInputSink();
   // An input sink that already had focus fires no focus event on a tab switch.
   reportTerminalFocus();
 }
