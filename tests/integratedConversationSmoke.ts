@@ -384,8 +384,11 @@ const lone = groupTranscriptMessages([
   { id: 'l4', role: 'assistant', kind: 'text', text: 'ok' }
 ]);
 assert.deepEqual(lone.map((row) => [row.kind, row.id]), [['tools', 'tools:l1'], ['message', 'l2'], ['message', 'l3'], ['message', 'l4']], 'a lone call collapses like a group; a lone thought stays a thought row');
-assert.deepEqual(mixedGroup.kind === 'tools' ? transcriptToolGroupSummary(mixedGroup.messages) : null,
-  { count: 6, titles: ['Bash', 'Skill (run)', 'Glob', 'Edit'] }, 'tool titles are listed once each, in first-seen order, naming skills');
+assert.deepEqual(mixedGroup.kind === 'tools' ? transcriptToolGroupSummary(mixedGroup.messages) : null, {
+  count: 6,
+  tools: [{ title: 'Bash', count: 3 }, { title: 'Skill (run)', count: 1 }, { title: 'Glob', count: 1 }, { title: 'Edit', count: 1 }],
+  label: '3 Bash, Skill (run), Glob, Edit'
+}, 'tool titles are listed once each, in first-seen order, naming skills and counting each title');
 
 // Skills and MCP calls name what ran, in rows and in the group summary.
 const named = (name: string, input: Record<string, unknown>) => buildTranscriptTool(name, { input, state: 'completed' }, 'x');
@@ -402,7 +405,11 @@ assert.deepEqual(transcriptToolGroupSummary([
   { id: 'n2', role: 'assistant', kind: 'tool', text: '', tool: named('mcp__linear__get_issue', {}) },
   { id: 'n3', role: 'assistant', kind: 'tool', text: '', tool: named('Skill', { skill: 'run' }) },
   { id: 'n4', role: 'assistant', kind: 'tool', text: '', tool: named('Skill', { skill: 'run' }) }
-]), { count: 4, titles: ['MCP (notify_user, get_issue)', 'Skill (run)'] });
+]), {
+  count: 4,
+  tools: [{ title: 'MCP (notify_user, get_issue)', count: 2 }, { title: 'Skill (run)', count: 2 }],
+  label: '2 MCP (notify_user, get_issue), 2 Skill (run)'
+});
 
 // Thinking between tool calls folds into the same group, and its duration
 // runs to its own finish or the next row's start.
