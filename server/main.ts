@@ -60,7 +60,7 @@ async function main(): Promise<void> {
   })();
   try {
     application = await createApplication({
-      appDataPath, sidecarPath, mcpShimPath, runtime: 'node', publicOrigin, serverAccess, runtimeLock, ...(ownerLogin ? { ownerLogin } : {}),
+      appDataPath, sidecarPath, mcpShimPath, runtime: 'node', appRoot: root, publicOrigin, serverAccess, runtimeLock, ...(ownerLogin ? { ownerLogin } : {}),
       ...(process.env.PATTERM_TERMINAL_SERVICE ? { terminalHosts: { appDataPath, serviceName: process.env.PATTERM_TERMINAL_SERVICE } } : {}),
       onQuitRequested: () => { setImmediate(() => { void stop(0).catch((error) => { console.error(error); process.exit(1); }); }); }
     });

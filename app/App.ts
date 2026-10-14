@@ -100,6 +100,10 @@ import { McpServerImportService } from './Services/McpServerImportService';
 import { NativeOAuthCallbackService } from './Services/NativeOAuthCallbackService';
 import { McpServerActions } from './Actions/McpServerActions';
 import { registerMcpServerTools } from './MCP/registerMcpServerTools';
+import { registerUpdateTools } from './MCP/registerUpdateTools';
+import { detectReleaseInstall, UpdateService } from './Services/UpdateService';
+import { UpdateInstaller } from './Services/UpdateInstaller';
+import { quitConfirmation } from './Commands/CommandPalette';
 
 export interface AppOptions {
   appDataPath: string;
@@ -121,6 +125,11 @@ export interface AppOptions {
   // The runtime lock, when the caller already holds it; released on dispose.
   runtimeLock?: () => void;
   onQuitRequested?: () => void;
+  // The application's install directory. A release package there has a BUILD
+  // file and signing key, and checks for updates; a source checkout does not.
+  appRoot?: string;
+  // Replaces the release download endpoints, for tests.
+  updates?: { fetch?: typeof fetch; releasesUrl?: string; apiUrl?: string };
 }
 
 export interface BootstrapPayload {
@@ -135,6 +144,7 @@ export interface PattermApplication {
   terminal: TerminalService;
   timers: TimerService;
   settings: SettingsService;
+  updates: UpdateService;
   harnessPresets: HarnessPresetService;
   modelCatalog: HarnessModelCatalogService;
   autoSummaries: AutoSummaryService;
@@ -620,6 +630,27 @@ async function createApplicationResources(
   registerMcpServerTools(mcp, mcpServers);
   registerAssistantTools(mcp, assistantService, settings);
   registerIdleCompactionTools(mcp, settings);
+  const releaseInstall = detectReleaseInstall(options.appRoot);
+  const updateMode = options.runtime === 'node' ? 'server' : 'desktop';
+  const updates = new UpdateService({
+    install: releaseInstall,
+    settings,
+    applier: releaseInstall ? new UpdateInstaller({ install: releaseInstall, mode: updateMode, logPath: path.join(options.appDataPath, 'update.log') }) : null,
+    // A service restart reconnects to its terminal and Integrated hosts.
+    restartDetail: (): string => updateMode === 'desktop'
+      ? `Patterm quits, installs the update, and opens again. ${quitConfirmation(application) ?? 'Nothing is running.'}`
+      : persistent ? 'The server restarts to install the update. Agents and commands keep running, and browsers reconnect.'
+      : `The server restarts to install the update. ${quitConfirmation(application) ?? 'Nothing is running.'}`,
+    notify: ({ version, canApply }) => {
+      void notifications.updateAvailable(version, canApply).catch((error: unknown) => {
+        debugLog.write('updates', 'notify.failed', { version, message: error instanceof Error ? error.message : String(error) });
+      });
+    },
+    changed: () => notifyChanged(['updates']),
+    ...options.updates
+  });
+  defer(() => updates.dispose());
+  registerUpdateTools(mcp, updates);
   registerHostTools(mcp, hosts, projectLinkActions);
   registerProjectTools(mcp, {
     rename: new RenameProjectAction(database, timeline),
@@ -708,9 +739,12 @@ async function createApplicationResources(
     await mcpSocket.stop();
   });
 
-  return {
+  updates.start();
+
+  const application: PattermApplication = {
     database,
     serverAccess,
+    updates,
     autoSummaries,
     autoSummaryActions,
     debugLog,
@@ -755,7 +789,8 @@ async function createApplicationResources(
     shutdown: () => { shuttingDown = true; return quit.execute(); },
     requestQuit: () => options.onQuitRequested?.(),
     isShuttingDown: () => shuttingDown
-  } satisfies PattermApplication;
+  };
+  return application;
 }
 
 function importedConversations(result: unknown): boolean {

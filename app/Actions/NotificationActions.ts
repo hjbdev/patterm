@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { notificationUrgency, type NotificationSettings } from '../Services/NotificationSettings';
-import { BODY_LIMIT, TITLE_LIMIT, type NotificationService } from '../Services/NotificationService';
+import { BODY_LIMIT, TITLE_LIMIT, UPDATE_NOTICE_KEY, type NotificationService } from '../Services/NotificationService';
 import type { PresenceService } from '../Services/PresenceService';
 import type { PushService } from '../Services/PushService';
 import type { SettingsService } from '../Services/SettingsService';
@@ -76,6 +76,16 @@ export class NotificationActions {
   // update a host.
   hostRefused(hostName: string, reason: string) {
     return this.notifications.raise({ processId: null, source: 'system', kind: 'failure', urgency: 'normal', title: `Cannot connect to ${hostName}`.slice(0, TITLE_LIMIT), body: reason.slice(0, BODY_LIMIT), dedupeKey: `host-refused:${hostName}` });
+  }
+
+  // A newer Patterm release, announced once per version.
+  updateAvailable(version: string, canApply: boolean) {
+    return this.notifications.raise({
+      processId: null, source: 'system', kind: 'message', urgency: 'normal',
+      title: `Patterm ${version} is available`,
+      body: canApply ? 'Restart to update from Settings › About.' : 'See Settings › About for the release.',
+      dedupeKey: `${UPDATE_NOTICE_KEY}${version}`
+    });
   }
 
   // Input from the user answers any open request on that process.
