@@ -7,10 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
+### Added
 
-- Closing or quitting an empty desktop app no longer asks to stop zero agents
-  and zero commands. Running agents, commands, and timers still require confirmation.
+- The top bar shows the last three projects you visited beside the project
+  switcher. Turn it off in Settings › Appearance.
 
 ### Changed
 
@@ -38,6 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rarer ones, such as Set timer and Copy process ID.
 - Typing effort, reasoning, or thinking in the command palette finds the
   effort setting, whichever name the agent's harness uses.
+
+### Fixed
+
+- Closing or quitting an empty desktop app no longer asks to stop zero agents
+  and zero commands. Running agents, commands, and timers still require confirmation.
+- Settings › Appearance shows the saved Personal project choice instead of
+  always showing it off.
 
 ## [0.1.1] - 2026-10-13
 
