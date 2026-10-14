@@ -54,6 +54,9 @@
         <UnreadDot :urgency="unreadUrgency(process.id)" />
       </button>
     </template>
+    <template #mobile-footer>
+      <SidebarPages labelled class="mt-1 justify-around border-t border-white/5 pt-2" @click="open = false" />
+    </template>
   </ResponsiveMenu>
 </template>
 
@@ -72,6 +75,7 @@ import LaunchAgentMenu from './LaunchAgentMenu.vue';
 import HarnessLaunchTabs from './HarnessLaunchTabs.vue';
 import ResponsiveMenu from './ResponsiveMenu.vue';
 import RowStatus from './RowStatus.vue';
+import SidebarPages from './Sidebar/SidebarPages.vue';
 import TabWash from './TabWash.vue';
 import UnreadDot from './UnreadDot.vue';
 import { unreadUrgency } from '../Composables/useNotifications';

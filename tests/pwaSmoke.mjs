@@ -19,12 +19,22 @@ test('PWA manifest has standalone scope and valid install icons', () => {
     assert.equal(png.readUInt32BE(20), size);
   }
   assert(manifest.icons.some((icon) => icon.purpose === 'maskable'));
+  // Android's richer install sheet needs a narrow screenshot, desktop a wide one.
+  for (const formFactor of ['narrow', 'wide']) assert(manifest.screenshots.some((shot) => shot.form_factor === formFactor));
+  for (const shot of manifest.screenshots) {
+    const png = fs.readFileSync(path.join('public', shot.src));
+    assert.equal(`${png.readUInt32BE(16)}x${png.readUInt32BE(20)}`, shot.sizes, shot.src);
+  }
+  // Reopening the app focuses its window; main.ts routes the launch URL.
+  assert.equal(manifest.launch_handler?.client_mode, 'focus-existing');
+  for (const shortcut of manifest.shortcuts ?? []) assert.match(shortcut.url, /^\/(?:projects|routines|usage|settings)$/);
   const touchIcon = fs.readFileSync('public/icons/apple-touch-icon.png');
   assert.equal(touchIcon.readUInt32BE(16), 180);
   const html = fs.readFileSync('index.html', 'utf8');
   assert.match(html, /rel="manifest"/);
   const themeColor = /<meta name="theme-color" content="([^"]+)"/.exec(html)?.[1];
   assert.equal(themeColor, manifest.theme_color, 'the document must not override the manifest with another palette');
+  assert.match(html, /name="apple-mobile-web-app-status-bar-style" content="black-translucent"/);
 });
 
 test('Windows icon contains PNG images at each shell display size', () => {
@@ -56,7 +66,7 @@ test('service worker caches only offline assets and never intercepts commands or
   const caches = {
     open: async () => ({ addAll: async (urls) => urls.forEach((url) => stored.set(url, new Response(url))) }),
     match: async (url) => stored.get(url)?.clone(),
-    keys: async () => ['unrelated-cache', 'patterm-offline-old', 'patterm-offline-v2', 'patterm-offline-v3', 'patterm-offline-v4'],
+    keys: async () => ['unrelated-cache', 'patterm-offline-old', 'patterm-offline-v2', 'patterm-offline-v3', 'patterm-offline-v4', 'patterm-offline-v5'],
     delete: async (name) => { deleted.push(name); return true; }
   };
   vm.runInNewContext(fs.readFileSync('public/sw.js', 'utf8'), {
@@ -72,7 +82,7 @@ test('service worker caches only offline assets and never intercepts commands or
   await lifetime('install');
   assert.deepEqual([...stored.keys()], ['/offline.html', '/icon.svg', '/icons/icon-192.png']);
   await lifetime('activate');
-  assert.deepEqual(deleted, ['patterm-offline-old', 'patterm-offline-v2', 'patterm-offline-v3']);
+  assert.deepEqual(deleted, ['patterm-offline-old', 'patterm-offline-v2', 'patterm-offline-v3', 'patterm-offline-v4']);
   assert(claimed);
   const request = (pathname, method = 'GET', mode = 'cors') => {
     let response;

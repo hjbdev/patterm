@@ -42,6 +42,10 @@
     @apply border-border;
   }
 
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
   body {
     @apply m-0 min-h-dvh overflow-hidden bg-background font-sans text-foreground;
   }
@@ -49,11 +53,30 @@
 
 /* Unlayered so it follows the Tailwind utilities and overrides `.h-dvh`. */
 @media (display-mode: standalone) {
+  /* The safe-area padding shows the body, so match the application frame. */
   body {
+    background-color: #080808;
     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   }
   .h-dvh {
     height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  }
+}
+
+/* A long press on a control opens its own menu, not a text selection or the
+   system callout. */
+@media (hover: none) {
+  :is(button, [role='button'], [role='tab'], [role='menuitem']) {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
+/* iOS zooms the page into any field under 16px when it takes focus. */
+@supports (-webkit-touch-callout: none) {
+  html :is(input, textarea, select, [contenteditable='true']) {
+    font-size: 16px;
   }
 }
 

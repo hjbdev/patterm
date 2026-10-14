@@ -21,8 +21,7 @@ export const sidebarLayout = reactive({
   collapsed: localStorage.getItem(COLLAPSED_KEY) === '1',
   width: storedWidth(),
   // The sidebar over the workspace when the window is too narrow to dock it.
-  drawerOpen: false,
-  mobileOpen: false
+  drawerOpen: false
 });
 
 watch(() => sidebarLayout.collapsed, (collapsed) => localStorage.setItem(COLLAPSED_KEY, collapsed ? '1' : '0'));

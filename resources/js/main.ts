@@ -25,6 +25,12 @@ syncLoaders();
 function mountWorkbench(): void {
   const router = createWorkbenchRouter(window.patterm.runtime === 'desktop' ? createWebHashHistory() : createWebHistory());
   const app = createApp(App).use(router);
+  // The manifest's launch_handler reuses the open window instead of starting
+  // another, so a launch that names a page (a shortcut) navigates here.
+  (window as Window & { launchQueue?: { setConsumer(consumer: (params: { targetURL?: string }) => void): void } }).launchQueue?.setConsumer(({ targetURL }) => {
+    const url = targetURL ? new URL(targetURL) : null;
+    if (url?.origin === location.origin) void router.push(url.pathname + url.search + url.hash);
+  });
   // Once the first page is up, load the other pages, the diff viewer, and the
   // code highlighter, so later navigation doesn't wait for them.
   void router.isReady().then(() => {

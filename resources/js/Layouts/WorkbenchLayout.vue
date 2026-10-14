@@ -35,8 +35,7 @@
           @routines="openRoutines"
       >
         <template v-if="activeProject" #terminal-tabs>
-          <SidebarMobileNav v-if="sidebarMode" />
-          <template v-else>
+          <!-- Phones get the same tab menu in either navigation mode. -->
           <div class="min-w-0 flex-1 sm:hidden">
             <MobileTabs
               :project-id="activeProject.project.id"
@@ -49,8 +48,9 @@
               @select-process="selectAgentProcess"
             />
           </div>
+          <div v-if="sidebarMode" class="hidden flex-1 sm:block" />
           <!-- The vertical padding leaves room for a tab's mention glow, which the scroller would clip. -->
-          <div class="-my-2 hidden min-w-0 flex-1 items-center gap-1 overflow-x-auto py-2 [scrollbar-width:none] sm:flex" @wheel="scrollTabStrip">
+          <div v-else class="-my-2 hidden min-w-0 flex-1 items-center gap-1 overflow-x-auto py-2 [scrollbar-width:none] sm:flex" @wheel="scrollTabStrip">
             <TabStrip
               v-if="currentStripTabs.length"
               class="shrink-0"
@@ -73,7 +73,6 @@
               />
             </div>
           </div>
-          </template>
         </template>
       </WorkbenchTopBar>
 
@@ -123,7 +122,6 @@ import WorkbenchTopBar from '../Components/WorkbenchTopBar.vue';
 import WorkspaceSearchDialog from '../Components/WorkspaceSearchDialog.vue';
 import SidebarDialogs from '../Components/Sidebar/SidebarDialogs.vue';
 import WorkbenchSidebar from '../Components/Sidebar/WorkbenchSidebar.vue';
-import SidebarMobileNav from '../Components/Sidebar/SidebarMobileNav.vue';
 import { provideSidebarContext } from '../Components/Sidebar/sidebarContext';
 import { TooltipProvider } from '../Components/ui/tooltip';
 import { APPEARANCE_SETTINGS_CHANGED_EVENT, applyUiFont, lastKnownAppearanceSettings, loadAppearanceSettings, navigationLayoutHint, normalizeAppearanceSettings, type AppearanceSettings, type NavigationLayout } from '../appearance/AppearanceSettings';
