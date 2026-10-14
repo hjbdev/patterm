@@ -1313,22 +1313,24 @@ export function transcriptMessageKey(message: TranscriptMessage): string {
   return message.role === 'user' && message.clientMessageId ? `user_${message.clientMessageId}` : message.id;
 }
 
-// A tool group's summary, such as "55" calls of "Shell, Read, Web Search":
-// tool titles in first-seen order. Thoughts in the group are not counted.
-// Skills and MCP calls share a title, so the summary names which ones ran:
-// "Bash, Skill (simplify, run), MCP (notify_user)".
-export function transcriptToolGroupSummary(messages: TranscriptMessage[]): { count: number; titles: string[] } {
-  const titles = new Map<string, Set<string>>();
+// A tool group's summary, such as "Read, 3 Shell, 2 Web Search": each tool
+// title once, in first-seen order, with its own call count. Thoughts in the
+// group are not counted. Skills and MCP calls share a title, so the summary
+// names which ones ran: "7 Bash, 2 Skill (simplify, run), MCP (notify_user)".
+export function transcriptToolGroupSummary(messages: TranscriptMessage[]): { count: number; tools: Array<{ title: string; count: number }>; label: string } {
+  const tools = new Map<string, { count: number; names: Set<string> }>();
   let count = 0;
   for (const message of messages) {
     if (!message.tool) continue;
     count += 1;
-    const names = titles.get(message.tool.title) ?? new Set<string>();
-    titles.set(message.tool.title, names);
+    const entry = tools.get(message.tool.title) ?? { count: 0, names: new Set<string>() };
+    tools.set(message.tool.title, entry);
+    entry.count += 1;
     const name = groupName(message.tool);
-    if (name) names.add(name);
+    if (name) entry.names.add(name);
   }
-  return { count, titles: [...titles].map(([title, names]) => names.size ? `${title} (${[...names].join(', ')})` : title) };
+  const named = [...tools].map(([title, entry]) => ({ title: entry.names.size ? `${title} (${[...entry.names].join(', ')})` : title, count: entry.count }));
+  return { count, tools: named, label: named.map((tool) => tool.count > 1 ? `${tool.count} ${tool.title}` : tool.title).join(', ') };
 }
 
 function groupName(tool: TranscriptTool): string | undefined {

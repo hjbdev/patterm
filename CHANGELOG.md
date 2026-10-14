@@ -42,9 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Renderer development and production builds use the pinned Vite+ toolchain
+  with Rolldown, retaining the existing browser targets and validation commands.
+- Development builds and CI type checks use a pinned native TypeScript checker,
+  including Vue component checks, while retaining the compiler API used by tooling.
 - The assistant can auto-compact after the existing idle delay when voice is
   inactive. Voice cannot start until an automatic compaction finishes.
-
 - Integrated OpenCode prompts steer by default, as in OpenCode: a message sent
   mid-turn joins the turn at its next model step. Its pending row shows only
   the message and Cancel.
@@ -77,6 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Tool groups in conversation transcripts count each tool on its own, so a Skill followed by seven Bash calls reads "Skill (implement), 7 Bash" rather than "8 Skill (implement), Bash".
 - Assistant `/restart` resumes its conversation through the assistant controls.
   Rejected browser writes restore the Take control button, which reconnects
   the terminal subscription before taking over.
