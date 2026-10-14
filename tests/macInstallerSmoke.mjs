@@ -113,9 +113,15 @@ test('Mac installer repeats, updates, rejects downgrades, and preserves the old 
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /signature verification failed/);
     assert.equal(versionAt('Patterm.app'), 'version=1.2.4');
+    // The in-app updater pins the checksum from the signed release manifest.
+    result = install('1.2.5', {}, ['--version', '1.2.5', '--sha256', 'f'.repeat(64)]);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /does not match the signed release manifest/);
+    assert.equal(versionAt('Patterm.app'), 'version=1.2.4');
     for (const version of ['1.2.5-beta.2', '1.2.5-beta.10', '1.2.5']) {
       release(version);
-      result = install(version, {}, ['--version', version]);
+      const sha256 = createHash('sha256').update(fs.readFileSync(path.join(releases, `patterm-${version}-macos-arm64.zip`))).digest('hex');
+      result = install(version, {}, ['--version', version, '--sha256', sha256.toUpperCase()]);
       assert.equal(result.status, 0, result.stderr);
     }
     result = install('1.2.5-beta.10');

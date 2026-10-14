@@ -13,7 +13,7 @@ export function contextCall<T>(name: string, projectId: string, args: Record<str
   return window.patterm.call(name, { project_id: projectId, ...args }) as Promise<T>;
 }
 
-export type RefreshTopic = 'context' | 'settings' | 'mcp-servers' | 'routines' | 'history';
+export type RefreshTopic = 'context' | 'settings' | 'mcp-servers' | 'routines' | 'history' | 'updates';
 
 export interface ContextRefreshOptions {
   // Server topics whose changes make the view stale. Defaults to context.

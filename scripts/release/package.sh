@@ -101,6 +101,9 @@ cp "$ROOT/scripts/install-service.mjs" "$ROOT/scripts/start-tailscale-service.mj
 "$ROOT/scripts/release/render-installer.sh" "$REPO" > "$OUT/install.sh"
 install -m 0755 "$OUT/install.sh" "$STAGE/scripts/install-release.sh"
 install -m 0755 "$ROOT/scripts/release/uninstall.sh" "$STAGE/scripts/uninstall.sh"
+# The in-app updater checks releases with this key and installs through the helper.
+install -m 0755 "$ROOT/scripts/release/apply-update.sh" "$STAGE/scripts/apply-update.sh"
+cp "$ROOT/scripts/release/minisign.pub" "$STAGE/scripts/minisign.pub"
 cp "$ROOT/deploy/patterm.service" "$ROOT/deploy/patterm-terminal@.service" "$STAGE/deploy/"
 
 COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
