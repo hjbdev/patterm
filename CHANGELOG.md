@@ -28,12 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Each page runs in a sandboxed frame with an opaque origin, so it can run
   inline and CDN scripts but cannot reach Patterm, its storage, or your files.
   Pages get Patterm's theme as CSS variables and your interface and terminal
-  typefaces, and report their own height. Nothing a page asks for happens
-  until you confirm it in Patterm's own bar under the page: a clicked link
-  shows its address with an Open button, and a question asked with
-  `patterm.answer()` shows the answer with a Send button, which only the window
-  in control of the agent can press. The answer reaches the agent as an
-  ordinary message.
+  typefaces, and report their own height. A question asked with
+  `patterm.answer()` sends your pick to the agent as an ordinary message as
+  you click it, and only then: a page cannot answer on its own, and only the
+  window in control of the agent can answer. A clicked link shows its address
+  under the page and opens once you press Open.
   Local images in the page are copied when it is rendered. A page opens larger
   from its card, and its source is one click away.
 

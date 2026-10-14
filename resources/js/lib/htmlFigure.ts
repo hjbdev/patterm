@@ -29,6 +29,26 @@ export function figureFrameUrl(): string {
   return window.patterm.runtime === 'browser' ? FIGURE_FRAME_PATH : `${FIGURE_FRAME_SCHEME}://figure/`;
 }
 
+// A page can focus its own frame. Done while the user types elsewhere, it
+// would catch their next keys, and a key press in the frame lets the page
+// answer, so Patterm gives the focus straight back. Tab moves focus on purpose.
+let focusGuarded = false;
+export function guardFigureFocus(): void {
+  if (focusGuarded) return;
+  focusGuarded = true;
+  let typedAt = -Infinity;
+  window.addEventListener('keydown', (event) => { if (event.key !== 'Tab') typedAt = performance.now(); }, true);
+  document.addEventListener('focusout', (event) => {
+    const left = event.target;
+    if (!(left instanceof HTMLElement) || !(left.isContentEditable || left.matches('input, textarea')) || performance.now() - typedAt > TYPING_MS) return;
+    setTimeout(() => {
+      const taker = document.activeElement;
+      if (taker instanceof HTMLIFrameElement && taker.dataset.component === 'html-figure-frame' && left.isConnected) left.focus();
+    });
+  }, true);
+}
+const TYPING_MS = 2000;
+
 // A page's stored local images as data URLs; the frame cannot read anything
 // from Patterm, so each image travels inside the page.
 export async function figureImageUrls(images: Record<string, string>): Promise<Map<string, string>> {

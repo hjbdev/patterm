@@ -230,11 +230,16 @@ function mountFrame({ channel = null, answered = new Map(), shared = null } = {}
   const rect = { left: 0, top: 500, width: 600, height: 32 };
   const frames = [];
   const requestAnimationFrame = (callback) => frames.push(callback);
+  // Whether the user just clicked or typed, and where focus is.
+  const user = { active: true, focused: true };
+  const frameElement = markRaw({ contentWindow });
+  const navigator = { get userActivation() { return { isActive: user.active }; } };
+  const document = { get activeElement() { return user.focused ? frameElement : null; } };
   // The module block runs once per window, so frames that share one also
   // share its state, as in the app; each frame runs its own setup.
   const group = shared ?? {};
   group.module ??= new Function('FIGURE_ID', 'performance', `${transpile(executable(blocks[1]))}
-return function setup(computed, inject, onBeforeUnmount, onMounted, ref, watch, window, requestAnimationFrame, FIGURE_FRAME_SANDBOX, FIGURE_HEIGHT, figureAnswerText, figureAnswerKey, figureAnsweredKey, figureFrameUrl, defineProps, __frame, __bar) {
+return function setup(computed, inject, onBeforeUnmount, onMounted, ref, watch, window, navigator, document, requestAnimationFrame, FIGURE_FRAME_SANDBOX, FIGURE_HEIGHT, figureAnswerText, figureAnswerKey, figureAnsweredKey, figureFrameUrl, defineProps, __frame, __bar) {
 ${transpile(executable(blocks[0]))}
 frame.value = __frame;
 bar.value = __bar;
@@ -243,8 +248,8 @@ return { onMessage, arm, confirm, request };
   const window = { addEventListener: () => {}, removeEventListener: () => {}, open: (...args) => opened.push(args) };
   const answerKey = Symbol('answer');
   const answeredKey = Symbol('answered');
-  const api = group.module(computed, (key) => key === answerKey ? channel : key === answeredKey ? computed(() => answered) : null, () => {}, () => {}, ref, watch, window, requestAnimationFrame,
-    ui.FIGURE_FRAME_SANDBOX, ui.FIGURE_HEIGHT, ui.figureAnswerText, answerKey, answeredKey, () => '/figure-frame', () => ({ html: '<p>x</p>', title: 'x', initialHeight: 100 }), markRaw({ contentWindow }), markRaw({ getBoundingClientRect: () => ({ ...rect }) }));
+  const api = group.module(computed, (key) => key === answerKey ? channel : key === answeredKey ? computed(() => answered) : null, () => {}, () => {}, ref, watch, window, navigator, document, requestAnimationFrame,
+    ui.FIGURE_FRAME_SANDBOX, ui.FIGURE_HEIGHT, ui.figureAnswerText, answerKey, answeredKey, () => '/figure-frame', () => ({ html: '<p>x</p>', title: 'x', initialHeight: 100 }), frameElement, markRaw({ getBoundingClientRect: () => ({ ...rect }) }));
   // Runs the animation frames due now, as the browser would between events.
   const tick = () => { for (const callback of frames.splice(0)) callback(); };
   const fromPage = (data) => api.onMessage({ source: contentWindow, data: { source: 'patterm-figure', ...data } });
@@ -257,7 +262,7 @@ return { onMessage, arm, confirm, request };
     between?.();
     await api.confirm({ isTrusted: trusted });
   };
-  return { ...api, posted, opened, clock, rect, tick, fromPage, press };
+  return { ...api, posted, opened, clock, rect, user, tick, fromPage, press };
 }
 
 function liveChannel() {
@@ -267,81 +272,61 @@ function liveChannel() {
 
 const pick = (id, label, value, requestId = 1) => ({ type: 'answer', requestId, id, picks: [{ label, value }] });
 
-test('a page cannot answer without the user pressing Send in Patterm', async () => {
+const results = (frame) => frame.posted.filter((message) => message.type === 'answer-result').map((message) => [message.requestId, message.ok, message.error]);
+
+test('a pick sends at once, but only as the user clicks or types in its page', async () => {
   const { sent, channel } = liveChannel();
   const frame = mountFrame({ channel });
-  // A page that keeps proposing while the user clicks elsewhere in the app.
-  for (let attempt = 0; attempt < 3; attempt++) frame.fromPage(pick('unauthorized', 'Yes', 'yes', attempt + 1));
+  // A page answering on its own, from a timer or on load.
+  frame.user.active = false;
+  frame.fromPage(pick('q', 'Yes', 'yes', 1));
+  // The user just clicked, but somewhere else in the app.
+  frame.user.active = true;
+  frame.user.focused = false;
+  frame.fromPage(pick('q', 'Yes', 'yes', 2));
   await nextTick();
-  assert.deepEqual(sent, [], 'requests alone send nothing');
-  assert.equal(frame.request.value.text, 'Answer to unauthorized: Yes (yes)');
-  assert.deepEqual(frame.posted.filter((message) => message.type === 'answer-result').map((message) => [message.requestId, message.ok]), [[1, false], [2, false]], 'a newer request replaces the older one');
-  await frame.confirm({ isTrusted: true });
-  assert.deepEqual(sent, [], 'a click that never pressed the button sends nothing');
-  await frame.press({ trusted: false });
-  assert.deepEqual(sent, [], 'a synthetic press is not the user');
-  await frame.press();
-  assert.deepEqual(sent, ['Answer to unauthorized: Yes (yes)']);
-  assert.equal(frame.request.value, null);
-  assert.deepEqual(frame.posted.at(-1), { source: 'patterm-host', type: 'answer-result', requestId: 3, ok: true });
-  await frame.press();
-  assert.equal(sent.length, 1, 'a sent answer cannot be sent again');
+  assert.deepEqual(sent, [], 'no click in the page, no answer');
+  assert.match(results(frame)[1][2], /only as the user clicks or types/);
+  frame.user.focused = true;
+  frame.fromPage(pick('q', 'Yes', 'yes', 3));
+  frame.fromPage(pick('q', 'No', 'no', 4));
+  await nextTick();
+  assert.deepEqual(sent, ['Answer to q: Yes (yes)'], 'the pick goes straight to the agent');
+  assert.equal(frame.request.value, null, 'nothing waits for a confirmation');
+  assert.deepEqual(results(frame).slice(2), [[4, false, 'Patterm is still sending the last answer.'], [3, true, undefined]], 'a second pick while sending is refused');
 });
 
-test('a press sends only the request it began on, after it has stood still', async () => {
-  const { sent, channel } = liveChannel();
-  const frame = mountFrame({ channel });
-  frame.fromPage(pick('q', 'Original', 'original'));
-  // The page swaps its answer while the button is held down.
-  await frame.press({ between: () => frame.fromPage(pick('q', 'Replaced', 'unauthorized', 2)) });
-  assert.deepEqual(sent, [], 'the swapped request needs its own press');
-  assert.equal(frame.request.value.text, 'Answer to q: Replaced (unauthorized)', 'the user sees what changed');
-  // The page swaps it again just before the user presses.
-  frame.fromPage(pick('q', 'Swapped late', 'late', 3));
+test('a press opens only the link it began on, after it has stood still', async () => {
+  const frame = mountFrame();
+  frame.fromPage({ type: 'open-link', url: 'https://example.com/original' });
+  // The page swaps its link while the button is held down.
+  await frame.press({ between: () => frame.fromPage({ type: 'open-link', url: 'https://example.com/replaced' }) });
+  assert.deepEqual(frame.opened, [], 'the swapped link needs its own press');
+  assert.equal(frame.request.value.url, 'https://example.com/replaced', 'the user sees what changed');
+  frame.fromPage({ type: 'open-link', url: 'https://example.com/late' });
   await frame.press({ wait: 100 });
-  assert.deepEqual(sent, [], 'a request that only just appeared is not pressed yet');
+  assert.deepEqual(frame.opened, [], 'a link that only just appeared is not pressed yet');
   await frame.press();
-  assert.deepEqual(sent, ['Answer to q: Swapped late (late)'], 'the user sent what they had time to read');
+  assert.deepEqual(frame.opened.map(([url]) => url), ['https://example.com/late'], 'the user opened what they had time to read');
 });
 
 test('a bar that moved, for any reason, waits again before a press counts', async () => {
-  const { sent, channel } = liveChannel();
-  const frame = mountFrame({ channel });
-  frame.fromPage(pick('approval', 'Unrequested answer', 'unauthorized'));
+  const frame = mountFrame();
+  frame.fromPage({ type: 'open-link', url: 'https://example.com/report' });
   frame.tick();
   frame.clock.now += 600;
   frame.tick();
   // The bar has stood still; now something moves it: this page shrinking,
-  // a page above resizing, a bar above going from several lines to one.
+  // or a page above it resizing.
   frame.rect.top = 176;
   await frame.press({ wait: 50 });
-  assert.deepEqual(sent, [], 'a bar that just moved is not pressed yet');
+  assert.deepEqual(frame.opened, [], 'a bar that just moved is not pressed yet');
   // A move between pointer down and the click drops the press, even before
   // the next animation frame notices it.
   await frame.press({ between: () => { frame.rect.top = 300; } });
-  assert.deepEqual(sent, [], 'a press that began before the move does not count');
+  assert.deepEqual(frame.opened, [], 'a press that began before the move does not count');
   await frame.press();
-  assert.deepEqual(sent, ['Answer to approval: Unrequested answer (unauthorized)'], 'once it stands still the user can send it');
-});
-
-test('a page above that shrinks its own bar holds the bar below', async () => {
-  const { sent, channel } = liveChannel();
-  const shared = { clock: { now: 10_000 } };
-  const above = mountFrame({ channel, shared });
-  const below = mountFrame({ channel, shared });
-  above.fromPage(pick('a', 'A long answer\nover\nseveral lines', 'a'));
-  below.fromPage(pick('b', 'Below', 'below'));
-  below.tick();
-  shared.clock.now += 600;
-  below.tick();
-  // The page above swaps in a one-line answer; its bar shrinks and the bar
-  // below rises by the lines it lost.
-  above.fromPage(pick('a', 'Short', 'a', 2));
-  below.rect.top -= 40;
-  await below.press({ wait: 50 });
-  assert.deepEqual(sent, [], 'the bar below moved, so it waits again');
-  await below.press();
-  assert.deepEqual(sent, ['Answer to b: Below (below)']);
+  assert.equal(frame.opened.length, 1, 'once it stands still the user can open it');
 });
 
 test('links open only after the user confirms the address in Patterm', async () => {
@@ -350,27 +335,25 @@ test('links open only after the user confirms the address in Patterm', async () 
   frame.fromPage({ type: 'open-link', url: 'file:///etc/passwd' });
   assert.equal(frame.request.value, null, 'only web addresses are offered');
   frame.fromPage({ type: 'open-link', url: 'https://example.com/report' });
-  assert.equal(frame.request.value.text, 'https://example.com/report');
+  assert.equal(frame.request.value.url, 'https://example.com/report');
   assert.deepEqual(frame.opened, [], 'asking opens nothing');
   await frame.press();
   assert.deepEqual(frame.opened, [['https://example.com/report', '_blank', 'noopener,noreferrer']]);
   assert.equal(frame.request.value, null);
 });
 
-test('pages outside a live conversation, or for answered questions, cannot ask for answers', () => {
+test('pages outside a live conversation, or for answered questions, cannot answer', () => {
   const readOnly = mountFrame();
   readOnly.fromPage(pick('q', 'A', 'a'));
-  assert.equal(readOnly.request.value, null);
   assert.match(readOnly.posted.at(-1).error, /live conversation/);
   const { channel } = liveChannel();
   const answered = mountFrame({ channel, answered: new Map([['q', 'Answer to q: A (a)']]) });
   answered.fromPage(pick('q', 'B', 'b'));
-  assert.equal(answered.request.value, null);
   assert.match(answered.posted.at(-1).error, /Already answered/);
   const invalid = mountFrame({ channel });
   invalid.fromPage({ type: 'answer', requestId: 1, id: 'bad id', picks: [] });
   assert.match(invalid.posted.at(-1).error, /needs an id/);
   const stranger = mountFrame({ channel });
-  stranger.onMessage({ source: {}, data: { source: 'patterm-figure', type: 'answer', id: 'q', picks: [{ label: 'A', value: 'a' }] } });
-  assert.equal(stranger.request.value, null, 'only this page\'s own frame is heard');
+  stranger.onMessage({ source: {}, data: { source: 'patterm-figure', type: 'answer', requestId: 1, id: 'q', picks: [{ label: 'A', value: 'a' }] } });
+  assert.deepEqual(stranger.posted, [], 'only this page\'s own frame is heard');
 });
