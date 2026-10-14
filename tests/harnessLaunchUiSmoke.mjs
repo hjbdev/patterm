@@ -43,7 +43,7 @@ test('launch tabs open before native readiness; independent completions preserve
   const sidebarParsed = ts.createSourceFile('sidebar.ts', sidebarSource, ts.ScriptTarget.Latest, true);
   const watchSource = sidebarParsed.statements.find(statement => ts.isExpressionStatement(statement)
     && statement.getText(sidebarParsed).startsWith('watch(') && statement.getText(sidebarParsed).includes('sidebar.page')).getText(sidebarParsed);
-  const sidebarLayout = { mobileOpen: true, drawerOpen: true };
+  const sidebarLayout = { drawerOpen: true };
   const stopSidebarWatch = new Function('watch', 'sidebar', 'selectedLaunch', 'sidebarLayout', `return ${watchSource}`)(watch,
     { page: ref(null), tabs: ref([]) }, selectedLaunch, sidebarLayout);
   async function settle(index, sessionId, projectId = 'p1') {
@@ -60,17 +60,15 @@ test('launch tabs open before native readiness; independent completions preserve
     assert.equal(router.currentRoute.value.name, 'launch');
     assert.equal(router.currentRoute.value.params.launchId, firstId);
     assert.equal(calls.length, 1);
-    assert.equal(sidebarLayout.mobileOpen, false, 'Board-to-launch navigation closes the phone drawer');
     assert.equal(sidebarLayout.drawerOpen, false, 'Board-to-launch navigation closes the narrow sidebar');
     assert.equal(fixture.lastProjectLocation('p1').name, 'project', 'Temporary routes do not become saved project locations');
 
-    sidebarLayout.mobileOpen = sidebarLayout.drawerOpen = true;
+    sidebarLayout.drawerOpen = true;
     launchHarness({ projectId: 'p1', targetProjectId: 'p1', harness: 'claude', preset: 'fast', interfaceMode: 'integrated' });
     await tick();
     const secondId = store.launches[1].id;
     assert.equal(calls.length, 2, 'Claude RPC starts while OpenCode remains pending');
     assert.equal(router.currentRoute.value.params.launchId, secondId);
-    assert.equal(sidebarLayout.mobileOpen, false, 'Selecting another pending tab closes the phone drawer');
     assert.equal(sidebarLayout.drawerOpen, false, 'Selecting another pending tab closes the narrow sidebar');
     await settle(1, 'claude');
     assert.equal(router.currentRoute.value.params.sessionId, 'claude');

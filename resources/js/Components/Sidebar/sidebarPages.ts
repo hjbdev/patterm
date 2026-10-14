@@ -2,7 +2,8 @@ import type { Component } from 'vue';
 import { FolderGit2, History, Images, ListTodo, NotebookPen } from 'lucide-vue-next';
 import type { SidebarContext, SidebarPage } from './sidebarContext';
 
-// The project pages linked from the sidebar footer and the collapsed rail.
+// The project pages linked from the sidebar footer, the collapsed rail, and
+// the phone agents menu.
 export function projectPages(sidebar: SidebarContext): { page: SidebarPage; label: string; icon: Component; count?: number }[] {
   return [
     // The Personal project is not a repository, so it has no worktrees.

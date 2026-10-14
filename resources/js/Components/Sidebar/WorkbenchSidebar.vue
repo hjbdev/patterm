@@ -107,11 +107,11 @@ function dock(): void {
   sidebarLayout.collapsed = false;
 }
 
-// Choosing something dismisses the overlay and the phone drawer.
+// Choosing something dismisses the overlay.
 watch(() => [sidebar.page.value, selectedLaunch.value?.id, ...sidebar.tabs.value.flatMap((tab) => tab.kind === 'agent'
   ? [...tab.family.options.filter((option) => sidebar.sessionActive(option.session)).map((option) => option.session.id), ...sidebar.ownedProcesses(tab.family).filter(sidebar.processActive).map((process) => process.id)]
   : sidebar.processActive(tab.process) ? [tab.key] : [])].join(),
-() => { sidebarLayout.drawerOpen = false; sidebarLayout.mobileOpen = false; });
+() => { sidebarLayout.drawerOpen = false; });
 
 // Ctrl+Shift, like the terminal's copy chord, so plain Ctrl+B still reaches the PTY.
 // Caught before a focused terminal sees it, which would send Ctrl+B as well.

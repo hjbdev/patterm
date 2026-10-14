@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The installed app has launcher shortcuts to Projects, Routines, and Usage,
+  and Android shows screenshots in its install sheet.
+
+### Changed
+
+- Opening the installed app again switches to its open window instead of
+  starting another.
+- On phones, sidebar navigation uses the same agents menu as tabs mode, and
+  that menu links to the project's pages in both modes.
+- On phones, the composer fits on one row. Model, reasoning and mode move to
+  a settings drawer, with reasoning as a slider and long lists on their own
+  page with search. A message's copy button and time show when you tap it.
+- On phones and tablets, opening or switching to an agent no longer focuses
+  its composer or terminal, so the keyboard stays closed until you tap.
+
+### Fixed
+
+- The installed app's status bar and safe areas match the dark application
+  frame instead of showing a lighter strip.
+- On phones, tapping a control no longer flashes a grey box, and a long press
+  no longer selects its label.
+- iOS no longer zooms the page in when the composer or another field takes
+  focus.
+
 ## [0.2.1] - 2026-10-15
 
 ### Added

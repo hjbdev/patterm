@@ -1,5 +1,5 @@
 // Bump the cache version when changing the offline page or its icons.
-const CACHE = 'patterm-offline-v4';
+const CACHE = 'patterm-offline-v5';
 const OFFLINE_ASSETS = ['/offline.html', '/icon.svg', '/icons/icon-192.png'];
 
 self.addEventListener('install', (event) => {

@@ -1,7 +1,6 @@
 <template>
   <div class="flex h-full min-h-0 flex-col">
-    <!-- The phone drawer has a header and footer of its own. -->
-    <div v-if="placement !== 'mobile'" class="flex h-8 shrink-0 items-center gap-0.5 pl-3 pr-1">
+    <div class="flex h-8 shrink-0 items-center gap-0.5 pl-3 pr-1">
       <span class="flex-1 text-xs text-muted-foreground">Agents</span>
       <BoardButton />
       <SidebarViewOptions />
@@ -77,7 +76,7 @@
         </Transition>
       </template>
     </div>
-    <div v-if="placement !== 'mobile'" class="flex shrink-0 items-center border-t border-white/5 px-1 pt-1">
+    <div class="flex shrink-0 items-center border-t border-white/5 px-1 pt-1">
       <SidebarPages class="flex-1">
         <template #end>
           <span class="flex-1" />
@@ -85,9 +84,8 @@
         </template>
       </SidebarPages>
     </div>
-    <!-- The agent you point at gets a card beside it. Phones have no pointer
-         to rest, so the phone drawer goes without. -->
-    <SidebarAgentCard v-if="placement !== 'mobile'" :list="list" />
+    <!-- The agent you point at gets a card beside it. -->
+    <SidebarAgentCard :list="list" />
   </div>
 </template>
 
@@ -119,7 +117,7 @@ import { useSettledValues } from '../../Composables/useSettledValues';
 // they matter, and which families are open is the user's choice, remembered
 // on this device. Selecting an agent opens it; Alt-click a count to open or
 // close every family.
-withDefaults(defineProps<{ placement?: 'docked' | 'drawer' | 'mobile' }>(), { placement: 'docked' });
+withDefaults(defineProps<{ placement?: 'docked' | 'drawer' }>(), { placement: 'docked' });
 const sidebar = useSidebar();
 const pendingLaunches = useProjectHarnessLaunches(() => sidebar.projectId.value);
 const expansion = useSidebarExpansion(() => sidebar.projectId.value);

@@ -18,6 +18,8 @@ URL.revokeObjectURL = () => {};
 // routes uploads to its own controllable queue.
 let activeUpload = async () => { throw new Error('No active upload harness'); };
 globalThis.window = { patterm: { uploadFile: (file) => activeUpload(file) } };
+// Touch screens skip focusing on arrival, which would open the keyboard.
+let touch = false;
 
 const page = fs.readFileSync(new URL('../resources/js/Components/IntegratedComposer.vue', import.meta.url), 'utf8');
 const source = page.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1];
@@ -67,6 +69,7 @@ function createHarness({ processId = 'composer_test', provider = 'codex', agents
     shallowRef,
     useId,
     watch,
+    touchScreen: () => touch,
     createComposerEditor: (options) => {
       const editor = fakeEditor(options);
       editors.push(editor);
@@ -173,6 +176,18 @@ test('each agent gets its own focused editor, except ended sessions', async () =
   harness.lifecycle.beforeUnmount.forEach(callback => callback());
   assert.equal(harness.editors[2].destroyed, true);
   harness.scope.stop();
+  touch = true;
+  const phone = createHarness({ processId: 'composer_focus_phone' });
+  phone.lifecycle.mounted.forEach(callback => callback());
+  await nextTick();
+  assert.equal(phone.editors[0].focused, 0, 'a touch screen opens an agent without the keyboard');
+  phone.props.processId = 'composer_focus_phone_next';
+  await nextTick();
+  await nextTick();
+  assert.equal(phone.editors[1].focused, 0, 'a touch screen switches agents without the keyboard');
+  phone.lifecycle.beforeUnmount.forEach(callback => callback());
+  phone.scope.stop();
+  touch = false;
 });
 
 test('mention search is bounded, debounced, and keyboard selectable', async () => {

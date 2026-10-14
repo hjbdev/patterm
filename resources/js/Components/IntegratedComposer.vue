@@ -122,22 +122,30 @@
       <!-- Tiptap's editable element takes its role, classes and ARIA state from editorAttributes. -->
       <EditorContent v-if="editor" :editor="editor.tiptap" class="composer-editor" />
 
-      <div class="flex min-h-11 flex-wrap items-center gap-2 px-2 pb-1">
-        <IntegratedControlPicker v-for="selector in controls.selectors" :key="selector.id" :selector="selector" :disabled="!controlling || sending || ended" @select="emit('configure', selector.id, $event)" />
+      <!-- Phones keep one row: status on the left, then attach, the drawer
+           that holds the pickers, stop, and send (order 1 to 4). -->
+      <div class="flex min-h-11 items-center gap-2 px-2 pb-1 sm:flex-wrap">
+        <div v-if="controls.selectors.length" class="hidden flex-wrap items-center gap-2 sm:flex">
+          <IntegratedControlPicker v-for="selector in controls.selectors" :key="selector.id" :selector="selector" :disabled="!controlling || sending || ended" @select="emit('configure', selector.id, $event)" />
+        </div>
         <span class="flex-1" />
         <!-- The agent's state and usage, from the conversation. -->
-        <slot name="status" />
+        <!-- On narrow phones it clips rather than run under the buttons. -->
+        <div class="flex min-w-0 items-center gap-2 overflow-hidden max-sm:order-first">
+          <slot name="status" />
+        </div>
         <span v-if="sending" class="text-xs text-muted-foreground" role="status">Sending…</span>
-        <Button type="button" size="icon" variant="ghost" class="h-8 w-8 text-muted-foreground" :disabled="!controlling || ended" aria-label="Attach files" title="Attach files" @click="picker?.click()">
+        <Button type="button" size="icon" variant="ghost" class="h-8 w-8 text-muted-foreground max-sm:order-1" :disabled="!controlling || ended" aria-label="Attach files" title="Attach files" @click="picker?.click()">
           <Paperclip class="h-4 w-4" />
         </Button>
-        <Button v-if="!controlling && !ended" type="button" size="sm" @click="emit('takeControl')">Take control</Button>
-        <Button v-else type="submit" size="icon" class="h-8 w-8" :disabled="!canSend" :aria-label="sending ? 'Sending' : 'Send message'" :title="sendTitle">
+        <Button v-if="!controlling && !ended" type="button" size="sm" class="max-sm:order-4" @click="emit('takeControl')">Take control</Button>
+        <Button v-else type="submit" size="icon" class="h-8 w-8 max-sm:order-4" :disabled="!canSend" :aria-label="sending ? 'Sending' : 'Send message'" :title="sendTitle">
           <ArrowUp class="h-4 w-4" />
         </Button>
-        <Button type="button" size="icon" variant="outline" class="h-8 w-8" :disabled="!controlling || ended" aria-label="Stop response" title="Stop response" @click="emit('interrupt')">
+        <Button type="button" size="icon" variant="outline" class="h-8 w-8 max-sm:order-3" :disabled="!controlling || ended" aria-label="Stop response" title="Stop response" @click="emit('interrupt')">
           <Square class="h-3.5 w-3.5" />
         </Button>
+        <IntegratedControlDrawer v-if="controls.selectors.length" :selectors="controls.selectors" :disabled="!controlling || sending || ended" @select="(id, value) => emit('configure', id, value)" />
       </div>
     </div>
     <input ref="picker" type="file" multiple class="hidden" :accept="accept" @change="onPick">
@@ -151,6 +159,7 @@ import { ArrowUp, Paperclip, Square } from 'lucide-vue-next';
 import { Button } from './ui/button';
 import AgentIcon from './AgentIcon.vue';
 import ComposerWorkingBorder from './ComposerWorkingBorder.vue';
+import IntegratedControlDrawer from './IntegratedControlDrawer.vue';
 import IntegratedControlPicker from './IntegratedControlPicker.vue';
 import TabActivity from './TabActivity.vue';
 import {
@@ -175,6 +184,7 @@ import type { ComposerChip } from '../lib/composerDocument';
 import { createComposerEditor, type ComposerEditor } from '../lib/composerEditor';
 import { interceptMcpCallbackPaste } from '../lib/mcpCallbackPaste';
 import { sessionStatusIcon } from '../lib/statusIcons';
+import { touchScreen } from '../lib/touch';
 
 interface Selector { id: string; label: string; value: string; options: Array<{ value: string; label: string }> }
 interface NativeCommand { name: string; description?: string; source?: 'patterm' }
@@ -584,16 +594,22 @@ watch(() => draft.value.text, (text) => {
   if (editor.value && editor.value.getText() !== text) editor.value.setText(text, draft.value.chips);
 });
 watch([placeholder, editorAttributes], () => editor.value?.refresh());
+// Arriving at an agent focuses its composer, except on touch screens, where
+// that would reopen the keyboard the user just closed.
+function focusOnArrival(): void {
+  if (!touchScreen()) focusEditor();
+}
+
 watch(() => props.processId, () => {
   closeMenus();
   mountEditor();
-  void nextTick(focusEditor);
+  void nextTick(focusOnArrival);
 });
 watch(previewSessionId, (sessionId) => { mentionPreview.value = sessionId; });
 // Created last so the editor's callbacks can read everything above, and
 // before the first render so the composer never renders without it.
 mountEditor();
-onMounted(() => void nextTick(focusEditor));
+onMounted(() => void nextTick(focusOnArrival));
 onBeforeUnmount(() => {
   invalidateSearch();
   mentionPreview.value = null;
