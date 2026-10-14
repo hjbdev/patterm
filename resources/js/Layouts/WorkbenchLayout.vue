@@ -47,7 +47,6 @@
               :active-session-id="activeWorkspacePage === 'workbench' && projectViewMode === 'agents' ? selectedAgent?.id ?? null : null"
               @select="(rootId, session) => selectAgentTabTarget({ rootId, session })"
               @select-process="selectAgentProcess"
-              @launched="selectLaunchedAgent"
             />
           </div>
           <!-- The vertical padding leaves room for a tab's mention glow, which the scroller would clip. -->
@@ -67,10 +66,10 @@
               @select="selectAgentSession"
               @select-process="selectAgentProcess"
             />
+            <HarnessLaunchTabs :project-id="activeProject.project.id" />
             <div class="shrink-0">
               <LaunchAgentMenu
                 :project-id="activeProject.project.id"
-                @launched="selectLaunchedAgent"
               />
             </div>
           </div>
@@ -115,6 +114,7 @@ import { useMediaQuery } from '@vueuse/core';
 import AssistantDock from '../Components/Assistant/AssistantDock.vue';
 import CommandPalette from '../Components/CommandPalette.vue';
 import LaunchAgentMenu from '../Components/LaunchAgentMenu.vue';
+import HarnessLaunchTabs from '../Components/HarnessLaunchTabs.vue';
 import MobileTabs from '../Components/MobileTabs.vue';
 import TabStrip from '../Components/TabStrip.vue';
 import WorkbenchTopBar from '../Components/WorkbenchTopBar.vue';
@@ -126,6 +126,7 @@ import { provideSidebarContext } from '../Components/Sidebar/sidebarContext';
 import { TooltipProvider } from '../Components/ui/tooltip';
 import { APPEARANCE_SETTINGS_CHANGED_EVENT, applyUiFont, lastKnownAppearanceSettings, loadAppearanceSettings, navigationLayoutHint, normalizeAppearanceSettings, type AppearanceSettings, type NavigationLayout } from '../appearance/AppearanceSettings';
 import { useWorkbench } from '../Composables/useWorkbench';
+import { useHarnessLaunchCleanup, useProjectHarnessLaunches } from '../Composables/useHarnessLaunch';
 import { useWorkbenchNavigation } from '../Composables/useWorkbenchNavigation';
 import {
   agentOptionTargetByDelta,
@@ -145,8 +146,10 @@ import type { ProcessRecord, SessionRecord } from '../types';
 
 const { projects, sidecarStatus, sidecarAvailable, loaded, refresh } = useWorkbench();
 const { router, route, activeProjectId, activeProject, selectedAgent, selectedProcess, activeTerminalId, projectViewMode,
-  activeWorkspacePage, selectProject, selectTerminal, selectLaunchedAgent } = useWorkbenchNavigation();
+  activeWorkspacePage, selectProject, selectTerminal } = useWorkbenchNavigation();
+useHarnessLaunchCleanup();
 const selectedAgentByRoot = ref<SelectedAgentByRoot>({});
+const pendingLaunches = useProjectHarnessLaunches(() => activeProjectId.value);
 const navigationMode = ref(false);
 const tabLayoutByProject = ref<Record<string, TabLayout>>({});
 const paletteOpen = ref(false);
@@ -234,6 +237,11 @@ function selectNavigationTab(index: number | null, delta: number): void {
         select: () => selectAgentTabTarget({ rootId: tab.family.rootId, session: tab.family.active })
       }
     : { id: tab.key, selected: Boolean(activeTerminalId.value && tab.process.ptyProcessId === activeTerminalId.value), select: () => selectAgentProcess(tab.process) });
+  tabs.push(...pendingLaunches.value.map((launch) => ({
+    id: launch.id,
+    selected: route.name === 'launch' && route.params.launchId === launch.id,
+    select: () => { void router.push({ name: 'launch', params: { projectId: launch.input.projectId, launchId: launch.id } }); }
+  })));
   if (!tabs.length) return;
   const current = tabs.findIndex((tab) => tab.selected);
   const target = tabs[index ?? (current + delta + tabs.length) % tabs.length];
@@ -309,7 +317,6 @@ provideSidebarContext({
   selectProcess: selectAgentProcess,
   navigate: (page) => { if (activeProjectId.value) void router.push({ name: page, params: { projectId: activeProjectId.value } }); },
   updateLayout: updateCurrentTabLayout,
-  launched: (sessionId, terminalId) => { void selectLaunchedAgent(sessionId, terminalId); }
 });
 
 // Integrated agents have no terminal, so the palette also gets the routed agent

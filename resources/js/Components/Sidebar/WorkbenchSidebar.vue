@@ -43,6 +43,7 @@ import { useWindowSize } from '@vueuse/core';
 import { assistantLayout } from '../../lib/assistantLayout';
 import { assistant } from '../../lib/assistant';
 import { provideAgentDigests } from '../../Composables/useAgentDigests';
+import { useSelectedHarnessLaunch } from '../../Composables/useHarnessLaunch';
 import { useBoardKeys } from '../../Composables/useBoard';
 import SidebarDrawer from './SidebarDrawer.vue';
 import SidebarRail from './SidebarRail.vue';
@@ -51,6 +52,7 @@ import { clampSidebarWidth, SIDEBAR_WIDTH, sidebarLayout } from './sidebarLayout
 import SidebarList from './SidebarList.vue';
 
 const sidebar = useSidebar();
+const selectedLaunch = useSelectedHarnessLaunch();
 // Read once for every list's agent cards and for the board.
 provideAgentDigests();
 useBoardKeys();
@@ -106,7 +108,7 @@ function dock(): void {
 }
 
 // Choosing something dismisses the overlay and the phone drawer.
-watch(() => [sidebar.page.value, ...sidebar.tabs.value.flatMap((tab) => tab.kind === 'agent'
+watch(() => [sidebar.page.value, selectedLaunch.value?.id, ...sidebar.tabs.value.flatMap((tab) => tab.kind === 'agent'
   ? [...tab.family.options.filter((option) => sidebar.sessionActive(option.session)).map((option) => option.session.id), ...sidebar.ownedProcesses(tab.family).filter(sidebar.processActive).map((process) => process.id)]
   : sidebar.processActive(tab.process) ? [tab.key] : [])].join(),
 () => { sidebarLayout.drawerOpen = false; sidebarLayout.mobileOpen = false; });

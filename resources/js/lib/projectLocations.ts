@@ -21,6 +21,7 @@ const lastLocations = new Map<string, ProjectLocation>();
 // own, such as the board; when it redirects to the first tab, that tab is
 // remembered over it straight away.
 export function rememberProjectLocation(route: RouteLike): void {
+  if (route.name === 'launch') return;
   const { projectId, sessionId, processId } = route.params;
   if (typeof projectId !== 'string' || typeof route.name !== 'string') return;
   lastLocations.set(projectId, {
