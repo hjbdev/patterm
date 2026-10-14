@@ -1,5 +1,5 @@
 <template>
-  <header class="flex h-11 shrink-0 items-center gap-1.5 overflow-hidden bg-transparent px-2 sm:gap-2">
+  <header class="flex h-11 shrink-0 items-center gap-1.5 overflow-hidden bg-transparent px-2 [container-type:inline-size] sm:gap-2">
     <ResponsiveMenu v-model:open="projectMenuOpen" title="Projects" desktop-class="w-72" @content-pointer-enter="cancelProjectMenuClose" @content-pointer-leave="scheduleProjectMenuClose" @content-keydown="stopProjectMenuHover" @open-auto-focus="keepHoverFocus" @close-auto-focus="keepHoverFocus">
       <template #trigger>
         <Button variant="ghost" size="sm" class="h-[26px] max-w-[38vw] shrink-0 justify-between gap-1 rounded-tab px-2 py-0.5 text-[13px] sm:max-w-64 sm:gap-2" @pointerenter="openProjectMenuOnHover" @pointerleave="scheduleProjectMenuClose" @pointerdown="stopProjectMenuHover" @keydown="stopProjectMenuHover">
@@ -50,8 +50,8 @@
       </template>
     </ResponsiveMenu>
 
-    <!-- From md up: below it, the switcher and toolbar already fill the bar and the icons would push Settings out of view. -->
-    <div v-if="showRecentProjects && recentProjects.length" class="hidden shrink-0 items-center md:flex">
+    <!-- Only when the bar is wide enough: narrower, as in a small window or beside the docked assistant, the switcher and toolbar already fill it and the icons would push Settings out of view. -->
+    <div v-if="showRecentProjects && recentProjects.length" class="hidden shrink-0 items-center [@container(min-width:46rem)]:flex">
       <Tooltip v-for="projectGroup in recentProjects" :key="projectGroup.project.id">
         <TooltipTrigger as-child>
           <Button variant="ghost" size="icon" class="h-[26px] w-[26px] rounded-tab opacity-60 transition-opacity hover:opacity-100 focus-visible:opacity-100" :aria-label="`Switch to ${projectGroup.project.name}`" @click="emit('selectProject', projectGroup.project.id)">
