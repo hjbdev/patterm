@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The assistant can auto-compact after the existing idle delay when voice is
+  inactive. Voice cannot start until an automatic compaction finishes.
+
 - Integrated OpenCode prompts steer by default, as in OpenCode: a message sent
   mid-turn joins the turn at its next model step. Its pending row shows only
   the message and Cancel.
