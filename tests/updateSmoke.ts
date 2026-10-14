@@ -69,7 +69,7 @@ class FakeReleases {
 
 class MemorySettings {
   settings: UpdateSettings = { autoCheck: true, channel: 'stable' };
-  record: UpdateRecord = { notifiedVersion: null, pending: null };
+  record: UpdateRecord = { notifiedVersions: [], pending: null };
   updateSettings() { return this.settings; }
   saveUpdateSettings(input: unknown) { this.settings = input as UpdateSettings; return this.settings; }
   updateRecord() { return this.record; }
@@ -218,6 +218,26 @@ async function testPrereleaseChannel(): Promise<void> {
   assert.equal(state.latest?.prerelease, true);
   assert.ok(releases.requests.includes('https://releases.test/download/v1.4.0-beta.10/manifest.json'));
 
+  // Each release is announced once, even after switching channels and back.
+  run.updates.updateSettings({ channel: 'stable' });
+  await run.updates.check();
+  assert.deepEqual(run.notices.map((notice) => notice.version), ['1.3.0', '1.4.0-beta.10']);
+
+  // A check begun on the old channel never publishes after a switch.
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const slowFetch = releases.fetch;
+  const racing = service({ install: install('1.2.0', key), releases, settings: Object.assign(new MemorySettings(), { settings: { autoCheck: false, channel: 'prerelease' } }) });
+  releases.fetch = async (input, init) => { await gate; return slowFetch(input, init); };
+  const stale = racing.updates.check();
+  racing.updates.updateSettings({ channel: 'stable' });
+  const applying = racing.updates.apply('1.4.0-beta.10');
+  release();
+  await stale;
+  await assert.rejects(applying, /1.3.0 is now the latest release/, 'a prerelease is never installed after opting out');
+  assert.equal(racing.updates.state().latest?.version, '1.3.0');
+  releases.fetch = slowFetch;
+
   // A listed tag whose manifest names another version is refused.
   const mismatched = new FakeReleases(key);
   mismatched.publish('1.3.0', { latest: false });
@@ -236,11 +256,16 @@ async function testApply(): Promise<void> {
   const applied: Array<{ version: string; sha256: string }> = [];
   const applier: UpdateApplier = { unavailable: () => null, apply: async (release) => { applied.push(release); return { quit: true, log: '/data/update.log' }; } };
   const run = service({ install: install('1.2.0', key), releases, applier });
-  await assert.rejects(run.updates.apply(), /No update is available/, 'an install never starts without a fresh check finding one');
+  await assert.rejects(run.updates.apply('1.3.0'), /No update is available/, 'an install never starts without a fresh check finding one');
   assert.deepEqual(applied, []);
 
   releases.publish('1.3.0');
-  const result = await run.updates.apply();
+  // A release published after the owner confirmed one needs its own confirmation.
+  releases.publish('1.4.0');
+  await assert.rejects(run.updates.apply('1.3.0'), /1.4.0 is now the latest release/);
+  assert.deepEqual(applied, []);
+  releases.publish('1.3.0');
+  const result = await run.updates.apply('1.3.0');
   assert.equal(result.quit, true);
   assert.equal(result.state.status, 'installing');
   assert.deepEqual(applied, [{ version: '1.3.0', sha256: SHA }]);
@@ -258,12 +283,32 @@ async function testApply(): Promise<void> {
   assert.equal(run.settings.record.pending, null);
 
   // The server's installer reports back only when it fails before restarting the service.
-  let fail: (error: Error) => void = () => undefined;
-  const server = service({
+  const serverRun = (done: Promise<'finished' | 'lost'>) => service({
     install: install('1.2.0', key), releases,
-    applier: { unavailable: () => null, apply: async () => ({ quit: false, log: 'journalctl', done: new Promise<void>((_resolve, reject) => { fail = reject; }) }) }
+    applier: { unavailable: () => null, apply: async () => ({ quit: false, log: 'journalctl', done }) }
   });
-  assert.equal((await server.updates.apply()).quit, false);
+  // Losing the watch, as when the installer stops this service, is not a failure.
+  const lost = serverRun(Promise.resolve('lost'));
+  await lost.updates.apply('1.3.0');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(lost.updates.state().status, 'installing');
+  assert.equal(lost.settings.record.pending?.version, '1.3.0', 'the next launch still confirms the update');
+  const finished = serverRun(Promise.resolve('finished'));
+  await finished.updates.apply('1.3.0');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(finished.updates.state().status, 'idle');
+  assert.equal(finished.settings.record.pending, null);
+  // Nothing is written once the service is disposed.
+  let failLater: (error: Error) => void = () => undefined;
+  const disposed = serverRun(new Promise((_resolve, reject) => { failLater = reject; }));
+  await disposed.updates.apply('1.3.0');
+  disposed.updates.dispose();
+  failLater(new Error('killed'));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(disposed.settings.record.pending?.version, '1.3.0');
+  let fail: (error: Error) => void = () => undefined;
+  const server = serverRun(new Promise((_resolve, reject) => { fail = reject; }));
+  assert.equal((await server.updates.apply('1.3.0')).quit, false);
   fail(new Error('the installer exited with 1'));
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(server.updates.state().status, 'error');
@@ -274,7 +319,7 @@ async function testApply(): Promise<void> {
   const blockedState = await blocked.updates.check();
   assert.equal(blockedState.canApply, false);
   assert.equal(blockedState.applyUnavailable, 'Not here.');
-  await assert.rejects(blocked.updates.apply(), /Not here/);
+  await assert.rejects(blocked.updates.apply('1.3.0'), /Not here/);
 }
 
 function plan(input: Partial<Parameters<typeof updatePlan>[0]> & { install: ReleaseInstall }): UpdatePlan {
@@ -295,7 +340,7 @@ function testPlans(): void {
   assert.match((updatePlan({ install: linux, mode: 'server', version: '1.3.0', sha256: SHA, pid: 1, logPath: '', env: {}, unit: 'u' }) as { unavailable: string }).unavailable, /not running as the patterm service/);
   const server = plan({ install: linux, mode: 'server', env: { INVOCATION_ID: 'x', PATTERM_PORT: '9000', SECRET: 'no' } });
   assert.equal(server.command, 'systemd-run');
-  assert.deepEqual(server.args, ['--user', '--collect', '--quiet', '--wait', '--unit=patterm-update-1', '--setenv=PATTERM_PORT=9000', '--setenv=PATTERM_HOME=/home/me/.local/share/patterm', `${linux.root}/scripts/install-release.sh`, '--version', '1.3.0', '--update']);
+  assert.deepEqual(server.args, ['--user', '--quiet', '--unit=patterm-update-1', '--setenv=PATTERM_PORT=9000', '--setenv=PATTERM_HOME=/home/me/.local/share/patterm', `${linux.root}/scripts/install-release.sh`, '--version', '1.3.0', '--update']);
   assert.equal(server.detached, false);
   assert.equal(server.log, 'journalctl --user -u patterm-update-1');
 
@@ -335,6 +380,36 @@ async function testInstaller(directory: string): Promise<void> {
   assert.ok(fs.existsSync(path.join(directory, 'logs')), 'the log directory exists before the helper writes to it');
 }
 
+// A server watches its installer's unit, and losing the watch is not a failure.
+async function testServerInstaller(directory: string): Promise<void> {
+  const key = signer();
+  const root = path.join(directory, 'server', 'versions', '1.2.0');
+  fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'scripts', 'install-release.sh'), '');
+  const outcome = async (states: Array<{ code: number | null; stdout?: string }>) => {
+    const calls: string[] = [];
+    const fakeSpawn = ((command: string, args: readonly string[]) => {
+      calls.push(`${command} ${args.join(' ')}`);
+      const reply = command === 'systemd-run' ? { code: 0 } : states.shift() ?? { code: 1 };
+      const child = Object.assign(new EventEmitter(), { stdout: new EventEmitter() });
+      setImmediate(() => {
+        if (reply.stdout) child.stdout.emit('data', Buffer.from(reply.stdout));
+        child.emit('close', reply.code);
+      });
+      return child;
+    }) as unknown as typeof import('node:child_process').spawn;
+    const installer = new UpdateInstaller({ install: { ...install('1.2.0', key), root }, mode: 'server', logPath: '', env: { INVOCATION_ID: 'x' }, spawn: fakeSpawn, pollMs: 1, now: () => 5 });
+    const result = await installer.apply({ version: '1.3.0', sha256: SHA });
+    assert.equal(result.quit, false);
+    assert.match(calls[0]!, /^systemd-run --user --quiet --unit=patterm-update-5 /);
+    return result.done!.then((value) => value, (error: Error) => error.message);
+  };
+  const running = { code: 0, stdout: 'LoadState=loaded\nActiveState=active\nResult=success\n' };
+  assert.equal(await outcome([running, { code: 0, stdout: 'LoadState=not-found\nActiveState=inactive\nResult=success\n' }]), 'finished');
+  assert.equal(await outcome([running, { code: null }]), 'lost', 'a watch killed with the service is not a failure');
+  assert.match(await outcome([running, { code: 0, stdout: 'LoadState=loaded\nActiveState=failed\nResult=exit-code\n' }]), /the installer ended with exit-code; see journalctl --user -u patterm-update-5/);
+}
+
 // The helper waits for the app to quit, installs, and opens it again.
 async function testHelperScript(directory: string): Promise<void> {
   if (process.platform === 'win32') return;
@@ -370,7 +445,7 @@ function testSettingsDefaults(directory: string): void {
     assert.throws(() => settings.saveUpdateSettings({ autoCheck: true, channel: 'nightly' }));
     settings.saveUpdateSettings({ autoCheck: false });
     assert.deepEqual(settings.updateSettings(), { autoCheck: false, channel: 'stable' });
-    assert.deepEqual(settings.updateRecord(), { notifiedVersion: null, pending: null });
+    assert.deepEqual(settings.updateRecord(), { notifiedVersions: [], pending: null });
   } finally {
     database.dispose();
   }
@@ -388,6 +463,7 @@ async function main(): Promise<void> {
     await testApply();
     testPlans();
     await testInstaller(directory);
+    await testServerInstaller(directory);
     await testHelperScript(directory);
     testSettingsDefaults(directory);
     console.log('update smoke passed');

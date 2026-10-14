@@ -37,10 +37,10 @@ export async function checkForUpdates(): Promise<void> {
   state.value = await window.patterm.call('settings_updates_check', {}) as UpdateState;
 }
 
-// Starts the installer. On the desktop the caller then quits Patterm; a
-// server restarts itself.
-export async function applyUpdate(): Promise<{ quit: boolean }> {
-  const result = await window.patterm.call('settings_updates_apply', { confirmed: true }) as { quit: boolean; state: UpdateState };
+// Starts the installer for the version the owner confirmed. On the desktop
+// the caller then quits Patterm; a server restarts itself.
+export async function applyUpdate(version: string): Promise<{ quit: boolean }> {
+  const result = await window.patterm.call('settings_updates_apply', { confirmed: true, version }) as { quit: boolean; state: UpdateState };
   state.value = result.state;
   return result;
 }

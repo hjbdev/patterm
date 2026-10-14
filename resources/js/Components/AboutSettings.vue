@@ -7,7 +7,7 @@
           <a v-if="updates?.latest" :href="updates.latest.notesUrl" target="_blank" rel="noreferrer" class="underline underline-offset-2 hover:text-foreground">Release notes</a>
         </template>
         <template v-if="updates?.supported">
-          <Button v-if="updates.canApply" type="button" size="sm" class="h-7 px-2.5" @click="confirmOpen = true">Restart to update</Button>
+          <Button v-if="updates.canApply" type="button" size="sm" class="h-7 px-2.5" @click="openConfirm">Restart to update</Button>
           <Button v-else-if="updates.status !== 'installing'" type="button" size="sm" variant="ghost" class="h-7 px-2" :disabled="checking || updates.status === 'checking'" @click="check">
             {{ checking || updates.status === 'checking' ? 'Checking…' : 'Check now' }}
           </Button>
@@ -36,7 +36,7 @@
   <Dialog :open="confirmOpen" @update:open="(value) => { if (!value && !applying) confirmOpen = false; }">
     <DialogContent class="sm:max-w-md" @interact-outside="(event) => event.preventDefault()">
       <DialogHeader>
-        <DialogTitle>Update to Patterm {{ updates?.latest?.version }}?</DialogTitle>
+        <DialogTitle>Update to Patterm {{ confirmVersion }}?</DialogTitle>
         <DialogDescription>{{ updates?.restartDetail }}</DialogDescription>
       </DialogHeader>
       <p v-if="applyError" role="alert" class="text-sm text-destructive">{{ applyError }}</p>
@@ -68,6 +68,9 @@ const checking = ref(false);
 const confirmOpen = ref(false);
 const applying = ref(false);
 const applyError = ref('');
+// Pinned when the dialog opens, so a newer release found meanwhile is never
+// installed without its own confirmation.
+const confirmVersion = ref('');
 // The notices run to hundreds of kilobytes, so both load only when opened.
 const loaders: Record<Document, () => Promise<{ default: string }>> = {
   licence: () => import('../../../LICENSE?raw'),
@@ -105,11 +108,17 @@ function save(field: keyof UpdateState['settings'], settings: UpdateState['setti
   void autosave(`updates.${field}`, () => saveUpdateSettings(settings));
 }
 
+function openConfirm(): void {
+  confirmVersion.value = updates.value?.latest?.version ?? '';
+  applyError.value = '';
+  confirmOpen.value = true;
+}
+
 async function apply(): Promise<void> {
   applying.value = true;
   applyError.value = '';
   try {
-    const { quit } = await applyUpdate();
+    const { quit } = await applyUpdate(confirmVersion.value);
     // The desktop quits like Quit Patterm; a helper installs and reopens it.
     // A server restarts itself, and the browser reconnects.
     if (quit && window.patterm.runtime !== 'browser') {

@@ -101,10 +101,10 @@ export const updateSettingsInput = z.object({
   channel: z.enum(['stable', 'prerelease']).default('stable')
 }).strict();
 export type UpdateSettings = z.infer<typeof updateSettingsInput>;
-// What the updater remembers between launches: the release it last announced,
+// What the updater remembers between launches: the releases it announced,
 // and an update handed to an installer that the next launch should confirm.
 export const updateRecordInput = z.object({
-  notifiedVersion: z.string().nullable().default(null),
+  notifiedVersions: z.array(z.string()).default([]),
   pending: z.object({ version: z.string(), from: z.string(), startedAt: z.string(), log: z.string() }).nullable().default(null)
 });
 export type UpdateRecord = z.infer<typeof updateRecordInput>;

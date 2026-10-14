@@ -8,6 +8,7 @@ export const RELEASE_REPO = 'hjbdev/patterm';
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const FIRST_CHECK_DELAY_MS = 30_000;
 const FETCH_TIMEOUT_MS = 30_000;
+const ANNOUNCED_VERSIONS = 20;
 const VERSION = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 
 // A release package, recognised by the BUILD file and signing key that
@@ -120,8 +121,10 @@ export interface UpdateState {
 // Starts the platform installer for a verified release. See UpdateInstaller.
 export interface UpdateApplier {
   unavailable(): string | null;
-  // `done` settles when an installer this process waits on finishes.
-  apply(release: { version: string; sha256: string }): Promise<{ quit: boolean; log: string; done?: Promise<void> }>;
+  // `done` settles when an installer this process watches finishes: it
+  // resolves 'finished', resolves 'lost' when this process can no longer
+  // tell (as when the installer stops it), and rejects when it failed.
+  apply(release: { version: string; sha256: string }): Promise<{ quit: boolean; log: string; done?: Promise<'finished' | 'lost'> }>;
 }
 
 export interface UpdateServiceOptions {
@@ -143,6 +146,10 @@ export class UpdateService {
   private error: string | null = null;
   private manifest: ReleaseManifest | null = null;
   private checking: Promise<UpdateState> | null = null;
+  // Bumped when the channel changes, so a check begun on the old channel
+  // cannot publish its result.
+  private generation = 0;
+  private disposed = false;
   private firstCheck: NodeJS.Timeout | null = null;
   private interval: NodeJS.Timeout | null = null;
   private readonly fetch: typeof fetch;
@@ -170,6 +177,7 @@ export class UpdateService {
   }
 
   dispose(): void {
+    this.disposed = true;
     if (this.firstCheck) clearTimeout(this.firstCheck);
     if (this.interval) clearInterval(this.interval);
     this.firstCheck = this.interval = null;
@@ -204,6 +212,8 @@ export class UpdateService {
     const saved = this.options.settings.saveUpdateSettings({ ...before, ...(input as object) });
     // A changed channel makes the last result stale.
     if (saved.channel !== before.channel && this.status !== 'installing') {
+      this.generation++;
+      this.checking = null;
       this.manifest = null;
       this.status = 'idle';
       if (saved.autoCheck) void this.check().catch(() => undefined);
@@ -216,10 +226,14 @@ export class UpdateService {
   check(): Promise<UpdateState> {
     if (!this.options.install) return Promise.resolve(this.state());
     if (this.status === 'installing') return Promise.resolve(this.state());
-    return this.checking ??= this.runCheck().finally(() => { this.checking = null; });
+    if (this.checking) return this.checking;
+    const run = this.runCheck().finally(() => { if (this.checking === run) this.checking = null; });
+    return this.checking = run;
   }
 
-  async apply(): Promise<{ quit: boolean; state: UpdateState }> {
+  // `version` is the release the owner confirmed. A different one, found by
+  // the fresh check, needs its own confirmation.
+  async apply(version: string): Promise<{ quit: boolean; state: UpdateState }> {
     const install = this.options.install;
     const applier = this.options.applier;
     if (!install || !applier) throw new Error(this.state().applyUnavailable ?? 'This install cannot update itself');
@@ -229,9 +243,9 @@ export class UpdateService {
     await this.check();
     const state = this.state();
     if (state.status !== 'available' || !this.manifest) throw new Error(state.error ?? 'No update is available');
+    if (this.manifest.version !== version) throw new Error(`Patterm ${this.manifest.version} is now the latest release. Review it, then update again.`);
     if (!state.canApply) throw new Error(state.applyUnavailable ?? 'This install cannot update itself');
     const target = this.packageFor(this.manifest)!;
-    const version = this.manifest.version;
     this.status = 'installing';
     this.error = null;
     this.options.changed();
@@ -242,12 +256,14 @@ export class UpdateService {
       this.options.settings.saveUpdateRecord({ ...record, pending: { version, from: install.version, startedAt, log: '' } });
       const result = await applier.apply({ version, sha256: target.sha256 });
       this.options.settings.saveUpdateRecord({ ...this.options.settings.updateRecord(), pending: { version, from: install.version, startedAt, log: result.log } });
-      result.done?.then(() => {
+      result.done?.then((outcome) => {
+        // A lost installer leaves the record for the next launch to confirm.
+        if (this.disposed || outcome === 'lost') return;
         // Finished without restarting this process; the next check shows what is installed.
         this.options.settings.saveUpdateRecord({ ...this.options.settings.updateRecord(), pending: null });
         this.status = 'idle';
         this.options.changed();
-      }, (error: unknown) => this.failed(version, error));
+      }, (error: unknown) => { if (!this.disposed) this.failed(version, error); });
       return { quit: result.quit, state: this.state() };
     } catch (error) {
       this.failed(version, error);
@@ -264,11 +280,13 @@ export class UpdateService {
 
   private async runCheck(): Promise<UpdateState> {
     const install = this.options.install!;
+    const generation = this.generation;
+    const { channel } = this.options.settings.updateSettings();
     this.status = 'checking';
     this.options.changed();
     try {
-      const { channel } = this.options.settings.updateSettings();
       const manifest = channel === 'prerelease' ? await this.newestManifest(install) : await this.manifestAt(install, `${this.releasesUrl}/latest/download`);
+      if (generation !== this.generation) return this.state();
       this.checkedAt = this.now().toISOString();
       this.error = null;
       const newer = manifest && compareVersions(manifest.version, install.version) > 0 && (channel === 'prerelease' || !manifest.prerelease);
@@ -276,6 +294,7 @@ export class UpdateService {
       this.status = newer ? 'available' : 'up_to_date';
       if (newer) this.announce(manifest.version);
     } catch (error) {
+      if (generation !== this.generation) return this.state();
       this.checkedAt = this.now().toISOString();
       this.status = 'error';
       this.error = `Could not check for updates: ${message(error)}`;
@@ -316,11 +335,11 @@ export class UpdateService {
     return manifest.packages[`${install.platform}-${install.arch}`] ?? null;
   }
 
-  // Each release is announced once, even across restarts.
+  // Each release is announced once, even across restarts and channel switches.
   private announce(version: string): void {
     const record = this.options.settings.updateRecord();
-    if (record.notifiedVersion === version) return;
-    this.options.settings.saveUpdateRecord({ ...record, notifiedVersion: version });
+    if (record.notifiedVersions.includes(version)) return;
+    this.options.settings.saveUpdateRecord({ ...record, notifiedVersions: [...record.notifiedVersions, version].slice(-ANNOUNCED_VERSIONS) });
     this.options.notify({ version, canApply: this.state().canApply });
   }
 

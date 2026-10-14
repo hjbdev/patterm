@@ -24,6 +24,8 @@ export interface UpdatePlan {
   log: string;
   // Files the plan runs, which a release package must contain.
   scripts: string[];
+  // The transient systemd unit a server's installer runs in.
+  unit?: string;
 }
 
 // Server variables the Linux installer reads, passed to its transient unit.
@@ -45,13 +47,16 @@ export function updatePlan(input: UpdatePlanInput): UpdatePlan | { unavailable: 
     const installer = path.join(scripts, 'install-release.sh');
     const env = { ...Object.fromEntries(SERVER_INSTALLER_ENV.flatMap((name) => input.env[name] ? [[name, input.env[name]]] : [])), PATTERM_HOME: home };
     return {
-      // Outside the service's control group, which the installer stops.
+      // Outside the service's control group, which the installer stops. The
+      // unit outlives a failure, so its result can be read, and is unloaded
+      // once it succeeds.
       command: 'systemd-run',
-      args: ['--user', '--collect', '--quiet', '--wait', `--unit=${input.unit}`, ...Object.entries(env).map(([name, value]) => `--setenv=${name}=${value}`), installer, '--version', version, '--update'],
+      args: ['--user', '--quiet', `--unit=${input.unit}`, ...Object.entries(env).map(([name, value]) => `--setenv=${name}=${value}`), installer, '--version', version, '--update'],
       env: input.env,
       detached: false,
       log: `journalctl --user -u ${input.unit}`,
-      scripts: [installer]
+      scripts: [installer],
+      unit: input.unit
     };
   }
   const pid = String(input.pid);
@@ -114,7 +119,10 @@ export interface UpdateInstallerOptions {
   pid?: number;
   spawn?: typeof nodeSpawn;
   now?: () => number;
+  pollMs?: number;
 }
+
+interface CommandResult { code: number | null; stdout: string }
 
 export class UpdateInstaller implements UpdateApplier {
   private readonly spawn: typeof nodeSpawn;
@@ -130,7 +138,7 @@ export class UpdateInstaller implements UpdateApplier {
     return missing ? `This release package has no ${path.basename(missing)}; update it with its installer.` : null;
   }
 
-  async apply(release: { version: string; sha256: string }): Promise<{ quit: boolean; log: string; done?: Promise<void> }> {
+  async apply(release: { version: string; sha256: string }): Promise<{ quit: boolean; log: string; done?: Promise<'finished' | 'lost'> }> {
     const plan = this.plan(release);
     if ('unavailable' in plan) throw new Error(plan.unavailable);
     if (plan.detached) {
@@ -143,23 +151,37 @@ export class UpdateInstaller implements UpdateApplier {
       child.unref();
       return { quit: true, log: plan.log };
     }
-    // The installer stops this service when it succeeds, so `done` settles
-    // only if it failed first.
-    const child = this.spawn(plan.command, plan.args, { env: plan.env, stdio: 'ignore' });
-    const exited = new Promise<number | null>((resolve, reject) => {
+    const started = await this.run(plan.command, plan.args, plan.env);
+    if (started.code !== 0) throw new Error(`systemd-run exited with ${started.code ?? 'a signal'}`);
+    return { quit: false, log: plan.log, done: this.watch(plan.unit!, plan.log) };
+  }
+
+  // Follows the installer's unit until it ends. The installer stops this
+  // service when it succeeds, which also ends the watch: a check that
+  // cannot run reports the installer as lost, never as failed.
+  private async watch(unit: string, log: string): Promise<'finished' | 'lost'> {
+    for (;;) {
+      await new Promise((resolve) => setTimeout(resolve, this.options.pollMs ?? 2000));
+      let result: CommandResult;
+      try { result = await this.run('systemctl', ['--user', 'show', '--property=LoadState,ActiveState,Result', unit], this.options.env ?? process.env); }
+      catch { return 'lost'; }
+      if (result.code !== 0) return 'lost';
+      const property = (name: string) => new RegExp(`^${name}=(.*)$`, 'm').exec(result.stdout)?.[1] ?? '';
+      if (property('LoadState') === 'not-found') return 'finished';
+      if (['active', 'activating', 'deactivating', 'reloading'].includes(property('ActiveState'))) continue;
+      if (property('Result') === 'success') return 'finished';
+      throw new Error(`the installer ended with ${property('Result') || property('ActiveState')}; see ${log}`);
+    }
+  }
+
+  private run(command: string, args: string[], env: NodeJS.ProcessEnv): Promise<CommandResult> {
+    return new Promise((resolve, reject) => {
+      const child = this.spawn(command, args, { env, stdio: ['ignore', 'pipe', 'ignore'] });
+      let stdout = '';
+      child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
       child.once('error', reject);
-      child.once('exit', resolve);
+      child.once('close', (code) => resolve({ code, stdout }));
     });
-    const done = exited.then((code) => {
-      if (code !== 0) throw new Error(`the installer exited with ${code ?? 'a signal'}; see ${plan.log}`);
-    });
-    // A failure to start rejects below; this keeps `done` from also going unhandled.
-    done.catch(() => undefined);
-    await new Promise<void>((resolve, reject) => {
-      child.once('spawn', resolve);
-      child.once('error', reject);
-    });
-    return { quit: false, log: plan.log, done };
   }
 
   private plan(release: { version: string; sha256: string }): UpdatePlan | { unavailable: string } {

@@ -4,7 +4,8 @@ import type { McpToolRegistry } from './ToolRegistry';
 
 export const UPDATE_TOOLS = ['settings_updates_get', 'settings_updates_update', 'settings_updates_check', 'settings_updates_apply'] as const;
 
-const applyInput = z.object({ confirmed: z.literal(true) }).strict();
+// The version the owner confirmed, which the update must still be.
+const applyInput = z.object({ confirmed: z.literal(true), version: z.string().min(1) }).strict();
 
 // Owner-only update controls for Settings › About. Paired hosts cannot call
 // settings tools, so a peer never updates this machine.
@@ -22,10 +23,7 @@ export function registerUpdateTools(registry: McpToolRegistry, updates: Pick<Upd
     () => updates.check()
   );
   registry.register(
-    { name: 'settings_updates_apply', namespace: 'settings', description: 'Install the available update. On the desktop the caller then quits Patterm; the server restarts itself.', hidden: true, changes: ['updates'], inputSchema: { type: 'object', required: ['confirmed'] } },
-    async (args) => {
-      applyInput.parse(args);
-      return updates.apply();
-    }
+    { name: 'settings_updates_apply', namespace: 'settings', description: 'Install the available update. On the desktop the caller then quits Patterm; the server restarts itself.', hidden: true, changes: ['updates'], inputSchema: { type: 'object', required: ['confirmed', 'version'] } },
+    (args) => updates.apply(applyInput.parse(args).version)
   );
 }
