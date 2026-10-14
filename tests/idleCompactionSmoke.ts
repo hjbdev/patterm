@@ -34,7 +34,7 @@ async function main() {
   const compacted: string[] = [];
   let fail = false;
   let uncertain = false;
-  const models: Record<string, string | null> = { codex: 'gpt-6-astra', old: 'gpt-5.5', openai: 'openai/gpt-5.6', go: 'opencode-go/deepseek-v4.1-flash' };
+  const models: Record<string, string | null> = { codex: 'gpt-6-astra', assistant: 'gpt-6.1-sol', old: 'gpt-5.5', openai: 'openai/gpt-5.6', go: 'opencode-go/deepseek-v4.1-flash' };
   let modelGate: Promise<void> | null = null;
   const source: IdleCompactionSource = {
     onActivityChange(listener) { activityListener = listener; return () => { activityListener = undefined; }; },
@@ -75,7 +75,8 @@ async function main() {
   const state = (id: string) => db.prepare('select cache_compaction as state, cache_idle_since as since from processes where id = ?').get(id) as { state: string | null; since: string | null };
   const cleared = { state: null, since: null };
   const enabled: Record<string, boolean> = { claude: true, codex: true, opencode: true };
-  const service = new IdleCompactionService(database, source, (harness) => enabled[harness] === true);
+  let assistantVoiceActive = false;
+  const service = new IdleCompactionService(database, source, (harness) => enabled[harness] === true, undefined, Date.now, () => assistantVoiceActive);
   const count = (id: string) => compacted.filter((item) => item === id).length;
   try {
     db.exec("insert into projects(id,name,path,created_at,updated_at) values('project','Test','/tmp','now','now')");
@@ -250,12 +251,33 @@ async function main() {
     native('codex');
     native('openai');
 
-    // The assistant is never compacted: Codex drops voice input steered into
-    // a compaction.
+    // The assistant uses the same idle delay, but voice prevents compaction.
+    assistantVoiceActive = true;
     turn('assistant');
     await wait(SETTLE);
     assert.equal(count('assistant'), 0);
     assert.deepEqual(state('assistant'), cleared);
+    assistantVoiceActive = false;
+    turn('assistant');
+    await wait(SETTLE);
+    assert.equal(count('assistant'), 1);
+    assert.equal(service.compacting('assistant'), true);
+    native('assistant');
+    await wait(SETTLE);
+    assert.equal(count('assistant'), 1, 'compaction does not re-arm itself');
+
+    // Voice can start during the model lookup; check it again before admission.
+    const voiceGate = deferred<void>();
+    modelGate = voiceGate.promise;
+    turn('assistant');
+    await wait(SETTLE);
+    assistantVoiceActive = true;
+    voiceGate.resolve();
+    await wait(SETTLE);
+    assert.equal(count('assistant'), 1);
+    assert.deepEqual(state('assistant'), cleared);
+    assistantVoiceActive = false;
+    modelGate = null;
 
     // A model lookup that resolves after a newer turn leaves that turn's state.
     const gate = deferred<void>();
