@@ -62,6 +62,13 @@ const compiledDev = {
 // Source copied into the repository rather than installed as a dependency.
 const copied = [
   {
+    name: 'Rolldown runtime',
+    version: '1.2.13',
+    license: 'MIT',
+    files: ['rolldown.LICENSE', 'rolldown.THIRD-PARTY-LICENSE'],
+    note: 'Vite+ 1.2.0 emits its JavaScript helpers into the renderer bundles. The bundler and native build tools are not shipped.'
+  },
+  {
     name: 'shadcn-vue',
     license: 'MIT',
     files: ['shadcn-vue.LICENSE'],
