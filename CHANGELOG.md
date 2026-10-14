@@ -14,17 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Closing an agent or process from a tab, sidebar row, or menu now asks for
-  confirmation first.
-
-### Removed
-
-- The `…` button on sidebar rows. Right-click opens the same menu.
-
+- Closing an agent or process from a tab, sidebar row, menu, or the command
+  palette now asks for confirmation first.
 - The expand button on an agent's HTML page opens it full screen instead of
   in a small dialog, and Escape closes it.
 - The image viewer shows its previous and next arrows only while the pointer
   is over the image.
+
+### Removed
+
+- The `…` button on sidebar rows. Right-click opens the same menu.
 
 ## [0.2.0] - 2026-10-14
 

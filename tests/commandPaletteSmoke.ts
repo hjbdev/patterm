@@ -121,6 +121,7 @@ async function main() {
   assert.equal(listed.find(item => item.id === 'navigate:process:p:server')?.hint, 'Started by child');
   const processCurrent = (await listCommandPaletteCommands(integratedApplication, { ...integratedContext, active_session_id: null, active_process_id: 'crashed' })).commands.filter(item => item.group === 'current');
   assert.deepEqual(processCurrent.map(item => item.id), ['process:restart:crashed', 'process:rename:crashed', 'renderer:copy:crashed', 'process:close:crashed']);
+  assert.equal(processCurrent.find(item => item.id === 'process:close:crashed')?.confirmation, 'This stops the process.', 'Closing a process asks first');
 
   const calls: Array<{ name: string; args: unknown }> = [];
   const recording = { ...integratedApplication, mcp: { call: async (name: string, args: unknown) => { calls.push({ name, args }); return {}; } } } as unknown as typeof application;
@@ -128,6 +129,9 @@ async function main() {
   assert.equal(calls.length, 0);
   await runCommandPaletteCommand(recording, { id: 'process:close:root_process', context: integratedContext, input: { confirmed: true } });
   assert.deepEqual(calls, [{ name: 'close_process', args: { process_id: 'root_process' } }]);
+  calls.length = 0;
+  await assert.rejects(runCommandPaletteCommand(recording, { id: 'process:close:crashed', context: integratedContext }), /confirm/i, 'Closing a process needs confirmation too');
+  assert.equal(calls.length, 0);
   assert.deepEqual(await runCommandPaletteCommand(recording, { id: 'navigate:process:p:server', context: integratedContext }), { navigate: { projectId: 'p', processId: 'server' } });
 
   // Launch choices, resuming, and timers go through the same tools as the rest of the UI.
