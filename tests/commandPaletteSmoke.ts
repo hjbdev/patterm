@@ -34,7 +34,7 @@ assert.equal(worktreeName({ branch: null, path: 'C:\\repo\\.worktrees\\detached\
 assert.equal(worktreeName({ branch: null, path: '/repo/.worktrees/detached' }), 'detached');
 
 const project = { project: { id: 'p', name: 'Project', path: '/tmp/project' }, projectSessions: [], processes: [], worktrees: [], timers: [] };
-const application = { currentWorkbench: () => ({ projects: [project], harnesses: [] }), timers: { list: () => [] } } as unknown as Parameters<typeof listCommandPaletteCommands>[0];
+const application = { currentWorkbench: () => ({ projects: [project], harnesses: [] }), timers: { list: () => [] }, database: { connection: { prepare: () => ({ all: () => [] }) } } } as unknown as Parameters<typeof listCommandPaletteCommands>[0];
 const context = { active_project_id: 'p', active_terminal_id: null, active_tab: 'todos' };
 const available = rendererCommands(context.active_project_id);
 
@@ -57,7 +57,7 @@ const integratedProject = {
   ]
 };
 const otherProject = { project: { id: 'q', name: 'Other', path: '/tmp/other' }, projectSessions: [session('elsewhere')], processes: [], worktrees: [], timers: [] };
-const integratedApplication = { currentWorkbench: () => ({ projects: [integratedProject, otherProject], harnesses: [] }) } as unknown as typeof application;
+const integratedApplication = { ...application, currentWorkbench: () => ({ projects: [integratedProject, otherProject], harnesses: [] }) } as unknown as typeof application;
 const integratedContext = { active_project_id: 'p', active_terminal_id: null, active_tab: 'agents', active_session_id: 'root' };
 
 async function main() {
@@ -84,7 +84,7 @@ async function main() {
     processes: [{ id: 'old_preview', name: 'Old preview', ptyProcessId: 'proc_1', status: 'exited' }],
     projectSessions: [{ id: 'live_session', processId: 'live_agent', ptyProcessId: 'proc_1', displayName: 'Live agent', exitedAt: null }]
   };
-  const reusedHandleApplication = { currentWorkbench: () => ({ projects: [reusedHandleProject], harnesses: [] }) } as unknown as typeof application;
+  const reusedHandleApplication = { ...application, currentWorkbench: () => ({ projects: [reusedHandleProject], harnesses: [] }) } as unknown as typeof application;
   const focusedCommands = (await listCommandPaletteCommands(reusedHandleApplication, { ...context, active_terminal_id: 'proc_1' })).commands;
   assert.ok(focusedCommands.some(command => command.id === 'process:close:live_agent'), 'Close targets the live agent rather than an old terminal with the same PTY handle');
   assert.ok(!focusedCommands.some(command => command.id === 'process:close:old_preview'));

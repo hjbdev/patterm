@@ -295,7 +295,11 @@ function restartAgentsCommand(projects: ProjectWorkbenchDto[]): CommandDescripto
 
 export function quitConfirmation(application: PattermApplication, projects = application.currentWorkbench().projects): string | undefined {
   const agents = new Set(projects.flatMap((project) => project.projectSessions.filter((session) => !session.exitedAt && session.processId).map((session) => session.processId)));
+  // The global Assistant and its commands can live outside the workbench.
+  const running = application.database.connection.prepare("select id, kind from processes where status = 'running'").all() as Array<{ id: string; kind: string }>;
+  for (const row of running) if (row.kind === 'agent') agents.add(row.id);
   const commands = new Set(projects.flatMap((project) => project.processes.filter((process) => process.status === 'running' && !agents.has(process.id)).map((process) => process.id)));
+  for (const row of running) if (row.kind !== 'agent') commands.add(row.id);
   if (agents.size === 0 && commands.size === 0 && application.timers.list().length === 0) return undefined;
   return `This stops ${agents.size} agent${agents.size === 1 ? '' : 's'} and ${commands.size} command${commands.size === 1 ? '' : 's'} across all projects, including running sleeps and all Patterm timers. Saved conversations remain available to resume.`;
 }
