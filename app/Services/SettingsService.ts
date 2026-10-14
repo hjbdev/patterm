@@ -39,7 +39,9 @@ export const appearanceSettingsInput = z.object({
   navigation: z.enum(['tabs', 'sidebar']).default('tabs'),
   // Whether the Personal project is listed. It is opt-in. Hidden, it still
   // lists while an agent or process runs there.
-  personalProject: z.boolean().default(false)
+  personalProject: z.boolean().default(false),
+  // Whether the top bar shows the last few visited projects beside the switcher.
+  recentProjects: z.boolean().default(true)
 });
 
 export type AppearanceSettings = z.infer<typeof appearanceSettingsInput>;
@@ -106,7 +108,8 @@ export const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
   historyImportToasts: true,
   diffViewer: 'drawer',
   navigation: 'tabs',
-  personalProject: false
+  personalProject: false,
+  recentProjects: true
 };
 
 export const DEFAULT_WORKSPACE_LAYOUT: WorkspaceLayout = {

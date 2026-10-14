@@ -14,6 +14,7 @@ export interface AppearanceSettings {
   diffViewer: DiffViewerLayout;
   navigation: NavigationLayout;
   personalProject: boolean;
+  recentProjects: boolean;
 }
 
 export const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
@@ -24,7 +25,8 @@ export const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
   historyImportToasts: true,
   diffViewer: 'drawer',
   navigation: 'tabs',
-  personalProject: false
+  personalProject: false,
+  recentProjects: true
 };
 
 export const DIFF_VIEWER_OPTIONS: Array<{ value: DiffViewerLayout; label: string; description: string }> = [
@@ -54,7 +56,8 @@ export function normalizeAppearanceSettings(value: Partial<AppearanceSettings> |
     historyImportToasts: typeof value?.historyImportToasts === 'boolean' ? value.historyImportToasts : DEFAULT_APPEARANCE_SETTINGS.historyImportToasts,
     diffViewer: value?.diffViewer === 'deck' ? 'deck' : DEFAULT_APPEARANCE_SETTINGS.diffViewer,
     navigation: value?.navigation === 'sidebar' ? 'sidebar' : DEFAULT_APPEARANCE_SETTINGS.navigation,
-    personalProject: typeof value?.personalProject === 'boolean' ? value.personalProject : DEFAULT_APPEARANCE_SETTINGS.personalProject
+    personalProject: typeof value?.personalProject === 'boolean' ? value.personalProject : DEFAULT_APPEARANCE_SETTINGS.personalProject,
+    recentProjects: typeof value?.recentProjects === 'boolean' ? value.recentProjects : DEFAULT_APPEARANCE_SETTINGS.recentProjects
   };
 }
 

@@ -6,7 +6,7 @@
 // dependency's licence needs review.
 import { execFileSync, execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +24,33 @@ const overrides = {
   lru_map: { license: 'MIT', file: 'lru_map.LICENSE' },
   'vaul-vue': { license: 'MIT', file: 'vaul-vue.LICENSE' }
 };
+// JavaScript dependencies bundled into the renderer or MCP shim. Keep their
+// complete dependency graphs in the notices even though release installs omit them.
+const bundledDev = [
+  '@kitlangton/rolling-number',
+  '@modelcontextprotocol/server',
+  '@pierre/diffs',
+  '@radix-icons/vue',
+  '@tanstack/vue-virtual',
+  '@tiptap/core',
+  '@tiptap/extension-document',
+  '@tiptap/extension-paragraph',
+  '@tiptap/extension-text',
+  '@tiptap/extensions',
+  '@tiptap/pm',
+  '@tiptap/vue-3',
+  '@vueuse/core',
+  'class-variance-authority',
+  'clsx',
+  'lucide-vue-next',
+  'reka-ui',
+  'shiki',
+  'tailwind-merge',
+  'vaul-vue',
+  'vue',
+  'vue-router',
+  'vue-sonner'
+];
 // Development packages whose code the build compiles into the app.
 const compiledDev = {
   tailwindcss: 'Its base styles and utilities are compiled into the app stylesheet.',
@@ -102,13 +129,45 @@ function licenceTexts(dir) {
 function npmPackages() {
   const options = { cwd: root, encoding: 'utf8', maxBuffer: 64 << 20 };
   // pnpm is a .cmd shim on Windows, which only a shell can start.
-  const listed = JSON.parse(process.platform === 'win32'
-    ? execSync('pnpm licenses list --prod --json', options)
-    : execFileSync('pnpm', ['licenses', 'list', '--prod', '--json'], options));
+  const pnpmJson = (args) => JSON.parse(process.platform === 'win32'
+    ? execSync(['pnpm', ...args].join(' '), options)
+    : execFileSync('pnpm', args, options));
+  const [tree] = pnpmJson(['list', '--depth', 'Infinity', '--json']);
+  // pnpm abbreviates repeated branches. Index every occurrence so a bundled
+  // package still gets its full graph when an earlier build tool used it first.
+  const byPath = new Map();
+  function index(entry) {
+    const children = Object.values(entry.dependencies ?? {});
+    const existing = byPath.get(entry.path) ?? [];
+    byPath.set(entry.path, [...existing, ...children]);
+    for (const child of children) index(child);
+  }
+  for (const group of ['dependencies', 'optionalDependencies', 'devDependencies']) {
+    for (const entry of Object.values(tree[group] ?? {})) index(entry);
+  }
+  const shipped = new Set();
+  function include(entry) {
+    const dir = realpathSync(entry.path);
+    if (shipped.has(dir)) return;
+    shipped.add(dir);
+    for (const child of byPath.get(entry.path) ?? []) include(child);
+  }
+  for (const entry of Object.values({ ...tree.dependencies, ...tree.optionalDependencies })) include(entry);
+  for (const name of bundledDev) {
+    const entry = tree.devDependencies?.[name] ?? tree.dependencies?.[name];
+    if (!entry) throw new Error(`Bundled dependency is missing: ${name}`);
+    include(entry);
+  }
+  const listed = pnpmJson(['licenses', 'list', '--json']);
   const packages = [];
   for (const entries of Object.values(listed)) {
     for (const entry of entries) {
-      entry.versions.forEach((version, index) => packages.push({ name: entry.name, version, license: entry.license, dir: entry.paths[index] }));
+      entry.versions.forEach((version, index) => {
+        if (shipped.has(realpathSync(entry.paths[index]))) packages.push({
+          name: entry.name, version, license: entry.license, dir: entry.paths[index],
+          ...(bundledDev.includes(entry.name) ? { note: 'Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.' } : {})
+        });
+      });
     }
   }
   // Electron is a development dependency of the build, but it ships with the

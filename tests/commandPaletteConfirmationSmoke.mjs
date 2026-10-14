@@ -24,7 +24,7 @@ const dependencies = { computed, nextTick, reactive, ref, watch, ...library, use
     return { launch: reactive({ harness: '', presetId: null, worktreeId: null, interfaceMode: 'integrated', prompt: '' }), launchHarnesses: empty, launchPresets: empty, launchWorktrees: empty, chooseHarness: () => {}, rememberHarness: () => {}, conversationCommands: empty, timers: empty, timerCommands: empty, searchCommands: empty, searching: ref(false), now: ref(0) };
   } };
 const setup = new Function(...Object.keys(dependencies), 'defineProps', 'defineModel', 'window', `${transpile(executable)}\nreturn { open, query, highlighted, visibleRows, runHighlighted, runCommand, handleEscape, handleEscapeKey, reloadCommands, page, error };`);
-const quit = { id: 'renderer:quit', label: 'Quit', hint: 'close Patterm Desktop', group: 'quit', kind: 'renderer' };
+const quit = { id: 'renderer:quit', label: 'Quit', hint: 'close Patterm Desktop', confirmation: 'This stops running agents, commands, and timers.', group: 'quit', kind: 'renderer' };
 
 async function mount(t, { listed = [quit], query = 'quit', runs = [], timerSets = [] } = {}) {
   let closes = 0;
@@ -46,7 +46,14 @@ async function enter(palette, extra = {}) {
   for (let i = 0; i < 5; i++) await nextTick();
 }
 
-test('Quit requires two distinct Enter presses and ignores key repeat and composition', async t => {
+test('Empty Quit runs on the first Enter', async t => {
+  const { confirmation, ...emptyQuit } = quit;
+  const { palette, closes } = await mount(t, { listed: [emptyQuit] });
+  await enter(palette);
+  assert.equal(closes(), 1);
+});
+
+test('Quit with running work requires two distinct Enter presses and ignores key repeat and composition', async t => {
   const { palette, closes } = await mount(t);
   await enter(palette, { isComposing: true });
   await enter(palette);

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The top bar shows the last three projects you visited beside the project
+  switcher. Turn it off in Settings › Appearance.
+
 - Integrated agents show charts, tables, diagrams, mockups, and small
   interactive tools in their replies as HTML pages with `html_render`. The
   agent places `[patterm_figure:<id>]` in its reply where the page belongs.
@@ -30,14 +33,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The assistant can auto-compact after the existing idle delay when voice is
+  inactive. Voice cannot start until an automatic compaction finishes.
+
+- Integrated OpenCode prompts steer by default, as in OpenCode: a message sent
+  mid-turn joins the turn at its next model step. Its pending row shows only
+  the message and Cancel.
+- CI caches incremental TypeScript type checks and unchanged Rust integration
+  test builds, and runs smoke tests with up to eight workers. Linux, Windows and macOS
+  packaging save verified Electron downloads for reuse, including with
+  Electron's on-demand installer.
+- Release installs contain only the backend's runtime dependencies. Renderer
+  and MCP-shim libraries ship in their bundles, with their licences retained
+  in the offline notices.
 - CI runs smoke tests in parallel, prepares each test build once, and caches
   Rust builds and macOS package downloads. Linux checks build the renderer once
   for both the desktop and server. Desktop packaging reuses verified Electron
   archives from the install cache.
 - Release packages build alongside validation, with publication still waiting
   for every check and package. CI uploads compressed packages without recompressing them.
-- Session context shows summary coverage only when the recap is incomplete,
-  and the status line itself opens the rebuild dialog.
+- Session context has a regenerate icon beside Close, opening summary controls
+  with clearer wording instead of a coverage status button.
 - The command palette lists the open agent's everyday actions (New
   conversation, Restart agent, Open session context, and every setting such
   as Model, Effort, and Mode) at the top level. More actions keeps only the
@@ -49,6 +65,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `ui_save` and Patterm's own figure components. Figures already saved in
   conversations show as their raw `[patterm_figure:<id>]` token.
+
+### Fixed
+
+- Assistant `/restart` resumes its conversation through the assistant controls.
+  Rejected browser writes restore the Take control button, which reconnects
+  the terminal subscription before taking over.
+
+- Closing or quitting an empty desktop app no longer asks to stop zero agents
+  and zero commands. Running agents, commands, and timers still require confirmation.
+- Settings › Appearance shows the saved Personal project choice instead of
+  always showing it off.
+- Agent launches open a Starting tab immediately and keep other harnesses available
+  while startup finishes. Completed launches do not steal focus after switching away.
 
 ## [0.1.1] - 2026-10-13
 

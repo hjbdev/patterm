@@ -63,11 +63,28 @@ test('cancelling the quit confirmation keeps the window and application alive', 
   assert.equal(fixture.quitCompleted, false);
 });
 
-async function desktop({ nativeResponse = 1 } = {}) {
+for (const trigger of ['window close', 'application quit']) {
+  test(`${trigger} with no running work quits without a confirmation`, async () => {
+    const fixture = await desktop({ confirmation: undefined });
+    if (trigger === 'window close') fixture.window.close();
+    else fixture.app.quit();
+    await fixture.settle();
+    assert.equal(fixture.quitRequests.length, 0);
+    assert.equal(fixture.nativePrompts, 0);
+    assert.equal(fixture.timers.size, 0);
+    assert.equal(fixture.disposed, 1);
+    assert.equal(fixture.quitCompleted, true);
+  });
+}
+
+async function desktop(options = {}) {
+  const { nativeResponse = 1 } = options;
+  const confirmation = Object.hasOwn(options, 'confirmation') ? options.confirmation : 'Stop running processes.';
   const app = new EventEmitter();
   const ipcMain = new EventEmitter();
   const timers = new Map();
   const errors = [];
+  const quitRequests = [];
   let nextTimer = 0;
   let window;
   let shuttingDown = false;
@@ -88,7 +105,7 @@ async function desktop({ nativeResponse = 1 } = {}) {
     destroyed = false;
     contents = {
       isDestroyed: () => this.destroyed, isLoading: () => false, isCrashed: () => false,
-      setWindowOpenHandler: () => {}, on: () => {}, send: () => {}, openDevTools: () => {}
+      setWindowOpenHandler: () => {}, on: () => {}, send: (channel, payload) => { if (channel === 'patterm:quit:request') quitRequests.push(payload); }, openDevTools: () => {}
     };
     constructor() { super(); window = this; }
     // Electron's BrowserWindow getter itself throws once the window is destroyed.
@@ -147,7 +164,7 @@ async function desktop({ nativeResponse = 1 } = {}) {
     '../../routes/remote': { servePeerRoutes: () => {} },
     './launchIdentity': { resolveLaunchIdentity: () => ({ appName: 'quit-test', appDataPath: '/tmp/patterm-desktop-quit-test', mode: 'production' }) },
     './sidecar': { isInstalledLaunch: () => true, resolveMcpShimPath: () => '', resolveSidecarPath: () => '' },
-    '../../app/Commands/CommandPalette': { quitConfirmation: () => 'Stop running processes.' },
+    '../../app/Commands/CommandPalette': { quitConfirmation: () => confirmation },
     './figureFrame': { ElectronPagePreviewer: class {}, guardFigureFrames: () => {}, registerFigureFrameScheme: () => {}, serveFigureFrames: () => {} }
   };
   vm.runInNewContext(source, {
@@ -160,7 +177,7 @@ async function desktop({ nativeResponse = 1 } = {}) {
   await settle();
   assert.ok(window, 'desktop startup creates its window');
   return {
-    app, application, window, ipcMain, timers, errors, settle,
+    app, application, window, ipcMain, timers, errors, quitRequests, settle,
     get disposed() { return disposed; }, get nativePrompts() { return nativePrompts; },
     get quitCompleted() { return quitCompleted; },
     runTimers: async () => {

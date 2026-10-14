@@ -30,6 +30,15 @@ async function main(): Promise<void> {
     const database = new DatabaseService(tempDir);
     database.initialize();
 
+    // The global Assistant is hidden from the workbench but Quit still stops it.
+    database.connection.exec("insert into projects (id, name, path, kind, created_at, updated_at) values ('assistant_quit', 'Assistant', '/tmp', 'assistant', 'now', 'now'); insert into processes (id, project_id, kind, name, status, activity, created_at, updated_at) values ('assistant_quit', 'assistant_quit', 'agent', 'Assistant', 'running', 'working', 'now', 'now')");
+    let shutdowns = 0;
+    const assistantOnly = { database, currentWorkbench: () => new WorkbenchRepository(database).snapshot(), timers: { list: () => [] }, shutdown: async () => { shutdowns++; } } as unknown as Parameters<typeof runCommandPaletteCommand>[0];
+    assert.deepEqual(assistantOnly.currentWorkbench().projects, []);
+    await assert.rejects(runCommandPaletteCommand(assistantOnly, { id: 'renderer:quit', context: { active_project_id: null, active_terminal_id: null, active_tab: null } }), /Confirm Quit/);
+    assert.equal(shutdowns, 0);
+    database.connection.exec("delete from processes where id = 'assistant_quit'; delete from projects where id = 'assistant_quit'");
+
     const seeder = new WorkbenchSeeder(database, new TimelineService(database));
     seeder.seedIfEmpty();
     seeder.seedIfEmpty(); // idempotent
@@ -161,7 +170,7 @@ async function main(): Promise<void> {
       } as unknown as AgentHistoryReadService
     });
 
-    const paletteApplication = { workbench: repo, currentWorkbench: () => repo.snapshot(), mcp: registry } as Parameters<typeof listCommandPaletteCommands>[0];
+    const paletteApplication = { database, workbench: repo, currentWorkbench: () => repo.snapshot(), mcp: registry } as Parameters<typeof listCommandPaletteCommands>[0];
     const paletteContext = { active_project_id: projectSnapshot.project.id, active_terminal_id: null, active_tab: null };
     const commands = (await listCommandPaletteCommands(paletteApplication, paletteContext)).commands;
     assert.equal(commands.find((command) => command.id === 'worktree:create')?.input?.type, 'text');

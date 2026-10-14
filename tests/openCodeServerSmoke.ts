@@ -70,9 +70,9 @@ else if (method === 'GET' && route.startsWith('/api/mcp?')) {
   console.log(JSON.stringify({data:{}}));
 }
 else if (method === 'POST' && route.endsWith('/prompt')) {
-  if (body.delivery !== 'queue' || typeof body.text !== 'string' || body.prompt) { console.log('HTTP 400 Bad Request'); process.exit(1); }
+  if (body.delivery !== 'steer' || typeof body.text !== 'string' || body.prompt) { console.log('HTTP 400 Bad Request'); process.exit(1); }
   if (process.env.LOST_PROMPT_RESPONSE) { console.error('prompt response lost'); process.exit(1); }
-  console.log(JSON.stringify({data:{id:body.id ?? 'msg_test',sessionID:'ses_test',timeCreated:1,type:'user',payload:{text:body.text,files:body.files},delivery:'queue'}}));
+  console.log(JSON.stringify({data:{id:body.id ?? 'msg_test',sessionID:'ses_test',timeCreated:1,type:'user',payload:{text:body.text,files:body.files},delivery:body.delivery}}));
 }
 else if (method === 'GET' && route.startsWith('/api/shell?')) console.log(JSON.stringify({data:process.env.SUBAGENT_SESSION ? [{id:'sh_bg',status:'running'}] : []}));
 else if (method === 'GET' && route.startsWith('/api/shell/sh_gone')) { console.log(JSON.stringify({_tag:'ShellNotFoundError',message:'Shell command not found: sh_gone'})); console.log('HTTP 404 Not Found'); process.exit(1); }
@@ -296,7 +296,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const promptRequests = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line)).filter((request) => request.route.endsWith('/prompt'));
     const structured = promptRequests.at(-1)!.body as { text: string; files: Array<{ uri: string; name?: string }>; id?: string; delivery?: string };
     assert.equal(structured.text, 'review these');
-    assert.equal(structured.delivery, 'queue');
+    assert.equal(structured.delivery, 'steer', 'a prompt joins a running turn at its next step, as in OpenCode');
     assert.equal(structured.id, `msg_${messageId}`);
     assert.deepEqual(structured.files, [
       { uri: pathToFileURL(sourceFile).href, name: 'source.ts' },
@@ -616,7 +616,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const streamService = new OpenCodeServerService(database, { ...env, XDG_STATE_HOME: directory, STREAM_SEED: '2' });
     const imageBytes = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(150_000)]);
     await streamService.prompt('process_0', { text: 'inspect', references: [], attachments: [{ path: path.join(directory, 'uploads', 'pixel.png'), name: 'pixel.png', mime: 'image/png', size: imageBytes.length, data: imageBytes.toString('base64') }] });
-    assert.deepEqual(daemonState.prompts, [{ text: 'inspect', files: [{ uri: `data:image/png;base64,${imageBytes.toString('base64')}`, name: 'pixel.png' }], delivery: 'queue', resume: true }], 'uploads use inline data instead of external file paths');
+    assert.deepEqual(daemonState.prompts, [{ text: 'inspect', files: [{ uri: `data:image/png;base64,${imageBytes.toString('base64')}`, name: 'pixel.png' }], delivery: 'steer', resume: true }], 'uploads use inline data, and prompts steer as in OpenCode');
     assert.equal(daemonState.auth, `Basic ${Buffer.from('opencode:test-password').toString('base64')}`, 'inline uploads use the authenticated daemon');
     const streamed: IntegratedConversationEvent[] = [];
     const releaseStream = await streamService.subscribe('process_0', (event) => streamed.push(event));

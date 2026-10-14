@@ -31,7 +31,7 @@ const questionConversation = () => ({
   ] }
 });
 
-function createHarness({ processId = 'process_a', exited = false, keepCache = false, onNewSession, subscribeReply = () => ({ ok: true }) } = {}) {
+function createHarness({ processId = 'process_a', exited = false, keepCache = false, onNewSession, onRestartSession, subscribeReply = () => ({ ok: true }) } = {}) {
   // Tests reuse process IDs; each starts without another test's cached pane.
   if (!keepCache) helpers.forgetConversation();
   const lifecycle = { mounted: [], beforeUnmount: [] };
@@ -46,7 +46,7 @@ function createHarness({ processId = 'process_a', exited = false, keepCache = fa
   const workspaceHandlers = [];
   const published = new Map();
   const provided = new Map();
-  const props = reactive({ processId, exited, onNewSession });
+  const props = reactive({ processId, exited, onNewSession, onRestartSession });
   const windowMock = {
     patterm: {
       runtime: 'browser',
@@ -137,7 +137,7 @@ return {
     uncertain: submissionFor(props.processId)?.state === 'uncertain',
     canReply: canReply.value
   }),
-  refresh, loadOlder, historyCursor, loadingOlder, historyError, sendRequest, retryMessage, reconcileDelivery, replyQuestion, replyPermission, replyForm,
+  refresh, loadOlder, historyCursor, loadingOlder, historyError, sendRequest, retryMessage, reconcileDelivery, replyQuestion, replyPermission, replyForm, takeControl,
   transcriptMessages, messages, questions, permissions, questionAnswers, singleQuestionAnswers, customQuestionAnswers,
   forms, formAnswers, formErrors, setFormAnswer, toggleMultiselect, activeFields, isResponding,
   controls, resumeOpen, resumeQuery, transcriptRef
@@ -150,7 +150,8 @@ return {
     conversationSubscriptions, published,
     answerChannel: () => provided.get(bindings.figureAnswerKey),
     workspaceRequest: request => workspaceHandlers.some(handler => handler(request)),
-    emitConversationEvent: event => conversationHandler?.(event)
+    emitConversationEvent: event => conversationHandler?.(event),
+    emitControl: state => controlHandler?.(state)
   };
 }
 
@@ -1180,4 +1181,64 @@ test('/new during an assistant restart surfaces an error instead of succeeding',
   finish({ process_id: 'assistant_resumed', voice: { active: false } });
   await restarting;
   harness.scope.stop();
+});
+
+
+test('/restart in the assistant resumes through its owner without a workspace project', async () => {
+  const calls = [];
+  const harness = createHarness({ processId: 'assistant_restart', onRestartSession: async id => { calls.push(id); } });
+  await mountSettled(harness);
+  harness.pane.controls.value = { selectors: [], commands: [{ name: 'restart', source: 'patterm' }] };
+  composer.draftFor('assistant_restart').text = '/restart';
+  const prepared = composer.payloadFor('assistant_restart');
+  await harness.pane.sendRequest({ ...prepared.payload, hash: prepared.hash });
+  await flush();
+  assert.deepEqual(calls, ['assistant_restart']);
+  assert.deepEqual(harness.mutations, []);
+  harness.scope.stop();
+});
+
+
+test('a control rejection reveals takeover and takeover restores a lost subscription', async () => {
+  const h = createHarness({ processId: 'assistant_control' });
+  await mountSettled(h);
+  assert.equal(h.pane.state().controlling, true);
+  // BrowserTerminalSessions.guard sends this before rejecting a stale write.
+  h.emitControl({ processId: 'assistant_control', controlling: false });
+  assert.equal(h.pane.state().controlling, false, 'the composer shows Take control');
+  const takes = [];
+  h.windowMock.patterm.terminalTakeControl = async args => {
+    takes.push(args);
+    h.emitControl({ processId: args.process_id, controlling: true });
+    return { ok: true };
+  };
+  const taking = h.pane.takeControl();
+  assert.deepEqual(h.subscriptions.at(-1).args, { process_id: 'assistant_control', subscribed: true });
+  assert.deepEqual(takes, [], 'restore subscription before claiming control');
+  await resolveSubscriptions(h);
+  await taking;
+  assert.deepEqual(takes, [{ process_id: 'assistant_control' }]);
+  assert.equal(h.pane.state().controlling, true);
+  h.scope.stop();
+});
+
+test('assistant /restart refuses an active response until it finishes', async () => {
+  const calls = [];
+  const h = createHarness({ processId: 'assistant_busy_restart', onRestartSession: async id => { calls.push(id); } });
+  await mountPush(h, 1, 'Still responding.');
+  h.pane.controls.value = { selectors: [], commands: [{ name: 'restart', source: 'patterm' }] };
+  const restart = async () => {
+    composer.draftFor(h.props.processId).text = '/restart';
+    const prepared = composer.payloadFor(h.props.processId);
+    await h.pane.sendRequest({ ...prepared.payload, hash: prepared.hash });
+    await flush();
+  };
+  await restart();
+  assert.deepEqual(calls, [], 'a slash command cannot silently interrupt active work');
+  assert.match(h.pane.state().error, /working|responding/i);
+  h.emitConversationEvent({ processId: h.props.processId, revision: 2, kind: 'status', status: 'idle' });
+  await flush();
+  await restart();
+  assert.deepEqual(calls, ['assistant_busy_restart']);
+  h.scope.stop();
 });

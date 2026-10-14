@@ -13,7 +13,6 @@
           variant="outline"
           size="sm"
           class="gap-2"
-          :disabled="launching"
           @click="launchHarness(harness.harness)"
         >
           <AgentIcon :harness="harness.harness" class="h-4 w-4" />
@@ -26,8 +25,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
-import { toastLaunchError } from '../lib/launchErrors';
+import { computed } from 'vue';
+import { useHarnessLaunch } from '../Composables/useHarnessLaunch';
 import { harnessLabel, launchableHarnesses as filterLaunchableHarnesses } from '../lib/harnesses';
 import type { HarnessInstallationRecord } from '../types';
 import AgentIcon from './AgentIcon.vue';
@@ -43,26 +42,10 @@ const props = withDefaults(
   {}
 );
 
-const emit = defineEmits<{ launched: [sessionId: string, terminalId: string | null] }>();
-
-const launching = ref(false);
+const { launchHarness: startHarness } = useHarnessLaunch();
 const launchableHarnesses = computed(() => filterLaunchableHarnesses(props.harnesses));
 
-async function launchHarness(harness: string): Promise<void> {
-  if (launching.value) return;
-  launching.value = true;
-  try {
-    const result = (await window.patterm?.call?.('harness_launch', {
-      harness,
-      project_id: props.projectId,
-    })) as { session_id?: unknown; pty_process_id?: unknown } | null | undefined;
-    if (typeof result?.session_id === 'string') {
-      emit('launched', result.session_id, typeof result.pty_process_id === 'string' ? result.pty_process_id : null);
-    }
-  } catch (caught) {
-    toastLaunchError(caught, `Failed to launch ${harnessLabel(harness)}`, props.remote ? undefined : () => launchHarness(harness));
-  } finally {
-    launching.value = false;
-  }
+function launchHarness(harness: string): void {
+  startHarness({ harness, projectId: props.projectId, targetProjectId: props.projectId, ...(props.remote ? { host: props.projectId.split(':')[0]! } : {}) });
 }
 </script>

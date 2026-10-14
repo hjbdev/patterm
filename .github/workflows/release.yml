@@ -46,6 +46,7 @@ jobs:
       # remoteAccessSmoke, in check, runs the installer, which needs the server build.
       - name: Build the server using the existing renderer and MCP shim
         run: pnpm exec tsc -p tsconfig.server.json && pnpm run build:sidecar:release
+      - uses: ./.github/actions/cache-typecheck
       - run: pnpm run check:ci
 
   build:
@@ -169,6 +170,8 @@ jobs:
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
           key: pnpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-${{ runner.arch }}-
       - uses: ./.github/actions/cache-rust
       - name: Build and test the sidecar
         run: |

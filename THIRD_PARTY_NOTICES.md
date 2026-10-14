@@ -25,7 +25,7 @@ PERFORMANCE OF THIS SOFTWARE.
 
 ## apache-2.0
 
-- @pierre/diffs 1.2.7 (npm)
+- @pierre/diffs 1.2.7 (npm). Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.
 
 ```text
 Apache License
@@ -846,7 +846,7 @@ limitations under the License.
 
 ## Apache-2.0
 
-- class-variance-authority 0.7.1 (npm)
+- class-variance-authority 0.7.1 (npm). Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.
 
 ```text
 Apache License
@@ -2914,7 +2914,7 @@ IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ## ISC
 
-- lucide-vue-next 0.468.0 (npm)
+- lucide-vue-next 0.468.0 (npm). Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.
 
 ```text
 ISC License
@@ -3169,7 +3169,7 @@ SOFTWARE.
 
 ## MIT
 
-- @kitlangton/rolling-number 0.4.1 (npm)
+- @kitlangton/rolling-number 0.4.1 (npm). Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.
 
 ```text
 MIT License
@@ -3199,7 +3199,7 @@ SOFTWARE.
 
 - @modelcontextprotocol/client 2.0.0 (npm)
 - @modelcontextprotocol/core 2.0.0 (npm)
-- @modelcontextprotocol/server 2.0.0 (npm)
+- @modelcontextprotocol/server 2.0.0 (npm). Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.
 
 ```text
 The MCP project is undergoing a licensing transition from the MIT License to the Apache License, Version 2.0 ("Apache-2.0"). All new code and specification contributions to the project are licensed under Apache-2.0. Documentation contributions (excluding specifications) are licensed under CC-BY-4.0.
@@ -3450,7 +3450,7 @@ SOFTWARE.
 
 ## MIT
 
-- @radix-icons/vue 1.0.0 (npm)
+- @radix-icons/vue 1.0.0 (npm). Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.
 
 ```text
 MIT License
@@ -3485,7 +3485,7 @@ SOFTWARE.
 - @shikijs/themes 3.23.0 (npm). It bundles themes from many projects. Patterm uses only github-dark, and releases leave out the GPL-3.0 Aurora X theme. Each theme's source and licence are listed at https://github.com/shikijs/textmate-grammars-themes/blob/main/packages/tm-themes/README.md.
 - @shikijs/transformers 3.23.0 (npm)
 - @shikijs/types 3.23.0 (npm)
-- shiki 3.23.0 (npm)
+- shiki 3.23.0 (npm). Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.
 
 ```text
 MIT License
@@ -3573,8 +3573,8 @@ SOFTWARE.
 
 - @tanstack/virtual-core 3.17.0 (npm)
 - @tanstack/virtual-core 3.17.3 (npm)
-- @tanstack/vue-virtual 3.13.28 (npm)
-- @tanstack/vue-virtual 3.13.31 (npm)
+- @tanstack/vue-virtual 3.13.28 (npm). Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.
+- @tanstack/vue-virtual 3.13.31 (npm). Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.
 
 ```text
 MIT License
@@ -3602,15 +3602,15 @@ SOFTWARE.
 
 ## MIT
 
-- @tiptap/core 3.31.4 (npm)
+- @tiptap/core 3.31.4 (npm). Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.
 - @tiptap/extension-bubble-menu 3.31.4 (npm)
-- @tiptap/extension-document 3.31.4 (npm)
+- @tiptap/extension-document 3.31.4 (npm). Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.
 - @tiptap/extension-floating-menu 3.31.4 (npm)
-- @tiptap/extension-paragraph 3.31.4 (npm)
-- @tiptap/extension-text 3.31.4 (npm)
-- @tiptap/extensions 3.31.4 (npm)
-- @tiptap/pm 3.31.4 (npm)
-- @tiptap/vue-3 3.31.4 (npm)
+- @tiptap/extension-paragraph 3.31.4 (npm). Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.
+- @tiptap/extension-text 3.31.4 (npm). Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.
+- @tiptap/extensions 3.31.4 (npm). Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.
+- @tiptap/pm 3.31.4 (npm). Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.
+- @tiptap/vue-3 3.31.4 (npm). Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.
 
 ```text
 MIT License
@@ -3679,7 +3679,7 @@ MIT License
 - @vue/runtime-dom 3.5.35 (npm)
 - @vue/server-renderer 3.5.35 (npm)
 - @vue/shared 3.5.35 (npm)
-- vue 3.5.35 (npm)
+- vue 3.5.35 (npm). Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.
 
 ```text
 The MIT License (MIT)
@@ -3735,8 +3735,8 @@ THE SOFTWARE.
 
 ## MIT
 
-- @vueuse/core 10.11.1 (npm)
-- @vueuse/core 14.3.0 (npm)
+- @vueuse/core 10.11.1 (npm). Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.
+- @vueuse/core 14.3.0 (npm). Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.
 - @vueuse/metadata 10.11.1 (npm)
 - @vueuse/metadata 14.3.0 (npm)
 - @vueuse/shared 10.11.1 (npm)
@@ -3913,7 +3913,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ## MIT
 
-- clsx 2.1.1 (npm)
+- clsx 2.1.1 (npm). Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.
 
 ```text
 MIT License
@@ -5249,7 +5249,7 @@ SOFTWARE.
 
 ## MIT
 
-- reka-ui 2.9.8 (npm)
+- reka-ui 2.9.8 (npm). Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.
 
 ```text
 MIT License
@@ -5461,7 +5461,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ## MIT
 
-- tailwind-merge 2.6.1 (npm)
+- tailwind-merge 2.6.1 (npm). Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.
 
 ```text
 MIT License
@@ -5546,7 +5546,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ## MIT
 
-- vaul-vue 0.4.1 (npm)
+- vaul-vue 0.4.1 (npm). Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.
 
 ```text
 MIT License
@@ -5630,7 +5630,7 @@ SOFTWARE.
 
 ## MIT
 
-- vue-router 4.6.4 (npm)
+- vue-router 4.6.4 (npm). Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.
 
 ```text
 The MIT License (MIT)
@@ -5658,7 +5658,7 @@ SOFTWARE.
 
 ## MIT
 
-- vue-sonner 2.0.9 (npm)
+- vue-sonner 2.0.9 (npm). Its JavaScript ships in the renderer or MCP-shim bundle; release installs omit the npm package.
 
 ```text
 MIT License

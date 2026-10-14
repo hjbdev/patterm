@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { appearanceSettingsInput } from '../app/Services/SettingsService';
+import { readRecentProjectIds, rememberRecentProject, shownRecentProjects } from '../resources/js/lib/recentProjects';
 import { applyUiFont, normalizeAppearanceSettings, UI_FONT_OPTIONS, TERMINAL_FONT_OPTIONS, resolveTerminalFontFamily } from '../resources/js/appearance/AppearanceSettings';
 
 for (const [key, options] of [['uiFont', UI_FONT_OPTIONS], ['terminalFont', TERMINAL_FONT_OPTIONS]] as const) {
@@ -36,6 +37,20 @@ assert.equal(appearanceSettingsInput.parse({}).navigation, 'tabs', 'tabs are the
 assert.equal(normalizeAppearanceSettings(JSON.parse(JSON.stringify(appearanceSettingsInput.parse({ navigation: 'sidebar' })))).navigation, 'sidebar');
 assert.equal(normalizeAppearanceSettings({ navigation: 'drawer' as never }).navigation, 'tabs', 'unknown navigation falls back to tabs');
 assert.throws(() => appearanceSettingsInput.parse({ navigation: 'drawer' }), 'the service rejects unknown navigation');
+assert.equal(appearanceSettingsInput.parse({}).recentProjects, true, 'recent projects show by default');
+assert.equal(normalizeAppearanceSettings(JSON.parse(JSON.stringify(appearanceSettingsInput.parse({ recentProjects: false })))).recentProjects, false);
+
+// Recent projects: newest first, deduplicated, without the active or deleted ones.
+const stored = new Map<string, string>();
+const storage = { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => { stored.set(key, value); } };
+let recent: string[] = [];
+for (const id of ['a', 'b', 'c', 'b', 'd', 'e']) recent = rememberRecentProject(recent, id, storage);
+assert.deepEqual(recent, ['e', 'd', 'b', 'c', 'a']);
+assert.deepEqual(readRecentProjectIds(storage), recent, 'recent projects survive a reload');
+assert.deepEqual(readRecentProjectIds({ getItem: () => '{broken' }), []);
+const groups = ['a', 'b', 'c', 'e'].map((id) => ({ project: { id } }));
+assert.deepEqual(shownRecentProjects(recent, groups, 'e').map((group) => group.project.id), ['b', 'c', 'a'], 'skips the active project and deleted ones, shows three');
+
 const properties = new Map<string, string>();
 Object.defineProperty(globalThis, 'document', { configurable: true, value: {
   documentElement: { style: { setProperty: (key: string, value: string) => properties.set(key, value) } },

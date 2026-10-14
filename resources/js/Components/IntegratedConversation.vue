@@ -168,10 +168,10 @@
       <section v-if="queue.length && !ended" class="mx-auto mb-2 w-full max-w-[50rem] px-4 2xl:max-w-[1000px]" aria-label="Queued messages" data-component="integrated-queue">
         <ul class="space-y-1 rounded-lg border border-border/60 px-3 py-1.5 text-xs">
           <li v-for="item in queue" :key="item.id" class="flex min-w-0 items-center gap-2">
-            <span class="shrink-0" :class="item.error ? 'text-destructive' : 'text-muted-foreground'" :title="item.delivery === 'unconfirmed' ? `${item.error ?? ''} It may already have reached the agent; check before sending it again.`.trim() : item.error">{{ queueLabel(item) }}</span>
+            <span v-if="item.delivery === 'held' || item.delivery === 'unconfirmed'" class="shrink-0" :class="item.error ? 'text-destructive' : 'text-muted-foreground'" :title="item.delivery === 'unconfirmed' ? `${item.error ?? ''} It may already have reached the agent; check before sending it again.`.trim() : item.error">{{ queueLabel(item) }}</span>
             <span class="min-w-0 flex-1 truncate">{{ item.text }}</span>
             <Button v-if="item.delivery === 'unconfirmed'" size="sm" variant="ghost" class="h-6 shrink-0 px-2 text-xs" :disabled="isResponding(`queue:${item.id}`)" @click="checkHeldDelivery(item)">Check delivery</Button>
-            <Button v-else-if="item.delivery === 'queue' || item.error" size="sm" variant="ghost" class="h-6 shrink-0 px-2 text-xs" :disabled="!canReply || isResponding(`queue:${item.id}`)" @click="updateQueued(item, 'steer')">Send now</Button>
+            <Button v-else-if="item.error" size="sm" variant="ghost" class="h-6 shrink-0 px-2 text-xs" :disabled="!canReply || isResponding(`queue:${item.id}`)" @click="updateQueued(item, 'steer')">Send now</Button>
             <Button size="sm" variant="ghost" class="h-6 shrink-0 px-2 text-xs" :disabled="!canReply || isResponding(`queue:${item.id}`)" @click="updateQueued(item, 'cancel')">{{ item.delivery === 'unconfirmed' ? 'Dismiss' : 'Cancel' }}</Button>
           </li>
         </ul>
@@ -310,7 +310,7 @@ import { onWorkspaceRequest, type WorkspaceRequest } from '../lib/workspaceReque
 // `onLaunched` is a prop rather than an emit: /new and /resume close this tab
 // before they answer, which can unmount the pane, and Vue drops emits from an
 // unmounted component.
-const props = defineProps<{ processId: string; projectId?: string | null; projectPath?: string | null; exited?: boolean; mentionAgents?: MentionAgent[]; mentionLaunchers?: MentionLauncher[]; embedded?: boolean; closeRequest?: CloseRequestRecord | null | undefined; closeSubagents?: number | undefined; onLaunched?: (sessionId: string) => void; onNewSession?: (processId: string) => Promise<void> }>();
+const props = defineProps<{ processId: string; projectId?: string | null; projectPath?: string | null; exited?: boolean; mentionAgents?: MentionAgent[]; mentionLaunchers?: MentionLauncher[]; embedded?: boolean; closeRequest?: CloseRequestRecord | null | undefined; closeSubagents?: number | undefined; onLaunched?: (sessionId: string) => void; onNewSession?: (processId: string) => Promise<void>; onRestartSession?: (processId: string) => Promise<void> }>();
 const emit = defineEmits<{ transcript: [messages: TranscriptMessage[], status: string, loaded: boolean] }>();
 // Conversation state is replaced, never mutated in place (stream events and
 // snapshots produce new arrays), so shallow refs skip deep proxying of every
@@ -838,12 +838,11 @@ async function sendRequest(request: ComposerSendPayload & { hash: string }, opti
   }
 }
 
-// Held messages wait for a native turn that takes no input, such as
-// compaction, and are sent when it ends.
+// Native pending prompts need no label: they join the running turn at its
+// next step. Held messages wait for a native turn that takes no input, such
+// as compaction, and are sent when it ends.
 function queueLabel(item: IntegratedQueuedMessage): string {
-  if (item.delivery === 'steer') return 'Steering';
   if (item.delivery === 'unconfirmed') return 'Not confirmed';
-  if (item.delivery !== 'held') return 'Queued';
   if (item.error) return 'Not sent';
   return item.reason === 'compact' ? 'After compaction' : item.reason === 'review' ? 'After review' : 'Waiting';
 }
@@ -908,11 +907,16 @@ async function startNewSession(): Promise<void> {
 // Resumes this conversation in a new process, which replaces this tab. The
 // composer refuses mid-turn; the palette confirms first and forces it.
 async function restartSession(force: boolean): Promise<void> {
-  if (restarting || !props.projectId) return;
+  if (restarting || (!props.onRestartSession && !props.projectId)) return;
   const token = generation;
   restarting = true;
   error.value = '';
   try {
+    if (props.onRestartSession) {
+      if (!force && streamStatus.value === 'working') throw new Error('This agent is still working. Wait for it to finish or use Restart in the assistant menu to confirm stopping it.');
+      await props.onRestartSession(props.processId);
+      return;
+    }
     const result = await mutate('integrated_restart', { process_id: props.processId, project_id: props.projectId, ...(force ? { force: true } : {}) }) as { session_id?: unknown };
     if (typeof result?.session_id === 'string') props.onLaunched?.(result.session_id);
   } catch (cause) {
@@ -1162,7 +1166,17 @@ async function declineForm(form: IntegratedFormRequest): Promise<void> {
 }
 
 async function takeControl(): Promise<void> {
-  await window.patterm.terminalTakeControl?.({ process_id: props.processId });
+  const processId = props.processId;
+  const token = generation;
+  error.value = '';
+  await setSubscription(processId, true);
+  if (token !== generation || stopped) return;
+  try {
+    const result = await window.patterm.terminalTakeControl?.({ process_id: processId }) as { error?: string } | undefined;
+    if (result?.error) throw new Error(result.error);
+  } catch (cause) {
+    if (token === generation) error.value = cause instanceof Error ? cause.message : String(cause);
+  }
 }
 
 function mutate(tool: string, args: { process_id: string } & Record<string, unknown>): Promise<unknown> {

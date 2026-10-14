@@ -34,7 +34,7 @@ assert.equal(worktreeName({ branch: null, path: 'C:\\repo\\.worktrees\\detached\
 assert.equal(worktreeName({ branch: null, path: '/repo/.worktrees/detached' }), 'detached');
 
 const project = { project: { id: 'p', name: 'Project', path: '/tmp/project' }, projectSessions: [], processes: [], worktrees: [], timers: [] };
-const application = { currentWorkbench: () => ({ projects: [project], harnesses: [] }) } as unknown as Parameters<typeof listCommandPaletteCommands>[0];
+const application = { currentWorkbench: () => ({ projects: [project], harnesses: [] }), timers: { list: () => [] }, database: { connection: { prepare: () => ({ all: () => [] }) } } } as unknown as Parameters<typeof listCommandPaletteCommands>[0];
 const context = { active_project_id: 'p', active_terminal_id: null, active_tab: 'todos' };
 const available = rendererCommands(context.active_project_id);
 
@@ -57,11 +57,23 @@ const integratedProject = {
   ]
 };
 const otherProject = { project: { id: 'q', name: 'Other', path: '/tmp/other' }, projectSessions: [session('elsewhere')], processes: [], worktrees: [], timers: [] };
-const integratedApplication = { currentWorkbench: () => ({ projects: [integratedProject, otherProject], harnesses: [] }) } as unknown as typeof application;
+const integratedApplication = { ...application, currentWorkbench: () => ({ projects: [integratedProject, otherProject], harnesses: [] }) } as unknown as typeof application;
 const integratedContext = { active_project_id: 'p', active_terminal_id: null, active_tab: 'agents', active_session_id: 'root' };
 
 async function main() {
   const quitCommands = (await listCommandPaletteCommands(application, context)).commands;
+  assert.equal(quitCommands.find(item => item.id === 'renderer:quit')?.confirmation, undefined, 'An empty app needs no Quit confirmation');
+  let shutdowns = 0;
+  const emptyApplication = { ...application, shutdown: async () => { shutdowns++; } } as typeof application;
+  assert.equal((await runCommandPaletteCommand(emptyApplication, { id: 'renderer:quit', context })).rendererAction, 'quit');
+  assert.equal(shutdowns, 1);
+  // Unowned and paused timers also get cancelled by Quit, even without processes.
+  for (const status of ['pending', 'paused']) {
+    const timedApplication = { ...emptyApplication, timers: { list: () => [{ ownerProcessId: null, status }] } } as unknown as typeof application;
+    assert.ok((await listCommandPaletteCommands(timedApplication, context)).commands.find(item => item.id === 'renderer:quit')?.confirmation);
+    await assert.rejects(runCommandPaletteCommand(timedApplication, { id: 'renderer:quit', context }), /Confirm Quit/);
+  }
+  assert.equal(shutdowns, 1, 'Timers prevent an unconfirmed shutdown');
   for (const query of ['patterm', 'desktop', 'close']) {
     assert.ok(!rankedCommands(quitCommands, query).some(row => row.command.id === 'renderer:quit'), `${query} must not match Quit's description`);
   }
@@ -72,13 +84,15 @@ async function main() {
     processes: [{ id: 'old_preview', name: 'Old preview', ptyProcessId: 'proc_1', status: 'exited' }],
     projectSessions: [{ id: 'live_session', processId: 'live_agent', ptyProcessId: 'proc_1', displayName: 'Live agent', exitedAt: null }]
   };
-  const reusedHandleApplication = { currentWorkbench: () => ({ projects: [reusedHandleProject], harnesses: [] }) } as unknown as typeof application;
+  const reusedHandleApplication = { ...application, currentWorkbench: () => ({ projects: [reusedHandleProject], harnesses: [] }) } as unknown as typeof application;
   const focusedCommands = (await listCommandPaletteCommands(reusedHandleApplication, { ...context, active_terminal_id: 'proc_1' })).commands;
   assert.ok(focusedCommands.some(command => command.id === 'process:close:live_agent'), 'Close targets the live agent rather than an old terminal with the same PTY handle');
   assert.ok(!focusedCommands.some(command => command.id === 'process:close:old_preview'));
 
   // Integrated agents have no terminal: the routed session identifies them.
   const listed = (await listCommandPaletteCommands(integratedApplication, integratedContext)).commands;
+  assert.match(listed.find(item => item.id === 'renderer:quit')?.confirmation ?? '', /4 agents and 1 command/);
+  await assert.rejects(runCommandPaletteCommand(integratedApplication, { id: 'renderer:quit', context: integratedContext }), /Confirm Quit/);
   const current = listed.filter(item => item.group === 'current');
   for (const id of ['integrated:interrupt:root_process', 'process:rename:root_process', 'timer:set:root_process', 'goto:child', 'renderer:copy:root_process', 'process:close:root_process']) {
     assert.ok(current.some(item => item.id === id), `${id} is offered for the current Integrated agent`);
@@ -196,7 +210,7 @@ async function main() {
     assert.deepEqual(await runCommandPaletteCommand(application, { id, context }), { navigate: { projectId: 'p', tab } });
   }
   const worktreeProject = { ...project, worktrees: [{ id: 'w', repoPath: '/tmp/project', worktreePath: '/tmp/project/.worktrees/w', branch: 'patterm/w' }] };
-  const worktreeCommands = (await listCommandPaletteCommands({ currentWorkbench: () => ({ projects: [worktreeProject], harnesses: [] }) } as unknown as typeof application, context)).commands;
+  const worktreeCommands = (await listCommandPaletteCommands({ ...application, currentWorkbench: () => ({ projects: [worktreeProject], harnesses: [] }) } as unknown as typeof application, context)).commands;
   const worktreeRow = worktreeCommands.find(item => item.id === 'worktree:shell:w');
   assert.equal(worktreeRow?.label, 'patterm/w');
   assert.ok(worktreeRow?.actions?.some(item => item.id === 'worktree:abandon:w'), 'Each worktree is one row with its actions');
