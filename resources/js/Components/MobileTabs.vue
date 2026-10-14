@@ -24,7 +24,7 @@
       <div v-for="family in families" :key="family.rootId" class="mb-1">
         <button type="button" class="relative isolate flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="isFamilyActive(family) ? 'bg-primary/10' : ''" @click="selectFamily(family)">
           <TabWash :activity="activityFor(family.root.session)" />
-          <RowStatus :activity="activityFor(family.root.session)" :count="family.options.length - 1 + ownedProcesses(family).length" />
+          <RowStatus :activity="activityFor(family.root.session)" :count="family.options.length - 1 + ownedProcesses(family).length" :count-label="memberLabel(family.options.length - 1, ownedProcesses(family).length)" />
           <span class="min-w-0 flex-1 truncate">{{ agentLabel(family.root.session) }}</span>
           <UnreadDot :urgency="unreadUrgency(family.root.session.processId)" />
           <span v-if="family.options.length - 1 + ownedProcesses(family).length && !countInRing(activityFor(family.root.session))" :class="cn('text-xs tabular-nums', subagentCountClass(activityFor(family.root.session)))">
@@ -65,7 +65,7 @@ import { ChevronDown, LoaderCircle } from 'lucide-vue-next';
 import { cn } from '@/lib/utils';
 import { agentLabel, agentOptionIndent, familyOwnerLabel, type AgentTabFamily } from '../lib/agentTabs';
 import { ownedProcessesForSessions, type LiveProcessRecord } from '../lib/processTabs';
-import { activityLookup, countInRing, processActivity, subagentCountClass, subagentPulse } from '../lib/rowActivity';
+import { activityLookup, countInRing, memberLabel, processActivity, subagentCountClass, subagentPulse } from '../lib/rowActivity';
 import WorkingShimmer from './WorkingShimmer.vue';
 import type { ProcessRecord, SessionRecord } from '../types';
 import LaunchAgentMenu from './LaunchAgentMenu.vue';

@@ -63,6 +63,11 @@ export function subagentCountClass(activity: RowActivity): string {
   }
 }
 
+// What a row's member count holds, such as "2 subagents, 1 process".
+export function memberLabel(agents: number, processes: number): string {
+  return [agents && `${agents} ${agents === 1 ? 'subagent' : 'subagents'}`, processes && `${processes} ${processes === 1 ? 'process' : 'processes'}`].filter(Boolean).join(', ');
+}
+
 // Whether a row's subagent count sits inside its status ring. A row that shows
 // `?`, `✕` or `✓` keeps the count at its end instead.
 export function countInRing(activity: RowActivity): boolean {

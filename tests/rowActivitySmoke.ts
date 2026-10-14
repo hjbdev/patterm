@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 
 import { buildAgentTabFamilies } from '../resources/js/lib/agentTabs';
-import { activityLookup, describeActivity, processActivity, subagentCountClass, subagentPulse } from '../resources/js/lib/rowActivity';
+import { activityLookup, countInRing, describeActivity, memberLabel, processActivity, subagentCountClass, subagentPulse } from '../resources/js/lib/rowActivity';
 import type { ActivityState, ProcessRecord, SessionRecord } from '../resources/js/types';
 
 function session(id: string, parentId: string | null, activity: ActivityState): SessionRecord {
@@ -127,4 +127,19 @@ const activity = (id: string) => activityFor(byId.get(id)!);
   assert.equal(processActivity(processRecord('dev', 'running', 'working')).self, 'working');
   assert.equal(processActivity(processRecord('dev', 'running', 'idle')).self, 'idle');
   assert.equal(processActivity(processRecord('done', 'exited', 'working')).self, 'idle');
+}
+
+{
+  // The count sits in the status ring unless the ring shows `?`, `✕` or `✓`.
+  const none = { working: 0, permission: 0, error: 0 };
+  for (const self of ['working', 'idle', 'unknown'] as const) assert.equal(countInRing({ self, subagents: none }), true);
+  for (const self of ['permission', 'error', 'closing'] as const) assert.equal(countInRing({ self, subagents: none }), false);
+}
+
+{
+  // A member count names subagents and processes separately, so owned
+  // processes aren't announced as subagents.
+  assert.equal(memberLabel(2, 0), '2 subagents');
+  assert.equal(memberLabel(1, 1), '1 subagent, 1 process');
+  assert.equal(memberLabel(0, 2), '2 processes');
 }

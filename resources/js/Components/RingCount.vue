@@ -1,6 +1,7 @@
 <template>
   <!-- A subagent count inside a 16px status ring, fitted to the UI font (see
-       ringCountFit). While subagents work, a foreground copy shows through a
+       ringCountFit). It uses the font's default proportional digits, which
+       are what the canvas measures. While subagents work, a foreground copy shows through a
        sweeping band, like WorkingShimmer. -->
   <span class="ring-count" aria-hidden="true">
     <svg viewBox="0 0 14 14"><text x="7" :y="fit.baseline" :font-size="fit.size">{{ count }}</text></svg>
@@ -39,7 +40,6 @@ text {
   fill: currentColor;
   font-family: var(--patterm-ui-font-family);
   font-weight: 600;
-  font-variant-numeric: tabular-nums;
   text-anchor: middle;
 }
 

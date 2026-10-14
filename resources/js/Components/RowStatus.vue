@@ -13,7 +13,7 @@
     </span>
     <RingCount v-if="ringCount" :count="count!" :shimmer="subagentPulse(activity) === 'working'" :class="subagentCountClass(activity)" />
   </span>
-  <span class="sr-only">{{ description }}<template v-if="ringCount">, {{ count }} {{ count === 1 ? 'subagent' : 'subagents' }}</template></span>
+  <span class="sr-only">{{ description }}<template v-if="ringCount">, {{ countLabel }}</template></span>
 </template>
 
 <script setup lang="ts">
@@ -24,8 +24,9 @@ import RingCount from './RingCount.vue';
 import StatusIcon from './StatusIcon.vue';
 import StatusRing from './StatusRing.vue';
 
-// `count`: the row's subagents, shown inside the ring.
-const props = defineProps<{ activity: RowActivity; count?: number | undefined }>();
+// `count`: the row's subagents and owned processes, shown inside the ring;
+// `countLabel` says what they are, for screen readers.
+const props = defineProps<{ activity: RowActivity; count?: number | undefined; countLabel?: string | undefined }>();
 
 const working = computed(() => props.activity.self === 'working');
 const spinning = computed(() => working.value || ((props.activity.self === 'idle' || props.activity.self === 'unknown') && props.activity.subagents.working > 0));

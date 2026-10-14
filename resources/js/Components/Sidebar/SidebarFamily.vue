@@ -23,7 +23,7 @@
           <TabWash :activity="activity" />
           <!-- One icon column: the harness icon, or the status while it matters. -->
           <span class="flex h-5 w-4 shrink-0 items-center justify-center">
-            <RowStatus :activity="activity" :count="memberCount" />
+            <RowStatus :activity="activity" :count="memberCount" :count-label="memberLabel" />
           </span>
           <span class="min-w-0 flex-1">
             <span class="flex min-w-0 items-center gap-1.5 leading-5" :style="{ paddingRight: `${reserve}px` }">

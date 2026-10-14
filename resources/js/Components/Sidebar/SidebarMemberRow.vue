@@ -22,7 +22,7 @@
       >
         <TabWash :activity="rowActivity" />
         <span class="flex h-4 w-4 shrink-0 items-center justify-center">
-          <RowStatus :activity="rowActivity" :count="count" />
+          <RowStatus :activity="rowActivity" :count="count" :count-label="countLabel" />
         </span>
         <!-- Rows outside the selected thread dim their text until hovered; status stays bright. -->
         <span class="min-w-0 truncate transition-colors duration-200 motion-reduce:transition-none" :class="dimmed && 'text-muted-foreground/80 group-hover/row:text-foreground/85'">{{ label }}</span>

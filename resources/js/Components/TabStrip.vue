@@ -32,12 +32,12 @@
               >
                 <TabWash :activity="activityFor(tab.family.root.session)" />
                 <template v-if="tab.pinned">
-                  <RowStatus :activity="activityFor(tab.family.root.session)" :count="familyMenuCount(tab.family)" />
+                  <RowStatus :activity="activityFor(tab.family.root.session)" :count="familyMenuCount(tab.family)" :count-label="familyMemberLabel(tab.family)" />
                   <UnreadDot class="absolute right-1 top-1" :urgency="unreadUrgency(tab.family.root.session.processId)" />
                 </template>
                 <template v-else>
                   <span class="flex min-w-0 flex-1 items-center gap-1.5">
-                    <RowStatus :activity="activityFor(tab.family.root.session)" :count="familyMenuCount(tab.family)" />
+                    <RowStatus :activity="activityFor(tab.family.root.session)" :count="familyMenuCount(tab.family)" :count-label="familyMemberLabel(tab.family)" />
                     <span class="truncate">{{ agentLabel(tab.family.root.session) }}</span>
                     <HostBadge v-if="tab.family.root.session.host" :host="tab.family.root.session.host" />
                     <UnreadDot :urgency="unreadUrgency(tab.family.root.session.processId)" />
@@ -161,7 +161,7 @@ import {
 } from '../lib/agentTabs';
 import { mentionPreview } from '../lib/integratedComposer';
 import { ownedProcessesForSessions } from '../lib/processTabs';
-import { activityLookup, countInRing, describeActivity, subagentCountClass, subagentPulse } from '../lib/rowActivity';
+import { activityLookup, countInRing, describeActivity, memberLabel, subagentCountClass, subagentPulse } from '../lib/rowActivity';
 import MemberCount from './MemberCount.vue';
 import { moveStripTab, setStripTabPinned, type StripTab, type TabLayout } from '../lib/tabStrip';
 import { timersForProcesses } from '../lib/timers';
@@ -298,6 +298,10 @@ watch(openRootId, (rootId) => {
 
 function familyMenuCount(family: AgentTabFamily): number {
   return family.options.length - 1 + ownedProcesses(family).length;
+}
+
+function familyMemberLabel(family: AgentTabFamily): string {
+  return memberLabel(family.options.length - 1, ownedProcesses(family).length);
 }
 
 // Pinned tabs hide their label, so their menu always opens to show it.
