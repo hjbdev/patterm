@@ -125,7 +125,7 @@ function licenceTexts(dir) {
   return readdirSync(dir)
     .filter((name) => licenceFile.test(name))
     .sort()
-    .map((name) => readFileSync(path.join(dir, name), 'utf8').replace(/\r\n/g, '\n').trim());
+    .map((name) => readText(path.join(dir, name)));
 }
 
 function npmPackages() {
@@ -223,7 +223,7 @@ function crates() {
 
 // A Windows checkout may hold text files with CRLF line endings.
 function readText(file) {
-  return readFileSync(file, 'utf8').replace(/\r\n/g, '\n').trim();
+  return readFileSync(file, 'utf8').replace(/\r\n/g, '\n').replace(/[ \t]+$/gm, '').trim();
 }
 
 const problems = [];
