@@ -1,5 +1,6 @@
 import { reactive } from 'vue';
 import { toast } from 'vue-sonner';
+import { confirmClose } from '../../Composables/useCloseConfirm';
 import { agentLabel } from '../../lib/agentTabs';
 import type { ProcessRecord, SessionRecord } from '../../types';
 
@@ -33,14 +34,11 @@ export function copyId(id: string | null | undefined): void {
   if (id) void navigator.clipboard.writeText(id).catch(() => toast.error('Could not copy process ID'));
 }
 
-export async function closeTarget(id: string, noun: string): Promise<void> {
-  try {
-    await window.patterm.call('close_process', { process_id: id });
-  } catch (caught) {
-    toast.error(caught instanceof Error ? caught.message : `Could not close ${noun}`);
-  }
+// Both ask first; see useCloseConfirm.
+export function closeSession(session: SessionRecord): void {
+  confirmClose(lifecycleId(session), agentLabel(session), 'agent');
 }
 
-export function closeSession(session: SessionRecord): Promise<void> {
-  return closeTarget(lifecycleId(session), 'agent');
+export function closeProcess(process: ProcessRecord): void {
+  confirmClose(process.id, process.name, 'process');
 }

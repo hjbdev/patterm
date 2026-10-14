@@ -30,7 +30,7 @@ import { Clock, Copy, Pencil, Pin, PinOff, X } from 'lucide-vue-next';
 import type { StripTab } from '../../lib/tabStrip';
 import type { ProcessRecord, SessionRecord } from '../../types';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '../ui/context-menu';
-import { closeSession, closeTarget, copyId, openRename, openTimer } from './sidebarActions';
+import { closeProcess, closeSession, copyId, openRename, openTimer } from './sidebarActions';
 import { useSidebar } from './sidebarContext';
 
 const props = defineProps<{ session?: SessionRecord | undefined; process?: ProcessRecord | undefined; tab?: StripTab | undefined }>();
@@ -43,7 +43,7 @@ function rename(): void {
 }
 
 function close(): void {
-  if (props.session) void closeSession(props.session);
-  else if (props.process) void closeTarget(props.process.id, 'process');
+  if (props.session) closeSession(props.session);
+  else if (props.process) closeProcess(props.process);
 }
 </script>

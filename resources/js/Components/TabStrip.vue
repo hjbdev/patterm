@@ -5,7 +5,7 @@
         v-for="tab in tabs"
         :key="tab.key"
         :ref="(element) => setTabElement(tab.key, element)"
-        :class="cn('strip-tab relative shrink-0 rounded-tab', tab.pinned ? 'w-8' : 'w-56')"
+        :class="cn('strip-tab group/tab relative shrink-0 rounded-tab', tab.pinned ? 'w-8' : 'w-56')"
         :data-dragging="draggingKey === tab.key ? 'true' : undefined"
         @pointerdown="onTabPointerDown($event, tab.key)"
         @click.capture="consumeTabClick($event, tab.key)"
@@ -24,7 +24,7 @@
                 :aria-label="tab.pinned ? `${hostLabel(agentLabel(tab.family.root.session), tab.family.root.session.host)}, ${describeActivity(activityFor(tab.family.root.session))}` : undefined"
                 :class="cn(
                   'mention-target relative isolate flex h-[26px] w-full touch-none select-none items-center gap-2 overflow-hidden rounded-tab bg-transparent text-[13px] transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
-                  tab.pinned ? 'justify-center' : 'justify-between px-2',
+                  tab.pinned ? 'justify-center' : 'justify-between pl-2 pr-7',
                   isFamilyActive(tab.family) && 'bg-primary/10',
                   mentionPreview === tab.family.rootId && 'mention-glow'
                 )"
@@ -117,6 +117,13 @@
           @select="selectProcess(tab.process)"
           @update:pinned="setPinned(tab, $event)"
         />
+        <!-- Pinned tabs have no room for a close button; their menus still close them. -->
+        <CloseRowButton
+          v-if="!tab.pinned"
+          :label="tab.kind === 'agent' ? agentLabel(tab.family.root.session) : tab.process.name"
+          :class="cn('absolute right-1 top-[3px] opacity-0 transition-opacity group-hover/tab:opacity-100 focus-visible:opacity-100', tabActive(tab) && 'opacity-100')"
+          @close="tab.kind === 'agent' ? closeAgent(tab.family.root.session) : confirmClose(tab.process.id, tab.process.name, 'process')"
+        />
       </div>
     </TransitionGroup>
 
@@ -144,7 +151,7 @@
 import HostBadge from './HostBadge.vue';
 import { computed, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue';
 import { Clock, Copy, Pencil, Pin, PinOff, Timer as TimerIcon, X } from 'lucide-vue-next';
-import { toast } from 'vue-sonner';
+import { confirmClose } from '../Composables/useCloseConfirm';
 import { cn } from '@/lib/utils';
 import {
   agentLabel,
@@ -162,6 +169,7 @@ import type { ProcessRecord, SessionRecord, TimerRecord } from '../types';
 import { animateTabMoves, useTabStripDrag } from '../Composables/useTabStripDrag';
 import { useHoverPopover } from '../Composables/useHoverPopover';
 import AgentIcon from './AgentIcon.vue';
+import CloseRowButton from './CloseRowButton.vue';
 import AgentFamilyMenu from './AgentFamilyMenu.vue';
 import ProcessTab from './ProcessTab.vue';
 import SetTimerDialog from './SetTimerDialog.vue';
@@ -301,6 +309,10 @@ function hasPopover(tab: Extract<StripTab, { kind: 'agent' }>): boolean {
     || familyTimers(tab.family).length > 0;
 }
 
+function tabActive(tab: StripTab): boolean {
+  return tab.kind === 'agent' ? isFamilyActive(tab.family) : tab.process.ptyProcessId === props.activeTerminalId;
+}
+
 function isFamilyActive(family: AgentTabFamily): boolean {
   return family.options.some((option) => matchesAgentTabSelection(option.session, props.activeTerminalId, props.activeSessionId))
     || ownedProcesses(family).some((process) => Boolean(props.activeTerminalId && process.ptyProcessId === props.activeTerminalId));
@@ -415,12 +427,8 @@ function copyProcessId(session: SessionRecord): void {
   });
 }
 
-async function closeAgent(session: SessionRecord): Promise<void> {
-  try {
-    await window.patterm.call('close_process', { process_id: agentLifecycleId(session) });
-  } catch (caught) {
-    toast.error(caught instanceof Error ? caught.message : 'Could not close agent');
-  }
+function closeAgent(session: SessionRecord): void {
+  confirmClose(agentLifecycleId(session), agentLabel(session), 'agent');
 }
 
 function agentLifecycleId(session: SessionRecord): string {
