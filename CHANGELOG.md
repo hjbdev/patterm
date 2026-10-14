@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Integrated OpenCode prompts steer by default, as in OpenCode: a message sent
+  mid-turn joins the turn at its next model step. Its pending row shows only
+  the message and Cancel.
 - CI caches incremental TypeScript type checks and unchanged Rust integration
   test builds, and runs smoke tests with up to eight workers. Linux, Windows and macOS
   packaging save verified Electron downloads for reuse, including with
