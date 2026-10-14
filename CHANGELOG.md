@@ -7,12 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Tabs and sidebar rows have a close button, shown on hover and on the active
+  tab.
+
 ### Changed
 
+- Closing an agent or process from a tab, sidebar row, menu, or the command
+  palette now asks for confirmation first.
 - The expand button on an agent's HTML page opens it full screen instead of
   in a small dialog, and Escape closes it.
 - The image viewer shows its previous and next arrows only while the pointer
   is near the left or right edge of the image.
+
+### Removed
+
+- The `…` button on sidebar rows. Right-click opens the same menu.
 
 ## [0.2.0] - 2026-10-14
 

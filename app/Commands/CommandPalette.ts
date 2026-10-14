@@ -397,7 +397,7 @@ function processActions(projectId: string, process: ProcessDto, current: boolean
     ...(running ? [{ id: `process:stop:${process.id}`, label: 'Stop process', hint: process.name, group, kind: 'backend', inline: true } satisfies CommandDescriptor] : []),
     { id: `process:rename:${process.id}`, label: 'Rename process…', hint: process.name, group, kind: 'backend', inline: true, input: { type: 'text', title: 'Rename process', placeholder: 'Process name', value: process.name } },
     { id: `renderer:copy:${process.id}`, label: 'Copy process ID', hint: process.id, group, kind: 'renderer', inline: true, result: { rendererAction: 'copy', text: process.id } },
-    { id: `process:close:${process.id}`, label: 'Close process', hint: process.name, group, kind: 'backend', inline: true }
+    { id: `process:close:${process.id}`, label: 'Close process', hint: process.name, confirmation: 'This stops the process.', confirmVerb: 'close it', group, kind: 'backend', inline: true }
   ];
 }
 
@@ -405,10 +405,10 @@ function gotoCommand(projectId: string, session: SessionDto): CommandDescriptor 
   return { id: `goto:${session.id}`, label: agentLabel(session), group: 'current', kind: 'navigate', result: { navigate: { projectId, sessionId: session.id } } };
 }
 
-// Closing an agent also closes everything it started.
+// Closing an agent stops it, and everything it started, so it always asks.
 function closeConfirmation(project: ProjectWorkbenchDto, processId: string): Pick<CommandDescriptor, 'confirmation' | 'confirmVerb'> {
   const { agents, processes } = runningDescendants(project, processId);
-  if (!agents.length && !processes.length) return {};
+  if (!agents.length && !processes.length) return { confirmation: 'This stops the agent.', confirmVerb: 'close it' };
   const parts = [agents.length ? countLabel(agents.length, 'subagent') : '', processes.length ? countLabel(processes.length, 'process', 'processes') : ''].filter(Boolean).join(' and ');
   const names = [...agents.map(agentLabel), ...processes.map((process) => process.name)];
   return { confirmation: `Also closes ${parts}: ${listNames(names)}.`, confirmVerb: 'close all of them' };
@@ -537,10 +537,7 @@ async function runProcessCommand(application: PattermApplication, id: string, in
     return { refresh: true };
   }
   if (action === 'close') {
-    // The palette asks first, but agents may have started more since it listed.
-    if (input.confirmed !== true && pendingCloseConfirmation(application, processId)) {
-      throw new Error('This agent has running subagents or processes. Open the palette again to confirm closing them.');
-    }
+    if (input.confirmed !== true) throw new Error('Confirm closing it first');
     await callTool(application, 'close_process', { process_id: processId });
     return { refresh: true };
   }
@@ -561,13 +558,6 @@ async function runProcessCommand(application: PattermApplication, id: string, in
     return { refresh: true };
   }
   throw new Error(`unknown process command ${id}`);
-}
-
-function pendingCloseConfirmation(application: PattermApplication, processId: string): boolean {
-  for (const project of application.currentWorkbench().projects) {
-    if (project.projectSessions.some((candidate) => candidate.processId === processId)) return Boolean(closeConfirmation(project, processId).confirmation);
-  }
-  return false;
 }
 
 function restartAllMessage(result: RestartAllResult): string {

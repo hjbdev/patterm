@@ -50,9 +50,10 @@
       >
         {{ count }}<ChevronRight class="h-3 w-3 transition-transform duration-200 motion-reduce:transition-none" :class="expanded && 'rotate-90'" />
       </button>
+      <!-- The unread dot becomes the close button in place, so nothing moves on hover. -->
       <span class="relative flex h-5 w-5 items-center justify-center">
         <UnreadDot class="transition-opacity group-hover/row:opacity-0" :urgency="urgency !== undefined ? urgency : unreadUrgency(session ? session.processId : process?.id)" />
-        <SidebarActionsMenu class="pointer-events-none absolute inset-0 opacity-0 transition-opacity group-hover/row:pointer-events-auto group-hover/row:opacity-100 data-[state=open]:pointer-events-auto data-[state=open]:opacity-100" :session="session" :process="process" :tab="tab" />
+        <CloseRowButton class="pointer-events-none opacity-0 transition-opacity group-hover/row:pointer-events-auto group-hover/row:opacity-100 absolute inset-0" :label="label" @close="close" />
       </span>
     </span>
   </div>
@@ -72,7 +73,8 @@ import { unreadUrgency, type NotificationUrgency } from '../../Composables/useNo
 import TabIcon from '../TabIcon.vue';
 import TabWash from '../TabWash.vue';
 import UnreadDot from '../UnreadDot.vue';
-import SidebarActionsMenu from './SidebarActionsMenu.vue';
+import CloseRowButton from '../CloseRowButton.vue';
+import { closeProcess, closeSession } from './sidebarActions';
 import SidebarItemMenu from './SidebarItemMenu.vue';
 import { useSidebar } from './sidebarContext';
 import { useSidebarNodes } from './sidebarNodes';
@@ -107,6 +109,11 @@ const rowKey = computed(() => props.tab?.key ?? (props.session ? `session:${prop
 const active = computed(() => props.session ? sidebar.sessionActive(props.session) : props.process ? sidebar.processActive(props.process) : false);
 // Only family members dim; top-level processes aren't part of any thread.
 const dimmed = computed(() => !props.tab && Boolean(nodes.dimmed?.(props.session?.id ?? props.process?.id ?? '')));
+
+function close(): void {
+  if (props.session) closeSession(props.session);
+  else if (props.process) closeProcess(props.process);
+}
 
 function select(): void {
   if (props.process) {
