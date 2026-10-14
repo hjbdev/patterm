@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The session context button sits outside the conversation column or
+  terminal, where the sidebar opens, instead of over the first message.
 - Tabs, sidebar rows, and the sidebar rail lead with the agent's status instead
   of its harness icon: a ring at rest, a comet circling it while the agent
   works, or `?`, `✕` and `✓`. A subagent count sits inside the ring, fitted to

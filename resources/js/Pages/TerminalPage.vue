@@ -10,10 +10,6 @@
         <IntegratedConversation v-if="integratedAgent" :process-id="integratedAgent.processId" :project-id="activeProject?.project.id ?? null" :project-path="activeProject?.project.path ?? null" :exited="integratedAgent.exited" :mention-agents="mentionAgents" :mention-launchers="mentionLaunchers" :close-request="selectedAgent?.closeRequest" :close-subagents="closeSubagents" class="h-full" @launched="selectLaunchedAgent" />
         <!-- Hidden rather than unmounted so switching back skips renderer setup. A null ID detaches the PTY. -->
         <TerminalPane v-show="!integratedAgent" title="Terminal" :process-id="integratedAgent ? null : activeTerminalId" :capture-enabled="!!activeProject" @capture-selection="capture" />
-        <!-- Integrated transcripts span the workspace, so align the button with the conversation column instead. -->
-        <div v-if="selectedAgent && !visible" class="pointer-events-none absolute inset-x-0 top-3 z-10 mx-auto flex justify-end px-3" :class="{ 'max-w-[50rem] 2xl:max-w-[1000px]': integratedAgent }">
-          <Button variant="ghost" size="icon" class="pointer-events-auto h-8 w-8 text-muted-foreground" aria-label="Open session context" title="Open session context" @click="show"><PanelRight class="h-4 w-4" /></Button>
-        </div>
       </div>
       <template v-if="selectedAgent && visible">
         <div v-if="narrow" class="absolute inset-0 z-20 bg-black/40" @click="close" />
@@ -37,6 +33,19 @@
       class="mx-auto mt-3 w-full"
       :style="{ maxWidth: `calc(var(--patterm-terminal-max-width, 960px) + ${docked ? width : 0}px)` }"
     />
+    <!-- Sits just past the conversation column or terminal, where the sidebar opens, and clamps to the edge when there is no room. -->
+    <Button
+      v-if="(activeTerminalId || integratedAgent) && selectedAgent && !visible"
+      variant="ghost"
+      size="icon"
+      class="absolute right-3 top-6 z-10 h-8 w-8 text-muted-foreground"
+      :class="integratedAgent ? 'left-[min(calc(50%+25rem+0.5rem),calc(100%-2.75rem))] 2xl:left-[min(calc(50%+500px+0.5rem),calc(100%-2.75rem))]' : 'left-[min(calc(50%+var(--patterm-terminal-max-width,960px)/2+0.5rem),calc(100%-2.75rem))]'"
+      aria-label="Open session context"
+      title="Open session context"
+      @click="show"
+    >
+      <PanelRight class="h-4 w-4" />
+    </Button>
     <p v-if="captureError" role="alert" class="p-2 text-sm text-destructive">{{ captureError }}</p>
     <Transition
       enter-active-class="transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none"
