@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The top bar shows the last three projects you visited beside the project
   switcher. Turn it off in Settings › Appearance.
+- Release installs check GitHub for a newer Patterm every few hours and
+  announce each new release once. Settings › About shows the result, can check
+  now, and offers pre-releases on request. Restart to update quits the desktop
+  app, installs the release with its installer, and opens it again; a server
+  restarts its service, and agents in its terminal hosts keep running. Source
+  checkouts never check. Turn automatic checks off in Settings › About.
+- The release manifest lists the Windows and macOS zips with their checksums,
+  so updates on every platform install a package the release signature covers.
+  `install-macos.sh --sha256` and `install.ps1 -Sha256` refuse a package with
+  any other checksum.
 
 ### Changed
 

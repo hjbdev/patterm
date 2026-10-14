@@ -6,7 +6,9 @@ param(
     [string]$StartMenuDirectory = [Environment]::GetFolderPath('Programs'),
     [switch]$NoPath,
     [string]$Version,
-    [switch]$AllowDowngrade
+    [switch]$AllowDowngrade,
+    # Patterm's updater passes the checksum from the signed release manifest.
+    [string]$Sha256
 )
 
 $ErrorActionPreference = 'Stop'
@@ -73,6 +75,7 @@ try {
     if ($hashText -notmatch ('^([a-fA-F0-9]{64})\s+\*?' + [Regex]::Escape("$name.zip") + '$')) { throw 'Invalid package checksum file.' }
     $expected = $Matches[1]
     if ((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash -ne $expected) { throw 'Package checksum verification failed.' }
+    if ($Sha256 -and $expected -ne $Sha256) { throw 'The package checksum does not match the signed release manifest.' }
 
     Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem

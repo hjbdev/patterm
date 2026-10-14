@@ -81,6 +81,12 @@ try {
   // Refuse a sidecar from the wrong architecture before signing the bundle.
   execFileSync('lipo', [sidecar, '-verify_arch', ARCH === 'arm64' ? 'arm64' : 'x86_64'], { stdio: 'inherit' });
   fs.copyFileSync(path.join(ROOT, 'dist', 'mcp', 'patterm-mcp.js'), path.join(resources, 'mcp', 'patterm-mcp.js'));
+  // The in-app updater checks releases with this key and installs through the helper.
+  fs.mkdirSync(path.join(app, 'scripts'));
+  for (const [file, mode] of [['apply-update.sh', 0o755], ['install-macos.sh', 0o755], ['minisign.pub', 0o644]]) {
+    fs.copyFileSync(path.join(ROOT, 'scripts', 'release', file), path.join(app, 'scripts', file));
+    fs.chmodSync(path.join(app, 'scripts', file), mode);
+  }
   // Electron identifies its stock executable as a development launch.
   fs.renameSync(path.join(bundle, 'Contents', 'MacOS', 'Electron'), path.join(bundle, 'Contents', 'MacOS', 'Patterm'));
   const plist = path.join(bundle, 'Contents', 'Info.plist');

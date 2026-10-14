@@ -372,6 +372,8 @@ export function markdownText(source: string): string {
 }
 
 const ROUTINE_REPORT_KEY = 'routine-report:';
+// An update notice opens Settings › About, where the update is installed.
+export const UPDATE_NOTICE_KEY = 'update:';
 
 function toRecord(row: NotificationRow): NotificationRecord {
   const { dedupe_key: _dedupe, ...record } = row;
@@ -388,6 +390,7 @@ export function notificationUrl(row: Pick<NotificationRecord, 'project_id' | 'pr
   // A routine's report opens on the Routines page, which keeps it after the run's agent stops.
   const reportRun = row.dedupe_key?.startsWith(ROUTINE_REPORT_KEY) ? row.dedupe_key.slice(ROUTINE_REPORT_KEY.length) : '';
   if (reportRun) return `/routines?report=${encodeURIComponent(reportRun)}`;
+  if (row.dedupe_key?.startsWith(UPDATE_NOTICE_KEY)) return '/settings?tab=about';
   if (!row.project_id) return '/projects';
   // Workspace routine runs have no project tab; the Routines page opens them.
   if (row.project_id === ASSISTANT_PROJECT_ID) return row.process_id ? `/routines?run=${encodeURIComponent(row.process_id)}` : '/routines';
