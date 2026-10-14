@@ -89,7 +89,7 @@
                   >
                     <template v-if="groupSummary(row).count">
                       <span class="shrink-0 text-muted-foreground"><ShimmerText v-if="groupRunning(row)" text="Using" /><template v-else>Used</template></span>
-                      <span class="min-w-0 truncate font-[440] text-foreground" :title="groupSummary(row).titles.join(', ')"><OdometerNumber :value="groupSummary(row).count" /> {{ groupSummary(row).titles.join(', ') }}</span>
+                      <span class="min-w-0 truncate font-[440] text-foreground" :title="groupSummary(row).label"><template v-for="(tool, index) in groupSummary(row).tools" :key="tool.title">{{ index ? ', ' : '' }}<template v-if="tool.count > 1"><OdometerNumber :value="tool.count" />{{ ' ' }}</template>{{ tool.title }}</template></span>
                     </template>
                     <template v-else>
                       <span class="shrink-0 font-[440] text-foreground"><ShimmerText v-if="groupRunning(row)" text="Thinking" /><template v-else>Thought</template></span>
