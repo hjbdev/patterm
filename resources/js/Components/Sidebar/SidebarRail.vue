@@ -3,9 +3,10 @@
   <div class="flex h-full min-h-0 w-12 flex-col items-center">
     <div class="flex shrink-0 flex-col items-center gap-0.5 py-0.5">
       <BoardButton side="right" />
-      <LaunchAgentMenu :project-id="sidebar.projectId.value" @launched="sidebar.launched" />
+      <LaunchAgentMenu :project-id="sidebar.projectId.value" />
     </div>
     <div ref="list" class="flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-y-auto overflow-x-hidden py-1 [scrollbar-width:none]">
+      <HarnessLaunchTabs :project-id="sidebar.projectId.value" vertical compact />
       <template v-for="(tab, index) in tabs" :key="tab.key">
         <div v-if="index > 0 && tab.pinned !== tabs[index - 1]!.pinned" class="my-1 w-5 border-t border-white/10" />
         <div
@@ -102,6 +103,7 @@ import { unreadUrgency, type NotificationUrgency } from '../../Composables/useNo
 import AgentFamilyMenu from '../AgentFamilyMenu.vue';
 import AgentIcon from '../AgentIcon.vue';
 import LaunchAgentMenu from '../LaunchAgentMenu.vue';
+import HarnessLaunchTabs from '../HarnessLaunchTabs.vue';
 import TabIcon from '../TabIcon.vue';
 import TabWash from '../TabWash.vue';
 import UnreadDot from '../UnreadDot.vue';
