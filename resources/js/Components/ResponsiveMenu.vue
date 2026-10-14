@@ -1,7 +1,7 @@
 <template>
   <DrawerRoot v-if="mobile" v-model:open="open" :nested="nested ?? false">
     <DrawerTrigger as-child><slot name="trigger" /></DrawerTrigger>
-    <DrawerPortal v-if="open">
+    <DrawerPortal>
       <DrawerOverlay class="fixed inset-0 z-50 bg-black/80" />
       <DrawerContent class="fixed inset-x-0 bottom-0 z-50 flex max-h-[85dvh] flex-col rounded-t-2xl border border-border bg-background px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] text-foreground shadow-lg outline-none">
         <DrawerHandle class="mx-auto my-3 h-1.5 w-12 shrink-0 rounded-full bg-muted-foreground/40" />

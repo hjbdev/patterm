@@ -18,7 +18,7 @@
     data-assistant-dock
     class="fixed flex flex-col overflow-hidden bg-background outline-none"
     :class="page
-      ? 'inset-x-1.5 bottom-1.5 top-12 z-40 rounded-xl border-t border-white/5'
+      ? 'inset-x-1.5 bottom-1.5 top-12 z-40 rounded-xl border-t border-white/5 max-sm:bottom-[calc(0.375rem+env(safe-area-inset-bottom))] max-sm:top-[calc(0.375rem+env(safe-area-inset-top))]'
       : docked
         ? 'bottom-1.5 right-1.5 top-1.5 z-40 w-[var(--assistant-dock-width)] rounded-xl border-t border-white/5'
         : 'inset-x-2 bottom-20 z-50 h-[min(40rem,calc(100dvh-7rem))] rounded-xl border border-border shadow-2xl sm:inset-x-auto sm:right-4 sm:w-[26rem]'"
@@ -144,7 +144,8 @@
     <TooltipTrigger as-child>
       <button
         type="button"
-        class="fixed bottom-4 right-4 z-50 flex size-12 items-center justify-center rounded-full border border-border bg-background text-foreground shadow-lg transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        data-assistant-launcher
+        class="fixed bottom-4 right-4 z-50 flex max-sm:bottom-[calc(3.75rem+env(safe-area-inset-bottom))] size-12 items-center justify-center rounded-full border border-border bg-background text-foreground shadow-lg transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         :aria-label="open ? 'Hide assistant' : 'Open assistant'"
         :aria-expanded="open"
         @click="setOpen(!open)"

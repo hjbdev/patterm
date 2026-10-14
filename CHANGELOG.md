@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- On phones, the bar with the project switcher and tabs sits at the bottom of
+  the screen. It steps aside while the keyboard is open. Search and
+  Notifications stay in the bar; Scheduled, Usage and Settings move into a
+  menu drawer.
+- Over a narrow workspace, the session context panel opens as a sheet that
+  slides in and out.
+
+### Fixed
+
+- On phones, menus and the notification tray slide away when you tap outside
+  them instead of vanishing.
+- On phones, closing the session context panel no longer opens the keyboard.
+- On phones, sliding the reasoning level no longer drags the composer
+  settings drawer.
+
 ## [0.2.2] - 2026-10-15
 
 ### Added
