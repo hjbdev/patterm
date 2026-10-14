@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the screen. It steps aside while the keyboard is open. Search and
   Notifications stay in the bar; Scheduled, Usage and Settings move into a
   menu drawer.
-- On phones, the session context panel slides in and out.
+- Over a narrow workspace, the session context panel opens as a sheet that
+  slides in and out.
 
 ### Fixed
 

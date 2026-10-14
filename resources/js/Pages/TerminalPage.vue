@@ -11,21 +11,22 @@
         <!-- Hidden rather than unmounted so switching back skips renderer setup. A null ID detaches the PTY. -->
         <TerminalPane v-show="!integratedAgent" title="Terminal" :process-id="integratedAgent ? null : activeTerminalId" :capture-enabled="!!activeProject" @capture-selection="capture" />
       </div>
-      <!-- Over a narrow workspace the panel is a sheet, so it slides in like the phone drawers; docked, it just appears. -->
-      <Transition enter-active-class="transition-opacity duration-500 motion-reduce:transition-none" leave-active-class="transition-opacity duration-500 motion-reduce:transition-none" enter-from-class="opacity-0" leave-to-class="opacity-0">
-        <div v-if="selectedAgent && visible && narrow" class="absolute inset-0 z-20 bg-black/40" @click="close" />
-      </Transition>
-      <Transition :css="narrow" enter-active-class="transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none" leave-active-class="transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none" enter-from-class="translate-x-full" leave-to-class="translate-x-full">
-        <aside v-if="selectedAgent && visible" ref="panel" tabindex="-1" :role="narrow ? 'dialog' : 'complementary'" :aria-modal="narrow || undefined" aria-label="Session context" class="z-30 flex shrink-0 flex-col border-l border-border/30 bg-background outline-none" :class="narrow ? 'absolute inset-y-0 right-0 shadow-xl' : integratedAgent ? 'relative my-6' : 'relative'" :style="{ width: `${width}px`, maxWidth: '100%' }" @keydown.esc.stop.prevent="close" @keydown="trapFocus">
-          <div v-if="!narrow" role="separator" tabindex="0" aria-label="Resize session context" aria-orientation="vertical" :aria-valuenow="width" :aria-valuemin="260" :aria-valuemax="480" class="absolute inset-y-0 -left-1 w-2 cursor-col-resize focus-visible:bg-primary/40" @pointerdown="startResize" @pointermove="resize" @pointerup="endResize" @pointercancel="endResize" @keydown.left.prevent="setWidth(width + 20)" @keydown.right.prevent="setWidth(width - 20)" />
-          <SessionContextPanel :key="selectedAgent.id" :project-id="activeProject!.project.id" :session-id="selectedAgent.id" :summary="selectedAgent.summary" :can-summarize="!selectedAgent.parentId" :active-worktree-id="diffWorktree?.id ?? null" @open-worktree="openWorktree" @close="close" />
-        </aside>
-      </Transition>
+      <aside v-if="docked && selectedAgent" ref="panel" tabindex="-1" role="complementary" aria-label="Session context" class="relative z-30 flex shrink-0 flex-col border-l border-border/30 bg-background outline-none" :class="integratedAgent ? 'my-6' : ''" :style="{ width: `${width}px`, maxWidth: '100%' }" @keydown.esc.stop.prevent="close">
+        <div role="separator" tabindex="0" aria-label="Resize session context" aria-orientation="vertical" :aria-valuenow="width" :aria-valuemin="260" :aria-valuemax="480" class="absolute inset-y-0 -left-1 w-2 cursor-col-resize focus-visible:bg-primary/40" @pointerdown="startResize" @pointermove="resize" @pointerup="endResize" @pointercancel="endResize" @keydown.left.prevent="setWidth(width + 20)" @keydown.right.prevent="setWidth(width - 20)" />
+        <SessionContextPanel :key="selectedAgent.id" :project-id="activeProject!.project.id" :session-id="selectedAgent.id" :summary="selectedAgent.summary" :can-summarize="!selectedAgent.parentId" :active-worktree-id="diffWorktree?.id ?? null" @open-worktree="openWorktree" @close="close" />
+      </aside>
     </div>
     <div v-else-if="route.name !== 'project'" class="p-5 text-sm text-muted-foreground">This terminal is no longer available. Select another tab or launch an agent.</div>
     <div v-else-if="activeProject" class="flex min-h-0 flex-1 overflow-auto p-5">
       <AgentEmptyState :project-id="activeProject.project.id" :project-name="activeProject.project.name" :remote="Boolean(activeProject.project.host)" :harnesses="harnesses" />
     </div>
+    <!-- Over a narrow workspace the panel is a sheet. -->
+    <Sheet :open="sheetOpen" @update:open="open => { if (!open) close() }">
+      <SheetContent side="right" hide-close aria-describedby="" class="flex w-[85vw] max-w-sm flex-col gap-0 border-border/30 p-0" @open-auto-focus="focusSheet" @close-auto-focus="returnFocus">
+        <SheetTitle class="sr-only">Session context</SheetTitle>
+        <SessionContextPanel v-if="selectedAgent" :key="selectedAgent.id" :project-id="activeProject!.project.id" :session-id="selectedAgent.id" :summary="selectedAgent.summary" :can-summarize="!selectedAgent.parentId" :active-worktree-id="diffWorktree?.id ?? null" @open-worktree="openWorktree" @close="close" />
+      </SheetContent>
+    </Sheet>
     <!-- TUI agents have no composer; their close request sits under the terminal. -->
     <CloseRequestCard
       v-if="activeTerminalId && !integratedAgent && selectedAgent?.processId && selectedAgent.closeRequest && !selectedAgent.exitedAt"
@@ -73,6 +74,7 @@ import SessionContextPanel from '../Components/session-context/SessionContextPan
 import WorktreeDiffDeck from '../Components/WorktreeDiffDeck.vue';
 import WorktreeDiffDrawer from '../Components/WorktreeDiffDrawer.vue';
 import { Button } from '../Components/ui/button';
+import { Sheet, SheetContent, SheetTitle } from '../Components/ui/sheet';
 import { APPEARANCE_SETTINGS_CHANGED_EVENT, lastKnownAppearanceSettings, loadAppearanceSettings, normalizeAppearanceSettings, type AppearanceSettings } from '../appearance/AppearanceSettings';
 import { mentionableAgents, mentionLaunchers as buildMentionLaunchers } from '../lib/agentMentions';
 import type { HarnessPreset } from '../lib/paletteSources';
@@ -150,6 +152,7 @@ const width = ref(Number.isFinite(storedWidth) && storedWidth >= 260 ? Math.min(
 const visible = ref(preference('patterm.context.visible') === 'true'), captureError = ref('');
 // Integrated transcripts span the workspace; only a docked sidebar pulls the row in to the conversation column.
 const docked = computed(() => Boolean(selectedAgent.value && visible.value && !narrow.value));
+const sheetOpen = computed(() => Boolean((activeTerminalId.value || integratedAgent.value) && selectedAgent.value && visible.value && narrow.value));
 let observer: ResizeObserver | undefined, drag: {
   x: number;
   width: number;
@@ -181,27 +184,22 @@ async function show() {
 }
 function close() {
   visible.value = false;
-  // Return focus to whichever editor the panel was opened from, except on touch screens, where that opens the keyboard.
-  if (touchScreen())
-    return;
-  workspace.value?.querySelector<HTMLElement>('[data-patterm-terminal-input], [data-patterm-integrated-input]')?.focus();
+  if (!narrow.value)
+    focusEditor();
 }
-function trapFocus(event: KeyboardEvent) {
-  if (!narrow.value || event.key !== 'Tab')
-    return;
-  const elements = Array.from(panel.value?.querySelectorAll<HTMLElement>('button, a, input, select, textarea, [tabindex="0"]') ?? [])
-    .filter(element => !element.matches(':disabled, [hidden], [aria-hidden="true"]') && element.getClientRects().length > 0);
-  const first = elements?.[0], last = elements?.[elements.length - 1];
-  if (!first || !last)
-    return;
-  if (event.shiftKey && (document.activeElement === first || document.activeElement === panel.value)) {
-    last.focus();
-    event.preventDefault();
-  }
-  else if (!event.shiftKey && document.activeElement === last) {
-    first.focus();
-    event.preventDefault();
-  }
+// Return focus to whichever editor the panel was opened from, except on touch screens, where that opens the keyboard.
+function focusEditor() {
+  if (!touchScreen())
+    workspace.value?.querySelector<HTMLElement>('[data-patterm-terminal-input], [data-patterm-integrated-input]')?.focus();
+}
+// The sheet takes focus itself rather than its first control, which would show a focus ring.
+function focusSheet(event: Event) {
+  event.preventDefault();
+  (event.currentTarget as HTMLElement | null)?.focus();
+}
+function returnFocus(event: Event) {
+  event.preventDefault();
+  focusEditor();
 }
 function openWorktree(worktree: SessionWorktree) {
   worktreeOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -217,12 +215,6 @@ function appearanceChanged(event: Event) {
   diffLayout.value = normalizeAppearanceSettings((event as CustomEvent<AppearanceSettings>).detail).diffViewer;
 }
 watch(visible, value => storePreference('patterm.context.visible', String(value)));
-watch(narrow, async (value) => {
-  if (value && visible.value) {
-    await nextTick();
-    panel.value?.focus();
-  }
-});
 onMounted(async () => {
   observer = new ResizeObserver(updateNarrow);
   if (workspace.value)
