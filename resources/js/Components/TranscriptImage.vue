@@ -69,15 +69,15 @@
           </DialogTitle>
           <RouterLink v-if="shown.to" :to="shown.to" class="shrink-0 text-xs text-muted-foreground underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:underline" @click="expanded = false">Open conversation</RouterLink>
         </div>
-        <div class="group/stage relative flex min-h-0 items-center justify-center">
+        <div class="relative flex min-h-0 items-center justify-center" @pointermove="trackHotzone" @pointerleave="hotzone = 0">
           <img v-if="shownUrl" :src="shownUrl" :alt="shown.name ?? 'Image'" class="min-h-0 max-h-[calc(92vh-4rem)] max-w-full rounded object-contain">
           <p v-else-if="shownFailed" class="px-16 py-12 text-sm text-muted-foreground">No longer stored</p>
           <div v-else class="h-40 w-56" />
           <template v-if="items.length > 1">
-            <button type="button" :class="NAV_CLASS" class="left-2" aria-label="Previous image" @click="step(-1)">
+            <button type="button" :class="[NAV_CLASS, hotzone === -1 ? 'opacity-100' : 'opacity-0']" class="left-2" aria-label="Previous image" @click="step(-1)">
               <ChevronLeft class="h-5 w-5" aria-hidden="true" />
             </button>
-            <button type="button" :class="NAV_CLASS" class="right-2" aria-label="Next image" @click="step(1)">
+            <button type="button" :class="[NAV_CLASS, hotzone === 1 ? 'opacity-100' : 'opacity-0']" class="right-2" aria-label="Next image" @click="step(1)">
               <ChevronRight class="h-5 w-5" aria-hidden="true" />
             </button>
           </template>
@@ -109,7 +109,7 @@ const identity = (image: GalleryImage) => image.key ?? image.sha256;
 const props = withDefaults(defineProps<{ image: GalleryImage; gallery?: GalleryImage[]; maxHeight?: number; maxWidth?: number; projectId?: string; fill?: boolean }>(), { maxHeight: 160, maxWidth: 280 });
 
 const MAX_DOTS = 12;
-const NAV_CLASS = 'absolute top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-background/80 text-foreground shadow outline-none backdrop-blur transition hover:bg-background opacity-0 group-hover/stage:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/50';
+const NAV_CLASS = 'absolute top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-background/80 text-foreground shadow outline-none backdrop-blur transition hover:bg-background focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/50';
 
 const url = ref<string | null>(null);
 const failed = ref(false);
@@ -136,11 +136,24 @@ const gestures = useLightboxGestures(stage, stageImage, {
   onTap: () => { chrome.value = !chrome.value; },
 });
 
+// Each arrow shows while the pointer is over its outer third of the image.
+// Tracking the pointer, rather than covering the image with hover zones,
+// keeps the whole image right-clickable and draggable.
+const hotzone = ref<-1 | 0 | 1>(0);
+
 watch(expanded, (open) => {
   gestures.reset();
   chrome.value = true;
+  hotzone.value = 0;
   if (open) index.value = Math.max(0, items.value.findIndex((item) => identity(item) === identity(props.image)));
 });
+
+function trackHotzone(event: PointerEvent): void {
+  const stage = event.currentTarget as HTMLElement;
+  const rect = (stage.querySelector('img') ?? stage).getBoundingClientRect();
+  const x = (event.clientX - rect.left) / rect.width;
+  hotzone.value = x < 1 / 3 ? -1 : x > 2 / 3 ? 1 : 0;
+}
 
 function step(delta: number): void {
   const count = items.value.length;
