@@ -32,6 +32,7 @@ export interface WorkbenchChanges {
   };
   harnesses?: KeyedPatch<HarnessInstallationDto>;
   sidebarState?: SidebarState;
+  terminalAvailable?: boolean;
 }
 
 // `epoch` identifies one server run. Versions restart with each epoch.
@@ -151,5 +152,6 @@ export function diffWorkbench(previous: WorkbenchSnapshotDto, next: WorkbenchSna
   if (harnesses) changes.harnesses = harnesses;
   if (!same(previous.sidebarState, next.sidebarState)) changes.sidebarState = next.sidebarState;
   else next.sidebarState = previous.sidebarState;
+  if (previous.terminalAvailable !== next.terminalAvailable) changes.terminalAvailable = next.terminalAvailable;
   return Object.keys(changes).length ? changes : undefined;
 }

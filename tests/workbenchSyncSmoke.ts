@@ -66,7 +66,8 @@ function workbench(projects: number, sessions: number): WorkbenchSnapshotDto {
   return {
     projects: Array.from({ length: projects }, () => project(sessions)),
     harnesses: [{ id: 'harness_claude', harness: 'claude', executablePath: '/usr/bin/claude', version: '2.1', status: 'available', discoveredAt: '2026-09-01', lastCheckedAt: '2026-09-01' }],
-    sidebarState: { projects: [], sections: [], knownProjects: [], knownSections: [] }
+    sidebarState: { projects: [], sections: [], knownProjects: [], knownSections: [] },
+    terminalAvailable: true
   };
 }
 
@@ -162,6 +163,19 @@ function lifecycle(): void {
   assert.equal(check((next) => { next.projects[0]!.timers.pop(); }), false, 'timers are not lifecycle changes');
 }
 
+// A client that missed the startup state learns the terminal core's status
+// from the next patch, and an unchanged status sends nothing.
+function terminalStatus(): void {
+  const base = workbench(1, 1);
+  base.terminalAvailable = false;
+  const next = clone(base);
+  next.terminalAvailable = true;
+  const changes = diffWorkbench(clone(base), next)!;
+  assert.deepEqual(Object.keys(changes), ['terminalAvailable']);
+  assert.equal(applyWorkbenchChanges(clone(base) as WorkbenchSnapshot, wire(changes)).terminalAvailable, true);
+  assert.equal(diffWorkbench(clone(next), clone(next)), undefined, 'an unchanged status is no patch');
+}
+
 function syncService(): void {
   mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1_000 });
   let data = workbench(2, 4);
@@ -244,6 +258,7 @@ async function main(): Promise<void> {
   roundTrips();
   patchSize();
   lifecycle();
+  terminalStatus();
   await syncService();
   topics();
   console.log('workbench sync smoke passed: randomised patch round trips, sharing, lifecycle, versions, catch-up, topics');

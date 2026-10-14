@@ -396,12 +396,14 @@ async function createApplicationResources(
   notificationService.resumeTurns();
   debugLog.write('runtime', 'integrated.reconciled', integratedReconciled);
 
-  const workbench = new WorkbenchRepository(database, undefined, timers);
+  const workbench = new WorkbenchRepository(database, undefined, timers, Date.now, () => terminal.isAvailable());
   const sync = new WorkbenchSyncService(() => remoteClient ? remoteClient.merge(workbench.snapshot()) : workbench.snapshot(), {
     onError: (error) => debugLog.write('workbench', 'sync.failed', { message: error instanceof Error ? error.message : String(error) })
   });
   workbenchSync = sync;
   defer(() => sync.dispose());
+  // Clients learn that the terminal core went away through the next patch.
+  defer(terminal.onExit(notifyWorkbenchChanged));
   const harnessDiscovery = new HarnessDiscoveryService(harnessProviders, {
     env: resolvedEnv,
     // Windows ignores a $SHELL inherited from Git Bash or MSYS; raw terminals use PowerShell.
