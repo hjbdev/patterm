@@ -54,6 +54,7 @@ const bundledDev = [
 ];
 // Development packages whose code the build compiles into the app.
 const compiledDev = {
+  typescript: 'Its runtime helpers are emitted into the app JavaScript. The compiler and its native binaries are build tools.',
   tailwindcss: 'Its base styles and utilities are compiled into the app stylesheet.',
   '@tailwindcss/typography': 'Its prose styles are compiled into the app stylesheet.',
   'tailwindcss-animate': 'Its animation utilities are compiled into the app stylesheet.'
@@ -124,7 +125,7 @@ function licenceTexts(dir) {
   return readdirSync(dir)
     .filter((name) => licenceFile.test(name))
     .sort()
-    .map((name) => readFileSync(path.join(dir, name), 'utf8').replace(/\r\n/g, '\n').trim());
+    .map((name) => readText(path.join(dir, name)));
 }
 
 function npmPackages() {
@@ -147,17 +148,20 @@ function npmPackages() {
     for (const entry of Object.values(tree[group] ?? {})) index(entry);
   }
   const shipped = new Set();
-  function include(entry) {
+  function include(entry, bundled = false) {
+    // Vue lists TypeScript as a peer for build-time SFC tooling. The compiler
+    // and its platform binaries are not bundled into Patterm's renderer.
+    if (bundled && entry.path === tree.devDependencies?.typescript?.path && !bundledDev.includes('typescript')) return;
     const dir = realpathSync(entry.path);
     if (shipped.has(dir)) return;
     shipped.add(dir);
-    for (const child of byPath.get(entry.path) ?? []) include(child);
+    for (const child of byPath.get(entry.path) ?? []) include(child, bundled);
   }
   for (const entry of Object.values({ ...tree.dependencies, ...tree.optionalDependencies })) include(entry);
   for (const name of bundledDev) {
     const entry = tree.devDependencies?.[name] ?? tree.dependencies?.[name];
     if (!entry) throw new Error(`Bundled dependency is missing: ${name}`);
-    include(entry);
+    include(entry, true);
   }
   const listed = pnpmJson(['licenses', 'list', '--json']);
   const packages = [];
@@ -219,7 +223,7 @@ function crates() {
 
 // A Windows checkout may hold text files with CRLF line endings.
 function readText(file) {
-  return readFileSync(file, 'utf8').replace(/\r\n/g, '\n').trim();
+  return readFileSync(file, 'utf8').replace(/\r\n/g, '\n').replace(/[ \t]+$/gm, '').trim();
 }
 
 const problems = [];

@@ -24,9 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Development builds and CI type checks use a pinned native TypeScript checker,
+  including Vue component checks, while retaining the compiler API used by tooling.
 - The assistant can auto-compact after the existing idle delay when voice is
   inactive. Voice cannot start until an automatic compaction finishes.
-
 - Integrated OpenCode prompts steer by default, as in OpenCode: a message sent
   mid-turn joins the turn at its next model step. Its pending row shows only
   the message and Cancel.
