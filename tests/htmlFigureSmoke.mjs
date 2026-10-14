@@ -82,6 +82,16 @@ test('the frame runs scripts in an opaque origin and cannot submit or navigate f
   assert.match(ui.FIGURE_FRAME_HTML, /event\.source !== parent/, 'only the host can send the page');
 });
 
+test('the full-screen view fills the window, and Escape still closes it', () => {
+  const card = fs.readFileSync('resources/js/Components/HtmlFigureCard.vue', 'utf8');
+  const frame = fs.readFileSync('resources/js/Components/HtmlFigureFrame.vue', 'utf8');
+  assert.match(card, /<DialogContent class="[^"]*\bh-dvh w-screen max-w-none\b/);
+  assert.match(card, /:initial-height="initialHeight" fill \/>/, 'a short page stretches to the window');
+  assert.match(frame, /:class="fill \? 'shrink-0 grow' : ''"/, 'the page grows to fill, leaving room for the link bar');
+  assert.match(frame, /:class="fill \? 'sticky bottom-0[^']*'/, 'the link bar stays in sight below a tall page');
+  assert.match(card, /@open-auto-focus="keepFocus"/, 'focus in the frame would swallow Escape');
+});
+
 test('local images are found and swapped for their stored copies', () => {
   const page = `<img src="shot.png"><img alt="x" src='/abs/a.webp'><img src="https://example.com/r.png"><img src="data:image/png;base64,AA">
 <style>.a{background:url(bg.png)}.b{background:url("https://cdn.example/x.png")}.c{background:url('#frag')}</style>`;
