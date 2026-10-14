@@ -452,7 +452,7 @@ function runHighlighted(event: KeyboardEvent): void {
 }
 
 function needsConfirmation(command: CommandDescriptor): boolean {
-  return command.id === 'renderer:quit' || Boolean(command.confirmation);
+  return Boolean(command.confirmation);
 }
 
 async function runCommand(command: CommandDescriptor): Promise<void> {

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Closing or quitting an empty desktop app no longer asks to stop zero agents
+  and zero commands. Running agents, commands, and timers still require confirmation.
+
 ### Changed
 
 - CI caches incremental TypeScript type checks and unchanged Rust integration
