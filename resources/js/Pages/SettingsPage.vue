@@ -33,6 +33,9 @@
                     <SettingsRow label="Personal project" description="List a project for agents outside any repository. Turned off, it still shows while something runs there." html-for="personal-project" save-key="appearance.navigation.personal" toggle>
                       <Switch id="personal-project" :model-value="draft.personalProject" @update:model-value="(value) => { draft.personalProject = value; void saveAppearance('appearance.navigation.personal'); }" />
                     </SettingsRow>
+                    <SettingsRow label="Recent projects" description="Show the last few projects you visited beside the project switcher." html-for="recent-projects" save-key="appearance.navigation.recent" toggle>
+                      <Switch id="recent-projects" :model-value="draft.recentProjects" @update:model-value="(value) => { draft.recentProjects = value; void saveAppearance('appearance.navigation.recent'); }" />
+                    </SettingsRow>
                   </SettingsSection>
 
                   <SettingsSection title="Interface" description="Font for tabs, menus, and project views." scope="appearance.interface">
@@ -325,6 +328,8 @@ function assignDraft(settings: AppearanceSettings): void {
   draft.historyImportToasts = settings.historyImportToasts;
   draft.diffViewer = settings.diffViewer;
   draft.navigation = settings.navigation;
+  draft.personalProject = settings.personalProject;
+  draft.recentProjects = settings.recentProjects;
   terminalFontSizeText.value = String(settings.terminalFontSizePx);
 }
 
