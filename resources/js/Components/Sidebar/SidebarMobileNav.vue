@@ -37,7 +37,7 @@
 import HostBadge from '../HostBadge.vue';
 import { computed } from 'vue';
 import { useSelectedHarnessLaunch } from '../../Composables/useHarnessLaunch';
-import { harnessLabel } from '../../lib/harnesses';
+import { harnessLaunchLabel } from '../../lib/harnessLaunches';
 import { ChevronDown } from 'lucide-vue-next';
 import { agentLabel } from '../../lib/agentTabs';
 import type { SessionRecord } from '../../types';
@@ -59,7 +59,7 @@ const PAGE_LABELS = { worktrees: 'Worktrees', history: 'History', todos: 'Todos'
 
 const current = computed<{ label: string; root?: SessionRecord; rootSelect?: () => void; child?: string; session?: SessionRecord; host?: string | undefined }>(() => {
   const launch = activeLaunch.value;
-  if (launch) return { label: `${harnessLabel(launch.input.harness)} · ${launch.state === 'starting' ? 'Starting…' : launch.state === 'failed' ? 'Launch failed' : 'Ready'}`, host: launch.input.host };
+  if (launch) return { label: harnessLaunchLabel(launch), host: launch.input.host };
   const page = sidebar.page.value;
   if (page) return { label: PAGE_LABELS[page] };
   for (const tab of sidebar.tabs.value) {

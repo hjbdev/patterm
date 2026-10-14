@@ -11,7 +11,7 @@
           <TabWash :activity="processActivity(activeProcess)" />
           <TabIcon :activity="processActivity(activeProcess)"><TerminalSquare class="h-3.5 w-3.5" /></TabIcon>
         </template>
-        <span class="min-w-0 flex-1 truncate">{{ activeLaunch ? `${harnessLabel(activeLaunch.input.harness)} · ${activeLaunch.state === 'starting' ? 'Starting…' : activeLaunch.state === 'failed' ? 'Launch failed' : 'Ready'}` : activeProcess?.name ?? (activeAgent ? agentLabel(activeAgent) : 'Tabs') }}</span>
+        <span class="min-w-0 flex-1 truncate">{{ activeLaunch ? harnessLaunchLabel(activeLaunch) : activeProcess?.name ?? (activeAgent ? agentLabel(activeAgent) : 'Tabs') }}</span>
         <ChevronDown class="h-4 w-4 shrink-0 text-muted-foreground" />
       </button>
     </template>
@@ -58,7 +58,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useProjectHarnessLaunches, useSelectedHarnessLaunch } from '../Composables/useHarnessLaunch';
-import { harnessLabel } from '../lib/harnesses';
+import { harnessLaunchLabel } from '../lib/harnessLaunches';
 import { ChevronDown, LoaderCircle, TerminalSquare } from 'lucide-vue-next';
 import { cn } from '@/lib/utils';
 import { agentLabel, agentOptionIndent, familyOwnerLabel, type AgentTabFamily } from '../lib/agentTabs';

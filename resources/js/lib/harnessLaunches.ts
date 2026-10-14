@@ -1,4 +1,5 @@
 import { shallowReactive } from 'vue';
+import { harnessLabel } from './harnessLabels';
 import type { AgentInterface } from '../types';
 
 export interface HarnessLaunchInput {
@@ -16,6 +17,11 @@ export interface HarnessLaunch {
   state: 'starting' | 'ready' | 'failed';
   sessionId?: string;
   error?: string;
+}
+
+export function harnessLaunchLabel(launch: HarnessLaunch): string {
+  const name = harnessLabel(launch.input.harness);
+  return launch.state === 'starting' ? `Starting ${name}…` : `${name} · ${launch.state === 'failed' ? 'Launch failed' : 'Ready'}`;
 }
 
 // Temporary renderer records, not processes or sessions. Native launch and

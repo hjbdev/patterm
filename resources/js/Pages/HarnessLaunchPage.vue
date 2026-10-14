@@ -3,7 +3,7 @@
     <template v-if="launch">
       <LoaderCircle v-if="launch.state === 'starting'" class="h-6 w-6 animate-spin text-muted-foreground motion-reduce:animate-none" />
       <AgentIcon v-else :harness="launch.input.harness" class="h-6 w-6" />
-      <h1 class="text-lg font-medium">{{ harnessLabel(launch.input.harness) }} · {{ launch.state === 'starting' ? 'Starting…' : launch.state === 'failed' ? 'Launch failed' : 'Ready' }}</h1>
+      <h1 class="text-lg font-medium">{{ harnessLaunchLabel(launch) }}</h1>
       <HostBadge v-if="launch.input.host" :host="launch.input.host" />
       <p v-if="launch.state === 'starting'" role="status" class="text-sm text-muted-foreground">Waiting for the agent to start. You can switch tabs or launch another agent.</p>
       <template v-else-if="launch.state === 'failed'">
@@ -22,8 +22,7 @@
 import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { LoaderCircle } from 'lucide-vue-next';
-import { harnessLaunches } from '../lib/harnessLaunches';
-import { harnessLabel } from '../lib/harnesses';
+import { harnessLaunches, harnessLaunchLabel } from '../lib/harnessLaunches';
 import { toastLaunchError } from '../lib/launchErrors';
 import { isOpenCodeVersionMismatch } from '../../../app/Services/OpenCodeServiceErrors';
 import { useHarnessLaunch } from '../Composables/useHarnessLaunch';
