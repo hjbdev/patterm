@@ -157,6 +157,8 @@ release includes this caveat above its generated change notes.
 ## Development
 
 Use Node >=24 <27, pnpm v11, Rust/Cargo, Git, and the agent CLIs you want to run.
+Source builds require Node >=24.11 <27 for the pinned Vite+ renderer toolchain.
+The packaged server retains its Node >=24 <27 runtime requirement.
 The server uses Node's built-in `node:sqlite`; it does not need Electron or a
 graphical session at runtime.
 

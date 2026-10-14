@@ -3019,6 +3019,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ## BSD-3-Clause
 
 - source-map-js 1.2.1 (npm)
+- source-map-js 1.2.2 (npm)
 
 ```text
 Copyright (c) 2009-2011, Mozilla Foundation and contributors
@@ -5316,7 +5317,7 @@ obstacle to adoption, that text has been removed.
 
 ## MIT
 
-- nanoid 3.3.12 (npm)
+- nanoid 3.3.20 (npm)
 
 ```text
 The MIT License (MIT)
@@ -5471,7 +5472,7 @@ SOFTWARE.
 
 ## MIT
 
-- postcss 8.5.15 (npm)
+- postcss 8.5.30 (npm)
 
 ```text
 The MIT License (MIT)

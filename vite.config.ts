@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath, URL } from 'node:url';
 import vue from '@vitejs/plugin-vue';
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vite-plus';
 
 const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string };
 
@@ -20,6 +20,8 @@ export default defineConfig({
     ]
   },
   build: {
+    // Preserve the browser targets used before the Vite+ upgrade.
+    target: ['es2020', 'edge88', 'firefox78', 'chrome87', 'safari14'],
     outDir: 'dist/renderer',
     emptyOutDir: true
   },

@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Renderer development and production builds use the pinned Vite+ toolchain
+  with Rolldown, retaining the existing browser targets and validation commands.
 - Integrated OpenCode prompts steer by default, as in OpenCode: a message sent
   mid-turn joins the turn at its next model step. Its pending row shows only
   the message and Cancel.
