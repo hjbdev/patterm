@@ -1221,3 +1221,24 @@ test('a control rejection reveals takeover and takeover restores a lost subscrip
   assert.equal(h.pane.state().controlling, true);
   h.scope.stop();
 });
+
+test('assistant /restart refuses an active response until it finishes', async () => {
+  const calls = [];
+  const h = createHarness({ processId: 'assistant_busy_restart', onRestartSession: async id => { calls.push(id); } });
+  await mountPush(h, 1, 'Still responding.');
+  h.pane.controls.value = { selectors: [], commands: [{ name: 'restart', source: 'patterm' }] };
+  const restart = async () => {
+    composer.draftFor(h.props.processId).text = '/restart';
+    const prepared = composer.payloadFor(h.props.processId);
+    await h.pane.sendRequest({ ...prepared.payload, hash: prepared.hash });
+    await flush();
+  };
+  await restart();
+  assert.deepEqual(calls, [], 'a slash command cannot silently interrupt active work');
+  assert.match(h.pane.state().error, /working|responding/i);
+  h.emitConversationEvent({ processId: h.props.processId, revision: 2, kind: 'status', status: 'idle' });
+  await flush();
+  await restart();
+  assert.deepEqual(calls, ['assistant_busy_restart']);
+  h.scope.stop();
+});

@@ -914,6 +914,7 @@ async function restartSession(force: boolean): Promise<void> {
   error.value = '';
   try {
     if (props.onRestartSession) {
+      if (!force && streamStatus.value === 'working') throw new Error('This agent is still working. Wait for it to finish or use Restart in the assistant menu to confirm stopping it.');
       await props.onRestartSession(props.processId);
       return;
     }
