@@ -168,10 +168,10 @@
       <section v-if="queue.length && !ended" class="mx-auto mb-2 w-full max-w-[50rem] px-4 2xl:max-w-[1000px]" aria-label="Queued messages" data-component="integrated-queue">
         <ul class="space-y-1 rounded-lg border border-border/60 px-3 py-1.5 text-xs">
           <li v-for="item in queue" :key="item.id" class="flex min-w-0 items-center gap-2">
-            <span class="shrink-0" :class="item.error ? 'text-destructive' : 'text-muted-foreground'" :title="item.delivery === 'unconfirmed' ? `${item.error ?? ''} It may already have reached the agent; check before sending it again.`.trim() : item.error">{{ queueLabel(item) }}</span>
+            <span v-if="item.delivery === 'held' || item.delivery === 'unconfirmed'" class="shrink-0" :class="item.error ? 'text-destructive' : 'text-muted-foreground'" :title="item.delivery === 'unconfirmed' ? `${item.error ?? ''} It may already have reached the agent; check before sending it again.`.trim() : item.error">{{ queueLabel(item) }}</span>
             <span class="min-w-0 flex-1 truncate">{{ item.text }}</span>
             <Button v-if="item.delivery === 'unconfirmed'" size="sm" variant="ghost" class="h-6 shrink-0 px-2 text-xs" :disabled="isResponding(`queue:${item.id}`)" @click="checkHeldDelivery(item)">Check delivery</Button>
-            <Button v-else-if="item.delivery === 'queue' || item.error" size="sm" variant="ghost" class="h-6 shrink-0 px-2 text-xs" :disabled="!canReply || isResponding(`queue:${item.id}`)" @click="updateQueued(item, 'steer')">Send now</Button>
+            <Button v-else-if="item.error" size="sm" variant="ghost" class="h-6 shrink-0 px-2 text-xs" :disabled="!canReply || isResponding(`queue:${item.id}`)" @click="updateQueued(item, 'steer')">Send now</Button>
             <Button size="sm" variant="ghost" class="h-6 shrink-0 px-2 text-xs" :disabled="!canReply || isResponding(`queue:${item.id}`)" @click="updateQueued(item, 'cancel')">{{ item.delivery === 'unconfirmed' ? 'Dismiss' : 'Cancel' }}</Button>
           </li>
         </ul>
@@ -838,12 +838,11 @@ async function sendRequest(request: ComposerSendPayload & { hash: string }, opti
   }
 }
 
-// Held messages wait for a native turn that takes no input, such as
-// compaction, and are sent when it ends.
+// Native pending prompts need no label: they join the running turn at its
+// next step. Held messages wait for a native turn that takes no input, such
+// as compaction, and are sent when it ends.
 function queueLabel(item: IntegratedQueuedMessage): string {
-  if (item.delivery === 'steer') return 'Steering';
   if (item.delivery === 'unconfirmed') return 'Not confirmed';
-  if (item.delivery !== 'held') return 'Queued';
   if (item.error) return 'Not sent';
   return item.reason === 'compact' ? 'After compaction' : item.reason === 'review' ? 'After review' : 'Waiting';
 }
