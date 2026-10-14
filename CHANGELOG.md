@@ -80,6 +80,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The browser no longer reports "terminal core not started" after a service
+  restart or update while the terminal core is running. The status now arrives
+  with every workbench update instead of once at page load, and clients hear
+  when the terminal core goes away.
 - Tool groups in conversation transcripts count each tool on its own, so a Skill followed by seven Bash calls reads "Skill (implement), 7 Bash" rather than "8 Skill (implement), Bash".
 - Assistant `/restart` resumes its conversation through the assistant controls.
   Rejected browser writes restore the Take control button, which reconnects

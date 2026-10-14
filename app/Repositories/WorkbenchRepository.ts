@@ -102,6 +102,7 @@ export interface WorkbenchSnapshotDto {
   projects: ProjectWorkbenchDto[];
   harnesses: HarnessInstallationDto[];
   sidebarState: SidebarState;
+  terminalAvailable: boolean;
 }
 
 export type ProjectKind = 'workspace' | 'personal' | 'assistant';
@@ -182,7 +183,8 @@ export class WorkbenchRepository {
     private readonly database: DatabaseService,
     private readonly settings = new SettingsService(database),
     private readonly timers?: Pick<TimerService, 'list'>,
-    private readonly now: () => number = Date.now
+    private readonly now: () => number = Date.now,
+    private readonly terminalAvailable: () => boolean = () => false
   ) {}
 
   private get db() {
@@ -219,7 +221,7 @@ export class WorkbenchRepository {
     const projectRows = this.projectRows();
     const timers = this.timers?.list() ?? [];
 
-    return { projects: projectRows.map((project) => this.projectWorkbench(project, timers)), harnesses, sidebarState: this.settings.sidebarState() };
+    return { projects: projectRows.map((project) => this.projectWorkbench(project, timers)), harnesses, sidebarState: this.settings.sidebarState(), terminalAvailable: this.terminalAvailable() };
   }
 
   updateSidebarState(input: SidebarState): SidebarState {
