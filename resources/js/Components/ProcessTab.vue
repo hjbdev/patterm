@@ -11,7 +11,7 @@
             :aria-label="pinned ? `${hostLabel(process.name, process.host)}, ${describeActivity(processActivity(process))}` : undefined"
             :class="cn(
               'relative isolate flex h-[26px] w-full touch-none select-none items-center gap-1.5 overflow-hidden rounded-tab bg-transparent text-left text-[13px] transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
-              pinned ? 'justify-center' : 'px-2',
+              pinned ? 'justify-center' : 'pl-2 pr-7',
               active && 'bg-primary/10'
             )"
             @click="emit('select')"
@@ -80,6 +80,7 @@ import TabWash from './TabWash.vue';
 import UnreadDot from './UnreadDot.vue';
 import { unreadUrgency } from '../Composables/useNotifications';
 import { hostLabel } from '../lib/hosts';
+import { confirmClose } from '../Composables/useCloseConfirm';
 import AutoSummaryPreview from './AutoSummaryPreview.vue';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { Button } from './ui/button';
@@ -146,12 +147,8 @@ async function copyProcessId(process: ProcessRecord): Promise<void> {
   }
 }
 
-async function closeProcess(process: ProcessRecord): Promise<void> {
-  try {
-    await window.patterm.call('close_process', { process_id: process.id });
-  } catch (caught) {
-    toast.error(caught instanceof Error ? caught.message : 'Could not close process');
-  }
+function closeProcess(process: ProcessRecord): void {
+  confirmClose(process.id, process.name, 'process');
 }
 
 </script>

@@ -39,7 +39,7 @@
           </span>
         </button>
       </SidebarItemMenu>
-      <!-- Over the first line: the member toggle, then the unread dot, which hover swaps for the menu. -->
+      <!-- Over the first line: the member toggle, then the unread dot, which hover swaps for a close button. -->
       <div class="absolute right-1.5 flex h-5 items-center gap-0.5 transition-[top] duration-200 motion-reduce:transition-none" :class="twoLines ? 'top-1.5' : 'top-1'">
         <!-- Without a second line, the timer joins the first. -->
         <span v-if="timer && !twoLines" class="mr-0.5 flex items-center gap-1 text-[11px] tabular-nums text-muted-foreground" :title="timer.title"><TimerIcon class="h-3 w-3" />{{ timer.remaining }}</span>
@@ -58,7 +58,7 @@
         </button>
         <span class="relative flex h-5 w-5 items-center justify-center">
           <UnreadDot class="transition-opacity group-hover/row:opacity-0" :urgency="familyUrgency(sidebar, tab.family, expanded)" />
-          <SidebarActionsMenu class="pointer-events-none absolute inset-0 opacity-0 transition-opacity group-hover/row:pointer-events-auto group-hover/row:opacity-100 data-[state=open]:pointer-events-auto data-[state=open]:opacity-100" :session="root" :tab="tab" />
+          <CloseRowButton class="pointer-events-none opacity-0 transition-opacity group-hover/row:pointer-events-auto group-hover/row:opacity-100 absolute inset-0" :label="label" @close="closeSession(root)" />
         </span>
       </div>
     </div>
@@ -86,7 +86,8 @@ import AgentIcon from '../AgentIcon.vue';
 import TabIcon from '../TabIcon.vue';
 import TabWash from '../TabWash.vue';
 import UnreadDot from '../UnreadDot.vue';
-import SidebarActionsMenu from './SidebarActionsMenu.vue';
+import CloseRowButton from '../CloseRowButton.vue';
+import { closeSession } from './sidebarActions';
 import SidebarItemMenu from './SidebarItemMenu.vue';
 import SidebarMemberRow from './SidebarMemberRow.vue';
 import SidebarNode from './SidebarNode.vue';

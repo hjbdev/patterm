@@ -101,6 +101,7 @@
     </div>
 
     <AssistantDock />
+    <CloseConfirmDialog />
     <template v-if="sidebarMode">
       <SidebarDialogs />
     </template>
@@ -112,6 +113,7 @@ import { computed, onBeforeUnmount, onMounted, provide, ref } from 'vue';
 import { RouterView } from 'vue-router';
 import { useMediaQuery } from '@vueuse/core';
 import AssistantDock from '../Components/Assistant/AssistantDock.vue';
+import CloseConfirmDialog from '../Components/CloseConfirmDialog.vue';
 import CommandPalette from '../Components/CommandPalette.vue';
 import LaunchAgentMenu from '../Components/LaunchAgentMenu.vue';
 import HarnessLaunchTabs from '../Components/HarnessLaunchTabs.vue';
