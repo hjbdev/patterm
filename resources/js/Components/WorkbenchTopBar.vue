@@ -1,5 +1,5 @@
 <template>
-  <header class="flex h-11 shrink-0 items-center gap-1.5 overflow-hidden bg-transparent px-2 sm:gap-2">
+  <header class="flex h-11 shrink-0 items-center gap-1.5 overflow-hidden bg-transparent px-2 [container-type:inline-size] sm:gap-2">
     <ResponsiveMenu v-model:open="projectMenuOpen" title="Projects" desktop-class="w-72" @content-pointer-enter="cancelProjectMenuClose" @content-pointer-leave="scheduleProjectMenuClose" @content-keydown="stopProjectMenuHover" @open-auto-focus="keepHoverFocus" @close-auto-focus="keepHoverFocus">
       <template #trigger>
         <Button variant="ghost" size="sm" class="h-[26px] max-w-[38vw] shrink-0 justify-between gap-1 rounded-tab px-2 py-0.5 text-[13px] sm:max-w-64 sm:gap-2" @pointerenter="openProjectMenuOnHover" @pointerleave="scheduleProjectMenuClose" @pointerdown="stopProjectMenuHover" @keydown="stopProjectMenuHover">
@@ -50,6 +50,21 @@
       </template>
     </ResponsiveMenu>
 
+    <!-- Only when the bar is wide enough: narrower, as in a small window or beside the docked assistant, the switcher and toolbar already fill it and the icons would push Settings out of view. -->
+    <div v-if="showRecentProjects && recentProjects.length" class="hidden shrink-0 items-center [@container(min-width:46rem)]:flex">
+      <Tooltip v-for="projectGroup in recentProjects" :key="projectGroup.project.id">
+        <TooltipTrigger as-child>
+          <Button variant="ghost" size="icon" class="h-[26px] w-[26px] rounded-tab opacity-60 transition-opacity hover:opacity-100 focus-visible:opacity-100" :aria-label="`Switch to ${projectGroup.project.name}`" @click="emit('selectProject', projectGroup.project.id)">
+            <ProjectLogo :project="projectGroup.project" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent class="bg-popover text-popover-foreground">
+          {{ projectGroup.project.name }}
+          <HostBadge v-if="projectGroup.project.host" :host="projectGroup.project.host" class="ml-1" />
+        </TooltipContent>
+      </Tooltip>
+    </div>
+
     <slot name="terminal-tabs" />
 
     <div class="ml-auto flex shrink-0 items-center gap-1.5">
@@ -83,9 +98,10 @@
 
 <script setup lang="ts">
 import HostBadge from './HostBadge.vue';
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { CalendarClock, ChevronDown, Gauge, LayoutGrid, Search, Settings } from 'lucide-vue-next';
 import { activeAgentSessions } from '../lib/agentTabs';
+import { readRecentProjectIds, rememberRecentProject, shownRecentProjects } from '../lib/recentProjects';
 import type { ProjectWorkbench, SessionRecord } from '../types';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -102,6 +118,7 @@ const props = defineProps<{
   activeProjectId: string | null;
   sidecarStatus: string;
   sidecarAvailable: boolean;
+  showRecentProjects: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -111,6 +128,12 @@ const emit = defineEmits<{
   usage: [];
   routines: [];
 }>();
+
+const recentProjectIds = ref(readRecentProjectIds(globalThis.localStorage));
+watch(() => props.activeProjectId, (projectId) => {
+  if (projectId) recentProjectIds.value = rememberRecentProject(recentProjectIds.value, projectId, globalThis.localStorage);
+}, { immediate: true });
+const recentProjects = computed(() => shownRecentProjects(recentProjectIds.value, props.projects, props.activeProjectId));
 
 const projectMenuOpen = ref(false);
 let projectMenuHovered = false;

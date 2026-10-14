@@ -27,6 +27,7 @@
         :active-project-id="activeProjectId"
         :sidecar-status="sidecarStatus"
         :sidecar-available="sidecarAvailable"
+        :show-recent-projects="showRecentProjects"
         @select-project="selectProject"
         @command-palette="paletteOpen = true"
         @settings="openSettings"
@@ -123,7 +124,7 @@ import WorkbenchSidebar from '../Components/Sidebar/WorkbenchSidebar.vue';
 import SidebarMobileNav from '../Components/Sidebar/SidebarMobileNav.vue';
 import { provideSidebarContext } from '../Components/Sidebar/sidebarContext';
 import { TooltipProvider } from '../Components/ui/tooltip';
-import { APPEARANCE_SETTINGS_CHANGED_EVENT, applyUiFont, loadAppearanceSettings, navigationLayoutHint, normalizeAppearanceSettings, type AppearanceSettings, type NavigationLayout } from '../appearance/AppearanceSettings';
+import { APPEARANCE_SETTINGS_CHANGED_EVENT, applyUiFont, lastKnownAppearanceSettings, loadAppearanceSettings, navigationLayoutHint, normalizeAppearanceSettings, type AppearanceSettings, type NavigationLayout } from '../appearance/AppearanceSettings';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { useWorkbenchNavigation } from '../Composables/useWorkbenchNavigation';
 import {
@@ -184,6 +185,7 @@ onMounted(async () => {
   const settings = await loadAppearanceSettings();
   applyUiFont(settings);
   navigation.value = settings.navigation;
+  showRecentProjects.value = settings.recentProjects;
   window.addEventListener(APPEARANCE_SETTINGS_CHANGED_EVENT, handleAppearanceSettingsChanged);
 });
 
@@ -198,6 +200,7 @@ function handleAppearanceSettingsChanged(event: Event): void {
   const settings = normalizeAppearanceSettings((event as CustomEvent<AppearanceSettings>).detail);
   applyUiFont(settings);
   navigation.value = settings.navigation;
+  showRecentProjects.value = settings.recentProjects;
 }
 
 function handleAgentTabShortcut(event: KeyboardEvent): void {
@@ -288,6 +291,7 @@ const currentStripProcesses = computed(() => currentStripTabs.value.flatMap((tab
 
 // Agents show as tabs or in the sidebar, as chosen in Settings → Appearance.
 const navigation = ref<NavigationLayout>(navigationLayoutHint());
+const showRecentProjects = ref(lastKnownAppearanceSettings()?.recentProjects ?? false);
 const sidebarMode = computed(() => navigation.value === 'sidebar' && Boolean(activeProject.value) && !showStandalonePage.value);
 const agentPage = computed(() => activeWorkspacePage.value === 'workbench' && projectViewMode.value === 'agents');
 provideSidebarContext({
