@@ -328,30 +328,34 @@ function plan(input: Partial<Parameters<typeof updatePlan>[0]> & { install: Rele
   return result;
 }
 
+// Paths use the host's separators, as the plans do on each platform.
 function testPlans(): void {
   const key = signer();
-  const linux = { ...install('1.2.0', key), root: '/home/me/.local/share/patterm/versions/1.2.0' };
+  const home = path.resolve('/home/me/.local/share/patterm');
+  const linux = { ...install('1.2.0', key), root: path.join(home, 'versions', '1.2.0') };
   const desktop = plan({ install: linux });
-  assert.equal(desktop.command, `${linux.root}/scripts/apply-update.sh`);
-  assert.deepEqual(desktop.args, ['42', '/data/update.log', '/home/me/.local/share/patterm/current/scripts/patterm.sh', '--', `${linux.root}/scripts/install-release.sh`, '--version', '1.3.0']);
-  assert.equal(desktop.env.PATTERM_HOME, '/home/me/.local/share/patterm');
+  assert.equal(desktop.command, path.join(linux.root, 'scripts', 'apply-update.sh'));
+  assert.deepEqual(desktop.args, ['42', '/data/update.log', path.join(home, 'current', 'scripts', 'patterm.sh'), '--', path.join(linux.root, 'scripts', 'install-release.sh'), '--version', '1.3.0']);
+  assert.equal(desktop.env.PATTERM_HOME, home);
   assert.equal(desktop.detached, true);
 
   assert.match((updatePlan({ install: linux, mode: 'server', version: '1.3.0', sha256: SHA, pid: 1, logPath: '', env: {}, unit: 'u' }) as { unavailable: string }).unavailable, /not running as the patterm service/);
   const server = plan({ install: linux, mode: 'server', env: { INVOCATION_ID: 'x', PATTERM_PORT: '9000', SECRET: 'no' } });
   assert.equal(server.command, 'systemd-run');
-  assert.deepEqual(server.args, ['--user', '--quiet', '--unit=patterm-update-1', '--setenv=PATTERM_PORT=9000', '--setenv=PATTERM_HOME=/home/me/.local/share/patterm', `${linux.root}/scripts/install-release.sh`, '--version', '1.3.0', '--update']);
+  assert.deepEqual(server.args, ['--user', '--quiet', '--unit=patterm-update-1', '--setenv=PATTERM_PORT=9000', `--setenv=PATTERM_HOME=${home}`, path.join(linux.root, 'scripts', 'install-release.sh'), '--version', '1.3.0', '--update']);
   assert.equal(server.detached, false);
   assert.equal(server.log, 'journalctl --user -u patterm-update-1');
 
-  const unversioned = updatePlan({ install: { ...linux, root: '/home/me/src/patterm' }, mode: 'desktop', version: '1.3.0', sha256: SHA, pid: 1, logPath: '', env: {}, unit: 'u' });
+  const unversioned = updatePlan({ install: { ...linux, root: path.resolve('/home/me/src/patterm') }, mode: 'desktop', version: '1.3.0', sha256: SHA, pid: 1, logPath: '', env: {}, unit: 'u' });
   assert.ok('unavailable' in unversioned);
 
-  const mac = plan({ install: { ...install('1.2.0', key, 'macos', 'arm64'), root: '/Applications/Patterm.app/Contents/Resources/app' } });
+  const applications = path.resolve('/Applications');
+  const macRoot = path.join(applications, 'Patterm.app', 'Contents', 'Resources', 'app');
+  const mac = plan({ install: { ...install('1.2.0', key, 'macos', 'arm64'), root: macRoot } });
   assert.equal(mac.command, '/bin/bash');
-  assert.deepEqual(mac.args, ['/Applications/Patterm.app/Contents/Resources/app/scripts/apply-update.sh', '42', '/data/update.log', '/Applications/Patterm.app', '--',
-    '/bin/bash', '/Applications/Patterm.app/Contents/Resources/app/scripts/install-macos.sh', '--version', '1.3.0', '--sha256', SHA]);
-  assert.equal(mac.env.PATTERM_MAC_APPLICATIONS_DIR, '/Applications');
+  assert.deepEqual(mac.args, [path.join(macRoot, 'scripts', 'apply-update.sh'), '42', '/data/update.log', path.join(applications, 'Patterm.app'), '--',
+    '/bin/bash', path.join(macRoot, 'scripts', 'install-macos.sh'), '--version', '1.3.0', '--sha256', SHA]);
+  assert.equal(mac.env.PATTERM_MAC_APPLICATIONS_DIR, applications);
 
   const windowsRoot = path.join('C:', 'Users', 'me', 'AppData', 'Local', 'Patterm', 'versions', '1.2.0');
   const windows = plan({ install: { ...install('1.2.0', key, 'windows'), root: windowsRoot } });
