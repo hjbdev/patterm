@@ -169,3 +169,22 @@ test('a correction that shrinks the sizer reports its whole move, clamp included
   assert.equal(scrollElement.scrollTop, 1380);
   assert.deepEqual(notes, [1480], 'the scroller measures the correction from before the clamp');
 });
+
+test('a tool group summary renders a space between each count and its title', async () => {
+  const { createSSRApp, h } = await import('vue');
+  const { renderToString } = await import('vue/server-renderer');
+  const template = page.match(/<span[^\n]*:title="groupSummary\(row\)\.label"[^\n]*<\/span>/)?.[0];
+  assert.ok(template, 'the summary span is in the transcript');
+  const messages = [
+    { id: 's1', role: 'assistant', kind: 'tool', text: '', tool: { name: 'Skill', family: 'skill', status: 'completed', title: 'Skill', target: 'implement' } },
+    ...Array.from({ length: 7 }, (_, index) => ({ id: `b${index}`, role: 'assistant', kind: 'tool', text: '', tool: { name: 'Bash', family: 'shell', status: 'completed', title: 'Bash', target: 'ls' } }))
+  ];
+  const html = await renderToString(createSSRApp({
+    template,
+    components: { OdometerNumber: { props: ['value'], render() { return h('span', String(this.value)); } } },
+    setup: () => ({ row: { messages }, groupSummary: (row) => transcriptToolGroupSummary(row.messages) })
+  }));
+  const text = html.replace(/<!--[\s\S]*?-->/g, '').replace(/<[^>]+>/g, '');
+  assert.equal(text, 'Skill (implement), 7 Bash');
+  assert.match(html, /title="Skill \(implement\), 7 Bash"/);
+});
