@@ -194,7 +194,9 @@ export class OpenCodeServerService {
         text: input.text.trim(),
         ...(files.length ? { files } : {}),
         ...(input.messageId ? { id: `msg_${input.messageId}` } : {}),
-        delivery: 'queue', resume: true
+        // Like OpenCode's own clients, a prompt sent mid-turn joins the turn
+        // at its next model step instead of waiting for it to end.
+        delivery: 'steer', resume: true
       };
       const route = `/api/session/${encodeURIComponent(runtime.resumeId)}/prompt`;
       const response = (input.attachments.length

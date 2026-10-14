@@ -7,15 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
+### Added
 
-- Closing or quitting an empty desktop app no longer asks to stop zero agents
-  and zero commands. Running agents, commands, and timers still require confirmation.
+- The top bar shows the last three projects you visited beside the project
+  switcher. Turn it off in Settings › Appearance.
 
 ### Changed
 
 - Development builds and CI type checks use a pinned native TypeScript checker,
   including Vue component checks, while retaining the compiler API used by tooling.
+- Integrated OpenCode prompts steer by default, as in OpenCode: a message sent
+  mid-turn joins the turn at its next model step. Its pending row shows only
+  the message and Cancel.
 - CI caches incremental TypeScript type checks and unchanged Rust integration
   test builds, and runs smoke tests with up to eight workers. Linux, Windows and macOS
   packaging save verified Electron downloads for reuse, including with
@@ -37,6 +40,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rarer ones, such as Set timer and Copy process ID.
 - Typing effort, reasoning, or thinking in the command palette finds the
   effort setting, whichever name the agent's harness uses.
+
+### Fixed
+
+- Assistant `/restart` resumes its conversation through the assistant controls.
+  Rejected browser writes restore the Take control button, which reconnects
+  the terminal subscription before taking over.
+
+- Closing or quitting an empty desktop app no longer asks to stop zero agents
+  and zero commands. Running agents, commands, and timers still require confirmation.
+- Settings › Appearance shows the saved Personal project choice instead of
+  always showing it off.
 
 ## [0.1.1] - 2026-10-13
 
