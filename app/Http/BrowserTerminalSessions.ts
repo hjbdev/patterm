@@ -98,7 +98,12 @@ export class BrowserTerminalSessions {
   guard(client: BrowserTerminalClient, raw: unknown, resize = false): unknown {
     const { id, active } = this.resolve(processInput.parse(raw).process_id);
     if (!active) throw new Error('Session is not active');
-    if (this.owners.get(id) !== client) throw new Error('Take control of this terminal first');
+    if (this.owners.get(id) !== client) {
+      // Correct stale client state before rejecting, including clients whose
+      // subscription was lost. The composer must offer a way to take over.
+      client.sendEvent('terminal-control', { processId: id, controlling: false });
+      throw new Error('Take control of this terminal first');
+    }
     if (!resize) return raw;
     const requested = z.object({ resize_seq: z.number().int().nonnegative().max(0xfffffffe).optional() }).parse(raw);
     return { ...(raw as object), resize_seq: this.nextResizeSequence(id, requested.resize_seq) };
