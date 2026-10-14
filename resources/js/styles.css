@@ -64,16 +64,16 @@
 }
 
 /* Phones put the workbench bar at the bottom. The keyboard takes its place,
-   so the bar steps aside while a workbench field has focus. The assistant
-   button sits above the bar and drops back down with it. */
+   so the bar steps aside while the keyboard is up. The assistant button sits
+   above the bar and drops back down with it. */
 @media (max-width: 639px) {
-  [data-workbench]:has(:is(input, textarea, [contenteditable]):focus) > [data-workbench-bar] {
+  [data-workbench][data-keyboard] > [data-workbench-bar] {
     display: none;
   }
-  [data-workbench]:has(:is(input, textarea, [contenteditable]):focus) #workbench-main {
+  [data-workbench][data-keyboard] #workbench-main {
     margin-bottom: 0.375rem;
   }
-  body:has([data-workbench] :is(input, textarea, [contenteditable]):focus) [data-assistant-launcher] {
+  body:has([data-workbench][data-keyboard]) [data-assistant-launcher] {
     bottom: 1rem;
   }
 }

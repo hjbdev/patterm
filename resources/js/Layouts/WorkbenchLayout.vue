@@ -22,7 +22,7 @@
     <RouterView v-if="showStandalonePage" />
 
     <!-- On phones the bar sits at the bottom, within thumb reach. -->
-    <div v-else data-workbench class="flex h-dvh min-h-0 flex-col overflow-hidden bg-[#080808] text-foreground">
+    <div v-else data-workbench :data-keyboard="keyboardOpen || undefined" class="flex h-dvh min-h-0 flex-col overflow-hidden bg-[#080808] text-foreground">
       <WorkbenchTopBar
         data-workbench-bar
         class="max-sm:order-last"
@@ -130,6 +130,7 @@ import { TooltipProvider } from '../Components/ui/tooltip';
 import { APPEARANCE_SETTINGS_CHANGED_EVENT, applyUiFont, lastKnownAppearanceSettings, loadAppearanceSettings, navigationLayoutHint, normalizeAppearanceSettings, type AppearanceSettings, type NavigationLayout } from '../appearance/AppearanceSettings';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { useHarnessLaunchCleanup, useProjectHarnessLaunches } from '../Composables/useHarnessLaunch';
+import { useSoftKeyboard } from '../Composables/useSoftKeyboard';
 import { useWorkbenchNavigation } from '../Composables/useWorkbenchNavigation';
 import {
   agentOptionTargetByDelta,
@@ -160,6 +161,7 @@ provide(openCommandPaletteKey, () => { paletteOpen.value = true; });
 const searchOpen = ref(false);
 const searchQuery = ref('');
 const mobile = useMediaQuery('(max-width: 639px)');
+const keyboardOpen = useSoftKeyboard();
 const assistantDocked = computed(() => assistant.enabled && assistantLayout.open && assistantLayout.docked && !assistantLayout.expanded && !mobile.value);
 const showStandalonePage = computed(() => !activeProjectId.value || route.name === 'settings' || route.name === 'usage' || route.name === 'routines' || route.name === 'routineLog');
 
