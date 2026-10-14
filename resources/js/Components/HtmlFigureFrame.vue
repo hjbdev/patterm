@@ -15,19 +15,20 @@
          page asks for happens until the user confirms it here. The key
          rebuilds them when the request changes, so a press that began on an
          older request cannot finish on this one. -->
-    <div v-if="request" ref="bar" :key="request.revision" class="mt-2 flex items-start gap-3 rounded-md bg-muted/30 px-3 py-2 text-xs" role="group" :aria-label="request.kind === 'link' ? 'Link from this page' : 'Answer from this page'" data-component="html-figure-request">
-      <p class="min-w-0 flex-1 whitespace-pre-wrap break-words text-muted-foreground"><span class="text-foreground">{{ request.kind === 'link' ? 'Open in your browser:' : 'Send to the agent:' }}</span> {{ request.text }}</p>
-      <div class="flex shrink-0 items-center gap-1">
-        <Button size="sm" variant="ghost" class="h-6 px-2 text-xs text-muted-foreground" :disabled="sending" @click="settle(false, 'Cancelled.')">Cancel</Button>
-        <Button size="sm" class="h-6 px-2 text-xs" :disabled="sending" @pointerdown="arm" @keydown.enter="arm" @keydown.space="arm" @click="confirm">{{ request.kind === 'link' ? 'Open' : 'Send' }}</Button>
-      </div>
+    <div v-if="request" ref="bar" :key="request.revision" class="mt-1.5 flex items-start gap-2 text-xs text-muted-foreground" role="group" :aria-label="request.kind === 'link' ? 'Link from this page' : 'Answer from this page'" data-component="html-figure-request">
+      <ExternalLink v-if="request.kind === 'link'" class="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+      <CornerDownLeft v-else class="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+      <p v-if="request.kind === 'link'" class="min-w-0 flex-1 truncate" :title="request.text"><span class="text-foreground">{{ linkParts(request.text).host }}</span>{{ linkParts(request.text).rest }}</p>
+      <p v-else class="min-w-0 flex-1 whitespace-pre-wrap break-words">{{ request.text }}</p>
+      <button type="button" class="shrink-0 font-medium text-foreground hover:underline disabled:opacity-50" :disabled="sending" @pointerdown="arm" @keydown.enter="arm" @keydown.space="arm" @click="confirm">{{ request.kind === 'link' ? 'Open' : 'Send' }}</button>
+      <button type="button" class="shrink-0 hover:text-foreground disabled:opacity-50" :disabled="sending" aria-label="Cancel" @click="settle(false, 'Cancelled.')"><X class="size-3.5" /></button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { Button } from './ui/button';
+import { CornerDownLeft, ExternalLink, X } from 'lucide-vue-next';
 import { FIGURE_FRAME_SANDBOX, FIGURE_HEIGHT } from '../../../app/Services/HtmlFigure';
 import { FIGURE_ID, figureAnswerText } from '../../../app/Services/TranscriptProjection';
 import { figureAnswerKey, figureAnsweredKey, figureFrameUrl } from '../lib/htmlFigure';
@@ -212,6 +213,13 @@ function readPicks(raw: unknown): Array<{ item?: string; label: string; value: s
     return label && value && item !== null ? { label, value, ...(item ? { item } : {}) } : null;
   });
   return picks.every((pick) => pick !== null) ? picks as Array<{ item?: string; label: string; value: string }> : null;
+}
+
+// The host stands out, so a look-alike path cannot pass for another site.
+function linkParts(url: string): { host: string; rest: string } {
+  if (!URL.canParse(url)) return { host: url, rest: '' };
+  const { host, pathname, search, hash } = new URL(url);
+  return { host, rest: `${pathname === '/' ? '' : pathname}${search}${hash}` };
 }
 
 // Heights pages reported, so a row that scrolls back into view opens at its
