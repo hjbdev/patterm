@@ -34,8 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   archives from the install cache.
 - Release packages build alongside validation, with publication still waiting
   for every check and package. CI uploads compressed packages without recompressing them.
-- Session context shows summary coverage only when the recap is incomplete,
-  and the status line itself opens the rebuild dialog.
+- Session context has a regenerate icon beside Close, opening summary controls
+  with clearer wording instead of a coverage status button.
 - The command palette lists the open agent's everyday actions (New
   conversation, Restart agent, Open session context, and every setting such
   as Model, Effort, and Mode) at the top level. More actions keeps only the

@@ -96,7 +96,9 @@ under 40 characters, or unchanged since the last recap, make no request.
 
 ### Coverage
 
-Each agent recap has a coverage state, shown in Session context:
+Each agent recap has a coverage state. Incomplete coverage appears in recap
+tooltips. The regenerate icon beside Close in Session context opens a dialog
+with progress, estimated usage, and regenerate, pause, and resume controls.
 
 - **Complete**: everything retained has been read.
 - **Partial**: the thread was already larger than 32 KiB of prose when it was
@@ -107,9 +109,8 @@ Each agent recap has a coverage state, shown in Session context:
   status.
 - **Paused** and **needs rebuild**: described below.
 
-When coverage is not complete, clicking its status in Session context shows
-how many prose messages have been processed and a rough call estimate for a
-full rebuild. From there:
+The regenerate dialog shows the number of messages read and estimates model
+calls for a full rebuild. It supports these operations:
 
 - **Rebuild from beginning** reads all retained prose again in chronological
   batches. It needs summaries enabled and uses usage, so it is never automatic.
