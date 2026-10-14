@@ -1,5 +1,5 @@
 <template>
-  <div class="min-w-0" :class="fill ? 'h-full' : ''">
+  <div class="min-w-0" :class="fill ? 'flex min-h-full flex-col' : ''">
     <iframe
       ref="frame"
       :key="generation"
@@ -8,14 +8,15 @@
       :sandbox="FIGURE_FRAME_SANDBOX"
       loading="lazy"
       class="block w-full border-0 bg-transparent"
-      :style="{ height: `${height}px`, minHeight: fill ? '100%' : undefined }"
+      :class="fill ? 'shrink-0 grow' : ''"
+      :style="{ height: `${height}px` }"
       data-component="html-figure-frame"
     />
     <!-- Patterm's own controls: page script cannot press them, so a link
          opens only once the user confirms it here. The key rebuilds them when
          the link changes, so a press that began on an older one cannot finish
          on this one. -->
-    <div v-if="request" ref="bar" :key="request.revision" class="mt-1.5 flex items-start gap-2 text-xs text-muted-foreground" role="group" aria-label="Link from this page" data-component="html-figure-request">
+    <div v-if="request" ref="bar" :key="request.revision" class="mt-1.5 flex items-start gap-2 text-xs text-muted-foreground" :class="fill ? 'sticky bottom-0 bg-background py-1' : ''" role="group" aria-label="Link from this page" data-component="html-figure-request">
       <ExternalLink class="mt-0.5 size-3 shrink-0" aria-hidden="true" />
       <p class="min-w-0 flex-1 truncate" :title="request.url"><span class="text-foreground">{{ linkParts(request.url).host }}</span>{{ linkParts(request.url).rest }}</p>
       <button type="button" class="shrink-0 font-medium text-foreground hover:underline" @pointerdown="arm" @keydown.enter="arm" @keydown.space="arm" @click="confirm">Open</button>
@@ -37,7 +38,8 @@ import { figureAnswerKey, figureAnsweredKey, figureFrameUrl, guardFigureFocus } 
 // the user confirms them.
 // measureKey names the page for the height cache; the prepared html carries
 // inline fonts, too large to keep as keys. Without one, nothing is cached.
-// fill stretches a short page to its container, as in the full-screen view.
+// fill stretches a short page to its container, as in the full-screen view,
+// and keeps the link bar in sight below it.
 const props = defineProps<{ html: string; measureKey?: string; title: string; initialHeight: number; fill?: boolean }>();
 const channel = inject(figureAnswerKey, null);
 const answered = inject(figureAnsweredKey, null);
