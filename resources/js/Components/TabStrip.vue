@@ -24,7 +24,7 @@
                 :aria-label="tab.pinned ? `${hostLabel(agentLabel(tab.family.root.session), tab.family.root.session.host)}, ${describeActivity(activityFor(tab.family.root.session))}` : undefined"
                 :class="cn(
                   'mention-target relative isolate flex h-[26px] w-full touch-none select-none items-center gap-2 overflow-hidden rounded-tab bg-transparent text-[13px] transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
-                  tab.pinned ? 'justify-center' : 'justify-between pl-2 pr-7',
+                  tab.pinned ? 'justify-center' : 'justify-between pl-2 pr-6',
                   isFamilyActive(tab.family) && 'bg-primary/10',
                   mentionPreview === tab.family.rootId && 'mention-glow'
                 )"
@@ -32,26 +32,25 @@
               >
                 <TabWash :activity="activityFor(tab.family.root.session)" />
                 <template v-if="tab.pinned">
-                  <TabIcon :activity="activityFor(tab.family.root.session)" compact>
-                    <AgentIcon :harness="tab.family.root.session.harness" class="h-3.5 w-3.5" />
-                  </TabIcon>
+                  <RowStatus :activity="activityFor(tab.family.root.session)" :count="familyMenuCount(tab.family)" :count-label="familyMemberLabel(tab.family)" />
                   <UnreadDot class="absolute right-1 top-1" :urgency="unreadUrgency(tab.family.root.session.processId)" />
                 </template>
                 <template v-else>
                   <span class="flex min-w-0 flex-1 items-center gap-1.5">
-                    <TabIcon :activity="activityFor(tab.family.root.session)">
-                      <AgentIcon :harness="tab.family.root.session.harness" class="h-3.5 w-3.5" />
-                    </TabIcon>
+                    <RowStatus :activity="activityFor(tab.family.root.session)" :count="familyMenuCount(tab.family)" :count-label="familyMemberLabel(tab.family)" />
                     <span class="truncate">{{ agentLabel(tab.family.root.session) }}</span>
                     <HostBadge v-if="tab.family.root.session.host" :host="tab.family.root.session.host" />
                     <UnreadDot :urgency="unreadUrgency(tab.family.root.session.processId)" />
                   </span>
-                  <span v-if="familyTimers(tab.family).length" class="flex shrink-0 items-center text-muted-foreground" :aria-label="`${familyTimers(tab.family).length} ${familyTimers(tab.family).length === 1 ? 'timer' : 'timers'} set`">
-                    <TimerIcon class="h-3.5 w-3.5" />
-                  </span>
-                  <span v-if="familyMenuCount(tab.family) > 0" :class="cn('relative flex h-4 min-w-4 shrink-0 justify-center', subagentCountClass(activityFor(tab.family.root.session)))" :aria-label="`${familyMenuCount(tab.family)} subagents and processes`">
-                    <span class="text-[10px] font-medium leading-[10px] tabular-nums">{{ familyMenuCount(tab.family) }}</span>
-                    <svg class="absolute bottom-0 h-1.5 w-4" viewBox="0 0 16 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m1 1 7 4 7-4" /></svg>
+                  <!-- The timer and count sit close together, tucked against the close button. -->
+                  <span v-if="familyTimers(tab.family).length || familyMenuCount(tab.family) > 0" class="flex shrink-0 items-center gap-1">
+                    <span v-if="familyTimers(tab.family).length" class="flex shrink-0 items-center text-muted-foreground" :aria-label="`${familyTimers(tab.family).length} ${familyTimers(tab.family).length === 1 ? 'timer' : 'timers'} set`">
+                      <!-- 13px with a 1.25px stroke matches the count's height; lifted half a pixel because its crown sits it low. -->
+                      <TimerIcon class="h-[13px] w-[13px] -translate-y-[0.5px]" :stroke-width="2.3" />
+                    </span>
+                    <span v-if="familyMenuCount(tab.family) > 0 && !countInRing(activityFor(tab.family.root.session))" :class="cn('flex shrink-0', subagentCountClass(activityFor(tab.family.root.session)))" :aria-label="`${familyMenuCount(tab.family)} subagents and processes`">
+                      <MemberCount :count="familyMenuCount(tab.family)" :shimmer="subagentPulse(activityFor(tab.family.root.session)) === 'working'" />
+                    </span>
                   </span>
                 </template>
               </button>
@@ -162,18 +161,18 @@ import {
 } from '../lib/agentTabs';
 import { mentionPreview } from '../lib/integratedComposer';
 import { ownedProcessesForSessions } from '../lib/processTabs';
-import { activityLookup, describeActivity, subagentCountClass } from '../lib/rowActivity';
+import { activityLookup, countInRing, describeActivity, memberLabel, subagentCountClass, subagentPulse } from '../lib/rowActivity';
+import MemberCount from './MemberCount.vue';
 import { moveStripTab, setStripTabPinned, type StripTab, type TabLayout } from '../lib/tabStrip';
 import { timersForProcesses } from '../lib/timers';
 import type { ProcessRecord, SessionRecord, TimerRecord } from '../types';
 import { animateTabMoves, useTabStripDrag } from '../Composables/useTabStripDrag';
 import { useHoverPopover } from '../Composables/useHoverPopover';
-import AgentIcon from './AgentIcon.vue';
 import CloseRowButton from './CloseRowButton.vue';
 import AgentFamilyMenu from './AgentFamilyMenu.vue';
 import ProcessTab from './ProcessTab.vue';
 import SetTimerDialog from './SetTimerDialog.vue';
-import TabIcon from './TabIcon.vue';
+import RowStatus from './RowStatus.vue';
 import TabWash from './TabWash.vue';
 import UnreadDot from './UnreadDot.vue';
 import { unreadUrgency } from '../Composables/useNotifications';
@@ -299,6 +298,10 @@ watch(openRootId, (rootId) => {
 
 function familyMenuCount(family: AgentTabFamily): number {
   return family.options.length - 1 + ownedProcesses(family).length;
+}
+
+function familyMemberLabel(family: AgentTabFamily): string {
+  return memberLabel(family.options.length - 1, ownedProcesses(family).length);
 }
 
 // Pinned tabs hide their label, so their menu always opens to show it.

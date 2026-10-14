@@ -15,13 +15,7 @@
     >
       <TabWash :activity="member.activity" />
       <span class="flex h-4 w-4 shrink-0 items-center justify-center">
-        <!-- Subagents are rings, as in the sidebar; the header already names the harness. -->
-        <TabIcon :activity="member.activity" compact muted>
-          <template #default="{ working }">
-            <span v-if="member.session" :class="cn('block h-3 w-3 rounded-full border-[1.75px] border-current', working ? 'opacity-90' : 'opacity-[0.55]')" />
-            <TerminalSquare v-else class="h-3.5 w-3.5" />
-          </template>
-        </TabIcon>
+        <RowStatus :activity="member.activity" />
       </span>
       <span class="min-w-0 flex-1 truncate text-[13px]" :class="active ? 'text-foreground' : 'text-foreground/85'">{{ member.name }}</span>
       <HostBadge v-if="host && host !== parentHost" :host="host" />
@@ -32,13 +26,13 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { TerminalSquare } from 'lucide-vue-next';
+
 import { cn } from '@/lib/utils';
 import type { DigestMember } from '../../lib/agentDigest';
 import { hostLabel } from '../../lib/hosts';
 import { MAX_INDENT_DEPTH } from '../../lib/sidebarTree';
 import HostBadge from '../HostBadge.vue';
-import TabIcon from '../TabIcon.vue';
+import RowStatus from '../RowStatus.vue';
 import TabWash from '../TabWash.vue';
 import SidebarItemMenu from './SidebarItemMenu.vue';
 import { useSidebar } from './sidebarContext';

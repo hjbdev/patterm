@@ -23,7 +23,7 @@
           <TabWash :activity="activity" />
           <!-- One icon column: the harness icon, or the status while it matters. -->
           <span class="flex h-5 w-4 shrink-0 items-center justify-center">
-            <TabIcon :activity="activity" compact><AgentIcon :harness="root.harness" class="h-3.5 w-3.5" /></TabIcon>
+            <RowStatus :activity="activity" :count="memberCount" :count-label="memberLabel" />
           </span>
           <span class="min-w-0 flex-1">
             <span class="flex min-w-0 items-center gap-1.5 leading-5" :style="{ paddingRight: `${reserve}px` }">
@@ -47,14 +47,14 @@
           v-if="memberCount"
           type="button"
           tabindex="-1"
-          :class="cn('flex h-5 items-center gap-0.5 rounded pl-1 pr-0.5 text-xs tabular-nums transition-colors hover:bg-white/10 hover:text-foreground', subagentCountClass(activity))"
+          :class="cn('flex h-5 items-center rounded px-1 transition-colors hover:bg-white/10 hover:text-foreground', subagentCountClass(activity))"
           :aria-expanded="expanded"
           :aria-label="`${expanded ? 'Hide' : 'Show'} ${memberLabel}`"
           :title="memberLabel"
           @pointerdown.stop
           @click.stop="emit('toggle', $event)"
         >
-          {{ memberCount }}<ChevronRight class="h-3 w-3 transition-transform duration-200 motion-reduce:transition-none" :class="expanded && 'rotate-90'" />
+          <MemberCount :count="memberCount" :open="expanded" :shimmer="subagentPulse(activity) === 'working'" :bare="countInRing(activity)" />
         </button>
         <span class="relative flex h-5 w-5 items-center justify-center">
           <UnreadDot class="transition-opacity group-hover/row:opacity-0" :urgency="familyUrgency(sidebar, tab.family, expanded)" />
@@ -65,7 +65,7 @@
     <!-- The tree below the root, at any depth: each agent's subagents, then
          its processes. Members grow and shrink into place. -->
     <Transition :css="false" @enter="expandIn" @leave="collapseOut">
-      <div v-if="expanded && memberCount" class="ml-4 border-l border-white/[0.08] pl-1">
+      <div v-if="expanded && memberCount" class="sidebar-tree">
         <TransitionGroup :css="false" @enter="expandIn" @leave="collapseOut">
           <SidebarNode v-for="child in tab.family.root.children" :key="child.session.id" :node="child" :root-id="tab.family.rootId" :parent-key="tab.key" :parent-host="root.host" :depth="1" :owned="owned" />
           <SidebarMemberRow v-for="process in rootProcesses" :key="process.id" :process="process" :root-id="tab.family.rootId" :parent-key="tab.key" :parent-host="root.host" />
@@ -78,12 +78,12 @@
 <script setup lang="ts">
 import HostBadge from '../HostBadge.vue';
 import { computed } from 'vue';
-import { ChevronRight, Timer as TimerIcon } from 'lucide-vue-next';
+import { Timer as TimerIcon } from 'lucide-vue-next';
+import MemberCount from '../MemberCount.vue';
 import { cn } from '@/lib/utils';
 import { agentLabel, familyOwnerLabel } from '../../lib/agentTabs';
-import { subagentCountClass } from '../../lib/rowActivity';
-import AgentIcon from '../AgentIcon.vue';
-import TabIcon from '../TabIcon.vue';
+import { countInRing, subagentCountClass, subagentPulse } from '../../lib/rowActivity';
+import RowStatus from '../RowStatus.vue';
 import TabWash from '../TabWash.vue';
 import UnreadDot from '../UnreadDot.vue';
 import CloseRowButton from '../CloseRowButton.vue';

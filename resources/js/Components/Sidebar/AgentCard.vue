@@ -127,7 +127,7 @@ const meta = computed(() => [
   props.digest.summary ? `summary ${ago(props.digest.summary.at, props.now)}` : null
 ].filter((part): part is string => Boolean(part)));
 
-// The marks TabIcon draws on a row that needs you, so the two read alike.
+// The marks RowStatus draws on a row that needs you, so the two read alike.
 const askMark = computed<IconSpec>(() => props.digest.ask?.kind === 'close' ? CLOSING_MARK : activityIcon(props.digest.ask?.kind === 'error' ? 'error' : 'permission'));
 const askHeadline = computed(() => props.digest.ask?.kind === 'close' ? 'Ready to close' : props.digest.ask?.text ?? '');
 

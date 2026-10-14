@@ -49,7 +49,8 @@ export function subagentPulse(activity: RowActivity): BusyPulse | null {
   return activity.subagents.working ? 'working' : null;
 }
 
-// Text colour for a subagent count: purple while subagents work, amber or red
+// Text colour for a subagent count: muted while idle or working (working adds
+// a shimmer, see WorkingShimmer), amber or red
 // while one needs permission or has an error.
 export function subagentCountClass(activity: RowActivity): string {
   switch (subagentPulse(activity)) {
@@ -57,11 +58,20 @@ export function subagentCountClass(activity: RowActivity): string {
       return 'text-warning';
     case 'error':
       return 'text-destructive';
-    case 'working':
-      return 'text-purple-300';
     default:
       return 'text-muted-foreground';
   }
+}
+
+// What a row's member count holds, such as "2 subagents, 1 process".
+export function memberLabel(agents: number, processes: number): string {
+  return [agents && `${agents} ${agents === 1 ? 'subagent' : 'subagents'}`, processes && `${processes} ${processes === 1 ? 'process' : 'processes'}`].filter(Boolean).join(', ');
+}
+
+// Whether a row's subagent count sits inside its status ring. A row that shows
+// `?`, `✕` or `✓` keeps the count at its end instead.
+export function countInRing(activity: RowActivity): boolean {
+  return activity.self !== 'permission' && activity.self !== 'error' && activity.self !== 'closing';
 }
 
 const SELF_LABELS: Record<Pulse, string> = { working: 'Working', permission: 'Needs permission', error: 'Error', closing: 'Ready to close', idle: 'Idle', unknown: 'Unknown' };

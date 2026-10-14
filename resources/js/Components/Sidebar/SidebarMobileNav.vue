@@ -7,7 +7,7 @@
         <button type="button" class="relative isolate flex h-[30px] w-full min-w-0 items-center gap-2 rounded-tab bg-primary/10 px-2 text-left text-[13px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="Open navigation">
           <template v-if="current.session">
             <TabWash :activity="sidebar.activity(current.session)" />
-            <TabIcon :activity="sidebar.activity(current.session)"><AgentIcon :harness="current.session.harness" class="h-3.5 w-3.5" /></TabIcon>
+            <RowStatus :activity="sidebar.activity(current.session)" />
           </template>
           <span class="min-w-0 flex-1 truncate">{{ current.label }}<HostBadge v-if="current.host" :host="current.host" class="ml-1.5" /></span>
           <span v-if="attentionCount" class="flex shrink-0 items-center gap-1 text-xs tabular-nums text-muted-foreground"><span class="font-semibold text-warning">?</span>{{ attentionCount }}</span>
@@ -41,10 +41,9 @@ import { harnessLaunchLabel } from '../../lib/harnessLaunches';
 import { ChevronDown } from 'lucide-vue-next';
 import { agentLabel } from '../../lib/agentTabs';
 import type { SessionRecord } from '../../types';
-import AgentIcon from '../AgentIcon.vue';
 import LaunchAgentMenu from '../LaunchAgentMenu.vue';
 import ResponsiveMenu from '../ResponsiveMenu.vue';
-import TabIcon from '../TabIcon.vue';
+import RowStatus from '../RowStatus.vue';
 import TabWash from '../TabWash.vue';
 import BoardButton from './BoardButton.vue';
 import { useSidebar } from './sidebarContext';

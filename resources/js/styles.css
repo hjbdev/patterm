@@ -65,3 +65,45 @@ button.mention-glow:hover {
     inset 0 0 0 1px rgb(192 132 252 / 0.4),
     0 0 14px rgb(168 85 247 / 0.45);
 }
+
+/* The sidebar's agent tree. Each member draws its own piece of the line, so the
+   line can turn: a vertical beside every member, a stub at the member's row into
+   its status glyph, and the last member's vertical stopping at its stub. Rows
+   are 28px tall, so a member's own row is centred 14px from its top. The line
+   is translucent, so the pieces meet edge to edge on whole pixels: anywhere
+   two overlapped would paint brighter. */
+.sidebar-tree {
+  margin-left: 1rem;
+  padding-left: 0.25rem;
+}
+
+.sidebar-tree > * {
+  position: relative;
+}
+
+.sidebar-tree > *::before,
+.sidebar-tree > *::after {
+  content: '';
+  position: absolute;
+  left: -0.25rem;
+  background: rgb(255 255 255 / 0.08);
+  pointer-events: none;
+}
+
+.sidebar-tree > *::before {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.sidebar-tree > *:last-child::before {
+  bottom: auto;
+  height: 14px;
+}
+
+.sidebar-tree > *::after {
+  top: 13px;
+  left: calc(-0.25rem + 1px);
+  width: 9px;
+  height: 1px;
+}

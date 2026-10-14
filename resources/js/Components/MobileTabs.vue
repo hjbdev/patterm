@@ -5,11 +5,11 @@
         <LoaderCircle v-if="activeLaunch?.state === 'starting'" class="h-3.5 w-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
         <template v-else-if="activeAgent">
           <TabWash :activity="activityFor(activeAgent)" />
-          <TabIcon :activity="activityFor(activeAgent)"><AgentIcon :harness="activeAgent.harness" class="h-3.5 w-3.5" /></TabIcon>
+          <RowStatus :activity="activityFor(activeAgent)" />
         </template>
         <template v-else-if="activeProcess">
           <TabWash :activity="processActivity(activeProcess)" />
-          <TabIcon :activity="processActivity(activeProcess)"><TerminalSquare class="h-3.5 w-3.5" /></TabIcon>
+          <RowStatus :activity="processActivity(activeProcess)" />
         </template>
         <span class="min-w-0 flex-1 truncate">{{ activeLaunch ? harnessLaunchLabel(activeLaunch) : activeProcess?.name ?? (activeAgent ? agentLabel(activeAgent) : 'Tabs') }}</span>
         <ChevronDown class="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -24,21 +24,23 @@
       <div v-for="family in families" :key="family.rootId" class="mb-1">
         <button type="button" class="relative isolate flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="isFamilyActive(family) ? 'bg-primary/10' : ''" @click="selectFamily(family)">
           <TabWash :activity="activityFor(family.root.session)" />
-          <TabIcon :activity="activityFor(family.root.session)"><AgentIcon :harness="family.root.session.harness" class="h-4 w-4" /></TabIcon>
+          <RowStatus :activity="activityFor(family.root.session)" :count="family.options.length - 1 + ownedProcesses(family).length" :count-label="memberLabel(family.options.length - 1, ownedProcesses(family).length)" />
           <span class="min-w-0 flex-1 truncate">{{ agentLabel(family.root.session) }}</span>
           <UnreadDot :urgency="unreadUrgency(family.root.session.processId)" />
-          <span v-if="family.options.length - 1 + ownedProcesses(family).length" :class="cn('text-xs tabular-nums', subagentCountClass(activityFor(family.root.session)))">{{ family.options.length - 1 + ownedProcesses(family).length }}</span>
+          <span v-if="family.options.length - 1 + ownedProcesses(family).length && !countInRing(activityFor(family.root.session))" :class="cn('text-xs tabular-nums', subagentCountClass(activityFor(family.root.session)))">
+            <WorkingShimmer :active="subagentPulse(activityFor(family.root.session)) === 'working'">{{ family.options.length - 1 + ownedProcesses(family).length }}</WorkingShimmer>
+          </span>
         </button>
         <div v-if="isFamilyActive(family)" class="ml-5 border-l border-border pl-2">
           <button v-for="option in family.options.slice(1)" :key="option.session.id" type="button" class="relative isolate flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="option.session.id === activeAgent?.id ? 'bg-primary/10' : ''" :style="{ paddingLeft: `${12 + agentOptionIndent(option.depth)}px` }" @click="selectSession(family.rootId, option.session)">
             <TabWash :activity="activityFor(option.session)" />
-            <TabIcon :activity="activityFor(option.session)"><AgentIcon :harness="option.session.harness" class="h-4 w-4" /></TabIcon>
+            <RowStatus :activity="activityFor(option.session)" />
             <span class="min-w-0 flex-1 truncate">{{ agentLabel(option.session) }}</span>
             <UnreadDot :urgency="unreadUrgency(option.session.processId)" />
           </button>
           <button v-for="process in ownedProcesses(family)" :key="process.id" type="button" class="relative isolate flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="process.ptyProcessId === activeTerminalId ? 'bg-primary/10' : ''" @click="selectProcess(process)">
             <TabWash :activity="processActivity(process)" />
-            <TabIcon :activity="processActivity(process)"><TerminalSquare class="h-4 w-4" /></TabIcon>
+            <RowStatus :activity="processActivity(process)" />
             <span class="min-w-0 flex-1 truncate">{{ process.name }}<span v-if="familyOwnerLabel(family, process.parentProcessId)" class="text-muted-foreground"> · {{ familyOwnerLabel(family, process.parentProcessId) }}</span></span>
             <UnreadDot :urgency="unreadUrgency(process.id)" />
           </button>
@@ -47,7 +49,7 @@
       <div v-if="processes.length && families.length" class="my-2 border-t border-border" />
       <button v-for="process in processes" :key="process.id" type="button" class="relative isolate flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="process.ptyProcessId === activeTerminalId ? 'bg-primary/10' : ''" @click="selectProcess(process)">
         <TabWash :activity="processActivity(process)" />
-        <TabIcon :activity="processActivity(process)"><TerminalSquare class="h-4 w-4" /></TabIcon>
+        <RowStatus :activity="processActivity(process)" />
         <span class="min-w-0 flex-1 truncate">{{ process.name }}</span>
         <UnreadDot :urgency="unreadUrgency(process.id)" />
       </button>
@@ -59,17 +61,17 @@
 import { computed, ref } from 'vue';
 import { useProjectHarnessLaunches, useSelectedHarnessLaunch } from '../Composables/useHarnessLaunch';
 import { harnessLaunchLabel } from '../lib/harnessLaunches';
-import { ChevronDown, LoaderCircle, TerminalSquare } from 'lucide-vue-next';
+import { ChevronDown, LoaderCircle } from 'lucide-vue-next';
 import { cn } from '@/lib/utils';
 import { agentLabel, agentOptionIndent, familyOwnerLabel, type AgentTabFamily } from '../lib/agentTabs';
 import { ownedProcessesForSessions, type LiveProcessRecord } from '../lib/processTabs';
-import { activityLookup, processActivity, subagentCountClass } from '../lib/rowActivity';
+import { activityLookup, countInRing, memberLabel, processActivity, subagentCountClass, subagentPulse } from '../lib/rowActivity';
+import WorkingShimmer from './WorkingShimmer.vue';
 import type { ProcessRecord, SessionRecord } from '../types';
-import AgentIcon from './AgentIcon.vue';
 import LaunchAgentMenu from './LaunchAgentMenu.vue';
 import HarnessLaunchTabs from './HarnessLaunchTabs.vue';
 import ResponsiveMenu from './ResponsiveMenu.vue';
-import TabIcon from './TabIcon.vue';
+import RowStatus from './RowStatus.vue';
 import TabWash from './TabWash.vue';
 import UnreadDot from './UnreadDot.vue';
 import { unreadUrgency } from '../Composables/useNotifications';
