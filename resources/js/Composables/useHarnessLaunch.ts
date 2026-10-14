@@ -1,11 +1,11 @@
-import { computed } from 'vue';
+import { computed, watchEffect } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { harnessLaunches, type HarnessLaunchInput } from '../lib/harnessLaunches';
 import { useWorkbench } from './useWorkbench';
 
 export function useHarnessLaunch() {
   const router = useRouter();
-  const { projects, refresh } = useWorkbench();
+  const { refresh } = useWorkbench();
   function launchHarness(input: HarnessLaunchInput): void {
     const launch = harnessLaunches.start(input, (args) => window.patterm.call('harness_launch', args));
     const opened = router.push({ name: 'launch', params: { projectId: input.projectId, launchId: launch.id } }).catch(() => {});
@@ -18,9 +18,6 @@ export function useHarnessLaunch() {
       const route = router.currentRoute.value;
       if (route.name === 'launch' && route.params.projectId === input.projectId && route.params.launchId === launch.id) {
         await router.replace({ name: 'agent', params: { projectId: input.projectId, sessionId } });
-      }
-      if (projects.value.some((project) => project.project.id === input.projectId && project.projectSessions.some((session) => session.id === sessionId))) {
-        harnessLaunches.dismiss(launch.id);
       }
     }).catch(() => { /* Navigation failures never retry native launches. */ });
   }
@@ -41,5 +38,21 @@ export function useProjectHarnessLaunches(projectId: () => string | null) {
     const sessions = projects.value.find((project) => project.project.id === id)?.projectSessions ?? [];
     return harnessLaunches.launches.filter((launch) => launch.input.projectId === id
       && !(launch.state === 'ready' && sessions.some((session) => session.id === launch.sessionId)));
+  });
+}
+
+// Mounted once by the workbench. A successful launch can be observed only
+// after reconnection; retire it then so an aged-out session cannot revive it.
+export function useHarnessLaunchCleanup(): void {
+  const route = useRoute();
+  const { projects } = useWorkbench();
+  watchEffect(() => {
+    for (const launch of harnessLaunches.launches.slice()) {
+      if (launch.state !== 'ready') continue;
+      // Keep the selected placeholder until its navigation handoff finishes.
+      if (route.name === 'launch' && route.params.launchId === launch.id) continue;
+      if (projects.value.some((project) => project.project.id === launch.input.projectId
+        && project.projectSessions.some((session) => session.id === launch.sessionId))) harnessLaunches.dismiss(launch.id);
+    }
   });
 }

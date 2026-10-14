@@ -126,7 +126,7 @@ import { provideSidebarContext } from '../Components/Sidebar/sidebarContext';
 import { TooltipProvider } from '../Components/ui/tooltip';
 import { APPEARANCE_SETTINGS_CHANGED_EVENT, applyUiFont, lastKnownAppearanceSettings, loadAppearanceSettings, navigationLayoutHint, normalizeAppearanceSettings, type AppearanceSettings, type NavigationLayout } from '../appearance/AppearanceSettings';
 import { useWorkbench } from '../Composables/useWorkbench';
-import { useProjectHarnessLaunches } from '../Composables/useHarnessLaunch';
+import { useHarnessLaunchCleanup, useProjectHarnessLaunches } from '../Composables/useHarnessLaunch';
 import { useWorkbenchNavigation } from '../Composables/useWorkbenchNavigation';
 import {
   agentOptionTargetByDelta,
@@ -147,6 +147,7 @@ import type { ProcessRecord, SessionRecord } from '../types';
 const { projects, sidecarStatus, sidecarAvailable, loaded, refresh } = useWorkbench();
 const { router, route, activeProjectId, activeProject, selectedAgent, selectedProcess, activeTerminalId, projectViewMode,
   activeWorkspacePage, selectProject, selectTerminal } = useWorkbenchNavigation();
+useHarnessLaunchCleanup();
 const selectedAgentByRoot = ref<SelectedAgentByRoot>({});
 const pendingLaunches = useProjectHarnessLaunches(() => activeProjectId.value);
 const navigationMode = ref(false);
