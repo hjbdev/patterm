@@ -165,7 +165,7 @@ import {
   MessageScrollerViewport
 } from './ui/message-scroller';
 import ConversationToolRow from './ConversationToolRow.vue';
-import { drawnUiAnsweredKey, drawnUiFiguresKey } from '../lib/drawnUi';
+import { figureAnsweredKey, figuresKey } from '../lib/htmlFigure';
 import ConversationThoughtRow from './ConversationThoughtRow.vue';
 import ConversationMessageFooter from './ConversationMessageFooter.vue';
 import ShimmerText from './ShimmerText.vue';
@@ -179,8 +179,8 @@ import { splitProcessMentions } from '../lib/agentMentions';
 import {
   groupTranscriptMessages,
   isSavedFigure,
-  drawnUiId,
-  drawnUiAnswers,
+  figureId,
+  figureAnswers,
   normaliseTranscriptAttachments,
   transcriptRowIndexForMessage,
   transcriptMessageKey,
@@ -198,21 +198,21 @@ import {
 const props = withDefaults(defineProps<{ messages: TranscriptMessage[]; truncated?: boolean; historyUnavailable?: boolean; hasOlder?: boolean; loadingOlder?: boolean; historyError?: string; processId: string; live?: boolean; working?: boolean; autoLoadOlder?: boolean; activeMessageId?: string | null; settling?: boolean; canRetry?: boolean }>(), { truncated: false, historyUnavailable: false, hasOlder: false, loadingOlder: false, historyError: '', live: false, working: false, autoLoadOlder: false, activeMessageId: null, settling: false, canRetry: false });
 const emit = defineEmits<{ 'load-older': []; 'retry-message': [messageId: string] }>();
 
-// Figures by id, drawn where a reply places [patterm_figure:<id>].
+// Pages by id, drawn where a reply places [patterm_figure:<id>].
 const figures = computed(() => {
   const byId = new Map<string, TranscriptMessage>();
   for (const message of props.messages) {
     if (message.kind === 'tool' && isSavedFigure(message.tool)) {
-      const id = drawnUiId(message.tool);
+      const id = figureId(message.tool);
       if (id) byId.set(id, message);
     }
   }
   return byId;
 });
 const rows = computed(() => groupTranscriptMessages(props.messages));
-provide(drawnUiFiguresKey, figures);
-// A choice the user already answered stays answered when the card redraws.
-provide(drawnUiAnsweredKey, computed(() => drawnUiAnswers(props.messages)));
+provide(figuresKey, figures);
+// A question the user already answered stays answered when the page redraws.
+provide(figureAnsweredKey, computed(() => figureAnswers(props.messages)));
 const thoughtDurations = computed(() => transcriptThoughtDurations(props.messages));
 const turnDurations = computed(() => transcriptTurnDurations(props.messages, props.working));
 const showHeader = computed(() => props.truncated || props.hasOlder || props.loadingOlder || Boolean(props.historyError) || props.historyUnavailable);

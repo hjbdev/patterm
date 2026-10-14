@@ -1,16 +1,34 @@
-import { readFileSync } from 'node:fs';
+import { cpSync, readFileSync } from 'node:fs';
 import { fileURLToPath, URL } from 'node:url';
 import vue from '@vitejs/plugin-vue';
-import { defineConfig } from 'vite-plus';
+import { defineConfig, type Plugin } from 'vite-plus';
+import { BUNDLED_FIGURE_FONTS } from './app/Services/HtmlFigure';
 
 const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string };
+
+// The desktop app's page previews read the bundled faces from the build,
+// under stable names: the Latin ones, which pages carry inline.
+function figureFonts(): Plugin {
+  return {
+    name: 'patterm-figure-fonts',
+    apply: 'build',
+    writeBundle(options) {
+      for (const slug of BUNDLED_FIGURE_FONTS) {
+        cpSync(fileURLToPath(new URL(`./resources/js/assets/fonts/${slug}`, import.meta.url)), `${options.dir ?? 'dist/renderer'}/figure-fonts/${slug}`, {
+          recursive: true,
+          filter: (source) => !source.endsWith('.woff2') || /-latin(-ext)?-[4-7]00-normal\.woff2$/.test(source)
+        });
+      }
+    }
+  };
+}
 
 export default defineConfig({
   base: './',
   define: {
     __PATTERM_VERSION__: JSON.stringify(version)
   },
-  plugins: [vue()],
+  plugins: [vue(), figureFonts()],
   resolve: {
     alias: [
       { find: '@', replacement: fileURLToPath(new URL('./resources/js', import.meta.url)) },

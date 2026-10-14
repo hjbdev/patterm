@@ -164,7 +164,8 @@ async function desktop(options = {}) {
     '../../routes/remote': { servePeerRoutes: () => {} },
     './launchIdentity': { resolveLaunchIdentity: () => ({ appName: 'quit-test', appDataPath: '/tmp/patterm-desktop-quit-test', mode: 'production' }) },
     './sidecar': { isInstalledLaunch: () => true, resolveMcpShimPath: () => '', resolveSidecarPath: () => '' },
-    '../../app/Commands/CommandPalette': { quitConfirmation: () => confirmation }
+    '../../app/Commands/CommandPalette': { quitConfirmation: () => confirmation },
+    './figureFrame': { ElectronPagePreviewer: class {}, guardFigureFrames: () => {}, registerFigureFrameScheme: () => {}, serveFigureFrames: () => {} }
   };
   vm.runInNewContext(source, {
     require: (id) => Object.hasOwn(imports, id) ? imports[id] : require(id),

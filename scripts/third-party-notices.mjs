@@ -31,7 +31,6 @@ const bundledDev = [
   '@modelcontextprotocol/server',
   '@pierre/diffs',
   '@radix-icons/vue',
-  '@tanstack/charts',
   '@tanstack/vue-virtual',
   '@tiptap/core',
   '@tiptap/extension-document',

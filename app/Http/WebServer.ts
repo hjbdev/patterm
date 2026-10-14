@@ -1,4 +1,5 @@
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
+import { FIGURE_FRAME_HTML, FIGURE_FRAME_PATH, figureFrameCsp } from '../Services/HtmlFigure';
 import { readFileSync } from 'node:fs';
 import type { Socket } from 'node:net';
 import { randomUUID } from 'node:crypto';
@@ -248,7 +249,7 @@ export class WebServer {
   private async handleHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Referrer-Policy', 'no-referrer');
-    response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+    response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
     if (request.url === PEER_PAIR_PATH && request.method === 'POST') {
       await this.handlePeerPair(request, response);
       return;
@@ -295,6 +296,12 @@ export class WebServer {
       const host = this.application.remote.target({ process_id: url.searchParams.get('process_id') ?? '' });
       const filename = host ? await this.application.remote.upload(host, name, bytes) : await this.uploads.save(name, bytes);
       await this.json(request, response, 200, { path: filename });
+      return;
+    }
+    // Agent pages run in this frame under their own policy; see HtmlFigure.
+    if (url.pathname === FIGURE_FRAME_PATH && (request.method === 'GET' || request.method === 'HEAD')) {
+      response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': figureFrameCsp("'self'"), 'Cache-Control': 'no-store' });
+      response.end(FIGURE_FRAME_HTML);
       return;
     }
     if (!['GET', 'HEAD'].includes(request.method ?? '') || url.pathname.startsWith('/api/')) {

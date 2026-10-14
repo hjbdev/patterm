@@ -23,13 +23,19 @@ export function transcriptImageUrl(sha256: string, projectId?: string): Promise<
   return loading;
 }
 
-async function fetchImage(sha256: string, projectId: string | undefined): Promise<string> {
+// A stored image's type and base64 bytes.
+export async function transcriptImageData(sha256: string, projectId?: string): Promise<{ mime: string; data: string }> {
   const result = await (projectId
     ? window.patterm.call('media_get', { project_id: projectId, sha256 })
     : window.patterm.call('integrated_image', { sha256 })) as { mime?: unknown; data?: unknown } | null;
   if (typeof result?.data !== 'string' || typeof result.mime !== 'string' || !result.mime.startsWith('image/')) {
     throw new Error('This image is no longer stored');
   }
+  return { mime: result.mime, data: result.data };
+}
+
+async function fetchImage(sha256: string, projectId: string | undefined): Promise<string> {
+  const result = await transcriptImageData(sha256, projectId);
   const binary = atob(result.data);
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);

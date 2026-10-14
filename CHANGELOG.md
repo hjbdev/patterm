@@ -22,6 +22,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `install-macos.sh --sha256` and `install.ps1 -Sha256` refuse a package with
   any other checksum.
 
+- Integrated agents show charts, tables, diagrams, mockups, and small
+  interactive tools in their replies as HTML pages with `html_render`. The
+  agent places `[patterm_figure:<id>]` in its reply where the page belongs.
+  Each page runs in a sandboxed frame with an opaque origin, so it can run
+  inline and CDN scripts but cannot reach Patterm, its storage, or your files.
+  Pages get Patterm's theme as CSS variables and your interface and terminal
+  typefaces, and report their own height. A question asked with
+  `patterm.answer()` sends your pick to the agent as an ordinary message as
+  you click it. A page can answer only right after a click or key press while
+  it has focus, and only the window in control of the agent can answer. A clicked link shows its address
+  under the page and opens once you press Open.
+  Local images in the page are copied when it is rendered. A page opens larger
+  from its card, and its source is one click away.
+
+- The desktop app offers agents `html_preview`, which draws a page off screen
+  and returns a screenshot, its height, and its console output, so the agent
+  can fix a page before the user sees it.
+
 ### Changed
 
 - Renderer development and production builds use the pinned Vite+ toolchain
@@ -54,6 +72,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rarer ones, such as Set timer and Copy process ID.
 - Typing effort, reasoning, or thinking in the command palette finds the
   effort setting, whichever name the agent's harness uses.
+
+### Removed
+
+- `ui_save` and Patterm's own figure components. Figures already saved in
+  conversations show as their raw `[patterm_figure:<id>]` token.
 
 ### Fixed
 
