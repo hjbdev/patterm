@@ -23,7 +23,6 @@
       <DropdownMenuSeparator />
       <DropdownMenuSub v-for="harness in launchableHarnesses" :key="harness.id">
         <DropdownMenuSubTrigger
-          :disabled="launching"
           class="gap-2"
           @click.prevent.stop="launchHarness(harness.harness, defaultPresetId(harness.harness))"
         >
@@ -37,7 +36,6 @@
           <DropdownMenuItem
             v-for="preset in presetsFor(harness.harness)"
             :key="preset.id"
-            :disabled="launching"
             @select="launchHarness(harness.harness, preset.id)"
           >
             <span class="min-w-0 flex-1 truncate text-xs">{{ preset.name }}</span>
@@ -58,7 +56,7 @@
       <div class="divide-y divide-border">
         <div v-for="harness in launchableHarnesses" :key="harness.id" class="py-1">
           <div class="flex items-center gap-1">
-            <button type="button" class="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60" :disabled="launching" @click="launchHarness(harness.harness, defaultPresetId(harness.harness))">
+            <button type="button" class="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60" @click="launchHarness(harness.harness, defaultPresetId(harness.harness))">
               <AgentIcon :harness="harness.harness" class="h-4 w-4 shrink-0" />
               <span class="min-w-0 flex-1 truncate">{{ harnessLabel(harness.harness) }}</span>
             </button>
@@ -68,7 +66,7 @@
             </button>
           </div>
           <div v-if="expandedHarness === harness.harness" class="pb-1 pl-7">
-            <button v-for="preset in presetsFor(harness.harness)" :key="preset.id" type="button" class="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm hover:bg-muted/60" :disabled="launching" @click="launchHarness(harness.harness, preset.id)">
+            <button v-for="preset in presetsFor(harness.harness)" :key="preset.id" type="button" class="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm hover:bg-muted/60" @click="launchHarness(harness.harness, preset.id)">
               <span class="min-w-0 flex-1 truncate">{{ preset.name }}</span>
               <span class="max-w-[50%] shrink-0 truncate text-xs text-muted-foreground">{{ preset.model ?? 'Harness default' }}{{ preset.reasoning ? ` · ${preset.reasoning}` : '' }}</span>
               <Check class="h-4 w-4 shrink-0" :class="defaultPresetId(harness.harness) === preset.id ? 'text-foreground' : 'invisible'" :aria-label="defaultPresetId(harness.harness) === preset.id ? 'Default preset' : undefined" />
@@ -84,7 +82,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { Check, ChevronDown, Plus } from 'lucide-vue-next';
 import { toast } from 'vue-sonner';
-import { toastLaunchError } from '../lib/launchErrors';
+import { useHarnessLaunch } from '../Composables/useHarnessLaunch';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { harnessLabel, launchableHarnesses as filterLaunchableHarnesses } from '../lib/harnesses';
 import AgentIcon from './AgentIcon.vue';
@@ -112,7 +110,8 @@ interface HarnessPresetSettings {
 }
 
 const props = defineProps<{ projectId: string; label?: string; nested?: boolean }>();
-const emit = defineEmits<{ launched: [sessionId: string, terminalId: string | null] }>();
+const emit = defineEmits<{ started: [] }>();
+const { launchHarness: startHarness } = useHarnessLaunch();
 const { harnesses, projects } = useWorkbench();
 const menuOpen = ref(false);
 
@@ -148,7 +147,6 @@ watch([targetProjectId, () => menuOpen.value], async ([target, open]) => {
 
 // Real agent CLIs only — the raw shell is offered as a process, not an agent.
 const launchableHarnesses = computed(() => filterLaunchableHarnesses(remoteTarget.value ? remoteHarnesses.value : harnesses.value));
-const launching = ref(false);
 const interfaceMode = ref<AgentInterface>('integrated');
 const savedInterfaceMode = ref<AgentInterface>('integrated');
 
@@ -208,26 +206,16 @@ function defaultPresetId(harness: string): string | null {
   return id && presetsFor(harness).some((preset) => preset.id === id) ? id : null;
 }
 
-async function launchHarness(harness: string, presetId: string | null): Promise<void> {
-  if (launching.value) {
-    return;
-  }
-  launching.value = true;
+function launchHarness(harness: string, presetId: string | null): void {
   menuOpen.value = false;
-  try {
-    const result = (await window.patterm?.call?.('harness_launch', {
-      harness,
-      project_id: targetProjectId.value,
-      ...(presetId && !remoteTarget.value ? { preset: presetId } : {}),
-      interface_mode: interfaceMode.value
-    })) as { session_id?: unknown; pty_process_id?: unknown } | null | undefined;
-    if (typeof result?.session_id === 'string') {
-      emit('launched', result.session_id, typeof result.pty_process_id === 'string' ? result.pty_process_id : null);
-    }
-  } catch (caught) {
-    toastLaunchError(caught, `Failed to launch ${harnessLabel(harness)}`, remoteTarget.value ? undefined : () => launchHarness(harness, presetId));
-  } finally {
-    launching.value = false;
-  }
+  startHarness({
+    harness,
+    projectId: props.projectId,
+    targetProjectId: targetProjectId.value,
+    ...(presetId && !remoteTarget.value ? { preset: presetId } : {}),
+    ...(remoteTarget.value ? { host: targetHost.value } : {}),
+    interfaceMode: interfaceMode.value
+  });
+  emit('started');
 }
 </script>
