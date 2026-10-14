@@ -1,4 +1,5 @@
-node_modules/
+# Also a symlink in nested worktrees, so no trailing slash.
+node_modules
 .opencode/
 dist/
 out/

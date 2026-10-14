@@ -27,6 +27,8 @@
             class="group/row absolute left-0 top-0 w-full"
             :class="[activeMessageId === row.id ? 'rounded-lg bg-primary/10' : '', hasFooter(row) ? 'pb-2' : 'pb-4']"
             :style="{ transform: `translateY(${virtualItem.start}px)` }"
+            :data-tapped="tappedRowId === row.id || undefined"
+            @click="tapRow(row.id, $event)"
             >
               <MessageScrollerItem
             :message-id="row.id"
@@ -217,6 +219,15 @@ const thoughtDurations = computed(() => transcriptThoughtDurations(props.message
 const turnDurations = computed(() => transcriptTurnDurations(props.messages, props.working));
 const showHeader = computed(() => props.truncated || props.hasOlder || props.loadingOlder || Boolean(props.historyError) || props.historyUnavailable);
 const groupState = ref<Record<string, boolean>>({});
+// Touch screens have no hover, so tapping a message shows its copy button and
+// time; tapping it again, or another message, moves them on.
+const tappedRowId = ref<string | null>(null);
+function tapRow(id: string, event: MouseEvent): void {
+  if (!window.matchMedia('(hover: none)').matches) return;
+  if ((event.target as Element | null)?.closest('button, a, input, textarea, summary, [role="button"]')) return;
+  if (!window.getSelection()?.isCollapsed) return;
+  tappedRowId.value = tappedRowId.value === id ? null : id;
+}
 const viewportRef = ref<InstanceType<typeof MessageScrollerViewport> | null>(null);
 const virtualizer = useVirtualizer(computed(() => ({
   count: rows.value.length,

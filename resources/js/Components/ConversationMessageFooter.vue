@@ -1,6 +1,6 @@
 <template>
   <div
-    class="flex h-6 items-center gap-1.5 text-xs text-muted-foreground opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/row:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100"
+    class="flex h-6 items-center gap-1.5 text-xs text-muted-foreground opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/row:opacity-100 group-data-[tapped]/row:opacity-100 motion-reduce:transition-none"
     :class="align === 'end' ? 'justify-end' : ''"
     data-component="transcript-message-footer"
   >

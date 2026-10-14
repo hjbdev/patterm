@@ -11,7 +11,7 @@
           <TabWash :activity="processActivity(activeProcess)" />
           <RowStatus :activity="processActivity(activeProcess)" />
         </template>
-        <span class="min-w-0 flex-1 truncate">{{ activeLaunch ? harnessLaunchLabel(activeLaunch) : activeProcess?.name ?? (activeAgent ? agentLabel(activeAgent) : 'Tabs') }}</span>
+        <span class="min-w-0 flex-1 truncate">{{ activeLaunch ? harnessLaunchLabel(activeLaunch) : activeProcess?.name ?? (activeAgent ? agentLabel(activeAgent) : 'Tabs') }}<HostBadge v-if="activeHost" :host="activeHost" class="ml-1.5" /></span>
         <ChevronDown class="h-4 w-4 shrink-0 text-muted-foreground" />
       </button>
     </template>
@@ -25,7 +25,7 @@
         <button type="button" class="relative isolate flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="isFamilyActive(family) ? 'bg-primary/10' : ''" @click="selectFamily(family)">
           <TabWash :activity="activityFor(family.root.session)" />
           <RowStatus :activity="activityFor(family.root.session)" :count="family.options.length - 1 + ownedProcesses(family).length" :count-label="memberLabel(family.options.length - 1, ownedProcesses(family).length)" />
-          <span class="min-w-0 flex-1 truncate">{{ agentLabel(family.root.session) }}</span>
+          <span class="min-w-0 flex-1 truncate">{{ agentLabel(family.root.session) }}<HostBadge v-if="family.root.session.host" :host="family.root.session.host" class="ml-1.5" /></span>
           <UnreadDot :urgency="unreadUrgency(family.root.session.processId)" />
           <span v-if="family.options.length - 1 + ownedProcesses(family).length && !countInRing(activityFor(family.root.session))" :class="cn('text-xs tabular-nums', subagentCountClass(activityFor(family.root.session)))">
             <WorkingShimmer :active="subagentPulse(activityFor(family.root.session)) === 'working'">{{ family.options.length - 1 + ownedProcesses(family).length }}</WorkingShimmer>
@@ -35,13 +35,13 @@
           <button v-for="option in family.options.slice(1)" :key="option.session.id" type="button" class="relative isolate flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="option.session.id === activeAgent?.id ? 'bg-primary/10' : ''" :style="{ paddingLeft: `${12 + agentOptionIndent(option.depth)}px` }" @click="selectSession(family.rootId, option.session)">
             <TabWash :activity="activityFor(option.session)" />
             <RowStatus :activity="activityFor(option.session)" />
-            <span class="min-w-0 flex-1 truncate">{{ agentLabel(option.session) }}</span>
+            <span class="min-w-0 flex-1 truncate">{{ agentLabel(option.session) }}<HostBadge v-if="option.session.host" :host="option.session.host" class="ml-1.5" /></span>
             <UnreadDot :urgency="unreadUrgency(option.session.processId)" />
           </button>
           <button v-for="process in ownedProcesses(family)" :key="process.id" type="button" class="relative isolate flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="process.ptyProcessId === activeTerminalId ? 'bg-primary/10' : ''" @click="selectProcess(process)">
             <TabWash :activity="processActivity(process)" />
             <RowStatus :activity="processActivity(process)" />
-            <span class="min-w-0 flex-1 truncate">{{ process.name }}<span v-if="familyOwnerLabel(family, process.parentProcessId)" class="text-muted-foreground"> · {{ familyOwnerLabel(family, process.parentProcessId) }}</span></span>
+            <span class="min-w-0 flex-1 truncate">{{ process.name }}<span v-if="familyOwnerLabel(family, process.parentProcessId)" class="text-muted-foreground"> · {{ familyOwnerLabel(family, process.parentProcessId) }}</span><HostBadge v-if="process.host" :host="process.host" class="ml-1.5" /></span>
             <UnreadDot :urgency="unreadUrgency(process.id)" />
           </button>
         </div>
@@ -50,7 +50,7 @@
       <button v-for="process in processes" :key="process.id" type="button" class="relative isolate flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="process.ptyProcessId === activeTerminalId ? 'bg-primary/10' : ''" @click="selectProcess(process)">
         <TabWash :activity="processActivity(process)" />
         <RowStatus :activity="processActivity(process)" />
-        <span class="min-w-0 flex-1 truncate">{{ process.name }}</span>
+        <span class="min-w-0 flex-1 truncate">{{ process.name }}<HostBadge v-if="process.host" :host="process.host" class="ml-1.5" /></span>
         <UnreadDot :urgency="unreadUrgency(process.id)" />
       </button>
     </template>
@@ -73,6 +73,7 @@ import WorkingShimmer from './WorkingShimmer.vue';
 import type { ProcessRecord, SessionRecord } from '../types';
 import LaunchAgentMenu from './LaunchAgentMenu.vue';
 import HarnessLaunchTabs from './HarnessLaunchTabs.vue';
+import HostBadge from './HostBadge.vue';
 import ResponsiveMenu from './ResponsiveMenu.vue';
 import RowStatus from './RowStatus.vue';
 import SidebarPages from './Sidebar/SidebarPages.vue';
@@ -101,6 +102,8 @@ const activeAgent = computed(() => props.families.flatMap((family) => family.opt
   option.session.id === props.activeSessionId || Boolean(props.activeTerminalId && option.session.ptyProcessId === props.activeTerminalId)
 )?.session ?? null);
 const activeProcess = computed(() => props.allProcesses.find((process) => process.ptyProcessId && process.ptyProcessId === props.activeTerminalId) ?? null);
+// Paired-host records name their host beside them, as tabs and sidebar rows do.
+const activeHost = computed(() => activeLaunch.value ? activeLaunch.value.input.host : activeProcess.value?.host ?? activeAgent.value?.host);
 
 // Each agent's activity with its subagents'.
 const activityFor = computed(() => activityLookup(props.families));

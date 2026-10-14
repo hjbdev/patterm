@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   starting another.
 - On phones, sidebar navigation uses the same agents menu as tabs mode, and
   that menu links to the project's pages in both modes.
+- On phones, the composer fits on one row. Model, reasoning and mode move to
+  a settings drawer, with reasoning as a slider and long lists on their own
+  page with search. A message's copy button and time show when you tap it.
 
 ### Fixed
 

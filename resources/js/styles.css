@@ -73,6 +73,14 @@
   }
 }
 
+/* A message's copy button and time stay hidden on touch screens until the
+   message is tapped; until then they can't catch a tap either. */
+@media (hover: none) {
+  .group\/row:not([data-tapped]) [data-component='transcript-message-footer'] {
+    pointer-events: none;
+  }
+}
+
 /* iOS zooms the page into any field under 16px when it takes focus. */
 @supports (-webkit-touch-callout: none) {
   html :is(input, textarea, select, [contenteditable='true']) {
