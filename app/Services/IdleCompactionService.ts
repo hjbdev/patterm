@@ -60,8 +60,8 @@ interface CompactionRow {
   notice: string | null;
 }
 
-// The assistant is never compacted: its voice sessions steer speech into the
-// thread, and Codex drops input steered into a compaction.
+// Assistant compaction is admitted only with voice inactive. Voice startup
+// also checks the automatic compaction notice before steering speech.
 //
 // Compacts each Integrated agent at most once per idle period. An admitted
 // prompt or command arms it; activity never does, so neither the compaction's
@@ -82,7 +82,8 @@ export class IdleCompactionService {
     // Read when a deadline arrives, so a change applies to agents already idle.
     private readonly enabled: (harness: string) => boolean,
     private readonly log: (event: string, data: Record<string, unknown>) => void = () => {},
-    private readonly now: () => number = Date.now
+    private readonly now: () => number = Date.now,
+    private readonly assistantVoiceActive: (processId: string) => boolean = () => true
   ) {}
 
   // Nothing carries over a restart, or a lost native connection. Native
@@ -182,7 +183,7 @@ export class IdleCompactionService {
   }
 
   private eligibleAgent(row: CompactionRow): boolean {
-    return Boolean(IDLE_COMPACTION_AFTER_MS[row.harness]) && row.role !== 'assistant';
+    return Boolean(IDLE_COMPACTION_AFTER_MS[row.harness]);
   }
 
   private schedule(processId: string): void {
@@ -220,6 +221,12 @@ export class IdleCompactionService {
         return;
       }
       if (!this.due(processId)) return;
+    }
+    // Recheck after the async model lookup: a voice call may have started.
+    if (row.role === 'assistant' && this.assistantVoiceActive(processId)) {
+      this.write(processId, null, null);
+      this.log('skipped', { processId, harness: row.harness, reason: 'voice active' });
+      return;
     }
     this.log('started', { processId, harness: row.harness });
     // The 'compact' signal fires synchronously while admission begins.
