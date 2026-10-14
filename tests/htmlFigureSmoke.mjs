@@ -63,6 +63,7 @@ test('pages use the user\'s typefaces: bundled ones inline, installed ones by na
   const prepared = ui.prepareFigureHtml('<head></head><p>x</p>', css);
   assert.ok(prepared.indexOf('id="patterm-theme"') < prepared.indexOf('id="patterm-fonts"'), 'the chosen families override the theme default');
   assert.doesNotMatch(ui.prepareFigureHtml('<p>x</p>'), /patterm-fonts/, 'no fonts, no empty style');
+  assert.match(ui.prepareFigureHtml('<p>x</p>'), /preserveAspectRatio', 'xMidYMid meet'/, 'stretched drawings with text keep their shape');
   for (const slug of ui.BUNDLED_FIGURE_FONTS) {
     assert.ok(fs.existsSync(path.join('resources/js/assets/fonts', ui.figureFontFile(slug, 'latin', 400))), `${slug} is vendored`);
   }

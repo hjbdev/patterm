@@ -200,7 +200,18 @@ const BOOTSTRAP = `(function () {
   }
   var observer = new ResizeObserver(report);
   observer.observe(document.documentElement);
-  document.addEventListener('DOMContentLoaded', function () { if (document.body) observer.observe(document.body); report(); });
+  // An SVG stretched to the frame distorts its text and dots, and pages are
+  // wider or narrower than their author assumed, so drawings with text keep
+  // their shape and fit instead.
+  function unstretch() {
+    var drawings = document.getElementsByTagName('svg');
+    for (var i = 0; i < drawings.length; i++) {
+      var svg = drawings[i];
+      if (/^\s*none\s*$/i.test(svg.getAttribute('preserveAspectRatio') || '') && svg.getElementsByTagName('text').length) svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    }
+  }
+  new MutationObserver(unstretch).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['preserveAspectRatio'] });
+  document.addEventListener('DOMContentLoaded', function () { if (document.body) observer.observe(document.body); unstretch(); report(); });
   addEventListener('load', report);
   // Web links ask Patterm, which shows the address for the user to open;
   // anything else would navigate the frame.
