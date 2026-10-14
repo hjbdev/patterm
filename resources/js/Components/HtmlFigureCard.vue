@@ -8,18 +8,18 @@
         :class="showSource ? 'opacity-100' : ''"
       >
         <Button size="sm" variant="ghost" class="h-6 px-2 text-xs text-muted-foreground" :aria-pressed="showSource" @click="showSource = !showSource">{{ showSource ? 'Page' : 'Source' }}</Button>
-        <Button size="icon" variant="ghost" class="h-6 w-6 text-muted-foreground" aria-label="Open larger" @click="expanded = true"><Maximize2 class="h-3.5 w-3.5" /></Button>
+        <Button size="icon" variant="ghost" class="h-6 w-6 text-muted-foreground" aria-label="Full screen" @click="expanded = true"><Maximize2 class="h-3.5 w-3.5" /></Button>
       </div>
     </div>
     <pre v-if="showSource" class="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/30 p-3 font-mono text-[11px] leading-5 text-muted-foreground">{{ page.html }}</pre>
     <HtmlFigureFrame v-else-if="prepared" :html="prepared" :measure-key="page.html" :title="page.title" :initial-height="initialHeight" />
     <div v-else class="rounded-md bg-muted/20" :style="{ height: `${initialHeight}px` }" />
     <Dialog v-model:open="expanded">
-      <DialogContent class="flex max-h-[90dvh] max-w-[min(1200px,calc(100vw-2rem))] flex-col gap-3">
+      <DialogContent class="flex h-dvh w-screen max-w-none flex-col gap-3 rounded-none border-0 p-4 outline-none sm:rounded-none" @open-auto-focus="keepFocus">
         <DialogTitle class="pr-8 text-sm font-medium">{{ page.title }}</DialogTitle>
-        <DialogDescription class="sr-only">The agent's page at a larger size.</DialogDescription>
-        <div class="min-h-0 overflow-auto">
-          <HtmlFigureFrame v-if="expanded && prepared" :html="prepared" :title="page.title" :initial-height="initialHeight" />
+        <DialogDescription class="sr-only">The agent's page, full screen.</DialogDescription>
+        <div class="min-h-0 flex-1 overflow-auto">
+          <HtmlFigureFrame v-if="expanded && prepared" :html="prepared" :title="page.title" :initial-height="initialHeight" fill />
         </div>
       </DialogContent>
     </Dialog>
@@ -45,6 +45,12 @@ const initialHeight = computed(() => clampFigureHeight(page.value?.height));
 const showSource = ref(false);
 const expanded = ref(false);
 const prepared = ref<string | null>(null);
+
+// Focus inside the page's frame would swallow Escape, so the dialog keeps it.
+function keepFocus(event: Event): void {
+  event.preventDefault();
+  (event.target as HTMLElement | null)?.focus();
+}
 
 // Local images are swapped for their stored copies, and the user's typefaces
 // added, before the page is sent.

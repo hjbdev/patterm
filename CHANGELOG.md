@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The expand button on an agent's HTML page opens it full screen instead of
+  in a small dialog, and Escape closes it.
+
 ## [0.2.0] - 2026-10-14
 
 ### Added

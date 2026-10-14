@@ -1,5 +1,5 @@
 <template>
-  <div class="min-w-0">
+  <div class="min-w-0" :class="fill ? 'h-full' : ''">
     <iframe
       ref="frame"
       :key="generation"
@@ -8,7 +8,7 @@
       :sandbox="FIGURE_FRAME_SANDBOX"
       loading="lazy"
       class="block w-full border-0 bg-transparent"
-      :style="{ height: `${height}px` }"
+      :style="{ height: `${height}px`, minHeight: fill ? '100%' : undefined }"
       data-component="html-figure-frame"
     />
     <!-- Patterm's own controls: page script cannot press them, so a link
@@ -37,7 +37,8 @@ import { figureAnswerKey, figureAnsweredKey, figureFrameUrl, guardFigureFocus } 
 // the user confirms them.
 // measureKey names the page for the height cache; the prepared html carries
 // inline fonts, too large to keep as keys. Without one, nothing is cached.
-const props = defineProps<{ html: string; measureKey?: string; title: string; initialHeight: number }>();
+// fill stretches a short page to its container, as in the full-screen view.
+const props = defineProps<{ html: string; measureKey?: string; title: string; initialHeight: number; fill?: boolean }>();
 const channel = inject(figureAnswerKey, null);
 const answered = inject(figureAnsweredKey, null);
 const frame = ref<HTMLIFrameElement | null>(null);
