@@ -30,7 +30,7 @@
     <main class="mx-1.5 mb-1.5 flex min-h-0 flex-1 overflow-hidden rounded-xl border-t border-white/5 bg-background">
       <div class="min-w-0 flex-1 overflow-y-auto">
         <div class="mx-auto w-full max-w-[46rem] px-4 pb-10 pt-8 sm:px-6 sm:pt-10">
-          <ProjectOverviewList :overviews="overviews" :now="now" :loaded="loaded" @open-project="selectProject" @open-session="openSession" @launched="openLaunched" />
+          <ProjectOverviewList :overviews="overviews" :now="now" :loaded="loaded" @open-project="selectProject" @open-session="openSession" />
         </div>
       </div>
     </main>
@@ -76,16 +76,6 @@ const subtitle = computed(() => {
 function openSession(projectId: string, session: SessionRecord): void {
   if (session.interfaceMode === 'integrated' || !session.ptyProcessId) void router.push({ name: 'agent', params: { projectId, sessionId: session.id } });
   else void selectTerminal(projectId, session.ptyProcessId);
-}
-
-// Launch replies can arrive before the workbench lists the new session.
-async function openLaunched(projectId: string, sessionId: string, terminalId: string | null): Promise<void> {
-  if (terminalId) {
-    await selectTerminal(projectId, terminalId);
-    return;
-  }
-  await refresh();
-  await router.push({ name: 'agent', params: { projectId, sessionId } });
 }
 
 async function selectCreatedProject(projectId: string): Promise<void> {

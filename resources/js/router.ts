@@ -4,6 +4,7 @@ import { createRouter, type RouterHistory } from 'vue-router';
 const ProjectsPage = () => import('./Pages/ProjectsPage.vue');
 const ProjectPage = () => import('./Pages/ProjectPage.vue');
 const TerminalPage = () => import('./Pages/TerminalPage.vue');
+const HarnessLaunchPage = () => import('./Pages/HarnessLaunchPage.vue');
 const ResourcesPage = () => import('./Pages/ResourcesPage.vue');
 const HistoryPage = () => import('./Pages/HistoryPage.vue');
 const TodosPage = () => import('./Pages/TodosPage.vue');
@@ -27,6 +28,7 @@ export function createWorkbenchRouter(history: RouterHistory) {
       { path: '/routines/log', name: 'routineLog', component: RoutineLogPage },
       { path: '/projects', name: 'projects', component: ProjectsPage },
       { path: '/projects/:projectId', name: 'project', component: ProjectPage },
+      { path: '/projects/:projectId/launches/:launchId', name: 'launch', component: HarnessLaunchPage },
       { path: '/projects/:projectId/agents/:sessionId', name: 'agent', component: TerminalPage },
       { path: '/projects/:projectId/processes/:processId', name: 'process', component: TerminalPage },
       { path: '/projects/:projectId/worktrees', name: 'worktrees', component: ResourcesPage },

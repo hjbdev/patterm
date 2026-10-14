@@ -2,7 +2,8 @@
   <ResponsiveMenu v-model:open="open" mobile-only title="Open tabs">
     <template #trigger>
       <button type="button" class="relative isolate flex h-[30px] w-full min-w-0 items-center gap-2 rounded-tab bg-primary/10 px-2 text-left text-[13px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="Switch tab">
-        <template v-if="activeAgent">
+        <LoaderCircle v-if="activeLaunch?.state === 'starting'" class="h-3.5 w-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
+        <template v-else-if="activeAgent">
           <TabWash :activity="activityFor(activeAgent)" />
           <TabIcon :activity="activityFor(activeAgent)"><AgentIcon :harness="activeAgent.harness" class="h-3.5 w-3.5" /></TabIcon>
         </template>
@@ -10,15 +11,16 @@
           <TabWash :activity="processActivity(activeProcess)" />
           <TabIcon :activity="processActivity(activeProcess)"><TerminalSquare class="h-3.5 w-3.5" /></TabIcon>
         </template>
-        <span class="min-w-0 flex-1 truncate">{{ activeProcess?.name ?? (activeAgent ? agentLabel(activeAgent) : 'Tabs') }}</span>
+        <span class="min-w-0 flex-1 truncate">{{ activeLaunch ? harnessLaunchLabel(activeLaunch) : activeProcess?.name ?? (activeAgent ? agentLabel(activeAgent) : 'Tabs') }}</span>
         <ChevronDown class="h-4 w-4 shrink-0 text-muted-foreground" />
       </button>
     </template>
     <template #header-actions>
-      <LaunchAgentMenu :project-id="projectId" nested @launched="onLaunched" />
+      <LaunchAgentMenu :project-id="projectId" nested @started="open = false" />
     </template>
     <template #mobile>
-      <div v-if="!families.length && !processes.length" class="py-6 text-center text-sm text-muted-foreground">No open tabs</div>
+      <HarnessLaunchTabs :project-id="projectId" vertical @select="open = false" />
+      <div v-if="!families.length && !processes.length && !pendingLaunches.length" class="py-6 text-center text-sm text-muted-foreground">No open tabs</div>
       <div v-for="family in families" :key="family.rootId" class="mb-1">
         <button type="button" class="relative isolate flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="isFamilyActive(family) ? 'bg-primary/10' : ''" @click="selectFamily(family)">
           <TabWash :activity="activityFor(family.root.session)" />
@@ -55,7 +57,9 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { ChevronDown, TerminalSquare } from 'lucide-vue-next';
+import { useProjectHarnessLaunches, useSelectedHarnessLaunch } from '../Composables/useHarnessLaunch';
+import { harnessLaunchLabel } from '../lib/harnessLaunches';
+import { ChevronDown, LoaderCircle, TerminalSquare } from 'lucide-vue-next';
 import { cn } from '@/lib/utils';
 import { agentLabel, agentOptionIndent, familyOwnerLabel, type AgentTabFamily } from '../lib/agentTabs';
 import { ownedProcessesForSessions, type LiveProcessRecord } from '../lib/processTabs';
@@ -63,6 +67,7 @@ import { activityLookup, processActivity, subagentCountClass } from '../lib/rowA
 import type { ProcessRecord, SessionRecord } from '../types';
 import AgentIcon from './AgentIcon.vue';
 import LaunchAgentMenu from './LaunchAgentMenu.vue';
+import HarnessLaunchTabs from './HarnessLaunchTabs.vue';
 import ResponsiveMenu from './ResponsiveMenu.vue';
 import TabIcon from './TabIcon.vue';
 import TabWash from './TabWash.vue';
@@ -81,10 +86,11 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [rootId: string, session: SessionRecord];
   selectProcess: [process: ProcessRecord];
-  launched: [sessionId: string, terminalId: string | null];
 }>();
 
 const open = ref(false);
+const activeLaunch = useSelectedHarnessLaunch();
+const pendingLaunches = useProjectHarnessLaunches(() => props.projectId);
 const activeAgent = computed(() => props.families.flatMap((family) => family.options).find((option) =>
   option.session.id === props.activeSessionId || Boolean(props.activeTerminalId && option.session.ptyProcessId === props.activeTerminalId)
 )?.session ?? null);
@@ -117,8 +123,4 @@ function selectProcess(process: ProcessRecord): void {
   open.value = false;
 }
 
-function onLaunched(sessionId: string, terminalId: string | null): void {
-  open.value = false;
-  emit('launched', sessionId, terminalId);
-}
 </script>
