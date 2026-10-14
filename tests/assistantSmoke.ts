@@ -140,9 +140,12 @@ async function main(): Promise<void> {
     let voiceOffer: VoiceOffer | null = null;
     let conversation: IntegratedConversationMessage[] = [];
     let stopped = 0;
+    let voiceStartGate: Promise<void> = Promise.resolve();
+    let voiceStopGate: Promise<void> = Promise.resolve();
+    let compacting = false;
     const codex = {
-      realtimeStart: async (_processId: string, input: VoiceOffer) => { voiceOffer = input; return { sdp: 'answer-sdp' }; },
-      realtimeStop: async () => { stopped += 1; },
+      realtimeStart: async (_processId: string, input: VoiceOffer) => { await voiceStartGate; voiceOffer = input; return { sdp: 'answer-sdp' }; },
+      realtimeStop: async () => { await voiceStopGate; stopped += 1; },
       realtimeAppendText: async (_processId: string, text: string) => { if (appendFailure) throw appendFailure; appended.push(text); },
       onRealtime: (_processId: string, listener: (event: CodexRealtimeEvent) => void) => { realtimeListeners.add(listener); return () => realtimeListeners.delete(listener); }
     };
@@ -162,7 +165,7 @@ async function main(): Promise<void> {
       transferTimers: (from: readonly string[], to: string) => { timerTransfers.push(`${from.join(',')}->${to}`); }
     };
     const inbox = new AssistantInbox(database);
-    const assistant = new AssistantService(database, dir, launcher, codex, integrated, settings, inbox, processes, { digestDelayMs: 10 });
+    const assistant = new AssistantService(database, dir, launcher, codex, integrated, settings, inbox, processes, { digestDelayMs: 10, compacting: () => compacting });
     const events: AssistantEvent[] = [];
     assistant.onEvent((event) => events.push(event));
 
@@ -227,7 +230,20 @@ async function main(): Promise<void> {
     assert.equal(prompts[0]!.split('\n').length, 3, 'parent-audience, bell, assistant, and update changes are not forwarded');
 
     // Voice answers the offer with the configured voice and speaks digests.
-    assert.deepEqual(await assistant.startVoice('offer-sdp'), { sdp: 'answer-sdp' });
+    compacting = true;
+    await assert.rejects(assistant.startVoice('during-compaction'), /assistant is compacting/);
+    assert.equal(voiceOffer, null, 'voice never reaches Codex during auto-compaction');
+    assert.equal(assistant.voiceActive(assistant.state().process_id!), false);
+    compacting = false;
+    let finishVoiceStart!: () => void;
+    voiceStartGate = new Promise<void>((resolve) => { finishVoiceStart = resolve; });
+    const startingVoice = assistant.startVoice('offer-sdp');
+    await wait(0);
+    assert.equal(assistant.voiceActive(assistant.state().process_id!), true, 'voice startup blocks compaction');
+    finishVoiceStart();
+    assert.deepEqual(await startingVoice, { sdp: 'answer-sdp' });
+    assert.equal(assistant.voiceActive(assistant.state().process_id!), true);
+
     assert.deepEqual(voiceOffer, { sdp: 'offer-sdp', voice: 'maple', options: {} }, 'the default profile adds no start parameters, and an empty thread no brief');
     assert.equal(assistant.state().voice.active, true);
     assistant.handleNotification({ type: 'raised', notification: notification('n7', { kind: 'failure', body: 'Exited with code 1' }) });
@@ -257,7 +273,13 @@ async function main(): Promise<void> {
     assert.match(brief, /- User: Start a PAT-130 agent\n- Assistant: Started PAT-130\./);
     assert.match(brief, /- PAT-130 \(Project p\): working/);
     assert.doesNotMatch(brief, /spawn_agent|transcript_delta/);
-    await assistant.stopVoice();
+    let finishVoiceStop!: () => void;
+    voiceStopGate = new Promise<void>((resolve) => { finishVoiceStop = resolve; });
+    const stoppingVoice = assistant.stopVoice();
+    assert.equal(assistant.voiceActive(assistant.state().process_id!), true, 'voice shutdown blocks compaction');
+    finishVoiceStop();
+    await stoppingVoice;
+    assert.equal(assistant.voiceActive(assistant.state().process_id!), false);
     assert.equal(stopped, 2, 'starting a new call stops the previous one');
     assert.equal(assistant.state().voice.active, false);
 

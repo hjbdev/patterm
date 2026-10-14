@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Development builds and CI type checks use a pinned native TypeScript checker,
   including Vue component checks, while retaining the compiler API used by tooling.
+- The assistant can auto-compact after the existing idle delay when voice is
+  inactive. Voice cannot start until an automatic compaction finishes.
 - Integrated OpenCode prompts steer by default, as in OpenCode: a message sent
   mid-turn joins the turn at its next model step. Its pending row shows only
   the message and Cancel.
@@ -51,6 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and zero commands. Running agents, commands, and timers still require confirmation.
 - Settings › Appearance shows the saved Personal project choice instead of
   always showing it off.
+- Agent launches open a Starting tab immediately and keep other harnesses available
+  while startup finishes. Completed launches do not steal focus after switching away.
 
 ## [0.1.1] - 2026-10-13
 

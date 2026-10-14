@@ -48,6 +48,8 @@ export class AssistantService {
   private launching: Promise<AssistantState> | null = null;
   private restarting: Promise<AssistantState> | null = null;
   private voiceProcessId: string | null = null;
+  private voiceStartingProcessId: string | null = null;
+  private voiceStoppingProcessId: string | null = null;
   private releaseRealtime: (() => void) | null = null;
   private readonly listeners = new Set<(event: AssistantEvent) => void>();
   private digest: NotificationRecord[] = [];
@@ -65,7 +67,7 @@ export class AssistantService {
     private readonly settings: Pick<SettingsService, 'assistantSettings'>,
     private readonly inbox: AssistantInbox,
     private readonly processes: { stop(processId: string): Promise<unknown>; transferTimers(fromProcessIds: readonly string[], toProcessId: string): void },
-    private readonly options: { log?: (event: string, data: Record<string, unknown>) => void; digestDelayMs?: number } = {}
+    private readonly options: { log?: (event: string, data: Record<string, unknown>) => void; digestDelayMs?: number; compacting?: (processId: string) => boolean } = {}
   ) {
     this.releaseInbox = inbox.onChange(({ flush }) => {
       this.emitState();
@@ -157,13 +159,20 @@ export class AssistantService {
     return this.restarting;
   }
 
+  voiceActive(processId: string): boolean {
+    return this.voiceProcessId === processId || this.voiceStartingProcessId === processId || this.voiceStoppingProcessId === processId;
+  }
+
   async startVoice(sdp: string): Promise<{ sdp: string }> {
     const { process_id: processId } = await this.ensure();
     if (!processId) throw new Error('The assistant is not running');
-    if (this.voiceProcessId) await this.stopVoice().catch(() => undefined);
-    this.releaseRealtime?.();
-    this.releaseRealtime = this.codex.onRealtime(processId, (event) => this.onRealtime(processId, event));
+    if (this.voiceStartingProcessId) throw new Error('Voice is already starting');
+    if (this.options.compacting?.(processId)) throw new Error('The assistant is compacting. Try voice again when it finishes.');
+    this.voiceStartingProcessId = processId;
     try {
+      if (this.voiceProcessId) await this.stopVoice().catch(() => undefined);
+      this.releaseRealtime?.();
+      this.releaseRealtime = this.codex.onRealtime(processId, (event) => this.onRealtime(processId, event));
       const settings = this.settings.assistantSettings();
       const brief = await this.voiceBrief(processId);
       const answer = await this.codex.realtimeStart(processId, {
@@ -179,6 +188,8 @@ export class AssistantService {
     } catch (error) {
       this.releaseVoice();
       throw error;
+    } finally {
+      this.voiceStartingProcessId = null;
     }
   }
 
@@ -201,8 +212,15 @@ export class AssistantService {
 
   async stopVoice(): Promise<AssistantState> {
     const processId = this.voiceProcessId;
+    if (processId) this.voiceStoppingProcessId = processId;
     this.releaseVoice();
-    if (processId) await this.codex.realtimeStop(processId).catch((error: unknown) => this.log('voice.stop_failed', { message: errorMessage(error) }));
+    if (processId) {
+      try {
+        await this.codex.realtimeStop(processId).catch((error: unknown) => this.log('voice.stop_failed', { message: errorMessage(error) }));
+      } finally {
+        this.voiceStoppingProcessId = null;
+      }
+    }
     this.emitState();
     return this.state();
   }
