@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Assistant `/restart` resumes its conversation through the assistant controls.
+  Rejected browser writes restore the Take control button, which reconnects
+  the terminal subscription before taking over.
+
 - Closing or quitting an empty desktop app no longer asks to stop zero agents
   and zero commands. Running agents, commands, and timers still require confirmation.
 

@@ -310,7 +310,7 @@ import { onWorkspaceRequest, type WorkspaceRequest } from '../lib/workspaceReque
 // `onLaunched` is a prop rather than an emit: /new and /resume close this tab
 // before they answer, which can unmount the pane, and Vue drops emits from an
 // unmounted component.
-const props = defineProps<{ processId: string; projectId?: string | null; projectPath?: string | null; exited?: boolean; mentionAgents?: MentionAgent[]; mentionLaunchers?: MentionLauncher[]; embedded?: boolean; closeRequest?: CloseRequestRecord | null | undefined; closeSubagents?: number | undefined; onLaunched?: (sessionId: string) => void; onNewSession?: (processId: string) => Promise<void> }>();
+const props = defineProps<{ processId: string; projectId?: string | null; projectPath?: string | null; exited?: boolean; mentionAgents?: MentionAgent[]; mentionLaunchers?: MentionLauncher[]; embedded?: boolean; closeRequest?: CloseRequestRecord | null | undefined; closeSubagents?: number | undefined; onLaunched?: (sessionId: string) => void; onNewSession?: (processId: string) => Promise<void>; onRestartSession?: (processId: string) => Promise<void> }>();
 const emit = defineEmits<{ transcript: [messages: TranscriptMessage[], status: string, loaded: boolean] }>();
 // Conversation state is replaced, never mutated in place (stream events and
 // snapshots produce new arrays), so shallow refs skip deep proxying of every
@@ -908,11 +908,15 @@ async function startNewSession(): Promise<void> {
 // Resumes this conversation in a new process, which replaces this tab. The
 // composer refuses mid-turn; the palette confirms first and forces it.
 async function restartSession(force: boolean): Promise<void> {
-  if (restarting || !props.projectId) return;
+  if (restarting || (!props.onRestartSession && !props.projectId)) return;
   const token = generation;
   restarting = true;
   error.value = '';
   try {
+    if (props.onRestartSession) {
+      await props.onRestartSession(props.processId);
+      return;
+    }
     const result = await mutate('integrated_restart', { process_id: props.processId, project_id: props.projectId, ...(force ? { force: true } : {}) }) as { session_id?: unknown };
     if (typeof result?.session_id === 'string') props.onLaunched?.(result.session_id);
   } catch (cause) {
@@ -1162,7 +1166,17 @@ async function declineForm(form: IntegratedFormRequest): Promise<void> {
 }
 
 async function takeControl(): Promise<void> {
-  await window.patterm.terminalTakeControl?.({ process_id: props.processId });
+  const processId = props.processId;
+  const token = generation;
+  error.value = '';
+  await setSubscription(processId, true);
+  if (token !== generation || stopped) return;
+  try {
+    const result = await window.patterm.terminalTakeControl?.({ process_id: processId }) as { error?: string } | undefined;
+    if (result?.error) throw new Error(result.error);
+  } catch (cause) {
+    if (token === generation) error.value = cause instanceof Error ? cause.message : String(cause);
+  }
 }
 
 function mutate(tool: string, args: { process_id: string } & Record<string, unknown>): Promise<unknown> {

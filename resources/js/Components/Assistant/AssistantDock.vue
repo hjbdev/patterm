@@ -132,7 +132,7 @@
         <!-- Chat stays mounted in voice mode so the conversation subscription
              and composer draft survive the switch. -->
         <div v-show="mode === 'chat'" class="h-full">
-          <IntegratedConversation :key="assistant.processId" :process-id="assistant.processId" :on-new-session="newAssistantSession" embedded @transcript="onTranscript" />
+          <IntegratedConversation :key="assistant.processId" :process-id="assistant.processId" :on-new-session="newAssistantSession" :on-restart-session="restartAssistant" embedded @transcript="onTranscript" />
         </div>
         <AssistantVoice v-if="mode === 'voice'" :transcript="transcript" :stream-status="streamStatus" :wide="page" @end="mode = 'chat'" />
       </template>
