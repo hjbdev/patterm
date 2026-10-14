@@ -78,8 +78,9 @@
         <Gauge class="h-4 w-4" />
       </Button>
       <NotificationTray />
-      <Button variant="ghost" size="icon" class="h-7 w-7 rounded-tab text-muted-foreground" aria-label="Settings" title="Settings" @click="emit('settings')">
+      <Button variant="ghost" size="icon" class="relative h-7 w-7 rounded-tab text-muted-foreground" :aria-label="settingsLabel" :title="settingsLabel" @click="emit('settings')">
         <Settings class="h-4 w-4" />
+        <span v-if="updates?.status === 'available'" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
       </Button>
       <Tooltip v-if="!sidecarAvailable">
         <TooltipTrigger as-child>
@@ -108,6 +109,7 @@ import { Button } from './ui/button';
 import ResponsiveMenu from './ResponsiveMenu.vue';
 import ProjectLogo from './ProjectLogo.vue';
 import UnreadDot from './UnreadDot.vue';
+import { useUpdates } from '../lib/updates';
 import NotificationTray from './NotificationTray.vue';
 import { projectUnread } from '../Composables/useNotifications';
 import { DropdownMenuItem, DropdownMenuSeparator } from './ui/dropdown-menu';
@@ -184,4 +186,8 @@ function projectAgentSessions(project: ProjectWorkbench): SessionRecord[] {
   return project.projectSessions;
 }
 
+
+// A release newer than this install marks Settings until it is installed.
+const updates = useUpdates();
+const settingsLabel = computed(() => updates.value?.status === 'available' ? `Settings: Patterm ${updates.value.latest?.version} is available` : 'Settings');
 </script>

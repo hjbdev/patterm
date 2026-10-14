@@ -127,6 +127,13 @@ try {
     $global:pattermInstallerFixture.RunningApp = Join-Path $root 'versions/1.2.4/electron/electron.exe'
     Expect-UpdateFailure 'Patterm is running'
     $global:pattermInstallerFixture.RunningApp = $null
+    # The in-app updater pins the checksum from the signed release manifest.
+    $failed = $false
+    try { & $installer -InstallRoot $root -StartMenuDirectory $startMenu -NoPath -Sha256 ('f' * 64) } catch {
+        if ($_.Exception.Message -notlike '*signed release manifest*') { throw }
+        $failed = $true
+    }
+    if (-not $failed -or (Get-Content -LiteralPath $launcher -Raw) -cne $previousLauncher) { throw 'A package that does not match the manifest checksum was installed.' }
     $heldLock = [IO.File]::Open((Join-Path $root '.install.lock'), [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
     try { Expect-UpdateFailure 'Another Patterm installer' } finally { $heldLock.Dispose() }
     $blockedMenu = Join-Path $fixture 'not a directory'

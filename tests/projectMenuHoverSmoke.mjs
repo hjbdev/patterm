@@ -10,7 +10,7 @@ const source = page.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1];
 const parsed = ts.createSourceFile('topbar.ts', source, ts.ScriptTarget.Latest, true);
 const executable = parsed.statements.filter(statement => !ts.isImportDeclaration(statement)).map(statement => statement.getFullText(parsed)).join('\n');
 const { outputText } = ts.transpileModule(executable, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } });
-const setup = new Function('computed', 'ref', 'watch', 'readRecentProjectIds', 'rememberRecentProject', 'shownRecentProjects', 'defineProps', 'defineEmits', 'onBeforeUnmount', 'setTimeout', 'clearTimeout', 'window',
+const setup = new Function('computed', 'ref', 'watch', 'readRecentProjectIds', 'rememberRecentProject', 'shownRecentProjects', 'defineProps', 'defineEmits', 'onBeforeUnmount', 'setTimeout', 'clearTimeout', 'window', 'useUpdates',
   `${outputText}\nreturn { projectMenuOpen, openProjectMenuOnHover, scheduleProjectMenuClose, cancelProjectMenuClose, keepHoverFocus, stopProjectMenuHover };`);
 
 test('Project hover preserves focus, allows crossing into the menu, and cancels timers', () => {
@@ -20,7 +20,7 @@ test('Project hover preserves focus, allows crossing into the menu, and cancels 
   let mobile = false;
   const menu = setup(computed, ref, () => {}, () => [], ids => ids, () => [], () => ({ projects: [] }), () => () => {}, callback => { cleanup = callback; },
     (callback, delay) => { assert.equal(delay, 100); timers.set(++nextId, callback); return nextId; }, id => timers.delete(id),
-    { matchMedia: () => ({ matches: mobile }) });
+    { matchMedia: () => ({ matches: mobile }) }, () => ref(null));
   const tick = () => { const callbacks = [...timers.values()]; timers.clear(); callbacks.forEach(callback => callback()); };
   menu.openProjectMenuOnHover({ pointerType: 'touch' });
   assert.equal(menu.projectMenuOpen.value, false, 'Touch must use the existing click interaction');

@@ -6,13 +6,15 @@ set -euo pipefail
 REPO=hjbdev/patterm
 APPLICATIONS_DIR="${PATTERM_MAC_APPLICATIONS_DIR:-$HOME/Applications}"
 if [[ -z "${PATTERM_MAC_APPLICATIONS_DIR:-}" && -d /Applications/Patterm.app ]]; then APPLICATIONS_DIR=/Applications; fi
-VERSION="" ALLOW_DOWNGRADE=false
+VERSION="" ALLOW_DOWNGRADE=false EXPECTED_SHA256=""
 fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
 while (( $# )); do
   case "$1" in
     --version) VERSION="${2:-}"; VERSION="${VERSION#v}"; [[ -n "$VERSION" ]] || fail '--version needs a value'; shift 2 ;;
     --allow-downgrade) ALLOW_DOWNGRADE=true; shift ;;
-    -h|--help) printf 'Usage: install-macos.sh [--version VERSION] [--allow-downgrade]\nInstalls in ~/Applications; set PATTERM_MAC_APPLICATIONS_DIR to choose another directory.\n'; exit 0 ;;
+    # Patterm's updater passes the checksum from the signed release manifest.
+    --sha256) EXPECTED_SHA256="$(printf '%s' "${2:-}" | tr '[:upper:]' '[:lower:]')"; [[ "$EXPECTED_SHA256" =~ ^[0-9a-f]{64}$ ]] || fail '--sha256 needs a SHA-256 checksum'; shift 2 ;;
+    -h|--help) printf 'Usage: install-macos.sh [--version VERSION] [--allow-downgrade] [--sha256 CHECKSUM]\nInstalls in ~/Applications; set PATTERM_MAC_APPLICATIONS_DIR to choose another directory.\n'; exit 0 ;;
     *) fail "unknown option: $1" ;;
   esac
 done
@@ -85,6 +87,7 @@ read -r HASH HASH_NAME < "$STAGING/$NAME.sha256"
 HASH="$(printf '%s' "$HASH" | tr '[:upper:]' '[:lower:]')"
 ACTUAL="$(shasum -a 256 "$STAGING/$NAME")"
 [[ "${ACTUAL%% *}" == "$HASH" ]] || fail 'package checksum verification failed'
+[[ -z "$EXPECTED_SHA256" || "$HASH" == "$EXPECTED_SHA256" ]] || fail 'the package checksum does not match the signed release manifest'
 unzip -Z1 "$STAGING/$NAME" > "$STAGING/entries"
 while IFS= read -r entry; do
   case "$entry" in

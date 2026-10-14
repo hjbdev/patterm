@@ -76,6 +76,9 @@ try {
   fs.copyFileSync(options.sidecar, path.join(stage, 'resources', 'native', 'patterm-terminal-core.exe'));
   fs.copyFileSync(path.join(ROOT, 'dist', 'mcp', 'patterm-mcp.js'), path.join(stage, 'resources', 'mcp', 'patterm-mcp.js'));
   fs.writeFileSync(path.join(stage, 'Patterm.cmd'), launcher());
+  // The in-app updater checks releases with this key and installs through the helper.
+  fs.mkdirSync(path.join(stage, 'scripts'));
+  for (const file of ['apply-update.ps1', 'install.ps1', 'minisign.pub']) fs.copyFileSync(path.join(ROOT, 'scripts', 'release', file), path.join(stage, 'scripts', file));
 
   const commit = git('rev-parse', 'HEAD');
   const dirty = git('status', '--porcelain') !== '';

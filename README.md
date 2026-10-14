@@ -102,6 +102,13 @@ a complete document. Titles allow 500 characters and bodies allow 262,144.
 
 ## Installation and updates
 
+Release installs check for a newer release every few hours, and Settings › About
+installs it with the steps below: the desktop app quits, installs, and opens
+again, and a server restarts its service. Each check reads the signed release
+manifest from GitHub and verifies it with the key the installed version
+shipped with. Turn automatic checks off, or include pre-releases, in Settings ›
+About. Source checkouts never check.
+
 Patterm releases run on Linux (x64 and arm64) with systemd. They bundle their
 own Node and Electron, so you don't need Node, pnpm, or Rust. Install the latest
 stable release:
