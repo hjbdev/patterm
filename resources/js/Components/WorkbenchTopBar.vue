@@ -71,17 +71,35 @@
       <Button variant="ghost" size="sm" class="h-7 gap-2 rounded-tab px-2 text-xs text-muted-foreground" aria-label="Search or jump to" @click="emit('commandPalette')">
         <Search class="h-4 w-4" /><span class="hidden sm:inline">Search or jump to…</span><kbd class="hidden rounded border border-border/70 px-1 text-[10px] sm:inline">Ctrl K</kbd>
       </Button>
-      <Button variant="ghost" size="icon" class="h-7 w-7 rounded-tab text-muted-foreground" aria-label="Scheduled" title="Scheduled" @click="emit('routines')">
+      <!-- Phones keep Search and Notifications inline and move the rest into the menu drawer. -->
+      <Button variant="ghost" size="icon" class="hidden h-7 w-7 rounded-tab text-muted-foreground sm:inline-flex" aria-label="Scheduled" title="Scheduled" @click="emit('routines')">
         <CalendarClock class="h-4 w-4" />
       </Button>
-      <Button variant="ghost" size="icon" class="h-7 w-7 rounded-tab text-muted-foreground" aria-label="Usage" title="Usage" @click="emit('usage')">
+      <Button variant="ghost" size="icon" class="hidden h-7 w-7 rounded-tab text-muted-foreground sm:inline-flex" aria-label="Usage" title="Usage" @click="emit('usage')">
         <Gauge class="h-4 w-4" />
       </Button>
       <NotificationTray />
-      <Button variant="ghost" size="icon" class="relative h-7 w-7 rounded-tab text-muted-foreground" :aria-label="settingsLabel" :title="settingsLabel" @click="emit('settings')">
+      <Button variant="ghost" size="icon" class="relative hidden h-7 w-7 rounded-tab text-muted-foreground sm:inline-flex" :aria-label="settingsLabel" :title="settingsLabel" @click="emit('settings')">
         <Settings class="h-4 w-4" />
-        <span v-if="updates?.status === 'available'" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
+        <span v-if="updateAvailable" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
       </Button>
+      <ResponsiveMenu v-model:open="appMenuOpen" mobile-only title="Patterm">
+        <template #trigger>
+          <Button variant="ghost" size="icon" class="relative h-7 w-7 rounded-tab text-muted-foreground" :aria-label="updateAvailable ? 'Menu: an update is available' : 'Menu'">
+            <Menu class="h-4 w-4" />
+            <span v-if="updateAvailable" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
+          </Button>
+        </template>
+        <template #mobile>
+          <div class="space-y-1">
+            <button v-for="item in appMenuItems" :key="item.label" type="button" class="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" @click="selectAppMenuItem(item)">
+              <component :is="item.icon" class="h-4 w-4 text-muted-foreground" />
+              <span class="min-w-0 flex-1 truncate">{{ item.label }}</span>
+              <span v-if="item.label === 'Settings' && updateAvailable" class="truncate text-xs text-muted-foreground">Patterm {{ updates?.latest?.version }} available</span>
+            </button>
+          </div>
+        </template>
+      </ResponsiveMenu>
       <Tooltip v-if="!sidecarAvailable">
         <TooltipTrigger as-child>
           <Badge variant="outline" class="h-6 cursor-help border-destructive/40 bg-destructive/10 px-2 text-[11px] text-destructive">
@@ -100,7 +118,7 @@
 <script setup lang="ts">
 import HostBadge from './HostBadge.vue';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { CalendarClock, ChevronDown, Gauge, LayoutGrid, Search, Settings } from 'lucide-vue-next';
+import { CalendarClock, ChevronDown, Gauge, LayoutGrid, Menu, Search, Settings } from 'lucide-vue-next';
 import { activeAgentSessions } from '../lib/agentTabs';
 import { readRecentProjectIds, rememberRecentProject, shownRecentProjects } from '../lib/recentProjects';
 import type { ProjectWorkbench, SessionRecord } from '../types';
@@ -196,5 +214,17 @@ function projectAgentSessions(project: ProjectWorkbench): SessionRecord[] {
 
 // A release newer than this install marks Settings until it is installed.
 const updates = useUpdates();
-const settingsLabel = computed(() => updates.value?.status === 'available' ? `Settings: Patterm ${updates.value.latest?.version} is available` : 'Settings');
+const updateAvailable = computed(() => updates.value?.status === 'available');
+const settingsLabel = computed(() => updateAvailable.value ? `Settings: Patterm ${updates.value?.latest?.version} is available` : 'Settings');
+
+const appMenuOpen = ref(false);
+const appMenuItems = [
+  { label: 'Scheduled', icon: CalendarClock, select: () => emit('routines') },
+  { label: 'Usage', icon: Gauge, select: () => emit('usage') },
+  { label: 'Settings', icon: Settings, select: () => emit('settings') },
+];
+function selectAppMenuItem(item: typeof appMenuItems[number]): void {
+  appMenuOpen.value = false;
+  item.select();
+}
 </script>

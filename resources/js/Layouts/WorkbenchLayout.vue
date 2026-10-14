@@ -21,8 +21,11 @@
     <div class="bg-[#080808]" :class="assistantDocked ? 'pr-[calc(var(--assistant-dock-width)+0.375rem)]' : ''">
     <RouterView v-if="showStandalonePage" />
 
-    <div v-else class="flex h-dvh min-h-0 flex-col overflow-hidden bg-[#080808] text-foreground">
+    <!-- On phones the bar sits at the bottom, within thumb reach. -->
+    <div v-else data-workbench class="flex h-dvh min-h-0 flex-col overflow-hidden bg-[#080808] text-foreground">
       <WorkbenchTopBar
+        data-workbench-bar
+        class="max-sm:order-last"
         :projects="projects"
         :active-project-id="activeProjectId"
         :sidecar-status="sidecarStatus"
@@ -79,7 +82,7 @@
       <div class="flex min-h-0 flex-1">
       <WorkbenchSidebar v-if="sidebarMode" />
 
-      <main id="workbench-main" class="relative mx-1.5 mb-1.5 min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border-t border-white/5 bg-background">
+      <main id="workbench-main" class="relative mx-1.5 mb-1.5 max-sm:mb-0 max-sm:mt-1.5 min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border-t border-white/5 bg-background">
         <div v-if="!loaded" class="p-5 text-sm text-muted-foreground">Loading project…</div>
         <div v-else-if="!activeProject" class="p-5 text-sm text-muted-foreground">Project not found. Select another project from the toolbar.</div>
         <RouterView v-else />

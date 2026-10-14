@@ -6,7 +6,7 @@
         <span v-if="count" class="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-1 text-[9px] font-semibold tabular-nums text-background" :class="badgeTone">{{ badge }}</span>
       </Button>
     </DrawerTrigger>
-    <DrawerPortal v-if="open">
+    <DrawerPortal>
       <DrawerOverlay class="fixed inset-0 z-50 bg-black/80" />
       <DrawerContent class="fixed inset-x-0 bottom-0 z-50 flex h-[85dvh] flex-col rounded-t-2xl border border-border bg-background pb-[env(safe-area-inset-bottom)] text-foreground shadow-lg outline-none">
         <DrawerHandle class="mx-auto my-3 h-1.5 w-12 shrink-0 rounded-full bg-muted-foreground/40" />

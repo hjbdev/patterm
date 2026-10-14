@@ -11,13 +11,16 @@
         <!-- Hidden rather than unmounted so switching back skips renderer setup. A null ID detaches the PTY. -->
         <TerminalPane v-show="!integratedAgent" title="Terminal" :process-id="integratedAgent ? null : activeTerminalId" :capture-enabled="!!activeProject" @capture-selection="capture" />
       </div>
-      <template v-if="selectedAgent && visible">
-        <div v-if="narrow" class="absolute inset-0 z-20 bg-black/40" @click="close" />
-        <aside ref="panel" tabindex="-1" :role="narrow ? 'dialog' : 'complementary'" :aria-modal="narrow || undefined" aria-label="Session context" class="z-30 flex shrink-0 flex-col border-l border-border/30 bg-background outline-none" :class="narrow ? 'absolute inset-y-0 right-0 shadow-xl' : integratedAgent ? 'relative my-6' : 'relative'" :style="{ width: `${width}px`, maxWidth: '100%' }" @keydown.esc.stop.prevent="close" @keydown="trapFocus">
+      <!-- Over a narrow workspace the panel is a sheet, so it slides in like the phone drawers; docked, it just appears. -->
+      <Transition enter-active-class="transition-opacity duration-500 motion-reduce:transition-none" leave-active-class="transition-opacity duration-500 motion-reduce:transition-none" enter-from-class="opacity-0" leave-to-class="opacity-0">
+        <div v-if="selectedAgent && visible && narrow" class="absolute inset-0 z-20 bg-black/40" @click="close" />
+      </Transition>
+      <Transition :css="narrow" enter-active-class="transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none" leave-active-class="transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none" enter-from-class="translate-x-full" leave-to-class="translate-x-full">
+        <aside v-if="selectedAgent && visible" ref="panel" tabindex="-1" :role="narrow ? 'dialog' : 'complementary'" :aria-modal="narrow || undefined" aria-label="Session context" class="z-30 flex shrink-0 flex-col border-l border-border/30 bg-background outline-none" :class="narrow ? 'absolute inset-y-0 right-0 shadow-xl' : integratedAgent ? 'relative my-6' : 'relative'" :style="{ width: `${width}px`, maxWidth: '100%' }" @keydown.esc.stop.prevent="close" @keydown="trapFocus">
           <div v-if="!narrow" role="separator" tabindex="0" aria-label="Resize session context" aria-orientation="vertical" :aria-valuenow="width" :aria-valuemin="260" :aria-valuemax="480" class="absolute inset-y-0 -left-1 w-2 cursor-col-resize focus-visible:bg-primary/40" @pointerdown="startResize" @pointermove="resize" @pointerup="endResize" @pointercancel="endResize" @keydown.left.prevent="setWidth(width + 20)" @keydown.right.prevent="setWidth(width - 20)" />
           <SessionContextPanel :key="selectedAgent.id" :project-id="activeProject!.project.id" :session-id="selectedAgent.id" :summary="selectedAgent.summary" :can-summarize="!selectedAgent.parentId" :active-worktree-id="diffWorktree?.id ?? null" @open-worktree="openWorktree" @close="close" />
         </aside>
-      </template>
+      </Transition>
     </div>
     <div v-else-if="route.name !== 'project'" class="p-5 text-sm text-muted-foreground">This terminal is no longer available. Select another tab or launch an agent.</div>
     <div v-else-if="activeProject" class="flex min-h-0 flex-1 overflow-auto p-5">
@@ -76,6 +79,7 @@ import type { HarnessPreset } from '../lib/paletteSources';
 import { contextCall, type Scratchpad, type SessionWorktree } from '../lib/projectContext';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { useTerminalPageNavigation } from '../Composables/useTerminalPageNavigation';
+import { touchScreen } from '../lib/touch';
 import { onWorkspaceRequest } from '../lib/workspaceRequests';
 const { harnesses } = useWorkbench();
 const { route, router, activeProject, selectedAgent, activeTerminalId, selectLaunchedAgent } = useTerminalPageNavigation();
@@ -177,7 +181,9 @@ async function show() {
 }
 function close() {
   visible.value = false;
-  // Return focus to whichever editor the panel was opened from.
+  // Return focus to whichever editor the panel was opened from, except on touch screens, where that opens the keyboard.
+  if (touchScreen())
+    return;
   workspace.value?.querySelector<HTMLElement>('[data-patterm-terminal-input], [data-patterm-integrated-input]')?.focus();
 }
 function trapFocus(event: KeyboardEvent) {
