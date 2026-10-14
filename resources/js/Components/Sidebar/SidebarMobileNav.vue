@@ -18,7 +18,7 @@
         <div class="flex items-center gap-0.5">
           <BoardButton />
           <SidebarViewOptions />
-          <LaunchAgentMenu :project-id="sidebar.projectId.value" nested @launched="sidebar.launched" />
+          <LaunchAgentMenu :project-id="sidebar.projectId.value" nested @started="sidebarLayout.mobileOpen = false" />
         </div>
       </template>
       <template #mobile>
@@ -36,6 +36,8 @@
 <script setup lang="ts">
 import HostBadge from '../HostBadge.vue';
 import { computed } from 'vue';
+import { useSelectedHarnessLaunch } from '../../Composables/useHarnessLaunch';
+import { harnessLabel } from '../../lib/harnesses';
 import { ChevronDown } from 'lucide-vue-next';
 import { agentLabel } from '../../lib/agentTabs';
 import type { SessionRecord } from '../../types';
@@ -52,9 +54,12 @@ import SidebarPages from './SidebarPages.vue';
 import SidebarViewOptions from './SidebarViewOptions.vue';
 
 const sidebar = useSidebar();
+const activeLaunch = useSelectedHarnessLaunch();
 const PAGE_LABELS = { worktrees: 'Worktrees', history: 'History', todos: 'Todos', scratchpads: 'Scratchpads', media: 'Media' } as const;
 
 const current = computed<{ label: string; root?: SessionRecord; rootSelect?: () => void; child?: string; session?: SessionRecord; host?: string | undefined }>(() => {
+  const launch = activeLaunch.value;
+  if (launch) return { label: `${harnessLabel(launch.input.harness)} · ${launch.state === 'starting' ? 'Starting…' : launch.state === 'failed' ? 'Launch failed' : 'Ready'}`, host: launch.input.host };
   const page = sidebar.page.value;
   if (page) return { label: PAGE_LABELS[page] };
   for (const tab of sidebar.tabs.value) {

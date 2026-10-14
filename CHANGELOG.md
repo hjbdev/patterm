@@ -49,6 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and zero commands. Running agents, commands, and timers still require confirmation.
 - Settings › Appearance shows the saved Personal project choice instead of
   always showing it off.
+- Agent launches open a Starting tab immediately and keep other harnesses available
+  while startup finishes. Completed launches do not steal focus after switching away.
 
 ## [0.1.1] - 2026-10-13
 
