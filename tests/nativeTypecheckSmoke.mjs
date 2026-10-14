@@ -66,3 +66,20 @@ test('Vue checks reject script and template errors introduced after a warm incre
   result = run();
   assert.equal(result.status, 0, result.output);
 });
+
+test('Vue checks preserve prop types across imported components after a warm pass', t => {
+  const { source, run } = fixture(t, 'renderer', 'vue');
+  fs.writeFileSync(path.join(path.dirname(source), 'Child.vue'), '<script setup lang="ts">defineProps<{ count: number }>();</script><template>{{ count.toFixed() }}</template>');
+  const component = value => `<script setup lang="ts">import Child from './Child.vue'; const count = ${value};</script><template><Child :count="count" /></template>`;
+  fs.writeFileSync(source, component('123'));
+  let result = run();
+  assert.equal(result.status, 0, result.output);
+  fs.writeFileSync(source, component('"invalid"'));
+  result = run();
+  assert.notEqual(result.status, 0, result.output);
+  assert.match(result.output, /TS2322/, result.output);
+  assert.match(result.output, /probe\.vue/, result.output);
+  fs.writeFileSync(source, component('123'));
+  result = run();
+  assert.equal(result.status, 0, result.output);
+});
