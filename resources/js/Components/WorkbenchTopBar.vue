@@ -50,7 +50,8 @@
       </template>
     </ResponsiveMenu>
 
-    <div v-if="showRecentProjects && recentProjects.length" class="hidden shrink-0 items-center sm:flex">
+    <!-- From md up: below it, the switcher and toolbar already fill the bar and the icons would push Settings out of view. -->
+    <div v-if="showRecentProjects && recentProjects.length" class="hidden shrink-0 items-center md:flex">
       <Tooltip v-for="projectGroup in recentProjects" :key="projectGroup.project.id">
         <TooltipTrigger as-child>
           <Button variant="ghost" size="icon" class="h-[26px] w-[26px] rounded-tab opacity-60 transition-opacity hover:opacity-100 focus-visible:opacity-100" :aria-label="`Switch to ${projectGroup.project.name}`" @click="emit('selectProject', projectGroup.project.id)">
