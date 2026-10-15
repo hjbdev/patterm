@@ -1,6 +1,6 @@
 import { computed, ref, watch, type Ref } from 'vue';
 import { listMedia, mediaGallery, type MediaItem } from '../lib/media';
-import { useContextRefresh } from '../lib/projectContext';
+import { useTopicRefresh } from '../lib/serverQuery';
 
 // A project's or one session's images, newest first, a page at a time. The
 // list reloads when an import lands, keeping the pages already shown.
@@ -47,7 +47,7 @@ export function useMedia(props: { projectId: string; sessionId?: string | undefi
     loaded.value = false;
     void load(0, options.pageSize);
   }, { immediate: true });
-  useContextRefresh(() => void refresh(), { topics: ['history'], lifecycle: false });
+  useTopicRefresh(['history'], () => void refresh());
 
   return { items, gallery, total, loaded, loading, error, loadMore, refresh };
 }

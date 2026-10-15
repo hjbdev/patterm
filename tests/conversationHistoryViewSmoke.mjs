@@ -19,7 +19,7 @@ const { outputText } = ts.transpileModule(executable, {
 });
 const setup = new Function(
   'computed', 'nextTick', 'ref', 'shallowRef', 'watch', 'onBeforeUnmount', 'defineProps', 'defineEmits',
-  'useVirtualizer', 'window', 'archiveTranscript', 'isReasoningMessage', 'toolCallKey', 'toast',
+  'useVirtualizer', 'window', 'archiveTranscript', 'isReasoningMessage', 'toolCallKey', 'toast', 'topicCall', 'topicChanged', 'useTopicRefresh',
   `${outputText}\nreturn { conversations, messages, selectedId, messageTranscriptRef, selectConversation, loadOlderMessages, positioningInitialMessages, transcriptMessages, focusedMessageId, scrollToMessage, showReasoning, canResume, resumeTitle, resumeSelected };`
 );
 
@@ -33,7 +33,9 @@ function mount(watchPagination = false, props = {}) {
     () => {}, () => props, () => (...event) => emitted.push(event),
     () => ref({ getVirtualItems: () => [], getTotalSize: () => 1000, scrollToIndex: () => {}, scrollToOffset: () => {} }),
     { patterm: { call: (name, args) => new Promise((resolve) => pending.push({ name, args, resolve })) } },
-    archiveTranscript, isReasoningMessage, toolCallKey, { error: (title, options) => toasts.push([title, options?.description]) }
+    archiveTranscript, isReasoningMessage, toolCallKey, { error: (title, options) => toasts.push([title, options?.description]) },
+    // Cached reads go straight to the server here.
+    (_topic, name, args) => new Promise((resolve) => pending.push({ name, args, resolve })), () => {}, () => {}
   );
   const scrolling = { bottom: 0, message: null };
   history.messageTranscriptRef.value = {

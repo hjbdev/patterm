@@ -138,8 +138,7 @@ import { Switch } from '../Components/ui/switch';
 import { useRoutineRunViewer } from '../Composables/useRoutineRunViewer';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { harnessLabel } from '../lib/harnesses';
-import { useContextRefresh } from '../lib/projectContext';
-import { harnessPresets } from '../lib/serverQuery';
+import { harnessModels, harnessPresets, useTopicRefresh } from '../lib/serverQuery';
 import {
   createRoutine, describeLaunch, describeSchedule, formatRunDay, formatRunTime, listRoutines, nextRunLabel, nextRuns, onceDone, routineLog, routineRun, runTime, ROUTINE_HARNESSES,
   runNeedsAttention, runStatusLabel, updateRoutine, type RoutineModelOption, type RoutinePresetOption, type RoutineRecord, type RoutineRunRecord
@@ -225,7 +224,7 @@ async function loadLaunchOptions(): Promise<void> {
   try {
     const [presetSettings, catalog] = await Promise.all([
       harnessPresets<{ presets: RoutinePresetOption[] }>().then((settings) => settings ?? { presets: [] }),
-      window.patterm.harnessModels() as Promise<{ providers: Record<string, { models: RoutineModelOption[] } | null> }>
+      harnessModels<{ providers: Record<string, { models: RoutineModelOption[] } | null> }>()
     ]);
     presets.value = presetSettings.presets.map((preset) => ({ harness: preset.harness, name: preset.name }));
     models.value = Object.fromEntries(Object.entries(catalog.providers).map(([harness, provider]) => [harness, provider?.models ?? []]));
@@ -234,7 +233,7 @@ async function loadLaunchOptions(): Promise<void> {
   }
 }
 
-useContextRefresh(() => void refresh(), { topics: ['routines'], lifecycle: true });
+useTopicRefresh(['routines'], () => void refresh(), { lifecycle: true });
 // A run waiting on a permission prompt shows as agent activity, not a routine change.
 let activityTimer: ReturnType<typeof setTimeout> | null = null;
 watch(workbench.revision, () => {

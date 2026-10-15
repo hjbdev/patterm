@@ -58,7 +58,8 @@ export function useContextRecord(kind: Ref<ContextKind>, projectId: Ref<string>,
     }
     catch { error.value = 'Could not store this draft locally. Keep this page open until saving completes, or copy the content.'; }
   }
-  async function load() {
+  // `fresh` skips the cache, after this tab's own write or when asked to reload.
+  async function load(fresh = false) {
     const generation = ++readGeneration;
     // Refreshing the same record keeps it shown, so editors stay mounted and
     // focused. Edits or saves made meanwhile win over the refresh.
@@ -73,7 +74,10 @@ export function useContextRecord(kind: Ref<ContextKind>, projectId: Ref<string>,
     await pendingSaves.get(draftKeyFor(project, namespace, id));
     if (generation !== readGeneration) return;
     try {
-      const result = await contextCall<Todo | Scratchpad>(`${namespace}_get`, project, { [`${namespace}_id`]: id, ...(namespace === 'scratchpad' ? { mode: 'full', limit: 1000 } : {}) });
+      // Cached until the project's context changes, so reopening a record
+      // shows it at once. A copy, because a recovered draft and long notes
+      // change it.
+      const result = { ...await (fresh ? contextCall : contextRead)<Todo | Scratchpad>(`${namespace}_get`, project, { [`${namespace}_id`]: id, ...(namespace === 'scratchpad' ? { mode: 'full', limit: 1000 } : {}) }) };
       if (!('notes' in result) && result.total_lines && result.total_lines > 1000) {
         const chunks = [result.body ?? ''];
         for (let start = 1000; start < result.total_lines; start += 1000) {
@@ -172,7 +176,7 @@ export function useContextRecord(kind: Ref<ContextKind>, projectId: Ref<string>,
       await save();
       if (!isCurrent() || dirty.value) return;
       await contextCall(`todo_${operation}`, project, { todo_id: id, ...args });
-      if (isCurrent() && !dirty.value && !saving.value) await load();
+      if (isCurrent() && !dirty.value && !saving.value) await load(true);
       options.onChanged?.();
     }
     catch (cause) {
@@ -194,7 +198,7 @@ export function useContextRecord(kind: Ref<ContextKind>, projectId: Ref<string>,
   }
   function reload() {
     removeDraft();
-    return load();
+    return load(true);
   }
   function copyDraft() {
     return window.patterm.writeClipboardText(`# ${title.value}\n\n${body.value}`);

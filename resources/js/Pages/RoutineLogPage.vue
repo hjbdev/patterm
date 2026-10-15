@@ -53,7 +53,7 @@ import RoutineReportDialog from '../Components/routines/RoutineReportDialog.vue'
 import RoutineRunDialog from '../Components/routines/RoutineRunDialog.vue';
 import { Button } from '../Components/ui/button';
 import { useRoutineRunViewer } from '../Composables/useRoutineRunViewer';
-import { useContextRefresh } from '../lib/projectContext';
+import { useTopicRefresh } from '../lib/serverQuery';
 import { listRoutines, routineLog, type RoutineRecord, type RoutineRunRecord } from '../lib/routines';
 
 const PAGE = 30;
@@ -138,6 +138,6 @@ function setFilter(id: string): void {
   void refresh();
 }
 
-useContextRefresh(() => void refresh(), { topics: ['routines'], lifecycle: true });
+useTopicRefresh(['routines'], () => void refresh(), { lifecycle: true });
 void refresh();
 </script>

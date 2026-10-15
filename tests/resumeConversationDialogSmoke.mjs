@@ -27,6 +27,8 @@ function mount({ initialQuery = '', onLaunched } = {}) {
     window: { patterm: { call: (tool, args) => new Promise((resolve) => calls.push({ tool, args, resolve })) } },
     document: { getElementById: () => null }
   };
+  // Cached reads go straight to the server here.
+  bindings.topicCall = (_topic, tool, args) => bindings.window.patterm.call(tool, args);
   const setup = new Function(...Object.keys(bindings), `${outputText}\nreturn { query, results, visible, hasMore, loading, reload, loadMore, onScroll, searching, resume };`);
   const dialog = setup(...Object.values(bindings));
   const runTimers = async () => { await flush(); while (timers.length) timers.shift()(); await flush(); };

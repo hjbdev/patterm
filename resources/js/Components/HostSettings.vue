@@ -105,7 +105,7 @@ import SettingsPanel from './settings/SettingsPanel.vue';
 import SettingsRow from './settings/SettingsRow.vue';
 import SettingsSection from './settings/SettingsSection.vue';
 import { autosave, settingSaveStatus } from '../Composables/useSettingsAutosave';
-import { useContextRefresh } from '../lib/projectContext';
+import { useTopicRefresh } from '../lib/serverQuery';
 import {
   cancelPairingCode, createPairingCode, linkProject, pairHost, readHostProjects, readHosts, renameHost, setShowAgents, unlinkProject, unpairHost,
   type HostOverview, type HostProjects, type PairingCode, type PeerHost, type ProjectLink
@@ -177,7 +177,7 @@ async function loadSuggestions(): Promise<void> {
   suggested.value = Object.fromEntries(entries);
 }
 
-useContextRefresh(() => void load(), { topics: ['settings'] });
+useTopicRefresh(['settings'], () => void load());
 void load();
 
 function stateLabel(peer: PeerHost): string {

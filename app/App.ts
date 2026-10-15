@@ -445,7 +445,7 @@ async function createApplicationResources(
 
   defer(() => historyWatcher.stop());
 
-  const modelCatalog = new HarnessModelCatalogService({ database, settings, env: resolvedEnv, openCodeServer, debugLog });
+  const modelCatalog = new HarnessModelCatalogService({ database, settings, env: resolvedEnv, openCodeServer, debugLog, onChanged: () => notifyChanged(['settings']) });
   defer(() => modelCatalog.dispose());
   const mcpServerRegistry = new McpServerRegistry(database);
   const mcpOAuth = new McpOAuthService(database, mcpServerRegistry, {

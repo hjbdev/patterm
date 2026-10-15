@@ -33,6 +33,7 @@ import AgentIcon from './AgentIcon.vue';
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
 import { matchSegments, relativeTime } from '../lib/format';
 import type { ConversationRecord } from '../types';
+import { topicCall } from '../lib/serverQuery';
 
 type ConversationResult = ConversationRecord & { sessionClosedAt?: string | null; match?: { messageId: string | null; preview: string | null } };
 
@@ -122,7 +123,7 @@ async function loadMore(): Promise<void> {
 }
 
 async function listPage(offset: number): Promise<ConversationResult[]> {
-  const result = await window.patterm.call('history_list', { project_id: props.projectId, provider: props.provider, resumable: true, limit: PAGE_SIZE, offset }) as { conversations?: ConversationResult[] };
+  const result = await topicCall<{ conversations?: ConversationResult[] }>('history', 'history_list', { project_id: props.projectId, provider: props.provider, resumable: true, limit: PAGE_SIZE, offset });
   return result.conversations ?? [];
 }
 

@@ -54,6 +54,7 @@ import SettingsPanel from './settings/SettingsPanel.vue';
 import SettingsRow from './settings/SettingsRow.vue';
 import SettingsSection from './settings/SettingsSection.vue';
 import { autosave } from '../Composables/useSettingsAutosave';
+import { harnessModels } from '../lib/serverQuery';
 
 interface CatalogModel { id: string; label: string; reasoning: string[]; defaultReasoning: string | null; }
 interface ProviderCatalog { error: string | null; models: CatalogModel[]; }
@@ -124,7 +125,7 @@ onMounted(async () => {
     const [result, models] = await Promise.all([
       window.patterm.autoSummarySettings() as Promise<{ settings: unknown; providers: typeof providers.value; lastError: string | null }>,
       // The model list is optional; the model can still be typed without it.
-      Promise.resolve().then(() => window.patterm.harnessModels()).catch(() => null) as Promise<{ providers?: typeof catalog.value } | null>
+      Promise.resolve().then(() => harnessModels<{ providers?: typeof catalog.value }>()).catch(() => null)
     ]);
     draft.value = autoSummarySettingsInput.parse(result.settings);
     saved = JSON.stringify(draft.value);

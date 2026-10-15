@@ -99,6 +99,7 @@ import SettingsSection from './settings/SettingsSection.vue';
 import { autosave, settingSaveStatus } from '../Composables/useSettingsAutosave';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { harnessLabel } from '../lib/harnesses';
+import { harnessModels, topicChanged } from '../lib/serverQuery';
 
 type PresetHarness = 'claude' | 'codex' | 'opencode';
 type Harness = PresetHarness | 'rawpty';
@@ -206,7 +207,7 @@ async function load(): Promise<void> {
   try {
     const [presetResponse, modelResponse] = await Promise.all([
       window.patterm.harnessPresets() as Promise<PresetSettings>,
-      window.patterm.harnessModels() as Promise<ModelCatalog>
+      harnessModels<ModelCatalog>()
     ]);
     applySettings(presetResponse);
     catalog.value = modelResponse;
@@ -253,9 +254,11 @@ async function refreshModels(): Promise<void> {
   error.value = '';
   try {
     catalog.value = await window.patterm.harnessModelsRefresh() as ModelCatalog;
+    // Other views read the catalog again.
+    topicChanged('settings');
   } catch (caught) {
     error.value = caught instanceof Error ? caught.message : String(caught);
-    catalog.value = await window.patterm.harnessModels() as ModelCatalog;
+    catalog.value = await harnessModels<ModelCatalog>();
   } finally {
     refreshBusy.value = false;
   }
