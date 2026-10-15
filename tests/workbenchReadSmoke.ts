@@ -187,7 +187,7 @@ async function main(): Promise<void> {
     assert.deepEqual(registry.changedTopics('integrated_controls'), [], 'integrated control reads are read-only');
     const publicTools = registry.publicTools();
     const publicNames = publicTools.map(({ name }) => name);
-    assert.equal(publicNames.length, 77, 'the catalogue contains only agent-facing tools');
+    assert.equal(publicNames.length, 80, 'the catalogue contains only agent-facing tools');
     assert.equal(new Set(publicNames).size, publicNames.length, 'each tool has a unique public name');
     assert.ok(publicNames.every((name) => /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/.test(name)), 'every tool name is snake_case');
     for (const name of ['spawn_agent', 'get_conversation_output', 'report_to_parent', 'notify_user', 'request_close', 'notification_list', 'timer_fire_when_reported_all', 'search_conversation_history', 'help', 'todo_create', 'reference_attach', 'session_context', 'history_get', 'assistant_overview', 'assistant_focus', 'assistant_focus_set', 'host_read']) {
@@ -703,9 +703,12 @@ async function main(): Promise<void> {
     await socketServer.start();
     if (process.platform !== 'win32') assert.equal(fs.statSync(socketPath).mode & 0o777, 0o600, 'MCP socket is owner-only');
     const catalog = (await callOverSocket(socketPath, { id: 0, version: 2, op: 'catalog' })) as { result: Array<{ name: string }> };
-    assert.deepEqual(catalog.result.map(({ name }) => name), publicNames, 'the shim receives the canonical public catalogue');
+    // Project management is offered only to the assistant session.
+    const agentNames = publicNames.filter((name) => !name.startsWith('assistant_project_'));
+    assert.equal(agentNames.length, publicNames.length - 3);
+    assert.deepEqual(catalog.result.map(({ name }) => name), agentNames, 'the shim receives the canonical public catalogue');
     const tuiCatalog = (await callOverSocket(socketPath, { id: 1, version: 2, op: 'catalog', identity: 'identity_test' })) as { result: Array<{ name: string }> };
-    assert.deepEqual(tuiCatalog.result.map(({ name }) => name), publicNames.filter((name) => !FIGURE_TOOLS.includes(name)), 'TUI agents are not offered figures');
+    assert.deepEqual(tuiCatalog.result.map(({ name }) => name), agentNames.filter((name) => !FIGURE_TOOLS.includes(name)), 'TUI agents are not offered figures');
     const tuiFigure = (await callOverSocket(socketPath, { id: 2, version: 2, tool: 'html_render', args: {}, identity: 'identity_test' })) as { error: string };
     assert.match(tuiFigure.error, /only in Integrated mode/, 'TUI agents cannot save figures');
     database.connection.prepare(`update sessions set interface_mode = 'integrated' where mcp_identity = 'identity_test'`).run();
@@ -729,7 +732,7 @@ async function main(): Promise<void> {
     try {
       await client.connect(new StdioClientTransport({ command: process.execPath, args: [shimPath], env: { PATTERM_MCP_SOCKET: socketPath, PATTERM_MCP_IDENTITY: 'identity_test' }, stderr: 'pipe' }));
       const listed = await client.listTools();
-      assert.deepEqual(listed.tools.map(({ name }) => name), publicNames.filter((name) => !FIGURE_TOOLS.includes(name)), 'the catalogue a TUI agent lists is valid over modern MCP tools/list');
+      assert.deepEqual(listed.tools.map(({ name }) => name), agentNames.filter((name) => !FIGURE_TOOLS.includes(name)), 'the catalogue a TUI agent lists is valid over modern MCP tools/list');
       assert.match(JSON.stringify(await client.callTool({ name: 'list_processes', arguments: {} })), /proc_identity/, 'new clients call the backend directly with caller identity');
       assert.equal((await client.callTool({ name: 'spawn_agent', arguments: {} })).isError, true, 'agent launch validates its cross-field requirement before forwarding');
       assert.match(JSON.stringify(await client.callTool({ name: 'help', arguments: { tool: 'todo_create' } })), /title/, 'help reads the public catalogue');

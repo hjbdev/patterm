@@ -21,6 +21,7 @@ import { AgentContextService } from '../app/Services/AgentContextService';
 import { assistantVoiceOptions, type RealtimeVoiceOptions } from '../app/Services/AssistantVoiceProfile';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
 import { removeTree } from './fixtures/TempTree';
+import { trySymlink } from './fixtures/SymlinkFixture';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -458,6 +459,81 @@ async function main(): Promise<void> {
     await assert.rejects(registry.callPublic('todo_list', { project_id: 'q' }, { identity: 'mcp-worker-p' }), /outside the caller scope/);
     const whoami = await registry.callPublic('whoami', {}, assistantIdentity) as { role: string };
     assert.equal(whoami.role, 'assistant');
+
+    // Project management: the assistant lists, registers, and renames
+    // workspace projects. Other agents and workspace routines see none of it,
+    // and removal stays an owner action behind the UI's confirmation.
+    agent('routine-r', 'p', 'routine');
+    const projectTools = ['assistant_project_list', 'assistant_project_create', 'assistant_project_rename'];
+    const assistantCatalog = registry.publicTools(assistantIdentity).map(({ name }) => name);
+    for (const name of projectTools) assert.ok(assistantCatalog.includes(name), `${name} is in the assistant's catalogue`);
+    assert.ok(!assistantCatalog.includes('project_remove') && !assistantCatalog.includes('project_create'), 'owner project tools stay hidden from the assistant');
+    await assert.rejects(registry.callPublic('project_remove', { project_id: 'q' }, assistantIdentity), /unknown MCP tool/);
+    for (const identity of ['mcp-worker-p', 'mcp-routine-r']) {
+      const catalog = registry.publicTools({ identity }).map(({ name }) => name);
+      for (const name of projectTools) {
+        assert.ok(!catalog.includes(name), `${name} is not offered to ${identity}`);
+        await assert.rejects(registry.callPublic(name, { path: dir, project_id: 'p', name: 'x' }, { identity }), /Only the assistant session can manage projects/);
+      }
+    }
+    assert.ok(!registry.publicTools({ identity: null }).some(({ name }) => projectTools.includes(name)), 'an anonymous socket caller is not offered them');
+    await assert.rejects(registry.call('assistant_project_list', {}, { remote: { host_id: 'h', host_name: 'peer', project_id: 'p' } }), /only the assistant/, 'a paired host cannot manage projects');
+
+    const listProjects = async () => (await registry.callPublic('assistant_project_list', {}, assistantIdentity) as { projects: Array<{ project_id: string; name: string; path: string }> }).projects;
+    assert.deepEqual((await listProjects()).map((project) => project.project_id), ['p', 'q'], 'lists workspace projects, not the assistant\'s own');
+    assert.equal((await listProjects())[0]!.path, dir);
+
+    type Created = { project_id: string; name: string; path: string; existed: boolean; created_directory: boolean };
+    const create = (args: Record<string, unknown>) => registry.callPublic('assistant_project_create', args, assistantIdentity) as Promise<Created>;
+    const createSchema = registry.helpPublic('assistant_project_create').inputSchema as { properties: Record<string, { default?: unknown }>; required: string[]; additionalProperties: boolean };
+    assert.deepEqual(createSchema.required, ['path']);
+    assert.equal(createSchema.properties.create_directory?.default, false, 'creating the directory is opt-in');
+    assert.equal(createSchema.additionalProperties, false);
+    await assert.rejects(create({ path: dir, mkdir: true }), /Unrecognized key/, 'a misspelled option is rejected, not ignored');
+
+    // Registering an existing folder.
+    const existing = path.join(dir, 'existing');
+    fs.mkdirSync(existing);
+    const registered = await create({ path: existing, name: 'Existing app' });
+    assert.deepEqual([registered.name, registered.path, registered.existed, registered.created_directory], ['Existing app', existing, false, false]);
+    const again = await create({ path: `${existing}/`, name: 'Other name' });
+    assert.deepEqual([again.project_id, again.name, again.existed], [registered.project_id, 'Existing app', true], 'registering a path again returns the project unchanged');
+
+    // A missing folder fails unless the caller asks for it to be created.
+    const freshDir = path.join(dir, 'freshDir');
+    await assert.rejects(create({ path: freshDir }), /path does not exist/);
+    assert.ok(!fs.existsSync(freshDir), 'registering does not create the folder');
+    const made = await create({ path: freshDir, create_directory: true });
+    assert.deepEqual([made.name, made.existed, made.created_directory], ['freshDir', false, true]);
+    assert.ok(fs.statSync(freshDir).isDirectory());
+    const remade = await create({ path: freshDir, create_directory: true });
+    assert.deepEqual([remade.project_id, remade.existed, remade.created_directory], [made.project_id, true, false], 'create-and-register is idempotent');
+    await assert.rejects(create({ path: path.join(dir, 'missing-parent', 'app'), create_directory: true }), /parent directory does not exist/);
+    assert.ok(!fs.existsSync(path.join(dir, 'missing-parent')), 'a missing parent is not created');
+    fs.writeFileSync(path.join(dir, 'a-file'), 'x');
+    await assert.rejects(create({ path: path.join(dir, 'a-file'), create_directory: true }), /not a directory/);
+    await assert.rejects(create({ path: 'relative/app', create_directory: true }), /must be absolute/);
+    assert.ok(!fs.existsSync(path.join(process.cwd(), 'relative')), 'a relative path creates nothing');
+    const internal = db.prepare('select path from projects where id = ?').get(ASSISTANT_PROJECT_ID) as { path: string };
+    await assert.rejects(create({ path: internal.path }), /internal project/, 'the assistant\'s own project is never handed back');
+    if (trySymlink(internal.path, path.join(dir, 'internal-alias'), 'dir')) {
+      await assert.rejects(create({ path: path.join(dir, 'internal-alias') }), /internal project/, 'nor registered again through a symlink');
+    }
+    // Windows real paths keep the link target's case, so a junction to the
+    // same folder spelled in lower case must still match.
+    if (process.platform === 'win32' && trySymlink(internal.path.toLowerCase(), path.join(dir, 'internal-junction'), 'junction')) {
+      await assert.rejects(create({ path: path.join(dir, 'internal-junction') }), /internal project/, 'nor through a link whose target differs in case');
+    }
+    assert.deepEqual((await listProjects()).map((project) => project.project_id).sort(), ['p', 'q', registered.project_id, made.project_id].sort());
+
+    // Renaming changes only the display name, and only for workspace projects.
+    const renamed = await registry.callPublic('assistant_project_rename', { project_id: made.project_id, name: '  Fresh app ' }, assistantIdentity) as { name: string };
+    assert.equal(renamed.name, 'Fresh app');
+    assert.ok(fs.existsSync(freshDir), 'the folder keeps its name');
+    await assert.rejects(registry.callPublic('assistant_project_rename', { project_id: ASSISTANT_PROJECT_ID, name: 'Mine' }, assistantIdentity), /unknown project/);
+    await assert.rejects(registry.callPublic('assistant_project_rename', { project_id: 'q', name: '   ' }, assistantIdentity), /too_small|at least 1/);
+    const created = db.prepare(`select actor_type, actor_id from timeline_events where event_type = 'project.created' and project_id = ?`).get(made.project_id) as { actor_type: string; actor_id: string };
+    assert.deepEqual({ ...created }, { actor_type: 'agent', actor_id: 'proc-assistant-10' }, 'the timeline records the assistant as the actor');
     console.log('assistant smoke passed');
   } finally {
     database.dispose();

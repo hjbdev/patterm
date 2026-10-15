@@ -9,6 +9,7 @@ import { LinkWorktreeAction } from './LinkWorktreeAction';
 import { ListDirectoriesAction } from './ListDirectoriesAction';
 import { ListWorktreesAction } from './ListWorktreesAction';
 import { ProjectLogoAction } from './ProjectLogoAction';
+import { RenameProjectAction } from './RenameProjectAction';
 import { RestartOpenCodeServiceAction } from './RestartOpenCodeServiceAction';
 import { SearchArtifactsAction } from './SearchArtifactsAction';
 import { StopProcessAction } from './StopProcessAction';
@@ -30,6 +31,7 @@ export interface RegistryActions {
   abandonWorktree: AbandonWorktreeAction;
   closeProcess: CloseProcessAction;
   createProject: CreateProjectAction;
+  renameProject: RenameProjectAction;
   createWorktree: CreateWorktreeAction;
   discoverHarnesses: DiscoverHarnessesAction;
   getCurrentDiff: GetCurrentDiffAction;
@@ -65,6 +67,7 @@ export function createRegistryActions(deps: RegistryActionDeps): RegistryActions
     abandonWorktree: new AbandonWorktreeAction(deps.worktreeService),
     closeProcess: new CloseProcessAction(deps.database, deps.terminal, deps.openCodeServer, deps.integrated, deps.notifications, deps.onProcessesChanged),
     createProject: new CreateProjectAction(deps.database, deps.timeline),
+    renameProject: new RenameProjectAction(deps.database, deps.timeline),
     projectLogo: new ProjectLogoAction(deps.database, deps.timeline),
     createWorktree: new CreateWorktreeAction(deps.worktreeService, projectContext),
     discoverHarnesses: new DiscoverHarnessesAction(deps.database, deps.timeline, deps.harnessDiscovery),

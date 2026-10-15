@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The assistant can list, add, and rename projects itself with
+  `assistant_project_list`, `assistant_project_create`, and
+  `assistant_project_rename`. Adding a project can also create its folder, so
+  "create ~/Dev/app and add it to Patterm" works without the UI. Other agents
+  and routines are not offered these tools, and removing a project still
+  happens only in the app.
+
 ### Changed
 
 - Switching agents is quicker. The session context panel shows what it last

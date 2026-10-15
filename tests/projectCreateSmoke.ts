@@ -76,6 +76,14 @@ async function main(): Promise<void> {
     fs.writeFileSync(filePath, 'x');
     assert.throws(() => action.execute({ path: filePath, name: '', actor_type: 'user', actor_id: null }), /not a directory/);
 
+    // ~/ names the home directory; relative paths would resolve against the
+    // server's working directory, so they are refused.
+    const fakeHome = path.join(tempDir, 'home');
+    fs.mkdirSync(fakeHome);
+    const homed = new CreateProjectAction(database, timeline, fakeHome).execute({ path: '~/Tilde', name: '', create_directory: true, actor_type: 'user', actor_id: null });
+    assert.deepEqual([homed.path, homed.created_directory], [path.join(fakeHome, 'Tilde'), true], '~/ expands to home');
+    assert.throws(() => action.execute({ path: 'My Repo', name: '', actor_type: 'user', actor_id: null }), /must be absolute/);
+
     // The registry exposes project creation through project_create.
     const fakeTerminal = { isAvailable: () => false } as unknown as TerminalService;
     const registry = createTestMcpRegistry({
@@ -93,7 +101,7 @@ async function main(): Promise<void> {
     assert.ok(viaRegistry.project_id.startsWith('project_'));
     assert.deepEqual(
       repo.snapshot().projects.map((project) => project.project.id),
-      [created.project_id, similarlyNamed.project_id, viaRegistry.project_id],
+      [created.project_id, similarlyNamed.project_id, homed.project_id, viaRegistry.project_id],
       'snapshot keeps multiple project groups'
     );
 
