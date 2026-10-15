@@ -618,11 +618,23 @@ async function heldPrompts(database: DatabaseService): Promise<void> {
   assert.equal(await service.isEmpty('process_held'), false, 'held prompts count as conversation');
 
   await service.updateQueued('process_held', 'held-3', 'cancel');
+  const attemptsAtCancel = attempts;
+  const attemptsBeforePeek = () => attemptsAtCancel;
   assert.deepEqual((await queue()).map((item) => item.id), ['held-1', report.message_id], 'cancel drops a held prompt');
 
-  // The compaction ends: the prompts go out oldest first and leave the queue.
+  // Reading ahead sees the idle snapshot and the held prompts, but changes
+  // nothing: no activity change, no delivery.
   busy = false;
   snapshot = 'idle';
+  const activityBefore = activity();
+  const peeked = await service.peekConversation('process_held') as { queue?: Array<{ id: string }> };
+  await settle();
+  assert.deepEqual(peeked.queue?.map((item) => item.id), ['held-1', report.message_id], 'a peek shows held prompts');
+  assert.deepEqual(sent, [], 'a peek delivers nothing');
+  assert.equal(activity(), activityBefore, 'a peek leaves activity alone');
+  assert.equal(attempts, attemptsBeforePeek(), 'a peek tries no prompt');
+
+  // The compaction ends: the prompts go out oldest first and leave the queue.
   await service.conversation('process_held');
   await settle();
   assert.deepEqual(sent, ['Recap please', '[report from process_child: completed]']);

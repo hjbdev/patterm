@@ -207,6 +207,19 @@ async function main(): Promise<void> {
     assert.ok(bumps(() => call('todo_create', { title: 'Elsewhere', project_id: 'other' }))[1]! > 0);
     const summary = new WorkbenchRepository(database).snapshot().projects.find((item) => item.project.id === 'p')?.project;
     assert.equal(summary?.contextRevision, revision(), 'the workbench carries the revision');
+    // Reading ahead asks for the transcript without the command and model lists.
+    const conversations = createTestMcpRegistry({ tempDir: dir, database, timeline,
+      terminal: { request: async () => ({}) } as unknown as TerminalService,
+      workbench: new WorkbenchRepository(database),
+      integrated: {
+        conversation: async () => ({ provider: 'claude', messages: [{ id: 'm' }], commands: [{ name: 'x' }], models: ['y'] }),
+        peekConversation: async () => ({ provider: 'claude', messages: [{ id: 'm' }] })
+      } as never });
+    const aliceProcess = (db.prepare('select process_id from sessions where id=?').get(alice) as { process_id: string }).process_id;
+    const fullConversation = await conversations.call('integrated_get', { process_id: aliceProcess }) as Record<string, unknown>;
+    assert.ok('commands' in fullConversation && 'models' in fullConversation);
+    const transcript = await conversations.call('integrated_get', { process_id: aliceProcess, transcript_only: true }) as Record<string, unknown>;
+    assert.deepEqual(transcript, { provider: 'claude', messages: [{ id: 'm' }] });
     assert.deepEqual(db.prepare('pragma foreign_key_check').all(), []);
     console.log('project context smoke passed');
   } finally {
