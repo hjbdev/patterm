@@ -79,7 +79,6 @@ function createBrowserApi(): Window['patterm'] {
   const notificationListeners = new Set<(change: unknown) => void>();
   const assistantListeners = new Set<(event: unknown) => void>();
   let presence: unknown = null;
-  let opened = false;
 
   function setState(next: ConnectionState): void {
     state = next;
@@ -102,9 +101,7 @@ function createBrowserApi(): Window['patterm'] {
         void socketRequest('patterm:conversation:subscribe', { process_id: processId, subscribed: true }).catch(() => {});
       }
       if (presence) void socketRequest('patterm:presence:update', presence).catch(() => {});
-      // The first connection is not a reconnect: nothing was missed.
-      if (opened) for (const handler of notificationListeners) handler({ type: 'reconnected' });
-      opened = true;
+      for (const handler of notificationListeners) handler({ type: 'reconnected' });
     };
     current.onmessage = (event) => {
       if (socket !== current) return;

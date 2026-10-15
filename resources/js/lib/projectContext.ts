@@ -43,13 +43,10 @@ export function useContextRefresh(refresh: () => void, options: ContextRefreshOp
     unsubscribe = window.patterm.onDataChanged((changed) => {
       if (changed.some((topic) => (topics as readonly string[]).includes(topic))) schedule();
     });
-    // The handler first runs with the current state, which is not a reconnect,
-    // and neither is the page's first connection.
+    // The handler first runs with the current state, which is not a reconnect.
     let state = window.patterm.connectionState?.() ?? 'connected';
-    let wasConnected = state === 'connected';
     connection = window.patterm.onConnectionChanged?.((next) => {
-      if (next === 'connected' && state !== 'connected' && wasConnected) schedule();
-      if (next === 'connected') wasConnected = true;
+      if (next === 'connected' && state !== 'connected') schedule();
       state = next;
     });
   });

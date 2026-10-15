@@ -80,14 +80,10 @@ function start(): void {
   window.patterm?.onWorkbenchPatch?.((patch) => {
     applyPatch(patch as WorkbenchPatch);
   });
-  // The first connection can open after the first read; only a later one
-  // may have missed patches.
   let connection = window.patterm?.connectionState?.() ?? 'connected';
-  let wasConnected = connection === 'connected';
   window.patterm?.onConnectionChanged?.((state) => {
-    const reconnected = state === 'connected' && connection !== 'connected' && wasConnected;
+    const reconnected = state === 'connected' && connection !== 'connected';
     connection = state;
-    if (state === 'connected') wasConnected = true;
     if (reconnected) void refresh();
   });
   let lastFocusCheck = Date.now();
