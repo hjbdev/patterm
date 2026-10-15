@@ -22,7 +22,11 @@ export interface ProjectSummaryDto {
   host?: string;
   // Connected paired hosts this project is linked with, and the qualified ID
   // of the linked project there, for launching on that host.
-  remotes?: Array<{ host: string; projectId: string }>;
+  remotes?: Array<{ host: string; projectId: string; contextRevision?: number }>;
+  // Counts writes to the project's todos, scratchpads, links and worktrees.
+  // Clients key cached context reads by it. Only workbench snapshots carry
+  // it, and older paired hosts omit it.
+  contextRevision?: number;
 }
 
 export interface CloseRequestDto { summary: string; requestedAt: string; }
@@ -113,6 +117,7 @@ interface ProjectRow {
   path: string;
   logo: string | null;
   kind: ProjectKind;
+  context_revision: number;
 }
 
 interface SessionRow {
@@ -195,7 +200,7 @@ export class WorkbenchRepository {
   // Personal still lists while anything runs there, so no agent goes missing.
   private projectRows(): ProjectRow[] {
     const showPersonal = this.settings.appearanceSettings().personalProject;
-    return this.db.prepare(`select id, name, path, logo, kind from projects where kind in ${USER_PROJECT_KINDS_SQL}
+    return this.db.prepare(`select id, name, path, logo, kind, context_revision from projects where kind in ${USER_PROJECT_KINDS_SQL}
       and (kind <> 'personal' or ? or exists (select 1 from processes where processes.project_id = projects.id and processes.status = 'running'))
       order by kind = 'personal' desc, created_at asc`).all(showPersonal ? 1 : 0) as ProjectRow[];
   }
@@ -205,7 +210,7 @@ export class WorkbenchRepository {
   }
 
   getProject(id: string): ProjectSummaryDto | null {
-    const row = this.db.prepare(`select id, name, path, logo, kind from projects where id = ?`).get(id) as ProjectRow | undefined;
+    const row = this.db.prepare(`select id, name, path, logo, kind, context_revision from projects where id = ?`).get(id) as ProjectRow | undefined;
     return row ? projectSummary(row) : null;
   }
 
@@ -267,7 +272,7 @@ export class WorkbenchRepository {
     const recent = (row: ProcessRow) => row.status === 'running' || !row.exited_at || Date.parse(row.exited_at) >= since;
 
     return {
-      project: projectSummary(project),
+      project: { ...projectSummary(project), contextRevision: project.context_revision },
       projectSessions: sessions,
       processes: processRows.filter((row) => row.kind !== 'agent' && recent(row)).map(mapProcess),
       worktrees: (this.db.prepare('select * from worktrees where project_id = ? order by created_at').all(project.id) as WorktreeRow[]).map(mapWorktree),

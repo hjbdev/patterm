@@ -162,7 +162,7 @@ import PriorityIcon from './PriorityIcon.vue';
 import MarkdownField from '../MarkdownField.vue';
 import ExternalReferences from '../ExternalReferences.vue';
 import { useAssignees, useContextRecord } from '../../Composables/useContextRecord';
-import { contextCall, useContextClock, useContextRefresh, type Page, type Todo } from '../../lib/projectContext';
+import { contextRead, useContextClock, useContextVersion, type Page, type Todo } from '../../lib/projectContext';
 import { TODO_PRIORITIES, TODO_STATUSES, todoPriorityOption, todoStatusDisplay, todoStatusOption } from '../../lib/todoStatus';
 
 const props = defineProps<{ projectId: string; recordId: string }>();
@@ -170,7 +170,7 @@ const emit = defineEmits<{ open: [id: string]; changed: []; deleted: [] }>();
 const now = useContextClock();
 const { sessions, assigneeName } = useAssignees();
 const { record, todo, title, body, status, priority, error, saveError, saving, saveLabel, save, relation, remove, reload, copyDraft, refresh } = useContextRecord(ref<'todo'>('todo'), toRef(props, 'projectId'), toRef(props, 'recordId'), { onChanged: () => emit('changed') });
-useContextRefresh(refresh);
+useContextVersion(() => props.projectId, refresh);
 
 const statusDisplay = computed(() => todoStatusDisplay({ status: status.value, blocked: todo.value?.blocked ?? false }));
 const priorityOption = computed(() => todoPriorityOption(priority.value));
@@ -180,7 +180,7 @@ let blockerGeneration = 0, blockerTimer: ReturnType<typeof setTimeout> | undefin
 async function refreshBlockers() {
   const generation = ++blockerGeneration;
   try {
-    const options = await contextCall<Page<Todo>>('todo_list', props.projectId, { limit: 100, query: blockerQuery.value });
+    const options = await contextRead<Page<Todo>>('todo_list', props.projectId, { limit: 100, query: blockerQuery.value });
     if (generation === blockerGeneration) blockerOptions.value = options.items.filter(item => item.id !== props.recordId);
   }
   catch (cause) { if (generation === blockerGeneration) error.value = String(cause); }

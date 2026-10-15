@@ -31,6 +31,8 @@ const sidebarState = ref<SidebarState>({
   knownSections: [],
 });
 const loaded = ref(false);
+// The server instance the snapshot came from. A restarted server has a new one.
+const epoch = ref('');
 // Counts applied workbench changes, for views that derive other server data
 // from the workbench.
 const revision = ref(0);
@@ -103,7 +105,7 @@ export function useWorkbench() {
     sidebarState.value = normalizeSidebarState(saved ?? state);
   };
 
-  return { projects, harnesses, sidecarStatus, sidecarAvailable, sidebarState, updateSidebarState, loaded, refresh, revision, lifecycleRevision, archivedSessions, archivedProcesses, loadArchived };
+  return { projects, harnesses, sidecarStatus, sidecarAvailable, sidebarState, updateSidebarState, loaded, epoch, refresh, revision, lifecycleRevision, archivedSessions, archivedProcesses, loadArchived };
 }
 
 // Reads one session or process the snapshot no longer lists. Each is read
@@ -163,6 +165,7 @@ function publish(lifecycle: boolean): void {
   projects.value = held.projects;
   harnesses.value = held.harnesses;
   sidecarAvailable.value = held.terminalAvailable;
+  epoch.value = held.epoch;
   revision.value += 1;
   if (lifecycle) lifecycleRevision.value += 1;
 }

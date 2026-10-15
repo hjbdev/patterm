@@ -353,9 +353,12 @@ async function main(): Promise<void> {
     assert.equal(todoResponse.status, 200);
     await until(() => a.events.some((event) => event.event === 'data-changed' && (event.payload as { topics: string[] }).topics.includes('context')), 'context change signal');
     // Patches up to the current version may still be on their way over the
-    // socket; only a later one would come from the todo.
+    // socket; only a later one comes from the todo, carrying the project's
+    // new context revision.
     const currentVersion = currentReply!.version;
-    assert.ok(!a.events.some((event) => event.event === 'workbench-patch' && (event.payload as { to: number }).to > currentVersion), 'context writes publish no workbench patch');
+    const revisionPatch = () => a.events.find((event) => event.event === 'workbench-patch' && (event.payload as { to: number }).to > currentVersion);
+    await until(() => Boolean(revisionPatch()), 'the context revision patch');
+    assert.match(JSON.stringify(revisionPatch()!.payload), /"contextRevision":[1-9]/, 'a context write publishes its project\'s new context revision');
     assert.ok(!a.events.some((event) => event.event === 'workbench-changed'), 'clients are never told to refetch the whole workbench');
     const browserTodo = (await todoResponse.json() as { result: { id: string; created_by_actor: string } }).result;
     const storedTodo = await app.mcp.call('todo_get', { project_id: project.project_id, todo_id: browserTodo.id }) as { title: string; created_by_actor: string };

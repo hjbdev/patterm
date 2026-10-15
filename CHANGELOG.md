@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   project's todos and scratchpads only when opened.
 - Browser pages start one round trip sooner, and opening a project no longer
   sets up a terminal view only to replace it with the first tab.
+- Session context, todo, scratchpad and link views keep what they read until
+  that project's records change. Returning to an agent or page reads nothing
+  new, and a change in one project no longer reloads every other project's
+  views, or reloads them whenever an agent starts or stops.
 
 ### Fixed
 

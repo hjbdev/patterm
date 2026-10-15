@@ -139,6 +139,7 @@ import { useRoutineRunViewer } from '../Composables/useRoutineRunViewer';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { harnessLabel } from '../lib/harnesses';
 import { useContextRefresh } from '../lib/projectContext';
+import { harnessPresets } from '../lib/serverQuery';
 import {
   createRoutine, describeLaunch, describeSchedule, formatRunDay, formatRunTime, listRoutines, nextRunLabel, nextRuns, onceDone, routineLog, routineRun, runTime, ROUTINE_HARNESSES,
   runNeedsAttention, runStatusLabel, updateRoutine, type RoutineModelOption, type RoutinePresetOption, type RoutineRecord, type RoutineRunRecord
@@ -223,7 +224,7 @@ async function refresh(): Promise<void> {
 async function loadLaunchOptions(): Promise<void> {
   try {
     const [presetSettings, catalog] = await Promise.all([
-      window.patterm.harnessPresets() as Promise<{ presets: RoutinePresetOption[] }>,
+      harnessPresets<{ presets: RoutinePresetOption[] }>().then((settings) => settings ?? { presets: [] }),
       window.patterm.harnessModels() as Promise<{ providers: Record<string, { models: RoutineModelOption[] } | null> }>
     ]);
     presets.value = presetSettings.presets.map((preset) => ({ harness: preset.harness, name: preset.name }));

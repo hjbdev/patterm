@@ -1897,6 +1897,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       name: 'harness_preset_create',
       namespace: 'harness',
       hidden: true,
+      changes: ['settings'],
       description: 'Create a model preset for a harness. Names are unique per harness and case-insensitive. Omit model (or pass null) to keep the harness\'s own configured model.',
       inputSchema: { type: 'object', required: ['harness', 'name'] }
     },
@@ -1911,6 +1912,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       name: 'harness_preset_update',
       namespace: 'harness',
       hidden: true,
+      changes: ['settings'],
       description: 'Update a preset by name or id. Set default=true to make it the harness default, false to clear that default.',
       inputSchema: { type: 'object', required: ['ref'] }
     },
@@ -1925,6 +1927,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       name: 'harness_preset_delete',
       namespace: 'harness',
       hidden: true,
+      changes: ['settings'],
       description: 'Delete a preset by name or id. If it was the harness default, the next preset becomes the default.',
       inputSchema: { type: 'object', required: ['ref'] }
     },

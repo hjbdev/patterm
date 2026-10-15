@@ -204,7 +204,12 @@ export function registerApplicationRoutes(ipcMain: RouteRegistrar, application: 
 
   ipcMain.handle('patterm:settings:harness-presets:get', () => application.harnessPresets.list());
 
-  ipcMain.handle('patterm:settings:harness-presets:update', (_event, raw) => application.settings.updateHarnessPresets(raw));
+  ipcMain.handle('patterm:settings:harness-presets:update', (_event, raw) => {
+    const presets = application.settings.updateHarnessPresets(raw);
+    // Launch menus cache presets until settings change.
+    application.notifyChanged(['settings']);
+    return presets;
+  });
 
   ipcMain.handle('patterm:harness:models:get', () => application.modelCatalog.read());
 

@@ -85,6 +85,7 @@ import { toast } from 'vue-sonner';
 import { useHarnessLaunch } from '../Composables/useHarnessLaunch';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { harnessLabel, launchableHarnesses as filterLaunchableHarnesses } from '../lib/harnesses';
+import { harnessPresets } from '../lib/serverQuery';
 import AgentIcon from './AgentIcon.vue';
 import InterfaceModeToggle from './InterfaceModeToggle.vue';
 import ResponsiveMenu from './ResponsiveMenu.vue';
@@ -182,7 +183,7 @@ void loadPresets();
 
 async function loadPresets(): Promise<void> {
   try {
-    const response = await window.patterm.harnessPresets() as HarnessPresetSettings | null;
+    const response = await harnessPresets<HarnessPresetSettings>();
     if (response) presets.value = response;
   } catch {
     // The launch menu still works without presets; fall back to CLI defaults.

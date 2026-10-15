@@ -1,5 +1,5 @@
 import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue';
-import { contextCall, type Page, type Scratchpad, type Todo } from '../lib/projectContext';
+import { contextCall, contextRead, type Page, type Scratchpad, type Todo } from '../lib/projectContext';
 import { useWorkbenchNavigation } from './useWorkbenchNavigation';
 
 export type ContextKind = 'todo' | 'scratchpad';
@@ -232,7 +232,7 @@ export function useContextCollection<T extends Todo | Scratchpad>(kind: ContextK
     try {
       const all: T[] = [];
       for (let offset = 0; ; offset += 100) {
-        const page = await contextCall<Page<T>>(`${kind}_list`, project, { limit: 100, offset, ...args });
+        const page = await contextRead<Page<T>>(`${kind}_list`, project, { limit: 100, offset, ...args });
         if (current !== generation) return;
         all.push(...page.items);
         if (offset + 100 >= page.total) break;

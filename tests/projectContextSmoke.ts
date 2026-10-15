@@ -184,6 +184,29 @@ async function main(): Promise<void> {
   )));
   assert.equal(contenders.filter(result => result.status === 'fulfilled').length, 1);
   assert.equal(contenders.filter(result => result.status === 'rejected').length, 1);
+    // Every context write bumps its own project's context revision, in the
+    // write's transaction; reads and failed writes leave it alone.
+    const revision = (project = 'p') => (db.prepare('select context_revision from projects where id=?').get(project) as { context_revision: number }).context_revision;
+    const bumps = (write: () => unknown) => { const before = [revision(), revision('other')]; write(); return [revision() - before[0]!, revision('other') - before[1]!]; };
+    const fresh = todo('Revisioned');
+    const note = call<ScratchpadRow>('scratchpad_create', { title: 'Revisioned' });
+    for (const [name, write] of Object.entries({
+      todo_update: () => call('todo_update', { todo_id: fresh.id, revision: fresh.revision, title: 'Renamed' }),
+      todo_assign: () => call('todo_assign', { todo_id: fresh.id, assignee_id: alice }),
+      todo_dependency_add: () => call('todo_dependency_add', { todo_id: fresh.id, blocker_id: a.id }),
+      todo_lease_acquire: () => call('todo_lease_acquire', { todo_id: fresh.id }, 'bob'),
+      scratchpad_attach: () => call('scratchpad_attach', { scratchpad_id: note.id, session_id: alice }),
+      reference_attach: () => call('reference_attach', { target_type: 'scratchpad', target_id: note.id, url: 'https://example.com/revisioned' })
+    })) {
+      const [own, others] = bumps(write);
+      assert.ok(own! > 0, `${name} bumps the project's context revision`);
+      assert.equal(others, 0, `${name} leaves other projects' revisions alone`);
+    }
+    assert.deepEqual(bumps(() => call('session_context', { session_id: alice })), [0, 0], 'reads bump nothing');
+    assert.deepEqual(bumps(() => assert.throws(() => call('todo_update', { todo_id: fresh.id, revision: 1, title: 'Stale' }), /Revision conflict/)), [0, 0], 'a rolled-back write bumps nothing');
+    assert.ok(bumps(() => call('todo_create', { title: 'Elsewhere', project_id: 'other' }))[1]! > 0);
+    const summary = new WorkbenchRepository(database).snapshot().projects.find((item) => item.project.id === 'p')?.project;
+    assert.equal(summary?.contextRevision, revision(), 'the workbench carries the revision');
     assert.deepEqual(db.prepare('pragma foreign_key_check').all(), []);
     console.log('project context smoke passed');
   } finally {

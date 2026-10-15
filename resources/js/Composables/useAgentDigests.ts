@@ -4,7 +4,7 @@ import type { AgentNode } from '../lib/agentTree';
 import { capitalize, memberState, modelLabel, splitSummary, type AgentDigest, type DigestMember } from '../lib/agentDigest';
 import { processActivity, type RowActivity } from '../lib/rowActivity';
 import { familyTimerSummary, mostUrgent, processesByOwner, waitingSession } from '../lib/sidebarTree';
-import { contextCall, useContextRefresh, type SessionContext } from '../lib/projectContext';
+import { contextRead, useContextVersion, type SessionContext } from '../lib/projectContext';
 import type { DiffTotals } from '../lib/worktreeDiff';
 import { useSidebar, type AgentTab } from '../Components/Sidebar/sidebarContext';
 import { useWorkbench } from './useWorkbench';
@@ -126,7 +126,7 @@ function createAgentDigests(): AgentDigests {
     const ids = agentTabs.value.map((tab) => tab.family.rootId);
     const results = await Promise.all(ids.map(async (id) => {
       try {
-        return [id, await contextCall<SessionContext>('session_context', sidebar.projectId.value, { session_id: id, limit: 20 })] as const;
+        return [id, await contextRead<SessionContext>('session_context', sidebar.projectId.value, { session_id: id, limit: 20 })] as const;
       } catch {
         return null;
       }
@@ -137,7 +137,7 @@ function createAgentDigests(): AgentDigests {
   const refreshContexts = whenShown(loadContexts);
   watch(() => agentTabs.value.map((tab) => tab.family.rootId).join(), refreshContexts);
   // Agents starting and stopping change no todos or links; the roots above cover new agents.
-  useContextRefresh(refreshContexts, { lifecycle: false });
+  useContextVersion(() => sidebar.projectId.value, refreshContexts);
 
   // A project's first cards open with its notices and contexts already loaded.
   watch(() => sidebar.projectId.value, () => {
