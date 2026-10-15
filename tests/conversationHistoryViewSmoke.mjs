@@ -23,7 +23,7 @@ const setup = new Function(
   `${outputText}\nreturn { conversations, messages, selectedId, messageTranscriptRef, selectConversation, loadOlderMessages, positioningInitialMessages, transcriptMessages, focusedMessageId, scrollToMessage, showReasoning, canResume, resumeTitle, resumeSelected, loadNextConversations, refreshConversations };`
 );
 
-function mount(watchPagination = false, props = {}) {
+function mount(watchPagination = false, props = {}, realWatch = false) {
   const pending = [];
   // The history topic's generation, bumped by announcements.
   const generation = { value: 0 };
@@ -31,7 +31,10 @@ function mount(watchPagination = false, props = {}) {
   const toasts = [];
   const history = setup(
     computed, nextTick, ref, shallowRef,
-    (source, callback) => { if (watchPagination && (isRef(source) || Array.isArray(source))) vueWatch(source, callback); },
+    (source, callback, options) => {
+      if (realWatch) vueWatch(source, callback, options);
+      else if (watchPagination && (isRef(source) || Array.isArray(source))) vueWatch(source, callback);
+    },
     () => {}, () => props, () => (...event) => emitted.push(event),
     () => ref({ getVirtualItems: () => [], getTotalSize: () => 1000, scrollToIndex: () => {}, scrollToOffset: () => {} }),
     { patterm: { call: (name, args) => new Promise((resolve) => pending.push({ name, args, resolve })) } },
@@ -149,6 +152,28 @@ test('a page read before an import never undoes a newer refreshed row', async ()
   pageCalls.forEach((call, index) => call.resolve({ conversations: index === 0 ? [row(1, '2026-10-01T12:00:00.000Z')] : [] }));
   await page;
   assert.equal(history.conversations.value.find((conversation) => conversation.id === 'c').messageCount, 2);
+});
+
+test('mounting loads the first page of every provider', async () => {
+  const { pending } = mount(false, { projectId: 'p' }, true);
+  await nextTick();
+  assert.deepEqual(pending.map((call) => [call.name, call.args.provider, call.args.offset]), [
+    ['history_list', 'claude', 0], ['history_list', 'codex', 0], ['history_list', 'opencode', 0]
+  ]);
+});
+
+test('an earlier refresh landing last never undoes a later one, uncached or not', async () => {
+  const { history, pending } = mount();
+  const row = (messageCount) => ({ id: 'r', provider: 'claude', messageCount, updatedAt: '2026-10-01T00:00:00.000Z', importedAt: '2026-10-01T00:00:00.000Z' });
+  const earlier = history.refreshConversations();
+  const earlierCalls = pending.splice(0);
+  const later = history.refreshConversations();
+  const laterCalls = pending.splice(0);
+  laterCalls.forEach((call, index) => call.resolve({ conversations: index === 0 ? [row(2)] : [] }));
+  await later;
+  earlierCalls.forEach((call, index) => call.resolve({ conversations: index === 0 ? [row(1)] : [] }));
+  await earlier;
+  assert.equal(history.conversations.value.find((conversation) => conversation.id === 'r').messageCount, 2);
 });
 
 test('a hidden-reasoning-only page loads an older visible page', async () => {
