@@ -103,7 +103,7 @@ import { relativeTime } from '../lib/format';
 import { toast } from 'vue-sonner';
 import { isOpenCodeVersionMismatch } from '../../../app/Services/OpenCodeServiceErrors';
 import { toastLaunchError } from '../lib/launchErrors';
-import { topicCall, topicChanged, useTopicRefresh } from '../lib/serverQuery';
+import { topicCall, topicChanged, trimQueries, useTopicRefresh } from '../lib/serverQuery';
 import { ScrollArea } from './ui/scroll-area';
 
 const props = defineProps<{
@@ -116,6 +116,9 @@ const emit = defineEmits<{ 'select-conversation': [id: string]; launched: [sessi
 
 const CONVERSATION_PAGE_SIZE = 50;
 const MESSAGE_PAGE_SIZE = 100;
+// Opened transcript pages stay cached for going back, within this budget, so
+// reading many long conversations doesn't hold them all.
+const TRANSCRIPT_CACHE = { entries: 24, size: 4_000_000 };
 const historyProviders = ['claude', 'codex', 'opencode'] as const;
 type HistoryProvider = typeof historyProviders[number];
 
@@ -351,6 +354,7 @@ async function selectConversation(id: string, anchorMessageId: string | null = n
       limit: MESSAGE_PAGE_SIZE,
       offset
     }) as { messages?: ConversationMessageRecord[]; offset?: number };
+    trimQueries('history_get', TRANSCRIPT_CACHE);
     if (token !== bottomScrollToken) return;
     messages.value = response.messages ?? [];
     messageWindowOffset.value = response.offset ?? offset;
@@ -378,6 +382,7 @@ async function loadOlderMessages(): Promise<void> {
       limit,
       offset: nextOffset
     }) as { messages?: ConversationMessageRecord[]; offset?: number };
+    trimQueries('history_get', TRANSCRIPT_CACHE);
     if (token !== bottomScrollToken) return;
     messages.value = uniqueMessages([...(response.messages ?? []), ...messages.value]);
     messageWindowOffset.value = response.offset ?? nextOffset;

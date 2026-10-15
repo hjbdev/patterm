@@ -31,14 +31,14 @@ async function flush() {
 
 // One loaded copy of the composable module. Editors mounted from the same copy
 // share its module state, like components in one page.
-function loadModule(call, tabStorage) {
+function loadModule(call, tabStorage, read = call) {
   const timers = new Map();
   let nextTimer = 0;
   const module = { cleanup: [], timers };
   const modules = {
     vue: { ...vue, onBeforeUnmount: callback => module.cleanup.push(callback) },
     // Cached reads go straight to the controlled network here.
-    '../lib/projectContext': { contextCall: call, contextRead: call },
+    '../lib/projectContext': { contextCall: call, contextRead: read },
     './useWorkbenchNavigation': { useWorkbenchNavigation: () => ({ activeProject: vue.ref(null) }) }
   };
   module.exports = {};
@@ -243,4 +243,25 @@ test('assignment still runs on the original todo when navigation does not change
   tab.editor.body.value = 'edited a';
   await tab.editor.relation('assign', { assignee_id: 'user' });
   assert.deepEqual(mutations, [{ name: 'todo_assign', project: 'p', args: { todo_id: 'a', assignee_id: 'user' } }]);
+});
+
+test('a long note loads every chunk through the cache, and a reload reads them all fresh', async t => {
+  const lines = Array.from({ length: 2500 }, (_, index) => `line ${index}`);
+  const reply = (args) => ({ id: 'a', title: 'a', status: 'active', revision: 1, total_lines: lines.length,
+    body: lines.slice(args.offset ?? 0, (args.offset ?? 0) + args.limit).join('\n') });
+  const cached = [], fresh = [];
+  const read = async (name, project, args) => { cached.push(args.offset ?? 0); return reply(args); };
+  const call = async (name, project, args) => {
+    if (name === 'scratchpad_get') { fresh.push(args.offset ?? 0); return reply(args); }
+    throw new Error(`Unexpected call ${name}`);
+  };
+  const tab = mount(t, call, storage(), 'scratchpads', loadModule(call, storage(), read));
+  await flush();
+  assert.equal(tab.editor.body.value, lines.join('\n'));
+  assert.deepEqual(cached, [0, 1000, 2000], 'the first read and both chunks are cached reads');
+  assert.deepEqual(fresh, []);
+  await tab.editor.reload();
+  await flush();
+  assert.deepEqual(fresh, [0, 1000, 2000], 'a reload reads the note and its chunks fresh');
+  assert.equal(tab.editor.body.value, lines.join('\n'));
 });

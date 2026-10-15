@@ -77,12 +77,13 @@ export function useContextRecord(kind: Ref<ContextKind>, projectId: Ref<string>,
       // Cached until the project's context changes, so reopening a record
       // shows it at once. A copy, because a recovered draft and long notes
       // change it.
-      const result = { ...await (fresh ? contextCall : contextRead)<Todo | Scratchpad>(`${namespace}_get`, project, { [`${namespace}_id`]: id, ...(namespace === 'scratchpad' ? { mode: 'full', limit: 1000 } : {}) }) };
+      const read = fresh ? contextCall : contextRead;
+      const result = { ...await read<Todo | Scratchpad>(`${namespace}_get`, project, { [`${namespace}_id`]: id, ...(namespace === 'scratchpad' ? { mode: 'full', limit: 1000 } : {}) }) };
       if (!('notes' in result) && result.total_lines && result.total_lines > 1000) {
         const chunks = [result.body ?? ''];
         for (let start = 1000; start < result.total_lines; start += 1000) {
           if (generation !== readGeneration) return;
-          const part = await contextCall<Scratchpad>('scratchpad_get', project, { scratchpad_id: result.id, mode: 'content', offset: start, limit: 1000 });
+          const part = await read<Scratchpad>('scratchpad_get', project, { scratchpad_id: result.id, mode: 'content', offset: start, limit: 1000 });
           if (part.revision !== result.revision) throw new Error('The note changed while loading. Reopen it to load the latest revision.');
           chunks.push(part.body ?? '');
         }

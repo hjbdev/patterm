@@ -27,7 +27,7 @@ const modules = {
 };
 const exports = {};
 new Function('exports', 'require', 'window', outputText)(exports, (name) => modules[name], window);
-const { topicCall, topicChanged, topicRead } = exports;
+const { topicCall, topicChanged, topicRead, trimQueries, queryClient } = exports;
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 async function answer(value) {
@@ -88,4 +88,59 @@ test('data that changes unannounced reads again while fresh says so, and own wri
   const written = list();
   await answer({ pending: false, saved: true });
   assert.deepEqual(await written, { pending: false, saved: true });
+});
+
+test('the first connection is not a reconnect; a later one reads again', async () => {
+  // A fresh copy of the module whose socket is still connecting at its first read.
+  const listeners = [], pending = [];
+  let state = 'connecting';
+  const browser = { patterm: {
+    call: (name, args) => new Promise((resolve) => pending.push({ name, args, resolve })),
+    onDataChanged: () => () => {},
+    connectionState: () => state,
+    onConnectionChanged: (listener) => { listeners.push(listener); listener(state); return () => {}; }
+  } };
+  const copy = {};
+  new Function('exports', 'require', 'window', outputText)(copy, (name) => modules[name], browser);
+  const read = () => copy.topicCall('updates', 'settings_updates_get', {});
+  const first = read();
+  await settle();
+  pending.shift().resolve('state');
+  assert.equal(await first, 'state');
+  state = 'connected';
+  listeners.forEach((listener) => listener('connected'));
+  const opened = read();
+  await settle();
+  assert.equal(pending.length, 0, 'the socket opening reads nothing again');
+  assert.equal(await opened, 'state');
+  for (const next of ['disconnected', 'connected']) { state = next; listeners.forEach((listener) => listener(next)); }
+  const again = read();
+  await settle();
+  assert.equal(pending.length, 1, 'a reconnect reads again');
+  pending.shift().resolve('after reconnect');
+  assert.equal(await again, 'after reconnect');
+});
+
+test('large reads stay within their budget, dropping the least recently read first', async () => {
+  const page = (id) => topicCall('history', 'history_get', { conversation_id: id });
+  const cachedIds = () => queryClient.getQueryCache().findAll({ queryKey: ['history_get'] }).map((query) => query.queryKey[1].conversation_id).sort();
+  for (const id of ['a', 'b', 'c']) {
+    const read = page(id);
+    await answer({ messages: [id.repeat(10)] });
+    await read;
+  }
+  await page('a');
+  trimQueries('history_get', { entries: 2, size: 1_000_000 });
+  assert.deepEqual(cachedIds(), ['a', 'c'], 'reading a again kept it over b');
+  assert.equal(calls.length, 0);
+  const big = page('d');
+  await answer({ messages: ['x'.repeat(500)] });
+  await big;
+  trimQueries('history_get', { entries: 10, size: 100 });
+  assert.deepEqual(cachedIds(), ['d'], 'the newest read stays even when it alone is over the size');
+  const reread = page('a');
+  await settle();
+  assert.equal(calls.length, 1, 'a dropped page reads again');
+  await answer({ messages: ['a'] });
+  await reread;
 });
