@@ -90,6 +90,26 @@ process.stdin.on('data', (chunk) => {
       } else if (text === 'wake and hold') {
         begin(uuid); say('msg_started_hold', 'started'); end(uuid); state('idle');
         setTimeout(() => wake('held', true, true), 60);
+      } else if (text === 'wake before stream') {
+        begin(uuid); end(uuid); state('idle');
+        setTimeout(() => {
+          globalThis.turn = true;
+          state('running');
+          lifecycle('native-autonomous-command', 'started');
+          frame({type:'system',subtype:'notification',uuid:'autonomous_started',text:'Autonomous command started'});
+        }, 60);
+      } else if (text === 'background only') {
+        begin(uuid);
+        level([{task_id:'agent_held',task_type:'local_agent'}]);
+        end(uuid);
+        frame({type:'system',subtype:'notification',uuid:'background_only',text:'Only background activity remains'});
+      } else if (text === 'wake tool') {
+        begin(uuid); end(uuid); state('idle');
+        setTimeout(() => {
+          globalThis.turn = true;
+          // A tool-only response without partial or session-state events.
+          frame({type:'assistant',message:{id:'msg_woken_bash',content:[{type:'tool_use',id:'toolu_woken_bash',name:'Bash',input:{command:'sleep 60'}}]}});
+        }, 60);
       } else if (text === 'agent') {
         // A background agent outlives the turn; the session stays running
         // until the turn it wakes has ended.
@@ -105,6 +125,20 @@ process.stdin.on('data', (chunk) => {
             wake('finished', false);
           }, 40);
         }, 40);
+      } else if (text === 'bash before result') {
+        begin(uuid);
+        // A session-level idle report must not end an unfinished turn.
+        // Retire the command too, so the prompt map cannot mask the bug.
+        frame({type:'assistant',message:{id:'msg_bash',content:[{type:'tool_use',id:'toolu_bash',name:'Bash',input:{command:'sleep 60'}}]}});
+        lifecycle(uuid, 'completed');
+        state('idle');
+      } else if (text === 'finish bash') {
+        lifecycle(uuid, 'completed');
+        frame({type:'user',message:{role:'user',content:[{type:'tool_result',tool_use_id:'toolu_bash',content:'done'}]}});
+        // Check the model's next step too, after Bash itself has completed.
+        say('msg_after_bash', 'continuing');
+      } else if (text === 'finish turn') {
+        end(uuid); state('idle');
       } else if (text === 'shell') {
         begin(uuid);
         level([{task_id:'shell_1',task_type:'local_bash',description:'npm run dev'}]);
@@ -299,8 +333,6 @@ process.stdin.on('data', (chunk) => {
           // that both carry the base64 bytes.
           frame({type:'assistant',message:{id:'msg_image',content:[{type:'tool_use',id:'toolu_image',name:'Read',input:{file_path:'/tmp/shot.png'}}]}});
           frame({type:'user',message:{role:'user',content:[{type:'tool_result',tool_use_id:'toolu_image',content:[{type:'image',source:{type:'base64',data:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',media_type:'image/png'}}]}]},tool_use_result:{type:'image',file:{base64:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',type:'image/png',originalSize:70,dimensions:{originalWidth:1,originalHeight:1,displayWidth:1,displayHeight:1}}}});
-          if (process.env.ERROR_RESULT) frame({type:'result',is_error:true,subtype:'error_during_execution',result:'credential expired'});
-          else frame({type:'result',is_error:false,subtype:'success'});
           // Installed 2.1.266 shape: one assistant frame per content_block_stop,
           // carrying the native message id and a single content block. The
           // internal apiBlockIndex is not on the wire.
@@ -331,6 +363,9 @@ process.stdin.on('data', (chunk) => {
           frame({type:'stream_event',event:{type:'message_stop'}});
           frame({type:'user',message:{role:'user',content:[{type:'tool_result',tool_use_id:'toolu_native_edit',content:[{type:'text',text:'Applied edit'}]}]},tool_use_result:{filePath:'/tmp/a.ts',oldString:'old',newString:'new',originalFile:'old',structuredPatch:[{oldStart:1,oldLines:1,newStart:1,newLines:1,lines:['-old','+new']}]}});
           frame({type:'user',message:{role:'user',content:[{type:'tool_result',tool_use_id:'toolu_native_read',content:[{type:'text',text:'file contents'}]}]},tool_use_result:{type:'text',text:'file contents'}});
+          // A result ends the turn after all of its model and tool frames.
+          if (process.env.ERROR_RESULT) frame({type:'result',is_error:true,subtype:'error_during_execution',result:'credential expired'});
+          else frame({type:'result',is_error:false,subtype:'success'});
         }
         if (!process.env.ERROR_RESULT) {
         process.stdout.write(JSON.stringify({type:'control_request',request_id:'permission_test',request:{subtype:'can_use_tool',tool_name:'Bash',input:{command:'echo test'}}}) + '\\n');
@@ -878,37 +913,86 @@ process.stdin.on('data', (chunk) => {
       const suffix = legacy ? 'legacy' : 'native';
 
       if (!legacy) {
-        // A turn Claude starts by itself, such as one woken by a finished
-        // background shell, is working until its result. Only Claude's
-        // session state reports such a turn.
-        const woken = await launchActivity('wake', legacy);
-        await woken.prompt('wake');
-        await woken.until(4);
-        assert.deepEqual(woken.statuses(), ['working', 'idle', 'working', 'idle'], 'a self-started turn shows as working');
-        const wokenReply = woken.published('msg_wake_woken_0');
-        assert.ok(wokenReply > woken.statusAt(2) && wokenReply < woken.statusAt(3), 'the woken turn replies while working');
-        assert.equal((await woken.snapshot()).status, 'idle');
-        await woken.close();
+        const bash = await launchActivity('bash', legacy);
+        const bashActivity = await bash.observeActivity();
+        await bash.prompt('bash before result');
+        await waitFor(() => bash.published('toolu_bash') >= 0, 5_000);
+        assert.equal((await bash.snapshot()).status, 'working', 'Bash stays working until the turn result, despite a session idle report');
+        await bash.prompt('finish bash');
+        await waitFor(() => bash.published('msg_after_bash_0') >= 0, 5_000);
+        assert.equal((await bash.snapshot()).status, 'working', 'finishing Bash does not finish the turn');
+        await bash.prompt('finish turn');
+        await waitFor(() => bash.statuses().at(-1) === 'idle', 5_000);
+        await waitFor(() => bashActivity.activity() === 'idle');
+        assert.deepEqual(bash.statuses(), ['working', 'idle'], 'no transient idle during the turn');
+        assert.deepEqual(bashActivity.changes, ['working', 'idle'], 'persisted activity stays working through Bash');
+        bashActivity.dispose();
+        await bash.close();
 
-        // Interrupting a turn Claude started by itself settles it as idle,
-        // not as a failure; an interrupt with nothing running leaves a later
-        // failure reported as one.
-        const held = await launchActivity('interrupt', legacy);
-        await held.prompt('wake and hold');
-        await waitFor(() => held.published('msg_wake_held_0') >= 0, 5_000);
-        assert.equal((await held.snapshot()).status, 'working', 'a held self-started turn is working');
-        await held.interrupt();
-        await waitFor(() => held.statuses().at(-1) === 'idle', 5_000);
-        const stoppedTurn = await held.snapshot();
-        assert.equal(stoppedTurn.status, 'idle', 'an interrupted self-started turn settles as idle');
-        assert.ok(!stoppedTurn.messages.data.some((row) => row.kind === 'notice' && /error_during_execution/.test(row.text)), 'an interrupted self-started turn adds no error row');
-        await held.interrupt();
-        await new Promise((resolve) => setTimeout(resolve, 40));
-        await held.prompt('fail');
-        await waitFor(() => held.statuses().at(-1) === 'error', 5_000);
-        assert.equal((await held.snapshot()).status, 'error', 'an interrupt with nothing running does not hide a later failure');
-        await held.close();
+        // Internally queued commands have UUIDs outside the prompt map and
+        // can wait for a response before their first message_start.
+        const early = await launchActivity('early_interrupt', legacy);
+        await early.prompt('wake before stream');
+        await waitFor(() => early.published('notification_autonomous_started') >= 0, 5_000);
+        assert.equal((await early.snapshot()).status, 'working');
+        await early.interrupt();
+        await early.until(4);
+        const earlyStopped = await early.snapshot();
+        assert.equal(earlyStopped.status, 'idle', 'interrupting an autonomous command before streaming settles as idle');
+        assert.ok(!earlyStopped.messages.data.some((row) => row.kind === 'notice' && /error_during_execution/.test(row.text)), 'early interruption adds no false failure');
+        await early.close();
+
+        const backgroundOnly = await launchActivity('background_interrupt', legacy);
+        await backgroundOnly.prompt('background only');
+        await waitFor(() => backgroundOnly.published('notification_background_only') >= 0, 5_000);
+        assert.equal((await backgroundOnly.snapshot()).status, 'working');
+        await backgroundOnly.interrupt();
+        await backgroundOnly.until(2);
+        await backgroundOnly.prompt('fail');
+        await waitFor(() => backgroundOnly.statuses().at(-1) === 'error', 5_000);
+        assert.match(JSON.stringify(await backgroundOnly.snapshot()), /Network failure/, 'interrupting background-only activity does not hide a later main-turn failure');
+        await backgroundOnly.close();
       }
+
+      // A turn Claude starts by itself, such as one woken by a finished
+      // background shell, is working until its result, including without
+      // session-state events.
+      const woken = await launchActivity(`wake_${suffix}`, legacy);
+      await woken.prompt('wake');
+      await woken.until(4);
+      assert.deepEqual(woken.statuses(), ['working', 'idle', 'working', 'idle'], 'a self-started turn shows as working');
+      const wokenReply = woken.published('msg_wake_woken_0');
+      assert.ok(wokenReply > woken.statusAt(2) && wokenReply < woken.statusAt(3), 'the woken turn replies while working');
+      assert.equal((await woken.snapshot()).status, 'idle');
+      await woken.close();
+
+      // Interrupting a turn Claude started by itself settles it as idle,
+      // not as a failure; an interrupt with nothing running leaves a later
+      // failure reported as one.
+      const held = await launchActivity(`interrupt_${suffix}`, legacy);
+      await held.prompt('wake and hold');
+      await waitFor(() => held.published('msg_wake_held_0') >= 0, 5_000);
+      assert.equal((await held.snapshot()).status, 'working', 'a held self-started turn is working');
+      await held.interrupt();
+      await waitFor(() => held.statuses().at(-1) === 'idle', 5_000);
+      const stoppedTurn = await held.snapshot();
+      assert.equal(stoppedTurn.status, 'idle', 'an interrupted self-started turn settles as idle');
+      assert.ok(!stoppedTurn.messages.data.some((row) => row.kind === 'notice' && /error_during_execution/.test(row.text)), 'an interrupted self-started turn adds no error row');
+      await held.interrupt();
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      await held.prompt('fail');
+      await waitFor(() => held.statuses().at(-1) === 'error', 5_000);
+      assert.equal((await held.snapshot()).status, 'error', 'an interrupt with nothing running does not hide a later failure');
+      await held.close();
+
+      const toolOnly = await launchActivity(`tool_only_${suffix}`, legacy);
+      await toolOnly.prompt('wake tool');
+      await waitFor(() => toolOnly.published('toolu_woken_bash') >= 0, 5_000);
+      assert.equal((await toolOnly.snapshot()).status, 'working', `a self-started Bash call without partial events is working ${mode}`);
+      await toolOnly.interrupt();
+      await toolOnly.until(4);
+      assert.deepEqual(toolOnly.statuses(), ['working', 'idle', 'working', 'idle'], 'a tool-only turn ends on its result');
+      await toolOnly.close();
 
       // A background agent outliving the turn keeps the agent working until
       // it finishes. With session state there is no idle at all, through the

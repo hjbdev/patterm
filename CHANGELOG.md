@@ -42,6 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Integrated Claude and Codex stay Working through tool calls until the turn
+  finishes, even if a session or thread reports Idle early. Claude also detects
+  turns that start without session-state events.
 - Pages from `html_render` no longer flash white while a conversation opens.
 
 - Claude and Codex use Patterm-managed connections for configured remote MCP
