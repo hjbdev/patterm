@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   servers. Native CLI logins no longer override Patterm authentication, and
   connection failures direct users to Patterm's MCP settings.
 - The subagent view no longer casts a shadow onto the panel beside it.
+- Codex no longer fails to start a remote MCP server with "headers helper timed
+  out" while Patterm refreshes its sign-in. A token close to expiry is still
+  used while the refresh runs.
 
 ## [0.2.3] - 2026-10-15
 

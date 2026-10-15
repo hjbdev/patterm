@@ -27,7 +27,7 @@ import { NativeOAuthCallbackService } from '../app/Services/NativeOAuthCallbackS
 // registration, PKCE, rotating refresh tokens, and a tools/list endpoint that
 // requires the current access token.
 async function startFakeService() {
-  const state = { registrations: 0, refreshes: 0, access: 'at-1', refresh: 'rt-1', challenges: new Map<string, string>(), redirects: [] as string[] };
+  const state = { registrations: 0, refreshes: 0, access: 'at-1', refresh: 'rt-1', challenges: new Map<string, string>(), redirects: [] as string[], tokenGate: null as Promise<void> | null };
   let base = '';
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', base);
@@ -69,6 +69,7 @@ async function startFakeService() {
       }
       if (form.get('grant_type') === 'refresh_token') {
         if (form.get('refresh_token') !== state.refresh) return json(400, { error: 'invalid_grant' });
+        await state.tokenGate;
         state.refreshes += 1;
         state.access = `at-${state.refreshes + 1}`;
         state.refresh = `rt-${state.refreshes + 1}`;
@@ -384,6 +385,21 @@ async function main(): Promise<void> {
     const proxyHeaders = JSON.parse(proxyOutput) as Record<string, string>;
     assert.ok(proxyHeaders['X-Patterm-Mcp-Authorization']);
     assert.ok(!proxyOutput.includes(service.state.access), 'the helper supplies only proxy credentials');
+    // A slow authorization server never holds up the helper, which Codex
+    // allows 10 seconds, and a token inside its expiry margin is still used.
+    let releaseToken!: () => void;
+    service.state.tokenGate = new Promise<void>((resolve) => { releaseToken = resolve; });
+    const stored = JSON.parse(String((database.connection.prepare('select tokens from mcp_server_credentials where server_id = ?').get(remote.id) as { tokens: string }).tokens)) as { access_token: string; expires_at: number };
+    clock = stored.expires_at + 1;
+    await new Promise<string>((resolve, reject) => execFile(process.execPath, [shim, '--mcp-proxy-headers', remote.id], { env, encoding: 'utf8', timeout: 5_000 },
+      (error, stdout) => error ? reject(error) : resolve(stdout)));
+    clock = stored.expires_at - 30_000;
+    const refreshesBefore = service.state.refreshes;
+    assert.deepEqual(await oauth.headers(remote.id), { Authorization: `Bearer ${stored.access_token}` }, 'a token about to expire is used while it refreshes');
+    releaseToken();
+    service.state.tokenGate = null;
+    assert.equal((await oauth.headers(remote.id, stored.access_token)).Authorization, `Bearer ${service.state.access}`);
+    assert.equal(service.state.refreshes, refreshesBefore + 1, 'the background refresh is shared');
     const proxyUrl = `${proxy.url}/${remote.id}`;
     assert.equal((await fetch(proxyUrl, { method: 'POST', headers: { Connection: 'close' } })).status, 401);
     assert.equal((await fetch(proxyUrl, { headers: { ...proxyHeaders, Connection: 'close', Origin: 'https://example.com' } })).status, 403);
