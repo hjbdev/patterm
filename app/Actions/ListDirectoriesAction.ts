@@ -34,6 +34,11 @@ export const DRIVES_PATH = '\\\\';
 
 // Lists the subdirectories of one server directory so the browser client can
 // pick a project path without a native dialog. Read-only.
+// Expands a leading ~ to the home directory, as a shell would.
+export function expandHome(requested: string, home: string): string {
+  return requested === '~' ? home : requested.replace(process.platform === 'win32' ? /^~(?=[\\/])/ : /^~(?=\/)/, home);
+}
+
 export class ListDirectoriesAction {
   constructor(private readonly home: string = os.homedir()) {}
 
@@ -41,7 +46,7 @@ export class ListDirectoriesAction {
     const windows = process.platform === 'win32';
     const requested = input.path.trim();
     if (windows && requested === DRIVES_PATH) return this.listDrives(input.filter);
-    const resolved = path.resolve(requested === '~' || requested === '' ? this.home : requested.replace(windows ? /^~(?=[\\/])/ : /^~(?=\/)/, this.home));
+    const resolved = path.resolve(requested === '' ? this.home : expandHome(requested, this.home));
 
     let stat: fs.Stats;
     try {
