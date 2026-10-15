@@ -1,7 +1,7 @@
 import { computed, onBeforeUnmount, reactive, ref, watch, type Ref } from 'vue';
 import { useWorkbench } from './useWorkbench';
 import { launchableHarnesses } from '../lib/harnesses';
-import { harnessPresets } from '../lib/serverQuery';
+import { harnessPresets, topicCall } from '../lib/serverQuery';
 import {
   conversationRows,
   paletteTimers,
@@ -141,7 +141,7 @@ export function usePaletteSources(options: { open: Ref<boolean>; projectId: Ref<
       return;
     }
     try {
-      const result = await window.patterm.call('history_list', { project_id: projectId, limit: RECENT_CONVERSATIONS }) as { conversations?: ConversationRecord[] };
+      const result = await topicCall<{ conversations?: ConversationRecord[] }>('history', 'history_list', { project_id: projectId, limit: RECENT_CONVERSATIONS });
       if (token === conversationToken) conversations.value = result.conversations ?? [];
     } catch {
       // The palette still works without recent conversations.

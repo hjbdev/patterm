@@ -7,6 +7,7 @@ import type {
   SidebarState,
 } from '../types';
 import { applyWorkbenchChanges, changesLifecycle, type WorkbenchPatch, type WorkbenchSnapshot } from '../lib/workbenchPatch';
+import { queryClient } from '../lib/serverQuery';
 
 interface WorkbenchVersion {
   epoch: string;
@@ -50,8 +51,19 @@ const archiveReads = new Set<string>();
 // that loaded or reconnected while the server restarted still corrects it.
 // Assumed online until the first snapshot, so loading does not flash a warning.
 const sidecarAvailable = ref(true);
-// The snapshot behind the refs above, as plain objects. Patches apply to it.
-let held: HeldWorkbench | null = null;
+// The snapshot behind the refs above, as plain objects, kept in the query
+// cache with the other server data. Patches apply to it.
+const WORKBENCH_KEY = ['workbench'];
+function held(): HeldWorkbench | null {
+  return queryClient.getQueryData<HeldWorkbench>(WORKBENCH_KEY) ?? null;
+}
+function hold(snapshot: HeldWorkbench): HeldWorkbench {
+  // Patches already keep unchanged objects, so the cache doesn't compare
+  // them again, and the snapshot stays while nothing observes it.
+  queryClient.setQueryDefaults(WORKBENCH_KEY, { structuralSharing: false, gcTime: Infinity });
+  queryClient.setQueryData<HeldWorkbench>(WORKBENCH_KEY, snapshot);
+  return snapshot;
+}
 let refreshInFlight: Promise<void> | null = null;
 let refreshPending = false;
 
@@ -129,7 +141,8 @@ async function loadArchived(projectId: string, record: { sessionId?: string; pro
 
 async function refreshOnce(): Promise<void> {
   try {
-    const since = held ? { epoch: held.epoch, version: held.version } : undefined;
+    const current = held();
+    const since = current ? { epoch: current.epoch, version: current.version } : undefined;
     const result = await window.patterm?.workbench?.(since) as WorkbenchRead | null | undefined;
     if (!result) return;
     if ('projects' in result) adopt(result);
@@ -142,30 +155,33 @@ async function refreshOnce(): Promise<void> {
 }
 
 function adopt(snapshot: HeldWorkbench): void {
-  if (held && held.epoch === snapshot.epoch && snapshot.version < held.version) return;
-  held = { ...snapshot, sidebarState: normalizeSidebarState(snapshot.sidebarState) };
+  const current = held();
+  if (current && current.epoch === snapshot.epoch && snapshot.version < current.version) return;
+  const next = hold({ ...snapshot, sidebarState: normalizeSidebarState(snapshot.sidebarState) });
   publish(true);
-  sidebarState.value = held.sidebarState;
+  sidebarState.value = next.sidebarState;
 }
 
 function applyPatch(patch: WorkbenchPatch): void {
-  if (!held || patch.epoch !== held.epoch || patch.from > held.version) {
+  const current = held();
+  if (!current || patch.epoch !== current.epoch || patch.from > current.version) {
     void refresh();
     return;
   }
-  if (patch.to <= held.version) return;
-  const lifecycle = changesLifecycle(held, patch.changes);
-  held = { ...applyWorkbenchChanges(held, patch.changes), epoch: patch.epoch, version: patch.to };
+  if (patch.to <= current.version) return;
+  const lifecycle = changesLifecycle(current, patch.changes);
+  const next = hold({ ...applyWorkbenchChanges(current, patch.changes), epoch: patch.epoch, version: patch.to });
   publish(lifecycle);
-  if (patch.changes.sidebarState) sidebarState.value = normalizeSidebarState(held.sidebarState);
+  if (patch.changes.sidebarState) sidebarState.value = normalizeSidebarState(next.sidebarState);
 }
 
 function publish(lifecycle: boolean): void {
-  if (!held) return;
-  projects.value = held.projects;
-  harnesses.value = held.harnesses;
-  sidecarAvailable.value = held.terminalAvailable;
-  epoch.value = held.epoch;
+  const current = held();
+  if (!current) return;
+  projects.value = current.projects;
+  harnesses.value = current.harnesses;
+  sidecarAvailable.value = current.terminalAvailable;
+  epoch.value = current.epoch;
   revision.value += 1;
   if (lifecycle) lifecycleRevision.value += 1;
 }

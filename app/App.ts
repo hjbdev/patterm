@@ -434,7 +434,7 @@ async function createApplicationResources(
   const historyImportQueue = new AgentHistoryImportQueueService(options.appDataPath, undefined, options.runtime === 'node' ? launchNodeHistoryWorker : undefined, debugLog, {
     onResult: (result) => {
       if (applyHistoryImportEffects(result, timeline, resumeCapture)) notifyWorkbenchChanged();
-      if (importedConversations(result)) { autoSummaries.historyChanged(); notifyChanged(['history']); }
+      if (historyChanged(result)) { autoSummaries.historyChanged(); notifyChanged(['history']); }
     }
   });
   defer(() => historyImportQueue.dispose());
@@ -445,7 +445,7 @@ async function createApplicationResources(
 
   defer(() => historyWatcher.stop());
 
-  const modelCatalog = new HarnessModelCatalogService({ database, settings, env: resolvedEnv, openCodeServer, debugLog });
+  const modelCatalog = new HarnessModelCatalogService({ database, settings, env: resolvedEnv, openCodeServer, debugLog, onChanged: () => notifyChanged(['settings']) });
   defer(() => modelCatalog.dispose());
   const mcpServerRegistry = new McpServerRegistry(database);
   const mcpOAuth = new McpOAuthService(database, mcpServerRegistry, {
@@ -810,10 +810,13 @@ async function createApplicationResources(
   return application;
 }
 
-function importedConversations(result: unknown): boolean {
+// Whether a history job imported or deleted conversations. Clients cache
+// history reads until this is announced.
+function historyChanged(result: unknown): boolean {
   const row = result && typeof result === 'object' ? result as Record<string, unknown> : {};
   const importResult = row.import && typeof row.import === 'object' ? row.import as Record<string, unknown> : row;
-  return typeof importResult.conversationsImported === 'number' && importResult.conversationsImported > 0;
+  const positive = (value: unknown) => typeof value === 'number' && value > 0;
+  return positive(importResult.conversationsImported) || positive(row.deletedConversations) || row.deleted === true;
 }
 
 function applyHistoryImportEffects(result: unknown, timeline: TimelineService, resumeCapture: ResumeIdCaptureService): boolean {

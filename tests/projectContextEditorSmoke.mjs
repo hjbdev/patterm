@@ -37,7 +37,8 @@ function loadModule(call, tabStorage) {
   const module = { cleanup: [], timers };
   const modules = {
     vue: { ...vue, onBeforeUnmount: callback => module.cleanup.push(callback) },
-    '../lib/projectContext': { contextCall: call },
+    // Cached reads go straight to the controlled network here.
+    '../lib/projectContext': { contextCall: call, contextRead: call },
     './useWorkbenchNavigation': { useWorkbenchNavigation: () => ({ activeProject: vue.ref(null) }) }
   };
   module.exports = {};

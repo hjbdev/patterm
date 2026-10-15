@@ -39,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that project's records change. Returning to an agent or page reads nothing
   new, and a change in one project no longer reloads every other project's
   views, or reloads them whenever an agent starts or stops.
+- Reopening a todo or scratchpad, the conversation history, images, routines,
+  MCP servers, or the harness model list shows what was last read until the
+  server announces a change, instead of reading it again.
 
 ### Fixed
 

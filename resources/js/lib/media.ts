@@ -1,4 +1,5 @@
 import type { RouteLocationRaw } from 'vue-router';
+import { topicCall } from './serverQuery';
 
 // An image pasted into or viewed in an imported conversation, listed once per
 // conversation at its first appearance.
@@ -18,7 +19,7 @@ export interface MediaItem {
 export interface MediaPage { items: MediaItem[]; total: number }
 
 export function listMedia(projectId: string, args: { session_id?: string; kind?: MediaItem['kind']; limit?: number; offset?: number } = {}): Promise<MediaPage> {
-  return window.patterm.call('media_list', { project_id: projectId, ...args }) as Promise<MediaPage>;
+  return topicCall<MediaPage>('history', 'media_list', { project_id: projectId, ...args });
 }
 
 // Lightbox entries that open the message each image came from.

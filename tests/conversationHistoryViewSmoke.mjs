@@ -19,21 +19,28 @@ const { outputText } = ts.transpileModule(executable, {
 });
 const setup = new Function(
   'computed', 'nextTick', 'ref', 'shallowRef', 'watch', 'onBeforeUnmount', 'defineProps', 'defineEmits',
-  'useVirtualizer', 'window', 'archiveTranscript', 'isReasoningMessage', 'toolCallKey', 'toast',
-  `${outputText}\nreturn { conversations, messages, selectedId, messageTranscriptRef, selectConversation, loadOlderMessages, positioningInitialMessages, transcriptMessages, focusedMessageId, scrollToMessage, showReasoning, canResume, resumeTitle, resumeSelected };`
+  'useVirtualizer', 'window', 'archiveTranscript', 'isReasoningMessage', 'toolCallKey', 'toast', 'topicCall', 'topicChanged', 'useTopicRefresh', 'topicGeneration',
+  `${outputText}\nreturn { conversations, messages, selectedId, messageTranscriptRef, selectConversation, loadOlderMessages, positioningInitialMessages, transcriptMessages, focusedMessageId, scrollToMessage, showReasoning, canResume, resumeTitle, resumeSelected, loadNextConversations, refreshConversations };`
 );
 
-function mount(watchPagination = false, props = {}) {
+function mount(watchPagination = false, props = {}, realWatch = false) {
   const pending = [];
+  // The history topic's generation, bumped by announcements.
+  const generation = { value: 0 };
   const emitted = [];
   const toasts = [];
   const history = setup(
     computed, nextTick, ref, shallowRef,
-    (source, callback) => { if (watchPagination && (isRef(source) || Array.isArray(source))) vueWatch(source, callback); },
+    (source, callback, options) => {
+      if (realWatch) vueWatch(source, callback, options);
+      else if (watchPagination && (isRef(source) || Array.isArray(source))) vueWatch(source, callback);
+    },
     () => {}, () => props, () => (...event) => emitted.push(event),
     () => ref({ getVirtualItems: () => [], getTotalSize: () => 1000, scrollToIndex: () => {}, scrollToOffset: () => {} }),
     { patterm: { call: (name, args) => new Promise((resolve) => pending.push({ name, args, resolve })) } },
-    archiveTranscript, isReasoningMessage, toolCallKey, { error: (title, options) => toasts.push([title, options?.description]) }
+    archiveTranscript, isReasoningMessage, toolCallKey, { error: (title, options) => toasts.push([title, options?.description]) },
+    // Cached reads go straight to the server here.
+    (_topic, name, args) => new Promise((resolve) => pending.push({ name, args, resolve })), () => {}, () => {}, () => generation.value
   );
   const scrolling = { bottom: 0, message: null };
   history.messageTranscriptRef.value = {
@@ -41,7 +48,7 @@ function mount(watchPagination = false, props = {}) {
     scrollToMessage: (id) => { scrolling.message = id; }
   };
   history.conversations.value = ['a', 'b'].map((id) => ({ id, messageCount: 200 }));
-  return { history, pending, scrolling, emitted, toasts };
+  return { history, pending, scrolling, emitted, toasts, generation };
 }
 
 function record(id, extra = {}) {
@@ -126,6 +133,47 @@ test('selection, paging, and stale replies remain scoped to the selected convers
   pending[2].resolve({ offset: 0, messages: [record('old-b', { seq: 0 })] });
   await older;
   assert.deepEqual(history.messages.value.map((message) => message.id), ['old-b', 'b']);
+});
+
+test('a page read before an import never undoes a newer refreshed row', async () => {
+  const { history, pending, generation } = mount();
+  const row = (messageCount, importedAt) => ({ id: 'c', provider: 'claude', messageCount, updatedAt: '2026-10-01T00:00:00.000Z', importedAt });
+  const page = history.loadNextConversations();
+  const pageCalls = pending.splice(0);
+  generation.value += 1;
+  const refresh = history.refreshConversations();
+  const refreshCalls = pending.splice(0);
+  assert.equal(pageCalls.length, 3);
+  assert.equal(refreshCalls.length, 3);
+  // The refresh, read after the import, lands first; the older page lands last
+  // with the same provider timestamp.
+  refreshCalls.forEach((call, index) => call.resolve({ conversations: index === 0 ? [row(2, '2026-10-02T00:00:00.000Z')] : [] }));
+  await refresh;
+  pageCalls.forEach((call, index) => call.resolve({ conversations: index === 0 ? [row(1, '2026-10-01T12:00:00.000Z')] : [] }));
+  await page;
+  assert.equal(history.conversations.value.find((conversation) => conversation.id === 'c').messageCount, 2);
+});
+
+test('mounting loads the first page of every provider', async () => {
+  const { pending } = mount(false, { projectId: 'p' }, true);
+  await nextTick();
+  assert.deepEqual(pending.map((call) => [call.name, call.args.provider, call.args.offset]), [
+    ['history_list', 'claude', 0], ['history_list', 'codex', 0], ['history_list', 'opencode', 0]
+  ]);
+});
+
+test('an earlier refresh landing last never undoes a later one, uncached or not', async () => {
+  const { history, pending } = mount();
+  const row = (messageCount) => ({ id: 'r', provider: 'claude', messageCount, updatedAt: '2026-10-01T00:00:00.000Z', importedAt: '2026-10-01T00:00:00.000Z' });
+  const earlier = history.refreshConversations();
+  const earlierCalls = pending.splice(0);
+  const later = history.refreshConversations();
+  const laterCalls = pending.splice(0);
+  laterCalls.forEach((call, index) => call.resolve({ conversations: index === 0 ? [row(2)] : [] }));
+  await later;
+  earlierCalls.forEach((call, index) => call.resolve({ conversations: index === 0 ? [row(1)] : [] }));
+  await earlier;
+  assert.equal(history.conversations.value.find((conversation) => conversation.id === 'r').messageCount, 2);
 });
 
 test('a hidden-reasoning-only page loads an older visible page', async () => {

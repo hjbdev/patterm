@@ -1,5 +1,5 @@
 import { computed, readonly, ref, shallowRef } from 'vue';
-import { useContextRefresh } from './projectContext';
+import { topicChanged, topicRead, useTopicRefresh } from './serverQuery';
 
 export type McpHarness = 'claude' | 'codex' | 'opencode';
 export const MCP_HARNESSES: readonly McpHarness[] = ['claude', 'codex', 'opencode'];
@@ -74,22 +74,34 @@ const redirect = ref<McpRedirectMode>('loopback');
 const loaded = ref(false);
 const listError = ref('');
 const tests = shallowRef<Record<string, McpTestState>>({});
-let listRequest: Promise<void> | null = null;
+let listReads = 0;
 
+// Cached until the list next changes. A slower, older read never replaces a
+// newer one.
 export function loadMcpServers(): Promise<void> {
-  listRequest ??= call<{ servers: McpServerView[]; redirect: McpRedirectMode }>('mcp_servers_list')
+  const read = ++listReads;
+  // A pending sign-in expires on the server without an announcement, so a
+  // list that shows one is read again each time.
+  return topicRead('mcp-servers', ['mcp_servers_list'], () => call<{ servers: McpServerView[]; redirect: McpRedirectMode }>('mcp_servers_list'),
+    (list) => list.servers.some((server) => server.sign_in?.pending))
     .then((value) => {
+      if (read !== listReads) return;
       servers.value = value.servers;
       redirect.value = value.redirect;
       listError.value = '';
     })
-    .catch((caught) => { listError.value = errorMessage(caught); })
-    .finally(() => { loaded.value = true; listRequest = null; });
-  return listRequest;
+    .catch((caught) => { if (read === listReads) listError.value = errorMessage(caught); })
+    .finally(() => { loaded.value = true; });
+}
+
+// Reads the list again after this client changed it.
+function reloadMcpServers(): Promise<void> {
+  topicChanged('mcp-servers');
+  return loadMcpServers();
 }
 
 export function useMcpServers() {
-  useContextRefresh(() => void loadMcpServers(), { topics: ['mcp-servers'] });
+  useTopicRefresh(['mcp-servers'], () => void loadMcpServers());
   void loadMcpServers();
   return {
     servers: computed(() => servers.value),
@@ -102,25 +114,25 @@ export function useMcpServers() {
 
 export async function saveMcpServer(draft: McpServerDraft): Promise<McpServerView> {
   const saved = await call<McpServerView>('mcp_servers_save', payloadFromDraft(draft));
-  await loadMcpServers();
+  await reloadMcpServers();
   return saved;
 }
 
 export async function setMcpServerEnabled(server: McpServerView, enabled: boolean): Promise<void> {
   await call('mcp_servers_save', { ...payloadFromDraft(draftFromServer(server)), enabled });
-  await loadMcpServers();
+  await reloadMcpServers();
 }
 
 export async function deleteMcpServer(id: string): Promise<void> {
   await call('mcp_servers_delete', { id });
   const { [id]: _removed, ...rest } = tests.value;
   tests.value = rest;
-  await loadMcpServers();
+  await reloadMcpServers();
 }
 
 export async function importMcpServers(): Promise<McpImportResult> {
   const result = await call<McpImportResult>('mcp_servers_import');
-  await loadMcpServers();
+  await reloadMcpServers();
   return result;
 }
 
@@ -140,7 +152,7 @@ export async function testMcpServer(id: string): Promise<void> {
 export async function startMcpSignIn(id: string, via: 'auto' | 'loopback' = 'auto'): Promise<void> {
   const started = await call<{ authorization_url: string | null; signed_in: boolean }>('mcp_servers_signin_start', { id, via });
   if (started.authorization_url) openSignInPage(started.authorization_url);
-  await loadMcpServers();
+  await reloadMcpServers();
 }
 
 export function openSignInPage(url: string): void {
@@ -149,18 +161,18 @@ export function openSignInPage(url: string): void {
 
 export async function completeMcpSignIn(url: string): Promise<string> {
   const result = await call<{ server_id: string; name: string }>('mcp_servers_signin_complete', { url: url.trim() });
-  await loadMcpServers();
+  await reloadMcpServers();
   return result.name;
 }
 
 export async function cancelMcpSignIn(id: string): Promise<void> {
   await call('mcp_servers_signin_cancel', { id });
-  await loadMcpServers();
+  await reloadMcpServers();
 }
 
 export async function signOutMcpServer(id: string): Promise<void> {
   await call('mcp_servers_signout', { id });
-  await loadMcpServers();
+  await reloadMcpServers();
 }
 
 export function newMcpServerDraft(): McpServerDraft {

@@ -29,6 +29,8 @@ export interface HarnessModelCatalogOptions {
   claudeTimeoutMs?: number;
   openCodeTimeoutMs?: number;
   refreshIntervalMs?: number;
+  // Called after each refresh saves the catalog, so clients read it again.
+  onChanged?: () => void;
 }
 
 // Discovers selectable models for each agent harness and caches them in the
@@ -105,7 +107,9 @@ export class HarnessModelCatalogService {
         });
       }
     }
-    return this.deps.settings.updateHarnessModelCatalog({ providers });
+    const catalog = this.deps.settings.updateHarnessModelCatalog({ providers });
+    this.deps.onChanged?.();
+    return catalog;
   }
 
   private async discover(harness: (typeof CATALOG_HARNESSES)[number], previous: HarnessProviderCatalog | null): Promise<HarnessProviderCatalog> {

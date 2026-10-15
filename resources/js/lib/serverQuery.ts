@@ -1,4 +1,19 @@
-import { QueryClient, hashKey, type QueryKey } from '@tanstack/vue-query';
+import { onBeforeUnmount, ref, watch, type Ref } from 'vue';
+import { QueryClient, hashKey, timeoutManager, type ManagedTimerId, type QueryKey } from '@tanstack/vue-query';
+import { useWorkbench } from '../Composables/useWorkbench';
+
+// The cache's timers, such as each entry's garbage collection, never keep a
+// Node process such as a test run alive. Browsers have no unref.
+const unref = <T extends ManagedTimerId>(id: T): T => {
+  (id as { unref?: () => void }).unref?.();
+  return id;
+};
+timeoutManager.setTimeoutProvider<ManagedTimerId>({
+  setTimeout: (callback, delay) => unref(setTimeout(callback, delay) as ManagedTimerId),
+  clearTimeout: (id) => clearTimeout(id as number | undefined),
+  setInterval: (callback, delay) => unref(setInterval(callback, delay) as ManagedTimerId),
+  clearInterval: (id) => clearInterval(id as number | undefined)
+});
 
 // The cache for server reads. Entries never go stale on a timer: a read's key
 // carries the revision it depends on, so a change makes a new key, and topics
@@ -33,10 +48,13 @@ export function latestQueryData<T>(prefix: QueryKey): T | undefined {
   return latest?.data;
 }
 
-// Counts settings changes, and reconnects, after which one may have been
-// missed. Preset reads are keyed by it, so a read that was already under way
-// when settings changed can't stand in for one made after.
-let settingsGeneration = 0;
+// Server topics announced without a revision. Each counts its announcements,
+// and reconnects, after which one may have been missed. Reads are keyed by
+// their topic's count, so a read that was under way when a change was
+// announced can't stand in for one made after.
+export type ServerTopic = 'settings' | 'mcp-servers' | 'routines' | 'history' | 'updates';
+const SERVER_TOPICS: readonly ServerTopic[] = ['settings', 'mcp-servers', 'routines', 'history', 'updates'];
+const generations = Object.fromEntries(SERVER_TOPICS.map((topic) => [topic, ref(0)])) as Record<ServerTopic, Ref<number>>;
 
 // Starts on first use, not at import: the bundler may evaluate this module
 // before browser.ts installs window.patterm.
@@ -44,18 +62,68 @@ let listening = false;
 function listen(): void {
   if (listening || !window.patterm) return;
   listening = true;
-  window.patterm.onDataChanged((topics) => { if (topics.includes('settings')) settingsGeneration += 1; });
+  window.patterm.onDataChanged?.((topics) => {
+    for (const topic of SERVER_TOPICS) if (topics.includes(topic)) generations[topic].value += 1;
+  });
   let state = window.patterm.connectionState?.() ?? 'connected';
   window.patterm.onConnectionChanged?.((next) => {
-    if (next === 'connected' && state !== 'connected') settingsGeneration += 1;
+    if (next === 'connected' && state !== 'connected') for (const topic of SERVER_TOPICS) generations[topic].value += 1;
     state = next;
   });
+}
+
+export function topicGeneration(topic: ServerTopic): number {
+  listen();
+  return generations[topic].value;
+}
+
+// Marks a topic changed by this client's own write, so the next read fetches
+// without waiting for the server's announcement.
+export function topicChanged(topic: ServerTopic): void {
+  generations[topic].value += 1;
+}
+
+// A read cached until its topic next changes. `fresh` says whether a cached
+// result must be read again anyway, for data that changes without an
+// announcement.
+export function topicRead<T>(topic: ServerTopic, key: QueryKey, read: () => Promise<T>, fresh?: (cached: T) => boolean): Promise<T> {
+  return queryClient.fetchQuery({
+    queryKey: [...key, topicGeneration(topic)],
+    queryFn: read,
+    ...(fresh ? { staleTime: (query: { state: { data: T | undefined } }) => query.state.data !== undefined && fresh(query.state.data) ? 0 : Infinity } : {})
+  });
+}
+
+// A tool call cached until its topic next changes. A paired host doesn't
+// announce its topics here, so a call naming one of its records, as in
+// `workstation:project_7`, always reads.
+export function topicCall<T>(topic: ServerTopic, name: string, args: Record<string, unknown>, key: QueryKey = [name, args]): Promise<T> {
+  const call = () => window.patterm.call(name, args) as Promise<T>;
+  const remote = Object.entries(args).some(([field, value]) => field.endsWith('_id') && typeof value === 'string' && value.includes(':'));
+  return remote ? call() : topicRead(topic, key, call);
+}
+
+// Calls `refresh` when one of the topics changes. Bursts share one refresh.
+// `lifecycle` also refreshes when sessions or processes start, stop, appear
+// or disappear; reads such a view makes should key on the same revision.
+export function useTopicRefresh(topics: readonly ServerTopic[], refresh: () => void, options: { lifecycle?: boolean } = {}) {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const schedule = () => {
+    timer ??= setTimeout(() => { timer = null; refresh(); }, 50);
+  };
+  watch(() => topics.map(topicGeneration).join(), schedule);
+  if (options.lifecycle) watch(useWorkbench().lifecycleRevision, schedule);
+  onBeforeUnmount(() => { if (timer) clearTimeout(timer); });
 }
 
 export interface HarnessPresetSettings { presets?: unknown[] }
 
 // Saved harness presets, read once and again after settings change.
 export function harnessPresets<T extends HarnessPresetSettings>(): Promise<T | null> {
-  listen();
-  return queryClient.fetchQuery({ queryKey: ['harness_presets', settingsGeneration], queryFn: async () => (await window.patterm.harnessPresets() ?? null) as T | null });
+  return topicRead('settings', ['harness_presets'], async () => (await window.patterm.harnessPresets() ?? null) as T | null);
+}
+
+// The harness model catalog, read once and again after settings change.
+export function harnessModels<T>(): Promise<T> {
+  return topicRead('settings', ['harness_models'], async () => await window.patterm.harnessModels() as T);
 }

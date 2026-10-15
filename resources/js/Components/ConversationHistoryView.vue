@@ -4,7 +4,7 @@
     <aside class="flex h-full min-h-0 flex-col space-y-3 md:border-r md:border-border/70 md:pr-4">
       <div class="flex h-8 shrink-0 items-center justify-between gap-2">
         <h2 class="text-sm font-medium">Conversation history</h2>
-        <HistoryImportQueuePopover @imported="void refreshConversations()" />
+        <HistoryImportQueuePopover @imported="topicChanged('history'); void refreshConversations()" />
       </div>
       <div v-if="conversations.length" class="flex flex-wrap gap-1">
         <button
@@ -103,6 +103,7 @@ import { relativeTime } from '../lib/format';
 import { toast } from 'vue-sonner';
 import { isOpenCodeVersionMismatch } from '../../../app/Services/OpenCodeServiceErrors';
 import { toastLaunchError } from '../lib/launchErrors';
+import { topicCall, topicChanged, useTopicRefresh } from '../lib/serverQuery';
 import { ScrollArea } from './ui/scroll-area';
 
 const props = defineProps<{
@@ -189,7 +190,17 @@ const conversationTotalSize = computed(() => conversationVirtualizer.value.getTo
 
 onBeforeUnmount(() => { bottomScrollToken++; });
 
+// Each list read counts up as it starts, and each shown row keeps the count of
+// the read it came from. A reply replaces a row only if its read started
+// later, so a slower page or refresh never undoes a newer row, even for a
+// paired host, whose reads aren't cached. Declared before the watcher below
+// loads the list.
+let listReads = 0;
+const rowReads = new Map<string, number>();
 watch(() => [props.projectId] as const, () => void loadConversations(), { immediate: true });
+// Imports announce themselves, so new conversations appear without waiting
+// for the import popover's poll.
+useTopicRefresh(['history'], () => void refreshConversations());
 watch(() => props.projectPath, () => messageDisplayCache.clear());
 watch(() => [props.activeConversationId, props.activeMessageId] as const, ([id, messageId]) => {
   if (id) void selectConversation(id, messageId ?? null);
@@ -217,6 +228,7 @@ async function loadConversations(): Promise<void> {
   busy.value = true;
   error.value = '';
   conversations.value = [];
+  rowReads.clear();
   messageDisplayCache.clear();
   providerState.value = initialProviderState();
   try {
@@ -237,10 +249,11 @@ async function loadNextConversations(): Promise<void> {
   });
   if (providers.length === 0) return;
   for (const provider of providers) providerState.value[provider].loading = true;
+  const read = ++listReads;
   try {
     const responses = await Promise.all(providers.map(async (provider) => {
       const state = providerState.value[provider];
-      const response = await window.patterm.call('history_list', {
+      const response = await topicCall('history', 'history_list', {
         provider,
         project_id: props.projectId ?? undefined,
         limit: CONVERSATION_PAGE_SIZE,
@@ -250,7 +263,7 @@ async function loadNextConversations(): Promise<void> {
       providerState.value[provider] = { offset: state.offset + page.length, hasMore: page.length === CONVERSATION_PAGE_SIZE, loading: false };
       return page;
     }));
-    conversations.value = sortConversations(uniqueConversations([...conversations.value, ...responses.flat()]));
+    mergeConversations(responses.flat(), read);
   } catch (caught) {
     for (const provider of providers) providerState.value[provider].loading = false;
     error.value = caught instanceof Error ? caught.message : 'Failed to load conversation history';
@@ -260,10 +273,10 @@ async function loadNextConversations(): Promise<void> {
 // Merge the newest page per provider after an import so new and updated
 // conversations appear without resetting paging, scroll, or selection.
 async function refreshConversations(): Promise<void> {
-  const projectId = props.projectId;
+  const projectId = props.projectId, read = ++listReads;
   try {
     const responses = await Promise.all(historyProviders.map(async (provider) => {
-      const response = await window.patterm.call('history_list', {
+      const response = await topicCall('history', 'history_list', {
         provider,
         project_id: projectId ?? undefined,
         limit: CONVERSATION_PAGE_SIZE,
@@ -272,7 +285,7 @@ async function refreshConversations(): Promise<void> {
       return response.conversations ?? [];
     }));
     if (projectId !== props.projectId) return;
-    conversations.value = sortConversations(uniqueConversations([...conversations.value, ...responses.flat()]));
+    mergeConversations(responses.flat(), read);
   } catch {
     // The next import or project switch retries; keep the current list.
   }
@@ -290,12 +303,22 @@ function initialProviderState(): Record<HistoryProvider, ProviderPageState> {
   };
 }
 
-function uniqueConversations(value: ConversationRecord[]): ConversationRecord[] {
-  return [...new Map(value.map((conversation) => [conversation.id, conversation])).values()];
+function mergeConversations(rows: ConversationRecord[], read: number): void {
+  const merged = new Map(conversations.value.map((conversation) => [conversation.id, conversation]));
+  for (const row of rows) {
+    if ((rowReads.get(row.id) ?? -1) > read) continue;
+    merged.set(row.id, row);
+    rowReads.set(row.id, read);
+  }
+  conversations.value = sortConversations([...merged.values()]);
+}
+
+function conversationTime(conversation: ConversationRecord): number {
+  return Date.parse(conversation.updatedAt ?? conversation.importedAt);
 }
 
 function sortConversations(value: ConversationRecord[]): ConversationRecord[] {
-  return value.sort((a, b) => Date.parse(b.updatedAt ?? b.importedAt) - Date.parse(a.updatedAt ?? a.importedAt));
+  return value.sort((a, b) => conversationTime(b) - conversationTime(a));
 }
 
 function isHistoryProvider(value: string): value is HistoryProvider {
@@ -322,7 +345,7 @@ async function selectConversation(id: string, anchorMessageId: string | null = n
   const conversation = conversations.value.find((item) => item.id === id);
   const offset = anchorMessageId ? 0 : Math.max(0, (conversation?.messageCount ?? 0) - MESSAGE_PAGE_SIZE);
   try {
-    const response = await window.patterm.call('history_get', {
+    const response = await topicCall('history', 'history_get', {
       conversation_id: id,
       anchor_message_id: anchorMessageId ?? undefined,
       limit: MESSAGE_PAGE_SIZE,
@@ -350,7 +373,7 @@ async function loadOlderMessages(): Promise<void> {
   const nextOffset = Math.max(0, messageWindowOffset.value - MESSAGE_PAGE_SIZE);
   const limit = messageWindowOffset.value - nextOffset;
   try {
-    const response = await window.patterm.call('history_get', {
+    const response = await topicCall('history', 'history_get', {
       conversation_id: selectedId.value,
       limit,
       offset: nextOffset
