@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 import { expandHome } from './ListDirectoriesAction';
-import { pathColumn, pathParam, storedPath } from '../Platform/PathIdentity';
+import { pathColumn, pathParam, pathsMatch, storedPath } from '../Platform/PathIdentity';
 import { isUserProjectKind, USER_PROJECT_KINDS_SQL } from '../Services/PersonalProject';
 import type { DatabaseService } from '../Services/DatabaseService';
 import type { TimelineService } from '../Services/TimelineService';
@@ -97,6 +97,6 @@ export class CreateProjectAction {
     const real = (target: string) => { try { return fs.realpathSync(target); } catch { return null; } };
     const target = real(resolved);
     const internal = this.database.connection.prepare(`select path from projects where kind not in ${USER_PROJECT_KINDS_SQL}`).all() as Array<{ path: string }>;
-    return internal.some((project) => real(project.path) === target);
+    return internal.some((project) => pathsMatch(real(project.path), target));
   }
 }

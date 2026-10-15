@@ -519,6 +519,11 @@ async function main(): Promise<void> {
     if (trySymlink(internal.path, path.join(dir, 'internal-alias'), 'dir')) {
       await assert.rejects(create({ path: path.join(dir, 'internal-alias') }), /internal project/, 'nor registered again through a symlink');
     }
+    // Windows real paths keep the link target's case, so a junction to the
+    // same folder spelled in lower case must still match.
+    if (process.platform === 'win32' && trySymlink(internal.path.toLowerCase(), path.join(dir, 'internal-junction'), 'junction')) {
+      await assert.rejects(create({ path: path.join(dir, 'internal-junction') }), /internal project/, 'nor through a link whose target differs in case');
+    }
     assert.deepEqual((await listProjects()).map((project) => project.project_id).sort(), ['p', 'q', registered.project_id, made.project_id].sort());
 
     // Renaming changes only the display name, and only for workspace projects.
