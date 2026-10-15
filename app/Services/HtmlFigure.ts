@@ -158,7 +158,9 @@ export function figureFontStyle(settings: FontSettings, source: (file: string) =
 // The page runs in this frame's document, written in once the host sends it.
 // Its own policy lets the page run inline and CDN scripts; the sandbox gives
 // it an opaque origin, so it cannot reach Patterm's API, storage or window.
-export const FIGURE_FRAME_HTML = `<!doctype html><html><head><meta charset="utf-8"><script>
+// It shares Patterm's dark scheme: a frame in another scheme gets an opaque
+// backdrop, which flashes white until the page is written in.
+export const FIGURE_FRAME_HTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="dark"><script>
 addEventListener('message', function render(event) {
   if (event.source !== parent || !event.data || event.data.source !== 'patterm-host' || event.data.type !== 'render') return;
   removeEventListener('message', render);

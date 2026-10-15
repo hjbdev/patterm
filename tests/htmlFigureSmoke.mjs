@@ -80,6 +80,7 @@ test('the frame runs scripts in an opaque origin and cannot submit or navigate f
   assert.match(csp, /frame-ancestors 'self'$/);
   assert.doesNotMatch(ui.figureFrameCsp(null), /frame-ancestors/);
   assert.match(ui.FIGURE_FRAME_HTML, /event\.source !== parent/, 'only the host can send the page');
+  assert.match(ui.FIGURE_FRAME_HTML, /<meta name="color-scheme" content="dark">/, 'the empty frame matches the dark app instead of flashing white');
 });
 
 test('the full-screen view fills the window, and Escape still closes it', () => {
