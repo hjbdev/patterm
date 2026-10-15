@@ -63,6 +63,18 @@ import { isUserProjectKind } from '../Services/PersonalProject';
 
 const CONVERSATION_OUTPUT_HINT = 'Use get_conversation_output for the latest answer, turn state, last report, and older messages.';
 
+// The assistant registers and renames workspace projects. Removal stays an
+// owner action behind the UI's confirmation, so no agent can remove one.
+const assistantProjectCreateInput = z.object({
+  path: z.string().min(1).describe('Absolute directory path on the machine Patterm runs on, or one starting with ~/ for the home directory.'),
+  name: z.string().trim().max(200).optional().describe('Display name for a new project; defaults to the directory name. Ignored when the path is already a project.'),
+  create_directory: z.boolean().default(false).describe('Create the directory first if it is missing. Its parent must already exist. Leave false to register only an existing directory.')
+}).strict();
+const assistantProjectRenameInput = z.object({
+  project_id: z.string().min(1).describe('The project to rename, from assistant_project_list.'),
+  name: z.string().trim().min(1).max(200).describe('The new display name. The folder is not renamed.')
+}).strict();
+
 const jsonSchema = zodToJsonSchema as unknown as (schema: z.ZodTypeAny, options: { $refStrategy: 'none' }) => Record<string, unknown>;
 
 export { McpToolRegistry } from './ToolRegistry';
@@ -308,15 +320,15 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
   const caller = (context: McpCallContext) => context.remote ? remoteCaller(services.database, context.remote) : resolveCaller(services.database, context.identity ?? null);
   // An identity must name a running agent, even for tools that ignore it.
   registry.setCallerCheck((context) => { if (!context.remote) resolveCaller(services.database, context.identity ?? null); });
+  // Native MCP discovery happens during prepare, before session registration.
+  // Catalogue filtering must not use the strict tool-call authorizer.
+  const visibleToAssistant = (context: McpCallContext) => {
+    if (context.remote || !context.identity) return false;
+    const session = services.database.connection.prepare('select session_role from sessions where mcp_identity = ? and exited_at is null').get(context.identity) as { session_role: string } | undefined;
+    return (session?.session_role ?? services.launchingIdentities?.role(context.identity)) === 'assistant';
+  };
   if (services.assistantMemory) registerAssistantMemoryTools(registry, services.assistantMemory,
-    (context) => !context.remote && isAssistant(caller(context)),
-    (context) => {
-      // Native MCP discovery happens during prepare, before session registration.
-      // Catalogue filtering must not use the strict tool-call authorizer.
-      if (context.remote || !context.identity) return false;
-      const session = services.database.connection.prepare('select session_role from sessions where mcp_identity = ? and exited_at is null').get(context.identity) as { session_role: string } | undefined;
-      return (session?.session_role ?? services.launchingIdentities?.role(context.identity)) === 'assistant';
-    });
+    (context) => !context.remote && isAssistant(caller(context)), visibleToAssistant);
   if (services.routines) {
     const routines = services.routines;
     registerRoutineTools(registry, routines, (context) => {
@@ -751,6 +763,55 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
   }, (args, context) => {
     const input = assistantFocusItemsInput.parse(args ?? {});
     return assistantOnly(context, 'assistant_focus').focusItems({ digestId: input.digest_id, limit: input.limit, offset: input.offset });
+  });
+
+  const projectManager = (context: McpCallContext, tool: string) => {
+    const current = context.remote ? null : caller(context);
+    if (!current || !isAssistant(current)) throw new Error(`${tool}: only the assistant session can manage projects`);
+    return { actor_type: 'agent' as const, actor_id: current.process_id };
+  };
+  const notAssistant = (context: McpCallContext) => visibleToAssistant(context) ? null : 'Only the assistant session can manage projects.';
+  registry.register({
+    name: 'assistant_project_list',
+    namespace: 'assistant.project',
+    description: 'Assistant only: every workspace project with its ID, name, and directory path.',
+    inputSchema: { type: 'object', properties: {} },
+    changes: [],
+    unavailable: notAssistant
+  }, (_args, context) => {
+    projectManager(context, 'assistant_project_list');
+    return { projects: services.workbench.listProjects().map(({ id, name, path, kind }) => ({ project_id: id, name, path, kind })) };
+  });
+  registry.register({
+    name: 'assistant_project_create',
+    namespace: 'assistant.project',
+    description: 'Assistant only: register a directory as a Patterm project, optionally creating the directory first. Idempotent by path.',
+    inputSchema: jsonSchema(assistantProjectCreateInput, { $refStrategy: 'none' }),
+    changes: ['workbench'],
+    unavailable: notAssistant,
+    usageNotes: [
+      'To register an existing folder, pass its path. A missing path fails unless create_directory is true.',
+      'To make a new folder and project together, as in "create ~/Dev/app and add it to Patterm", pass create_directory: true. Only the last folder is created; a missing parent fails.',
+      'A path that is already a project returns that project with existed: true, unchanged; created_directory says whether this call made the folder.',
+      'Paths are on the machine Patterm runs on. Nothing is cloned or initialised: run git init or git clone yourself first if the user wants a repository.'
+    ]
+  }, (args, context) => {
+    const actor = projectManager(context, 'assistant_project_create');
+    const input = assistantProjectCreateInput.parse(args ?? {});
+    return services.actions.createProject.execute({ path: input.path, name: input.name ?? '', create_directory: input.create_directory, ...actor });
+  });
+  registry.register({
+    name: 'assistant_project_rename',
+    namespace: 'assistant.project',
+    description: 'Assistant only: rename a workspace project. Its folder is not renamed.',
+    inputSchema: jsonSchema(assistantProjectRenameInput, { $refStrategy: 'none' }),
+    changes: ['workbench', 'routines'],
+    unavailable: notAssistant,
+    usageNotes: ['Projects cannot be removed through MCP. Ask the user to remove one from the project menu, which confirms first.']
+  }, (args, context) => {
+    const actor = projectManager(context, 'assistant_project_rename');
+    const input = assistantProjectRenameInput.parse(args ?? {});
+    return services.actions.renameProject.execute({ ...input, ...actor });
   });
 
   registry.register({
