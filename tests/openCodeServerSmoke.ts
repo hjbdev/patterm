@@ -746,6 +746,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     );
     try {
       await checkStreamedActivity({ database, env: { ...env, XDG_STATE_HOME: directory }, first, daemonState, daemonResponses, daemonFrame, waitFor });
+      await checkActivityOrdering(database, env);
     } catch (error) {
       // An open stream would keep the process alive after a failure.
       daemon.closeAllConnections();
@@ -1087,6 +1088,59 @@ async function checkStreamedActivity(input: {
     releaseQuiet();
   }
   await waitFor(() => daemonResponses.size === 0);
+}
+
+// Subagent events wait on a parent lookup. A root end must not settle ahead of
+// a child start that arrived first, a subagent the daemon interrupts to
+// restart is not finished, and a lookup finishing after its stream was
+// replaced leaves the replacement alone.
+async function checkActivityOrdering(database: DatabaseService, env: NodeJS.ProcessEnv): Promise<void> {
+  const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const service = new OpenCodeServerService(database, env, { settleMs: 30 });
+  type Stream = { emit: (event: unknown) => void; runtime: { executable: string; cwd: string }; serial: Promise<void> };
+  const internals = service as unknown as {
+    activityState(sessionId: string): { emitters: Set<(event: IntegratedConversationEvent) => void> };
+    releaseActivity(sessionId: string, state: unknown, emit: unknown): void;
+    handleEvent(sessionId: string, envelope: unknown, stream: Stream): void;
+    descendsFrom(child: string, root: string): Promise<boolean>;
+  };
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  internals.descendsFrom = async (child) => {
+    if (child === 'ses_other') await delay(150);
+    if (child === 'ses_late') await held;
+    return child === 'ses_kid' || child === 'ses_late';
+  };
+  const open = () => {
+    const statuses: string[] = [];
+    const emit = (event: IntegratedConversationEvent) => { if (event.kind === 'status' && event.status) statuses.push(event.status); };
+    const state = internals.activityState('ses_root');
+    state.emitters.add(emit);
+    const stream: Stream = { emit: () => {}, runtime: { executable: 'opencode', cwd: '/tmp' }, serial: Promise.resolve() };
+    const send = (type: string, data: Record<string, unknown>) => internals.handleEvent('ses_root', { type, data }, stream);
+    return { statuses, send, close: () => internals.releaseActivity('ses_root', state, emit) };
+  };
+
+  const first = open();
+  first.send('session.execution.started', { sessionID: 'ses_root' });
+  first.send('session.execution.started', { sessionID: 'ses_other' });
+  first.send('session.created', { sessionID: 'ses_kid', parentID: 'ses_root' });
+  first.send('session.execution.started', { sessionID: 'ses_kid' });
+  first.send('session.execution.succeeded', { sessionID: 'ses_root' });
+  await delay(300);
+  assert.ok(!first.statuses.includes('idle'), 'a root end waits for an earlier child start');
+  first.send('session.execution.interrupted', { sessionID: 'ses_kid', reason: 'shutdown' });
+  await delay(100);
+  assert.ok(!first.statuses.includes('idle'), 'a subagent interrupted for a restart is not finished');
+
+  first.send('session.execution.started', { sessionID: 'ses_late' });
+  first.close();
+  const second = open();
+  second.send('session.execution.succeeded', { sessionID: 'ses_root' });
+  release();
+  await delay(100);
+  assert.deepEqual([...new Set(second.statuses)], ['idle'], 'a lookup finishing after its stream closed leaves the replacement alone');
+  second.close();
 }
 
 interface FakeDaemonState {

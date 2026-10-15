@@ -438,9 +438,10 @@ export class OpenCodeServerService {
       const request = isRequestEvent(type);
       if (request || executionEvent(type, data)) {
         const child = eventSession;
+        const state = this.activityState(sessionId);
         stream.serial = stream.serial.then(async () => {
           if (!await this.descendsFrom(child, sessionId, runtime).catch(() => false)) return;
-          this.applyChildActivity(sessionId, child, type, data);
+          this.applyChildActivity(sessionId, state, child, type, data);
           if (request) emit({ kind: 'pending' });
         }).catch(() => {});
         if (request) return;
@@ -456,7 +457,10 @@ export class OpenCodeServerService {
     if (execution) {
       const failure = execution === 'failed' ? String(record(data.error).message ?? data.message ?? '').trim() : '';
       if (failure) emit({ kind: 'replace', message: { id: `error_${String(event.id ?? randomUUID())}`, role: 'assistant', kind: 'notice', level: 'error', text: failure, createdAt: at, completedAt: at } });
-      this.applyRootExecution(sessionId, execution, failure);
+      // In order behind subagent events still being looked up, so an end is
+      // never settled before a child start that arrived earlier.
+      const state = this.activityState(sessionId);
+      stream.serial = stream.serial.then(() => this.applyRootExecution(sessionId, state, execution, failure)).catch(() => {});
       return;
     }
     // Ids match the snapshot's projection of the same native rows.
@@ -559,8 +563,9 @@ export class OpenCodeServerService {
     if (state) state.admittedAt = Date.now();
   }
 
-  private applyRootExecution(sessionId: string, execution: OpenCodeExecutionEvent, failure: string): void {
-    const state = this.activityState(sessionId);
+  private applyRootExecution(sessionId: string, state: OpenCodeActivity, execution: OpenCodeExecutionEvent, failure: string): void {
+    // Queued work belongs to the stream it arrived on, not a replacement.
+    if (this.activity.get(sessionId) !== state) return;
     if (execution === 'started') {
       state.execution = 'running';
       state.detail = '';
@@ -584,16 +589,19 @@ export class OpenCodeServerService {
     this.publishActivity(state);
   }
 
-  private applyChildActivity(sessionId: string, child: string, type: string, data: Record<string, unknown>): void {
-    // A lookup can finish after the session's last stream closed.
-    const state = this.activity.get(sessionId);
-    if (!state) return;
+  private applyChildActivity(sessionId: string, state: OpenCodeActivity, child: string, type: string, data: Record<string, unknown>): void {
+    // A lookup can finish after its stream closed or was replaced.
+    if (this.activity.get(sessionId) !== state) return;
     let changed: boolean;
+    const execution = isRequestEvent(type) ? null : executionEvent(type, data);
     if (isRequestEvent(type)) {
       changed = applyRequest(state, type, data, child);
-    } else if (executionEvent(type, data) === 'started') {
+    } else if (execution === 'started') {
       changed = !state.children.has(child);
       state.children.add(child);
+    } else if (execution === 'shutdown') {
+      // The daemon resumes the subagent after it restarts.
+      return;
     } else {
       changed = state.children.delete(child);
       changed = dropRequests(state, child) || changed;
