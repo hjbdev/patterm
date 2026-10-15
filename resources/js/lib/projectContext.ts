@@ -14,8 +14,9 @@ export function contextCall<T>(name: string, projectId: string, args: Record<str
   return window.patterm.call(name, { project_id: projectId, ...args }) as Promise<T>;
 }
 
-// Announcements of context changes, for projects whose revision is unknown:
-// one the workbench doesn't list yet, or one on an older paired host.
+// Announcements of context changes, and reconnects, after which one may have
+// been missed, for projects whose revision is unknown: one the workbench
+// doesn't list yet, or one on an older paired host.
 const contextSignal = ref(0);
 let signalling = false;
 
@@ -33,6 +34,11 @@ export function projectContextVersion(projectId: string): string | null {
   if (!signalling) {
     signalling = true;
     window.patterm.onDataChanged((topics) => { if (topics.includes('context')) contextSignal.value += 1; });
+    let state = window.patterm.connectionState?.() ?? 'connected';
+    window.patterm.onConnectionChanged?.((next) => {
+      if (next === 'connected' && state !== 'connected') contextSignal.value += 1;
+      state = next;
+    });
   }
   return `${epoch.value}:${revisions.join(',')}:${contextSignal.value}`;
 }

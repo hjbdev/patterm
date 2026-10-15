@@ -14,6 +14,10 @@ export const queryClient = new QueryClient({
     }
   }
 });
+// Mounted for the page's lifetime: a retry paused while the tab was hidden or
+// offline resumes when it is shown or back online. Focus and reconnect still
+// refetch nothing.
+queryClient.mount();
 
 // The newest data cached under any key that starts with `prefix`, so a view
 // can show what it last read while a read for the current revision runs.
@@ -29,11 +33,10 @@ export function latestQueryData<T>(prefix: QueryKey): T | undefined {
   return latest?.data;
 }
 
-// Keys invalidated when the server announces a change to their topic, or
-// after a reconnect, when announcements may have been missed.
-const topicKeys: Record<string, QueryKey[]> = {
-  settings: [['harness_presets']]
-};
+// Counts settings changes, and reconnects, after which one may have been
+// missed. Preset reads are keyed by it, so a read that was already under way
+// when settings changed can't stand in for one made after.
+let settingsGeneration = 0;
 
 // Starts on first use, not at import: the bundler may evaluate this module
 // before browser.ts installs window.patterm.
@@ -41,13 +44,10 @@ let listening = false;
 function listen(): void {
   if (listening || !window.patterm) return;
   listening = true;
-  const invalidate = (topics: string[]) => {
-    for (const topic of topics) for (const queryKey of topicKeys[topic] ?? []) void queryClient.invalidateQueries({ queryKey });
-  };
-  window.patterm.onDataChanged(invalidate);
+  window.patterm.onDataChanged((topics) => { if (topics.includes('settings')) settingsGeneration += 1; });
   let state = window.patterm.connectionState?.() ?? 'connected';
   window.patterm.onConnectionChanged?.((next) => {
-    if (next === 'connected' && state !== 'connected') invalidate(Object.keys(topicKeys));
+    if (next === 'connected' && state !== 'connected') settingsGeneration += 1;
     state = next;
   });
 }
@@ -57,5 +57,5 @@ export interface HarnessPresetSettings { presets?: unknown[] }
 // Saved harness presets, read once and again after settings change.
 export function harnessPresets<T extends HarnessPresetSettings>(): Promise<T | null> {
   listen();
-  return queryClient.fetchQuery({ queryKey: ['harness_presets'], queryFn: async () => (await window.patterm.harnessPresets() ?? null) as T | null });
+  return queryClient.fetchQuery({ queryKey: ['harness_presets', settingsGeneration], queryFn: async () => (await window.patterm.harnessPresets() ?? null) as T | null });
 }
