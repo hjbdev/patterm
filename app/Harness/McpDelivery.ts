@@ -2,12 +2,15 @@ import type { McpServerSpec } from './HarnessProvider';
 import type { McpLaunchServer } from '../Services/McpServerRegistry';
 import { escapeCmdArgument } from '../Platform/Executable';
 
-// Turns Patterm's global MCP servers into each harness's own configuration.
-// Remote servers never carry secrets here: Claude Code and Codex run a header
-// helper, and OpenCode, which only take fixed headers, run a stdio
-// bridge. Both ask Patterm for current headers over the local socket.
+// A public marker, never a credential. Supplying a bearer disables Codex's
+// native OAuth lookup; the helper authenticates the proxy in a separate header.
+export const CODEX_MCP_PROXY_ENV = { PATTERM_MCP_PROXY: 'patterm-managed' };
 
-type ShimMode = '--mcp-headers' | '--mcp-bridge' | '--mcp-exec';
+// Turns Patterm's global MCP servers into each harness's own configuration.
+// Remote servers never carry upstream secrets here. Claude and OpenCode use
+// stdio bridges; Codex uses Patterm's HTTP proxy to override native HTTP entries.
+
+type ShimMode = '--mcp-headers' | '--mcp-proxy-headers' | '--mcp-bridge' | '--mcp-exec';
 
 interface Invocation {
   command: string;
@@ -30,8 +33,8 @@ function shim(patterm: McpServerSpec, mode: ShimMode, serverId: string): Invocat
 // use cmd.exe: Claude runs `cmd.exe /d /s /c "<helper>"` and Codex
 // `%ComSpec% /Q /D /C "<helper>"`, which both strip the outer quotes. Neither
 // passes the shim's environment through, so the helper sets it first.
-export function headersHelperCommand(patterm: McpServerSpec, serverId: string): string {
-  const helper = shim(patterm, '--mcp-headers', serverId);
+export function headersHelperCommand(patterm: McpServerSpec, serverId: string, mode: '--mcp-headers' | '--mcp-proxy-headers' = '--mcp-headers'): string {
+  const helper = shim(patterm, mode, serverId);
   if (process.platform === 'win32') return cmdHelperCommand(helper);
   return [
     ...Object.entries(helper.env).map(([key, value]) => `${key}=${shellQuote(value)}`),
@@ -40,9 +43,11 @@ export function headersHelperCommand(patterm: McpServerSpec, serverId: string): 
 }
 
 export function claudeMcpServers(servers: McpLaunchServer[], patterm: McpServerSpec): Record<string, unknown> {
-  return Object.fromEntries(servers.map((server) => [server.name, server.transport === 'stdio'
-    ? { command: server.command, args: server.args, env: server.env }
-    : { type: 'http', url: server.url, ...(server.managedHeaders ? { headersHelper: headersHelperCommand(patterm, server.id) } : {}) }]));
+  return Object.fromEntries(servers.map((server) => {
+    if (server.transport === 'stdio') return [server.name, { command: server.command, args: server.args, env: server.env }];
+    const bridge = shim(patterm, '--mcp-bridge', server.id);
+    return [server.name, { command: bridge.command, args: bridge.args, env: bridge.env }];
+  }));
 }
 
 // Codex `-c` values appear in `ps` and in Patterm's process records, so a
@@ -53,10 +58,12 @@ export function codexMcpOverrides(servers: McpLaunchServer[], patterm: McpServer
   return servers.flatMap((server) => {
     const key = `mcp_servers.${server.name}`;
     if (server.transport === 'http') {
+      if (!patterm.httpProxyUrl) throw new Error('Patterm MCP HTTP proxy is unavailable');
       return [
-        `${key}.url=${tomlString(server.url)}`,
+        `${key}.url=${tomlString(`${patterm.httpProxyUrl}/${encodeURIComponent(server.id)}`)}`,
         `${key}.enabled=true`,
-        ...(server.managedHeaders ? [`${key}.http_headers_helper=${tomlString(headersHelperCommand(patterm, server.id))}`] : [])
+        `${key}.bearer_token_env_var="PATTERM_MCP_PROXY"`,
+        `${key}.http_headers_helper=${tomlString(headersHelperCommand(patterm, server.id, '--mcp-proxy-headers'))}`
       ];
     }
     const run = Object.keys(server.env).length > 0 ? shim(patterm, '--mcp-exec', server.id) : { command: server.command, args: server.args, env: {} };
@@ -80,27 +87,15 @@ export function openCodeMcpConfigs(servers: McpLaunchServer[], patterm: McpServe
   }));
 }
 
-// Codex prefers its own saved login for a server name over Patterm's header
-// helper, so an expired native login hides a server that works in Patterm.
-// Without either login, Codex reports the server as not logged in.
+// Patterm owns authentication for its servers; native Codex login advice is
+// never a recovery step for these connections (including older live hosts).
 export function codexMcpStartupNotice(server: McpLaunchServer, error: string): { title: string; body: string } {
-  const managed = server.transport === 'http' && server.managedHeaders;
   const reason = error || 'Codex could not start this MCP server.';
-  // Advice leads because notification lists show only the first lines.
-  // PowerShell and cmd.exe take the TOML values in double quotes, so Windows
-  // uses TOML literal strings inside them.
-  const url = server.transport === 'http' ? server.url : '';
-  const logout = process.platform === 'win32'
-    ? `codex -c "mcp_servers.${server.name}.url='${url}'" mcp logout ${server.name} (add -c "mcp_oauth_credentials_store='file'" if no keyring is available)`
-    : `codex -c 'mcp_servers.${server.name}.url="${url}"' mcp logout ${server.name} (add -c mcp_oauth_credentials_store="file" if no keyring is available)`;
-  const advice = managed && /refresh/i.test(error)
-    ? `Codex has its own saved login for ${server.name}, which it uses instead of Patterm's. Remove it with ${logout}, then restart the agent.`
-    : managed && /not logged in/i.test(error)
-      ? `Sign in to ${server.name} in Patterm's MCP server settings, then restart the agent.`
-      : null;
+  const authFailure = server.transport === 'http' && /oauth|authenticat|not logged in|refresh|sign.?in/i.test(error);
+  const advice = authFailure ? `Test ${server.name} in Patterm's MCP server settings and sign in there if needed, then restart the agent.` : null;
   return {
     title: `${server.name} did not start in Codex`,
-    body: advice ? `${advice}\n\nCodex reported: ${reason}` : `${reason}\n\nThe agent runs without its tools until it restarts.`
+    body: advice ? advice : `${reason}\n\nThe agent runs without its tools until it restarts.`
   };
 }
 

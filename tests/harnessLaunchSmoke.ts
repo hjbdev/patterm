@@ -184,7 +184,7 @@ function assertProviderPlans(runtimeDir: string): void {
 
   // Codex: repeated -c TOML overrides, no files, no env.
   const codex = providerById('codex').buildLaunch({ executablePath: '/usr/bin/codex', mcp: MCP, runtimeDir, agentContext: 'Agent startup context\nwith "quotes"' });
-  assert.deepEqual(codex.env, {});
+  assert.deepEqual(codex.env, { PATTERM_MCP_PROXY: 'patterm-managed' });
   assert.equal(codex.files.length, 0);
   assert.ok(codex.args.includes('mcp_servers.patterm.command="/opt/electron"'), 'codex sets mcp command via -c');
   assert.ok(

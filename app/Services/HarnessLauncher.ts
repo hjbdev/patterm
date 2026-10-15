@@ -102,6 +102,7 @@ export interface HarnessLauncherDeps {
   presetSettings?: Pick<SettingsService, 'harnessPresets'>;
   // The user's global MCP servers, added to every launch beside Patterm's.
   mcpServers?: Pick<McpServerRegistry, 'forHarness'>;
+  mcpHttpProxyUrl?: string;
   // Browsers on other machines view these terminals, so agent CLIs must not
   // expect a sign-in redirect to reach this machine's loopback listeners.
   // Lets MCP helpers of a launch that is still starting use its identity.
@@ -190,6 +191,7 @@ export class HarnessLauncher {
     timing.mark('install.resolved');
 
     const mcp: McpServerSpec = {
+      ...(this.deps.mcpHttpProxyUrl ? { httpProxyUrl: this.deps.mcpHttpProxyUrl } : {}),
       command: this.deps.nodePath,
       args: [this.deps.shimPath],
       env: { ELECTRON_RUN_AS_NODE: '1', PATTERM_MCP_SOCKET: this.deps.socketPath, PATTERM_MCP_IDENTITY: identity }

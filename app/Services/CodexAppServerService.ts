@@ -27,7 +27,7 @@ import {
   type CodexConversationState, restoreCodexWindowGap, CODEX_PLAN_TITLE } from './CodexTranscript';
 import type { TranscriptImageStore } from './TranscriptImageStore';
 import type { RealtimeVoiceOptions } from './AssistantVoiceProfile';
-import { codexMcpOverrides as globalCodexMcpOverrides } from '../Harness/McpDelivery';
+import { CODEX_MCP_PROXY_ENV, codexMcpOverrides as globalCodexMcpOverrides } from '../Harness/McpDelivery';
 import { ipcPath } from '../Platform/Ipc';
 
 type JsonRecord = Record<string, unknown>;
@@ -157,7 +157,7 @@ export class CodexAppServerService {
       executable: input.executable, args, cwd: input.cwd, appServerSocketPath,
       controlSocketPath: socketPath, logPath
     }), { mode: 0o600 });
-    const pid = await (this.options.launcher ?? detachedHostLauncher).launch({ harness: 'codex', key, nodePath: this.nodePath, script: this.hostScript, configPath, cwd: input.cwd, env: this.env });
+    const pid = await (this.options.launcher ?? detachedHostLauncher).launch({ harness: 'codex', key, nodePath: this.nodePath, script: this.hostScript, configPath, cwd: input.cwd, env: { ...this.env, ...CODEX_MCP_PROXY_ENV } });
 
     try {
       await waitForSocket(socketPath, pid);

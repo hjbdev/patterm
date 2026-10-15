@@ -5,7 +5,7 @@ import {
   type HarnessLaunchPlan,
   type HarnessProvider
 } from './HarnessProvider';
-import { claudeMcpServers, codexMcpOverrides, tomlString, tomlStringArray } from './McpDelivery';
+import { claudeMcpServers, CODEX_MCP_PROXY_ENV, codexMcpOverrides, tomlString, tomlStringArray } from './McpDelivery';
 
 // Built-in harness providers: the agent CLIs
 // (claude | codex | opencode) plus the always-available raw PTY fallback. Each
@@ -94,7 +94,7 @@ const codex: HarnessProvider = {
       args: resumeId
         ? ['resume', ...overrides.flatMap((override) => ['-c', override]), resumeId]
         : overrides.flatMap((override) => ['-c', override]),
-      env: {},
+      env: { ...CODEX_MCP_PROXY_ENV },
       files: [],
       agentContextInjected: Boolean(context)
     };

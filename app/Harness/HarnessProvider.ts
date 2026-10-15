@@ -14,6 +14,7 @@ export interface McpServerSpec {
   command: string;
   args: string[];
   env: Record<string, string>;
+  httpProxyUrl?: string;
 }
 
 export interface HarnessLaunchInput {

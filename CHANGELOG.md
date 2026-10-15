@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Claude and Codex use Patterm-managed connections for configured remote MCP
+  servers. Native CLI logins no longer override Patterm authentication, and
+  connection failures direct users to Patterm's MCP settings.
+
 ## [0.2.3] - 2026-10-15
 
 ### Changed
