@@ -22,11 +22,14 @@ export interface ProjectSummaryDto {
   host?: string;
   // Connected paired hosts this project is linked with, and the qualified ID
   // of the linked project there, for launching on that host.
-  remotes?: Array<{ host: string; projectId: string; contextRevision?: number }>;
+  remotes?: Array<{ host: string; projectId: string; contextRevision?: number; sharesHistory?: boolean }>;
   // Counts writes to the project's todos, scratchpads, links and worktrees.
   // Clients key cached context reads by it. Only workbench snapshots carry
   // it, and older paired hosts omit it.
   contextRevision?: number;
+  // Set on a paired host's records when that host announces its history
+  // changes here, so its history reads can be cached.
+  sharesHistory?: boolean;
 }
 
 export interface CloseRequestDto { summary: string; requestedAt: string; }

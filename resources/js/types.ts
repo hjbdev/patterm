@@ -17,10 +17,13 @@ export interface ProjectSummary {
   host?: string;
   // Connected paired hosts this project is linked with, and the qualified ID
   // of the linked project there.
-  remotes?: Array<{ host: string; projectId: string; contextRevision?: number }>;
+  remotes?: Array<{ host: string; projectId: string; contextRevision?: number; sharesHistory?: boolean }>;
   // Counts writes to the project's todos, scratchpads, links and worktrees.
   // Absent on older paired hosts.
   contextRevision?: number;
+  // Set on a paired host's records when that host announces its history
+  // changes here, so its history reads can be cached.
+  sharesHistory?: boolean;
 }
 
 export interface ProjectWorkbench {

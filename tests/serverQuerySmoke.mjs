@@ -12,6 +12,8 @@ const source = fs.readFileSync(new URL('../resources/js/lib/serverQuery.ts', imp
 const { outputText } = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } });
 
 const dataListeners = [], connectionListeners = [], calls = [];
+// The workbench's projects, for which paired hosts announce their history.
+const projects = vue.ref([]);
 const window = {
   patterm: {
     call: (name, args) => new Promise((resolve) => calls.push({ name, args, resolve })),
@@ -23,7 +25,7 @@ const window = {
 const modules = {
   vue,
   '@tanstack/vue-query': require('@tanstack/vue-query'),
-  '../Composables/useWorkbench': { useWorkbench: () => ({ lifecycleRevision: vue.ref(0) }) }
+  '../Composables/useWorkbench': { useWorkbench: () => ({ lifecycleRevision: vue.ref(0), projects }) }
 };
 const exports = {};
 new Function('exports', 'require', 'window', outputText)(exports, (name) => modules[name], window);
@@ -88,4 +90,33 @@ test('data that changes unannounced reads again while fresh says so, and own wri
   const written = list();
   await answer({ pending: false, saved: true });
   assert.deepEqual(await written, { pending: false, saved: true });
+});
+
+test("a paired host's history is cached once that host announces it; older hosts always read", async () => {
+  projects.value = [
+    { project: { id: 'local', remotes: [{ host: 'workstation', projectId: 'workstation:p', sharesHistory: true }] } },
+    { project: { id: 'laptop:q', host: 'laptop' } }
+  ];
+  const remote = () => topicCall('history', 'history_list', { project_id: 'workstation:p', limit: 2 });
+  const first = remote();
+  await answer('shared');
+  assert.equal(await first, 'shared');
+  assert.equal(await remote(), 'shared', 'a revisit reads nothing');
+  assert.equal(calls.length, 0);
+  announce(['history']);
+  const changed = remote();
+  await answer('shared again');
+  assert.equal(await changed, 'shared again', 'its announcement reads again');
+  for (const value of ['older one', 'older two']) {
+    const read = topicCall('history', 'history_list', { project_id: 'laptop:q' });
+    await answer(value);
+    assert.equal(await read, value, 'a host that does not announce history always reads');
+  }
+  const settings = topicCall('settings', 'harness_presets', { project_id: 'workstation:p' });
+  await answer('presets');
+  assert.equal(await settings, 'presets');
+  const again = topicCall('settings', 'harness_presets', { project_id: 'workstation:p' });
+  await answer('presets again');
+  assert.equal(await again, 'presets again', 'other topics are not announced, so they always read');
+  projects.value = [];
 });

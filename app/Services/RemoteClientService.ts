@@ -48,6 +48,9 @@ export const RELAY_CHANNELS = new Set([
 const MAX_DEPTH = 12;
 const RELAY_TIMEOUT_MS = 30_000;
 const ANNOUNCE_DELAY_MS = 100;
+// Change topics hosts announce to each other.
+const SHARED_TOPICS = ['context', 'history'] as const;
+type SharedTopic = typeof SHARED_TOPICS[number];
 
 const rpcRequest = z.object({ channel: z.string().max(100), args: z.unknown().optional() }).strict();
 const uploadRequest = z.object({ name: z.string().min(1).max(255), data: z.string().max(15 * 1024 * 1024) }).strict();
@@ -74,9 +77,9 @@ export interface RemoteClientOptions {
   subscribeConversation: (processId: string, listener: ConversationListener) => Promise<() => void>;
   // Stores a file a paired host's UI attached for one of this host's agents.
   saveUpload: (name: string, bytes: Buffer) => Promise<string>;
-  // A paired host's todos or scratchpads changed; refresh those views here
-  // without announcing the change back.
-  notifyRemoteTopics: (topics: Array<'context'>) => void;
+  // A paired host's todos, scratchpads or conversation history changed;
+  // refresh those views here without announcing the change back.
+  notifyRemoteTopics: (topics: SharedTopic[]) => void;
   // Integrated and MCP tools a paired host may call as the owner.
   allowedTools: ReadonlySet<string>;
 }
@@ -110,14 +113,21 @@ export class RemoteClientService {
     private readonly links: ProjectLinkService,
     private readonly options: RemoteClientOptions
   ) {
-    peers.handle('workbench.read', () => this.options.localWorkbench().projects);
+    // The flag tells a paired host it may cache this host's history reads:
+    // its changes are announced. Older hosts send no flag.
+    peers.handle('workbench.read', () => this.options.localWorkbench().projects
+      .map((project) => ({ ...project, project: { ...project.project, sharesHistory: true } })));
     peers.handle('client.rpc', (raw, peer) => this.serveRequest(raw, peer));
     peers.handle('client.conversation', (raw, peer) => this.serveConversation(raw, peer));
     peers.handle('client.upload', (raw) => {
       const { name, data } = uploadRequest.parse(raw);
       return this.options.saveUpload(name, Buffer.from(data, 'base64'));
     });
-    peers.onConnected((hostId) => void this.refresh(hostId));
+    peers.onConnected((hostId) => {
+      void this.refresh(hostId);
+      // History announced while the link was down was missed.
+      this.options.notifyRemoteTopics(['history']);
+    });
     peers.onDisconnected((hostId) => this.dropHost(hostId));
     peers.onEvent((event) => {
       if (event.event === 'workbench.changed') void this.refresh(event.host_id);
@@ -131,7 +141,7 @@ export class RemoteClientService {
         if (peer && typeof processId === 'string') for (const listener of this.controlLostListeners) listener(`${peer.name}:${processId}`);
       }
       else if (event.event === 'data.changed') {
-        const topics = z.array(z.enum(['context'])).safeParse((event.payload as { topics?: unknown } | null)?.topics);
+        const topics = z.array(z.enum(SHARED_TOPICS)).safeParse((event.payload as { topics?: unknown } | null)?.topics);
         if (topics.success && topics.data.length) this.options.notifyRemoteTopics(topics.data);
       }
     });
@@ -166,12 +176,15 @@ export class RemoteClientService {
     this.announceTimer.unref?.();
   }
 
-  // This host's todos or scratchpads changed: tell paired hosts so their
-  // views of them refresh.
+  // This host's todos, scratchpads or history changed: tell paired hosts so
+  // their views of them refresh. One topic per event: an older host rejects
+  // an event naming a topic it doesn't know.
   localTopicsChanged(topics: readonly string[]): void {
-    const shared = topics.filter((topic) => topic === 'context');
-    if (!shared.length || this.disposed) return;
-    for (const peer of this.hosts.peers()) this.peers.emit(peer.host_id, 'data.changed', { topics: shared });
+    if (this.disposed) return;
+    for (const topic of SHARED_TOPICS) {
+      if (!topics.includes(topic)) continue;
+      for (const peer of this.hosts.peers()) this.peers.emit(peer.host_id, 'data.changed', { topics: [topic] });
+    }
   }
 
   dispose(): void {
@@ -194,7 +207,12 @@ export class RemoteClientService {
         const localId = this.links.localProjectFor(peer.host_id, remoteProject.project.id);
         const local = localId ? projects.find((project) => project.project.id === localId) : undefined;
         if (local) {
-          local.project = { ...local.project, remotes: [...(local.project.remotes ?? []), { host: peer.name, projectId: qualified.project.id, ...(qualified.project.contextRevision === undefined ? {} : { contextRevision: qualified.project.contextRevision }) }] };
+          local.project = { ...local.project, remotes: [...(local.project.remotes ?? []), {
+            host: peer.name,
+            projectId: qualified.project.id,
+            ...(qualified.project.contextRevision === undefined ? {} : { contextRevision: qualified.project.contextRevision }),
+            ...(qualified.project.sharesHistory ? { sharesHistory: true } : {})
+          }] };
           local.projectSessions = [...local.projectSessions, ...qualified.projectSessions];
           local.processes = [...local.processes, ...qualified.processes];
           local.worktrees = [...local.worktrees, ...qualified.worktrees];
