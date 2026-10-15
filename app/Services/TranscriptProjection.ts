@@ -791,6 +791,9 @@ export interface ConversationStreamMessage {
   completedAt?: string | undefined;
 }
 
+// Activity a conversation stream reports.
+export type IntegratedDeliveryStatus = 'working' | 'idle' | 'error' | 'permission' | 'unknown';
+
 export interface ConversationStreamEvent {
   processId: string;
   revision: number;
@@ -798,7 +801,7 @@ export interface ConversationStreamEvent {
   message?: ConversationStreamMessage | undefined;
   id?: string | undefined;
   delta?: string | undefined;
-  status?: 'working' | 'idle' | 'error' | 'unknown' | undefined;
+  status?: IntegratedDeliveryStatus | undefined;
   detail?: string | undefined;
 }
 
