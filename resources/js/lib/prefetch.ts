@@ -1,4 +1,4 @@
-import { watch } from 'vue';
+import { onScopeDispose, watch } from 'vue';
 import { useWorkbench } from '../Composables/useWorkbench';
 import type { ProjectWorkbench, SessionRecord } from '../types';
 import { hasCachedConversation, normaliseConversation, rememberConversation } from './integratedConversation';
@@ -84,7 +84,10 @@ export function linkClass(): LinkClass {
 export const Tier = { Intent: 0, Current: 1, Other: 2, Transcript: 3 } as const;
 export type Tier = typeof Tier[keyof typeof Tier];
 
-interface Task { key: string; tier: Tier; notBefore: number; run: () => Promise<void> }
+// `eligible` is checked again just before a task reads, so a queued task
+// whose session ended, or that the connection or preference no longer allows,
+// is dropped without reading.
+interface Task { key: string; tier: Tier; notBefore: number; eligible: () => boolean; run: () => Promise<void> }
 
 const MAX_RUNNING = 2;
 const queue = new Map<string, Task>();
@@ -97,6 +100,12 @@ function enqueue(task: Task): void {
   if (queued && queued.tier <= task.tier && queued.notBefore <= task.notBefore) return;
   queue.set(task.key, task);
   schedule(0);
+}
+
+// Drops queued tasks that are no longer eligible, such as those for agents
+// that ended while the tab was hidden.
+function prune(): void {
+  for (const [key, task] of queue) if (!task.eligible()) queue.delete(key);
 }
 
 function schedule(delay: number): void {
@@ -121,6 +130,7 @@ function pump(): void {
     }
     const task = next;
     queue.delete(task.key);
+    if (!task.eligible()) continue;
     running.add(task.key);
     void task.run().catch(() => { /* A view reads it again when opened. */ }).finally(() => {
       running.delete(task.key);
@@ -162,10 +172,22 @@ function transcriptAllowed(processId: string, inCurrentProject: boolean, tier: T
 // Reads an Integrated conversation into the cache its pane paints from. The
 // pane still takes its own snapshot when opened; this only lets it show
 // something at once. Conversations the user has opened are never evicted.
+// A read in flight counts against the budget at this size until its real
+// size is known, so reads started together can't overshoot it.
+const TRANSCRIPT_ESTIMATE_BYTES = 100_000;
+
 async function readTranscript(processId: string): Promise<void> {
   if (hasCachedConversation(processId)) return;
-  const result = await window.patterm.call('integrated_get', { process_id: processId, transcript_only: true }) as Record<string, unknown>;
-  transcriptReads.push({ at: Date.now(), bytes: JSON.stringify(result).length, processId });
+  const read = { at: Date.now(), bytes: TRANSCRIPT_ESTIMATE_BYTES, processId };
+  transcriptReads.push(read);
+  let result: Record<string, unknown>;
+  try {
+    result = await window.patterm.call('integrated_get', { process_id: processId, transcript_only: true }) as Record<string, unknown>;
+  } catch (error) {
+    transcriptReads.splice(transcriptReads.indexOf(read), 1);
+    throw error;
+  }
+  read.bytes = JSON.stringify(result).length;
   if (hasCachedConversation(processId)) return;
   const cursor = result.history_cursor as Record<string, unknown> | null | undefined;
   rememberConversation(processId, {
@@ -187,15 +209,23 @@ function runningSessions(project: ProjectWorkbench): SessionRecord[] {
   return project.projectSessions.filter((session) => !session.exitedAt && session.processId).slice(-SESSIONS_PER_PROJECT);
 }
 
+// Whether a session is still one the project would read ahead now.
+function stillRunning(projectId: string, sessionId: string): boolean {
+  const project = useWorkbench().projects.value.find((item) => item.project.id === projectId);
+  return Boolean(project && runningSessions(project).some((session) => session.id === sessionId));
+}
+
 // Reads one session's context panel, and its conversation if allowed. The
 // context read uses the panel's own arguments, so the panel finds it cached.
 export function prefetchSession(projectId: string, session: SessionRecord, tier: Tier, delay = 0): void {
-  const { activeProjectId } = prefetchState;
   const notBefore = Date.now() + delay;
-  enqueue({ key: `context\0${projectId}\0${session.id}`, tier, notBefore, run: () => contextRead('session_context', projectId, { session_id: session.id, limit: 100 }).then(() => undefined) });
+  const live = () => stillRunning(projectId, session.id);
+  enqueue({ key: `context\0${projectId}\0${session.id}`, tier, notBefore, eligible: live, run: () => contextRead('session_context', projectId, { session_id: session.id, limit: 100 }).then(() => undefined) });
   const processId = session.processId;
-  if (session.interfaceMode === 'integrated' && processId && transcriptAllowed(processId, projectId === activeProjectId, tier)) {
-    enqueue({ key: `transcript\0${processId}`, tier: tier === Tier.Intent ? Tier.Intent : Tier.Transcript, notBefore, run: () => readTranscript(processId) });
+  if (session.interfaceMode !== 'integrated' || !processId) return;
+  const allowed = () => transcriptAllowed(processId, projectId === prefetchState.activeProjectId, tier);
+  if (allowed()) {
+    enqueue({ key: `transcript\0${processId}`, tier: tier === Tier.Intent ? Tier.Intent : Tier.Transcript, notBefore, eligible: () => live() && allowed(), run: () => readTranscript(processId) });
   }
 }
 
@@ -234,8 +264,11 @@ export function startPrefetch(activeProjectId: () => string | null): void {
   };
   // Nothing reads ahead until the page has loaded and settled, so it never
   // competes with the first view.
-  let settled = false;
-  const plan = () => settled && idle(() => {
+  let settled = false, disposed = false;
+  let settleTimer: ReturnType<typeof setTimeout> | null = null;
+  const plan = () => settled && !disposed && idle(() => {
+    if (disposed) return;
+    prune();
     const active = prefetchState.activeProjectId;
     for (const project of projects.value) {
       const id = project.project.id;
@@ -244,7 +277,7 @@ export function startPrefetch(activeProjectId: () => string | null): void {
     }
   });
   watch(activeProjectId, (id) => { prefetchState.activeProjectId = id; plan(); }, { immediate: true });
-  const settle = () => setTimeout(() => { settled = true; plan(); }, SETTLE_MS);
+  const settle = () => { settleTimer = setTimeout(() => { settled = true; plan(); }, SETTLE_MS); };
   if (loaded.value) settle();
   else { const stop = watch(loaded, (value) => { if (value) { stop(); settle(); } }); }
   watch(lifecycleRevision, plan);
@@ -260,5 +293,12 @@ export function startPrefetch(activeProjectId: () => string | null): void {
       else prefetchProject(id, Tier.Other, OTHER_PROJECT_DELAY_MS);
     }
   }, { immediate: true });
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') schedule(0); });
+  const resume = () => { if (document.visibilityState === 'visible') schedule(0); };
+  document.addEventListener('visibilitychange', resume);
+  onScopeDispose(() => {
+    disposed = true;
+    document.removeEventListener('visibilitychange', resume);
+    if (settleTimer) clearTimeout(settleTimer);
+    queue.clear();
+  });
 }

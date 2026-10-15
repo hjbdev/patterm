@@ -276,6 +276,21 @@ export class IntegratedAgentService {
     return { ...record(conversation), history_truncated: true, history_unavailable: false, history_cursor: { next: archiveCursor(before, count) } };
   }
 
+  // The transcript alone, for reading ahead of the user. Unlike
+  // `conversation` it keeps no snapshot ledger: it never changes activity,
+  // delivers held prompts, or records limits, so reading an agent nobody has
+  // opened changes nothing. It leaves out the command and model lists, which
+  // the pane reads separately, and imported history, which the pane's own
+  // snapshot adds.
+  async peekConversation(processId: string): Promise<unknown> {
+    const conversation = record(await this.forProcess(processId).conversation(processId));
+    const { commands: _commands, models: _models, ...transcript } = conversation;
+    const held = this.heldQueue(this.ledgerKey(processId));
+    if (!held.length) return transcript;
+    const native = transcript.queue;
+    return { ...transcript, queue: [...(Array.isArray(native) ? native : []), ...held] };
+  }
+
   // Archive pages carry imported rows untouched. The renderer projects them
   // exactly as the History view does.
   async olderMessages(processId: string, cursor: string): Promise<unknown> {

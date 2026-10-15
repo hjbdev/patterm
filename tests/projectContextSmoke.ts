@@ -211,7 +211,10 @@ async function main(): Promise<void> {
     const conversations = createTestMcpRegistry({ tempDir: dir, database, timeline,
       terminal: { request: async () => ({}) } as unknown as TerminalService,
       workbench: new WorkbenchRepository(database),
-      integrated: { conversation: async () => ({ provider: 'claude', messages: [{ id: 'm' }], commands: [{ name: 'x' }], models: ['y'] }) } as never });
+      integrated: {
+        conversation: async () => ({ provider: 'claude', messages: [{ id: 'm' }], commands: [{ name: 'x' }], models: ['y'] }),
+        peekConversation: async () => ({ provider: 'claude', messages: [{ id: 'm' }] })
+      } as never });
     const aliceProcess = (db.prepare('select process_id from sessions where id=?').get(alice) as { process_id: string }).process_id;
     const fullConversation = await conversations.call('integrated_get', { process_id: aliceProcess }) as Record<string, unknown>;
     assert.ok('commands' in fullConversation && 'models' in fullConversation);

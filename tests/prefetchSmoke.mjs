@@ -69,13 +69,13 @@ test('at most two reads run at once, the pointer first, and none while hidden', 
   assert.equal(hidden.contextReads.length, 0, 'a hidden tab reads nothing');
 
   const { prefetch, contextReads, projects } = load({});
-  projects.value = [project('p', ['a', 'b', 'c'].map((id) => session(id, 'tui')))];
+  projects.value = [project('p', ['a', 'b', 'c'].map((id) => session(id, 'tui'))), project('q', [session('urgent', 'tui')])];
   prefetch.prefetchProject('p', prefetch.Tier.Other);
   prefetch.prefetchTab(session('elsewhere', 'tui'));
   await settle();
   assert.deepEqual(contextReads.map((read) => read.args.session_id), ['a', 'b']);
   assert.deepEqual(contextReads[0].args, { session_id: 'a', limit: 100 }, 'the panel’s own arguments, so it finds the read cached');
-  prefetch.prefetchSession('p', session('urgent', 'tui'), prefetch.Tier.Intent);
+  prefetch.prefetchSession('q', session('urgent', 'tui'), prefetch.Tier.Intent);
   contextReads[0].resolve();
   await settle();
   assert.equal(contextReads[2].args.session_id, 'urgent', 'what the pointer is on goes ahead of the queue');
@@ -88,28 +88,33 @@ test('at most two reads run at once, the pointer first, and none while hidden', 
 
 test('conversations prefetch on fast links, not on slow ones or when turned off', async () => {
   const fast = load({ connection: { type: 'wifi', rtt: 40 } });
+  fast.projects.value = [project('p', [session('a')])];
   fast.prefetch.prefetchSession('p', session('a'), fast.prefetch.Tier.Other);
   await settle();
   assert.deepEqual(fast.calls.map((call) => [call.name, call.args]), [['integrated_get', { process_id: 'process_a', transcript_only: true }]], 'without the command and model lists');
 
   const slow = load({ connection: { saveData: true } });
+  slow.projects.value = [project('p', [session('a')])];
   slow.prefetch.prefetchSession('p', session('a'), slow.prefetch.Tier.Intent);
   await settle();
   assert.equal(slow.calls.length, 0, 'data saver reads no conversation');
 
   const off = load({ preference: 'never' });
+  off.projects.value = [project('p', [session('a')])];
   off.prefetch.prefetchSession('p', session('a'), off.prefetch.Tier.Intent);
   await settle();
   assert.equal(off.calls.length, 0);
 
   const forced = load({ connection: { saveData: true }, preference: 'always' });
+  forced.projects.value = [project('p', [session('a')])];
   forced.prefetch.prefetchSession('p', session('a'), forced.prefetch.Tier.Other);
   await settle();
   assert.equal(forced.calls.length, 1, 'Always reads conversations on any link');
 });
 
 test('on mobile data only the hovered or open project’s conversations prefetch, each once', async () => {
-  const { prefetch, calls, contextReads } = load({ connection: { type: 'cellular', rtt: 60 } });
+  const { prefetch, calls, contextReads, projects } = load({ connection: { type: 'cellular', rtt: 60 } });
+  projects.value = [project('other', [session('x'), session('y')])];
   // Context reads finish at once here, so they never hold the two slots.
   const finishContext = async () => { await settle(); contextReads.splice(0).forEach((read) => read.resolve()); await settle(); };
   prefetch.prefetchSession('other', session('x'), prefetch.Tier.Other);
@@ -136,7 +141,8 @@ test('a read-ahead conversation fills the cache without evicting opened ones', a
   assert.equal(cachedConversation('ahead'), undefined, 'no room, so it is dropped');
   assert.ok(cachedConversation('opened_0'), 'the oldest opened conversation stays');
   forgetConversation('opened_1');
-  const { prefetch, calls } = load({ runtime: 'desktop' });
+  const { prefetch, calls, projects } = load({ runtime: 'desktop' });
+  projects.value = [project('p', [session('z')])];
   prefetch.prefetchSession('p', session('z'), prefetch.Tier.Other);
   await settle();
   calls[0].resolve({ messages: [{ id: 'm' }], provider: 'codex', streaming: true, history_truncated: true, history_cursor: { next: 'c1' } });
@@ -146,4 +152,34 @@ test('a read-ahead conversation fills the cache without evicting opened ones', a
   assert.equal(cached?.historyCursor, 'c1');
   assert.equal(cached?.streaming, true);
   forgetConversation();
+});
+
+test('a queued read checks again before it runs: Never, an ended agent, and the budget', async () => {
+  const { prefetch, calls, contextReads, projects, document, storage } = load({ connection: { type: 'cellular', rtt: 60 }, visible: false });
+  projects.value = [project('p', ['a', 'b'].map((id) => session(id)))];
+  prefetch.prefetchProject('p', prefetch.Tier.Intent);
+  // While hidden, the user turns conversations off and agent b ends.
+  storage.set('patterm.prefetch.conversations', 'never');
+  projects.value = [project('p', [session('a')])];
+  document.visibilityState = 'visible';
+  prefetch.prefetchProject('p', prefetch.Tier.Other);
+  await settle();
+  assert.deepEqual(contextReads.map((read) => read.args.session_id), ['a'], 'the ended agent is not read');
+  assert.equal(calls.length, 0, 'Never applies to reads already queued');
+});
+
+test('reads started together count against the budget before they finish', async () => {
+  const { prefetch, calls, contextReads, projects } = load({ connection: { type: 'cellular', rtt: 60 } });
+  // 30 conversations in the open project, far over the 2 MB mobile budget at
+  // the 100 KB each counted while in flight.
+  const sessions = Array.from({ length: 30 }, (_, index) => session(`s${index}`));
+  projects.value = [project('p', sessions)];
+  for (const item of sessions) prefetch.prefetchSession('p', item, prefetch.Tier.Intent);
+  for (let round = 0; round < 40; round++) {
+    await settle();
+    contextReads.splice(0).forEach((read) => read.resolve());
+    // Each conversation is 300 KB, so the 2 MB budget allows about seven.
+    calls.forEach((call) => { if (!call.done) { call.done = true; call.resolve({ messages: ['x'.repeat(300_000)] }); } });
+  }
+  assert.ok(calls.length >= 2 && calls.length <= 8, `about the budget's worth of reads, not all 30 (${calls.length})`);
 });

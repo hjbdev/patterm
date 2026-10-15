@@ -87,7 +87,7 @@ interface RegistryServices {
   workbench: WorkbenchRepository;
   harnessDiscovery: HarnessDiscoveryService;
   harnessLauncher: HarnessLauncher;
-  integrated?: Pick<IntegratedAgentService, 'conversation' | 'olderMessages' | 'prompt' | 'files' | 'delivery' | 'interrupt' | 'stopTask' | 'taskOutput' | 'updateQueued' | 'replyPermission' | 'replyQuestion' | 'replyForm' | 'controls' | 'configure' | 'command' | 'isEmpty' | 'liveSettings'>;
+  integrated?: Pick<IntegratedAgentService, 'conversation' | 'peekConversation' | 'olderMessages' | 'prompt' | 'files' | 'delivery' | 'interrupt' | 'stopTask' | 'taskOutput' | 'updateQueued' | 'replyPermission' | 'replyQuestion' | 'replyForm' | 'controls' | 'configure' | 'command' | 'isEmpty' | 'liveSettings'>;
   transcriptImages?: Pick<TranscriptImageStore, 'read' | 'fromFile'>;
   // Draws pages off screen for html_preview; only the desktop app has one.
   pagePreviewer?: PagePreviewer;
@@ -189,8 +189,9 @@ const integratedFilesSearchInput = processIdInput.extend({
 });
 const integratedDeliveryInput = processIdInput.extend({ message_id: z.string().min(1).max(80) });
 const integratedHistoryInput = processIdInput.extend({ cursor: z.string().min(1).max(4096) });
-// `transcript_only` leaves out the command and model lists, which the pane
-// reads separately; background reads ahead want only the transcript.
+// `transcript_only` reads ahead of the user: the transcript without the
+// command and model lists, and without the snapshot bookkeeping a pane's read
+// does, so it changes nothing on the server.
 const integratedGetInput = processIdInput.extend({ transcript_only: z.boolean().optional() });
 const integratedConfigureInput = processIdInput.extend({ selector: z.string().min(1).max(50), value: z.string().min(1).max(500) });
 const integratedCommandInput = processIdInput.extend({ name: z.string().min(1).max(100), text: z.string().max(262_144).default('') });
@@ -494,13 +495,11 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
   );
 
   registry.register(
-    { name: 'integrated_get', namespace: 'integrated', description: 'Read the bounded native transcript and pending requests for an Integrated agent session. Pass transcript_only to leave out its command and model lists.', hidden: true, changes: [], inputSchema: { type: 'object', required: ['process_id'] } },
+    { name: 'integrated_get', namespace: 'integrated', description: 'Read the bounded native transcript and pending requests for an Integrated agent session. Pass transcript_only for a side-effect-free read of the transcript alone.', hidden: true, changes: [], inputSchema: { type: 'object', required: ['process_id'] } },
     async (args, context) => {
       const input = integratedGetInput.parse(args);
-      const conversation = await requireIntegrated(services).conversation(processFor(context, input.process_id));
-      if (!input.transcript_only || !conversation || typeof conversation !== 'object') return conversation;
-      const { commands: _commands, models: _models, ...transcript } = conversation as Record<string, unknown>;
-      return transcript;
+      const processId = processFor(context, input.process_id);
+      return input.transcript_only ? requireIntegrated(services).peekConversation(processId) : requireIntegrated(services).conversation(processId);
     }
   );
   registry.register(
