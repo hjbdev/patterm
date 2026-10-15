@@ -35,8 +35,10 @@ export function projectContextVersion(projectId: string): string | null {
     signalling = true;
     window.patterm.onDataChanged((topics) => { if (topics.includes('context')) contextSignal.value += 1; });
     let state = window.patterm.connectionState?.() ?? 'connected';
+    let wasConnected = state === 'connected';
     window.patterm.onConnectionChanged?.((next) => {
-      if (next === 'connected' && state !== 'connected') contextSignal.value += 1;
+      if (next === 'connected' && state !== 'connected' && wasConnected) contextSignal.value += 1;
+      if (next === 'connected') wasConnected = true;
       state = next;
     });
   }
