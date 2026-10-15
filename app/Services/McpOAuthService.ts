@@ -196,8 +196,13 @@ export class McpOAuthService {
     if (server.auth !== 'oauth') return { ...server.headers };
     let tokens = this.readTokens(serverId);
     if (tokens && (tokens.access_token === rejected || this.expired(tokens))) {
-      await this.refresh(server);
-      tokens = this.readTokens(serverId);
+      const refreshing = this.refresh(server);
+      // A token inside its expiry margin still works, so a slow authorization
+      // server refreshes behind it instead of stalling harness startup.
+      if (tokens.access_token === rejected || this.expired(tokens, 0)) {
+        await refreshing;
+        tokens = this.readTokens(serverId);
+      }
     }
     // Without a token the request goes out unauthenticated and the harness
     // reports that the server needs a sign-in.
@@ -230,8 +235,8 @@ export class McpOAuthService {
     return attempt;
   }
 
-  private expired(tokens: StoredTokens): boolean {
-    return typeof tokens.expires_at === 'number' && tokens.expires_at - EXPIRY_MARGIN_MS <= this.now();
+  private expired(tokens: StoredTokens, margin = EXPIRY_MARGIN_MS): boolean {
+    return typeof tokens.expires_at === 'number' && tokens.expires_at - margin <= this.now();
   }
 
   private oauthServer(serverId: string): McpHttpServer {

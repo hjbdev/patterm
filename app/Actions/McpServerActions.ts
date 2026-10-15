@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
-import type { McpServer, McpServerRegistry } from '../Services/McpServerRegistry';
+import type { McpHttpServer, McpServer, McpServerRegistry } from '../Services/McpServerRegistry';
 import type { McpOAuthService, McpSignInStatus } from '../Services/McpOAuthService';
 import type { McpServerImportService } from '../Services/McpServerImportService';
 import type { NativeOAuthCallbackService } from '../Services/NativeOAuthCallbackService';
@@ -144,14 +144,19 @@ export class McpServerActions {
       if (!server.enabled || (harness && !(server.harnesses as string[]).includes(harness))) throw new Error(`${server.name} is not enabled for this agent`);
       return server;
     };
+    const remote = (serverId: string, caller: McpHelperCaller): McpHttpServer => {
+      const server = allowed(serverId, caller);
+      if (server.transport !== 'http') throw new Error(`${server.name} is not a remote server`);
+      return server;
+    };
     return {
+      authorizeRemote: (serverId, caller) => { remote(serverId, caller); },
       headers: (serverId, rejected, caller) => {
         allowed(serverId, caller);
         return this.oauth.headers(serverId, rejected);
       },
       endpoint: async (serverId, rejected, caller) => {
-        const server = allowed(serverId, caller);
-        if (server.transport !== 'http') throw new Error(`${server.name} is not a remote server`);
+        const server = remote(serverId, caller);
         return { url: server.url, headers: await this.oauth.headers(serverId, rejected) };
       },
       exec: (serverId, caller) => {

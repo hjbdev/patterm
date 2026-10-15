@@ -43,7 +43,8 @@ export class McpHttpProxyService {
 
   async headers(server: string, caller: McpHelperCaller): Promise<Record<string, string>> {
     if (!caller.identity || caller.opencodeBridge !== undefined) throw new Error('Proxy requires an agent identity');
-    await this.handlers.endpoint(server, null, caller);
+    // Codex gives this helper 10 seconds; upstream sign-in waits for requests.
+    this.handlers.authorizeRemote(server, caller);
     const payload = Buffer.from(JSON.stringify({ server, identity: caller.identity })).toString('base64url');
     return { 'X-Patterm-Mcp-Authorization': `Bearer ${payload}.${this.sign(payload)}` };
   }

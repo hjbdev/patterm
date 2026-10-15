@@ -33,6 +33,8 @@ export interface McpServerSocketHandlers {
   headers(serverId: string, rejected: string | null, caller: McpHelperCaller): Promise<Record<string, string>>;
   endpoint(serverId: string, rejected: string | null, caller: McpHelperCaller): Promise<{ url: string; headers: Record<string, string> }>;
   exec(serverId: string, caller: McpHelperCaller): { command: string; args: string[]; env: Record<string, string> };
+  // Checks the caller may use a remote server, without contacting it.
+  authorizeRemote(serverId: string, caller: McpHelperCaller): void;
   proxyHeaders?(serverId: string, caller: McpHelperCaller): Promise<Record<string, string>>;
 }
 
