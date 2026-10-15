@@ -13,7 +13,7 @@ import { registerApplicationRoutes, type RouteRegistrar } from '../../routes/app
 import { callIntegrated, readIntegrated, relayingRegistrar } from '../../routes/remote';
 import { registerCommandRoutes } from '../../routes/commands';
 import { BrowserTerminalSessions, type BrowserTerminalClient } from './BrowserTerminalSessions';
-import { ClientConversationSubscriptions, updateConversationSubscription } from './ClientConversationSubscriptions';
+import { beginConversationSubscription, ClientConversationSubscriptions } from './ClientConversationSubscriptions';
 import { UploadService, MAX_UPLOAD_BYTES } from './UploadService';
 import { MCP_OAUTH_CALLBACK_PATH } from '../Services/McpOAuthService';
 import { PEER_PAIR_PATH } from '../Actions/HostActions';
@@ -27,6 +27,20 @@ import { TailscaleService } from '../Services/TailscaleService';
 const rpcInput = z.object({ id: z.number().int().nonnegative(), channel: z.string().max(100), args: z.unknown().optional() });
 const MAX_RPC_BYTES = 1024 * 1024;
 const MAX_BUFFER_BYTES = 4 * 1024 * 1024;
+// Requests handled at once, beyond which the server answers 503.
+const MAX_API_REQUESTS = 32;
+const MAX_FILE_REQUESTS = 128;
+// Conversation snapshots one socket reads outside its request queue at once.
+const MAX_SNAPSHOTS_READING = 4;
+
+// Which request bound a request counts against, from the path routing will
+// use, so `/assets/../api/rpc` or an absolute-form URL is still an API call.
+// Sign-in callbacks are API work too.
+export function requestPool(url: string | undefined, origin: URL): 'api' | 'file' {
+  let pathname = '/';
+  try { pathname = new URL(url ?? '/', origin).pathname; } catch { return 'api'; }
+  return pathname.startsWith('/api/') || pathname.startsWith('/oauth/') ? 'api' : 'file';
+}
 const passwordInput = z.object({ password: z.string().max(1024) });
 const passwordChangeInput = z.object({ current: z.string().max(1024).nullable().default(null), password: z.string().max(1024).nullable() });
 // Open without signing in: the sign-in routes, the pairing route (other hosts
@@ -81,6 +95,7 @@ export class WebServer {
   private readonly access: ServerAccess;
   private readonly unsubscribe: Array<() => void> = [];
   private readonly requests = new Set<Promise<unknown>>();
+  private apiRequests = 0;
   private readonly queues = new Map<WebSocket, Promise<unknown>>();
   private heartbeat: ReturnType<typeof setInterval> | undefined;
   private stopping = false;
@@ -126,13 +141,22 @@ export class WebServer {
 
   private createServer(): http.Server {
     const server = http.createServer((request, response) => {
-      if (this.requests.size >= 32) { response.writeHead(503); response.end(); return; }
+      // API calls are bounded tightly. A page load fetches about 40 script
+      // chunks at once over HTTP/2, so app files get a separate, larger bound;
+      // sharing one turned a cold first load into 503s and a blank page.
+      const api = requestPool(request.url, this.origin) === 'api';
+      const pending = api ? this.apiRequests : this.requests.size - this.apiRequests;
+      if (pending >= (api ? MAX_API_REQUESTS : MAX_FILE_REQUESTS)) { response.writeHead(503); response.end(); return; }
+      if (api) this.apiRequests++;
       const handling = this.handleHttp(request, response).catch(async (error) => {
         if (!response.headersSent) await this.json(request, response, 400, { error: errorMessage(error) });
         else response.destroy();
       });
       this.requests.add(handling);
-      void handling.finally(() => this.requests.delete(handling));
+      void handling.finally(() => {
+        this.requests.delete(handling);
+        if (api) this.apiRequests--;
+      });
     });
     // Other accounts on this machine can reach the loopback listener, so only
     // this user and root (tailscaled, for Tailscale Serve) may connect.
@@ -388,6 +412,7 @@ export class WebServer {
     this.terminals.clients.add(client);
     const presenceId = `browser_${randomUUID()}`;
     let queue: Promise<unknown> = Promise.resolve();
+    let snapshotsReading = 0;
     let queued = 0;
     let queuedBytes = 0;
     socket.on('message', (data, binary) => {
@@ -406,7 +431,23 @@ export class WebServer {
           if (channel === 'patterm:terminal:subscribe') result = await this.terminals.subscribe(client, args);
           else if (channel === 'patterm:terminal:take-control') result = await this.terminals.takeControl(client, args);
           else if (channel === 'patterm:conversation:subscribe') {
-            result = await updateConversationSubscription(client.conversations!, args, (processId) => readIntegrated(this.application, processId));
+            const finish = await beginConversationSubscription(client.conversations!, args, (processId) => readIntegrated(this.application, processId));
+            // The snapshot is answered outside the queue, so terminal input
+            // never waits behind a large conversation. A few at a time; past
+            // that, the queue waits as before.
+            // Once stopping, it reads in the queue, which stopping waits for.
+            if (snapshotsReading < MAX_SNAPSHOTS_READING && !this.stopping && socket.readyState === WebSocket.OPEN) {
+              snapshotsReading++;
+              const replyId = id;
+              // Counted with API requests, so stopping waits for it.
+              this.apiRequests++;
+              const reading = finish()
+                .then((reply) => send(boundedReply(replyId, reply)), (error) => send(JSON.stringify({ id: replyId, error: errorMessage(error) })))
+                .finally(() => { snapshotsReading--; this.apiRequests--; this.requests.delete(reading); });
+              this.requests.add(reading);
+              return;
+            }
+            result = await finish();
           } else if (channel === 'patterm:presence:update') {
             // Presence belongs to this socket and ends when it closes.
             this.application.notifications.updatePresence(presenceId, args);

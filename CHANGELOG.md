@@ -7,8 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Opening an Integrated agent no longer holds up typing in a terminal in the
+  same browser while its conversation loads, and switching back to an agent
+  within a few seconds shows its worktree changes without running git again.
+
 ### Fixed
 
+- The first browser page load after the server starts no longer gets "503"
+  errors for its script files and stays blank until reloaded.
 - Launching an agent from a tab opened before a server update now opens the
   new agent. The launch view loads with the other pages at startup, and if it
   still can't open, the app goes straight to the agent unless you have moved

@@ -7,7 +7,7 @@ import http from 'node:http';
 import zlib from 'node:zlib';
 import { WebSocket } from 'ws';
 import { createApplication } from '../app/App';
-import { WebServer, boundedReply } from '../app/Http/WebServer';
+import { WebServer, boundedReply, requestPool } from '../app/Http/WebServer';
 import { browserToolsOnly } from '../routes/application';
 import { loopbackPeerUid, ServerAccess } from '../app/Http/ServerAccess';
 import { acquireApplicationLock } from '../app/Runtime/ApplicationLock';
@@ -396,6 +396,43 @@ async function main(): Promise<void> {
     await a.request('refresh', { process_id: firstId });
     await b.request('refresh', { process_id: secondId });
     await until(() => a.frames.length > 0 && b.frames.length > 0, 'independent terminal frames');
+
+    // A slow conversation snapshot is answered outside the socket's queue, so
+    // a terminal request sent after it doesn't wait for it.
+    const integrated = app as unknown as { subscribeConversation: typeof app.subscribeConversation; mcp: { call: typeof app.mcp.call } };
+    const originalSubscribe = integrated.subscribeConversation;
+    const originalCall = integrated.mcp.call;
+    let releaseSnapshot: (() => void) | undefined;
+    integrated.subscribeConversation = async () => () => {};
+    integrated.mcp.call = ((tool: string, args: unknown, ...rest: unknown[]) => tool === 'integrated_get'
+      ? new Promise((resolve) => { releaseSnapshot = () => resolve({ messages: [] }); })
+      : (originalCall as (...input: unknown[]) => Promise<unknown>).call(app.mcp, tool, args, ...rest)) as typeof app.mcp.call;
+    try {
+      let snapshotAnswered = false;
+      const snapshot = a.call('patterm:conversation:subscribe', { process_id: 'process_slow', subscribed: true, snapshot: true }).then((reply) => { snapshotAnswered = true; return reply; });
+      await until(() => Boolean(releaseSnapshot), 'the snapshot read to start');
+      await a.request('refresh', { process_id: firstId });
+      assert.equal(snapshotAnswered, false, 'the terminal request was answered while the snapshot was still reading');
+      releaseSnapshot!();
+      assert.deepEqual(await snapshot, { ok: true, snapshot: { messages: [] } });
+      await a.call('patterm:conversation:subscribe', { process_id: 'process_slow', subscribed: false });
+    } finally {
+      integrated.subscribeConversation = originalSubscribe;
+      integrated.mcp.call = originalCall;
+    }
+
+    // A cold page load fetches dozens of app files at once while their
+    // compressed copies are still being made; none is turned away.
+    fs.mkdirSync(path.join(rendererPath, 'assets'), { recursive: true });
+    for (let index = 0; index < 60; index++) {
+      fs.writeFileSync(path.join(rendererPath, 'assets', `chunk-${index}.js`), `export const chunk${index} = ${JSON.stringify(Array.from({ length: 20_000 }, (_, item) => `${index}-${item}-${(item * 2654435761) % 1000003}`))};`);
+    }
+    const files = await Promise.all(Array.from({ length: 60 }, (_, index) => new Promise<number>((resolve, reject) => {
+      http.get(`${base}/assets/chunk-${index}.js`, { headers: { Cookie: cookie, 'Accept-Encoding': 'br, gzip' } }, (response) => { response.resume(); resolve(response.statusCode ?? 0); }).on('error', reject);
+    })));
+    assert.ok(!files.includes(503), 'no app file gets 503 during a burst');
+    for (const url of ['/api/rpc', '/assets/../api/rpc', `${base}/api/rpc`, '/oauth/mcp/callback?code=x']) assert.equal(requestPool(url, new URL(origin)), 'api', url);
+    for (const url of ['/', '/assets/app.js', '/projects/p']) assert.equal(requestPool(url, new URL(origin)), 'file', url);
     assert(a.frames.every((frame) => frame?.processId === firstId));
     assert(b.frames.every((frame) => frame?.processId === secondId));
     await b.request('subscribe', { process_id: firstId, subscribed: true });
