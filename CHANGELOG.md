@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Launching an agent from a tab opened before a server update now opens the
+  new agent. The launch view loads with the other pages at startup, and if it
+  still can't open, the app goes straight to the agent unless you have moved
+  elsewhere. Before, the agent started but the tab stayed where it was.
+
 ## [0.2.4] - 2026-10-15
 
 ### Added
