@@ -139,6 +139,52 @@ test('launch tabs open before native readiness; independent completions preserve
   } finally { stopSidebarWatch?.(); app.unmount(); delete globalThis.window; fs.unlinkSync(output); }
 });
 
+// An open tab keeps the build it loaded. After a redeploy, a page it never
+// loaded is gone, and opening it fails.
+test('a launch view that cannot load still opens the agent, unless the user moved on', async () => {
+  const output = path.resolve('dist/tests/harness-launch-stale-fixture.cjs');
+  await build({ stdin: { contents: `export { createWorkbenchRouter } from './resources/js/router';
+    export { useHarnessLaunch } from './resources/js/Composables/useHarnessLaunch';
+    export { useWorkbench } from './resources/js/Composables/useWorkbench';`, resolveDir: process.cwd() },
+    outfile: output, bundle: true, platform: 'node', format: 'cjs', external: ['vue', 'vue-router'],
+    plugins: [{ name: 'page-stubs', setup(builder) { builder.onLoad({ filter: /\.vue$/ }, (args) => ({ contents: args.path.endsWith('HarnessLaunchPage.vue')
+      ? 'throw new Error("Failed to fetch dynamically imported module")' : 'export default {}', loader: 'js' })); } }] });
+  const native = [];
+  const projects = [{ project: { id: 'p1' }, projectSessions: [{ id: 'current', interfaceMode: 'integrated' }], processes: [] }];
+  globalThis.window = { patterm: {
+    workbench: async () => ({ projects: structuredClone(projects) }),
+    call: () => { const pending = deferred(); native.push(pending); return pending.promise; }
+  }, addEventListener() {} };
+  const fixture = createRequire(import.meta.url)(output);
+  const router = fixture.createWorkbenchRouter(createMemoryHistory());
+  router.onError(() => {});
+  await router.push('/projects/p1/agents/current');
+  let launchHarness;
+  const app = renderer.createApp({ setup() { ({ launchHarness } = fixture.useHarnessLaunch()); return () => null; } });
+  app.use(router).mount({});
+  async function settle(index, sessionId) {
+    projects[0].projectSessions.push({ id: sessionId, interfaceMode: 'integrated' });
+    native[index].resolve({ session_id: sessionId });
+    await tick(); await tick(); await tick();
+  }
+  try {
+    await fixture.useWorkbench().refresh();
+    launchHarness({ projectId: 'p1', targetProjectId: 'p1', harness: 'claude', interfaceMode: 'integrated' });
+    await tick();
+    assert.equal(router.currentRoute.value.params.sessionId, 'current', 'The launch view failed to open');
+    await settle(0, 'spawned');
+    assert.equal(router.currentRoute.value.params.sessionId, 'spawned', 'The new agent opens anyway');
+    router.back(); await tick(); await tick();
+    assert.equal(router.currentRoute.value.params.sessionId, 'current', 'Back returns to where the launch started');
+
+    launchHarness({ projectId: 'p1', targetProjectId: 'p1', harness: 'claude', interfaceMode: 'integrated' });
+    await tick();
+    await router.push('/projects/p1/todos');
+    await settle(1, 'later');
+    assert.equal(router.currentRoute.value.name, 'todos', 'Moving on before the launch finishes keeps the user there');
+  } finally { app.unmount(); delete globalThis.window; fs.unlinkSync(output); }
+});
+
 test('menu and empty-state handlers submit every launch with click-time arguments', () => {
   const calls = [];
   const menu = fs.readFileSync('resources/js/Components/LaunchAgentMenu.vue', 'utf8');

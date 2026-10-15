@@ -106,6 +106,8 @@ const notes = {
   // Shiki bundles grammars and themes whose licences its upstream repository lists.
   '@shikijs/langs': 'It bundles TextMate grammars from many projects. Patterm highlights with the grammars in resources/js/lib/shiki.ts, and releases leave out the GPL-3.0 Ada, gnuplot, nginx, and Racket grammars. Each grammar\'s source and licence are listed at https://github.com/shikijs/textmate-grammars-themes/blob/main/packages/tm-grammars/README.md.',
   '@shikijs/themes': 'It bundles themes from many projects. Patterm uses only github-dark, and releases leave out the GPL-3.0 Aurora X theme. Each theme\'s source and licence are listed at https://github.com/shikijs/textmate-grammars-themes/blob/main/packages/tm-themes/README.md.',
+  // Apache-2.0 requires stating that modified files were changed.
+  alacritty_terminal: 'Patterm ships a modified copy from native/terminal-core/vendor/alacritty_terminal. src/event_loop.rs is changed so that bytes read from the PTY just before a read error still reach the terminal; the change is marked "Changed by Patterm".',
   // MPL-2.0 requires telling recipients where to get the source.
   'web-push': 'Patterm ships it unmodified. Its source is available from https://github.com/web-push-libs/web-push and in the installed node_modules/web-push directory.'
 };

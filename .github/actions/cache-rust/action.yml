@@ -36,7 +36,7 @@ runs:
           native/terminal-core/target
         # Cargo validates restored artifacts; keep OS, architecture, target and
         # toolchain separate, and save fresh builds when sidecar sources change.
-        key: rust-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.target }}-${{ inputs.variant }}-${{ steps.toolchain.outputs.version }}-${{ hashFiles('native/terminal-core/Cargo.lock', 'native/terminal-core/Cargo.toml') }}-${{ hashFiles('native/terminal-core/src/**', 'native/terminal-core/tests/**') }}
+        key: rust-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.target }}-${{ inputs.variant }}-${{ steps.toolchain.outputs.version }}-${{ hashFiles('native/terminal-core/Cargo.lock', 'native/terminal-core/Cargo.toml') }}-${{ hashFiles('native/terminal-core/src/**', 'native/terminal-core/tests/**', 'native/terminal-core/vendor/**') }}
         restore-keys: |
           rust-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.target }}-${{ inputs.variant }}-${{ steps.toolchain.outputs.version }}-${{ hashFiles('native/terminal-core/Cargo.lock', 'native/terminal-core/Cargo.toml') }}-
     - name: Preserve unchanged Rust source freshness on an exact cache hit
@@ -50,7 +50,7 @@ runs:
         import path from 'node:path';
         const root = 'native/terminal-core';
         const files = ['Cargo.toml', 'Cargo.lock'].map(file => path.join(root, file));
-        for (const directory of ['src', 'tests']) {
+        for (const directory of ['src', 'tests', 'vendor']) {
           for (const entry of fs.readdirSync(path.join(root, directory), { recursive: true, withFileTypes: true })) {
             if (entry.isFile()) files.push(path.join(entry.parentPath, entry.name));
           }
