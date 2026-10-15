@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   effort, mode and slash-command controls again unless they changed, and its
   conversation snapshots no longer carry Claude's full model and command
   lists, tens of kilobytes each time.
+- Opened conversation history pages stay cached within a budget of 24 pages
+  and about 4 MB, dropping the least recently read first, instead of all of
+  them for 15 minutes. Long scratchpads reopen from the cache too, and the
+  browser no longer reads update and settings data a second time when its
+  connection first opens.
 - Paired hosts tell each other when their conversation history changes, so
   reopening another host's history in a linked project shows it from the
   cache instead of reading it again. Hosts on an older version keep being

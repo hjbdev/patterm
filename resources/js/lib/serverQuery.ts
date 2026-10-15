@@ -65,9 +65,13 @@ function listen(): void {
   window.patterm.onDataChanged?.((topics) => {
     for (const topic of SERVER_TOPICS) if (topics.includes(topic)) generations[topic].value += 1;
   });
+  // As for the workbench, the first connection can open after the first
+  // reads; only a later one may have missed announcements.
   let state = window.patterm.connectionState?.() ?? 'connected';
+  let wasConnected = state === 'connected';
   window.patterm.onConnectionChanged?.((next) => {
-    if (next === 'connected' && state !== 'connected') for (const topic of SERVER_TOPICS) generations[topic].value += 1;
+    if (next === 'connected' && state !== 'connected' && wasConnected) for (const topic of SERVER_TOPICS) generations[topic].value += 1;
+    if (next === 'connected') wasConnected = true;
     state = next;
   });
 }
@@ -83,14 +87,47 @@ export function topicChanged(topic: ServerTopic): void {
   generations[topic].value += 1;
 }
 
+// When each topic read was last asked for, cached or not, so `trimQueries`
+// keeps the ones in use.
+const lastRead = new Map<string, number>();
+let readCount = 0;
+queryClient.getQueryCache().subscribe((event) => {
+  if (event.type === 'removed') lastRead.delete(event.query.queryHash);
+});
+
 // A read cached until its topic next changes. `fresh` says whether a cached
 // result must be read again anyway, for data that changes without an
 // announcement.
 export function topicRead<T>(topic: ServerTopic, key: QueryKey, read: () => Promise<T>, fresh?: (cached: T) => boolean): Promise<T> {
+  const queryKey = [...key, topicGeneration(topic)];
+  lastRead.set(hashKey(queryKey), ++readCount);
   return queryClient.fetchQuery({
-    queryKey: [...key, topicGeneration(topic)],
+    queryKey,
     queryFn: read,
     ...(fresh ? { staleTime: (query: { state: { data: T | undefined } }) => query.state.data !== undefined && fresh(query.state.data) ? 0 : Infinity } : {})
+  });
+}
+
+const sizes = new WeakMap<object, number>();
+function sizeOf(data: unknown): number {
+  if (typeof data !== 'object' || data === null) return JSON.stringify(data ?? null).length;
+  let size = sizes.get(data);
+  if (size === undefined) sizes.set(data, size = JSON.stringify(data).length);
+  return size;
+}
+
+// Topic reads named `name` that can be large, such as conversation
+// transcripts, kept within a budget of entries and of characters of JSON.
+// The least recently read beyond it are dropped instead of waiting out the
+// cache's 15 minutes; the most recent always stays, and so do reads under way.
+export function trimQueries(name: string, budget: { entries: number; size: number }): void {
+  const queries = queryClient.getQueryCache().findAll({ queryKey: [name] })
+    .filter((query) => query.state.data !== undefined && query.state.fetchStatus === 'idle' && query.getObserversCount() === 0)
+    .sort((a, b) => (lastRead.get(b.queryHash) ?? 0) - (lastRead.get(a.queryHash) ?? 0));
+  let total = 0;
+  queries.forEach((query, index) => {
+    total += sizeOf(query.state.data);
+    if (index > 0 && (index >= budget.entries || total > budget.size)) queryClient.removeQueries({ queryKey: query.queryKey, exact: true });
   });
 }
 
