@@ -16,6 +16,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Codex no longer fails to start a remote MCP server with "headers helper timed
   out" while Patterm refreshes its sign-in. A token close to expiry is still
   used while the refresh runs.
+- Integrated agents report their activity more reliably:
+  - They show as working while native background agents run after the turn
+    ends, and during turns Claude starts on its own, such as after a background
+    task finishes.
+  - They show "needs permission" while they wait for one, including OpenCode
+    agents and an agent you send a message to while it waits.
+  - Slash commands that start no turn no longer leave them working, and a
+    failed turn stays failed instead of turning idle when you open it.
+  - Codex agents no longer flash idle just after a message is sent, read as
+    idle after a reconnect while a turn runs, or show a permission prompt again
+    after Codex has withdrawn it.
+  - OpenCode agents no longer flash idle between turns that follow each other
+    straight away, and a silent event stream is reopened after 45 seconds.
+  - A lost connection shows as reconnecting rather than as a failed turn, and is
+    retried after two seconds instead of thirty.
+  - Idle timers treat a turn that ended with an error as ended.
 
 ## [0.2.3] - 2026-10-15
 

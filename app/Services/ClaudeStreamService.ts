@@ -498,7 +498,9 @@ function isUncertainHostFailure(error: unknown): boolean {
 }
 
 // The Claude host reports process status, not Patterm's activity vocabulary.
-// Map only the states that have a verified activity meaning.
+// Map only the states that have a verified activity meaning. Hosts from an
+// older generation also report `starting` and `running`, which say nothing
+// about a turn, so those leave activity unchanged.
 function claudeActivity(value: unknown): string | undefined {
   if (value === 'working') return 'working';
   if (value === 'permission') return 'permission';

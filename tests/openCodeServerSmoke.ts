@@ -528,6 +528,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const childService = new OpenCodeServerService(database, { ...env, CHILD_ROOT: root });
     const childView = await childService.conversation('process_0') as { permissions: { data: Array<{ id: string; action: string }> }; forms: { data: Array<{ id: string; detail?: string; declinable?: boolean }> } };
     assert.deepEqual(childView.permissions.data.map((item) => [item.id, item.action]), [['per_child', 'Subagent: bash'], ['per_grandchild', 'Subagent: edit']]);
+    assert.equal((childView as { status?: string }).status, 'permission', 'a subagent waiting on the user reads as permission');
     const [childPermission, grandchildPermission] = childView.permissions.data as Array<Record<string, unknown>>;
     assert.equal(childPermission?.detail, 'Clean the build output', 'the agent message explains the request');
     assert.equal(childPermission?.always_label, 'Always allow rm *', 'Always names the pattern it saves');
@@ -544,7 +545,11 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     // Native event stream: discovery from the CLI's service registration,
     // Basic auth, session scoping, and automatic reconnect.
     const daemonResponses = new Set<http.ServerResponse>();
-    const daemonState: { connections: number; auth: string; prompts: unknown[]; messageReads: number; emit: (type: string, data: unknown, created?: number) => void } = { connections: 0, auth: '', prompts: [], messageReads: 0, emit: () => {} };
+    const daemonState: FakeDaemonState = {
+      connections: 0, auth: '', prompts: [], messageReads: 0, emit: () => {}, write: () => {},
+      burst: true, active: { [first]: { type: 'running' } }, rows: null, permissions: [], shells: []
+    };
+    const daemonFrame = (type: string, data: unknown): string => `data: ${JSON.stringify({ id: `evt_${daemonState.connections}`, type, data })}\n\n`;
     const daemon = http.createServer((request, response) => {
       daemonState.auth = String(request.headers.authorization ?? '');
       if (request.url === '/api/info') {
@@ -566,7 +571,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
       if (request.method === 'GET' && request.url?.startsWith(`/api/session/${first}/message?`)) {
         daemonState.messageReads += 1;
         response.writeHead(200, { 'content-type': 'application/json' });
-        response.end(JSON.stringify({ data: [
+        response.end(JSON.stringify({ data: daemonState.rows ?? [
           { id: 'msg_v2', type: 'assistant', content: [{ type: 'reasoning', text: 'Think' }, { type: 'text', text: 'Hi' }, { type: 'tool', id: 'call_1', name: 'shell', state: { status: 'running', input: { command: 'ls' }, content: [] } }], time: { created: 2 } },
           { id: 'msg_seed', type: 'assistant', content: [{ type: 'text', text: 'Hello' }], time: { created: 1 } }
         ], cursor: {} }));
@@ -574,12 +579,17 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
       }
       if (request.method === 'GET' && (request.url === `/api/session/${first}/permission` || request.url === `/api/session/${first}/form`)) {
         response.writeHead(200, { 'content-type': 'application/json' });
-        response.end(JSON.stringify({ data: [] }));
+        response.end(JSON.stringify({ data: request.url.endsWith('/permission') ? daemonState.permissions : [] }));
         return;
       }
       if (request.method === 'GET' && request.url === '/api/session/active') {
         response.writeHead(200, { 'content-type': 'application/json' });
-        response.end(JSON.stringify({ data: { [first]: { type: 'running' } } }));
+        response.end(JSON.stringify({ data: daemonState.active }));
+        return;
+      }
+      if (request.method === 'GET' && request.url?.startsWith('/api/shell?')) {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ data: daemonState.shells }));
         return;
       }
       if (request.method === 'POST' && request.url === `/api/session/${first}/agent`) {
@@ -592,11 +602,13 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
         daemonResponses.add(response);
         response.on('close', () => daemonResponses.delete(response));
         response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
-        const send = (type: string, data: unknown, created?: number): void => {
-          response.write(`data: ${JSON.stringify({ id: `evt_${daemonState.connections}`, type, data, ...(created !== undefined ? { created } : {}) })}\n\n`);
-        };
-        daemonState.emit = send;
+        const frame = (type: string, data: unknown, created?: number): string => `data: ${JSON.stringify({ id: `evt_${daemonState.connections}`, type, data, ...(created !== undefined ? { created } : {}) })}\n\n`;
+        const send = (type: string, data: unknown, created?: number): void => { response.write(frame(type, data, created)); };
+        // Later events reach every open stream, as the daemon's do.
+        daemonState.write = (raw) => { for (const open of daemonResponses) open.write(raw); };
+        daemonState.emit = (type, data, created) => daemonState.write(frame(type, data, created));
         send('server.connected', {});
+        if (!daemonState.burst) return;
         send('message.part.delta', { sessionID: 'ses_other', messageID: 'm', partID: 'p', field: 'text', delta: 'leak' });
         send('session.execution.started', { sessionID: first });
         send('form.created', { form: { id: 'frm_live', sessionID: first, title: 'Live form', fields: [] } });
@@ -721,8 +733,10 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     // Conversation reads use the verified daemon over HTTP, in parallel, and
     // never start a CLI process.
     const cliCallsBefore = fs.readFileSync(record, 'utf8').trim().split('\n').length;
+    // The stream last reported this session's end; the daemon agrees.
+    daemonState.active = {};
     const httpConversation = await streamService.conversation('process_0') as { status: string; messages: { data: Array<{ id: string }> } };
-    assert.equal(httpConversation.status, 'working');
+    assert.equal(httpConversation.status, 'idle');
     assert.deepEqual(httpConversation.messages.data.map((message) => message.id), ['msg_seed', 'msg_v2']);
     assert.equal(fs.readFileSync(record, 'utf8').trim().split('\n').length, cliCallsBefore, 'daemon reads do not spawn the CLI');
     await assert.rejects(
@@ -730,6 +744,14 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
       (error: unknown) => error instanceof ProviderCommandError && error.status === 400 && error.message === 'Unknown agent',
       'native HTTP errors keep their status and tagged message'
     );
+    try {
+      await checkStreamedActivity({ database, env: { ...env, XDG_STATE_HOME: directory }, first, daemonState, daemonResponses, daemonFrame, waitFor });
+    } catch (error) {
+      // An open stream would keep the process alive after a failure.
+      daemon.closeAllConnections();
+      daemon.close();
+      throw error;
+    }
     await new Promise<void>((resolve) => daemon.close(() => resolve()));
     // A daemon that has gone away is rediscovered; without a live service the
     // CLI transport takes over.
@@ -839,6 +861,239 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     database.dispose();
     fs.rmSync(directory, { recursive: true, force: true });
   }
+}
+
+// Activity follows the native stream: requests that wait on the user, ends
+// that work resumes from at once, subagents that outlive their parent's turn,
+// failures, daemon shutdowns, and a stream that goes quiet.
+async function checkStreamedActivity(input: {
+  database: DatabaseService;
+  env: NodeJS.ProcessEnv;
+  first: string;
+  daemonState: FakeDaemonState;
+  daemonResponses: Set<http.ServerResponse>;
+  daemonFrame: (type: string, data: unknown) => string;
+  waitFor: (predicate: () => boolean, timeout?: number) => Promise<void>;
+}): Promise<void> {
+  const { database, env, first, daemonState, daemonResponses, daemonFrame, waitFor } = input;
+  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 450));
+  daemonState.burst = false;
+  daemonState.active = {};
+  // The default hold on an end, 150 ms.
+  const service = new OpenCodeServerService(database, env);
+  const events: IntegratedConversationEvent[] = [];
+  const release = await service.subscribe('process_0', (event) => events.push(event));
+  const statuses = (from: number): string[] => events.slice(from).flatMap((event) => event.kind === 'status' && event.status ? [event.status] : []);
+  const read = async (target = service): Promise<{ status?: string; status_detail?: string }> => await target.conversation('process_0') as { status?: string; status_detail?: string };
+  try {
+    let mark = events.length;
+    daemonState.active = { [first]: { type: 'running' } };
+    daemonState.emit('session.execution.started', { sessionID: first });
+    await waitFor(() => statuses(mark).includes('working'));
+
+    // A permission request is streamed and read as permission, and its reply
+    // returns to work. The request also re-reads the snapshot for the dock.
+    mark = events.length;
+    daemonState.permissions = [{ id: 'per_live', sessionID: first, action: 'bash', resources: ['ls'] }];
+    daemonState.emit('permission.asked', { id: 'per_live', sessionID: first, action: 'bash', resources: ['ls'] });
+    await waitFor(() => statuses(mark).includes('permission'));
+    assert.ok(events.slice(mark).some((event) => event.kind === 'pending'), 'a permission request re-reads the snapshot');
+    assert.equal((await read()).status, 'permission', 'the snapshot reports a pending permission');
+    assert.equal((await read(new OpenCodeServerService(database, env))).status, 'permission', 'a snapshot without a stream reads the pending permission natively');
+    mark = events.length;
+    daemonState.permissions = [];
+    daemonState.emit('permission.replied', { sessionID: first, requestID: 'per_live', reply: 'once' });
+    await waitFor(() => statuses(mark).includes('working'));
+    assert.equal((await read()).status, 'working');
+
+    // A subagent's form pauses this session too.
+    mark = events.length;
+    daemonState.emit('session.created', { sessionID: 'ses_fg_child', parentID: first });
+    daemonState.emit('form.created', { form: { id: 'frm_child_live', sessionID: 'ses_fg_child', title: 'Pick', fields: [] } });
+    await waitFor(() => statuses(mark).includes('permission'));
+    mark = events.length;
+    daemonState.emit('form.cancelled', { id: 'frm_child_live', sessionID: 'ses_fg_child' });
+    await waitFor(() => statuses(mark).includes('working'));
+
+    // An end that a successor execution follows at once is never shown.
+    mark = events.length;
+    daemonState.emit('session.execution.succeeded', { sessionID: first });
+    daemonState.emit('session.execution.started', { sessionID: first });
+    await settle();
+    assert.deepEqual(statuses(mark), ['working'], 'a successor execution hides the end before it');
+
+    // While an end is held back a read agrees with the stream; once shown, a
+    // daemon that still lists the session does not bring the work back.
+    const holding = new OpenCodeServerService(database, env, { settleMs: 30_000 });
+    const held: IntegratedConversationEvent[] = [];
+    const releaseHolding = await holding.subscribe('process_0', (event) => held.push(event));
+    try {
+      daemonState.emit('session.execution.started', { sessionID: first });
+      await waitFor(() => held.some((event) => event.kind === 'status' && event.status === 'working'));
+      mark = events.length;
+      const heldMark = held.length;
+      daemonState.emit('session.execution.succeeded', { sessionID: first });
+      daemonState.emit('session.inbox.cancelled', { sessionID: first, inboxID: 'msg_marker' });
+      await waitFor(() => held.slice(heldMark).some((event) => event.kind === 'pending'));
+      assert.equal((await read(holding)).status, 'working', 'a read during a held-back end matches the stream');
+    } finally {
+      releaseHolding();
+    }
+    await waitFor(() => statuses(mark).includes('idle'));
+    assert.equal((await read()).status, 'idle', 'the active map lagging the reported end does not restore working');
+    await service.prompt('process_0', { text: 'next', references: [], attachments: [] });
+    assert.equal((await read()).status, 'working', 'an accepted prompt reads as working before its start event arrives');
+
+    // A failure stays failed, with its detail, until the next execution.
+    mark = events.length;
+    daemonState.active = {};
+    daemonState.emit('session.execution.started', { sessionID: first });
+    daemonState.emit('session.execution.failed', { sessionID: first, error: { message: 'Model overloaded' } });
+    await waitFor(() => statuses(mark).includes('error'));
+    assert.equal(events.slice(mark).find((event) => event.kind === 'status' && event.status === 'error')?.detail, 'Model overloaded');
+    const failed = await read();
+    assert.deepEqual([failed.status, failed.status_detail], ['error', 'Model overloaded'], 'a re-read keeps the failure');
+    // Native outcome rows keep it without the stream, for example after a restart.
+    daemonState.rows = [
+      { id: 'msg_shell_after', type: 'shell', shellID: 'sh_user', command: 'ls', time: { created: 6 } },
+      { id: 'evt_idle', type: 'idle', outcome: 'failed', time: { created: 5 } },
+      { id: 'msg_failed', type: 'assistant', content: [], error: { message: 'Rate limited' }, time: { created: 4 } },
+      { id: 'msg_prompt', type: 'user', text: 'go', time: { created: 3 } }
+    ];
+    const restarted = await read(new OpenCodeServerService(database, env));
+    assert.deepEqual([restarted.status, restarted.status_detail], ['error', 'Rate limited'], 'a failed outcome row is an error until new work starts');
+    daemonState.rows = [{ id: 'msg_retry', type: 'user', text: 'again', time: { created: 7 } }, ...daemonState.rows];
+    assert.equal((await read(new OpenCodeServerService(database, env))).status, 'idle', 'a newer prompt leaves the failure behind');
+    daemonState.rows = null;
+
+    // A background subagent that outlives its parent's turn keeps it working;
+    // the last one ending settles it.
+    mark = events.length;
+    daemonState.emit('session.execution.started', { sessionID: first });
+    daemonState.emit('session.created', { sessionID: 'ses_bg', parentID: first });
+    daemonState.emit('session.execution.started', { sessionID: 'ses_bg' });
+    daemonState.emit('session.execution.succeeded', { sessionID: first });
+    await settle();
+    assert.ok(statuses(mark).includes('working') && !statuses(mark).includes('idle'), 'a background subagent keeps its parent working');
+    daemonState.active = { ses_bg: { type: 'running' } };
+    const backgroundRows = [{ id: 'msg_bg', type: 'assistant', content: [{ type: 'tool', id: 'call_bg_sub', name: 'subagent', state: { status: 'completed', input: { description: 'Explore', background: true }, metadata: { sessionID: 'ses_bg', status: 'running' }, content: [] } }], time: { created: 3 } }];
+    daemonState.rows = backgroundRows;
+    assert.equal((await read()).status, 'working', 'the snapshot agrees');
+    assert.equal((await read(new OpenCodeServerService(database, env))).status, 'working', 'a running subagent named in the transcript keeps working without the stream');
+    mark = events.length;
+    daemonState.active = {};
+    daemonState.emit('session.execution.succeeded', { sessionID: 'ses_bg' });
+    await waitFor(() => statuses(mark).includes('idle'));
+    assert.equal((await read()).status, 'idle', 'the parent settles when its last subagent ends');
+
+    // A background shell, such as a dev server, does not keep it working.
+    mark = events.length;
+    daemonState.shells = [{ id: 'sh_dev', status: 'running', metadata: { sessionID: first } }];
+    daemonState.rows = [{ id: 'msg_sh', type: 'assistant', content: [{ type: 'tool', id: 'call_dev', name: 'shell', state: { status: 'completed', input: { command: 'npm run dev', background: true }, metadata: { shellID: 'sh_dev', sessionID: first }, content: [] } }], time: { created: 3 } }];
+    daemonState.emit('session.execution.started', { sessionID: first });
+    daemonState.emit('session.tool.called', { sessionID: first, assistantMessageID: 'msg_sh', id: 'call_dev', name: 'shell', input: { command: 'npm run dev', background: true } });
+    daemonState.emit('session.tool.success', { sessionID: first, assistantMessageID: 'msg_sh', id: 'call_dev', content: [{ type: 'text', text: 'Command moved to the background' }], metadata: { shellID: 'sh_dev', sessionID: first } });
+    daemonState.emit('shell.created', { id: 'sh_dev', metadata: { sessionID: first } });
+    daemonState.emit('session.execution.succeeded', { sessionID: first });
+    await waitFor(() => statuses(mark).includes('idle'));
+    assert.equal((await read()).status, 'idle', 'a running background shell is not work in progress');
+    daemonState.rows = null;
+    daemonState.shells = [];
+
+    // A daemon shutdown is not the end of the turn: it resumes on restart, so
+    // only a re-read is asked for. A user's interrupt is an end.
+    mark = events.length;
+    daemonState.emit('session.execution.started', { sessionID: first });
+    daemonState.emit('session.execution.interrupted', { sessionID: first, reason: 'shutdown' });
+    await settle();
+    assert.deepEqual(statuses(mark), ['working'], 'a shutdown interruption is not an end');
+    assert.ok(events.slice(mark).some((event) => event.kind === 'pending'), 'a shutdown interruption re-reads the snapshot');
+    mark = events.length;
+    daemonState.emit('session.execution.interrupted', { sessionID: first, reason: 'user' });
+    await waitFor(() => statuses(mark).includes('idle'));
+
+    // One event that cannot be applied neither drops the rest of its chunk
+    // nor ends the stream.
+    mark = events.length;
+    const connections = daemonState.connections;
+    Object.defineProperty(service, 'applyFamilyEvent', { configurable: true, value: () => { throw new Error('bad event'); } });
+    daemonState.write(daemonFrame('session.text.started', { sessionID: first, assistantMessageID: 'msg_bad', ordinal: 0 })
+      + daemonFrame('session.execution.started', { sessionID: first }));
+    await waitFor(() => statuses(mark).includes('working'));
+    Reflect.deleteProperty(service, 'applyFamilyEvent');
+    assert.equal(daemonState.connections, connections, 'the stream stays open');
+    assert.ok(!events.slice(mark).some((event) => event.kind === 'reconnecting'));
+  } finally {
+    release();
+  }
+
+  // After a reconnect nothing has streamed yet. A read while the turn's end is
+  // held back keeps what is shown rather than reporting the end early, so the
+  // streamed end still announces the finished turn.
+  const reconnected = new OpenCodeServerService(database, env, { settleMs: 30_000 });
+  const reconnectedEvents: IntegratedConversationEvent[] = [];
+  const releaseReconnected = await reconnected.subscribe('process_0', (event) => reconnectedEvents.push(event));
+  try {
+    daemonState.active = { [first]: { type: 'running' } };
+    assert.equal((await reconnected.conversation('process_0') as { status?: string }).status, 'working');
+    const reconnectedMark = reconnectedEvents.length;
+    daemonState.active = {};
+    daemonState.emit('session.execution.succeeded', { sessionID: first });
+    daemonState.emit('session.inbox.cancelled', { sessionID: first, inboxID: 'msg_marker_reconnect' });
+    await waitFor(() => reconnectedEvents.slice(reconnectedMark).some((event) => event.kind === 'pending'));
+    assert.equal((await reconnected.conversation('process_0') as { status?: string }).status, undefined, 'a read during a held-back end after a reconnect keeps what is shown');
+  } finally {
+    releaseReconnected();
+  }
+
+  // Integrated activity writes the streamed statuses, permission included.
+  daemonState.active = { [first]: { type: 'running' } };
+  const integrated = new IntegratedAgentService(database, { opencode: new OpenCodeServerService(database, env, { settleMs: 50 }) });
+  const activity = (): string => (database.connection.prepare(`select activity from processes where id = 'process_0'`).get() as { activity: string }).activity;
+  try {
+    const connections = daemonState.connections;
+    integrated.observe('process_0');
+    await waitFor(() => daemonState.connections > connections && activity() === 'working');
+    daemonState.permissions = [{ id: 'per_observed', sessionID: first, action: 'bash', resources: ['ls'] }];
+    daemonState.emit('permission.asked', { id: 'per_observed', sessionID: first, action: 'bash', resources: ['ls'] });
+    await waitFor(() => activity() === 'permission');
+    // The daemon reports the answer just before it drops the request, so a
+    // read can still list it; the answered request stays answered.
+    daemonState.emit('permission.replied', { sessionID: first, requestID: 'per_observed', reply: 'once' });
+    await waitFor(() => activity() === 'working');
+    daemonState.permissions = [];
+    daemonState.active = {};
+    daemonState.emit('session.execution.succeeded', { sessionID: first });
+    await waitFor(() => activity() === 'idle');
+  } finally {
+    integrated.dispose();
+  }
+
+  // A stream with no traffic, not even heartbeats, is dropped and reopened,
+  // and the dropped connection is released.
+  const quiet = new OpenCodeServerService(database, env, { streamIdleMs: 300 });
+  const quietEvents: IntegratedConversationEvent[] = [];
+  const before = daemonState.connections;
+  const releaseQuiet = await quiet.subscribe('process_0', (event) => quietEvents.push(event));
+  try {
+    const heartbeat = setInterval(() => daemonState.write(': heartbeat\n\n'), 100);
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    clearInterval(heartbeat);
+    assert.equal(daemonState.connections, before + 1, 'heartbeats keep the stream open');
+    await waitFor(() => daemonState.connections >= before + 2, 3_000);
+    assert.ok(quietEvents.some((event) => event.kind === 'reconnecting'), 'a silent stream reconnects');
+    await waitFor(() => daemonResponses.size === 1);
+  } finally {
+    releaseQuiet();
+  }
+  await waitFor(() => daemonResponses.size === 0);
+}
+
+interface FakeDaemonState {
+  connections: number; auth: string; prompts: unknown[]; messageReads: number;
+  emit: (type: string, data: unknown, created?: number) => void; write: (raw: string) => void;
+  // Each connection opens with a fixed burst of events unless turned off.
+  burst: boolean; active: Record<string, unknown>; rows: unknown[] | null; permissions: unknown[]; shells: unknown[];
 }
 
 function checkHistory(directory: string): void {

@@ -88,6 +88,19 @@ test('idle watchers retain evidence that a child was busy before restart', (t) =
   assert.match(fixture.delivery.calls[0]!.text, /^\[Patterm timer timer_\w+: condition met\]\n- child "child": idle \(its turn ended\)\nidle$/);
 });
 
+test('an Integrated turn that ended with an error satisfies idle watchers', (t) => {
+  const fixture = setup(t);
+  const timers = fixture.create();
+  timers.activate();
+  fixture.database.connection.prepare("update processes set activity = 'working' where id = 'child'").run();
+  timers.setIdle({ kind: 'idle_all', watched: ['child'], ownerProcessId: 'owner', body: 'ended' });
+  assert.equal(fixture.delivery.calls.length, 0);
+  fixture.database.connection.prepare("update processes set activity = 'error' where id = 'child'").run();
+  t.mock.timers.tick(5_000);
+  assert.equal(fixture.delivery.calls.length, 1);
+  assert.match(fixture.delivery.calls[0]!.text, /^\[Patterm timer timer_\w+: condition met\]\n- child "child": its turn ended with an error\nended$/);
+});
+
 test('report watchers retain their original report cutoff after restart', (t) => {
   const fixture = setup(t);
   let timers = fixture.create();

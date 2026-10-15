@@ -50,8 +50,11 @@ async function main(): Promise<void> {
     assert.equal(activity(), 'idle');
     assert.deepEqual(changes, ['changed', 'changed']);
 
-    // Commands also notify when they start work.
+    // Commands also notify when they start work. Not every command starts a
+    // turn, so the native state decides.
+    status = 'working';
     await service.command('process_test', 'compact', '');
+    await new Promise((resolve) => setImmediate(resolve));
     assert.equal(activity(), 'working');
     assert.deepEqual(changes, ['changed', 'changed', 'changed']);
 
@@ -329,6 +332,7 @@ async function main(): Promise<void> {
     await assert.rejects(stuckHost.stop('process_test'), /host is still alive/);
 
     await observedActivity(database);
+    await activityContract(database);
     await heldPrompts(database);
   } finally {
     database.dispose();
@@ -406,7 +410,7 @@ async function observedActivity(database: DatabaseService): Promise<void> {
   await read;
   assert.equal(activity(), 'working', 'a stale snapshot does not overwrite a newer status');
 
-  // Pending refreshes pick up permission, which the stream collapses to working.
+  // Pending refreshes pick up permission a provider does not stream.
   conversation = async () => ({ status: snapshot });
   snapshot = 'permission';
   emit({ kind: 'pending' });
@@ -456,6 +460,95 @@ async function observedActivity(database: DatabaseService): Promise<void> {
   assert.equal(subscriptions, 1);
   service.dispose();
   assert.equal(subscriptions, 0, 'dispose releases every observation');
+}
+
+// How streamed status, snapshots, prompts and commands combine into the
+// activity tabs, timers and notifications read.
+async function activityContract(database: DatabaseService): Promise<void> {
+  const now = new Date().toISOString();
+  database.connection.prepare(`insert into processes (id,project_id,kind,name,status,activity,created_at,updated_at) values ('process_contract','project_test','agent','Contract','running','idle',?,?)`).run(now, now);
+  database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,started_at,session_role,resume_status,created_by_actor) values ('session_contract','project_test','process_contract','codex','integrated',?,'sub-agent','found','user')`).run(now);
+  const activity = () => (database.connection.prepare(`select activity from processes where id = 'process_contract'`).get() as { activity: string }).activity;
+  const settle = async () => { for (let index = 0; index < 5; index++) await new Promise((resolve) => setImmediate(resolve)); };
+
+  const listeners = new Set<IntegratedConversationListener>();
+  let subscriptions = 0;
+  let snapshot: string | undefined = 'idle';
+  let busy = false;
+  const sent: string[] = [];
+  const emit = (event: Omit<IntegratedConversationEvent, 'processId' | 'revision'>) => {
+    for (const listener of listeners) listener({ ...event, processId: 'process_contract', revision: 1 });
+  };
+  const provider: IntegratedProviderService = {
+    prepare: async () => ({ resumeId: 'thread_contract', argv: [] }),
+    conversation: async () => ({ status: snapshot }),
+    prompt: async (_processId, input) => {
+      if (busy) throw new TurnBusyError('failed to submit turn input: ActiveTurnNotSteerable { turn_kind: Compact }', 'compact');
+      sent.push(input.text);
+      return { id: `message_${sent.length}` };
+    },
+    command: async () => ({}),
+    interrupt: async () => {},
+    replyPermission: async () => {},
+    replyQuestion: async () => {},
+    stop: async () => {},
+    subscribe: async (_processId, listener) => {
+      subscriptions += 1;
+      listeners.add(listener);
+      return () => { listeners.delete(listener); subscriptions -= 1; };
+    }
+  };
+  const logged: Array<{ event: string; data: unknown }> = [];
+  const service = new IntegratedAgentService(database, { codex: provider });
+  service.setDebugLog({ write: (_source, event, data) => { logged.push({ event, data }); } });
+  service.observe('process_contract');
+  await settle();
+
+  // Permission streams as its own status.
+  emit({ kind: 'status', status: 'working' });
+  emit({ kind: 'status', status: 'permission' });
+  assert.equal(activity(), 'permission', 'a streamed permission reaches the database');
+  assert.deepEqual(logged.filter((entry) => entry.event === 'activity').at(-1)?.data,
+    { processId: 'process_contract', previous: 'working', activity: 'permission', snapshot: false }, 'transitions are debug logged');
+
+  // A prompt does not answer the permission the agent waits for.
+  snapshot = 'permission';
+  await service.prompt('process_contract', 'While you wait');
+  assert.equal(activity(), 'permission', 'a prompt keeps a pending permission');
+
+  // A command that starts no turn leaves the agent as the native state says.
+  emit({ kind: 'status', status: 'idle' });
+  snapshot = 'idle';
+  await service.command('process_contract', 'rename', 'New name');
+  await settle();
+  assert.equal(activity(), 'idle', 'a command without a turn does not mark working');
+  snapshot = 'working';
+  await service.command('process_contract', 'review', '');
+  await settle();
+  assert.equal(activity(), 'working', 'a command that started a turn reads as working');
+
+  // A held prompt is retried on any status, even one that does not change
+  // activity, such as a compaction ending while background agents run.
+  busy = true;
+  const held = await service.prompt('process_contract', 'After compaction') as { delivery: string };
+  assert.equal(held.delivery, 'queued');
+  busy = false;
+  emit({ kind: 'status', status: 'working' });
+  await settle();
+  assert.ok(sent.includes('After compaction'), 'an unchanged status retries held prompts');
+
+  // A provider that gave up reconnecting is retried quickly at first.
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    emit({ kind: 'error', id: 'connection_error', delta: 'gone' });
+    assert.equal(subscriptions, 0);
+    mock.timers.tick(2_000);
+  } finally {
+    mock.timers.reset();
+  }
+  await settle();
+  assert.equal(subscriptions, 1, 'the first resubscribe comes after two seconds');
+  service.dispose();
 }
 
 // Prompts a compacting Codex agent rejects wait in order and are sent when the

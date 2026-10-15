@@ -12,7 +12,7 @@ import type { IntegratedControls, IntegratedFormAction, IntegratedLaunchInput, I
 import { OPENCODE_VERSION_MISMATCH } from './OpenCodeServiceErrors';
 import { UncertainDeliveryError, type IntegratedDeliveryState } from './IntegratedDelivery';
 import type { ResolvedIntegratedPrompt } from './IntegratedInput';
-import { messagesTaskOutput, textTaskOutput, type IntegratedConversationEvent, type IntegratedConversationListener, type IntegratedTaskOutput } from './IntegratedConversation';
+import { messagesTaskOutput, textTaskOutput, type IntegratedConversationEvent, type IntegratedConversationListener, type IntegratedDeliveryStatus, type IntegratedTaskOutput } from './IntegratedConversation';
 import type { TranscriptImageRef, TranscriptImageStore } from './TranscriptImageStore';
 
 // `opencode api` sends the JSON body as one argv entry: the kernel rejects any
@@ -26,6 +26,52 @@ const MAX_ARGUMENT_BYTES = 131_072;
 // capture bound must cover realistic uploads (10 MiB raw -> ~13.4 MiB base64).
 const MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
 const OPENCODE_RECONNECT_ATTEMPTS = 8;
+// The daemon writes a heartbeat every 15 s, so a stream silent for three of
+// them is a dead connection, for example a half-open one after sleep.
+const OPENCODE_STREAM_IDLE_MS = 45_000;
+// An execution's end is shown only once nothing follows it at once: a
+// successor execution, or a parent woken by its finished background subagent.
+const OPENCODE_SETTLE_MS = 150;
+// The daemon reports an execution's end just before the session leaves its
+// active map, so a read right after the end may still find it there.
+const OPENCODE_ENDED_TRUST_MS = 1_000;
+
+type OpenCodeStatus = Exclude<IntegratedDeliveryStatus, 'unknown'>;
+type OpenCodeEmit = (event: Omit<IntegratedConversationEvent, 'processId' | 'revision'>) => void;
+
+// What the event stream says about one Patterm session: its own execution,
+// the requests waiting on the user from it or its subagents, and subagent
+// sessions still running after it stopped. Background shells do not count:
+// they can run for as long as a dev server does.
+interface OpenCodeActivity {
+  execution: 'running' | 'idle' | 'error' | 'unknown';
+  detail: string;
+  // Pending permission and form request id -> the session that asked, and
+  // recently answered ids a read may still find pending for a moment.
+  requests: Map<string, string>;
+  answered: Set<string>;
+  children: Set<string>;
+  // Bumped by every stream change, so a snapshot knows whether the stream
+  // moved on while it was reading.
+  version: number;
+  // Host times of the last reported end and the last prompt or command that
+  // starts work.
+  endedAt: number;
+  admittedAt: number;
+  // The status last sent on the stream, a deferred idle or error, and the
+  // open streams it goes to.
+  emitted: OpenCodeStatus | null;
+  settling: NodeJS.Timeout | null;
+  emitters: Set<OpenCodeEmit>;
+}
+
+// One open event stream. Descendant lookups can need a native read, so they
+// run in event order on their own chain.
+interface OpenCodeStream {
+  emit: OpenCodeEmit;
+  runtime: { executable: string; cwd: string };
+  serial: Promise<void>;
+}
 
 // One projected transcript row, keyed by its native identity: a tool call id,
 // or the assistant message plus the family-specific ordinal for text and
@@ -106,16 +152,22 @@ export class OpenCodeServerService {
   // Verified daemon discovery, shared by every request until a connection or
   // credential failure shows the registration is stale.
   private discovery: Promise<OpenCodeDaemon> | null = null;
+  // Stream-derived activity by native session.
+  private readonly activity = new Map<string, OpenCodeActivity>();
 
   private readonly images: TranscriptImageStore | null;
+  private readonly streamIdleMs: number;
+  private readonly settleMs: number;
 
   constructor(
     private readonly database: DatabaseService,
     private readonly env: NodeJS.ProcessEnv = process.env,
-    options: { persistent?: boolean; images?: TranscriptImageStore } = {}
+    options: { persistent?: boolean; images?: TranscriptImageStore; streamIdleMs?: number; settleMs?: number } = {}
   ) {
     this.token = options.persistent ? persistentBridgeToken(path.dirname(database.dbPath)) : randomUUID();
     this.images = options.images ?? null;
+    this.streamIdleMs = options.streamIdleMs ?? OPENCODE_STREAM_IDLE_MS;
+    this.settleMs = options.settleMs ?? OPENCODE_SETTLE_MS;
   }
 
   async interrupt(processId: string): Promise<void> {
@@ -205,6 +257,7 @@ export class OpenCodeServerService {
       if (typeof response.data?.id !== 'string') {
         throw new Error('OpenCode did not acknowledge the message');
       }
+      this.admitted(runtime.resumeId);
       return { id: response.data.id };
     } catch (error) {
       // 4xx responses and pre-execution failures are definitive rejections.
@@ -215,7 +268,10 @@ export class OpenCodeServerService {
       if (error instanceof ProviderCommandError && error.definitive) throw error;
       if (input.messageId) {
         const state = await this.reconcile(processId, input.messageId).catch((): IntegratedDeliveryState => 'unknown');
-        if (state === 'accepted') return { id: `msg_${input.messageId}` };
+        if (state === 'accepted') {
+          this.admitted(runtime.resumeId);
+          return { id: `msg_${input.messageId}` };
+        }
       }
       throw new UncertainDeliveryError(error instanceof Error ? error.message : String(error), input.messageId);
     }
@@ -260,11 +316,14 @@ export class OpenCodeServerService {
     let controller: AbortController | null = null;
     let retry: NodeJS.Timeout | null = null;
     let attempts = 0;
-    const emit = (event: Omit<IntegratedConversationEvent, 'processId' | 'revision'>): void => {
+    const emit: OpenCodeEmit = (event) => {
       const revision = (this.revisions.get(processId) ?? 0) + 1;
       this.revisions.set(processId, revision);
       listener({ ...event, processId, revision });
     };
+    const stream: OpenCodeStream = { emit, runtime, serial: Promise.resolve() };
+    const activity = this.activityState(sessionId);
+    activity.emitters.add(emit);
     const schedule = (): void => {
       if (stopped) return;
       emit({ kind: 'reconnecting' });
@@ -275,32 +334,46 @@ export class OpenCodeServerService {
       }
       retry = setTimeout(() => void open(false), Math.min(250 * 2 ** (attempts - 1), 5_000));
     };
-    const pump = async (body: ReadableStream<Uint8Array>): Promise<void> => {
+    const pump = async (body: ReadableStream<Uint8Array>, connection: AbortController): Promise<void> => {
       const reader = body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) return;
-        buffer += decoder.decode(value, { stream: true });
-        for (let boundary = buffer.indexOf('\n\n'); boundary >= 0; boundary = buffer.indexOf('\n\n')) {
-          const block = buffer.slice(0, boundary);
-          buffer = buffer.slice(boundary + 2);
-          const payload = block.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('');
-          if (!payload) continue;
-          let envelope: unknown;
-          try { envelope = JSON.parse(payload); } catch { continue; }
-          this.handleEvent(sessionId, envelope, emit, runtime);
+      // Heartbeats count as traffic; a connection silent for longer is dead
+      // even when the socket never closes, so it is dropped and reopened.
+      const watchdog = setTimeout(() => connection.abort(), this.streamIdleMs);
+      watchdog.unref?.();
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) return;
+          watchdog.refresh();
+          buffer += decoder.decode(value, { stream: true });
+          for (let boundary = buffer.indexOf('\n\n'); boundary >= 0; boundary = buffer.indexOf('\n\n')) {
+            const block = buffer.slice(0, boundary);
+            buffer = buffer.slice(boundary + 2);
+            const payload = block.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('');
+            if (!payload) continue;
+            let envelope: unknown;
+            try { envelope = JSON.parse(payload); } catch { continue; }
+            // One event that cannot be applied must not drop the rest of the
+            // chunk or end the stream.
+            try { this.handleEvent(sessionId, envelope, stream); } catch { /* the next snapshot covers it */ }
+          }
         }
+      } finally {
+        clearTimeout(watchdog);
+        // Release the socket however the read ended.
+        connection.abort();
       }
     };
     const open = async (first: boolean): Promise<void> => {
+      const connection = new AbortController();
       try {
-        controller = new AbortController();
+        controller = connection;
         const daemon = await this.daemon();
         const response = await fetch(`${daemon.url}/api/event`, {
           headers: { Authorization: daemon.auth, Accept: 'text/event-stream' },
-          signal: controller.signal
+          signal: connection.signal
         }).catch((error: unknown) => {
           if (connectionRefused(error) || connectionClosed(error)) this.forgetDaemon();
           throw error;
@@ -313,18 +386,25 @@ export class OpenCodeServerService {
         // native content index stays aligned with the refreshed snapshot.
         if (!first) await this.seedProjection(sessionId, runtime);
         emit({ kind: 'pending' });
-        void pump(response.body).catch(() => {}).finally(() => { if (!stopped) schedule(); });
+        void pump(response.body, connection).catch(() => {}).finally(() => { if (!stopped && controller === connection) schedule(); });
       } catch (error) {
+        connection.abort();
         if (stopped) return;
         if (first) throw error;
         schedule();
       }
     };
-    await open(true);
+    try {
+      await open(true);
+    } catch (error) {
+      this.releaseActivity(sessionId, activity, emit);
+      throw error;
+    }
     return () => {
       stopped = true;
       controller?.abort();
       if (retry) clearTimeout(retry);
+      this.releaseActivity(sessionId, activity, emit);
     };
   }
 
@@ -332,12 +412,8 @@ export class OpenCodeServerService {
   // server-wide and carries every session on the daemon. Text, reasoning, and
   // tool events are projected onto their native row identity: the assistant
   // message plus the family-specific ordinal, or the native tool call id.
-  private handleEvent(
-    sessionId: string,
-    envelope: unknown,
-    emit: (event: Omit<IntegratedConversationEvent, 'processId' | 'revision'>) => void,
-    runtime?: { executable: string; cwd: string }
-  ): void {
+  private handleEvent(sessionId: string, envelope: unknown, stream: OpenCodeStream): void {
+    const { emit, runtime } = stream;
     const event = record(envelope);
     const type = typeof event.type === 'string' ? event.type : '';
     const data = record(event.data);
@@ -346,8 +422,8 @@ export class OpenCodeServerService {
     const at = openCodeTime(event.created) ?? openCodeTime(data.timestamp) ?? new Date().toISOString();
     const form = record(data.form);
     const eventSession = typeof data.sessionID === 'string' ? data.sessionID : typeof form.sessionID === 'string' ? form.sessionID : null;
-    // Only subagent parentage is kept from the daemon-wide stream; root
-    // sessions are looked up lazily when one has a request.
+    // Only subagent parentage is kept from the daemon-wide stream; other
+    // sessions are looked up lazily when one asks for something or runs.
     // v2 events carry the session fields in data; v1 nests them in info.
     if (type === 'session.created') {
       const info = record(data.info);
@@ -356,32 +432,31 @@ export class OpenCodeServerService {
       if (created && parent) bounded(this.sessionParents, created, parent);
     }
     if (eventSession && eventSession !== sessionId) {
-      // A subagent's request pauses this session's turn; re-read the snapshot,
-      // which collects requests from every descendant session.
-      if ((type.startsWith('form.') || type.startsWith('permission.')) && runtime) {
-        void this.descendsFrom(eventSession, sessionId, runtime).then((child) => { if (child) emit({ kind: 'pending' }); }, () => {});
-        return;
+      // A subagent's request pauses this session, and a background subagent
+      // keeps it working after its own turn ends. Its end alone never settles
+      // this session. Requests also re-read the snapshot for the dock.
+      const request = isRequestEvent(type);
+      if (request || executionEvent(type, data)) {
+        const child = eventSession;
+        stream.serial = stream.serial.then(async () => {
+          if (!await this.descendsFrom(child, sessionId, runtime).catch(() => false)) return;
+          this.applyChildActivity(sessionId, child, type, data);
+          if (request) emit({ kind: 'pending' });
+        }).catch(() => {});
+        if (request) return;
       }
-      // A direct subagent's content nests under its tool row. Its status is
-      // its own and never settles this session's turn.
+      // A direct subagent's content nests under its tool row.
       const parentId = this.childRows.get(eventSession);
       if (parentId && this.sessionParents.get(eventSession) === sessionId) this.handleChildContent(eventSession, parentId, type, data, emit, at);
       return;
     }
     if (eventSession !== sessionId) return;
     const projection = this.projection(sessionId);
-    if (type === 'session.execution.started') {
-      emit({ kind: 'status', status: 'working' });
-      return;
-    }
-    if (type === 'session.idle' || type === 'session.execution.succeeded' || type === 'session.execution.interrupted') {
-      emit({ kind: 'status', status: 'idle' });
-      return;
-    }
-    if (type === 'session.execution.failed' || type === 'session.error') {
-      const message = String(record(data.error).message ?? data.message ?? '').trim();
-      if (message) emit({ kind: 'replace', message: { id: `error_${String(event.id ?? randomUUID())}`, role: 'assistant', kind: 'notice', level: 'error', text: message, createdAt: at, completedAt: at } });
-      emit({ kind: 'status', status: 'error', ...(message ? { detail: message } : {}) });
+    const execution = executionEvent(type, data);
+    if (execution) {
+      const failure = execution === 'failed' ? String(record(data.error).message ?? data.message ?? '').trim() : '';
+      if (failure) emit({ kind: 'replace', message: { id: `error_${String(event.id ?? randomUUID())}`, role: 'assistant', kind: 'notice', level: 'error', text: failure, createdAt: at, completedAt: at } });
+      this.applyRootExecution(sessionId, execution, failure);
       return;
     }
     // Ids match the snapshot's projection of the same native rows.
@@ -414,7 +489,7 @@ export class OpenCodeServerService {
         bounded(this.childRows, child, tool.rowId);
         bounded(this.sessionParents, child, sessionId);
         // Align the child's row indices with its snapshot before events land.
-        if (runtime) void this.seedProjection(child, { ...runtime, resumeId: child });
+        void this.seedProjection(child, { ...runtime, resumeId: child });
       }
       return;
     }
@@ -445,7 +520,9 @@ export class OpenCodeServerService {
       this.applyLegacyDelta(projection, data, emit);
       return;
     }
-    if (type.startsWith('form.') || type.startsWith('permission.') || type === 'session.diff') {
+    if (isRequestEvent(type) || type === 'session.diff') {
+      const state = this.activityState(sessionId);
+      if (applyRequest(state, type, data, sessionId)) this.publishActivity(state);
       emit({ kind: 'pending' });
       return;
     }
@@ -456,6 +533,151 @@ export class OpenCodeServerService {
     const counts = this.unhandled.get(sessionId) ?? {};
     if (Object.keys(counts).length < 100 || counts[type] !== undefined) counts[type] = (counts[type] ?? 0) + 1;
     bounded(this.unhandled, sessionId, counts);
+  }
+
+  // Stream-derived state lives as long as a stream for the session is open.
+  private activityState(sessionId: string): OpenCodeActivity {
+    let state = this.activity.get(sessionId);
+    if (!state) {
+      state = newActivity();
+      this.activity.set(sessionId, state);
+    }
+    return state;
+  }
+
+  private releaseActivity(sessionId: string, state: OpenCodeActivity, emit: OpenCodeEmit): void {
+    state.emitters.delete(emit);
+    if (state.emitters.size) return;
+    this.cancelSettle(state);
+    if (this.activity.get(sessionId) === state) this.activity.delete(sessionId);
+  }
+
+  // A prompt or command that starts work was accepted. The daemon puts the
+  // session in its active map before it replies.
+  private admitted(sessionId: string): void {
+    const state = this.activity.get(sessionId);
+    if (state) state.admittedAt = Date.now();
+  }
+
+  private applyRootExecution(sessionId: string, execution: OpenCodeExecutionEvent, failure: string): void {
+    const state = this.activityState(sessionId);
+    if (execution === 'started') {
+      state.execution = 'running';
+      state.detail = '';
+      this.publishActivity(state);
+      return;
+    }
+    // A request cannot outlive the execution waiting on it; an interrupted
+    // permission ends without a reply event.
+    dropRequests(state, sessionId);
+    if (execution === 'shutdown') {
+      // The daemon is stopping and resumes this turn when it starts again, so
+      // the turn has not finished. The reconnect re-reads what happened.
+      state.version += 1;
+      this.cancelSettle(state);
+      this.broadcast(state, { kind: 'pending' });
+      return;
+    }
+    state.endedAt = Date.now();
+    state.execution = execution === 'failed' ? 'error' : 'idle';
+    state.detail = failure;
+    this.publishActivity(state);
+  }
+
+  private applyChildActivity(sessionId: string, child: string, type: string, data: Record<string, unknown>): void {
+    // A lookup can finish after the session's last stream closed.
+    const state = this.activity.get(sessionId);
+    if (!state) return;
+    let changed: boolean;
+    if (isRequestEvent(type)) {
+      changed = applyRequest(state, type, data, child);
+    } else if (executionEvent(type, data) === 'started') {
+      changed = !state.children.has(child);
+      state.children.add(child);
+    } else {
+      changed = state.children.delete(child);
+      changed = dropRequests(state, child) || changed;
+    }
+    if (changed) this.publishActivity(state);
+  }
+
+  // Sends the status the stream state implies. An end is held back briefly
+  // and dropped if work resumes, so a successor execution or a parent woken
+  // by its subagent does not flash idle and announce a finished turn.
+  private publishActivity(state: OpenCodeActivity): void {
+    state.version += 1;
+    if (!state.emitters.size) return;
+    const status = activityStatus(state);
+    if (status === null) {
+      // This session's own state is not known yet; let the snapshot decide.
+      this.cancelSettle(state);
+      this.broadcast(state, { kind: 'pending' });
+      return;
+    }
+    if (status === 'idle' || status === 'error') {
+      if (state.settling) clearTimeout(state.settling);
+      state.settling = setTimeout(() => {
+        state.settling = null;
+        const settled = activityStatus(state);
+        if (settled) this.sendStatus(state, settled);
+      }, this.settleMs);
+      state.settling.unref?.();
+      return;
+    }
+    this.cancelSettle(state);
+    this.sendStatus(state, status);
+  }
+
+  private sendStatus(state: OpenCodeActivity, status: OpenCodeStatus): void {
+    state.emitted = status;
+    this.broadcast(state, { kind: 'status', status, ...(status === 'error' && state.detail ? { detail: state.detail } : {}) });
+  }
+
+  private broadcast(state: OpenCodeActivity, event: Parameters<OpenCodeEmit>[0]): void {
+    for (const emit of state.emitters) emit(event);
+  }
+
+  private cancelSettle(state: OpenCodeActivity): void {
+    if (state.settling) clearTimeout(state.settling);
+    state.settling = null;
+  }
+
+  // The snapshot's status agrees with the stream. A read never reports an end
+  // the stream is still holding back, and when the stream moved on during the
+  // read, the stream is newer. Otherwise the native state decides and becomes
+  // the stream's baseline, which also repairs events missed while
+  // disconnected. A session the daemon lists as active just after the stream
+  // reported its end has ended, unless a prompt was accepted since.
+  private snapshotActivity(
+    state: OpenCodeActivity,
+    version: number,
+    readAt: number,
+    native: { active: unknown; rows: unknown[]; requests: Array<Record<string, unknown>>; sessionId: string }
+  ): { status: OpenCodeStatus | undefined; detail: string } {
+    const running = openCodeRunning(native.active, native.sessionId);
+    const requests = new Map(native.requests.flatMap((row) => typeof row.id === 'string' && !state.answered.has(row.id)
+      ? [[row.id, typeof row.sessionID === 'string' ? row.sessionID : native.sessionId] as [string, string]]
+      : []));
+    if (running === undefined) return { status: requests.size ? 'permission' : undefined, detail: '' };
+    // After a reconnect nothing has streamed yet, so a held-back end keeps
+    // what is shown; the streamed end then announces the finished turn.
+    if (state.settling) return { status: state.emitted ?? undefined, detail: state.detail };
+    if (state.version !== version) {
+      const status = activityStatus(state);
+      if (status) return { status, detail: state.detail };
+    }
+    const ended = state.execution !== 'running' && state.endedAt > state.admittedAt && readAt - state.endedAt < OPENCODE_ENDED_TRUST_MS;
+    const outcome = latestOutcome(native.rows);
+    // An execution that failed stays failed until the next one starts.
+    const failed = outcome === undefined ? state.execution === 'error' : outcome?.failed === true;
+    const detail = failed ? (state.execution === 'error' && state.detail ? state.detail : outcome?.detail ?? '') : '';
+    const live = record(record(native.active).data);
+    const candidates = new Set([...subagentChildren(native.rows, native.sessionId), ...state.children]);
+    state.execution = running && !ended ? 'running' : failed ? 'error' : 'idle';
+    state.detail = detail;
+    state.requests = requests;
+    state.children = new Set([...candidates].filter((child) => record(live[child]).type === 'running'));
+    return { status: activityStatus(state) ?? undefined, detail };
   }
 
   private handleChildContent(
@@ -1057,7 +1279,9 @@ export class OpenCodeServerService {
 
   async compact(processId: string): Promise<unknown> {
     const runtime = this.runtime(processId);
-    return this.api(runtime.executable, runtime.cwd, 'POST', `/api/session/${encodeURIComponent(runtime.resumeId)}/compact`, { delivery: 'queue' });
+    const result = await this.api(runtime.executable, runtime.cwd, 'POST', `/api/session/${encodeURIComponent(runtime.resumeId)}/compact`, { delivery: 'queue' });
+    this.admitted(runtime.resumeId);
+    return result;
   }
 
   // The daemon keeps a model change across a Patterm restart; the selection
@@ -1084,7 +1308,14 @@ export class OpenCodeServerService {
     // A custom command with a built-in's name wins, as it did before.
     const custom = OPENCODE_BUILTIN_COMMANDS.some((command) => command.name === name)
       && dataRows(await this.api(runtime.executable, runtime.cwd, 'GET', `/api/command?${new URLSearchParams({ 'location[directory]': runtime.cwd })}`).catch(() => null)).some((command) => command.name === name);
-    if (custom) return this.api(runtime.executable, runtime.cwd, 'POST', `${session}/command`, { name, text, delivery: 'queue' });
+    // A native command starts a turn. Built-ins other than compact do not:
+    // /shell runs outside one.
+    const native = async (): Promise<unknown> => {
+      const result = await this.api(runtime.executable, runtime.cwd, 'POST', `${session}/command`, { name, text, delivery: 'queue' });
+      this.admitted(runtime.resumeId);
+      return result;
+    };
+    if (custom) return native();
     if (name === 'compact') return this.compact(processId);
     if (name === 'rename') {
       if (!text.trim()) throw new Error('Give the new name after /rename');
@@ -1098,7 +1329,7 @@ export class OpenCodeServerService {
       // Like the TUI: stage a revert of the latest prompt and its reply, which
       // /redo clears. The TUI never commits it. A running turn is not reverted
       // underneath itself.
-      if (openCodeActivity(await this.api(runtime.executable, runtime.cwd, 'GET', '/api/session/active'), runtime.resumeId) === 'working') {
+      if (openCodeRunning(await this.api(runtime.executable, runtime.cwd, 'GET', '/api/session/active'), runtime.resumeId) === true) {
         throw new Error('Stop the running turn before undoing it');
       }
       const { rows } = await this.messageRows(runtime, 50);
@@ -1107,9 +1338,7 @@ export class OpenCodeServerService {
       return this.api(runtime.executable, runtime.cwd, 'POST', `${session}/revert/stage`, { messageID: latest.id });
     }
     if (name === 'redo') return this.api(runtime.executable, runtime.cwd, 'DELETE', `${session}/revert`);
-    return this.api(runtime.executable, runtime.cwd, 'POST', `${session}/command`, {
-      name, text, delivery: 'queue'
-    });
+    return native();
   }
 
   async conversation(processId: string): Promise<unknown> {
@@ -1118,6 +1347,10 @@ export class OpenCodeServerService {
     // during a read keeps a newer revision, so the renderer re-applies it
     // instead of dropping it with the snapshot.
     const revision = this.revisions.get(processId) ?? 0;
+    // Without an open stream the snapshot decides alone.
+    const activity = this.activity.get(runtime.resumeId) ?? newActivity();
+    const activityVersion = activity.version;
+    const readAt = Date.now();
     const [{ rows, truncated, cursor }, ownPermissions, ownForms, active, childRequests, inbox, shells] = await Promise.all([
       this.messageRows(runtime),
       this.api(runtime.executable, runtime.cwd, 'GET', `/api/session/${encodeURIComponent(runtime.resumeId)}/permission`),
@@ -1142,9 +1375,14 @@ export class OpenCodeServerService {
       const row = record(request);
       if (typeof row.id === 'string' && typeof row.sessionID === 'string') bounded(this.requestOwners, row.id, row.sessionID);
     }
+    const { status, detail } = this.snapshotActivity(activity, activityVersion, readAt, {
+      active, rows, sessionId: runtime.resumeId,
+      requests: [...permissions, ...forms].map(record)
+    });
     return {
       process_id: processId, session_id: runtime.sessionId, provider_session_id: runtime.resumeId, provider: 'opencode',
-      status: openCodeActivity(active, runtime.resumeId),
+      status,
+      ...(status === 'error' && detail ? { status_detail: detail } : {}),
       // Newest-first bounded read, reversed for chronological display.
       history_truncated: truncated,
       history_cursor: cursor ?? null,
@@ -1630,19 +1868,107 @@ function stringValue(value: unknown): string | undefined {
 }
 
 // OpenCode reports idle sessions by omitting them from the server-scoped active
-// snapshot. `null` means this build has no active-session route, so activity is
-// unknown; malformed payloads and provider errors stay visible.
-function openCodeActivity(value: unknown, sessionId: string): string | undefined {
+// snapshot. `null` means this build has no active-session route, so whether it
+// runs is unknown; malformed payloads and provider errors stay visible.
+function openCodeRunning(value: unknown, sessionId: string): boolean | undefined {
   if (value === null) return undefined;
   const data = record(value).data;
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     throw new Error('OpenCode returned an invalid active-session response');
   }
   const active = record(data);
-  if (active[sessionId] === undefined) return 'idle';
-  const type = record(active[sessionId]).type;
-  if (type === 'running') return 'working';
-  return undefined;
+  if (active[sessionId] === undefined) return false;
+  return record(active[sessionId]).type === 'running' ? true : undefined;
+}
+
+type OpenCodeExecutionEvent = 'started' | 'ended' | 'failed' | 'shutdown';
+
+// Execution lifecycle, once per busy period. `session.idle` and
+// `session.error` are the deprecated forms.
+function executionEvent(type: string, data: Record<string, unknown>): OpenCodeExecutionEvent | null {
+  if (type === 'session.execution.started') return 'started';
+  if (type === 'session.execution.succeeded' || type === 'session.idle') return 'ended';
+  if (type === 'session.execution.interrupted') return data.reason === 'shutdown' ? 'shutdown' : 'ended';
+  if (type === 'session.execution.failed' || type === 'session.error') return 'failed';
+  return null;
+}
+
+function newActivity(): OpenCodeActivity {
+  return {
+    execution: 'unknown', detail: '', requests: new Map(), answered: new Set(), children: new Set(), version: 0,
+    endedAt: 0, admittedAt: 0, emitted: null, settling: null, emitters: new Set()
+  };
+}
+
+function isRequestEvent(type: string): boolean {
+  return type.startsWith('form.') || type.startsWith('permission.');
+}
+
+// Tracks one asked or settled permission or form. Returns whether the
+// pending set changed.
+function applyRequest(state: OpenCodeActivity, type: string, data: Record<string, unknown>, owner: string): boolean {
+  const asked = type === 'permission.asked' ? data.id : type === 'form.created' ? record(data.form).id : undefined;
+  if (typeof asked === 'string') {
+    if (state.requests.get(asked) === owner) return false;
+    state.requests.set(asked, owner);
+    return true;
+  }
+  const settled = type === 'permission.replied' ? data.requestID : type === 'form.replied' || type === 'form.cancelled' ? data.id : undefined;
+  if (typeof settled !== 'string') return false;
+  // The daemon reports the answer just before it drops the request.
+  state.answered.add(settled);
+  if (state.answered.size > 200) state.answered.delete(state.answered.values().next().value!);
+  return state.requests.delete(settled);
+}
+
+function dropRequests(state: OpenCodeActivity, owner: string): boolean {
+  let changed = false;
+  for (const [id, session] of state.requests) {
+    if (session === owner) changed = state.requests.delete(id) || changed;
+  }
+  return changed;
+}
+
+// A request waiting on the user comes first, then this session's own work or
+// a background subagent still running (as for Claude and Codex), then a
+// failure until the next execution, then idle. Otherwise null while this
+// session's own state is unknown.
+function activityStatus(state: OpenCodeActivity): OpenCodeStatus | null {
+  if (state.requests.size) return 'permission';
+  if (state.execution === 'running' || state.children.size) return 'working';
+  if (state.execution === 'error') return 'error';
+  return state.execution === 'idle' ? 'idle' : null;
+}
+
+// The newest recorded end of this session's own work, from rows newest
+// first. Each execution appends an `idle` row with its outcome; a newer user
+// or assistant row means later work has none yet (null). Undefined when the
+// window holds no outcome at all, as on daemons that do not record them.
+function latestOutcome(rows: unknown[]): { failed: boolean; detail: string } | null | undefined {
+  const list = rows.map(record);
+  const index = list.findIndex((row) => row.type === 'idle');
+  if (index < 0) return undefined;
+  if (list.slice(0, index).some((row) => row.type === 'user' || row.type === 'assistant' || row.type === 'compaction')) return null;
+  const outcome = list[index]!;
+  if (outcome.outcome !== 'failed') return { failed: false, detail: '' };
+  // Newer daemons record the error on the outcome; older ones only on the
+  // failed turn's reply.
+  const turn = list.slice(index + 1).find((row) => row.type === 'assistant' || row.type === 'user');
+  const message = record(outcome.error).message ?? (turn?.type === 'assistant' ? record(turn.error).message : undefined);
+  return { failed: true, detail: typeof message === 'string' ? message.trim() : '' };
+}
+
+// Subagent sessions named by subagent tools in the window.
+function subagentChildren(rows: unknown[], ownSession: string): string[] {
+  return rows.flatMap((raw) => {
+    const message = record(raw);
+    if (message.type !== 'assistant' || !Array.isArray(message.content)) return [];
+    return message.content.flatMap((part) => {
+      const block = record(part);
+      const child = block.type === 'tool' ? subagentSession(block.name, record(block.state).metadata, ownSession) : null;
+      return child ? [child] : [];
+    });
+  });
 }
 
 // Windows defines no O_NOFOLLOW, and opening a link there always follows it, so
