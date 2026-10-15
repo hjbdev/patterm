@@ -892,6 +892,21 @@ async function checkStreamedActivity(input: {
     daemonState.emit('session.execution.started', { sessionID: first });
     await waitFor(() => statuses(mark).includes('working'));
 
+    // Foreground shell activity does not end the execution. A quiet tool,
+    // then its completion, stays working until the execution ends.
+    mark = events.length;
+    daemonState.emit('session.tool.input.started', { sessionID: first, assistantMessageID: 'msg_fg_shell', id: 'call_fg_shell', name: 'shell' });
+    daemonState.emit('session.tool.called', { sessionID: first, assistantMessageID: 'msg_fg_shell', id: 'call_fg_shell', input: { command: 'sleep 60' } });
+    await waitFor(() => events.slice(mark).some((event) => event.kind === 'replace' && event.message?.id === 'msg_fg_shell-0'));
+    await settle();
+    assert.equal((await read()).status, 'working', 'a quiet foreground OpenCode shell stays working');
+    assert.equal((await read(new OpenCodeServerService(database, env))).status, 'working', 'a fresh connection sees the running OpenCode execution');
+    daemonState.emit('session.tool.success', { sessionID: first, assistantMessageID: 'msg_fg_shell', id: 'call_fg_shell', content: [{ type: 'text', text: 'done' }] });
+    await waitFor(() => events.slice(mark).some((event) => event.kind === 'replace' && event.message?.text === 'done'));
+    await settle();
+    assert.equal((await read()).status, 'working', 'finishing the OpenCode shell does not finish its execution');
+    assert.ok(!statuses(mark).includes('idle'), 'OpenCode never streams idle between a tool and the execution end');
+
     // A permission request is streamed and read as permission, and its reply
     // returns to work. The request also re-reads the snapshot for the dock.
     mark = events.length;
