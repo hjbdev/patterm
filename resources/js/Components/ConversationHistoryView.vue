@@ -103,7 +103,7 @@ import { relativeTime } from '../lib/format';
 import { toast } from 'vue-sonner';
 import { isOpenCodeVersionMismatch } from '../../../app/Services/OpenCodeServiceErrors';
 import { toastLaunchError } from '../lib/launchErrors';
-import { topicCall, topicChanged, useTopicRefresh } from '../lib/serverQuery';
+import { topicCall, topicChanged, topicGeneration, useTopicRefresh } from '../lib/serverQuery';
 import { ScrollArea } from './ui/scroll-area';
 
 const props = defineProps<{
@@ -221,6 +221,7 @@ async function loadConversations(): Promise<void> {
   busy.value = true;
   error.value = '';
   conversations.value = [];
+  rowGenerations.clear();
   messageDisplayCache.clear();
   providerState.value = initialProviderState();
   try {
@@ -241,6 +242,7 @@ async function loadNextConversations(): Promise<void> {
   });
   if (providers.length === 0) return;
   for (const provider of providers) providerState.value[provider].loading = true;
+  const generation = topicGeneration('history');
   try {
     const responses = await Promise.all(providers.map(async (provider) => {
       const state = providerState.value[provider];
@@ -254,7 +256,7 @@ async function loadNextConversations(): Promise<void> {
       providerState.value[provider] = { offset: state.offset + page.length, hasMore: page.length === CONVERSATION_PAGE_SIZE, loading: false };
       return page;
     }));
-    conversations.value = sortConversations(uniqueConversations([...conversations.value, ...responses.flat()]));
+    mergeConversations(responses.flat(), generation);
   } catch (caught) {
     for (const provider of providers) providerState.value[provider].loading = false;
     error.value = caught instanceof Error ? caught.message : 'Failed to load conversation history';
@@ -263,9 +265,8 @@ async function loadNextConversations(): Promise<void> {
 
 // Merge the newest page per provider after an import so new and updated
 // conversations appear without resetting paging, scroll, or selection.
-let refreshes = 0;
 async function refreshConversations(): Promise<void> {
-  const projectId = props.projectId, refresh = ++refreshes;
+  const projectId = props.projectId, generation = topicGeneration('history');
   try {
     const responses = await Promise.all(historyProviders.map(async (provider) => {
       const response = await topicCall('history', 'history_list', {
@@ -276,9 +277,8 @@ async function refreshConversations(): Promise<void> {
       }) as { conversations?: ConversationRecord[] };
       return response.conversations ?? [];
     }));
-    // A newer refresh has already merged what this one read.
-    if (projectId !== props.projectId || refresh !== refreshes) return;
-    conversations.value = sortConversations(uniqueConversations([...conversations.value, ...responses.flat()]));
+    if (projectId !== props.projectId) return;
+    mergeConversations(responses.flat(), generation);
   } catch {
     // The next import or project switch retries; keep the current list.
   }
@@ -296,15 +296,18 @@ function initialProviderState(): Record<HistoryProvider, ProviderPageState> {
   };
 }
 
-// One row per conversation, the most recently updated copy, so a slower
-// reply with an older copy never replaces a newer one.
-function uniqueConversations(value: ConversationRecord[]): ConversationRecord[] {
-  const rows = new Map<string, ConversationRecord>();
-  for (const conversation of value) {
-    const held = rows.get(conversation.id);
-    if (!held || conversationTime(conversation) >= conversationTime(held)) rows.set(conversation.id, conversation);
+// The history generation each shown row was read under. A reply replaces a
+// row only if it was read under the same or a later one, so a slower page or
+// refresh begun before an import never undoes a newer row.
+const rowGenerations = new Map<string, number>();
+function mergeConversations(rows: ConversationRecord[], generation: number): void {
+  const merged = new Map(conversations.value.map((conversation) => [conversation.id, conversation]));
+  for (const row of rows) {
+    if ((rowGenerations.get(row.id) ?? -1) > generation) continue;
+    merged.set(row.id, row);
+    rowGenerations.set(row.id, generation);
   }
-  return [...rows.values()];
+  conversations.value = sortConversations([...merged.values()]);
 }
 
 function conversationTime(conversation: ConversationRecord): number {
