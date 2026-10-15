@@ -932,6 +932,57 @@ test('reconnecting and unknown status never claim the agent is idle', async () =
   harness.scope.stop();
 });
 
+test('permission and thinking count as working, and a missing status keeps what is shown', async () => {
+  composer.clearDrafts();
+  const harness = createHarness({ processId: 'status_A' });
+  await mountPush(harness, 1, 'Live');
+  harness.emitConversationEvent({ processId: 'status_A', revision: 2, kind: 'status', status: 'idle' });
+  await flush();
+  await resolveGets(harness, { ...pushConversation(2, 'Live'), status: 'idle' });
+  assert.equal(harness.pane.state().streamStatus, 'idle');
+  harness.emitConversationEvent({ processId: 'status_A', revision: 3, kind: 'status', status: 'permission' });
+  await flush();
+  assert.equal(harness.pane.state().streamStatus, 'working', 'an agent waiting for permission is mid-turn');
+  await resolveGets(harness, { ...pushConversation(3, 'Live'), status: 'permission' });
+  assert.equal(harness.pane.state().streamStatus, 'working');
+  void harness.pane.refresh();
+  await flush();
+  await resolveGets(harness, { ...pushConversation(3, 'Live'), status: undefined });
+  assert.equal(harness.pane.state().streamStatus, 'working', 'a snapshot without a status keeps the indicator');
+  void harness.pane.refresh();
+  await flush();
+  await resolveGets(harness, { ...pushConversation(3, 'Live'), status: 'idle' });
+  void harness.pane.refresh();
+  await flush();
+  await resolveGets(harness, { ...pushConversation(3, 'Live'), status: 'thinking' });
+  assert.equal(harness.pane.state().streamStatus, 'working', 'thinking is working');
+  harness.scope.stop();
+});
+
+test('a lost connection shows reconnecting, not a failed turn', async () => {
+  composer.clearDrafts();
+  const harness = createHarness({ processId: 'lost_A' });
+  await mountPush(harness, 1, 'Live');
+  harness.emitConversationEvent({ processId: 'lost_A', revision: 2, kind: 'error', id: 'connection_error', delta: 'Lost the connection to the native agent.' });
+  await flush();
+  assert.equal(harness.pane.state().streamStatus, 'reconnecting');
+  harness.scope.stop();
+});
+
+test('a polling pane takes its status from snapshots', async () => {
+  composer.clearDrafts();
+  const harness = createHarness({ processId: 'poll_status_A' });
+  await mountSettled(harness, { ...replyConversation('first'), status: 'working' });
+  assert.equal(harness.pane.state().streamStatus, 'working');
+  const poll = [...harness.timers.values()][0];
+  harness.timers.clear();
+  poll.callback();
+  await flush();
+  await resolveGets(harness, { ...replyConversation('first'), status: 'idle' });
+  assert.equal(harness.pane.state().streamStatus, 'idle');
+  harness.scope.stop();
+});
+
 test('controls and control ownership do not gate the first transcript read', async () => {
   composer.clearDrafts();
   const harness = createHarness({ processId: 'parallel_A' });

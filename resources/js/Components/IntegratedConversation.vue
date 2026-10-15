@@ -667,15 +667,15 @@ async function applySnapshot(load: () => Promise<Record<string, unknown>>): Prom
       controls.value = { ...controls.value, selectors: controls.value.selectors.map((item) => item.id === 'mode' ? { ...item, value: mode } : item) };
     }
     if (pushCapable() && typeof result.revision === 'number') streamRevision = Math.max(streamRevision, result.revision);
-    if (pushCapable()) {
-      const status = result.status === 'working' || result.status === 'permission' ? 'working' : result.status === 'failed' ? 'error' : result.status === 'unknown' ? 'unknown' : 'idle';
-      if (status === 'working') streamStatus.value = 'working';
-      else if (status === 'error') {
-        streamStatus.value = 'error';
-        if (typeof result.status_detail === 'string') statusDetail.value = result.status_detail;
-      }
-      else if (status === 'idle' && streamStatus.value !== 'error') streamStatus.value = 'idle';
+    // Streamed or polled, a snapshot carries the status; while polling it is
+    // the only source.
+    const status = snapshotStatus(result.status);
+    if (status === 'working') streamStatus.value = 'working';
+    else if (status === 'error') {
+      streamStatus.value = 'error';
+      if (typeof result.status_detail === 'string') statusDetail.value = result.status_detail;
     }
+    else if (status === 'idle' && streamStatus.value !== 'error') streamStatus.value = 'idle';
     // The 750ms poll mostly re-reads an unchanged conversation, so polled
     // payloads are compared before re-projecting. No cheaper exact signal
     // exists: polled providers carry no revision, and a snapshot revision is
@@ -1277,11 +1277,12 @@ async function startConversationStream(processId: string, force = false): Promis
   }
 }
 
+// A process switch clears the status in resetState. Falling back to polling
+// keeps the status the last snapshot showed.
 async function stopConversationStream(): Promise<void> {
   const previous = conversationProcess;
   conversationProcess = null;
   bufferedStreamEvents = [];
-  streamStatus.value = '';
   streamRevision = -1;
   if (previous) await window.patterm.conversationSubscribe?.({ process_id: previous, subscribed: false });
 }
@@ -1298,6 +1299,15 @@ function endSnapshot(): void {
   for (const event of buffered) applyStreamEvent(event);
 }
 
+// Status as the indicator shows it: an agent waiting for permission is
+// mid-turn, and its card shows what it needs. Unknown or missing status keeps
+// what is shown rather than claiming the agent is idle.
+function snapshotStatus(value: unknown): 'working' | 'error' | 'idle' | null {
+  if (value === 'working' || value === 'thinking' || value === 'permission') return 'working';
+  if (value === 'error' || value === 'failed') return 'error';
+  return value === 'idle' ? 'idle' : null;
+}
+
 function handleConversationEvent(event: ConversationStreamEvent): void {
   if (stopped || !event || conversationProcess !== event.processId || props.processId !== event.processId) return;
   if (snapshotDepth > 0) {
@@ -1312,12 +1322,10 @@ function applyStreamEvent(event: ConversationStreamEvent): void {
   // Connection state is transport, not transcript content: it is not subject to
   // the snapshot revision boundary, and it must never inflate the native
   // revision domain that snapshots and deltas share.
+  // A lost connection is not a failed turn: the server subscribes again.
   if (event.kind === 'reconnecting' || event.id === 'connection_error') {
-    if (event.kind === 'reconnecting') streamStatus.value = 'reconnecting';
-    if (event.id === 'connection_error') {
-      streamStatus.value = 'error';
-      messages.value = applyConversationStreamEvent(messages.value, event);
-    }
+    streamStatus.value = 'reconnecting';
+    if (event.id === 'connection_error') messages.value = applyConversationStreamEvent(messages.value, event);
     return;
   }
   // Patterm's held queue changed. Re-read it without touching the native
@@ -1338,10 +1346,11 @@ function applyStreamEvent(event: ConversationStreamEvent): void {
     return;
   }
   if (event.kind === 'status' && event.status) {
-    streamStatus.value = event.status === 'unknown' ? '' : event.status;
+    streamStatus.value = snapshotStatus(event.status) ?? '';
     statusDetail.value = event.status === 'error' ? event.detail ?? '' : '';
-    // Completion and interruption re-read the authoritative snapshot.
-    if (event.status !== 'working' || gap) void refresh();
+    // Completion and interruption re-read the authoritative snapshot. A
+    // permission arrives with a pending event, which re-reads it already.
+    if ((event.status !== 'working' && event.status !== 'permission') || gap) void refresh();
     return;
   }
   if (event.kind === 'pending' || gap) void refresh();

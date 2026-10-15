@@ -52,7 +52,7 @@ interface TimerEntry {
 type WatchedState =
   | { process_id: string; satisfied: boolean; reason: 'missing' }
   | { process_id: string; satisfied: boolean; reason: 'exited'; status: string; name: string }
-  | { process_id: string; satisfied: boolean; reason: 'idle' | 'working' | 'not_started'; name: string; activity: string }
+  | { process_id: string; satisfied: boolean; reason: 'idle' | 'failed' | 'working' | 'not_started'; name: string; activity: string }
   | { process_id: string; satisfied: boolean; reason: 'reported'; name: string; report_status: string; excerpt: string; at: string }
   | { process_id: string; satisfied: boolean; reason: 'messaged'; name: string; excerpt: string; at: string }
   | { process_id: string; satisfied: boolean; reason: 'waiting'; name: string; activity: string };
@@ -310,6 +310,8 @@ export class TimerService {
     if (row.status !== 'running') {
       return { process_id: row.id, satisfied: true, reason: 'exited', status: row.status, name: row.name };
     }
+    // An Integrated turn that ended with an error has ended too.
+    if (row.activity === 'error') return { process_id: row.id, satisfied: true, reason: 'failed', name: row.name, activity: row.activity };
     if (row.activity !== 'idle') {
       if (!entry.seenNonIdleProcessIds.has(row.id)) {
         entry.seenNonIdleProcessIds.add(row.id);
@@ -509,6 +511,7 @@ function describeState(state: WatchedState, report: boolean): string {
     case 'reported': return `- ${state.process_id} "${state.name}": reported ${state.report_status} at ${state.at}${state.excerpt ? `: ${state.excerpt}` : ''}`;
     case 'messaged': return `- ${state.process_id} "${state.name}": sent you a message at ${state.at}${state.excerpt ? `: ${state.excerpt}` : ''}`;
     case 'idle': return `- ${state.process_id} "${state.name}": idle (its turn ended)`;
+    case 'failed': return `- ${state.process_id} "${state.name}": its turn ended with an error`;
     case 'not_started': return `- ${state.process_id} "${state.name}": idle and has not started working`;
     case 'working':
     case 'waiting': return `- ${state.process_id} "${state.name}": still ${state.activity === 'idle' ? 'running without a report' : state.activity}`;

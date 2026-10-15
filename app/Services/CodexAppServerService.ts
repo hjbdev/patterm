@@ -23,7 +23,10 @@ import {
   projectCodexPlan,
   projectCodexPatchUpdated,
   projectCodexStatus,
+  codexThreadStatus,
   type CodexConversationEvent,
+  type CodexDeliveryStatus,
+  type CodexStatus,
   type CodexConversationState, restoreCodexWindowGap, CODEX_PLAN_TITLE } from './CodexTranscript';
 import type { TranscriptImageStore } from './TranscriptImageStore';
 import type { RealtimeVoiceOptions } from './AssistantVoiceProfile';
@@ -74,6 +77,17 @@ interface CodexChannel {
   unhandled: Record<string, number>;
   // Subagent rows already created, so a delta before item/started nests.
   childRows: Set<string>;
+  // The agent thread's own status from its turn and thread notifications,
+  // before running subagents and pending requests are counted.
+  own: CodexStatus;
+  // The effective status last queued for listeners.
+  emitted: CodexStatus | null;
+  // The agent thread reported a status since the seed began, so the seed's
+  // native read is older and must not replace it.
+  liveOwn: boolean;
+  // Every subagent thread seen starting under this agent, nested or not.
+  // They keep the agent working while they run; only `children` nest rows.
+  descendants: Set<string>;
 }
 
 const RECONNECT_BASE_MS = 250;
@@ -84,6 +98,11 @@ const CODEX_CHILD_THREADS = 8;
 // Notifications consumed outside the channel projection (turn tracking, usage,
 // rate limits, and requests), so they are not reported as unhandled.
 const CODEX_OBSERVED = new Set(['thread/tokenUsage/updated', 'account/rateLimits/updated', 'serverRequest/resolved', 'thread/started']);
+// Patterm's own notifications for a request arriving and being answered.
+const REQUEST_ARRIVED = 'server/request';
+const REQUEST_ANSWERED = 'server/answered';
+// A subagent thread's notifications that change whether it is running.
+const THREAD_ACTIVITY = new Set(['turn/started', 'turn/completed', 'thread/status/changed']);
 const CODEX_CHILD_ITEMS = 40;
 // Codex creates the voice call upstream before answering the browser's offer.
 const REALTIME_ANSWER_MS = 20_000;
@@ -190,18 +209,21 @@ export class CodexAppServerService {
       await channel.ready;
       const state = channel.state;
       if (state?.cursorStale && !state.historyUnavailable) await this.refreshCursor(channel, client, runtime.threadId);
+      // Events already received are applied first, so the snapshot never
+      // reports a status older than the stream's.
+      this.flushNow(channel);
       // Rows, cursor, and revision are read together before any later await:
       // a delta arriving meanwhile could otherwise evict the row the cursor
       // follows, and a reader paging back would skip it.
       const cursor = state?.cursor ?? null;
       const messages = [...(state?.messages ?? [])];
       const revision = state?.revision ?? this.revision(processId);
-      const status = state?.status;
+      const status = state?.status ?? 'unknown';
       const detail = state?.detail;
       const historyUnavailable = state?.historyUnavailable ?? false;
       const tasks = codexTasks(messages, client, await this.trackBackgroundTerminals(client, runtime.threadId, messages));
       const pending = client.pendingRequests();
-      const plan = this.planApproval(processId, messages, !pending.length && status !== 'working');
+      const plan = this.planApproval(processId, messages, !pending.length && (status === 'idle' || status === 'error'));
       return {
         process_id: processId,
         session_id: runtime.sessionId,
@@ -213,7 +235,8 @@ export class CodexAppServerService {
         history_cursor: cursor ? { next: cursor } : null,
         streaming: true,
         ...withPlan(pendingViews(pending, runtime.threadId, messages), plan),
-        status: pending.length || plan.length ? 'permission' : status ?? 'idle',
+        // Unknown until a native read says; the caller keeps what it had.
+        status: pending.length || plan.length ? 'permission' : status === 'unknown' ? undefined : status,
         ...(status === 'error' && detail ? { status_detail: detail } : {}),
         usage: client.usage(runtime.threadId),
         tasks,
@@ -231,9 +254,16 @@ export class CodexAppServerService {
     const parentMessages = entries.flatMap(this.projectEntry);
     // Subagent rows are read before pending requests too, and approval cards
     // look up diffs across both.
-    const messages = [...parentMessages, ...await this.childMessages(client, spawnedThreads(parentMessages))];
+    const spawned = spawnedThreads(parentMessages);
+    const [childMessages, own] = await Promise.all([
+      this.childMessages(client, spawned),
+      this.ownStatus(client, runtime.threadId),
+      this.readThreadStatuses(client, [...spawned.keys()])
+    ]);
+    const messages = [...parentMessages, ...childMessages];
     const pending = client.pendingRequests();
-    const plan = this.planApproval(processId, messages, !pending.length && !client.activeTurn(runtime.threadId));
+    const { status } = effectiveStatus(own, client, spawned.keys());
+    const plan = this.planApproval(processId, messages, !pending.length && (status === 'idle' || status === 'error'));
     return {
       process_id: processId,
       session_id: runtime.sessionId,
@@ -244,7 +274,9 @@ export class CodexAppServerService {
       history_unavailable: unavailable,
       history_cursor: nativeCursor(response) ? { next: nativeCursor(response) } : null,
       streaming: true,
-      status: pending.length || plan.length ? 'permission' : client.activeTurn(runtime.threadId) ? 'working' : 'idle',
+      // A connection that has not seen this thread's turns reads them
+      // natively; when that fails too, the caller keeps what it had.
+      status: pending.length || plan.length ? 'permission' : status === 'unknown' ? undefined : status,
       usage: client.usage(runtime.threadId),
       tasks: codexTasks(parentMessages, client, await this.trackBackgroundTerminals(client, runtime.threadId, parentMessages)),
       messages: { data: messages },
@@ -313,7 +345,7 @@ export class CodexAppServerService {
       }));
       const turn = record(response.turn);
       if (typeof turn.id !== 'string') throw new Error('Codex app-server did not start the turn');
-      client.setActiveTurn(runtime.threadId, turn.id);
+      this.turnAccepted(processId, client, runtime.threadId, turn.id);
       return { turnId: turn.id };
     } catch (error) {
       if (isUncertainRpcFailure(error)) {
@@ -323,6 +355,22 @@ export class CodexAppServerService {
       if (busy) throw new TurnBusyError(error instanceof Error ? error.message : String(error), busy);
       throw error;
     }
+  }
+
+  // An accepted turn runs from now, though its turn/started may still be on
+  // its way or in the batch, so the snapshot and stream say working at once.
+  // A turn that already completed is not revived, and a thread waiting on
+  // the user still waits.
+  private turnAccepted(processId: string, client: CodexRpcClient, threadId: string, turnId: string): void {
+    client.setActiveTurn(threadId, turnId);
+    const channel = this.channels.get(processId);
+    if (!channel || channel.closed || channel.client !== client) return;
+    if (client.activeTurn(threadId) === turnId && channel.own.status !== 'working' && channel.own.status !== 'permission') {
+      channel.own = { status: 'working' };
+      channel.liveOwn = true;
+      this.updateStatus(channel);
+    }
+    this.flushNow(channel);
   }
 
   // Native evidence that an ambiguous turn was admitted. The bounded read can
@@ -382,9 +430,13 @@ export class CodexAppServerService {
         seed: 0,
         children: new Map(),
         unhandled: {},
-        childRows: new Set()
+        childRows: new Set(),
+        own: { status: 'unknown' },
+        emitted: null,
+        liveOwn: false,
+        descendants: new Set()
       };
-      created.ready = this.seedChannel(created, client, true).catch((error: unknown) => {
+      created.ready = this.seedChannel(created, client).catch((error: unknown) => {
         this.closeChannelObject(created);
         throw error;
       });
@@ -407,37 +459,38 @@ export class CodexAppServerService {
   // notifications that arrived while the read was in flight. Events sent after
   // the read are delivered normally; the merge keeps replaces and statuses and
   // drops ambiguous deltas, which completion replaces will restore in full.
-  private async seedChannel(channel: CodexChannel, client: CodexRpcClient, refreshStatus: boolean): Promise<void> {
+  private async seedChannel(channel: CodexChannel, client: CodexRpcClient): Promise<void> {
     const generation = ++channel.seed;
     channel.client = client;
+    channel.liveOwn = false;
     channel.off = client.onNotification((notification) => this.handleNotification(channel, notification));
     // Servers fail within a second of thread start, before the agent is observed.
     for (const [server, error] of client.mcpStartupFailures(channel.threadId)) this.reportMcpFailure(channel.processId, server, error);
-    let status: CodexConversationState['status'] = client.activeTurn(channel.threadId) ? 'working' : 'idle';
-    if (refreshStatus) {
-      // Read status before the message snapshot. A delta delivered just after
-      // the snapshot response must remain a live event, not be folded into the
-      // seed while a second native request is still pending.
-      const active = await this.activeTurnId(client, channel.threadId);
-      if (active === undefined) status = 'unknown';
-      else {
-        client.setActiveTurn(channel.threadId, active);
-        status = active ? 'working' : 'idle';
-      }
+    // Read status before the message snapshot. A delta delivered just after
+    // the snapshot response must remain a live event, not be folded into the
+    // seed while a second native request is still pending. A status that
+    // streamed during the read is newer than it.
+    const native = await this.nativeTurn(client, channel.threadId);
+    if (channel.seed !== generation) return;
+    if (!channel.liveOwn) {
+      if (native.turnId !== undefined) client.setActiveTurn(channel.threadId, native.turnId);
+      channel.own = { status: native.status };
     }
     const { response, unavailable } = await this.listItems(client, channel.threadId);
     if (channel.seed !== generation) return;
     const newest = Array.isArray(response.data) ? response.data : [];
     const entries = [...newest].reverse();
-    if (channel.seed !== generation) return;
     const parentMessages = entries.flatMap(this.projectEntry);
     for (const [thread, item] of spawnedThreads(parentMessages)) channel.children.set(thread, item);
-    const childMessages = await this.childMessages(client, channel.children);
+    const [childMessages] = await Promise.all([
+      this.childMessages(client, channel.children),
+      this.readThreadStatuses(client, descendantThreads(channel))
+    ]);
     if (channel.seed !== generation) return;
     const state: CodexConversationState = {
       revision: this.revision(channel.processId),
       messages: [...parentMessages, ...childMessages],
-      status,
+      status: 'unknown',
       truncated: newest.length >= CODEX_MESSAGE_WINDOW,
       historyUnavailable: unavailable,
       cursor: nativeCursor(response)
@@ -449,6 +502,12 @@ export class CodexAppServerService {
       channel.timer = null;
     }
     mergeCodexSeedEvents(state, queued);
+    // Everything received so far is in the channel and the client, so the
+    // effective status replaces the statuses queued while it was unknown.
+    const effective = effectiveStatus(channel.own, client, descendantThreads(channel));
+    state.status = effective.status;
+    state.detail = effective.detail;
+    channel.emitted = effective.status === 'unknown' ? null : effective;
     channel.state = state;
   }
 
@@ -480,60 +539,95 @@ export class CodexAppServerService {
     }
   }
 
-  // Only the newest turn can be in progress. A one-turn page without items
-  // avoids hydrating the whole thread; builds without `thread/turns/list`
-  // fall back to the full read.
-  private async activeTurnId(client: CodexRpcClient, threadId: string): Promise<string | null | undefined> {
+  // The thread's own status and in-progress turn. Only the newest turn can be
+  // in progress; a one-turn page without items avoids hydrating the whole
+  // thread, and builds without `thread/turns/list` fall back to the full
+  // read. An undefined turn is not known, which is not the same as none.
+  private async nativeTurn(client: CodexRpcClient, threadId: string): Promise<{ turnId?: string | null; status: CodexDeliveryStatus }> {
     try {
       const response = record(await client.request('thread/turns/list', { threadId, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded' }));
       if (Array.isArray(response.data)) {
         const latest = response.data.map(record)[0];
-        return latest?.status === 'inProgress' && typeof latest.id === 'string' ? latest.id : null;
+        return latest?.status === 'inProgress' && typeof latest.id === 'string' ? { turnId: latest.id, status: 'working' } : { turnId: null, status: 'idle' };
       }
     } catch (error) {
       // A thread before its first message has no turn to be in progress.
-      if (error instanceof Error && error.message.includes('not materialized yet')) return null;
+      if (error instanceof Error && error.message.includes('not materialized yet')) return { turnId: null, status: 'idle' };
       // Only an app-server without the method needs the full thread read.
       // Newer builds warn that it is deprecated, so a timeout or other
       // failure uses the status-only read below.
-      if (!(error instanceof Error && /not supported|unknown variant|method not found/i.test(error.message))) return this.idleStatus(client, threadId);
+      if (!(error instanceof Error && /not supported|unknown variant|method not found/i.test(error.message))) return this.threadState(client, threadId);
     }
     try {
       const response = record(await client.request('thread/read', { threadId, includeTurns: true }));
       const turns = record(response.thread).turns;
-      if (!Array.isArray(turns)) return undefined;
+      if (!Array.isArray(turns)) return { status: 'unknown' };
       const active = turns.map(record).filter((turn) => turn.status === 'inProgress').at(-1);
-      return typeof active?.id === 'string' ? active.id : null;
+      return typeof active?.id === 'string' ? { turnId: active.id, status: 'working' } : { turnId: null, status: 'idle' };
     } catch {
-      return this.idleStatus(client, threadId);
+      return this.threadState(client, threadId);
     }
   }
 
-  private async idleStatus(client: CodexRpcClient, threadId: string): Promise<null | undefined> {
+  // The live thread status, which names no turn. An active thread is working
+  // even when its turn list could not be read.
+  private async threadState(client: CodexRpcClient, threadId: string): Promise<{ turnId?: null; status: CodexDeliveryStatus }> {
     try {
-      const response = record(await client.request('thread/read', { threadId, includeTurns: false }));
-      return record(record(response.thread).status).type === 'idle' ? null : undefined;
-    } catch { return undefined; }
+      const status = codexThreadStatus(record(record(await client.request('thread/read', { threadId, includeTurns: false })).thread).status) ?? 'unknown';
+      return status === 'idle' ? { turnId: null, status } : { status };
+    } catch { return { status: 'unknown' }; }
+  }
+
+  // The agent thread's own status as this connection knows it, read natively
+  // when the connection has not seen the thread's turns.
+  private async ownStatus(client: CodexRpcClient, threadId: string): Promise<CodexStatus> {
+    const known = client.threadStatus(threadId);
+    if (known) return { status: known };
+    const native = await this.nativeTurn(client, threadId);
+    if (native.turnId !== undefined && client.threadStatus(threadId) === null) client.setActiveTurn(threadId, native.turnId);
+    return { status: client.threadStatus(threadId) ?? native.status };
+  }
+
+  // Subagent threads this connection has not seen run, read natively so a
+  // restarted Patterm still counts the ones running. The newest few only.
+  private async readThreadStatuses(client: CodexRpcClient, threads: string[]): Promise<void> {
+    const unknown = threads.filter((thread) => client.threadStatus(thread) === null).slice(-CODEX_CHILD_THREADS);
+    // An unreadable subagent does not keep the agent working.
+    await Promise.all(unknown.map(async (thread) => {
+      const { status } = await this.threadState(client, thread);
+      if (status !== 'unknown') client.noteThreadStatus(thread, status);
+    }));
   }
 
   private handleNotification(channel: CodexChannel, notification: { method: string; params: JsonRecord }): void {
     const { method, params } = notification;
-    if (method === 'server/request' || method === 'serverRequest/resolved') {
+    if (method === REQUEST_ARRIVED || method === REQUEST_ANSWERED || method === 'serverRequest/resolved') {
       this.enqueue(channel, { revision: 0, kind: 'pending' });
+      this.updateStatus(channel);
       return;
     }
     const threadId = typeof params.threadId === 'string' ? params.threadId : null;
     if (method === 'thread/started') {
+      const thread = record(params.thread);
+      if (typeof thread.id !== 'string' || typeof thread.parentThreadId !== 'string') return;
+      // Nested subagents keep the agent working while they run.
+      if (thread.parentThreadId === channel.threadId || isDescendant(channel, thread.parentThreadId)) {
+        channel.descendants.add(thread.id);
+        if (channel.descendants.size > 500) channel.descendants.delete(channel.descendants.values().next().value!);
+        this.updateStatus(channel);
+      }
       // A subagent thread may start before its spawnAgent item names it; nest
       // it under the newest spawn until the item does.
-      const thread = record(params.thread);
-      if (typeof thread.id === 'string' && thread.parentThreadId === channel.threadId && !channel.children.has(thread.id)) {
+      if (thread.parentThreadId === channel.threadId && !channel.children.has(thread.id)) {
         const spawn = [...(channel.state?.messages ?? [])].reverse().find((message) => record(message.tool?.input).tool === 'spawnAgent' || isSubagentStart(message));
         if (spawn) channel.children.set(thread.id, spawn.id);
       }
       return;
     }
     if (threadId && threadId !== channel.threadId) {
+      // A subagent still running after the agent's turn keeps it working,
+      // and a thread's turn boundary settles its pending requests.
+      if (THREAD_ACTIVITY.has(method)) this.updateStatus(channel);
       this.handleChildNotification(channel, threadId, method, params);
       return;
     }
@@ -545,8 +639,11 @@ export class CodexAppServerService {
       const projected = projectCodexItem(params.item, this.options.images);
       const message = projected ? itemTimes(method, params, projected) : null;
       if (message) {
-        for (const [thread, item] of spawnedThreads([message])) channel.children.set(thread, item);
+        const spawned = spawnedThreads([message]);
+        for (const [thread, item] of spawned) channel.children.set(thread, item);
         this.enqueue(channel, { revision: 0, kind: 'replace', message });
+        // A subagent may have reported running before its row named it.
+        if (spawned.size) this.updateStatus(channel);
         // Only a snapshot carries the task list, so a task's row asks for one.
         if (message.tool?.name === 'subAgentActivity' || this.backgroundCommands.has(message.id)) this.enqueue(channel, { revision: 0, kind: 'pending' });
       }
@@ -569,7 +666,12 @@ export class CodexAppServerService {
     }
     const status = projectCodexStatus(method, params);
     if (status) {
-      this.enqueue(channel, { revision: 0, kind: 'status', status: status.status, ...(status.detail ? { detail: status.detail } : {}) });
+      channel.own = status;
+      channel.liveOwn = true;
+      // A turn's end is announced even while running subagents keep the
+      // status unchanged: held prompts wait for it, and the snapshot (its
+      // tasks, a proposed plan) is read again.
+      this.updateStatus(channel, status.status === 'idle' || status.status === 'error');
       if (status.status !== 'working') this.enqueue(channel, { revision: 0, kind: 'pending' });
       return;
     }
@@ -640,7 +742,27 @@ export class CodexAppServerService {
     return pages.flat();
   }
 
+  // Queues the effective status when it changes. An unknown status is never
+  // streamed: listeners keep what they had.
+  private updateStatus(channel: CodexChannel, announce = false): void {
+    const next = effectiveStatus(channel.own, channel.client, descendantThreads(channel));
+    const last = channel.emitted;
+    if (next.status === 'unknown' || (!announce && last?.status === next.status && last.detail === next.detail)) return;
+    channel.emitted = next;
+    this.enqueue(channel, { revision: 0, kind: 'status', status: next.status, ...(next.detail ? { detail: next.detail } : {}) });
+  }
+
+  // Delivers queued events at once, so a snapshot or a caller never sees an
+  // older state than the connection already received.
+  private flushNow(channel: CodexChannel): void {
+    if (!channel.state || !channel.queue.length) return;
+    if (channel.timer) clearTimeout(channel.timer);
+    this.flush(channel);
+  }
+
   private enqueue(channel: CodexChannel, event: CodexConversationEvent): void {
+    // One re-read per batch, after everything else in it.
+    if (event.kind === 'pending') channel.queue = channel.queue.filter((queued) => queued.kind !== 'pending');
     channel.queue.push(event);
     if (channel.timer) return;
     channel.timer = setTimeout(() => this.flush(channel), 40);
@@ -896,7 +1018,7 @@ export class CodexAppServerService {
   async interrupt(processId: string): Promise<void> {
     const runtime = this.runtime(processId);
     const client = await this.client(runtime);
-    const turnId = client.activeTurn(runtime.threadId) ?? await this.activeTurnId(client, runtime.threadId);
+    const turnId = client.activeTurn(runtime.threadId) ?? (await this.nativeTurn(client, runtime.threadId)).turnId;
     if (turnId) await client.request('turn/interrupt', { threadId: runtime.threadId, turnId });
   }
 
@@ -1162,15 +1284,21 @@ export class CodexAppServerService {
       clearTimeout(channel.reconnect);
       channel.reconnect = null;
     }
-    channel.ready = this.seedChannel(channel, client, true)
+    channel.ready = this.seedChannel(channel, client)
       .then(() => {
         channel.attempts = 0;
-        if (channel.listeners.size && channel.state) this.enqueue(channel, { revision: 0, kind: 'pending' });
+        if (!channel.listeners.size || !channel.state) return;
+        // Listeners missed whatever changed while the stream was down.
+        this.updateStatus(channel, true);
+        this.enqueue(channel, { revision: 0, kind: 'pending' });
       })
       .catch(() => {
         // Losing the stream must not blank a visible transcript; keep the last
-        // projection until a later reconnect reseeds it.
-        channel.state = previous;
+        // projection until a later reconnect reseeds it. Its status may be
+        // stale by now, so snapshots stop reporting one until a live status.
+        channel.state = previous ? { ...previous, status: 'unknown', detail: undefined } : previous;
+        channel.own = { status: 'unknown' };
+        channel.emitted = null;
         channel.queue = [];
         this.scheduleReconnect(channel);
       });
@@ -1284,6 +1412,24 @@ export class CodexRpcClient {
   // Turns that have completed. A turn/start reply can arrive in the same chunk
   // as the turn's completion and be handled after it; it must not revive it.
   private readonly completedTurns = new Set<string>();
+  // Latest status per thread from its notifications, its turns, and native
+  // reads. Running subagent threads keep their agent working.
+  private readonly threadStatuses = new Map<string, CodexDeliveryStatus>();
+
+  // Null when this connection has not learned the thread's status.
+  threadStatus(threadId: string): CodexDeliveryStatus | null { return this.threadStatuses.get(threadId) ?? null; }
+
+  // A status read natively, kept only when no notification said otherwise
+  // while the read was in flight.
+  noteThreadStatus(threadId: string, status: CodexDeliveryStatus): void {
+    if (!this.threadStatuses.has(threadId)) this.setThreadStatus(threadId, status);
+  }
+
+  private setThreadStatus(threadId: string, status: CodexDeliveryStatus): void {
+    this.threadStatuses.delete(threadId);
+    this.threadStatuses.set(threadId, status);
+    if (this.threadStatuses.size > 500) this.threadStatuses.delete(this.threadStatuses.keys().next().value!);
+  }
 
   lastTurnStatus(threadId: string): string | null { return this.endedTurns.get(threadId) ?? null; }
 
@@ -1314,10 +1460,16 @@ export class CodexRpcClient {
 
   activeTurn(threadId: string): string | null { return this.turns.get(threadId) ?? null; }
 
+  // A thread waiting on the user stays waiting when its turn is known.
   setActiveTurn(threadId: string, turnId: string | null): void {
     if (turnId && this.completedTurns.has(turnId)) return;
-    if (turnId) this.turns.set(threadId, turnId);
-    else this.turns.delete(threadId);
+    if (turnId) {
+      this.turns.set(threadId, turnId);
+      if (this.threadStatuses.get(threadId) !== 'permission') this.setThreadStatus(threadId, 'working');
+    } else {
+      this.turns.delete(threadId);
+      this.setThreadStatus(threadId, 'idle');
+    }
   }
 
   private constructor(private readonly socket: net.Socket, onClose: () => void, private readonly timeoutMs: number) {
@@ -1369,6 +1521,7 @@ export class CodexRpcClient {
   respond(id: RequestId, result: unknown): void {
     this.serverRequests.delete(String(id));
     this.write({ jsonrpc: '2.0', id, result });
+    this.notify(REQUEST_ANSWERED, { requestId: id });
   }
 
   close(): void { this.socket.destroy(); }
@@ -1395,7 +1548,7 @@ export class CodexRpcClient {
           continue;
         }
         this.serverRequests.set(String(id), { id, method: message.method, params: record(message.params) });
-        this.notify('server/request', { requestId: id });
+        this.notify(REQUEST_ARRIVED, { requestId: id });
       } else if ('id' in message) {
         const request = this.requests.get(message.id as RequestId);
         if (!request) continue;
@@ -1411,9 +1564,15 @@ export class CodexRpcClient {
         const method = typeof message.method === 'string' ? message.method : '';
         const params = record(message.params);
         const threadId = typeof params.threadId === 'string' ? params.threadId : null;
+        // App-server resolves a thread's requests when its turn starts or
+        // ends, and announces each one later; none is answerable after.
+        if ((method === 'turn/started' || method === 'turn/completed') && threadId) this.dropThreadRequests(threadId);
         if (method === 'turn/started' && threadId) {
           const turn = record(params.turn);
           if (typeof turn.id === 'string') this.setActiveTurn(threadId, turn.id);
+        } else if (method === 'thread/status/changed' && threadId) {
+          const status = codexThreadStatus(params.status);
+          if (status) this.setThreadStatus(threadId, status);
         } else if (method === 'turn/completed' && threadId) {
           this.setActiveTurn(threadId, null);
           const turnId = record(params.turn).id;
@@ -1452,6 +1611,12 @@ export class CodexRpcClient {
         }
         if (method) this.notify(method, params);
       }
+    }
+  }
+
+  private dropThreadRequests(threadId: string): void {
+    for (const [id, request] of this.serverRequests) {
+      if (request.params.threadId === threadId) this.serverRequests.delete(id);
     }
   }
 
@@ -1605,6 +1770,31 @@ function reviewTarget(argument: string): JsonRecord {
   const commit = argument.match(/^commit\s+([0-9a-f]{7,40})$/i);
   if (commit) return { type: 'commit', sha: commit[1], title: null };
   return { type: 'custom', instructions: argument };
+}
+
+// The agent's status: a request waiting for the user, then its own turn,
+// then any subagent thread still running after that turn. Background
+// terminals never count; a dev server can run for as long as it likes.
+function effectiveStatus(own: CodexStatus, client: CodexRpcClient | null, threads: Iterable<string>): CodexStatus {
+  if (!client) return own;
+  if (client.pendingRequests().length) return { status: 'permission' };
+  if (own.status === 'working' || own.status === 'permission') return own;
+  let working = false;
+  for (const thread of threads) {
+    const status = client.threadStatus(thread);
+    if (status === 'permission') return { status: 'permission' };
+    if (status === 'working') working = true;
+  }
+  return working ? { status: 'working' } : own;
+}
+
+function isDescendant(channel: CodexChannel, threadId: string): boolean {
+  return channel.children.has(threadId) || channel.descendants.has(threadId);
+}
+
+// Spawned subagent threads, oldest first, and the threads they started.
+function descendantThreads(channel: CodexChannel): string[] {
+  return [...new Set([...channel.children.keys(), ...channel.descendants])];
 }
 
 // spawnAgent rows, and the subagent activity rows newer Codex builds report
