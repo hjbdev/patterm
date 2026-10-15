@@ -31,6 +31,9 @@ const questionConversation = () => ({
   ] }
 });
 
+// The server run the pane's workbench came from.
+const workbenchEpoch = ref('epoch-1');
+
 function createHarness({ processId = 'process_a', exited = false, keepCache = false, onNewSession, onRestartSession, subscribeReply = () => ({ ok: true }) } = {}) {
   // Tests reuse process IDs; each starts without another test's cached pane.
   if (!keepCache) helpers.forgetConversation();
@@ -116,6 +119,7 @@ function createHarness({ processId = 'process_a', exited = false, keepCache = fa
     provide: (key, value) => provided.set(key, value),
     figureAnswerKey: Symbol('figureAnswer'),
     publishIntegratedControls: (id, controls) => { if (controls) published.set(id, controls); else published.delete(id); },
+    useWorkbench: () => ({ epoch: workbenchEpoch }),
     onWorkspaceRequest: (handler) => {
       workspaceHandlers.push(handler);
       return () => workspaceHandlers.splice(workspaceHandlers.indexOf(handler), 1);
@@ -1111,6 +1115,55 @@ test('an unmounted pane is cached for its next mount', async () => {
   const second = createHarness({ processId: 'cache_mount', keepCache: true });
   assert.deepEqual(second.pane.messages.value.map(message => message.text), ['kept']);
   second.scope.stop();
+});
+
+test('controls are read again only when a snapshot reports a new revision or server run', async () => {
+  composer.clearDrafts();
+  const controlsWith = (model, revision) => ({ selectors: [{ id: 'model', label: 'Model', value: model, options: [] }], commands: [{ name: 'compact' }], ...(revision ? { revision } : {}) });
+  const first = createHarness({ processId: 'revision_A' });
+  await resolveSubscriptions(first);
+  pending(first, 'integrated_controls')[0].resolve(controlsWith('opus', 'r1'));
+  await flush();
+  await resolveGets(first, { ...replyConversation('hello'), controls_revision: 'r1' });
+  assert.equal(pending(first, 'integrated_controls').length, 0, 'a snapshot with the revision just read reads nothing');
+  first.lifecycle.beforeUnmount.forEach(callback => callback());
+  first.scope.stop();
+
+  const second = createHarness({ processId: 'revision_A', keepCache: true });
+  await resolveSubscriptions(second);
+  assert.equal(pending(second, 'integrated_controls').length, 0, 'a revisit shows its cached controls without reading them');
+  await resolveGets(second, { ...replyConversation('hello'), controls_revision: 'r1' });
+  assert.equal(pending(second, 'integrated_controls').length, 0);
+  assert.equal(second.pane.controls.value.selectors[0].value, 'opus');
+  void second.pane.refresh();
+  await flush();
+  await resolveGets(second, { ...replyConversation('hello'), controls_revision: 'r2' });
+  assert.equal(pending(second, 'integrated_controls').length, 1, 'a changed revision reads them again');
+  pending(second, 'integrated_controls')[0].resolve(controlsWith('sonnet', 'r2'));
+  await flush();
+  assert.equal(second.pane.controls.value.selectors[0].value, 'sonnet');
+  second.lifecycle.beforeUnmount.forEach(callback => callback());
+  second.scope.stop();
+
+  workbenchEpoch.value = 'epoch-2';
+  const restarted = createHarness({ processId: 'revision_A', keepCache: true });
+  await resolveSubscriptions(restarted);
+  await resolveGets(restarted, { ...replyConversation('hello'), controls_revision: 'r2' });
+  assert.equal(pending(restarted, 'integrated_controls').length, 1, 'a restarted server\'s controls are read again');
+  pending(restarted, 'integrated_controls')[0].resolve(controlsWith('sonnet', 'r2'));
+  await flush();
+  restarted.lifecycle.beforeUnmount.forEach(callback => callback());
+  restarted.scope.stop();
+  workbenchEpoch.value = 'epoch-1';
+
+  const unversioned = createHarness({ processId: 'revision_B' });
+  await mountSettled(unversioned, replyConversation('no revision'));
+  unversioned.lifecycle.beforeUnmount.forEach(callback => callback());
+  unversioned.scope.stop();
+  const revisit = createHarness({ processId: 'revision_B', keepCache: true });
+  await flush();
+  assert.equal(pending(revisit, 'integrated_controls').length, 1, 'controls without a revision are read on every visit');
+  revisit.scope.stop();
 });
 
 test('palette requests run through the open conversation and its controls are published', async () => {

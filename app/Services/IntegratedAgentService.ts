@@ -75,6 +75,9 @@ export interface IntegratedCommand {
 export interface IntegratedControls {
   selectors: IntegratedControlSelector[];
   commands: IntegratedCommand[];
+  // Set by providers whose conversation snapshots report `controls_revision`;
+  // equal values mean the controls haven't changed.
+  revision?: string;
 }
 
 const PATTERM_COMMANDS: IntegratedCommand[] = [
