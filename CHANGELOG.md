@@ -7,17 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- `wait_for_pattern` no longer blocks the agent's turn. It answers at once when
-  the text is already in the output or the process has ended, and otherwise
-  starts a watch and returns its timer ID. Patterm then messages the agent once:
-  when the text appears, when the process ends without it (with its exit code),
-  or when the optional timeout passes. The agent can end its turn and stay
-  responsive while a long command runs. Watches search scrollback as well as the
-  visible screen, survive app restarts, show in `timer_list`, and end with
-  `timer_cancel` or when their agent closes. The pattern is literal,
-  case-sensitive text, not a regex.
+## [0.2.4] - 2026-10-15
 
 ### Added
 
@@ -29,6 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   happens only in the app.
 
 ### Changed
+
+- `wait_for_pattern` no longer blocks the agent's turn. It answers at once when
+  the text is already in the output or the process has ended, and otherwise
+  starts a watch and returns its timer ID. Patterm then messages the agent once:
+  when the text appears, when the process ends without it (with its exit code),
+  or when the optional timeout passes. The agent can end its turn and stay
+  responsive while a long command runs. Watches search scrollback as well as the
+  visible screen, survive app restarts, show in `timer_list`, and end with
+  `timer_cancel` or when their agent closes. The pattern is literal,
+  case-sensitive text, not a regex.
 
 - Switching agents is quicker. The session context panel shows what it last
   read for an agent straight away while it refreshes, and its pickers read the
@@ -49,6 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   connections and data saver read context only, and a hidden tab reads
   nothing. Settings › Appearance › Prefetch conversations sets this per
   device.
+
+- Release notes now explain the four performance phases with per-phase browser
+  benchmark figures, measurement limits and remaining work.
 
 ### Fixed
 
