@@ -63,6 +63,9 @@ interface OpenCodeActivity {
   emitted: OpenCodeStatus | null;
   settling: NodeJS.Timeout | null;
   emitters: Set<OpenCodeEmit>;
+  // Activity events received but not yet applied. An end is not shown while
+  // later events wait, since one of them may resume the work.
+  queued: number;
 }
 
 // One open event stream. Descendant lookups can need a native read, so they
@@ -438,12 +441,11 @@ export class OpenCodeServerService {
       const request = isRequestEvent(type);
       if (request || executionEvent(type, data)) {
         const child = eventSession;
-        const state = this.activityState(sessionId);
-        stream.serial = stream.serial.then(async () => {
+        this.queueActivity(sessionId, stream, async (state) => {
           if (!await this.descendsFrom(child, sessionId, runtime).catch(() => false)) return;
-          this.applyChildActivity(sessionId, state, child, type, data);
+          this.applyChildActivity(state, child, type, data);
           if (request) emit({ kind: 'pending' });
-        }).catch(() => {});
+        });
         if (request) return;
       }
       // A direct subagent's content nests under its tool row.
@@ -457,10 +459,7 @@ export class OpenCodeServerService {
     if (execution) {
       const failure = execution === 'failed' ? String(record(data.error).message ?? data.message ?? '').trim() : '';
       if (failure) emit({ kind: 'replace', message: { id: `error_${String(event.id ?? randomUUID())}`, role: 'assistant', kind: 'notice', level: 'error', text: failure, createdAt: at, completedAt: at } });
-      // In order behind subagent events still being looked up, so an end is
-      // never settled before a child start that arrived earlier.
-      const state = this.activityState(sessionId);
-      stream.serial = stream.serial.then(() => this.applyRootExecution(sessionId, state, execution, failure)).catch(() => {});
+      this.queueActivity(sessionId, stream, (state) => this.applyRootExecution(sessionId, state, execution, failure));
       return;
     }
     // Ids match the snapshot's projection of the same native rows.
@@ -525,9 +524,10 @@ export class OpenCodeServerService {
       return;
     }
     if (isRequestEvent(type) || type === 'session.diff') {
-      const state = this.activityState(sessionId);
-      if (applyRequest(state, type, data, sessionId)) this.publishActivity(state);
-      emit({ kind: 'pending' });
+      this.queueActivity(sessionId, stream, (state) => {
+        if (applyRequest(state, type, data, sessionId)) this.publishActivity(state);
+        emit({ kind: 'pending' });
+      });
       return;
     }
     if (type === 'message.removed' || type === 'message.part.removed') {
@@ -563,9 +563,19 @@ export class OpenCodeServerService {
     if (state) state.admittedAt = Date.now();
   }
 
+  // Activity events apply in arrival order, behind subagent events still
+  // waiting on a parent lookup, and only to the state of the stream they
+  // arrived on: a lookup can finish after that stream closed or was replaced.
+  private queueActivity(sessionId: string, stream: OpenCodeStream, apply: (state: OpenCodeActivity) => void | Promise<void>): void {
+    const state = this.activityState(sessionId);
+    state.queued += 1;
+    stream.serial = stream.serial
+      .then(async () => { if (this.activity.get(sessionId) === state) await apply(state); })
+      .catch(() => {})
+      .finally(() => { state.queued -= 1; });
+  }
+
   private applyRootExecution(sessionId: string, state: OpenCodeActivity, execution: OpenCodeExecutionEvent, failure: string): void {
-    // Queued work belongs to the stream it arrived on, not a replacement.
-    if (this.activity.get(sessionId) !== state) return;
     if (execution === 'started') {
       state.execution = 'running';
       state.detail = '';
@@ -589,9 +599,7 @@ export class OpenCodeServerService {
     this.publishActivity(state);
   }
 
-  private applyChildActivity(sessionId: string, state: OpenCodeActivity, child: string, type: string, data: Record<string, unknown>): void {
-    // A lookup can finish after its stream closed or was replaced.
-    if (this.activity.get(sessionId) !== state) return;
+  private applyChildActivity(state: OpenCodeActivity, child: string, type: string, data: Record<string, unknown>): void {
     let changed: boolean;
     const execution = isRequestEvent(type) ? null : executionEvent(type, data);
     if (isRequestEvent(type)) {
@@ -624,11 +632,18 @@ export class OpenCodeServerService {
     }
     if (status === 'idle' || status === 'error') {
       if (state.settling) clearTimeout(state.settling);
-      state.settling = setTimeout(() => {
+      const settle = (): void => {
+        // Events still waiting may resume the work; wait for them first.
+        if (state.queued) {
+          state.settling = setTimeout(settle, this.settleMs);
+          state.settling.unref?.();
+          return;
+        }
         state.settling = null;
         const settled = activityStatus(state);
         if (settled) this.sendStatus(state, settled);
-      }, this.settleMs);
+      };
+      state.settling = setTimeout(settle, this.settleMs);
       state.settling.unref?.();
       return;
     }
@@ -1904,7 +1919,7 @@ function executionEvent(type: string, data: Record<string, unknown>): OpenCodeEx
 function newActivity(): OpenCodeActivity {
   return {
     execution: 'unknown', detail: '', requests: new Map(), answered: new Set(), children: new Set(), version: 0,
-    endedAt: 0, admittedAt: 0, emitted: null, settling: null, emitters: new Set()
+    endedAt: 0, admittedAt: 0, emitted: null, settling: null, emitters: new Set(), queued: 0
   };
 }
 

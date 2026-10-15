@@ -1141,6 +1141,26 @@ async function checkActivityOrdering(database: DatabaseService, env: NodeJS.Proc
   await delay(100);
   assert.deepEqual([...new Set(second.statuses)], ['idle'], 'a lookup finishing after its stream closed leaves the replacement alone');
   second.close();
+
+  // A newer turn's permission survives the older turn's end before it.
+  const third = open();
+  third.send('session.execution.started', { sessionID: 'ses_root' });
+  third.send('session.execution.succeeded', { sessionID: 'ses_root' });
+  third.send('session.execution.started', { sessionID: 'ses_root' });
+  third.send('permission.asked', { id: 'per_newer', sessionID: 'ses_root', action: 'bash', resources: ['ls'] });
+  await delay(100);
+  assert.equal(third.statuses.at(-1), 'permission', 'an older end does not drop a newer turn\'s permission');
+  third.close();
+
+  // An end is not shown while a successor start waits behind a lookup.
+  const fourth = open();
+  fourth.send('session.execution.started', { sessionID: 'ses_root' });
+  fourth.send('session.execution.succeeded', { sessionID: 'ses_root' });
+  fourth.send('session.execution.started', { sessionID: 'ses_other' });
+  fourth.send('session.execution.started', { sessionID: 'ses_root' });
+  await delay(300);
+  assert.ok(!fourth.statuses.includes('idle'), 'a queued successor start keeps the end from showing');
+  fourth.close();
 }
 
 interface FakeDaemonState {
