@@ -22,7 +22,7 @@ export const queryClient = new QueryClient({
 export function latestQueryData<T>(prefix: QueryKey): T | undefined {
   const hash = hashKey(prefix);
   let latest: { data: T; at: number } | undefined;
-  for (const query of queryClient.getQueryCache().findAll({ predicate: (item) => hashKey(item.queryKey.slice(0, prefix.length)) === hash })) {
+  for (const query of queryClient.getQueryCache().findAll({ queryKey: prefix.slice(0, 1), predicate: (item) => hashKey(item.queryKey.slice(0, prefix.length)) === hash })) {
     const { data, dataUpdatedAt } = query.state;
     if (data !== undefined && (!latest || dataUpdatedAt > latest.at)) latest = { data: data as T, at: dataUpdatedAt };
   }
