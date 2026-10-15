@@ -377,9 +377,21 @@ export class TimerService {
     }
   }
 
+  // An output watch can wait indefinitely, so it ends with the agent that set
+  // it rather than searching for, and calling back, a closed agent. A
+  // replaced owner's watches are paused, then transferred, so never seen here.
+  private cancelIfOwnerGone(entry: TimerEntry): boolean {
+    if (entry.kind !== 'output' || !entry.ownerProcessId) return false;
+    const owner = this.watchedProcess(entry.ownerProcessId);
+    if (owner?.status === 'running') return false;
+    this.cancel(entry.id);
+    return true;
+  }
+
   private async checkOutput(entry: TimerEntry): Promise<void> {
     // A slow search must not overlap the next one.
     if (entry.checking || entry.status !== 'pending' || !this.timers.has(entry.id) || !entry.pattern || !entry.watched[0]) return;
+    if (this.cancelIfOwnerGone(entry)) return;
     entry.checking = true;
     try {
       const state = await this.outputState(entry.watched[0], entry.pattern);
@@ -513,6 +525,7 @@ export class TimerService {
     if (!this.active || entry.status !== 'pending' || !this.timers.has(entry.id)) {
       return;
     }
+    if (this.cancelIfOwnerGone(entry)) return;
     const text = this.callbackText(entry, trigger, states);
     // Consume before sending: a lost acknowledgement must not replay terminal
     // input after a restart. A crash during delivery can lose this callback.

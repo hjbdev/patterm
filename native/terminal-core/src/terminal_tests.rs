@@ -708,3 +708,24 @@ fn search_all_scope_reads_scrollback_as_logical_lines() {
         "limit keeps the newest matches"
     );
 }
+
+#[test]
+fn search_all_scope_keeps_wide_and_combining_characters() {
+    let mut fixture = Fixture::new(8, 4);
+    // The wide character does not fit in the last column, so it wraps.
+    fixture.feed("abcdefg界done\r\nCafe\u{301} ok\r\n".as_bytes());
+    let search = |query: &str| {
+        fixture
+            .manager
+            .search(serde_json::json!({ "process_id": fixture.process_id, "query": query, "case_sensitive": true, "scope": "all" }))
+            .unwrap()
+    };
+    assert_eq!(
+        search("abcdefg界done")["matches"][0]["text"],
+        "abcdefg界done"
+    );
+    assert_eq!(
+        search("Cafe\u{301} ok")["matches"][0]["text"],
+        "Cafe\u{301} ok"
+    );
+}

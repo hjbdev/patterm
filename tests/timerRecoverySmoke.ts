@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test, type TestContext } from 'node:test';
+import { CloseProcessAction } from '../app/Actions/CloseProcessAction';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { TimerService } from '../app/Services/TimerService';
@@ -204,6 +205,22 @@ test('output watches time out, cancel, and end with their owner', async (t) => {
   assert.equal(fixture.delivery.calls.length, 1, 'cancelled and owner-closed watches never fire');
 });
 
+test('closing its owner ends an output watch', async (t) => {
+  const fixture = setup(t);
+  const timers = fixture.create();
+  timers.activate();
+  timers.setOutput({ processId: 'child', pattern: 'ready', ownerProcessId: 'child_2', body: '' });
+  timers.setOutput({ processId: 'child', pattern: 'ready', ownerProcessId: 'owner', body: 'kept' });
+  await settle();
+  await new CloseProcessAction(fixture.database, fixture.terminal).execute('child_2');
+  fixture.output.set('pty_child', 'ready');
+  t.mock.timers.tick(1_000);
+  await settle();
+  assert.deepEqual(fixture.delivery.calls.map((call) => call.process_id), ['pty_owner'], 'only the open owner is called back');
+  assert.deepEqual(timers.listMcp(), []);
+  assert.equal((fixture.database.connection.prepare('select count(*) as count from runtime_timers').get() as { count: number }).count, 0, 'the closed owner\'s watch is not restored');
+});
+
 test('an output watch survives restart and fires after reconciliation', async (t) => {
   const fixture = setup(t);
   let timers = fixture.create();
@@ -243,6 +260,7 @@ function setup(t: TestContext) {
       const lines = (output.get(input.process_id) ?? '').split('\n').filter((line) => line.includes(input.query ?? ''));
       return { scope: 'all', total: lines.length, matches: lines.slice(-1).map((text) => ({ line: 0, text })) };
     }
+    if (method !== 'terminal.process.input') return { ok: true };
     delivery.calls.push(input);
     if (delivery.fail) throw new Error('Simulated lost acknowledgement');
   } } as unknown as TerminalService;
@@ -256,6 +274,7 @@ function setup(t: TestContext) {
     database,
     delivery,
     output,
+    terminal,
     create() {
       const timers = new TimerService(database, terminal, { persistent: true });
       services.push(timers);

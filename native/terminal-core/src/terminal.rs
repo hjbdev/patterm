@@ -1640,8 +1640,17 @@ impl TerminalSession {
             let mut text = String::with_capacity(columns);
             for col in 0..columns {
                 let cell = &row[Column(col)];
-                if !cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-                    text.push(cell.c);
+                // Spacers pad wide characters, including one moved to the
+                // next row because it did not fit; they are not output.
+                if cell
+                    .flags
+                    .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+                {
+                    continue;
+                }
+                text.push(cell.c);
+                if let Some(combining) = cell.zerowidth() {
+                    text.extend(combining);
                 }
             }
             let wrapped = columns > 0 && row[Column(columns - 1)].flags.contains(Flags::WRAPLINE);
