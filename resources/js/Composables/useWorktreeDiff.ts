@@ -219,12 +219,15 @@ export function useViewedDiffFiles(worktreeId: Readonly<Ref<string>>) {
 export interface WorktreeDiffTotalsState { totals: DiffTotals | null; error: string }
 
 // The last totals read for each worktree, shown while a fresh read runs git.
+// Totals read this recently are shown without reading again, so switching
+// between agents doesn't run git on every switch; polling still refreshes them.
 const MAX_CACHED_TOTALS = 100;
-const lastTotals = new Map<string, WorktreeDiffTotalsState>();
+const FRESH_TOTALS_MS = 10_000;
+const lastTotals = new Map<string, WorktreeDiffTotalsState & { at: number }>();
 
 function rememberTotals(id: string, state: WorktreeDiffTotalsState): void {
   lastTotals.delete(id);
-  lastTotals.set(id, state);
+  lastTotals.set(id, { ...state, at: Date.now() });
   while (lastTotals.size > MAX_CACHED_TOTALS) lastTotals.delete(lastTotals.keys().next().value!);
 }
 
@@ -252,9 +255,11 @@ export function useWorktreeDiffTotals(worktreeIds: Ref<string[]>) {
   watch(() => worktreeIds.value.join('\n'), () => {
     states.value = new Map(worktreeIds.value.flatMap((id) => {
       const cached = lastTotals.get(id);
-      return cached ? [[id, cached] as const] : [];
+      return cached ? [[id, { totals: cached.totals, error: cached.error }] as const] : [];
     }));
-    void refresh().finally(polling.schedule);
+    const now = Date.now();
+    if (worktreeIds.value.length && worktreeIds.value.every((id) => now - (lastTotals.get(id)?.at ?? 0) < FRESH_TOTALS_MS)) polling.schedule();
+    else void refresh().finally(polling.schedule);
   }, { immediate: true });
 
   return { states, refresh };

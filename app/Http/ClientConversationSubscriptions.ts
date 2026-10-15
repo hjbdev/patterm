@@ -63,15 +63,29 @@ export async function updateConversationSubscription(
   subscriptions: ClientConversationSubscriptions,
   raw: unknown,
   read: (processId: string) => Promise<unknown>
-): Promise<{ ok: true; snapshot?: unknown; snapshot_error?: string }> {
+): Promise<ConversationSubscriptionReply> {
+  return (await beginConversationSubscription(subscriptions, raw, read))();
+}
+
+export type ConversationSubscriptionReply = { ok: true; snapshot?: unknown; snapshot_error?: string };
+
+// Applies the subscription change and returns how to finish the reply. The
+// change must keep its place among the client's requests; the snapshot read
+// that follows need not, so a transport can answer it without holding later
+// requests, such as terminal input, behind a large conversation.
+export async function beginConversationSubscription(
+  subscriptions: ClientConversationSubscriptions,
+  raw: unknown,
+  read: (processId: string) => Promise<unknown>
+): Promise<() => Promise<ConversationSubscriptionReply>> {
   const input = subscriptionInput.parse(raw);
   if (!input.subscribed) {
     subscriptions.remove(input.process_id);
-    return { ok: true };
+    return async () => ({ ok: true });
   }
   await subscriptions.add(input.process_id);
-  if (!input.snapshot) return { ok: true };
-  return { ok: true, ...await readSnapshot(input.process_id, read) };
+  if (!input.snapshot) return async () => ({ ok: true });
+  return async () => ({ ok: true, ...await readSnapshot(input.process_id, read) });
 }
 
 // The conversation for a reply, or the reason it could not be read.
