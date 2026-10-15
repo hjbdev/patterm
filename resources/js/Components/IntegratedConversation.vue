@@ -642,10 +642,12 @@ function refresh(): Promise<void> {
   return done;
 }
 
-async function applySnapshot(load: () => Promise<Record<string, unknown>>): Promise<void> {
+// `request` is the snapshot's place in order, taken when its read was asked
+// for. A subscription reply takes its place before subscribing, so a refresh
+// asked for later, such as after a permission reply, wins if it lands first.
+async function applySnapshot(load: () => Promise<Record<string, unknown>>, request = ++refreshSequence): Promise<void> {
   if (stopped || ended.value) return;
   const token = generation;
-  const request = ++refreshSequence;
   beginSnapshot();
   try {
     const result = await load();
@@ -1199,9 +1201,6 @@ function replySnapshot(reply: unknown): SnapshotLoader | null {
   return null;
 }
 
-function refreshAfter(snapshot: SnapshotLoader | null): Promise<void> {
-  return snapshot ? applySnapshot(snapshot) : refresh();
-}
 
 async function runMutation(tool: string, args: { process_id: string } & Record<string, unknown>): Promise<void> {
   const token = generation;
@@ -1259,9 +1258,12 @@ async function startConversationStream(processId: string, force = false): Promis
   beginSnapshot();
   try {
     // The reply carries the first snapshot, so a switch takes one round trip.
+    // The server may answer it after later requests, so its place is taken now.
+    const request = ++refreshSequence;
     const reply = await window.patterm.conversationSubscribe?.({ process_id: processId, subscribed: true, snapshot: true });
     if (token !== generation || conversationProcess !== processId) return;
-    await refreshAfter(replySnapshot(reply));
+    const snapshot = replySnapshot(reply);
+    await (snapshot ? applySnapshot(snapshot, request) : refresh());
     if (token !== generation || conversationProcess !== processId) return;
   } catch (cause) {
     if (token === generation && conversationProcess === processId && !ended.value) {

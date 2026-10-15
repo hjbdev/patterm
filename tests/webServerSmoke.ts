@@ -7,7 +7,7 @@ import http from 'node:http';
 import zlib from 'node:zlib';
 import { WebSocket } from 'ws';
 import { createApplication } from '../app/App';
-import { WebServer, boundedReply } from '../app/Http/WebServer';
+import { WebServer, boundedReply, requestPool } from '../app/Http/WebServer';
 import { browserToolsOnly } from '../routes/application';
 import { loopbackPeerUid, ServerAccess } from '../app/Http/ServerAccess';
 import { acquireApplicationLock } from '../app/Runtime/ApplicationLock';
@@ -431,6 +431,8 @@ async function main(): Promise<void> {
       http.get(`${base}/assets/chunk-${index}.js`, { headers: { Cookie: cookie, 'Accept-Encoding': 'br, gzip' } }, (response) => { response.resume(); resolve(response.statusCode ?? 0); }).on('error', reject);
     })));
     assert.ok(!files.includes(503), 'no app file gets 503 during a burst');
+    for (const url of ['/api/rpc', '/assets/../api/rpc', `${base}/api/rpc`, '/oauth/mcp/callback?code=x']) assert.equal(requestPool(url, new URL(origin)), 'api', url);
+    for (const url of ['/', '/assets/app.js', '/projects/p']) assert.equal(requestPool(url, new URL(origin)), 'file', url);
     assert(a.frames.every((frame) => frame?.processId === firstId));
     assert(b.frames.every((frame) => frame?.processId === secondId));
     await b.request('subscribe', { process_id: firstId, subscribed: true });

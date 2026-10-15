@@ -1055,6 +1055,28 @@ test('a subscription reply with a snapshot opens the pane without a separate rea
   harness.scope.stop();
 });
 
+test('a subscription reply answered after a later refresh cannot replace it', async () => {
+  composer.clearDrafts();
+  // The server answers the snapshot outside its request queue, so a refresh
+  // asked for later, such as after a permission reply, can land first.
+  let releaseReply;
+  const harness = createHarness({ processId: 'reply_late', subscribeReply: () => new Promise((resolve) => { releaseReply = () => resolve({ ok: true, snapshot: pushConversation(1, 'OLD') }); }) });
+  await resolveSubscriptions(harness);
+  await resolveControls(harness);
+  await flush();
+  void harness.pane.refresh();
+  await flush();
+  await resolveGets(harness, pushConversation(2, 'NEW'));
+  assert.equal(harness.pane.messages.value[0]?.text, 'NEW');
+  releaseReply();
+  await flush();
+  assert.equal(harness.pane.messages.value[0]?.text, 'NEW', 'the older subscription snapshot is dropped');
+  harness.emitConversationEvent({ processId: 'reply_late', revision: 3, kind: 'append', id: 'assistant_1', delta: ' LIVE' });
+  await flush();
+  assert.equal(harness.pane.messages.value[0]?.text, 'NEW LIVE', 'later events still apply');
+  harness.scope.stop();
+});
+
 test('a subscription reply that cannot read an ended session shows the ended state', async () => {
   composer.clearDrafts();
   const harness = createHarness({ processId: 'reply_gone', subscribeReply: () => ({ ok: true, snapshot_error: 'Claude Integrated session is not active' }) });

@@ -32,6 +32,15 @@ const MAX_API_REQUESTS = 32;
 const MAX_FILE_REQUESTS = 128;
 // Conversation snapshots one socket reads outside its request queue at once.
 const MAX_SNAPSHOTS_READING = 4;
+
+// Which request bound a request counts against, from the path routing will
+// use, so `/assets/../api/rpc` or an absolute-form URL is still an API call.
+// Sign-in callbacks are API work too.
+export function requestPool(url: string | undefined, origin: URL): 'api' | 'file' {
+  let pathname = '/';
+  try { pathname = new URL(url ?? '/', origin).pathname; } catch { return 'api'; }
+  return pathname.startsWith('/api/') || pathname.startsWith('/oauth/') ? 'api' : 'file';
+}
 const passwordInput = z.object({ password: z.string().max(1024) });
 const passwordChangeInput = z.object({ current: z.string().max(1024).nullable().default(null), password: z.string().max(1024).nullable() });
 // Open without signing in: the sign-in routes, the pairing route (other hosts
@@ -135,7 +144,7 @@ export class WebServer {
       // API calls are bounded tightly. A page load fetches about 40 script
       // chunks at once over HTTP/2, so app files get a separate, larger bound;
       // sharing one turned a cold first load into 503s and a blank page.
-      const api = request.url?.startsWith('/api/') ?? false;
+      const api = requestPool(request.url, this.origin) === 'api';
       const pending = api ? this.apiRequests : this.requests.size - this.apiRequests;
       if (pending >= (api ? MAX_API_REQUESTS : MAX_FILE_REQUESTS)) { response.writeHead(503); response.end(); return; }
       if (api) this.apiRequests++;
@@ -426,7 +435,8 @@ export class WebServer {
             // The snapshot is answered outside the queue, so terminal input
             // never waits behind a large conversation. A few at a time; past
             // that, the queue waits as before.
-            if (snapshotsReading < MAX_SNAPSHOTS_READING) {
+            // Once stopping, it reads in the queue, which stopping waits for.
+            if (snapshotsReading < MAX_SNAPSHOTS_READING && !this.stopping && socket.readyState === WebSocket.OPEN) {
               snapshotsReading++;
               const replyId = id;
               // Counted with API requests, so stopping waits for it.

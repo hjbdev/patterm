@@ -258,8 +258,11 @@ export function useWorktreeDiffTotals(worktreeIds: Ref<string[]>) {
       return cached ? [[id, { totals: cached.totals, error: cached.error }] as const] : [];
     }));
     const now = Date.now();
-    if (worktreeIds.value.length && worktreeIds.value.every((id) => now - (lastTotals.get(id)?.at ?? 0) < FRESH_TOTALS_MS)) polling.schedule();
-    else void refresh().finally(polling.schedule);
+    if (worktreeIds.value.length && worktreeIds.value.every((id) => now - (lastTotals.get(id)?.at ?? 0) < FRESH_TOTALS_MS)) {
+      // A read for the worktrees shown before must not replace these.
+      ++generation;
+      polling.schedule();
+    } else void refresh().finally(polling.schedule);
   }, { immediate: true });
 
   return { states, refresh };
