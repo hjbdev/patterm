@@ -143,7 +143,15 @@ async function main(): Promise<void> {
       }
     };
     const terminalInputs: Array<Record<string, unknown>> = [];
-    const terminal = { request: async (method: string, params: Record<string, unknown>) => { if (method === 'terminal.process.input') terminalInputs.push(params); return {}; } } as unknown as TerminalService;
+    const ptyOutput = new Map<string, string>([['pty-dry-run', '[DRY RUN] 1 chunk\nDone in 1.6 min failures=0']]);
+    const terminal = { request: async (method: string, params: Record<string, unknown>) => {
+      if (method === 'terminal.process.input') terminalInputs.push(params);
+      if (method === 'terminal.process.search' && params.scope === 'all') {
+        const lines = (ptyOutput.get(String(params.process_id)) ?? '').split('\n').filter((line) => line.includes(String(params.query)));
+        return { scope: 'all', total: lines.length, matches: lines.slice(-1).map((text) => ({ line: 0, text })) };
+      }
+      return {};
+    } } as unknown as TerminalService;
     const timeline = new TimelineService(database);
     const settings = new SettingsService(database);
     const registry = createTestMcpRegistry({ tempDir: dir, database, timeline, terminal, workbench: new WorkbenchRepository(database, settings), integrated, historyReadService: history, assistant });
@@ -181,8 +189,33 @@ async function main(): Promise<void> {
     assert.ok(bytes.content_bytes <= 5, 'max_bytes counts bytes');
     const found = await registry.callPublic('search_output', { process_id: 'proc-live', pattern: 'BUILD_READY' }, worker) as { matches: string[] };
     assert.deepEqual(found.matches, ['BUILD_READY on port 5173'], 'searches see tool output');
-    const waited = await registry.callPublic('wait_for_pattern', { process_id: 'proc-live', pattern: 'BUILD_READY', timeout_seconds: 1 }, worker) as { matched: boolean };
-    assert.equal(waited.matched, true, 'pattern waits see tool output');
+    // wait_for_pattern never blocks: it answers from what is already true,
+    // or returns a watch whose callback arrives as a message later.
+    type Watch = { status: string; line?: string; timer_id?: string; process_status?: string; exit_code?: number | null };
+    const watch = (args: Record<string, unknown>) => registry.callPublic('wait_for_pattern', args, worker) as Promise<Watch>;
+    const already = await watch({ process_id: 'proc-live', pattern: 'BUILD_READY' });
+    assert.deepEqual([already.status, already.line], ['matched', 'BUILD_READY on port 5173'], 'pattern waits see tool output');
+    db.prepare(`insert into processes(id,project_id,parent_process_id,kind,name,status,exit_code,pty_process_id,created_at,updated_at) values('proc-dry-run','p','proc-tui','command','dry-run','exited',0,'pty-dry-run',?,?)`).run(now, now);
+    db.prepare(`insert into processes(id,project_id,parent_process_id,kind,name,status,pty_process_id,created_at,updated_at) values('proc-serve','p','proc-tui','command','serve','running','pty-serve',?,?)`).run(now, now);
+    const ended = await watch({ process_id: 'proc-dry-run', pattern: 'Done in|FAILED', timeout_seconds: 900 });
+    assert.deepEqual([ended.status, ended.process_status, ended.exit_code, ended.timer_id], ['exited', 'exited', 0, undefined], 'an exited process without the text answers at once, and the pattern is literal');
+    assert.equal((await watch({ process_id: 'proc-dry-run', pattern: 'Done in' })).status, 'matched', 'output an exited process left is still matched');
+    const started = Date.now();
+    const pending = await watch({ process_id: 'proc-serve', pattern: 'ready on', timeout_seconds: 900, body: 'open the app' });
+    assert.ok(Date.now() - started < 1000, 'a pending watch returns at once');
+    assert.equal(pending.status, 'watching');
+    const listed = (await registry.callPublic('timer_list', {}, worker) as Array<{ timer_id: string; kind: string; pattern?: string; owner_process_id: string }>).find((timer) => timer.timer_id === pending.timer_id);
+    assert.deepEqual([listed?.kind, listed?.pattern, listed?.owner_process_id], ['output', 'ready on', 'proc-tui']);
+    const inputsBefore = terminalInputs.length;
+    ptyOutput.set('pty-serve', 'compiling\nready on http://localhost:5173');
+    for (let attempt = 0; attempt < 40 && terminalInputs.length === inputsBefore; attempt += 1) await wait(50);
+    assert.equal(terminalInputs.length, inputsBefore + 1, 'the watch calls its owner back');
+    assert.match(String(terminalInputs.at(-1)?.text), /^\[Patterm wait_for_pattern timer_\w+: matched\]\n- proc-serve "serve": printed "ready on": ready on http:\/\/localhost:5173\n.*\nopen the app$/);
+    const cancelled = await watch({ process_id: 'proc-serve', pattern: 'never printed' });
+    await registry.callPublic('timer_cancel', { timer_id: cancelled.timer_id }, worker);
+    await wait(1200);
+    assert.equal(terminalInputs.length, inputsBefore + 1, 'a cancelled watch sends nothing');
+    db.prepare(`delete from processes where id in ('proc-dry-run', 'proc-serve')`).run();
 
     // The first page: newest text rows, the latest answer, state, and report.
     timeline.append({ event_type: 'agent.reported', project_id: 'p', process_id: 'proc-live', actor_type: 'agent', metadata: { status: 'completed', title: 'Flake fixed', body: 'Awaited the flush.' } });

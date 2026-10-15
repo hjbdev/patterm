@@ -144,7 +144,7 @@ const TOOL_VERBS: Record<string, string> = {
   search_output: 'Searched',
   get_process_status: 'Checked',
   get_process_ports: 'Checked',
-  wait_for_pattern: 'Waited on',
+  wait_for_pattern: 'Watching',
   send_message: 'Messaged',
   send_input: 'Typed into',
   restart_process: 'Restarted',

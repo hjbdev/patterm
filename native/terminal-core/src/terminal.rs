@@ -13,10 +13,10 @@ use alacritty_terminal::event::{Event, EventListener, WindowSize};
 use alacritty_terminal::event_loop::{EventLoop, EventLoopSender, Msg};
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::grid::Scroll;
-use alacritty_terminal::index::{Column, Point, Side};
+use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
-use alacritty_terminal::term::cell::{Cell, Hyperlink};
+use alacritty_terminal::term::cell::{Cell, Flags, Hyperlink};
 use alacritty_terminal::term::{viewport_to_point, Config, Term, TermDamage, TermMode};
 use alacritty_terminal::tty::{self, Options, Shell};
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Rgb};
@@ -650,6 +650,42 @@ impl TerminalManager {
         } else {
             query.to_lowercase()
         };
+        // `all` searches scrollback and screen as logical lines, so text a
+        // narrow terminal soft-wrapped still matches. It returns the newest
+        // matching lines; the default scope keeps viewport cell positions.
+        if params.get("scope").and_then(Value::as_str) == Some("all") {
+            let limit = params
+                .get("limit")
+                .and_then(Value::as_u64)
+                .map_or(20, |limit| limit.clamp(1, 100) as usize);
+            let mut matches = if needle.is_empty() {
+                Vec::new()
+            } else {
+                session
+                    .logical_lines()
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(_, line)| {
+                        if case_sensitive {
+                            line.contains(&needle)
+                        } else {
+                            line.to_lowercase().contains(&needle)
+                        }
+                    })
+                    .map(|(line, text)| serde_json::json!({ "line": line, "text": text }))
+                    .collect::<Vec<_>>()
+            };
+            let total = matches.len();
+            let newest = matches.split_off(total.saturating_sub(limit));
+            return Ok(serde_json::json!({
+                "process_id": process_id,
+                "query": query,
+                "scope": "all",
+                "status": session.status.as_str(),
+                "total": total,
+                "matches": newest
+            }));
+        }
         let matches = if needle.is_empty() {
             Vec::new()
         } else {
@@ -1589,6 +1625,46 @@ impl TerminalSession {
                 text
             })
             .collect()
+    }
+
+    // Every retained line of the active screen, oldest first, with rows the
+    // terminal soft-wrapped joined back into the line the program printed.
+    fn logical_lines(&self) -> Vec<String> {
+        let terminal = self.terminal.lock();
+        let grid = terminal.grid();
+        let mut lines = Vec::new();
+        let mut current = String::new();
+        for index in grid.topmost_line().0..=grid.bottommost_line().0 {
+            let row = &grid[Line(index)];
+            let columns = row.len();
+            let mut text = String::with_capacity(columns);
+            for col in 0..columns {
+                let cell = &row[Column(col)];
+                // Spacers pad wide characters, including one moved to the
+                // next row because it did not fit; they are not output.
+                if cell
+                    .flags
+                    .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+                {
+                    continue;
+                }
+                text.push(cell.c);
+                if let Some(combining) = cell.zerowidth() {
+                    text.extend(combining);
+                }
+            }
+            let wrapped = columns > 0 && row[Column(columns - 1)].flags.contains(Flags::WRAPLINE);
+            if wrapped {
+                current.push_str(&text);
+            } else {
+                current.push_str(text.trim_end());
+                lines.push(std::mem::take(&mut current));
+            }
+        }
+        if !current.is_empty() {
+            lines.push(current.trim_end().to_string());
+        }
+        lines
     }
 
     fn set_selection(&self, start_col: u16, start_row: u16, end_col: u16, end_row: u16) {

@@ -138,7 +138,8 @@ const WATCH_WORDS: Record<TimerKind, string> = {
   idle_any: 'when one is idle',
   idle_all: 'when all are idle',
   report_any: 'when one reports',
-  report_all: 'when all report'
+  report_all: 'when all report',
+  output: 'when the text appears'
 };
 const timers = computed(() => sidebar.familyTimers(props.digest.family).map((timer) => {
   const owner = familyOwnerLabel(props.digest.family, timer.ownerProcessId);
