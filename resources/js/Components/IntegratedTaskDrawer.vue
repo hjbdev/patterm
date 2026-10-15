@@ -4,7 +4,7 @@
     tabindex="-1"
     role="dialog"
     :aria-label="`Background task: ${task.label}`"
-    class="absolute inset-0 z-30 flex min-h-0 flex-col bg-background shadow-[-12px_0_32px_-16px_rgb(0_0_0/0.35)] outline-none"
+    class="absolute inset-0 z-30 flex min-h-0 flex-col bg-background outline-none"
     data-component="integrated-task-drawer"
     @keydown.esc.stop.prevent="emit('close')"
   >
