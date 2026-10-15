@@ -1113,6 +1113,82 @@ test('an unmounted pane is cached for its next mount', async () => {
   second.scope.stop();
 });
 
+test('controls are read again only when a snapshot reports a new revision', async () => {
+  composer.clearDrafts();
+  const controlsWith = (model, revision) => ({ selectors: [{ id: 'model', label: 'Model', value: model, options: [] }], commands: [{ name: 'compact' }], ...(revision ? { revision } : {}) });
+  const first = createHarness({ processId: 'revision_A' });
+  await resolveSubscriptions(first);
+  pending(first, 'integrated_controls')[0].resolve(controlsWith('opus', 'r1'));
+  await flush();
+  await resolveGets(first, { ...replyConversation('hello'), controls_revision: 'r1' });
+  assert.equal(pending(first, 'integrated_controls').length, 0, 'a snapshot with the revision just read reads nothing');
+  first.lifecycle.beforeUnmount.forEach(callback => callback());
+  first.scope.stop();
+
+  const second = createHarness({ processId: 'revision_A', keepCache: true });
+  await resolveSubscriptions(second);
+  assert.equal(pending(second, 'integrated_controls').length, 0, 'a revisit shows its cached controls without reading them');
+  await resolveGets(second, { ...replyConversation('hello'), controls_revision: 'r1' });
+  assert.equal(pending(second, 'integrated_controls').length, 0);
+  assert.equal(second.pane.controls.value.selectors[0].value, 'opus');
+  void second.pane.refresh();
+  await flush();
+  await resolveGets(second, { ...replyConversation('hello'), controls_revision: 'r2' });
+  assert.equal(pending(second, 'integrated_controls').length, 1, 'a changed revision reads them again');
+  pending(second, 'integrated_controls')[0].resolve(controlsWith('sonnet', 'r2'));
+  await flush();
+  assert.equal(second.pane.controls.value.selectors[0].value, 'sonnet');
+  second.lifecycle.beforeUnmount.forEach(callback => callback());
+  second.scope.stop();
+
+  // A newer revision arriving while controls are read is not lost when the
+  // read returns the older state.
+  const racing = createHarness({ processId: 'revision_A', keepCache: true });
+  await resolveSubscriptions(racing);
+  await resolveGets(racing, { ...replyConversation('hello'), controls_revision: 'r3' });
+  assert.equal(pending(racing, 'integrated_controls').length, 1);
+  void racing.pane.refresh();
+  await flush();
+  await resolveGets(racing, { ...replyConversation('hello'), controls_revision: 'r4' });
+  assert.equal(pending(racing, 'integrated_controls').length, 1, 'one read at a time');
+  pending(racing, 'integrated_controls')[0].resolve(controlsWith('opus', 'r3'));
+  await flush();
+  assert.equal(pending(racing, 'integrated_controls').length, 1, 'a read that returned older controls than the latest snapshot reads again');
+  pending(racing, 'integrated_controls')[0].resolve(controlsWith('haiku', 'r4'));
+  await flush();
+  assert.equal(pending(racing, 'integrated_controls').length, 0);
+  assert.equal(racing.pane.controls.value.selectors[0].value, 'haiku');
+  assert.equal(racing.pane.controls.value.revision, 'r4');
+
+  // Settings that change and change back report an earlier revision again;
+  // it still counts while a read for the changed ones is under way.
+  void racing.pane.refresh();
+  await flush();
+  await resolveGets(racing, { ...replyConversation('hello'), controls_revision: 'r5' });
+  assert.equal(pending(racing, 'integrated_controls').length, 1);
+  void racing.pane.refresh();
+  await flush();
+  await resolveGets(racing, { ...replyConversation('hello'), controls_revision: 'r4' });
+  pending(racing, 'integrated_controls')[0].resolve(controlsWith('opus', 'r5'));
+  await flush();
+  assert.equal(pending(racing, 'integrated_controls').length, 1, 'changed back while reading, the controls are read again');
+  pending(racing, 'integrated_controls')[0].resolve(controlsWith('haiku', 'r4'));
+  await flush();
+  assert.equal(pending(racing, 'integrated_controls').length, 0);
+  assert.equal(racing.pane.controls.value.revision, 'r4');
+  racing.lifecycle.beforeUnmount.forEach(callback => callback());
+  racing.scope.stop();
+
+  const unversioned = createHarness({ processId: 'revision_B' });
+  await mountSettled(unversioned, replyConversation('no revision'));
+  unversioned.lifecycle.beforeUnmount.forEach(callback => callback());
+  unversioned.scope.stop();
+  const revisit = createHarness({ processId: 'revision_B', keepCache: true });
+  await flush();
+  assert.equal(pending(revisit, 'integrated_controls').length, 1, 'controls without a revision are read on every visit');
+  revisit.scope.stop();
+});
+
 test('palette requests run through the open conversation and its controls are published', async () => {
   const harness = createHarness({ processId: 'A' });
   await resolveSubscriptions(harness);

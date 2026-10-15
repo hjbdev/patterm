@@ -236,7 +236,9 @@ export interface ConversationProjection {
 export interface IntegratedControlSelector { id: string; label: string; value: string; options: Array<{ value: string; label: string }> }
 // Patterm commands run in the renderer and never reach the native agent.
 export interface IntegratedNativeCommand { name: string; description?: string; source?: 'patterm' }
-export interface IntegratedControls { selectors: IntegratedControlSelector[]; commands: IntegratedNativeCommand[] }
+// `revision`, when the provider has one, matches the `controls_revision` its
+// snapshots report while the controls are unchanged.
+export interface IntegratedControls { selectors: IntegratedControlSelector[]; commands: IntegratedNativeCommand[]; revision?: string }
 
 // The last state a pane showed for a process. Switching back paints it at once
 // and the fresh snapshot replaces it; it is never treated as authoritative.

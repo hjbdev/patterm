@@ -405,6 +405,10 @@ provide(figureAnswerKey, {
 
 let timer: ReturnType<typeof setTimeout> | undefined;
 let controlsRetry: ReturnType<typeof setTimeout> | undefined;
+// The generation a controls read is under way for, if any, and the newest
+// revision a snapshot asked for meanwhile, which the read must reach.
+let controlsReadingFor = -1;
+let wantedControls: { generation: number; revision: string } | null = null;
 let stopped = false;
 // Every process change and unmount starts a new generation. Results from an
 // older generation are dropped instead of leaking into the wrong transcript.
@@ -506,7 +510,9 @@ async function loadTranscript(processId: string, token: number): Promise<void> {
   // Control ownership and native controls never gate the transcript, so they
   // load alongside it. Both already ignore stale replies.
   void setSubscription(processId, true);
-  void loadControls();
+  // Controls shown from an earlier visit stand while snapshots report their
+  // revision; those without one are read on every visit.
+  if (!controls.value.revision) void loadControls();
   // Streaming providers subscribe first and take a single snapshot, so a
   // switch costs one read. Subscribing is a no-op for providers without a
   // native stream; a process last seen polling skips straight to the read.
@@ -667,6 +673,12 @@ async function applySnapshot(load: () => Promise<Record<string, unknown>>, reque
     const mode = (result.provider === 'claude' || result.provider === 'codex') && typeof result.mode === 'string' ? result.mode : null;
     if (mode && controls.value.selectors.some((item) => item.id === 'mode' && item.value !== mode)) {
       controls.value = { ...controls.value, selectors: controls.value.selectors.map((item) => item.id === 'mode' ? { ...item, value: mode } : item) };
+    }
+    // While controls are being read, every snapshot's revision counts, even
+    // one equal to the controls shown: settings can change and change back.
+    if (typeof result.controls_revision === 'string') {
+      if (controlsReadingFor === generation) wantedControls = { generation, revision: result.controls_revision };
+      else if (result.controls_revision !== controls.value.revision) void loadControls();
     }
     if (pushCapable() && typeof result.revision === 'number') streamRevision = Math.max(streamRevision, result.revision);
     // Streamed or polled, a snapshot carries the status; while polling it is
@@ -937,16 +949,28 @@ async function restartSession(force: boolean): Promise<void> {
 async function loadControls(): Promise<void> {
   if (stopped || ended.value) return;
   const token = generation;
+  controlsReadingFor = token;
   try {
     const result = await window.patterm.call('integrated_controls', { process_id: props.processId }) as Partial<IntegratedControls>;
     if (token !== generation || stopped || ended.value) return;
-    controls.value = { selectors: Array.isArray(result.selectors) ? result.selectors : [], commands: Array.isArray(result.commands) ? result.commands : [] };
+    controls.value = {
+      selectors: Array.isArray(result.selectors) ? result.selectors : [],
+      commands: Array.isArray(result.commands) ? result.commands : [],
+      ...(typeof result.revision === 'string' ? { revision: result.revision } : {})
+    };
     controlsError.value = '';
   } catch (cause) {
     if (token !== generation || stopped || ended.value) return;
     controlsError.value = `Controls unavailable: ${cause instanceof Error ? cause.message : String(cause)}`;
     controlsRetry = setTimeout(() => void loadControls(), 2_000);
+  } finally {
+    if (controlsReadingFor === token) controlsReadingFor = -1;
   }
+  // A snapshot that arrived during the read may name newer controls than it
+  // returned; read once more for them.
+  const wanted = wantedControls;
+  wantedControls = null;
+  if (wanted?.generation === token && token === generation && wanted.revision !== controls.value.revision && !controlsError.value) void loadControls();
 }
 
 async function configure(selectorId: string, value: string): Promise<void> {

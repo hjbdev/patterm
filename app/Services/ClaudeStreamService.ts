@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -29,6 +29,9 @@ export class ClaudeStreamService {
   // Native model and command catalogue per host control socket. A relaunch
   // gets a new socket, so an entry never outlives the host it describes.
   private readonly catalogs = new Map<string, { models: unknown[]; commands: unknown[] }>();
+  // Salts controls revisions, so a client's cached controls go stale when the
+  // server that owns the agent restarts, perhaps with commands of its own.
+  private readonly run = randomUUID();
 
   constructor(
     private readonly database: DatabaseService,
@@ -94,9 +97,13 @@ export class ClaudeStreamService {
     const runtime = this.runtime(processId);
     const result = record(await callHost(runtime.socketPath, 'conversation', {}));
     const messages = record(result.messages);
+    // The model and command lists, tens of kilobytes, belong to the controls,
+    // which clients read once and again only when their revision changes.
+    const { models: _models, commands: _commands, ...state } = result;
     return {
       process_id: processId, session_id: runtime.pattermSessionId, provider_session_id: runtime.sessionId, provider: 'claude',
-      ...result,
+      ...state,
+      controls_revision: controlsRevision(this.run, result),
       ...(Array.isArray(messages.data) ? { messages: { ...messages, data: messages.data.map(withoutOriginalFile) } } : {}),
       streaming: true,
       status: claudeActivity(result.status),
@@ -243,17 +250,18 @@ export class ClaudeStreamService {
   }
 
   async controls(processId: string): Promise<IntegratedControls> {
-    const state = await this.controlState(this.runtime(processId).socketPath);
+    const { state, revision } = await this.controlState(this.runtime(processId).socketPath);
     return {
       selectors: [claudeModelSelector(state), claudeEffortSelector(state), claudeModeSelector(state)]
         .filter((selector): selector is IntegratedControlSelector => selector !== null),
-      commands: nativeCommands(state)
+      commands: nativeCommands(state),
+      revision
     };
   }
 
   async configure(processId: string, selector: string, value: string): Promise<void> {
     const socketPath = this.runtime(processId).socketPath;
-    const state = await this.controlState(socketPath);
+    const { state } = await this.controlState(socketPath);
     const control = selector === 'model' ? claudeModelSelector(state)
       : selector === 'effort' ? claudeEffortSelector(state)
       : selector === 'mode' ? claudeModeSelector(state) : null;
@@ -341,18 +349,23 @@ export class ClaudeStreamService {
   // command catalogue is remembered. The launch wait for the `initialize` reply
   // happens once per host, so a later switch never pays for it again, even
   // when a Claude build never reports a model list.
-  private async controlState(socketPath: string): Promise<Record<string, unknown>> {
+  // The revision is the host state's, as a conversation snapshot reports it,
+  // even when a cached catalog stands in for models that haven't arrived.
+  private async controlState(socketPath: string): Promise<{ state: Record<string, unknown>; revision: string }> {
     let state = await readControls(socketPath);
     const cached = this.catalogs.get(socketPath);
     if (!nativeModels(state).length && cached) {
-      return { ...state, models: cached.models, commands: Array.isArray(state.commands) && state.commands.length ? state.commands : cached.commands };
+      return {
+        state: { ...state, models: cached.models, commands: Array.isArray(state.commands) && state.commands.length ? state.commands : cached.commands },
+        revision: controlsRevision(this.run, state)
+      };
     }
     for (let attempt = 0; attempt < 20 && !nativeModels(state).length && state.status !== 'failed'; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 100));
       state = await readControls(socketPath);
     }
     this.catalogs.set(socketPath, { models: nativeModels(state), commands: Array.isArray(state.commands) ? state.commands : [] });
-    return state;
+    return { state, revision: controlsRevision(this.run, state) };
   }
 
   private runtime(processId: string): ClaudeRuntime {
@@ -404,6 +417,15 @@ const CLAUDE_MODES = [
 ];
 
 // Names with a leading `__` are Claude Code internals, not user commands.
+// Changes whenever anything the controls are built from changes, or the
+// service restarts, so a client holding controls can tell from a snapshot
+// whether to read them again.
+function controlsRevision(run: string, state: Record<string, unknown>): string {
+  return createHash('sha256')
+    .update(JSON.stringify([run, state.model, state.mode, state.effort, state.appliedEffort, state.models, state.commands]))
+    .digest('base64url').slice(0, 16);
+}
+
 function nativeCommands(state: Record<string, unknown>): IntegratedControls['commands'] {
   return (Array.isArray(state.commands) ? state.commands.map(record) : [])
     .filter((command) => typeof command.name === 'string' && command.name && !command.name.startsWith('__'))

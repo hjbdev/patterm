@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Switching back to an Integrated Claude agent no longer reads its model,
+  effort, mode and slash-command controls again unless they changed, and its
+  conversation snapshots no longer carry Claude's full model and command
+  lists, tens of kilobytes each time.
 - Opened conversation history pages stay cached within a budget of 24 pages
   and about 4 MB, dropping the least recently read first, instead of all of
   them for 15 minutes. Long scratchpads reopen from the cache too, and the

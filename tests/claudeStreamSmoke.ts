@@ -565,6 +565,15 @@ process.stdin.on('data', (chunk) => {
     assert.deepEqual(initial.selectors[1]?.options.map((option) => option.value), ['default', 'low', 'medium', 'high'], 'effort levels come from the selected model');
     assert.equal(initial.selectors[2]?.value, 'auto', 'the composer shows the native permission mode');
     assert.ok(initial.selectors[2]?.options.some((option) => option.value === 'auto'));
+    const nativeSnapshot = await service.conversation('process_test') as Record<string, unknown>;
+    assert.equal(nativeSnapshot.models, undefined, 'snapshots leave the model list to the controls');
+    assert.equal(nativeSnapshot.commands, undefined, 'snapshots leave the command list to the controls');
+    assert.equal(nativeSnapshot.model, 'sonnet', 'snapshots still report the current settings');
+    assert.match(String(initial.revision), /^[\w-]{16}$/);
+    assert.equal(nativeSnapshot.controls_revision, initial.revision, 'a snapshot reports the revision of the controls it matches');
+    const restartedService = new ClaudeStreamService(database, runtimeDirectory, process.execPath, process.env);
+    assert.notEqual((await restartedService.conversation('process_test') as Record<string, unknown>).controls_revision, initial.revision,
+      'the same host state from a restarted service has a new revision, so clients read its controls again');
     await assert.rejects(service.configure('process_test', 'model', 'gpt-5'), /Unknown Claude setting/);
     await assert.rejects(service.configure('process_test', 'effort', 'max'), /Unknown Claude setting/, 'a level the model lacks is rejected');
     await service.configure('process_test', 'model', 'sonnet');
@@ -572,6 +581,7 @@ process.stdin.on('data', (chunk) => {
     await service.configure('process_test', 'mode', 'plan');
     const configured = await service.controls('process_test');
     assert.deepEqual(configured.selectors.map((selector) => selector.value), ['sonnet', 'low', 'plan']);
+    assert.notEqual(configured.revision, initial.revision, 'changed settings change the revision');
     await service.configure('process_test', 'effort', 'default');
     let reset = await service.controls('process_test');
     for (let attempt = 0; attempt < 50 && reset.selectors[1]?.options[0]?.label !== 'Default (Medium)'; attempt++) {
