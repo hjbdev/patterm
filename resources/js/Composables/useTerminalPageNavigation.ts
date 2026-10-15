@@ -1,7 +1,6 @@
-import { computed, watch } from 'vue';
+import { computed, watch, type Ref } from 'vue';
 import { useWorkbenchNavigation } from './useWorkbenchNavigation';
-import { activeAgentSessions } from '../lib/agentTabs';
-import { activeProcesses } from '../lib/processTabs';
+import { projectFirstTab } from '../lib/projectLocations';
 
 export function useTerminalPageNavigation() {
   const navigation = useWorkbenchNavigation();
@@ -17,13 +16,16 @@ export function useTerminalPageNavigation() {
       void router.replace({ name: 'project', params: { projectId: activeProject.value.project.id } });
     }
   });
-  watch([activeProject, () => route.name], () => {
-    const project = activeProject.value;
-    if (!project || route.name !== 'project') return;
-    const session = activeAgentSessions(project.projectSessions)[0];
-    const process = activeProcesses(project.processes)[0];
-    if (session) void router.replace({ name: 'agent', params: { projectId: project.project.id, sessionId: session.id } });
-    else if (process) void router.replace({ name: 'process', params: { projectId: project.project.id, processId: process.id } });
-  }, { immediate: true });
   return navigation;
+}
+
+// A project's own page opens its first tab, unless it shows the board. It
+// runs before any terminal page mounts there, which the tab would only replace.
+export function useProjectFirstTab(boardIsHome: Readonly<Ref<boolean>>) {
+  const { route, router, activeProject } = useWorkbenchNavigation();
+  const firstTab = computed(() => projectFirstTab(activeProject.value));
+  watch([firstTab, boardIsHome, () => route.name], ([tab, board, name]) => {
+    if (tab && !board && name === 'project') void router.replace(tab);
+  }, { immediate: true });
+  return firstTab;
 }

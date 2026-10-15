@@ -13,7 +13,7 @@
       </div>
       <aside v-if="docked && selectedAgent" ref="panel" tabindex="-1" role="complementary" aria-label="Session context" class="relative z-30 flex shrink-0 flex-col border-l border-border/30 bg-background outline-none" :class="integratedAgent ? 'my-6' : ''" :style="{ width: `${width}px`, maxWidth: '100%' }" @keydown.esc.stop.prevent="close">
         <div role="separator" tabindex="0" aria-label="Resize session context" aria-orientation="vertical" :aria-valuenow="width" :aria-valuemin="260" :aria-valuemax="480" class="absolute inset-y-0 -left-1 w-2 cursor-col-resize focus-visible:bg-primary/40" @pointerdown="startResize" @pointermove="resize" @pointerup="endResize" @pointercancel="endResize" @keydown.left.prevent="setWidth(width + 20)" @keydown.right.prevent="setWidth(width - 20)" />
-        <SessionContextPanel :key="selectedAgent.id" :project-id="activeProject!.project.id" :session-id="selectedAgent.id" :summary="selectedAgent.summary" :can-summarize="!selectedAgent.parentId" :active-worktree-id="diffWorktree?.id ?? null" @open-worktree="openWorktree" @close="close" />
+        <SessionContextPanel :project-id="activeProject!.project.id" :session-id="selectedAgent.id" :summary="selectedAgent.summary" :can-summarize="!selectedAgent.parentId" :active-worktree-id="diffWorktree?.id ?? null" @open-worktree="openWorktree" @close="close" />
       </aside>
     </div>
     <div v-else-if="route.name !== 'project'" class="p-5 text-sm text-muted-foreground">This terminal is no longer available. Select another tab or launch an agent.</div>
@@ -24,7 +24,7 @@
     <Sheet :open="sheetOpen" @update:open="open => { if (!open) close() }">
       <SheetContent side="right" hide-close aria-describedby="" class="flex w-[85vw] max-w-sm flex-col gap-0 border-border/30 p-0" @open-auto-focus="focusSheet" @close-auto-focus="returnFocus">
         <SheetTitle class="sr-only">Session context</SheetTitle>
-        <SessionContextPanel v-if="selectedAgent" :key="selectedAgent.id" :project-id="activeProject!.project.id" :session-id="selectedAgent.id" :summary="selectedAgent.summary" :can-summarize="!selectedAgent.parentId" :active-worktree-id="diffWorktree?.id ?? null" @open-worktree="openWorktree" @close="close" />
+        <SessionContextPanel v-if="selectedAgent" :project-id="activeProject!.project.id" :session-id="selectedAgent.id" :summary="selectedAgent.summary" :can-summarize="!selectedAgent.parentId" :active-worktree-id="diffWorktree?.id ?? null" @open-worktree="openWorktree" @close="close" />
       </SheetContent>
     </Sheet>
     <!-- TUI agents have no composer; their close request sits under the terminal. -->
@@ -114,14 +114,17 @@ const mentionAgents = computed(() => integratedAgent.value && activeProject.valu
   ? mentionableAgents(activeProject.value.projectSessions, integratedAgent.value.processId)
   : []);
 // Presets and harnesses the @ menu offers for launching a new agent. Presets
-// are read again for each agent, so ones added in Settings appear.
+// are read once while the page is open; Settings is another page, so ones
+// added there appear on return.
 const presets = ref<HarnessPreset[]>([]);
 const mentionLaunchers = computed(() => integratedAgent.value ? buildMentionLaunchers(harnesses.value, presets.value) : []);
+let presetsRead = false;
 watch(() => integratedAgent.value?.processId, (processId) => {
-  if (!processId) return;
+  if (!processId || presetsRead) return;
+  presetsRead = true;
   void (window.patterm.harnessPresets() as Promise<{ presets?: HarnessPreset[] } | null>)
     .then((settings) => { presets.value = settings?.presets ?? []; })
-    .catch(() => { /* Harnesses are still offered. */ });
+    .catch(() => { presetsRead = false; /* Harnesses are still offered. */ });
 }, { immediate: true });
 const workspace = ref<HTMLElement>(), panel = ref<HTMLElement>(), narrow = ref(false);
 // The worktree under review. The viewer covers the workspace below the top bar,

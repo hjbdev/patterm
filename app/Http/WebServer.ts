@@ -323,7 +323,14 @@ export class WebServer {
       stamp = `${stat.size}:${stat.mtimeMs}`;
     } catch { await this.json(request, response, 404, { error: 'Not found' }); return; }
     // Keep the same relative-asset build usable through Electron's file protocol.
-    if (relative === 'index.html') body = Buffer.from(body.toString('utf8').replace(/\b(src|href)="\.\//g, '$1="/'));
+    if (relative === 'index.html') {
+      // The page carries this browser's sign-in state, so it starts without
+      // asking /api/session first.
+      const session = JSON.stringify(this.sessionState(request));
+      const meta = `<meta name="patterm-session" content="${session.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;')}" />`;
+      body = Buffer.from(body.toString('utf8').replace(/\b(src|href)="\.\//g, '$1="/').replace('</head>', `${meta}</head>`));
+      stamp += `:${session}`;
+    }
     const types: Record<string, string> = {
       '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
       '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ico': 'image/x-icon',
@@ -436,11 +443,15 @@ export class WebServer {
     for (const client of this.terminals.clients) client.sendEvent(event, payload);
   }
 
+  private sessionState(request: IncomingMessage): { password_set: boolean; signed_in: boolean; tailnet: boolean } {
+    return { password_set: this.access.passwordSet(), signed_in: this.access.allows(request.headers.cookie), tailnet: this.origin.hostname.endsWith('.ts.net') };
+  }
+
   // Sign-in and the password, which Settings › Remote access changes.
   private async handleAccess(pathname: string, request: IncomingMessage, response: ServerResponse): Promise<boolean> {
     const secure = this.origin.protocol === 'https:';
     if (pathname === '/api/session' && request.method === 'GET') {
-      await this.json(request, response, 200, { password_set: this.access.passwordSet(), signed_in: this.access.allows(request.headers.cookie), tailnet: this.origin.hostname.endsWith('.ts.net') });
+      await this.json(request, response, 200, this.sessionState(request));
       return true;
     }
     if (pathname === '/api/login' && request.method === 'POST') {

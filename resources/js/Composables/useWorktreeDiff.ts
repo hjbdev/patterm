@@ -218,6 +218,16 @@ export function useViewedDiffFiles(worktreeId: Readonly<Ref<string>>) {
 
 export interface WorktreeDiffTotalsState { totals: DiffTotals | null; error: string }
 
+// The last totals read for each worktree, shown while a fresh read runs git.
+const MAX_CACHED_TOTALS = 100;
+const lastTotals = new Map<string, WorktreeDiffTotalsState>();
+
+function rememberTotals(id: string, state: WorktreeDiffTotalsState): void {
+  lastTotals.delete(id);
+  lastTotals.set(id, state);
+  while (lastTotals.size > MAX_CACHED_TOTALS) lastTotals.delete(lastTotals.keys().next().value!);
+}
+
 // Branch totals for the session sidebar, unfiltered so they match `git diff`.
 export function useWorktreeDiffTotals(worktreeIds: Ref<string[]>) {
   const states = shallowRef(new Map<string, WorktreeDiffTotalsState>());
@@ -234,11 +244,18 @@ export function useWorktreeDiffTotals(worktreeIds: Ref<string[]>) {
         return [id, { totals: null, error: errorMessage(cause) }];
       }
     }));
+    for (const [id, state] of results) if (state.totals) rememberTotals(id, state);
     if (current === generation) states.value = new Map(results);
   }
 
   const polling = useVisiblePolling(refresh, SIDEBAR_POLL_MS);
-  watch(() => worktreeIds.value.join('\n'), () => void refresh().finally(polling.schedule), { immediate: true });
+  watch(() => worktreeIds.value.join('\n'), () => {
+    states.value = new Map(worktreeIds.value.flatMap((id) => {
+      const cached = lastTotals.get(id);
+      return cached ? [[id, cached] as const] : [];
+    }));
+    void refresh().finally(polling.schedule);
+  }, { immediate: true });
 
   return { states, refresh };
 }

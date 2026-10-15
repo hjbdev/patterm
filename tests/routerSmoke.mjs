@@ -4,14 +4,14 @@ import { build } from 'esbuild';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
-import { createRenderer } from 'vue';
+import { createRenderer, ref } from 'vue';
 import { createMemoryHistory } from 'vue-router';
 
 test('saved IDs drive navigation, delayed snapshots, history queries, and Back/Forward', async () => {
   const output = path.resolve('dist/tests/router-fixture.cjs');
   await build({
     stdin: { contents: `export { createWorkbenchRouter } from './resources/js/router';
-      export { useTerminalPageNavigation as useWorkbenchNavigation } from './resources/js/Composables/useTerminalPageNavigation';
+      export { useTerminalPageNavigation as useWorkbenchNavigation, useProjectFirstTab } from './resources/js/Composables/useTerminalPageNavigation';
       export { useWorkbench } from './resources/js/Composables/useWorkbench';`, resolveDir: process.cwd() },
     outfile: output, bundle: true, platform: 'node', format: 'cjs', external: ['vue', 'vue-router'],
     // Page rendering is checked in the browser; this fixture exercises real routing and selection.
@@ -30,7 +30,8 @@ test('saved IDs drive navigation, delayed snapshots, history queries, and Back/F
     createElement: () => ({}), createText: () => ({}), setText() {}, setElementText() {}, patchProp() {}
   });
   let navigation;
-  const app = renderer.createApp({ setup() { navigation = fixture.useWorkbenchNavigation(); return () => null; } });
+  // The project page's own redirect stands in for ProjectPage, which is stubbed.
+  const app = renderer.createApp({ setup() { navigation = fixture.useWorkbenchNavigation(); fixture.useProjectFirstTab(ref(false)); return () => null; } });
   app.use(router).mount({});
   try {
     assert.equal(navigation.activeProjectId.value, 'p1');
@@ -94,7 +95,8 @@ test('saved IDs drive navigation, delayed snapshots, history queries, and Back/F
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(router.currentRoute.value.fullPath, '/projects/p1', 'last terminal exit returns to the empty project page');
     project.projectSessions.push({ id: 'integrated', processId: 'process-integrated', interfaceMode: 'integrated', ptyProcessId: null });
-    await router.push('/projects/p1/agents/integrated');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(router.currentRoute.value.fullPath, '/projects/p1/agents/integrated', 'an agent launched from the empty project page opens');
     assert.equal(navigation.activeTerminalId.value, null, 'an Integrated agent has no PTY terminal ID');
     project.projectSessions.at(-1).exitedAt = '2026-09-22';
     await new Promise((resolve) => setTimeout(resolve, 20));

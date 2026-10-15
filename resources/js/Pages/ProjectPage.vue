@@ -1,15 +1,18 @@
 <template>
   <!-- A project's own page. In sidebar mode it's the board of its agents;
-       otherwise, or before it has any, it opens the first tab or offers to
-       launch an agent. -->
+       otherwise it opens the first tab or, before there is one, offers to
+       launch an agent. The tab opens before any terminal page mounts here,
+       which the agent route would only replace. -->
   <ProjectBoard v-if="boardIsHome" />
-  <TerminalPage v-else />
+  <TerminalPage v-else-if="!firstTab" />
 </template>
 
 <script setup lang="ts">
 import ProjectBoard from '../Components/Board/ProjectBoard.vue';
 import { useBoardIsHome } from '../Composables/useBoard';
+import { useProjectFirstTab } from '../Composables/useTerminalPageNavigation';
 import TerminalPage from './TerminalPage.vue';
 
 const boardIsHome = useBoardIsHome();
+const firstTab = useProjectFirstTab(boardIsHome);
 </script>

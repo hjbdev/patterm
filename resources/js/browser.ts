@@ -6,10 +6,21 @@ type TerminalClientRequest = { kind: 'clipboard'; text: string } | { kind: 'open
 type ServerSession = { password_set: boolean; signed_in: boolean; tailnet: boolean };
 
 // Whether this browser must sign in first. Null in the desktop app, or when
-// the server could not be reached.
-export const browserSession: Promise<ServerSession | null> = window.patterm ? Promise.resolve(null) : readSession();
+// the server could not be reached. The server puts it in the page; a page
+// served without it, such as the dev server's, asks.
+export const browserSession: Promise<ServerSession | null> = window.patterm ? Promise.resolve(null) : embeddedSession() ?? readSession();
 
 if (!window.patterm) window.patterm = createBrowserApi();
+
+function embeddedSession(): Promise<ServerSession> | null {
+  const content = document.querySelector<HTMLMetaElement>('meta[name="patterm-session"]')?.content;
+  if (!content) return null;
+  try {
+    return Promise.resolve(JSON.parse(content) as ServerSession);
+  } catch {
+    return null;
+  }
+}
 
 async function readSession(): Promise<ServerSession | null> {
   try {

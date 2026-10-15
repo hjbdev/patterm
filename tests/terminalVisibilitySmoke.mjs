@@ -12,7 +12,8 @@ const executable = parsed.statements.filter(s => !ts.isImportDeclaration(s)).map
 const { outputText } = ts.transpileModule(executable, { compilerOptions: { target: ts.ScriptTarget.ES2022 } });
 const bundled = await build({
   stdin: { contents: `export * from './resources/js/terminal/TerminalRenderer';
-    export * from './resources/js/terminal/TerminalFrameCadence';`, resolveDir: process.cwd() },
+    export * from './resources/js/terminal/TerminalFrameCadence';
+    export * from './resources/js/terminal/TerminalFrameCoalescing';`, resolveDir: process.cwd() },
   bundle: true, platform: 'node', format: 'cjs', write: false
 });
 const module = { exports: {} };

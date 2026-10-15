@@ -47,3 +47,14 @@ export function resolveProjectReturnPath(project: ProjectWorkbench | undefined, 
   }
   return location.fullPath;
 }
+
+// Where a project's own page goes when it doesn't show the board: its first
+// agent, or else its first process. Null when it has neither.
+export function projectFirstTab(project: ProjectWorkbench | null | undefined): { name: 'agent'; params: { projectId: string; sessionId: string } } | { name: 'process'; params: { projectId: string; processId: string } } | null {
+  if (!project) return null;
+  const projectId = project.project.id;
+  const session = activeAgentSessions(project.projectSessions)[0];
+  if (session) return { name: 'agent', params: { projectId, sessionId: session.id } };
+  const process = activeProcesses(project.processes)[0];
+  return process ? { name: 'process', params: { projectId, processId: process.id } } : null;
+}

@@ -16,12 +16,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and routines are not offered these tools, and removing a project still
   happens only in the app.
 
+### Changed
+
+- Switching agents is quicker. The session context panel shows what it last
+  read for an agent straight away while it refreshes, and its pickers read the
+  project's todos and scratchpads only when opened.
+- Browser pages start one round trip sooner, and opening a project no longer
+  sets up a terminal view only to replace it with the first tab.
+
 ### Fixed
 
 - Claude and Codex use Patterm-managed connections for configured remote MCP
   servers. Native CLI logins no longer override Patterm authentication, and
   connection failures direct users to Patterm's MCP settings.
 - The subagent view no longer casts a shadow onto the panel beside it.
+- In the browser, switching to a terminal you control no longer flashes
+  "Viewing shared terminal · Take control".
+- Frames still arriving from a terminal you just left can no longer hide the
+  new terminal's latest frames.
 - Codex no longer fails to start a remote MCP server with "headers helper timed
   out" while Patterm refreshes its sign-in. A token close to expiry is still
   used while the refresh runs.
