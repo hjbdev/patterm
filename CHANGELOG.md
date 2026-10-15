@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A process's last output no longer occasionally goes missing from its
+  terminal when it exits. On Linux, output read just as the process exited
+  was dropped if the terminal was busy drawing a frame at that moment.
+  Patterm now builds a vendored copy of `alacritty_terminal` 0.26.0 with
+  that fixed.
+
 ## [0.2.4] - 2026-10-15
 
 ### Added
