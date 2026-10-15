@@ -1049,7 +1049,8 @@ async function checkStreamedActivity(input: {
 
   // Integrated activity writes the streamed statuses, permission included.
   daemonState.active = { [first]: { type: 'running' } };
-  const integrated = new IntegratedAgentService(database, { opencode: new OpenCodeServerService(database, env, { settleMs: 50 }) });
+  const observedProvider = new OpenCodeServerService(database, env, { settleMs: 50 });
+  const integrated = new IntegratedAgentService(database, { opencode: observedProvider });
   const activity = (): string => (database.connection.prepare(`select activity from processes where id = 'process_0'`).get() as { activity: string }).activity;
   try {
     const connections = daemonState.connections;
@@ -1065,6 +1066,32 @@ async function checkStreamedActivity(input: {
     daemonState.permissions = [];
     daemonState.active = {};
     daemonState.emit('session.execution.succeeded', { sessionID: first });
+    await waitFor(() => activity() === 'idle');
+
+    // A read while subagent events wait behind a lookup keeps the streamed
+    // status: the queued background agent start is still to apply.
+    daemonState.active = { [first]: { type: 'running' } };
+    daemonState.emit('session.execution.started', { sessionID: first });
+    await waitFor(() => activity() === 'working');
+    let releaseLookup: () => void = () => {};
+    const lookup = new Promise<void>((resolve) => { releaseLookup = resolve; });
+    const lookups = observedProvider as unknown as { descendsFrom(child: string, root: string): Promise<boolean> };
+    lookups.descendsFrom = async (child) => {
+      if (child === 'ses_unrelated') await lookup;
+      return child === 'ses_queued_bg';
+    };
+    daemonState.emit('session.execution.started', { sessionID: 'ses_unrelated' });
+    daemonState.emit('session.execution.started', { sessionID: 'ses_queued_bg' });
+    daemonState.active = { ses_queued_bg: { type: 'running' } };
+    daemonState.emit('session.execution.succeeded', { sessionID: first });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await integrated.conversation('process_0');
+    assert.equal(activity(), 'working', 'a read while activity is queued does not settle the agent');
+    releaseLookup();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.equal(activity(), 'working', 'the queued background agent keeps it working');
+    daemonState.active = {};
+    daemonState.emit('session.execution.succeeded', { sessionID: 'ses_queued_bg' });
     await waitFor(() => activity() === 'idle');
   } finally {
     integrated.dispose();
