@@ -5,7 +5,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { expandHome } from './ListDirectoriesAction';
 import { pathColumn, pathParam, storedPath } from '../Platform/PathIdentity';
-import { isUserProjectKind } from '../Services/PersonalProject';
+import { isUserProjectKind, USER_PROJECT_KINDS_SQL } from '../Services/PersonalProject';
 import type { DatabaseService } from '../Services/DatabaseService';
 import type { TimelineService } from '../Services/TimelineService';
 
@@ -68,7 +68,7 @@ export class CreateProjectAction {
     const existing = this.database.connection
       .prepare(`select id, name, path, kind from projects where ${pathColumn('path')} = ?`)
       .get(pathParam(resolved)) as ProjectRow | undefined;
-    if (existing && !isUserProjectKind(existing.kind)) throw new Error(`path belongs to Patterm's internal project: ${resolved}`);
+    if ((existing && !isUserProjectKind(existing.kind)) || this.isInternalDirectory(resolved)) throw new Error(`path belongs to Patterm's internal project: ${resolved}`);
     if (existing) {
       return { project_id: existing.id, name: existing.name, path: existing.path, existed: true, created_directory: createdDirectory };
     }
@@ -90,5 +90,13 @@ export class CreateProjectAction {
     });
 
     return { project_id: id, name, path: resolved, existed: false, created_directory: createdDirectory };
+  }
+
+  // Compares real paths, so a symlink cannot alias an internal project's folder.
+  private isInternalDirectory(resolved: string): boolean {
+    const real = (target: string) => { try { return fs.realpathSync(target); } catch { return null; } };
+    const target = real(resolved);
+    const internal = this.database.connection.prepare(`select path from projects where kind not in ${USER_PROJECT_KINDS_SQL}`).all() as Array<{ path: string }>;
+    return internal.some((project) => real(project.path) === target);
   }
 }

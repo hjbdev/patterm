@@ -21,6 +21,7 @@ import { AgentContextService } from '../app/Services/AgentContextService';
 import { assistantVoiceOptions, type RealtimeVoiceOptions } from '../app/Services/AssistantVoiceProfile';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
 import { removeTree } from './fixtures/TempTree';
+import { trySymlink } from './fixtures/SymlinkFixture';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -515,6 +516,9 @@ async function main(): Promise<void> {
     assert.ok(!fs.existsSync(path.join(process.cwd(), 'relative')), 'a relative path creates nothing');
     const internal = db.prepare('select path from projects where id = ?').get(ASSISTANT_PROJECT_ID) as { path: string };
     await assert.rejects(create({ path: internal.path }), /internal project/, 'the assistant\'s own project is never handed back');
+    if (trySymlink(internal.path, path.join(dir, 'internal-alias'), 'dir')) {
+      await assert.rejects(create({ path: path.join(dir, 'internal-alias') }), /internal project/, 'nor registered again through a symlink');
+    }
     assert.deepEqual((await listProjects()).map((project) => project.project_id).sort(), ['p', 'q', registered.project_id, made.project_id].sort());
 
     // Renaming changes only the display name, and only for workspace projects.
