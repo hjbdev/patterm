@@ -666,6 +666,9 @@ export class CodexAppServerService {
     }
     const status = projectCodexStatus(method, params);
     if (status) {
+      // A thread-level idle report cannot complete a known active turn.
+      // Keep the projected snapshot consistent with the RPC client's state.
+      if (method === 'thread/status/changed' && status.status === 'idle' && channel.client?.activeTurn(channel.threadId)) status.status = 'working';
       channel.own = status;
       channel.liveOwn = true;
       // A turn's end is announced even while running subagents keep the
@@ -1426,6 +1429,9 @@ export class CodexRpcClient {
   }
 
   private setThreadStatus(threadId: string, status: CodexDeliveryStatus): void {
+    // Only turn/completed clears an active turn. This also protects child
+    // threads and reads outside a conversation subscription.
+    if (status === 'idle' && this.turns.has(threadId)) status = 'working';
     this.threadStatuses.delete(threadId);
     this.threadStatuses.set(threadId, status);
     if (this.threadStatuses.size > 500) this.threadStatuses.delete(this.threadStatuses.keys().next().value!);

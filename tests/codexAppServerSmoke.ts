@@ -208,6 +208,16 @@ function serve(socket) {
         const start = () => {
           notify('thread/status/changed', {threadId:'thread_test', status:{type:'active', activeFlags:[]}});
           notify('turn/started', {threadId:'thread_test', turn:{id:turnId, status:'inProgress', items:[]}});
+          if (process.env.EARLY_TOOL_IDLE) {
+            const tool = {type:'commandExecution',id:'exec_held',command:'sleep 60',cwd:'/tmp',processId:'88',status:'inProgress',commandActions:[],aggregatedOutput:''};
+            notify('item/started', {threadId:'thread_test',turnId,item:tool});
+            // Thread status is weaker evidence than the unfinished turn.
+            notify('thread/status/changed', {threadId:'thread_test',status:{type:'idle'}});
+            setTimeout(() => {
+              notify('item/completed', {threadId:'thread_test',turnId,item:{...tool,status:'completed',exitCode:0}});
+              notify('thread/status/changed', {threadId:'thread_test',status:{type:'idle'}});
+            }, 200);
+          }
           if (process.env.HOLD_APPROVAL) {
             holdApproval = true;
             notify('thread/status/changed', {threadId:'thread_test', status:{type:'active', activeFlags:['waitingOnApproval']}});
@@ -221,6 +231,8 @@ function serve(socket) {
             longChild = true;
             notify('thread/status/changed', {threadId:'thread_long', status:{type:'active', activeFlags:[]}});
             notify('turn/started', {threadId:'thread_long', turn:{id:'turn_long', status:'inProgress', items:[]}});
+            // A thread-level idle report does not end the child's turn either.
+            notify('thread/status/changed', {threadId:'thread_long', status:{type:'idle'}});
             // The agent's own turn ends while its subagent runs on.
             holdTurn = null;
             notify('thread/status/changed', {threadId:'thread_test', status:{type:'idle'}});
@@ -972,6 +984,39 @@ if (socketPath) {
     releaseHeld();
     await held.service.stop(held.processId);
     held.service.disconnect();
+  }
+
+  // A quiet shell and its completion are both inside the same active turn.
+  // Thread-level idle notifications must not settle it before turn/completed.
+  {
+    const tool = await launch({ ...process.env, HOLD_TURN: '1', EARLY_TOOL_IDLE: '1', NO_PENDING: '1' });
+    const events: IntegratedConversationEvent[] = [];
+    const release = await tool.service.subscribe(tool.processId, (event) => events.push(event));
+    const agents = new IntegratedAgentService(database, { codex: tool.service });
+    const transitions: string[] = [];
+    agents.onActivityChange((change) => transitions.push(change.activity));
+    agents.observe(tool.processId);
+    await waitFor(() => activityOf(tool.processId) === 'idle');
+    try {
+      await agents.prompt(tool.processId, 'run a shell');
+      await waitFor(() => events.some((event) => event.kind === 'replace' && event.message?.id === 'exec_held'));
+      assert.equal((await tool.service.conversation(tool.processId) as StatusSnapshot).status, 'working', 'a shell in an unfinished Codex turn stays working despite thread idle');
+      await waitFor(() => events.some((event) => event.kind === 'replace' && event.message?.id === 'exec_held' && event.message.tool?.state === 'completed'));
+      await agents.conversation(tool.processId);
+      assert.equal(activityOf(tool.processId), 'working', 'a finished tool does not finish the Codex turn');
+      assert.deepEqual([...new Set(statusesIn(events))], ['working'], 'the stream never idles before turn completion');
+      const fresh = new CodexAppServerService(database, runtimeDirectory);
+      assert.equal((await fresh.conversation(tool.processId) as StatusSnapshot).status, 'working', 'a fresh connection reads the unfinished turn');
+      fresh.disconnect();
+      await tool.service.interrupt(tool.processId);
+      await waitFor(() => activityOf(tool.processId) === 'idle');
+      assert.deepEqual(transitions, ['working', 'idle'], 'persisted Codex activity only idles at the turn boundary');
+    } finally {
+      agents.dispose();
+      release();
+      await tool.service.stop(tool.processId);
+      tool.service.disconnect();
+    }
   }
 
   // A turn list that times out does not hide an active thread, and a status

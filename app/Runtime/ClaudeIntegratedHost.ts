@@ -109,8 +109,8 @@ const limits = new Map<string, JsonRecord>();
 let retryNotice: { id: string; attempts: number } | null = null;
 // Why the last turn failed, for the error banner.
 let statusDetail: string | null = null;
-// A main-agent turn is running, by Claude's evidence: its session started
-// running or the main agent streamed. It ends with the turn's result. Prompts
+// A main-agent turn is running, by Claude's command lifecycle, model stream,
+// or tool call. Its result ends it; a session-level idle report does not. Prompts
 // waiting for their turn are tracked in `prompts`.
 let turnActive = false;
 // Background work Claude reports: background shells, workflows, monitors, and
@@ -488,7 +488,11 @@ function receiveClaude(chunk: string): void {
     try { event = record(JSON.parse(line)); } catch { continue; }
     if (event.type === 'assistant') {
       acknowledgeUserMessage(event.user_message_uuid);
-      if (!parentOf(event)) recordContext(record(record(event.message).usage));
+      if (!parentOf(event)) {
+        const content = record(event.message).content;
+        if (Array.isArray(content) && content.some((block) => record(block).type === 'tool_use')) markMainTurnRunning();
+        recordContext(record(record(event.message).usage));
+      }
       applyAssistantMessage(event, parentOf(event));
     } else if (event.type === 'user') {
       // --replay-user-messages echoes an accepted client uuid; tool_result
@@ -570,26 +574,24 @@ function receiveClaude(chunk: string): void {
 
 // The fate of a prompt this host sent: queued, started into a turn, then
 // completed, cancelled, discarded, or refused. Commands Claude enqueues
-// itself are covered by its session state.
+// itself also start turns, though their UUIDs are outside the prompt map.
 function receiveLifecycle(event: JsonRecord): void {
   const id = typeof event.command_uuid === 'string' ? event.command_uuid : '';
   if (!id) return;
   lifecycleReported = true;
-  if (!prompts.has(id)) return;
-  if (event.state === 'queued' || event.state === 'started') prompts.set(id, event.state);
-  else prompts.delete(id);
+  if (event.state === 'started') turnActive = true;
+  if (prompts.has(id)) {
+    if (event.state === 'queued' || event.state === 'started') prompts.set(id, event.state);
+    else prompts.delete(id);
+  }
   updateStatus();
-}
-
-function sessionRunning(): boolean {
-  return sessionState === 'running' || sessionState === 'requires_action';
 }
 
 // The main agent only starts a model request during a turn. While a session
 // runs only for a background agent, this marks the turn that agent's finish
 // wakes, so interrupting it is not reported as a failure.
 function markMainTurnRunning(): void {
-  if (turnActive || !sessionRunning()) return;
+  if (turnActive) return;
   turnActive = true;
   updateStatus();
 }
@@ -599,12 +601,10 @@ function markMainTurnRunning(): void {
 // agents keep it running after the main turn's result.
 function receiveSessionState(state: unknown): void {
   if (typeof state !== 'string') return;
-  const started = state === 'running' && !sessionRunning();
   sessionState = state;
-  if (started) turnActive = true;
   if (state === 'idle') {
-    turnActive = false;
-    interrupted = false;
+    // Session state is a level signal for background activity. Only a result
+    // or process exit ends a main turn that has actually started.
     // A prompt Claude has not read yet is newer than this report; one it
     // queued or started has run, since Claude idles only with an empty queue.
     for (const [id, fate] of prompts) if (fate !== 'written') prompts.delete(id);
