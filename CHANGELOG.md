@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Launching an agent from a tab opened before a server update now opens the
+  new agent. The launch view loads with the other pages at startup, and if it
+  still can't open, the app goes straight to the agent unless you have moved
+  elsewhere. Before, the agent started but the tab stayed where it was.
 - A process's last output no longer occasionally goes missing from its
   terminal when it exits. On Linux, output read just as the process exited
   was dropped if the terminal was busy drawing a frame at that moment.
