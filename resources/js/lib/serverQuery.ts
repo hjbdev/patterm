@@ -83,14 +83,24 @@ export function topicChanged(topic: ServerTopic): void {
   generations[topic].value += 1;
 }
 
-// A read cached until its topic next changes.
-export function topicRead<T>(topic: ServerTopic, key: QueryKey, read: () => Promise<T>): Promise<T> {
-  return queryClient.fetchQuery({ queryKey: [...key, topicGeneration(topic)], queryFn: read });
+// A read cached until its topic next changes. `fresh` says whether a cached
+// result must be read again anyway, for data that changes without an
+// announcement.
+export function topicRead<T>(topic: ServerTopic, key: QueryKey, read: () => Promise<T>, fresh?: (cached: T) => boolean): Promise<T> {
+  return queryClient.fetchQuery({
+    queryKey: [...key, topicGeneration(topic)],
+    queryFn: read,
+    ...(fresh ? { staleTime: (query: { state: { data: T | undefined } }) => query.state.data !== undefined && fresh(query.state.data) ? 0 : Infinity } : {})
+  });
 }
 
-// A tool call cached until its topic next changes.
-export function topicCall<T>(topic: ServerTopic, name: string, args: Record<string, unknown>): Promise<T> {
-  return topicRead(topic, [name, args], () => window.patterm.call(name, args) as Promise<T>);
+// A tool call cached until its topic next changes. A paired host doesn't
+// announce its topics here, so a call naming one of its records, as in
+// `workstation:project_7`, always reads.
+export function topicCall<T>(topic: ServerTopic, name: string, args: Record<string, unknown>, key: QueryKey = [name, args]): Promise<T> {
+  const call = () => window.patterm.call(name, args) as Promise<T>;
+  const remote = Object.entries(args).some(([field, value]) => field.endsWith('_id') && typeof value === 'string' && value.includes(':'));
+  return remote ? call() : topicRead(topic, key, call);
 }
 
 // Calls `refresh` when one of the topics changes. Bursts share one refresh.

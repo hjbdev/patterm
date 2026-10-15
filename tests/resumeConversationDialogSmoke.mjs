@@ -29,6 +29,7 @@ function mount({ initialQuery = '', onLaunched } = {}) {
   };
   // Cached reads go straight to the server here.
   bindings.topicCall = (_topic, tool, args) => bindings.window.patterm.call(tool, args);
+  bindings.useWorkbench = () => ({ lifecycleRevision: ref(0) });
   const setup = new Function(...Object.keys(bindings), `${outputText}\nreturn { query, results, visible, hasMore, loading, reload, loadMore, onScroll, searching, resume };`);
   const dialog = setup(...Object.values(bindings));
   const runTimers = async () => { await flush(); while (timers.length) timers.shift()(); await flush(); };

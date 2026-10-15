@@ -34,6 +34,7 @@ import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
 import { matchSegments, relativeTime } from '../lib/format';
 import type { ConversationRecord } from '../types';
 import { topicCall } from '../lib/serverQuery';
+import { useWorkbench } from '../Composables/useWorkbench';
 
 type ConversationResult = ConversationRecord & { sessionClosedAt?: string | null; match?: { messageId: string | null; preview: string | null } };
 
@@ -122,8 +123,12 @@ async function loadMore(): Promise<void> {
   }
 }
 
+const { lifecycleRevision } = useWorkbench();
+
 async function listPage(offset: number): Promise<ConversationResult[]> {
-  const result = await topicCall<{ conversations?: ConversationResult[] }>('history', 'history_list', { project_id: props.projectId, provider: props.provider, resumable: true, limit: PAGE_SIZE, offset });
+  // Closing a session reorders resumable conversations without an import.
+  const args = { project_id: props.projectId, provider: props.provider, resumable: true, limit: PAGE_SIZE, offset };
+  const result = await topicCall<{ conversations?: ConversationResult[] }>('history', 'history_list', args, ['history_list', args, lifecycleRevision.value]);
   return result.conversations ?? [];
 }
 

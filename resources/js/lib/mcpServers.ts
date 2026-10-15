@@ -80,7 +80,10 @@ let listReads = 0;
 // newer one.
 export function loadMcpServers(): Promise<void> {
   const read = ++listReads;
-  return topicRead('mcp-servers', ['mcp_servers_list'], () => call<{ servers: McpServerView[]; redirect: McpRedirectMode }>('mcp_servers_list'))
+  // A pending sign-in expires on the server without an announcement, so a
+  // list that shows one is read again each time.
+  return topicRead('mcp-servers', ['mcp_servers_list'], () => call<{ servers: McpServerView[]; redirect: McpRedirectMode }>('mcp_servers_list'),
+    (list) => list.servers.some((server) => server.sign_in?.pending))
     .then((value) => {
       if (read !== listReads) return;
       servers.value = value.servers;

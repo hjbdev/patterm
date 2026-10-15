@@ -263,8 +263,9 @@ async function loadNextConversations(): Promise<void> {
 
 // Merge the newest page per provider after an import so new and updated
 // conversations appear without resetting paging, scroll, or selection.
+let refreshes = 0;
 async function refreshConversations(): Promise<void> {
-  const projectId = props.projectId;
+  const projectId = props.projectId, refresh = ++refreshes;
   try {
     const responses = await Promise.all(historyProviders.map(async (provider) => {
       const response = await topicCall('history', 'history_list', {
@@ -275,7 +276,8 @@ async function refreshConversations(): Promise<void> {
       }) as { conversations?: ConversationRecord[] };
       return response.conversations ?? [];
     }));
-    if (projectId !== props.projectId) return;
+    // A newer refresh has already merged what this one read.
+    if (projectId !== props.projectId || refresh !== refreshes) return;
     conversations.value = sortConversations(uniqueConversations([...conversations.value, ...responses.flat()]));
   } catch {
     // The next import or project switch retries; keep the current list.
@@ -294,12 +296,23 @@ function initialProviderState(): Record<HistoryProvider, ProviderPageState> {
   };
 }
 
+// One row per conversation, the most recently updated copy, so a slower
+// reply with an older copy never replaces a newer one.
 function uniqueConversations(value: ConversationRecord[]): ConversationRecord[] {
-  return [...new Map(value.map((conversation) => [conversation.id, conversation])).values()];
+  const rows = new Map<string, ConversationRecord>();
+  for (const conversation of value) {
+    const held = rows.get(conversation.id);
+    if (!held || conversationTime(conversation) >= conversationTime(held)) rows.set(conversation.id, conversation);
+  }
+  return [...rows.values()];
+}
+
+function conversationTime(conversation: ConversationRecord): number {
+  return Date.parse(conversation.updatedAt ?? conversation.importedAt);
 }
 
 function sortConversations(value: ConversationRecord[]): ConversationRecord[] {
-  return value.sort((a, b) => Date.parse(b.updatedAt ?? b.importedAt) - Date.parse(a.updatedAt ?? a.importedAt));
+  return value.sort((a, b) => conversationTime(b) - conversationTime(a));
 }
 
 function isHistoryProvider(value: string): value is HistoryProvider {

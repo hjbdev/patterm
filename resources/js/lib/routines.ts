@@ -78,10 +78,11 @@ export interface RoutineChoiceOption {
 
 export const ROUTINE_HARNESSES = ['claude', 'codex', 'opencode'] as const;
 
-// Routine reads are cached until routines change or a run's agent starts or
-// stops. Writes here mark routines changed, so the next read is fresh.
+// Routine reads are cached until routines or the workbench change: a run's
+// waiting and needs-you state follow its agent's activity. Writes here mark
+// routines changed, so the next read is fresh.
 function routineRead<T>(name: string, args: Record<string, unknown>): Promise<T> {
-  return topicRead('routines', [name, args, useWorkbench().lifecycleRevision.value], () => window.patterm.call(name, args) as Promise<T>);
+  return topicRead('routines', [name, args, useWorkbench().revision.value], () => window.patterm.call(name, args) as Promise<T>);
 }
 
 function routineWrite<T>(name: string, args: Record<string, unknown>): Promise<T> {
