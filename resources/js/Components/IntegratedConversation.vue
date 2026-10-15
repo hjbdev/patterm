@@ -674,9 +674,11 @@ async function applySnapshot(load: () => Promise<Record<string, unknown>>, reque
     if (mode && controls.value.selectors.some((item) => item.id === 'mode' && item.value !== mode)) {
       controls.value = { ...controls.value, selectors: controls.value.selectors.map((item) => item.id === 'mode' ? { ...item, value: mode } : item) };
     }
-    if (typeof result.controls_revision === 'string' && result.controls_revision !== controls.value.revision) {
+    // While controls are being read, every snapshot's revision counts, even
+    // one equal to the controls shown: settings can change and change back.
+    if (typeof result.controls_revision === 'string') {
       if (controlsReadingFor === generation) wantedControls = { generation, revision: result.controls_revision };
-      else void loadControls();
+      else if (result.controls_revision !== controls.value.revision) void loadControls();
     }
     if (pushCapable() && typeof result.revision === 'number') streamRevision = Math.max(streamRevision, result.revision);
     // Streamed or polled, a snapshot carries the status; while polling it is

@@ -1159,6 +1159,23 @@ test('controls are read again only when a snapshot reports a new revision', asyn
   assert.equal(pending(racing, 'integrated_controls').length, 0);
   assert.equal(racing.pane.controls.value.selectors[0].value, 'haiku');
   assert.equal(racing.pane.controls.value.revision, 'r4');
+
+  // Settings that change and change back report an earlier revision again;
+  // it still counts while a read for the changed ones is under way.
+  void racing.pane.refresh();
+  await flush();
+  await resolveGets(racing, { ...replyConversation('hello'), controls_revision: 'r5' });
+  assert.equal(pending(racing, 'integrated_controls').length, 1);
+  void racing.pane.refresh();
+  await flush();
+  await resolveGets(racing, { ...replyConversation('hello'), controls_revision: 'r4' });
+  pending(racing, 'integrated_controls')[0].resolve(controlsWith('opus', 'r5'));
+  await flush();
+  assert.equal(pending(racing, 'integrated_controls').length, 1, 'changed back while reading, the controls are read again');
+  pending(racing, 'integrated_controls')[0].resolve(controlsWith('haiku', 'r4'));
+  await flush();
+  assert.equal(pending(racing, 'integrated_controls').length, 0);
+  assert.equal(racing.pane.controls.value.revision, 'r4');
   racing.lifecycle.beforeUnmount.forEach(callback => callback());
   racing.scope.stop();
 
