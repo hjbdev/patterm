@@ -272,7 +272,7 @@ async function main(): Promise<void> {
     browser.close();
 
     // A linked project can launch on the other host.
-    assert.deepEqual(deskWorkbench()!.project.remotes, [{ host: 'workstation', projectId: `workstation:${devProject}`, contextRevision: 0 }], 'a linked project carries the paired host\'s context revision');
+    assert.deepEqual(deskWorkbench()!.project.remotes, [{ host: 'workstation', projectId: `workstation:${devProject}`, contextRevision: 0, sharesHistory: true }], 'a linked project carries the paired host\'s context revision, and that it announces history');
     const launchedRemote = await rpc(desktop, 'patterm:mcp:call', { tool: 'harness_launch', arguments: { project_id: `workstation:${devProject}`, harness: 'rawpty', interface_mode: 'tui' } }) as { session_id: string; process_id: string };
     assert.match(launchedRemote.session_id, /^workstation:session_/);
     assert.ok(workstation.app.database.connection.prepare('select 1 from sessions where id = ? and project_id = ?').get(launchedRemote.session_id.slice('workstation:'.length), devProject));
@@ -300,6 +300,10 @@ async function main(): Promise<void> {
     const stopTopics = desktop.app.onDataChanged((topics) => topicsSeen.push(...topics));
     await rpc(workstation, 'patterm:mcp:call', { tool: 'todo_create', arguments: { project_id: devProject, title: 'Profile the hot path' } });
     await until(() => topicsSeen.includes('context'), 'a forwarded context change');
+    // So do changes to its conversation history, which this host's clients
+    // may then cache.
+    workstation.app.notifyChanged(['history']);
+    await until(() => topicsSeen.includes('history'), 'a forwarded history change');
     stopTopics();
     await until(() => (deskWorkbench()?.project.remotes?.[0]?.contextRevision ?? 0) > 0, 'the other host\'s context revision to reach this workbench');
 
