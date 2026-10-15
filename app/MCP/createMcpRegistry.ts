@@ -227,10 +227,13 @@ const searchOutputInput = z.object({
   limit: z.number().int().positive().default(10)
 });
 const waitForPatternInput = z.object({
-  process_id: z.string().min(1),
-  pattern: z.string().min(1),
-  timeout_seconds: z.number().positive().default(30),
-  timeout_ms: z.number().positive().optional()
+  process_id: z.string().min(1).describe('Process whose output to watch.'),
+  pattern: z.string().min(1).describe('Literal, case-sensitive text, matched within one output line. Not a regex: "a|b" matches only that exact text.'),
+  timeout_seconds: z.number().positive().optional().describe('Optional rescue timeout. Omit it to wait until the text appears or the process ends.'),
+  // Older callers' spelling of timeout_seconds.
+  timeout_ms: z.number().positive().optional(),
+  body: z.string().default('').describe('Optional text added to the callback, such as what to do next.'),
+  label: z.string().optional().describe('Optional timer label.')
 });
 const sendInputInput = z.object({
   process_id: z.string().min(1),
@@ -343,7 +346,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       return services.crossHost!.routine(current.project_id, peer.host_id, tool, args, { session_id: current.session_id, process_id: current.process_id, name: current.title ?? 'An agent' });
     } : undefined);
   }
-  const timerService = services.timers ?? new TimerService(services.database, services.terminal);
+  const timerService = services.timers ?? new TimerService(services.database, services.terminal, services.integrated ? { integrated: services.integrated } : {});
   const resumeConversationAgent = services.historyReadService
     ? new ResumeConversationAgentAction(services.database, services.historyReadService, services.harnessLauncher,
       services.integrated ? { integrated: services.integrated, closeProcess: services.actions.closeProcess } : undefined)
@@ -876,23 +879,30 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     return { matches: matches.slice(0, input.limit), truncated: matches.length > input.limit };
   });
 
-  registry.register({ name: 'wait_for_pattern', namespace: 'cli.process', description: 'Wait for a pattern to appear in output.', inputSchema: { type: 'object', required: ['process_id', 'pattern'] } }, async (args, context) => {
+  registry.register({
+    name: 'wait_for_pattern',
+    namespace: 'cli.process',
+    description: 'Watch a process for literal text without blocking. Returns at once: matched or exited when that is already true, otherwise watching with a timer_id. Patterm then messages you once, when the text appears, the process ends without it, or timeout_seconds passes.',
+    inputSchema: { type: 'object', required: ['process_id', 'pattern'] },
+    usageNotes: [
+      'This tool never waits. When it returns watching, end your turn; the callback arrives as a new message. Do not poll get_process_output meanwhile.',
+      'Output the process printed before the call counts, scrollback included, so a pattern already printed returns matched straight away.',
+      'Use it for readiness ("ready on port") and for completion of long commands. Cancel a watch with timer_cancel; timer_list shows pending watches.'
+    ]
+  }, async (args, context) => {
     const input = waitForPatternInput.parse(args);
     const processId = processFor(context, input.process_id);
-    const deadline = Date.now() + (input.timeout_ms ?? input.timeout_seconds * 1000);
-    while (Date.now() < deadline) {
-      let out: ReturnType<typeof normalizeOutput>;
-      try {
-        out = await readProcessOutput(services, processId, 'grid', 0);
-      } catch {
-        return { matched: false, snippet: '' };
-      }
-      if (out.content.includes(input.pattern)) {
-        return { matched: true, snippet: out.content.slice(Math.max(0, out.content.indexOf(input.pattern) - 200), out.content.indexOf(input.pattern) + input.pattern.length + 200) };
-      }
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-    return { matched: false, snippet: '' };
+    const owner = caller(context)?.process_id;
+    if (!owner) throw new Error('wait_for_pattern sends its result to the calling agent, so only agents can call it.');
+    const now = await timerService.outputState(processId, input.pattern);
+    if (now.state === 'matched') return { status: 'matched', process_id: now.process_id, line: now.line };
+    if (now.state === 'exited') return { status: 'exited', process_id: now.process_id, process_status: now.status, exit_code: now.exit_code };
+    if (now.state === 'missing') throw new Error(`unknown process: ${input.process_id}`);
+    // Output printed between this check and the watch's first search is
+    // still found: the watch searches everything the terminal retains.
+    const timeoutMs = input.timeout_ms ?? (input.timeout_seconds === undefined ? undefined : input.timeout_seconds * 1000);
+    const timer = timerService.setOutput({ processId, pattern: input.pattern, ownerProcessId: owner, body: input.body, maxWaitSeconds: timeoutMs === undefined ? undefined : timeoutMs / 1000, label: input.label });
+    return { status: 'watching', timer_id: timer.id, process_id: processId, pattern: input.pattern, next: 'End your turn. Patterm will message you when the text appears, the process ends, or the timeout passes.' };
   });
 
   // Input changes no stored state. The activity that follows is reported by the

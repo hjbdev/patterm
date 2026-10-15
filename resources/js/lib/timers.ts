@@ -5,7 +5,8 @@ const KIND_LABELS: Record<TimerKind, string> = {
   idle_any: 'When any is idle',
   idle_all: 'When all are idle',
   report_any: 'When any reports',
-  report_all: 'When all report'
+  report_all: 'When all report',
+  output: 'Watching output'
 };
 
 export function timersForProcesses(timers: readonly TimerRecord[], processIds: ReadonlySet<string>): TimerRecord[] {
