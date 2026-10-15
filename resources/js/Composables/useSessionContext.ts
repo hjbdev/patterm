@@ -1,6 +1,6 @@
 import { computed, onBeforeUnmount, ref, shallowRef, watch, type Ref } from 'vue';
 import { CircleDot, GitPullRequest, Link2 } from 'lucide-vue-next';
-import { contextCall, useContextClock, useContextRefresh, type Page, type Reference, type Scratchpad, type SessionContext, type Todo } from '../lib/projectContext';
+import { contextCall, contextRead, lastContextRead, useContextClock, useContextVersion, type Page, type Reference, type Scratchpad, type SessionContext, type Todo } from '../lib/projectContext';
 import { worktreeName } from '../lib/worktreeDiff';
 import { useWorkbench } from './useWorkbench';
 import { useWorktreeDiffTotals } from './useWorktreeDiff';
@@ -9,17 +9,6 @@ export interface LinkChanges { url: string; resource_type: 'generic' | 'issue' |
 
 // Matches the service limit on worktrees linked to one session.
 export const MAX_LINKED_WORKTREES = 10;
-
-// Recently shown sessions' context, so switching back to one shows it straight
-// away while a fresh read is on the way.
-const CACHED_CONTEXTS = 32;
-const contextCache = new Map<string, SessionContext>();
-
-function cacheContext(key: string, value: SessionContext): void {
-  contextCache.delete(key);
-  contextCache.set(key, value);
-  while (contextCache.size > CACHED_CONTEXTS) contextCache.delete(contextCache.keys().next().value!);
-}
 
 // The worktrees, todos, scratchpads and links attached to one agent session,
 // with the mutations the session context sidebar offers.
@@ -49,8 +38,8 @@ export function useSessionContext(props: { projectId: string; sessionId: string 
   const projectWorktrees = computed(() => (project.value?.worktrees ?? []).filter(worktree => worktree.host === sessionHost.value));
   // Picker rows; items already attached to the session are checked and disabled.
   const worktreeOptions = computed(() => projectWorktrees.value.map(worktree => ({ id: worktree.id, label: worktreeName({ branch: worktree.branch, path: worktree.worktreePath }), detail: worktree.worktreePath, selected: worktrees.value.some(item => item.id === worktree.id) })));
-  const todoPicker = usePickerList(todoPickerOpen, () => contextCall<Page<Todo>>('todo_list', ownerProjectId.value, { limit: 100, query: todoQuery.value }), error);
-  const notePicker = usePickerList(notePickerOpen, () => contextCall<Page<Scratchpad>>('scratchpad_list', ownerProjectId.value, { limit: 100, status: 'active', query: noteQuery.value }), error);
+  const todoPicker = usePickerList(todoPickerOpen, () => contextRead<Page<Todo>>('todo_list', ownerProjectId.value, { limit: 100, query: todoQuery.value }), error);
+  const notePicker = usePickerList(notePickerOpen, () => contextRead<Page<Scratchpad>>('scratchpad_list', ownerProjectId.value, { limit: 100, status: 'active', query: noteQuery.value }), error);
   const todoOptions = computed(() => todoPicker.items.value.map(todo => ({ id: todo.id, label: todo.title, selected: todos.value.some(item => item.id === todo.id) })));
   const noteOptions = computed(() => notePicker.items.value.map(note => ({ id: note.id, label: note.title, selected: scratchpads.value.some(item => item.id === note.id) })));
   const todoPickerLoaded = todoPicker.loaded, notePickerLoaded = notePicker.loaded;
@@ -59,15 +48,15 @@ export function useSessionContext(props: { projectId: string; sessionId: string 
   const { states: diffTotals, refresh: refreshDiffTotals } = useWorktreeDiffTotals(computed(() => worktrees.value.map(worktree => worktree.id)));
   let generation = 0;
 
-  const cacheKey = () => `${props.projectId}\0${props.sessionId}`;
+  // Cached until the project's context changes, so switching back to a
+  // session makes no read.
+  const contextArgs = () => ({ session_id: props.sessionId, limit: 100 });
 
   async function refresh() {
     const current = ++generation;
-    const key = cacheKey();
     const pickers = [todoPicker.refresh(), notePicker.refresh()];
     try {
-      const result = await contextCall<SessionContext>('session_context', props.projectId, { session_id: props.sessionId, limit: 100 });
-      cacheContext(key, result);
+      const result = await contextRead<SessionContext>('session_context', props.projectId, contextArgs());
       if (generation === current) context.value = result;
     }
     catch (cause) {
@@ -82,8 +71,9 @@ export function useSessionContext(props: { projectId: string; sessionId: string 
     busy.value = true;
     error.value = '';
     try {
+      // The write changes the project's context revision, which refreshes
+      // this view when it arrives.
       await contextCall(name, ownerProjectId.value, args);
-      await refresh();
       return true;
     }
     catch (cause) {
@@ -112,7 +102,9 @@ export function useSessionContext(props: { projectId: string; sessionId: string 
   };
 
   watch(() => [props.projectId, props.sessionId], () => {
-    context.value = contextCache.get(cacheKey()) ?? null;
+    // The last read shows straight away, even from before a change, while
+    // the current one loads.
+    context.value = lastContextRead<SessionContext>('session_context', props.projectId, contextArgs()) ?? null;
     error.value = '';
     void refresh();
   }, { immediate: true });
@@ -120,7 +112,8 @@ export function useSessionContext(props: { projectId: string; sessionId: string 
     todoPicker.reset();
     notePicker.reset();
   });
-  useContextRefresh(() => {
+  // The project's version covers linked paired hosts, where the pickers may read.
+  useContextVersion(() => props.projectId, () => {
     void refresh();
     void refreshDiffTotals();
   });

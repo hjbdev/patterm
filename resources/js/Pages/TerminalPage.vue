@@ -83,6 +83,7 @@ import { useWorkbench } from '../Composables/useWorkbench';
 import { useTerminalPageNavigation } from '../Composables/useTerminalPageNavigation';
 import { touchScreen } from '../lib/touch';
 import { onWorkspaceRequest } from '../lib/workspaceRequests';
+import { harnessPresets } from '../lib/serverQuery';
 const { harnesses } = useWorkbench();
 const { route, router, activeProject, selectedAgent, activeTerminalId, selectLaunchedAgent } = useTerminalPageNavigation();
 const integratedAgent = computed(() => {
@@ -114,17 +115,14 @@ const mentionAgents = computed(() => integratedAgent.value && activeProject.valu
   ? mentionableAgents(activeProject.value.projectSessions, integratedAgent.value.processId)
   : []);
 // Presets and harnesses the @ menu offers for launching a new agent. Presets
-// are read once while the page is open; Settings is another page, so ones
-// added there appear on return.
+// are cached until settings change.
 const presets = ref<HarnessPreset[]>([]);
 const mentionLaunchers = computed(() => integratedAgent.value ? buildMentionLaunchers(harnesses.value, presets.value) : []);
-let presetsRead = false;
 watch(() => integratedAgent.value?.processId, (processId) => {
-  if (!processId || presetsRead) return;
-  presetsRead = true;
-  void (window.patterm.harnessPresets() as Promise<{ presets?: HarnessPreset[] } | null>)
+  if (!processId) return;
+  void harnessPresets<{ presets?: HarnessPreset[] }>()
     .then((settings) => { presets.value = settings?.presets ?? []; })
-    .catch(() => { presetsRead = false; /* Harnesses are still offered. */ });
+    .catch(() => { /* Harnesses are still offered. */ });
 }, { immediate: true });
 const workspace = ref<HTMLElement>(), panel = ref<HTMLElement>(), narrow = ref(false);
 // The worktree under review. The viewer covers the workspace below the top bar,

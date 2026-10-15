@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue';
 import { useWorkbenchNavigation } from './useWorkbenchNavigation';
 import { hasContextDraft, useContextCollection } from './useContextRecord';
-import { contextCall, useContextRefresh, type Scratchpad } from '../lib/projectContext';
+import { contextCall, useContextVersion, type Scratchpad } from '../lib/projectContext';
 
 // List state and navigation shared by the scratchpads page.
 export function useScratchpadPage() {
@@ -11,7 +11,9 @@ export function useScratchpadPage() {
   const query = ref(''), error = ref('');
   const filters = computed(() => query.value.trim() ? { query: query.value.trim() } : {});
   const collection = useContextCollection<Scratchpad>('scratchpad', projectId, filters);
-  useContextRefresh(() => void collection.refresh());
+  // Writes here and elsewhere change the project's context revision, which
+  // refreshes the list.
+  useContextVersion(() => projectId.value, () => void collection.refresh());
   const active = computed(() => collection.items.value.filter(item => item.status === 'active'));
   const archived = computed(() => collection.items.value.filter(item => item.status === 'archived'));
 
@@ -24,7 +26,6 @@ export function useScratchpadPage() {
   async function create() {
     try {
       const pad = await contextCall<Scratchpad>('scratchpad_create', projectId.value, { title: 'Untitled' });
-      await collection.refresh();
       await open(pad.id);
       return pad;
     }
@@ -45,7 +46,6 @@ export function useScratchpadPage() {
     catch (cause) {
       error.value = String(cause);
     }
-    await collection.refresh();
   }
   return { projectId, recordId, query, error, active, archived, loaded: collection.loaded, listError: collection.error, refresh: collection.refresh, open, close, create, setArchived };
 }

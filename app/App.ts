@@ -281,11 +281,14 @@ async function createApplicationResources(
   const notifyChanged = (topics: readonly ChangeTopic[], fromPeer = false) => {
     if (!fromPeer) remoteClient?.localTopicsChanged(topics);
     for (const topic of topics) {
-      if (topic === 'workbench') {
+      // Context writes bump their project's context revision, which reaches
+      // clients in the workbench. A paired host's revision arrives with its
+      // own workbench change.
+      if (topic === 'workbench' || (topic === 'context' && !fromPeer)) {
         workbenchSync?.invalidate();
         remoteClient?.localChanged();
       }
-      else changedTopics.add(topic);
+      if (topic !== 'workbench') changedTopics.add(topic);
     }
     if (!changedTopics.size || topicsScheduled) return;
     // One signal per turn of the event loop, however many writes announce it.

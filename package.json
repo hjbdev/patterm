@@ -80,6 +80,7 @@
     "@pierre/diffs": "^1.2.7",
     "@radix-icons/vue": "^1.0.0",
     "@tailwindcss/typography": "^0.5.20",
+    "@tanstack/vue-query": "^5.104.2",
     "@tanstack/vue-virtual": "^3.13.31",
     "@tiptap/core": "^3.31.4",
     "@tiptap/extension-document": "^3.31.4",

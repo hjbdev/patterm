@@ -194,7 +194,7 @@ export class RemoteClientService {
         const localId = this.links.localProjectFor(peer.host_id, remoteProject.project.id);
         const local = localId ? projects.find((project) => project.project.id === localId) : undefined;
         if (local) {
-          local.project = { ...local.project, remotes: [...(local.project.remotes ?? []), { host: peer.name, projectId: qualified.project.id }] };
+          local.project = { ...local.project, remotes: [...(local.project.remotes ?? []), { host: peer.name, projectId: qualified.project.id, ...(qualified.project.contextRevision === undefined ? {} : { contextRevision: qualified.project.contextRevision }) }] };
           local.projectSessions = [...local.projectSessions, ...qualified.projectSessions];
           local.processes = [...local.processes, ...qualified.processes];
           local.worktrees = [...local.worktrees, ...qualified.worktrees];

@@ -70,12 +70,12 @@ import ScratchpadMenu from '../Components/scratchpads/ScratchpadMenu.vue';
 import { ROW_ACTION } from '../Components/session-context/rowAction';
 import { useScratchpadPage } from '../Composables/useScratchpadPage';
 import { useContextRecord } from '../Composables/useContextRecord';
-import { useContextClock, useContextRefresh } from '../lib/projectContext';
+import { useContextClock, useContextVersion } from '../lib/projectContext';
 import { relativeTime } from '../lib/format';
 
 const { projectId, recordId, query, error, active, archived, loaded, listError, refresh, open, close, create, setArchived } = useScratchpadPage();
 const { record, title, body, status, error: recordError, saveError, saveLabel, save, remove, reload, copyDraft, refresh: refreshRecord } = useContextRecord(ref<'scratchpad'>('scratchpad'), projectId, recordId, { onChanged: () => void refresh() });
-useContextRefresh(refreshRecord);
+useContextVersion(() => projectId.value, refreshRecord);
 const now = useContextClock();
 const views = [{ value: 'active', label: 'Active' }, { value: 'archived', label: 'Archived' }] as const;
 const tab = ref<'active' | 'archived'>('active'), editing = ref(false);

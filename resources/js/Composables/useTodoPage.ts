@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue';
 import { useWorkbenchNavigation } from './useWorkbenchNavigation';
 import { useContextCollection } from './useContextRecord';
-import { contextCall, useContextRefresh, type Todo } from '../lib/projectContext';
+import { contextCall, useContextVersion, type Todo } from '../lib/projectContext';
 import { TODO_STATUSES, updateTodoFields } from '../lib/todoStatus';
 
 // List state and navigation shared by the todos page layouts.
@@ -12,7 +12,9 @@ export function useTodoPage() {
   const query = ref(''), assignee = ref(''), error = ref('');
   const filters = computed(() => ({ ...(query.value.trim() ? { query: query.value.trim() } : {}), ...(assignee.value ? { assignee_id: assignee.value } : {}) }));
   const collection = useContextCollection<Todo>('todo', projectId, filters);
-  useContextRefresh(() => void collection.refresh());
+  // Writes here and elsewhere change the project's context revision, which
+  // refreshes the list.
+  useContextVersion(() => projectId.value, () => void collection.refresh());
 
   function open(id: string) {
     return router.push({ name: 'todos', params: { projectId: projectId.value, recordId: id } });
@@ -25,7 +27,6 @@ export function useTodoPage() {
     if (!text) return null;
     try {
       const todo = await contextCall<Todo>('todo_create', projectId.value, { title: text, ...fields });
-      await collection.refresh();
       if (openAfter) await open(todo.id);
       return todo;
     }
@@ -41,7 +42,6 @@ export function useTodoPage() {
     catch (cause) {
       error.value = String(cause);
     }
-    await collection.refresh();
   }
   // Status groups in working order. Completed starts collapsed. Within a group,
   // todos that can start come before waiting ones; the server sorts by priority.

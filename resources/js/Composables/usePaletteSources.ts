@@ -1,6 +1,7 @@
 import { computed, onBeforeUnmount, reactive, ref, watch, type Ref } from 'vue';
 import { useWorkbench } from './useWorkbench';
 import { launchableHarnesses } from '../lib/harnesses';
+import { harnessPresets } from '../lib/serverQuery';
 import {
   conversationRows,
   paletteTimers,
@@ -121,7 +122,7 @@ export function usePaletteSources(options: { open: Ref<boolean>; projectId: Ref<
 
   async function loadLaunchSettings(): Promise<void> {
     const [presets, interfaceSetting] = await Promise.allSettled([
-      window.patterm.harnessPresets() as Promise<PresetSettings | null>,
+      harnessPresets<PresetSettings>(),
       window.patterm.call('settings_agent_interface_get', {}) as Promise<{ interface_mode?: unknown }>
     ]);
     if (presets.status === 'fulfilled' && presets.value) presetSettings.value = presets.value;

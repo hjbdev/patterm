@@ -24,7 +24,7 @@ import { Button } from './ui/button';
 import ContextLinkRow from './session-context/ContextLinkRow.vue';
 import LinkAttachPopover from './session-context/LinkAttachPopover.vue';
 import type { LinkChanges } from '../Composables/useSessionContext';
-import { contextCall, useContextRefresh, type Reference } from '../lib/projectContext';
+import { contextCall, contextRead, useContextVersion, type Reference } from '../lib/projectContext';
 const props = defineProps<{
   projectId: string;
   targetType: 'todo' | 'scratchpad' | 'session';
@@ -37,7 +37,7 @@ const target = () => ({ target_type: props.targetType, target_id: props.targetId
 async function refresh() {
   const current = ++generation;
   try {
-    const result = await contextCall<{ items: Reference[]; total: number }>('reference_list', props.projectId, { ...target(), offset: offset.value, limit: 50 });
+    const result = await contextRead<{ items: Reference[]; total: number }>('reference_list', props.projectId, { ...target(), offset: offset.value, limit: 50 });
     if (current === generation) {
       links.value = result.items;
       total.value = result.total;
@@ -51,8 +51,8 @@ async function mutate(operation: string, args: Record<string, unknown>) {
   busy.value = true;
   error.value = '';
   try {
+    // The write changes the project's context revision, which refreshes the list.
     await contextCall(operation, props.projectId, args);
-    await refresh();
     return true;
   }
   catch (cause) {
@@ -78,5 +78,5 @@ watch(() => [props.projectId, props.targetId], () => {
   void refresh();
 }, { immediate: true });
 watch(offset, () => void refresh());
-useContextRefresh(() => void refresh());
+useContextVersion(() => props.projectId, () => void refresh());
 </script>
