@@ -574,15 +574,16 @@ function receiveClaude(chunk: string): void {
 
 // The fate of a prompt this host sent: queued, started into a turn, then
 // completed, cancelled, discarded, or refused. Commands Claude enqueues
-// itself are covered by its session state.
+// itself also start turns, though their UUIDs are outside the prompt map.
 function receiveLifecycle(event: JsonRecord): void {
   const id = typeof event.command_uuid === 'string' ? event.command_uuid : '';
   if (!id) return;
   lifecycleReported = true;
-  if (!prompts.has(id)) return;
-  if (event.state === 'queued' || event.state === 'started') prompts.set(id, event.state);
-  else prompts.delete(id);
   if (event.state === 'started') turnActive = true;
+  if (prompts.has(id)) {
+    if (event.state === 'queued' || event.state === 'started') prompts.set(id, event.state);
+    else prompts.delete(id);
+  }
   updateStatus();
 }
 

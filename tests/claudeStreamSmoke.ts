@@ -90,6 +90,19 @@ process.stdin.on('data', (chunk) => {
       } else if (text === 'wake and hold') {
         begin(uuid); say('msg_started_hold', 'started'); end(uuid); state('idle');
         setTimeout(() => wake('held', true, true), 60);
+      } else if (text === 'wake before stream') {
+        begin(uuid); end(uuid); state('idle');
+        setTimeout(() => {
+          globalThis.turn = true;
+          state('running');
+          lifecycle('native-autonomous-command', 'started');
+          frame({type:'system',subtype:'notification',uuid:'autonomous_started',text:'Autonomous command started'});
+        }, 60);
+      } else if (text === 'background only') {
+        begin(uuid);
+        level([{task_id:'agent_held',task_type:'local_agent'}]);
+        end(uuid);
+        frame({type:'system',subtype:'notification',uuid:'background_only',text:'Only background activity remains'});
       } else if (text === 'wake tool') {
         begin(uuid); end(uuid); state('idle');
         setTimeout(() => {
@@ -915,6 +928,30 @@ process.stdin.on('data', (chunk) => {
         assert.deepEqual(bashActivity.changes, ['working', 'idle'], 'persisted activity stays working through Bash');
         bashActivity.dispose();
         await bash.close();
+
+        // Internally queued commands have UUIDs outside the prompt map and
+        // can wait for a response before their first message_start.
+        const early = await launchActivity('early_interrupt', legacy);
+        await early.prompt('wake before stream');
+        await waitFor(() => early.published('notification_autonomous_started') >= 0, 5_000);
+        assert.equal((await early.snapshot()).status, 'working');
+        await early.interrupt();
+        await early.until(4);
+        const earlyStopped = await early.snapshot();
+        assert.equal(earlyStopped.status, 'idle', 'interrupting an autonomous command before streaming settles as idle');
+        assert.ok(!earlyStopped.messages.data.some((row) => row.kind === 'notice' && /error_during_execution/.test(row.text)), 'early interruption adds no false failure');
+        await early.close();
+
+        const backgroundOnly = await launchActivity('background_interrupt', legacy);
+        await backgroundOnly.prompt('background only');
+        await waitFor(() => backgroundOnly.published('notification_background_only') >= 0, 5_000);
+        assert.equal((await backgroundOnly.snapshot()).status, 'working');
+        await backgroundOnly.interrupt();
+        await backgroundOnly.until(2);
+        await backgroundOnly.prompt('fail');
+        await waitFor(() => backgroundOnly.statuses().at(-1) === 'error', 5_000);
+        assert.match(JSON.stringify(await backgroundOnly.snapshot()), /Network failure/, 'interrupting background-only activity does not hide a later main-turn failure');
+        await backgroundOnly.close();
       }
 
       // A turn Claude starts by itself, such as one woken by a finished
