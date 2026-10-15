@@ -571,6 +571,9 @@ process.stdin.on('data', (chunk) => {
     assert.equal(nativeSnapshot.model, 'sonnet', 'snapshots still report the current settings');
     assert.match(String(initial.revision), /^[\w-]{16}$/);
     assert.equal(nativeSnapshot.controls_revision, initial.revision, 'a snapshot reports the revision of the controls it matches');
+    const restartedService = new ClaudeStreamService(database, runtimeDirectory, process.execPath, process.env);
+    assert.notEqual((await restartedService.conversation('process_test') as Record<string, unknown>).controls_revision, initial.revision,
+      'the same host state from a restarted service has a new revision, so clients read its controls again');
     await assert.rejects(service.configure('process_test', 'model', 'gpt-5'), /Unknown Claude setting/);
     await assert.rejects(service.configure('process_test', 'effort', 'max'), /Unknown Claude setting/, 'a level the model lacks is rejected');
     await service.configure('process_test', 'model', 'sonnet');

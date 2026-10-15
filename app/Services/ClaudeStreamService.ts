@@ -29,6 +29,9 @@ export class ClaudeStreamService {
   // Native model and command catalogue per host control socket. A relaunch
   // gets a new socket, so an entry never outlives the host it describes.
   private readonly catalogs = new Map<string, { models: unknown[]; commands: unknown[] }>();
+  // Salts controls revisions, so a client's cached controls go stale when the
+  // server that owns the agent restarts, perhaps with commands of its own.
+  private readonly run = randomUUID();
 
   constructor(
     private readonly database: DatabaseService,
@@ -100,7 +103,7 @@ export class ClaudeStreamService {
     return {
       process_id: processId, session_id: runtime.pattermSessionId, provider_session_id: runtime.sessionId, provider: 'claude',
       ...state,
-      controls_revision: controlsRevision(result),
+      controls_revision: controlsRevision(this.run, result),
       ...(Array.isArray(messages.data) ? { messages: { ...messages, data: messages.data.map(withoutOriginalFile) } } : {}),
       streaming: true,
       status: claudeActivity(result.status),
@@ -354,7 +357,7 @@ export class ClaudeStreamService {
     if (!nativeModels(state).length && cached) {
       return {
         state: { ...state, models: cached.models, commands: Array.isArray(state.commands) && state.commands.length ? state.commands : cached.commands },
-        revision: controlsRevision(state)
+        revision: controlsRevision(this.run, state)
       };
     }
     for (let attempt = 0; attempt < 20 && !nativeModels(state).length && state.status !== 'failed'; attempt++) {
@@ -362,7 +365,7 @@ export class ClaudeStreamService {
       state = await readControls(socketPath);
     }
     this.catalogs.set(socketPath, { models: nativeModels(state), commands: Array.isArray(state.commands) ? state.commands : [] });
-    return { state, revision: controlsRevision(state) };
+    return { state, revision: controlsRevision(this.run, state) };
   }
 
   private runtime(processId: string): ClaudeRuntime {
@@ -414,11 +417,12 @@ const CLAUDE_MODES = [
 ];
 
 // Names with a leading `__` are Claude Code internals, not user commands.
-// Changes whenever anything the controls are built from changes, so a client
-// holding controls can tell from a snapshot whether to read them again.
-function controlsRevision(state: Record<string, unknown>): string {
+// Changes whenever anything the controls are built from changes, or the
+// service restarts, so a client holding controls can tell from a snapshot
+// whether to read them again.
+function controlsRevision(run: string, state: Record<string, unknown>): string {
   return createHash('sha256')
-    .update(JSON.stringify([state.model, state.mode, state.effort, state.appliedEffort, state.models, state.commands]))
+    .update(JSON.stringify([run, state.model, state.mode, state.effort, state.appliedEffort, state.models, state.commands]))
     .digest('base64url').slice(0, 16);
 }
 

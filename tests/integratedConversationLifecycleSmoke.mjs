@@ -31,9 +31,6 @@ const questionConversation = () => ({
   ] }
 });
 
-// The server run the pane's workbench came from.
-const workbenchEpoch = ref('epoch-1');
-
 function createHarness({ processId = 'process_a', exited = false, keepCache = false, onNewSession, onRestartSession, subscribeReply = () => ({ ok: true }) } = {}) {
   // Tests reuse process IDs; each starts without another test's cached pane.
   if (!keepCache) helpers.forgetConversation();
@@ -119,7 +116,6 @@ function createHarness({ processId = 'process_a', exited = false, keepCache = fa
     provide: (key, value) => provided.set(key, value),
     figureAnswerKey: Symbol('figureAnswer'),
     publishIntegratedControls: (id, controls) => { if (controls) published.set(id, controls); else published.delete(id); },
-    useWorkbench: () => ({ epoch: workbenchEpoch }),
     onWorkspaceRequest: (handler) => {
       workspaceHandlers.push(handler);
       return () => workspaceHandlers.splice(workspaceHandlers.indexOf(handler), 1);
@@ -1117,7 +1113,7 @@ test('an unmounted pane is cached for its next mount', async () => {
   second.scope.stop();
 });
 
-test('controls are read again only when a snapshot reports a new revision or server run', async () => {
+test('controls are read again only when a snapshot reports a new revision', async () => {
   composer.clearDrafts();
   const controlsWith = (model, revision) => ({ selectors: [{ id: 'model', label: 'Model', value: model, options: [] }], commands: [{ name: 'compact' }], ...(revision ? { revision } : {}) });
   const first = createHarness({ processId: 'revision_A' });
@@ -1145,16 +1141,26 @@ test('controls are read again only when a snapshot reports a new revision or ser
   second.lifecycle.beforeUnmount.forEach(callback => callback());
   second.scope.stop();
 
-  workbenchEpoch.value = 'epoch-2';
-  const restarted = createHarness({ processId: 'revision_A', keepCache: true });
-  await resolveSubscriptions(restarted);
-  await resolveGets(restarted, { ...replyConversation('hello'), controls_revision: 'r2' });
-  assert.equal(pending(restarted, 'integrated_controls').length, 1, 'a restarted server\'s controls are read again');
-  pending(restarted, 'integrated_controls')[0].resolve(controlsWith('sonnet', 'r2'));
+  // A newer revision arriving while controls are read is not lost when the
+  // read returns the older state.
+  const racing = createHarness({ processId: 'revision_A', keepCache: true });
+  await resolveSubscriptions(racing);
+  await resolveGets(racing, { ...replyConversation('hello'), controls_revision: 'r3' });
+  assert.equal(pending(racing, 'integrated_controls').length, 1);
+  void racing.pane.refresh();
   await flush();
-  restarted.lifecycle.beforeUnmount.forEach(callback => callback());
-  restarted.scope.stop();
-  workbenchEpoch.value = 'epoch-1';
+  await resolveGets(racing, { ...replyConversation('hello'), controls_revision: 'r4' });
+  assert.equal(pending(racing, 'integrated_controls').length, 1, 'one read at a time');
+  pending(racing, 'integrated_controls')[0].resolve(controlsWith('opus', 'r3'));
+  await flush();
+  assert.equal(pending(racing, 'integrated_controls').length, 1, 'a read that returned older controls than the latest snapshot reads again');
+  pending(racing, 'integrated_controls')[0].resolve(controlsWith('haiku', 'r4'));
+  await flush();
+  assert.equal(pending(racing, 'integrated_controls').length, 0);
+  assert.equal(racing.pane.controls.value.selectors[0].value, 'haiku');
+  assert.equal(racing.pane.controls.value.revision, 'r4');
+  racing.lifecycle.beforeUnmount.forEach(callback => callback());
+  racing.scope.stop();
 
   const unversioned = createHarness({ processId: 'revision_B' });
   await mountSettled(unversioned, replyConversation('no revision'));

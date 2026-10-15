@@ -305,7 +305,6 @@ import {
 import { completeSend, discardOutgoingMessage, beginSubmission, beginOutgoingMessage, outgoingFor, outgoingTranscript, reconcileOutgoingMessages, failOutgoingMessage, markSubmissionUncertain, clearSubmission, isAmbiguousTransportError, submissionFor, payloadHash, type ComposerSendPayload } from '../lib/integratedComposer';
 import { figureAnswerKey } from '../lib/htmlFigure';
 import { publishIntegratedControls } from '../lib/integratedControlsRegistry';
-import { useWorkbench } from '../Composables/useWorkbench';
 import { onWorkspaceRequest, type WorkspaceRequest } from '../lib/workspaceRequests';
 
 // `embedded` conversations live outside the workbench main area, such as the assistant panel.
@@ -406,11 +405,10 @@ provide(figureAnswerKey, {
 
 let timer: ReturnType<typeof setTimeout> | undefined;
 let controlsRetry: ReturnType<typeof setTimeout> | undefined;
-// The generation a controls read is under way for, if any.
+// The generation a controls read is under way for, if any, and the newest
+// revision a snapshot asked for meanwhile, which the read must reach.
 let controlsReadingFor = -1;
-// Controls revisions are kept with the server run they came from, so a
-// restarted server's own commands are read again.
-const { epoch } = useWorkbench();
+let wantedControls: { generation: number; revision: string } | null = null;
 let stopped = false;
 // Every process change and unmount starts a new generation. Results from an
 // older generation are dropped instead of leaking into the wrong transcript.
@@ -676,8 +674,10 @@ async function applySnapshot(load: () => Promise<Record<string, unknown>>, reque
     if (mode && controls.value.selectors.some((item) => item.id === 'mode' && item.value !== mode)) {
       controls.value = { ...controls.value, selectors: controls.value.selectors.map((item) => item.id === 'mode' ? { ...item, value: mode } : item) };
     }
-    const controlsRevision = typeof result.controls_revision === 'string' ? `${epoch.value}:${result.controls_revision}` : null;
-    if (controlsRevision && controlsRevision !== controls.value.revision && controlsReadingFor !== generation) void loadControls();
+    if (typeof result.controls_revision === 'string' && result.controls_revision !== controls.value.revision) {
+      if (controlsReadingFor === generation) wantedControls = { generation, revision: result.controls_revision };
+      else void loadControls();
+    }
     if (pushCapable() && typeof result.revision === 'number') streamRevision = Math.max(streamRevision, result.revision);
     // Streamed or polled, a snapshot carries the status; while polling it is
     // the only source.
@@ -954,7 +954,7 @@ async function loadControls(): Promise<void> {
     controls.value = {
       selectors: Array.isArray(result.selectors) ? result.selectors : [],
       commands: Array.isArray(result.commands) ? result.commands : [],
-      ...(typeof result.revision === 'string' ? { revision: `${epoch.value}:${result.revision}` } : {})
+      ...(typeof result.revision === 'string' ? { revision: result.revision } : {})
     };
     controlsError.value = '';
   } catch (cause) {
@@ -964,6 +964,11 @@ async function loadControls(): Promise<void> {
   } finally {
     if (controlsReadingFor === token) controlsReadingFor = -1;
   }
+  // A snapshot that arrived during the read may name newer controls than it
+  // returned; read once more for them.
+  const wanted = wantedControls;
+  wantedControls = null;
+  if (wanted?.generation === token && token === generation && wanted.revision !== controls.value.revision && !controlsError.value) void loadControls();
 }
 
 async function configure(selectorId: string, value: string): Promise<void> {
