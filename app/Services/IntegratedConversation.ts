@@ -5,6 +5,7 @@
 
 import { createHash } from 'node:crypto';
 import type { TranscriptImageRef } from './TranscriptImageStore';
+import type { IntegratedDeliveryStatus } from './TranscriptProjection';
 
 export type IntegratedNoticeLevel = 'info' | 'warning' | 'error';
 
@@ -98,10 +99,8 @@ function outputVersion(value: unknown): string {
   return createHash('sha1').update(JSON.stringify(value)).digest('hex');
 }
 
-// The queue shape is shared with the renderer's projection.
-export { HELD_QUEUE_EVENT_ID, type IntegratedQueuedMessage } from './TranscriptProjection';
-
-export type IntegratedDeliveryStatus = 'working' | 'idle' | 'error' | 'unknown';
+// The queue shape and stream status are shared with the renderer's projection.
+export { HELD_QUEUE_EVENT_ID, type IntegratedDeliveryStatus, type IntegratedQueuedMessage } from './TranscriptProjection';
 
 export interface IntegratedConversationEvent {
   processId: string;

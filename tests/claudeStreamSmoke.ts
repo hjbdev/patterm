@@ -19,6 +19,28 @@ import { writeNodeCli } from './fixtures/IntegratedFakeCli';
 async function main(): Promise<void> {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-claude-stream-'));
   const executable = writeNodeCli(path.join(directory, 'claude'), `if (process.env.ARGV_FILE) require('node:fs').writeFileSync(process.env.ARGV_FILE, JSON.stringify(process.argv.slice(2)));
+// ACTIVITY scripts native turn shapes recorded from Claude Code 2.1.299. Like
+// the real CLI, session states are reported only when the host asks for them,
+// and command_lifecycle frames only in that mode here so the fallback is tested.
+const out = (value) => process.stdout.write(JSON.stringify(value) + '\\n');
+const reportsState = process.env.CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS === '1';
+const state = (value) => { if (reportsState) out({type:'system',subtype:'session_state_changed',state:value}); };
+const lifecycle = (uuid, value) => { if (reportsState) out({type:'command_lifecycle',command_uuid:uuid,state:value}); };
+const level = (tasks) => out({type:'system',subtype:'background_tasks_changed',tasks});
+const say = (id, text, parent) => out({type:'assistant',parent_tool_use_id:parent || null,message:{id,content:[{type:'text',text}]}});
+const begin = (uuid) => { globalThis.turn = true; state('running'); lifecycle(uuid,'queued'); lifecycle(uuid,'started'); out({type:'system',subtype:'init'}); out({type:'stream_event',event:{type:'message_start',message:{id:'msg_' + uuid}}}); };
+const end = (uuid, extra) => { globalThis.turn = false; out({type:'result',is_error:false,subtype:'success',...(uuid ? {user_message_uuid:uuid} : {}),...extra}); if (uuid) lifecycle(uuid,'completed'); };
+// A turn Claude starts by itself when a background task finishes. Its session
+// reports running again only if it had gone idle.
+const wake = (text, fromIdle, hold) => {
+  globalThis.turn = true;
+  if (fromIdle) state('running');
+  out({type:'system',subtype:'init'});
+  out({type:'stream_event',event:{type:'message_start',message:{id:'msg_wake_' + text}}});
+  say('msg_wake_' + text, text);
+  if (!hold) { end(null); state('idle'); }
+};
+if (process.env.ENV_FILE) require('node:fs').writeFileSync(process.env.ENV_FILE, JSON.stringify({sessionState:process.env.CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS ?? null}));
 let buffer = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (chunk) => {
@@ -30,6 +52,101 @@ process.stdin.on('data', (chunk) => {
     if (!line.trim()) continue;
     const event = JSON.parse(line);
     const frame = (value) => process.stdout.write(JSON.stringify(value) + '\\n');
+    if (process.env.ACTIVITY && event.type === 'control_request' && event.request && event.request.subtype === 'interrupt') {
+      // An interrupt ends a running turn with error_during_execution; with
+      // nothing running there is no result, only another idle report.
+      if (globalThis.turn) { globalThis.turn = false; frame({type:'result',is_error:true,subtype:'error_during_execution'}); }
+      state('idle');
+      continue;
+    }
+    if (process.env.ACTIVITY && event.type === 'control_response') {
+      const answered = event.response.request_id;
+      if (answered === 'main_perm') {
+        state('running');
+        frame({type:'user',message:{role:'user',content:[{type:'tool_result',tool_use_id:'toolu_write',content:'Written'}]}});
+        for (const uuid of globalThis.queued || []) lifecycle(uuid, 'started');
+        say('msg_after_permission', 'after permission');
+        for (const uuid of globalThis.queued || []) lifecycle(uuid, 'completed');
+        globalThis.queued = [];
+        end(globalThis.first);
+        state('idle');
+      } else if (answered === 'sub_perm') {
+        state('running');
+        frame({type:'user',parent_tool_use_id:'toolu_agent',message:{role:'user',content:[{type:'tool_result',tool_use_id:'toolu_sub_bash',content:'ok'}]}});
+        setTimeout(() => {
+          frame({type:'system',subtype:'task_notification',task_id:'agent_ask',status:'completed',output_file:'/tmp/out',summary:'done'});
+          level([]);
+          wake('finished after permission', false);
+        }, 40);
+      }
+      continue;
+    }
+    if (process.env.ACTIVITY && event.type === 'user') {
+      const uuid = event.uuid;
+      const text = event.message.content[0].text;
+      if (text === 'wake') {
+        begin(uuid); say('msg_started', 'started'); end(uuid); state('idle');
+        setTimeout(() => wake('woken', true), 60);
+      } else if (text === 'wake and hold') {
+        begin(uuid); say('msg_started_hold', 'started'); end(uuid); state('idle');
+        setTimeout(() => wake('held', true, true), 60);
+      } else if (text === 'agent') {
+        // A background agent outlives the turn; the session stays running
+        // until the turn it wakes has ended.
+        begin(uuid);
+        level([{task_id:'agent_1',task_type:'local_agent',subagent_type:'general-purpose',description:'Explore'}]);
+        frame({type:'system',subtype:'task_started',task_id:'agent_1',task_type:'local_agent',description:'Explore',is_backgrounded:true});
+        say('msg_launched', 'launched'); end(uuid);
+        setTimeout(() => {
+          say('msg_sub_work', 'sub work', 'toolu_agent');
+          setTimeout(() => {
+            frame({type:'system',subtype:'task_notification',task_id:'agent_1',status:'completed',output_file:'/tmp/out',summary:'done'});
+            level([]);
+            wake('finished', false);
+          }, 40);
+        }, 40);
+      } else if (text === 'shell') {
+        begin(uuid);
+        level([{task_id:'shell_1',task_type:'local_bash',description:'npm run dev'}]);
+        frame({type:'system',subtype:'task_started',task_id:'shell_1',task_type:'local_bash',description:'npm run dev',is_backgrounded:true});
+        say('msg_serving', 'serving'); end(uuid); state('idle');
+      } else if (text === 'ask') {
+        globalThis.first = uuid;
+        begin(uuid);
+        frame({type:'assistant',message:{id:'msg_write',content:[{type:'tool_use',id:'toolu_write',name:'Write',input:{file_path:'/tmp/a.txt',content:'hi'}}]}});
+        state('requires_action');
+        frame({type:'control_request',request_id:'main_perm',request:{subtype:'can_use_tool',tool_name:'Write',tool_use_id:'toolu_write',input:{file_path:'/tmp/a.txt',content:'hi'}}});
+      } else if (text === 'extra') {
+        // A prompt sent while a request waits is queued behind it.
+        globalThis.queued = [...(globalThis.queued || []), uuid];
+        lifecycle(uuid, 'queued');
+      } else if (text === 'agent ask') {
+        begin(uuid);
+        frame({type:'assistant',message:{id:'msg_agent',content:[{type:'tool_use',id:'toolu_agent',name:'Agent',input:{run_in_background:true}}]}});
+        level([{task_id:'agent_ask',task_type:'local_agent',subagent_type:'general-purpose',description:'Write'}]);
+        frame({type:'system',subtype:'task_started',task_id:'agent_ask',task_type:'local_agent',description:'Write',is_backgrounded:true});
+        frame({type:'assistant',parent_tool_use_id:'toolu_agent',message:{id:'msg_sub_bash',content:[{type:'tool_use',id:'toolu_sub_bash',name:'Bash',input:{command:'npm test'}}]}});
+        state('requires_action');
+        frame({type:'control_request',request_id:'sub_perm',request:{subtype:'can_use_tool',tool_name:'Bash',tool_use_id:'toolu_sub_bash',agent_id:'agent_ask',input:{command:'npm test'}}});
+        say('msg_agent_launched', 'launched'); end(uuid);
+      } else if (text === 'fail') {
+        begin(uuid);
+        globalThis.turn = false;
+        frame({type:'result',is_error:true,subtype:'error_during_execution',result:'Network failure',user_message_uuid:uuid});
+        lifecycle(uuid, 'cancelled'); state('idle');
+      } else if (text === 'refused') {
+        lifecycle(uuid, 'refused');
+      } else if (text === 'crash') {
+        // The CLI dies while a background agent it started is running.
+        begin(uuid);
+        frame({type:'system',subtype:'task_started',task_id:'agent_crash',task_type:'local_agent',description:'Explore',is_backgrounded:true});
+        say('msg_crash', 'launched');
+        setTimeout(() => process.exit(1), 20);
+      } else if (text === 'after crash') {
+        begin(uuid); say('msg_after_crash', 'resumed'); end(uuid); state('idle');
+      }
+      continue;
+    }
     if (event.type === 'control_request' && event.request && event.request.subtype === 'initialize') {
       frame({type:'control_response',response:{subtype:'success',request_id:event.request_id,response:{current_permission_mode:'auto',commands:[
         {name:'compact',description:'Clear conversation history but keep a summary',argumentHint:''},
@@ -706,6 +823,182 @@ process.stdin.on('data', (chunk) => {
     assert.doesNotMatch(interruptedText, /error_during_execution/, 'an interrupted turn adds no error row');
     assert.doesNotMatch(interruptedText, /"status":"running"/, 'an interrupted turn leaves no running tool');
     await interruptService.stop('process_interrupt');
+
+    // Activity follows Claude's own reports. The host asks for session state,
+    // so a turn Claude starts by itself shows as working; a fake CLI told not
+    // to report it exercises the fallback.
+    const { CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: _inherited, ...baseEnv } = process.env;
+    const envPath = path.join(directory, 'claude-env.json');
+    const launchActivity = async (name: string, legacy: boolean) => {
+      const activityService = new ClaudeStreamService(database, runtimeDirectory, process.execPath, {
+        ...baseEnv, STREAM_FRAMES: '', ACTIVITY: '1', ENV_FILE: envPath, ...(legacy ? { CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '0' } : {})
+      });
+      const launched = await activityService.prepare({
+        executable, cwd: directory, name, context: 'Project context',
+        mcp: { command: process.execPath, args: ['shim.js'], env: { PATTERM_MCP_SOCKET: '/tmp/mcp.sock', PATTERM_MCP_IDENTITY: `identity_activity_${name}` } },
+        resumeId: null
+      });
+      const processId = `process_activity_${name}`;
+      database.connection.prepare(`insert into processes (id,project_id,kind,name,status,cwd,argv,created_at,updated_at) values (?,'project_test','agent',?,'running',?,?,?,?)`)
+        .run(processId, name, directory, JSON.stringify(launched.argv), now, now);
+      database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor) values (?,'project_test',?,'claude','integrated',?,?,?, 'orchestrator','found','user')`)
+        .run(`session_activity_${name}`, processId, `identity_activity_${name}`, launched.resumeId, now);
+      const activityEvents: IntegratedConversationEvent[] = [];
+      const releaseActivity = await activityService.subscribe(processId, (event) => activityEvents.push(event));
+      const statuses = () => activityEvents.flatMap((event) => event.kind === 'status' ? [event.status] : []);
+      // Event positions, to order a transcript row against status changes.
+      const published = (id: string) => activityEvents.findIndex((event) => event.kind === 'replace' && event.message?.id === id);
+      const statusAt = (nth: number) => activityEvents.map((event, index) => event.kind === 'status' ? index : -1).filter((index) => index >= 0)[nth] ?? -1;
+      // Patterm's own observation, which persists the streamed status.
+      const observeActivity = async () => {
+        const observing = new IntegratedAgentService(database, { claude: activityService });
+        const changes: string[] = [];
+        observing.onActivityChange((change) => changes.push(change.activity));
+        observing.observe(processId);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        return {
+          changes,
+          activity: () => (database.connection.prepare('select activity from processes where id = ?').get(processId) as { activity: string }).activity,
+          dispose: () => observing.dispose()
+        };
+      };
+      return {
+        processId, statuses, published, statusAt, observeActivity,
+        prompt: (text: string) => activityService.prompt(processId, { text, references: [], attachments: [] }),
+        snapshot: async () => await activityService.conversation(processId) as { status?: string; tasks: Array<{ id: string; status: string }>; messages: { data: Array<{ id: string; text: string; kind: string }> } },
+        until: (count: number) => waitFor(() => statuses().length >= count, 5_000),
+        interrupt: () => activityService.interrupt(processId),
+        reply: (requestId: string) => activityService.replyPermission(processId, requestId, 'once'),
+        close: async () => { releaseActivity(); await activityService.stop(processId); }
+      };
+    };
+
+    for (const legacy of [false, true]) {
+      const mode = legacy ? 'without session state' : 'with session state';
+      const suffix = legacy ? 'legacy' : 'native';
+
+      if (!legacy) {
+        // A turn Claude starts by itself, such as one woken by a finished
+        // background shell, is working until its result. Only Claude's
+        // session state reports such a turn.
+        const woken = await launchActivity('wake', legacy);
+        await woken.prompt('wake');
+        await woken.until(4);
+        assert.deepEqual(woken.statuses(), ['working', 'idle', 'working', 'idle'], 'a self-started turn shows as working');
+        const wokenReply = woken.published('msg_wake_woken_0');
+        assert.ok(wokenReply > woken.statusAt(2) && wokenReply < woken.statusAt(3), 'the woken turn replies while working');
+        assert.equal((await woken.snapshot()).status, 'idle');
+        await woken.close();
+
+        // Interrupting a turn Claude started by itself settles it as idle,
+        // not as a failure; an interrupt with nothing running leaves a later
+        // failure reported as one.
+        const held = await launchActivity('interrupt', legacy);
+        await held.prompt('wake and hold');
+        await waitFor(() => held.published('msg_wake_held_0') >= 0, 5_000);
+        assert.equal((await held.snapshot()).status, 'working', 'a held self-started turn is working');
+        await held.interrupt();
+        await waitFor(() => held.statuses().at(-1) === 'idle', 5_000);
+        const stoppedTurn = await held.snapshot();
+        assert.equal(stoppedTurn.status, 'idle', 'an interrupted self-started turn settles as idle');
+        assert.ok(!stoppedTurn.messages.data.some((row) => row.kind === 'notice' && /error_during_execution/.test(row.text)), 'an interrupted self-started turn adds no error row');
+        await held.interrupt();
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        await held.prompt('fail');
+        await waitFor(() => held.statuses().at(-1) === 'error', 5_000);
+        assert.equal((await held.snapshot()).status, 'error', 'an interrupt with nothing running does not hide a later failure');
+        await held.close();
+      }
+
+      // A background agent outliving the turn keeps the agent working until
+      // it finishes. With session state there is no idle at all, through the
+      // turn the agent's finish wakes; the fallback counts the native level of
+      // background agents.
+      const agent = await launchActivity(`agent_${suffix}`, legacy);
+      const agentActivity = await agent.observeActivity();
+      await agent.prompt('agent');
+      await waitFor(() => agent.published('msg_wake_finished_0') >= 0 && agent.statuses().at(-1) === 'idle', 5_000);
+      assert.deepEqual(JSON.parse(fs.readFileSync(envPath, 'utf8')), { sessionState: legacy ? '0' : '1' }, 'the host asks Claude for its session state unless told not to');
+      if (!legacy) assert.deepEqual(agent.statuses(), ['working', 'idle'], 'a background agent keeps the agent working through its turn\'s result');
+      assert.ok(agent.statusAt(1) > agent.published('msg_sub_work_0'), `the agent stays working while its background agent works ${mode}`);
+      await waitFor(() => agentActivity.activity() === 'idle');
+      if (!legacy) assert.deepEqual(agentActivity.changes, ['working', 'idle'], 'persisted activity follows without an idle in between');
+      agentActivity.dispose();
+      await agent.close();
+
+      // A CLI that exits takes its background agents with it, so they do not
+      // keep the agent working once the next process runs.
+      const crashed = await launchActivity(`crash_${suffix}`, legacy);
+      await crashed.prompt('crash');
+      await waitFor(() => crashed.statuses().at(-1) === 'error', 5_000);
+      await crashed.prompt('after crash');
+      await waitFor(() => crashed.statuses().at(-1) === 'idle', 5_000);
+      const recovered = await crashed.snapshot();
+      assert.equal(recovered.status, 'idle', `a dead CLI's background agent does not keep its successor working ${mode}`);
+      assert.deepEqual(recovered.tasks.map((task) => [task.id, task.status]), [['agent_crash', 'stopped']], 'its background agent shows as stopped');
+      await crashed.close();
+
+      // A background shell such as a dev server does not keep it working.
+      const shell = await launchActivity(`shell_${suffix}`, legacy);
+      await shell.prompt('shell');
+      await shell.until(2);
+      assert.deepEqual(shell.statuses(), ['working', 'idle'], `a background shell does not keep the agent working ${mode}`);
+      const served = await shell.snapshot();
+      assert.equal(served.status, 'idle');
+      assert.deepEqual(served.tasks.map((task) => [task.id, task.status]), [['shell_1', 'running']], 'the shell is still shown as running');
+      await shell.close();
+
+      // A prompt sent while a request waits keeps the agent waiting on it;
+      // answering it resumes the turn, which then takes the prompt.
+      const ask = await launchActivity(`ask_${suffix}`, legacy);
+      await ask.prompt('ask');
+      await ask.until(2);
+      assert.deepEqual(ask.statuses(), ['working', 'permission'], 'permission streams as its own status');
+      await ask.prompt('extra');
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      assert.equal((await ask.snapshot()).status, 'permission', `a prompt during a permission request keeps permission ${mode}`);
+      assert.deepEqual(ask.statuses(), ['working', 'permission']);
+      await ask.reply('main_perm');
+      await ask.until(4);
+      assert.deepEqual(ask.statuses(), ['working', 'permission', 'working', 'idle'], `answering resumes the turn ${mode}`);
+      await ask.close();
+
+      // A background agent's request pending when the main turn ends goes
+      // straight to permission, with no idle in between, and answering it
+      // resumes the background agent.
+      const agentAsk = await launchActivity(`agent_ask_${suffix}`, legacy);
+      const askActivity = await agentAsk.observeActivity();
+      await agentAsk.prompt('agent ask');
+      await waitFor(() => agentAsk.published('msg_agent_launched_0') >= 0, 5_000);
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      assert.deepEqual(agentAsk.statuses(), ['working', 'permission'], `a turn ending with a background agent's request pending stays on permission ${mode}`);
+      assert.equal((await agentAsk.snapshot()).status, 'permission');
+      assert.equal(askActivity.activity(), 'permission', `persisted activity ends the turn on permission ${mode}`);
+      assert.deepEqual(askActivity.changes, ['working', 'permission'], 'persisted activity never passes through idle');
+      askActivity.dispose();
+      if (legacy) {
+        // Without session state an interrupt has no turn to stop here, so it
+        // must not mark a later failure as an interruption.
+        await agentAsk.interrupt();
+      }
+      await agentAsk.reply('sub_perm');
+      await waitFor(() => agentAsk.published('msg_wake_finished after permission_0') >= 0 && agentAsk.statuses().at(-1) === 'idle', 5_000);
+      assert.deepEqual(agentAsk.statuses().slice(0, 3), ['working', 'permission', 'working'], `answering resumes the background agent ${mode}`);
+      if (legacy) {
+        await agentAsk.prompt('fail');
+        await waitFor(() => agentAsk.statuses().at(-1) === 'error', 5_000);
+        assert.match(JSON.stringify(await agentAsk.snapshot()), /Network failure/, 'a stale interrupt does not swallow a later failure');
+      }
+      await agentAsk.close();
+    }
+
+    // A prompt Claude refuses never starts a turn, so it does not leave the
+    // agent working.
+    const refused = await launchActivity('refused', false);
+    await refused.prompt('refused');
+    await refused.until(2);
+    assert.deepEqual(refused.statuses(), ['working', 'idle'], 'a refused prompt returns to idle');
+    await refused.close();
 
     // A missing executable fails the launch without crashing the host.
     const missingService = new ClaudeStreamService(database, runtimeDirectory, process.execPath);

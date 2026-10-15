@@ -59,10 +59,30 @@ const streams = new Map<string, StreamState>();
 const nextBlockIndex = new Map<string, number>();
 let child: ChildProcessWithoutNullStreams | null = null;
 let childBuffer = '';
-let status = 'starting';
+// idle, working, permission, or failed. Derived in updateStatus.
+let status = 'idle';
 // Claude ends an interrupted turn with an `error_during_execution` result; the
-// flag lets that result settle the turn as idle instead of failed.
+// flag lets that result settle the turn as idle instead of failed. An interrupt
+// with no turn running produces no result, so the flag is only set while one
+// runs and is cleared once Claude reports nothing running.
 let interrupted = false;
+// The last turn failed or the CLI exited with an error. Shown while nothing
+// else is running, until the next turn ends.
+let failed = false;
+// Prompts written to Claude, by client uuid, until Claude reports their fate
+// through command_lifecycle. A prompt Claude has not read yet keeps the agent
+// working through an idle report that predates it.
+const prompts = new Map<string, 'written' | 'queued' | 'started'>();
+// Builds without command_lifecycle end every prompt with the turn's result.
+let lifecycleReported = false;
+// Claude's own session state, which CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS turns
+// on: `running` while the main loop or a background agent works,
+// `requires_action` while it waits on a prompt, and `idle` once nothing runs
+// or is queued. Null until this CLI process reports one.
+let sessionState: string | null = null;
+// Live background agents from Claude's background_tasks_changed level signal,
+// for builds that do not report session state. Null until reported.
+let backgroundAgentLevel: number | null = null;
 let model = config.model ?? 'default';
 // Integrated sessions start in auto mode. Claude Code falls back to manual when
 // the model or account lacks auto, so the mode shown is the one it reports.
@@ -89,8 +109,9 @@ const limits = new Map<string, JsonRecord>();
 let retryNotice: { id: string; attempts: number } | null = null;
 // Why the last turn failed, for the error banner.
 let statusDetail: string | null = null;
-// A main-agent turn is running: from a prompt or Claude starting one on its
-// own, until its result.
+// A main-agent turn is running, by Claude's evidence: its session started
+// running or the main agent streamed. It ends with the turn's result. Prompts
+// waiting for their turn are tracked in `prompts`.
 let turnActive = false;
 // Background work Claude reports: background shells, workflows, monitors, and
 // background agents. The newest few finished tasks stay visible.
@@ -147,7 +168,7 @@ async function handle(socket: net.Socket, request: JsonRecord): Promise<void> {
       questions: { data: [...pending.values()].filter((item) => item.kind === 'question') },
       forms: { data: [...pending.values()].flatMap((item) => item.kind === 'form' ? [item.form] : []) },
       usage: { ...usage, ...(limits.size ? { limits: [...limits.values()] } : {}) },
-      tasks: [...tasks.values()].filter((task) => !foregroundTasks.has(String(task.id)) && !ambientTasks.has(String(task.id))),
+      tasks: backgroundTasks(),
       diagnostics: { unhandled },
       ...(status === 'failed' && statusDetail ? { status_detail: statusDetail } : {}),
       status, model, mode, effort, appliedEffort, models, commands, revision
@@ -243,8 +264,6 @@ async function handle(socket: net.Socket, request: JsonRecord): Promise<void> {
         ...(attachments.length ? { attachments } : {}) }, true, true);
     }
     if (!userMessages.has(clientMessageId)) userMessages.set(clientMessageId, false);
-    turnActive = true;
-    setStatus('working');
     writeClaude({
       type: 'user',
       message: { role: 'user', content: [...(text ? [{ type: 'text', text }] : []), ...images, ...documents] },
@@ -252,11 +271,15 @@ async function handle(socket: net.Socket, request: JsonRecord): Promise<void> {
       session_id: config.sessionId,
       uuid: clientMessageId
     });
+    // A retry of a prompt Claude already accepted starts nothing new. A prompt
+    // sent while a request waits keeps the agent waiting on that request.
+    if (!prompts.has(clientMessageId) && !userMessages.get(clientMessageId)) prompts.set(clientMessageId, 'written');
+    updateStatus();
     respond(socket, id, { id: messageId });
     return;
   }
   if (request.method === 'interrupt') {
-    interrupted = status !== 'idle' && status !== 'failed';
+    interrupted = turnActive || prompts.size > 0;
     writeClaude({ type: 'control_request', request_id: randomUUID(), request: { subtype: 'interrupt' } });
     respond(socket, id, {});
     return;
@@ -365,37 +388,76 @@ function startClaude(forceResume = false): void {
   const env = claudeEnvironment(process.env);
   // npm installs Claude Code as a .cmd shim on Windows, which Node cannot spawn.
   const command = resolveCommand(config.executable, args, env);
-  child = spawn(command.command, command.args, {
+  // A new process starts with nothing of its predecessor's, even one whose
+  // input closed but has not exited yet; that one's late output and exit are
+  // ignored.
+  forgetProcess();
+  childBuffer = '';
+  const spawned = spawn(command.command, command.args, {
     cwd: config.cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, windowsVerbatimArguments: command.verbatim
   });
-  setStatus('running');
-  child.stdout.setEncoding('utf8');
-  child.stdout.on('data', receiveClaude);
-  child.stderr.setEncoding('utf8');
+  child = spawned;
+  spawned.stdout.setEncoding('utf8');
+  // Output can still drain after the exit event; only a successor's start
+  // makes it stale.
+  spawned.stdout.on('data', (chunk: string) => { if (child === spawned || !child) receiveClaude(chunk); });
+  spawned.stderr.setEncoding('utf8');
   // Diagnostics on stderr are harness warnings, not something the model said.
-  child.stderr.on('data', (chunk: string) => {
+  spawned.stderr.on('data', (chunk: string) => {
     const text = chunk.trim();
     if (text) upsertMessage({ id: `stderr_${randomUUID()}`, role: 'assistant', kind: 'notice', level: 'warning', text: boundText(text) }, true, true);
   });
   // A missing or unexecutable binary must not crash the host; keep the
   // transcript serviceable and surface the failure through status and a message.
-  child.on('error', (error) => {
-    setStatus('failed');
+  spawned.on('error', (error) => {
+    if (child !== spawned) return;
     upsertMessage({ id: `error_${randomUUID()}`, role: 'assistant', kind: 'notice', level: 'error', text: `Claude Code could not start: ${error.message}` }, true, true);
-    child = null;
+    endProcess(true);
   });
-  child.stdin.on('error', () => { /* a dead child closes stdin; prompt paths report it */ });
-  child.on('exit', (code) => { setStatus(code === 0 ? 'idle' : 'failed'); child = null; });
+  spawned.stdin.on('error', () => { /* a dead child closes stdin; prompt paths report it */ });
+  // A replaced process's late exit must not end its successor's turn.
+  spawned.on('exit', (code) => { if (child === spawned) endProcess(code !== 0); });
   writeClaude({ type: 'control_request', request_id: INITIALIZE_REQUEST_ID, request: { subtype: 'initialize' } });
+}
+
+function endProcess(failure: boolean): void {
+  child = null;
+  failed = failure;
+  forgetProcess();
+  updateStatus();
+}
+
+// Nothing outlives a CLI process: its turn, its prompts, what it reported,
+// its background tasks, and requests it can no longer receive an answer for.
+// A restart resumes the session afresh.
+function forgetProcess(): void {
+  turnActive = false;
+  interrupted = false;
+  prompts.clear();
+  lifecycleReported = false;
+  sessionState = null;
+  backgroundAgentLevel = null;
+  streams.clear();
+  let changed = pending.size > 0;
+  pending.clear();
+  for (const [id, task] of tasks) {
+    if (!task.stoppable) continue;
+    tasks.set(id, { ...task, status: 'stopped', stoppable: false });
+    changed = true;
+  }
+  if (changed) publish({ kind: 'pending' });
 }
 
 // Claude leaves the Artifact tool out of headless sessions unless asked, though
 // terminal sessions have it. enableArtifact settings and deny rules still
 // apply. Publishing must not open a browser on the machine hosting the agent.
+// Headless Claude reports its session state (session_state_changed) only when
+// asked; it is the one signal for turns Claude starts on its own.
 function claudeEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return withEnv(env, {
     CLAUDE_CODE_ARTIFACT: envValue(env, 'CLAUDE_CODE_ARTIFACT') ?? '1',
-    CLAUDE_CODE_ARTIFACT_AUTO_OPEN: envValue(env, 'CLAUDE_CODE_ARTIFACT_AUTO_OPEN') ?? '0'
+    CLAUDE_CODE_ARTIFACT_AUTO_OPEN: envValue(env, 'CLAUDE_CODE_ARTIFACT_AUTO_OPEN') ?? '0',
+    CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: envValue(env, 'CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS') ?? '1'
   });
 }
 
@@ -432,6 +494,9 @@ function receiveClaude(chunk: string): void {
       // --replay-user-messages echoes an accepted client uuid; tool_result
       // blocks pair with their streamed or final tool_use row.
       acknowledgeUserMessage(event.uuid);
+      // The echo shows Claude read the prompt; a duplicate it drops gets no
+      // lifecycle frame, only the echo and an idle report.
+      if (typeof event.uuid === 'string' && prompts.get(event.uuid) === 'written') prompts.set(event.uuid, 'queued');
       applyToolResults(event);
       applySubagentPrompt(event, parentOf(event));
     } else if (event.type === 'stream_event') {
@@ -466,6 +531,8 @@ function receiveClaude(chunk: string): void {
     } else if (event.type === 'rate_limit_event') {
       recordRateLimit(record(event.rate_limit_info));
       publish({ kind: 'pending' });
+    } else if (event.type === 'command_lifecycle') {
+      receiveLifecycle(event);
     } else if (event.type !== 'result') {
       countUnhandled(String(event.type ?? 'unknown'));
     } else {
@@ -476,6 +543,10 @@ function receiveClaude(chunk: string): void {
       const stopped = interrupted && event.subtype === 'error_during_execution';
       interrupted = false;
       turnActive = false;
+      // The result settles the prompt that started its turn. Prompts folded
+      // into the turn settled before it; queued ones are still to run.
+      if (typeof event.user_message_uuid === 'string') prompts.delete(event.user_message_uuid);
+      if (!lifecycleReported) prompts.clear();
       // The main agent's prompts end with its turn and each gets an explicit
       // reply; background subagents keep running and keep theirs.
       closeMainPrompts();
@@ -484,20 +555,88 @@ function receiveClaude(chunk: string): void {
       // Background subagents keep working after the main turn ends, so their
       // tools are left alone unless the turn was interrupted.
       settleRunningTools(stopped ? 'Interrupted' : 'Turn ended before the tool finished', !stopped);
-      if (stopped) {
-        setStatus('idle');
-      } else if (event.is_error) {
+      failed = !stopped && Boolean(event.is_error);
+      if (failed) {
         statusDetail = String(event.result ?? event.subtype ?? 'Claude turn failed');
-        setStatus('failed');
         upsertMessage({ id: `result_${randomUUID()}`, role: 'assistant', kind: 'notice', level: 'error', text: statusDetail }, true, true);
-      } else {
-        setStatus('idle');
       }
-      // A background subagent still waiting on a prompt needs a person.
-      if (pending.size) setStatus('permission');
+      // A background agent still running or waiting on a prompt keeps the
+      // agent working or waiting; there is no idle in between.
+      updateStatus();
       settleRetryNotice(!event.is_error);
     }
   }
+}
+
+// The fate of a prompt this host sent: queued, started into a turn, then
+// completed, cancelled, discarded, or refused. Commands Claude enqueues
+// itself are covered by its session state.
+function receiveLifecycle(event: JsonRecord): void {
+  const id = typeof event.command_uuid === 'string' ? event.command_uuid : '';
+  if (!id) return;
+  lifecycleReported = true;
+  if (!prompts.has(id)) return;
+  if (event.state === 'queued' || event.state === 'started') prompts.set(id, event.state);
+  else prompts.delete(id);
+  updateStatus();
+}
+
+function sessionRunning(): boolean {
+  return sessionState === 'running' || sessionState === 'requires_action';
+}
+
+// The main agent only starts a model request during a turn. While a session
+// runs only for a background agent, this marks the turn that agent's finish
+// wakes, so interrupting it is not reported as a failure.
+function markMainTurnRunning(): void {
+  if (turnActive || !sessionRunning()) return;
+  turnActive = true;
+  updateStatus();
+}
+
+// Claude's report of what runs: a turn it starts on its own (for example when
+// a background task finishes and wakes it) shows as working, and background
+// agents keep it running after the main turn's result.
+function receiveSessionState(state: unknown): void {
+  if (typeof state !== 'string') return;
+  const started = state === 'running' && !sessionRunning();
+  sessionState = state;
+  if (started) turnActive = true;
+  if (state === 'idle') {
+    turnActive = false;
+    interrupted = false;
+    // A prompt Claude has not read yet is newer than this report; one it
+    // queued or started has run, since Claude idles only with an empty queue.
+    for (const [id, fate] of prompts) if (fate !== 'written') prompts.delete(id);
+  }
+  updateStatus();
+}
+
+// Tasks shown as background work: neither a foreground tool nor ambient.
+function backgroundTasks(): JsonRecord[] {
+  return [...tasks.values()].filter((task) => !foregroundTasks.has(String(task.id)) && !ambientTasks.has(String(task.id)));
+}
+
+// Background agents keep the agent working after its turn. Background shells
+// and monitors do not: a dev server can run for as long as the session.
+function backgroundAgentCount(): number {
+  if (backgroundAgentLevel !== null) return backgroundAgentLevel;
+  return backgroundTasks().filter((task) => task.kind === 'local_agent' && task.stoppable === true).length;
+}
+
+function busy(): boolean {
+  if (!child) return false;
+  if (turnActive || prompts.size > 0) return true;
+  // Claude's session state already covers background agents.
+  if (sessionState !== null) return sessionState !== 'idle';
+  return backgroundAgentCount() > 0;
+}
+
+// The one place status is decided. A pending prompt needs a person; otherwise
+// the agent works while a turn, an unsettled prompt, or a background agent
+// runs; a failure shows once nothing does.
+function updateStatus(): void {
+  setStatus(pending.size ? 'permission' : busy() ? 'working' : failed ? 'failed' : 'idle');
 }
 
 // Only requests a person can answer become pending prompts. Every other
@@ -559,7 +698,7 @@ function receiveControlRequest(requestId: string, event: JsonRecord): void {
     });
     return;
   }
-  setStatus('permission');
+  updateStatus();
   publish({ kind: 'pending' });
 }
 
@@ -581,12 +720,12 @@ function editPreview(input: JsonRecord): string {
   return [file ? `+++ ${file}` : '', ...bounded].filter(Boolean).join('\n');
 }
 
-// Answering or withdrawing a prompt resumes a running turn. A prompt from a
-// background subagent can arrive between turns; settling it returns to idle
-// rather than claiming a turn that is not running.
+// Answering or withdrawing the last prompt resumes whatever still runs: the
+// main turn or a background agent. A background agent's prompt answered
+// after both have ended returns to idle.
 function settlePending(requestId: string): void {
   pending.delete(requestId);
-  if (status === 'permission') setStatus(pending.size ? 'permission' : turnActive ? 'working' : 'idle');
+  updateStatus();
   publish({ kind: 'pending' });
 }
 
@@ -678,8 +817,11 @@ function applyStreamEvent(event: JsonRecord, parent: string | null): void {
   const type = String(event.type ?? '');
   const key = parent ?? '';
   if (type === 'message_start') {
-    if (!parent) usage.lastModelActivityAt = new Date().toISOString();
     streams.set(key, { messageId: String(record(event.message).id ?? randomUUID()), blocks: new Map(), toolInput: new Map(), stopped: [] });
+    if (!parent) {
+      usage.lastModelActivityAt = new Date().toISOString();
+      markMainTurnRunning();
+    }
     return;
   }
   if (type === 'message_stop') {
@@ -801,12 +943,15 @@ function receiveSystem(event: JsonRecord): void {
     receiveTask(event);
     return;
   }
-  // Covers turns Claude starts on its own, for example when a background task
-  // finishes and wakes the agent. Idle is left to the turn's result: an idle
-  // state racing a just-sent prompt must not fire idle timers early.
   if (event.subtype === 'session_state_changed') {
-    if (event.state === 'running') turnActive = true;
-    if (event.state === 'running' && (status === 'idle' || status === 'failed' || status === 'running')) setStatus('working');
+    receiveSessionState(event.state);
+    return;
+  }
+  // The full set of live background tasks; only agents keep the agent working.
+  if (event.subtype === 'background_tasks_changed') {
+    backgroundAgentLevel = (Array.isArray(event.tasks) ? event.tasks.map(record) : [])
+      .filter((task) => task.task_type === 'local_agent' && task.ambient !== true).length;
+    updateStatus();
     return;
   }
   if (event.subtype === 'api_retry') {
@@ -885,6 +1030,9 @@ function receiveTask(event: JsonRecord): void {
     foregroundTasks.delete(key);
     ambientTasks.delete(key);
   }
+  // Without native session state, a background agent's tasks decide whether
+  // the agent still works after its turn.
+  updateStatus();
   publish({ kind: 'pending' });
 }
 
@@ -1060,12 +1208,12 @@ function appendText(id: string, delta: string): void {
   messages[index] = { ...row, text: `${String(row.text ?? '')}${delta}` };
 }
 
-// The renderer's status vocabulary is working/idle/error; permission is a
-// working turn with a pending dock.
+// Streamed as working, permission, idle, or error. The snapshot reports the
+// raw status, and ClaudeStreamService maps failed to error there.
 function setStatus(next: string): void {
   if (status === next) return;
   status = next;
-  publish({ kind: 'status', status: next === 'idle' ? 'idle' : next === 'failed' ? 'error' : 'working' });
+  publish({ kind: 'status', status: next === 'failed' ? 'error' : next });
 }
 
 function toolResultImages(content: unknown, structured: unknown): TranscriptImageRef[] {

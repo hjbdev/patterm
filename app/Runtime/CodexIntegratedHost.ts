@@ -131,7 +131,26 @@ function receiveAppServer(text: string): void {
     if (!line.trim()) continue;
     const message = parse(line);
     if ('id' in message && typeof message.method === 'string') pendingServerRequests.set(String(message.id), line);
+    else forgetResolvedRequests(message);
     for (const client of clients) client.write(`${line}\n`);
+  }
+}
+
+// Requests stored for replay must end when app-server settles them, or a
+// reconnecting client is shown an approval nobody waits for. App-server
+// resolves a request itself when its turn starts or ends, and announces each
+// resolution; both are honoured so neither alone can leave one behind.
+function forgetResolvedRequests(message: JsonRecord): void {
+  const params = message.params && typeof message.params === 'object' ? message.params as JsonRecord : {};
+  if (message.method === 'serverRequest/resolved') {
+    if (typeof params.requestId === 'string' || typeof params.requestId === 'number') pendingServerRequests.delete(String(params.requestId));
+    return;
+  }
+  if ((message.method !== 'turn/started' && message.method !== 'turn/completed') || typeof params.threadId !== 'string') return;
+  for (const [id, line] of pendingServerRequests) {
+    const request = parse(line);
+    const requestParams = request.params && typeof request.params === 'object' ? request.params as JsonRecord : {};
+    if (requestParams.threadId === params.threadId) pendingServerRequests.delete(id);
   }
 }
 

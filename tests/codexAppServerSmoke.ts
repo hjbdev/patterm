@@ -151,6 +151,13 @@ if (process.env.NATIVE_TASKS) {
 }
 const nativeItems = Array.from({length:130},(_,index)=>({turnId:'turn_sub',item:{type:'agentMessage',id:'native_' + index,text:'step ' + index}}));
 let itemsListCalls = 0;
+// HOLD_TURN and CHILD_OUTLIVES turns keep running until interrupted.
+let holdTurn = null;
+let holdApproval = false;
+let holdCount = 0;
+let longChild = false;
+// Set by renaming a thread to "fail-items": later transcript reads fail.
+let itemsFail = false;
 function serve(socket) {
   const notify = (method, params) => socket.send(JSON.stringify({jsonrpc:'2.0', method, params}));
   let initialized = false;
@@ -161,6 +168,12 @@ function serve(socket) {
       // so the smoke can see exactly what Patterm answered.
       if (request.method === undefined && request.id !== undefined) {
         items.push({turnId:'turn_test',item:{type:'agentMessage',id:'response_' + request.id,text:JSON.stringify(request.error ? {error:request.error.message} : request.result)}});
+        // Like app-server: an answer is announced, then the thread stops waiting.
+        if (request.id === 'held_approval' && holdApproval) {
+          holdApproval = false;
+          notify('serverRequest/resolved', {threadId:'thread_test', requestId:'held_approval'});
+          notify('thread/status/changed', {threadId:'thread_test', status:{type:'active', activeFlags:[]}});
+        }
         return;
       }
       // Like the real app-server, the host's one connection initialises once.
@@ -185,6 +198,37 @@ function serve(socket) {
         notify('mcpServer/startupStatus/updated', {threadId:'thread_test', name:'linear', status:'failed', error:'The linear MCP server is not logged in.', failureReason:null});
         notify('mcpServer/startupStatus/updated', {threadId:'thread_test', name:'there', status:'failed', error:'refresh token rejected', failureReason:null});
         notify('mcpServer/startupStatus/updated', {threadId:'thread_child', name:'child-only', status:'failed', error:'x', failureReason:null});
+      }
+      else if (request.method === 'turn/start' && (process.env.HOLD_TURN || process.env.CHILD_OUTLIVES)) {
+        const turnId = 'turn_hold_' + (++holdCount);
+        items.push({turnId,item:{type:'userMessage',id:'user_hold_' + holdCount,clientId:request.params.clientUserMessageId ?? null,content:request.params.input}});
+        holdTurn = turnId;
+        send({jsonrpc:'2.0', id:request.id, result:{turn:{id:turnId}}});
+        // App-server can answer turn/start before the turn reports starting.
+        const start = () => {
+          notify('thread/status/changed', {threadId:'thread_test', status:{type:'active', activeFlags:[]}});
+          notify('turn/started', {threadId:'thread_test', turn:{id:turnId, status:'inProgress', items:[]}});
+          if (process.env.HOLD_APPROVAL) {
+            holdApproval = true;
+            notify('thread/status/changed', {threadId:'thread_test', status:{type:'active', activeFlags:['waitingOnApproval']}});
+            send({jsonrpc:'2.0', id:'held_approval', method:'item/commandExecution/requestApproval', params:{threadId:'thread_test',turnId,itemId:'held_item',command:'make',reason:'Build'}});
+          }
+          if (process.env.CHILD_OUTLIVES) {
+            const spawn = {type:'collabAgentToolCall',id:'spawn_long',tool:'spawnAgent',status:'completed',senderThreadId:'thread_test',receiverThreadIds:['thread_long'],prompt:'Keep going',model:'gpt-test',reasoningEffort:null,agentsStates:{thread_long:{status:'running',message:null}}};
+            items.push({turnId,item:spawn});
+            notify('item/completed', {threadId:'thread_test', turnId, item:spawn, completedAtMs: 60});
+            notify('thread/started', {thread:{id:'thread_long', parentThreadId:'thread_test'}});
+            longChild = true;
+            notify('thread/status/changed', {threadId:'thread_long', status:{type:'active', activeFlags:[]}});
+            notify('turn/started', {threadId:'thread_long', turn:{id:'turn_long', status:'inProgress', items:[]}});
+            // The agent's own turn ends while its subagent runs on.
+            holdTurn = null;
+            notify('thread/status/changed', {threadId:'thread_test', status:{type:'idle'}});
+            notify('turn/completed', {threadId:'thread_test', turn:{id:turnId, status:'completed', items:[]}});
+          }
+        };
+        if (process.env.DELAY_STARTED) setTimeout(start, Number(process.env.DELAY_STARTED));
+        else start();
       }
       else if (request.method === 'turn/start') {
         if (process.env.REJECT_TURN) {
@@ -260,6 +304,10 @@ function serve(socket) {
           }
         }
       } else if (request.method === 'thread/items/list') {
+        if (itemsFail) {
+          send({jsonrpc:'2.0', id:request.id, error:{code:-32603, message:'internal error'}});
+          return;
+        }
         if (process.env.UNSUPPORTED_ITEMS || process.env.UNMATERIALIZED) {
           send({jsonrpc:'2.0', id:request.id, error:{code:-32601, message:'thread/items/list is not supported yet'}});
           return;
@@ -277,6 +325,10 @@ function serve(socket) {
         }
         if (request.params.threadId === 'thread_child') {
           send({jsonrpc:'2.0', id:request.id, result:{data:[...childItems].reverse(),nextCursor:null,backwardsCursor:null}});
+          return;
+        }
+        if (request.params.threadId === 'thread_long') {
+          send({jsonrpc:'2.0', id:request.id, result:{data:[],nextCursor:null,backwardsCursor:null}});
           return;
         }
         if (request.params.threadId === 'thread_native') {
@@ -316,6 +368,9 @@ function serve(socket) {
       else if (request.method === 'thread/turns/list') {
         if (process.env.THREAD_READ_FAIL) send({jsonrpc:'2.0', id:request.id, error:{code:-32603, message:'status unavailable'}});
         else if (process.env.UNSUPPORTED_ITEMS) send({jsonrpc:'2.0', id:request.id, error:{code:-32601, message:'thread/turns/list is not supported yet'}});
+        // A long rollout can time out the turn list.
+        else if (process.env.TURNS_LIST_FAIL) send({jsonrpc:'2.0', id:request.id, error:{code:-32603, message:'internal error'}});
+        else if (process.env.HOLD_TURN || process.env.CHILD_OUTLIVES) send({jsonrpc:'2.0', id:request.id, result:{data:holdTurn ? [{id:holdTurn,status:'inProgress',items:[],itemsView:'notLoaded'}] : [],nextCursor:null,backwardsCursor:null}});
         // Codex 0.158 before a new thread's first message.
         else if (process.env.UNMATERIALIZED) send({jsonrpc:'2.0', id:request.id, error:{code:-32600, message:'thread thread_test is not materialized yet; thread/turns/list is unavailable before first user message'}});
         else if (process.env.RECONNECT_ACTIVE) send({jsonrpc:'2.0', id:request.id, result:{data:[{id:'turn_live',status:'inProgress',items:[],itemsView:'notLoaded'}],nextCursor:null,backwardsCursor:null}});
@@ -327,10 +382,29 @@ function serve(socket) {
         else if (process.env.UNSUPPORTED_ITEMS && request.params.includeTurns) send({jsonrpc:'2.0', id:request.id, error:{code:-32601, message:'list_turns is not supported yet'}});
         else if (process.env.UNSUPPORTED_ITEMS) send({jsonrpc:'2.0', id:request.id, result:{thread:{turns:[],status:{type:'idle'}}}});
         else if (process.env.RECONNECT_ACTIVE) send({jsonrpc:'2.0', id:request.id, result:{thread:{turns:[{id:'turn_live',status:'inProgress',items:[]}]}}});
+        else if (request.params.threadId === 'thread_long') send({jsonrpc:'2.0', id:request.id, result:{thread:{id:'thread_long',parentThreadId:'thread_test',turns:[],status:longChild ? {type:'active',activeFlags:[]} : {type:'idle'}}}});
         else if (request.params.threadId === 'thread_child' || request.params.threadId === 'thread_native') send({jsonrpc:'2.0', id:request.id, result:{thread:{id:request.params.threadId,parentThreadId:'thread_test',turns:[]}}});
+        else if (process.env.HOLD_TURN || process.env.CHILD_OUTLIVES) send({jsonrpc:'2.0', id:request.id, result:{thread:{turns:[],status:holdTurn ? {type:'active',activeFlags:holdApproval ? ['waitingOnApproval'] : []} : {type:'idle'}}}});
         else send({jsonrpc:'2.0', id:request.id, result:{thread:{turns:[]}}});
       }
-      else if (request.method === 'turn/interrupt') send({jsonrpc:'2.0', id:request.id, result:{}});
+      else if (request.method === 'turn/interrupt') {
+        send({jsonrpc:'2.0', id:request.id, result:{}});
+        if (request.params.threadId === 'thread_long' && longChild) {
+          longChild = false;
+          notify('thread/status/changed', {threadId:'thread_long', status:{type:'idle'}});
+          notify('turn/completed', {threadId:'thread_long', turn:{id:'turn_long', status:'interrupted', items:[]}});
+        } else if (request.params.threadId === 'thread_test' && holdTurn) {
+          const turnId = holdTurn;
+          const approval = holdApproval;
+          holdTurn = null;
+          holdApproval = false;
+          // Like app-server: the turn's requests are cancelled as it ends, and
+          // each resolution is announced afterwards.
+          notify('thread/status/changed', {threadId:'thread_test', status:{type:'idle'}});
+          notify('turn/completed', {threadId:'thread_test', turn:{id:turnId, status:'interrupted', items:[]}});
+          if (approval && !process.env.NO_RESOLVED) setTimeout(() => notify('serverRequest/resolved', {threadId:'thread_test', requestId:'held_approval'}), 50);
+        }
+      }
       // GPT-Live voice: the answer arrives as a notification after the start reply.
       else if (request.method === 'thread/realtime/start') {
         send({jsonrpc:'2.0', id:request.id, result:{}});
@@ -368,6 +442,10 @@ function serve(socket) {
       }
       else if (request.method === 'thread/backgroundTerminals/terminate') {
         fs.writeFileSync(stateBase + '.terminated', JSON.stringify(request.params));
+        send({jsonrpc:'2.0', id:request.id, result:{}});
+      }
+      else if (request.method === 'thread/name/set' && request.params.name === 'fail-items') {
+        itemsFail = true;
         send({jsonrpc:'2.0', id:request.id, result:{}});
       }
       else if (request.method === 'thread/compact/start' || request.method === 'review/start' || request.method === 'thread/name/set' || request.method === 'thread/goal/set' || request.method === 'thread/shellCommand' || request.method === 'thread/revert') {
@@ -827,7 +905,8 @@ if (socketPath) {
   const beforeReconnect = reconnectedEvents.length;
   await reconnecting.service.prompt(reconnecting.processId, { text: 'again', references: [], attachments: [] });
   await new Promise((resolve) => setTimeout(resolve, 150));
-  assert.ok(reconnectedEvents.slice(beforeReconnect).some((event) => event.kind === 'status' && event.status === 'working'), 'events flow again after the socket reconnects');
+  // The agent was already working, so the stream reports the turn's end.
+  assert.ok(reconnectedEvents.slice(beforeReconnect).some((event) => event.kind === 'status' && event.status === 'idle'), 'events flow again after the socket reconnects');
   releaseReconnect();
   await reconnecting.service.stop(reconnecting.processId);
   reconnecting.service.disconnect();
@@ -846,6 +925,158 @@ if (socketPath) {
   releaseRestored();
   await restored.service.stop(restored.processId);
   restored.service.disconnect();
+
+  const activityOf = (processId: string) => (database.connection.prepare('select activity from processes where id = ?').get(processId) as { activity: string }).activity;
+  type StatusSnapshot = { status?: string; permissions: { data: Array<{ id: string }> } };
+  const statusesIn = (events: IntegratedConversationEvent[]) => events.flatMap((event) => event.kind === 'status' ? [event.status] : []);
+
+  // An accepted turn is working at once, before its turn/started arrives or
+  // leaves the batch, so a snapshot read right after a send never says idle.
+  {
+    const held = await launch({ ...process.env, HOLD_TURN: '1', DELAY_STARTED: '300' });
+    const heldEvents: IntegratedConversationEvent[] = [];
+    const releaseHeld = await held.service.subscribe(held.processId, (event) => heldEvents.push(event));
+    const heldAgents = new IntegratedAgentService(database, { codex: held.service });
+    const transitions: string[] = [];
+    heldAgents.onActivityChange((change) => transitions.push(change.activity));
+    heldAgents.observe(held.processId);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.equal(activityOf(held.processId), 'idle');
+    await heldAgents.prompt(held.processId, 'hold on');
+    assert.deepEqual(statusesIn(heldEvents), ['working'], 'the stream reports an accepted turn before the prompt call returns');
+    assert.equal((await held.service.conversation(held.processId) as StatusSnapshot).status, 'working', 'a snapshot straight after an accepted prompt is working');
+    await heldAgents.conversation(held.processId);
+    assert.equal(activityOf(held.processId), 'working', 'a read right after the send does not mark the agent idle');
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    assert.equal(activityOf(held.processId), 'working');
+
+    // A restarted Patterm reads the running turn natively instead of
+    // assuming a new connection's empty turn list means idle.
+    const restartedService = new CodexAppServerService(database, runtimeDirectory);
+    assert.equal((await restartedService.conversation(held.processId) as StatusSnapshot).status, 'working', 'a new connection reads the running turn natively');
+    const restartedAgents = new IntegratedAgentService(database, { codex: restartedService });
+    const restartTransitions: string[] = [];
+    restartedAgents.onActivityChange((change) => restartTransitions.push(change.activity));
+    // What reconciliation does for each live agent.
+    await restartedAgents.conversation(held.processId);
+    restartedAgents.observe(held.processId);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.deepEqual(restartTransitions, [], 'reconciling a working agent never marks it idle');
+    restartedAgents.dispose();
+    restartedService.disconnect();
+
+    await held.service.interrupt(held.processId);
+    await waitFor(() => activityOf(held.processId) === 'idle');
+    assert.deepEqual(transitions, ['working', 'idle'], 'activity moves straight from working to idle');
+    heldAgents.dispose();
+    releaseHeld();
+    await held.service.stop(held.processId);
+    held.service.disconnect();
+  }
+
+  // A turn list that times out does not hide an active thread, and a status
+  // nobody can read is unknown, not idle.
+  {
+    const slowList = await launch({ ...process.env, HOLD_TURN: '1', TURNS_LIST_FAIL: '1' });
+    await slowList.service.prompt(slowList.processId, { text: 'long thread', references: [], attachments: [] });
+    const slowFresh = new CodexAppServerService(database, runtimeDirectory);
+    assert.equal((await slowFresh.conversation(slowList.processId) as StatusSnapshot).status, 'working', 'an active thread is working when its turn list fails');
+    slowFresh.disconnect();
+    await slowList.service.stop(slowList.processId);
+    slowList.service.disconnect();
+    const unreadableStatus = await launch({ ...process.env, THREAD_READ_FAIL: '1', NO_PENDING: '1' });
+    assert.equal((await unreadableStatus.service.conversation(unreadableStatus.processId) as StatusSnapshot).status, undefined, 'an unreadable status is left unknown');
+    const releaseUnreadable = await unreadableStatus.service.subscribe(unreadableStatus.processId, () => {});
+    assert.equal((await unreadableStatus.service.conversation(unreadableStatus.processId) as StatusSnapshot).status, undefined, 'the seeded snapshot agrees');
+    releaseUnreadable();
+    await unreadableStatus.service.stop(unreadableStatus.processId);
+    unreadableStatus.service.disconnect();
+  }
+
+  // The stream reports permission while a request waits. An answer returns
+  // to working; a turn that ends with its request unanswered leaves nothing
+  // to replay, whether or not app-server announces the resolution.
+  for (const mode of ['answer', 'resolved', 'turn end'] as const) {
+    const approving = await launch({ ...process.env, HOLD_TURN: '1', HOLD_APPROVAL: '1', ...(mode === 'turn end' ? { NO_RESOLVED: '1' } : {}) });
+    const approvalEvents: IntegratedConversationEvent[] = [];
+    const releaseApproval = await approving.service.subscribe(approving.processId, (event) => approvalEvents.push(event));
+    await approving.service.prompt(approving.processId, { text: 'build it', references: [], attachments: [] });
+    await waitFor(() => statusesIn(approvalEvents).includes('permission'));
+    const waiting = await approving.service.conversation(approving.processId) as StatusSnapshot;
+    assert.equal(waiting.status, 'permission');
+    assert.deepEqual(waiting.permissions.data.map((item) => item.id), ['held_approval']);
+    if (mode === 'answer') {
+      await approving.service.replyPermission(approving.processId, 'held_approval', 'once');
+      await waitFor(() => statusesIn(approvalEvents).at(-1) === 'working');
+      assert.equal((await approving.service.conversation(approving.processId) as StatusSnapshot).status, 'working', 'an answered request returns the agent to work');
+    }
+    await approving.service.interrupt(approving.processId);
+    await waitFor(() => statusesIn(approvalEvents).at(-1) === 'idle');
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const settled = await approving.service.conversation(approving.processId) as StatusSnapshot;
+    assert.deepEqual([settled.status, settled.permissions.data.length], ['idle', 0], `${mode}: the ended turn's request is gone`);
+    assert.ok(!statusesIn(approvalEvents).slice(statusesIn(approvalEvents).lastIndexOf('idle')).includes('permission'), `${mode}: no permission after the turn ends`);
+    // Neither a reconnect nor a Patterm restart replays it from the host.
+    const approvalClients = approving.service as unknown as { clients: Map<string, { close(): void }> };
+    for (const client of approvalClients.clients.values()) client.close();
+    const lostAt = approvalEvents.length;
+    await waitFor(() => approvalEvents.slice(lostAt).some((event) => event.kind === 'pending'), 5_000);
+    const reconnectedApproval = await approving.service.conversation(approving.processId) as StatusSnapshot;
+    assert.deepEqual([reconnectedApproval.status, reconnectedApproval.permissions.data.length], ['idle', 0], `${mode}: a reconnect does not revive the request`);
+    const restartedApproval = new CodexAppServerService(database, runtimeDirectory);
+    const afterRestartApproval = await restartedApproval.conversation(approving.processId) as StatusSnapshot;
+    assert.deepEqual([afterRestartApproval.status, afterRestartApproval.permissions.data.length], ['idle', 0], `${mode}: a restarted Patterm is not shown the request`);
+    restartedApproval.disconnect();
+    releaseApproval();
+    await approving.service.stop(approving.processId);
+    approving.service.disconnect();
+  }
+
+  // A reconnect that cannot reseed keeps the transcript, but no longer
+  // vouches for a status it may have missed.
+  {
+    const unseeded = await launch({ ...process.env, NO_PENDING: '1' });
+    const unseededEvents: IntegratedConversationEvent[] = [];
+    const releaseUnseeded = await unseeded.service.subscribe(unseeded.processId, (event) => unseededEvents.push(event));
+    await unseeded.service.prompt(unseeded.processId, { text: 'before the drop', references: [], attachments: [] });
+    await waitFor(() => statusesIn(unseededEvents).at(-1) === 'idle');
+    assert.equal((await unseeded.service.conversation(unseeded.processId) as StatusSnapshot).status, 'idle');
+    await unseeded.service.command(unseeded.processId, 'rename', 'fail-items');
+    const unseededClients = unseeded.service as unknown as { clients: Map<string, { close(): void }> };
+    for (const client of unseededClients.clients.values()) client.close();
+    await waitFor(() => unseededEvents.some((event) => event.kind === 'reconnecting'));
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const unseededView = await unseeded.service.conversation(unseeded.processId) as StatusSnapshot & { messages: { data: Array<{ id: string }> } };
+    assert.equal(unseededView.status, undefined, 'a failed reseed reports no status');
+    assert.ok(unseededView.messages.data.some((message) => message.id === 'agent_stream'), 'a failed reseed keeps the transcript');
+    releaseUnseeded();
+    await unseeded.service.stop(unseeded.processId);
+    unseeded.service.disconnect();
+  }
+
+  // A subagent still running after the agent's turn ends keeps the agent
+  // working, on the stream and in snapshots, until it finishes.
+  {
+    const outliving = await launch({ ...process.env, CHILD_OUTLIVES: '1', NO_PENDING: '1' });
+    const outlivingEvents: IntegratedConversationEvent[] = [];
+    const releaseOutliving = await outliving.service.subscribe(outliving.processId, (event) => outlivingEvents.push(event));
+    await outliving.service.prompt(outliving.processId, { text: 'delegate and finish', references: [], attachments: [] });
+    await waitFor(() => outlivingEvents.some((event) => event.kind === 'replace' && event.message?.id === 'spawn_long'));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // The parent's own turn end is announced again as working.
+    assert.deepEqual([...new Set(statusesIn(outlivingEvents))], ['working'], 'the agent stays working while its subagent runs');
+    assert.equal(outlivingEvents.at(-1)?.kind, 'pending', 'the end of the agent\'s own turn is still announced');
+    assert.equal((await outliving.service.conversation(outliving.processId) as StatusSnapshot).status, 'working');
+    const outlivingFresh = new CodexAppServerService(database, runtimeDirectory);
+    assert.equal((await outlivingFresh.conversation(outliving.processId) as StatusSnapshot).status, 'working', 'a new connection reads the running subagent natively');
+    outlivingFresh.disconnect();
+    await outliving.service.stopTask(outliving.processId, 'thread_long');
+    await waitFor(() => statusesIn(outlivingEvents).at(-1) === 'idle');
+    assert.equal((await outliving.service.conversation(outliving.processId) as StatusSnapshot).status, 'idle', 'the agent is idle once its last subagent ends');
+    releaseOutliving();
+    await outliving.service.stop(outliving.processId);
+    outliving.service.disconnect();
+  }
 
   // A session longer than one bounded page still shows its newest rows.
   const many = await launch({ ...process.env, MANY_ITEMS: '1' });
@@ -908,6 +1139,7 @@ if (socketPath) {
     { id: 'thread_native', label: 'file summary', kind: 'subagent', status: 'completed', stoppable: false },
     { id: 'exec_bg', label: 'ping -c 120 127.0.0.1', kind: 'shell', status: 'running', stoppable: true }
   ], 'native subagents and background terminals are tasks');
+  assert.equal((nativeView as unknown as StatusSnapshot).status, 'idle', 'a running background terminal does not keep the agent working');
   assert.ok(nativeView.messages.data.some((row) => row.id === 'native_129' && row.parentId === 'call_native'), 'a native subagent nests under its start row');
   const nativeOutput = await native.service.taskOutput(native.processId, 'thread_native');
   assert.ok(nativeOutput.format === 'messages' && nativeOutput.cursor);
@@ -975,6 +1207,15 @@ if (socketPath) {
     ['command_thread_shellCommand', { threadId: 'thread_test', command: 'git status' }],
     ['command_thread_revert', { threadId: 'thread_test', beforeTurnId: 'turn_done' }]
   ]);
+  // A command that starts no turn leaves the agent idle.
+  commandIntegrated.observe(commands.processId);
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  await commandIntegrated.command(commands.processId, 'rename', 'Quiet rename');
+  await commandIntegrated.command(commands.processId, 'fast', '');
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert.equal(activityOf(commands.processId), 'idle', 'a rename or a local setting does not mark the agent working');
+  assert.equal((await commands.service.conversation(commands.processId) as StatusSnapshot).status, 'idle');
+  commandIntegrated.dispose();
   await commands.service.stop(commands.processId);
   commands.service.disconnect();
 

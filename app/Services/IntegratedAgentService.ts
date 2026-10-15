@@ -17,8 +17,9 @@ const ARCHIVE_CURSOR_PREFIX = 'archive:';
 // times after each accepted prompt, then wait for the next one.
 const TITLE_RETRY_DELAYS_MS = [1_000, 5_000, 15_000, 45_000, 120_000];
 // A live agent whose event stream could not be opened, or whose provider gave
-// up reconnecting, is subscribed again after this delay.
-const RESUBSCRIBE_MS = 30_000;
+// up reconnecting, is subscribed again after these delays. Activity is frozen
+// until then, so the first retry is quick and later ones back off.
+const RESUBSCRIBE_DELAYS_MS = [2_000, 5_000, 15_000, 30_000];
 
 export interface IntegratedLaunchInput {
   executable: string;
@@ -155,7 +156,7 @@ export class IntegratedAgentService {
   private readonly sending = new Map<string, number>();
   // One delivery run of held prompts per agent. A trigger during a run asks
   // for another run once it ends.
-  private readonly heldFlushes = new Map<string, { again: boolean }>();
+  private readonly heldFlushes = new Map<string, { again: boolean; started: boolean }>();
   // Prompts reach each agent one at a time in arrival order, so a held prompt
   // is never overtaken by a later one. The tail of each agent's chain.
   private readonly dispatches = new Map<string, Promise<unknown>>();
@@ -177,6 +178,8 @@ export class IntegratedAgentService {
   // Service-owned observation of every live agent, so activity follows the
   // native turn even when no client is viewing the conversation.
   private readonly observers = new Map<string, ActivityObserver>();
+  // Failed attempts to observe each agent, for the retry backoff.
+  private readonly observeAttempts = new Map<string, number>();
   private readonly eventListeners = new Set<(processId: string, event: IntegratedConversationEvent) => void>();
   private readonly activityListeners = new Set<(change: IntegratedActivityChange) => void>();
   private readonly compactionListeners = new Set<(processId: string, signal: CompactionSignal) => void>();
@@ -256,8 +259,7 @@ export class IntegratedAgentService {
     const key = this.ledgerKey(processId);
     const sequence = this.sequence(key);
     let conversation = await this.forProcess(processId).conversation(processId);
-    const status = record(conversation).status;
-    if (isActivity(status)) this.markActivitySince(key, status, sequence, true);
+    this.markSnapshot(key, conversation, sequence);
     this.logUnhandled(key, conversation);
     this.recordLimits(key, conversation);
     this.confirmHeld(key, conversation);
@@ -450,7 +452,8 @@ export class IntegratedAgentService {
   // present the submission as rejected. A turn that already reported its own
   // status while the call was in flight wins over the synthetic mark.
   private admitted(processId: string, key: string, sequence: number, resolved: ResolvedIntegratedPrompt, identity: SubmissionIdentity | null, result: unknown): void {
-    try { this.markActivitySince(key, 'working', sequence); } catch { /* activity is best effort */ }
+    // A prompt does not answer a pending permission, so the agent still waits.
+    try { if (this.activity(key) !== 'permission') this.markActivitySince(key, 'working', sequence); } catch { /* activity is best effort */ }
     this.signal(key, 'turn');
     try { this.refreshTitle(processId, resolved.text); } catch { /* titles are best effort */ }
     if (identity) {
@@ -474,15 +477,19 @@ export class IntegratedAgentService {
   // Sends held prompts oldest first once the agent can take input. Each later
   // prompt steers the turn the first one started, as a typed message would.
   private flushHeld(key: string): void {
+    // A call before the running pass reads the queue joins that pass.
     const running = this.heldFlushes.get(key);
     if (running) {
-      running.again = true;
+      if (running.started) running.again = true;
       return;
     }
     if (!this.nextHeld(key)) return;
-    const flush = { again: false };
+    const flush = { again: false, started: false };
     this.heldFlushes.set(key, flush);
-    void this.whileSending(key, () => this.serially(this.dispatches, key, () => this.deliverHeld(key))).catch((error: unknown) => {
+    void this.whileSending(key, () => this.serially(this.dispatches, key, () => {
+      flush.started = true;
+      return this.deliverHeld(key);
+    })).catch((error: unknown) => {
       this.debugLog?.write('integrated', 'prompt.held_flush_failed', { processId: key, message: error instanceof Error ? error.message : String(error) });
     }).finally(() => {
       this.heldFlushes.delete(key);
@@ -707,6 +714,7 @@ export class IntegratedAgentService {
         // of leaving every listener on a dead one.
         if (event.kind === 'error' && event.id === 'connection_error') resubscribe();
       };
+      let attempts = 0;
       const resubscribe = (): void => {
         if (created.retry || this.conversationSubscriptions.get(processId) !== created) return;
         created.unsubscribe?.();
@@ -715,10 +723,11 @@ export class IntegratedAgentService {
           created.retry = null;
           if (this.conversationSubscriptions.get(processId) !== created || !created.listeners.size) return;
           void subscribe.call(provider, processId, fanOut).then((release) => {
+            attempts = 0;
             if (this.conversationSubscriptions.get(processId) === created) created.unsubscribe = release;
             else release();
           }, resubscribe);
-        }, RESUBSCRIBE_MS);
+        }, resubscribeDelay(attempts++));
         created.retry.unref();
       };
       created.ready = subscribe.call(provider, processId, fanOut).then((release) => {
@@ -838,7 +847,6 @@ export class IntegratedAgentService {
     const key = this.ledgerKey(processId);
     const compacting = name === 'compact';
     if (compacting) this.signal(key, 'compact');
-    const sequence = this.sequence(key);
     let result: unknown;
     try {
       result = await command.call(provider, processId, name, text);
@@ -847,7 +855,9 @@ export class IntegratedAgentService {
       throw error;
     }
     if (!compacting) this.signal(key, 'turn');
-    this.markActivitySince(key, 'working', sequence);
+    // Some commands start no turn, such as a rename or a local setting, so
+    // read the native state rather than assume work started.
+    this.refreshObserved(key);
     try { this.refreshTitle(processId, `/${name}${text ? ` ${text}` : ''}`); } catch { /* titles are best effort */ }
     return result;
   }
@@ -860,8 +870,7 @@ export class IntegratedAgentService {
     const compact = provider.compact;
     if (!compact) throw new Error('This agent cannot compact its conversation');
     const key = this.ledgerKey(processId);
-    const activity = (this.database.connection.prepare('select activity from processes where id = ?').get(key) as { activity: string } | undefined)?.activity;
-    if (activity !== 'idle' || this.sending.get(key)) throw new Error('The agent is busy');
+    if (this.activity(key) !== 'idle' || this.sending.get(key)) throw new Error('The agent is busy');
     this.signal(key, 'compact');
     const sequence = this.sequence(key);
     try {
@@ -1058,7 +1067,11 @@ export class IntegratedAgentService {
     let key: string;
     try {
       key = this.ledgerKey(processId);
-      if (this.observers.has(key) || !this.isLive(key)) return;
+      if (this.observers.has(key)) return;
+      if (!this.isLive(key)) {
+        this.observeAttempts.delete(key);
+        return;
+      }
       this.adoptHeld(key);
     } catch { return; /* observation is best effort */ }
     const observer: ActivityObserver = { release: null, retry: null, refreshing: null, again: false, stale: false, closed: false };
@@ -1066,6 +1079,7 @@ export class IntegratedAgentService {
     void this.subscribeConversation(key, (event) => this.observed(key, observer, event)).then((release) => {
       if (observer.closed) release();
       else {
+        this.observeAttempts.delete(key);
         observer.release = release;
         this.refreshActivity(key, observer);
       }
@@ -1080,6 +1094,7 @@ export class IntegratedAgentService {
 
   private unobserve(key: string): void {
     this.loggedUnhandled.delete(key);
+    this.observeAttempts.delete(key);
     const observer = this.observers.get(key);
     if (!observer) return;
     this.observers.delete(key);
@@ -1102,17 +1117,33 @@ export class IntegratedAgentService {
         // The shared subscription reopens itself; re-read once it does.
         observer.stale = true;
       } else if (event.kind === 'status') {
-        if (event.status === 'working' || event.status === 'idle' || event.status === 'error') {
+        if (event.status && event.status !== 'unknown') {
           this.activitySequence.set(key, this.sequence(key) + 1);
           this.markActivity(key, event.status);
         }
+        // A held prompt waits for a turn that takes no input. That turn can
+        // end while background agents keep the status unchanged, so every
+        // status retries it; a busy agent keeps it held.
+        this.flushHeld(key);
         if (observer.stale) this.refreshActivity(key, observer);
       } else if (event.kind === 'pending' || observer.stale) {
-        // Pending carries permission changes and reconnect handoffs; the
-        // stream status collapses permission into working.
+        // Pending carries permission changes a provider does not stream and
+        // reconnect handoffs.
         this.refreshActivity(key, observer);
       }
     } catch { /* activity is best effort; a busy database must not break the stream */ }
+  }
+
+  // Re-reads activity through the agent's observer, or once directly while it
+  // has none, for example while its stream is being opened again.
+  private refreshObserved(key: string): void {
+    const observer = this.observers.get(key);
+    if (observer?.release) {
+      this.refreshActivity(key, observer);
+      return;
+    }
+    const sequence = this.sequence(key);
+    void this.forProcess(key).conversation(key).then((conversation) => this.markSnapshot(key, conversation, sequence)).catch(() => undefined);
   }
 
   // Coalesced snapshot read. It never overwrites a newer streamed status.
@@ -1124,9 +1155,9 @@ export class IntegratedAgentService {
     }
     const sequence = this.sequence(key);
     observer.refreshing = this.forProcess(key).conversation(key).then((conversation) => {
-      const status = record(conversation).status;
-      if (!observer.closed && isActivity(status)) this.markActivitySince(key, status, sequence, true);
+      if (!observer.closed) this.markSnapshot(key, conversation, sequence);
       // Covers prompts held before a restart, when no transition follows.
+      const status = record(conversation).status;
       if (!observer.closed && (status === 'idle' || status === 'error')) this.flushHeld(key);
       this.logUnhandled(key, conversation);
       this.recordLimits(key, conversation);
@@ -1141,12 +1172,14 @@ export class IntegratedAgentService {
 
   private retryObserve(key: string, observer: ActivityObserver): void {
     if (observer.closed) return;
+    const attempt = this.observeAttempts.get(key) ?? 0;
     this.unobserve(key);
+    this.observeAttempts.set(key, attempt + 1);
     const retry = setTimeout(() => {
       if (this.observers.get(key) !== retrying) return;
       this.observers.delete(key);
       this.observe(key);
-    }, RESUBSCRIBE_MS);
+    }, resubscribeDelay(attempt));
     retry.unref();
     // Hold the slot so launch or reconcile does not start a competing loop.
     const retrying: ActivityObserver = { release: null, retry, refreshing: null, again: false, stale: false, closed: false };
@@ -1164,6 +1197,11 @@ export class IntegratedAgentService {
     return this.activitySequence.get(key) ?? 0;
   }
 
+  private markSnapshot(key: string, conversation: unknown, since: number): void {
+    const status = record(conversation).status;
+    if (isActivity(status)) this.markActivitySince(key, status, since, true);
+  }
+
   // Synthetic and snapshot writes lose to any newer write since `since`. A
   // snapshot does not advance the sequence: it is older than a mark made after
   // it started, never newer.
@@ -1176,6 +1214,7 @@ export class IntegratedAgentService {
   private markActivity(processId: string, activity: string, snapshot = false): void {
     const previous = this.updateActivity(processId, activity);
     if (previous === null) return;
+    this.debugLog?.write('integrated', 'activity', { processId, previous, activity, snapshot });
     if (activity === 'idle' || activity === 'error') this.flushHeld(processId);
     this.onWorkbenchChange?.();
     for (const listener of this.activityListeners) {
@@ -1210,6 +1249,10 @@ export class IntegratedAgentService {
     attempt(0);
   }
 
+  private activity(processId: string): string | undefined {
+    return (this.database.connection.prepare('select activity from processes where id = ?').get(processId) as { activity: string } | undefined)?.activity;
+  }
+
   // Returns the replaced activity, or null when nothing changed.
   private updateActivity(processId: string, activity: string): string | null {
     const db = this.database.connection;
@@ -1219,6 +1262,10 @@ export class IntegratedAgentService {
       .run(activity, new Date().toISOString(), processId, activity);
     return result.changes > 0 ? row.activity : null;
   }
+}
+
+function resubscribeDelay(attempt: number): number {
+  return RESUBSCRIBE_DELAYS_MS[Math.min(attempt, RESUBSCRIBE_DELAYS_MS.length - 1)]!;
 }
 
 function record(value: unknown): Record<string, unknown> {

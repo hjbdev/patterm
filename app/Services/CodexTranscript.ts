@@ -21,6 +21,8 @@ export type CodexConversationEvent = Omit<IntegratedConversationEvent, 'processI
 export interface CodexConversationState {
   revision: number;
   messages: IntegratedConversationMessage[];
+  // The agent's effective status: its own turn, its running subagents, and
+  // requests waiting for the user. `unknown` until a native read says.
   status: CodexDeliveryStatus;
   detail?: string | undefined;
   truncated: boolean;
@@ -326,7 +328,12 @@ export function projectCodexPlan(value: unknown): CodexProjectedMessage | null {
   };
 }
 
-export function projectCodexStatus(method: string, value: unknown): { status: CodexDeliveryStatus; detail?: string } | null {
+export interface CodexStatus {
+  status: CodexDeliveryStatus;
+  detail?: string | undefined;
+}
+
+export function projectCodexStatus(method: string, value: unknown): CodexStatus | null {
   const params = record(value);
   if (method === 'turn/started') return { status: 'working' };
   if (method === 'turn/completed') {
@@ -340,11 +347,22 @@ export function projectCodexStatus(method: string, value: unknown): { status: Co
     return { status: 'idle' };
   }
   if (method === 'thread/status/changed') {
-    const status = record(params.status).type;
-    if (status === 'active') return { status: 'working' };
-    if (status === 'systemError') return { status: 'error' };
-    if (status === 'idle' || status === 'notLoaded') return { status: 'idle' };
+    const status = codexThreadStatus(params.status);
+    return status ? { status } : null;
   }
+  return null;
+}
+
+// A native thread status. An active thread waiting on an approval or on
+// input is waiting for the user, not working.
+export function codexThreadStatus(value: unknown): CodexDeliveryStatus | null {
+  const status = record(value);
+  if (status.type === 'active') {
+    const flags = Array.isArray(status.activeFlags) ? status.activeFlags : [];
+    return flags.includes('waitingOnApproval') || flags.includes('waitingOnUserInput') ? 'permission' : 'working';
+  }
+  if (status.type === 'systemError') return 'error';
+  if (status.type === 'idle' || status.type === 'notLoaded') return 'idle';
   return null;
 }
 
