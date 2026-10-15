@@ -682,11 +682,11 @@ export class OpenCodeServerService {
       ? [[row.id, typeof row.sessionID === 'string' ? row.sessionID : native.sessionId] as [string, string]]
       : []));
     if (running === undefined) return { status: requests.size ? 'permission' : undefined, detail: '' };
-    // A held-back end, or events still queued behind a lookup, keep what the
-    // stream showed: the queue may yet resume the work. After a reconnect
-    // nothing has streamed, so that is nothing; the streamed end then
-    // announces the finished turn.
-    if (state.settling || state.queued) return { status: state.emitted ?? undefined, detail: state.detail };
+    // While an end is held back or events wait behind a lookup, the read
+    // reports no status, so callers keep what they show: the queue may yet
+    // resume the work, and the last streamed status can be older than a
+    // snapshot reconciled since. The streamed end then announces the turn.
+    if (state.settling || state.queued) return { status: undefined, detail: state.detail };
     if (state.version !== version) {
       const status = activityStatus(state);
       if (status) return { status, detail: state.detail };

@@ -936,7 +936,7 @@ async function checkStreamedActivity(input: {
       daemonState.emit('session.execution.succeeded', { sessionID: first });
       daemonState.emit('session.inbox.cancelled', { sessionID: first, inboxID: 'msg_marker' });
       await waitFor(() => held.slice(heldMark).some((event) => event.kind === 'pending'));
-      assert.equal((await read(holding)).status, 'working', 'a read during a held-back end matches the stream');
+      assert.equal((await read(holding)).status, undefined, 'a read during a held-back end leaves what is shown');
     } finally {
       releaseHolding();
     }
@@ -1093,6 +1093,25 @@ async function checkStreamedActivity(input: {
     daemonState.active = {};
     daemonState.emit('session.execution.succeeded', { sessionID: 'ses_queued_bg' });
     await waitFor(() => activity() === 'idle');
+
+    // A turn that ended unseen is reconciled by a read; a later read while an
+    // unrelated lookup is queued does not bring back the older streamed work.
+    daemonState.active = { [first]: { type: 'running' } };
+    daemonState.emit('session.execution.started', { sessionID: first });
+    await waitFor(() => activity() === 'working');
+    daemonState.active = {};
+    await integrated.conversation('process_0');
+    assert.equal(activity(), 'idle', 'a read reconciles a turn that ended unseen');
+    let releaseUnrelated: () => void = () => {};
+    const unrelated = new Promise<void>((resolve) => { releaseUnrelated = resolve; });
+    lookups.descendsFrom = async () => { await unrelated; return false; };
+    daemonState.emit('session.execution.started', { sessionID: 'ses_unrelated_later' });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await integrated.conversation('process_0');
+    assert.equal(activity(), 'idle', 'a read while a lookup is queued keeps the reconciled state');
+    releaseUnrelated();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(activity(), 'idle', 'and stays idle once the queue drains');
   } finally {
     integrated.dispose();
   }
