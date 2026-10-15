@@ -12,17 +12,18 @@ function load() {
   const reads = [];
   const window = { patterm: { call: (name, args) => new Promise((resolve) => reads.push({ name, args, resolve })) } };
   const document = { visibilityState: 'visible', addEventListener() {}, removeEventListener() {} };
-  const modules = { vue: { ...vue, onMounted: () => {}, onBeforeUnmount: () => {} }, '../lib/worktreeDiff': {} };
+  const teardown = [];
+  const modules = { vue: { ...vue, onMounted: () => {}, onBeforeUnmount: (callback) => teardown.push(callback) }, '../lib/worktreeDiff': {} };
   const exports = {};
   new Function('exports', 'require', 'window', 'document', 'localStorage', outputText)(exports, (name) => modules[name], window, document, { getItem: () => null, setItem() {} });
-  return { useWorktreeDiffTotals: exports.useWorktreeDiffTotals, reads };
+  return { useWorktreeDiffTotals: exports.useWorktreeDiffTotals, reads, unmount: () => teardown.splice(0).forEach((callback) => callback()) };
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 const totals = (files) => ({ totals: { files, additions: files, deletions: 0 } });
 
 test('switching back to fresh totals reads nothing, and a slower read for the previous worktree cannot replace them', async () => {
-  const { useWorktreeDiffTotals, reads } = load();
+  const { useWorktreeDiffTotals, reads, unmount } = load();
   const ids = vue.ref(['B']);
   const scope = vue.effectScope();
   const { states } = scope.run(() => useWorktreeDiffTotals(ids));
@@ -41,5 +42,7 @@ test('switching back to fresh totals reads nothing, and a slower read for the pr
   slowA.resolve(totals(9));
   await settle();
   assert.deepEqual([...states.value.keys()], ['B'], "the previous worktree's late read does not replace them");
+  // Unmounting stops the poll, so the test doesn't wait on its timer.
+  unmount();
   scope.stop();
 });
