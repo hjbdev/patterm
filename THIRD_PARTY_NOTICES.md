@@ -638,7 +638,7 @@ limitations under the License.
 
 ## Apache-2.0
 
-- alacritty_terminal 0.26.0 (Rust crate)
+- alacritty_terminal 0.26.0 (Rust crate). Patterm ships a modified copy from native/terminal-core/vendor/alacritty_terminal. src/event_loop.rs is changed so that bytes read from the PTY just before a read error still reach the terminal; the change is marked "Changed by Patterm".
 
 ```text
 Apache License

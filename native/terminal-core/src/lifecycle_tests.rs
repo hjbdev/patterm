@@ -184,6 +184,71 @@ fn natural_exit_retains_output_until_explicit_close() {
     assert!(manager.sessions.is_empty());
 }
 
+// A frame or output read can hold the terminal while a child prints its last
+// bytes and exits. Linux then fails the next PTY read with EIO, and those
+// bytes must still reach the terminal.
+#[cfg(target_os = "linux")]
+#[test]
+fn final_output_survives_a_held_terminal_at_exit() {
+    let dir = std::env::temp_dir().join(format!("patterm-held-exit-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let (go, pid) = (dir.join("go"), dir.join("pid"));
+    let script = format!(
+        "while [ ! -e '{}' ]; do sleep 0.01; done; echo $$ > '{}'; printf 'final output'; exit 7",
+        go.display(),
+        pid.display()
+    );
+    let mut manager = manager();
+    let id = manager
+        .spawn(super::tests::script_params(&script, "", 100, 30))
+        .unwrap()["process_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let deadline = Instant::now() + super::tests::SCRIPT_DEADLINE;
+    let held = manager.sessions[&id].terminal.lock();
+    std::fs::write(&go, b"").unwrap();
+    // Wait until the child has written, exited, and closed its end of the PTY:
+    // a zombie, or already reaped.
+    loop {
+        let exited = std::fs::read_to_string(&pid).is_ok_and(|pid| {
+            std::fs::read_to_string(format!("/proc/{}/stat", pid.trim())).map_or(true, |stat| {
+                stat.rsplit(')')
+                    .next()
+                    .unwrap_or("")
+                    .trim_start()
+                    .starts_with('Z')
+            })
+        });
+        if exited {
+            break;
+        }
+        assert!(Instant::now() < deadline, "child exited");
+        thread::sleep(Duration::from_millis(1));
+    }
+    // The reader, waiting for the terminal, now sees the hangup.
+    thread::sleep(Duration::from_millis(50));
+    drop(held);
+    while !manager
+        .output(serde_json::json!({ "process_id": id }))
+        .unwrap()["screen"]
+        .as_str()
+        .unwrap()
+        .contains("final output")
+    {
+        assert!(
+            Instant::now() < deadline,
+            "final PTY output survived the held terminal"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+    manager
+        .close(serde_json::json!({ "process_id": id }))
+        .unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 #[ignore]
 fn benchmark_terminal_output() {

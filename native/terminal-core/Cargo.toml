@@ -22,3 +22,8 @@ libc = "0.2"
 # Already in the tree through alacritty_terminal; used for the host's job object
 # and the persistent host's named pipe.
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_Threading"] }
+
+# alacritty_terminal with a fix for final PTY output lost at child exit; see
+# vendor/alacritty_terminal/Cargo.toml.
+[patch.crates-io]
+alacritty_terminal = { path = "vendor/alacritty_terminal" }
