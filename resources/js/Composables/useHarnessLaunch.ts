@@ -8,16 +8,23 @@ export function useHarnessLaunch() {
   const { refresh } = useWorkbench();
   function launchHarness(input: HarnessLaunchInput): void {
     const launch = harnessLaunches.start(input, (args) => window.patterm.call('harness_launch', args));
-    const opened = router.push({ name: 'launch', params: { projectId: input.projectId, launchId: launch.id } }).catch(() => {});
+    const from = router.currentRoute.value.fullPath;
+    const opened = router.push({ name: 'launch', params: { projectId: input.projectId, launchId: launch.id } })
+      .then((failure) => !failure, () => false);
     void launch.finished.then(async (sessionId) => {
       if (!sessionId) return;
       // A refresh failure does not turn a successful native launch into a
       // failed one. The live workbench will catch up after reconnection.
       await refresh().catch(() => {});
-      await opened;
+      const shown = await opened;
       const route = router.currentRoute.value;
+      const agent = { name: 'agent', params: { projectId: input.projectId, sessionId } };
       if (route.name === 'launch' && route.params.projectId === input.projectId && route.params.launchId === launch.id) {
-        await router.replace({ name: 'agent', params: { projectId: input.projectId, sessionId } });
+        await router.replace(agent);
+      } else if (!shown && route.fullPath === from) {
+        // The launch view never opened, as when a redeploy removed its code
+        // from under an open tab. Open the agent unless the user moved on.
+        await router.push(agent);
       }
     }).catch(() => { /* Navigation failures never retry native launches. */ });
   }
