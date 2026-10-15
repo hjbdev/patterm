@@ -94,13 +94,20 @@ export function topicRead<T>(topic: ServerTopic, key: QueryKey, read: () => Prom
   });
 }
 
-// A tool call cached until its topic next changes. A paired host doesn't
-// announce its topics here, so a call naming one of its records, as in
-// `workstation:project_7`, always reads.
+// Whether a paired host announces `topic` here. Hosts share history changes,
+// and mark the records they send when they do; older hosts don't.
+function hostAnnounces(host: string, topic: ServerTopic): boolean {
+  return topic === 'history' && useWorkbench().projects.value.some(({ project }) => (project.host === host && project.sharesHistory)
+    || project.remotes?.some((remote) => remote.host === host && remote.sharesHistory));
+}
+
+// A tool call cached until its topic next changes. A call naming a paired
+// host's record, as in `workstation:project_7`, is cached only if that host
+// announces the topic here; otherwise it always reads.
 export function topicCall<T>(topic: ServerTopic, name: string, args: Record<string, unknown>, key: QueryKey = [name, args]): Promise<T> {
   const call = () => window.patterm.call(name, args) as Promise<T>;
-  const remote = Object.entries(args).some(([field, value]) => field.endsWith('_id') && typeof value === 'string' && value.includes(':'));
-  return remote ? call() : topicRead(topic, key, call);
+  const hosts = Object.entries(args).flatMap(([field, value]) => field.endsWith('_id') && typeof value === 'string' && value.includes(':') ? [value.slice(0, value.indexOf(':'))] : []);
+  return hosts.every((host) => hostAnnounces(host, topic)) ? topicRead(topic, key, call) : call();
 }
 
 // Calls `refresh` when one of the topics changes. Bursts share one refresh.

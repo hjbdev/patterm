@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Paired hosts tell each other when their conversation history changes, so
+  reopening another host's history in a linked project shows it from the
+  cache instead of reading it again. Hosts on an older version keep being
+  read each time.
 - Opening an Integrated agent no longer holds up typing in a terminal in the
   same browser while its conversation loads, and switching back to an agent
   within a few seconds shows its worktree changes without running git again.
