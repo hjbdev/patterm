@@ -4,8 +4,10 @@ import { sendAgentInput } from './AgentInputService';
 import type { TerminalService } from './TerminalService';
 import type { IntegratedAgentService } from './IntegratedAgentService';
 import type { AssistantInbox } from './AssistantInbox';
+import { snapshotText } from './ConversationText';
+import { resolvePtyProcessId } from './ProcessIdentity';
 
-export type TimerKind = 'delay' | 'idle_any' | 'idle_all' | 'report_any' | 'report_all';
+export type TimerKind = 'delay' | 'idle_any' | 'idle_all' | 'report_any' | 'report_all' | 'output';
 export type TimerStatus = 'pending' | 'paused';
 
 export interface TimerRecord {
@@ -14,6 +16,8 @@ export interface TimerRecord {
   status: TimerStatus;
   ownerProcessId: string | null;
   watched: string[];
+  // Output timers: the literal text they wait for.
+  pattern?: string;
   body: string;
   label: string | null;
   firesAtUnixMs: number | null;
@@ -28,6 +32,7 @@ export interface McpTimerInfo {
   status: TimerStatus;
   owner_process_id: string;
   watched: string[];
+  pattern?: string;
   body: string;
   fires_at_unix_ms?: number;
   paused_remaining_ms?: number;
@@ -40,6 +45,7 @@ interface TimerEntry {
   ownerProcessId: string | null;
   watched: string[];
   seenNonIdleProcessIds: Set<string>;
+  pattern?: string;
   body: string;
   label: string | null;
   firesAtUnixMs: number | null;
@@ -47,17 +53,28 @@ interface TimerEntry {
   createdAtUnixMs: number;
   timeout: NodeJS.Timeout | null;
   interval: NodeJS.Timeout | null;
+  checking?: boolean;
 }
 
 type WatchedState =
   | { process_id: string; satisfied: boolean; reason: 'missing' }
-  | { process_id: string; satisfied: boolean; reason: 'exited'; status: string; name: string }
+  | { process_id: string; satisfied: boolean; reason: 'exited'; status: string; name: string; exit_code?: number | null }
+  | { process_id: string; satisfied: boolean; reason: 'matched'; name: string; line: string }
   | { process_id: string; satisfied: boolean; reason: 'idle' | 'failed' | 'working' | 'not_started'; name: string; activity: string }
   | { process_id: string; satisfied: boolean; reason: 'reported'; name: string; report_status: string; excerpt: string; at: string }
   | { process_id: string; satisfied: boolean; reason: 'messaged'; name: string; excerpt: string; at: string }
   | { process_id: string; satisfied: boolean; reason: 'waiting'; name: string; activity: string };
 
 const EXCERPT_CHARS = 300;
+const OUTPUT_CHECK_MS = 1000;
+
+// What an output watch saw: the text, the process ending without it, or
+// neither yet.
+export type OutputWatchState =
+  | { state: 'matched'; process_id: string; name: string; line: string }
+  | { state: 'exited'; process_id: string; name: string; status: string; exit_code: number | null }
+  | { state: 'missing'; process_id: string }
+  | { state: 'waiting'; process_id: string; name: string };
 
 interface SavedTimer extends TimerRecord {
   seenNonIdleProcessIds: string[];
@@ -72,7 +89,7 @@ export class TimerService {
   constructor(
     private readonly database: DatabaseService,
     private readonly terminal: TerminalService,
-    private readonly options: { persistent?: boolean; integrated?: Pick<IntegratedAgentService, 'prompt'>; assistantInbox?: Pick<AssistantInbox, 'hold'>; onChanged?: () => void } = {}
+    private readonly options: { persistent?: boolean; integrated?: Pick<IntegratedAgentService, 'prompt' | 'conversation'>; assistantInbox?: Pick<AssistantInbox, 'hold'>; onChanged?: () => void } = {}
   ) {
     this.active = !options.persistent;
     if (options.persistent) {
@@ -183,6 +200,70 @@ export class TimerService {
     return this.toRecord(entry);
   }
 
+  // Waits for literal text in a process's output, or for it to end without
+  // printing it. The owner gets one callback either way.
+  setOutput(input: {
+    processId: string;
+    pattern: string;
+    ownerProcessId: string;
+    body: string;
+    maxWaitSeconds?: number | undefined;
+    label?: string | null | undefined;
+  }): TimerRecord {
+    const entry: TimerEntry = {
+      id: randomTimerId(),
+      kind: 'output',
+      status: 'pending',
+      ownerProcessId: input.ownerProcessId,
+      watched: [input.processId],
+      seenNonIdleProcessIds: new Set(),
+      pattern: input.pattern,
+      body: input.body,
+      label: input.label?.trim() || null,
+      firesAtUnixMs: input.maxWaitSeconds && input.maxWaitSeconds > 0 ? Date.now() + input.maxWaitSeconds * 1000 : null,
+      remainingMs: null,
+      createdAtUnixMs: Date.now(),
+      timeout: null,
+      interval: null
+    };
+    this.register(entry);
+    return this.toRecord(entry);
+  }
+
+  // Searches everything the process has printed that the terminal retains,
+  // scrollback included, so text printed before the watch began counts.
+  async outputState(processId: string, pattern: string): Promise<OutputWatchState> {
+    const row = this.watchedProcess(processId);
+    if (!row) return { state: 'missing', process_id: processId };
+    const line = await this.findOutputLine(row.id, pattern);
+    if (line !== null) return { state: 'matched', process_id: row.id, name: row.name, line };
+    if (row.status !== 'running') return { state: 'exited', process_id: row.id, name: row.name, status: row.status, exit_code: row.exit_code };
+    return { state: 'waiting', process_id: row.id, name: row.name };
+  }
+
+  private async findOutputLine(processId: string, pattern: string): Promise<string | null> {
+    const integrated = this.database.connection.prepare(`select 1 from sessions where process_id = ? and interface_mode = 'integrated' and exited_at is null`).get(processId);
+    if (integrated) {
+      if (!this.options.integrated) return null;
+      const lines = snapshotText(await this.options.integrated.conversation(processId)).split('\n');
+      return lines.reverse().find((line) => line.includes(pattern)) ?? null;
+    }
+    let result: unknown;
+    try {
+      result = await this.terminal.request('terminal.process.search', { process_id: resolvePtyProcessId(this.database, processId), query: pattern, case_sensitive: true, scope: 'all', limit: 1 });
+    } catch {
+      // A closed terminal has no output left to match.
+      return null;
+    }
+    const record = parseObject(result);
+    const matches = Array.isArray(record.matches) ? record.matches : [];
+    if (matches.length === 0) return null;
+    // Terminal hosts from before scrollback search answer with viewport
+    // positions only, so the match has no line text.
+    const text = parseObject(matches[matches.length - 1]).text;
+    return typeof text === 'string' ? text : pattern;
+  }
+
   cancel(timerId: string): 'ok' {
     if (this.options.persistent) this.database.connection.prepare('delete from runtime_timers where id = ?').run(timerId);
     const entry = this.timers.get(timerId);
@@ -288,6 +369,23 @@ export class TimerService {
     } else if (entry.kind === 'report_any' || entry.kind === 'report_all') {
       this.armReportInterval(entry);
       void this.checkReport(entry).catch(() => undefined);
+    } else if (entry.kind === 'output') {
+      entry.interval = setInterval(() => {
+        void this.checkOutput(entry).catch(() => undefined);
+      }, OUTPUT_CHECK_MS);
+      void this.checkOutput(entry).catch(() => undefined);
+    }
+  }
+
+  private async checkOutput(entry: TimerEntry): Promise<void> {
+    // A slow search must not overlap the next one.
+    if (entry.checking || entry.status !== 'pending' || !this.timers.has(entry.id) || !entry.pattern || !entry.watched[0]) return;
+    entry.checking = true;
+    try {
+      const state = await this.outputState(entry.watched[0], entry.pattern);
+      if (state.state !== 'waiting') await this.fire(entry, 'condition', [watchedFromOutput(state)]);
+    } finally {
+      entry.checking = false;
     }
   }
 
@@ -327,7 +425,7 @@ export class TimerService {
   private watchedProcess(processId: string) {
     return this.database.connection
       .prepare(
-        `select processes.id, processes.status, processes.activity, processes.created_at, processes.updated_at,
+        `select processes.id, processes.status, processes.activity, processes.created_at, processes.updated_at, processes.exit_code,
                 coalesce((select sessions.title from sessions
                           where sessions.process_id = processes.id order by sessions.started_at desc limit 1), processes.name) as name
          from processes
@@ -335,7 +433,7 @@ export class TimerService {
          order by processes.status = 'running' desc
          limit 1`
       )
-      .get(processId, processId) as { id: string; status: string; activity: string; created_at: string; updated_at: string; name: string } | undefined;
+      .get(processId, processId) as { id: string; status: string; activity: string; created_at: string; updated_at: string; exit_code: number | null; name: string } | undefined;
   }
 
   private async checkReport(entry: TimerEntry): Promise<void> {
@@ -435,13 +533,29 @@ export class TimerService {
   // the owner need not read output to find out. Delay timers send their body.
   private callbackText(entry: TimerEntry, trigger: 'condition' | 'timeout', computed?: WatchedState[]): string {
     if (entry.kind === 'delay') return entry.body;
+    const name = `${entry.id}${entry.label ? ` (${entry.label})` : ''}`;
+    if (entry.kind === 'output') return this.outputCallbackText(entry, name, trigger, computed?.[0]);
     const report = entry.kind === 'report_any' || entry.kind === 'report_all';
     const states = computed ?? entry.watched.map((id) => report ? this.processReportState(entry, id) : this.processIdleState(entry, id));
-    const name = `${entry.id}${entry.label ? ` (${entry.label})` : ''}`;
     const lines = [`[Patterm timer ${name}: ${trigger === 'timeout' ? 'max_wait elapsed' : 'condition met'}]`, ...states.map((state) => describeState(state, report))];
     if (states.some((state) => state.reason === 'reported')) lines.push('Read full results with get_conversation_output.');
     const body = entry.body.trim();
     return body ? `${lines.join('\n')}\n${body}` : lines.join('\n');
+  }
+
+  private outputCallbackText(entry: TimerEntry, name: string, trigger: 'condition' | 'timeout', state: WatchedState | undefined): string {
+    const pattern = JSON.stringify(entry.pattern ?? '');
+    const processId = entry.watched[0] ?? '';
+    const row = this.watchedProcess(processId);
+    const label = row ? `${row.id} "${row.name}"` : processId;
+    const line = trigger === 'timeout'
+      ? `- ${label}: ${row && row.status !== 'running' ? row.status : 'still running'} without printing ${pattern}`
+      : state?.reason === 'matched' ? `- ${label}: printed ${pattern}: ${excerptOf(state.line)}`
+        : state?.reason === 'exited' ? `- ${label}: ${state.status}${state.exit_code === null || state.exit_code === undefined ? '' : ` with code ${state.exit_code}`} without printing ${pattern}`
+          : `- ${processId}: no longer exists`;
+    const heading = `[Patterm wait_for_pattern ${name}: ${trigger === 'timeout' ? 'timed out' : state?.reason === 'matched' ? 'matched' : 'ended without a match'}]`;
+    const body = entry.body.trim();
+    return [heading, line, 'Read output with get_process_output or search_output.', ...(body ? [body] : [])].join('\n');
   }
 
   private clearHandles(entry: TimerEntry): void {
@@ -480,6 +594,7 @@ export class TimerService {
       status: entry.status,
       ownerProcessId: entry.ownerProcessId,
       watched: [...entry.watched],
+      ...(entry.pattern === undefined ? {} : { pattern: entry.pattern }),
       body: entry.body,
       label: entry.label,
       firesAtUnixMs: entry.firesAtUnixMs,
@@ -496,6 +611,7 @@ export class TimerService {
       status: entry.status,
       owner_process_id: entry.ownerProcessId ?? '',
       watched: [...entry.watched],
+      ...(entry.pattern === undefined ? {} : { pattern: entry.pattern }),
       body: entry.body,
       ...(entry.firesAtUnixMs === null ? {} : { fires_at_unix_ms: entry.firesAtUnixMs }),
       ...(entry.remainingMs === null ? {} : { paused_remaining_ms: entry.remainingMs })
@@ -504,11 +620,18 @@ export class TimerService {
 
 }
 
+function watchedFromOutput(state: Exclude<OutputWatchState, { state: 'waiting' }>): WatchedState {
+  if (state.state === 'missing') return { process_id: state.process_id, satisfied: true, reason: 'missing' };
+  if (state.state === 'matched') return { process_id: state.process_id, satisfied: true, reason: 'matched', name: state.name, line: state.line };
+  return { process_id: state.process_id, satisfied: true, reason: 'exited', status: state.status, name: state.name, exit_code: state.exit_code };
+}
+
 function describeState(state: WatchedState, report: boolean): string {
   switch (state.reason) {
     case 'missing': return `- ${state.process_id}: no longer exists`;
     case 'exited': return `- ${state.process_id} "${state.name}": ${state.status}${report ? ' without reporting' : ''}`;
     case 'reported': return `- ${state.process_id} "${state.name}": reported ${state.report_status} at ${state.at}${state.excerpt ? `: ${state.excerpt}` : ''}`;
+    case 'matched': return `- ${state.process_id} "${state.name}": printed ${excerptOf(state.line)}`;
     case 'messaged': return `- ${state.process_id} "${state.name}": sent you a message at ${state.at}${state.excerpt ? `: ${state.excerpt}` : ''}`;
     case 'idle': return `- ${state.process_id} "${state.name}": idle (its turn ended)`;
     case 'failed': return `- ${state.process_id} "${state.name}": its turn ended with an error`;
@@ -521,6 +644,10 @@ function describeState(state: WatchedState, report: boolean): string {
 function excerptOf(text: string): string {
   const flat = text.replace(/\s+/g, ' ').trim();
   return flat.length > EXCERPT_CHARS ? `${flat.slice(0, EXCERPT_CHARS - 1)}…` : flat;
+}
+
+function parseObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
 function parseRecord(value: string): Record<string, unknown> {

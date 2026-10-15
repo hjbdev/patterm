@@ -143,6 +143,86 @@ test('explicit cancellation removes durable timers and failed sends are not repl
   assert.deepEqual(timers.listMcp(), []);
 });
 
+// Output watches search asynchronously; let their searches settle.
+async function settle(): Promise<void> {
+  for (let index = 0; index < 20; index += 1) await Promise.resolve();
+}
+
+test('an output watch fires once when its literal text appears', async (t) => {
+  const fixture = setup(t);
+  const timers = fixture.create();
+  timers.activate();
+  fixture.output.set('pty_child', 'chunk 1/2');
+  const watch = timers.setOutput({ processId: 'child', pattern: 'Done in|FAILED', ownerProcessId: 'owner', body: 'summarise it', label: 'backfill' });
+  assert.equal(timers.listMcp()[0]?.pattern, 'Done in|FAILED');
+  await settle();
+  fixture.output.set('pty_child', 'chunk 1/2\nDone in 1.6 min');
+  t.mock.timers.tick(5_000);
+  await settle();
+  assert.equal(fixture.delivery.calls.length, 0, 'the pattern is literal text, not a regex alternation');
+  fixture.output.set('pty_child', 'chunk 1/2\nDone in 1.6 min\nDone in|FAILED marker');
+  t.mock.timers.tick(1_000);
+  await settle();
+  t.mock.timers.tick(5_000);
+  await settle();
+  assert.equal(fixture.delivery.calls.length, 1, 'a watch delivers one callback');
+  assert.equal(fixture.delivery.calls[0]!.process_id, 'pty_owner');
+  assert.equal(fixture.delivery.calls[0]!.text, `[Patterm wait_for_pattern ${watch.id} (backfill): matched]\n- child "child": printed "Done in|FAILED": Done in|FAILED marker\nRead output with get_process_output or search_output.\nsummarise it`);
+  assert.deepEqual(timers.listMcp(), []);
+});
+
+test('an output watch reports a process that ends without the text, with its exit code', async (t) => {
+  const fixture = setup(t);
+  const timers = fixture.create();
+  timers.activate();
+  timers.setOutput({ processId: 'child', pattern: 'Done in', ownerProcessId: 'owner', body: '' });
+  await settle();
+  fixture.database.connection.prepare("update processes set status = 'failed', exit_code = 3 where id = 'child'").run();
+  t.mock.timers.tick(1_000);
+  await settle();
+  assert.equal(fixture.delivery.calls.length, 1);
+  assert.match(fixture.delivery.calls[0]!.text, /^\[Patterm wait_for_pattern timer_\w+: ended without a match\]\n- child "child": failed with code 3 without printing "Done in"\n/);
+});
+
+test('output watches time out, cancel, and end with their owner', async (t) => {
+  const fixture = setup(t);
+  const timers = fixture.create();
+  timers.activate();
+  timers.setOutput({ processId: 'child', pattern: 'ready', ownerProcessId: 'owner', body: '', maxWaitSeconds: 3 });
+  const cancelled = timers.setOutput({ processId: 'child', pattern: 'ready', ownerProcessId: 'owner', body: 'cancelled' });
+  timers.setOutput({ processId: 'child', pattern: 'ready', ownerProcessId: 'child_2', body: 'owner closed' });
+  timers.cancel(cancelled.id);
+  timers.cancelOwnedBy(['child_2']);
+  await settle();
+  t.mock.timers.tick(3_000);
+  await settle();
+  assert.equal(fixture.delivery.calls.length, 1);
+  assert.match(fixture.delivery.calls[0]!.text, /^\[Patterm wait_for_pattern timer_\w+: timed out\]\n- child "child": still running without printing "ready"\n/);
+  fixture.output.set('pty_child', 'ready');
+  t.mock.timers.tick(5_000);
+  await settle();
+  assert.equal(fixture.delivery.calls.length, 1, 'cancelled and owner-closed watches never fire');
+});
+
+test('an output watch survives restart and fires after reconciliation', async (t) => {
+  const fixture = setup(t);
+  let timers = fixture.create();
+  timers.activate();
+  timers.setOutput({ processId: 'child', pattern: 'Done in', ownerProcessId: 'owner', body: 'restored' });
+  await settle();
+  timers.dispose();
+  fixture.output.set('pty_child', 'Done in 1.6 min');
+  timers = fixture.create();
+  assert.equal(timers.listMcp()[0]?.pattern, 'Done in');
+  t.mock.timers.tick(5_000);
+  await settle();
+  assert.equal(fixture.delivery.calls.length, 0, 'restored watches wait for runtime reconciliation');
+  timers.activate();
+  await settle();
+  assert.equal(fixture.delivery.calls.length, 1);
+  assert.match(fixture.delivery.calls[0]!.text, /: matched\]\n- child "child": printed "Done in": Done in 1\.6 min\n.*\nrestored$/);
+});
+
 function setup(t: TestContext) {
   t.mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now: 1_000_000 });
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-timer-recovery-'));
@@ -156,7 +236,13 @@ function setup(t: TestContext) {
       values (?, 'project', 'agent', ?, 'running', 'working', ?, ?, ?)`).run(id, id, `pty_${id}`, now, now);
   }
   const delivery = { fail: false, calls: [] as Array<{ process_id: string; kind: string; text: string; submit: boolean }> };
-  const terminal = { request: async (_method: string, input: (typeof delivery.calls)[number]) => {
+  // Output each terminal retains, searched like the sidecar's `all` scope.
+  const output = new Map<string, string>();
+  const terminal = { request: async (method: string, input: (typeof delivery.calls)[number] & { query?: string }) => {
+    if (method === 'terminal.process.search') {
+      const lines = (output.get(input.process_id) ?? '').split('\n').filter((line) => line.includes(input.query ?? ''));
+      return { scope: 'all', total: lines.length, matches: lines.slice(-1).map((text) => ({ line: 0, text })) };
+    }
     delivery.calls.push(input);
     if (delivery.fail) throw new Error('Simulated lost acknowledgement');
   } } as unknown as TerminalService;
@@ -169,6 +255,7 @@ function setup(t: TestContext) {
   return {
     database,
     delivery,
+    output,
     create() {
       const timers = new TimerService(database, terminal, { persistent: true });
       services.push(timers);

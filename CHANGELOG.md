@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `wait_for_pattern` no longer blocks the agent's turn. It answers at once when
+  the text is already in the output or the process has ended, and otherwise
+  starts a watch and returns its timer ID. Patterm then messages the agent once:
+  when the text appears, when the process ends without it (with its exit code),
+  or when the optional timeout passes. The agent can end its turn and stay
+  responsive while a long command runs. Watches search scrollback as well as the
+  visible screen, survive app restarts, show in `timer_list`, and end with
+  `timer_cancel` or when their agent closes. The pattern is literal,
+  case-sensitive text, not a regex.
+
 ### Added
 
 - The assistant can list, add, and rename projects itself with

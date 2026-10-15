@@ -96,7 +96,7 @@ export interface ProcessRecord {
   exitCode: number | null;
 }
 
-export type TimerKind = 'delay' | 'idle_any' | 'idle_all' | 'report_any' | 'report_all';
+export type TimerKind = 'delay' | 'idle_any' | 'idle_all' | 'report_any' | 'report_all' | 'output';
 export type TimerStatus = 'pending' | 'paused';
 
 export interface TimerRecord {
@@ -105,6 +105,7 @@ export interface TimerRecord {
   status: TimerStatus;
   ownerProcessId: string | null;
   watched: string[];
+  pattern?: string;
   label: string | null;
   body: string;
   firesAtUnixMs: number | null;

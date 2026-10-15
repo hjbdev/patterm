@@ -659,3 +659,52 @@ fn echoing_child_shows_input_it_is_sent() {
     let _ = manager.stop(serde_json::json!({ "process_id": process_id }));
     assert!(screen.contains("echoed-input-7"), "screen was {screen:?}");
 }
+
+#[test]
+fn search_all_scope_reads_scrollback_as_logical_lines() {
+    let mut fixture = Fixture::new(8, 2);
+    fixture.feed(b"Done in 1.6 min\r\nnext\r\nlast\r\n");
+    let search = |fixture: &Fixture, query: &str, extra: Value| {
+        let mut params = serde_json::json!({ "process_id": fixture.process_id, "query": query, "case_sensitive": true });
+        params
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        fixture.manager.search(params).unwrap()
+    };
+    // The wrapped line has scrolled out of the 2-row viewport.
+    assert!(
+        search(&fixture, "Done in", serde_json::json!({}))["matches"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let found = search(
+        &fixture,
+        "Done in 1.6",
+        serde_json::json!({ "scope": "all" }),
+    );
+    assert_eq!(found["scope"], "all");
+    assert_eq!(found["total"], 1);
+    assert_eq!(found["matches"][0]["text"], "Done in 1.6 min");
+    let literal = search(
+        &fixture,
+        "Done in|FAILED",
+        serde_json::json!({ "scope": "all" }),
+    );
+    assert_eq!(literal["total"], 0, "patterns are literal text");
+    let cased = search(&fixture, "done in", serde_json::json!({ "scope": "all" }));
+    assert_eq!(cased["total"], 0, "case-sensitive search respects case");
+    fixture.feed(b"next\r\n");
+    let newest = search(
+        &fixture,
+        "next",
+        serde_json::json!({ "scope": "all", "limit": 1 }),
+    );
+    assert_eq!(newest["total"], 2);
+    assert_eq!(
+        newest["matches"].as_array().unwrap().len(),
+        1,
+        "limit keeps the newest matches"
+    );
+}

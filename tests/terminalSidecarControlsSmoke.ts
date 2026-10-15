@@ -220,6 +220,17 @@ async function main(): Promise<void> {
       query: 'line08'
     }) as SearchResult;
     assert.ok(visibleSearch.matches.length >= 1, 'search finds text in the rendered viewport');
+    // wait_for_pattern watches search scrollback too, newest match first.
+    const scrollbackSearch = await terminal.request('terminal.process.search', {
+      process_id: spawn.process_id,
+      query: 'line0',
+      case_sensitive: true,
+      scope: 'all',
+      limit: 1
+    }) as { scope: string; total: number; matches: Array<{ text: string }> };
+    assert.equal(scrollbackSearch.scope, 'all');
+    assert.equal(scrollbackSearch.total, 8, 'scrollback search sees lines above the 4-row viewport');
+    assert.deepEqual(scrollbackSearch.matches.map((match) => match.text), ['line08']);
 
     await terminal.request('terminal.process.scroll', { process_id: spawn.process_id, lines: -5 });
     const scrolled = await terminal.request('terminal.process.output', { process_id: spawn.process_id }) as OutputResult;
