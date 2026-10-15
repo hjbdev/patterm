@@ -7,8 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Opening an Integrated agent no longer holds up typing in a terminal in the
+  same browser while its conversation loads, and switching back to an agent
+  within a few seconds shows its worktree changes without running git again.
+
 ### Fixed
 
+- The first browser page load after the server starts no longer gets "503"
+  errors for its script files and stays blank until reloaded.
 - Launching an agent from a tab opened before a server update now opens the
   new agent. The launch view loads with the other pages at startup, and if it
   still can't open, the app goes straight to the agent unless you have moved
@@ -61,17 +69,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   connections and data saver read context only, and a hidden tab reads
   nothing. Settings › Appearance › Prefetch conversations sets this per
   device.
-- Opening an Integrated agent no longer holds up typing in a terminal in the
-  same browser while its conversation loads, and switching back to an agent
-  within a few seconds shows its worktree changes without running git again.
 
 - Release notes now explain the four performance phases with per-phase browser
   benchmark figures, measurement limits and remaining work.
 
 ### Fixed
 
-- The first browser page load after the server starts no longer gets "503"
-  errors for its script files and stays blank until reloaded.
 - Integrated Claude and Codex stay Working through tool calls until the turn
   finishes, even if a session or thread reports Idle early. Claude also detects
   turns that start without session-state events.
