@@ -13,10 +13,31 @@ import {
   terminalCellHeightForFontSizeForTest,
   terminalRendererTestFlags
 } from '../resources/js/terminal/TerminalRenderer';
+import { coalesceTerminalFrames } from '../resources/js/terminal/TerminalFrameCoalescing';
 
 type Layout = 'current' | 'shape-only' | 'visible-only' | 'legacy';
 
 function main(): void {
+  // A snapshot from the PTY just left must not hide the shown PTY's frames.
+  const coalesced = coalesceTerminalFrames([
+    versionedFrame('snapshot', 'a'.codePointAt(0) ?? 0x20, 1),
+    versionedFrame('damage', 'b'.codePointAt(0) ?? 0x20, 1),
+    versionedFrame('snapshot', 'x'.codePointAt(0) ?? 0x20, 9, true, 2, 1, 'proc_left'),
+    versionedFrame('damage', 'c'.codePointAt(0) ?? 0x20, 1)
+  ], 'proc_test');
+  assert.deepEqual(coalesced.frames.map((frame) => [frame?.processId, frame?.frameKind, frame?.runs[0]?.cells[0]?.char]), [
+    ['proc_test', 'snapshot', 'a'],
+    ['proc_test', 'damage', 'b'],
+    ['proc_test', 'damage', 'c']
+  ]);
+  const latest = coalesceTerminalFrames([
+    versionedFrame('damage', 'a'.codePointAt(0) ?? 0x20, 1),
+    versionedFrame('snapshot', 'b'.codePointAt(0) ?? 0x20, 2),
+    versionedFrame('damage', 'c'.codePointAt(0) ?? 0x20, 2)
+  ], 'proc_test');
+  assert.deepEqual(latest.frames.map((frame) => frame?.runs[0]?.cells[0]?.char), ['b', 'c']);
+  assert.equal(latest.byteLength, versionedFrame('snapshot', 'b'.codePointAt(0) ?? 0x20, 2).byteLength * 2);
+
   const snapshot = parseDamageFrame(versionedFrame('snapshot', '🚂'.codePointAt(0) ?? 0x20));
   assert.equal(snapshot?.frameKind, 'snapshot');
   assert.equal(snapshot?.frameSeq, 7);
@@ -145,9 +166,9 @@ function main(): void {
   assert.ok(zoomedAtlas.glyphHeight > atlas.glyphHeight, 'larger font cell metrics produce a larger glyph atlas slot');
 }
 
-function versionedFrame(kind: 'snapshot' | 'damage', codepoint: number, resizeSeq = 0, includeRuns = true, cols = 2, rows = 1): Uint8Array {
+function versionedFrame(kind: 'snapshot' | 'damage', codepoint: number, resizeSeq = 0, includeRuns = true, cols = 2, rows = 1, process = 'proc_test'): Uint8Array {
   const bytes: number[] = [];
-  const processId = Buffer.from('proc_test');
+  const processId = Buffer.from(process);
   pushU16(bytes, 2);
   bytes.push(kind === 'snapshot' ? 0 : 1);
   pushU32(bytes, 7);

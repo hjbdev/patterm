@@ -126,6 +126,7 @@ async function main(): Promise<void> {
       const html = await page.text();
       assert.match(html, /href="\/assets\/app.css"/);
       assert.match(html, /src="\/assets\/app.js"/);
+      assert.match(html, /<meta name="patterm-session" content="\{&quot;password_set&quot;:false,&quot;signed_in&quot;:true,&quot;tailnet&quot;:false\}" \/><\/head>/, 'pages carry the sign-in state');
       assert.doesNotMatch(html, /<base\b/);
       assert.match(page.headers.get('content-security-policy') ?? '', /base-uri 'none'/);
       assert.equal((await fetch(`${base}${route}`, { method: 'HEAD' })).status, 200);
@@ -259,7 +260,9 @@ async function main(): Promise<void> {
     assert.deepEqual(await session(), { password_set: true, signed_in: false, tailnet: false });
     assert.equal((await rpc('patterm:bootstrap')).status, 401, 'API calls need a sign-in');
     assert.equal((await fetch(`${base}/health`)).status, 200, '/health stays open');
-    assert.equal((await fetch(`${base}/settings`)).status, 200, 'pages stay open so the sign-in page can load');
+    const lockedPage = await fetch(`${base}/settings`, { headers: { 'Accept-Encoding': 'gzip' } });
+    assert.equal(lockedPage.status, 200, 'pages stay open so the sign-in page can load');
+    assert.match(await lockedPage.text(), /&quot;password_set&quot;:true,&quot;signed_in&quot;:false/, 'a page never carries an old sign-in state');
     const unsignedSocket = new WebSocket(`ws://127.0.0.1:${port}/api/events`, { origin });
     unsignedSocket.on('error', () => {});
     assert.equal(await new Promise<number>((resolve) => unsignedSocket.on('unexpected-response', (_request, response) => {

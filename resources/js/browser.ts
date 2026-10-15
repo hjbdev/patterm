@@ -6,10 +6,21 @@ type TerminalClientRequest = { kind: 'clipboard'; text: string } | { kind: 'open
 type ServerSession = { password_set: boolean; signed_in: boolean; tailnet: boolean };
 
 // Whether this browser must sign in first. Null in the desktop app, or when
-// the server could not be reached.
-export const browserSession: Promise<ServerSession | null> = window.patterm ? Promise.resolve(null) : readSession();
+// the server could not be reached. The server puts it in the page; a page
+// served without it, such as the dev server's, asks.
+export const browserSession: Promise<ServerSession | null> = window.patterm ? Promise.resolve(null) : embeddedSession() ?? readSession();
 
 if (!window.patterm) window.patterm = createBrowserApi();
+
+function embeddedSession(): Promise<ServerSession> | null {
+  const content = document.querySelector<HTMLMetaElement>('meta[name="patterm-session"]')?.content;
+  if (!content) return null;
+  try {
+    return Promise.resolve(JSON.parse(content) as ServerSession);
+  } catch {
+    return null;
+  }
+}
 
 async function readSession(): Promise<ServerSession | null> {
   try {
@@ -68,6 +79,7 @@ function createBrowserApi(): Window['patterm'] {
   const notificationListeners = new Set<(change: unknown) => void>();
   const assistantListeners = new Set<(event: unknown) => void>();
   let presence: unknown = null;
+  let opened = false;
 
   function setState(next: ConnectionState): void {
     state = next;
@@ -90,7 +102,9 @@ function createBrowserApi(): Window['patterm'] {
         void socketRequest('patterm:conversation:subscribe', { process_id: processId, subscribed: true }).catch(() => {});
       }
       if (presence) void socketRequest('patterm:presence:update', presence).catch(() => {});
-      for (const handler of notificationListeners) handler({ type: 'reconnected' });
+      // The first connection is not a reconnect: nothing was missed.
+      if (opened) for (const handler of notificationListeners) handler({ type: 'reconnected' });
+      opened = true;
     };
     current.onmessage = (event) => {
       if (socket !== current) return;

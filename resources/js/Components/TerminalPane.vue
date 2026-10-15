@@ -6,9 +6,9 @@
         <X class="h-3.5 w-3.5" aria-hidden="true" />
       </button>
     </div>
-    <div v-if="browserRuntime && (connection !== 'connected' || (hasActiveTerminal && !controlling) || connectionError)" class="absolute left-3 right-3 top-3 z-10 flex items-center gap-3 rounded-md border bg-background/95 px-3 py-2 text-xs" role="status">
+    <div v-if="browserRuntime && (connection !== 'connected' || (hasActiveTerminal && !controlling && !controlPending) || connectionError)" class="absolute left-3 right-3 top-3 z-10 flex items-center gap-3 rounded-md border bg-background/95 px-3 py-2 text-xs" role="status">
       <span v-if="connection !== 'connected'">Disconnected. Agents continue running. Reconnecting…</span>
-      <template v-else-if="hasActiveTerminal && !controlling">
+      <template v-else-if="hasActiveTerminal && !controlling && !controlPending">
         <span>Viewing shared terminal</span>
         <button class="rounded border px-2 py-1 hover:bg-muted" @click="takeControl">Take control</button>
       </template>
@@ -72,7 +72,8 @@ import {
 import { isPasteShortcut, TerminalInputRouter, type TerminalInputDispatch } from '../terminal/TerminalInputRouter';
 import { interceptMcpCallbackPaste } from '../lib/mcpCallbackPaste';
 import { touchScreen } from '../lib/touch';
-import { parseDamageFrame, TerminalRenderer, type ParsedDamageFrame, type TerminalGridSize } from '../terminal/TerminalRenderer';
+import { TerminalRenderer, type TerminalGridSize } from '../terminal/TerminalRenderer';
+import { coalesceTerminalFrames } from '../terminal/TerminalFrameCoalescing';
 
 const props = defineProps<{ title: string; processId?: string | null; captureEnabled?: boolean }>();
 const emit = defineEmits<{ captureSelection: [text: string] }>();
@@ -138,8 +139,9 @@ let subscribeSnapshotPending = false;
 // the reply says whether it did, a control change does not resend the size.
 let sizedSubscription: { processId: string; key: string } | null = null;
 // After a switch, input typed before the server says whether this browser
-// controls the terminal waits here instead of being dropped.
-let controlPending = false;
+// controls the terminal waits here instead of being dropped. The shared-view
+// notice also waits, so a terminal this browser controls doesn't flash it.
+const controlPending = ref(false);
 const pendingInput: TerminalInputDispatch[] = [];
 const MAX_PENDING_INPUT = 256;
 let lastTerminalFrameMode: TerminalFrameMode | null = null;
@@ -351,7 +353,7 @@ function applyTarget(next: string): void {
   processId = next;
   controlling.value = !browserRuntime;
   pendingInput.length = 0;
-  controlPending = browserRuntime && connection.value === 'connected';
+  controlPending.value = browserRuntime && connection.value === 'connected';
   hasActiveTerminal.value = true;
   awaitingSnapshot.value = true;
   lastSentFrameIntervalMs = null;
@@ -466,7 +468,7 @@ onBeforeUnmount(() => {
 });
 
 function handleKeydown(event: KeyboardEvent): void {
-  if (!canControl() && !controlPending) { event.preventDefault(); return; }
+  if (!canControl() && !controlPending.value) { event.preventDefault(); return; }
   // Native browser paste delivers text and files through the paste event.
   if (uploadsFiles() && isPasteShortcut(event)) return;
   if (!processId) {
@@ -947,7 +949,7 @@ function flushTerminalFrames(): void {
     return;
   }
 
-  const { frames, byteLength } = coalesceTerminalFrames(queuedFrames.splice(0, queuedFrames.length));
+  const { frames, byteLength } = coalesceTerminalFrames(queuedFrames.splice(0, queuedFrames.length), processId, frameDecoder);
   if (frames.length > MAX_QUEUED_TERMINAL_FRAMES || byteLength > MAX_QUEUED_TERMINAL_FRAME_BYTES) {
     debugLog('terminal-pane', 'frame.backpressure-refresh', {
       frameCount: frames.length,
@@ -1087,8 +1089,8 @@ function handleTerminalControl(state: { processId: string; controlling: boolean 
 // Ends the wait for control after a switch: input typed meanwhile goes to the
 // terminal if this browser controls it, and is dropped otherwise.
 function settleControl(): void {
-  if (!controlPending) return;
-  controlPending = false;
+  if (!controlPending.value) return;
+  controlPending.value = false;
   const queued = pendingInput.splice(0);
   if (canControl()) for (const input of queued) sendTerminalInput(input);
 }
@@ -1105,7 +1107,7 @@ function unsubscribeCurrentProcess(): void {
   terminalFramesSubscribed = false;
   subscribeSnapshotPending = false;
   sizedSubscription = null;
-  controlPending = false;
+  controlPending.value = false;
   pendingInput.length = 0;
   lastTerminalFrameMode = null;
   void window.patterm.terminalSubscribe({ process_id: targetProcessId, subscribed: false });
@@ -1146,25 +1148,6 @@ function currentTerminalFrameMode(): TerminalFrameMode {
     visibilityState: document.visibilityState,
     hasFocus: document.hasFocus()
   });
-}
-
-// Parse each queued frame once and drop everything before the newest
-// snapshot. The renderer applies the parsed frames directly.
-function coalesceTerminalFrames(payloads: Uint8Array[]): { frames: Array<ParsedDamageFrame | null>; byteLength: number } {
-  const frames = payloads.map((payload) => parseDamageFrame(payload, frameDecoder));
-  let latestSnapshotIndex = 0;
-  let latestSnapshotSeq = -1;
-
-  for (let index = 0; index < frames.length; index += 1) {
-    const frame = frames[index];
-    if (!frame || frame.frameKind !== 'snapshot') continue;
-    if (frame.resizeSeq >= latestSnapshotSeq) {
-      latestSnapshotSeq = frame.resizeSeq;
-      latestSnapshotIndex = index;
-    }
-  }
-
-  return { frames: frames.slice(latestSnapshotIndex), byteLength: frameBytes(payloads.slice(latestSnapshotIndex)) };
 }
 
 function debugLog(source: string, event: string, data?: unknown): void {
@@ -1238,7 +1221,7 @@ function handleCompositionEnd(event: CompositionEvent): void {
 
 function sendTerminalInput(input: TerminalInputDispatch): void {
   if (!canControl()) {
-    if (controlPending && input.text && pendingInput.length < MAX_PENDING_INPUT) pendingInput.push(input);
+    if (controlPending.value && input.text && pendingInput.length < MAX_PENDING_INPUT) pendingInput.push(input);
     return;
   }
   if (!processId || !input.text) return;
