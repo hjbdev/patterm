@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { McpHttpProxyService } from './Services/McpHttpProxyService';
 import { AssistantService, type AssistantEvent } from './Services/AssistantService';
 import { AssistantMemoryService } from './Services/AssistantMemoryService';
 import { registerAssistantTools } from './MCP/registerAssistantTools';
@@ -462,11 +463,17 @@ async function createApplicationResources(
     onChanged: () => notifyChanged(['mcp-servers'])
   });
   const launchingIdentities = new LaunchingMcpIdentities();
+  const mcpServerHandlers = mcpServers.socketHandlers(new McpHelperAccess(database, (token) => openCodeServer.isBridgeToken(token), launchingIdentities));
+  const mcpHttpProxy = new McpHttpProxyService(path.join(options.appDataPath, 'mcp-proxy.json'), mcpServerHandlers);
+  defer(() => mcpHttpProxy.stop());
+  await mcpHttpProxy.start();
+  mcpServerHandlers.proxyHeaders = (server, caller) => mcpHttpProxy.headers(server, caller);
   // Removing a project keeps launches out of it while it stops what runs there.
   const launchFence = new ProjectLaunchFence();
   const harnessLauncher = new HarnessLauncher({
     fence: launchFence,
     mcpServers: mcpServerRegistry,
+    mcpHttpProxyUrl: mcpHttpProxy.url,
     launchingIdentities,
     assistantMemory,
     openCodeServer,
@@ -708,7 +715,7 @@ async function createApplicationResources(
       if (typeof input.url === 'string') nativeOAuthCallbacks.observe(input.url);
       return opened;
     },
-    mcpServers.socketHandlers(new McpHelperAccess(database, (token) => openCodeServer.isBridgeToken(token), launchingIdentities)));
+    mcpServerHandlers);
   defer(() => mcpSocket.stop());
   // Release activity observation before the database closes; persistent
   // hosts keep running and are observed again after reconnect.

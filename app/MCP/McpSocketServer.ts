@@ -33,9 +33,10 @@ export interface McpServerSocketHandlers {
   headers(serverId: string, rejected: string | null, caller: McpHelperCaller): Promise<Record<string, string>>;
   endpoint(serverId: string, rejected: string | null, caller: McpHelperCaller): Promise<{ url: string; headers: Record<string, string> }>;
   exec(serverId: string, caller: McpHelperCaller): { command: string; args: string[]; env: Record<string, string> };
+  proxyHeaders?(serverId: string, caller: McpHelperCaller): Promise<Record<string, string>>;
 }
 
-const MCP_SERVER_OPS = new Set(['mcp-headers', 'mcp-endpoint', 'mcp-exec']);
+const MCP_SERVER_OPS = new Set(['mcp-headers', 'mcp-proxy-headers', 'mcp-endpoint', 'mcp-exec']);
 
 // A line-delimited JSON RPC over a local socket. The Electron app hosts the MCP
 // registry; a thin stdio shim (launched by a harness) connects here and forwards
@@ -125,7 +126,9 @@ export class McpSocketServer {
         if (typeof request.server !== 'string' || !request.server) throw new Error('request is missing a server ID');
         const rejected = typeof request.rejected === 'string' ? request.rejected : null;
         const caller = { identity: typeof request.identity === 'string' && request.identity ? request.identity : null, opencodeBridge: request.opencodeBridge };
-        const result = request.op === 'mcp-headers' ? { headers: await this.mcpServers.headers(request.server, rejected, caller) }
+        if (request.op === 'mcp-proxy-headers' && !this.mcpServers.proxyHeaders) throw new Error('MCP proxy is unavailable');
+        const result = request.op === 'mcp-proxy-headers' ? { headers: await this.mcpServers.proxyHeaders?.(request.server, caller) ?? {} }
+          : request.op === 'mcp-headers' ? { headers: await this.mcpServers.headers(request.server, rejected, caller) }
           : request.op === 'mcp-endpoint' ? await this.mcpServers.endpoint(request.server, rejected, caller)
             : this.mcpServers.exec(request.server, caller);
         this.write(socket, { id, result });

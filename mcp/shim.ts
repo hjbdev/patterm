@@ -37,6 +37,7 @@ type ShimRequest =
   | { op: 'catalog' }
   | { op: 'open-url'; url: string }
   | { op: 'mcp-headers'; server: string; rejected?: string | null }
+  | { op: 'mcp-proxy-headers'; server: string }
   | { op: 'mcp-endpoint'; server: string; rejected?: string | null }
   | { op: 'mcp-exec'; server: string }
   | { tool: string; args: unknown };
@@ -225,6 +226,11 @@ async function printHeaders(serverId: string): Promise<void> {
   process.stdout.write(JSON.stringify(headers));
 }
 
+async function printProxyHeaders(serverId: string): Promise<void> {
+  const { headers } = await registryRequest({ op: 'mcp-proxy-headers', server: serverId }) as { headers: Record<string, string> };
+  process.stdout.write(JSON.stringify(headers));
+}
+
 // Relays JSON-RPC between stdio and a remote server's Streamable HTTP endpoint
 // for harnesses that only take fixed headers (OpenCode). Headers come
 // from Patterm per request, so a refreshed token is used without a restart.
@@ -320,6 +326,7 @@ const MODES: Record<string, (args: string[]) => Promise<void>> = {
   '--open': openUrl,
   '--mcp-headers': ([serverId]) => printHeaders(required(serverId)),
   '--mcp-bridge': ([serverId]) => bridge(required(serverId)),
+  '--mcp-proxy-headers': ([serverId]) => printProxyHeaders(required(serverId)),
   '--mcp-exec': ([serverId]) => exec(required(serverId))
 };
 

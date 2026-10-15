@@ -5,8 +5,10 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
 import { buildSync } from 'esbuild';
-import { Client } from '@modelcontextprotocol/client';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { McpServerActions } from '../app/Actions/McpServerActions';
 import { harnessProviders } from '../app/Harness/providers';
@@ -18,6 +20,7 @@ import { DatabaseService } from '../app/Services/DatabaseService';
 import { McpOAuthService } from '../app/Services/McpOAuthService';
 import { McpServerImportService } from '../app/Services/McpServerImportService';
 import { McpServerRegistry } from '../app/Services/McpServerRegistry';
+import { McpHttpProxyService } from '../app/Services/McpHttpProxyService';
 import { NativeOAuthCallbackService } from '../app/Services/NativeOAuthCallbackService';
 
 // A minimal authorization server and MCP server: discovery, dynamic client
@@ -85,6 +88,7 @@ async function startFakeService() {
         return json(200, { jsonrpc: '2.0', id: message.id, result: { protocolVersion: message.params?.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'fake', version: '1' } } });
       }
       if (message.method === 'tools/list') return json(200, { jsonrpc: '2.0', id: message.id, result: { tools: [{ name: 'echo', inputSchema: { type: 'object' } }] } });
+      if (message.method === 'tools/call') return json(200, { jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text: JSON.stringify(message.params) }] } });
       return json(200, { jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Method not found' } });
     }
     json(404, { error: 'not found' });
@@ -98,6 +102,47 @@ async function authorize(authorizationUrl: string): Promise<string> {
   const response = await fetch(authorizationUrl, { redirect: 'manual' });
   assert.equal(response.status, 302);
   return response.headers.get('location')!;
+}
+
+// Optional native compatibility check, without an LLM call or real credentials.
+// PATTERM_TEST_CODEX=/path/to/codex node dist/tests/tests/mcpServersSmoke.js
+async function nativeCodexTools(executable: string, home: string, overrides: string[], env: NodeJS.ProcessEnv): Promise<Record<string, unknown>[]> {
+  const child = spawn(executable, [...overrides.flatMap((entry) => ['-c', entry]), 'app-server', '--listen', 'stdio://'], {
+    cwd: home, env: { ...process.env, ...env, CODEX_HOME: home }, stdio: ['pipe', 'pipe', 'pipe']
+  });
+  let sequence = 0;
+  const pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
+  const lines = createInterface({ input: child.stdout });
+  lines.on('line', (line) => {
+    const message = JSON.parse(line) as { id?: number; result?: unknown; error?: unknown };
+    const request = message.id === undefined ? undefined : pending.get(message.id);
+    if (request) {
+      pending.delete(message.id!);
+      if (message.error) request.reject(new Error(JSON.stringify(message.error)));
+      else request.resolve(message.result);
+    }
+  });
+  child.stderr.resume();
+  const rejectPending = (error: Error) => { for (const request of pending.values()) request.reject(error); };
+  child.on('error', rejectPending);
+  child.on('exit', () => rejectPending(new Error('Native Codex exited')));
+  const deadline = setTimeout(() => { rejectPending(new Error('Native Codex MCP probe timed out')); child.kill('SIGKILL'); }, 20_000);
+  const rpc = (method: string, params: unknown) => new Promise<unknown>((resolve, reject) => {
+    const id = ++sequence;
+    pending.set(id, { resolve, reject });
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
+  });
+  try {
+    await rpc('initialize', { clientInfo: { name: 'patterm-mcp-test', version: '1' }, capabilities: { experimentalApi: true } });
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'initialized' })}\n`);
+    const response = await rpc('mcpServerStatus/list', {}) as { data: Record<string, unknown>[] };
+    return response.data;
+  } finally {
+    clearTimeout(deadline);
+    lines.close();
+    child.stdin.end();
+    child.kill();
+  }
 }
 
 async function main(): Promise<void> {
@@ -121,36 +166,27 @@ async function main(): Promise<void> {
     assert.equal(registry.forHarness('codex').find((server) => server.name === 'open')?.transport === 'http' && (registry.forHarness('codex').find((server) => server.name === 'open') as { managedHeaders: boolean }).managedHeaders, false);
 
     // Delivery: secrets never appear in configs or arguments for remote servers.
-    const patterm = { command: '/usr/bin/node', args: ['/opt/patterm/shim.js'], env: { ELECTRON_RUN_AS_NODE: '1', PATTERM_MCP_SOCKET: '/tmp/p.sock', PATTERM_MCP_IDENTITY: 'mcp_1' } };
+    const patterm = { httpProxyUrl: 'http://127.0.0.1:12345', command: '/usr/bin/node', args: ['/opt/patterm/shim.js'], env: { ELECTRON_RUN_AS_NODE: '1', PATTERM_MCP_SOCKET: '/tmp/p.sock', PATTERM_MCP_IDENTITY: 'mcp_1' } };
     const servers = registry.forHarness('codex');
     const claude = claudeMcpServers(servers, patterm) as Record<string, Record<string, unknown>>;
-    assert.equal(claude['linear-acme']!.type, 'http');
-    if (process.platform === 'win32') {
-      // cmd.exe runs Windows helpers; every token is caret-escaped.
-      assert.match(String(claude['linear-acme']!.headersHelper), /^set \^"ELECTRON_RUN_AS_NODE=1\^" && set \^"PATTERM_MCP_SOCKET=\/tmp\/p.sock\^" && set \^"PATTERM_MCP_IDENTITY=mcp_1\^" && \^"\/usr\/bin\/node\^" \^"\/opt\/patterm\/shim.js\^" \^"--mcp-headers\^" \^"mcpsrv_/,
-        'helpers carry the agent identity, so Patterm answers only for its harness');
-    } else {
-      assert.match(String(claude['linear-acme']!.headersHelper), /^ELECTRON_RUN_AS_NODE=1 PATTERM_MCP_SOCKET=\/tmp\/p.sock PATTERM_MCP_IDENTITY=mcp_1 \/usr\/bin\/node \/opt\/patterm\/shim.js --mcp-headers mcpsrv_/,
-        'helpers carry the agent identity, so Patterm answers only for its harness');
-    }
-    assert.equal(claude.open!.headersHelper, undefined);
+    assert.deepEqual(claude['linear-acme'], {
+      command: patterm.command, args: [...patterm.args, '--mcp-bridge', remote.id], env: patterm.env
+    });
+    assert.deepEqual((claude.open!.args as string[]).slice(-2), ['--mcp-bridge', open.id]);
     assert.deepEqual(claude.railway, { command: 'railway', args: ['mcp'], env: { RAILWAY_TOKEN: 'secret' } });
     const codex = codexMcpOverrides(servers, patterm);
-    assert.ok(codex.includes(`mcp_servers.linear-acme.url="${service.base}/mcp"`));
+    assert.ok(codex.includes(`mcp_servers.linear-acme.url="${patterm.httpProxyUrl}/${remote.id}"`));
     assert.ok(codex.some((value) => value.startsWith('mcp_servers.linear-acme.http_headers_helper=')));
     assert.ok(codex.includes(`mcp_servers.railway.args=["/opt/patterm/shim.js", "--mcp-exec", "${local.id}"]`), 'Codex runs environments through the exec bridge');
     assert.ok(!codex.join(' ').includes('secret'), 'secrets stay out of Codex arguments');
-    // A stale native Codex login for the same name hides Patterm's server.
+    assert.ok(codex.includes('mcp_servers.linear-acme.bearer_token_env_var="PATTERM_MCP_PROXY"'));
+    assert.ok(codex.join(' ').includes('--mcp-proxy-headers'));
     const linear = servers.find((server) => server.name === 'linear-acme')!;
-    const stale = codexMcpStartupNotice(linear, 'failed to refresh OAuth tokens for server linear-acme: invalid_grant');
-    assert.equal(stale.title, 'linear-acme did not start in Codex');
-    assert.match(stale.body, /own saved login for linear-acme/);
-    assert.ok(stale.body.includes(process.platform === 'win32'
-      ? `codex -c "mcp_servers.linear-acme.url='${service.base}/mcp'" mcp logout linear-acme`
-      : `codex -c 'mcp_servers.linear-acme.url="${service.base}/mcp"' mcp logout linear-acme`));
-    const signedOut = codexMcpStartupNotice(linear, 'The linear-acme MCP server is not logged in. Run `codex mcp login linear-acme`.');
-    assert.match(signedOut.body, /Sign in to linear-acme in Patterm's MCP server settings/, 'a server with neither login points at Patterm sign-in');
-    assert.doesNotMatch(signedOut.body, /saved login/);
+    for (const error of ['failed to refresh OAuth tokens: invalid_grant', 'requires OAuth reauthentication. Run codex mcp login linear-acme.', 'not logged in']) {
+      const notice = codexMcpStartupNotice(linear, error);
+      assert.match(notice.body, /Patterm.*MCP server settings/);
+      assert.doesNotMatch(notice.body, /codex mcp (login|logout)/);
+    }
     const missing = codexMcpStartupNotice(servers.find((server) => server.name === 'railway')!, 'No such file or directory (os error 2)');
     assert.doesNotMatch(missing.body, /saved login/, 'other failures carry no login advice');
     const openCode = openCodeMcpConfigs(registry.forHarness('opencode'), patterm);
@@ -300,10 +336,16 @@ async function main(): Promise<void> {
       `insert into sessions (id, project_id, mcp_identity, harness, session_role, resume_status, started_at, exited_at) values (?, 'project_1', ?, ?, 'orchestrator', 'unknown', ?, ?)`
     ).run(`session_${identity}`, identity, harness, startedAt, exitedAt);
     agent('mcp_claude', 'claude');
+    agent('mcp_codex', 'codex');
     agent('mcp_opencode', 'opencode');
     agent('mcp_gone', 'claude', stamp, stamp);
     const access = new McpHelperAccess(database, (token) => token === 'bridge-token');
     const handlers = actions.socketHandlers(access);
+    const proxyState = path.join(dir, 'mcp-proxy.json');
+    let proxy = new McpHttpProxyService(proxyState, handlers);
+    await proxy.start();
+    cleanups.push(() => proxy.stop());
+    handlers.proxyHeaders = (server, caller) => proxy.headers(server, caller);
     const as = (identity: string | null, opencodeBridge?: unknown) => ({ identity, opencodeBridge });
     assert.deepEqual(handlers.exec(local.id, as('mcp_claude')), { command: 'railway', args: ['mcp'], env: { RAILWAY_TOKEN: 'secret' } });
     assert.throws(() => handlers.exec(local.id, as('mcp_opencode')), /not enabled for this agent/, 'servers not assigned to the harness are refused');
@@ -337,6 +379,62 @@ async function main(): Promise<void> {
       (error, stdout) => error ? reject(error) : resolve(stdout)));
     const helper = JSON.parse(output) as Record<string, string>;
     assert.equal(helper.Authorization, `Bearer ${service.state.access}`);
+    const proxyOutput = await new Promise<string>((resolve, reject) => execFile(process.execPath, [shim, '--mcp-proxy-headers', remote.id], { env, encoding: 'utf8', timeout: 10_000 },
+      (error, stdout) => error ? reject(error) : resolve(stdout)));
+    const proxyHeaders = JSON.parse(proxyOutput) as Record<string, string>;
+    assert.ok(proxyHeaders['X-Patterm-Mcp-Authorization']);
+    assert.ok(!proxyOutput.includes(service.state.access), 'the helper supplies only proxy credentials');
+    const proxyUrl = `${proxy.url}/${remote.id}`;
+    assert.equal((await fetch(proxyUrl, { method: 'POST', headers: { Connection: 'close' } })).status, 401);
+    assert.equal((await fetch(proxyUrl, { headers: { ...proxyHeaders, Connection: 'close', Origin: 'https://example.com' } })).status, 403);
+    const rebound = await new Promise<number>((resolve, reject) => {
+      const request = http.get(proxyUrl, { headers: { ...proxyHeaders, Host: 'attacker.example' } }, (response) => {
+        response.resume();
+        resolve(response.statusCode!);
+      });
+      request.on('error', reject);
+    });
+    assert.equal(rebound, 403);
+    assert.equal((await fetch(`${proxy.url}/${open.id}`, { headers: { ...proxyHeaders, Connection: 'close' } })).status, 403, 'credentials are scoped to one server');
+    // Persisted agents keep their endpoint and proxy credentials across restart.
+    await proxy.stop();
+    proxy = new McpHttpProxyService(proxyState, handlers);
+    await proxy.start();
+    assert.equal(`${proxy.url}/${remote.id}`, proxyUrl);
+    const proxied = new Client({ name: 'proxy-test', version: '1' });
+    await proxied.connect(new StreamableHTTPClientTransport(new URL(proxyUrl), { requestInit: { headers: {
+      ...proxyHeaders, Authorization: 'Bearer unrelated-native-login'
+    } } }));
+    service.state.access = 'at-revoked-by-proxy';
+    service.state.refresh = (JSON.parse(String((database.connection.prepare('select tokens from mcp_server_credentials where server_id = ?').get(remote.id) as { tokens: string }).tokens)) as { refresh_token: string }).refresh_token;
+    assert.deepEqual((await proxied.listTools()).tools.map((entry) => entry.name), ['echo'], 'Patterm refreshes upstream credentials through the proxy');
+    assert.deepEqual((await proxied.callTool({ name: 'echo', arguments: { text: 'through Patterm' } })).content,
+      [{ type: 'text', text: JSON.stringify({ name: 'echo', arguments: { text: 'through Patterm' } }) }]);
+    if (process.env.PATTERM_TEST_CODEX) {
+      const nativeHome = path.join(dir, 'native-codex');
+      fs.mkdirSync(nativeHome);
+      const nativeConfig = `mcp_oauth_credentials_store="file"\n[mcp_servers.linear-acme]\nurl="${service.base}/mcp"\n`;
+      fs.writeFileSync(path.join(nativeHome, 'config.toml'), nativeConfig);
+      const key = `linear-acme|${createHash('sha256').update(JSON.stringify({ headers: {}, type: 'http', url: `${service.base}/mcp` })).digest('hex').slice(0, 16)}`;
+      const credentials = JSON.stringify({ [key]: { server_name: 'linear-acme', server_url: `${service.base}/mcp`, issuer: service.base, client_id: 'native-client', access_token: 'invalid-native-token', refresh_token: 'invalid-native-refresh', expires_at: 1, scopes: [] } });
+      fs.writeFileSync(path.join(nativeHome, '.credentials.json'), credentials, { mode: 0o600 });
+      const nativePlan = { command: process.execPath, args: [shim], env: { PATTERM_MCP_SOCKET: socketPath, PATTERM_MCP_IDENTITY: 'mcp_codex' }, httpProxyUrl: proxy.url };
+      const before = await nativeCodexTools(process.env.PATTERM_TEST_CODEX, nativeHome, [
+        `mcp_servers.linear-acme.http_headers_helper=${JSON.stringify(headersHelperCommand(nativePlan, remote.id))}`
+      ], {});
+      assert.ok(!(before[0]?.tools as Record<string, unknown>)?.echo, 'the old helper delivery fails with a stale native OAuth login');
+      assert.match(JSON.stringify(before), /auth|refresh|invalid_grant/i);
+      fs.writeFileSync(path.join(nativeHome, '.credentials.json'), credentials, { mode: 0o600 });
+      fs.writeFileSync(path.join(nativeHome, 'config.toml'), `${nativeConfig}bearer_token_env_var="MISSING_NATIVE_TOKEN"\n`);
+      const remoteLaunch = registry.forHarness('codex').filter((entry) => entry.id === remote.id);
+      const status = await nativeCodexTools(process.env.PATTERM_TEST_CODEX, nativeHome, codexMcpOverrides(remoteLaunch, nativePlan), { PATTERM_MCP_PROXY: 'patterm-managed' });
+      assert.ok((status[0]?.tools as Record<string, unknown>)?.echo, 'native Codex discovers tools despite conflicting native bearer and saved OAuth settings');
+      assert.equal(fs.readFileSync(path.join(nativeHome, '.credentials.json'), 'utf8'), credentials, 'native credentials remain untouched');
+    }
+    registry.save({ id: remote.id, name: remote.name, transport: 'http', url: `${service.base}/mcp`, enabled: false });
+    assert.equal((await fetch(proxyUrl, { headers: proxyHeaders })).status, 502, 'each request rechecks server permissions');
+    registry.save({ id: remote.id, name: remote.name, transport: 'http', url: `${service.base}/mcp`, enabled: true });
+    await proxied.close();
     if (process.platform === 'win32') {
       // Run the delivered helper the way each CLI does on Windows, without the
       // shim's environment: Claude Code `cmd.exe /d /s /c "<helper>"`, Codex
@@ -360,6 +458,8 @@ async function main(): Promise<void> {
     service.state.refresh = (JSON.parse(String((database.connection.prepare('select tokens from mcp_server_credentials where server_id = ?').get(remote.id) as { tokens: string }).tokens)) as { refresh_token: string }).refresh_token;
     const listedByBridge = await bridged.listTools();
     assert.deepEqual(listedByBridge.tools.map((entry) => entry.name), ['echo']);
+    assert.deepEqual((await bridged.callTool({ name: 'echo', arguments: { text: 'through the bridge' } })).content,
+      [{ type: 'text', text: JSON.stringify({ name: 'echo', arguments: { text: 'through the bridge' } }) }]);
     await bridged.close();
 
     console.log('mcp servers smoke passed');
