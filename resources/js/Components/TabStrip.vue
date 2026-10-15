@@ -7,7 +7,7 @@
         :ref="(element) => setTabElement(tab.key, element)"
         :class="cn('strip-tab group/tab relative shrink-0 rounded-tab', tab.pinned ? 'w-8' : 'w-56')"
         :data-dragging="draggingKey === tab.key ? 'true' : undefined"
-        @pointerdown="onTabPointerDown($event, tab.key)"
+        @pointerdown="onTabPointerDown($event, tab.key); if (tab.kind === 'agent') prefetchTab(tab.family.root.session)"
         @click.capture="consumeTabClick($event, tab.key)"
         @mouseenter="hoverTab(tab)"
         @mouseleave="hover.scheduleClose"
@@ -182,6 +182,7 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } 
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { Input } from './ui/input';
 import { Popover, PopoverAnchor, PopoverContent } from './ui/popover';
+import { prefetchTab } from '../lib/prefetch';
 
 const props = withDefaults(
   defineProps<{
@@ -370,7 +371,9 @@ function selectProcess(process: ProcessRecord): void {
 }
 
 function hoverTab(tab: StripTab): void {
-  if (tab.kind === 'agent') hover.open(tab.family.rootId);
+  if (tab.kind !== 'agent') return;
+  hover.open(tab.family.rootId);
+  prefetchTab(tab.family.root.session);
 }
 
 function updateSelectedForSession(session: SessionRecord, emitSelect: boolean): void {

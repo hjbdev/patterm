@@ -256,6 +256,11 @@ export interface CachedIntegratedConversation extends ConversationProjection {
 const CONVERSATION_CACHE_LIMIT = 8;
 const conversationCache = new Map<string, CachedIntegratedConversation>();
 
+// Whether a process has a remembered conversation, without marking it used.
+export function hasCachedConversation(processId: string): boolean {
+  return conversationCache.has(processId);
+}
+
 export function cachedConversation(processId: string): CachedIntegratedConversation | undefined {
   const entry = conversationCache.get(processId);
   if (!entry) return undefined;
@@ -264,7 +269,10 @@ export function cachedConversation(processId: string): CachedIntegratedConversat
   return entry;
 }
 
-export function rememberConversation(processId: string, entry: CachedIntegratedConversation): void {
+// `evict: false` remembers only into a free slot, so a conversation read
+// ahead never pushes out one the user opened.
+export function rememberConversation(processId: string, entry: CachedIntegratedConversation, options: { evict?: boolean } = {}): void {
+  if (options.evict === false && !conversationCache.has(processId) && conversationCache.size >= CONVERSATION_CACHE_LIMIT) return;
   conversationCache.delete(processId);
   conversationCache.set(processId, entry);
   while (conversationCache.size > CONVERSATION_CACHE_LIMIT) conversationCache.delete(conversationCache.keys().next().value!);

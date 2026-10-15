@@ -81,6 +81,12 @@
                       <SettingsChoice id="diff-viewer-layout" :model-value="draft.diffViewer" :options="DIFF_VIEWER_OPTIONS" aria-label="Diff review layout" segmented @update:model-value="(value) => { draft.diffViewer = value; void saveAppearance('appearance.diff.layout'); }" />
                     </SettingsRow>
                   </SettingsSection>
+
+                  <SettingsSection title="This device" description="Saved in this browser only." scope="appearance.device">
+                    <SettingsRow label="Prefetch conversations" :description="PREFETCH_OPTIONS.find((option) => option.value === prefetch)?.description ?? ''" html-for="prefetch-conversations">
+                      <SettingsChoice id="prefetch-conversations" :model-value="prefetch" :options="PREFETCH_OPTIONS" aria-label="Prefetch conversations" segmented @update:model-value="(value) => { prefetch = value; setPrefetchPreference(value); }" />
+                    </SettingsRow>
+                  </SettingsSection>
                 </SettingsPanel>
               </TabsContent>
 
@@ -221,6 +227,7 @@ import HostSettings from '../Components/HostSettings.vue';
 import ServerAccessSettings from '../Components/ServerAccessSettings.vue';
 import NotificationSettings from '../Components/NotificationSettings.vue';
 import SettingsChoice from '../Components/settings/SettingsChoice.vue';
+import { prefetchPreference, setPrefetchPreference, type PrefetchPreference } from '../lib/prefetch';
 import SettingsItem from '../Components/settings/SettingsItem.vue';
 import SettingsPanel from '../Components/settings/SettingsPanel.vue';
 import SettingsRow from '../Components/settings/SettingsRow.vue';
@@ -229,6 +236,15 @@ import { autosave, resetSettingsSaveStatus } from '../Composables/useSettingsAut
 import { useWorkbenchNavigation } from '../Composables/useWorkbenchNavigation';
 
 const { router, activeProjectId } = useWorkbenchNavigation();
+
+// Read ahead on this device. Context always prefetches; conversations follow
+// this, and on Automatic, the connection.
+const PREFETCH_OPTIONS: Array<{ value: PrefetchPreference; label: string; description: string }> = [
+  { value: 'auto', label: 'Automatic', description: 'Fast connections read running agents’ conversations ahead. Mobile data reads the open project’s, a little at a time. Slow connections and data saver read none.' },
+  { value: 'always', label: 'Always', description: 'Read running agents’ conversations ahead on any connection.' },
+  { value: 'never', label: 'Never', description: 'Conversations load when you open them.' }
+];
+const prefetch = ref<PrefetchPreference>(prefetchPreference());
 
 const NAV = [
   { value: 'appearance', label: 'Appearance', icon: Palette },

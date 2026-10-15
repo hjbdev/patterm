@@ -4,7 +4,7 @@
     <div v-if="showRecentProjects && recentProjects.length" class="hidden shrink-0 items-center [@container(min-width:46rem)]:flex">
       <Tooltip v-for="projectGroup in [...recentProjects].reverse()" :key="projectGroup.project.id">
         <TooltipTrigger as-child>
-          <Button variant="ghost" size="icon" class="group h-[26px] w-[26px] rounded-tab" :aria-label="`Switch to ${projectGroup.project.name}`" @click="emit('selectProject', projectGroup.project.id)">
+          <Button variant="ghost" size="icon" class="group h-[26px] w-[26px] rounded-tab" :aria-label="`Switch to ${projectGroup.project.name}`" @click="emit('selectProject', projectGroup.project.id)" @pointerenter="prefetchProject(projectGroup.project.id, Tier.Intent)">
             <ProjectStatusLogo :project="projectGroup.project" :states="agentStates(projectGroup.project.id)" dim />
           </Button>
         </TooltipTrigger>
@@ -33,6 +33,8 @@
           :key="projectGroup.project.id"
           class="py-1 text-[13px] data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
           @select="emit('selectProject', projectGroup.project.id)"
+          @pointerenter="prefetchProject(projectGroup.project.id, Tier.Intent)"
+          @focus="prefetchProject(projectGroup.project.id, Tier.Intent)"
         >
           <ProjectStatusLogo :project="projectGroup.project" :states="agentStates(projectGroup.project.id)" class="mr-2" />
           <span class="min-w-0 flex-1 truncate">{{ projectGroup.project.name }}</span>
@@ -133,6 +135,7 @@ import NotificationTray from './NotificationTray.vue';
 import { projectUnread } from '../Composables/useNotifications';
 import { DropdownMenuItem, DropdownMenuSeparator } from './ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
+import { prefetchProject, Tier } from '../lib/prefetch';
 
 const props = defineProps<{
   projects: ProjectWorkbench[];
@@ -163,6 +166,11 @@ function agentStates(projectId: string): AgentState[] {
 const recentProjects = computed(() => shownRecentProjects(recentProjectIds.value, props.projects, props.activeProjectId));
 
 const projectMenuOpen = ref(false);
+// Opening the switcher reads every project's running agents ahead; hovering
+// one reads it first.
+watch(projectMenuOpen, (open) => {
+  if (open) for (const projectGroup of props.projects) prefetchProject(projectGroup.project.id, Tier.Other);
+});
 let projectMenuHovered = false;
 let projectMenuCloseTimer: ReturnType<typeof setTimeout> | undefined;
 

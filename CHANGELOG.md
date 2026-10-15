@@ -42,6 +42,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reopening a todo or scratchpad, the conversation history, images, routines,
   MCP servers, or the harness model list shows what was last read until the
   server announces a change, instead of reading it again.
+- Switching agents and projects reads ahead in the background. Once idle,
+  and when you point at a tab or open the project switcher, Patterm reads the
+  running agents' session context, and on a fast connection their
+  conversations, so they show at once. Mobile data reads less, slow
+  connections and data saver read context only, and a hidden tab reads
+  nothing. Settings › Appearance › Prefetch conversations sets this per
+  device.
 
 ### Fixed
 

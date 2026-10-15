@@ -189,6 +189,9 @@ const integratedFilesSearchInput = processIdInput.extend({
 });
 const integratedDeliveryInput = processIdInput.extend({ message_id: z.string().min(1).max(80) });
 const integratedHistoryInput = processIdInput.extend({ cursor: z.string().min(1).max(4096) });
+// `transcript_only` leaves out the command and model lists, which the pane
+// reads separately; background reads ahead want only the transcript.
+const integratedGetInput = processIdInput.extend({ transcript_only: z.boolean().optional() });
 const integratedConfigureInput = processIdInput.extend({ selector: z.string().min(1).max(50), value: z.string().min(1).max(500) });
 const integratedCommandInput = processIdInput.extend({ name: z.string().min(1).max(100), text: z.string().max(262_144).default('') });
 const integratedPermissionInput = processIdInput.extend({ request_id: z.string().min(1), reply: z.enum(['once', 'always', 'reject']), message: z.string().max(10_000).optional() });
@@ -491,8 +494,14 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
   );
 
   registry.register(
-    { name: 'integrated_get', namespace: 'integrated', description: 'Read the bounded native transcript and pending requests for an Integrated agent session.', hidden: true, changes: [], inputSchema: { type: 'object', required: ['process_id'] } },
-    (args, context) => requireIntegrated(services).conversation(processFor(context, processIdInput.parse(args).process_id))
+    { name: 'integrated_get', namespace: 'integrated', description: 'Read the bounded native transcript and pending requests for an Integrated agent session. Pass transcript_only to leave out its command and model lists.', hidden: true, changes: [], inputSchema: { type: 'object', required: ['process_id'] } },
+    async (args, context) => {
+      const input = integratedGetInput.parse(args);
+      const conversation = await requireIntegrated(services).conversation(processFor(context, input.process_id));
+      if (!input.transcript_only || !conversation || typeof conversation !== 'object') return conversation;
+      const { commands: _commands, models: _models, ...transcript } = conversation as Record<string, unknown>;
+      return transcript;
+    }
   );
   registry.register(
     { name: 'integrated_history', namespace: 'integrated', description: 'Load an older page of native Integrated conversation messages.', hidden: true, changes: [], inputSchema: { type: 'object', required: ['process_id', 'cursor'] } },

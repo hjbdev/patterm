@@ -147,11 +147,14 @@ import { isNavigationModeToggle, navigationModeAction } from '../lib/navigationM
 import { activeProcesses, topLevelProcessesForSessions } from '../lib/processTabs';
 import { buildStripTabs, readStoredTabLayout, writeStoredTabLayout, type TabLayout } from '../lib/tabStrip';
 import type { ProcessRecord, SessionRecord } from '../types';
+import { startPrefetch } from '../lib/prefetch';
 
 const { projects, sidecarStatus, sidecarAvailable, loaded, refresh } = useWorkbench();
 const { router, route, activeProjectId, activeProject, selectedAgent, selectedProcess, activeTerminalId, projectViewMode,
   activeWorkspacePage, selectProject, selectTerminal } = useWorkbenchNavigation();
 useHarnessLaunchCleanup();
+// Reads ahead what the user is likely to open next, as the connection allows.
+startPrefetch(() => activeProjectId.value);
 const selectedAgentByRoot = ref<SelectedAgentByRoot>({});
 const pendingLaunches = useProjectHarnessLaunches(() => activeProjectId.value);
 const navigationMode = ref(false);
