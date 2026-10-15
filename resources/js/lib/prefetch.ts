@@ -209,10 +209,11 @@ function runningSessions(project: ProjectWorkbench): SessionRecord[] {
   return project.projectSessions.filter((session) => !session.exitedAt && session.processId).slice(-SESSIONS_PER_PROJECT);
 }
 
-// Whether a session is still one the project would read ahead now.
+// Whether a session is still running. The cap above bounds project sweeps,
+// not a tab the pointer is on.
 function stillRunning(projectId: string, sessionId: string): boolean {
   const project = useWorkbench().projects.value.find((item) => item.project.id === projectId);
-  return Boolean(project && runningSessions(project).some((session) => session.id === sessionId));
+  return Boolean(project?.projectSessions.some((session) => session.id === sessionId && !session.exitedAt && session.processId));
 }
 
 // Reads one session's context panel, and its conversation if allowed. The
@@ -222,7 +223,10 @@ export function prefetchSession(projectId: string, session: SessionRecord, tier:
   const live = () => stillRunning(projectId, session.id);
   enqueue({ key: `context\0${projectId}\0${session.id}`, tier, notBefore, eligible: live, run: () => contextRead('session_context', projectId, { session_id: session.id, limit: 100 }).then(() => undefined) });
   const processId = session.processId;
-  if (session.interfaceMode !== 'integrated' || !processId) return;
+  // A paired host's agent, as in `workstation:process_7`, is never read ahead:
+  // an older host would treat transcript_only as an ordinary read, which can
+  // change the agent's activity or deliver its held prompts.
+  if (session.interfaceMode !== 'integrated' || !processId || processId.includes(':')) return;
   const allowed = () => transcriptAllowed(processId, projectId === prefetchState.activeProjectId, tier);
   if (allowed()) {
     enqueue({ key: `transcript\0${processId}`, tier: tier === Tier.Intent ? Tier.Intent : Tier.Transcript, notBefore, eligible: () => live() && allowed(), run: () => readTranscript(processId) });

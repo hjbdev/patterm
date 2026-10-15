@@ -183,3 +183,21 @@ test('reads started together count against the budget before they finish', async
   }
   assert.ok(calls.length >= 2 && calls.length <= 8, `about the budget's worth of reads, not all 30 (${calls.length})`);
 });
+
+test("a paired host's conversations are never read ahead, and a hovered tab past the sweep cap still is", async () => {
+  const { prefetch, calls, contextReads, projects } = load({ runtime: 'desktop' });
+  const remote = { id: 'workstation:session_r', processId: 'workstation:process_r', interfaceMode: 'integrated', exitedAt: null };
+  // 13 newer live sessions push the oldest past the 12-session sweep cap.
+  const sessions = Array.from({ length: 13 }, (_, index) => session(`t${index}`, 'tui'));
+  projects.value = [project('p', [remote, ...sessions])];
+  prefetch.prefetchTab(remote);
+  prefetch.prefetchTab(sessions[0]);
+  const read = [];
+  for (let round = 0; round < 4; round++) {
+    await settle();
+    for (const entry of contextReads.splice(0)) { read.push(entry.args.session_id); entry.resolve(); }
+  }
+  assert.equal(calls.length, 0, 'no integrated_get to a paired host');
+  assert.ok(read.includes('t0'), 'the hovered tab past the cap is read');
+  assert.ok(read.includes('workstation:session_r'), "the paired host's context still is");
+});
