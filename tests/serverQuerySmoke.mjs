@@ -143,4 +143,17 @@ test('large reads stay within their budget, dropping the least recently read fir
   assert.equal(calls.length, 1, 'a dropped page reads again');
   await answer({ messages: ['a'] });
   await reread;
+
+  // A cached page being read again keeps its old data while it loads; it is
+  // left alone, not evicted and cancelled.
+  const refetching = topicRead('history', ['history_get', { conversation_id: 'a' }], () => window.patterm.call('history_get', { refetch: 'a' }), () => true);
+  await settle();
+  const later = page('e');
+  await settle();
+  calls.splice(calls.findIndex((call) => call.args.conversation_id === 'e'), 1)[0].resolve({ messages: ['e'] });
+  await later;
+  trimQueries('history_get', { entries: 1, size: 1_000_000 });
+  assert.ok(cachedIds().includes('a'), 'a page being read again stays, though e was read since');
+  await answer({ messages: ['a again'] });
+  assert.deepEqual(await refetching, { messages: ['a again'] });
 });

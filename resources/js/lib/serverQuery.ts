@@ -119,10 +119,10 @@ function sizeOf(data: unknown): number {
 // Topic reads named `name` that can be large, such as conversation
 // transcripts, kept within a budget of entries and of characters of JSON.
 // The least recently read beyond it are dropped instead of waiting out the
-// cache's 15 minutes; the most recent always stays.
+// cache's 15 minutes; the most recent always stays, and so do reads under way.
 export function trimQueries(name: string, budget: { entries: number; size: number }): void {
   const queries = queryClient.getQueryCache().findAll({ queryKey: [name] })
-    .filter((query) => query.state.data !== undefined && query.getObserversCount() === 0)
+    .filter((query) => query.state.data !== undefined && query.state.fetchStatus === 'idle' && query.getObserversCount() === 0)
     .sort((a, b) => (lastRead.get(b.queryHash) ?? 0) - (lastRead.get(a.queryHash) ?? 0));
   let total = 0;
   queries.forEach((query, index) => {
