@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { inspect } from 'node:util';
 import { McpHttpProxyService } from './Services/McpHttpProxyService';
 import { AssistantService, type AssistantEvent } from './Services/AssistantService';
 import { AssistantMemoryService } from './Services/AssistantMemoryService';
@@ -217,12 +218,18 @@ export async function createApplication(options: AppOptions): Promise<PattermApp
 
 async function createApplicationResources(
   options: AppOptions,
-  defer: (close: () => void | Promise<void>) => void,
+  registerCleanup: (close: () => void | Promise<void>) => void,
   signal: AbortSignal,
   dispose: () => Promise<void>
 ): Promise<PattermApplication> {
   const startupStartedAt = Date.now();
   const debugLog = new DebugLogService(options.appDataPath);
+  const defer = (close: () => void | Promise<void>): void => registerCleanup(async () => {
+    try { await close(); } catch (error) {
+      debugLog.write('app', 'shutdown.cleanup-failed', { error: inspect(error, { depth: 8 }) });
+      throw error;
+    }
+  });
   defer(() => debugLog.dispose());
   debugLog.initialize();
   defer(startEventLoopMonitor(debugLog));

@@ -12,7 +12,14 @@ $startMenu = Join-Path $fixture 'Start menu with spaces'
 $global:pattermInstallerFixture = @{ Version = '1.2.3'; BadChecksum = $false; MissingAsset = $false; Directory = $fixture }
 function Get-CimInstance {
     param($ClassName, $Filter)
-    if ($global:pattermInstallerFixture.RunningApp) { return [pscustomobject]@{ ExecutablePath = $global:pattermInstallerFixture.RunningApp } }
+    $global:pattermInstallerFixture.ProcessChecks++
+    $running = $global:pattermInstallerFixture.RunningApp
+    if ($global:pattermInstallerFixture.RunningAfterCheck -and $global:pattermInstallerFixture.ProcessChecks -lt $global:pattermInstallerFixture.RunningAfterCheck) { return @() }
+    if ($running) {
+        $name = [IO.Path]::GetFileName($running)
+        if ($Filter -notlike "*'$name'*") { return @() }
+        return [pscustomobject]@{ ExecutablePath = $running; ProcessId = 12345 }
+    }
     return @()
 }
 function Invoke-RestMethod {
@@ -41,9 +48,10 @@ function Make-Package([switch]$Unsafe, [switch]$Legacy) {
         $files = @{
             'Patterm.cmd' = "@echo off`r`necho launched:%*`r`n"
             'BUILD' = "version=$($global:pattermInstallerFixture.Version)`ncommit=synthetic`n"
-            'electron/electron.exe' = 'synthetic test file'
             'resources/native/patterm-terminal-core.exe' = 'synthetic test file'
         }
+        $exe = if ($Legacy) { 'electron/electron.exe' } else { 'electron/Patterm.exe' }
+        $files[$exe] = 'synthetic test file'
         if ($Unsafe) { $files['../escaped.txt'] = 'must never be extracted' }
         foreach ($file in $files.Keys) {
             $entry = $archive.CreateEntry("patterm-$($global:pattermInstallerFixture.Version)-windows-x64/$file")
@@ -110,6 +118,7 @@ try {
     if ((Get-Content -LiteralPath $launcher -Raw) -notlike '*versions\1.2.4\Patterm.cmd*') { throw 'Upgrade did not select the new version.' }
     $previousLauncher = Get-Content -LiteralPath $launcher -Raw
     function Expect-UpdateFailure([string]$Message, [string]$Menu = $startMenu) {
+        $shortcutHash = (Get-FileHash -LiteralPath (Join-Path $startMenu 'Patterm.lnk')).Hash
         $failed = $false
         try { & $installer -InstallRoot $root -StartMenuDirectory $Menu -NoPath } catch {
             if ($_.Exception.Message -notlike "*$Message*") { throw }
@@ -117,6 +126,9 @@ try {
         }
         if (-not $failed) { throw "Expected update failure: $Message" }
         if ((Get-Content -LiteralPath $launcher -Raw) -cne $previousLauncher) { throw 'A failed update changed the launcher.' }
+        if ((Get-FileHash -LiteralPath (Join-Path $startMenu 'Patterm.lnk')).Hash -cne $shortcutHash) { throw 'A failed update changed the Start menu shortcut.' }
+        if (@(Get-ChildItem -LiteralPath $startMenu -Filter '.patterm-*.lnk').Count) { throw 'Failed update left a pending shortcut.' }
+        Assert-Shortcut $root (Join-Path $root 'patterm.ico')
         if ((& $launcher 'still usable') -notlike 'launched:*') { throw 'Previous launcher stopped working.' }
     }
     $global:pattermInstallerFixture.Version = '1.2.3'
@@ -124,8 +136,16 @@ try {
     Expect-UpdateFailure 'newer than'
     $global:pattermInstallerFixture.Version = '1.2.5'
     Make-Package
-    $global:pattermInstallerFixture.RunningApp = Join-Path $root 'versions/1.2.4/electron/electron.exe'
+    foreach ($exe in @('electron.exe', 'Patterm.exe')) {
+        $global:pattermInstallerFixture.RunningApp = Join-Path $root "versions/1.2.4/electron/$exe"
+        Expect-UpdateFailure 'Patterm is running'
+    }
+    # An app started during setup fails the final check, after the new shortcut
+    # has been prepared. The original link must remain byte-for-byte intact.
+    $global:pattermInstallerFixture.ProcessChecks = 0
+    $global:pattermInstallerFixture.RunningAfterCheck = 2
     Expect-UpdateFailure 'Patterm is running'
+    $global:pattermInstallerFixture.RunningAfterCheck = $null
     $global:pattermInstallerFixture.RunningApp = $null
     # The in-app updater pins the checksum from the signed release manifest.
     $failed = $false
@@ -180,6 +200,10 @@ try {
         $realRoot = Join-Path $fixture 'real package with spaces'
         & $installer -InstallRoot $realRoot -StartMenuDirectory $startMenu -NoPath
         Assert-Shortcut $realRoot (Join-Path $realRoot 'patterm.ico')
+        $installed = Join-Path $realRoot "versions/$($global:pattermInstallerFixture.Version)"
+        if (-not (Test-Path -LiteralPath (Join-Path $installed 'electron/Patterm.exe'))) { throw 'Built package did not rename the executable.' }
+        if (Test-Path -LiteralPath (Join-Path $installed 'electron/electron.exe')) { throw 'Built package still contains electron.exe.' }
+        if ((Get-Content -LiteralPath (Join-Path $installed 'Patterm.cmd') -Raw) -notlike '*\electron\Patterm.exe*') { throw 'Built launcher does not use Patterm.exe.' }
         Write-Host 'Actual built Windows package installation: PASS'
     }
     Write-Host 'Windows installer smoke: installation, Start menu entry, icon, application identity, spaced paths, launcher arguments, repeat install, upgrade, legacy package, PATH isolation, bad checksum, unsafe archive and missing asset PASS'

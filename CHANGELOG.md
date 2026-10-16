@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Windows desktop packages run as `Patterm.exe`. The installer and updater
+  recognise both the new name and older `electron.exe` installations.
+
 ### Fixed
+
+- Desktop Quit finishes exiting after managed processes stop even if resource
+  cleanup reports an error, and shutdown dialogs include the underlying error.
+- Windows installs prepare the Start menu shortcut separately and replace it
+  atomically after validation, preserving the existing entry on failed setup.
 
 - Quit warnings count only agents and commands on this machine, excluding
   paired hosts, including their records in linked projects.
