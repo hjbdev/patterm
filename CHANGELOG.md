@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Clicking a failed agent in the sidebar opens it for recovery. Old failures
+  without live descendants and deliberately stopped or completed sessions stay
+  out of the agent tabs. `/resume` can recover the failed current conversation
+  through the guarded restart flow, keeping its subagents attached.
+
 - Failed Integrated agents stay visible with a dead state and retain their
   subagent family. Reopen the saved transcript and use `/restart` to resume
   the conversation, carrying its subagents, timers, and session context across.

@@ -22,10 +22,26 @@ export interface AgentTabSelectionTarget {
 
 export type SelectedAgentByRoot = Record<string, string | null | undefined>;
 
-export function activeAgentSessions(sessions: readonly SessionRecord[]): SessionRecord[] {
-  return sessions.filter((session) => Boolean(session.processId) && session.processStatus !== 'closed'
-    && ((!session.exitedAt && (session.interfaceMode === 'integrated' || Boolean(session.ptyProcessId)))
-      || (session.interfaceMode === 'integrated' && Boolean(session.processStatus))));
+// Failed sessions stay recoverable for the same 24-hour window as the
+// workbench history. Older ancestors stay only while a visible descendant
+// needs them, so a failure never promotes its children to independent roots.
+export function activeAgentSessions(sessions: readonly SessionRecord[], now = Date.now()): SessionRecord[] {
+  const recentFailure = now - 24 * 60 * 60 * 1000;
+  const byId = new Map(sessions.map(session => [session.id, session]));
+  const visible = new Set(sessions.filter(session => session.processId && session.processStatus !== 'closed'
+    && ((!session.exitedAt && (session.interfaceMode === 'integrated' || session.ptyProcessId))
+      || (session.interfaceMode === 'integrated' && session.processStatus === 'failed' && session.exitedAt && Date.parse(session.exitedAt) >= recentFailure)))
+    .map(session => session.id));
+  for (const id of visible) {
+    let parentId = byId.get(id)?.parentId;
+    while (parentId && !visible.has(parentId)) {
+      const parent = byId.get(parentId);
+      if (!parent?.processId || parent.processStatus === 'closed') break;
+      visible.add(parentId);
+      parentId = parent.parentId;
+    }
+  }
+  return sessions.filter(session => visible.has(session.id));
 }
 
 export function buildAgentTabFamilies(

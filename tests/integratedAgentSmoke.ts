@@ -316,9 +316,13 @@ async function main(): Promise<void> {
     let deadNativeReads = 0;
     const savedService = new IntegratedAgentService(database, { claude: { ...provider, conversation: async () => { deadNativeReads++; throw new Error('host gone'); } } });
     savedService.setHistoryReadService(history);
-    const saved = await savedService.peekConversation('process_claude') as { archived_messages: Array<{ id: string }>; history_cursor: { next: string } };
+    const saved = await savedService.peekConversation('process_claude') as { provider: string; resume_id: string; archived_messages: Array<{ id: string }>; history_cursor: { next: string } };
     assert.deepEqual(saved.archived_messages.map((row) => row.id), archived.slice(20).map((row) => row.id), 'reopening a dead session reads the saved tail');
     assert.equal(deadNativeReads, 0, 'saved reads never call the dead native host');
+    assert.equal(saved.provider, 'claude');
+    assert.equal(saved.resume_id, 'claude_native', 'recovery identifies the failed native conversation independently of imported session links');
+    const withoutArchive = new IntegratedAgentService(database, {});
+    assert.deepEqual(await withoutArchive.peekConversation('process_claude'), { provider: 'claude', resume_id: 'claude_native', messages: [] }, 'native identity remains available without imported history');
     const savedOlder = await savedService.olderMessages('process_claude', saved.history_cursor.next) as { archived_messages: Array<{ id: string }>; cursor: string | null };
     assert.deepEqual(savedOlder.archived_messages.map((row) => row.id), archived.slice(0, 20).map((row) => row.id));
     assert.equal(savedOlder.cursor, null);

@@ -266,16 +266,22 @@ export class WorkbenchRepository {
   }
 
   private projectWorkbench(project: ProjectRow, timers: TimerRecord[]): ProjectWorkbenchDto {
-    // Assigned sessions stay listed so todos can name their assignees;
-    // unclosed Integrated sessions stay available for recovery after an exit.
+    // Keep recent history, assigned sessions, and ancestors of live processes.
+    // An old failed parent must not disappear from its surviving family.
     const since = this.now() - WORKBENCH_HISTORY_MS;
     const sessionRows = this.db
-      .prepare(`select sessions.*, processes.pty_process_id from sessions left join processes on processes.id = sessions.process_id
-        where sessions.project_id = ? and ((sessions.interface_mode = 'integrated' and processes.status != 'closed')
-          or sessions.exited_at is null or julianday(sessions.exited_at) >= julianday(?)
+      .prepare(`with recursive ancestors(id) as (
+          select parent_process_id from processes where project_id = ? and status = 'running' and parent_process_id is not null
+          union
+          select p.parent_process_id from processes p join ancestors a on a.id = p.id
+            where p.project_id = ? and p.parent_process_id is not null
+        )
+        select sessions.*, processes.pty_process_id from sessions left join processes on processes.id = sessions.process_id
+        where sessions.project_id = ? and (sessions.exited_at is null or julianday(sessions.exited_at) >= julianday(?)
+          or sessions.process_id in (select id from ancestors)
           or exists (select 1 from todo_assignments where todo_assignments.session_id = sessions.id))
         order by sessions.started_at asc`)
-      .all(project.id, new Date(since).toISOString()) as SessionRow[];
+      .all(project.id, project.id, project.id, new Date(since).toISOString()) as SessionRow[];
     // Every process is read: parents and timers may belong to ended ones.
     const processRows = this.db
       .prepare(`select * from processes where project_id = ? order by created_at asc`)

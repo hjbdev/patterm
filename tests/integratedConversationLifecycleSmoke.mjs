@@ -1445,6 +1445,10 @@ test('reopening a dead parent reads saved history and /restart uses its owner wi
   let prepared = composer.payloadFor('dead_parent');
   await h.pane.sendRequest({ ...prepared.payload, hash: prepared.hash });
   assert.deepEqual(calls, []);
+  composer.draftFor('dead_parent').text = '/resume';
+  prepared = composer.payloadFor('dead_parent');
+  await h.pane.sendRequest({ ...prepared.payload, hash: prepared.hash });
+  assert.equal(h.pane.resumeOpen.value, true, 'a dead parent can open the history picker');
   composer.draftFor('dead_parent').text = ' /restart ';
   prepared = composer.payloadFor('dead_parent');
   await h.pane.sendRequest({ ...prepared.payload, hash: prepared.hash });
