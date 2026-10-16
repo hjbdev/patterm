@@ -52,6 +52,7 @@ function Make-Package([switch]$Unsafe, [switch]$Legacy) {
         }
         $exe = if ($Legacy) { 'electron/electron.exe' } else { 'electron/Patterm.exe' }
         $files[$exe] = 'synthetic test file'
+        if (-not $Legacy) { $files['electron/electron.exe'] = $files[$exe] }
         if ($Unsafe) { $files['../escaped.txt'] = 'must never be extracted' }
         foreach ($file in $files.Keys) {
             $entry = $archive.CreateEntry("patterm-$($global:pattermInstallerFixture.Version)-windows-x64/$file")
@@ -202,7 +203,12 @@ try {
         Assert-Shortcut $realRoot (Join-Path $realRoot 'patterm.ico')
         $installed = Join-Path $realRoot "versions/$($global:pattermInstallerFixture.Version)"
         if (-not (Test-Path -LiteralPath (Join-Path $installed 'electron/Patterm.exe'))) { throw 'Built package did not rename the executable.' }
-        if (Test-Path -LiteralPath (Join-Path $installed 'electron/electron.exe')) { throw 'Built package still contains electron.exe.' }
+        # v0.2.7's installed updater validates these paths before it can switch
+        # versions; a tolerant installer in the new zip cannot change that gate.
+        foreach ($file in @('Patterm.cmd', 'electron/electron.exe', 'resources/native/patterm-terminal-core.exe', 'BUILD')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $installed $file) -PathType Leaf)) { throw "Built package breaks legacy installer validation: missing $file." }
+        }
+        if ((Get-FileHash -LiteralPath (Join-Path $installed 'electron/Patterm.exe')).Hash -ne (Get-FileHash -LiteralPath (Join-Path $installed 'electron/electron.exe')).Hash) { throw 'Branded executable differs from its compatibility copy.' }
         if ((Get-Content -LiteralPath (Join-Path $installed 'Patterm.cmd') -Raw) -notlike '*\electron\Patterm.exe*') { throw 'Built launcher does not use Patterm.exe.' }
         Write-Host 'Actual built Windows package installation: PASS'
     }

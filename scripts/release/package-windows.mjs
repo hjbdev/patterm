@@ -73,7 +73,9 @@ try {
   fs.mkdirSync(path.join(stage, 'electron'));
   execFileSync('tar', ['-xf', downloaded, '-C', path.join(stage, 'electron')], { stdio: 'inherit' });
 
-  fs.renameSync(path.join(stage, 'electron', 'electron.exe'), path.join(stage, 'electron', 'Patterm.exe'));
+  // Installed 0.2.x updaters require electron.exe when validating the new zip.
+  // Keep that compatibility copy while the launcher runs Patterm.exe.
+  fs.copyFileSync(path.join(stage, 'electron', 'electron.exe'), path.join(stage, 'electron', 'Patterm.exe'));
 
   fs.copyFileSync(options.sidecar, path.join(stage, 'resources', 'native', 'patterm-terminal-core.exe'));
   fs.copyFileSync(path.join(ROOT, 'dist', 'mcp', 'patterm-mcp.js'), path.join(stage, 'resources', 'mcp', 'patterm-mcp.js'));

@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Windows desktop packages run as `Patterm.exe`. The installer and updater
-  recognise both the new name and older `electron.exe` installations.
+  recognise both names. Packages retain an `electron.exe` compatibility copy
+  so older installed updaters can validate and install the new release.
 
 ### Fixed
 
