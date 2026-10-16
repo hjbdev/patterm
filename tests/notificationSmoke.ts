@@ -29,6 +29,7 @@ async function main(): Promise<void> {
     addProcess('root', 'agent');
     addProcess('child', 'agent', 'root');
     addProcess('shell', 'command', null, 'npm test');
+    addProcess('asker', 'agent');
     db.prepare(`insert into sessions (id, project_id, process_id, harness, session_role, started_at, last_title)
       values ('session_root', 'project_a', 'root', 'claude', 'orchestrator', ?, '✳ Claude Code')`).run(at);
 
@@ -117,6 +118,18 @@ async function main(): Promise<void> {
     // Process failures default to in-app only; agent failures reach the user.
     const shellFailure = await service.raise({ processId: 'shell', source: 'runtime', kind: 'failure', body: 'Exited with code 1' });
     assert.equal((shellFailure as { notification: NotificationRecord }).notification.delivery, 'in_app');
+
+    // A question is stored as a permission notice with its own wording, and a
+    // changed reason replaces the earlier notice.
+    const open = () => service.list({ process_id: 'asker' }).items.map((row) => row.body);
+    assert.equal((await service.waiting('asker', 'working', 'permission')).status, 'raised');
+    const question = await service.waiting('asker', 'permission', 'question');
+    assert.equal(question.status, 'raised');
+    assert.equal((question as { notification: NotificationRecord }).notification.urgency, 'high');
+    assert.deepEqual(open(), ['Has a question for you'], 'answering the approval leaves only the question');
+    await service.waiting('asker', 'question', 'permission');
+    assert.deepEqual(open(), ['Waiting for your permission']);
+    assert.ok(service.resolveHandled('asker') > 0);
 
     // Settings change the delivery level, and minimum urgency gates push.
     settings.updateNotificationSettings({ sources: { agent_requests: 'off' } });

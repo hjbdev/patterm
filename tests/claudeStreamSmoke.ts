@@ -83,6 +83,11 @@ process.stdin.on('data', (chunk) => {
         globalThis.queued = [];
         end(globalThis.first);
         state('idle');
+      } else if (answered === 'main_question') {
+        state('running');
+        say('msg_after_question', 'after question');
+        end(globalThis.first);
+        state('idle');
       } else if (answered === 'sub_perm') {
         state('running');
         frame({type:'user',parent_tool_use_id:'toolu_agent',message:{role:'user',content:[{type:'tool_result',tool_use_id:'toolu_sub_bash',content:'ok'}]}});
@@ -163,6 +168,11 @@ process.stdin.on('data', (chunk) => {
         frame({type:'assistant',message:{id:'msg_write',content:[{type:'tool_use',id:'toolu_write',name:'Write',input:{file_path:'/tmp/a.txt',content:'hi'}}]}});
         state('requires_action');
         frame({type:'control_request',request_id:'main_perm',request:{subtype:'can_use_tool',tool_name:'Write',tool_use_id:'toolu_write',input:{file_path:'/tmp/a.txt',content:'hi'}}});
+      } else if (text === 'question') {
+        globalThis.first = uuid;
+        begin(uuid);
+        state('requires_action');
+        frame({type:'control_request',request_id:'main_question',request:{subtype:'can_use_tool',tool_name:'AskUserQuestion',input:{questions:[{question:'Which one?',header:'Pick',multiSelect:false,options:[{label:'A',description:''}]}]}}});
       } else if (text === 'extra') {
         // A prompt sent while a request waits is queued behind it.
         globalThis.queued = [...(globalThis.queued || []), uuid];
@@ -555,6 +565,7 @@ process.stdin.on('data', (chunk) => {
     assert.ok(late.some((event) => event.revision > boundary && (event.kind === 'append' || event.kind === 'replace')), 'late events stay newer than the snapshot boundary');
     releaseLate();
     const pending = await waitForConversation(service, 'process_test', /"id":"question_test"/);
+    assert.equal(pending.status, 'permission', 'a question beside a pending approval still reads as permission');
     const questionRequest = (pending.questions as { data: Array<{ id: string; questions: Array<Record<string, unknown>> }> }).data[0]!;
     assert.deepEqual(
       questionRequest.questions.map((question) => [question.id, question.multiple, question.custom, question.header]),
@@ -948,6 +959,7 @@ process.stdin.on('data', (chunk) => {
         until: (count: number) => waitFor(() => statuses().length >= count, 5_000),
         interrupt: () => activityService.interrupt(processId),
         reply: (requestId: string) => activityService.replyPermission(processId, requestId, 'once'),
+        answer: (requestId: string, answers: string[][]) => activityService.replyQuestion(processId, requestId, answers),
         close: async () => { releaseActivity(); await activityService.stop(processId); }
       };
     };
@@ -1090,6 +1102,20 @@ process.stdin.on('data', (chunk) => {
       await ask.until(4);
       assert.deepEqual(ask.statuses(), ['working', 'permission', 'working', 'idle'], `answering resumes the turn ${mode}`);
       await ask.close();
+
+      // A question alone waits on an answer, not a permission.
+      const question = await launchActivity(`question_${suffix}`, legacy);
+      const questionActivity = await question.observeActivity();
+      await question.prompt('question');
+      await question.until(2);
+      assert.deepEqual(question.statuses(), ['working', 'question'], `a pending question streams as question ${mode}`);
+      assert.equal((await question.snapshot()).status, 'question');
+      await waitFor(() => questionActivity.activity() === 'question');
+      questionActivity.dispose();
+      await question.answer('main_question', [['A']]);
+      await question.until(4);
+      assert.deepEqual(question.statuses(), ['working', 'question', 'working', 'idle'], `answering the question resumes the turn ${mode}`);
+      await question.close();
 
       // A background agent's request pending when the main turn ends goes
       // straight to permission, with no idle in between, and answering it

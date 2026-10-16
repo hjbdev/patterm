@@ -39,6 +39,8 @@ export function activityIcon(state: ActivityState): IconSpec {
       return { spinner: true, class: 'text-success', spin: false, label: 'Thinking' };
     case 'permission':
       return { glyph: '?', class: 'text-warning', spin: false, label: 'Needs permission' };
+    case 'question':
+      return { glyph: '?', class: 'text-warning', spin: false, label: 'Has a question' };
     case 'error':
       return { glyph: '✕', class: 'text-destructive', spin: false, label: 'Error' };
     case 'idle':
