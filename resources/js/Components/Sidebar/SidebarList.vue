@@ -15,11 +15,13 @@
         <template v-for="entry in entries" :key="entry.key">
           <div v-if="entry.kind === 'divider'" data-sidebar-slide class="mx-2 my-2 border-t border-white/[0.06]" />
           <!-- Grouped by project, a hairline rule names each project. -->
-          <div v-else-if="entry.kind === 'rule'" data-sidebar-slide class="flex h-6 items-center gap-1.5 px-2 text-[11px] text-muted-foreground" :class="entry.first ? '' : 'mt-2'">
+          <!-- Its + starts an agent in that project. -->
+          <div v-else-if="entry.kind === 'rule'" data-sidebar-slide class="group/rule flex h-6 items-center gap-1.5 pl-2 pr-0.5 text-[11px] text-muted-foreground" :class="entry.first ? '' : 'mt-2'">
             <ProjectLogo :project="entry.project" :size="12" />
             <span class="max-w-[60%] truncate">{{ entry.label }}</span>
             <HostBadge v-if="entry.project.host" :host="entry.project.host" />
             <span class="h-px flex-1 bg-white/[0.06]" />
+            <LaunchAgentMenu :project-id="entry.project.id" trigger-class="h-5 w-5 opacity-0 transition-opacity group-hover/rule:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 max-sm:opacity-100 [&_svg]:h-3.5 [&_svg]:w-3.5" />
           </div>
           <div v-else-if="entry.kind === 'heading'" data-sidebar-slide class="flex h-7 items-center gap-2 px-2 text-xs text-muted-foreground" :class="entry.first ? '' : 'mt-3'">
             <span class="flex-1">{{ entry.label }}</span>
@@ -55,13 +57,15 @@
       <template v-if="processTabs.length">
         <button
           type="button"
-          class="mt-3 flex h-7 w-full items-center gap-2 rounded-tab px-2 text-left text-xs transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          class="mt-2 flex h-6 w-full items-center gap-1.5 rounded-tab px-2 text-left text-[11px] transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
           :class="!processesOpen && processTabs.some((tab) => sidebar.processActive(tab.process)) ? 'bg-primary/10 text-foreground' : 'text-muted-foreground'"
           :aria-expanded="processesOpen"
           @click="expansion.state.value.processes = !processesOpen"
         >
+          <!-- Ruled like a project's heading in All agents. -->
           <ChevronRight class="h-3 w-3 shrink-0 transition-transform duration-200 motion-reduce:transition-none" :class="processesOpen && 'rotate-90'" />
-          <span class="flex-1">Processes</span>
+          <span>Processes</span>
+          <span class="h-px flex-1 bg-white/[0.06]" />
           <span class="tabular-nums">{{ processTabs.length }}</span>
         </button>
         <Transition :css="false" @enter="expandIn" @leave="collapseOut">

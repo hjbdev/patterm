@@ -8,8 +8,10 @@ import {
   projectShown,
   readAllAgentsState,
   keepHiddenTabs,
+  launchTargets,
   setProjectShown,
   tabsGroupedByProject,
+  targetsWithHarness,
   type AllAgentsState
 } from '../resources/js/lib/allAgents';
 import type { ProcessRecord, ProjectSummary, ProjectWorkbench, SessionRecord } from '../resources/js/types';
@@ -105,5 +107,15 @@ const storage = (value: string | null) => ({ getItem: () => value });
 assert.deepEqual(readAllAgentsState(storage(JSON.stringify({ active: true, hidden: ['web', 3] }))), { active: true, hidden: ['web'] });
 assert.deepEqual(readAllAgentsState(storage('not json')), { active: false, hidden: [] });
 assert.deepEqual(readAllAgentsState(storage(null)), { active: false, hidden: [] });
+
+// Launching from All agents offers each shown project and its paired hosts,
+// then only the ones whose host has the picked CLI.
+const linked: ProjectWorkbench = { ...web, project: { ...web.project, remotes: [{ host: 'gpu', projectId: 'gpu:web' }] } };
+const remoteOnly: ProjectWorkbench = { ...docs, project: { ...docs.project, id: 'gpu:docs', host: 'gpu' } };
+const targets = launchTargets([linked, remoteOnly, helper, docs], { active: true, hidden: ['docs'] });
+assert.deepEqual(targets.map((target) => [target.projectId, target.targetProjectId, target.host]), [['web', 'web', null], ['web', 'gpu:web', 'gpu'], ['gpu:docs', 'gpu:docs', 'gpu']]);
+const installed = (host: string | null) => host === 'gpu' ? [{ harness: 'opencode' }] : [{ harness: 'claude' }];
+assert.deepEqual(targetsWithHarness(targets, 'opencode', installed).map((target) => target.targetProjectId), ['gpu:web', 'gpu:docs']);
+assert.deepEqual(targetsWithHarness(targets, 'claude', installed).map((target) => target.targetProjectId), ['web']);
 
 console.log('all agents smoke passed');

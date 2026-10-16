@@ -51,6 +51,25 @@ export function listedProjects(projects: readonly ProjectWorkbench[]): ProjectWo
   return projects.filter((item) => item.project.kind !== 'assistant');
 }
 
+// Where an agent launched from All agents can start: each shown project, and
+// each paired host a local project is linked with. `targetProjectId` names the
+// project on the host that runs it.
+export interface LaunchTarget { projectId: string; targetProjectId: string; host: string | null; project: ProjectSummary }
+
+export function launchTargets(projects: readonly ProjectWorkbench[], state: AllAgentsState): LaunchTarget[] {
+  return listedProjects(projects)
+    .filter((item) => projectShown(state, item.project.id))
+    .flatMap(({ project }) => [
+      { projectId: project.id, targetProjectId: project.id, host: project.host ?? null, project },
+      ...(project.host ? [] : (project.remotes ?? []).map((remote) => ({ projectId: project.id, targetProjectId: remote.projectId, host: remote.host, project })))
+    ]);
+}
+
+// The targets whose host has this agent CLI.
+export function targetsWithHarness(targets: readonly LaunchTarget[], harness: string, harnessesOn: (host: string | null) => readonly { harness: string }[]): LaunchTarget[] {
+  return targets.filter((target) => harnessesOn(target.host).some((record) => record.harness === harness));
+}
+
 export function openAgentCount(project: ProjectWorkbench): number {
   return activeAgentSessions(project.projectSessions).length;
 }

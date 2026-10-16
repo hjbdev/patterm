@@ -20,10 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Group by project (on by default) separates them under each project's name;
   with it off, you can drag them into any order. The view options' Projects
   submenu chooses which projects show, and stays open while you toggle them.
-  Launching an agent from All agents asks which project it starts in.
+  Launching an agent from All agents picks the agent first, then asks which
+  project (or paired host) it starts in; the + beside each project's name
+  starts one there directly.
 
 ### Changed
 
+- The sidebar's Processes heading is a ruled line like a project's heading in
+  All agents.
 - The sidebar's view options replace Expand all, Collapse all, and Show every
   summary with one Show subtitles toggle, on by default. Opening a family no
   longer changes whether its subtitle shows, and Alt-click no longer opens or
