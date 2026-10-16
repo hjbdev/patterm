@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-10-17
+
+### Fixed
+
+- Windows executables embed Patterm's product name and icon. Electron's toast
+  registration now creates a Patterm entry instead of an Electron entry, and
+  upgrades remove stale Electron shortcuts only when they belong to Patterm.
+- Windows Start menu and notification shortcuts can launch the executable
+  directly, with the installed app's resources and production data directory.
+
 ## [0.2.8] - 2026-10-17
 
 ### Changed

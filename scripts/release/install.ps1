@@ -67,6 +67,28 @@ function Get-AppExecutable([string]$Directory) {
     }
     throw "Package is missing electron/Patterm.exe (or legacy electron.exe) in $Directory."
 }
+# Older unbranded Electron builds generated this second shortcut for toasts.
+# Never remove another app's Electron shortcut, even when its name matches.
+function Remove-LegacyElectronShortcut {
+    $legacyPath = Join-Path $StartMenuDirectory 'Electron.lnk'
+    if (-not (Test-Path -LiteralPath $legacyPath -PathType Leaf)) { return }
+    $shell = $folder = $item = $null
+    try {
+        $shell = New-Object -ComObject Shell.Application
+        $folder = $shell.NameSpace($StartMenuDirectory)
+        $item = $folder.ParseName('Electron.lnk')
+        $appId = $item.ExtendedProperty('System.AppUserModel.ID')
+        $target = [string]$item.ExtendedProperty('System.Link.TargetParsingPath')
+        $prefix = [IO.Path]::GetFullPath($InstallRoot).TrimEnd('\') + '\'
+        if ($appId -eq 'Patterm.Desktop' -and $target.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+            Remove-Item -LiteralPath $legacyPath -Force
+        }
+    } finally {
+        foreach ($com in @($item, $folder, $shell)) {
+            if ($null -ne $com) { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($com) }
+        }
+    }
+}
 $lock = $null
 $pendingLauncher = $null
 $pendingShortcut = $null
@@ -227,6 +249,9 @@ public static class PattermShortcut {
     if (Test-Path -LiteralPath $launcherPath) { [IO.File]::Replace($pendingLauncher, $launcherPath, (Join-Path $bin 'patterm.previous.cmd')) }
     else { [IO.File]::Move($pendingLauncher, $launcherPath) }
     $pendingLauncher = $null
+    try { Remove-LegacyElectronShortcut } catch {
+        Write-Warning "Patterm installed, but its old Electron shortcut could not be removed: $($_.Exception.Message)"
+    }
     Write-Host "Patterm $version installed in $destination."
     Write-Host 'Open Patterm from the Start menu or run patterm. Install and sign into your agent CLIs separately.'
 } finally {

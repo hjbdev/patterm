@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { downloadElectron } from './download-electron.mjs';
+import { brandWindowsExecutable } from './brand-windows.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const USAGE = 'Usage: package-windows.mjs --version VERSION --sidecar PATH --out DIR';
@@ -73,6 +74,24 @@ try {
   fs.mkdirSync(path.join(stage, 'electron'));
   execFileSync('tar', ['-xf', downloaded, '-C', path.join(stage, 'electron')], { stdio: 'inherit' });
 
+  const executable = path.join(stage, 'electron', 'electron.exe');
+  fs.writeFileSync(executable, brandWindowsExecutable(fs.readFileSync(executable),
+    fs.readFileSync(path.join(ROOT, 'dist/renderer/icons/icon.ico')), options.version));
+  // Electron's toast registration creates direct executable shortcuts, without
+  // our command launcher or its environment. Make that launch work as well.
+  const appDirectory = path.join(stage, 'electron/resources/app');
+  fs.mkdirSync(appDirectory, { recursive: true });
+  fs.writeFileSync(path.join(appDirectory, 'package.json'), JSON.stringify({
+    name: 'patterm-desktop', productName: 'Patterm', version: options.version, main: 'main.cjs'
+  }));
+  fs.writeFileSync(path.join(appDirectory, 'main.cjs'), [
+    "const path = require('node:path');",
+    "const root = path.resolve(__dirname, '../../..');",
+    "process.env.PATTERM_DESKTOP_RESOURCES = path.join(root, 'resources');",
+    "process.chdir(root);",
+    "require(path.join(root, 'dist/main/desktop/main/main.js'));", ''
+  ].join('\n'));
+
   // Installed 0.2.x updaters require electron.exe when validating the new zip.
   // Keep that compatibility copy while the launcher runs Patterm.exe.
   fs.copyFileSync(path.join(stage, 'electron', 'electron.exe'), path.join(stage, 'electron', 'Patterm.exe'));
@@ -110,7 +129,7 @@ function launcher() {
     'set "PATTERM_DESKTOP_RESOURCES=%APP_DIR%\\resources"',
     'set "ELECTRON_RUN_AS_NODE="',
     'cd /d "%APP_DIR%"',
-    'start "" "%APP_DIR%\\electron\\Patterm.exe" "%APP_DIR%\\dist\\main\\desktop\\main\\main.js" %*',
+    'start "" "%APP_DIR%\\electron\\Patterm.exe" %*',
     ''
   ].join('\r\n');
 }
