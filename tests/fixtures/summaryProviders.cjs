@@ -38,7 +38,7 @@ if (args.includes('--help')) {
     const model = args[args.indexOf('--model') + 1];
     if (model === 'bad-json') return console.log('bad output');
     console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(model === 'bad-schema' ? { command: 'unsafe' } : { summary: 'patterm okay' }) } }));
-    console.log(JSON.stringify({ type: model === 'error' ? 'turn.failed' : 'turn.completed' }));
+    console.log(JSON.stringify({ type: model === 'error' ? 'turn.failed' : 'turn.completed', usage: { input_tokens: 100, cached_input_tokens: 30, output_tokens: 8 } }));
   });
 } else {
   assert.deepEqual(args.slice(0, 4), ['api', 'POST', '/api/generate', '--data']);
@@ -49,5 +49,5 @@ if (args.includes('--help')) {
   assert.equal(body.sessionID, undefined);
   if (body.model.id === 'bad-json') return console.log('bad output');
   if (body.model.id === 'error') return console.log(JSON.stringify({ error: 'sensitive provider diagnostic' }));
-  console.log(JSON.stringify({ data: { text: JSON.stringify(body.model.id === 'bad-schema' ? { command: 'unsafe' } : { summary: 'patterm okay' }) } }));
+  console.log(JSON.stringify({ data: { usage: { inputTokens: 120, cachedInputTokens: 40, outputTokens: 15, reasoningTokens: 5 }, text: JSON.stringify(body.model.id === 'bad-schema' ? { command: 'unsafe' } : { summary: 'patterm okay' }) } }));
 }

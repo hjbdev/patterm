@@ -38,6 +38,7 @@ export interface UsageSummary {
   dayKeys: string[];
   historyAvailable: boolean;
   totals: UsageTokens;
+  autoSummaries: UsageTokens;
   daily: Array<UsageTokens & { day: string; provider: string }>;
   models: Array<UsageTokens & { provider: string; model: string | null }>;
   projects: Array<UsageTokens & { projectId: string | null; name: string | null }>;

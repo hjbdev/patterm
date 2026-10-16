@@ -1,3 +1,4 @@
+import addAutoSummaryUsage from './2026_10_16_000050_add_auto_summary_usage';
 import addSummaryMemory from './2026_10_12_000048_add_summary_memory';
 import addContextRevisions from './2026_10_15_000049_add_context_revisions';
 import createInitialSchema from './2026_06_03_000001_create_initial_schema';
@@ -102,5 +103,6 @@ export const migrations: Migration[] = [
   addAssistantMemory,
   addAutoTitles,
   addSummaryMemory,
-  addContextRevisions
+  addContextRevisions,
+  addAutoSummaryUsage
 ];

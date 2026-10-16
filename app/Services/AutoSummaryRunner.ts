@@ -1,3 +1,4 @@
+import { AutoSummaryUsageService } from './AutoSummaryUsageService';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -130,7 +131,7 @@ export class AutoSummaryRunner {
       : { available: false, reason: `${names[provider]} was not discovered. Install it and sign in with its native CLI.` };
   }
 
-  async run(settings: AutoSummarySettings, text: string, signal: AbortSignal, mode: 'summary' | 'test' = 'summary', context: SummaryContext = {}): Promise<SummaryResult> {
+  async run(settings: AutoSummarySettings, text: string, signal: AbortSignal, mode: 'summary' | 'test' = 'summary', context: SummaryContext = {}, projectId: string | null = null): Promise<SummaryResult> {
     const input = JSON.stringify({ ...context, ...(context.memory ? { conversation_text: text } : { terminal_output: text }) });
     if (Buffer.byteLength(input) + Buffer.byteLength(mode === 'test' ? SUMMARY_TEST_SYSTEM_PROMPT : SUMMARY_SYSTEM_PROMPT) > SUMMARY_INPUT_BYTES) throw new Error('Summary input exceeded the limit.');
     signal = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
@@ -141,6 +142,8 @@ export class AutoSummaryRunner {
     try {
       const env = summaryEnvironment(this.env);
       let result: string;
+      const recordUsage = (output: string) => new AutoSummaryUsageService(this.database)
+        .record(settings.provider, settings.models[settings.provider], output, projectId);
       if (settings.provider === 'codex') {
         const codexEnv = await codexSummaryEnvironment(directory, env);
         const help = await runSummaryCommand(executable, ['exec', '--help'], '', directory, codexEnv, signal, 64 * 1024);
@@ -155,11 +158,11 @@ export class AutoSummaryRunner {
         catch { models = codexSummaryCatalog(await catalog(['debug', 'models']), settings.models.codex); }
         await fs.writeFile(path.join(directory, 'models.json'), models, { mode: 0o600 });
         await fs.writeFile(path.join(directory, 'instructions.txt'), mode === 'test' ? SUMMARY_TEST_SYSTEM_PROMPT : SUMMARY_SYSTEM_PROMPT, { mode: 0o600 });
-        const output = await runSummaryCommand(executable, codexSummaryArgs(settings.models.codex, directory, settings.reasoning.codex), input, directory, codexEnv, signal);
+        const output = await runSummaryCommand(executable, codexSummaryArgs(settings.models.codex, directory, settings.reasoning.codex), input, directory, codexEnv, signal, 16 * 1024, recordUsage);
         try { result = codexSummaryOutput(output); }
         catch { throw new Error('Summary failed. Check Codex login, model access, and output format.'); }
       } else if (settings.provider === 'opencode') {
-        const output = await runSummaryCommand(executable, openCodeSummaryArgs(settings.models.opencode, input, mode), '', directory, env, signal);
+        const output = await runSummaryCommand(executable, openCodeSummaryArgs(settings.models.opencode, input, mode), '', directory, env, signal, 16 * 1024, recordUsage);
         try {
           const envelope = JSON.parse(output) as { data?: { text?: string } };
           if (typeof envelope.data?.text !== 'string') throw new Error();
@@ -170,7 +173,7 @@ export class AutoSummaryRunner {
         if (!REQUIRED_FLAGS.every((flag) => help.includes(flag))) throw new Error('This Claude CLI lacks required summary isolation flags. Update Claude Code.');
         if (settings.reasoning.claude && !help.includes('--effort')) throw new Error('Summary reasoning requires a newer Claude Code. Update it or use the model default.');
         const output = await runSummaryCommand(executable, claudeSummaryArgs(settings.models.claude, mode, settings.reasoning.claude),
-          input, directory, env, signal);
+          input, directory, env, signal, 16 * 1024, recordUsage);
         let envelope: { type?: string; subtype?: string; is_error?: boolean; result?: string };
         try { envelope = JSON.parse(output); }
         catch { throw new Error('Summariser returned invalid JSON.'); }
@@ -198,7 +201,7 @@ export class AutoSummaryRunner {
   }
 }
 
-export function runSummaryCommand(executable: string, args: string[], input: string, cwd: string, env: NodeJS.ProcessEnv, signal: AbortSignal, limit = 16 * 1024): Promise<string> {
+export function runSummaryCommand(executable: string, args: string[], input: string, cwd: string, env: NodeJS.ProcessEnv, signal: AbortSignal, limit = 16 * 1024, onOutput?: (output: string) => void): Promise<string> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) { reject(new Error('Summary cancelled.')); return; }
     const child = spawnResolved(executable, args, { cwd, env, shell: false, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
@@ -227,8 +230,13 @@ export function runSummaryCommand(executable: string, args: string[], input: str
       clearTimeout(timer);
       signal.removeEventListener('abort', abort);
       if (failure) reject(failure);
-      else if (code !== 0) reject(new Error('Summariser exited unsuccessfully. Check login, model access, and usage limits.'));
-      else resolve(Buffer.concat(chunks).toString('utf8'));
+      else {
+        const output = Buffer.concat(chunks).toString('utf8');
+        try { onOutput?.(output); }
+        catch (error) { reject(error); return; }
+        if (code !== 0) reject(new Error('Summariser exited unsuccessfully. Check login, model access, and usage limits.'));
+        else resolve(output);
+      }
     });
     child.stdin.end(input);
   });

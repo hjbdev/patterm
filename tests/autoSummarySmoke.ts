@@ -295,7 +295,7 @@ async function main() {
     assert.ok(now - startUncapped < 3_600_000);
     assert.equal(calls.length, beforeUncapped + 14, 'more than twelve calls run in the same hour');
     assert.equal(state('uncapped').position, 14);
-    assert.equal(db.prepare("select name from sqlite_master where name = 'auto_summary_usage'").get(), undefined);
+    assert.ok(db.prepare("select name from sqlite_master where name = 'auto_summary_usage'").get());
 
     // Failures still back off and never move coverage or expose diagnostics.
     add('failure'); message('failure', 0, 'user', 'Please fix this failure.'); index.publish('failure'); service.userInput('failure');
@@ -384,7 +384,10 @@ async function main() {
     };
     const fixture = installFixture('claude', 'tests/fixtures/summaryCli.cjs');
     db.prepare("insert into harness_installations values ('fake', 'claude', ?, 'fixture', 'available', 'now', 'now')").run(fixture);
-    assert.deepEqual(await runner.run(enabled, 'synthetic terminal text', new AbortController().signal), { summary: 'patterm okay' });
+    assert.deepEqual(await runner.run(enabled, 'synthetic terminal text', new AbortController().signal, 'summary', {}, 'project'), { summary: 'patterm okay' });
+    assert.deepEqual({ ...db.prepare('select project_id, model, input_tokens, cache_read_tokens, cache_write_tokens, output_tokens from auto_summary_usage').get() as Record<string, unknown> }, {
+      project_id: 'project', model: 'claude-haiku-4-5-20251001', input_tokens: 50, cache_read_tokens: 20, cache_write_tokens: 10, output_tokens: 5
+    });
     const testSettings = { ...enabled, models: { ...enabled.models, claude: 'health-check' } };
     const health = new AutoSummaryService(database, settings, terminal, runner, () => {});
     assert.deepEqual(await health.test(testSettings), { ok: true });
@@ -399,6 +402,8 @@ async function main() {
     for (const model of ['bad-json', 'bad-schema', 'error']) {
       await assert.rejects(runner.run({ ...enabled, models: { ...enabled.models, claude: model } }, 'synthetic', new AbortController().signal), /Summari[sz]|Summary/);
     }
+    assert.equal((db.prepare('select count(*) as count from auto_summary_usage').get() as { count: number }).count, 4,
+      'successful calls, connection tests, rejected summary schemas and provider error envelopes retain reported usage');
     const providerFixture = installFixture('summary-providers', 'tests/fixtures/summaryProviders.cjs');
     const codexHome = path.join(directory, 'native-codex');
     fs.mkdirSync(codexHome);

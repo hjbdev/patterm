@@ -173,7 +173,7 @@ export class AutoSummaryService {
           pending.controller = controller; pending.attempted = now; pending.batchStarted = null;
           const job = (async () => {
             try {
-              const result = summaryResult.parse(await this.runner.run(settings, batch.text, controller.signal, 'summary', batch.context));
+              const result = summaryResult.parse(await this.runner.run(settings, batch.text, controller.signal, 'summary', batch.context, thread.project_id));
               if (!result.memory) throw new Error('Summary returned no internal recap.');
               if (controller.signal.aborted || this.settings !== settings) return;
               const eligible = this.database.connection.prepare(`select 1 from processes p join sessions s on s.process_id = p.id
@@ -217,7 +217,7 @@ export class AutoSummaryService {
     }
     // Shell/process summaries retain their existing bounded screen source.
     for (const [id, pending] of this.pending) {
-      const row = this.database.connection.prepare('select kind, status, activity, pty_process_id from processes where id = ?').get(id) as { kind: string; status: string; activity: string; pty_process_id: string | null } | undefined;
+      const row = this.database.connection.prepare('select kind, status, activity, pty_process_id, project_id from processes where id = ?').get(id) as { kind: string; status: string; activity: string; pty_process_id: string | null; project_id: string } | undefined;
       if (!row || row.status === 'closed') { pending.controller?.abort(); this.pending.delete(id); continue; }
       if (row.kind === 'agent' || row.status !== 'running' || row.activity === 'permission' || !row.pty_process_id || pending.controller || this.jobs.size >= 2) continue;
       if (this.now() < pending.retryAt || this.now() - pending.attempted < this.settings.intervalSeconds * 1000 || this.now() - pending.changed < 2000) continue;
@@ -228,7 +228,7 @@ export class AutoSummaryService {
           const screen = await this.terminal.request('terminal.process.output', { process_id: row.pty_process_id, max_lines: 100 }) as { screen?: string };
           const text = summarySnapshot(screen.screen ?? '');
           if (controller.signal.aborted || this.settings !== settings || text.length < 40 || pending.hash === text) return;
-          const result = await this.runner.run(settings, text, controller.signal);
+          const result = await this.runner.run(settings, text, controller.signal, 'summary', {}, row.project_id);
           if (controller.signal.aborted || this.settings !== settings) return;
           const changed = this.database.connection.prepare(`update processes set auto_summary = ?, auto_status = ?, auto_summary_at = ?,
             auto_summary_provider = ?, auto_summary_model = ? where id = ? and pty_process_id = ? and status = 'running' and activity != 'permission'`)

@@ -41,6 +41,7 @@ export interface UsageSummary {
   dayKeys: string[];
   historyAvailable: boolean;
   totals: UsageTokens;
+  autoSummaries: UsageTokens;
   daily: Array<UsageTokens & { day: string; provider: string }>;
   models: Array<UsageTokens & { provider: string; model: string | null }>;
   projects: Array<UsageTokens & { projectId: string | null; name: string | null }>;
@@ -68,7 +69,7 @@ interface UsageGroup {
 
 type PricedGroup = UsageGroup & Pick<UsageTokens, 'costUsd' | 'unpricedTokens'>;
 
-// Token usage comes from imported native transcripts in history.db; quota
+// Token usage comes from imported transcripts and separate summary records; quota
 // windows come from both transcripts and live Integrated sessions.
 export class UsageService {
   private readonly written = new Map<string, string>();
@@ -110,12 +111,10 @@ export class UsageService {
       day.setDate(start.getDate() + index);
       return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
     });
-    const empty: UsageSummary = { since, days, dayKeys, historyAvailable: false, totals: emptyTokens(), daily: [], models: [], projects: [], limits: [], skills: [] };
     const db = this.historyConnection();
-    if (!db) return { ...empty, limits: this.limits(null, now) };
 
     // Days follow the server's local calendar, like the rest of the app.
-    const rows = db.prepare(`
+    const rows = db ? db.prepare(`
       select date(occurred_at, 'localtime') as day, conversation_usage.provider as provider, model, conversations.project_id as projectId,
         sum(input_tokens) as inputTokens, sum(cache_read_tokens) as cacheReadTokens, sum(cache_write_tokens) as cacheWriteTokens,
         sum(cache_write_1h_tokens) as cacheWrite1hTokens, sum(output_tokens) as outputTokens, sum(reasoning_tokens) as reasoningTokens,
@@ -123,8 +122,17 @@ export class UsageService {
       from conversation_usage join conversations on conversations.id = conversation_usage.conversation_id
       where occurred_at >= ?
       group by day, conversation_usage.provider, model, conversations.project_id
+    `).all(since) as unknown as UsageGroup[] : [];
+    const summaryRows = this.database.connection.prepare(`
+      select date(occurred_at, 'localtime') as day, provider, model, project_id as projectId,
+        sum(input_tokens) as inputTokens, sum(cache_read_tokens) as cacheReadTokens, sum(cache_write_tokens) as cacheWriteTokens,
+        sum(cache_write_1h_tokens) as cacheWrite1hTokens, sum(output_tokens) as outputTokens, sum(reasoning_tokens) as reasoningTokens,
+        count(*) as responses, sum(cost_usd) as reportedCost
+      from auto_summary_usage where occurred_at >= ? group by day, provider, model, project_id
     `).all(since) as unknown as UsageGroup[];
-    const groups = rows.map(priceGroup);
+    const summaryGroups = summaryRows.map(priceGroup);
+    const autoSummaries = sumGroups(summaryGroups, () => 'all')[0]?.tokens ?? emptyTokens();
+    const groups = [...rows.map(priceGroup), ...summaryGroups];
     const totals = sumGroups(groups, () => 'all')[0]?.tokens ?? emptyTokens();
     const daily = sumGroups(groups, (group) => `${group.day}\u0000${group.provider}`)
       .map(({ first, tokens }) => ({ day: first.day, provider: first.provider, ...tokens }))
@@ -137,7 +145,7 @@ export class UsageService {
       .sort((a, b) => processed(b) - processed(a));
     const names = this.projectNames(projectRows.map((row) => row.projectId).filter((id): id is string => Boolean(id)));
     const projects = projectRows.map((row) => ({ ...row, name: row.projectId ? names.get(row.projectId) ?? null : null }));
-    return { since, days, dayKeys, historyAvailable: true, totals, daily, models, projects, limits: this.limits(db, now), skills: this.skills(db, since) };
+    return { since, days, dayKeys, historyAvailable: Boolean(db), totals, autoSummaries, daily, models, projects, limits: this.limits(db, now), skills: db ? this.skills(db, since) : [] };
   }
 
   private limits(history: ReturnType<UsageService['historyConnection']>, now: Date): UsageLimit[] {

@@ -182,3 +182,12 @@ another machine; use the settings test there.
 Cancellation kills the owned CLI process group and discards late results. For
 OpenCode, cancellation of the upstream generation also depends on its shared
 server handling client disconnection; Patterm never stops that shared server.
+
+### Usage accounting
+
+New summary calls, including connection tests, record provider-reported token
+usage separately from conversations. Usage includes these records in its totals,
+charts, model and project rows, and shows an auto-summary breakdown. Connection
+tests have no project. Calls with rejected summary text still count when the CLI
+returned usage. Providers that omit usage cannot be counted; earlier calls cannot
+be recovered. No summary prompts or outputs are retained for accounting.
