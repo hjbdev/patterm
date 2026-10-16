@@ -1,4 +1,5 @@
 import addSummaryProse from './2026_10_12_000008_add_summary_prose';
+import addProviderRateLimitReadings from './2026_10_16_000009_add_provider_rate_limit_readings';
 import createConversationHistorySchema from './2026_07_04_000001_create_conversation_history_schema';
 import createHistorySearchIndexState from './2026_07_15_000002_create_history_search_index_state';
 import type { Migration } from '../../app/Database/Migration';
@@ -16,5 +17,6 @@ export const historyMigrations: Migration[] = [
   createConversationUsage,
   createConversationSkillUses,
   createConversationMedia,
-  addSummaryProse
+  addSummaryProse,
+  addProviderRateLimitReadings
 ];

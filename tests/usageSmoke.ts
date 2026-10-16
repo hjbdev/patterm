@@ -10,7 +10,8 @@ import { ProviderHistoryDiscoveryService } from '../app/Services/AgentHistory/Pr
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { HistoryDatabaseService } from '../app/Services/HistoryDatabaseService';
 import { modelPrice } from '../app/Services/ModelPrices';
-import { UsageService } from '../app/Services/UsageService';
+import { AutoSummaryUsageService } from '../app/Services/AutoSummaryUsageService';
+import { UsageService, usagePace } from '../app/Services/UsageService';
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-usage-'));
 const now = new Date();
@@ -78,6 +79,24 @@ function writeCodex(root: string): void {
   ].join('\n') + '\n');
 }
 
+function paceSmoke(): void {
+  const hours = (count: number) => new Date(now.getTime() + count * 3_600_000).toISOString();
+  const weekly = (usedPercent: number, extra: Partial<{ resetsAt: string; observedAt: string; label: string }> = {}) => ({ label: 'Weekly limit', usedPercent, resetsAt: hours(72), observedAt: hours(-0.2), ...extra });
+  // 30% two days ago, 40% now: ten points a day for the three days left.
+  const steady = usagePace(weekly(40), [{ usedPercent: 30, observedAt: hours(-48) }], now);
+  assert.ok(steady && Math.abs(steady.projectedPercent - 70) < 1e-9 && steady.exhaustsAt === null, 'the last day sets the pace');
+  // Thirty points a day runs out the remaining forty in 32 hours.
+  const fast = usagePace(weekly(60), [{ usedPercent: 30, observedAt: hours(-48) }], now);
+  assert.equal(fast?.projectedPercent, 100);
+  assert.equal(fast?.exhaustsAt, hours(32), 'a fast pace runs out before the reset');
+  assert.equal(usagePace(weekly(60), [{ usedPercent: 30, observedAt: hours(-48) }, { usedPercent: 60, observedAt: hours(-30) }], now)?.projectedPercent, 60, 'no change over the lookback is no pace');
+  assert.equal(usagePace(weekly(20, { resetsAt: hours(150) }), [{ usedPercent: 0, observedAt: hours(-17) }], now), null, 'the first quarter of a window is too early');
+  assert.equal(usagePace(weekly(40, { observedAt: hours(-30) }), [{ usedPercent: 30, observedAt: hours(-48) }], now), null, 'a stale reading has no pace');
+  assert.equal(usagePace(weekly(40), [{ usedPercent: 30, observedAt: hours(-6) }], now), null, 'a few hours of readings is not enough');
+  assert.ok(usagePace(weekly(40), [{ usedPercent: 30, observedAt: hours(-14) }], now), 'readings over half the lookback are enough');
+  assert.equal(usagePace(weekly(40, { label: 'Overage' }), [{ usedPercent: 30, observedAt: hours(-48) }], now), null, 'a window of unknown length has no pace');
+}
+
 function main(): void {
   const appDatabase = new DatabaseService(directory);
   const historyDatabase = new HistoryDatabaseService(directory);
@@ -111,6 +130,13 @@ function main(): void {
     ], 'Codex usage counts each new running total once and separates cached input');
     assert.deepEqual(codex.skills?.map((entry) => [entry.name, entry.invokedBy]), [['bro', 'user'], ['ship', 'agent'], ['one', 'agent'], ['two', 'agent'], ['three', 'agent'], ['ship', 'agent']], 'Codex skills come from $skill mentions and SKILL.md reads, once per turn');
     assert.deepEqual(codex.rateLimits?.map((limit) => [limit.label, limit.usedPercent]), [['5h limit', 42], ['Weekly limit', 12]], 'the newest quota windows are kept');
+    assert.deepEqual(codex.rateLimitReadings?.map((reading) => [reading.label, reading.usedPercent]), [['5h limit', 40], ['Weekly limit', 12], ['5h limit', 41], ['5h limit', 42]], 'each change in a window is a reading');
+    // The same figure in a new window is that window's first reading.
+    const resetFile = path.join(directory, 'rollout-reset.jsonl');
+    const quota = (minutesAgo: number, resetsInMinutes: number) => JSON.stringify({ timestamp: at(minutesAgo), type: 'event_msg', payload: { type: 'token_count', rate_limits: { limit_id: 'codex', primary: { used_percent: 5, window_minutes: 300, resets_at: Math.floor(now.getTime() / 1000) + resetsInMinutes * 60 } } } });
+    fs.writeFileSync(resetFile, [JSON.stringify({ timestamp: at(400), type: 'session_meta', payload: { id: 'codex_reset', cwd: projectPath } }), quota(360, -180), quota(150, 120), quota(6, 120)].join('\n') + '\n');
+    const reset = new CodexHistoryAdapter().parseFile(resetFile).conversations[0];
+    assert.deepEqual(reset?.rateLimitReadings?.map((reading) => reading.observedAt), [at(360), at(150)], 'a reset starts a new reading at the same figure');
 
     const imports = new AgentHistoryImportService(historyDatabase, new ProviderHistoryDiscoveryService(), null, undefined, appDatabase);
     imports.configure({ provider: 'claude', path: claudeRoot, enabled: true, watch_enabled: false });
@@ -136,6 +162,9 @@ function main(): void {
     fs.writeFileSync(subagentFile, `${fs.readFileSync(subagentFile, 'utf8').split('\n')[0]!.replace('claude-sonnet-5-5', 'claude-haiku-4-5')}\n`);
     imports.import({ provider: 'claude', trigger: 'manual' });
 
+    const imported = historyDatabase.connection.prepare(`select label, used_percent as usedPercent from provider_rate_limit_readings order by observed_at, label`).all() as Array<{ label: string; usedPercent: number }>;
+    assert.deepEqual(imported.map((row) => [row.label, row.usedPercent]), [['5h limit', 40], ['Weekly limit', 12], ['5h limit', 41], ['5h limit', 42]], 'imports keep quota readings');
+
     const usage = new UsageService(appDatabase, historyDatabase);
     usage.recordLimits('claude', [{ label: '5h limit', usedPercent: 63, resetsAt: at(-90), observedAt: at(0) }, { label: 'bad' }]);
     // An idle session's snapshot repeats its older reading; it must not replace the newer one.
@@ -143,6 +172,10 @@ function main(): void {
     // A host without observation times cannot date its windows.
     usage.recordLimits('claude', [{ label: 'Weekly limit', usedPercent: 50 }]);
     usage.recordLimits('codex', [{ label: '5h limit', usedPercent: 10, observedAt: at(60) }]);
+    usage.recordLimits('codex', [{ label: '5h limit', usedPercent: 10, observedAt: at(50) }]);
+    const readings = appDatabase.connection.prepare(`select harness, used_percent as usedPercent from harness_rate_limit_readings order by harness, observed_at`).all() as Array<{ harness: string; usedPercent: number }>;
+    assert.deepEqual(readings.map((row) => [row.harness, row.usedPercent]), [['claude', 5], ['claude', 63], ['codex', 10], ['codex', 10]], 'live readings keep every observation, including a late older one');
+
     const summary = usage.summary(7, now);
     assert.equal(summary.dayKeys.length, 7);
     assert.equal(summary.dayKeys.at(-1), localDay(now), 'the chart days end today on the server calendar');
@@ -179,6 +212,56 @@ function main(): void {
     const empty = new UsageService(appDatabase, null).summary(1, now);
     assert.equal(empty.historyAvailable, false, 'the dashboard works without history');
     assert.equal(empty.limits.length, 2, 'live quota windows still show');
+    const summaries = new AutoSummaryUsageService(appDatabase);
+    const conversationCount = historyDatabase.connection.prepare('select count(*) as count from conversations').get();
+    summaries.record('codex', 'gpt-6-sol', [
+      { type: 'item.completed', item: { text: 'private summary' } },
+      { type: 'turn.completed', usage: { input_tokens: 100, cached_input_tokens: 20, output_tokens: 10, reasoning_output_tokens: 4 } }
+    ].map(row => JSON.stringify(row)).join('\n'), 'usage_project');
+    summaries.record('claude', 'haiku', JSON.stringify({
+      usage: { cache_creation: { ephemeral_1h_input_tokens: 5 } },
+      modelUsage: { 'claude-haiku-4-5': { inputTokens: 30, cacheReadInputTokens: 10, cacheCreationInputTokens: 5, outputTokens: 7 } }
+    }), 'usage_project');
+    summaries.record('claude', 'unknown-model', JSON.stringify({
+      usage: { input_tokens: 40, cache_read_input_tokens: 10, output_tokens: 8, output_tokens_details: { thinking_tokens: 3 } }, total_cost_usd: 0.02
+    }));
+    // Missing or malformed metadata must not invent usage or retain provider text.
+    summaries.record('claude', 'haiku', 'invalid JSON');
+    summaries.record('codex', 'gpt-6-sol', JSON.stringify({ type: 'turn.completed' }));
+    summaries.record('opencode', 'unknown-model', JSON.stringify({ data: { usage: { inputTokens: -1, outputTokens: '5' } } }));
+    appDatabase.connection.prepare("insert into auto_summary_usage (provider, model, occurred_at, input_tokens, cache_read_tokens, cache_write_tokens, cache_write_1h_tokens, output_tokens, reasoning_tokens) values ('codex', 'gpt-6-sol', '2000-01-01T00:00:00.000Z', 9999, 0, 0, 0, 0, 0)").run();
+    const combined = usage.summary(7, now);
+    assert.equal(combined.totals.responses, summary.totals.responses + 3);
+    assert.equal(combined.autoSummaries.responses, 3);
+    assert.equal(combined.autoSummaries.inputTokens, 80 + 30 + 40);
+    assert.equal(combined.autoSummaries.outputTokens, 10 + 7 + 8);
+    assert.equal(combined.autoSummaries.cacheReadTokens, 20 + 10 + 10);
+    assert.equal(combined.autoSummaries.reasoningTokens, 4 + 3);
+    const summaryCost = (80 * 2 + 20 * 0.2 + 10 * 10 + 30 + 10 * 0.1 + 5 * 2 + 7 * 5) / 1_000_000 + 0.02;
+    assert.ok(Math.abs(combined.autoSummaries.costUsd - summaryCost) < 1e-12);
+    assert.ok(Math.abs(combined.totals.costUsd - summary.totals.costUsd - summaryCost) < 1e-12);
+    assert.equal(combined.projects.find(row => row.projectId === 'usage_project')!.inputTokens,
+      summary.projects[0]!.inputTokens + 80 + 30);
+    assert.equal(combined.daily.reduce((sum, row) => sum + row.responses, 0), combined.totals.responses);
+    assert.equal(combined.models.reduce((sum, row) => sum + row.responses, 0), combined.totals.responses);
+    assert.deepEqual(historyDatabase.connection.prepare('select count(*) as count from conversations').get(), conversationCount,
+      'summary accounting creates no conversations');
+    const withoutHistory = new UsageService(appDatabase, null).summary(7, now);
+    assert.equal(withoutHistory.historyAvailable, false);
+    assert.deepEqual(withoutHistory.totals, combined.autoSummaries, 'summary usage works without history imports');
+    const saved = appDatabase.connection.prepare('select * from auto_summary_usage').all();
+    assert.ok(!JSON.stringify(saved).includes('private summary'));
+    appDatabase.dispose();
+    appDatabase.initialize();
+    assert.deepEqual(new UsageService(appDatabase, null).summary(7, now).totals, combined.autoSummaries, 'usage survives restart');
+    // A late, older observation at the same figure still shows usage had already plateaued.
+    const hours = (count: number) => new Date(now.getTime() + count * 3_600_000).toISOString();
+    for (const [usedPercent, observedAt] of [[30, hours(-48)], [40, hours(-1)], [40, hours(-26)]] as const) {
+      usage.recordLimits('claude', [{ label: 'Weekly Opus', usedPercent, resetsAt: hours(72), observedAt }]);
+    }
+    const plateau = usage.summary(1, now).limits.find((limit) => limit.label === 'Weekly Opus');
+    assert.equal(plateau?.projectedPercent, 40, 'a late observation sets the start of a plateau');
+    paceSmoke();
     console.log('usage smoke ok');
   } finally {
     historyDatabase.dispose();

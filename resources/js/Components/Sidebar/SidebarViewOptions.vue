@@ -7,12 +7,9 @@
       </button>
     </DropdownMenuTrigger>
     <DropdownMenuContent align="end" class="w-56">
-      <DropdownMenuItem class="pl-8 text-[13px]" @select="expansion.setAll(true)">Expand all</DropdownMenuItem>
-      <DropdownMenuItem class="pl-8 text-[13px]" @select="expansion.setAll(false)">Collapse all</DropdownMenuItem>
-      <DropdownMenuSeparator />
+      <DropdownMenuCheckboxItem v-model="expansion.state.value.subtitles" class="text-[13px]" @select.prevent>Show subtitles</DropdownMenuCheckboxItem>
       <DropdownMenuCheckboxItem v-model="expansion.state.value.groupByStatus" class="text-[13px]" @select.prevent>Group by status</DropdownMenuCheckboxItem>
       <DropdownMenuCheckboxItem v-model="expansion.state.value.followActive" class="text-[13px]" @select.prevent>Open the agent I'm in</DropdownMenuCheckboxItem>
-      <DropdownMenuCheckboxItem v-model="expansion.state.value.summaries" class="text-[13px]" @select.prevent>Show every summary</DropdownMenuCheckboxItem>
     </DropdownMenuContent>
   </DropdownMenu>
 </template>
@@ -20,7 +17,7 @@
 <script setup lang="ts">
 import { SlidersHorizontal } from 'lucide-vue-next';
 import { useSidebarExpansion } from '../../Composables/useSidebarExpansion';
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '../ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { useSidebar } from './sidebarContext';
 
 const sidebar = useSidebar();

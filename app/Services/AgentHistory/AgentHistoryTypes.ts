@@ -20,6 +20,8 @@ export interface ParsedConversation {
   usage?: ParsedUsage[];
   // The newest quota windows the transcript recorded.
   rateLimits?: ParsedRateLimit[];
+  // Each change in a quota window's usage, oldest first, for its pace.
+  rateLimitReadings?: ParsedRateLimitReading[];
   // Each time a skill was loaded, by the agent or by the user's command.
   skills?: ParsedSkillUse[];
   // Images the user pasted or the agent viewed, in transcript order.
@@ -73,6 +75,15 @@ export interface ParsedRateLimit {
   usedPercent: number;
   windowMinutes: number | null;
   resetsAt: string | null;
+  observedAt: string;
+}
+
+// Longer than the longest quota window, so a window's readings outlive it.
+export const RATE_LIMIT_READING_RETENTION_MS = 8 * 24 * 60 * 60_000;
+
+export interface ParsedRateLimitReading {
+  label: string;
+  usedPercent: number;
   observedAt: string;
 }
 

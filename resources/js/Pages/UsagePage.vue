@@ -6,7 +6,7 @@
       </Button>
       <div class="min-w-0 flex-1">
         <h1 class="text-sm font-semibold">Usage</h1>
-        <p class="truncate text-[11px] text-muted-foreground">Tokens from agent transcripts and the remaining quota for each harness.</p>
+        <p class="truncate text-[11px] text-muted-foreground">Tokens from agent conversations and auto-summaries, plus remaining quota.</p>
       </div>
       <AssistantButton />
     </header>
@@ -38,11 +38,15 @@
                   <div class="mt-1.5 h-1 overflow-hidden rounded-full bg-white/[0.06]">
                     <div v-if="!limit.expired" class="h-full rounded-full" :class="barClass(limit.usedPercent)" :style="{ width: `${Math.min(100, Math.max(0, limit.usedPercent))}%` }" />
                   </div>
-                  <p class="mt-1 text-[11px] text-muted-foreground/80">
-                    <template v-if="limit.expired">Window reset since last seen · </template>
-                    <template v-else-if="limit.resetsAt">Resets in {{ untilLabel(limit.resetsAt, now) }} · </template>
-                    seen {{ relativeTime(limit.observedAt, now) }}
-                  </p>
+                  <div class="mt-1 flex flex-wrap items-baseline gap-x-3 text-[11px] text-muted-foreground/80">
+                    <!-- Each part wraps whole, breaking only between parts. -->
+                    <p class="min-w-0">
+                      <span v-if="limit.expired" class="whitespace-nowrap">Window reset since last seen</span>
+                      <span v-else-if="limit.resetsAt" class="whitespace-nowrap">Resets in {{ untilLabel(limit.resetsAt, now) }}</span>
+                      <template v-if="pace(limit)"> · <span class="whitespace-nowrap">{{ pace(limit) }}</span></template>
+                    </p>
+                    <span class="ml-auto whitespace-nowrap">Seen {{ relativeTime(limit.observedAt, now) }}</span>
+                  </div>
                 </li>
               </ul>
             </section>
@@ -64,9 +68,9 @@
               </div>
 
               <p v-if="!summary.historyAvailable" class="text-xs text-muted-foreground">
-                Conversation history has not been imported yet. Turn on history sources in Settings to count tokens.
+                Conversation history has not been imported yet. Turn on history sources in Settings to include conversation tokens.
               </p>
-              <template v-else>
+              <template v-if="summary.historyAvailable || summary.autoSummaries?.responses">
                 <dl class="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-5">
                   <div v-for="stat in stats" :key="stat.label">
                     <dt class="text-[11px] text-muted-foreground">{{ stat.label }}</dt>
@@ -77,6 +81,14 @@
                   {{ summary.totals.responses.toLocaleString() }} model responses. API prices are pay-as-you-go list rates, which your subscriptions replace; OpenCode's own figures cover models without one.
                   <template v-if="unpricedModels.length">{{ compactTokens(summary.totals.unpricedTokens) }} tokens from {{ unpricedModels.join(', ') }} have no public price and are left out.</template>
                 </p>
+
+                <p v-if="summary.autoSummaries?.responses" class="mt-2 text-[11px] text-muted-foreground" data-component="auto-summary-usage">
+                  Includes auto-summaries: {{ summary.autoSummaries.responses.toLocaleString() }} model responses,
+                  {{ compactTokens(processedTokens(summary.autoSummaries)) }} tokens excluding cache reads,
+                  {{ formatUsd(summary.autoSummaries.costUsd) }} at API prices.
+                </p>
+
+                <p class="mt-2 text-[11px] text-muted-foreground/80">OpenCode auto-summary usage is unavailable because its summary endpoint does not report tokens.</p>
 
                 <div v-if="summary.days > 1" class="mt-6">
                   <div class="mb-2 flex items-center gap-2">
@@ -212,6 +224,11 @@ const largestSkill = computed(() => Math.max(1, ...(summary.value?.skills ?? [])
 
 function remaining(limit: UsageLimit): number {
   return Math.max(0, Math.round(100 - limit.usedPercent));
+}
+function pace(limit: UsageLimit): string {
+  if (limit.exhaustsAt) return Date.parse(limit.exhaustsAt) > now.value ? `On pace to run out in ${untilLabel(limit.exhaustsAt, now.value)}` : '';
+  if (limit.projectedPercent === null) return '';
+  return `On pace for ${Math.max(0, Math.round(100 - limit.projectedPercent))}% left at reset`;
 }
 // Calm until the quota runs low.
 function toneClass(usedPercent: number): string {

@@ -21,6 +21,9 @@ export interface UsageLimit {
   resetsAt: string | null;
   observedAt: string;
   expired: boolean;
+  // Where the window ends at the recent pace, and when it runs out first.
+  projectedPercent: number | null;
+  exhaustsAt: string | null;
 }
 
 export interface UsageSkill {
@@ -38,6 +41,7 @@ export interface UsageSummary {
   dayKeys: string[];
   historyAvailable: boolean;
   totals: UsageTokens;
+  autoSummaries: UsageTokens;
   daily: Array<UsageTokens & { day: string; provider: string }>;
   models: Array<UsageTokens & { provider: string; model: string | null }>;
   projects: Array<UsageTokens & { projectId: string | null; name: string | null }>;

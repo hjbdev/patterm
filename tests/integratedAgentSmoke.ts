@@ -417,6 +417,85 @@ async function observedActivity(database: DatabaseService): Promise<void> {
   await settle();
   assert.equal(activity(), 'permission');
 
+  // A background task, such as a shell the agent waits on, is counted from the
+  // snapshot a pending event re-reads. Activity stays as the harness says.
+  const backgroundTasks = () => (database.connection.prepare(`select background_tasks from processes where id = 'process_observed'`).get() as { background_tasks: number }).background_tasks;
+  const updatedAt = () => (database.connection.prepare(`select updated_at from processes where id = 'process_observed'`).get() as { updated_at: string }).updated_at;
+  snapshot = 'idle';
+  emit({ kind: 'status', status: 'idle' });
+  const idleSince = updatedAt();
+  let tasks: unknown[] = [{ id: 'shell', kind: 'shell', status: 'running' }, { id: 'old', kind: 'shell', status: 'completed' }, { id: 'queued', status: 'pending' }];
+  conversation = async () => ({ status: snapshot, tasks });
+  const beforeTasks = changes;
+  emit({ kind: 'pending' });
+  await settle();
+  assert.equal(backgroundTasks(), 2, 'running and pending tasks are counted');
+  assert.equal(activity(), 'idle', 'background tasks leave activity alone');
+  assert.equal(updatedAt(), idleSince, 'the count does not look like activity to idle timers');
+  assert.equal(changes, beforeTasks + 1, 'a count change refreshes the workbench');
+  emit({ kind: 'pending' });
+  await settle();
+  assert.equal(changes, beforeTasks + 1, 'an unchanged count does not');
+  tasks = [{ id: 'shell', kind: 'shell', status: 'completed' }];
+  emit({ kind: 'pending' });
+  await settle();
+  assert.equal(backgroundTasks(), 0, 'finished tasks are not counted');
+
+  // Only the agent's own reads, one at a time, set the count, so a viewer's
+  // older read that lands late cannot bring back a finished task.
+  tasks = [{ id: 'shell', status: 'running' }];
+  emit({ kind: 'pending' });
+  await settle();
+  assert.equal(backgroundTasks(), 1);
+  let releaseOlder!: (value: unknown) => void;
+  conversation = () => new Promise((resolve) => { releaseOlder = resolve; });
+  const olderRead = service.conversation('process_observed');
+  tasks = [];
+  conversation = async () => ({ status: snapshot, tasks });
+  emit({ kind: 'pending' });
+  await settle();
+  assert.equal(backgroundTasks(), 0);
+  releaseOlder({ status: 'idle', tasks: [{ id: 'shell', status: 'running' }] });
+  await olderRead;
+  assert.equal(backgroundTasks(), 0, 'a late, older read does not restore a finished task');
+
+  // OpenCode ends a subagent task with a status alone; while tasks are
+  // counted, a status re-reads them.
+  tasks = [{ id: 'child', kind: 'subagent', status: 'running' }];
+  emit({ kind: 'pending' });
+  await settle();
+  assert.equal(backgroundTasks(), 1);
+  tasks = [];
+  emit({ kind: 'status', status: 'idle' });
+  await settle();
+  assert.equal(backgroundTasks(), 0, 'a status alone clears finished tasks');
+
+  // A turn that ends with a new task and no pending event counts it.
+  tasks = [{ id: 'shell', kind: 'shell', status: 'running' }];
+  emit({ kind: 'status', status: 'working' });
+  emit({ kind: 'status', status: 'idle' });
+  await settle();
+  assert.equal(backgroundTasks(), 1, 'a turn\'s end counts the tasks it started');
+
+  // A read in flight when a task ends may predate the end; the turn's end
+  // queues another read behind it.
+  tasks = [];
+  emit({ kind: 'pending' });
+  await settle();
+  assert.equal(backgroundTasks(), 0);
+  let releaseInFlight!: (value: unknown) => void;
+  conversation = () => new Promise((resolve) => { releaseInFlight = resolve; });
+  tasks = [{ id: 'child', status: 'running' }];
+  emit({ kind: 'pending' });
+  await settle();
+  conversation = async () => ({ status: snapshot, tasks: [] });
+  emit({ kind: 'status', status: 'idle' });
+  releaseInFlight({ status: 'idle', tasks: [{ id: 'child', status: 'running' }] });
+  await settle();
+  await settle();
+  assert.equal(backgroundTasks(), 0, 'a read that predates a task\'s end does not leave it counted');
+  conversation = async () => ({ status: snapshot });
+
   // A turn that ended while disconnected is caught by the reconnect handoff.
   snapshot = 'idle';
   emit({ kind: 'reconnecting' });
