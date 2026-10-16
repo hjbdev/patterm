@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Quit warnings count only agents and commands on this machine, excluding
+  paired hosts, including their records in linked projects.
+
 ## [0.2.7] - 2026-10-17
 
 ### Fixed
