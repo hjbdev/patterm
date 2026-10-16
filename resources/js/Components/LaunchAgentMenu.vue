@@ -18,18 +18,18 @@
     <template #desktop>
       <!-- Showing all agents, the agent you picked asks which project next. -->
       <template v-if="pending">
-        <DropdownMenuItem class="gap-2 text-[13px] text-muted-foreground" @select.prevent="pending = null">
+        <DropdownMenuItem class="gap-2 text-[13px] text-muted-foreground" @select.prevent="backToAgents">
           <ChevronLeft class="h-4 w-4 shrink-0" />
           <span class="min-w-0 flex-1 truncate">{{ pendingLabel }}</span>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem v-for="target in launchTargets" :key="target.targetProjectId" data-launch-target class="gap-2 text-[13px]" @select="launchHarness(pending.harness, pending.presetId, target)">
+        <DropdownMenuItem v-for="target in pendingTargets" :key="target.targetProjectId" data-launch-target class="gap-2 text-[13px]" @select="launchHarness(pending.harness, pending.presetId, target)">
           <ProjectLogo :project="target.project" :size="14" />
           <span class="min-w-0 flex-1 truncate">{{ target.project.name }}</span>
           <HostBadge v-if="target.host" :host="target.host" />
         </DropdownMenuItem>
-        <DropdownMenuItem v-if="!launchTargets.length" disabled>
-          <span class="text-xs text-muted-foreground">No projects shown</span>
+        <DropdownMenuItem v-if="!pendingTargets.length" disabled>
+          <span class="text-xs text-muted-foreground">No shown project can run it</span>
         </DropdownMenuItem>
       </template>
       <template v-else>
@@ -40,6 +40,7 @@
       <DropdownMenuSeparator />
       <DropdownMenuSub v-for="harness in launchableHarnesses" :key="harness.id">
         <DropdownMenuSubTrigger
+          data-launch-harness
           class="gap-2"
           @click.prevent.stop="pickHarness(harness.harness, defaultPresetId(harness.harness))"
         >
@@ -68,16 +69,16 @@
     </template>
     <template #mobile>
       <div v-if="pending" class="space-y-1">
-        <button type="button" class="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm text-muted-foreground hover:bg-muted/60" @click="pending = null">
+        <button type="button" class="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm text-muted-foreground hover:bg-muted/60" @click="backToAgents">
           <ChevronLeft class="h-4 w-4 shrink-0" />
           <span class="min-w-0 flex-1 truncate">{{ pendingLabel }}</span>
         </button>
-        <button v-for="target in launchTargets" :key="target.targetProjectId" type="button" class="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60" @click="launchHarness(pending.harness, pending.presetId, target)">
+        <button v-for="target in pendingTargets" :key="target.targetProjectId" type="button" class="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60" @click="launchHarness(pending.harness, pending.presetId, target)">
           <ProjectLogo :project="target.project" :size="16" />
           <span class="min-w-0 flex-1 truncate">{{ target.project.name }}</span>
           <HostBadge v-if="target.host" :host="target.host" />
         </button>
-        <p v-if="!launchTargets.length" class="py-2 text-sm text-muted-foreground">No projects shown</p>
+        <p v-if="!pendingTargets.length" class="py-2 text-sm text-muted-foreground">No shown project can run it</p>
       </div>
       <template v-else>
         <div v-if="hostOptions.length > 1" class="pb-2">
@@ -124,12 +125,12 @@ import ResponsiveMenu from './ResponsiveMenu.vue';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger } from './ui/dropdown-menu';
-import { allAgents, listedProjects, projectShown } from '../lib/allAgents';
+import { allAgents, launchTargets, targetsWithHarness, type LaunchTarget } from '../lib/allAgents';
 import HostBadge from './HostBadge.vue';
 import ProjectLogo from './ProjectLogo.vue';
 import SettingsChoice from './settings/SettingsChoice.vue';
 import { cn } from '../lib/utils';
-import type { AgentInterface, HarnessInstallationRecord, ProjectSummary } from '../types';
+import type { AgentInterface, HarnessInstallationRecord } from '../types';
 
 type PresetHarness = 'claude' | 'codex' | 'opencode';
 
@@ -172,7 +173,6 @@ const remoteTarget = computed(() => Boolean(project.value?.project.host) || targ
 
 // Showing all agents, the agent you pick waits while you choose a shown
 // project, or one of its paired hosts, to start it in.
-interface LaunchTarget { projectId: string; targetProjectId: string; host: string | null; project: ProjectSummary }
 const pending = ref<{ harness: string; presetId: string | null } | null>(null);
 watch(menuOpen, (open) => { if (!open) pending.value = null; });
 const pendingLabel = computed(() => {
@@ -180,12 +180,7 @@ const pendingLabel = computed(() => {
   const preset = presets.value.presets.find((candidate) => candidate.id === pending.value?.presetId);
   return `${harnessLabel(pending.value.harness)}${preset ? ` · ${preset.name}` : ''}`;
 });
-const launchTargets = computed<LaunchTarget[]>(() => listedProjects(projects.value)
-  .filter((item) => projectShown(allAgents, item.project.id))
-  .flatMap(({ project: shown }) => [
-    { projectId: shown.id, targetProjectId: shown.id, host: shown.host ?? null, project: shown },
-    ...(shown.host ? [] : (shown.remotes ?? []).map((remote) => ({ projectId: shown.id, targetProjectId: remote.projectId, host: remote.host, project: shown })))
-  ]));
+const shownTargets = computed(() => launchTargets(projects.value, allAgents));
 const targetHost = computed(() => project.value?.project.host ?? hostOptions.value.find((option) => option.value === targetProjectId.value)?.label ?? '');
 // Another host has its own CLIs; its presets stay there, so a launch there
 // uses that host's default preset.
@@ -201,8 +196,33 @@ watch([targetProjectId, () => menuOpen.value], async ([target, open]) => {
   }
 });
 
+// Showing all agents, each paired host offers its own CLIs, so the list
+// covers every host and the project step offers only targets that have the
+// one you picked. A host that can't be reached offers none.
+const hostHarnesses = ref<Record<string, HarnessInstallationRecord[]>>({});
+watch(menuOpen, async (open) => {
+  if (!open || !props.chooseProject) return;
+  const hosts = new Map(shownTargets.value.flatMap((target) => target.host ? [[target.host, target.targetProjectId] as const] : []));
+  hostHarnesses.value = Object.fromEntries(await Promise.all([...hosts].map(async ([host, projectId]) => {
+    try {
+      const result = await window.patterm.call('harness_list', { project_id: projectId }) as { harnesses?: HarnessInstallationRecord[] } | HarnessInstallationRecord[];
+      return [host, filterLaunchableHarnesses(Array.isArray(result) ? result : result.harnesses ?? [])] as const;
+    } catch {
+      return [host, []] as const;
+    }
+  })));
+});
+function harnessesOn(host: string | null): HarnessInstallationRecord[] {
+  return host ? hostHarnesses.value[host] ?? [] : filterLaunchableHarnesses(harnesses.value);
+}
+const pendingTargets = computed(() => pending.value ? targetsWithHarness(shownTargets.value, pending.value.harness, harnessesOn) : []);
+
 // Real agent CLIs only — the raw shell is offered as a process, not an agent.
-const launchableHarnesses = computed(() => filterLaunchableHarnesses(remoteTarget.value ? remoteHarnesses.value : harnesses.value));
+const launchableHarnesses = computed(() => {
+  if (!props.chooseProject) return filterLaunchableHarnesses(remoteTarget.value ? remoteHarnesses.value : harnesses.value);
+  const all = [harnessesOn(null), ...Object.values(hostHarnesses.value)].flat();
+  return all.filter((record, index) => all.findIndex((other) => other.harness === record.harness) === index);
+});
 const interfaceMode = ref<AgentInterface>('integrated');
 const savedInterfaceMode = ref<AgentInterface>('integrated');
 
@@ -268,7 +288,17 @@ function pickHarness(harness: string, presetId: string | null): void {
     return;
   }
   pending.value = { harness, presetId };
-  void nextTick(() => document.querySelector<HTMLElement>('[data-launch-target]')?.focus());
+  focusFirst('[data-launch-target]');
+}
+
+function backToAgents(): void {
+  pending.value = null;
+  focusFirst('[data-launch-harness]');
+}
+
+// Swapping the menu's items drops focus, so keyboard users keep their place.
+function focusFirst(selector: string): void {
+  void nextTick(() => document.querySelector<HTMLElement>(selector)?.focus());
 }
 
 // Choosing the project next keeps the menu open.
