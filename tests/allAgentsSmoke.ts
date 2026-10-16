@@ -7,6 +7,7 @@ import {
   openAgentCount,
   projectShown,
   readAllAgentsState,
+  keepHiddenTabs,
   setProjectShown,
   tabsGroupedByProject,
   type AllAgentsState
@@ -87,6 +88,13 @@ assert.deepEqual(groupByProject(['guide'], [web.project, docs.project], (id) => 
 // Pinned tabs stay first in their own order; the rest gather by project.
 const tabs = [{ id: 'guide', pinned: false }, { id: 'checkout', pinned: true }, { id: 'reviewer', pinned: false }, { id: 'dev-server', pinned: false }];
 assert.deepEqual(tabsGroupedByProject(tabs, [web.project, docs.project], (tab) => all.owners.get(tab.id) ?? null).map((tab) => tab.id), ['checkout', 'reviewer', 'dev-server', 'guide']);
+
+// A change while project B is hidden keeps B's order and pins: saved
+// [b2, a2, b1, a1] with b2 pinned, B hidden, a1 moved before a2.
+const hiddenB = (key: string) => key.startsWith('b');
+assert.deepEqual(keepHiddenTabs({ order: ['b2', 'a2', 'b1', 'a1'], pinned: ['b2'] }, { order: ['a1', 'a2'], pinned: [] }, hiddenB), { order: ['b2', 'a1', 'a2', 'b1'], pinned: ['b2'] });
+// Closed tabs, which no hidden project owns, drop out as before.
+assert.deepEqual(keepHiddenTabs({ order: ['gone', 'a1'], pinned: ['gone'] }, { order: ['a1'], pinned: [] }, hiddenB), { order: ['a1'], pinned: [] });
 
 // Stored state survives bad input.
 const storage = (value: string | null) => ({ getItem: () => value });

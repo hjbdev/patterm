@@ -1,5 +1,6 @@
 import { reactive, watch } from 'vue';
 import { activeAgentSessions } from './agentTabs';
+import type { TabLayout } from './tabStrip';
 import type { ProcessRecord, ProjectSummary, ProjectWorkbench, SessionRecord, TimerRecord } from '../types';
 
 // "All agents" shows every shown project's open agents together. It stays on
@@ -75,6 +76,23 @@ export function buildAllAgentsView(projects: readonly ProjectWorkbench[], hidden
     processes: shown.flatMap((item) => item.processes),
     timers: shown.flatMap((item) => item.timers),
     owners
+  };
+}
+
+// A layout change made while some projects are hidden covers only the tabs
+// that show. The hidden projects' tabs keep their places beside the tabs they
+// followed, and their pins, for when those projects show again.
+export function keepHiddenTabs(previous: TabLayout, next: TabLayout, hidden: (key: string) => boolean): TabLayout {
+  const shown = new Set(next.order);
+  const after = new Map<string | null, string[]>();
+  let anchor: string | null = null;
+  for (const key of previous.order) {
+    if (shown.has(key)) anchor = key;
+    else if (hidden(key)) after.set(anchor, [...after.get(anchor) ?? [], key]);
+  }
+  return {
+    order: [...after.get(null) ?? [], ...next.order.flatMap((key) => [key, ...after.get(key) ?? []])],
+    pinned: [...next.pinned, ...previous.pinned.filter((key) => hidden(key) && !next.pinned.includes(key))]
   };
 }
 

@@ -146,7 +146,7 @@ import HostBadge from './HostBadge.vue';
 import AssistantButton from './Assistant/AssistantButton.vue';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { CalendarClock, ChevronDown, Gauge, Layers, LayoutGrid, Menu, Search, Settings } from 'lucide-vue-next';
-import { allAgents, listedProjects, openAgentCount, projectShown } from '../lib/allAgents';
+import { allAgents as allAgentsState, listedProjects, openAgentCount, projectShown } from '../lib/allAgents';
 import { readRecentProjectIds, rememberRecentProject, shownRecentProjects } from '../lib/recentProjects';
 import type { ProjectWorkbench } from '../types';
 import { Badge } from './ui/badge';
@@ -245,7 +245,7 @@ onBeforeUnmount(cancelProjectMenuClose);
 const activeProject = computed(() => props.projects.find((project) => project.project.id === props.activeProjectId) ?? null);
 const shownAgentCount = computed(() => props.allAgents ? props.allAgentsCount ?? 0 : activeProject.value ? openAgentCount(activeProject.value) : 0);
 // What All agents would show: the projects switched on in its Projects menu.
-const totalAgentCount = computed(() => listedProjects(props.projects).filter((project) => projectShown(allAgents, project.project.id)).reduce((total, project) => total + openAgentCount(project), 0));
+const totalAgentCount = computed(() => listedProjects(props.projects).filter((project) => projectShown(allAgentsState, project.project.id)).reduce((total, project) => total + openAgentCount(project), 0));
 
 
 // A release newer than this install marks Settings until it is installed.

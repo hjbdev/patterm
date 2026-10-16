@@ -155,8 +155,8 @@ import { assistant } from '../lib/assistant';
 import { openCommandPaletteKey } from '../lib/commandPalette';
 import { isNavigationModeToggle, navigationModeAction } from '../lib/navigationMode';
 import { activeProcesses, topLevelProcessesForSessions } from '../lib/processTabs';
-import { buildStripTabs, readStoredTabLayout, writeStoredTabLayout, type StripTab, type TabLayout } from '../lib/tabStrip';
-import { ALL_AGENTS_SCOPE, allAgents, buildAllAgentsView, listedProjects, projectShown, tabsGroupedByProject } from '../lib/allAgents';
+import { agentTabKey, buildStripTabs, EMPTY_TAB_LAYOUT, processTabKey, readStoredTabLayout, writeStoredTabLayout, type StripTab, type TabLayout } from '../lib/tabStrip';
+import { ALL_AGENTS_SCOPE, allAgents, buildAllAgentsView, keepHiddenTabs, listedProjects, projectShown, tabsGroupedByProject } from '../lib/allAgents';
 import { useSidebarExpansion } from '../Composables/useSidebarExpansion';
 import type { ProcessRecord, ProjectSummary, SessionRecord } from '../types';
 import { startPrefetch } from '../lib/prefetch';
@@ -295,9 +295,10 @@ function selectAgentTabTarget(target: AgentTabSelectionTarget): void {
 // All agents keeps one order of its own, apart from each project's.
 const tabLayoutScope = computed(() => showingAll.value ? ALL_AGENTS_SCOPE : activeProjectId.value);
 
-function updateCurrentTabLayout(layout: TabLayout): void {
+function updateCurrentTabLayout(change: TabLayout): void {
   const scope = tabLayoutScope.value;
   if (!scope) return;
+  const layout = showingAll.value ? keepHiddenTabs(currentTabLayout.value ?? EMPTY_TAB_LAYOUT, change, (key) => hiddenTabKeys.value.has(key)) : change;
   tabLayoutByProject.value = { ...tabLayoutByProject.value, [scope]: layout };
   writeStoredTabLayout(scope, layout);
 }
@@ -319,6 +320,9 @@ const listedSummaries = computed(() => listedProjects(projects.value).map((item)
 const shownProjectIds = computed(() => showingAll.value
   ? listedSummaries.value.filter((project) => projectShown(allAgents, project.id)).map((project) => project.id)
   : activeProjectId.value ? [activeProjectId.value] : []);
+// Tabs of the projects switched off, whose places All agents keeps.
+const hiddenTabKeys = computed(() => new Set(listedProjects(projects.value).filter((item) => !projectShown(allAgents, item.project.id))
+  .flatMap((item) => [...item.projectSessions.map((session) => agentTabKey(session.id)), ...item.processes.map((process) => processTabKey(process.id))])));
 function projectOf(id: string): ProjectSummary | null {
   return allAgentsView.value.owners.get(id) ?? null;
 }
