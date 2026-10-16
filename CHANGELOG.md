@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The assistant button moved from the floating corner into the top bar (the
+  bottom bar on phones), so it no longer covers composers, send buttons, or
+  terminal text. The floating panel now opens beneath it.
 - Switching back to an Integrated Claude agent no longer reads its model,
   effort, mode and slash-command controls again unless they changed, and its
   conversation snapshots no longer carry Claude's full model and command

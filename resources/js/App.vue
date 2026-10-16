@@ -9,8 +9,8 @@
   <WorkbenchLayout v-else />
   <DirectoryPickerDialog v-if="isBrowser" />
   <QuitDialog v-else />
-  <!-- Toasts sit above the assistant button in the same corner, or beside the docked assistant, when it is on. -->
-  <Toaster position="bottom-right" rich-colors :offset="assistant.enabled && assistantLayout.open && assistantLayout.docked && !assistantLayout.expanded ? { bottom: 16, right: 'calc(var(--assistant-dock-width) + 1.375rem)' } : { bottom: assistant.enabled ? 80 : 16, right: 16 }" :mobile-offset="{ bottom: assistant.enabled ? 80 : 16 }" />
+  <!-- Toasts sit beside the docked assistant when it is open, and above the bottom bar on phones. -->
+  <Toaster position="bottom-right" rich-colors :offset="assistant.enabled && assistantLayout.open && assistantLayout.docked && !assistantLayout.expanded ? { bottom: 16, right: 'calc(var(--assistant-dock-width) + 1.375rem)' } : { bottom: 16, right: 16 }" :mobile-offset="{ bottom: 56 }" />
 </template>
 
 <script setup lang="ts">

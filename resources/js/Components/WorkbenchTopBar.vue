@@ -70,10 +70,11 @@
     <slot name="terminal-tabs" />
 
     <div class="ml-auto flex shrink-0 items-center gap-1.5">
+      <AssistantButton />
       <Button variant="ghost" size="sm" class="h-7 gap-2 rounded-tab px-2 text-xs text-muted-foreground" aria-label="Search or jump to" @click="emit('commandPalette')">
         <Search class="h-4 w-4" /><span class="hidden sm:inline">Search or jump to…</span><kbd class="hidden rounded border border-border/70 px-1 text-[10px] sm:inline">Ctrl K</kbd>
       </Button>
-      <!-- Phones keep Search and Notifications inline and move the rest into the menu drawer. -->
+      <!-- Phones keep Search and Notifications inline and move the rest into the menu drawer, which stays in the corner. -->
       <Button variant="ghost" size="icon" class="hidden h-7 w-7 rounded-tab text-muted-foreground sm:inline-flex" aria-label="Scheduled" title="Scheduled" @click="emit('routines')">
         <CalendarClock class="h-4 w-4" />
       </Button>
@@ -85,6 +86,17 @@
         <Settings class="h-4 w-4" />
         <span v-if="updateAvailable" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
       </Button>
+      <Tooltip v-if="!sidecarAvailable">
+        <TooltipTrigger as-child>
+          <Badge variant="outline" class="h-6 cursor-help border-destructive/40 bg-destructive/10 px-2 text-[11px] text-destructive">
+            {{ sidecarStatus }}
+          </Badge>
+        </TooltipTrigger>
+        <TooltipContent align="end" class="max-w-72 bg-popover text-popover-foreground">
+          <p class="font-medium">Terminal core unavailable</p>
+          <p class="mt-1 text-muted-foreground">Agent and process terminals cannot launch until the native terminal sidecar starts.</p>
+        </TooltipContent>
+      </Tooltip>
       <ResponsiveMenu v-model:open="appMenuOpen" mobile-only title="Patterm">
         <template #trigger>
           <Button variant="ghost" size="icon" class="relative h-7 w-7 rounded-tab text-muted-foreground" :aria-label="updateAvailable ? 'Menu: an update is available' : 'Menu'">
@@ -102,23 +114,13 @@
           </div>
         </template>
       </ResponsiveMenu>
-      <Tooltip v-if="!sidecarAvailable">
-        <TooltipTrigger as-child>
-          <Badge variant="outline" class="h-6 cursor-help border-destructive/40 bg-destructive/10 px-2 text-[11px] text-destructive">
-            {{ sidecarStatus }}
-          </Badge>
-        </TooltipTrigger>
-        <TooltipContent align="end" class="max-w-72 bg-popover text-popover-foreground">
-          <p class="font-medium">Terminal core unavailable</p>
-          <p class="mt-1 text-muted-foreground">Agent and process terminals cannot launch until the native terminal sidecar starts.</p>
-        </TooltipContent>
-      </Tooltip>
     </div>
   </header>
 </template>
 
 <script setup lang="ts">
 import HostBadge from './HostBadge.vue';
+import AssistantButton from './Assistant/AssistantButton.vue';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { CalendarClock, ChevronDown, Gauge, LayoutGrid, Menu, Search, Settings } from 'lucide-vue-next';
 import { activeAgentSessions } from '../lib/agentTabs';
