@@ -24,7 +24,9 @@ export const IDLE_COMPACTION_AFTER_MS: Partial<Record<string, number>> = {
 // deadline overdue by more than timer delay is skipped rather than risk an
 // expired cache.
 const LATE_MS = 20_000;
-
+// A deadline saved before a restart is kept only if the native agent did
+// nothing after it went idle. Times this close to the idle are that turn's.
+const RESTORED_SLOP_MS = 2_000;
 
 // OpenAI documents a 30-minute minimum only for GPT-5.6 and later; earlier
 // models can drop an in-memory cache after 5 to 10 minutes.
@@ -48,6 +50,9 @@ export interface IdleCompactionSource {
   onConversationEvent(listener: (processId: string, event: IntegratedConversationEvent) => void): () => void;
   compact(processId: string): Promise<void>;
   model(processId: string): Promise<string | null>;
+  // When the native agent last did anything, in epoch milliseconds, or null
+  // when unknown.
+  lastActivity(processId: string): Promise<number | null>;
 }
 
 interface CompactionRow {
@@ -70,6 +75,8 @@ interface CompactionRow {
 // own, such as after a background task, is not compacted.
 export class IdleCompactionService {
   private readonly timers = new Map<string, NodeJS.Timeout>();
+  // Deadlines saved before a restart, checked against the native agent.
+  private readonly restored = new Set<string>();
   private readonly unsubscribers: Array<() => void> = [];
   // The automatic attempt being admitted, so its 'compact' signal is told
   // from a /compact the user typed.
@@ -86,16 +93,20 @@ export class IdleCompactionService {
     private readonly assistantVoiceActive: (processId: string) => boolean = () => true
   ) {}
 
-  // Nothing carries over a restart, or a lost native connection. Native
-  // agents run on unseen, so saved idle times and running compactions cannot
-  // be trusted:
-  // every agent is disarmed until its next prompt, and a compaction still
-  // running is announced when it ends. Runs before any activity event.
+  // Native agents run on while Patterm restarts, so a saved idle time keeps
+  // its deadline only if the native agent shows nothing ran since; that is
+  // checked when the deadline arrives. A compaction still running is
+  // announced when it ends. Runs before any activity event.
   start(): void {
-    this.database.connection.prepare(`
-      update processes set cache_compaction = null, cache_idle_since = null, cache_compaction_notice = null
-      where cache_compaction is not null or cache_idle_since is not null or cache_compaction_notice is not null
-    `).run();
+    this.database.connection.prepare('update processes set cache_compaction_notice = null where cache_compaction_notice is not null').run();
+    const saved = this.database.connection.prepare(`select id, cache_idle_since as idle_since from processes
+      where status = 'running' and cache_compaction = 'armed' and cache_idle_since is not null`).all() as Array<{ id: string; idle_since: string }>;
+    for (const { id, idle_since: idleSince } of saved) {
+      this.schedule(id);
+      if (!this.timers.has(id)) continue;
+      this.restored.add(id);
+      this.log('restored', { processId: id, idleSince });
+    }
     this.unsubscribers.push(this.integrated.onActivityChange((change) => this.changed(change)));
     this.unsubscribers.push(this.integrated.onCompactionSignal((processId, signal) => this.signalled(processId, signal)));
     this.unsubscribers.push(this.integrated.onConversationEvent((processId, event) => {
@@ -104,7 +115,7 @@ export class IdleCompactionService {
   }
 
   // While the native connection is down, work can start unseen and activity
-  // stays as it was. As after a restart, the agent waits for its next prompt.
+  // stays as it was, so the agent waits for its next prompt.
   private disconnected(processId: string): void {
     const row = this.row(processId);
     if (!row || row.state !== 'armed') return;
@@ -210,11 +221,22 @@ export class IdleCompactionService {
       this.log('skipped', { processId, harness: row.harness, reason: 'disabled' });
       return;
     }
+    if (this.restored.has(processId)) {
+      const last = await this.integrated.lastActivity(processId).catch((): null => null);
+      if (!this.unchanged(processId, row)) return;
+      // Unknown, or work that ran while Patterm was not watching, leaves the
+      // cache's age unknown too.
+      if (last === null || last > Date.parse(row.idle_since!) + RESTORED_SLOP_MS) {
+        this.write(processId, null, null);
+        this.log('skipped', { processId, harness: row.harness, reason: 'restart', lastActivity: last === null ? null : new Date(last).toISOString() });
+        return;
+      }
+      this.restored.delete(processId);
+      if (!this.due(processId)) return;
+    }
     if (row.harness !== 'claude') {
       const model = await this.integrated.model(processId);
-      // A turn, model change, or compaction during the lookup owns the row now.
-      const current = this.row(processId);
-      if (current?.state !== 'armed' || current.idle_since !== row.idle_since) return;
+      if (!this.unchanged(processId, row)) return;
       if (!eligibleModel(row.harness, model)) {
         this.write(processId, null, null);
         this.log('skipped', { processId, harness: row.harness, model, reason: 'model' });
@@ -241,12 +263,22 @@ export class IdleCompactionService {
     try {
       await admission;
     } catch (error) {
-      // Only this attempt's notice, and only if the attempt surely never
-      // started; an uncertain one keeps it until its turn ends. The next turn
-      // arms the agent again.
-      if (!uncertainAdmission(error) && this.row(processId)?.notice === attempt) this.setNotice(processId, null);
+      // Only this attempt's notice, and only if the attempt never started. An
+      // uncertain failure is a timeout or a lost connection, by when a
+      // compaction the agent received usually shows as working. One still
+      // idle has no turn whose end would clear the notice, so it goes; if it
+      // did start, its end is announced rather than hiding the next turn's.
+      // The next turn arms the agent again.
+      const current = this.row(processId);
+      if (current?.notice === attempt && (!uncertainAdmission(error) || current.activity === 'idle')) this.setNotice(processId, null);
       throw error;
     }
+  }
+
+  // A turn, model change, or compaction during a lookup owns the row now.
+  private unchanged(processId: string, row: CompactionRow): boolean {
+    const current = this.row(processId);
+    return current?.state === 'armed' && current.idle_since === row.idle_since;
   }
 
   // An armed agent that has been idle long enough, and not so long that its
@@ -292,7 +324,9 @@ export class IdleCompactionService {
     this.database.connection.prepare('update processes set cache_compaction_notice = ? where id = ?').run(notice, processId);
   }
 
+  // A new state is one Patterm saw, so a restored deadline no longer applies.
   private write(processId: string, state: CompactionRow['state'], idleSince: string | null): void {
+    this.restored.delete(processId);
     this.database.connection.prepare('update processes set cache_compaction = ?, cache_idle_since = ? where id = ?').run(state, idleSince, processId);
   }
 }

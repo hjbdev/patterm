@@ -4,6 +4,7 @@ import { AssistantService, type AssistantEvent } from './Services/AssistantServi
 import { AssistantMemoryService } from './Services/AssistantMemoryService';
 import { registerAssistantTools } from './MCP/registerAssistantTools';
 import { registerIdleCompactionTools } from './MCP/registerIdleCompactionTools';
+import { integratedActivityNotifications } from './Listeners/IntegratedActivityNotifications';
 import { registerHostTools } from './MCP/registerHostTools';
 import { registerProjectTools } from './MCP/registerProjectTools';
 import { RemoveProjectAction } from './Actions/RemoveProjectAction';
@@ -366,33 +367,18 @@ async function createApplicationResources(
     (event, data) => debugLog.write('idle-compaction', event, data), Date.now,
     (processId) => !assistant || assistant.voiceActive(processId));
   let closeRequests: CloseRequestActions | null = null;
-  defer(integrated.onActivityChange(({ processId, previous, activity, snapshot }) => {
-    const reportedThisTurn = notificationService.turnActivity(processId, previous, activity, snapshot);
-    if (activity === 'permission') raiseNotification({ processId, source: 'integrated', kind: 'permission', body: 'Waiting for your permission', dedupeKey: 'integrated:permission' });
-    else if (activity === 'working') {
-      notificationService.resolveHandled(processId);
-      // New work makes an earlier close request stale.
-      if (!snapshot && (previous === 'idle' || previous === 'error')) closeRequests?.clear(processId);
-    }
-    else if (activity === 'error') raiseNotification({ processId, source: 'integrated', kind: 'failure', body: 'The agent reported an error' });
-    else if (activity === 'idle') {
-      notificationService.resolve({ process_id: processId, kinds: ['permission'] });
-      // Reconnect snapshots are not turns the user has not seen.
-      // The assistant's own turns are read in its panel, not announced, and
-      // neither is a compaction or a turn that reported.
-      const turnEnded = !snapshot && (previous === 'working' || previous === 'thinking' || previous === 'permission');
-      // A turn that asked to be closed announces that instead of finishing.
-      if (turnEnded && closeRequests?.pending(processId)) void closeRequests.announce(processId).catch(() => undefined);
-      else if (turnEnded && !assistant?.isAssistantProcess(processId) && !idleCompaction.compacting(processId) && !reportedThisTurn) {
-        const decision = triage.decide(processId);
-        if (decision.reason !== 'disabled') debugLog.write('notifications', 'triage', { processId, ...decision });
-        raiseNotification({ processId, source: 'integrated', kind: 'turn_finished', body: 'Finished its turn', dedupeKey: 'integrated:turn_finished', quiet: decision.quiet });
-      }
-    }
-  }));
+  defer(integrated.onActivityChange(integratedActivityNotifications({
+    notifications: notificationService,
+    raise: raiseNotification,
+    closeRequests: () => closeRequests,
+    isAssistant: (processId) => assistant?.isAssistantProcess(processId) === true,
+    compacting: (processId) => idleCompaction.compacting(processId),
+    triage: (processId) => triage.decide(processId),
+    log: (event, data) => debugLog.write('notifications', event, data)
+  })));
 
   // Started after the listener above, and before reconciliation so its
-  // snapshots find every agent already disarmed.
+  // snapshots find the deadlines saved before a restart.
   idleCompaction.start();
   defer(() => idleCompaction.dispose());
 

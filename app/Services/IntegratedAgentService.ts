@@ -112,6 +112,9 @@ export interface IntegratedProviderService {  prepare(input: IntegratedLaunchInp
   compact?(processId: string): Promise<unknown>;
   // The native session's current model, where Patterm's selection can be stale.
   currentModel?(processId: string): Promise<string | null>;
+  // When the native agent last started work, in epoch milliseconds, for
+  // providers whose transcript rows can carry Patterm's clock instead.
+  lastActivity?(processId: string): Promise<number | null>;
   // The native session's model and reasoning, read together for the same reason.
   nativeSettings?(processId: string): Promise<LiveSettings>;
   // Native evidence that a previously ambiguous prompt was admitted.
@@ -906,6 +909,28 @@ export class IntegratedAgentService {
     const provider = this.forProcess(processId);
     const native = provider.currentModel ? await provider.currentModel(processId) : null;
     return native ?? (await this.controls(processId)).selectors.find((selector) => selector.id === 'model')?.value ?? null;
+  }
+
+  // When the native agent last did anything, in epoch milliseconds, or null
+  // when unknown: the provider's own record, else the newest time on its
+  // transcript's rows. Like peekConversation, reading it changes nothing.
+  async lastActivity(processId: string): Promise<number | null> {
+    const provider = this.forProcess(processId);
+    if (provider.lastActivity) return provider.lastActivity(processId);
+    const conversation = record(await provider.conversation(processId));
+    const messages = Array.isArray(conversation.messages) ? conversation.messages : record(conversation.messages).data;
+    if (!Array.isArray(messages)) return null;
+    let latest: number | null = null;
+    for (const message of messages.map(record)) {
+      // Notices can arrive between turns, and background agents keep the
+      // agent working while their rows change.
+      if (message.kind === 'notice' || typeof message.parentId === 'string') continue;
+      for (const value of [message.createdAt, message.created_at, message.completedAt, message.completed_at]) {
+        const time = typeof value === 'string' ? Date.parse(value) : Number.NaN;
+        if (Number.isFinite(time) && (latest === null || time > latest)) latest = time;
+      }
+    }
+    return latest;
   }
 
   // The settings the agent runs on now. The launch columns miss changes made

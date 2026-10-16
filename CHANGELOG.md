@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Claude and Codex auto-summary token usage now counts in Usage totals, daily charts, models, and
   projects, with a separate breakdown, without adding conversation-history entries.
+- An automatic idle compaction no longer dismisses an agent's open questions,
+  close request or other notifications. When it ends, the close request is not
+  announced again, and a failed compaction no longer reports an agent error.
+- Restarting Patterm no longer cancels idle compaction for agents that were
+  idle. A saved deadline still fires if the agent's own record shows nothing
+  ran while Patterm was down; otherwise it is skipped, and the debug log says so.
+- An automatic compaction that timed out before it started no longer hides
+  the next "Finished its turn" notification. An OpenCode compaction the server
+  rejects with a 4xx is treated as never started.
 
 ## [0.2.5] - 2026-10-16
 

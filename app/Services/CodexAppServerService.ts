@@ -898,6 +898,19 @@ export class CodexAppServerService {
     return (await this.client(runtime)).request('thread/compact/start', { threadId: runtime.threadId });
   }
 
+  // Codex records when each turn started. Transcript rows without a native
+  // time carry the host's clock from when it first saw them.
+  async lastActivity(processId: string): Promise<number | null> {
+    const runtime = this.runtime(processId);
+    const turn = await this.latestTurn(await this.client(runtime), runtime.threadId);
+    return typeof turn.startedAt === 'number' ? turn.startedAt * 1000 : null;
+  }
+
+  private async latestTurn(client: CodexRpcClient, threadId: string): Promise<JsonRecord> {
+    const latest = record(await client.request('thread/turns/list', { threadId, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded' }));
+    return Array.isArray(latest.data) ? record(latest.data[0]) : {};
+  }
+
   async command(processId: string, name: string, text: string): Promise<unknown> {
     const runtime = this.runtime(processId);
     const client = await this.client(runtime);
@@ -927,8 +940,7 @@ export class CodexAppServerService {
       return client.request('thread/shellCommand', { threadId: runtime.threadId, command: argument });
     }
     if (name === 'undo') {
-      const latest = record(await client.request('thread/turns/list', { threadId: runtime.threadId, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded' }));
-      const turn = Array.isArray(latest.data) ? record(latest.data[0]) : {};
+      const turn = await this.latestTurn(client, runtime.threadId);
       if (typeof turn.id !== 'string') throw new Error('There is no turn to undo');
       if (turn.status === 'inProgress') throw new Error('Stop the running turn before undoing it');
       const result = await client.request('thread/revert', { threadId: runtime.threadId, beforeTurnId: turn.id });

@@ -34,6 +34,9 @@ async function main() {
   const compacted: string[] = [];
   let fail = false;
   let uncertain = false;
+  // An uncertain failure whose compaction the agent did receive.
+  let uncertainStarted = false;
+  const lastActivities: Record<string, number | null> = {};
   const models: Record<string, string | null> = { codex: 'gpt-6-astra', assistant: 'gpt-6.1-sol', old: 'gpt-5.5', openai: 'openai/gpt-5.6', go: 'opencode-go/deepseek-v4.1-flash' };
   let modelGate: Promise<void> | null = null;
   const source: IdleCompactionSource = {
@@ -48,6 +51,7 @@ async function main() {
         throw new Error('host unavailable');
       }
       if (uncertain) {
+        if (uncertainStarted) activity(processId, 'working');
         signalListener?.(processId, 'compact_rejected');
         throw Object.assign(new Error('timed out'), { definitive: false });
       }
@@ -55,6 +59,9 @@ async function main() {
     async model(processId) {
       await modelGate;
       return models[processId] ?? null;
+    },
+    async lastActivity(processId) {
+      return lastActivities[processId] ?? null;
     }
   };
   const add = (id: string, harness: string) => {
@@ -201,16 +208,23 @@ async function main() {
     assert.equal(count('claude'), 7);
     fail = false;
 
-    // An uncertain failure may have started the compaction, so its notice
-    // stays until the turn ends.
+    // An uncertain failure arrives after a timeout. An agent still idle by
+    // then never started the compaction, so no turn would clear its notice.
     uncertain = true;
     turn('claude');
     await wait(SETTLE);
-    uncertain = false;
     assert.equal(count('claude'), 8);
-    assert.equal(service.compacting('claude'), true, 'an uncertain failure keeps the notice');
-    native('claude');
-    assert.equal(service.compacting('claude'), false);
+    assert.equal(service.compacting('claude'), false, 'an uncertain failure with no turn drops its notice');
+    // One that shows as working did start, and keeps it until the turn ends.
+    uncertainStarted = true;
+    turn('second');
+    await wait(SETTLE);
+    uncertain = false;
+    uncertainStarted = false;
+    assert.equal(count('second'), 2);
+    assert.equal(service.compacting('second'), true, 'an uncertain failure whose turn runs keeps the notice');
+    activity('second', 'idle');
+    assert.equal(service.compacting('second'), false);
 
     // A lost native connection disarms the agent: work can start unseen while
     // activity stays idle. The next prompt arms it again.
@@ -304,20 +318,57 @@ async function main() {
     await wait(SETTLE);
     assert.equal(count('claude'), 8);
 
-    // Nothing carries over a restart: native agents run on while Patterm is
-    // down, so saved deadlines and notices are cleared before any event.
+    // A deadline saved before a restart holds if the native agent did nothing
+    // since it went idle. A saved notice is cleared before any event.
     service.dispose();
-    db.prepare("update processes set activity = 'idle', cache_compaction = 'armed', cache_idle_since = ?, cache_compaction_notice = 'old-attempt' where id = 'claude'").run(new Date(Date.now() - AFTER).toISOString());
-    const restarted = new IdleCompactionService(database, source, () => true);
-    restarted.start();
-    assert.deepEqual(state('claude'), cleared);
+    const saved = (ago: number) => {
+      const since = Date.now() - ago;
+      db.prepare("update processes set activity = 'idle', cache_compaction = 'armed', cache_idle_since = ?, cache_compaction_notice = 'old-attempt' where id = 'claude'").run(new Date(since).toISOString());
+      return since;
+    };
+    const restart = () => {
+      const restarted = new IdleCompactionService(database, source, () => true);
+      restarted.start();
+      return restarted;
+    };
+    lastActivities.claude = saved(AFTER / 2) - 1_000;
+    let restarted = restart();
     assert.equal(restarted.compacting('claude'), false, 'a stale notice cannot quiet the next turn');
+    assert.equal(state('claude').state, 'armed');
     activity('claude', 'idle', true);
     await wait(SETTLE);
-    assert.equal(count('claude'), 8, 'a saved deadline does not fire after a restart');
+    assert.equal(count('claude'), 9, 'a saved deadline fires after a restart');
+    native('claude');
+    restarted.dispose();
+
+    // Work the agent did while Patterm was down, or an agent that cannot say,
+    // leaves the cache's age unknown.
+    for (const last of [5_000, null]) {
+      const since = saved(AFTER / 2);
+      lastActivities.claude = last === null ? null : since + last;
+      restarted = restart();
+      await wait(SETTLE);
+      assert.equal(count('claude'), 9, 'unseen or unknown work skips a saved deadline');
+      assert.deepEqual(state('claude'), cleared);
+      restarted.dispose();
+    }
+
+    // A deadline that passed while Patterm was down is late.
+    lastActivities.claude = saved(AFTER + 30_000) - 1_000;
+    restarted = restart();
+    await wait(SETTLE);
+    assert.equal(count('claude'), 9, 'a deadline missed during a restart is skipped');
+    assert.deepEqual(state('claude'), cleared);
+    restarted.dispose();
+
+    // A turn seen after the restart replaces the saved deadline.
+    saved(AFTER / 2);
+    lastActivities.claude = null;
+    restarted = restart();
     turn('claude');
     await wait(SETTLE);
-    assert.equal(count('claude'), 9, 'the next prompt arms the agent again');
+    assert.equal(count('claude'), 10, 'a turn after the restart needs no native check');
+    native('claude');
     restarted.dispose();
 
     await integratedSignals(database);
@@ -412,6 +463,19 @@ async function integratedSignals(database: DatabaseService): Promise<void> {
   provider.nativeSettings = async () => ({ model: 'opencode-go/deepseek-v4.1-flash', reasoning: 'low' });
   assert.deepEqual(await integrated.liveSettings('oc'), { model: 'opencode-go/deepseek-v4.1-flash', reasoning: 'low' });
 
+  // A restart's check reads the provider's own record, else the newest time
+  // on a transcript row. Notices and background agents' rows do not count.
+  assert.equal(await integrated.lastActivity('oc'), null);
+  provider.conversation = async () => ({ status: 'idle', messages: { data: [
+    { id: 'a', role: 'user', created_at: '2026-10-16T01:00:00.000Z' },
+    { id: 'b', role: 'assistant', createdAt: '2026-10-16T01:00:05.000Z', completedAt: '2026-10-16T01:00:09.000Z' },
+    { id: 'c', role: 'assistant', kind: 'notice', createdAt: '2026-10-16T02:00:00.000Z' },
+    { id: 'd', role: 'assistant', parentId: 'b', createdAt: '2026-10-16T03:00:00.000Z' }
+  ] } });
+  assert.equal(await integrated.lastActivity('oc'), Date.parse('2026-10-16T01:00:09.000Z'));
+  provider.lastActivity = async () => 42;
+  assert.equal(await integrated.lastActivity('oc'), 42);
+
   await lateRejection(database);
   await reconnectDisarms(database);
 }
@@ -487,7 +551,8 @@ async function lateRejection(database: DatabaseService): Promise<void> {
     onCompactionSignal: (listener) => integrated.onCompactionSignal(listener),
     onConversationEvent: (listener) => integrated.onConversationEvent(listener),
     compact: (processId) => integrated.compact(processId),
-    model: (processId) => integrated.model(processId)
+    model: (processId) => integrated.model(processId),
+    lastActivity: (processId) => integrated.lastActivity(processId)
   }, () => true);
   const activity = (value: string) => {
     db.prepare("update processes set activity = ? where id = 'cl'").run(value);
