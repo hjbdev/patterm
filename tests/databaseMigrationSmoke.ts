@@ -70,6 +70,7 @@ function main(): void {
     assert.throws(() => service.migrator().rollback(), /forward-only/);
     service.dispose();
     assertHistoryDatabaseMigrations(tempDir);
+    assertHistoryReaderDuringInitialization(tempDir);
     assertHistoryIndexStateUpgrade(tempDir);
     assertFailureDoesNotRecordMigration();
     assertNestedTransactionsCommit();
@@ -82,6 +83,25 @@ function main(): void {
     assertDatabaseBackups();
   } finally {
     removeTree(tempDir);
+  }
+}
+
+function assertHistoryReaderDuringInitialization(tempDir: string): void {
+  const directory = path.join(tempDir, 'history-initializing');
+  fs.mkdirSync(directory);
+  const writer = openSqliteConnection(path.join(directory, 'history.db'));
+  const reader = new HistoryDatabaseService(directory, { mode: 'read', busyTimeoutMs: 0 });
+  try {
+    reader.initialize({ migrate: false });
+    assert.equal(reader.isAvailable, false);
+    writer.exec('begin exclusive; create table conversations (id text)');
+    assert.equal(reader.ensureAvailable(), false, 'a file being initialized is not available yet');
+    writer.exec('commit');
+    assert.equal(reader.ensureAvailable(), true, 'the next read opens the completed database');
+    assert.deepEqual(reader.connection.prepare('select * from conversations').all(), []);
+  } finally {
+    reader.dispose();
+    writer.close();
   }
 }
 
