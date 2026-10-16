@@ -304,12 +304,14 @@ export class IntegratedAgentService {
   private savedConversation(processId: string): unknown {
     const archive = this.archiveSession(processId, null);
     const before = '9999-12-31T23:59:59.999Z';
-    if (!archive || !this.history) return { messages: [] };
+    if (!archive) return { messages: [] };
+    const snapshot = { provider: archive.provider, resume_id: archive.resumeId, messages: [] };
+    if (!this.history) return snapshot;
     const count = this.history.archive(archive.provider, archive.resumeId, archive.projectId, before, 0, 0).count;
     const offset = Math.max(0, count - ARCHIVE_PAGE_SIZE);
     const page = this.history.archive(archive.provider, archive.resumeId, archive.projectId, before, offset, ARCHIVE_PAGE_SIZE);
     return {
-      provider: archive.provider, messages: [], archived_messages: page.messages,
+      ...snapshot, archived_messages: page.messages,
       history_truncated: offset > 0,
       history_cursor: offset > 0 ? { next: archiveCursor(before, offset) } : null
     };

@@ -17,9 +17,10 @@ function mount({ initialQuery = '', onLaunched, currentEnded = false } = {}) {
   const calls = [];
   const timers = [];
   const open = ref(false);
+  const props = { projectId: 'project_a', processId: 'process_self', provider: 'claude', providerLabel: 'Claude', initialQuery, onLaunched, currentEnded };
   const bindings = {
     computed, nextTick, ref, watch, useId: () => 'list', onBeforeUnmount: () => {},
-    defineProps: () => ({ projectId: 'project_a', processId: 'process_self', provider: 'claude', providerLabel: 'Claude', initialQuery, onLaunched, currentEnded }),
+    defineProps: () => props,
     defineModel: () => open,
     setTimeout: (callback) => { timers.push(callback); return timers.length; },
     clearTimeout: () => {},
@@ -36,7 +37,7 @@ function mount({ initialQuery = '', onLaunched, currentEnded = false } = {}) {
   const setup = new Function(...Object.keys(bindings), `${outputText}\nreturn { query, results, visible, hasMore, loading, reload, loadMore, onScroll, searching, resume };`);
   const dialog = setup(...Object.values(bindings));
   const runTimers = async () => { await flush(); while (timers.length) timers.shift()(); await flush(); };
-  return { dialog, calls, open, runTimers };
+  return { dialog, calls, open, runTimers, props };
 }
 
 const conversation = (id, extra = {}) => ({ id, provider: 'claude', processId: null, messageCount: 2, title: id, ...extra });
@@ -103,21 +104,54 @@ test('a resume that replaces the tab still opens the new session', async () => {
 });
 
 
-test('a dead parent can resume its own conversation through the guarded restart path', async () => {
-  const launched = [];
-  const { dialog, calls, open } = mount({ currentEnded: true, onLaunched: id => launched.push(id) });
-  open.value = true;
+for (const linkedProcess of ['process_self', 'later_closed_process', null]) {
+  test(`dead-parent recovery uses native identity with history linked to ${linkedProcess}`, async () => {
+    const launched = [];
+    const { dialog, calls, open } = mount({ currentEnded: true, onLaunched: id => launched.push(id) });
+    open.value = true;
+    await flush();
+    calls.at(-1).resolve({ conversations: [conversation('own', { processId: linkedProcess, providerConversationId: 'native_current' })] });
+    await flush();
+    assert.equal(dialog.visible.value.length, 1, 'the dead current conversation is offered for recovery');
+    const resuming = dialog.resume(dialog.visible.value[0]);
+    const identity = calls.at(-1);
+    assert.equal(identity.tool, 'integrated_get');
+    assert.deepEqual(identity.args, { process_id: 'process_self', transcript_only: true });
+    identity.resolve({ provider: 'claude', resume_id: 'native_current' });
+    await flush();
+    const request = calls.at(-1);
+    assert.equal(request.channel, 'integrated', 'recovery uses the browser ownership guard');
+    assert.equal(request.tool, 'integrated_restart', 'recovery transfers the existing family regardless of mutable history linkage');
+    assert.deepEqual(request.args, { process_id: 'process_self', project_id: 'project_a' });
+    request.resolve({ session_id: 'recovered_parent' });
+    await resuming;
+    assert.deepEqual(launched, ['recovered_parent']);
+    assert.equal(open.value, false);
+  });
+}
+
+test('a different saved conversation uses ordinary history resume from a dead parent', async () => {
+  const { dialog, calls } = mount({ currentEnded: true });
+  const resuming = dialog.resume(conversation('other', { providerConversationId: 'native_other' }));
+  calls.at(-1).resolve({ provider: 'claude', resume_id: 'native_current' });
   await flush();
-  calls.at(-1).resolve({ conversations: [conversation('own', { processId: 'process_self' })] });
-  await flush();
-  assert.equal(dialog.visible.value.length, 1, 'the dead current conversation is offered for recovery');
-  const resuming = dialog.resume(dialog.visible.value[0]);
   const request = calls.at(-1);
-  assert.equal(request.channel, 'integrated', 'recovery uses the browser ownership guard');
-  assert.equal(request.tool, 'integrated_restart', 'recovery transfers the existing family rather than launching an unrelated root');
+  assert.equal(request.tool, 'history_resume');
+  assert.equal(request.channel, undefined);
+  request.resolve({ session_id: 'other_root' });
+  await resuming;
+});
+
+
+test('switching agents during the identity read cannot restart the new agent', async () => {
+  const { dialog, calls, props } = mount({ currentEnded: true });
+  const resuming = dialog.resume(conversation('own', { providerConversationId: 'native_current' }));
+  props.processId = 'different_agent';
+  props.projectId = 'different_project';
+  calls.at(-1).resolve({ provider: 'claude', resume_id: 'native_current' });
+  await flush();
+  const request = calls.at(-1);
   assert.deepEqual(request.args, { process_id: 'process_self', project_id: 'project_a' });
   request.resolve({ session_id: 'recovered_parent' });
   await resuming;
-  assert.deepEqual(launched, ['recovered_parent']);
-  assert.equal(open.value, false);
 });

@@ -158,14 +158,21 @@ async function resume(conversation: ConversationRecord | undefined): Promise<voi
   if (!conversation || busy.value) return;
   busy.value = true;
   error.value = '';
+  const processId = props.processId, projectId = props.projectId;
   try {
-    const result = props.currentEnded && conversation.processId === props.processId
-      ? await (window.patterm.integratedCall ?? window.patterm.call)('integrated_restart', { process_id: props.processId, project_id: props.projectId }) as { session_id?: unknown }
+    // History links move to the newest Patterm session after a resume. Read
+    // the failed parent's native identity instead of trusting that linkage.
+    const source = props.currentEnded
+      ? await window.patterm.call('integrated_get', { process_id: processId, transcript_only: true }) as { provider?: string; resume_id?: string }
+      : null;
+    const ownConversation = source?.provider === conversation.provider && Boolean(source?.resume_id) && source?.resume_id === conversation.providerConversationId;
+    const result = ownConversation
+      ? await (window.patterm.integratedCall ?? window.patterm.call)('integrated_restart', { process_id: processId, project_id: projectId }) as { session_id?: unknown }
       : await window.patterm.call('history_resume', {
       conversation_id: conversation.id,
-      project_id: props.projectId,
+      project_id: projectId,
       interface_mode: 'integrated',
-      replace_process_id: props.processId
+      replace_process_id: processId
     }) as { session_id?: unknown };
     open.value = false;
     if (typeof result?.session_id === 'string') props.onLaunched?.(result.session_id);
