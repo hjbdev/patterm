@@ -89,6 +89,12 @@ try {
     "const root = path.resolve(__dirname, '../../..');",
     "process.env.PATTERM_DESKTOP_RESOURCES = path.join(root, 'resources');",
     "process.chdir(root);",
+    // Older installed updaters run their own installer, so repair on launch too.
+    "if (path.basename(path.dirname(root)).toLowerCase() === 'versions') {",
+    "  require('node:child_process').execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(root, 'scripts/install.ps1'), '-InstallRoot', path.resolve(root, '../..'), '-RepairShortcutsOnly'], { windowsHide: true, timeout: 10000 }, (error) => {",
+    "    if (error) console.warn('Could not repair legacy Patterm shortcut:', error.message);",
+    "  });",
+    "}",
     "require(path.join(root, 'dist/main/desktop/main/main.js'));", ''
   ].join('\n'));
 

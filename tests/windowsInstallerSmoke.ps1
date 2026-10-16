@@ -133,6 +133,15 @@ try {
         Assert-Shortcut $root (Join-Path $root 'patterm.ico') 2
         Remove-Item -LiteralPath $legacyLink
     }
+    # The new bootstrap must be able to repair an old updater's leftovers without
+    # querying releases, touching the launcher, or doing another installation.
+    Write-LegacyShortcut $oldExe 'Patterm.Desktop'
+    $beforeRepair = (Get-FileHash -LiteralPath (Join-Path $root 'bin/patterm.cmd')).Hash
+    $savedInvoke = ${function:Invoke-RestMethod}
+    function Invoke-RestMethod { throw 'Repair-only must not contact a release provider.' }
+    try { & $installer -InstallRoot $root -StartMenuDirectory $startMenu -RepairShortcutsOnly } finally { ${function:Invoke-RestMethod} = $savedInvoke }
+    if (Test-Path -LiteralPath $legacyLink) { throw 'Repair-only left the owned Electron shortcut.' }
+    if ((Get-FileHash -LiteralPath (Join-Path $root 'bin/patterm.cmd')).Hash -ne $beforeRepair) { throw 'Repair-only changed the launcher.' }
     $global:pattermInstallerFixture.Version = '1.2.4'
     Make-Package
     & $installer -InstallRoot $root -StartMenuDirectory $startMenu -NoPath

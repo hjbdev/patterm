@@ -5,7 +5,9 @@ Windows Start menu branding fix:
 - The Windows executable embeds Patterm’s product name, version and icon, so
   Windows lists the app as Patterm instead of Electron.
 - Upgrades remove the old Electron shortcut when its app identity and target
-  both identify it as Patterm. Other applications’ Electron shortcuts are kept.
+  both identify it as Patterm. The new app also repairs this on launch when
+  upgrading through an older in-app updater. Other applications’ Electron
+  shortcuts are kept.
 - Start menu and notification shortcuts can launch Patterm.exe directly with
   the installed resources and production data directory.
 
