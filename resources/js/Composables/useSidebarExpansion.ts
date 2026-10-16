@@ -1,18 +1,17 @@
 import { computed, effectScope, ref, watch, type Ref } from 'vue';
 
 // Which agent families are open is the user's choice, remembered per project
-// on this device. Families follow `all` until opened or closed one by one;
-// `followActive` also opens the family you're in unless you've closed it.
+// on this device. Families start closed; `followActive` also opens the family
+// you're in unless you've closed it. `subtitles` shows every row's status line.
 export interface SidebarExpansion {
-  all: boolean;
   overrides: Record<string, boolean>;
   followActive: boolean;
-  summaries: boolean;
+  subtitles: boolean;
   processes: boolean;
   groupByStatus: boolean;
 }
 
-const DEFAULTS: SidebarExpansion = { all: false, overrides: {}, followActive: false, summaries: false, processes: false, groupByStatus: false };
+const DEFAULTS: SidebarExpansion = { overrides: {}, followActive: false, subtitles: true, processes: false, groupByStatus: false };
 const KEY_PREFIX = 'patterm.sidebar.expansion.';
 
 function read(projectId: string): SidebarExpansion {
@@ -44,7 +43,7 @@ export function useSidebarExpansion(projectId: () => string) {
   const state = computed(() => stateFor(projectId()).value);
 
   function isOpen(rootId: string, holdsSelection: boolean): boolean {
-    return state.value.overrides[rootId] ?? (state.value.all || (state.value.followActive && holdsSelection));
+    return state.value.overrides[rootId] ?? (state.value.followActive && holdsSelection);
   }
   // Nested agents start open, so opening a family shows its whole tree.
   function isNodeOpen(sessionId: string): boolean {
@@ -53,9 +52,5 @@ export function useSidebarExpansion(projectId: () => string) {
   function setOpen(sessionId: string, open: boolean): void {
     state.value.overrides = { ...state.value.overrides, [sessionId]: open };
   }
-  function setAll(open: boolean): void {
-    state.value.all = open;
-    state.value.overrides = {};
-  }
-  return { state, isOpen, isNodeOpen, setOpen, setAll };
+  return { state, isOpen, isNodeOpen, setOpen };
 }
