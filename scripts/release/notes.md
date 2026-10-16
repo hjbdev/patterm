@@ -1,33 +1,34 @@
-## Patterm 0.2.5
+## Patterm 0.2.6
 
-This release improves conversation switching and repeat visits, fixes startup
-and terminal exit issues, and moves the assistant button into the bar.
+This release adds an All agents view across projects and quota forecasts,
+and improves agent recovery, activity indicators, and compaction.
+
+### Added
+
+- All agents shows open agents across projects, grouped by project or in your
+  own order. Choose which projects appear and launch agents locally or on a
+  paired host, with a + button beside each project for quick launches.
+- Usage estimates how much quota will remain at reset, or when it may run out,
+  based on your recent pace.
 
 ### Changed
 
-- Integrated Claude reuses its model, effort, mode and slash-command controls
-  until they change. Conversation snapshots omit the full model and command
-  lists, saving tens of kilobytes per snapshot.
-- Opening an Integrated conversation no longer holds up terminal typing in
-  the same browser. Returning to an agent within a few seconds reuses its
-  worktree diff totals instead of running git again.
-- Conversation history caches up to 24 pages within about 4 MB, evicting the
-  least recently read pages first. Long scratchpads reopen from cache too.
-- Paired hosts announce history changes, so linked projects can reuse cached
-  remote history. Older hosts continue to be read each time.
-- The browser avoids duplicate update and settings reads when connecting.
-- The assistant button sits in the top bar, or bottom bar on phones, so it
-  no longer covers composers, send buttons or terminal text.
+- One Show subtitles toggle controls sidebar subtitles.
+- Integrated Claude batches streamed text to the browser every 50 ms.
+- Browser tabs load updated page code after a server update.
 
 ### Fixed
 
-- The first browser load after server startup no longer gets script-file
-  503 errors that leave the page blank until reloaded.
-- Launching an agent from a browser tab opened before a server update now
-  opens the agent instead of leaving the tab on its previous page.
-- Linux terminals retain output read as a process exits, including when
-  the terminal is busy drawing a frame. This uses a patched vendored copy
-  of alacritty_terminal 0.26.0.
+- Failed Integrated agents retain their subagent families and can be opened
+  for recovery. Restart carries subagents, timers, and session context across.
+- Context usage refreshes after compaction, and idle compaction preserves
+  questions and notifications, recovers saved deadlines after restart, and
+  handles failures without misleading activity or completion notifications.
+- Agents with background tasks show that they are still working, while
+  questions show Has a question and approvals show Needs permission.
+- Auto-summary tokens count in Usage with a separate breakdown.
+- Claude's /model command updates the model shown in its controls.
+- History reads tolerate database initialization by the import worker.
 
 ## Platform support
 
