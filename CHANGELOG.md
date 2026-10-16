@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The usage page estimates where each quota window is heading at your recent
+  pace: how much will be left when it resets, or when it will run out first.
+  The estimate appears once a quarter of the window has passed, based on the
+  last seventh of it (a day of a weekly window), which predicted best when
+  tested against past Codex windows.
+
 ## [0.2.5] - 2026-10-16
 
 ### Changed

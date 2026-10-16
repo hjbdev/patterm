@@ -41,6 +41,7 @@
                   <p class="mt-1 text-[11px] text-muted-foreground/80">
                     <template v-if="limit.expired">Window reset since last seen · </template>
                     <template v-else-if="limit.resetsAt">Resets in {{ untilLabel(limit.resetsAt, now) }} · </template>
+                    <template v-if="pace(limit)">{{ pace(limit) }} · </template>
                     seen {{ relativeTime(limit.observedAt, now) }}
                   </p>
                 </li>
@@ -212,6 +213,11 @@ const largestSkill = computed(() => Math.max(1, ...(summary.value?.skills ?? [])
 
 function remaining(limit: UsageLimit): number {
   return Math.max(0, Math.round(100 - limit.usedPercent));
+}
+function pace(limit: UsageLimit): string {
+  if (limit.exhaustsAt) return Date.parse(limit.exhaustsAt) > now.value ? `On pace to run out in ${untilLabel(limit.exhaustsAt, now.value)}` : '';
+  if (limit.projectedPercent === null) return '';
+  return `On pace for ${Math.max(0, Math.round(100 - limit.projectedPercent))}% left at reset`;
 }
 // Calm until the quota runs low.
 function toneClass(usedPercent: number): string {

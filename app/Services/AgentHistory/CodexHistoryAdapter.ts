@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { HistoryFileFingerprint, HistorySourceCandidate, ParsedConversation, ParsedHistoryFile, ParsedMedia, ParsedMessage, ParsedRateLimit, ParsedUsage, ProviderHistoryAdapter } from './AgentHistoryTypes';
+import type { HistoryFileFingerprint, HistorySourceCandidate, ParsedConversation, ParsedHistoryFile, ParsedMedia, ParsedMessage, ParsedRateLimit, ParsedRateLimitReading, ParsedUsage, ProviderHistoryAdapter } from './AgentHistoryTypes';
 import { defaultFileFingerprint, isoFromString, nonNegative, parsedImage, readJsonl, skillUsesFromMessages, statOnlyFingerprint, stringValue, textFromUnknown, walkFiles } from './HistoryAdapterUtils';
 
 export class CodexHistoryAdapter implements ProviderHistoryAdapter {
@@ -129,6 +129,7 @@ export class CodexHistoryAdapter implements ProviderHistoryAdapter {
       media,
       usage: usage.usage,
       rateLimits: usage.rateLimits,
+      rateLimitReadings: usage.rateLimitReadings,
       skills: skillUsesFromMessages(messages, { skillFileReads: true })
     };
     return { provider: this.provider, sourcePath: filePath, sourceKind: 'jsonl', parserVersion: this.parserVersion, warnings, conversations: messages.length || (hasSessionId && !parsed.warnings.length && !parsed.partialTrailingLine) ? [conversation] : [] };
@@ -145,6 +146,7 @@ const TOKEN_FIELDS = ['input_tokens', 'cached_input_tokens', 'cache_write_input_
 class CodexUsageReader {
   readonly usage: ParsedUsage[] = [];
   rateLimits: ParsedRateLimit[] = [];
+  readonly rateLimitReadings: ParsedRateLimitReading[] = [];
   private model: string | null = null;
   private previous: TokenTotals | null = null;
 
@@ -189,6 +191,10 @@ class CodexUsageReader {
       const minutes = typeof window.window_minutes === 'number' ? window.window_minutes : null;
       const resets = typeof window.resets_at === 'number' ? new Date(window.resets_at < 1e12 ? window.resets_at * 1000 : window.resets_at).toISOString() : null;
       windows.push({ key: `${limitId}:${minutes ?? key}`, label: `${name ? `${name} ` : ''}${limitLabel(minutes, key)}`, usedPercent: window.used_percent, windowMinutes: minutes, resetsAt: resets, observedAt });
+    }
+    for (const window of windows) {
+      const previous = this.rateLimits.find((limit) => limit.key === window.key);
+      if (previous?.usedPercent !== window.usedPercent) this.rateLimitReadings.push({ label: window.label, usedPercent: window.usedPercent, observedAt });
     }
     if (windows.length) this.rateLimits = [...this.rateLimits.filter((limit) => !windows.some((window) => window.key === limit.key)), ...windows];
   }

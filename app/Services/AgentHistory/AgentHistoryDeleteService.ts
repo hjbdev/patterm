@@ -49,6 +49,7 @@ export class AgentHistoryDeleteService {
       db.prepare(`delete from conversation_import_batches`).run();
       // Usage rows cascade with their conversations; quota windows stand alone.
       if (db.prepare(`select 1 from sqlite_master where type = 'table' and name = 'provider_rate_limits'`).get()) db.prepare(`delete from provider_rate_limits`).run();
+      if (db.prepare(`select 1 from sqlite_master where type = 'table' and name = 'provider_rate_limit_readings'`).get()) db.prepare(`delete from provider_rate_limit_readings`).run();
       return row.count;
     })();
     return { deletedConversations };
