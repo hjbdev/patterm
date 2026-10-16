@@ -53,8 +53,16 @@ process.stdin.on('data', (chunk) => {
     const event = JSON.parse(line);
     const frame = (value) => process.stdout.write(JSON.stringify(value) + '\\n');
     // Claude Code's own /model answers with command output only.
-    if (event.type === 'user' && JSON.stringify(event.message && event.message.content).includes('/model sonnet')) {
-      frame({type:'system',subtype:'local_command_output',content:'Set model to \\u001b[1mSonnet 5 (claude-sonnet-5)\\u001b[22m',uuid:'model_switch'});
+    const modelSwitch = event.type === 'user' && /\\/model (\\w+)/.exec(JSON.stringify(event.message && event.message.content));
+    if (modelSwitch) {
+      const outputs = {
+        plain: 'Set model to \\u001b[1mSonnet 5 (claude-sonnet-5)\\u001b[22m',
+        wide: 'Set model to \\u0060Sonnet 5 (1M context)\\u0060 and saved as your default for new sessions',
+        session: 'Set model to Haiku 4.5 for this session only · effort high',
+        default: 'Set model to \\u0060Opus 5.5 (default)\\u0060 and saved as your default for new sessions',
+        unknown: 'Set model to Mystery 9 for this session only'
+      };
+      frame({type:'system',subtype:'local_command_output',content:outputs[modelSwitch[1]],uuid:'model_' + modelSwitch[1]});
       continue;
     }
     if (process.env.ACTIVITY && event.type === 'control_request' && event.request && event.request.subtype === 'interrupt') {
@@ -194,6 +202,7 @@ process.stdin.on('data', (chunk) => {
       ],models:[
         {value:'default',displayName:'Default (recommended)',description:'Opus 5.5 · Best for everyday, complex tasks',supportsAutoMode:true,supportedEffortLevels:['low','medium','high','xhigh','max']},
         {value:'sonnet',displayName:'Sonnet 5',supportsAutoMode:true,supportedEffortLevels:['low','medium','high']},
+        {value:'claude-sonnet-5[1m]',displayName:'Sonnet 5 (1M context)',supportsAutoMode:true,supportedEffortLevels:['low','medium','high']},
         {value:'haiku',displayName:'Haiku 4.5'}
       ]}}});
       continue;
@@ -563,7 +572,7 @@ process.stdin.on('data', (chunk) => {
     assert.equal((await service.controls('process_test')).selectors.find((selector) => selector.id === 'model')?.value, 'sonnet', 'composer reflects the native launch model');
     const initial = await service.controls('process_test');
     assert.deepEqual(initial.selectors[0]?.options, [
-      { value: 'default', label: 'Default (Opus 5.5)' }, { value: 'sonnet', label: 'Sonnet 5' }, { value: 'haiku', label: 'Haiku 4.5' }
+      { value: 'default', label: 'Default (Opus 5.5)' }, { value: 'sonnet', label: 'Sonnet 5' }, { value: 'claude-sonnet-5[1m]', label: 'Sonnet 5 (1M context)' }, { value: 'haiku', label: 'Haiku 4.5' }
     ], 'model options come from the native initialize reply');
     assert.deepEqual(initial.commands, [
       { name: 'compact', description: 'Clear conversation history but keep a summary' }, { name: 'grill-me', description: 'Interview the user (user)' }
@@ -602,13 +611,22 @@ process.stdin.on('data', (chunk) => {
     await service.command('process_test', 'compact', '');
     // Claude Code's own /model, typed into the conversation, moves the
     // controls to the model it chose.
-    await service.command('process_test', 'model', 'sonnet');
-    let switched = await service.controls('process_test');
-    for (let attempt = 0; attempt < 50 && switched.selectors[0]?.value !== 'sonnet'; attempt++) {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      switched = await service.controls('process_test');
-    }
-    assert.equal(switched.selectors[0]?.value, 'sonnet', 'a native /model is followed');
+    const switchModel = async (output: string, expected: string, message: string) => {
+      await service.command('process_test', 'model', output);
+      let switched = await service.controls('process_test');
+      for (let attempt = 0; attempt < 50 && switched.selectors[0]?.value !== expected; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        switched = await service.controls('process_test');
+      }
+      assert.equal(switched.selectors[0]?.value, expected, message);
+    };
+    await switchModel('plain', 'sonnet', 'a native /model is followed, through styling and its ID');
+    await switchModel('wide', 'claude-sonnet-5[1m]', 'the most specific listed name wins over a shorter one it starts with');
+    await switchModel('session', 'haiku', 'a session-only switch, with annotations after it, is followed');
+    await switchModel('default', 'default', 'the default marker selects Default');
+    await service.command('process_test', 'model', 'unknown');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal((await service.controls('process_test')).selectors[0]?.value, 'default', 'a name matching no listed model changes nothing');
 
     // Structured input: @ references with quoting, image blocks with validated
     // bytes, and the client uuid for native deduplication.

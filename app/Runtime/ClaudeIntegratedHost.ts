@@ -997,20 +997,37 @@ function receiveSystem(event: JsonRecord): void {
 }
 
 // Claude Code's own /model reports the change only as command output, such as
-// "Set model to Sonnet 5 (claude-sonnet-5)". Follow it, so the controls show
-// the model in use; a name that matches no listed model changes nothing.
+// "Set model to Sonnet 5 (claude-sonnet-5) and saved as your default for new
+// sessions", "Set model to Sonnet 5 for this session only · effort high", or
+// "Set model to Opus 5.5 (default)". Follow it, so the controls show the model
+// in use; a name that matches no listed model changes nothing.
 function followModelCommand(content: string): void {
   const line = content.replace(/\x1b\[[0-9;]*m/g, '').replace(/[`*]/g, '').trim().split('\n')[0] ?? '';
-  const match = /^Set model to (.+?)(?: and saved as your default for new sessions)?\.?$/.exec(line);
-  if (!match) return;
-  const name = match[1]!.trim().toLowerCase();
-  const named = (value: unknown) => typeof value === 'string' && value && (name === value.toLowerCase() || name.startsWith(`${value.toLowerCase()} (`));
-  const found = name.startsWith('default') ? models.find((item) => item.value === 'default') : models.find((item) => named(item.value) || named(item.displayName));
+  if (!line.startsWith('Set model to ')) return;
+  const name = line.slice('Set model to '.length).split(/ and saved as your default| for this session only/)[0]!.replace(/[.\s]+$/, '').trim().toLowerCase();
+  const found = matchModel(name);
   if (typeof found?.value !== 'string' || found.value === model) return;
   model = found.value;
   // Effort levels depend on the model.
   requestSettings();
   publish({ kind: 'pending' });
+}
+
+// The listed model a reported name means: the default, an exact value or
+// display name, or else the longest one the name starts with, as in
+// "Sonnet 5 (claude-sonnet-5)".
+function matchModel(name: string): JsonRecord | undefined {
+  if (name.startsWith('default') || name.endsWith('(default)')) return models.find((item) => item.value === 'default');
+  const names = (item: JsonRecord) => [item.value, item.displayName].filter((value): value is string => typeof value === 'string' && value.length > 0).map((value) => value.toLowerCase());
+  const exact = models.find((item) => names(item).includes(name));
+  if (exact) return exact;
+  let best: { item: JsonRecord; length: number } | undefined;
+  for (const item of models) {
+    for (const value of names(item)) {
+      if (name.startsWith(`${value} (`) && value.length > (best?.length ?? 0)) best = { item, length: value.length };
+    }
+  }
+  return best?.item;
 }
 
 function receiveTask(event: JsonRecord): void {
