@@ -354,12 +354,13 @@ export function projectCodexStatus(method: string, value: unknown): CodexStatus 
 }
 
 // A native thread status. An active thread waiting on an approval or on
-// input is waiting for the user, not working.
+// input is waiting for the user, not working; an approval comes first.
 export function codexThreadStatus(value: unknown): CodexDeliveryStatus | null {
   const status = record(value);
   if (status.type === 'active') {
     const flags = Array.isArray(status.activeFlags) ? status.activeFlags : [];
-    return flags.includes('waitingOnApproval') || flags.includes('waitingOnUserInput') ? 'permission' : 'working';
+    if (flags.includes('waitingOnApproval')) return 'permission';
+    return flags.includes('waitingOnUserInput') ? 'question' : 'working';
   }
   if (status.type === 'systemError') return 'error';
   if (status.type === 'idle' || status.type === 'notLoaded') return 'idle';

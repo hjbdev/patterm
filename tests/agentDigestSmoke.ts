@@ -26,7 +26,7 @@ assert.equal(shortAgo(null, now), '');
 assert.equal(ago('2026-10-11T11:59:30Z', now), 'just now', 'under a minute reads as just now, never "now ago"');
 assert.equal(ago('2026-10-11T11:58:00Z', now), '2m ago');
 
-const activity = (self: RowActivity['self']): RowActivity => ({ self, subagents: { working: 0, permission: 0, error: 0 } });
+const activity = (self: RowActivity['self']): RowActivity => ({ self, subagents: { working: 0, permission: 0, question: 0, error: 0 } });
 assert.equal(memberState(activity('permission')), 'attention');
 assert.equal(memberState(activity('error')), 'attention');
 assert.equal(memberState(activity('working')), 'working');

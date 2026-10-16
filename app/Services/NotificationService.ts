@@ -5,6 +5,7 @@ import type { SettingsService } from './SettingsService';
 import type { TimelineService } from './TimelineService';
 import { ASSISTANT_PROJECT_ID } from './AssistantProject';
 import type { DeliveryLevel, NotificationCategory, NotificationUrgency } from './NotificationSettings';
+import { awaitingUser } from './Activity';
 
 export type NotificationSource = 'mcp' | 'terminal' | 'integrated' | 'runtime' | 'system';
 export type NotificationKind = 'attention' | 'permission' | 'turn_finished' | 'bell' | 'message' | 'failure';
@@ -225,6 +226,15 @@ export class NotificationService {
     const process = this.processContext(processId);
     if (!process) return 0;
     return this.resolve({ process_id: process.id, kinds: ['attention', 'permission', 'turn_finished', 'bell', 'message'] });
+  }
+
+  // An Integrated agent waits on an approval or an answer. Both are
+  // permission notices; one whose reason changed replaces the earlier one.
+  waiting(processId: string, previous: string | null | undefined, activity: 'permission' | 'question'): Promise<RaiseNotificationResult> {
+    if (awaitingUser(previous) && previous !== activity) this.resolve({ process_id: processId, kinds: ['permission'] });
+    return this.raise(activity === 'permission'
+      ? { processId, source: 'integrated', kind: 'permission', body: 'Waiting for your permission', dedupeKey: 'integrated:permission' }
+      : { processId, source: 'integrated', kind: 'permission', body: 'Has a question for you', dedupeKey: 'integrated:question' });
   }
 
   // A report says how the turn ended, so it replaces the bare turn-ended

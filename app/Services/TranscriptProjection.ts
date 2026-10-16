@@ -802,7 +802,7 @@ export interface ConversationStreamMessage {
 }
 
 // Activity a conversation stream reports.
-export type IntegratedDeliveryStatus = 'working' | 'idle' | 'error' | 'permission' | 'unknown';
+export type IntegratedDeliveryStatus = 'working' | 'idle' | 'error' | 'permission' | 'question' | 'unknown';
 
 export interface ConversationStreamEvent {
   processId: string;

@@ -128,7 +128,10 @@ const meta = computed(() => [
 ].filter((part): part is string => Boolean(part)));
 
 // The marks RowStatus draws on a row that needs you, so the two read alike.
-const askMark = computed<IconSpec>(() => props.digest.ask?.kind === 'close' ? CLOSING_MARK : activityIcon(props.digest.ask?.kind === 'error' ? 'error' : 'permission'));
+const askMark = computed<IconSpec>(() => {
+  const kind = props.digest.ask?.kind;
+  return kind === 'close' ? CLOSING_MARK : activityIcon(kind === 'error' || kind === 'question' ? kind : 'permission');
+});
 const askHeadline = computed(() => props.digest.ask?.kind === 'close' ? 'Ready to close' : props.digest.ask?.text ?? '');
 
 // Watches without a deadline fire on an event. One its agent named says which;

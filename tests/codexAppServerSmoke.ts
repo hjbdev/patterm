@@ -4,8 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import net from 'node:net';
-import { CodexAppServerService, CodexRpcClient } from '../app/Services/CodexAppServerService';
-import { projectCodexItem, projectCodexPlan, restoreCodexWindowGap, trimCodexWindow, CODEX_MESSAGE_WINDOW, CODEX_CHILD_WINDOW, type CodexConversationState } from '../app/Services/CodexTranscript';
+import { CodexAppServerService, CodexRpcClient, effectiveStatus, snapshotStatus } from '../app/Services/CodexAppServerService';
+import { codexThreadStatus, projectCodexItem, projectCodexPlan, restoreCodexWindowGap, trimCodexWindow, CODEX_MESSAGE_WINDOW, CODEX_CHILD_WINDOW, type CodexConversationState } from '../app/Services/CodexTranscript';
 import { elicitationForm } from '../app/Services/McpElicitation';
 import { TranscriptImageStore } from '../app/Services/TranscriptImageStore';
 import { TurnBusyError, UncertainDeliveryError } from '../app/Services/IntegratedDelivery';
@@ -14,6 +14,31 @@ import { IntegratedAgentService } from '../app/Services/IntegratedAgentService';
 import { ipcPath } from '../app/Platform/Ipc';
 import { writeNodeCli } from './fixtures/IntegratedFakeCli';
 import { removeTree } from './fixtures/TempTree';
+
+// An approval waits on a permission; input alone waits on an answer.
+assert.equal(codexThreadStatus({ type: 'active', activeFlags: ['waitingOnApproval'] }), 'permission');
+assert.equal(codexThreadStatus({ type: 'active', activeFlags: ['waitingOnUserInput'] }), 'question');
+assert.equal(codexThreadStatus({ type: 'active', activeFlags: ['waitingOnUserInput', 'waitingOnApproval'] }), 'permission', 'an approval outranks a question');
+assert.equal(codexThreadStatus({ type: 'active', activeFlags: [] }), 'working');
+
+// A known child approval outranks the parent's question, and a pending
+// question outranks the parent's own work.
+{
+  const client = (pending: Array<{ method: string }>, threads: Record<string, string>) =>
+    ({ pendingRequests: () => pending, threadStatus: (id: string) => threads[id] ?? null }) as unknown as CodexRpcClient;
+  assert.deepEqual(effectiveStatus({ status: 'question' }, client([], { child: 'permission' }), ['child']), { status: 'permission' });
+  assert.deepEqual(effectiveStatus({ status: 'working' }, client([{ method: 'item/tool/requestUserInput' }], { child: 'permission' }), ['child']), { status: 'permission' });
+  assert.deepEqual(effectiveStatus({ status: 'working' }, client([{ method: 'item/tool/requestUserInput' }], {}), []), { status: 'question' });
+  assert.deepEqual(effectiveStatus({ status: 'idle' }, client([{ method: 'item/commandExecution/requestApproval' }], { child: 'question' }), ['child']), { status: 'permission' });
+  assert.deepEqual(effectiveStatus({ status: 'idle' }, client([], { child: 'question' }), ['child']), { status: 'question' });
+  // Snapshots combine the same way, whatever the effective status already says.
+  const question = [{ method: 'item/tool/requestUserInput' }];
+  const effective = effectiveStatus({ status: 'working' }, client(question, { child: 'permission' }), ['child']).status;
+  assert.equal(snapshotStatus(question, [], effective), 'permission', 'a snapshot keeps a child approval over a pending question');
+  assert.equal(snapshotStatus(question, [], 'working'), 'question');
+  assert.equal(snapshotStatus([], [{}], 'question'), 'permission', 'a plan to approve outranks a question');
+  assert.equal(snapshotStatus([], [], 'unknown'), undefined);
+}
 
 // A turn/start reply can arrive in the same chunk as the turn's completion.
 // prompt() marks the turn active after awaiting the reply, which runs after

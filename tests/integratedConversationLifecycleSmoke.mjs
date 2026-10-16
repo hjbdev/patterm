@@ -9,6 +9,7 @@ const require = createRequire(import.meta.url);
 const helpers = require('../dist/tests/resources/js/lib/integratedConversation.js');
 const composer = require('../dist/tests/resources/js/lib/integratedComposer.js');
 const { archiveTranscript } = require('../dist/tests/resources/js/lib/historyTranscript.js');
+const { awaitingUser } = require('../dist/tests/resources/js/lib/activity.js');
 
 // The pane keeps provider/business logic in helpers and services. This harness
 // runs its real <script setup> with controllable browser APIs, timers, and
@@ -111,6 +112,7 @@ function createHarness({ processId = 'process_a', exited = false, keepCache = fa
     reconcileOutgoingMessages: composer.reconcileOutgoingMessages,
     failOutgoingMessage: composer.failOutgoingMessage,
     archiveTranscript,
+    awaitingUser,
     randomId: () => crypto.randomUUID(),
     payloadHash: composer.payloadHash,
     provide: (key, value) => provided.set(key, value),
@@ -932,7 +934,7 @@ test('reconnecting and unknown status never claim the agent is idle', async () =
   harness.scope.stop();
 });
 
-test('permission and thinking count as working, and a missing status keeps what is shown', async () => {
+test('permission, questions and thinking count as working, and a missing status keeps what is shown', async () => {
   composer.clearDrafts();
   const harness = createHarness({ processId: 'status_A' });
   await mountPush(harness, 1, 'Live');
@@ -956,6 +958,10 @@ test('permission and thinking count as working, and a missing status keeps what 
   await flush();
   await resolveGets(harness, { ...pushConversation(3, 'Live'), status: 'thinking' });
   assert.equal(harness.pane.state().streamStatus, 'working', 'thinking is working');
+  void harness.pane.refresh();
+  await flush();
+  await resolveGets(harness, { ...pushConversation(3, 'Live'), status: 'question' });
+  assert.equal(harness.pane.state().streamStatus, 'working', 'an agent waiting on an answer is mid-turn');
   harness.scope.stop();
 });
 
