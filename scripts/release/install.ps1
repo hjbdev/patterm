@@ -54,14 +54,22 @@ function Test-VersionOlder([string]$Left, [string]$Right) {
 }
 function Assert-AppStopped {
     $prefix = [IO.Path]::GetFullPath($InstallRoot).TrimEnd('\') + '\'
-    foreach ($process in @(Get-CimInstance Win32_Process -Filter "Name = 'electron.exe'")) {
+    foreach ($process in @(Get-CimInstance Win32_Process -Filter "Name = 'Patterm.exe' OR Name = 'electron.exe'")) {
         if ($process.ExecutablePath -and $process.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
-            throw 'Patterm is running. Quit Patterm, then rerun this installer to update.'
+            throw "Patterm is running (PID $($process.ProcessId): $($process.ExecutablePath)). Quit Patterm, then rerun this installer to update."
         }
     }
 }
+function Get-AppExecutable([string]$Directory) {
+    foreach ($name in @('Patterm.exe', 'electron.exe')) {
+        $executable = Join-Path $Directory "electron/$name"
+        if (Test-Path -LiteralPath $executable -PathType Leaf) { return $executable }
+    }
+    throw "Package is missing electron/Patterm.exe (or legacy electron.exe) in $Directory."
+}
 $lock = $null
 $pendingLauncher = $null
+$pendingShortcut = $null
 
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('patterm-install-' + [Guid]::NewGuid().ToString('N'))
 try {
@@ -93,9 +101,10 @@ try {
     $extract = Join-Path $temp 'extracted'
     [IO.Compression.ZipFile]::ExtractToDirectory($zip, $extract)
     $package = Join-Path $extract $name
-    foreach ($file in @('Patterm.cmd', 'electron/electron.exe', 'resources/native/patterm-terminal-core.exe', 'BUILD')) {
+    foreach ($file in @('Patterm.cmd', 'resources/native/patterm-terminal-core.exe', 'BUILD')) {
         if (-not (Test-Path -LiteralPath (Join-Path $package $file) -PathType Leaf)) { throw "Package is missing $file." }
     }
+    [void](Get-AppExecutable $package)
     if ((Get-Content -LiteralPath (Join-Path $package 'BUILD')) -notcontains "version=$version") { throw 'Package version does not match the release.' }
     Assert-AppStopped
     New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
@@ -115,9 +124,10 @@ try {
     $destination = Join-Path $versions $version
     New-Item -ItemType Directory -Path $versions -Force | Out-Null
     if (Test-Path -LiteralPath $destination) {
-        foreach ($file in @('Patterm.cmd', 'electron/electron.exe', 'resources/native/patterm-terminal-core.exe', 'BUILD')) {
+        foreach ($file in @('Patterm.cmd', 'resources/native/patterm-terminal-core.exe', 'BUILD')) {
             if (-not (Test-Path -LiteralPath (Join-Path $destination $file) -PathType Leaf)) { throw "Incomplete install at $destination; remove it and retry." }
         }
+        [void](Get-AppExecutable $destination)
         if ((Get-Content -LiteralPath (Join-Path $destination 'BUILD')) -notcontains "version=$version") { throw "Invalid installed version at $destination." }
     } else {
         Move-Item -LiteralPath $package -Destination $destination
@@ -131,15 +141,18 @@ try {
     # The stable launcher and icon keep Start menu and pinned shortcuts working
     # when a later install selects another version. Older zips have no .ico yet.
     $packageIcon = Join-Path $destination 'dist/renderer/icons/icon.ico'
-    $icon = Join-Path $destination 'electron/electron.exe'
+    $icon = Get-AppExecutable $destination
     if (Test-Path -LiteralPath $packageIcon -PathType Leaf) {
         $icon = Join-Path $InstallRoot 'patterm.ico'
         Copy-Item -LiteralPath $packageIcon -Destination $icon -Force
     }
     New-Item -ItemType Directory -Path $StartMenuDirectory -Force | Out-Null
     $shortcutPath = Join-Path $StartMenuDirectory 'Patterm.lnk'
+    # Prepare the link beside its destination; a failed COM write must never
+    # truncate or replace the user's working Start menu entry.
+    $pendingShortcut = Join-Path $StartMenuDirectory ('.patterm-' + [Guid]::NewGuid().ToString('N') + '.lnk')
     $shell = New-Object -ComObject WScript.Shell
-    $shortcut = $shell.CreateShortcut($shortcutPath)
+    $shortcut = $shell.CreateShortcut($pendingShortcut)
     try {
         $shortcut.TargetPath = Join-Path $bin 'patterm.cmd'
         $shortcut.WorkingDirectory = $InstallRoot
@@ -194,7 +207,7 @@ public static class PattermShortcut {
 }
 '@
     }
-    [PattermShortcut]::SetAppId($shortcutPath, 'Patterm.Desktop')
+    [PattermShortcut]::SetAppId($pendingShortcut, 'Patterm.Desktop')
 
     if (-not $NoPath) {
         $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -207,12 +220,17 @@ public static class PattermShortcut {
     # Switch only after installation, shortcut and PATH setup all succeeded.
     # Replace is atomic: a failed update leaves the previous launcher usable.
     Assert-AppStopped
+    # Windows PowerShell 5.1 coerces $null to an empty string for .NET methods.
+    if (Test-Path -LiteralPath $shortcutPath) { [IO.File]::Replace($pendingShortcut, $shortcutPath, [NullString]::Value) }
+    else { [IO.File]::Move($pendingShortcut, $shortcutPath) }
+    $pendingShortcut = $null
     if (Test-Path -LiteralPath $launcherPath) { [IO.File]::Replace($pendingLauncher, $launcherPath, (Join-Path $bin 'patterm.previous.cmd')) }
     else { [IO.File]::Move($pendingLauncher, $launcherPath) }
     $pendingLauncher = $null
     Write-Host "Patterm $version installed in $destination."
     Write-Host 'Open Patterm from the Start menu or run patterm. Install and sign into your agent CLIs separately.'
 } finally {
+    if ($pendingShortcut -and (Test-Path -LiteralPath $pendingShortcut)) { Remove-Item -LiteralPath $pendingShortcut -Force }
     if ($pendingLauncher -and (Test-Path -LiteralPath $pendingLauncher)) { Remove-Item -LiteralPath $pendingLauncher -Force }
     if ($lock) { $lock.Dispose() }
     if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force }

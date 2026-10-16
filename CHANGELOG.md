@@ -7,8 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Windows desktop packages run as `Patterm.exe`. The installer and updater
+  recognise both names. Packages retain an `electron.exe` compatibility copy
+  so older installed updaters can validate and install the new release.
+
 ### Fixed
 
+- Desktop Quit finishes exiting after managed processes stop even if resource
+  cleanup reports an error, and shutdown dialogs include the underlying error.
+- Windows installs prepare the Start menu shortcut separately and replace it
+  atomically after validation, preserving the existing entry on failed setup.
 - Windows update checks no longer fail with “Digest method not supported” when
   verifying signed release manifests in Electron.
 

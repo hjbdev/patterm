@@ -27,7 +27,7 @@ try {
     # The installer refuses while any of Patterm's Electron processes remain.
     $prefix = [IO.Path]::GetFullPath($InstallRoot).TrimEnd('\') + '\'
     for ($waited = 0; $waited -lt 60; $waited++) {
-        $running = @(Get-CimInstance Win32_Process -Filter "Name = 'electron.exe'" | Where-Object {
+        $running = @(Get-CimInstance Win32_Process -Filter "Name = 'Patterm.exe' OR Name = 'electron.exe'" | Where-Object {
             $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
         })
         if ($running.Count -eq 0) { break }

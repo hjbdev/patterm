@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { inspect } from 'node:util';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, shell } from 'electron';
 import { createApplication, type PattermApplication } from '../../app/App';
 import { registerCommandRoutes } from '../../routes/commands';
@@ -272,11 +273,19 @@ function quitDesktop(): Promise<void> {
       }
     }
     await patterm?.shutdown();
-    await patterm?.dispose();
+    try {
+      await patterm?.dispose();
+    } catch (error) {
+      // Managed hosts are already stopped and disposal attempted every cleanup.
+      // Keeping Electron alive now leaves an unusable app that blocks updates.
+      console.error('Patterm cleanup failed', error);
+      dialog.showErrorBox('Patterm stopped with cleanup errors', inspect(error, { depth: 8 }));
+    }
     quitComplete = true;
     app.quit();
   })().catch((error) => {
-    dialog.showErrorBox('Patterm could not finish shutting down', String(error));
+    console.error('Patterm shutdown failed', error);
+    dialog.showErrorBox('Patterm could not finish shutting down', inspect(error, { depth: 8 }));
   }).finally(() => { quitting = undefined; });
 }
 

@@ -77,6 +77,32 @@ for (const trigger of ['window close', 'application quit']) {
   });
 }
 
+for (const trigger of ['window close', 'application quit']) {
+  test(`${trigger} still exits after cleanup fails once managed processes have stopped`, async () => {
+    const fixture = await desktop({ confirmation: undefined, disposeError: new AggregateError([
+      new Error('Windows cleanup fixture failed')
+    ], 'Application shutdown failed') });
+    if (trigger === 'window close') fixture.window.close();
+    else fixture.app.quit();
+    await fixture.settle();
+    assert.equal(fixture.disposed, 1);
+    assert.equal(fixture.quitCompleted, true, 'cleanup failure must not leave a windowless Electron process');
+    assert.equal(fixture.errors.length, 1);
+    assert.match(fixture.errors[0][1], /Windows cleanup fixture failed/, 'show the underlying error');
+  });
+}
+
+test('a failed managed-process shutdown keeps the app alive for a retry', async () => {
+  const fixture = await desktop({ confirmation: undefined, shutdownError: new AggregateError([
+    new Error('Terminal host is still running')
+  ], 'Managed shutdown failed') });
+  fixture.app.quit();
+  await fixture.settle();
+  assert.equal(fixture.disposed, 0);
+  assert.equal(fixture.quitCompleted, false);
+  assert.match(fixture.errors[0][1], /Terminal host is still running/);
+});
+
 async function desktop(options = {}) {
   const { nativeResponse = 1 } = options;
   const confirmation = Object.hasOwn(options, 'confirmation') ? options.confirmation : 'Stop running processes.';
@@ -98,8 +124,8 @@ async function desktop(options = {}) {
     onTerminalClientRequest: () => () => {}, onNotificationsChanged: () => () => {},
     onAssistantEvent: () => () => {}, onDesktopNotification: () => () => {},
     isShuttingDown: () => shuttingDown,
-    shutdown: async () => { shuttingDown = true; },
-    dispose: async () => { disposed++; }
+    shutdown: async () => { if (options.shutdownError) throw options.shutdownError; shuttingDown = true; },
+    dispose: async () => { disposed++; if (options.disposeError) throw options.disposeError; }
   };
   class BrowserWindow extends EventEmitter {
     destroyed = false;
@@ -169,7 +195,7 @@ async function desktop(options = {}) {
   };
   vm.runInNewContext(source, {
     require: (id) => Object.hasOwn(imports, id) ? imports[id] : require(id),
-    exports: {}, __dirname: path.dirname(filename), console, Buffer,
+    exports: {}, __dirname: path.dirname(filename), console: { ...console, error: () => {} }, Buffer,
     process: { platform: 'win32', env: {}, cwd: () => process.cwd() },
     setTimeout: (callback) => { const id = ++nextTimer; timers.set(id, callback); return id; },
     clearTimeout: (id) => timers.delete(id)

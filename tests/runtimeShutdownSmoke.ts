@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test, type TestContext } from 'node:test';
+import { createApplication } from '../app/App';
+import { acquireApplicationLock } from '../app/Runtime/ApplicationLock';
 import { QuitApplicationAction } from '../app/Actions/QuitApplicationAction';
 import { ReconcileRuntimeAction } from '../app/Actions/ReconcileRuntimeAction';
 import { DatabaseService } from '../app/Services/DatabaseService';
@@ -12,6 +14,26 @@ import { RuntimeReconciler, type LifecycleSource } from '../app/Services/Runtime
 import type { TerminalService } from '../app/Services/TerminalService';
 import { TimelineService } from '../app/Services/TimelineService';
 import { TimerService } from '../app/Services/TimerService';
+
+test('resource cleanup logs its underlying failure and still releases application ownership', async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-cleanup-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const application = await createApplication({
+    appDataPath: directory, runtime: 'node', sidecarPath: path.join(directory, 'missing-sidecar'), mcpShimPath: ''
+  });
+  const events: Array<{ event: string; data: unknown }> = [];
+  const write = application.debugLog.write.bind(application.debugLog);
+  application.debugLog.write = (source, event, data) => { events.push({ event, data }); write(source, event, data); };
+  const disposeTimers = application.timers.dispose.bind(application.timers);
+  application.timers.dispose = () => { disposeTimers(); throw new Error('Cleanup regression fixture'); };
+  await application.shutdown();
+  await assert.rejects(application.dispose(), /Application shutdown failed/);
+  const failure = events.find((entry) => entry.event === 'shutdown.cleanup-failed');
+  assert.match(JSON.stringify(failure?.data), /Cleanup regression fixture/);
+  assert.ok(events.findIndex((entry) => entry.event === 'debug-log.stopped') > events.indexOf(failure!));
+  const release = acquireApplicationLock(directory);
+  release();
+});
 
 test('an exit captured after startup inventory is replayed after subscribing to live events', (t) => {
   const fixture = setup(t);

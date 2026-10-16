@@ -73,6 +73,10 @@ try {
   fs.mkdirSync(path.join(stage, 'electron'));
   execFileSync('tar', ['-xf', downloaded, '-C', path.join(stage, 'electron')], { stdio: 'inherit' });
 
+  // Installed 0.2.x updaters require electron.exe when validating the new zip.
+  // Keep that compatibility copy while the launcher runs Patterm.exe.
+  fs.copyFileSync(path.join(stage, 'electron', 'electron.exe'), path.join(stage, 'electron', 'Patterm.exe'));
+
   fs.copyFileSync(options.sidecar, path.join(stage, 'resources', 'native', 'patterm-terminal-core.exe'));
   fs.copyFileSync(path.join(ROOT, 'dist', 'mcp', 'patterm-mcp.js'), path.join(stage, 'resources', 'mcp', 'patterm-mcp.js'));
   fs.writeFileSync(path.join(stage, 'Patterm.cmd'), launcher());
@@ -106,7 +110,7 @@ function launcher() {
     'set "PATTERM_DESKTOP_RESOURCES=%APP_DIR%\\resources"',
     'set "ELECTRON_RUN_AS_NODE="',
     'cd /d "%APP_DIR%"',
-    'start "" "%APP_DIR%\\electron\\electron.exe" "%APP_DIR%\\dist\\main\\desktop\\main\\main.js" %*',
+    'start "" "%APP_DIR%\\electron\\Patterm.exe" "%APP_DIR%\\dist\\main\\desktop\\main\\main.js" %*',
     ''
   ].join('\r\n');
 }
