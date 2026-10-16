@@ -70,6 +70,9 @@ export interface SessionRecord {
   sessionRole: SessionRole;
   resumeStatus: ResumeStatus;
   activity: ActivityState;
+  // Background tasks still running, such as a shell the agent waits on. Older
+  // paired hosts omit it.
+  backgroundTasks?: number;
   lastTitle: string | null;
   displayName: string | null;
   // Chosen, then generated, then native name. Older paired hosts omit it.
@@ -94,6 +97,8 @@ export interface ProcessRecord {
   argv: string[];
   status: ProcessStatus | string;
   activity: ActivityState;
+  // Background tasks still running. Older paired hosts omit it.
+  backgroundTasks?: number;
   // Live sidecar PTY handle backing this process's terminal tab (null once exited).
   ptyProcessId: string | null;
   worktreeId: string | null;

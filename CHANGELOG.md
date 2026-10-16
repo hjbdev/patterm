@@ -7,8 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The usage page estimates where each quota window is heading at your recent
+  pace: how much will be left when it resets, or when it will run out first.
+  The estimate appears once a quarter of the window has passed, based on the
+  last seventh of it (a day of a weekly window), which predicted best when
+  tested against past Codex windows.
+
+### Changed
+
+- The sidebar's view options replace Expand all, Collapse all, and Show every
+  summary with one Show subtitles toggle, on by default. Opening a family no
+  longer changes whether its subtitle shows, and Alt-click no longer opens or
+  closes every family.
+
 ### Fixed
 
+- An Integrated agent whose turn has ended while a background task it started
+  still runs, such as a shell waiting for a deploy or a long database query,
+  no longer looks idle. Its tab, sidebar row, project list and command palette
+  entry show it working, and its card reads "Running a background task".
+  Messages, idle timers and compaction still treat it as idle.
 - Claude and Codex auto-summary token usage now counts in Usage totals, daily charts, models, and
   projects, with a separate breakdown, without adding conversation-history entries.
 - An Integrated agent asking a question (Claude's AskUserQuestion, Codex user input, or an

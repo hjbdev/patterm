@@ -3,7 +3,7 @@ import { agentLabel } from '../lib/agentTabs';
 import { awaitingUser, waitingReason } from '../lib/activity';
 import type { AgentNode } from '../lib/agentTree';
 import { capitalize, memberState, modelLabel, splitSummary, type AgentDigest, type DigestMember } from '../lib/agentDigest';
-import { processActivity, type RowActivity } from '../lib/rowActivity';
+import { processActivity, shownActivity, type RowActivity } from '../lib/rowActivity';
 import { familyTimerSummary, mostUrgent, processesByOwner, waitingSession } from '../lib/sidebarTree';
 import { contextRead, useContextVersion, type SessionContext } from '../lib/projectContext';
 import type { DiffTotals } from '../lib/worktreeDiff';
@@ -249,7 +249,13 @@ function createAgentDigests(): AgentDigests {
       return { state: 'attention', status: from ? `${from} ${said}` : capitalize(said), ask: { kind: 'message', from, text: [message.title, message.body].filter(Boolean).join(' ') } };
     }
     const working = rows.filter((row) => row.session && row.state === 'working').length;
-    if (activity.self === 'working') return { state: 'working', status: working ? `Working with ${working} ${working === 1 ? 'subagent' : 'subagents'}` : 'Working', ask: null };
+    if (activity.self === 'working') {
+      // Busy only because a background task it started still runs.
+      const background = shownActivity(root) === root.activity ? 0 : root.backgroundTasks ?? 0;
+      const status = working ? `Working with ${working} ${working === 1 ? 'subagent' : 'subagents'}`
+        : background ? `Running ${background === 1 ? 'a background task' : `${background} background tasks`}` : 'Working';
+      return { state: 'working', status, ask: null };
+    }
     if (working) return { state: 'waiting', status: `Waiting on ${working} ${working === 1 ? 'subagent' : 'subagents'}`, ask: null };
     if (hasTimer) return { state: 'waiting', status: 'Waiting on a timer', ask: null };
     return { state: 'idle', status: activity.self === 'unknown' ? 'Unknown' : 'Idle', ask: null };

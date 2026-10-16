@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 
 import { buildAgentTabFamilies } from '../resources/js/lib/agentTabs';
-import { activityLookup, countInRing, describeActivity, memberLabel, processActivity, subagentCountClass, subagentPulse } from '../resources/js/lib/rowActivity';
+import { activityLookup, countInRing, describeActivity, memberLabel, processActivity, shownActivity, subagentCountClass, subagentPulse } from '../resources/js/lib/rowActivity';
 import type { ActivityState, ProcessRecord, SessionRecord } from '../resources/js/types';
 
 function session(id: string, parentId: string | null, activity: ActivityState): SessionRecord {
@@ -140,6 +140,20 @@ const activity = (id: string) => activityFor(byId.get(id)!);
   assert.equal(processActivity(processRecord('dev', 'running', 'working')).self, 'working');
   assert.equal(processActivity(processRecord('dev', 'running', 'idle')).self, 'idle');
   assert.equal(processActivity(processRecord('done', 'exited', 'working')).self, 'idle');
+}
+
+{
+  // An agent whose turn ended while a background task it started still runs,
+  // such as a shell it waits on, is busy. Its own activity is left alone.
+  const waiting = { ...session('waiting', null, 'idle'), backgroundTasks: 1 };
+  assert.equal(shownActivity(waiting), 'working');
+  assert.equal(activityFor(waiting).self, 'working');
+  assert.equal(activityFor({ ...waiting, activity: 'unknown' }).self, 'working');
+  assert.equal(activityFor({ ...waiting, activity: 'permission' }).self, 'permission', 'a prompt still needs a person');
+  assert.equal(activityFor({ ...waiting, backgroundTasks: 0 }).self, 'idle');
+  assert.equal(activityFor({ ...waiting, exitedAt: '2026-01-01T00:01:00.000Z' }).self, 'idle', 'an exited agent runs nothing');
+  assert.equal(processActivity({ ...processRecord('dev', 'running', 'idle'), backgroundTasks: 2 }).self, 'working');
+  assert.equal(processActivity({ ...processRecord('done', 'exited', 'idle'), backgroundTasks: 2 }).self, 'idle');
 }
 
 {

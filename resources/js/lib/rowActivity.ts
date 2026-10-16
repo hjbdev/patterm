@@ -40,7 +40,15 @@ export function activityLookup(families: readonly AgentTabFamily[]): (session: S
 }
 
 export function processActivity(process: ProcessRecord): RowActivity {
-  return summarize(process.status === 'running' ? pulse(process.activity) : 'idle', NO_SUBAGENTS);
+  return summarize(process.status === 'running' ? pulse(shownActivity(process)) : 'idle', NO_SUBAGENTS);
+}
+
+// An agent's own activity as rows show it. One that is idle while a background
+// task it started still runs, such as a shell it waits on, is busy and shows
+// as working; its turn has only ended.
+export function shownActivity(record: Pick<SessionRecord, 'activity' | 'backgroundTasks' | 'exitedAt'>): ActivityState {
+  const idle = record.activity === 'idle' || record.activity === 'unknown';
+  return idle && !record.exitedAt && (record.backgroundTasks ?? 0) > 0 ? 'working' : record.activity;
 }
 
 // The most urgent state among the subagents, or null while they are all idle.
@@ -95,7 +103,7 @@ export function describeActivity(activity: RowActivity): string {
 const NO_SUBAGENTS: Readonly<Record<BusyPulse, number>> = { working: 0, permission: 0, question: 0, error: 0 };
 
 function sessionPulse(session: SessionRecord): Pulse {
-  return session.closeRequest ? 'closing' : pulse(session.activity);
+  return session.closeRequest ? 'closing' : pulse(shownActivity(session));
 }
 
 function pulse(activity: ActivityState): Pulse {

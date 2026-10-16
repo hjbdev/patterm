@@ -21,6 +21,9 @@ export interface UsageLimit {
   resetsAt: string | null;
   observedAt: string;
   expired: boolean;
+  // Where the window ends at the recent pace, and when it runs out first.
+  projectedPercent: number | null;
+  exhaustsAt: string | null;
 }
 
 export interface UsageSkill {

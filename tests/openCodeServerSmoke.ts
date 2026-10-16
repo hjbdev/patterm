@@ -1010,10 +1010,21 @@ async function checkStreamedActivity(input: {
     daemonState.emit('session.execution.started', { sessionID: first });
     daemonState.emit('session.tool.called', { sessionID: first, assistantMessageID: 'msg_sh', id: 'call_dev', name: 'shell', input: { command: 'npm run dev', background: true } });
     daemonState.emit('session.tool.success', { sessionID: first, assistantMessageID: 'msg_sh', id: 'call_dev', content: [{ type: 'text', text: 'Command moved to the background' }], metadata: { shellID: 'sh_dev', sessionID: first } });
+    const shellMark = events.length;
     daemonState.emit('shell.created', { id: 'sh_dev', metadata: { sessionID: first } });
+    await waitFor(() => events.slice(shellMark).some((event) => event.kind === 'pending'));
     daemonState.emit('session.execution.succeeded', { sessionID: first });
     await waitFor(() => statuses(mark).includes('idle'));
     assert.equal((await read()).status, 'idle', 'a running background shell is not work in progress');
+    const { tasks } = await read() as { tasks?: Array<{ id: string; status: string }> };
+    assert.deepEqual(tasks?.map((task) => [task.id, task.status]), [['sh_dev', 'running']], 'but it is a running task');
+    // A shell's start and end re-read the tasks; another session's shell does not.
+    mark = events.length;
+    daemonState.emit('shell.exited', { id: 'sh_other', metadata: { sessionID: 'ses_other' } });
+    await settle();
+    assert.ok(!events.slice(mark).some((event) => event.kind === 'pending'), 'another session\'s shell is ignored');
+    daemonState.emit('shell.exited', { id: 'sh_dev', metadata: { sessionID: first } });
+    await waitFor(() => events.slice(mark).some((event) => event.kind === 'pending'));
     daemonState.rows = null;
     daemonState.shells = [];
 

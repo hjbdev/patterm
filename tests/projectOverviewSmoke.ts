@@ -61,6 +61,9 @@ assert.equal(agentStatusText(asking!), 'Planner has a question');
 const worker = busyOverview?.agents.find((agent) => agent.session.id === 'worker');
 assert.equal(agentStatusText(worker!), '', 'agents without a summary show no status text');
 
+const watching = projectOverviews([project('watching', [session('deploy', { backgroundTasks: 1 })])])[0];
+assert.deepEqual([watching?.working, watching?.idle], [1, 0], 'an agent waiting on its background task is working');
+
 assert.equal(recentOverview?.agents.length, 0, 'ended agents are not listed');
 assert.equal(recentOverview?.lastActiveAt, '2026-01-01T05:00:00.000Z', 'ended agents still date the project');
 assert.equal(quietOverview?.lastActiveAt, null);

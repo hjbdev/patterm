@@ -10,6 +10,7 @@ import {
   User
 } from 'lucide-vue-next';
 import type { ActivityState, ActorType, ProcessRecord, SessionRecord } from '../types';
+import { shownActivity } from './rowActivity';
 
 // A resolved icon for a domain state: which Lucide glyph, its colour, whether it
 // spins (working/thinking), and a human label used for the title / aria-label.
@@ -57,13 +58,13 @@ export function sessionStatusIcon(session: SessionRecord): IconSpec {
     }
     return { icon: CircleCheck, class: 'text-muted-foreground', spin: false, label: 'Exited' };
   }
-  return activityIcon(session.activity);
+  return activityIcon(shownActivity(session));
 }
 
 export function processStatusIcon(proc: ProcessRecord): IconSpec {
   switch (proc.status) {
     case 'running':
-      return activityIcon(proc.activity);
+      return activityIcon(shownActivity(proc));
     case 'stopped':
       return { icon: CirclePause, class: 'text-muted-foreground', spin: false, label: 'Stopped' };
     case 'failed':
