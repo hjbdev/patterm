@@ -16,12 +16,12 @@
           <div v-if="entry.kind === 'divider'" data-sidebar-slide class="mx-2 my-2 border-t border-white/[0.06]" />
           <!-- Grouped by project, a hairline rule names each project. -->
           <!-- Its + starts an agent in that project. -->
-          <div v-else-if="entry.kind === 'rule'" data-sidebar-slide class="group/rule flex h-6 items-center gap-1.5 pl-2 pr-0.5 text-[11px] text-muted-foreground" :class="entry.first ? '' : 'mt-2'">
+          <div v-else-if="entry.kind === 'rule'" data-sidebar-slide class="flex h-6 items-center gap-1.5 pl-2 pr-0.5 text-[11px] text-muted-foreground" :class="entry.first ? '' : 'mt-2'">
             <ProjectLogo :project="entry.project" :size="12" />
             <span class="max-w-[60%] truncate">{{ entry.label }}</span>
             <HostBadge v-if="entry.project.host" :host="entry.project.host" />
             <span class="h-px flex-1 bg-white/[0.06]" />
-            <LaunchAgentMenu :project-id="entry.project.id" trigger-class="h-5 w-5 opacity-0 transition-opacity group-hover/rule:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 max-sm:opacity-100 [&_svg]:h-3.5 [&_svg]:w-3.5" />
+            <LaunchAgentMenu :project-id="entry.project.id" trigger-class="h-5 w-5 [&_svg]:h-3.5 [&_svg]:w-3.5" />
           </div>
           <div v-else-if="entry.kind === 'heading'" data-sidebar-slide class="flex h-7 items-center gap-2 px-2 text-xs text-muted-foreground" :class="entry.first ? '' : 'mt-3'">
             <span class="flex-1">{{ entry.label }}</span>
