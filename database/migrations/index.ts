@@ -1,6 +1,7 @@
+import addAutoSummaryUsage from './2026_10_16_000050_add_auto_summary_usage';
 import addSummaryMemory from './2026_10_12_000048_add_summary_memory';
 import addContextRevisions from './2026_10_15_000049_add_context_revisions';
-import addProcessBackgroundTasks from './2026_10_16_000050_add_process_background_tasks';
+import addProcessBackgroundTasks from './2026_10_16_000051_add_process_background_tasks';
 import createInitialSchema from './2026_06_03_000001_create_initial_schema';
 import addProcessRuntimeColumns from './2026_06_03_000002_add_process_runtime_columns';
 import addProcessWorktreeId from './2026_06_03_000003_add_process_worktree_id';
@@ -104,5 +105,6 @@ export const migrations: Migration[] = [
   addAutoTitles,
   addSummaryMemory,
   addContextRevisions,
+  addAutoSummaryUsage,
   addProcessBackgroundTasks
 ];
