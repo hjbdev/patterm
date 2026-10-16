@@ -411,7 +411,7 @@ function serve(socket) {
         // Codex 0.158 before a new thread's first message.
         else if (process.env.UNMATERIALIZED) send({jsonrpc:'2.0', id:request.id, error:{code:-32600, message:'thread thread_test is not materialized yet; thread/turns/list is unavailable before first user message'}});
         else if (process.env.RECONNECT_ACTIVE) send({jsonrpc:'2.0', id:request.id, result:{data:[{id:'turn_live',status:'inProgress',items:[],itemsView:'notLoaded'}],nextCursor:null,backwardsCursor:null}});
-        else if (process.env.COMMANDS) send({jsonrpc:'2.0', id:request.id, result:{data:[{id:'turn_done',status:'completed',items:[],itemsView:'notLoaded'}],nextCursor:null,backwardsCursor:null}});
+        else if (process.env.COMMANDS) send({jsonrpc:'2.0', id:request.id, result:{data:[{id:'turn_done',status:'completed',items:[],itemsView:'notLoaded',startedAt:1760000000,completedAt:1760000060}],nextCursor:null,backwardsCursor:null}});
         else send({jsonrpc:'2.0', id:request.id, result:{data:[],nextCursor:null,backwardsCursor:null}});
       }
       else if (request.method === 'thread/read') {
@@ -914,6 +914,8 @@ if (socketPath) {
   // A dropped control connection is announced and recovered without any
   // explicit read, and an active native turn is not mislabelled idle.
   const reconnecting = await launch({ ...process.env, RECONNECT_ACTIVE: '1', NO_PENDING: '1' });
+  const beforeActive = Date.now();
+  assert.ok((await reconnecting.service.lastActivity(reconnecting.processId))! >= beforeActive, 'a running turn is activity now');
   const reconnectedEvents: IntegratedConversationEvent[] = [];
   const releaseReconnect = await reconnecting.service.subscribe(reconnecting.processId, (event) => reconnectedEvents.push(event));
   await reconnecting.service.prompt(reconnecting.processId, { text: 'drop me', references: [], attachments: [] });
@@ -1267,6 +1269,8 @@ if (socketPath) {
   await commands.service.command(commands.processId, 'shell', 'git status');
   await commands.service.command(commands.processId, 'undo', '');
   await assert.rejects(commands.service.command(commands.processId, 'rename', ' '), /new name/);
+  // Idle compaction's restart check reads when the latest turn started.
+  assert.equal(await commandIntegrated.lastActivity(commands.processId), 1760000000 * 1000);
   const commandRows = (JSON.parse(JSON.stringify(await commands.service.conversation(commands.processId))) as { messages: { data: Array<{ id: string; text: string }> } }).messages.data
     .filter((row) => row.id.startsWith('command_')).map((row) => [row.id.replace(/_\d+$/, ''), JSON.parse(row.text)]);
   assert.deepEqual(commandRows, [

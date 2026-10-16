@@ -1315,7 +1315,14 @@ export class OpenCodeServerService {
 
   async compact(processId: string): Promise<unknown> {
     const runtime = this.runtime(processId);
-    const result = await this.api(runtime.executable, runtime.cwd, 'POST', `/api/session/${encodeURIComponent(runtime.resumeId)}/compact`, { delivery: 'queue' });
+    let result: unknown;
+    try {
+      result = await this.api(runtime.executable, runtime.cwd, 'POST', `/api/session/${encodeURIComponent(runtime.resumeId)}/compact`, { delivery: 'queue' });
+    } catch (error) {
+      // As for prompts, a 4xx response is a definitive rejection.
+      if (error instanceof ProviderCommandError && error.status && error.status >= 400 && error.status < 500) throw new ProviderCommandError(error.message, error.status, true);
+      throw error;
+    }
     this.admitted(runtime.resumeId);
     return result;
   }

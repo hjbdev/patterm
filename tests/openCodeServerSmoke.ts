@@ -52,6 +52,7 @@ if (api !== 'api') process.exit(2);
 const body = json ? JSON.parse(json) : undefined;
 const rows = fs.existsSync(process.env.RECORD) ? fs.readFileSync(process.env.RECORD, 'utf8').trim().split('\\n').filter(Boolean).map(JSON.parse) : [];
 if (process.env.REJECT_PROMPT && method === 'POST' && route.endsWith('/prompt')) { console.log('HTTP 400 Bad Request'); process.exit(1); }
+if (process.env.REJECT_COMPACT && method === 'POST' && route.endsWith('/compact')) { console.log('HTTP ' + process.env.REJECT_COMPACT); process.exit(1); }
 fs.appendFileSync(process.env.RECORD, JSON.stringify({method,route,body})+'\\n');
 if (process.env.FAIL_API) { console.error(json); process.exit(1); }
  if (route === '/api/info') console.log(JSON.stringify({version:process.env.WRONG_VERSION && !(process.env.RESTARTED && fs.existsSync(process.env.RESTARTED)) ? '2.0.13' : '2.0.14',pid:4242}));
@@ -402,6 +403,18 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
       (error: unknown) => error instanceof Error && !(error instanceof UncertainDeliveryError)
     );
     assert.equal(await rejectedService.reconcile('process_0', rejectedId), 'unknown');
+    // A restart's idle compaction check reads OpenCode's native row times,
+    // and a session with a running execution is active now.
+    // The newest is a prompt sent earlier in this test, at native time 2.
+    assert.equal(await new IntegratedAgentService(database, { opencode: new OpenCodeServerService(database, { ...env, ACTIVE_EMPTY: '1' }) }).lastActivity('process_0'), 2);
+    const beforeActive = Date.now();
+    assert.ok((await new IntegratedAgentService(database, { opencode: new OpenCodeServerService(database, env) }).lastActivity('process_0'))! >= beforeActive);
+    // A 4xx rejects a compaction definitively, as it does a prompt; a 5xx may
+    // have queued it.
+    await assert.rejects(new OpenCodeServerService(database, { ...env, REJECT_COMPACT: '409 Conflict' }).compact('process_0'),
+      (error: unknown) => error instanceof ProviderCommandError && error.status === 409 && error.definitive);
+    await assert.rejects(new OpenCodeServerService(database, { ...env, REJECT_COMPACT: '502 Bad Gateway' }).compact('process_0'),
+      (error: unknown) => error instanceof ProviderCommandError && error.status === 502 && !error.definitive);
 
     // A session longer than one bounded page still shows its newest rows.
     const manyService = new OpenCodeServerService(database, { ...env, MANY_MESSAGES: '1' });
