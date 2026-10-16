@@ -237,7 +237,7 @@ export class CodexAppServerService {
         streaming: true,
         ...withPlan(pendingViews(pending, runtime.threadId, messages), plan),
         // Unknown until a native read says; the caller keeps what it had.
-        status: pendingStatus(pending, plan) ?? (status === 'unknown' ? undefined : status),
+        status: snapshotStatus(pending, plan, status),
         ...(status === 'error' && detail ? { status_detail: detail } : {}),
         usage: client.usage(runtime.threadId),
         tasks,
@@ -277,7 +277,7 @@ export class CodexAppServerService {
       streaming: true,
       // A connection that has not seen this thread's turns reads them
       // natively; when that fails too, the caller keeps what it had.
-      status: pendingStatus(pending, plan) ?? (status === 'unknown' ? undefined : status),
+      status: snapshotStatus(pending, plan, status),
       usage: client.usage(runtime.threadId),
       tasks: codexTasks(parentMessages, client, await this.trackBackgroundTerminals(client, runtime.threadId, parentMessages)),
       messages: { data: messages },
@@ -1837,9 +1837,17 @@ const ANSWERABLE_REQUESTS = new Set(['item/tool/requestUserInput', ELICITATION])
 
 // What pending requests wait on: an approval, including a plan to approve,
 // or else only questions and forms. Undefined while nothing is pending.
-function pendingStatus(pending: PendingServerRequest[], plan: unknown[]): 'permission' | 'question' | undefined {
+function pendingStatus(pending: Array<{ method: string }>, plan: unknown[]): 'permission' | 'question' | undefined {
   if (!pending.length && !plan.length) return undefined;
   return awaitingActivity(plan.length + pending.filter((request) => !ANSWERABLE_REQUESTS.has(request.method)).length);
+}
+
+// A snapshot's status: pending requests and the effective status together,
+// an approval in either first. Undefined while unknown.
+export function snapshotStatus(pending: Array<{ method: string }>, plan: unknown[], status: CodexDeliveryStatus): CodexDeliveryStatus | undefined {
+  const waiting = pendingStatus(pending, plan);
+  if (waiting === 'permission' || status === 'permission') return 'permission';
+  return waiting ?? (status === 'unknown' ? undefined : status);
 }
 
 function pendingViews(pending: PendingServerRequest[], threadId: string, messages: IntegratedConversationMessage[]): JsonRecord {
