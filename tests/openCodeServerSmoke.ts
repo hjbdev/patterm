@@ -110,6 +110,7 @@ else if (method === 'GET' && route.includes('/message?')) {
     {type:'tool',id:'call_bg',name:'shell',state:{status:'completed',input:{command:'npm run dev',background:true},metadata:{shellID:'sh_bg',status:'running'},content:[]}},
     {type:'tool',id:'call_done',name:'shell',state:{status:'completed',input:{command:'sleep 1',background:true},metadata:{shellID:'sh_done',status:'running'},content:[]}}
   ],model:{providerID:'openai',id:'gpt-test'},tokens:{input:3000,output:200,reasoning:0,cache:{read:17000,write:0}},time:{created:2}});
+  if (process.env.COMPACTED) messages.push({id:'msg_compacted',type:'compaction',status:'completed',reason:'manual',model:{providerID:'openai',id:'gpt-test'},tokens:{input:3000,output:500,reasoning:0,cache:{read:17000,write:0}},summary:'Summary',time:{created:3}});
   for (const item of rows) {
     if (item.method !== 'POST' || !item.route.endsWith('/prompt') || typeof item.body?.id !== 'string') continue;
     messages.push({id:item.body.id,type:'user',text:String(item.body.text ?? ''),time:{created:2}});
@@ -521,6 +522,9 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     assert.equal((await nestedService.taskOutput('process_0', 'ses_sub', subOutput.version)).format, 'unchanged', 'an unchanged subagent skips its rows');
     await assert.rejects(nestedService.taskOutput('process_0', 'ses_foreign'), /does not belong/, 'another session is never read');
     assert.deepEqual(nestedView.usage, { contextTokens: 20_000, contextWindow: 400_000, inputTokens: 100_000, outputTokens: 5_000, costUsd: 1.25, lastModelActivityAt: new Date(2).toISOString() }, 'session totals, latest context, the model window, and the newest request start are reported');
+    const compactedView = await new OpenCodeServerService(database, { ...env, SUBAGENT_SESSION: '1', COMPACTED: '1', SUBAGENT_ROOT: (database.connection.prepare(`select resume_id from sessions where process_id = 'process_0'`).get() as { resume_id: string }).resume_id }).conversation('process_0') as { usage: Record<string, unknown> };
+    assert.equal(compactedView.usage.contextTokens, undefined, 'a newer compaction drops the stale context');
+    assert.equal(compactedView.usage.contextWindow, 400_000, 'the window still comes from the compaction model');
     assert.deepEqual(nestedView.messages.data.filter((row) => row.parentId).map((row) => [row.id, row.parentId]), [['msg_sub_1', 'msg_task-1'], ['msg_sub_2', 'msg_task-1']]);
     const nestedRoutes = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as { route: string });
     assert.ok(!nestedRoutes.some((request) => request.route.startsWith(`/api/session/${(database.connection.prepare(`select resume_id from sessions where process_id = 'process_0'`).get() as { resume_id: string }).resume_id}/message?limit=40`)), 'a shell tool session is not read as a subagent');
@@ -919,6 +923,12 @@ async function checkStreamedActivity(input: {
     await settle();
     assert.equal((await read()).status, 'working', 'finishing the OpenCode shell does not finish its execution');
     assert.ok(!statuses(mark).includes('idle'), 'OpenCode never streams idle between a tool and the execution end');
+
+    // A finished compaction re-reads the snapshot for its usage.
+    mark = events.length;
+    daemonState.emit('session.compaction.ended', { sessionID: first });
+    await waitFor(() => events.slice(mark).some((event) => event.kind === 'replace' && event.message?.text === 'Conversation compacted'));
+    assert.ok(events.slice(mark).some((event) => event.kind === 'pending'), 'a finished compaction re-reads the snapshot');
 
     // A permission request is streamed and read as permission, and its reply
     // returns to work. The request also re-reads the snapshot for the dock.
