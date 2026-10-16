@@ -9,7 +9,7 @@ const source = page.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1];
 const parsed = ts.createSourceFile('mobile-tabs.ts', source, ts.ScriptTarget.Latest, true);
 const executable = parsed.statements.filter(statement => !ts.isImportDeclaration(statement)).map(statement => statement.getFullText(parsed)).join('\n');
 const { outputText } = ts.transpileModule(executable, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } });
-const setup = new Function('computed', 'ref', 'useProjectHarnessLaunches', 'useSelectedHarnessLaunch', 'defineProps', 'defineEmits', 'ownedProcessesForSessions',
+const setup = new Function('computed', 'ref', 'useHarnessLaunchesFor', 'useSelectedHarnessLaunch', 'defineProps', 'defineEmits', 'ownedProcessesForSessions',
   `${outputText}\nreturn { open, activeAgent, activeProcess, isFamilyActive, selectFamily, selectSession, selectProcess };`);
 
 test('Mobile tabs select the family and expose its children without launching or losing the active title', () => {

@@ -16,15 +16,16 @@
       </button>
     </template>
     <template #header-actions>
-      <LaunchAgentMenu :project-id="projectId" nested @started="open = false" />
+      <LaunchAgentMenu :project-id="projectId" :choose-project="Boolean(projectOf)" nested @started="open = false" />
     </template>
     <template #mobile>
-      <HarnessLaunchTabs :project-id="projectId" vertical @select="open = false" />
+      <HarnessLaunchTabs v-for="id in launchProjectIds" :key="id" :project-id="id" vertical @select="open = false" />
       <div v-if="!families.length && !processes.length && !pendingLaunches.length" class="py-6 text-center text-sm text-muted-foreground">No open tabs</div>
       <div v-for="family in families" :key="family.rootId" class="mb-1">
         <button type="button" class="relative isolate flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="isFamilyActive(family) ? 'bg-primary/10' : ''" @click="selectFamily(family)">
           <TabWash :activity="activityFor(family.root.session)" />
           <RowStatus :activity="activityFor(family.root.session)" :count="family.options.length - 1 + ownedProcesses(family).length" :count-label="memberLabel(family.options.length - 1, ownedProcesses(family).length)" />
+          <ProjectLogo v-if="projectOf?.(family.rootId)" :project="projectOf(family.rootId)!" :size="16" />
           <span class="min-w-0 flex-1 truncate">{{ agentLabel(family.root.session) }}<HostBadge v-if="family.root.session.host" :host="family.root.session.host" class="ml-1.5" /></span>
           <UnreadDot :urgency="unreadUrgency(family.root.session.processId)" />
           <span v-if="family.options.length - 1 + ownedProcesses(family).length && !countInRing(activityFor(family.root.session))" :class="cn('text-xs tabular-nums', subagentCountClass(activityFor(family.root.session)))">
@@ -50,6 +51,7 @@
       <button v-for="process in processes" :key="process.id" type="button" class="relative isolate flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="process.ptyProcessId === activeTerminalId ? 'bg-primary/10' : ''" @click="selectProcess(process)">
         <TabWash :activity="processActivity(process)" />
         <RowStatus :activity="processActivity(process)" />
+        <ProjectLogo v-if="projectOf?.(process.id)" :project="projectOf(process.id)!" :size="16" />
         <span class="min-w-0 flex-1 truncate">{{ process.name }}<HostBadge v-if="process.host" :host="process.host" class="ml-1.5" /></span>
         <UnreadDot :urgency="unreadUrgency(process.id)" />
       </button>
@@ -62,7 +64,8 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { useProjectHarnessLaunches, useSelectedHarnessLaunch } from '../Composables/useHarnessLaunch';
+import { useHarnessLaunchesFor, useSelectedHarnessLaunch } from '../Composables/useHarnessLaunch';
+import ProjectLogo from './ProjectLogo.vue';
 import { harnessLaunchLabel } from '../lib/harnessLaunches';
 import { ChevronDown, LoaderCircle } from 'lucide-vue-next';
 import { cn } from '@/lib/utils';
@@ -70,7 +73,7 @@ import { agentLabel, agentOptionIndent, familyOwnerLabel, type AgentTabFamily } 
 import { ownedProcessesForSessions, type LiveProcessRecord } from '../lib/processTabs';
 import { activityLookup, countInRing, memberLabel, processActivity, subagentCountClass, subagentPulse } from '../lib/rowActivity';
 import WorkingShimmer from './WorkingShimmer.vue';
-import type { ProcessRecord, SessionRecord } from '../types';
+import type { ProcessRecord, ProjectSummary, SessionRecord } from '../types';
 import LaunchAgentMenu from './LaunchAgentMenu.vue';
 import HarnessLaunchTabs from './HarnessLaunchTabs.vue';
 import HostBadge from './HostBadge.vue';
@@ -88,6 +91,9 @@ const props = defineProps<{
   allProcesses: ProcessRecord[];
   activeTerminalId: string | null;
   activeSessionId: string | null;
+  // While showing all agents: each row's project, and the projects shown.
+  projectOf?: ((id: string) => ProjectSummary | null) | undefined;
+  shownProjectIds?: readonly string[] | undefined;
 }>();
 
 const emit = defineEmits<{
@@ -97,7 +103,8 @@ const emit = defineEmits<{
 
 const open = ref(false);
 const activeLaunch = useSelectedHarnessLaunch();
-const pendingLaunches = useProjectHarnessLaunches(() => props.projectId);
+const launchProjectIds = computed(() => props.shownProjectIds ?? [props.projectId]);
+const pendingLaunches = useHarnessLaunchesFor(() => launchProjectIds.value);
 const activeAgent = computed(() => props.families.flatMap((family) => family.options).find((option) =>
   option.session.id === props.activeSessionId || Boolean(props.activeTerminalId && option.session.ptyProcessId === props.activeTerminalId)
 )?.session ?? null);

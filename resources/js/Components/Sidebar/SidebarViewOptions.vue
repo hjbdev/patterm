@@ -8,18 +8,35 @@
     </DropdownMenuTrigger>
     <DropdownMenuContent align="end" class="w-56">
       <DropdownMenuCheckboxItem v-model="expansion.state.value.subtitles" class="text-[13px]" @select.prevent>Show subtitles</DropdownMenuCheckboxItem>
-      <DropdownMenuCheckboxItem v-model="expansion.state.value.groupByStatus" class="text-[13px]" @select.prevent>Group by status</DropdownMenuCheckboxItem>
+      <DropdownMenuCheckboxItem :model-value="groupingByStatus" class="text-[13px]" @update:model-value="setGrouping('status', Boolean($event))" @select.prevent>Group by status</DropdownMenuCheckboxItem>
+      <!-- One grouping at a time; with neither, All agents keeps the order you give it. -->
+      <DropdownMenuCheckboxItem v-if="sidebar.allAgents.value" :model-value="expansion.state.value.groupByProject" class="text-[13px]" @update:model-value="setGrouping('project', Boolean($event))" @select.prevent>Group by project</DropdownMenuCheckboxItem>
       <DropdownMenuCheckboxItem v-model="expansion.state.value.followActive" class="text-[13px]" @select.prevent>Open the agent I'm in</DropdownMenuCheckboxItem>
+      <template v-if="sidebar.allAgents.value">
+        <DropdownMenuSeparator />
+        <AllAgentsProjectsMenu />
+      </template>
     </DropdownMenuContent>
   </DropdownMenu>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
 import { SlidersHorizontal } from 'lucide-vue-next';
 import { useSidebarExpansion } from '../../Composables/useSidebarExpansion';
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from '../ui/dropdown-menu';
+import AllAgentsProjectsMenu from '../AllAgentsProjectsMenu.vue';
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuSeparator, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { useSidebar } from './sidebarContext';
 
 const sidebar = useSidebar();
-const expansion = useSidebarExpansion(() => sidebar.projectId.value);
+const expansion = useSidebarExpansion(() => sidebar.expansionScope.value);
+const groupingByStatus = computed(() => expansion.state.value.groupByStatus && !(sidebar.allAgents.value && expansion.state.value.groupByProject));
+
+// Grouping by status and by project take turns.
+function setGrouping(by: 'status' | 'project', on: boolean): void {
+  const state = expansion.state.value;
+  if (by === 'status') state.groupByStatus = on;
+  else state.groupByProject = on;
+  if (on) state[by === 'status' ? 'groupByProject' : 'groupByStatus'] = false;
+}
 </script>

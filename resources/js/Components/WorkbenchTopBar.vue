@@ -18,16 +18,33 @@
     <ResponsiveMenu v-model:open="projectMenuOpen" title="Projects" desktop-class="w-72" @content-pointer-enter="cancelProjectMenuClose" @content-pointer-leave="scheduleProjectMenuClose" @content-keydown="stopProjectMenuHover" @open-auto-focus="keepHoverFocus" @close-auto-focus="keepHoverFocus">
       <template #trigger>
         <Button variant="ghost" size="sm" class="h-[26px] max-w-[38vw] shrink-0 justify-between gap-1 rounded-tab px-2 py-0.5 text-[13px] sm:max-w-64 sm:gap-2" @pointerenter="openProjectMenuOnHover" @pointerleave="scheduleProjectMenuClose" @pointerdown="stopProjectMenuHover" @keydown="stopProjectMenuHover">
-          <ProjectStatusLogo v-if="activeProject" :project="activeProject.project" :states="agentStates(activeProject.project.id)" />
-          <span class="truncate">{{ activeProject?.project.name ?? 'Projects' }}</span>
-          <HostBadge v-if="activeProject?.project.host" :host="activeProject.project.host" />
-          <Badge v-if="activeProjectAgentCount > 0" variant="secondary" class="ml-auto hidden h-5 px-1.5 text-[10px] tabular-nums sm:inline-flex">
-            {{ activeProjectAgentCount }}
+          <template v-if="allAgents">
+            <Layers class="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <span class="truncate">All agents</span>
+          </template>
+          <template v-else>
+            <ProjectStatusLogo v-if="activeProject" :project="activeProject.project" :states="agentStates(activeProject.project.id)" />
+            <span class="truncate">{{ activeProject?.project.name ?? 'Projects' }}</span>
+            <HostBadge v-if="activeProject?.project.host" :host="activeProject.project.host" />
+          </template>
+          <Badge v-if="shownAgentCount > 0" variant="secondary" class="ml-auto hidden h-5 px-1.5 text-[10px] tabular-nums sm:inline-flex">
+            {{ shownAgentCount }}
           </Badge>
           <ChevronDown class="h-4 w-4 shrink-0 opacity-70" />
         </Button>
       </template>
       <template #desktop>
+        <!-- Every shown project's agents together, until you pick a project. -->
+        <DropdownMenuItem
+          class="py-1 text-[13px] data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
+          :class="allAgents && 'bg-primary/10'"
+          @select="emit('selectAllAgents')"
+        >
+          <Layers class="mr-2 h-3.5 w-3.5 text-muted-foreground" />
+          <span class="min-w-0 flex-1 truncate">All agents</span>
+          <Badge v-if="totalAgentCount > 0" variant="secondary" class="ml-2 h-5 px-1.5 text-[10px] tabular-nums">{{ totalAgentCount }}</Badge>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator v-if="projects.length" />
         <DropdownMenuItem
           v-for="projectGroup in projects"
           :key="projectGroup.project.id"
@@ -52,7 +69,13 @@
       </template>
       <template #mobile>
         <div class="space-y-1">
-          <button v-for="projectGroup in projects" :key="projectGroup.project.id" type="button" class="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="projectGroup.project.id === activeProjectId ? 'bg-primary/10' : ''" @click="selectMobileProject(projectGroup.project.id)">
+          <button type="button" class="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="allAgents ? 'bg-primary/10' : ''" @click="selectMobileAllAgents">
+            <Layers class="h-4 w-4 text-muted-foreground" />
+            <span class="min-w-0 flex-1 truncate">All agents</span>
+            <Badge v-if="totalAgentCount > 0" variant="secondary" class="h-5 px-1.5 text-[10px] tabular-nums">{{ totalAgentCount }}</Badge>
+          </button>
+          <div v-if="projects.length" class="my-2 border-t border-border" />
+          <button v-for="projectGroup in projects" :key="projectGroup.project.id" type="button" class="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="!allAgents && projectGroup.project.id === activeProjectId ? 'bg-primary/10' : ''" @click="selectMobileProject(projectGroup.project.id)">
             <ProjectStatusLogo :project="projectGroup.project" :states="agentStates(projectGroup.project.id)" :size="16" />
             <span class="min-w-0 flex-1 truncate">{{ projectGroup.project.name }}</span>
             <HostBadge v-if="projectGroup.project.host" :host="projectGroup.project.host" />
@@ -122,10 +145,10 @@
 import HostBadge from './HostBadge.vue';
 import AssistantButton from './Assistant/AssistantButton.vue';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { CalendarClock, ChevronDown, Gauge, LayoutGrid, Menu, Search, Settings } from 'lucide-vue-next';
-import { activeAgentSessions } from '../lib/agentTabs';
+import { CalendarClock, ChevronDown, Gauge, Layers, LayoutGrid, Menu, Search, Settings } from 'lucide-vue-next';
+import { allAgents, listedProjects, openAgentCount, projectShown } from '../lib/allAgents';
 import { readRecentProjectIds, rememberRecentProject, shownRecentProjects } from '../lib/recentProjects';
-import type { ProjectWorkbench, SessionRecord } from '../types';
+import type { ProjectWorkbench } from '../types';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import ResponsiveMenu from './ResponsiveMenu.vue';
@@ -145,10 +168,14 @@ const props = defineProps<{
   sidecarStatus: string;
   sidecarAvailable: boolean;
   showRecentProjects: boolean;
+  // Showing every shown project's agents, and how many are open.
+  allAgents?: boolean;
+  allAgentsCount?: number;
 }>();
 
 const emit = defineEmits<{
   selectProject: [projectId: string | null];
+  selectAllAgents: [];
   commandPalette: [];
   settings: [];
   usage: [];
@@ -176,6 +203,10 @@ watch(projectMenuOpen, (open) => {
 let projectMenuHovered = false;
 let projectMenuCloseTimer: ReturnType<typeof setTimeout> | undefined;
 
+function selectMobileAllAgents(): void {
+  projectMenuOpen.value = false;
+  emit('selectAllAgents');
+}
 function selectMobileProject(projectId: string | null): void {
   projectMenuOpen.value = false;
   emit('selectProject', projectId);
@@ -212,14 +243,9 @@ function stopProjectMenuHover(): void {
 onBeforeUnmount(cancelProjectMenuClose);
 
 const activeProject = computed(() => props.projects.find((project) => project.project.id === props.activeProjectId) ?? null);
-const activeProjectAgentCount = computed(() => activeProject.value ? openAgentCount(activeProject.value) : 0);
-function openAgentCount(project: ProjectWorkbench): number {
-  return activeAgentSessions(projectAgentSessions(project)).length;
-}
-
-function projectAgentSessions(project: ProjectWorkbench): SessionRecord[] {
-  return project.projectSessions;
-}
+const shownAgentCount = computed(() => props.allAgents ? props.allAgentsCount ?? 0 : activeProject.value ? openAgentCount(activeProject.value) : 0);
+// What All agents would show: the projects switched on in its Projects menu.
+const totalAgentCount = computed(() => listedProjects(props.projects).filter((project) => projectShown(allAgents, project.project.id)).reduce((total, project) => total + openAgentCount(project), 0));
 
 
 // A release newer than this install marks Settings until it is installed.

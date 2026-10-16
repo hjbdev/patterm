@@ -20,6 +20,7 @@
           >
             <TabWash :activity="processActivity(process)" />
             <RowStatus :activity="processActivity(process)" />
+            <ProjectLogo v-if="!pinned && project" :project="project" :size="14" :title="project.name" />
             <span v-if="!pinned" class="min-w-0 flex-1 truncate">{{ process.name }}</span>
             <HostBadge v-if="!pinned && process.host" :host="process.host" />
             <UnreadDot :class="pinned && 'absolute right-1 top-1'" :urgency="unreadUrgency(process.id)" />
@@ -67,12 +68,13 @@
 
 <script setup lang="ts">
 import HostBadge from './HostBadge.vue';
+import ProjectLogo from './ProjectLogo.vue';
 import { computed, ref } from 'vue';
 import { Copy, Pencil, Pin, PinOff, X } from 'lucide-vue-next';
 import { toast } from 'vue-sonner';
 import { cn } from '@/lib/utils';
 import { describeActivity, processActivity } from '../lib/rowActivity';
-import type { ProcessRecord } from '../types';
+import type { ProcessRecord, ProjectSummary } from '../types';
 import RowStatus from './RowStatus.vue';
 import TabWash from './TabWash.vue';
 import UnreadDot from './UnreadDot.vue';
@@ -90,6 +92,8 @@ defineProps<{
   process: ProcessRecord;
   active: boolean;
   pinned: boolean;
+  // Shown while listing all agents.
+  project?: ProjectSummary | null | undefined;
 }>();
 
 const emit = defineEmits<{

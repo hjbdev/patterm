@@ -3,12 +3,14 @@
   <div class="flex h-full min-h-0 w-12 flex-col items-center">
     <div class="flex shrink-0 flex-col items-center gap-0.5 py-0.5">
       <BoardButton side="right" />
-      <LaunchAgentMenu :project-id="sidebar.projectId.value" />
+      <LaunchAgentMenu :project-id="sidebar.projectId.value" :choose-project="sidebar.allAgents.value" />
     </div>
     <div ref="list" class="flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-y-auto overflow-x-hidden py-1 [scrollbar-width:none]">
-      <HarnessLaunchTabs :project-id="sidebar.projectId.value" vertical compact />
+      <HarnessLaunchTabs v-for="projectId in sidebar.shownProjectIds.value" :key="projectId" :project-id="projectId" vertical compact />
       <template v-for="(tab, index) in tabs" :key="tab.key">
         <div v-if="index > 0 && tab.pinned !== tabs[index - 1]!.pinned" class="my-1 w-5 border-t border-white/10" />
+        <!-- Showing all agents, a project's logo heads each run of its tabs. -->
+        <ProjectLogo v-if="projectStarts(index)" :project="sidebar.projectOf(tab)!" :size="12" :title="sidebar.projectOf(tab)!.name" class="mt-1 opacity-70" />
         <div
           :ref="(element) => setElement(tab.key, element)"
           class="relative"
@@ -106,6 +108,7 @@ import HarnessLaunchTabs from '../HarnessLaunchTabs.vue';
 import RowStatus from '../RowStatus.vue';
 import TabWash from '../TabWash.vue';
 import UnreadDot from '../UnreadDot.vue';
+import ProjectLogo from '../ProjectLogo.vue';
 import { Popover, PopoverAnchor, PopoverContent } from '../ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import BoardButton from './BoardButton.vue';
@@ -139,6 +142,12 @@ const openKey = computed(() => {
   return hover.hoverKey.value;
 });
 
+function projectStarts(index: number): boolean {
+  const tab = tabs.value[index];
+  if (!sidebar.allAgents.value || !tab || tab.pinned) return false;
+  const previous = tabs.value[index - 1];
+  return Boolean(sidebar.projectOf(tab)) && (!previous || previous.pinned || sidebar.projectOf(previous)?.id !== sidebar.projectOf(tab)?.id);
+}
 function tabLabel(tab: StripTab): string {
   return tab.kind === 'agent' ? hostLabel(agentLabel(tab.family.root.session), tab.family.root.session.host) : hostLabel(tab.process.name, tab.process.host);
 }

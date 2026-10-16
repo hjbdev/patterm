@@ -9,9 +9,11 @@ export interface SidebarExpansion {
   subtitles: boolean;
   processes: boolean;
   groupByStatus: boolean;
+  // Only while showing all agents. Off, the list keeps the order you give it.
+  groupByProject: boolean;
 }
 
-const DEFAULTS: SidebarExpansion = { overrides: {}, followActive: false, subtitles: true, processes: false, groupByStatus: false };
+const DEFAULTS: SidebarExpansion = { overrides: {}, followActive: false, subtitles: true, processes: false, groupByStatus: false, groupByProject: true };
 const KEY_PREFIX = 'patterm.sidebar.expansion.';
 
 function read(projectId: string): SidebarExpansion {

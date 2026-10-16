@@ -196,7 +196,11 @@ test('menu and empty-state handlers submit every launch with click-time argument
     return new Function(...Object.keys(values), `${js};return launchHarness;`)(...Object.values(values));
   }
   const props = { projectId: 'p1' }, targetProjectId = { value: 'p1' }, interfaceMode = { value: 'tui' };
-  const menuLaunch = handler(menu, { props, targetProjectId, interfaceMode, menuOpen: { value: true }, remoteTarget: { value: false }, targetHost: { value: '' }, startHarness: input => calls.push(input), emit() {} });
+  const menuState = { targetProjectId, interfaceMode, menuOpen: { value: true }, remoteTarget: { value: false }, targetHost: { value: '' }, startHarness: input => calls.push(input), emit() {} };
+  const menuLaunch = handler(menu, { ...menuState, launchProjectId: { get value() { return props.projectId; } } });
+  // Showing all agents, nothing launches until a project is chosen.
+  handler(menu, { ...menuState, launchProjectId: { value: null } })('claude', null);
+  assert.equal(calls.length, 0);
   menuLaunch('opencode', null);
   menuLaunch('claude', 'fast');
   props.projectId = 'p2'; targetProjectId.value = 'p2'; interfaceMode.value = 'integrated';

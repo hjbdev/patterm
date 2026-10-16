@@ -2,10 +2,10 @@
   <div ref="strip" :class="cn('flex min-w-max items-center', props.class)">
     <TransitionGroup name="strip-tab" tag="div" class="flex min-w-max items-center gap-1">
       <div
-        v-for="tab in tabs"
+        v-for="(tab, index) in tabs"
         :key="tab.key"
         :ref="(element) => setTabElement(tab.key, element)"
-        :class="cn('strip-tab group/tab relative shrink-0 rounded-tab', tab.pinned ? 'w-8' : 'w-56')"
+        :class="cn('strip-tab group/tab relative shrink-0 rounded-tab', tab.pinned ? 'w-8' : 'w-56', startsProject(index) && 'ml-2 before:absolute before:-left-[5px] before:top-1 before:h-[18px] before:w-px before:bg-white/10')"
         :data-dragging="draggingKey === tab.key ? 'true' : undefined"
         @pointerdown="onTabPointerDown($event, tab.key); if (tab.kind === 'agent') prefetchTab(tab.family.root.session)"
         @click.capture="consumeTabClick($event, tab.key)"
@@ -38,6 +38,7 @@
                 <template v-else>
                   <span class="flex min-w-0 flex-1 items-center gap-1.5">
                     <RowStatus :activity="activityFor(tab.family.root.session)" :count="familyMenuCount(tab.family)" :count-label="familyMemberLabel(tab.family)" />
+                    <ProjectLogo v-if="tabProject(tab)" :project="tabProject(tab)!" :size="14" :title="tabProject(tab)!.name" />
                     <span class="truncate">{{ agentLabel(tab.family.root.session) }}</span>
                     <HostBadge v-if="tab.family.root.session.host" :host="tab.family.root.session.host" />
                     <UnreadDot :urgency="unreadUrgency(tab.family.root.session.processId)" />
@@ -111,6 +112,7 @@
         <ProcessTab
           v-else
           :process="tab.process"
+          :project="tabProject(tab)"
           :pinned="tab.pinned"
           :active="tab.process.ptyProcessId === activeTerminalId"
           @select="selectProcess(tab.process)"
@@ -165,7 +167,8 @@ import { activityLookup, countInRing, describeActivity, memberLabel, subagentCou
 import MemberCount from './MemberCount.vue';
 import { moveStripTab, setStripTabPinned, type StripTab, type TabLayout } from '../lib/tabStrip';
 import { timersForProcesses } from '../lib/timers';
-import type { ProcessRecord, SessionRecord, TimerRecord } from '../types';
+import type { ProcessRecord, ProjectSummary, SessionRecord, TimerRecord } from '../types';
+import ProjectLogo from './ProjectLogo.vue';
 import { animateTabMoves, useTabStripDrag } from '../Composables/useTabStripDrag';
 import { useHoverPopover } from '../Composables/useHoverPopover';
 import CloseRowButton from './CloseRowButton.vue';
@@ -193,6 +196,10 @@ const props = withDefaults(
     activeTerminalId?: string | null | undefined;
     activeSessionId?: string | null | undefined;
     selectedByRoot?: SelectedAgentByRoot | undefined;
+    // While showing all agents: each tab's project, and whether tabs sit in
+    // project groups, which a divider separates.
+    projectOf?: ((id: string) => ProjectSummary | null) | undefined;
+    groupedByProject?: boolean | undefined;
     class?: string | undefined;
   }>(),
   {
@@ -204,6 +211,14 @@ const props = withDefaults(
     class: ''
   }
 );
+
+function tabProject(tab: StripTab): ProjectSummary | null {
+  return props.projectOf?.(tab.kind === 'agent' ? tab.family.rootId : tab.process.id) ?? null;
+}
+function startsProject(index: number): boolean {
+  const tab = props.tabs[index], previous = props.tabs[index - 1];
+  return Boolean(props.groupedByProject && tab && previous && !tab.pinned && !previous.pinned && tabProject(tab)?.id !== tabProject(previous)?.id);
+}
 
 const emit = defineEmits<{
   select: [session: SessionRecord];

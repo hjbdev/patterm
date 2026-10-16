@@ -31,7 +31,10 @@
         :sidecar-status="sidecarStatus"
         :sidecar-available="sidecarAvailable"
         :show-recent-projects="showRecentProjects"
-        @select-project="selectProject"
+        :all-agents="showingAll"
+        :all-agents-count="activeAgentModeSessions.length"
+        @select-project="pickProject"
+        @select-all-agents="allAgents.active = true"
         @command-palette="paletteOpen = true"
         @settings="openSettings"
           @usage="openUsage"
@@ -44,7 +47,9 @@
               :project-id="activeProject.project.id"
               :families="currentAgentFamilies"
               :processes="currentStripProcesses"
-              :all-processes="activeProject.processes"
+              :all-processes="scopeProcesses"
+              :project-of="showingAll ? projectOf : undefined"
+              :shown-project-ids="showingAll ? shownProjectIds : undefined"
               :active-terminal-id="activeWorkspacePage === 'workbench' && projectViewMode === 'agents' ? activeTerminalId : null"
               :active-session-id="activeWorkspacePage === 'workbench' && projectViewMode === 'agents' ? selectedAgent?.id ?? null : null"
               @select="(rootId, session) => selectAgentTabTarget({ rootId, session })"
@@ -57,10 +62,12 @@
             <TabStrip
               v-if="currentStripTabs.length"
               class="shrink-0"
-              :tabs="currentStripTabs"
+              :tabs="shownStripTabs"
+              :grouped-by-project="groupedByProject"
               :sessions="activeAgentModeSessions"
-              :processes="activeProject?.processes ?? []"
-              :timers="activeProject?.timers ?? []"
+              :processes="scopeProcesses"
+              :timers="scopeTimers"
+              :project-of="showingAll ? projectOf : undefined"
               :active-terminal-id="activeWorkspacePage === 'workbench' && projectViewMode === 'agents' ? activeTerminalId : null"
               :active-session-id="activeWorkspacePage === 'workbench' && projectViewMode === 'agents' ? selectedAgent?.id : null"
               :selected-by-root="selectedAgentByRoot"
@@ -69,10 +76,12 @@
               @select="selectAgentSession"
               @select-process="selectAgentProcess"
             />
-            <HarnessLaunchTabs :project-id="activeProject.project.id" />
-            <div class="shrink-0">
+            <HarnessLaunchTabs v-for="projectId in shownProjectIds" :key="projectId" :project-id="projectId" />
+            <div class="flex shrink-0 items-center">
+              <AllAgentsOptions v-if="showingAll" />
               <LaunchAgentMenu
                 :project-id="activeProject.project.id"
+                :choose-project="showingAll"
               />
             </div>
           </div>
@@ -122,6 +131,7 @@ import HarnessLaunchTabs from '../Components/HarnessLaunchTabs.vue';
 import MobileTabs from '../Components/MobileTabs.vue';
 import TabStrip from '../Components/TabStrip.vue';
 import WorkbenchTopBar from '../Components/WorkbenchTopBar.vue';
+import AllAgentsOptions from '../Components/AllAgentsOptions.vue';
 import WorkspaceSearchDialog from '../Components/WorkspaceSearchDialog.vue';
 import SidebarDialogs from '../Components/Sidebar/SidebarDialogs.vue';
 import WorkbenchSidebar from '../Components/Sidebar/WorkbenchSidebar.vue';
@@ -129,7 +139,7 @@ import { provideSidebarContext } from '../Components/Sidebar/sidebarContext';
 import { TooltipProvider } from '../Components/ui/tooltip';
 import { APPEARANCE_SETTINGS_CHANGED_EVENT, applyUiFont, lastKnownAppearanceSettings, loadAppearanceSettings, navigationLayoutHint, normalizeAppearanceSettings, type AppearanceSettings, type NavigationLayout } from '../appearance/AppearanceSettings';
 import { useWorkbench } from '../Composables/useWorkbench';
-import { useHarnessLaunchCleanup, useProjectHarnessLaunches } from '../Composables/useHarnessLaunch';
+import { useHarnessLaunchCleanup, useHarnessLaunchesFor } from '../Composables/useHarnessLaunch';
 import { useSoftKeyboard } from '../Composables/useSoftKeyboard';
 import { useWorkbenchNavigation } from '../Composables/useWorkbenchNavigation';
 import {
@@ -145,18 +155,20 @@ import { assistant } from '../lib/assistant';
 import { openCommandPaletteKey } from '../lib/commandPalette';
 import { isNavigationModeToggle, navigationModeAction } from '../lib/navigationMode';
 import { activeProcesses, topLevelProcessesForSessions } from '../lib/processTabs';
-import { buildStripTabs, readStoredTabLayout, writeStoredTabLayout, type TabLayout } from '../lib/tabStrip';
-import type { ProcessRecord, SessionRecord } from '../types';
+import { buildStripTabs, readStoredTabLayout, writeStoredTabLayout, type StripTab, type TabLayout } from '../lib/tabStrip';
+import { ALL_AGENTS_SCOPE, allAgents, buildAllAgentsView, listedProjects, projectShown, tabsGroupedByProject } from '../lib/allAgents';
+import { useSidebarExpansion } from '../Composables/useSidebarExpansion';
+import type { ProcessRecord, ProjectSummary, SessionRecord } from '../types';
 import { startPrefetch } from '../lib/prefetch';
 
 const { projects, sidecarStatus, sidecarAvailable, loaded, refresh } = useWorkbench();
 const { router, route, activeProjectId, activeProject, selectedAgent, selectedProcess, activeTerminalId, projectViewMode,
-  activeWorkspacePage, selectProject, selectTerminal } = useWorkbenchNavigation();
+  activeWorkspacePage, selectProject, pickProject, selectTerminal } = useWorkbenchNavigation();
 useHarnessLaunchCleanup();
 // Reads ahead what the user is likely to open next, as the connection allows.
 startPrefetch(() => activeProjectId.value);
 const selectedAgentByRoot = ref<SelectedAgentByRoot>({});
-const pendingLaunches = useProjectHarnessLaunches(() => activeProjectId.value);
+const pendingLaunches = useHarnessLaunchesFor(() => shownProjectIds.value);
 const navigationMode = ref(false);
 const tabLayoutByProject = ref<Record<string, TabLayout>>({});
 const paletteOpen = ref(false);
@@ -237,7 +249,7 @@ function handleAgentTabShortcut(event: KeyboardEvent): void {
 
 // Top-bar tabs in visual order, pinned tabs first.
 function selectNavigationTab(index: number | null, delta: number): void {
-  const tabs = currentStripTabs.value.map((tab) => tab.kind === 'agent'
+  const tabs = shownStripTabs.value.map((tab) => tab.kind === 'agent'
     ? {
         id: tab.key,
         selected: tab.family.options.some((option) => matchesAgentTabSelection(option.session, activeTerminalId.value, selectedAgent.value?.id ?? null))
@@ -280,28 +292,58 @@ function selectAgentTabTarget(target: AgentTabSelectionTarget): void {
   selectAgentSession(target.session);
 }
 
+// All agents keeps one order of its own, apart from each project's.
+const tabLayoutScope = computed(() => showingAll.value ? ALL_AGENTS_SCOPE : activeProjectId.value);
+
 function updateCurrentTabLayout(layout: TabLayout): void {
-  const projectId = activeProjectId.value;
-  if (!projectId) return;
-  tabLayoutByProject.value = { ...tabLayoutByProject.value, [projectId]: layout };
-  writeStoredTabLayout(projectId, layout);
+  const scope = tabLayoutScope.value;
+  if (!scope) return;
+  tabLayoutByProject.value = { ...tabLayoutByProject.value, [scope]: layout };
+  writeStoredTabLayout(scope, layout);
 }
 
 const currentTabLayout = computed(() => {
-  const projectId = activeProjectId.value;
-  if (!projectId) return undefined;
-  return tabLayoutByProject.value[projectId] ?? readStoredTabLayout(projectId);
+  const scope = tabLayoutScope.value;
+  if (!scope) return undefined;
+  return tabLayoutByProject.value[scope] ?? readStoredTabLayout(scope);
 });
 
-const agentModeSessions = computed<SessionRecord[]>(() => activeProject.value ? activeProject.value.projectSessions : []);
+// All agents lists every shown project's agents instead of the route's
+// project's. Opening one goes to its own project and keeps the list.
+const showingAll = computed(() => allAgents.active && Boolean(activeProject.value));
+const allAgentsView = computed(() => buildAllAgentsView(projects.value, allAgents.hidden));
+const scopeProcesses = computed(() => showingAll.value ? allAgentsView.value.processes : activeProject.value?.processes ?? []);
+const scopeTimers = computed(() => showingAll.value ? allAgentsView.value.timers : activeProject.value?.timers ?? []);
+const listedSummaries = computed(() => listedProjects(projects.value).map((item) => item.project));
+// The projects whose agents and starting launches show.
+const shownProjectIds = computed(() => showingAll.value
+  ? listedSummaries.value.filter((project) => projectShown(allAgents, project.id)).map((project) => project.id)
+  : activeProjectId.value ? [activeProjectId.value] : []);
+function projectOf(id: string): ProjectSummary | null {
+  return allAgentsView.value.owners.get(id) ?? null;
+}
+// The project a session or process opens in.
+function ownerProjectId(id: string): string | null {
+  return (showingAll.value ? projectOf(id)?.id : null) ?? activeProject.value?.project.id ?? null;
+}
+
+const agentModeSessions = computed<SessionRecord[]>(() => showingAll.value ? allAgentsView.value.sessions : activeProject.value?.projectSessions ?? []);
 const activeAgentModeSessions = computed<SessionRecord[]>(() => activeAgentSessions(agentModeSessions.value));
-const activeProjectProcesses = computed<ProcessRecord[]>(() => activeProcesses(activeProject.value?.processes ?? []));
+const activeProjectProcesses = computed<ProcessRecord[]>(() => activeProcesses(scopeProcesses.value));
 const topLevelProcesses = computed(() => topLevelProcessesForSessions(activeAgentModeSessions.value, activeProjectProcesses.value));
 const currentStripTabs = computed(() => buildStripTabs(
   buildAgentTabFamilies(activeAgentModeSessions.value, selectedAgentByRoot.value),
   topLevelProcesses.value,
   currentTabLayout.value
 ));
+// Grouped by project, the top bar's tabs keep each project's together; the
+// sidebar groups its own list.
+const allAgentsOptions = useSidebarExpansion(() => ALL_AGENTS_SCOPE);
+const groupedByProject = computed(() => showingAll.value && allAgentsOptions.state.value.groupByProject);
+const shownStripTabs = computed(() => groupedByProject.value ? tabsGroupedByProject(currentStripTabs.value, listedSummaries.value, stripTabProject) : currentStripTabs.value);
+function stripTabProject(tab: StripTab): ProjectSummary | null {
+  return projectOf(tab.kind === 'agent' ? tab.family.rootId : tab.process.id);
+}
 const currentAgentFamilies = computed(() => currentStripTabs.value.flatMap((tab) => tab.kind === 'agent' ? [tab.family] : []));
 const currentStripProcesses = computed(() => currentStripTabs.value.flatMap((tab) => tab.kind === 'process' ? [tab.process] : []));
 
@@ -313,9 +355,13 @@ const agentPage = computed(() => activeWorkspacePage.value === 'workbench' && pr
 provideSidebarContext({
   projectId: () => activeProjectId.value ?? '',
   shown: () => sidebarMode.value,
-  tabs: () => currentStripTabs.value,
-  processes: () => activeProject.value?.processes ?? [],
-  timers: () => activeProject.value?.timers ?? [],
+  tabs: () => shownStripTabs.value,
+  processes: () => scopeProcesses.value,
+  timers: () => scopeTimers.value,
+  allAgents: () => showingAll.value,
+  projects: () => listedSummaries.value,
+  projectOf,
+  shownProjectIds: () => shownProjectIds.value,
   worktreeCount: () => activeProject.value?.worktrees.length ?? 0,
   repository: () => activeProject.value?.project.kind !== 'personal',
   activeTerminalId: () => agentPage.value ? activeTerminalId.value : null,
@@ -340,14 +386,16 @@ const commandContext = computed(() => ({
 }));
 
 function selectAgentSession(session: SessionRecord): void {
-  if (!activeProject.value || session.processStatus === 'closed') return;
-  if (session.interfaceMode === 'integrated') void router.push({ name: 'agent', params: { projectId: activeProject.value.project.id, sessionId: session.id } });
-  else if (!session.exitedAt && session.ptyProcessId) selectTerminal(activeProject.value.project.id, session.ptyProcessId);
+  const projectId = ownerProjectId(session.id);
+  if (!projectId || session.processStatus === 'closed') return;
+  if (session.interfaceMode === 'integrated') void router.push({ name: 'agent', params: { projectId, sessionId: session.id } });
+  else if (!session.exitedAt && session.ptyProcessId) selectTerminal(projectId, session.ptyProcessId);
 }
 
 function selectAgentProcess(process: ProcessRecord): void {
-  if (!activeProject.value || !process.ptyProcessId || process.status !== 'running') return;
-  selectTerminal(activeProject.value.project.id, process.ptyProcessId);
+  const projectId = ownerProjectId(process.id);
+  if (!projectId || !process.ptyProcessId || process.status !== 'running') return;
+  selectTerminal(projectId, process.ptyProcessId);
 }
 
 interface SearchResultTarget {
