@@ -19,7 +19,7 @@ import { AssistantMemoryService } from './AssistantMemoryService';
 // Notifications arriving together are summarised in one message.
 const DIGEST_DELAY_MS = 5_000;
 const DIGEST_LIMIT = 12;
-const FORWARDED_KINDS = new Set(['attention', 'permission', 'question', 'failure', 'turn_finished', 'message']);
+const FORWARDED_KINDS = new Set(['attention', 'permission', 'failure', 'turn_finished', 'message']);
 // A focus digest names at most this many items; the rest are counted.
 const FOCUS_DIGEST_LIMIT = 12;
 const FOCUS_LINE_LIMIT = 240;

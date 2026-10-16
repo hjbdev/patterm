@@ -1782,13 +1782,14 @@ function reviewTarget(argument: string): JsonRecord {
 // The agent's status: a request waiting for the user, then its own turn,
 // then any subagent thread still running after that turn. Background
 // terminals never count; a dev server can run for as long as it likes.
-function effectiveStatus(own: CodexStatus, client: CodexRpcClient | null, threads: Iterable<string>): CodexStatus {
+export function effectiveStatus(own: CodexStatus, client: CodexRpcClient | null, threads: Iterable<string>): CodexStatus {
   if (!client) return own;
+  // An approval anywhere outranks a question; a question outranks work.
   const pending = pendingStatus(client.pendingRequests(), []);
-  if (pending) return { status: pending };
-  if (own.status === 'working' || awaitingUser(own.status)) return own;
+  if (pending === 'permission') return { status: 'permission' };
+  if (own.status === 'permission' || (own.status === 'working' && !pending)) return own;
   let working = false;
-  let question = false;
+  let question = pending === 'question' || own.status === 'question';
   for (const thread of threads) {
     const status = client.threadStatus(thread);
     if (status === 'permission') return { status: 'permission' };
