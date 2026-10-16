@@ -1,4 +1,5 @@
-import { createHash, createPublicKey, verify } from 'node:crypto';
+import { createPublicKey, verify } from 'node:crypto';
+import { blake2b } from '@noble/hashes/blake2.js';
 
 // Verifies a minisign signature with Node's own Ed25519. A port of
 // scripts/release/verify-minisign.mjs, which installers run on their own.
@@ -15,7 +16,8 @@ export function verifyMinisign(publicKey: string, contents: Buffer, signatureTex
   if (!signature.subarray(2, 10).equals(key.subarray(2, 10))) throw new Error('The signature was made with a different key');
   const algorithm = signature.subarray(0, 2).toString('latin1');
   // "ED" signs a BLAKE2b-512 hash of the file, the default since minisign 0.11.
-  const message = algorithm === 'ED' ? createHash('blake2b512').update(contents).digest()
+  // Electron's crypto provider does not expose BLAKE2 on all platforms.
+  const message = algorithm === 'ED' ? blake2b(contents)
     : algorithm === 'Ed' ? contents
     : null;
   if (!message) throw new Error('Unsupported minisign signature algorithm');
