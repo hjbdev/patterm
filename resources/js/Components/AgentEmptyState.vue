@@ -6,7 +6,7 @@
         <p class="mt-2 text-sm text-muted-foreground">{{ chooseProject ? 'Start an installed agent CLI in one of your projects.' : `Start an installed agent CLI for ${projectName}.` }}</p>
       </div>
 
-      <!-- Showing all agents, the launch menu asks which project first. -->
+      <!-- Showing all agents, the launch menu asks which project after the agent. -->
       <LaunchAgentMenu v-if="chooseProject" :project-id="projectId" choose-project label="Start an agent" />
       <div v-else-if="launchableHarnesses.length" class="flex flex-wrap items-center justify-center gap-2">
         <Button

@@ -196,15 +196,14 @@ test('menu and empty-state handlers submit every launch with click-time argument
     return new Function(...Object.keys(values), `${js};return launchHarness;`)(...Object.values(values));
   }
   const props = { projectId: 'p1' }, targetProjectId = { value: 'p1' }, interfaceMode = { value: 'tui' };
-  const menuState = { targetProjectId, interfaceMode, menuOpen: { value: true }, remoteTarget: { value: false }, targetHost: { value: '' }, startHarness: input => calls.push(input), emit() {} };
-  const menuLaunch = handler(menu, { ...menuState, launchProjectId: { get value() { return props.projectId; } } });
-  // Showing all agents, nothing launches until a project is chosen.
-  handler(menu, { ...menuState, launchProjectId: { value: null } })('claude', null);
-  assert.equal(calls.length, 0);
-  menuLaunch('opencode', null);
-  menuLaunch('claude', 'fast');
+  const menuLaunch = handler(menu, { interfaceMode, menuOpen: { value: true }, startHarness: input => calls.push(input), emit() {} });
+  menuLaunch('opencode', null, { projectId: props.projectId, targetProjectId: targetProjectId.value, host: null });
+  menuLaunch('claude', 'fast', { projectId: 'p1', targetProjectId: 'p1:remote', host: 'remote' });
   props.projectId = 'p2'; targetProjectId.value = 'p2'; interfaceMode.value = 'integrated';
   assert.deepEqual(calls.map(input => [input.harness, input.projectId, input.interfaceMode]), [['opencode', 'p1', 'tui'], ['claude', 'p1', 'tui']]);
+  // Another host keeps its presets, so the launch there drops the local one.
+  assert.equal(calls[1].preset, undefined);
+  assert.equal(calls[1].host, 'remote');
   const emptyLaunch = handler(empty, { props, startHarness: input => calls.push(input) });
   emptyLaunch('opencode'); emptyLaunch('claude');
   assert.equal(calls.length, 4);
