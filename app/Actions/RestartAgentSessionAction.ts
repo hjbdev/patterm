@@ -4,7 +4,8 @@ import type { DatabaseService } from '../Services/DatabaseService';
 import type { HarnessLauncher, LaunchHarnessResult } from '../Services/HarnessLauncher';
 import type { LiveSettings } from '../Services/IntegratedAgentService';
 
-// `/restart` stops a top-level Integrated agent and resumes its conversation
+// `/restart` stops a top-level Integrated agent (or recovers an ended one)
+// and resumes its conversation
 // in a new process, as `/resume` would, so it picks up changed MCP servers,
 // settings, and logins. It keeps the model, effort, and speed the agent runs
 // on now, including changes made since launch. The new session inherits the
@@ -53,11 +54,12 @@ interface SourceSession {
   last_title: string | null;
   name: string;
   activity: string | null;
+  status: string;
 }
 
 const SOURCE_COLUMNS = `sessions.id as session_id, sessions.project_id, sessions.harness, sessions.model, sessions.reasoning, sessions.service_tier,
   sessions.cwd, sessions.worktree_id, sessions.resume_id, sessions.session_role, sessions.title_set_by_user,
-  sessions.display_name, sessions.last_title, processes.name, processes.activity, processes.id as process_id`;
+  sessions.display_name, sessions.last_title, processes.name, processes.activity, processes.status, processes.id as process_id`;
 const WORKING = 'This agent is working, and restarting would stop its turn. Wait for it to finish or stop the response first.';
 const LIVE_INTEGRATED = `sessions.interface_mode = 'integrated' and sessions.exited_at is null and processes.status = 'running'`;
 
@@ -99,8 +101,8 @@ export class RestartAgentSessionAction {
     // Read and locked in one step, so a restart that already replaced the
     // agent, or a turn that has since started, is seen.
     if (this.restarting.has(processId)) throw new Error('This agent is already restarting');
-    const source = this.liveSource(processId, projectId);
-    if (!source) throw new Error(`This agent is not a running Integrated agent: ${processId}`);
+    const source = this.restartableSource(processId, projectId);
+    if (!source) throw new Error(`This agent is not a restartable Integrated agent: ${processId}`);
     const refusal = restartRefusal(source) ?? (!force && isWorking(source) ? WORKING : null);
     if (refusal) throw new Error(refusal);
     this.restarting.add(processId);
@@ -112,11 +114,13 @@ export class RestartAgentSessionAction {
       let launched: LaunchHarnessResult;
       // Read before the stop, while the agent can still report them. The
       // launch settings stand in for any it cannot.
-      const live: LiveSettings = await this.processes.liveSettings?.(processId).catch(() => ({})) ?? {};
+      const live: LiveSettings = source.status === 'running'
+        ? await this.processes.liveSettings?.(processId).catch(() => ({})) ?? {} : {};
       // A prompt can start a turn during the read.
-      if (!force && isWorking(this.liveSource(processId, projectId) ?? source)) {
+      const current = this.restartableSource(processId, projectId);
+      if (!current || (!force && isWorking(current))) {
         this.processes.releaseTimers(held);
-        throw new Error(WORKING);
+        throw new Error(current ? WORKING : 'This agent was closed while restarting');
       }
       try {
         // The native conversation can only be open in one process, so the
@@ -158,10 +162,10 @@ export class RestartAgentSessionAction {
     }
   }
 
-  private liveSource(processId: string, projectId: string): SourceSession | undefined {
+  private restartableSource(processId: string, projectId: string): SourceSession | undefined {
     return this.database.connection.prepare(`select ${SOURCE_COLUMNS}
       from sessions join processes on processes.id = sessions.process_id
-      where sessions.process_id = ? and sessions.project_id = ? and ${LIVE_INTEGRATED}
+      where sessions.process_id = ? and sessions.project_id = ? and sessions.interface_mode = 'integrated' and processes.status != 'closed'
       order by sessions.started_at desc limit 1`).get(processId, projectId) as SourceSession | undefined;
   }
 
@@ -183,9 +187,9 @@ function restartRefusal(source: SourceSession): string | null {
   return null;
 }
 
-// A failed turn has finished; anything else may still be running.
+// A failed process has finished even if its last activity still says working.
 function isWorking(source: SourceSession): boolean {
-  return source.activity !== 'idle' && source.activity !== 'error';
+  return source.status === 'running' && source.activity !== 'idle' && source.activity !== 'error';
 }
 
 function isIntegratedHarness(harness: string): boolean {

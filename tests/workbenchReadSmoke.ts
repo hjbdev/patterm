@@ -107,6 +107,14 @@ async function main(): Promise<void> {
     assert.equal(windowRepo.record({ project_id: 'p_window', process_id: 'cmd_old' }).session, null, 'a command process has no session');
     assert.equal(windowRepo.record({ project_id: 'other', process_id: 'agent_old' }).session, null, 'agent sessions are read within their project');
     assert.equal(windowRepo.record({ project_id: 'other', session_id: 's_old' }).session, null, 'records are read within their project');
+    addProcess('agent_failed', 'agent', 'failed', at(80));
+    addSession('s_failed', 'agent_failed', at(80));
+    db.prepare("update sessions set interface_mode = 'integrated' where id = 's_failed'").run();
+    const deadSession = windowRepo.snapshot().projects.find((item) => item.project.id === 'p_window')!.projectSessions.find((session) => session.id === 's_failed');
+    assert.ok(deadSession, 'an unclosed failed Integrated session survives the history window for recovery');
+    assert.equal(deadSession.processStatus, 'failed');
+    db.prepare("update processes set status = 'closed' where id = 'agent_failed'").run();
+    assert.ok(!windowSessions().includes('s_failed'), 'closing the recovered session lets it leave the snapshot');
     db.prepare(`delete from todo_assignments where todo_id = 't_window'`).run();
     db.prepare(`delete from todos where id = 't_window'`).run();
     db.prepare(`delete from sessions where project_id = 'p_window'`).run();

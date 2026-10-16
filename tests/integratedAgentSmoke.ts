@@ -311,6 +311,18 @@ async function main(): Promise<void> {
     assert.equal(archiveCalls.at(-1)?.provider, 'codex');
     assert.ok(legacySnapshot.history_cursor.next.startsWith('archive:'));
 
+    database.connection.prepare("update processes set status = 'failed' where id = 'process_claude'").run();
+    database.connection.prepare('update sessions set exited_at = ? where process_id = ?').run(now, 'process_claude');
+    let deadNativeReads = 0;
+    const savedService = new IntegratedAgentService(database, { claude: { ...provider, conversation: async () => { deadNativeReads++; throw new Error('host gone'); } } });
+    savedService.setHistoryReadService(history);
+    const saved = await savedService.peekConversation('process_claude') as { archived_messages: Array<{ id: string }>; history_cursor: { next: string } };
+    assert.deepEqual(saved.archived_messages.map((row) => row.id), archived.slice(20).map((row) => row.id), 'reopening a dead session reads the saved tail');
+    assert.equal(deadNativeReads, 0, 'saved reads never call the dead native host');
+    const savedOlder = await savedService.olderMessages('process_claude', saved.history_cursor.next) as { archived_messages: Array<{ id: string }>; cursor: string | null };
+    assert.deepEqual(savedOlder.archived_messages.map((row) => row.id), archived.slice(0, 20).map((row) => row.id));
+    assert.equal(savedOlder.cursor, null);
+
     // Stop is best effort on interrupt: a host whose native process already
     // exited has nothing to interrupt, but it still must be stopped.
     const stopCalls: string[] = [];

@@ -421,6 +421,38 @@ async function main(): Promise<void> {
       integrated.mcp.call = originalCall;
     }
 
+    // A failed Integrated parent can be recovered only by the controlling
+    // browser. Ended-session control grants no prompt/configure permissions.
+    const crashAt = new Date().toISOString();
+    app.database.connection.prepare(`insert into processes (id, project_id, kind, name, status, activity, created_at, updated_at, exited_at)
+      values ('dead_parent', ?, 'agent', 'Crashed parent', 'failed', 'working', ?, ?, ?)`).run(project.project_id, crashAt, crashAt, crashAt);
+    app.database.connection.prepare(`insert into sessions (id, project_id, process_id, harness, interface_mode, session_role, resume_status, resume_id, started_at, exited_at, created_by_actor)
+      values ('dead_session', ?, 'dead_parent', 'claude', 'integrated', 'orchestrator', 'found', 'saved_conversation', ?, ?, 'user')`).run(project.project_id, crashAt, crashAt);
+    const restartCalls: string[] = [];
+    const beforeRestart = integrated.mcp.call;
+    integrated.mcp.call = async (tool, args, context) => {
+      if (tool === 'integrated_restart') { restartCalls.push((args as { process_id: string }).process_id); return { ok: true }; }
+      return beforeRestart.call(app.mcp, tool, args, context);
+    };
+    try {
+      assert.equal((await a.request('subscribe', { process_id: 'dead_parent', subscribed: true }) as { controlling: boolean }).controlling, true);
+      await b.request('subscribe', { process_id: 'dead_parent', subscribed: true });
+      await assert.rejects(b.call('patterm:integrated:call', { tool: 'integrated_restart', arguments: { process_id: 'dead_parent' } }), /Take control/);
+      for (const tool of ['integrated_send', 'integrated_configure', 'integrated_new', 'integrated_command']) {
+        await assert.rejects(a.call('patterm:integrated:call', { tool, arguments: { process_id: 'dead_parent', text: 'continue' } }), /not active/);
+      }
+      await a.call('patterm:integrated:call', { tool: 'integrated_restart', arguments: { process_id: 'dead_parent' } });
+      assert.deepEqual(restartCalls, ['dead_parent']);
+      await b.request('take-control', { process_id: 'dead_parent' });
+      await assert.rejects(a.call('patterm:integrated:call', { tool: 'integrated_restart', arguments: { process_id: 'dead_parent' } }), /Take control/);
+      app.database.connection.prepare("update processes set status = 'closed' where id = 'dead_parent'").run();
+      await assert.rejects(b.call('patterm:integrated:call', { tool: 'integrated_restart', arguments: { process_id: 'dead_parent' } }), /not active/);
+      await a.request('subscribe', { process_id: 'dead_parent', subscribed: false });
+      await b.request('subscribe', { process_id: 'dead_parent', subscribed: false });
+    } finally {
+      integrated.mcp.call = beforeRestart;
+    }
+
     // A cold page load fetches dozens of app files at once while their
     // compressed copies are still being made; none is turned away.
     fs.mkdirSync(path.join(rendererPath, 'assets'), { recursive: true });

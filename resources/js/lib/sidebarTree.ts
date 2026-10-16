@@ -25,6 +25,7 @@ export const MAX_INDENT_DEPTH = 5;
 
 // Why an agent needs you, if it does.
 export function sessionAttention(view: SidebarTreeView, session: SessionRecord): SidebarAttention | null {
+  if (session.exitedAt) return 'error';
   if (awaitingUser(session.activity)) return session.activity;
   if (session.activity === 'error') return 'error';
   if (session.closeRequest) return 'close';
@@ -65,6 +66,7 @@ export function waitingSession(view: SidebarTreeView, family: AgentTabFamily): S
 export function familyWaitingOn(view: SidebarTreeView, family: AgentTabFamily): string | null {
   const session = waitingSession(view, family);
   if (!session) return null;
+  if (session.exitedAt) return session === family.root.session ? 'Agent stopped · /restart to resume' : `${agentLabel(session)} has stopped`;
   if (!awaitingUser(session.activity) && session.activity !== 'error') return session === family.root.session ? 'Ready to close' : `${agentLabel(session)} is ready to close`;
   const reason = awaitingUser(session.activity) ? waitingReason(session.activity) : 'stopped with an error';
   return session === family.root.session ? reason[0]!.toUpperCase() + reason.slice(1) : `${agentLabel(session)} ${reason}`;

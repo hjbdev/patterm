@@ -29,6 +29,8 @@ export interface IconSpec {
 // Activity of a live agent/process. Mirrors patterm-cli IdleState
 // (internal/app idle detection). The spinner is reserved for actively-working
 // states; an idle-but-alive entity is a solid circle.
+export const DEAD_MARK: IconSpec = { icon: CircleSlash, class: 'text-muted-foreground', spin: false, label: 'Dead' };
+
 export const CLOSING_MARK: IconSpec = { glyph: '✓', class: 'text-foreground/75', spin: false, label: 'Ready to close' };
 
 export function activityIcon(state: ActivityState): IconSpec {
@@ -53,6 +55,7 @@ export function activityIcon(state: ActivityState): IconSpec {
 
 export function sessionStatusIcon(session: SessionRecord): IconSpec {
   if (session.exitedAt) {
+    if (session.processStatus && session.processStatus !== 'closed') return DEAD_MARK;
     if (session.resumeStatus === 'missing') {
       return { icon: CircleSlash, class: 'text-muted-foreground', spin: false, label: 'Exited · no resume' };
     }

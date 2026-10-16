@@ -138,7 +138,7 @@
         <Button type="button" size="icon" variant="ghost" class="h-8 w-8 text-muted-foreground max-sm:order-1" :disabled="!controlling || ended" aria-label="Attach files" title="Attach files" @click="picker?.click()">
           <Paperclip class="h-4 w-4" />
         </Button>
-        <Button v-if="!controlling && !ended" type="button" size="sm" class="max-sm:order-4" @click="emit('takeControl')">Take control</Button>
+        <Button v-if="!controlling && (!ended || restartable)" type="button" size="sm" class="max-sm:order-4" @click="emit('takeControl')">Take control</Button>
         <Button v-else type="submit" size="icon" class="h-8 w-8 max-sm:order-4" :disabled="!canSend" :aria-label="sending ? 'Sending' : 'Send message'" :title="sendTitle">
           <ArrowUp class="h-4 w-4" />
         </Button>
@@ -198,6 +198,7 @@ const props = defineProps<{
   sending: boolean;
   pending: boolean;
   ended: boolean;
+  restartable?: boolean;
   // The agent is working on a turn; a comet circles the border.
   working?: boolean;
   // Other agents the @ menu offers.
@@ -250,6 +251,7 @@ const previewSessionId = computed(() => {
   return item?.kind === 'agent' ? item.agent.session.id : null;
 });
 const placeholder = computed(() => {
+  if (props.ended) return props.restartable ? 'Type /restart to resume this conversation' : 'This session has ended';
   const mentions = agents.value.length || launchers.value.length ? 'type @ for agents and files' : 'type @ for files';
   return props.controls.commands.length ? `Message agent, ${mentions}, / for commands` : `Message agent, ${mentions}`;
 });
@@ -266,7 +268,9 @@ const editorAttributes = computed<Record<string, string>>(() => ({
   ...(menuOpen.value ? { 'aria-controls': listboxId } : {}),
   ...(menuOpen.value && menuItems.value.length ? { 'aria-activedescendant': optionId(menuIndex.value) } : {})
 }));
-const canSend = computed(() => props.controlling && !props.ended && !props.sending && !props.pending
+const restartCommand = computed(() => Boolean(props.ended && props.restartable && draft.value.text.trim() === '/restart'
+  && !draft.value.chips.length && !draft.value.attachments.length));
+const canSend = computed(() => props.controlling && (!props.ended || restartCommand.value) && !props.sending && !props.pending
   && (draft.value.text.trim().length > 0 || draft.value.attachments.length > 0)
   && !draft.value.attachments.some((attachment) => attachment.status !== 'ready'));
 const sendTitle = computed(() => {
@@ -431,6 +435,7 @@ function chooseLauncher(launcher: MentionLauncher): void {
 }
 
 function chooseCommand(command: NativeCommand): void {
+  if (props.ended && (!props.restartable || !props.controlling || command.name !== 'restart')) return;
   closeMenus();
   draft.value.chips = [];
   if (command.source === 'patterm') {

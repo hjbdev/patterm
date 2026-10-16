@@ -151,7 +151,7 @@ const activity = (id: string) => activityFor(byId.get(id)!);
   assert.equal(activityFor({ ...waiting, activity: 'unknown' }).self, 'working');
   assert.equal(activityFor({ ...waiting, activity: 'permission' }).self, 'permission', 'a prompt still needs a person');
   assert.equal(activityFor({ ...waiting, backgroundTasks: 0 }).self, 'idle');
-  assert.equal(activityFor({ ...waiting, exitedAt: '2026-01-01T00:01:00.000Z' }).self, 'idle', 'an exited agent runs nothing');
+  assert.equal(activityFor({ ...waiting, exitedAt: '2026-01-01T00:01:00.000Z' }).self, 'dead', 'an exited agent runs nothing');
   assert.equal(processActivity({ ...processRecord('dev', 'running', 'idle'), backgroundTasks: 2 }).self, 'working');
   assert.equal(processActivity({ ...processRecord('done', 'exited', 'idle'), backgroundTasks: 2 }).self, 'idle');
 }
@@ -169,4 +169,13 @@ const activity = (id: string) => activityFor(byId.get(id)!);
   assert.equal(memberLabel(2, 0), '2 subagents');
   assert.equal(memberLabel(1, 1), '1 subagent, 1 process');
   assert.equal(memberLabel(0, 2), '2 processes');
+}
+
+{
+  const dead = { ...session('dead', null, 'working'), interfaceMode: 'integrated' as const, processStatus: 'failed', exitedAt: '2026-01-01T00:01:00.000Z' };
+  const child = session('survivor', dead.id, 'working');
+  const lookup = activityLookup(buildAgentTabFamilies([dead, child]));
+  assert.equal(lookup(dead).self, 'dead');
+  assert.equal(describeActivity(lookup(dead)), 'Dead, 1 subagent working');
+  assert.equal(countInRing(lookup(dead)), false, 'dead agents show a distinct mark while child activity is retained');
 }

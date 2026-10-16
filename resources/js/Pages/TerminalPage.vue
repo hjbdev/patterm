@@ -7,7 +7,7 @@
       :style="activeTerminalId ? { maxWidth: `calc(var(--patterm-terminal-max-width, 960px) + ${docked ? width : 0}px)` } : { '--patterm-context-width': `${width}px` }"
     >
       <div class="relative min-h-0 min-w-0 flex-1">
-        <IntegratedConversation v-if="integratedAgent" :process-id="integratedAgent.processId" :project-id="activeProject?.project.id ?? null" :project-path="activeProject?.project.path ?? null" :exited="integratedAgent.exited" :mention-agents="mentionAgents" :mention-launchers="mentionLaunchers" :close-request="selectedAgent?.closeRequest" :close-subagents="closeSubagents" class="h-full" @launched="selectLaunchedAgent" />
+        <IntegratedConversation v-if="integratedAgent" :process-id="integratedAgent.processId" :project-id="activeProject?.project.id ?? null" :project-path="activeProject?.project.path ?? null" :exited="integratedAgent.exited" :restartable="selectedAgent?.sessionRole === 'orchestrator' && selectedAgent?.processStatus !== 'closed'" :mention-agents="mentionAgents" :mention-launchers="mentionLaunchers" :close-request="selectedAgent?.closeRequest" :close-subagents="closeSubagents" class="h-full" @launched="selectLaunchedAgent" />
         <!-- Hidden rather than unmounted so switching back skips renderer setup. A null ID detaches the PTY. -->
         <TerminalPane v-show="!integratedAgent" title="Terminal" :process-id="integratedAgent ? null : activeTerminalId" :capture-enabled="!!activeProject" @capture-selection="capture" />
       </div>

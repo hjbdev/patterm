@@ -42,11 +42,11 @@ export class BrowserTerminalSessions {
     const payload = subscriptionInput.parse(raw);
     const host = this.application.remote.target({ process_id: payload.process_id });
     if (host) return this.subscribeRemote(client, payload, host);
-    const { id, integrated, active } = this.resolve(payload.process_id);
+    const { id, integrated, controllable } = this.resolve(payload.process_id);
     let resized = false;
     if (payload.subscribed) {
       if (client.subscriptions.size >= 32 && !client.subscriptions.has(id)) throw new Error('Too many terminal subscriptions');
-      if (integrated && !active) throw new Error('Integrated session is not active');
+      if (integrated && !controllable) throw new Error('Integrated session is not active');
       const added = !client.subscriptions.has(id);
       const claimed = !this.owners.has(id) && !this.application.remote.peerControls(id);
       client.subscriptions.add(id);
@@ -84,8 +84,8 @@ export class BrowserTerminalSessions {
   }
 
   async takeControl(client: BrowserTerminalClient, raw: unknown): Promise<unknown> {
-    const { id, active } = this.resolve(processInput.parse(raw).process_id);
-    if (!active) throw new Error('Session is not active');
+    const { id, controllable } = this.resolve(processInput.parse(raw).process_id);
+    if (!controllable) throw new Error('Session is not active');
     if (!client.subscriptions.has(id)) throw new Error('Subscribe before taking terminal control');
     const host = this.application.remote.target({ process_id: id });
     if (host) await this.application.remote.relay(host, 'patterm:terminal:take-control', { process_id: id });
@@ -95,16 +95,18 @@ export class BrowserTerminalSessions {
     return { ok: true };
   }
 
-  guard(client: BrowserTerminalClient, raw: unknown, resize = false): unknown {
-    const { id, active } = this.resolve(processInput.parse(raw).process_id);
-    if (!active) throw new Error('Session is not active');
+  guard(client: BrowserTerminalClient, raw: unknown, operation: 'write' | 'resize' | 'restart' = 'write'): unknown {
+    const { id, active, controllable } = this.resolve(processInput.parse(raw).process_id);
+    // An ended Integrated session can be recovered by its controlling viewer.
+    // Every other write still requires a live process.
+    if (!active && !(operation === 'restart' && controllable)) throw new Error('Session is not active');
     if (this.owners.get(id) !== client) {
       // Correct stale client state before rejecting, including clients whose
       // subscription was lost. The composer must offer a way to take over.
       client.sendEvent('terminal-control', { processId: id, controlling: false });
       throw new Error('Take control of this terminal first');
     }
-    if (!resize) return raw;
+    if (operation !== 'resize') return raw;
     const requested = z.object({ resize_seq: z.number().int().nonnegative().max(0xfffffffe).optional() }).parse(raw);
     return { ...(raw as object), resize_seq: this.nextResizeSequence(id, requested.resize_seq) };
   }
@@ -188,14 +190,14 @@ export class BrowserTerminalSessions {
     await this.application.terminalSubscriptions.set('browsers', id, subscribed);
   }
 
-  private resolve(processId: string): { id: string; integrated: boolean; active: boolean } {
+  private resolve(processId: string): { id: string; integrated: boolean; active: boolean; controllable: boolean } {
     // The paired host checks its own records when the request reaches it.
-    if (this.application.remote.target({ process_id: processId })) return { id: processId, integrated: false, active: true };
+    if (this.application.remote.target({ process_id: processId })) return { id: processId, integrated: false, active: true, controllable: true };
     const integrated = this.application.database.connection.prepare(`select processes.id, processes.status, sessions.exited_at from processes join sessions on sessions.process_id = processes.id
       where processes.id = ? and sessions.interface_mode = 'integrated' order by sessions.started_at desc limit 1`).get(processId) as { id: string; status: string; exited_at: string | null } | undefined;
     return integrated
-      ? { id: integrated.id, integrated: true, active: integrated.status === 'running' && integrated.exited_at === null }
-      : { id: resolvePtyProcessId(this.application.database, processId), integrated: false, active: true };
+      ? { id: integrated.id, integrated: true, active: integrated.status === 'running' && integrated.exited_at === null, controllable: integrated.status !== 'closed' }
+      : { id: resolvePtyProcessId(this.application.database, processId), integrated: false, active: true, controllable: true };
   }
 
   private notifyControl(id: string): void {

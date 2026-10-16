@@ -803,6 +803,21 @@ async function main(): Promise<void> {
     assert.equal((database.connection.prepare('select parent_process_id from processes where id = ?').get(restartChild.process_id) as { parent_process_id: string }).parent_process_id,
       restarted.process_id, 'subagents report to the new process');
 
+    // A crashed parent can restart with stale working activity, retaining
+    // its children, timers, and resume provenance just like a live restart.
+    const deadTab = await launcher.launch({ harness: 'claude', project_id: projectId, interface_mode: 'integrated' });
+    const liveChild = await launcher.launch({ harness: 'claude', project_id: projectId, interface_mode: 'integrated', parent_process_id: deadTab.process_id, session_role: 'child' });
+    database.connection.prepare("update processes set status = 'failed', activity = 'working' where id = ?").run(deadTab.process_id);
+    database.connection.prepare('update sessions set exited_at = ? where id = ?').run(new Date().toISOString(), deadTab.session_id);
+    const recovered = await restart.execute({ process_id: deadTab.process_id, project_id: projectId });
+    assert.equal(recovered.replaced_process_id, deadTab.process_id);
+    assert.equal((database.connection.prepare('select parent_process_id from processes where id = ?').get(liveChild.process_id) as { parent_process_id: string }).parent_process_id, recovered.process_id);
+    assert.equal((database.connection.prepare('select resumed_from_session_id from sessions where id = ?').get(recovered.session_id) as { resumed_from_session_id: string }).resumed_from_session_id, deadTab.session_id);
+    assert.deepEqual(timerTransfers.at(-1), [[deadTab.process_id], recovered.process_id]);
+    database.connection.prepare("update processes set status = 'closed' where id = ?").run(deadTab.process_id);
+    await assert.rejects(restart.execute({ process_id: deadTab.process_id, project_id: projectId }), /not a restartable Integrated agent/);
+    await assert.rejects(restart.execute({ process_id: recovered.process_id, project_id: 'project_other' }), /not a restartable Integrated agent/);
+
     // A turn that starts while the settings are read is not cut short, and
     // timers are held before that read.
     const raceSteps: string[] = [];

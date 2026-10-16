@@ -866,3 +866,31 @@ test('a cancelled held message leaves no sent-looking copy behind', () => {
   composer.discardOutgoingMessage('codex', prepared.payload.messageId);
   assert.deepEqual(composer.outgoingTranscript('codex', [], []), []);
 });
+
+
+test('a dead session accepts only /restart, without attachments or a native prompt', async () => {
+  composer.clearDrafts();
+  const h = createHarness({ processId: 'dead_composer' });
+  h.props.ended = true;
+  h.props.restartable = true;
+  h.setEditor('/restart');
+  assert.equal(h.pane.canSend.value, true);
+  h.pane.submit();
+  assert.equal(h.emitted.at(-1)?.event, 'send');
+  h.props.pending = true;
+  assert.equal(h.pane.canSend.value, false, 'a restart in flight cannot be submitted twice');
+  h.props.pending = false;
+  h.setEditor('carry on');
+  assert.equal(h.pane.canSend.value, false);
+  h.setEditor('/restart extra');
+  assert.equal(h.pane.canSend.value, false);
+  h.setEditor('/restart');
+  h.props.controlling = false;
+  assert.equal(h.pane.canSend.value, false, 'restart requires browser control');
+  h.pane.chooseCommand({ name: 'restart', source: 'patterm' });
+  assert.equal(h.emitted.filter(item => item.event === 'command').length, 0);
+  h.props.controlling = true;
+  h.props.restartable = false;
+  assert.equal(h.pane.canSend.value, false, 'a closed session cannot restart');
+  h.scope.stop();
+});

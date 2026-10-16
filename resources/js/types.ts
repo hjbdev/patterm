@@ -64,6 +64,8 @@ export interface SessionRecord {
   ptyProcessId: string | null;
   // Stable processes.id row backing this session, used for lifecycle actions.
   processId: string | null;
+  // Lifecycle of the backing process; older hosts omit it.
+  processStatus?: string | null;
   worktreeId: string | null;
   harness: string | null;
   interfaceMode: AgentInterface;

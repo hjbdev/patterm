@@ -19,7 +19,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { countInRing, describeActivity, subagentCountClass, subagentPulse, type RowActivity } from '../lib/rowActivity';
-import { activityIcon, CLOSING_MARK } from '../lib/statusIcons';
+import { activityIcon, CLOSING_MARK, DEAD_MARK } from '../lib/statusIcons';
 import RingCount from './RingCount.vue';
 import StatusIcon from './StatusIcon.vue';
 import StatusRing from './StatusRing.vue';
@@ -32,6 +32,7 @@ const working = computed(() => props.activity.self === 'working');
 const spinning = computed(() => working.value || ((props.activity.self === 'idle' || props.activity.self === 'unknown') && props.activity.subagents.working > 0));
 const mark = computed(() => {
   const self = props.activity.self;
+  if (self === 'dead') return DEAD_MARK;
   if (self === 'closing') return CLOSING_MARK;
   return self === 'permission' || self === 'question' || self === 'error' ? activityIcon(self) : null;
 });
