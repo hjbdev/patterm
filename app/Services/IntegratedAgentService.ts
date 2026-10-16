@@ -1174,7 +1174,10 @@ export class IntegratedAgentService {
         // end while background agents keep the status unchanged, so every
         // status retries it; a busy agent keeps it held.
         this.flushHeld(key);
-        if (observer.stale) this.refreshActivity(key, observer);
+        // A turn's end re-reads the tasks, or queues another read behind one
+        // in flight: OpenCode ends a subagent task with a status alone.
+        const ended = event.status === 'idle' || event.status === 'error';
+        if (observer.stale || ended) this.refreshActivity(key, observer);
       } else if (event.kind === 'pending' || observer.stale) {
         // Pending carries permission changes a provider does not stream and
         // reconnect handoffs.
@@ -1204,7 +1207,12 @@ export class IntegratedAgentService {
     }
     const sequence = this.sequence(key);
     observer.refreshing = this.forProcess(key).conversation(key).then((conversation) => {
-      if (!observer.closed) this.markSnapshot(key, conversation, sequence);
+      if (!observer.closed) {
+        this.markSnapshot(key, conversation, sequence);
+        // Only these reads set the task count: they run one at a time, so a
+        // slower, older read cannot overwrite a newer count.
+        this.markBackgroundTasks(key, runningTasks(record(conversation).tasks));
+      }
       // Covers prompts held before a restart, when no transition follows.
       const status = record(conversation).status;
       if (!observer.closed && (status === 'idle' || status === 'error')) this.flushHeld(key);
@@ -1249,6 +1257,16 @@ export class IntegratedAgentService {
   private markSnapshot(key: string, conversation: unknown, since: number): void {
     const status = record(conversation).status;
     if (isActivity(status)) this.markActivitySince(key, status, since, true);
+  }
+
+  // Background tasks only change how rows look, so activity, and the queues,
+  // timers and notifications that follow it, leave them out. Hosts announce a
+  // task change with a pending event, which re-reads the snapshot. The count
+  // does not touch updated_at, which idle timers read as the agent's start.
+  private markBackgroundTasks(processId: string, count: number): void {
+    const result = this.database.connection.prepare(`update processes set background_tasks = ? where id = ? and status = 'running' and background_tasks != ?`)
+      .run(count, processId, count);
+    if (result.changes > 0) this.onWorkbenchChange?.();
   }
 
   // Synthetic and snapshot writes lose to any newer write since `since`. A
@@ -1435,6 +1453,15 @@ function canonicalPayload(input: ResolvedIntegratedPrompt): string {
     input.references.map((reference) => [reference.relativePath, reference.path]),
     input.attachments.map((attachment) => [attachment.path, attachment.mime, attachment.size])
   ]);
+}
+
+// Tasks a harness reports as still running, such as a background shell.
+function runningTasks(tasks: unknown): number {
+  if (!Array.isArray(tasks)) return 0;
+  return tasks.filter((task) => {
+    const status = record(task).status;
+    return status === 'running' || status === 'pending';
+  }).length;
 }
 
 function isActivity(value: unknown): value is string {

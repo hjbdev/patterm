@@ -49,6 +49,9 @@ export interface SessionDto {
   sessionRole: string;
   resumeStatus: string;
   activity: string;
+  // Background tasks still running, such as a shell the agent waits on. Older
+  // paired hosts omit it.
+  backgroundTasks?: number;
   lastTitle: string | null;
   displayName: string | null;
   // The name to show: chosen, then generated, then native. Older paired hosts omit it.
@@ -71,6 +74,8 @@ export interface ProcessDto {
   argv: string[];
   status: string;
   activity: string;
+  // Background tasks still running. Older paired hosts omit it.
+  backgroundTasks?: number;
   ptyProcessId: string | null;
   worktreeId: string | null;
   autoRestart: boolean;
@@ -158,6 +163,7 @@ interface ProcessRow {
   argv: string | null;
   status: string;
   activity: string;
+  background_tasks: number;
   pty_process_id: string | null;
   worktree_id: string | null;
   auto_restart: number;
@@ -294,6 +300,7 @@ function projectSummary(row: ProjectRow): ProjectSummaryDto {
 function mapSessions(sessions: SessionRow[], processes: ProcessRow[]): SessionDto[] {
   const summaries = new Map(processes.map((process) => [process.id, mapAutoSummary(process)]));
   const closeRequests = new Map(processes.map((process) => [process.id, mapCloseRequest(process)]));
+  const backgroundTasks = new Map(processes.map((process) => [process.id, process.background_tasks]));
   const parentProcessByProcessId = new Map<string, string | null>();
   const activityByProcessId = new Map<string, string>();
   for (const process of processes) {
@@ -323,6 +330,7 @@ function mapSessions(sessions: SessionRow[], processes: ProcessRow[]): SessionDt
       sessionRole: session.session_role,
       resumeStatus: session.resume_status,
       activity: session.process_id ? activityByProcessId.get(session.process_id) ?? 'idle' : 'idle',
+      backgroundTasks: session.process_id ? backgroundTasks.get(session.process_id) ?? 0 : 0,
       lastTitle: session.last_title,
       displayName: session.display_name,
       title: session.title,
@@ -347,6 +355,7 @@ function mapProcess(row: ProcessRow): ProcessDto {
     argv,
     status: row.status,
     activity: row.activity,
+    backgroundTasks: row.background_tasks,
     ptyProcessId: row.pty_process_id,
     worktreeId: row.worktree_id,
     autoRestart: row.auto_restart === 1,

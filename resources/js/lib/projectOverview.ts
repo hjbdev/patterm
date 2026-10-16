@@ -3,6 +3,7 @@
 import type { ProjectSummary, ProjectWorkbench, SessionRecord } from '../types';
 import { activeAgentSessions, agentLabel } from './agentTabs';
 import { buildAgentTree, type AgentNode } from './agentTree';
+import { shownActivity } from './rowActivity';
 
 export type AgentState = 'waiting' | 'working' | 'idle';
 
@@ -27,7 +28,8 @@ export interface ProjectOverview {
 
 export function agentState(session: SessionRecord): AgentState {
   if (session.activity === 'permission' || session.activity === 'error') return 'waiting';
-  if (session.activity === 'working' || session.activity === 'thinking') return 'working';
+  const activity = shownActivity(session);
+  if (activity === 'working' || activity === 'thinking') return 'working';
   return 'idle';
 }
 

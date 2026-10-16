@@ -8,7 +8,7 @@ import type { HistorySearchIndexService } from './HistorySearchIndexService';
 import type { TimelineService } from '../TimelineService';
 import { pathIdentity } from '../../Platform/PathIdentity';
 import { ConversationLinker,type ConversationLink } from './ConversationLinker';
-import { MESSAGE_TEXT_CAP, TOOL_INPUT_CAP, TOOL_OUTPUT_CAP, type AgentHistoryProvider, type HistoryFileFingerprint, type HistorySourceCandidate, type ParseHistoryFileOptions, type ParsedConversation, type ParsedHistoryStream, type ParsedMessage, type ProviderHistoryAdapter } from './AgentHistoryTypes';
+import { MESSAGE_TEXT_CAP, RATE_LIMIT_READING_RETENTION_MS, TOOL_INPUT_CAP, TOOL_OUTPUT_CAP, type AgentHistoryProvider, type HistoryFileFingerprint, type HistorySourceCandidate, type ParseHistoryFileOptions, type ParsedConversation, type ParsedHistoryStream, type ParsedMessage, type ProviderHistoryAdapter } from './AgentHistoryTypes';
 import { defaultFileFingerprint, digestJson, stableJson, statDigest, statOnlyFingerprint } from './HistoryAdapterUtils';
 import { ProviderHistoryDiscoveryService } from './ProviderHistoryDiscoveryService';
 import { SecretRedactor } from './SecretRedactor';
@@ -46,6 +46,7 @@ export class AgentHistoryImportService {
   private readonly watermarks: AgentHistoryWatermarkService;
   private resumeMarks: ResumeMark[] = [];
   private usageTables: boolean | null = null;
+  private readingsTable: boolean | null = null;
   private mediaTable: boolean | null = null;
 
   constructor(
@@ -662,7 +663,7 @@ export class AgentHistoryImportService {
   }
 
   // Replaces the conversation's usage and skill rows when they differ, and
-  // keeps the newest observation of each quota window.
+  // keeps the newest observation of each quota window and its recent changes.
   private syncUsage(conversation: ParsedConversation): void {
     const db = this.database.connection;
     // Only history.db has usage tables; app.db keeps legacy history without them.
@@ -708,6 +709,15 @@ export class AgentHistoryImportService {
       `);
       for (const entry of conversation.rateLimits ?? []) {
         limit.run(conversation.provider, entry.key, entry.label, entry.usedPercent, entry.windowMinutes, entry.resetsAt, entry.observedAt);
+      }
+      this.readingsTable ??= Boolean(db.prepare(`select 1 from sqlite_master where type = 'table' and name = 'provider_rate_limit_readings'`).get());
+      if (this.readingsTable && conversation.rateLimitReadings?.length) {
+        const cutoff = new Date(Date.now() - RATE_LIMIT_READING_RETENTION_MS).toISOString();
+        const reading = db.prepare(`insert or ignore into provider_rate_limit_readings (provider, label, used_percent, observed_at) values (?, ?, ?, ?)`);
+        for (const entry of conversation.rateLimitReadings) {
+          if (entry.observedAt >= cutoff) reading.run(conversation.provider, entry.label, entry.usedPercent, entry.observedAt);
+        }
+        db.prepare(`delete from provider_rate_limit_readings where observed_at < ?`).run(cutoff);
       }
     })();
   }
