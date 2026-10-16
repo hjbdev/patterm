@@ -107,3 +107,42 @@ test('saved IDs drive navigation, delayed snapshots, history queries, and Back/F
     fs.unlinkSync(output);
   }
 });
+
+test('a page whose code is gone after an update reloads the tab there once', async () => {
+  const output = path.resolve('dist/tests/router-stale-fixture.cjs');
+  await build({
+    stdin: { contents: `export { createWorkbenchRouter, reloadOnStaleBuild } from './resources/js/router';`, resolveDir: process.cwd() },
+    outfile: output, bundle: true, platform: 'node', format: 'cjs', external: ['vue', 'vue-router'],
+    plugins: [{ name: 'page-stubs', setup(builder) {
+      builder.onLoad({ filter: /\.vue$/ }, (args) => ({ contents: /TodosPage|ScratchpadsPage|HarnessLaunchPage|MediaPage/.test(args.path)
+        ? `throw new Error(${JSON.stringify(args.path.includes('MediaPage') ? 'Cannot read properties of undefined' : 'Failed to fetch dynamically imported module: https://x/assets/page.js')})`
+        : 'export default {}', loader: 'js' }));
+    } }]
+  });
+  globalThis.window = { patterm: {}, addEventListener() {} };
+  try {
+    const fixture = createRequire(import.meta.url)(output);
+    const router = fixture.createWorkbenchRouter(createMemoryHistory());
+    const reloads = [];
+    const values = new Map();
+    const storage = { getItem: (key) => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: (key) => values.delete(key) };
+    fixture.reloadOnStaleBuild(router, (url) => reloads.push(url), () => storage);
+    await router.push('/projects/p1/agents/s1');
+    await router.push('/projects/p1/todos').catch(() => {});
+    assert.deepEqual(reloads, ['/projects/p1/todos'], 'a missing page loads the new build there');
+    await router.push('/projects/p1/todos').catch(() => {});
+    assert.equal(reloads.length, 1, 'a page that still fails after reloading is not reloaded again');
+    await router.push('/projects/p1/launches/launch_1').catch(() => {});
+    assert.equal(reloads.length, 1, 'the launch view is left to its own fallback');
+    await router.push('/projects/p1/media').catch(() => {});
+    assert.equal(reloads.length, 1, 'other page errors do not reload');
+    await router.push('/projects/p1/history');
+    assert.equal(values.size, 0, 'a page that opens clears the attempt');
+    const unstored = fixture.createWorkbenchRouter(createMemoryHistory());
+    const blind = [];
+    fixture.reloadOnStaleBuild(unstored, (url) => blind.push(url), () => null);
+    const failed = await unstored.push('/projects/p1/scratchpads').then(() => null, (error) => error);
+    assert.match(String(failed), /Failed to fetch/);
+    assert.deepEqual(blind, [], 'without storage to bound it, the tab is never reloaded');
+  } finally { delete globalThis.window; fs.unlinkSync(output); }
+});

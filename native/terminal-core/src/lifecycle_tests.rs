@@ -200,6 +200,7 @@ fn final_output_survives_a_held_terminal_at_exit() {
         pid.display()
     );
     let mut manager = manager();
+    let readers_before = pty_readers();
     let id = manager
         .spawn(super::tests::script_params(&script, "", 100, 30))
         .unwrap()["process_id"]
@@ -227,8 +228,18 @@ fn final_output_survives_a_held_terminal_at_exit() {
         assert!(Instant::now() < deadline, "child exited");
         thread::sleep(Duration::from_millis(1));
     }
-    // The reader, waiting for the terminal, now sees the hangup.
-    thread::sleep(Duration::from_millis(50));
+    // Release once this session's reader waits for the terminal: it has read
+    // the output and met the hangup, whether it then parses or drops the bytes.
+    // If that can't be observed, carry on after a bound: the test may then
+    // pass without exercising the race, but never fails because of it.
+    let lock_deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < lock_deadline
+        && !pty_readers()
+            .iter()
+            .any(|tid| !readers_before.contains(tid) && waits_on_lock(tid))
+    {
+        thread::sleep(Duration::from_millis(1));
+    }
     drop(held);
     while !manager
         .output(serde_json::json!({ "process_id": id }))
@@ -247,6 +258,32 @@ fn final_output_survives_a_held_terminal_at_exit() {
         .close(serde_json::json!({ "process_id": id }))
         .unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+// The alacritty PTY reader threads in this process.
+#[cfg(target_os = "linux")]
+fn pty_readers() -> Vec<String> {
+    std::fs::read_dir("/proc/self/task")
+        .map(|tasks| {
+            tasks
+                .flatten()
+                .map(|task| task.file_name().to_string_lossy().into_owned())
+                .filter(|tid| {
+                    std::fs::read_to_string(format!("/proc/self/task/{tid}/comm"))
+                        .is_ok_and(|name| name.trim() == "PTY reader")
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+// Whether a thread is blocked in futex, as a thread waiting for a lock is.
+#[cfg(target_os = "linux")]
+fn waits_on_lock(tid: &str) -> bool {
+    std::fs::read_to_string(format!("/proc/self/task/{tid}/syscall"))
+        .ok()
+        .and_then(|call| call.split_whitespace().next()?.parse::<i64>().ok())
+        == Some(libc::SYS_futex)
 }
 
 #[test]
