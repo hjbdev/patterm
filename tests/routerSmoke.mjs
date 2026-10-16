@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { build } from 'esbuild';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
+import ts from 'typescript';
 import path from 'node:path';
 import { createRenderer, ref } from 'vue';
 import { createMemoryHistory } from 'vue-router';
@@ -102,6 +103,17 @@ test('saved IDs drive navigation, delayed snapshots, history queries, and Back/F
     project.projectSessions.at(-1).processStatus = 'failed';
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(router.currentRoute.value.fullPath, '/projects/p1/agents/integrated', 'a failed Integrated agent stays open for /restart');
+    // Exercise the actual layout handler used by sidebar families and tabs,
+    // starting on another page rather than opening a direct agent URL.
+    await router.push('/projects/p1/todos');
+    const layout = fs.readFileSync('resources/js/Layouts/WorkbenchLayout.vue', 'utf8').match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1];
+    const parsed = ts.createSourceFile('layout.ts', layout, ts.ScriptTarget.Latest, true);
+    const handler = parsed.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'selectAgentSession');
+    const compiled = ts.transpileModule(handler.getFullText(parsed), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+    const clickSession = new Function('activeProject', 'router', 'selectTerminal', `${compiled}; return selectAgentSession;`)(navigation.activeProject, router, navigation.selectTerminal);
+    clickSession(project.projectSessions.at(-1));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(router.currentRoute.value.fullPath, '/projects/p1/agents/integrated', 'clicking the failed parent in the sidebar opens its conversation');
     project.projectSessions.at(-1).processStatus = 'closed';
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(router.currentRoute.value.fullPath, '/projects/p1', 'explicitly closing the Integrated tab returns to the empty project page');

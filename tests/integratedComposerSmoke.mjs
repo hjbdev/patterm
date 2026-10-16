@@ -868,7 +868,7 @@ test('a cancelled held message leaves no sent-looking copy behind', () => {
 });
 
 
-test('a dead session accepts only /restart, without attachments or a native prompt', async () => {
+test('a dead session accepts recovery commands without attachments or a native prompt', async () => {
   composer.clearDrafts();
   const h = createHarness({ processId: 'dead_composer' });
   h.props.ended = true;
@@ -880,6 +880,8 @@ test('a dead session accepts only /restart, without attachments or a native prom
   h.props.pending = true;
   assert.equal(h.pane.canSend.value, false, 'a restart in flight cannot be submitted twice');
   h.props.pending = false;
+  h.setEditor('/resume');
+  assert.equal(h.pane.canSend.value, true, 'the history picker is available for recovery');
   h.setEditor('carry on');
   assert.equal(h.pane.canSend.value, false);
   h.setEditor('/restart extra');

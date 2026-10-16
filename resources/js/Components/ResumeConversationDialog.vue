@@ -44,7 +44,7 @@ const SEARCH_DEBOUNCE_MS = 150;
 
 // A prop, not an emit: replacing the tab can unmount this dialog before the
 // resume answers, and Vue drops emits from an unmounted component.
-const props = defineProps<{ projectId: string; processId: string; provider: string; providerLabel: string; initialQuery: string; onLaunched?: (sessionId: string) => void }>();
+const props = defineProps<{ projectId: string; processId: string; provider: string; providerLabel: string; initialQuery: string; currentEnded?: boolean; onLaunched?: (sessionId: string) => void }>();
 const open = defineModel<boolean>('open', { required: true });
 
 const listId = useId();
@@ -62,8 +62,8 @@ let searchTimer: ReturnType<typeof setTimeout> | undefined;
 // Without a query the list pages through recent conversations. With one, the
 // server searches titles, paths, and message text across the whole history.
 const searching = computed(() => query.value.trim().length > 0);
-// The current session's own conversation is already open here.
-const visible = computed(() => results.value.filter((conversation) => conversation.processId !== props.processId));
+// A live session's conversation is already open; a dead one can be recovered.
+const visible = computed(() => results.value.filter((conversation) => props.currentEnded || conversation.processId !== props.processId));
 
 watch(open, (value) => {
   clearTimeout(searchTimer);
@@ -159,7 +159,9 @@ async function resume(conversation: ConversationRecord | undefined): Promise<voi
   busy.value = true;
   error.value = '';
   try {
-    const result = await window.patterm.call('history_resume', {
+    const result = props.currentEnded && conversation.processId === props.processId
+      ? await (window.patterm.integratedCall ?? window.patterm.call)('integrated_restart', { process_id: props.processId, project_id: props.projectId }) as { session_id?: unknown }
+      : await window.patterm.call('history_resume', {
       conversation_id: conversation.id,
       project_id: props.projectId,
       interface_mode: 'integrated',

@@ -232,6 +232,7 @@
         :provider="provider"
         :provider-label="providerLabel"
         :initial-query="resumeQuery"
+        :current-ended="ended && canRestart"
         @launched="props.onLaunched?.($event)"
       />
     </div>
@@ -391,7 +392,10 @@ const providerLabel = computed(() => {
 const controls = shallowRef<IntegratedControls>({ selectors: [], commands: [] });
 const canRestart = computed(() => Boolean(props.restartable && (props.projectId || props.onRestartSession)));
 const composerControls = computed<IntegratedControls>(() => ended.value
-  ? { selectors: [], commands: canRestart.value ? [{ name: 'restart', description: 'Resume this conversation in a new process', source: 'patterm' }] : [] }
+  ? { selectors: [], commands: canRestart.value ? [
+      { name: 'restart', description: 'Resume this conversation in a new process', source: 'patterm' },
+      { name: 'resume', description: 'Resume a saved conversation', source: 'patterm' }
+    ] : [] }
   : controls.value);
 const transcriptRef = ref<InstanceType<typeof ConversationTranscript> | null>(null);
 const INITIAL_HISTORY_MESSAGES = 30;
@@ -811,7 +815,7 @@ async function sendRequest(request: ComposerSendPayload & { hash: string }, opti
   const token = generation;
   const mounted = () => token === generation && props.processId === processId;
   const local = pattermCommand(request);
-  if (ended.value && (!canRestart.value || local?.name !== 'restart')) return;
+  if (ended.value && (!canRestart.value || (local?.name !== 'restart' && local?.name !== 'resume'))) return;
   if (!ended.value && submissionFor(processId) && !options.force) return;
   if (local) {
     completeSend(processId, request);
@@ -904,7 +908,7 @@ function slashCommand(request: ComposerSendPayload): { name: string; text: strin
 }
 
 function runPattermCommand(name: string, text: string): void {
-  if (ended.value && (!canRestart.value || name !== 'restart')) return;
+  if (ended.value && (!canRestart.value || (name !== 'restart' && name !== 'resume'))) return;
   if (name === 'new') {
     void startNewSession();
     return;

@@ -122,13 +122,22 @@ assert.equal(activeAgentFamilyIndex(mixedFamilies, null), -1, 'no routed session
 assert.deepEqual(families.map((family) => family.rootId), ['root-a', 'root-b', 'root-c']);
 
 // A failed parent remains a selectable family root while its children run.
-const deadRoot = { ...integratedSession, exitedAt: '2026-01-01T00:01:00.000Z', processStatus: 'failed', activity: 'working' as const };
+const deadRoot = { ...integratedSession, exitedAt: new Date().toISOString(), processStatus: 'failed', activity: 'working' as const };
 const survivingChild = { ...integratedChild, parentId: deadRoot.id };
 const recoveredFamilies = buildAgentTabFamilies([deadRoot, survivingChild]);
 assert.deepEqual(recoveredFamilies.map((family) => family.rootId), [deadRoot.id], 'a crash does not promote surviving children to roots');
 assert.deepEqual(recoveredFamilies[0]?.options.map((option) => option.session.id), [deadRoot.id, survivingChild.id]);
 assert.equal(buildAgentTabFamilies([{ ...deadRoot, processStatus: 'closed' }]).length, 0, 'explicitly closed sessions stay hidden');
 assert.equal(buildAgentTabFamilies([deadRoot]).length, 1, 'a failed Integrated agent stays available even without children');
+
+const oldFailure = { ...deadRoot, exitedAt: new Date(Date.now() - 48 * 3_600_000).toISOString() };
+assert.equal(buildAgentTabFamilies([oldFailure]).length, 0, 'old failures without live descendants do not return to the sidebar');
+assert.equal(buildAgentTabFamilies([{ ...deadRoot, processStatus: 'stopped' }]).length, 0, 'deliberately stopped sessions do not return to the sidebar');
+assert.equal(buildAgentTabFamilies([{ ...deadRoot, processStatus: 'exited' }]).length, 0, 'normally completed sessions do not return to the sidebar');
+assert.deepEqual(buildAgentTabFamilies([oldFailure, survivingChild])[0]?.options.map(option => option.session.id), [deadRoot.id, survivingChild.id], 'a parent of a live child remains grouped even beyond the history window');
+
+const oldMiddle = { ...oldFailure, id: 'old-middle', processId: 'process-old-middle', parentId: oldFailure.id };
+assert.deepEqual(buildAgentTabFamilies([oldFailure, oldMiddle, { ...survivingChild, parentId: oldMiddle.id }])[0]?.options.map(option => option.session.id), [oldFailure.id, oldMiddle.id, survivingChild.id], 'ended intermediate ancestors retain the live grandchild family');
 
 // Nested sub-agents keep their place at any depth, even when listed before their parents.
 const greatGrandchildA = session('great-grandchild-a', 'grandchild-a');

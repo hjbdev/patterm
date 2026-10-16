@@ -268,9 +268,10 @@ const editorAttributes = computed<Record<string, string>>(() => ({
   ...(menuOpen.value ? { 'aria-controls': listboxId } : {}),
   ...(menuOpen.value && menuItems.value.length ? { 'aria-activedescendant': optionId(menuIndex.value) } : {})
 }));
-const restartCommand = computed(() => Boolean(props.ended && props.restartable && draft.value.text.trim() === '/restart'
+const recoveryCommand = computed(() => Boolean(props.ended && props.restartable
+  && (draft.value.text.trim() === '/restart' || /^\/resume(?:\s|$)/.test(draft.value.text.trim()))
   && !draft.value.chips.length && !draft.value.attachments.length));
-const canSend = computed(() => props.controlling && (!props.ended || restartCommand.value) && !props.sending && !props.pending
+const canSend = computed(() => props.controlling && (!props.ended || recoveryCommand.value) && !props.sending && !props.pending
   && (draft.value.text.trim().length > 0 || draft.value.attachments.length > 0)
   && !draft.value.attachments.some((attachment) => attachment.status !== 'ready'));
 const sendTitle = computed(() => {
@@ -435,7 +436,7 @@ function chooseLauncher(launcher: MentionLauncher): void {
 }
 
 function chooseCommand(command: NativeCommand): void {
-  if (props.ended && (!props.restartable || !props.controlling || command.name !== 'restart')) return;
+  if (props.ended && (!props.restartable || !props.controlling || (command.name !== 'restart' && command.name !== 'resume'))) return;
   closeMenus();
   draft.value.chips = [];
   if (command.source === 'patterm') {

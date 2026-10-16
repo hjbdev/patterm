@@ -13,18 +13,21 @@ const executable = parsed.statements.filter((statement) => !ts.isImportDeclarati
 const { outputText } = ts.transpileModule(executable, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } });
 const flush = async () => { await new Promise((resolve) => setImmediate(resolve)); await nextTick(); };
 
-function mount({ initialQuery = '', onLaunched } = {}) {
+function mount({ initialQuery = '', onLaunched, currentEnded = false } = {}) {
   const calls = [];
   const timers = [];
   const open = ref(false);
   const bindings = {
     computed, nextTick, ref, watch, useId: () => 'list', onBeforeUnmount: () => {},
-    defineProps: () => ({ projectId: 'project_a', processId: 'process_self', provider: 'claude', providerLabel: 'Claude', initialQuery, onLaunched }),
+    defineProps: () => ({ projectId: 'project_a', processId: 'process_self', provider: 'claude', providerLabel: 'Claude', initialQuery, onLaunched, currentEnded }),
     defineModel: () => open,
     setTimeout: (callback) => { timers.push(callback); return timers.length; },
     clearTimeout: () => {},
     relativeTime: () => 'now',
-    window: { patterm: { call: (tool, args) => new Promise((resolve) => calls.push({ tool, args, resolve })) } },
+    window: { patterm: {
+      call: (tool, args) => new Promise((resolve) => calls.push({ tool, args, resolve })),
+      integratedCall: (tool, args) => new Promise((resolve) => calls.push({ tool, args, resolve, channel: 'integrated' }))
+    } },
     document: { getElementById: () => null }
   };
   // Cached reads go straight to the server here.
@@ -97,4 +100,24 @@ test('a resume that replaces the tab still opens the new session', async () => {
   await resuming;
   assert.equal(open.value, false);
   assert.deepEqual(launched, ['session_new']);
+});
+
+
+test('a dead parent can resume its own conversation through the guarded restart path', async () => {
+  const launched = [];
+  const { dialog, calls, open } = mount({ currentEnded: true, onLaunched: id => launched.push(id) });
+  open.value = true;
+  await flush();
+  calls.at(-1).resolve({ conversations: [conversation('own', { processId: 'process_self' })] });
+  await flush();
+  assert.equal(dialog.visible.value.length, 1, 'the dead current conversation is offered for recovery');
+  const resuming = dialog.resume(dialog.visible.value[0]);
+  const request = calls.at(-1);
+  assert.equal(request.channel, 'integrated', 'recovery uses the browser ownership guard');
+  assert.equal(request.tool, 'integrated_restart', 'recovery transfers the existing family rather than launching an unrelated root');
+  assert.deepEqual(request.args, { process_id: 'process_self', project_id: 'project_a' });
+  request.resolve({ session_id: 'recovered_parent' });
+  await resuming;
+  assert.deepEqual(launched, ['recovered_parent']);
+  assert.equal(open.value, false);
 });
