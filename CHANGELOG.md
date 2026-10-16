@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Windows update checks no longer fail with “Digest method not supported” when
+  verifying signed release manifests in Electron.
+
 ## [0.2.7] - 2026-10-17
 
 ### Fixed
