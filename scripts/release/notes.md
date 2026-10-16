@@ -1,10 +1,18 @@
-## Patterm 0.2.7
+## Patterm 0.2.8
 
-Codex now explicitly uses auto-review for eligible approval requests in terminal
-and Integrated sessions, including on Windows. The setting applies when launching
-or resuming an agent; existing running agents need to be restarted or resumed.
+Windows fixes for quitting and updating:
 
-This uses Codex's native auto-review while preserving its configured sandbox.
+- Quit exits after managed processes stop even if final resource cleanup reports
+  an error. Shutdown dialogs and the debug log include the underlying exception.
+- The desktop launcher runs `Patterm.exe`. An `electron.exe` compatibility copy
+  remains in the package so older installed updaters can install this release.
+- The installer prepares Start menu shortcuts separately and replaces them
+  atomically, preserving the existing entry if setup fails. Running-app errors
+  identify the blocking process by PID and executable path.
+- In-app update checks no longer fail with “Digest method not supported” when
+  verifying signed release manifests in Electron on Windows.
+- Quit warnings count only agents and commands on the local machine, excluding
+  paired hosts.
 
 ## Platform support
 
