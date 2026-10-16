@@ -1216,8 +1216,19 @@ export class IntegratedAgentService {
   }
 
   private markSnapshot(key: string, conversation: unknown, since: number): void {
-    const status = record(conversation).status;
-    if (isActivity(status)) this.markActivitySince(key, status, since, true);
+    const snapshot = record(conversation);
+    if (isActivity(snapshot.status)) this.markActivitySince(key, snapshot.status, since, true);
+    this.markBackgroundTasks(key, runningTasks(snapshot.tasks));
+  }
+
+  // Background tasks only change how rows look, so activity, and the queues,
+  // timers and notifications that follow it, leave them out. Hosts announce a
+  // task change with a pending event, which re-reads the snapshot. The count
+  // does not touch updated_at, which idle timers read as the agent's start.
+  private markBackgroundTasks(processId: string, count: number): void {
+    const result = this.database.connection.prepare(`update processes set background_tasks = ? where id = ? and status = 'running' and background_tasks != ?`)
+      .run(count, processId, count);
+    if (result.changes > 0) this.onWorkbenchChange?.();
   }
 
   // Synthetic and snapshot writes lose to any newer write since `since`. A
@@ -1404,6 +1415,15 @@ function canonicalPayload(input: ResolvedIntegratedPrompt): string {
     input.references.map((reference) => [reference.relativePath, reference.path]),
     input.attachments.map((attachment) => [attachment.path, attachment.mime, attachment.size])
   ]);
+}
+
+// Tasks a harness reports as still running, such as a background shell.
+function runningTasks(tasks: unknown): number {
+  if (!Array.isArray(tasks)) return 0;
+  return tasks.filter((task) => {
+    const status = record(task).status;
+    return status === 'running' || status === 'pending';
+  }).length;
 }
 
 function isActivity(value: unknown): value is string {

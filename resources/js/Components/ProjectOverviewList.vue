@@ -37,7 +37,7 @@
             @click="emit('openSession', overview.project.id, agent.session)"
           >
             <span class="flex w-8 shrink-0 items-center gap-1">
-              <TabActivity :spec="activityIcon((agent.waiting ?? agent.session).activity)">
+              <TabActivity :spec="activityIcon(shownActivity(agent.waiting ?? agent.session))">
                 <AgentIcon :harness="agent.session.harness" class="h-3.5 w-3.5" />
               </TabActivity>
             </span>
@@ -79,6 +79,7 @@ import { agentLabel } from '../lib/agentTabs';
 import { hostLabel } from '../lib/hosts';
 import { relativeTime } from '../lib/format';
 import { agentStatusText, displayPath, type ProjectOverview } from '../lib/projectOverview';
+import { shownActivity } from '../lib/rowActivity';
 import { activityIcon } from '../lib/statusIcons';
 import type { ProjectSummary, SessionRecord } from '../types';
 

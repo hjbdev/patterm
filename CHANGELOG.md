@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- An Integrated agent whose turn has ended while a background task it started
+  still runs, such as a shell waiting for a deploy or a long database query,
+  no longer looks idle. Its tab, sidebar row, project list and command palette
+  entry show it working, and its card reads "Running a background task".
+  Messages, idle timers and compaction still treat it as idle.
+
 ## [0.2.5] - 2026-10-16
 
 ### Changed
