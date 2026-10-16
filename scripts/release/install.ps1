@@ -220,7 +220,8 @@ public static class PattermShortcut {
     # Switch only after installation, shortcut and PATH setup all succeeded.
     # Replace is atomic: a failed update leaves the previous launcher usable.
     Assert-AppStopped
-    if (Test-Path -LiteralPath $shortcutPath) { [IO.File]::Replace($pendingShortcut, $shortcutPath, $null) }
+    # Windows PowerShell 5.1 coerces $null to an empty string for .NET methods.
+    if (Test-Path -LiteralPath $shortcutPath) { [IO.File]::Replace($pendingShortcut, $shortcutPath, [NullString]::Value) }
     else { [IO.File]::Move($pendingShortcut, $shortcutPath) }
     $pendingShortcut = $null
     if (Test-Path -LiteralPath $launcherPath) { [IO.File]::Replace($pendingLauncher, $launcherPath, (Join-Path $bin 'patterm.previous.cmd')) }
