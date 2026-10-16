@@ -453,6 +453,14 @@ export class OpenCodeServerService {
       if (parentId && this.sessionParents.get(eventSession) === sessionId) this.handleChildContent(eventSession, parentId, type, data, emit, at);
       return;
     }
+    // A background shell starting or ending changes the tasks, which only the
+    // snapshot lists. Shell events name their session in metadata; one that
+    // names none may be this session's.
+    if (type === 'shell.created' || type === 'shell.exited' || type === 'shell.deleted') {
+      const owner = eventSession ?? record(data.metadata).sessionID;
+      if (owner === undefined || owner === sessionId) emit({ kind: 'pending' });
+      return;
+    }
     if (eventSession !== sessionId) return;
     const projection = this.projection(sessionId);
     const execution = executionEvent(type, data);
@@ -511,8 +519,7 @@ export class OpenCodeServerService {
       emit({ kind: 'pending' });
       return;
     }
-    if (type.startsWith('session.step.') || type.startsWith('session.usage.') || type.startsWith('session.instructions.')
-      || type === 'shell.created') {
+    if (type.startsWith('session.step.') || type.startsWith('session.usage.') || type.startsWith('session.instructions.')) {
       return;
     }
     if (type === 'message.part.updated') {
