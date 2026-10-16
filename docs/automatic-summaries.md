@@ -185,9 +185,15 @@ server handling client disconnection; Patterm never stops that shared server.
 
 ### Usage accounting
 
-New summary calls, including connection tests, record provider-reported token
+New Claude and Codex summary calls, including connection tests, record provider-reported token
 usage separately from conversations. Usage includes these records in its totals,
 charts, model and project rows, and shows an auto-summary breakdown. Connection
 tests have no project. Calls with rejected summary text still count when the CLI
 returned usage. Providers that omit usage cannot be counted; earlier calls cannot
 be recovered. No summary prompts or outputs are retained for accounting.
+
+OpenCode's stateless endpoint returns only `data.text`, so its summary usage is
+unavailable. This was checked in the native OpenCode source before commit
+`c987590c5f5d9dad968399910a86bb8482a82c18`, in
+`packages/protocol/src/groups/generate.ts` and
+`packages/server/src/handlers/generate.ts`. No token estimates are substituted.

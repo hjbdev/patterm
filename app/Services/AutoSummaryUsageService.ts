@@ -7,6 +7,8 @@ export class AutoSummaryUsageService {
   constructor(private readonly database: DatabaseService) {}
 
   record(provider: AutoSummarySettings['provider'], model: string, output: string, projectId: string | null = null): void {
+    // OpenCode's stateless GenerateTextResponse contains only data.text.
+    if (provider === 'opencode') return;
     let envelopes: Record<string, unknown>[];
     try {
       envelopes = (provider === 'codex' ? output.trim().split('\n') : [output]).map(line => object(JSON.parse(line)));
@@ -41,14 +43,6 @@ export class AutoSummaryUsageService {
             object(usage.cache_creation).ephemeral_1h_input_tokens, usage.output_tokens,
             object(usage.output_tokens_details).thinking_tokens, envelope.total_cost_usd);
         }
-      } else {
-        // The stateless endpoint returns AI SDK usage alongside its text.
-        const data = object(envelope.data), tokens = object(data.usage);
-        const details = object(tokens.inputTokenDetails);
-        const read = count(details.cacheReadTokens ?? tokens.cachedInputTokens);
-        const write = count(details.cacheWriteTokens);
-        save(model.replace(/^openai\//, ''), Math.max(0, count(tokens.inputTokens) - read - write), read, write, 0,
-          tokens.outputTokens, object(tokens.outputTokenDetails).reasoningTokens ?? tokens.reasoningTokens, data.cost);
       }
     }
   }

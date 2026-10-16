@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Auto-summary token usage now counts in Usage totals, daily charts, models, and
+- Claude and Codex auto-summary token usage now counts in Usage totals, daily charts, models, and
   projects, with a separate breakdown, without adding conversation-history entries.
 
 ## [0.2.5] - 2026-10-16

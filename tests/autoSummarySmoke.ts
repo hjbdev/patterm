@@ -1,3 +1,4 @@
+import { AutoSummaryUsageService } from '../app/Services/AutoSummaryUsageService';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -492,6 +493,23 @@ async function main() {
     const hung = command('setInterval(() => {}, 1000)', cancelled.signal);
     cancelled.abort(); await assert.rejects(hung, /cancelled/);
     await assert.rejects(command('process.exit(0)', cancelled.signal), /cancelled/);
+
+    // Usage already emitted by a paid call survives cancellation during cleanup.
+    const readyFile = path.join(directory, 'usage-ready');
+    const reported = JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 80, output_tokens: 10 } }) + '\n';
+    const cleanup = new AbortController();
+    const beforeCancelUsage = (db.prepare('select count(*) as count from auto_summary_usage').get() as { count: number }).count;
+    const completing = runSummaryCommand(process.execPath, ['-e',
+      `process.stdout.write(${JSON.stringify(reported)}, () => require('node:fs').writeFileSync(${JSON.stringify(readyFile)}, 'ready')); setInterval(() => {}, 1000);`
+    ], '', directory, env, cleanup.signal, 16 * 1024, output =>
+      new AutoSummaryUsageService(database).record('codex', 'gpt-5.6-luna', output, 'project'));
+    const readyDeadline = Date.now() + 5000;
+    try {
+      while (!fs.existsSync(readyFile) && Date.now() < readyDeadline) await new Promise(resolve => setTimeout(resolve, 5));
+      assert.ok(fs.existsSync(readyFile), 'fixture flushed its usage before cancellation');
+    } finally { cleanup.abort(); }
+    await assert.rejects(completing, /cancelled/);
+    assert.equal((db.prepare('select count(*) as count from auto_summary_usage').get() as { count: number }).count, beforeCancelUsage + 1);
 
     const unicode = summarySnapshot('🙂'.repeat(20_000));
     assert.ok(Buffer.byteLength(unicode) <= 12 * 1024);

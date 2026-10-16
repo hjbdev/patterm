@@ -49,5 +49,5 @@ if (args.includes('--help')) {
   assert.equal(body.sessionID, undefined);
   if (body.model.id === 'bad-json') return console.log('bad output');
   if (body.model.id === 'error') return console.log(JSON.stringify({ error: 'sensitive provider diagnostic' }));
-  console.log(JSON.stringify({ data: { usage: { inputTokens: 120, cachedInputTokens: 40, outputTokens: 15, reasoningTokens: 5 }, text: JSON.stringify(body.model.id === 'bad-schema' ? { command: 'unsafe' } : { summary: 'patterm okay' }) } }));
+  console.log(JSON.stringify({ data: { text: JSON.stringify(body.model.id === 'bad-schema' ? { command: 'unsafe' } : { summary: 'patterm okay' }) } }));
 }

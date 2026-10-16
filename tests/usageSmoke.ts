@@ -190,9 +190,9 @@ function main(): void {
       usage: { cache_creation: { ephemeral_1h_input_tokens: 5 } },
       modelUsage: { 'claude-haiku-4-5': { inputTokens: 30, cacheReadInputTokens: 10, cacheCreationInputTokens: 5, outputTokens: 7 } }
     }), 'usage_project');
-    summaries.record('opencode', 'unknown-model', JSON.stringify({ data: {
-      usage: { inputTokens: 50, cachedInputTokens: 10, outputTokens: 8, reasoningTokens: 3 }, cost: 0.02
-    } }));
+    summaries.record('claude', 'unknown-model', JSON.stringify({
+      usage: { input_tokens: 40, cache_read_input_tokens: 10, output_tokens: 8, output_tokens_details: { thinking_tokens: 3 } }, total_cost_usd: 0.02
+    }));
     // Missing or malformed metadata must not invent usage or retain provider text.
     summaries.record('claude', 'haiku', 'invalid JSON');
     summaries.record('codex', 'gpt-6-sol', JSON.stringify({ type: 'turn.completed' }));

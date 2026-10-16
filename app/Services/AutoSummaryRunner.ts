@@ -162,7 +162,7 @@ export class AutoSummaryRunner {
         try { result = codexSummaryOutput(output); }
         catch { throw new Error('Summary failed. Check Codex login, model access, and output format.'); }
       } else if (settings.provider === 'opencode') {
-        const output = await runSummaryCommand(executable, openCodeSummaryArgs(settings.models.opencode, input, mode), '', directory, env, signal, 16 * 1024, recordUsage);
+        const output = await runSummaryCommand(executable, openCodeSummaryArgs(settings.models.opencode, input, mode), '', directory, env, signal);
         try {
           const envelope = JSON.parse(output) as { data?: { text?: string } };
           if (typeof envelope.data?.text !== 'string') throw new Error();
@@ -229,11 +229,11 @@ export function runSummaryCommand(executable: string, args: string[], input: str
     child.on('close', (code) => {
       clearTimeout(timer);
       signal.removeEventListener('abort', abort);
+      const output = Buffer.concat(chunks).toString('utf8');
+      try { onOutput?.(output); }
+      catch (error) { reject(error); return; }
       if (failure) reject(failure);
       else {
-        const output = Buffer.concat(chunks).toString('utf8');
-        try { onOutput?.(output); }
-        catch (error) { reject(error); return; }
         if (code !== 0) reject(new Error('Summariser exited unsuccessfully. Check login, model access, and usage limits.'));
         else resolve(output);
       }

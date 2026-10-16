@@ -84,6 +84,8 @@
                   {{ formatUsd(summary.autoSummaries.costUsd) }} at API prices.
                 </p>
 
+                <p class="mt-2 text-[11px] text-muted-foreground/80">OpenCode auto-summary usage is unavailable because its summary endpoint does not report tokens.</p>
+
                 <div v-if="summary.days > 1" class="mt-6">
                   <div class="mb-2 flex items-center gap-2">
                     <p class="text-[11px] text-muted-foreground">{{ metric === 'cost' ? 'Per day, at API prices' : 'Per day, excluding cache reads' }}</p>
