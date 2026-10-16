@@ -16,6 +16,18 @@
       <InterfaceModeToggle :model-value="interfaceMode" @update:model-value="saveInterface" />
     </template>
     <template #desktop>
+      <!-- Showing all agents, you say which project the agent starts in. -->
+      <template v-if="chooseProject">
+        <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Project</DropdownMenuLabel>
+        <DropdownMenuRadioGroup :model-value="chosenProjectId ?? ''" @update:model-value="chosenProjectId = String($event)">
+          <DropdownMenuRadioItem v-for="item in projectChoices" :key="item.project.id" :value="item.project.id" class="gap-2 text-[13px]" @select.prevent>
+            <ProjectLogo :project="item.project" :size="14" />
+            <span class="min-w-0 flex-1 truncate">{{ item.project.name }}</span>
+            <HostBadge v-if="item.project.host" :host="item.project.host" />
+          </DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
+      </template>
       <InterfaceModeToggle menu :model-value="interfaceMode" @update:model-value="saveInterface" />
       <div v-if="hostOptions.length > 1" class="px-1 py-1" @keydown.stop>
         <SettingsChoice v-model="targetProjectId" :options="hostOptions" aria-label="Launch on" segmented class="w-full" />
@@ -23,7 +35,8 @@
       <DropdownMenuSeparator />
       <DropdownMenuSub v-for="harness in launchableHarnesses" :key="harness.id">
         <DropdownMenuSubTrigger
-          class="gap-2"
+          class="gap-2 data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+          :disabled="!launchProjectId"
           @click.prevent.stop="launchHarness(harness.harness, defaultPresetId(harness.harness))"
         >
           <AgentIcon :harness="harness.harness" class="h-4 w-4 shrink-0" />
@@ -47,33 +60,47 @@
       <DropdownMenuItem v-if="launchableHarnesses.length === 0" disabled>
         <span class="text-xs text-muted-foreground">No agent CLIs found on PATH</span>
       </DropdownMenuItem>
+      <DropdownMenuItem v-else-if="!launchProjectId" disabled>
+        <span class="text-xs text-muted-foreground">Choose a project first</span>
+      </DropdownMenuItem>
     </template>
     <template #mobile>
-      <div v-if="hostOptions.length > 1" class="pb-2">
-        <SettingsChoice v-model="targetProjectId" :options="hostOptions" aria-label="Launch on" segmented class="w-full" />
+      <div v-if="chooseProject" class="mb-2 space-y-1 border-b border-border pb-2">
+        <button v-for="item in projectChoices" :key="item.project.id" type="button" class="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60" :class="chosenProjectId === item.project.id ? 'bg-primary/10' : ''" :aria-pressed="chosenProjectId === item.project.id" @click="chosenProjectId = item.project.id">
+          <ProjectLogo :project="item.project" :size="16" />
+          <span class="min-w-0 flex-1 truncate">{{ item.project.name }}</span>
+          <HostBadge v-if="item.project.host" :host="item.project.host" />
+          <Check class="h-4 w-4 shrink-0" :class="chosenProjectId === item.project.id ? 'text-foreground' : 'invisible'" />
+        </button>
       </div>
-      <p v-if="!launchableHarnesses.length" class="py-3 text-sm text-muted-foreground">No agent CLIs found on PATH</p>
-      <div class="divide-y divide-border">
-        <div v-for="harness in launchableHarnesses" :key="harness.id" class="py-1">
-          <div class="flex items-center gap-1">
-            <button type="button" class="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60" @click="launchHarness(harness.harness, defaultPresetId(harness.harness))">
-              <AgentIcon :harness="harness.harness" class="h-4 w-4 shrink-0" />
-              <span class="min-w-0 flex-1 truncate">{{ harnessLabel(harness.harness) }}</span>
-            </button>
-            <button v-if="presetsFor(harness.harness).length" type="button" class="flex min-h-11 max-w-[45%] shrink-0 items-center gap-1.5 rounded-lg px-3 text-xs text-muted-foreground hover:bg-muted/60" :aria-expanded="expandedHarness === harness.harness" :aria-label="`Choose ${harnessLabel(harness.harness)} preset`" @click="expandedHarness = expandedHarness === harness.harness ? null : harness.harness">
-              <span class="min-w-0 truncate">{{ presetSummary(harness.harness) }}</span>
-              <ChevronDown class="h-4 w-4 shrink-0 transition-transform" :class="expandedHarness === harness.harness ? 'rotate-180' : ''" />
-            </button>
-          </div>
-          <div v-if="expandedHarness === harness.harness" class="pb-1 pl-7">
-            <button v-for="preset in presetsFor(harness.harness)" :key="preset.id" type="button" class="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm hover:bg-muted/60" @click="launchHarness(harness.harness, preset.id)">
-              <span class="min-w-0 flex-1 truncate">{{ preset.name }}</span>
-              <span class="max-w-[50%] shrink-0 truncate text-xs text-muted-foreground">{{ preset.model ?? 'Harness default' }}{{ preset.reasoning ? ` · ${preset.reasoning}` : '' }}</span>
-              <Check class="h-4 w-4 shrink-0" :class="defaultPresetId(harness.harness) === preset.id ? 'text-foreground' : 'invisible'" :aria-label="defaultPresetId(harness.harness) === preset.id ? 'Default preset' : undefined" />
-            </button>
+      <p v-if="chooseProject && !launchProjectId" class="py-2 text-sm text-muted-foreground">Choose a project first</p>
+      <template v-else>
+        <div v-if="hostOptions.length > 1" class="pb-2">
+          <SettingsChoice v-model="targetProjectId" :options="hostOptions" aria-label="Launch on" segmented class="w-full" />
+        </div>
+        <p v-if="!launchableHarnesses.length" class="py-3 text-sm text-muted-foreground">No agent CLIs found on PATH</p>
+        <div class="divide-y divide-border">
+          <div v-for="harness in launchableHarnesses" :key="harness.id" class="py-1">
+            <div class="flex items-center gap-1">
+              <button type="button" class="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60" @click="launchHarness(harness.harness, defaultPresetId(harness.harness))">
+                <AgentIcon :harness="harness.harness" class="h-4 w-4 shrink-0" />
+                <span class="min-w-0 flex-1 truncate">{{ harnessLabel(harness.harness) }}</span>
+              </button>
+              <button v-if="presetsFor(harness.harness).length" type="button" class="flex min-h-11 max-w-[45%] shrink-0 items-center gap-1.5 rounded-lg px-3 text-xs text-muted-foreground hover:bg-muted/60" :aria-expanded="expandedHarness === harness.harness" :aria-label="`Choose ${harnessLabel(harness.harness)} preset`" @click="expandedHarness = expandedHarness === harness.harness ? null : harness.harness">
+                <span class="min-w-0 truncate">{{ presetSummary(harness.harness) }}</span>
+                <ChevronDown class="h-4 w-4 shrink-0 transition-transform" :class="expandedHarness === harness.harness ? 'rotate-180' : ''" />
+              </button>
+            </div>
+            <div v-if="expandedHarness === harness.harness" class="pb-1 pl-7">
+              <button v-for="preset in presetsFor(harness.harness)" :key="preset.id" type="button" class="flex min-h-11 w-full items-center gap-2 rounded-lg px-3 text-left text-sm hover:bg-muted/60" @click="launchHarness(harness.harness, preset.id)">
+                <span class="min-w-0 flex-1 truncate">{{ preset.name }}</span>
+                <span class="max-w-[50%] shrink-0 truncate text-xs text-muted-foreground">{{ preset.model ?? 'Harness default' }}{{ preset.reasoning ? ` · ${preset.reasoning}` : '' }}</span>
+                <Check class="h-4 w-4 shrink-0" :class="defaultPresetId(harness.harness) === preset.id ? 'text-foreground' : 'invisible'" :aria-label="defaultPresetId(harness.harness) === preset.id ? 'Default preset' : undefined" />
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      </template>
     </template>
   </ResponsiveMenu>
 </template>
@@ -91,7 +118,13 @@ import InterfaceModeToggle from './InterfaceModeToggle.vue';
 import ResponsiveMenu from './ResponsiveMenu.vue';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
-import { DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger } from './ui/dropdown-menu';
+import {
+  DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator,
+  DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger
+} from './ui/dropdown-menu';
+import { allAgents, listedProjects, projectShown } from '../lib/allAgents';
+import HostBadge from './HostBadge.vue';
+import ProjectLogo from './ProjectLogo.vue';
 import SettingsChoice from './settings/SettingsChoice.vue';
 import type { AgentInterface, HarnessInstallationRecord } from '../types';
 
@@ -110,27 +143,33 @@ interface HarnessPresetSettings {
   defaultPresetIdByHarness: Partial<Record<PresetHarness, string | null>>;
 }
 
-const props = defineProps<{ projectId: string; label?: string; nested?: boolean }>();
+// `chooseProject` asks which shown project to launch in instead of using `projectId`.
+const props = defineProps<{ projectId: string; label?: string; nested?: boolean; chooseProject?: boolean }>();
 const emit = defineEmits<{ started: [] }>();
 const { launchHarness: startHarness } = useHarnessLaunch();
 const { harnesses, projects } = useWorkbench();
 const menuOpen = ref(false);
+const projectChoices = computed(() => listedProjects(projects.value).filter((item) => projectShown(allAgents, item.project.id)));
+// Chosen afresh each time the menu opens.
+const chosenProjectId = ref<string | null>(null);
+watch(menuOpen, (open) => { if (!open) chosenProjectId.value = null; });
+const launchProjectId = computed(() => props.chooseProject ? chosenProjectId.value : props.projectId);
 
 // A project linked with paired hosts can launch on any of them. The ID names
 // the project on that host, so the launch runs there.
-const project = computed(() => projects.value.find((candidate) => candidate.project.id === props.projectId) ?? null);
+const project = computed(() => projects.value.find((candidate) => candidate.project.id === launchProjectId.value) ?? null);
 const hostOptions = computed(() => {
   const current = project.value?.project;
   if (!current || current.host) return [];
-  return [{ value: props.projectId, label: 'This host' }, ...(current.remotes ?? []).map((remote) => ({ value: remote.projectId, label: remote.host }))];
+  return [{ value: current.id, label: 'This host' }, ...(current.remotes ?? []).map((remote) => ({ value: remote.projectId, label: remote.host }))];
 });
-const targetProjectId = ref(props.projectId);
-watch(() => [props.projectId, hostOptions.value.length], () => {
-  if (!hostOptions.value.some((option) => option.value === targetProjectId.value)) targetProjectId.value = props.projectId;
+const targetProjectId = ref(launchProjectId.value ?? '');
+watch(() => [launchProjectId.value, hostOptions.value.length], () => {
+  if (!hostOptions.value.some((option) => option.value === targetProjectId.value)) targetProjectId.value = launchProjectId.value ?? '';
 });
 // A project that exists only on a paired host is remote whichever option is
 // chosen.
-const remoteTarget = computed(() => Boolean(project.value?.project.host) || targetProjectId.value !== props.projectId);
+const remoteTarget = computed(() => Boolean(project.value?.project.host) || targetProjectId.value !== launchProjectId.value);
 const targetHost = computed(() => project.value?.project.host ?? hostOptions.value.find((option) => option.value === targetProjectId.value)?.label ?? '');
 // Another host has its own CLIs; its presets stay there, so a launch there
 // uses that host's default preset.
@@ -208,10 +247,12 @@ function defaultPresetId(harness: string): string | null {
 }
 
 function launchHarness(harness: string, presetId: string | null): void {
+  const projectId = launchProjectId.value;
+  if (!projectId) return;
   menuOpen.value = false;
   startHarness({
     harness,
-    projectId: props.projectId,
+    projectId,
     targetProjectId: targetProjectId.value,
     ...(presetId && !remoteTarget.value ? { preset: presetId } : {}),
     ...(remoteTarget.value ? { host: targetHost.value } : {}),

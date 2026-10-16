@@ -3,10 +3,12 @@
     <div class="flex max-w-lg flex-col items-center gap-5 text-center">
       <div>
         <h1 class="text-3xl font-semibold tracking-tight">Get Started</h1>
-        <p class="mt-2 text-sm text-muted-foreground">Start an installed agent CLI for {{ projectName }}.</p>
+        <p class="mt-2 text-sm text-muted-foreground">{{ chooseProject ? 'Start an installed agent CLI in one of your projects.' : `Start an installed agent CLI for ${projectName}.` }}</p>
       </div>
 
-      <div v-if="launchableHarnesses.length" class="flex flex-wrap items-center justify-center gap-2">
+      <!-- Showing all agents, the launch menu asks which project first. -->
+      <LaunchAgentMenu v-if="chooseProject" :project-id="projectId" choose-project label="Start an agent" />
+      <div v-else-if="launchableHarnesses.length" class="flex flex-wrap items-center justify-center gap-2">
         <Button
           v-for="harness in launchableHarnesses"
           :key="harness.id"
@@ -30,6 +32,7 @@ import { useHarnessLaunch } from '../Composables/useHarnessLaunch';
 import { harnessLabel, launchableHarnesses as filterLaunchableHarnesses } from '../lib/harnesses';
 import type { HarnessInstallationRecord } from '../types';
 import AgentIcon from './AgentIcon.vue';
+import LaunchAgentMenu from './LaunchAgentMenu.vue';
 import { Button } from './ui/button';
 
 const props = withDefaults(
@@ -38,6 +41,7 @@ const props = withDefaults(
     projectName: string;
     remote?: boolean;
     harnesses: HarnessInstallationRecord[];
+    chooseProject?: boolean;
   }>(),
   {}
 );

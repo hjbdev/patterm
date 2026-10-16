@@ -18,7 +18,7 @@
     </div>
     <div v-else-if="route.name !== 'project'" class="p-5 text-sm text-muted-foreground">This terminal is no longer available. Select another tab or launch an agent.</div>
     <div v-else-if="activeProject" class="flex min-h-0 flex-1 overflow-auto p-5">
-      <AgentEmptyState :project-id="activeProject.project.id" :project-name="activeProject.project.name" :remote="Boolean(activeProject.project.host)" :harnesses="harnesses" />
+      <AgentEmptyState :project-id="activeProject.project.id" :project-name="activeProject.project.name" :remote="Boolean(activeProject.project.host)" :harnesses="harnesses" :choose-project="allAgents.active" />
     </div>
     <!-- Over a narrow workspace the panel is a sheet. -->
     <Sheet :open="sheetOpen" @update:open="open => { if (!open) close() }">
@@ -67,6 +67,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { PanelRight } from 'lucide-vue-next';
 import AgentEmptyState from '../Components/AgentEmptyState.vue';
+import { allAgents } from '../lib/allAgents';
 import CloseRequestCard from '../Components/CloseRequestCard.vue';
 import IntegratedConversation from '../Components/IntegratedConversation.vue';
 import TerminalPane from '../Components/TerminalPane.vue';

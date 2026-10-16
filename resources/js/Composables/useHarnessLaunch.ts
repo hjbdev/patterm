@@ -39,12 +39,17 @@ export function useSelectedHarnessLaunch() {
 }
 
 export function useProjectHarnessLaunches(projectId: () => string | null) {
+  return useHarnessLaunchesFor(() => { const id = projectId(); return id ? [id] : []; });
+}
+
+// Launches still starting in any of these projects, in launch order.
+export function useHarnessLaunchesFor(projectIds: () => readonly string[]) {
   const { projects } = useWorkbench();
   return computed(() => {
-    const id = projectId();
-    const sessions = projects.value.find((project) => project.project.id === id)?.projectSessions ?? [];
-    return harnessLaunches.launches.filter((launch) => launch.input.projectId === id
-      && !(launch.state === 'ready' && sessions.some((session) => session.id === launch.sessionId)));
+    const ids = new Set(projectIds());
+    const sessions = new Set(projects.value.filter((project) => ids.has(project.project.id)).flatMap((project) => project.projectSessions.map((session) => session.id)));
+    return harnessLaunches.launches.filter((launch) => ids.has(launch.input.projectId)
+      && !(launch.state === 'ready' && launch.sessionId && sessions.has(launch.sessionId)));
   });
 }
 

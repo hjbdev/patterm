@@ -24,6 +24,7 @@
         <span class="flex h-4 w-4 shrink-0 items-center justify-center">
           <RowStatus :activity="rowActivity" :count="count" :count-label="countLabel" />
         </span>
+        <ProjectLogo v-if="project" :project="project" :size="14" :title="project.name" />
         <!-- Rows outside the selected thread dim their text until hovered; status stays bright. -->
         <span class="min-w-0 truncate transition-colors duration-200 motion-reduce:transition-none" :class="dimmed && 'text-muted-foreground/80 group-hover/row:text-foreground/85'">{{ label }}</span>
         <HostBadge v-if="host && host !== parentHost" :host="host" class="-ml-0.5" />
@@ -55,6 +56,7 @@
 
 <script setup lang="ts">
 import HostBadge from '../HostBadge.vue';
+import ProjectLogo from '../ProjectLogo.vue';
 import { computed } from 'vue';
 
 import MemberCount from '../MemberCount.vue';
@@ -63,7 +65,7 @@ import { agentLabel } from '../../lib/agentTabs';
 import { hostLabel } from '../../lib/hosts';
 import { countInRing, processActivity, subagentCountClass, subagentPulse } from '../../lib/rowActivity';
 import type { StripTab } from '../../lib/tabStrip';
-import type { ProcessRecord, SessionRecord } from '../../types';
+import type { ProcessRecord, ProjectSummary, SessionRecord } from '../../types';
 import { unreadUrgency, type NotificationUrgency } from '../../Composables/useNotifications';
 import RowStatus from '../RowStatus.vue';
 import TabWash from '../TabWash.vue';
@@ -93,6 +95,8 @@ const props = withDefaults(defineProps<{
   expanded?: boolean | undefined;
   holdsSelection?: boolean | undefined;
   urgency?: NotificationUrgency | null | undefined;
+  // Shown while listing all agents, where rows from several projects mix.
+  project?: ProjectSummary | null | undefined;
 }>(), { session: undefined, process: undefined, rootId: undefined, parentKey: undefined, parentHost: undefined, tab: undefined, nodeId: undefined, count: 0, countLabel: '', expanded: false, holdsSelection: false, urgency: undefined });
 
 const sidebar = useSidebar();

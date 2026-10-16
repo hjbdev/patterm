@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The estimate appears once a quarter of the window has passed, based on the
   last seventh of it (a day of a weekly window), which predicted best when
   tested against past Codex windows.
+- All agents, at the top of the project picker, lists the open agents of every
+  project in the sidebar or tab strip, each with its project's logo. It stays
+  on while you open agents in different projects, until you pick a project.
+  Group by project (on by default) separates them under each project's name;
+  with it off, you can drag them into any order. The view options' Projects
+  submenu chooses which projects show, and stays open while you toggle them.
+  Launching an agent from All agents asks which project it starts in.
 
 ### Changed
 

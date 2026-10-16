@@ -1,19 +1,26 @@
 <template>
   <div class="flex h-full min-h-0 flex-col">
     <div class="flex h-8 shrink-0 items-center gap-0.5 pl-3 pr-1">
-      <span class="flex-1 text-xs text-muted-foreground">Agents</span>
+      <span class="flex-1 text-xs text-muted-foreground">{{ sidebar.allAgents.value ? 'All agents' : 'Agents' }}</span>
       <BoardButton />
       <SidebarViewOptions />
-      <LaunchAgentMenu :project-id="sidebar.projectId.value" />
+      <LaunchAgentMenu :project-id="sidebar.projectId.value" :choose-project="sidebar.allAgents.value" />
     </div>
     <div ref="list" class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1 pb-2 [scrollbar-width:thin]" @keydown="onKeydown">
-      <HarnessLaunchTabs :project-id="sidebar.projectId.value" vertical />
+      <HarnessLaunchTabs v-for="projectId in sidebar.shownProjectIds.value" :key="projectId" :project-id="projectId" vertical />
       <p v-if="!sidebar.tabs.value.length && !pendingLaunches.length" class="px-2 py-1 text-[13px] text-muted-foreground">No agents running</p>
       <!-- One list, headings included, so a row that changes group keeps its
            element and slides there instead of leaving one group and entering another. -->
       <TransitionGroup tag="div" :css="false" @enter="expandIn" @leave="collapseOut">
         <template v-for="entry in entries" :key="entry.key">
           <div v-if="entry.kind === 'divider'" data-sidebar-slide class="mx-2 my-2 border-t border-white/[0.06]" />
+          <!-- Grouped by project, a hairline rule names each project. -->
+          <div v-else-if="entry.kind === 'rule'" data-sidebar-slide class="flex h-6 items-center gap-1.5 px-2 text-[11px] text-muted-foreground" :class="entry.first ? '' : 'mt-2'">
+            <ProjectLogo :project="entry.project" :size="12" />
+            <span class="max-w-[60%] truncate">{{ entry.label }}</span>
+            <HostBadge v-if="entry.project.host" :host="entry.project.host" />
+            <span class="h-px flex-1 bg-white/[0.06]" />
+          </div>
           <div v-else-if="entry.kind === 'heading'" data-sidebar-slide class="flex h-7 items-center gap-2 px-2 text-xs text-muted-foreground" :class="entry.first ? '' : 'mt-3'">
             <span class="flex-1">{{ entry.label }}</span>
             <span class="tabular-nums">{{ entry.count }}</span>
@@ -36,11 +43,12 @@
               :expanded="expanded(entry.tab) || revealed(entry.tab.family.rootId)"
               :subtitle="subtitle(entry.tab)"
               :waiting="Boolean(familyWaitingOn(sidebar, entry.tab.family))"
+              :project="rowProject(entry.tab)"
               expand-on-select
               @toggle="setExpanded(entry.tab.family.rootId, !expanded(entry.tab))"
               @expand="(open) => setFamilyOpen(entry.tab, open)"
             />
-            <SidebarMemberRow v-else :process="entry.tab.process" :tab="entry.tab" />
+            <SidebarMemberRow v-else :process="entry.tab.process" :tab="entry.tab" :project="rowProject(entry.tab)" />
           </div>
         </template>
       </TransitionGroup>
@@ -70,7 +78,7 @@
               @click.capture="consumeClick($event, tab.key)"
             >
               <span v-if="dropLine?.key === tab.key" class="pointer-events-none absolute inset-x-1 z-10 h-0.5 rounded-full bg-primary/70" :class="dropLine.edge === 'before' ? '-top-px' : '-bottom-px'" aria-hidden="true" />
-              <SidebarMemberRow :process="tab.process" :tab="tab" />
+              <SidebarMemberRow :process="tab.process" :tab="tab" :project="sidebar.allAgents.value ? sidebar.projectOf(tab) : null" />
             </div>
           </TransitionGroup>
         </Transition>
@@ -91,7 +99,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, provide, ref, watch } from 'vue';
-import { useProjectHarnessLaunches } from '../../Composables/useHarnessLaunch';
+import { useHarnessLaunchesFor } from '../../Composables/useHarnessLaunch';
 import { ChevronRight } from 'lucide-vue-next';
 import type { StripTab } from '../../lib/tabStrip';
 import LaunchAgentMenu from '../LaunchAgentMenu.vue';
@@ -112,14 +120,18 @@ import { useSidebarExpansion } from '../../Composables/useSidebarExpansion';
 import { useSidebarKeys } from '../../Composables/useSidebarKeys';
 import { useSidebarReorder } from '../../Composables/useSidebarReorder';
 import { useSettledValues } from '../../Composables/useSettledValues';
+import { groupByProject } from '../../lib/allAgents';
+import HostBadge from '../HostBadge.vue';
+import ProjectLogo from '../ProjectLogo.vue';
+import type { ProjectSummary } from '../../types';
 
 // The sidebar's list. Subtitles show on every row or none, and which families
 // are open is the user's choice, remembered on this device. Selecting an agent
 // opens it.
 withDefaults(defineProps<{ placement?: 'docked' | 'drawer' }>(), { placement: 'docked' });
 const sidebar = useSidebar();
-const pendingLaunches = useProjectHarnessLaunches(() => sidebar.projectId.value);
-const expansion = useSidebarExpansion(() => sidebar.projectId.value);
+const pendingLaunches = useHarnessLaunchesFor(() => sidebar.shownProjectIds.value);
+const expansion = useSidebarExpansion(() => sidebar.expansionScope.value);
 
 // Grouped by status, a family moves once its new status has lasted a moment,
 // so output blips don't bounce it between groups. Needing you moves at once.
@@ -132,13 +144,18 @@ const status = useSettledValues(() => liveStatuses.value, {
   delayFor: (next) => next === 'working' ? 1_500 : 2_500
 });
 
+// All agents groups by project unless you'd rather sort them yourself.
+const byProject = computed(() => sidebar.allAgents.value && expansion.state.value.groupByProject);
+
 // Pinned rows first, in the order you gave them. The rest are agents, grouped
-// by status if you ask; your order holds within each group.
-interface Group { id: string; label: string | null; tabs: StripTab[] }
+// by project or status if you ask; your order holds within each group.
+interface Group { id: string; label: string | null; tabs: StripTab[]; project?: ProjectSummary }
 const groups = computed<Group[]>(() => {
   const tabs = sidebar.tabs.value;
   const open = tabs.filter((tab) => !tab.pinned && tab.kind === 'agent');
-  const rest = expansion.state.value.groupByStatus
+  const rest = byProject.value
+    ? groupByProject(open, sidebar.projects.value, sidebar.projectOf).map(({ project, items }) => ({ id: `project:${project.id}`, label: project.name, project, tabs: items }))
+    : expansion.state.value.groupByStatus
     ? SIDEBAR_STATUSES.map(({ id, label }) => ({ id, label, tabs: open.filter((tab) => (status(tab.key) ?? 'idle') === id) }))
     : [{ id: 'open', label: null, tabs: open }];
   return [{ id: 'pinned', label: null, tabs: tabs.filter((tab) => tab.pinned) }, ...rest].filter((group) => group.tabs.length);
@@ -146,12 +163,17 @@ const groups = computed<Group[]>(() => {
 type Entry =
   | { kind: 'divider'; key: string }
   | { kind: 'heading'; key: string; label: string; count: number; first: boolean }
+  | { kind: 'rule'; key: string; label: string; first: boolean; project: ProjectSummary }
   | { kind: 'tab'; key: string; tab: StripTab; group: string; gap: string | false };
 const entries = computed<Entry[]>(() => groups.value.flatMap((group, groupIndex): Entry[] => [
-  ...(group.label ? [{ kind: 'heading' as const, key: `heading:${group.id}`, label: group.label, count: group.tabs.length, first: groupIndex === 0 }]
-    : groupIndex > 0 ? [{ kind: 'divider' as const, key: `divider:${group.id}` }] : []),
+  ...(group.project ? [{ kind: 'rule' as const, key: `heading:${group.id}`, label: group.project.name, first: groupIndex === 0, project: group.project }]
+    : group.label ? [{ kind: 'heading' as const, key: `heading:${group.id}`, label: group.label, count: group.tabs.length, first: groupIndex === 0 }]
+      : groupIndex > 0 ? [{ kind: 'divider' as const, key: `divider:${group.id}` }] : []),
   ...group.tabs.map((tab, index) => ({ kind: 'tab' as const, key: tab.key, tab, group: group.id, gap: index > 0 && 'mt-0.5' }))
 ]));
+// Sorted freely, each row shows its project's logo; grouped, the rule does,
+// except over pinned rows.
+const rowProject = (tab: StripTab) => sidebar.allAgents.value && (!byProject.value || tab.pinned) ? sidebar.projectOf(tab) : null;
 
 // When rows change group (a status settling, or pinning), measure them before
 // the list redraws and slide them from there. Reordering within a group

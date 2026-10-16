@@ -110,7 +110,8 @@ test('saved IDs drive navigation, delayed snapshots, history queries, and Back/F
     const parsed = ts.createSourceFile('layout.ts', layout, ts.ScriptTarget.Latest, true);
     const handler = parsed.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'selectAgentSession');
     const compiled = ts.transpileModule(handler.getFullText(parsed), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-    const clickSession = new Function('activeProject', 'router', 'selectTerminal', `${compiled}; return selectAgentSession;`)(navigation.activeProject, router, navigation.selectTerminal);
+    const ownerProjectId = () => navigation.activeProject.value?.project.id ?? null;
+    const clickSession = new Function('ownerProjectId', 'router', 'selectTerminal', `${compiled}; return selectAgentSession;`)(ownerProjectId, router, navigation.selectTerminal);
     clickSession(project.projectSessions.at(-1));
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(router.currentRoute.value.fullPath, '/projects/p1/agents/integrated', 'clicking the failed parent in the sidebar opens its conversation');

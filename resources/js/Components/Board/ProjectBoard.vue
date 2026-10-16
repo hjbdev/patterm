@@ -110,7 +110,7 @@ const board = useBoardRoute();
 const sidebar = useSidebar();
 const { projects } = useWorkbench();
 
-const projectName = computed(() => projects.value.find((item) => item.project.id === sidebar.projectId.value)?.project.name ?? '');
+const projectName = computed(() => sidebar.allAgents.value ? 'All agents' : projects.value.find((item) => item.project.id === sidebar.projectId.value)?.project.name ?? '');
 
 const processTabs = computed(() => sidebar.tabs.value.filter((tab): tab is ProcessTab => tab.kind === 'process'));
 const shownProcesses = computed(() => processTabs.value.slice(0, PROCESSES_SHOWN));

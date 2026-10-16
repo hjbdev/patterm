@@ -27,6 +27,7 @@
           </span>
           <span class="min-w-0 flex-1">
             <span class="flex min-w-0 items-center gap-1.5 leading-5" :style="{ paddingRight: `${reserve}px` }">
+              <ProjectLogo v-if="project" :project="project" :size="14" :title="project.name" />
               <span class="truncate" :class="sidebar.familyActive(tab.family) && 'font-medium'">{{ label }}</span>
               <HostBadge v-if="root.host" :host="root.host" />
             </span>
@@ -77,6 +78,8 @@
 
 <script setup lang="ts">
 import HostBadge from '../HostBadge.vue';
+import ProjectLogo from '../ProjectLogo.vue';
+import type { ProjectSummary } from '../../types';
 import { computed } from 'vue';
 import { Timer as TimerIcon } from 'lucide-vue-next';
 import MemberCount from '../MemberCount.vue';
@@ -104,7 +107,9 @@ const props = withDefaults(defineProps<{
   expanded: boolean;
   subtitle?: string | null | undefined;
   waiting?: boolean | undefined;
-}>(), { subtitle: null, waiting: false });
+  // Shown while listing all agents, where rows from several projects mix.
+  project?: ProjectSummary | null;
+}>(), { subtitle: null, waiting: false, project: null });
 // `expand` asks to open or close the family after the agent was clicked:
 // clicking opens it, and clicking it again while it's selected closes it.
 const emit = defineEmits<{ toggle: []; expand: [open: boolean] }>();

@@ -5,7 +5,7 @@ import type { AgentNode } from '../lib/agentTree';
 import { capitalize, memberState, modelLabel, splitSummary, type AgentDigest, type DigestMember } from '../lib/agentDigest';
 import { processActivity, shownActivity, type RowActivity } from '../lib/rowActivity';
 import { familyTimerSummary, mostUrgent, processesByOwner, waitingSession } from '../lib/sidebarTree';
-import { contextRead, useContextVersion, type SessionContext } from '../lib/projectContext';
+import { contextRead, projectContextVersion, type SessionContext } from '../lib/projectContext';
 import type { DiffTotals } from '../lib/worktreeDiff';
 import { useSidebar, type AgentTab } from '../Components/Sidebar/sidebarContext';
 import { useWorkbench } from './useWorkbench';
@@ -46,7 +46,9 @@ function unchanged(a: unknown, b: unknown): boolean {
 function createAgentDigests(): AgentDigests {
   const sidebar = useSidebar();
   const { projects } = useWorkbench();
-  const project = computed(() => projects.value.find((item) => item.project.id === sidebar.projectId.value) ?? null);
+  // All agents spans projects: each agent's records live in its own.
+  const projectIds = computed(() => sidebar.shownProjectIds.value);
+  const projectIdOf = (tab: AgentTab) => sidebar.projectOf(tab)?.id ?? sidebar.projectId.value;
   const agentTabs = computed(() => sidebar.tabs.value.filter((tab): tab is AgentTab => tab.kind === 'agent'));
 
   // Notices, contexts and diffs cost calls and git runs, so after the first
@@ -77,7 +79,7 @@ function createAgentDigests(): AgentDigests {
     };
   }
 
-  // Unread notifications for the project, newest first, keyed by process.
+  // Unread notifications for the shown projects, newest first, keyed by process.
   const notices = shallowRef<NotificationRecord[]>([]);
   let noticeGeneration = 0;
   let noticesLoading = false;
@@ -87,13 +89,15 @@ function createAgentDigests(): AgentDigests {
     try {
       // Read notices stay listed until they're resolved, so page past them to every unread one.
       const items: NotificationRecord[] = [];
-      let cursor: string | null = null;
-      do {
-        const page = await window.patterm.notificationsList({ project_id: sidebar.projectId.value, limit: 200, ...(cursor ? { cursor } : {}) }) as { items: NotificationRecord[]; next_cursor: string | null };
-        if (current !== noticeGeneration) return;
-        items.push(...page.items);
-        cursor = page.next_cursor;
-      } while (cursor);
+      for (const projectId of projectIds.value) {
+        let cursor: string | null = null;
+        do {
+          const page = await window.patterm.notificationsList({ project_id: projectId, limit: 200, ...(cursor ? { cursor } : {}) }) as { items: NotificationRecord[]; next_cursor: string | null };
+          if (current !== noticeGeneration) return;
+          items.push(...page.items);
+          cursor = page.next_cursor;
+        } while (cursor);
+      }
       const next = items.filter((item) => !item.read_at && !item.resolved_at);
       if (!unchanged(next, notices.value)) notices.value = next;
     } catch { /* The cards still work from the workbench alone. */ } finally {
@@ -114,7 +118,7 @@ function createAgentDigests(): AgentDigests {
   const stopNotices = window.patterm.onNotificationsChanged((raw) => {
     const change = raw as NotificationChange;
     if (change.type === 'reconnected'
-      || ((change.type === 'raised' || change.type === 'updated') && change.notification.project_id === sidebar.projectId.value)
+      || ((change.type === 'raised' || change.type === 'updated') && projectIds.value.includes(change.notification.project_id ?? ''))
       || ((change.type === 'read' || change.type === 'resolved') && (noticesLoading || change.ids.some((id) => notices.value.some((notice) => notice.id === id))))) invalidateNotices();
   });
   onBeforeUnmount(stopNotices);
@@ -124,10 +128,10 @@ function createAgentDigests(): AgentDigests {
   let contextGeneration = 0;
   async function loadContexts(): Promise<void> {
     const current = ++contextGeneration;
-    const ids = agentTabs.value.map((tab) => tab.family.rootId);
-    const results = await Promise.all(ids.map(async (id) => {
+    const roots = agentTabs.value.map((tab) => ({ id: tab.family.rootId, projectId: projectIdOf(tab) }));
+    const results = await Promise.all(roots.map(async ({ id, projectId }) => {
       try {
-        return [id, await contextRead<SessionContext>('session_context', sidebar.projectId.value, { session_id: id, limit: 20 })] as const;
+        return [id, await contextRead<SessionContext>('session_context', projectId, { session_id: id, limit: 20 })] as const;
       } catch {
         return null;
       }
@@ -138,10 +142,10 @@ function createAgentDigests(): AgentDigests {
   const refreshContexts = whenShown(loadContexts);
   watch(() => agentTabs.value.map((tab) => tab.family.rootId).join(), refreshContexts);
   // Agents starting and stopping change no todos or links; the roots above cover new agents.
-  useContextVersion(() => sidebar.projectId.value, refreshContexts);
+  watch(() => projectIds.value.map(projectContextVersion).join(), refreshContexts);
 
   // A project's first cards open with its notices and contexts already loaded.
-  watch(() => sidebar.projectId.value, () => {
+  watch(() => projectIds.value.join(), () => {
     void loadNotices();
     void loadContexts();
   }, { immediate: true });
@@ -191,7 +195,7 @@ function createAgentDigests(): AgentDigests {
     const timer = timers.length ? familyTimerSummary(timers, minute.value, (processId) => rows.find((row) => row.session?.processId === processId)?.name ?? (processId === session.processId ? agentLabel(session) : null)) : null;
     const familyNotices = notices.value.filter((notice) => family.options.some((option) => option.session.processId === notice.process_id));
     const { state, status, ask } = describe(tab, activity, rows, familyNotices, timers.length > 0);
-    const worktree = project.value?.worktrees.find((item) => item.id === session.worktreeId) ?? null;
+    const worktree = projects.value.find((item) => item.project.id === projectIdOf(tab))?.worktrees.find((item) => item.id === session.worktreeId) ?? null;
     const own = context?.worktrees.items.find((item) => item.own) ?? null;
     const sessions = rows.filter((row) => row.session);
     return {

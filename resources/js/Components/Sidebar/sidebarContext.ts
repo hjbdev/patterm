@@ -4,9 +4,10 @@ import { ownedProcessesForSessions, type LiveProcessRecord } from '../../lib/pro
 import { activityLookup, type RowActivity } from '../../lib/rowActivity';
 import { moveStripTab, setStripTabPinned, type StripTab, type TabLayout } from '../../lib/tabStrip';
 import { timersForProcesses } from '../../lib/timers';
+import { ALL_AGENTS_SCOPE } from '../../lib/allAgents';
 import { unreadUrgency } from '../../Composables/useNotifications';
 import { familyAttention, sessionAttention, type SidebarAttention, type SidebarTreeView } from '../../lib/sidebarTree';
-import type { ProcessRecord, SessionRecord, TimerRecord } from '../../types';
+import type { ProcessRecord, ProjectSummary, SessionRecord, TimerRecord } from '../../types';
 
 export type SidebarPage = 'worktrees' | 'history' | 'todos' | 'scratchpads' | 'media';
 export type AgentTab = Extract<StripTab, { kind: 'agent' }>;
@@ -17,6 +18,14 @@ export interface SidebarContext extends SidebarTreeView {
   // Whether agents show in the sidebar, rather than as tabs.
   shown: ComputedRef<boolean>;
   tabs: ComputedRef<StripTab[]>;
+  // Whether the list shows every shown project's agents, and which projects
+  // there are to show. Its view options are kept apart from any project's.
+  allAgents: ComputedRef<boolean>;
+  expansionScope: ComputedRef<string>;
+  projects: ComputedRef<ProjectSummary[]>;
+  projectOf: (tab: StripTab) => ProjectSummary | null;
+  // The projects the list shows: the route's, or every shown one.
+  shownProjectIds: ComputedRef<readonly string[]>;
   page: ComputedRef<SidebarPage | null>;
   worktreeCount: ComputedRef<number>;
   // Whether the project is a repository, which the Personal project is not.
@@ -51,6 +60,10 @@ export interface SidebarInput {
   projectId: () => string;
   shown: () => boolean;
   tabs: () => StripTab[];
+  allAgents: () => boolean;
+  projects: () => ProjectSummary[];
+  projectOf: (id: string) => ProjectSummary | null;
+  shownProjectIds: () => readonly string[];
   processes: () => ProcessRecord[];
   timers: () => TimerRecord[];
   worktreeCount: () => number;
@@ -87,6 +100,11 @@ export function provideSidebarContext(input: SidebarInput): SidebarContext {
     projectId: computed(input.projectId),
     shown: computed(input.shown),
     tabs: computed(input.tabs),
+    allAgents: computed(input.allAgents),
+    expansionScope: computed(() => input.allAgents() ? ALL_AGENTS_SCOPE : input.projectId()),
+    projects: computed(input.projects),
+    projectOf: (tab) => input.projectOf(tab.kind === 'agent' ? tab.family.rootId : tab.process.id),
+    shownProjectIds: computed(input.shownProjectIds),
     page: computed(input.page),
     worktreeCount: computed(input.worktreeCount),
     repository: computed(input.repository),

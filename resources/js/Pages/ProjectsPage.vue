@@ -31,7 +31,7 @@
     <main class="mx-1.5 mb-1.5 flex min-h-0 flex-1 overflow-hidden rounded-xl border-t border-white/5 bg-background">
       <div class="min-w-0 flex-1 overflow-y-auto">
         <div class="mx-auto w-full max-w-[46rem] px-4 pb-10 pt-8 sm:px-6 sm:pt-10">
-          <ProjectOverviewList :overviews="overviews" :now="now" :loaded="loaded" @open-project="selectProject" @open-session="openSession" />
+          <ProjectOverviewList :overviews="overviews" :now="now" :loaded="loaded" @open-project="pickProject" @open-session="openSession" />
         </div>
       </div>
     </main>
@@ -54,7 +54,7 @@ import { projectOverviews } from '../lib/projectOverview';
 import type { SessionRecord } from '../types';
 
 const { projects, loaded, sidecarAvailable, refresh } = useWorkbench();
-const { route, router, selectProject, selectTerminal } = useWorkbenchNavigation();
+const { route, router, pickProject, selectTerminal } = useWorkbenchNavigation();
 const openCommandPalette = inject(openCommandPaletteKey, () => {});
 
 // Relative times on this page show minutes at most.
@@ -82,6 +82,6 @@ function openSession(projectId: string, session: SessionRecord): void {
 
 async function selectCreatedProject(projectId: string): Promise<void> {
   await refresh();
-  await selectProject(projectId);
+  await pickProject(projectId);
 }
 </script>

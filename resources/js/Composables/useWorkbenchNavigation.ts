@@ -3,6 +3,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useWorkbench } from './useWorkbench';
 import type { ProjectViewMode } from '../lib/workbenchNavigation';
 import { lastProjectLocation, resolveProjectReturnPath } from '../lib/projectLocations';
+import { allAgents } from '../lib/allAgents';
 
 export function useWorkbenchNavigation() {
   const route = useRoute();
@@ -66,6 +67,12 @@ export function useWorkbenchNavigation() {
     if (session) return router.push({ name: 'agent', params: { projectId, sessionId } });
   }
 
+  // Choosing a project by hand also leaves All agents.
+  function pickProject(projectId: string | null) {
+    if (projectId) allAgents.active = false;
+    return selectProject(projectId);
+  }
+
   function switchViewMode(mode: ProjectViewMode) {
     const projectId = activeProjectId.value;
     if (!projectId) return;
@@ -80,5 +87,5 @@ export function useWorkbenchNavigation() {
   }
 
   return { route, router, activeProjectId, activeProject, selectedAgent, selectedProcess, activeTerminalId,
-    projectViewMode, activeWorkspacePage, selectProject, selectTerminal, selectLaunchedAgent, switchViewMode, openConversationHistory };
+    projectViewMode, activeWorkspacePage, selectProject, pickProject, selectTerminal, selectLaunchedAgent, switchViewMode, openConversationHistory };
 }
