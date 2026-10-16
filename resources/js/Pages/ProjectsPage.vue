@@ -7,6 +7,7 @@
         <p class="truncate text-[11px] text-muted-foreground">{{ subtitle }}</p>
       </div>
       <div class="ml-auto flex shrink-0 items-center gap-1.5">
+        <AssistantButton />
         <Button variant="ghost" size="sm" class="h-7 gap-2 rounded-tab px-2 text-xs text-muted-foreground" aria-label="Search or jump to" @click="openCommandPalette">
           <Search class="h-4 w-4" /><span class="hidden sm:inline">Search or jump to…</span><kbd class="hidden rounded border border-border/70 px-1 text-[10px] sm:inline">Ctrl K</kbd>
         </Button>
@@ -38,6 +39,7 @@
 </template>
 
 <script setup lang="ts">
+import AssistantButton from '../Components/Assistant/AssistantButton.vue';
 import { computed, inject, onBeforeUnmount, ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import { Gauge, Plus, Search, Settings } from 'lucide-vue-next';

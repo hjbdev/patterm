@@ -4,7 +4,8 @@
       <Button variant="ghost" size="icon" class="h-8 w-8 rounded-tab text-muted-foreground" aria-label="Back" @click="goBack">
         <ArrowLeft class="h-4 w-4" />
       </Button>
-      <h1 class="text-sm font-semibold">Settings</h1>
+      <h1 class="min-w-0 flex-1 text-sm font-semibold">Settings</h1>
+      <AssistantButton />
     </header>
 
     <main class="mx-1.5 mb-1.5 min-h-0 flex-1 overflow-hidden rounded-xl border-t border-white/5 bg-background">
@@ -195,6 +196,7 @@
 </template>
 
 <script setup lang="ts">
+import AssistantButton from '../Components/Assistant/AssistantButton.vue';
 import { computed, onBeforeUnmount, reactive, ref } from 'vue';
 import { ArrowLeft, AudioLines, Bell, ChartColumn, ChevronDown, Cpu, History, Info, KeyRound, Palette, Plug, Server, Shrink, Sparkles } from 'lucide-vue-next';
 import {

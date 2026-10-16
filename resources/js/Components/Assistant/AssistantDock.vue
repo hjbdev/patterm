@@ -1,14 +1,14 @@
 <template>
   <!-- One element in every layout, so the conversation and a live voice call
        carry over when the panel docks or expands to a page. The page and the
-       docked column slide in like the diff drawer; the panel rises out of the
-       floating button. -->
+       docked column slide in like the diff drawer; the panel drops from the
+       assistant button in the bar. -->
   <template v-if="assistant.enabled">
   <Transition
-    :enter-active-class="page || docked ? 'transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none' : 'origin-bottom-right transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none'"
-    :enter-from-class="page || docked ? 'translate-x-6 opacity-0' : 'translate-y-2 scale-[0.97] opacity-0'"
-    :leave-active-class="page || docked ? 'transition-[transform,opacity] duration-150 ease-in motion-reduce:transition-none' : 'origin-bottom-right transition-[transform,opacity] duration-150 ease-in motion-reduce:transition-none'"
-    :leave-to-class="page || docked ? 'translate-x-6 opacity-0' : 'translate-y-2 scale-[0.97] opacity-0'"
+    :enter-active-class="page || docked ? 'transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none' : 'origin-top-right transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none'"
+    :enter-from-class="page || docked ? 'translate-x-6 opacity-0' : '-translate-y-2 scale-[0.97] opacity-0'"
+    :leave-active-class="page || docked ? 'transition-[transform,opacity] duration-150 ease-in motion-reduce:transition-none' : 'origin-top-right transition-[transform,opacity] duration-150 ease-in motion-reduce:transition-none'"
+    :leave-to-class="page || docked ? 'translate-x-6 opacity-0' : '-translate-y-2 scale-[0.97] opacity-0'"
   >
   <section
     v-show="open"
@@ -21,7 +21,7 @@
       ? 'inset-x-1.5 bottom-1.5 top-12 z-40 rounded-xl border-t border-white/5 max-sm:bottom-[calc(0.375rem+env(safe-area-inset-bottom))] max-sm:top-[calc(0.375rem+env(safe-area-inset-top))]'
       : docked
         ? 'bottom-1.5 right-1.5 top-1.5 z-40 w-[var(--assistant-dock-width)] rounded-xl border-t border-white/5'
-        : 'inset-x-2 bottom-20 z-50 h-[min(40rem,calc(100dvh-7rem))] rounded-xl border border-border shadow-2xl sm:inset-x-auto sm:right-4 sm:w-[26rem]'"
+        : 'right-2 top-12 z-50 h-[min(40rem,calc(100dvh-3.5rem))] w-[26rem] rounded-xl border border-border shadow-2xl'"
     aria-label="Assistant"
     @keydown.esc="onEscape"
   >
@@ -140,31 +140,13 @@
   </section>
   </Transition>
 
-  <Tooltip v-if="!(open && (page || docked))">
-    <TooltipTrigger as-child>
-      <button
-        type="button"
-        data-assistant-launcher
-        class="fixed bottom-4 right-4 z-50 flex max-sm:bottom-[calc(3.75rem+env(safe-area-inset-bottom))] size-12 items-center justify-center rounded-full border border-border bg-background text-foreground shadow-lg transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-        :aria-label="open ? 'Hide assistant' : 'Open assistant'"
-        :aria-expanded="open"
-        @click="setOpen(!open)"
-      >
-        <span v-if="assistant.voiceActive" class="absolute inset-0 animate-ping rounded-full border border-emerald-400/50" aria-hidden="true" />
-        <Focus v-if="assistant.focus && !open" class="absolute -right-0.5 -top-0.5 size-4 rounded-full bg-background p-0.5 text-muted-foreground" aria-hidden="true" />
-        <ChevronDown v-if="open" class="size-5" />
-        <Sparkles v-else class="size-5" />
-      </button>
-    </TooltipTrigger>
-    <TooltipContent side="left">{{ open ? 'Hide assistant' : assistant.focus ? `Assistant · Focus${assistant.focusPending ? `, ${assistant.focusPending} held` : ''}` : 'Assistant' }}</TooltipContent>
-  </Tooltip>
   </template>
 </template>
 
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onMounted, ref, shallowRef, watch } from 'vue';
 import { useMediaQuery } from '@vueuse/core';
-import { ArrowLeft, AudioLines, Check, ChevronDown, Ellipsis, Focus, Locate, LocateFixed, Maximize2, MessageSquare, Minimize2, Minus, PanelRight, PanelRightClose, RotateCcw, Sparkles } from 'lucide-vue-next';
+import { ArrowLeft, AudioLines, Check, Ellipsis, Focus, Locate, LocateFixed, Maximize2, MessageSquare, Minimize2, Minus, PanelRight, PanelRightClose, RotateCcw } from 'lucide-vue-next';
 import { Button } from '../ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
@@ -203,9 +185,14 @@ function onTranscript(rows: TranscriptMessage[], status: string, loaded: boolean
 
 function setOpen(value: boolean): void {
   setAssistantLayout({ open: value });
-  if (value && assistant.loaded && !assistant.processId) void start();
-  if (value && page.value) void nextTick(() => root.value?.focus());
 }
+
+// The button in the bar opens the assistant too, so opening is handled here.
+watch(open, (value) => {
+  if (!value) return;
+  if (assistant.loaded && !assistant.processId) void start();
+  if (page.value) void nextTick(() => root.value?.focus());
+});
 
 // On a phone there is no panel to go back to, so Back closes the page.
 function back(): void {
