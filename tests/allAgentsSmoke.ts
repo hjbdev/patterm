@@ -92,7 +92,11 @@ assert.deepEqual(tabsGroupedByProject(tabs, [web.project, docs.project], (tab) =
 // A change while project B is hidden keeps B's order and pins: saved
 // [b2, a2, b1, a1] with b2 pinned, B hidden, a1 moved before a2.
 const hiddenB = (key: string) => key.startsWith('b');
-assert.deepEqual(keepHiddenTabs({ order: ['b2', 'a2', 'b1', 'a1'], pinned: ['b2'] }, { order: ['a1', 'a2'], pinned: [] }, hiddenB), { order: ['b2', 'a1', 'a2', 'b1'], pinned: ['b2'] });
+assert.deepEqual(keepHiddenTabs({ order: ['b2', 'a2', 'b1', 'a1'], pinned: ['b2'] }, { order: ['a1', 'a2'], pinned: [] }, hiddenB), { order: ['b2', 'a1', 'b1', 'a2'], pinned: ['b2'] });
+// Interleaved and unpinned, the hidden tabs keep their own order too.
+assert.deepEqual(keepHiddenTabs({ order: ['a1', 'b1', 'a2', 'b2'], pinned: [] }, { order: ['a2', 'a1'], pinned: [] }, hiddenB).order, ['a2', 'b1', 'a1', 'b2']);
+// A tab new since the last save goes after the rest.
+assert.deepEqual(keepHiddenTabs({ order: ['a1', 'b1'], pinned: [] }, { order: ['a1', 'a3'], pinned: [] }, hiddenB).order, ['a1', 'b1', 'a3']);
 // Closed tabs, which no hidden project owns, drop out as before.
 assert.deepEqual(keepHiddenTabs({ order: ['gone', 'a1'], pinned: ['gone'] }, { order: ['a1'], pinned: [] }, hiddenB), { order: ['a1'], pinned: [] });
 

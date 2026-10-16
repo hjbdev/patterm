@@ -80,18 +80,15 @@ export function buildAllAgentsView(projects: readonly ProjectWorkbench[], hidden
 }
 
 // A layout change made while some projects are hidden covers only the tabs
-// that show. The hidden projects' tabs keep their places beside the tabs they
-// followed, and their pins, for when those projects show again.
+// that show. The hidden projects' tabs keep their slots, and so their order
+// and pins, for when those projects show again; the shown tabs fill the other
+// slots in their new order.
 export function keepHiddenTabs(previous: TabLayout, next: TabLayout, hidden: (key: string) => boolean): TabLayout {
   const shown = new Set(next.order);
-  const after = new Map<string | null, string[]>();
-  let anchor: string | null = null;
-  for (const key of previous.order) {
-    if (shown.has(key)) anchor = key;
-    else if (hidden(key)) after.set(anchor, [...after.get(anchor) ?? [], key]);
-  }
+  const queue = [...next.order];
+  const order = previous.order.flatMap((key) => shown.has(key) ? [queue.shift()!] : hidden(key) ? [key] : []);
   return {
-    order: [...after.get(null) ?? [], ...next.order.flatMap((key) => [key, ...after.get(key) ?? []])],
+    order: [...order, ...queue],
     pinned: [...next.pinned, ...previous.pinned.filter((key) => hidden(key) && !next.pinned.includes(key))]
   };
 }
