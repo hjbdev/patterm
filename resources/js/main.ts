@@ -3,7 +3,7 @@ import { createApp } from 'vue';
 import 'vue-sonner/style.css';
 import App from './App.vue';
 import { createWebHashHistory, createWebHistory } from 'vue-router';
-import { createWorkbenchRouter, prefetchPages } from './router';
+import { createWorkbenchRouter, prefetchPages, reloadOnStaleBuild } from './router';
 import { warmHighlightWorker } from './lib/markdownHighlightWorker';
 import { syncLoaders } from './lib/loaderSync';
 import './assets/fonts/fonts.css';
@@ -24,6 +24,8 @@ syncLoaders();
 
 function mountWorkbench(): void {
   const router = createWorkbenchRouter(window.patterm.runtime === 'desktop' ? createWebHashHistory() : createWebHistory());
+  // The desktop app ships its own build, which a server update never replaces.
+  if (window.patterm.runtime !== 'desktop') reloadOnStaleBuild(router);
   const app = createApp(App).use(router);
   // The manifest's launch_handler reuses the open window instead of starting
   // another, so a launch that names a page (a shortcut) navigates here. A plain
