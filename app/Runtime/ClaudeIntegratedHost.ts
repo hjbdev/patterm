@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
+import { awaitingActivity } from '../Services/Activity';
 import { elicitationContent, elicitationForm, type ElicitationForm } from '../Services/McpElicitation';
 import { envValue, withEnv } from '../Platform/Environment';
 import { resolveCommand } from '../Platform/Executable';
@@ -59,7 +60,7 @@ const streams = new Map<string, StreamState>();
 const nextBlockIndex = new Map<string, number>();
 let child: ChildProcessWithoutNullStreams | null = null;
 let childBuffer = '';
-// idle, working, permission, or failed. Derived in updateStatus.
+// idle, working, permission, question, or failed. Derived in updateStatus.
 let status = 'idle';
 // Claude ends an interrupted turn with an `error_during_execution` result; the
 // flag lets that result settle the turn as idle instead of failed. An interrupt
@@ -161,6 +162,8 @@ server.listen(ipcPath(config.socketPath), () => restrictIpc(config.socketPath));
 async function handle(socket: net.Socket, request: JsonRecord): Promise<void> {
   const id = request.id;
   const params = record(request.params);
+  // A snapshot or subscription boundary includes every streamed delta so far.
+  if (request.method === 'conversation' || request.method === 'controls' || request.method === 'subscribe') flushAppends();
   if (request.method === 'conversation') {
     respond(socket, id, {
       messages: { data: messages },
@@ -632,11 +635,13 @@ function busy(): boolean {
   return backgroundAgentCount() > 0;
 }
 
-// The one place status is decided. A pending prompt needs a person; otherwise
-// the agent works while a turn, an unsettled prompt, or a background agent
-// runs; a failure shows once nothing does.
+// The one place status is decided. A pending prompt needs a person: an
+// approval, or else a question or form; otherwise the agent works while a
+// turn, an unsettled prompt, or a background agent runs; a failure shows once
+// nothing does.
 function updateStatus(): void {
-  setStatus(pending.size ? 'permission' : busy() ? 'working' : failed ? 'failed' : 'idle');
+  const approvals = [...pending.values()].filter((item) => item.kind === 'permission').length;
+  setStatus(pending.size ? awaitingActivity(approvals) : busy() ? 'working' : failed ? 'failed' : 'idle');
 }
 
 // Only requests a person can answer become pending prompts. Every other
@@ -866,12 +871,12 @@ function applyStreamEvent(event: JsonRecord, parent: string | null): void {
     const delta = record(event.delta);
     if (delta.type === 'text_delta' && typeof delta.text === 'string') {
       appendText(id, delta.text);
-      publish({ kind: 'append', id, delta: delta.text });
+      publishAppend(id, delta.text);
       return;
     }
     if (delta.type === 'thinking_delta' && typeof delta.thinking === 'string') {
       appendText(id, delta.thinking);
-      publish({ kind: 'append', id, delta: delta.thinking });
+      publishAppend(id, delta.thinking);
       return;
     }
     if (delta.type === 'input_json_delta' && typeof delta.partial_json === 'string') {
@@ -983,6 +988,7 @@ function receiveSystem(event: JsonRecord): void {
   }
   // Output of local slash commands such as /cost or /context.
   if (event.subtype === 'local_command_output' && typeof event.content === 'string' && event.content.trim()) {
+    followModelCommand(event.content);
     upsertMessage({ id: `command_${typeof event.uuid === 'string' ? event.uuid : randomUUID()}`, role: 'assistant', kind: 'text', text: boundText(event.content) }, true, true);
     return;
   }
@@ -991,6 +997,40 @@ function receiveSystem(event: JsonRecord): void {
     return;
   }
   countUnhandled(`system/${String(event.subtype ?? 'unknown')}`);
+}
+
+// Claude Code's own /model reports the change only as command output, such as
+// "Set model to Sonnet 5 (claude-sonnet-5) and saved as your default for new
+// sessions", "Set model to Sonnet 5 for this session only · effort high", or
+// "Set model to Opus 5.5 (default)". Follow it, so the controls show the model
+// in use; a name that matches no listed model changes nothing.
+function followModelCommand(content: string): void {
+  const line = content.replace(/\x1b\[[0-9;]*m/g, '').replace(/[`*]/g, '').trim().split('\n')[0] ?? '';
+  if (!line.startsWith('Set model to ')) return;
+  const name = line.slice('Set model to '.length).split(/ and saved as your default| for this session only/)[0]!.replace(/[.\s]+$/, '').trim().toLowerCase();
+  const found = matchModel(name);
+  if (typeof found?.value !== 'string' || found.value === model) return;
+  model = found.value;
+  // Effort levels depend on the model.
+  requestSettings();
+  publish({ kind: 'pending' });
+}
+
+// The listed model a reported name means: the default, an exact value or
+// display name, or else the longest one the name starts with, as in
+// "Sonnet 5 (claude-sonnet-5)".
+function matchModel(name: string): JsonRecord | undefined {
+  if (name.startsWith('default') || name.endsWith('(default)')) return models.find((item) => item.value === 'default');
+  const names = (item: JsonRecord) => [item.value, item.displayName].filter((value): value is string => typeof value === 'string' && value.length > 0).map((value) => value.toLowerCase());
+  const exact = models.find((item) => names(item).includes(name));
+  if (exact) return exact;
+  let best: { item: JsonRecord; length: number } | undefined;
+  for (const item of models) {
+    for (const value of names(item)) {
+      if (name.startsWith(`${value} (`) && value.length > (best?.length ?? 0)) best = { item, length: value.length };
+    }
+  }
+  return best?.item;
 }
 
 function receiveTask(event: JsonRecord): void {
@@ -1162,6 +1202,36 @@ function acknowledgeUserMessage(value: unknown): void {
 // captures the current revision before building its payload, so a client can
 // drop events the snapshot already contains and apply newer ones afterwards.
 function publish(event: JsonRecord): void {
+  flushAppends();
+  send(event);
+}
+
+// Claude streams text a few characters per event. Deltas to the same row are
+// merged and sent at most every APPEND_FLUSH_MS; any other event, snapshot or
+// subscription sends them first, so subscribers see the same order.
+const APPEND_FLUSH_MS = 50;
+let appends: Array<{ id: string; delta: string }> = [];
+let appendTimer: NodeJS.Timeout | null = null;
+
+function publishAppend(id: string, delta: string): void {
+  const last = appends.at(-1);
+  if (last?.id === id) last.delta += delta;
+  else appends.push({ id, delta });
+  if (!appendTimer) {
+    appendTimer = setTimeout(flushAppends, APPEND_FLUSH_MS);
+    appendTimer.unref?.();
+  }
+}
+
+function flushAppends(): void {
+  if (appendTimer) clearTimeout(appendTimer);
+  appendTimer = null;
+  const pending = appends;
+  appends = [];
+  for (const item of pending) send({ kind: 'append', ...item });
+}
+
+function send(event: JsonRecord): void {
   revision += 1;
   const line = `${JSON.stringify({ event: { ...event, revision } })}\n`;
   for (const socket of subscribers) {
@@ -1208,7 +1278,7 @@ function appendText(id: string, delta: string): void {
   messages[index] = { ...row, text: `${String(row.text ?? '')}${delta}` };
 }
 
-// Streamed as working, permission, idle, or error. The snapshot reports the
+// Streamed as working, permission, question, idle, or error. The snapshot reports the
 // raw status, and ClaudeStreamService maps failed to error there.
 function setStatus(next: string): void {
   if (status === next) return;

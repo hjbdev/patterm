@@ -52,6 +52,19 @@ process.stdin.on('data', (chunk) => {
     if (!line.trim()) continue;
     const event = JSON.parse(line);
     const frame = (value) => process.stdout.write(JSON.stringify(value) + '\\n');
+    // Claude Code's own /model answers with command output only.
+    const modelSwitch = event.type === 'user' && /\\/model (\\w+)/.exec(JSON.stringify(event.message && event.message.content));
+    if (modelSwitch) {
+      const outputs = {
+        plain: 'Set model to \\u001b[1mSonnet 5 (claude-sonnet-5)\\u001b[22m',
+        wide: 'Set model to \\u0060Sonnet 5 (1M context)\\u0060 and saved as your default for new sessions',
+        session: 'Set model to Haiku 4.5 for this session only · effort high',
+        default: 'Set model to \\u0060Opus 5.5 (default)\\u0060 and saved as your default for new sessions',
+        unknown: 'Set model to Mystery 9 for this session only'
+      };
+      frame({type:'system',subtype:'local_command_output',content:outputs[modelSwitch[1]],uuid:'model_' + modelSwitch[1]});
+      continue;
+    }
     if (process.env.ACTIVITY && event.type === 'control_request' && event.request && event.request.subtype === 'interrupt') {
       // An interrupt ends a running turn with error_during_execution; with
       // nothing running there is no result, only another idle report.
@@ -68,6 +81,11 @@ process.stdin.on('data', (chunk) => {
         say('msg_after_permission', 'after permission');
         for (const uuid of globalThis.queued || []) lifecycle(uuid, 'completed');
         globalThis.queued = [];
+        end(globalThis.first);
+        state('idle');
+      } else if (answered === 'main_question') {
+        state('running');
+        say('msg_after_question', 'after question');
         end(globalThis.first);
         state('idle');
       } else if (answered === 'sub_perm') {
@@ -150,6 +168,11 @@ process.stdin.on('data', (chunk) => {
         frame({type:'assistant',message:{id:'msg_write',content:[{type:'tool_use',id:'toolu_write',name:'Write',input:{file_path:'/tmp/a.txt',content:'hi'}}]}});
         state('requires_action');
         frame({type:'control_request',request_id:'main_perm',request:{subtype:'can_use_tool',tool_name:'Write',tool_use_id:'toolu_write',input:{file_path:'/tmp/a.txt',content:'hi'}}});
+      } else if (text === 'question') {
+        globalThis.first = uuid;
+        begin(uuid);
+        state('requires_action');
+        frame({type:'control_request',request_id:'main_question',request:{subtype:'can_use_tool',tool_name:'AskUserQuestion',input:{questions:[{question:'Which one?',header:'Pick',multiSelect:false,options:[{label:'A',description:''}]}]}}});
       } else if (text === 'extra') {
         // A prompt sent while a request waits is queued behind it.
         globalThis.queued = [...(globalThis.queued || []), uuid];
@@ -189,6 +212,7 @@ process.stdin.on('data', (chunk) => {
       ],models:[
         {value:'default',displayName:'Default (recommended)',description:'Opus 5.5 · Best for everyday, complex tasks',supportsAutoMode:true,supportedEffortLevels:['low','medium','high','xhigh','max']},
         {value:'sonnet',displayName:'Sonnet 5',supportsAutoMode:true,supportedEffortLevels:['low','medium','high']},
+        {value:'claude-sonnet-5[1m]',displayName:'Sonnet 5 (1M context)',supportsAutoMode:true,supportedEffortLevels:['low','medium','high']},
         {value:'haiku',displayName:'Haiku 4.5'}
       ]}}});
       continue;
@@ -483,7 +507,7 @@ process.stdin.on('data', (chunk) => {
     assert.equal(streamedRows.find((message) => message.id === 'msg_native_1')?.kind, 'text');
     assert.equal(streamedRows.find((message) => message.id === 'msg_native_1')?.text, 'Partial text');
     assert.equal(streamedRows.find((message) => message.id === 'msg_native_2')?.text, 'Second text', 'a later text block does not overwrite the earlier one');
-    assert.ok(events.some((event) => event.kind === 'append' && event.id === 'msg_native_1' && event.delta === 'Partial '), 'partial text streams before its per-block assistant frame');
+    assert.ok(events.some((event) => event.kind === 'append' && event.id === 'msg_native_1' && String(event.delta).startsWith('Partial ')), 'partial text streams before its per-block assistant frame');
     assert.ok(events.some((event) => event.kind === 'append' && event.id === 'msg_native_2'), 'a later block keeps its own partial stream');
     const nativeEdit = streamedRows.find((message) => message.id === 'toolu_native_edit')!;
     assert.equal(nativeEdit.kind, 'tool');
@@ -517,7 +541,9 @@ process.stdin.on('data', (chunk) => {
     // Targeted events: appends for text and reasoning, replaces for tool input
     // and results, a pending boundary, and monotonic revisions.
     assert.equal(events[0]?.kind, 'pending', 'the subscription starts with a fresh snapshot boundary');
-    assert.ok(events.some((event) => event.kind === 'append' && event.id === 'msg_partial_0' && event.delta === 'Still '), 'partial prose streams as appends');
+    const partialAppends = events.filter((event) => event.kind === 'append' && event.id === 'msg_partial_0');
+    assert.equal(partialAppends.map((event) => String(event.delta)).join(''), 'Still partial', 'partial prose streams as appends');
+    assert.equal(partialAppends.length, 1, 'deltas that arrive together are sent as one append');
     assert.ok(events.some((event) => event.kind === 'append' && event.id === 'msg_stream_1'), 'reasoning streams as appends');
     assert.ok(events.some((event) => event.kind === 'replace' && event.message?.id === 'toolu_stream' && typeof event.message.tool?.input === 'string'), 'partial tool input is published');
     assert.ok(events.some((event) => event.kind === 'replace' && event.message?.id === 'toolu_stream' && event.message.text === 'streamed output'), 'the tool result is published');
@@ -539,6 +565,7 @@ process.stdin.on('data', (chunk) => {
     assert.ok(late.some((event) => event.revision > boundary && (event.kind === 'append' || event.kind === 'replace')), 'late events stay newer than the snapshot boundary');
     releaseLate();
     const pending = await waitForConversation(service, 'process_test', /"id":"question_test"/);
+    assert.equal(pending.status, 'permission', 'a question beside a pending approval still reads as permission');
     const questionRequest = (pending.questions as { data: Array<{ id: string; questions: Array<Record<string, unknown>> }> }).data[0]!;
     assert.deepEqual(
       questionRequest.questions.map((question) => [question.id, question.multiple, question.custom, question.header]),
@@ -556,7 +583,7 @@ process.stdin.on('data', (chunk) => {
     assert.equal((await service.controls('process_test')).selectors.find((selector) => selector.id === 'model')?.value, 'sonnet', 'composer reflects the native launch model');
     const initial = await service.controls('process_test');
     assert.deepEqual(initial.selectors[0]?.options, [
-      { value: 'default', label: 'Default (Opus 5.5)' }, { value: 'sonnet', label: 'Sonnet 5' }, { value: 'haiku', label: 'Haiku 4.5' }
+      { value: 'default', label: 'Default (Opus 5.5)' }, { value: 'sonnet', label: 'Sonnet 5' }, { value: 'claude-sonnet-5[1m]', label: 'Sonnet 5 (1M context)' }, { value: 'haiku', label: 'Haiku 4.5' }
     ], 'model options come from the native initialize reply');
     assert.deepEqual(initial.commands, [
       { name: 'compact', description: 'Clear conversation history but keep a summary' }, { name: 'grill-me', description: 'Interview the user (user)' }
@@ -593,6 +620,24 @@ process.stdin.on('data', (chunk) => {
     await service.configure('process_test', 'model', 'haiku');
     assert.deepEqual((await service.controls('process_test')).selectors.map((selector) => selector.id), ['model', 'mode'], 'a model without effort levels has no effort control');
     await service.command('process_test', 'compact', '');
+    // Claude Code's own /model, typed into the conversation, moves the
+    // controls to the model it chose.
+    const switchModel = async (output: string, expected: string, message: string) => {
+      await service.command('process_test', 'model', output);
+      let switched = await service.controls('process_test');
+      for (let attempt = 0; attempt < 50 && switched.selectors[0]?.value !== expected; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        switched = await service.controls('process_test');
+      }
+      assert.equal(switched.selectors[0]?.value, expected, message);
+    };
+    await switchModel('plain', 'sonnet', 'a native /model is followed, through styling and its ID');
+    await switchModel('wide', 'claude-sonnet-5[1m]', 'the most specific listed name wins over a shorter one it starts with');
+    await switchModel('session', 'haiku', 'a session-only switch, with annotations after it, is followed');
+    await switchModel('default', 'default', 'the default marker selects Default');
+    await service.command('process_test', 'model', 'unknown');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal((await service.controls('process_test')).selectors[0]?.value, 'default', 'a name matching no listed model changes nothing');
 
     // Structured input: @ references with quoting, image blocks with validated
     // bytes, and the client uuid for native deduplication.
@@ -914,6 +959,7 @@ process.stdin.on('data', (chunk) => {
         until: (count: number) => waitFor(() => statuses().length >= count, 5_000),
         interrupt: () => activityService.interrupt(processId),
         reply: (requestId: string) => activityService.replyPermission(processId, requestId, 'once'),
+        answer: (requestId: string, answers: string[][]) => activityService.replyQuestion(processId, requestId, answers),
         close: async () => { releaseActivity(); await activityService.stop(processId); }
       };
     };
@@ -1056,6 +1102,20 @@ process.stdin.on('data', (chunk) => {
       await ask.until(4);
       assert.deepEqual(ask.statuses(), ['working', 'permission', 'working', 'idle'], `answering resumes the turn ${mode}`);
       await ask.close();
+
+      // A question alone waits on an answer, not a permission.
+      const question = await launchActivity(`question_${suffix}`, legacy);
+      const questionActivity = await question.observeActivity();
+      await question.prompt('question');
+      await question.until(2);
+      assert.deepEqual(question.statuses(), ['working', 'question'], `a pending question streams as question ${mode}`);
+      assert.equal((await question.snapshot()).status, 'question');
+      await waitFor(() => questionActivity.activity() === 'question');
+      questionActivity.dispose();
+      await question.answer('main_question', [['A']]);
+      await question.until(4);
+      assert.deepEqual(question.statuses(), ['working', 'question', 'working', 'idle'], `answering the question resumes the turn ${mode}`);
+      await question.close();
 
       // A background agent's request pending when the main turn ends goes
       // straight to permission, with no idle in between, and answering it

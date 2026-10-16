@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   summary with one Show subtitles toggle, on by default. Opening a family no
   longer changes whether its subtitle shows, and Alt-click no longer opens or
   closes every family.
+- Integrated Claude agents send streamed text to the browser at most every
+  50 ms, merged per message, instead of one event per few characters.
+- A browser tab opened before a server update loads the new version when it
+  opens a page whose code the update replaced, instead of failing to open it.
 
 ### Fixed
 
@@ -33,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Messages, idle timers and compaction still treat it as idle.
 - Claude and Codex auto-summary token usage now counts in Usage totals, daily charts, models, and
   projects, with a separate breakdown, without adding conversation-history entries.
+- An Integrated agent asking a question (Claude's AskUserQuestion, Codex user input, or an
+  MCP form) now shows "Has a question" in tabs, the sidebar, and notifications instead of
+  "Needs permission". A pending approval still shows "Needs permission".
+- Changing an Integrated Claude agent's model with Claude Code's own `/model`
+  command now updates the model shown in its controls.
 
 ## [0.2.5] - 2026-10-16
 

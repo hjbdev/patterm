@@ -48,6 +48,7 @@ const word = computed(() => {
   const { activity, process } = props.member;
   switch (activity.self) {
     case 'permission': return 'needs you';
+    case 'question': return 'asking';
     case 'error': return 'error';
     case 'closing': return 'done';
     case 'working': return 'working';

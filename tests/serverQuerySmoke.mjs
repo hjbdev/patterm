@@ -175,6 +175,14 @@ test("a paired host's history is cached once that host announces it; older hosts
   const changed = remote();
   await answer('shared again');
   assert.equal(await changed, 'shared again', 'its announcement reads again');
+  projects.value = [{ project: { id: 'local', remotes: [{ host: 'workstation', projectId: 'workstation:p' }] } }];
+  const downgraded = remote();
+  await answer('downgraded');
+  assert.equal(await downgraded, 'downgraded', 'a host that stops announcing history is read again');
+  projects.value = [
+    { project: { id: 'local', remotes: [{ host: 'workstation', projectId: 'workstation:p', sharesHistory: true }] } },
+    { project: { id: 'laptop:q', host: 'laptop' } }
+  ];
   for (const value of ['older one', 'older two']) {
     const read = topicCall('history', 'history_list', { project_id: 'laptop:q' });
     await answer(value);

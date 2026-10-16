@@ -47,7 +47,7 @@ export type AgentInterface = 'tui' | 'integrated';
 
 // Live activity of an agent/process. Mirrors patterm-cli IdleState
 // (internal/app idle detection). Runtime-derived, not a persisted column.
-export type ActivityState = 'working' | 'thinking' | 'idle' | 'permission' | 'error' | 'unknown';
+export type ActivityState = 'working' | 'thinking' | 'idle' | 'permission' | 'question' | 'error' | 'unknown';
 
 // sessions → AGENTS
 export interface CloseRequestRecord { summary: string; requestedAt: string; }

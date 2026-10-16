@@ -108,7 +108,7 @@ const PROCESS_STATUS_LABELS: Record<string, string> = {
 };
 
 // Activities during which an Integrated agent has a response to stop.
-const RESPONDING = new Set(['working', 'thinking', 'permission']);
+const RESPONDING = new Set(['working', 'thinking', 'permission', 'question']);
 
 export async function listCommandPaletteCommands(application: PattermApplication, context: CommandPaletteContext): Promise<{ commands: CommandDescriptor[] }> {
   const snapshot = application.currentWorkbench();

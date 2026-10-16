@@ -1,3 +1,4 @@
+import { awaitingUser } from './Activity';
 import { stripVTControlCharacters } from 'node:util';
 import { SecretRedactor } from './AgentHistory/SecretRedactor';
 import type { DatabaseService } from './DatabaseService';
@@ -53,7 +54,7 @@ export class AutoSummaryService {
   start(): void {
     this.unsubscribers.push(this.terminal.onFrame((frame) => {
       if (frame.type !== 'terminal-lifecycle' || !frame.processId) return;
-      if (frame.event === 'activity' && frame.activity === 'permission') {
+      if (frame.event === 'activity' && awaitingUser(frame.activity)) {
         const row = this.database.connection.prepare('select id from processes where pty_process_id = ?').get(frame.processId) as { id: string } | undefined;
         if (row) this.pending.get(row.id)?.controller?.abort();
       }
@@ -148,7 +149,7 @@ export class AutoSummaryService {
         if (this.jobs.size >= 2) break;
         const pending = this.pending.get(thread.id)!;
         const now = this.now(), settings = this.settings;
-        if (thread.activity === 'permission') { pending.controller?.abort(); continue; }
+        if (awaitingUser(thread.activity)) { pending.controller?.abort(); continue; }
         if (pending.controller || now < pending.retryAt || now - pending.attempted < settings.intervalSeconds * 1000) continue;
         try {
           const batch = reader.snapshot(() => {
@@ -178,7 +179,7 @@ export class AutoSummaryService {
               if (controller.signal.aborted || this.settings !== settings) return;
               const eligible = this.database.connection.prepare(`select 1 from processes p join sessions s on s.process_id = p.id
                 where p.id = ? and p.project_id = ? and p.kind = 'agent' and p.parent_process_id is null
-                  and p.status != 'closed' and p.activity != 'permission' and s.id = ? and s.resume_id is ? and s.harness = ?
+                  and p.status != 'closed' and p.activity not in ('permission', 'question') and s.id = ? and s.resume_id is ? and s.harness = ?
                   and s.id = (select id from sessions where process_id = p.id order by started_at desc, rowid desc limit 1)`).get(thread.id, thread.project_id, thread.session_id, thread.resume_id, thread.harness);
               if (!eligible) return;
               // An append or tool-only import need not waste a successful call.
@@ -219,7 +220,7 @@ export class AutoSummaryService {
     for (const [id, pending] of this.pending) {
       const row = this.database.connection.prepare('select kind, status, activity, pty_process_id, project_id from processes where id = ?').get(id) as { kind: string; status: string; activity: string; pty_process_id: string | null; project_id: string } | undefined;
       if (!row || row.status === 'closed') { pending.controller?.abort(); this.pending.delete(id); continue; }
-      if (row.kind === 'agent' || row.status !== 'running' || row.activity === 'permission' || !row.pty_process_id || pending.controller || this.jobs.size >= 2) continue;
+      if (row.kind === 'agent' || row.status !== 'running' || awaitingUser(row.activity) || !row.pty_process_id || pending.controller || this.jobs.size >= 2) continue;
       if (this.now() < pending.retryAt || this.now() - pending.attempted < this.settings.intervalSeconds * 1000 || this.now() - pending.changed < 2000) continue;
       const settings = this.settings, controller = new AbortController();
       pending.attempted = this.now(); pending.controller = controller;
@@ -231,7 +232,7 @@ export class AutoSummaryService {
           const result = await this.runner.run(settings, text, controller.signal, 'summary', {}, row.project_id);
           if (controller.signal.aborted || this.settings !== settings) return;
           const changed = this.database.connection.prepare(`update processes set auto_summary = ?, auto_status = ?, auto_summary_at = ?,
-            auto_summary_provider = ?, auto_summary_model = ? where id = ? and pty_process_id = ? and status = 'running' and activity != 'permission'`)
+            auto_summary_provider = ?, auto_summary_model = ? where id = ? and pty_process_id = ? and status = 'running' and activity not in ('permission', 'question')`)
             .run(summarySnapshot(result.summary), oneLine(result.status), new Date(this.now()).toISOString(), settings.provider, settings.models[settings.provider], id, row.pty_process_id).changes;
           if (changed) { pending.hash = text; pending.failures = 0; this.notify(); }
         } catch (error) { this.failed(pending, settings, controller, error); }

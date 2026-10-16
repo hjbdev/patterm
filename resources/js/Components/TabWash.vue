@@ -8,17 +8,23 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { subagentPulse, type RowActivity } from '../lib/rowActivity';
+import { subagentPulse, type Pulse, type RowActivity } from '../lib/rowActivity';
 
 const props = defineProps<{ activity: RowActivity }>();
 
 const wash = computed(() => {
-  const self = props.activity.self;
-  if (self === 'permission' || self === 'error') return { tone: self, side: 'start' };
-  const subagents = subagentPulse(props.activity);
-  if (subagents === 'permission' || subagents === 'error') return { tone: subagents, side: 'end' };
+  const self = tone(props.activity.self);
+  if (self) return { tone: self, side: 'start' };
+  const subagents = tone(subagentPulse(props.activity));
+  if (subagents) return { tone: subagents, side: 'end' };
   return null;
 });
+
+// A question washes amber like a permission.
+function tone(pulse: Pulse | null): 'permission' | 'error' | null {
+  if (pulse === 'permission' || pulse === 'question') return 'permission';
+  return pulse === 'error' ? 'error' : null;
+}
 </script>
 
 <style scoped>

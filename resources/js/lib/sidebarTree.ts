@@ -1,3 +1,4 @@
+import { awaitingUser, waitingReason } from './activity';
 import { agentLabel, type AgentTabFamily } from './agentTabs';
 import type { AgentNode } from './agentTree';
 import type { LiveProcessRecord } from './processTabs';
@@ -7,7 +8,7 @@ import { timerLabel, timerRemaining, timerRemainingToMinute } from './timers';
 import type { ProcessRecord, SessionRecord, TimerRecord } from '../types';
 
 export type SidebarUrgency = 'low' | 'normal' | 'high';
-export type SidebarAttention = 'permission' | 'error' | 'close' | 'unread';
+export type SidebarAttention = 'permission' | 'question' | 'error' | 'close' | 'unread';
 
 // What the sidebar's tree helpers read about the workbench. The sidebar
 // context provides it; tests pass a stand-in.
@@ -24,7 +25,7 @@ export const MAX_INDENT_DEPTH = 5;
 
 // Why an agent needs you, if it does.
 export function sessionAttention(view: SidebarTreeView, session: SessionRecord): SidebarAttention | null {
-  if (session.activity === 'permission') return 'permission';
+  if (awaitingUser(session.activity)) return session.activity;
   if (session.activity === 'error') return 'error';
   if (session.closeRequest) return 'close';
   return view.unreadUrgency(session.processId) === 'high' ? 'unread' : null;
@@ -34,7 +35,7 @@ export function sessionAttention(view: SidebarTreeView, session: SessionRecord):
 export function familyAttention(view: SidebarTreeView, family: AgentTabFamily): SidebarAttention | null {
   const states = family.options.map((option) => sessionAttention(view, option.session));
   if (view.ownedProcesses(family).some((process) => view.unreadUrgency(process.id) === 'high')) states.push('unread');
-  return states.find((state) => state === 'permission') ?? states.find((state) => state === 'error') ?? states.find((state) => state === 'close') ?? states.find(Boolean) ?? null;
+  return states.find((state) => state === 'permission') ?? states.find((state) => state === 'question') ?? states.find((state) => state === 'error') ?? states.find((state) => state === 'close') ?? states.find(Boolean) ?? null;
 }
 
 // The status group a family sits in when the sidebar groups by status:
@@ -56,7 +57,7 @@ export function familyStatus(view: SidebarTreeView, family: AgentTabFamily, acti
 export function waitingSession(view: SidebarTreeView, family: AgentTabFamily): SessionRecord | null {
   return family.options.find((option) => {
     const state = sessionAttention(view, option.session);
-    return state === 'permission' || state === 'error';
+    return state === 'permission' || state === 'question' || state === 'error';
   })?.session ?? family.options.find((option) => option.session.closeRequest)?.session ?? null;
 }
 
@@ -64,8 +65,8 @@ export function waitingSession(view: SidebarTreeView, family: AgentTabFamily): S
 export function familyWaitingOn(view: SidebarTreeView, family: AgentTabFamily): string | null {
   const session = waitingSession(view, family);
   if (!session) return null;
-  if (session.activity !== 'permission' && session.activity !== 'error') return session === family.root.session ? 'Ready to close' : `${agentLabel(session)} is ready to close`;
-  const reason = session.activity === 'permission' ? 'needs permission' : 'stopped with an error';
+  if (!awaitingUser(session.activity) && session.activity !== 'error') return session === family.root.session ? 'Ready to close' : `${agentLabel(session)} is ready to close`;
+  const reason = awaitingUser(session.activity) ? waitingReason(session.activity) : 'stopped with an error';
   return session === family.root.session ? reason[0]!.toUpperCase() + reason.slice(1) : `${agentLabel(session)} ${reason}`;
 }
 
