@@ -469,6 +469,31 @@ async function observedActivity(database: DatabaseService): Promise<void> {
   emit({ kind: 'status', status: 'idle' });
   await settle();
   assert.equal(backgroundTasks(), 0, 'a status alone clears finished tasks');
+
+  // A turn that ends with a new task and no pending event counts it.
+  tasks = [{ id: 'shell', kind: 'shell', status: 'running' }];
+  emit({ kind: 'status', status: 'working' });
+  emit({ kind: 'status', status: 'idle' });
+  await settle();
+  assert.equal(backgroundTasks(), 1, 'a turn\'s end counts the tasks it started');
+
+  // A read in flight when a task ends may predate the end; the turn's end
+  // queues another read behind it.
+  tasks = [];
+  emit({ kind: 'pending' });
+  await settle();
+  assert.equal(backgroundTasks(), 0);
+  let releaseInFlight!: (value: unknown) => void;
+  conversation = () => new Promise((resolve) => { releaseInFlight = resolve; });
+  tasks = [{ id: 'child', status: 'running' }];
+  emit({ kind: 'pending' });
+  await settle();
+  conversation = async () => ({ status: snapshot, tasks: [] });
+  emit({ kind: 'status', status: 'idle' });
+  releaseInFlight({ status: 'idle', tasks: [{ id: 'child', status: 'running' }] });
+  await settle();
+  await settle();
+  assert.equal(backgroundTasks(), 0, 'a read that predates a task\'s end does not leave it counted');
   conversation = async () => ({ status: snapshot });
 
   // A turn that ended while disconnected is caught by the reconnect handoff.

@@ -1143,9 +1143,10 @@ export class IntegratedAgentService {
         // end while background agents keep the status unchanged, so every
         // status retries it; a busy agent keeps it held.
         this.flushHeld(key);
-        // OpenCode ends a subagent task with a status alone, so a status
-        // re-reads the tasks while any are counted.
-        if (observer.stale || this.backgroundTasks(key) > 0) this.refreshActivity(key, observer);
+        // A turn's end re-reads the tasks, or queues another read behind one
+        // in flight: OpenCode ends a subagent task with a status alone.
+        const ended = event.status === 'idle' || event.status === 'error';
+        if (observer.stale || ended) this.refreshActivity(key, observer);
       } else if (event.kind === 'pending' || observer.stale) {
         // Pending carries permission changes a provider does not stream and
         // reconnect handoffs.
@@ -1286,10 +1287,6 @@ export class IntegratedAgentService {
 
   private activity(processId: string): string | undefined {
     return (this.database.connection.prepare('select activity from processes where id = ?').get(processId) as { activity: string } | undefined)?.activity;
-  }
-
-  private backgroundTasks(processId: string): number {
-    return (this.database.connection.prepare('select background_tasks from processes where id = ?').get(processId) as { background_tasks: number } | undefined)?.background_tasks ?? 0;
   }
 
   // Returns the replaced activity, or null when nothing changed.
