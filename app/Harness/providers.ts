@@ -80,6 +80,8 @@ const codex: HarnessProvider = {
   buildLaunch({ executablePath, mcp, mcpServers = [], agentContext, resumeId, model, reasoning, serviceTier }: HarnessLaunchInput): HarnessLaunchPlan {
     const context = agentContext?.trim();
     const overrides = [
+      'approval_policy="on-request"',
+      'approvals_reviewer="auto_review"',
       ...codexMcpOverrides(mcpServers, mcp),
       `mcp_servers.patterm.command=${tomlString(mcp.command)}`,
       `mcp_servers.patterm.args=${tomlStringArray(mcp.args)}`,

@@ -198,6 +198,11 @@ function assertProviderPlans(runtimeDir: string): void {
   assert.equal(resumedCodex.args.at(-1), 'codex_resume_test', 'codex passes the exact session id');
   assert.ok(resumedCodex.args.includes('mcp_servers.patterm.command="/opt/electron"'), 'codex resume keeps MCP injection');
 
+  for (const plan of [codex, resumedCodex]) {
+    assert.ok(plan.args.includes('approval_policy="on-request"'), 'Codex enables approval requests');
+    assert.ok(plan.args.includes('approvals_reviewer="auto_review"'), 'Codex routes eligible approvals to auto-review');
+  }
+
   // OpenCode attaches to a session prepared through the shared-server API.
   const opencode = providerById('opencode').buildLaunch({ executablePath: '/usr/bin/opencode', mcp: MCP, runtimeDir, agentContext: 'Agent startup context' });
   assert.deepEqual(opencode.args, []);

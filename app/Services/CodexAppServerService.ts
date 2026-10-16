@@ -166,6 +166,8 @@ export class CodexAppServerService {
     const logPath = path.join(directory, `${key}.log`);
     const overrides = [...globalCodexMcpOverrides(input.mcpServers ?? [], input.mcp), ...codexMcpOverrides(input.mcp)];
     const args = [
+      '-c', 'approval_policy="on-request"',
+      '-c', 'approvals_reviewer="auto_review"',
       ...overrides.flatMap((override) => ['-c', override]),
       ...(input.model ? ['-c', `model=${JSON.stringify(input.model)}`] : []),
       ...(input.reasoning ? ['-c', `model_reasoning_effort=${JSON.stringify(input.reasoning)}`] : []),
@@ -183,7 +185,7 @@ export class CodexAppServerService {
       await waitForSocket(socketPath, pid);
       const client = await this.connect(socketPath);
       const response = await client.request(input.resumeId ? 'thread/resume' : 'thread/start', input.resumeId
-        ? { threadId: input.resumeId, cwd: input.cwd, developerInstructions: input.context, excludeTurns: true, ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}) }
+        ? { threadId: input.resumeId, cwd: input.cwd, developerInstructions: input.context, approvalPolicy: 'on-request', approvalsReviewer: 'auto_review', excludeTurns: true, ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}) }
         : { cwd: input.cwd, developerInstructions: input.context, ephemeral: false, ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}) });
       const thread = record(record(response).thread);
       if (typeof thread.id !== 'string') throw new Error('Codex app-server did not return a thread ID');

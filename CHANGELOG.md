@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-10-17
+
+### Fixed
+
+- Codex terminal and Integrated sessions explicitly use auto-review for eligible
+  approval requests on launch and resume, including on Windows.
+
 ## [0.2.6] - 2026-10-16
 
 ### Added

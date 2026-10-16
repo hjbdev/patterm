@@ -1,34 +1,10 @@
-## Patterm 0.2.6
+## Patterm 0.2.7
 
-This release adds an All agents view across projects and quota forecasts,
-and improves agent recovery, activity indicators, and compaction.
+Codex now explicitly uses auto-review for eligible approval requests in terminal
+and Integrated sessions, including on Windows. The setting applies when launching
+or resuming an agent; existing running agents need to be restarted or resumed.
 
-### Added
-
-- All agents shows open agents across projects, grouped by project or in your
-  own order. Choose which projects appear and launch agents locally or on a
-  paired host, with a + button beside each project for quick launches.
-- Usage estimates how much quota will remain at reset, or when it may run out,
-  based on your recent pace.
-
-### Changed
-
-- One Show subtitles toggle controls sidebar subtitles.
-- Integrated Claude batches streamed text to the browser every 50 ms.
-- Browser tabs load updated page code after a server update.
-
-### Fixed
-
-- Failed Integrated agents retain their subagent families and can be opened
-  for recovery. Restart carries subagents, timers, and session context across.
-- Context usage refreshes after compaction, and idle compaction preserves
-  questions and notifications, recovers saved deadlines after restart, and
-  handles failures without misleading activity or completion notifications.
-- Agents with background tasks show that they are still working, while
-  questions show Has a question and approvals show Needs permission.
-- Auto-summary tokens count in Usage with a separate breakdown.
-- Claude's /model command updates the model shown in its controls.
-- History reads tolerate database initialization by the import worker.
+This uses Codex's native auto-review while preserving its configured sandbox.
 
 ## Platform support
 

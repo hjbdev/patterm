@@ -210,6 +210,12 @@ function serve(socket) {
       else if (request.method === 'model/list') send({jsonrpc:'2.0', id:request.id, result:{data:[{id:'gpt-test',displayName:'GPT Test',isDefault:true,defaultReasoningEffort:'medium',supportedReasoningEfforts:[{reasoningEffort:'low',description:'Faster'},{reasoningEffort:'medium',description:'Balanced'},{reasoningEffort:'high',description:'Deeper'}],serviceTiers:[{id:'priority',name:'Fast',description:'1.5x speed'}]}]}});
       else if (request.method === 'config/read') send({jsonrpc:'2.0', id:request.id, result:{config:{service_tier:'default'}}});
       else if (request.method === 'thread/start' || request.method === 'thread/resume') {
+        // A resumed thread restores saved user-review settings unless overridden.
+        if (request.method === 'thread/resume' &&
+            (request.params.approvalPolicy !== 'on-request' || request.params.approvalsReviewer !== 'auto_review')) {
+          send({jsonrpc:'2.0', id:request.id, error:{code:-32602, message:'Resume retained saved permission settings'}});
+          return;
+        }
         send({jsonrpc:'2.0', id:request.id, result:{thread:{id:'thread_test'}}});
         // Codex starts MCP servers right after the thread, before Patterm observes it.
         if (process.env.MCP_FAILURE) {
@@ -536,6 +542,8 @@ if (socketPath) {
   });
   assert.equal(prepared.resumeId, 'thread_test');
   const nativeArgs = JSON.parse(fs.readFileSync(argvPath, 'utf8')) as string[];
+  assert.ok(nativeArgs.includes('approval_policy="on-request"'), 'Integrated Codex enables approval requests');
+  assert.ok(nativeArgs.includes('approvals_reviewer="auto_review"'), 'Integrated Codex uses auto-review');
   assert.ok(nativeArgs.includes('model="gpt-test"'), 'Integrated Codex pins the selected model before app-server');
   assert.ok(nativeArgs.includes('model_reasoning_effort="high"'), 'Integrated Codex pins the selected effort before app-server');
   assert.ok(nativeArgs.includes('service_tier="priority"'), 'Integrated Codex pins the selected service tier before app-server');
@@ -689,7 +697,7 @@ if (socketPath) {
   let launchCount = 0;
   // Launch waits for app-server to start, which can take seconds on a busy
   // Windows runner, so only the requests after it get a short timeout.
-  const launch = async (mode: NodeJS.ProcessEnv, requestTimeoutMs?: number) => {
+  const launch = async (mode: NodeJS.ProcessEnv, requestTimeoutMs?: number, resumeId: string | null = null) => {
     launchCount += 1;
     const launcher = new CodexAppServerService(database, runtimeDirectory, mode, process.execPath);
     const launched = await launcher.prepare({
@@ -698,7 +706,7 @@ if (socketPath) {
       name: 'Codex',
       context: 'Project context',
       mcp: { command: process.execPath, args: ['shim.js'], env: { PATTERM_MCP_SOCKET: '/tmp/mcp.sock', PATTERM_MCP_IDENTITY: 'identity_test' } },
-      resumeId: null
+      resumeId
     });
     const processId = `process_delivery_${launchCount}`;
     database.connection.prepare(`insert into processes (id,project_id,kind,name,status,cwd,argv,created_at,updated_at) values (?, 'project_test','agent','Codex','running',?,?,?,?)`)
@@ -709,6 +717,10 @@ if (socketPath) {
     launcher.disconnect();
     return { service: new CodexAppServerService(database, runtimeDirectory, mode, process.execPath, undefined, { requestTimeoutMs }), processId };
   };
+
+  const resumed = await launch({ ...process.env }, undefined, 'thread_saved_user_review');
+  await resumed.service.stop(resumed.processId);
+  resumed.service.disconnect();
 
   const lost = await launch({ ...process.env, HANG_TURN_RESPONSE: '1' }, 1_000);
   const lostId = '55555555-5555-5555-5555-555555555555';
