@@ -1,3 +1,4 @@
+import { awaitingUser } from './Activity';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -470,7 +471,7 @@ export class RoutineService {
 
   private toRecord(row: RoutineRow): RoutineRecord {
     const last = this.db.prepare(`${RUN_SELECT} where routine_runs.routine_id = ? order by routine_runs.scheduled_for desc limit 1`).get(row.id) as unknown as RunRow | undefined;
-    const waiting = this.db.prepare(`${RUN_SELECT} where routine_runs.routine_id = ? and routine_runs.status = 'running' and processes.status = 'running' and processes.activity = 'permission'
+    const waiting = this.db.prepare(`${RUN_SELECT} where routine_runs.routine_id = ? and routine_runs.status = 'running' and processes.status = 'running' and processes.activity in ('permission', 'question')
       order by routine_runs.scheduled_for desc limit 1`).get(row.id) as unknown as RunRow | undefined;
     return {
       routine_id: row.id,
@@ -587,7 +588,7 @@ function toRunRecord(row: RunRow): RoutineRunRecord {
     finished_at: row.finished_at,
     status: row.status,
     report_status: row.report_status,
-    needs_you: row.status === 'running' && row.process_status === 'running' && row.activity === 'permission',
+    needs_you: row.status === 'running' && row.process_status === 'running' && awaitingUser(row.activity),
     excerpt: row.excerpt,
     report: row.report,
     live: row.process_status === 'running',

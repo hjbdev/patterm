@@ -68,7 +68,7 @@ const activity = (id: string) => activityFor(byId.get(id)!);
 {
   // A tab counts subagents at any depth, and thinking counts as working.
   const triage = activity('triage');
-  assert.deepEqual(triage, { self: 'idle', subagents: { working: 3, permission: 0, error: 0 } });
+  assert.deepEqual(triage, { self: 'idle', subagents: { working: 3, permission: 0, question: 0, error: 0 } });
   assert.equal(describeActivity(triage), 'Idle, 3 subagents working');
   assert.equal(subagentPulse(triage), 'working');
   assert.equal(subagentCountClass(triage), 'text-muted-foreground');
@@ -76,15 +76,15 @@ const activity = (id: string) => activityFor(byId.get(id)!);
 
 {
   // A subagent's row covers only the agents below it.
-  assert.deepEqual(activity('hygiene'), { self: 'idle', subagents: { working: 1, permission: 0, error: 0 } });
+  assert.deepEqual(activity('hygiene'), { self: 'idle', subagents: { working: 1, permission: 0, question: 0, error: 0 } });
   assert.equal(describeActivity(activity('hygiene')), 'Idle, 1 subagent working');
-  assert.deepEqual(activity('security'), { self: 'working', subagents: { working: 0, permission: 0, error: 0 } });
+  assert.deepEqual(activity('security'), { self: 'working', subagents: { working: 0, permission: 0, question: 0, error: 0 } });
 }
 
 {
   // A subagent at a prompt outranks an error, which outranks work.
   const lead = activity('lead');
-  assert.deepEqual(lead, { self: 'working', subagents: { working: 0, permission: 1, error: 1 } });
+  assert.deepEqual(lead, { self: 'working', subagents: { working: 0, permission: 1, question: 0, error: 1 } });
   assert.equal(subagentPulse(lead), 'permission');
   assert.equal(subagentCountClass(lead), 'text-warning');
   assert.equal(describeActivity(lead), 'Working, 1 subagent needs permission, 1 subagent has an error');
@@ -95,16 +95,29 @@ const activity = (id: string) => activityFor(byId.get(id)!);
 {
   // The agent's own state stays separate from its subagents'.
   const solo = activity('solo');
-  assert.deepEqual(solo, { self: 'permission', subagents: { working: 0, permission: 0, error: 0 } });
+  assert.deepEqual(solo, { self: 'permission', subagents: { working: 0, permission: 0, question: 0, error: 0 } });
   assert.equal(describeActivity(solo), 'Needs permission');
   assert.equal(subagentPulse(solo), null);
   assert.equal(subagentCountClass(solo), 'text-muted-foreground');
 }
 
 {
+  // A question needs you like a permission, and says what it is.
+  const asking = activityFor(session('curious', null, 'question'));
+  assert.equal(asking.self, 'question');
+  assert.equal(describeActivity(asking), 'Has a question');
+  assert.equal(countInRing(asking), false, 'the ring shows `?` for a question');
+  const lead = buildAgentTabFamilies([session('boss', null, 'working'), session('asker', 'boss', 'question')]);
+  const boss = activityLookup(lead)(lead[0]!.root.session);
+  assert.equal(subagentPulse(boss), 'question');
+  assert.equal(subagentCountClass(boss), 'text-warning');
+  assert.equal(describeActivity(boss), 'Working, 1 subagent has a question');
+}
+
+{
   // Unknown looks idle, without a spinner or a count, but says it is unknown.
   const unsure = activity('unsure');
-  assert.deepEqual(unsure, { self: 'unknown', subagents: { working: 0, permission: 0, error: 0 } });
+  assert.deepEqual(unsure, { self: 'unknown', subagents: { working: 0, permission: 0, question: 0, error: 0 } });
   assert.equal(describeActivity(unsure), 'Unknown');
   assert.equal(subagentPulse(unsure), null);
   assert.equal(describeActivity(processActivity(processRecord('dev', 'running', 'unknown'))), 'Unknown');
@@ -119,7 +132,7 @@ const activity = (id: string) => activityFor(byId.get(id)!);
 
 {
   // An agent outside the families shows only its own state.
-  assert.deepEqual(activityFor(session('alone', null, 'thinking')), { self: 'working', subagents: { working: 0, permission: 0, error: 0 } });
+  assert.deepEqual(activityFor(session('alone', null, 'thinking')), { self: 'working', subagents: { working: 0, permission: 0, question: 0, error: 0 } });
 }
 
 {
@@ -145,7 +158,7 @@ const activity = (id: string) => activityFor(byId.get(id)!);
 
 {
   // The count sits in the status ring unless the ring shows `?`, `✕` or `✓`.
-  const none = { working: 0, permission: 0, error: 0 };
+  const none = { working: 0, permission: 0, question: 0, error: 0 };
   for (const self of ['working', 'idle', 'unknown'] as const) assert.equal(countInRing({ self, subagents: none }), true);
   for (const self of ['permission', 'error', 'closing'] as const) assert.equal(countInRing({ self, subagents: none }), false);
 }

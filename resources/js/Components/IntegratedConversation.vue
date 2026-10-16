@@ -256,6 +256,7 @@
 
 <script setup lang="ts">
 import { randomId } from '../lib/randomId';
+import { awaitingUser } from '../lib/activity';
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, shallowRef, watch } from 'vue';
 import { Button } from './ui/button';
 import CloseRequestCard from './CloseRequestCard.vue';
@@ -1325,11 +1326,11 @@ function endSnapshot(): void {
   for (const event of buffered) applyStreamEvent(event);
 }
 
-// Status as the indicator shows it: an agent waiting for permission is
-// mid-turn, and its card shows what it needs. Unknown or missing status keeps
+// Status as the indicator shows it: an agent waiting for permission or an
+// answer is mid-turn, and its card shows what it needs. Unknown or missing status keeps
 // what is shown rather than claiming the agent is idle.
 function snapshotStatus(value: unknown): 'working' | 'error' | 'idle' | null {
-  if (value === 'working' || value === 'thinking' || value === 'permission') return 'working';
+  if (value === 'working' || value === 'thinking' || awaitingUser(value)) return 'working';
   if (value === 'error' || value === 'failed') return 'error';
   return value === 'idle' ? 'idle' : null;
 }
@@ -1375,8 +1376,9 @@ function applyStreamEvent(event: ConversationStreamEvent): void {
     streamStatus.value = snapshotStatus(event.status) ?? '';
     statusDetail.value = event.status === 'error' ? event.detail ?? '' : '';
     // Completion and interruption re-read the authoritative snapshot. A
-    // permission arrives with a pending event, which re-reads it already.
-    if ((event.status !== 'working' && event.status !== 'permission') || gap) void refresh();
+    // permission or question arrives with a pending event, which re-reads it
+    // already.
+    if ((event.status !== 'working' && !awaitingUser(event.status)) || gap) void refresh();
     return;
   }
   if (event.kind === 'pending' || gap) void refresh();

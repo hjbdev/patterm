@@ -5,6 +5,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { pathsMatch } from '../Platform/PathIdentity';
 import { commandLineTooLong, execFileResolved, resolveService } from '../Platform/ServiceProcess';
+import { awaitingActivity } from './Activity';
 import type { DatabaseService } from './DatabaseService';
 import { firstSemver, type McpServerSpec } from '../Harness/HarnessProvider';
 import { openCodeMcpConfigs } from '../Harness/McpDelivery';
@@ -46,9 +47,11 @@ type OpenCodeEmit = (event: Omit<IntegratedConversationEvent, 'processId' | 'rev
 interface OpenCodeActivity {
   execution: 'running' | 'idle' | 'error' | 'unknown';
   detail: string;
-  // Pending permission and form request id -> the session that asked, and
-  // recently answered ids a read may still find pending for a moment.
+  // Pending permission and form request id -> the session that asked, which
+  // of them are forms, and recently answered ids a read may still find
+  // pending for a moment.
   requests: Map<string, string>;
+  forms: Set<string>;
   answered: Set<string>;
   children: Set<string>;
   // Bumped by every stream change, so a snapshot knows whether the stream
@@ -682,13 +685,13 @@ export class OpenCodeServerService {
     state: OpenCodeActivity,
     version: number,
     readAt: number,
-    native: { active: unknown; rows: unknown[]; requests: Array<Record<string, unknown>>; sessionId: string }
+    native: { active: unknown; rows: unknown[]; requests: Array<Record<string, unknown>>; forms: Set<string>; sessionId: string }
   ): { status: OpenCodeStatus | undefined; detail: string } {
     const running = openCodeRunning(native.active, native.sessionId);
     const requests = new Map(native.requests.flatMap((row) => typeof row.id === 'string' && !state.answered.has(row.id)
       ? [[row.id, typeof row.sessionID === 'string' ? row.sessionID : native.sessionId] as [string, string]]
       : []));
-    if (running === undefined) return { status: requests.size ? 'permission' : undefined, detail: '' };
+    if (running === undefined) return { status: requests.size ? awaitingActivity(approvals(requests, native.forms)) : undefined, detail: '' };
     // While an end is held back or events wait behind a lookup, the read
     // reports no status, so callers keep what they show: the queue may yet
     // resume the work, and the last streamed status can be older than a
@@ -708,6 +711,7 @@ export class OpenCodeServerService {
     state.execution = running && !ended ? 'running' : failed ? 'error' : 'idle';
     state.detail = detail;
     state.requests = requests;
+    state.forms = native.forms;
     state.children = new Set([...candidates].filter((child) => record(live[child]).type === 'running'));
     return { status: activityStatus(state) ?? undefined, detail };
   }
@@ -1416,7 +1420,8 @@ export class OpenCodeServerService {
     }
     const { status, detail } = this.snapshotActivity(activity, activityVersion, readAt, {
       active, rows, sessionId: runtime.resumeId,
-      requests: [...permissions, ...forms].map(record)
+      requests: [...permissions, ...forms].map(record),
+      forms: new Set(forms.flatMap((form) => typeof record(form).id === 'string' ? [record(form).id as string] : []))
     });
     return {
       process_id: processId, session_id: runtime.sessionId, provider_session_id: runtime.resumeId, provider: 'opencode',
@@ -1934,7 +1939,7 @@ function executionEvent(type: string, data: Record<string, unknown>): OpenCodeEx
 
 function newActivity(): OpenCodeActivity {
   return {
-    execution: 'unknown', detail: '', requests: new Map(), answered: new Set(), children: new Set(), version: 0,
+    execution: 'unknown', detail: '', requests: new Map(), forms: new Set(), answered: new Set(), children: new Set(), version: 0,
     endedAt: 0, admittedAt: 0, emitted: null, settling: null, emitters: new Set(), queued: 0
   };
 }
@@ -1950,6 +1955,7 @@ function applyRequest(state: OpenCodeActivity, type: string, data: Record<string
   if (typeof asked === 'string') {
     if (state.requests.get(asked) === owner) return false;
     state.requests.set(asked, owner);
+    if (type === 'form.created') state.forms.add(asked);
     return true;
   }
   const settled = type === 'permission.replied' ? data.requestID : type === 'form.replied' || type === 'form.cancelled' ? data.id : undefined;
@@ -1957,13 +1963,21 @@ function applyRequest(state: OpenCodeActivity, type: string, data: Record<string
   // The daemon reports the answer just before it drops the request.
   state.answered.add(settled);
   if (state.answered.size > 200) state.answered.delete(state.answered.values().next().value!);
+  state.forms.delete(settled);
   return state.requests.delete(settled);
+}
+
+// How many pending requests are permissions rather than forms.
+function approvals(requests: Map<string, string>, forms: Set<string>): number {
+  return [...requests.keys()].filter((id) => !forms.has(id)).length;
 }
 
 function dropRequests(state: OpenCodeActivity, owner: string): boolean {
   let changed = false;
   for (const [id, session] of state.requests) {
-    if (session === owner) changed = state.requests.delete(id) || changed;
+    if (session !== owner) continue;
+    state.forms.delete(id);
+    changed = state.requests.delete(id) || changed;
   }
   return changed;
 }
@@ -1973,7 +1987,7 @@ function dropRequests(state: OpenCodeActivity, owner: string): boolean {
 // failure until the next execution, then idle. Otherwise null while this
 // session's own state is unknown.
 function activityStatus(state: OpenCodeActivity): OpenCodeStatus | null {
-  if (state.requests.size) return 'permission';
+  if (state.requests.size) return awaitingActivity(approvals(state.requests, state.forms));
   if (state.execution === 'running' || state.children.size) return 'working';
   if (state.execution === 'error') return 'error';
   return state.execution === 'idle' ? 'idle' : null;

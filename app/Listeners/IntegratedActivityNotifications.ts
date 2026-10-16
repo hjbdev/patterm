@@ -1,10 +1,11 @@
 import type { CloseRequestActions } from '../Actions/CloseRequestActions';
+import { awaitingUser } from '../Services/Activity';
 import type { IntegratedActivityChange } from '../Services/IntegratedAgentService';
 import type { NotificationService } from '../Services/NotificationService';
 import type { TriageDecision } from '../Services/NotificationTriage';
 
 export interface IntegratedActivityNotificationContext {
-  notifications: Pick<NotificationService, 'turnActivity' | 'resolveHandled' | 'resolve'>;
+  notifications: Pick<NotificationService, 'turnActivity' | 'waiting' | 'resolveHandled' | 'resolve'>;
   raise(input: Parameters<NotificationService['raise']>[0]): void;
   // Created after this listener is registered.
   closeRequests(): Pick<CloseRequestActions, 'clear' | 'pending' | 'announce'> | null;
@@ -23,7 +24,11 @@ export function integratedActivityNotifications(context: IntegratedActivityNotif
     // An automatic compaction is not work for the user: it leaves their open
     // requests alone, and its end or failure is not announced.
     const compacting = context.compacting(processId);
-    if (activity === 'permission') context.raise({ processId, source: 'integrated', kind: 'permission', body: 'Waiting for your permission', dedupeKey: 'integrated:permission' });
+    if (awaitingUser(activity)) {
+      void context.notifications.waiting(processId, previous, activity).catch((error: unknown) => {
+        context.log('raise.failed', { source: 'integrated', kind: 'permission', message: error instanceof Error ? error.message : String(error) });
+      });
+    }
     else if (activity === 'working') {
       if (compacting) return;
       context.notifications.resolveHandled(processId);
@@ -36,7 +41,7 @@ export function integratedActivityNotifications(context: IntegratedActivityNotif
     else if (activity === 'idle') {
       context.notifications.resolve({ process_id: processId, kinds: ['permission'] });
       // Reconnect snapshots are not turns the user has not seen.
-      const turnEnded = !snapshot && !compacting && (previous === 'working' || previous === 'thinking' || previous === 'permission');
+      const turnEnded = !snapshot && !compacting && (previous === 'working' || previous === 'thinking' || awaitingUser(previous));
       if (!turnEnded) return;
       // A turn that asked to be closed announces that instead of finishing.
       const closeRequests = context.closeRequests();

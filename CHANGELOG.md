@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Messages, idle timers and compaction still treat it as idle.
 - Claude and Codex auto-summary token usage now counts in Usage totals, daily charts, models, and
   projects, with a separate breakdown, without adding conversation-history entries.
+- An Integrated agent asking a question (Claude's AskUserQuestion, Codex user input, or an
+  MCP form) now shows "Has a question" in tabs, the sidebar, and notifications instead of
+  "Needs permission". A pending approval still shows "Needs permission".
 - An automatic idle compaction no longer dismisses an agent's open questions,
   close request or other notifications. When it ends, the close request is not
   announced again, and a failed compaction no longer reports an agent error.

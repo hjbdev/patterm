@@ -33,7 +33,7 @@ const spinning = computed(() => working.value || ((props.activity.self === 'idle
 const mark = computed(() => {
   const self = props.activity.self;
   if (self === 'closing') return CLOSING_MARK;
-  return self === 'permission' || self === 'error' ? activityIcon(self) : null;
+  return self === 'permission' || self === 'question' || self === 'error' ? activityIcon(self) : null;
 });
 const ringCount = computed(() => Boolean(props.count) && countInRing(props.activity));
 const description = computed(() => describeActivity(props.activity));

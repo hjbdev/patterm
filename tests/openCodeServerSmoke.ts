@@ -938,8 +938,9 @@ async function checkStreamedActivity(input: {
     // A subagent's form pauses this session too.
     mark = events.length;
     daemonState.emit('session.created', { sessionID: 'ses_fg_child', parentID: first });
+    // A form alone is a question, not a permission.
     daemonState.emit('form.created', { form: { id: 'frm_child_live', sessionID: 'ses_fg_child', title: 'Pick', fields: [] } });
-    await waitFor(() => statuses(mark).includes('permission'));
+    await waitFor(() => statuses(mark).includes('question'));
     mark = events.length;
     daemonState.emit('form.cancelled', { id: 'frm_child_live', sessionID: 'ses_fg_child' });
     await waitFor(() => statuses(mark).includes('working'));
