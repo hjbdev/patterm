@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Integrated Claude agents send streamed text to the browser at most every
+  50 ms, merged per message, instead of one event per few characters.
+- A browser tab opened before a server update loads the new version when it
+  opens a page whose code the update replaced, instead of failing to open it.
+
+### Fixed
+
+- Changing an Integrated Claude agent's model with Claude Code's own `/model`
+  command now updates the model shown in its controls.
+
 ## [0.2.5] - 2026-10-16
 
 ### Changed

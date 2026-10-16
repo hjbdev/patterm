@@ -52,6 +52,11 @@ process.stdin.on('data', (chunk) => {
     if (!line.trim()) continue;
     const event = JSON.parse(line);
     const frame = (value) => process.stdout.write(JSON.stringify(value) + '\\n');
+    // Claude Code's own /model answers with command output only.
+    if (event.type === 'user' && JSON.stringify(event.message && event.message.content).includes('/model sonnet')) {
+      frame({type:'system',subtype:'local_command_output',content:'Set model to \\u001b[1mSonnet 5 (claude-sonnet-5)\\u001b[22m',uuid:'model_switch'});
+      continue;
+    }
     if (process.env.ACTIVITY && event.type === 'control_request' && event.request && event.request.subtype === 'interrupt') {
       // An interrupt ends a running turn with error_during_execution; with
       // nothing running there is no result, only another idle report.
@@ -483,7 +488,7 @@ process.stdin.on('data', (chunk) => {
     assert.equal(streamedRows.find((message) => message.id === 'msg_native_1')?.kind, 'text');
     assert.equal(streamedRows.find((message) => message.id === 'msg_native_1')?.text, 'Partial text');
     assert.equal(streamedRows.find((message) => message.id === 'msg_native_2')?.text, 'Second text', 'a later text block does not overwrite the earlier one');
-    assert.ok(events.some((event) => event.kind === 'append' && event.id === 'msg_native_1' && event.delta === 'Partial '), 'partial text streams before its per-block assistant frame');
+    assert.ok(events.some((event) => event.kind === 'append' && event.id === 'msg_native_1' && String(event.delta).startsWith('Partial ')), 'partial text streams before its per-block assistant frame');
     assert.ok(events.some((event) => event.kind === 'append' && event.id === 'msg_native_2'), 'a later block keeps its own partial stream');
     const nativeEdit = streamedRows.find((message) => message.id === 'toolu_native_edit')!;
     assert.equal(nativeEdit.kind, 'tool');
@@ -517,7 +522,9 @@ process.stdin.on('data', (chunk) => {
     // Targeted events: appends for text and reasoning, replaces for tool input
     // and results, a pending boundary, and monotonic revisions.
     assert.equal(events[0]?.kind, 'pending', 'the subscription starts with a fresh snapshot boundary');
-    assert.ok(events.some((event) => event.kind === 'append' && event.id === 'msg_partial_0' && event.delta === 'Still '), 'partial prose streams as appends');
+    const partialAppends = events.filter((event) => event.kind === 'append' && event.id === 'msg_partial_0');
+    assert.equal(partialAppends.map((event) => String(event.delta)).join(''), 'Still partial', 'partial prose streams as appends');
+    assert.equal(partialAppends.length, 1, 'deltas that arrive together are sent as one append');
     assert.ok(events.some((event) => event.kind === 'append' && event.id === 'msg_stream_1'), 'reasoning streams as appends');
     assert.ok(events.some((event) => event.kind === 'replace' && event.message?.id === 'toolu_stream' && typeof event.message.tool?.input === 'string'), 'partial tool input is published');
     assert.ok(events.some((event) => event.kind === 'replace' && event.message?.id === 'toolu_stream' && event.message.text === 'streamed output'), 'the tool result is published');
@@ -593,6 +600,15 @@ process.stdin.on('data', (chunk) => {
     await service.configure('process_test', 'model', 'haiku');
     assert.deepEqual((await service.controls('process_test')).selectors.map((selector) => selector.id), ['model', 'mode'], 'a model without effort levels has no effort control');
     await service.command('process_test', 'compact', '');
+    // Claude Code's own /model, typed into the conversation, moves the
+    // controls to the model it chose.
+    await service.command('process_test', 'model', 'sonnet');
+    let switched = await service.controls('process_test');
+    for (let attempt = 0; attempt < 50 && switched.selectors[0]?.value !== 'sonnet'; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      switched = await service.controls('process_test');
+    }
+    assert.equal(switched.selectors[0]?.value, 'sonnet', 'a native /model is followed');
 
     // Structured input: @ references with quoting, image blocks with validated
     // bytes, and the client uuid for native deduplication.

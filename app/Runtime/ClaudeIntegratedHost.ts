@@ -161,6 +161,8 @@ server.listen(ipcPath(config.socketPath), () => restrictIpc(config.socketPath));
 async function handle(socket: net.Socket, request: JsonRecord): Promise<void> {
   const id = request.id;
   const params = record(request.params);
+  // A snapshot or subscription boundary includes every streamed delta so far.
+  if (request.method === 'conversation' || request.method === 'controls' || request.method === 'subscribe') flushAppends();
   if (request.method === 'conversation') {
     respond(socket, id, {
       messages: { data: messages },
@@ -866,12 +868,12 @@ function applyStreamEvent(event: JsonRecord, parent: string | null): void {
     const delta = record(event.delta);
     if (delta.type === 'text_delta' && typeof delta.text === 'string') {
       appendText(id, delta.text);
-      publish({ kind: 'append', id, delta: delta.text });
+      publishAppend(id, delta.text);
       return;
     }
     if (delta.type === 'thinking_delta' && typeof delta.thinking === 'string') {
       appendText(id, delta.thinking);
-      publish({ kind: 'append', id, delta: delta.thinking });
+      publishAppend(id, delta.thinking);
       return;
     }
     if (delta.type === 'input_json_delta' && typeof delta.partial_json === 'string') {
@@ -983,6 +985,7 @@ function receiveSystem(event: JsonRecord): void {
   }
   // Output of local slash commands such as /cost or /context.
   if (event.subtype === 'local_command_output' && typeof event.content === 'string' && event.content.trim()) {
+    followModelCommand(event.content);
     upsertMessage({ id: `command_${typeof event.uuid === 'string' ? event.uuid : randomUUID()}`, role: 'assistant', kind: 'text', text: boundText(event.content) }, true, true);
     return;
   }
@@ -991,6 +994,23 @@ function receiveSystem(event: JsonRecord): void {
     return;
   }
   countUnhandled(`system/${String(event.subtype ?? 'unknown')}`);
+}
+
+// Claude Code's own /model reports the change only as command output, such as
+// "Set model to Sonnet 5 (claude-sonnet-5)". Follow it, so the controls show
+// the model in use; a name that matches no listed model changes nothing.
+function followModelCommand(content: string): void {
+  const line = content.replace(/\x1b\[[0-9;]*m/g, '').replace(/[`*]/g, '').trim().split('\n')[0] ?? '';
+  const match = /^Set model to (.+?)(?: and saved as your default for new sessions)?\.?$/.exec(line);
+  if (!match) return;
+  const name = match[1]!.trim().toLowerCase();
+  const named = (value: unknown) => typeof value === 'string' && value && (name === value.toLowerCase() || name.startsWith(`${value.toLowerCase()} (`));
+  const found = name.startsWith('default') ? models.find((item) => item.value === 'default') : models.find((item) => named(item.value) || named(item.displayName));
+  if (typeof found?.value !== 'string' || found.value === model) return;
+  model = found.value;
+  // Effort levels depend on the model.
+  requestSettings();
+  publish({ kind: 'pending' });
 }
 
 function receiveTask(event: JsonRecord): void {
@@ -1162,6 +1182,36 @@ function acknowledgeUserMessage(value: unknown): void {
 // captures the current revision before building its payload, so a client can
 // drop events the snapshot already contains and apply newer ones afterwards.
 function publish(event: JsonRecord): void {
+  flushAppends();
+  send(event);
+}
+
+// Claude streams text a few characters per event. Deltas to the same row are
+// merged and sent at most every APPEND_FLUSH_MS; any other event, snapshot or
+// subscription sends them first, so subscribers see the same order.
+const APPEND_FLUSH_MS = 50;
+let appends: Array<{ id: string; delta: string }> = [];
+let appendTimer: NodeJS.Timeout | null = null;
+
+function publishAppend(id: string, delta: string): void {
+  const last = appends.at(-1);
+  if (last?.id === id) last.delta += delta;
+  else appends.push({ id, delta });
+  if (!appendTimer) {
+    appendTimer = setTimeout(flushAppends, APPEND_FLUSH_MS);
+    appendTimer.unref?.();
+  }
+}
+
+function flushAppends(): void {
+  if (appendTimer) clearTimeout(appendTimer);
+  appendTimer = null;
+  const pending = appends;
+  appends = [];
+  for (const item of pending) send({ kind: 'append', ...item });
+}
+
+function send(event: JsonRecord): void {
   revision += 1;
   const line = `${JSON.stringify({ event: { ...event, revision } })}\n`;
   for (const socket of subscribers) {
