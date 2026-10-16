@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- History reads no longer fail with "database is locked" while the import
+  worker initializes the history database.
 - An Integrated agent whose turn has ended while a background task it started
   still runs, such as a shell waiting for a deploy or a long database query,
   no longer looks idle. Its tab, sidebar row, project list and command palette

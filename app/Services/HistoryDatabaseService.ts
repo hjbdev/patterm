@@ -63,11 +63,18 @@ export class HistoryDatabaseService {
       this.db.exec('pragma temp_store = MEMORY');
     }
     if (mode === 'read') {
-      this.db.exec('pragma query_only = ON');
-      this.db.exec(`pragma busy_timeout = ${busyTimeoutMs(this.options.busyTimeoutMs)}`);
-      this.db.exec('pragma cache_size = -32000');
-      this.db.exec('pragma mmap_size = 134217728');
-      this.available = hasHistorySchema(this.db);
+      try {
+        this.db.exec('pragma query_only = ON');
+        this.db.exec(`pragma busy_timeout = ${busyTimeoutMs(this.options.busyTimeoutMs)}`);
+        this.db.exec('pragma cache_size = -32000');
+        this.db.exec('pragma mmap_size = 134217728');
+        this.available = hasHistorySchema(this.db);
+      } catch (error) {
+        this.dispose();
+        // The worker can have created the file but still hold its initial
+        // database lock. Keep lazy history reads unavailable until it is ready.
+        if (!(error instanceof Error) || (error as Error & { errcode?: number }).errcode !== 5) throw error;
+      }
       return;
     }
     if (options.migrate ?? true) {
