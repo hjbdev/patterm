@@ -1,7 +1,7 @@
 import type { Migration } from '../../app/Database/Migration';
 
 export default {
-  name: '2026_10_16_000050_add_harness_rate_limit_readings',
+  name: '2026_10_16_000051_add_harness_rate_limit_readings',
   up(schema) {
     // Each change in a quota window's usage from Integrated sessions, kept
     // for about a week, so the usage page can project the current pace.

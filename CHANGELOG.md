@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   last seventh of it (a day of a weekly window), which predicted best when
   tested against past Codex windows.
 
+### Fixed
+
+- Claude and Codex auto-summary token usage now counts in Usage totals, daily charts, models, and
+  projects, with a separate breakdown, without adding conversation-history entries.
+
 ## [0.2.5] - 2026-10-16
 
 ### Changed

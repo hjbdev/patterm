@@ -10,6 +10,7 @@ import { ProviderHistoryDiscoveryService } from '../app/Services/AgentHistory/Pr
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { HistoryDatabaseService } from '../app/Services/HistoryDatabaseService';
 import { modelPrice } from '../app/Services/ModelPrices';
+import { AutoSummaryUsageService } from '../app/Services/AutoSummaryUsageService';
 import { UsageService, usagePace } from '../app/Services/UsageService';
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-usage-'));
@@ -211,6 +212,48 @@ function main(): void {
     const empty = new UsageService(appDatabase, null).summary(1, now);
     assert.equal(empty.historyAvailable, false, 'the dashboard works without history');
     assert.equal(empty.limits.length, 2, 'live quota windows still show');
+    const summaries = new AutoSummaryUsageService(appDatabase);
+    const conversationCount = historyDatabase.connection.prepare('select count(*) as count from conversations').get();
+    summaries.record('codex', 'gpt-6-sol', [
+      { type: 'item.completed', item: { text: 'private summary' } },
+      { type: 'turn.completed', usage: { input_tokens: 100, cached_input_tokens: 20, output_tokens: 10, reasoning_output_tokens: 4 } }
+    ].map(row => JSON.stringify(row)).join('\n'), 'usage_project');
+    summaries.record('claude', 'haiku', JSON.stringify({
+      usage: { cache_creation: { ephemeral_1h_input_tokens: 5 } },
+      modelUsage: { 'claude-haiku-4-5': { inputTokens: 30, cacheReadInputTokens: 10, cacheCreationInputTokens: 5, outputTokens: 7 } }
+    }), 'usage_project');
+    summaries.record('claude', 'unknown-model', JSON.stringify({
+      usage: { input_tokens: 40, cache_read_input_tokens: 10, output_tokens: 8, output_tokens_details: { thinking_tokens: 3 } }, total_cost_usd: 0.02
+    }));
+    // Missing or malformed metadata must not invent usage or retain provider text.
+    summaries.record('claude', 'haiku', 'invalid JSON');
+    summaries.record('codex', 'gpt-6-sol', JSON.stringify({ type: 'turn.completed' }));
+    summaries.record('opencode', 'unknown-model', JSON.stringify({ data: { usage: { inputTokens: -1, outputTokens: '5' } } }));
+    appDatabase.connection.prepare("insert into auto_summary_usage (provider, model, occurred_at, input_tokens, cache_read_tokens, cache_write_tokens, cache_write_1h_tokens, output_tokens, reasoning_tokens) values ('codex', 'gpt-6-sol', '2000-01-01T00:00:00.000Z', 9999, 0, 0, 0, 0, 0)").run();
+    const combined = usage.summary(7, now);
+    assert.equal(combined.totals.responses, summary.totals.responses + 3);
+    assert.equal(combined.autoSummaries.responses, 3);
+    assert.equal(combined.autoSummaries.inputTokens, 80 + 30 + 40);
+    assert.equal(combined.autoSummaries.outputTokens, 10 + 7 + 8);
+    assert.equal(combined.autoSummaries.cacheReadTokens, 20 + 10 + 10);
+    assert.equal(combined.autoSummaries.reasoningTokens, 4 + 3);
+    const summaryCost = (80 * 2 + 20 * 0.2 + 10 * 10 + 30 + 10 * 0.1 + 5 * 2 + 7 * 5) / 1_000_000 + 0.02;
+    assert.ok(Math.abs(combined.autoSummaries.costUsd - summaryCost) < 1e-12);
+    assert.ok(Math.abs(combined.totals.costUsd - summary.totals.costUsd - summaryCost) < 1e-12);
+    assert.equal(combined.projects.find(row => row.projectId === 'usage_project')!.inputTokens,
+      summary.projects[0]!.inputTokens + 80 + 30);
+    assert.equal(combined.daily.reduce((sum, row) => sum + row.responses, 0), combined.totals.responses);
+    assert.equal(combined.models.reduce((sum, row) => sum + row.responses, 0), combined.totals.responses);
+    assert.deepEqual(historyDatabase.connection.prepare('select count(*) as count from conversations').get(), conversationCount,
+      'summary accounting creates no conversations');
+    const withoutHistory = new UsageService(appDatabase, null).summary(7, now);
+    assert.equal(withoutHistory.historyAvailable, false);
+    assert.deepEqual(withoutHistory.totals, combined.autoSummaries, 'summary usage works without history imports');
+    const saved = appDatabase.connection.prepare('select * from auto_summary_usage').all();
+    assert.ok(!JSON.stringify(saved).includes('private summary'));
+    appDatabase.dispose();
+    appDatabase.initialize();
+    assert.deepEqual(new UsageService(appDatabase, null).summary(7, now).totals, combined.autoSummaries, 'usage survives restart');
     // A late, older observation at the same figure still shows usage had already plateaued.
     const hours = (count: number) => new Date(now.getTime() + count * 3_600_000).toISOString();
     for (const [usedPercent, observedAt] of [[30, hours(-48)], [40, hours(-1)], [40, hours(-26)]] as const) {

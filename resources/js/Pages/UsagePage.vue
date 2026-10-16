@@ -6,7 +6,7 @@
       </Button>
       <div class="min-w-0 flex-1">
         <h1 class="text-sm font-semibold">Usage</h1>
-        <p class="truncate text-[11px] text-muted-foreground">Tokens from agent transcripts and the remaining quota for each harness.</p>
+        <p class="truncate text-[11px] text-muted-foreground">Tokens from agent conversations and auto-summaries, plus remaining quota.</p>
       </div>
       <AssistantButton />
     </header>
@@ -65,9 +65,9 @@
               </div>
 
               <p v-if="!summary.historyAvailable" class="text-xs text-muted-foreground">
-                Conversation history has not been imported yet. Turn on history sources in Settings to count tokens.
+                Conversation history has not been imported yet. Turn on history sources in Settings to include conversation tokens.
               </p>
-              <template v-else>
+              <template v-if="summary.historyAvailable || summary.autoSummaries?.responses">
                 <dl class="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-5">
                   <div v-for="stat in stats" :key="stat.label">
                     <dt class="text-[11px] text-muted-foreground">{{ stat.label }}</dt>
@@ -78,6 +78,14 @@
                   {{ summary.totals.responses.toLocaleString() }} model responses. API prices are pay-as-you-go list rates, which your subscriptions replace; OpenCode's own figures cover models without one.
                   <template v-if="unpricedModels.length">{{ compactTokens(summary.totals.unpricedTokens) }} tokens from {{ unpricedModels.join(', ') }} have no public price and are left out.</template>
                 </p>
+
+                <p v-if="summary.autoSummaries?.responses" class="mt-2 text-[11px] text-muted-foreground" data-component="auto-summary-usage">
+                  Includes auto-summaries: {{ summary.autoSummaries.responses.toLocaleString() }} model responses,
+                  {{ compactTokens(processedTokens(summary.autoSummaries)) }} tokens excluding cache reads,
+                  {{ formatUsd(summary.autoSummaries.costUsd) }} at API prices.
+                </p>
+
+                <p class="mt-2 text-[11px] text-muted-foreground/80">OpenCode auto-summary usage is unavailable because its summary endpoint does not report tokens.</p>
 
                 <div v-if="summary.days > 1" class="mt-6">
                   <div class="mb-2 flex items-center gap-2">

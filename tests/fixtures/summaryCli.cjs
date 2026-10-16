@@ -21,7 +21,10 @@ if (args.includes('--help')) {
       assert.equal(JSON.parse(input).terminal_output, 'patterm okay');
     }
     if (model === 'bad-json') return console.log('invalid provider output');
+    if (model === 'error') process.exitCode = 1;
     console.log(JSON.stringify({ type: 'result', subtype: model === 'error' ? 'error' : 'success', is_error: model === 'error',
+      usage: { input_tokens: 50, cache_read_input_tokens: 20, cache_creation_input_tokens: 10, output_tokens: 5 },
+      modelUsage: { 'claude-haiku-4-5-20251001': { inputTokens: 50, cacheReadInputTokens: 20, cacheCreationInputTokens: 10, outputTokens: 5, costUSD: 0.0001 } },
       result: JSON.stringify(model === 'bad-schema' ? { command: 'unsafe' } : { summary: 'patterm okay' }) }));
   });
 }
