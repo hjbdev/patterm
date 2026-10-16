@@ -536,6 +536,8 @@ if (socketPath) {
   });
   assert.equal(prepared.resumeId, 'thread_test');
   const nativeArgs = JSON.parse(fs.readFileSync(argvPath, 'utf8')) as string[];
+  assert.ok(nativeArgs.includes('approval_policy="on-request"'), 'Integrated Codex enables approval requests');
+  assert.ok(nativeArgs.includes('approvals_reviewer="auto_review"'), 'Integrated Codex uses auto-review');
   assert.ok(nativeArgs.includes('model="gpt-test"'), 'Integrated Codex pins the selected model before app-server');
   assert.ok(nativeArgs.includes('model_reasoning_effort="high"'), 'Integrated Codex pins the selected effort before app-server');
   assert.ok(nativeArgs.includes('service_tier="priority"'), 'Integrated Codex pins the selected service tier before app-server');

@@ -166,6 +166,8 @@ export class CodexAppServerService {
     const logPath = path.join(directory, `${key}.log`);
     const overrides = [...globalCodexMcpOverrides(input.mcpServers ?? [], input.mcp), ...codexMcpOverrides(input.mcp)];
     const args = [
+      '-c', 'approval_policy="on-request"',
+      '-c', 'approvals_reviewer="auto_review"',
       ...overrides.flatMap((override) => ['-c', override]),
       ...(input.model ? ['-c', `model=${JSON.stringify(input.model)}`] : []),
       ...(input.reasoning ? ['-c', `model_reasoning_effort=${JSON.stringify(input.reasoning)}`] : []),
