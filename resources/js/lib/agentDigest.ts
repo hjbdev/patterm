@@ -31,7 +31,7 @@ export interface DigestMember {
 export interface DigestSummary { goal: string; now: string; at: string }
 
 // Why it needs you, in its own words where it gave any.
-export interface DigestAsk { kind: 'permission' | 'error' | 'close' | 'message'; from: string | null; text: string }
+export interface DigestAsk { kind: 'permission' | 'question' | 'error' | 'close' | 'message'; from: string | null; text: string }
 
 type AgentTab = Extract<StripTab, { kind: 'agent' }>;
 
@@ -70,6 +70,7 @@ export const STATE_ORDER: readonly DigestState[] = ['attention', 'working', 'wai
 export function memberState(activity: RowActivity): DigestMember['state'] {
   switch (activity.self) {
     case 'permission':
+    case 'question':
     case 'error':
       return 'attention';
     case 'working':

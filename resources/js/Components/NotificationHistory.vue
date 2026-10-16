@@ -39,7 +39,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, type Component } from 'vue';
 import { useRouter } from 'vue-router';
-import { AlertTriangle, Bell, BellOff, CheckCheck, CheckCircle2, Loader2, MessageSquare, ShieldAlert } from 'lucide-vue-next';
+import { AlertTriangle, Bell, BellOff, CheckCheck, CheckCircle2, Loader2, MessageCircleQuestion, MessageSquare, ShieldAlert } from 'lucide-vue-next';
 import { totalUnread, type NotificationRecord } from '../Composables/useNotifications';
 import { relativeTime } from '../lib/format';
 import { Button } from './ui/button';
@@ -140,6 +140,7 @@ function markAllRead(): void {
 
 function kindIcon(item: NotificationRecord): Component {
   if (item.kind === 'permission') return ShieldAlert;
+  if (item.kind === 'question') return MessageCircleQuestion;
   if (item.kind === 'failure') return AlertTriangle;
   if (item.kind === 'turn_finished') return CheckCircle2;
   if (item.kind === 'bell') return Bell;

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
+import { awaitingActivity, awaitingUser } from './Activity';
 import type { DatabaseService } from './DatabaseService';
 import { detachedHostLauncher, hostConnectionError, integratedHostReady, stopHostProcess, stopRecordedHostProcess, type IntegratedHostLauncher } from './IntegratedHostLauncher';
 import type { IntegratedControls, IntegratedFormAction, IntegratedLaunchInput, IntegratedLaunchResult } from './IntegratedAgentService';
@@ -236,7 +237,7 @@ export class CodexAppServerService {
         streaming: true,
         ...withPlan(pendingViews(pending, runtime.threadId, messages), plan),
         // Unknown until a native read says; the caller keeps what it had.
-        status: pending.length || plan.length ? 'permission' : status === 'unknown' ? undefined : status,
+        status: pendingStatus(pending, plan) ?? (status === 'unknown' ? undefined : status),
         ...(status === 'error' && detail ? { status_detail: detail } : {}),
         usage: client.usage(runtime.threadId),
         tasks,
@@ -276,7 +277,7 @@ export class CodexAppServerService {
       streaming: true,
       // A connection that has not seen this thread's turns reads them
       // natively; when that fails too, the caller keeps what it had.
-      status: pending.length || plan.length ? 'permission' : status === 'unknown' ? undefined : status,
+      status: pendingStatus(pending, plan) ?? (status === 'unknown' ? undefined : status),
       usage: client.usage(runtime.threadId),
       tasks: codexTasks(parentMessages, client, await this.trackBackgroundTerminals(client, runtime.threadId, parentMessages)),
       messages: { data: messages },
@@ -365,7 +366,7 @@ export class CodexAppServerService {
     client.setActiveTurn(threadId, turnId);
     const channel = this.channels.get(processId);
     if (!channel || channel.closed || channel.client !== client) return;
-    if (client.activeTurn(threadId) === turnId && channel.own.status !== 'working' && channel.own.status !== 'permission') {
+    if (client.activeTurn(threadId) === turnId && channel.own.status !== 'working' && !awaitingUser(channel.own.status)) {
       channel.own = { status: 'working' };
       channel.liveOwn = true;
       this.updateStatus(channel);
@@ -1471,7 +1472,7 @@ export class CodexRpcClient {
     if (turnId && this.completedTurns.has(turnId)) return;
     if (turnId) {
       this.turns.set(threadId, turnId);
-      if (this.threadStatuses.get(threadId) !== 'permission') this.setThreadStatus(threadId, 'working');
+      if (!awaitingUser(this.threadStatuses.get(threadId))) this.setThreadStatus(threadId, 'working');
     } else {
       this.turns.delete(threadId);
       this.setThreadStatus(threadId, 'idle');
@@ -1783,15 +1784,18 @@ function reviewTarget(argument: string): JsonRecord {
 // terminals never count; a dev server can run for as long as it likes.
 function effectiveStatus(own: CodexStatus, client: CodexRpcClient | null, threads: Iterable<string>): CodexStatus {
   if (!client) return own;
-  if (client.pendingRequests().length) return { status: 'permission' };
-  if (own.status === 'working' || own.status === 'permission') return own;
+  const pending = pendingStatus(client.pendingRequests(), []);
+  if (pending) return { status: pending };
+  if (own.status === 'working' || awaitingUser(own.status)) return own;
   let working = false;
+  let question = false;
   for (const thread of threads) {
     const status = client.threadStatus(thread);
     if (status === 'permission') return { status: 'permission' };
+    if (status === 'question') question = true;
     if (status === 'working') working = true;
   }
-  return working ? { status: 'working' } : own;
+  return question ? { status: 'question' } : working ? { status: 'working' } : own;
 }
 
 function isDescendant(channel: CodexChannel, threadId: string): boolean {
@@ -1829,6 +1833,13 @@ function withPlan(views: JsonRecord, plan: JsonRecord[]): JsonRecord {
   return plan.length ? { ...views, permissions: { data: [...record(views.permissions).data as unknown[], ...plan] } } : views;
 }
 const ANSWERABLE_REQUESTS = new Set(['item/tool/requestUserInput', ELICITATION]);
+
+// What pending requests wait on: an approval, including a plan to approve,
+// or else only questions and forms. Undefined while nothing is pending.
+function pendingStatus(pending: PendingServerRequest[], plan: unknown[]): 'permission' | 'question' | undefined {
+  if (!pending.length && !plan.length) return undefined;
+  return awaitingActivity(plan.length + pending.filter((request) => !ANSWERABLE_REQUESTS.has(request.method)).length);
+}
 
 function pendingViews(pending: PendingServerRequest[], threadId: string, messages: IntegratedConversationMessage[]): JsonRecord {
   return {

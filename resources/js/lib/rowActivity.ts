@@ -8,7 +8,7 @@ import type { AgentTabFamily } from './agentTabs';
 import type { AgentNode } from './agentTree';
 
 // Closing is an idle agent that asked to be closed.
-export type Pulse = 'working' | 'permission' | 'error' | 'closing' | 'idle' | 'unknown';
+export type Pulse = 'working' | 'permission' | 'question' | 'error' | 'closing' | 'idle' | 'unknown';
 type BusyPulse = Exclude<Pulse, 'closing' | 'idle' | 'unknown'>;
 
 export interface RowActivity {
@@ -22,12 +22,13 @@ export interface RowActivity {
 export function activityLookup(families: readonly AgentTabFamily[]): (session: SessionRecord) => RowActivity {
   const activities = new Map<string, RowActivity>();
   const visit = (node: AgentNode): RowActivity => {
-    const subagents = { working: 0, permission: 0, error: 0 };
+    const subagents = { working: 0, permission: 0, question: 0, error: 0 };
     for (const child of node.children) {
       const below = visit(child);
       if (below.self !== 'closing' && below.self !== 'idle' && below.self !== 'unknown') subagents[below.self] += 1;
       subagents.working += below.subagents.working;
       subagents.permission += below.subagents.permission;
+      subagents.question += below.subagents.question;
       subagents.error += below.subagents.error;
     }
     const activity = summarize(sessionPulse(node.session), subagents);
@@ -45,16 +46,18 @@ export function processActivity(process: ProcessRecord): RowActivity {
 // The most urgent state among the subagents, or null while they are all idle.
 export function subagentPulse(activity: RowActivity): BusyPulse | null {
   if (activity.subagents.permission) return 'permission';
+  if (activity.subagents.question) return 'question';
   if (activity.subagents.error) return 'error';
   return activity.subagents.working ? 'working' : null;
 }
 
 // Text colour for a subagent count: muted while idle or working (working adds
 // a shimmer, see WorkingShimmer), amber or red
-// while one needs permission or has an error.
+// while one needs permission, has a question, or has an error.
 export function subagentCountClass(activity: RowActivity): string {
   switch (subagentPulse(activity)) {
     case 'permission':
+    case 'question':
       return 'text-warning';
     case 'error':
       return 'text-destructive';
@@ -71,24 +74,25 @@ export function memberLabel(agents: number, processes: number): string {
 // Whether a row's subagent count sits inside its status ring. A row that shows
 // `?`, `✕` or `✓` keeps the count at its end instead.
 export function countInRing(activity: RowActivity): boolean {
-  return activity.self !== 'permission' && activity.self !== 'error' && activity.self !== 'closing';
+  return activity.self !== 'permission' && activity.self !== 'question' && activity.self !== 'error' && activity.self !== 'closing';
 }
 
-const SELF_LABELS: Record<Pulse, string> = { working: 'Working', permission: 'Needs permission', error: 'Error', closing: 'Ready to close', idle: 'Idle', unknown: 'Unknown' };
+const SELF_LABELS: Record<Pulse, string> = { working: 'Working', permission: 'Needs permission', question: 'Has a question', error: 'Error', closing: 'Ready to close', idle: 'Idle', unknown: 'Unknown' };
 
 // For screen readers and tooltips, such as "Idle, 2 subagents working".
 export function describeActivity(activity: RowActivity): string {
-  const { working, permission, error } = activity.subagents;
+  const { working, permission, question, error } = activity.subagents;
   const subagents = (count: number, singular: string, plural: string): string => `${count} ${count === 1 ? `subagent ${singular}` : `subagents ${plural}`}`;
   return [
     SELF_LABELS[activity.self],
     permission ? subagents(permission, 'needs permission', 'need permission') : null,
+    question ? subagents(question, 'has a question', 'have questions') : null,
     error ? subagents(error, 'has an error', 'have errors') : null,
     working ? subagents(working, 'working', 'working') : null
   ].filter(Boolean).join(', ');
 }
 
-const NO_SUBAGENTS: Readonly<Record<BusyPulse, number>> = { working: 0, permission: 0, error: 0 };
+const NO_SUBAGENTS: Readonly<Record<BusyPulse, number>> = { working: 0, permission: 0, question: 0, error: 0 };
 
 function sessionPulse(session: SessionRecord): Pulse {
   return session.closeRequest ? 'closing' : pulse(session.activity);
@@ -101,6 +105,8 @@ function pulse(activity: ActivityState): Pulse {
       return 'working';
     case 'permission':
       return 'permission';
+    case 'question':
+      return 'question';
     case 'error':
       return 'error';
     case 'unknown':
@@ -115,7 +121,7 @@ function pulse(activity: ActivityState): Pulse {
 const interned = new Map<string, RowActivity>();
 
 function summarize(self: Pulse, subagents: Readonly<Record<BusyPulse, number>>): RowActivity {
-  const key = `${self}|${subagents.working}|${subagents.permission}|${subagents.error}`;
+  const key = `${self}|${subagents.working}|${subagents.permission}|${subagents.question}|${subagents.error}`;
   let activity = interned.get(key);
   if (!activity) {
     activity = Object.freeze({ self, subagents: Object.freeze({ ...subagents }) });

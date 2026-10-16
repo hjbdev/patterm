@@ -2,6 +2,7 @@
 
 import type { ProjectSummary, ProjectWorkbench, SessionRecord } from '../types';
 import { activeAgentSessions, agentLabel } from './agentTabs';
+import { awaitingUser, waitingReason } from './activity';
 import { buildAgentTree, type AgentNode } from './agentTree';
 
 export type AgentState = 'waiting' | 'working' | 'idle';
@@ -26,7 +27,7 @@ export interface ProjectOverview {
 }
 
 export function agentState(session: SessionRecord): AgentState {
-  if (session.activity === 'permission' || session.activity === 'error') return 'waiting';
+  if (awaitingUser(session.activity) || session.activity === 'error') return 'waiting';
   if (session.activity === 'working' || session.activity === 'thinking') return 'working';
   return 'idle';
 }
@@ -42,7 +43,7 @@ export function projectOverviews(projects: readonly ProjectWorkbench[]): Project
 // A subagent at a prompt matters more than the root's summary.
 export function agentStatusText(agent: ProjectAgent): string {
   const { waiting } = agent;
-  if (waiting && waiting.id !== agent.session.id) return `${agentLabel(waiting)} ${waiting.activity === 'error' ? 'hit an error' : 'needs permission'}`;
+  if (waiting && waiting.id !== agent.session.id) return `${agentLabel(waiting)} ${awaitingUser(waiting.activity) ? waitingReason(waiting.activity) : 'hit an error'}`;
   return agent.session.summary?.text ?? '';
 }
 

@@ -1,3 +1,4 @@
+import { awaitingUser, isActivityState } from './Activity';
 import { createHash, randomUUID } from 'node:crypto';
 import { UpdateSessionTitleAction } from '../Actions/UpdateSessionTitleAction';
 import type { DatabaseService } from './DatabaseService';
@@ -470,8 +471,9 @@ export class IntegratedAgentService {
   // present the submission as rejected. A turn that already reported its own
   // status while the call was in flight wins over the synthetic mark.
   private admitted(processId: string, key: string, sequence: number, resolved: ResolvedIntegratedPrompt, identity: SubmissionIdentity | null, result: unknown): void {
-    // A prompt does not answer a pending permission, so the agent still waits.
-    try { if (this.activity(key) !== 'permission') this.markActivitySince(key, 'working', sequence); } catch { /* activity is best effort */ }
+    // A prompt does not answer a pending permission or question, so the agent
+    // still waits.
+    try { if (!awaitingUser(this.activity(key))) this.markActivitySince(key, 'working', sequence); } catch { /* activity is best effort */ }
     this.signal(key, 'turn');
     try { this.refreshTitle(processId, resolved.text); } catch { /* titles are best effort */ }
     if (identity) {
@@ -1217,7 +1219,7 @@ export class IntegratedAgentService {
 
   private markSnapshot(key: string, conversation: unknown, since: number): void {
     const status = record(conversation).status;
-    if (isActivity(status)) this.markActivitySince(key, status, since, true);
+    if (isActivityState(status)) this.markActivitySince(key, status, since, true);
   }
 
   // Synthetic and snapshot writes lose to any newer write since `since`. A
@@ -1406,6 +1408,3 @@ function canonicalPayload(input: ResolvedIntegratedPrompt): string {
   ]);
 }
 
-function isActivity(value: unknown): value is string {
-  return typeof value === 'string' && ['working', 'thinking', 'idle', 'permission', 'error', 'unknown'].includes(value);
-}

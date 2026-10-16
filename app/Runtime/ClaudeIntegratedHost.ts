@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
+import { awaitingActivity } from '../Services/Activity';
 import { elicitationContent, elicitationForm, type ElicitationForm } from '../Services/McpElicitation';
 import { envValue, withEnv } from '../Platform/Environment';
 import { resolveCommand } from '../Platform/Executable';
@@ -59,7 +60,7 @@ const streams = new Map<string, StreamState>();
 const nextBlockIndex = new Map<string, number>();
 let child: ChildProcessWithoutNullStreams | null = null;
 let childBuffer = '';
-// idle, working, permission, or failed. Derived in updateStatus.
+// idle, working, permission, question, or failed. Derived in updateStatus.
 let status = 'idle';
 // Claude ends an interrupted turn with an `error_during_execution` result; the
 // flag lets that result settle the turn as idle instead of failed. An interrupt
@@ -632,11 +633,13 @@ function busy(): boolean {
   return backgroundAgentCount() > 0;
 }
 
-// The one place status is decided. A pending prompt needs a person; otherwise
-// the agent works while a turn, an unsettled prompt, or a background agent
-// runs; a failure shows once nothing does.
+// The one place status is decided. A pending prompt needs a person: an
+// approval, or else a question or form; otherwise the agent works while a
+// turn, an unsettled prompt, or a background agent runs; a failure shows once
+// nothing does.
 function updateStatus(): void {
-  setStatus(pending.size ? 'permission' : busy() ? 'working' : failed ? 'failed' : 'idle');
+  const approvals = [...pending.values()].filter((item) => item.kind === 'permission').length;
+  setStatus(pending.size ? awaitingActivity(approvals) : busy() ? 'working' : failed ? 'failed' : 'idle');
 }
 
 // Only requests a person can answer become pending prompts. Every other
@@ -1208,7 +1211,7 @@ function appendText(id: string, delta: string): void {
   messages[index] = { ...row, text: `${String(row.text ?? '')}${delta}` };
 }
 
-// Streamed as working, permission, idle, or error. The snapshot reports the
+// Streamed as working, permission, question, idle, or error. The snapshot reports the
 // raw status, and ClaudeStreamService maps failed to error there.
 function setStatus(next: string): void {
   if (status === next) return;

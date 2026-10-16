@@ -525,7 +525,7 @@ function isUncertainHostFailure(error: unknown): boolean {
 // about a turn, so those leave activity unchanged.
 function claudeActivity(value: unknown): string | undefined {
   if (value === 'working') return 'working';
-  if (value === 'permission') return 'permission';
+  if (value === 'permission' || value === 'question') return value;
   if (value === 'idle') return 'idle';
   if (value === 'failed' || value === 'error') return 'error';
   return undefined;

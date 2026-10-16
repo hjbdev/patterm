@@ -106,6 +106,7 @@ import { registerUpdateTools } from './MCP/registerUpdateTools';
 import { detectReleaseInstall, UpdateService } from './Services/UpdateService';
 import { UpdateInstaller } from './Services/UpdateInstaller';
 import { quitConfirmation } from './Commands/CommandPalette';
+import { awaitingUser } from './Services/Activity';
 
 export interface AppOptions {
   appDataPath: string;
@@ -369,6 +370,7 @@ async function createApplicationResources(
   defer(integrated.onActivityChange(({ processId, previous, activity, snapshot }) => {
     const reportedThisTurn = notificationService.turnActivity(processId, previous, activity, snapshot);
     if (activity === 'permission') raiseNotification({ processId, source: 'integrated', kind: 'permission', body: 'Waiting for your permission', dedupeKey: 'integrated:permission' });
+    else if (activity === 'question') raiseNotification({ processId, source: 'integrated', kind: 'question', body: 'Has a question for you', dedupeKey: 'integrated:question' });
     else if (activity === 'working') {
       notificationService.resolveHandled(processId);
       // New work makes an earlier close request stale.
@@ -376,11 +378,11 @@ async function createApplicationResources(
     }
     else if (activity === 'error') raiseNotification({ processId, source: 'integrated', kind: 'failure', body: 'The agent reported an error' });
     else if (activity === 'idle') {
-      notificationService.resolve({ process_id: processId, kinds: ['permission'] });
+      notificationService.resolve({ process_id: processId, kinds: ['permission', 'question'] });
       // Reconnect snapshots are not turns the user has not seen.
       // The assistant's own turns are read in its panel, not announced, and
       // neither is a compaction or a turn that reported.
-      const turnEnded = !snapshot && (previous === 'working' || previous === 'thinking' || previous === 'permission');
+      const turnEnded = !snapshot && (previous === 'working' || previous === 'thinking' || awaitingUser(previous));
       // A turn that asked to be closed announces that instead of finishing.
       if (turnEnded && closeRequests?.pending(processId)) void closeRequests.announce(processId).catch(() => undefined);
       else if (turnEnded && !assistant?.isAssistantProcess(processId) && !idleCompaction.compacting(processId) && !reportedThisTurn) {

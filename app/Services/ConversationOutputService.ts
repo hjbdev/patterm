@@ -48,7 +48,7 @@ const MAX_BATCHES = 4;
 const MAX_SCANNED = 1_000;
 const HISTORY_BATCH = 200;
 // Snapshot statuses that are activities, as IntegratedAgentService accepts them.
-const ACTIVITIES = new Set(['working', 'thinking', 'idle', 'permission', 'error']);
+const ACTIVITIES = new Set(['working', 'thinking', 'idle', 'permission', 'question', 'error']);
 // Reports have no size limit of their own; readers get the start of one.
 const REPORT_BYTES = 4_000;
 const TITLE_BYTES = 200;
@@ -238,12 +238,13 @@ function wanted(row: ConversationRow, include: ReadonlySet<Include>): boolean {
   return true;
 }
 
-// Pending requests are more specific than activity: some providers report a
+// Pending requests are more specific than activity: older hosts report a
 // pending question as permission activity.
 function turnState(status: string, activity: string, pendingPermission: boolean, pendingQuestion: boolean) {
   if (status !== 'running') return 'exited';
   if (pendingQuestion && !pendingPermission) return 'awaiting_answer';
   if (pendingPermission || activity === 'permission') return 'awaiting_permission';
+  if (activity === 'question') return 'awaiting_answer';
   if (activity === 'working' || activity === 'thinking') return 'working';
   if (activity === 'error') return 'errored';
   if (activity === 'idle') return 'ended';

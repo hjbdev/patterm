@@ -1,5 +1,6 @@
 import { computed, onBeforeUnmount, ref, shallowRef, watch, type ComputedRef } from 'vue';
 import { agentLabel } from '../lib/agentTabs';
+import { awaitingUser, waitingReason } from '../lib/activity';
 import type { AgentNode } from '../lib/agentTree';
 import { capitalize, memberState, modelLabel, splitSummary, type AgentDigest, type DigestMember } from '../lib/agentDigest';
 import { processActivity, type RowActivity } from '../lib/rowActivity';
@@ -225,15 +226,16 @@ function createAgentDigests(): AgentDigests {
     const { family } = tab;
     const root = family.root.session;
     const waiting = waitingSession(sidebar, family);
-    if (waiting && (waiting.activity === 'permission' || waiting.activity === 'error')) {
+    if (waiting && (awaitingUser(waiting.activity) || waiting.activity === 'error')) {
       const isRoot = waiting.id === root.id;
       const notice = familyNotices.find((item) => item.process_id === waiting.processId);
       const tool = notice?.body.match(/permission to use (\S+)/)?.[1];
-      const verb = waiting.activity === 'permission' ? (tool ? `wants to use ${tool}` : 'needs permission') : 'stopped with an error';
+      const verb = waiting.activity === 'permission' ? (tool ? `wants to use ${tool}` : 'needs permission')
+        : waiting.activity === 'question' ? waitingReason('question') : 'stopped with an error';
       return {
         state: 'attention',
         status: isRoot ? capitalize(verb) : `${agentLabel(waiting)} ${verb}`,
-        ask: { kind: waiting.activity === 'permission' ? 'permission' : 'error', from: isRoot ? null : agentLabel(waiting), text: capitalize(verb) }
+        ask: { kind: awaitingUser(waiting.activity) ? waiting.activity : 'error', from: isRoot ? null : agentLabel(waiting), text: capitalize(verb) }
       };
     }
     if (waiting?.closeRequest) {

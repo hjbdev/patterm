@@ -1,3 +1,4 @@
+import { awaitingUser } from './Activity';
 import type { DatabaseService } from './DatabaseService';
 import { UncertainDeliveryError } from './IntegratedDelivery';
 import type { CompactionSignal, IntegratedActivityChange } from './IntegratedAgentService';
@@ -133,7 +134,7 @@ export class IdleCompactionService {
       // be a turn Codex aborted to compact, or the compaction itself.
       this.cancel(processId);
       if (row.state === 'armed' && row.idle_since) this.write(processId, 'armed', null);
-    } else if (activity === 'permission') {
+    } else if (awaitingUser(activity)) {
       // A background task can ask between turns. That is not a new turn, so
       // it only holds the deadline.
       this.cancel(processId);

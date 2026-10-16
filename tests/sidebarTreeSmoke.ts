@@ -5,6 +5,7 @@ import { buildAgentTabFamilies, type AgentTabFamily } from '../resources/js/lib/
 import { ownedProcessesForSessions, type LiveProcessRecord } from '../resources/js/lib/processTabs';
 import {
   descendants,
+  familyAttention,
   familyTimerSummary,
   familyUrgency,
   familyStatus,
@@ -110,6 +111,11 @@ assert.equal(selectedThread(view(), tabs), null, 'nothing dims without a selecti
 assert.equal(familyWaitingOn(view(), family), 'grandchild needs permission');
 const waitingRoot = buildAgentTabFamilies([session('lone', null, 'permission')])[0]!;
 assert.equal(familyWaitingOn(view(), waitingRoot), 'Needs permission');
+const askingRoot = buildAgentTabFamilies([session('asker', null, 'question')])[0]!;
+assert.equal(familyWaitingOn(view(), askingRoot), 'Has a question', 'a question is not a permission');
+assert.equal(sessionAttention(view(), session('asker', null, 'question')), 'question');
+const mixed = buildAgentTabFamilies([session('mixed', null, 'working'), session('mixed-ask', 'mixed', 'question'), session('mixed-perm', 'mixed', 'permission')])[0]!;
+assert.equal(familyAttention(view(), mixed), 'permission', 'a permission outranks a question');
 assert.equal(familyWaitingOn(view(), families.find((candidate) => candidate.rootId === 'other')!), null);
 assert.equal(sessionAttention(view({}, { 'process-other': 'high' }), session('other')), 'unread', 'a high-urgency notification needs you');
 const closing = { ...session('done'), closeRequest: { summary: 'Merged.', requestedAt: '2026-10-06T00:00:00Z' } };

@@ -1,3 +1,4 @@
+import { isActivityState } from './Activity';
 import { UpdateSessionTitleAction } from '../Actions/UpdateSessionTitleAction';
 import type { DatabaseService } from './DatabaseService';
 import { SessionContextService } from './SessionContextService';
@@ -257,9 +258,6 @@ export class RuntimeReconciler {
   }
 }
 
-function isActivityState(value: string): boolean {
-  return ['working', 'thinking', 'idle', 'permission', 'error', 'unknown'].includes(value);
-}
 
 function isRetryableLifecycleEvent(value: string | undefined): boolean {
   return value === 'activity' || value === 'title' || value === 'exit';

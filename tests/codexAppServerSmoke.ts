@@ -5,7 +5,7 @@ import path from 'node:path';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import net from 'node:net';
 import { CodexAppServerService, CodexRpcClient } from '../app/Services/CodexAppServerService';
-import { projectCodexItem, projectCodexPlan, restoreCodexWindowGap, trimCodexWindow, CODEX_MESSAGE_WINDOW, CODEX_CHILD_WINDOW, type CodexConversationState } from '../app/Services/CodexTranscript';
+import { codexThreadStatus, projectCodexItem, projectCodexPlan, restoreCodexWindowGap, trimCodexWindow, CODEX_MESSAGE_WINDOW, CODEX_CHILD_WINDOW, type CodexConversationState } from '../app/Services/CodexTranscript';
 import { elicitationForm } from '../app/Services/McpElicitation';
 import { TranscriptImageStore } from '../app/Services/TranscriptImageStore';
 import { TurnBusyError, UncertainDeliveryError } from '../app/Services/IntegratedDelivery';
@@ -14,6 +14,12 @@ import { IntegratedAgentService } from '../app/Services/IntegratedAgentService';
 import { ipcPath } from '../app/Platform/Ipc';
 import { writeNodeCli } from './fixtures/IntegratedFakeCli';
 import { removeTree } from './fixtures/TempTree';
+
+// An approval waits on a permission; input alone waits on an answer.
+assert.equal(codexThreadStatus({ type: 'active', activeFlags: ['waitingOnApproval'] }), 'permission');
+assert.equal(codexThreadStatus({ type: 'active', activeFlags: ['waitingOnUserInput'] }), 'question');
+assert.equal(codexThreadStatus({ type: 'active', activeFlags: ['waitingOnUserInput', 'waitingOnApproval'] }), 'permission', 'an approval outranks a question');
+assert.equal(codexThreadStatus({ type: 'active', activeFlags: [] }), 'working');
 
 // A turn/start reply can arrive in the same chunk as the turn's completion.
 // prompt() marks the turn active after awaiting the reply, which runs after

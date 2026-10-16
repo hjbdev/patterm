@@ -54,6 +54,10 @@ assert.equal(root?.waiting?.id, 'child');
 assert.deepEqual(root?.subagents.map((member) => member.id), ['child']);
 assert.equal(agentStatusText(root!), 'Reviewer needs permission', 'the waiting subagent replaces the summary');
 
+const asking = projectOverviews([project('asking', [session('lead'), session('helper', { parentId: 'lead', activity: 'question', lastTitle: 'Planner' })])])[0]?.agents[0];
+assert.equal(asking?.state, 'waiting', 'a subagent with a question makes its family wait');
+assert.equal(agentStatusText(asking!), 'Planner has a question');
+
 const worker = busyOverview?.agents.find((agent) => agent.session.id === 'worker');
 assert.equal(agentStatusText(worker!), '', 'agents without a summary show no status text');
 

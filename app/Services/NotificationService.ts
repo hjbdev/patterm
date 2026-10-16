@@ -7,7 +7,7 @@ import { ASSISTANT_PROJECT_ID } from './AssistantProject';
 import type { DeliveryLevel, NotificationCategory, NotificationUrgency } from './NotificationSettings';
 
 export type NotificationSource = 'mcp' | 'terminal' | 'integrated' | 'runtime' | 'system';
-export type NotificationKind = 'attention' | 'permission' | 'turn_finished' | 'bell' | 'message' | 'failure';
+export type NotificationKind = 'attention' | 'permission' | 'question' | 'turn_finished' | 'bell' | 'message' | 'failure';
 
 export interface NotificationRecord {
   id: string;
@@ -93,6 +93,7 @@ const URGENCY_RANK: Record<NotificationUrgency, number> = { low: 0, normal: 1, h
 const DEFAULT_URGENCY: Record<NotificationKind, NotificationUrgency> = {
   attention: 'normal',
   permission: 'high',
+  question: 'high',
   turn_finished: 'normal',
   bell: 'low',
   message: 'normal',
@@ -224,7 +225,7 @@ export class NotificationService {
   resolveHandled(processId: string): number {
     const process = this.processContext(processId);
     if (!process) return 0;
-    return this.resolve({ process_id: process.id, kinds: ['attention', 'permission', 'turn_finished', 'bell', 'message'] });
+    return this.resolve({ process_id: process.id, kinds: ['attention', 'permission', 'question', 'turn_finished', 'bell', 'message'] });
   }
 
   // A report says how the turn ended, so it replaces the bare turn-ended
@@ -319,7 +320,7 @@ function categoryFor(input: RaiseNotificationInput, process: ProcessContext | nu
 }
 
 function isBlocking(kind: NotificationKind): boolean {
-  return kind === 'attention' || kind === 'permission' || kind === 'failure';
+  return kind === 'attention' || kind === 'permission' || kind === 'question' || kind === 'failure';
 }
 
 function defaultDedupeKey(kind: NotificationKind, title: string, body: string): string {
