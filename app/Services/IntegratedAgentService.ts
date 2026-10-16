@@ -913,11 +913,14 @@ export class IntegratedAgentService {
 
   // When the native agent last did anything, in epoch milliseconds, or null
   // when unknown: the provider's own record, else the newest time on its
-  // transcript's rows. Like peekConversation, reading it changes nothing.
+  // transcript's rows. An agent not idle now is active now; Patterm's own
+  // activity can lag it, for example just after a restart. Like
+  // peekConversation, reading it changes nothing.
   async lastActivity(processId: string): Promise<number | null> {
     const provider = this.forProcess(processId);
     if (provider.lastActivity) return provider.lastActivity(processId);
     const conversation = record(await provider.conversation(processId));
+    if (conversation.status !== 'idle') return Date.now();
     const messages = Array.isArray(conversation.messages) ? conversation.messages : record(conversation.messages).data;
     if (!Array.isArray(messages)) return null;
     let latest: number | null = null;
@@ -925,8 +928,11 @@ export class IntegratedAgentService {
       // Notices can arrive between turns, and background agents keep the
       // agent working while their rows change.
       if (message.kind === 'notice' || typeof message.parentId === 'string') continue;
-      for (const value of [message.createdAt, message.created_at, message.completedAt, message.completed_at]) {
-        const time = typeof value === 'string' ? Date.parse(value) : Number.NaN;
+      // Projected rows carry ISO times; OpenCode's native rows carry
+      // milliseconds under `time`.
+      const native = record(message.time);
+      for (const value of [message.createdAt, message.created_at, message.completedAt, message.completed_at, native.created, native.completed]) {
+        const time = typeof value === 'string' ? Date.parse(value) : typeof value === 'number' ? value : Number.NaN;
         if (Number.isFinite(time) && (latest === null || time > latest)) latest = time;
       }
     }

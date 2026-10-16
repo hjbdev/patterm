@@ -898,11 +898,13 @@ export class CodexAppServerService {
     return (await this.client(runtime)).request('thread/compact/start', { threadId: runtime.threadId });
   }
 
-  // Codex records when each turn started. Transcript rows without a native
-  // time carry the host's clock from when it first saw them.
+  // Codex records when each turn started, and a running turn is activity
+  // now. Transcript rows without a native time carry the host's clock from
+  // when it first saw them.
   async lastActivity(processId: string): Promise<number | null> {
     const runtime = this.runtime(processId);
     const turn = await this.latestTurn(await this.client(runtime), runtime.threadId);
+    if (turn.status === 'inProgress') return Date.now();
     return typeof turn.startedAt === 'number' ? turn.startedAt * 1000 : null;
   }
 

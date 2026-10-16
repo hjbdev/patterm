@@ -403,6 +403,12 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
       (error: unknown) => error instanceof Error && !(error instanceof UncertainDeliveryError)
     );
     assert.equal(await rejectedService.reconcile('process_0', rejectedId), 'unknown');
+    // A restart's idle compaction check reads OpenCode's native row times,
+    // and a session with a running execution is active now.
+    // The newest is a prompt sent earlier in this test, at native time 2.
+    assert.equal(await new IntegratedAgentService(database, { opencode: new OpenCodeServerService(database, { ...env, ACTIVE_EMPTY: '1' }) }).lastActivity('process_0'), 2);
+    const beforeActive = Date.now();
+    assert.ok((await new IntegratedAgentService(database, { opencode: new OpenCodeServerService(database, env) }).lastActivity('process_0'))! >= beforeActive);
     // A 4xx rejects a compaction definitively, as it does a prompt; a 5xx may
     // have queued it.
     await assert.rejects(new OpenCodeServerService(database, { ...env, REJECT_COMPACT: '409 Conflict' }).compact('process_0'),

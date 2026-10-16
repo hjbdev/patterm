@@ -473,11 +473,66 @@ async function integratedSignals(database: DatabaseService): Promise<void> {
     { id: 'd', role: 'assistant', parentId: 'b', createdAt: '2026-10-16T03:00:00.000Z' }
   ] } });
   assert.equal(await integrated.lastActivity('oc'), Date.parse('2026-10-16T01:00:09.000Z'));
+  // An agent that is not idle is active now, whatever its rows say.
+  provider.conversation = async () => ({ status: 'working', messages: { data: [{ id: 'a', role: 'user', created_at: '2026-10-16T01:00:00.000Z' }] } });
+  const now = Date.now();
+  assert.ok((await integrated.lastActivity('oc'))! >= now, 'a busy agent counts as active now');
   provider.lastActivity = async () => 42;
   assert.equal(await integrated.lastActivity('oc'), 42);
 
   await lateRejection(database);
   await reconnectDisarms(database);
+  await restoredBusy(database);
+}
+
+// Just after a restart Patterm's saved activity can still say idle while the
+// native agent works, before any new transcript row exists. A restored
+// deadline then never compacts it.
+async function restoredBusy(database: DatabaseService): Promise<void> {
+  const db = database.connection;
+  // Longer than the slop that covers the idle turn's own row times, as any
+  // real deadline is.
+  const after = 3_000;
+  IDLE_COMPACTION_AFTER_MS.claude = after;
+  const idleSince = Date.now() - after + AFTER;
+  db.prepare(`insert into processes (id,project_id,kind,name,status,activity,cache_compaction,cache_idle_since,created_at,updated_at)
+    values ('rb', 'project', 'agent', 'rb', 'running', 'idle', 'armed', ?, 'now', 'now')`).run(new Date(idleSince).toISOString());
+  db.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,session_role,started_at)
+    values ('session_rb', 'project', 'rb', 'claude', 'integrated', 'orchestrator', 'now')`).run();
+  let status = 'working';
+  const compacts: string[] = [];
+  const provider: IntegratedProviderService = {
+    prepare: async () => ({ resumeId: 'session', argv: [] }),
+    conversation: async () => ({ status, messages: { data: [{ id: 'old', role: 'assistant', kind: 'text', created_at: new Date(idleSince - 5_000).toISOString() }] } }),
+    prompt: async () => ({}),
+    interrupt: async () => {},
+    replyPermission: async () => {},
+    replyQuestion: async () => {},
+    compact: async () => { compacts.push('rb'); return {}; }
+  };
+  const integrated = new IntegratedAgentService(database, { claude: provider });
+  const restart = () => {
+    const service = new IdleCompactionService(database, integrated, () => true);
+    service.start();
+    return service;
+  };
+  let service = restart();
+  try {
+    await wait(SETTLE);
+    assert.deepEqual(compacts, [], 'a restored deadline never compacts an agent that is working');
+    const row = db.prepare("select cache_compaction as state from processes where id = 'rb'").get() as { state: string | null };
+    assert.equal(row.state, null);
+    service.dispose();
+    // The same agent idle, with nothing newer than its idle time, compacts.
+    status = 'idle';
+    db.prepare("update processes set cache_compaction = 'armed', cache_idle_since = ? where id = 'rb'").run(new Date(Date.now() - after + AFTER).toISOString());
+    service = restart();
+    await wait(SETTLE);
+    assert.deepEqual(compacts, ['rb']);
+  } finally {
+    service.dispose();
+    IDLE_COMPACTION_AFTER_MS.claude = AFTER;
+  }
 }
 
 // A reconnect reported through IntegratedAgentService's own observation of a
