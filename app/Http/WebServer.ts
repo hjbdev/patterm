@@ -455,12 +455,12 @@ export class WebServer {
           } else if (channel === 'patterm:integrated:call') {
             const call = z.object({ tool: z.string(), arguments: z.object({ process_id: z.string().min(1) }).passthrough() }).parse(args);
             if (!INTEGRATED_CONTROL_TOOLS.has(call.tool)) throw new Error('Unknown Integrated control operation');
-            this.terminals.guard(client, call.arguments);
+            this.terminals.guard(client, call.arguments, call.tool === 'integrated_restart' ? 'restart' : 'write');
             result = await callIntegrated(this.application, call.tool, call.arguments);
           } else {
             const operation = channel.replace('patterm:terminal:', '');
             if (!channel.startsWith('patterm:terminal:')) throw new Error('Use HTTP for non-terminal operations');
-            if (CONTROL_OPERATIONS.has(operation)) args = this.terminals.guard(client, args, operation === 'resize');
+            if (CONTROL_OPERATIONS.has(operation)) args = this.terminals.guard(client, args, operation === 'resize' ? 'resize' : 'write');
             result = await this.dispatch(channel, args);
           }
           send(boundedReply(id, result));

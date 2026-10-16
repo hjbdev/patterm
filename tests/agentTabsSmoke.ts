@@ -121,6 +121,15 @@ assert.equal(agentOptionTargetByDelta(mixedFamilies, null, -1, integratedChild.i
 assert.equal(activeAgentFamilyIndex(mixedFamilies, null), -1, 'no routed session means no active family');
 assert.deepEqual(families.map((family) => family.rootId), ['root-a', 'root-b', 'root-c']);
 
+// A failed parent remains a selectable family root while its children run.
+const deadRoot = { ...integratedSession, exitedAt: '2026-01-01T00:01:00.000Z', processStatus: 'failed', activity: 'working' as const };
+const survivingChild = { ...integratedChild, parentId: deadRoot.id };
+const recoveredFamilies = buildAgentTabFamilies([deadRoot, survivingChild]);
+assert.deepEqual(recoveredFamilies.map((family) => family.rootId), [deadRoot.id], 'a crash does not promote surviving children to roots');
+assert.deepEqual(recoveredFamilies[0]?.options.map((option) => option.session.id), [deadRoot.id, survivingChild.id]);
+assert.equal(buildAgentTabFamilies([{ ...deadRoot, processStatus: 'closed' }]).length, 0, 'explicitly closed sessions stay hidden');
+assert.equal(buildAgentTabFamilies([deadRoot]).length, 1, 'a failed Integrated agent stays available even without children');
+
 // Nested sub-agents keep their place at any depth, even when listed before their parents.
 const greatGrandchildA = session('great-grandchild-a', 'grandchild-a');
 const siblingA = session('sibling-a', 'root-a');

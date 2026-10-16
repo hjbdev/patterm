@@ -158,7 +158,6 @@ function anchor(key: string): HTMLElement {
   return element(key) ?? document.body;
 }
 function selectMember(rootId: string, session: SessionRecord): void {
-  if (session.exitedAt) return;
   sidebar.selectSession(rootId, session);
   hover.close();
 }

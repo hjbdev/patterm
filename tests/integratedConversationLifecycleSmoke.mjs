@@ -32,7 +32,7 @@ const questionConversation = () => ({
   ] }
 });
 
-function createHarness({ processId = 'process_a', exited = false, keepCache = false, onNewSession, onRestartSession, subscribeReply = () => ({ ok: true }) } = {}) {
+function createHarness({ processId = 'process_a', exited = false, restartable = false, keepCache = false, onNewSession, onRestartSession, subscribeReply = () => ({ ok: true }) } = {}) {
   // Tests reuse process IDs; each starts without another test's cached pane.
   if (!keepCache) helpers.forgetConversation();
   const lifecycle = { mounted: [], beforeUnmount: [] };
@@ -47,7 +47,7 @@ function createHarness({ processId = 'process_a', exited = false, keepCache = fa
   const workspaceHandlers = [];
   const published = new Map();
   const provided = new Map();
-  const props = reactive({ processId, exited, onNewSession, onRestartSession });
+  const props = reactive({ processId, exited, restartable, onNewSession, onRestartSession });
   const windowMock = {
     patterm: {
       runtime: 'browser',
@@ -1424,5 +1424,31 @@ test('assistant /restart refuses an active response until it finishes', async ()
   await flush();
   await restart();
   assert.deepEqual(calls, ['assistant_busy_restart']);
+  h.scope.stop();
+});
+
+
+test('reopening a dead parent reads saved history and /restart uses its owner without sending a prompt', async () => {
+  composer.clearDrafts();
+  const calls = [];
+  const h = createHarness({ processId: 'dead_parent', exited: true, restartable: true, onRestartSession: async id => { calls.push(id); } });
+  await flush();
+  await resolveSubscriptions(h);
+  const read = pending(h, 'integrated_get')[0];
+  assert.deepEqual(read.args, { process_id: 'dead_parent', transcript_only: true });
+  read.resolve({ provider: 'claude', ...replyConversation('saved before crash') });
+  await flush();
+  assert.equal(h.pane.messages.value[0].text, 'saved before crash');
+  assert.equal(h.conversationSubscriptions.length, 0, 'reopening does not reconnect to the dead host');
+  h.emitControl({ processId: 'dead_parent', controlling: true });
+  composer.draftFor('dead_parent').text = 'continue';
+  let prepared = composer.payloadFor('dead_parent');
+  await h.pane.sendRequest({ ...prepared.payload, hash: prepared.hash });
+  assert.deepEqual(calls, []);
+  composer.draftFor('dead_parent').text = ' /restart ';
+  prepared = composer.payloadFor('dead_parent');
+  await h.pane.sendRequest({ ...prepared.payload, hash: prepared.hash });
+  assert.deepEqual(calls, ['dead_parent']);
+  assert.deepEqual(h.mutations, []);
   h.scope.stop();
 });

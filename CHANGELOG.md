@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Failed Integrated agents stay visible with a dead state and retain their
+  subagent family. Reopen the saved transcript and use `/restart` to resume
+  the conversation, carrying its subagents, timers, and session context across.
+
 - After `/compact` or auto-compaction, the context ring no longer shows the old
   usage until the next reply. Claude sessions show the compacted size; OpenCode,
   which does not report it, shows no figure until the next request.

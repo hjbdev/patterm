@@ -288,14 +288,31 @@ export class IntegratedAgentService {
   // delivers held prompts, or records limits, so reading an agent nobody has
   // opened changes nothing. It leaves out the command and model lists, which
   // the pane reads separately, and imported history, which the pane's own
-  // snapshot adds.
+  // snapshot adds. Ended sessions read only their imported history.
   async peekConversation(processId: string): Promise<unknown> {
+    if (!this.isLive(this.ledgerKey(processId))) return this.savedConversation(processId);
     const conversation = record(await this.forProcess(processId).conversation(processId));
     const { commands: _commands, models: _models, ...transcript } = conversation;
     const held = this.heldQueue(this.ledgerKey(processId));
     if (!held.length) return transcript;
     const native = transcript.queue;
     return { ...transcript, queue: [...(Array.isArray(native) ? native : []), ...held] };
+  }
+
+  // Ended agents have no host to read. Imported native history remains
+  // available without restarting anything, using the same bounded archive pages.
+  private savedConversation(processId: string): unknown {
+    const archive = this.archiveSession(processId, null);
+    const before = '9999-12-31T23:59:59.999Z';
+    if (!archive || !this.history) return { messages: [] };
+    const count = this.history.archive(archive.provider, archive.resumeId, archive.projectId, before, 0, 0).count;
+    const offset = Math.max(0, count - ARCHIVE_PAGE_SIZE);
+    const page = this.history.archive(archive.provider, archive.resumeId, archive.projectId, before, offset, ARCHIVE_PAGE_SIZE);
+    return {
+      provider: archive.provider, messages: [], archived_messages: page.messages,
+      history_truncated: offset > 0,
+      history_cursor: offset > 0 ? { next: archiveCursor(before, offset) } : null
+    };
   }
 
   // Archive pages carry imported rows untouched. The renderer projects them
@@ -1097,10 +1114,11 @@ export class IntegratedAgentService {
   private archiveSession(processId: string, conversation: unknown): { provider: string; resumeId: string; projectId: string; startedAt: string } | null {
     const row = this.database.connection.prepare(`
       select harness, resume_id, project_id, started_at from sessions
-      where (process_id = ? or id = ?) and interface_mode = 'integrated' and harness in ('claude', 'codex') and resume_id is not null
+      where (process_id = ? or id = ?) and interface_mode = 'integrated' and harness in ('claude', 'codex', 'opencode') and resume_id is not null
       order by exited_at is null desc, started_at desc limit 1
     `).get(processId, processId) as { harness: string; resume_id: string; project_id: string; started_at: string } | undefined;
     if (!row) return null;
+    if (row.harness === 'opencode' && conversation !== null) return null;
     if (row.harness === 'codex' && conversation !== null && record(conversation).history_unavailable !== true) return null;
     return { provider: row.harness, resumeId: row.resume_id, projectId: row.project_id, startedAt: row.started_at };
   }

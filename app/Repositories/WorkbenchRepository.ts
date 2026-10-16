@@ -42,6 +42,8 @@ export interface SessionDto {
   id: string;
   parentId: string | null;
   processId: string | null;
+  // Lifecycle of the backing process; older hosts omit it.
+  processStatus?: string | null;
   ptyProcessId: string | null;
   worktreeId: string | null;
   harness: string | null;
@@ -264,11 +266,13 @@ export class WorkbenchRepository {
   }
 
   private projectWorkbench(project: ProjectRow, timers: TimerRecord[]): ProjectWorkbenchDto {
-    // Assigned sessions stay listed, so todos can name their assignees.
+    // Assigned sessions stay listed so todos can name their assignees;
+    // unclosed Integrated sessions stay available for recovery after an exit.
     const since = this.now() - WORKBENCH_HISTORY_MS;
     const sessionRows = this.db
       .prepare(`select sessions.*, processes.pty_process_id from sessions left join processes on processes.id = sessions.process_id
-        where sessions.project_id = ? and (sessions.exited_at is null or julianday(sessions.exited_at) >= julianday(?)
+        where sessions.project_id = ? and ((sessions.interface_mode = 'integrated' and processes.status != 'closed')
+          or sessions.exited_at is null or julianday(sessions.exited_at) >= julianday(?)
           or exists (select 1 from todo_assignments where todo_assignments.session_id = sessions.id))
         order by sessions.started_at asc`)
       .all(project.id, new Date(since).toISOString()) as SessionRow[];
@@ -298,6 +302,7 @@ function projectSummary(row: ProjectRow): ProjectSummaryDto {
 // Derive each session's parent session via the backing process tree:
 // session → process → parent_process → the session owning that process.
 function mapSessions(sessions: SessionRow[], processes: ProcessRow[]): SessionDto[] {
+  const statuses = new Map(processes.map((process) => [process.id, process.status]));
   const summaries = new Map(processes.map((process) => [process.id, mapAutoSummary(process)]));
   const closeRequests = new Map(processes.map((process) => [process.id, mapCloseRequest(process)]));
   const backgroundTasks = new Map(processes.map((process) => [process.id, process.background_tasks]));
@@ -321,6 +326,7 @@ function mapSessions(sessions: SessionRow[], processes: ProcessRow[]): SessionDt
       id: session.id,
       parentId,
       processId: session.process_id,
+      processStatus: session.process_id ? statuses.get(session.process_id) ?? null : null,
       summary: session.process_id ? summaries.get(session.process_id) ?? null : null,
       closeRequest: session.process_id ? closeRequests.get(session.process_id) ?? null : null,
       ptyProcessId: session.pty_process_id ?? null,

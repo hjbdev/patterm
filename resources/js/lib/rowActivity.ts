@@ -8,8 +8,8 @@ import type { AgentTabFamily } from './agentTabs';
 import type { AgentNode } from './agentTree';
 
 // Closing is an idle agent that asked to be closed.
-export type Pulse = 'working' | 'permission' | 'question' | 'error' | 'closing' | 'idle' | 'unknown';
-type BusyPulse = Exclude<Pulse, 'closing' | 'idle' | 'unknown'>;
+export type Pulse = 'working' | 'permission' | 'question' | 'error' | 'closing' | 'idle' | 'unknown' | 'dead';
+type BusyPulse = Exclude<Pulse, 'closing' | 'idle' | 'unknown' | 'dead'>;
 
 export interface RowActivity {
   readonly self: Pulse;
@@ -25,7 +25,7 @@ export function activityLookup(families: readonly AgentTabFamily[]): (session: S
     const subagents = { working: 0, permission: 0, question: 0, error: 0 };
     for (const child of node.children) {
       const below = visit(child);
-      if (below.self !== 'closing' && below.self !== 'idle' && below.self !== 'unknown') subagents[below.self] += 1;
+      if (below.self !== 'closing' && below.self !== 'idle' && below.self !== 'unknown' && below.self !== 'dead') subagents[below.self] += 1;
       subagents.working += below.subagents.working;
       subagents.permission += below.subagents.permission;
       subagents.question += below.subagents.question;
@@ -82,10 +82,10 @@ export function memberLabel(agents: number, processes: number): string {
 // Whether a row's subagent count sits inside its status ring. A row that shows
 // `?`, `✕` or `✓` keeps the count at its end instead.
 export function countInRing(activity: RowActivity): boolean {
-  return activity.self !== 'permission' && activity.self !== 'question' && activity.self !== 'error' && activity.self !== 'closing';
+  return activity.self !== 'permission' && activity.self !== 'question' && activity.self !== 'error' && activity.self !== 'closing' && activity.self !== 'dead';
 }
 
-const SELF_LABELS: Record<Pulse, string> = { working: 'Working', permission: 'Needs permission', question: 'Has a question', error: 'Error', closing: 'Ready to close', idle: 'Idle', unknown: 'Unknown' };
+const SELF_LABELS: Record<Pulse, string> = { working: 'Working', permission: 'Needs permission', question: 'Has a question', error: 'Error', closing: 'Ready to close', idle: 'Idle', unknown: 'Unknown', dead: 'Dead' };
 
 // For screen readers and tooltips, such as "Idle, 2 subagents working".
 export function describeActivity(activity: RowActivity): string {
@@ -103,6 +103,7 @@ export function describeActivity(activity: RowActivity): string {
 const NO_SUBAGENTS: Readonly<Record<BusyPulse, number>> = { working: 0, permission: 0, question: 0, error: 0 };
 
 function sessionPulse(session: SessionRecord): Pulse {
+  if (session.exitedAt) return 'dead';
   return session.closeRequest ? 'closing' : pulse(shownActivity(session));
 }
 

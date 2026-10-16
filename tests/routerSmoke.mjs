@@ -99,8 +99,12 @@ test('saved IDs drive navigation, delayed snapshots, history queries, and Back/F
     assert.equal(router.currentRoute.value.fullPath, '/projects/p1/agents/integrated', 'an agent launched from the empty project page opens');
     assert.equal(navigation.activeTerminalId.value, null, 'an Integrated agent has no PTY terminal ID');
     project.projectSessions.at(-1).exitedAt = '2026-09-22';
+    project.projectSessions.at(-1).processStatus = 'failed';
     await new Promise((resolve) => setTimeout(resolve, 20));
-    assert.equal(router.currentRoute.value.fullPath, '/projects/p1', 'closing the Integrated tab returns to the empty project page');
+    assert.equal(router.currentRoute.value.fullPath, '/projects/p1/agents/integrated', 'a failed Integrated agent stays open for /restart');
+    project.projectSessions.at(-1).processStatus = 'closed';
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(router.currentRoute.value.fullPath, '/projects/p1', 'explicitly closing the Integrated tab returns to the empty project page');
   } finally {
     app.unmount();
     delete globalThis.window;

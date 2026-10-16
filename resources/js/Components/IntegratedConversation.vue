@@ -10,7 +10,7 @@
         </div>
         <p v-if="displayError" role="alert" class="mx-auto w-full max-w-[50rem] shrink-0 break-words px-4 pb-4 text-sm text-destructive 2xl:max-w-[1000px]">{{ displayError }}</p>
       </div>
-      <div v-if="ended" class="mx-auto w-full max-w-[50rem] shrink-0 px-4 2xl:max-w-[1000px]"><p role="status" class="border-t border-border/60 py-3 text-sm text-muted-foreground">This agent session has ended. The transcript is read-only.</p></div>
+      <div v-if="ended" class="mx-auto w-full max-w-[50rem] shrink-0 px-4 2xl:max-w-[1000px]"><p role="status" class="border-t border-border/60 py-3 text-sm text-muted-foreground">{{ canRestart ? 'This agent has stopped. Use /restart to resume this conversation.' : 'This agent session has ended. The transcript is read-only.' }}</p></div>
       <div v-if="permissions.length || questions.length || forms.length || (closeRequest && !ended)" class="shrink-0 pb-2">
         <!-- The same width and inset as the composer below. -->
         <div class="mx-auto max-h-[55vh] w-full max-w-[50rem] space-y-2 overflow-y-auto overscroll-contain px-4 2xl:max-w-[1000px]" role="group" aria-label="Pending requests">
@@ -199,11 +199,12 @@
       <IntegratedComposer
         :process-id="processId"
         :provider="provider"
-        :controls="controls"
+        :controls="composerControls"
         :controlling="controlling"
         :sending="sending"
-        :pending="!!submission"
+        :pending="ended ? restarting : !!submission || restarting"
         :ended="ended"
+        :restartable="canRestart"
         :working="streamStatus === 'working' && !ended"
         :agents="mentionAgents"
         :launchers="mentionLaunchers"
@@ -312,7 +313,7 @@ import { onWorkspaceRequest, type WorkspaceRequest } from '../lib/workspaceReque
 // `onLaunched` is a prop rather than an emit: /new and /resume close this tab
 // before they answer, which can unmount the pane, and Vue drops emits from an
 // unmounted component.
-const props = defineProps<{ processId: string; projectId?: string | null; projectPath?: string | null; exited?: boolean; mentionAgents?: MentionAgent[]; mentionLaunchers?: MentionLauncher[]; embedded?: boolean; closeRequest?: CloseRequestRecord | null | undefined; closeSubagents?: number | undefined; onLaunched?: (sessionId: string) => void; onNewSession?: (processId: string) => Promise<void>; onRestartSession?: (processId: string) => Promise<void> }>();
+const props = defineProps<{ processId: string; projectId?: string | null; projectPath?: string | null; exited?: boolean; restartable?: boolean; mentionAgents?: MentionAgent[]; mentionLaunchers?: MentionLauncher[]; embedded?: boolean; closeRequest?: CloseRequestRecord | null | undefined; closeSubagents?: number | undefined; onLaunched?: (sessionId: string) => void; onNewSession?: (processId: string) => Promise<void>; onRestartSession?: (processId: string) => Promise<void> }>();
 const emit = defineEmits<{ transcript: [messages: TranscriptMessage[], status: string, loaded: boolean] }>();
 // Conversation state is replaced, never mutated in place (stream events and
 // snapshots produce new arrays), so shallow refs skip deep proxying of every
@@ -388,12 +389,16 @@ const providerLabel = computed(() => {
   return 'The agent';
 });
 const controls = shallowRef<IntegratedControls>({ selectors: [], commands: [] });
+const canRestart = computed(() => Boolean(props.restartable && (props.projectId || props.onRestartSession)));
+const composerControls = computed<IntegratedControls>(() => ended.value
+  ? { selectors: [], commands: canRestart.value ? [{ name: 'restart', description: 'Resume this conversation in a new process', source: 'patterm' }] : [] }
+  : controls.value);
 const transcriptRef = ref<InstanceType<typeof ConversationTranscript> | null>(null);
 const INITIAL_HISTORY_MESSAGES = 30;
 const resumeOpen = ref(false);
 const resumeQuery = ref('');
 let startingNew = false;
-let restarting = false;
+const restarting = ref(false);
 const displayError = computed(() => error.value || refreshError.value || controlsError.value);
 const canReply = computed(() => controlling.value && !ended.value);
 // A page's answer is an ordinary message, through the same send path
@@ -494,11 +499,14 @@ watch(() => props.exited, (value) => {
 });
 
 async function begin(processId: string): Promise<void> {
-  if (stopped || ended.value) return;
+  if (stopped) return;
   const token = generation;
   loadingTranscript.value = true;
   try {
-    await loadTranscript(processId, token);
+    if (ended.value) {
+      if (canRestart.value) void setSubscription(processId, true);
+      await applySnapshot(() => window.patterm.call('integrated_get', { process_id: processId, transcript_only: true }) as Promise<Record<string, unknown>>, ++refreshSequence, true);
+    } else await loadTranscript(processId, token);
   } finally {
     if (token === generation) {
       loadingTranscript.value = false;
@@ -652,8 +660,8 @@ function refresh(): Promise<void> {
 // `request` is the snapshot's place in order, taken when its read was asked
 // for. A subscription reply takes its place before subscribing, so a refresh
 // asked for later, such as after a permission reply, wins if it lands first.
-async function applySnapshot(load: () => Promise<Record<string, unknown>>, request = ++refreshSequence): Promise<void> {
-  if (stopped || ended.value) return;
+async function applySnapshot(load: () => Promise<Record<string, unknown>>, request = ++refreshSequence, readOnly = false): Promise<void> {
+  if (stopped || (ended.value && !readOnly)) return;
   const token = generation;
   beginSnapshot();
   try {
@@ -697,11 +705,14 @@ async function applySnapshot(load: () => Promise<Record<string, unknown>>, reque
     // captured before its payload, so equal revisions can hold different
     // content. Streamed snapshots are only taken on switch, reconnect, gaps,
     // and status or pending events, so they apply without the comparison.
-    const conversation = pushCapable() ? '' : JSON.stringify([result.messages, result.permissions, result.questions, result.forms, result.usage, result.tasks, result.queue]);
+    const conversation = pushCapable() ? '' : JSON.stringify([result.messages, result.archived_messages, result.permissions, result.questions, result.forms, result.usage, result.tasks, result.queue]);
     if (!conversation || conversation !== lastConversation) {
       lastConversation = conversation;
       const projection = normaliseConversation(result);
-      messages.value = historyLoaded ? mergeTranscriptWindows(messages.value, projection.messages) : projection.messages;
+      const rows = Array.isArray(result.archived_messages)
+        ? archiveTranscript(result.archived_messages as ConversationMessageRecord[], { projectPath: props.projectPath ?? null, showReasoning: true })
+        : projection.messages;
+      messages.value = historyLoaded ? mergeTranscriptWindows(messages.value, rows) : rows;
       permissions.value = projection.permissions;
       applyQuestions(projection.questions);
       applyForms(projection.forms);
@@ -715,7 +726,7 @@ async function applySnapshot(load: () => Promise<Record<string, unknown>>, reque
     if (!historyLoaded && historyCursor.value && messages.value.length < INITIAL_HISTORY_MESSAGES) void loadOlder();
   } catch (cause) {
     // A read that fails after the agent ended only saw its host go away.
-    if (token !== generation || stopped || ended.value || request < appliedSequence) return;
+    if (token !== generation || stopped || (ended.value && !readOnly) || request < appliedSequence) return;
     appliedSequence = request;
     const message = cause instanceof Error ? cause.message : String(cause);
     if (isSessionUnavailableError(message)) {
@@ -799,8 +810,9 @@ async function sendRequest(request: ComposerSendPayload & { hash: string }, opti
   const processId = props.processId;
   const token = generation;
   const mounted = () => token === generation && props.processId === processId;
-  if (ended.value || (submissionFor(processId) && !options.force)) return;
   const local = pattermCommand(request);
+  if (ended.value && (!canRestart.value || local?.name !== 'restart')) return;
+  if (!ended.value && submissionFor(processId) && !options.force) return;
   if (local) {
     completeSend(processId, request);
     runPattermCommand(local.name, local.text);
@@ -885,12 +897,14 @@ function pattermCommand(request: ComposerSendPayload): { name: string; text: str
 
 function slashCommand(request: ComposerSendPayload): { name: string; text: string; source: 'patterm' | undefined } | null {
   if (request.references.length || request.attachments.length) return null;
-  const slash = request.text.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/);
-  const command = slash && controls.value.commands.find((item) => item.name === slash[1]);
+  const text = ended.value ? request.text.trim() : request.text;
+  const slash = text.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/);
+  const command = slash && composerControls.value.commands.find((item) => item.name === slash[1]);
   return command ? { name: command.name, text: slash[2] ?? '', source: command.source } : null;
 }
 
 function runPattermCommand(name: string, text: string): void {
+  if (ended.value && (!canRestart.value || name !== 'restart')) return;
   if (name === 'new') {
     void startNewSession();
     return;
@@ -928,13 +942,17 @@ async function startNewSession(): Promise<void> {
 // Resumes this conversation in a new process, which replaces this tab. The
 // composer refuses mid-turn; the palette confirms first and forces it.
 async function restartSession(force: boolean): Promise<void> {
-  if (restarting || (!props.onRestartSession && !props.projectId)) return;
+  if (restarting.value || (!props.onRestartSession && !props.projectId)) return;
   const token = generation;
-  restarting = true;
+  restarting.value = true;
   error.value = '';
   try {
+    if (window.patterm.runtime === 'browser' && !controlling.value) {
+      await takeControl();
+      if (!controlling.value) throw new Error('Take control of this agent before restarting it.');
+    }
     if (props.onRestartSession) {
-      if (!force && streamStatus.value === 'working') throw new Error('This agent is still working. Wait for it to finish or use Restart in the assistant menu to confirm stopping it.');
+      if (!force && !ended.value && streamStatus.value === 'working') throw new Error('This agent is still working. Wait for it to finish or use Restart in the assistant menu to confirm stopping it.');
       await props.onRestartSession(props.processId);
       return;
     }
@@ -943,7 +961,7 @@ async function restartSession(force: boolean): Promise<void> {
   } catch (cause) {
     if (token === generation) error.value = cause instanceof Error ? cause.message : String(cause);
   } finally {
-    restarting = false;
+    restarting.value = false;
   }
 }
 
@@ -1027,7 +1045,8 @@ async function interrupt(): Promise<void> {
 // Palette actions for this conversation run here, through the same control
 // checks and error display as the composer.
 function handleWorkspaceRequest(request: WorkspaceRequest): boolean {
-  if (request.kind !== 'integrated' || request.processId !== props.processId || ended.value) return false;
+  if (request.kind !== 'integrated' || request.processId !== props.processId) return false;
+  if (ended.value && (!canRestart.value || request.action !== 'restart')) return false;
   if (request.action === 'interrupt') void interrupt();
   else if (request.action === 'new') void startNewSession();
   else if (request.action === 'restart') void restartSession(true);

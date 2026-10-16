@@ -352,6 +352,11 @@ function agentActions(
       });
     }
   }
+  if (extra.current && !live && session.interfaceMode === 'integrated' && session.processStatus !== 'closed'
+    && session.sessionRole === 'orchestrator' && !session.host) {
+    commands.push({ id: `integrated:restart:${processId}`, label: 'Restart agent', hint: 'Resume this conversation in a new process', group, kind: 'renderer', inline: true,
+      result: { rendererAction: 'integrated', integrated: 'restart', processId } });
+  }
   if (extra.current) {
     commands.push({ id: `renderer:session-context:${session.id}`, label: 'Open session context', hint: 'Worktrees, todos, scratchpads, and links', group, kind: 'renderer', inline: true, result: { rendererAction: 'sessionContext', sessionId: session.id } });
   }

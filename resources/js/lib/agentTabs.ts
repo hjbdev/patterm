@@ -23,7 +23,9 @@ export interface AgentTabSelectionTarget {
 export type SelectedAgentByRoot = Record<string, string | null | undefined>;
 
 export function activeAgentSessions(sessions: readonly SessionRecord[]): SessionRecord[] {
-  return sessions.filter((session) => !session.exitedAt && Boolean(session.processId) && (session.interfaceMode === 'integrated' || Boolean(session.ptyProcessId)));
+  return sessions.filter((session) => Boolean(session.processId) && session.processStatus !== 'closed'
+    && ((!session.exitedAt && (session.interfaceMode === 'integrated' || Boolean(session.ptyProcessId)))
+      || (session.interfaceMode === 'integrated' && Boolean(session.processStatus))));
 }
 
 export function buildAgentTabFamilies(
