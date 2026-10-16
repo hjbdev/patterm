@@ -742,8 +742,10 @@ export class OpenCodeServerService {
   // is one model request, so the newest one's start is the latest activity.
   // Best effort: usage never blocks the transcript.
   private async usage(runtime: { executable: string; cwd: string; resumeId: string }, rows: unknown[]): Promise<Record<string, unknown>> {
-    const latest = rows.map(record).find((row) => row.type === 'assistant' && Object.keys(record(row.tokens)).length);
-    const tokens = record(latest?.tokens);
+    // A newer finished compaction makes that context stale. OpenCode does not
+    // report the compacted size, so context is unknown until the next request.
+    const latest = rows.map(record).find((row) => (row.type === 'assistant' && Object.keys(record(row.tokens)).length) || (row.type === 'compaction' && row.status === 'completed'));
+    const tokens = latest?.type === 'assistant' ? record(latest.tokens) : {};
     const cache = record(tokens.cache);
     const number = (value: unknown): number => typeof value === 'number' && Number.isFinite(value) ? value : 0;
     const context = number(tokens.input) + number(cache.read) + number(cache.write);

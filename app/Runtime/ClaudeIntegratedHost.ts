@@ -982,6 +982,9 @@ function receiveSystem(event: JsonRecord): void {
     const metadata = record(event.compact_metadata);
     const before = typeof metadata.pre_tokens === 'number' ? ` from ${Math.round(metadata.pre_tokens / 1000)}k tokens` : '';
     const after = typeof metadata.post_tokens === 'number' ? ` to ${Math.round(metadata.post_tokens / 1000)}k` : '';
+    // The next request reports the real figure; until then the old context is stale.
+    if (typeof metadata.post_tokens === 'number') usage.contextTokens = metadata.post_tokens;
+    else delete usage.contextTokens;
     upsertMessage({ id: compactNotice ?? `compact_${++noticeSequence}`, role: 'assistant', kind: 'notice', level: 'info', text: `Conversation compacted${metadata.trigger === 'auto' ? ' automatically' : ''}${before}${after}` }, true, true);
     compactNotice = null;
     return;

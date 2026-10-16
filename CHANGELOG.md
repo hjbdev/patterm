@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- After `/compact` or auto-compaction, the context ring no longer shows the old
+  usage until the next reply. Claude sessions show the compacted size; OpenCode,
+  which does not report it, shows no figure until the next request.
 - History reads no longer fail with "database is locked" while the import
   worker initializes the history database.
 - An Integrated agent whose turn has ended while a background task it started

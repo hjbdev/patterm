@@ -791,6 +791,7 @@ process.stdin.on('data', (chunk) => {
     const notices = noticed.messages.data.filter((row) => row.kind === 'notice').map((row) => [row.level, row.text]);
     assert.ok(notices.some(([, text]) => text === 'Recovered after 2 retries'), 'a retry run is one row that settles as recovered');
     assert.ok(notices.some(([, text]) => text === 'Conversation compacted automatically from 180k tokens to 22k'), 'compaction is one row');
+    assert.equal((noticed as unknown as { usage: { contextTokens?: number } }).usage.contextTokens, 22_000, 'compaction resets context usage');
     assert.ok(noticed.messages.data.some((row) => row.kind === 'text' && row.text === 'Total cost: $0.12'), 'local command output is shown');
     await waitForConversation(noticeService, 'process_notices', /deprecated setting/);
     const warned = await noticeService.conversation('process_notices') as { messages: { data: Array<{ kind: string; level?: string; text: string }> } };
