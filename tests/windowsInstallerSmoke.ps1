@@ -1,4 +1,4 @@
-param([string]$PackageDirectory)
+param([string]$PackageDirectory, [switch]$CheckStartRegistration)
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression
@@ -75,7 +75,7 @@ function Expect-Failure($Root, $Message) {
     if (-not $failed) { throw "Expected failure: $Message" }
     if (Test-Path $Root) { throw 'A failed validation created an installation.' }
 }
-function Assert-Shortcut($Root, $Icon) {
+function Assert-Shortcut($Root, $Icon, [int]$ExpectedLinks = 1) {
     $Icon = [IO.Path]::GetFullPath($Icon)
     if (-not (Test-Path -LiteralPath $Icon -PathType Leaf)) { throw 'Shortcut icon file is missing.' }
     $shortcutPath = Join-Path $startMenu 'Patterm.lnk'
@@ -100,7 +100,16 @@ function Assert-Shortcut($Root, $Icon) {
         [void][Runtime.InteropServices.Marshal]::ReleaseComObject($folder)
         [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
     }
-    if (@(Get-ChildItem -LiteralPath $startMenu -Filter '*.lnk').Count -ne 1) { throw 'Repeat installs created duplicate shortcuts.' }
+    if (@(Get-ChildItem -LiteralPath $startMenu -Filter '*.lnk').Count -ne $ExpectedLinks) { throw 'Repeat installs created duplicate shortcuts.' }
+}
+function Write-LegacyShortcut([string]$Target, [string]$AppId) {
+    $shell = New-Object -ComObject WScript.Shell
+    $link = $shell.CreateShortcut((Join-Path $startMenu 'Electron.lnk'))
+    try { $link.TargetPath = $Target; $link.Save() } finally {
+        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($link)
+        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
+    }
+    [PattermShortcut]::SetAppId((Join-Path $startMenu 'Electron.lnk'), $AppId)
 }
 try {
     Make-Package
@@ -112,6 +121,27 @@ try {
     if ($result -ne 'launched:"hello world"' -and $result -ne 'launched:hello world') { throw "Launcher did not forward arguments: $result" }
     & $installer -InstallRoot $root -StartMenuDirectory $startMenu -NoPath
     Assert-Shortcut $root (Join-Path $root 'patterm.ico')
+    $legacyLink = Join-Path $startMenu 'Electron.lnk'
+    $oldExe = Join-Path $root 'versions/1.2.3/electron/Patterm.exe'
+    Write-LegacyShortcut $oldExe 'Patterm.Desktop'
+    & $installer -InstallRoot $root -StartMenuDirectory $startMenu -NoPath
+    if (Test-Path -LiteralPath $legacyLink) { throw 'Patterm-owned Electron shortcut was not removed.' }
+    foreach ($other in @(@{ Target = $oldExe; Id = 'Other.App' }, @{ Target = $PSHOME + '/powershell.exe'; Id = 'Patterm.Desktop' })) {
+        Write-LegacyShortcut $other.Target $other.Id
+        & $installer -InstallRoot $root -StartMenuDirectory $startMenu -NoPath
+        if (-not (Test-Path -LiteralPath $legacyLink)) { throw 'Installer removed an unrelated Electron shortcut.' }
+        Assert-Shortcut $root (Join-Path $root 'patterm.ico') 2
+        Remove-Item -LiteralPath $legacyLink
+    }
+    # The new bootstrap must be able to repair an old updater's leftovers without
+    # querying releases, touching the launcher, or doing another installation.
+    Write-LegacyShortcut $oldExe 'Patterm.Desktop'
+    $beforeRepair = (Get-FileHash -LiteralPath (Join-Path $root 'bin/patterm.cmd')).Hash
+    $savedInvoke = ${function:Invoke-RestMethod}
+    function Invoke-RestMethod { throw 'Repair-only must not contact a release provider.' }
+    try { & $installer -InstallRoot $root -StartMenuDirectory $startMenu -RepairShortcutsOnly } finally { ${function:Invoke-RestMethod} = $savedInvoke }
+    if (Test-Path -LiteralPath $legacyLink) { throw 'Repair-only left the owned Electron shortcut.' }
+    if ((Get-FileHash -LiteralPath (Join-Path $root 'bin/patterm.cmd')).Hash -ne $beforeRepair) { throw 'Repair-only changed the launcher.' }
     $global:pattermInstallerFixture.Version = '1.2.4'
     Make-Package
     & $installer -InstallRoot $root -StartMenuDirectory $startMenu -NoPath
@@ -210,6 +240,14 @@ try {
         }
         if ((Get-FileHash -LiteralPath (Join-Path $installed 'electron/Patterm.exe')).Hash -ne (Get-FileHash -LiteralPath (Join-Path $installed 'electron/electron.exe')).Hash) { throw 'Branded executable differs from its compatibility copy.' }
         if ((Get-Content -LiteralPath (Join-Path $installed 'Patterm.cmd') -Raw) -notlike '*\electron\Patterm.exe*') { throw 'Built launcher does not use Patterm.exe.' }
+        $exe = Join-Path $installed 'electron/Patterm.exe'
+        $versionInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo($exe)
+        if ($versionInfo.ProductName -ne 'Patterm' -or $versionInfo.FileDescription -ne 'Patterm') { throw "Built executable still displays the wrong product name: $($versionInfo.ProductName) / $($versionInfo.FileDescription)" }
+        if ($versionInfo.ProductVersion -ne $global:pattermInstallerFixture.Version) { throw 'Built executable reports the wrong product version.' }
+        if (-not (Test-Path -LiteralPath (Join-Path $installed 'electron/resources/app/main.cjs'))) { throw 'Direct executable launch has no app bootstrap.' }
+        if ($CheckStartRegistration) {
+            & (Join-Path $PSScriptRoot 'windowsStartRegistrationSmoke.ps1') -Executable $exe -Directory $fixture
+        }
         Write-Host 'Actual built Windows package installation: PASS'
     }
     Write-Host 'Windows installer smoke: installation, Start menu entry, icon, application identity, spaced paths, launcher arguments, repeat install, upgrade, legacy package, PATH isolation, bad checksum, unsafe archive and missing asset PASS'

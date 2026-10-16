@@ -1,18 +1,15 @@
-## Patterm 0.2.8
+## Patterm 0.2.9
 
-Windows fixes for quitting and updating:
+Windows Start menu branding fix:
 
-- Quit exits after managed processes stop even if final resource cleanup reports
-  an error. Shutdown dialogs and the debug log include the underlying exception.
-- The desktop launcher runs `Patterm.exe`. An `electron.exe` compatibility copy
-  remains in the package so older installed updaters can install this release.
-- The installer prepares Start menu shortcuts separately and replaces them
-  atomically, preserving the existing entry if setup fails. Running-app errors
-  identify the blocking process by PID and executable path.
-- In-app update checks no longer fail with “Digest method not supported” when
-  verifying signed release manifests in Electron on Windows.
-- Quit warnings count only agents and commands on the local machine, excluding
-  paired hosts.
+- The Windows executable embeds Patterm’s product name, version and icon, so
+  Windows lists the app as Patterm instead of Electron.
+- Upgrades remove the old Electron shortcut when its app identity and target
+  both identify it as Patterm. The new app also repairs this on launch when
+  upgrading through an older in-app updater. Other applications’ Electron
+  shortcuts are kept.
+- Start menu and notification shortcuts can launch Patterm.exe directly with
+  the installed resources and production data directory.
 
 ## Platform support
 
