@@ -82,7 +82,6 @@ type PricedGroup = UsageGroup & Pick<UsageTokens, 'costUsd' | 'unpricedTokens'>;
 // windows come from both transcripts and live Integrated sessions.
 export class UsageService {
   private readonly written = new Map<string, string>();
-  private readonly readPercent = new Map<string, number>();
 
   constructor(private readonly database: DatabaseService, private readonly history: HistoryDatabaseService | null) {}
 
@@ -109,10 +108,9 @@ export class UsageService {
       if (this.written.get(key) === observed) continue;
       upsert.run(harness, label, usedPercent, resets, observed);
       this.written.set(key, observed);
-      // Only changes are kept: usage holds steady between them.
-      if (this.readPercent.get(key) === usedPercent) continue;
+      // Sessions report independently and out of order, so every observation
+      // is kept: a late one can still be the evidence for an earlier plateau.
       reading.run(harness, label, usedPercent, observed);
-      this.readPercent.set(key, usedPercent);
       this.database.connection.prepare(`delete from harness_rate_limit_readings where observed_at < ?`).run(new Date(Date.now() - RATE_LIMIT_READING_RETENTION_MS).toISOString());
     }
   }

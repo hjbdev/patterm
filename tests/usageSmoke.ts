@@ -130,6 +130,12 @@ function main(): void {
     assert.deepEqual(codex.skills?.map((entry) => [entry.name, entry.invokedBy]), [['bro', 'user'], ['ship', 'agent'], ['one', 'agent'], ['two', 'agent'], ['three', 'agent'], ['ship', 'agent']], 'Codex skills come from $skill mentions and SKILL.md reads, once per turn');
     assert.deepEqual(codex.rateLimits?.map((limit) => [limit.label, limit.usedPercent]), [['5h limit', 42], ['Weekly limit', 12]], 'the newest quota windows are kept');
     assert.deepEqual(codex.rateLimitReadings?.map((reading) => [reading.label, reading.usedPercent]), [['5h limit', 40], ['Weekly limit', 12], ['5h limit', 41], ['5h limit', 42]], 'each change in a window is a reading');
+    // The same figure in a new window is that window's first reading.
+    const resetFile = path.join(directory, 'rollout-reset.jsonl');
+    const quota = (minutesAgo: number, resetsInMinutes: number) => JSON.stringify({ timestamp: at(minutesAgo), type: 'event_msg', payload: { type: 'token_count', rate_limits: { limit_id: 'codex', primary: { used_percent: 5, window_minutes: 300, resets_at: Math.floor(now.getTime() / 1000) + resetsInMinutes * 60 } } } });
+    fs.writeFileSync(resetFile, [JSON.stringify({ timestamp: at(400), type: 'session_meta', payload: { id: 'codex_reset', cwd: projectPath } }), quota(360, -180), quota(150, 120), quota(6, 120)].join('\n') + '\n');
+    const reset = new CodexHistoryAdapter().parseFile(resetFile).conversations[0];
+    assert.deepEqual(reset?.rateLimitReadings?.map((reading) => reading.observedAt), [at(360), at(150)], 'a reset starts a new reading at the same figure');
 
     const imports = new AgentHistoryImportService(historyDatabase, new ProviderHistoryDiscoveryService(), null, undefined, appDatabase);
     imports.configure({ provider: 'claude', path: claudeRoot, enabled: true, watch_enabled: false });
@@ -167,7 +173,8 @@ function main(): void {
     usage.recordLimits('codex', [{ label: '5h limit', usedPercent: 10, observedAt: at(60) }]);
     usage.recordLimits('codex', [{ label: '5h limit', usedPercent: 10, observedAt: at(50) }]);
     const readings = appDatabase.connection.prepare(`select harness, used_percent as usedPercent from harness_rate_limit_readings order by harness, observed_at`).all() as Array<{ harness: string; usedPercent: number }>;
-    assert.deepEqual(readings.map((row) => [row.harness, row.usedPercent]), [['claude', 5], ['claude', 63], ['codex', 10]], 'live readings keep each change, including a late older one');
+    assert.deepEqual(readings.map((row) => [row.harness, row.usedPercent]), [['claude', 5], ['claude', 63], ['codex', 10], ['codex', 10]], 'live readings keep every observation, including a late older one');
+
     const summary = usage.summary(7, now);
     assert.equal(summary.dayKeys.length, 7);
     assert.equal(summary.dayKeys.at(-1), localDay(now), 'the chart days end today on the server calendar');
@@ -204,6 +211,13 @@ function main(): void {
     const empty = new UsageService(appDatabase, null).summary(1, now);
     assert.equal(empty.historyAvailable, false, 'the dashboard works without history');
     assert.equal(empty.limits.length, 2, 'live quota windows still show');
+    // A late, older observation at the same figure still shows usage had already plateaued.
+    const hours = (count: number) => new Date(now.getTime() + count * 3_600_000).toISOString();
+    for (const [usedPercent, observedAt] of [[30, hours(-48)], [40, hours(-1)], [40, hours(-26)]] as const) {
+      usage.recordLimits('claude', [{ label: 'Weekly Opus', usedPercent, resetsAt: hours(72), observedAt }]);
+    }
+    const plateau = usage.summary(1, now).limits.find((limit) => limit.label === 'Weekly Opus');
+    assert.equal(plateau?.projectedPercent, 40, 'a late observation sets the start of a plateau');
     paceSmoke();
     console.log('usage smoke ok');
   } finally {

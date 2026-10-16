@@ -194,7 +194,8 @@ class CodexUsageReader {
     }
     for (const window of windows) {
       const previous = this.rateLimits.find((limit) => limit.key === window.key);
-      if (previous?.usedPercent !== window.usedPercent) this.rateLimitReadings.push({ label: window.label, usedPercent: window.usedPercent, observedAt });
+      // A transcript is in order, so a reading is new when usage or the window changes.
+      if (previous?.usedPercent !== window.usedPercent || previous.resetsAt !== window.resetsAt) this.rateLimitReadings.push({ label: window.label, usedPercent: window.usedPercent, observedAt });
     }
     if (windows.length) this.rateLimits = [...this.rateLimits.filter((limit) => !windows.some((window) => window.key === limit.key)), ...windows];
   }
