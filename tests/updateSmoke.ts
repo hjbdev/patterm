@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import { mock } from 'node:test';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -104,6 +105,26 @@ async function testMinisignPort(): Promise<void> {
   assert.equal(verifyMinisign(key, body, fs.readFileSync(path.join(fixtures, 'manifest.json.minisig'), 'utf8')), 'patterm 1.2.0');
   assert.equal(verifyMinisign(key, body, fs.readFileSync(path.join(fixtures, 'manifest.json.legacy.minisig'), 'utf8')), 'legacy');
   assert.throws(() => verifyMinisign(key, Buffer.from(body.toString().replace('1.2.0', '9.9.9')), fs.readFileSync(path.join(fixtures, 'manifest.json.minisig'), 'utf8')), /Signature verification failed/);
+}
+
+// Electron's crypto provider can omit BLAKE2 even when standalone Node has it.
+async function testWithoutNativeBlake2(): Promise<void> {
+  const key = signer();
+  const releases = new FakeReleases(key);
+  releases.publish('1.3.0');
+  const createHash = crypto.createHash;
+  const digest = mock.method(crypto, 'createHash', (algorithm: string, options?: crypto.HashOptions) => {
+    if (algorithm === 'blake2b512') throw new Error('Digest method not supported');
+    return createHash(algorithm, options);
+  });
+  try {
+    await testMinisignPort();
+    const state = await service({ install: install('1.2.0', key, 'windows'), releases }).updates.check();
+    assert.equal(state.status, 'available', state.error ?? undefined);
+    assert.equal(state.latest?.version, '1.3.0');
+  } finally {
+    digest.mock.restore();
+  }
 }
 
 function testVersionOrder(): void {
@@ -459,6 +480,7 @@ async function main(): Promise<void> {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-update-test-'));
   try {
     await testMinisignPort();
+    await testWithoutNativeBlake2();
     testVersionOrder();
     testDetection(directory);
     await testChecks();

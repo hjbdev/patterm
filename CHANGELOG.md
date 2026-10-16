@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Windows update checks no longer fail with “Digest method not supported” when
+  verifying signed release manifests in Electron.
+
 - Quit warnings count only agents and commands on this machine, excluding
   paired hosts, including their records in linked projects.
 
