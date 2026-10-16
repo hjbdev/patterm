@@ -1143,7 +1143,9 @@ export class IntegratedAgentService {
         // end while background agents keep the status unchanged, so every
         // status retries it; a busy agent keeps it held.
         this.flushHeld(key);
-        if (observer.stale) this.refreshActivity(key, observer);
+        // OpenCode ends a subagent task with a status alone, so a status
+        // re-reads the tasks while any are counted.
+        if (observer.stale || this.backgroundTasks(key) > 0) this.refreshActivity(key, observer);
       } else if (event.kind === 'pending' || observer.stale) {
         // Pending carries permission changes a provider does not stream and
         // reconnect handoffs.
@@ -1173,7 +1175,12 @@ export class IntegratedAgentService {
     }
     const sequence = this.sequence(key);
     observer.refreshing = this.forProcess(key).conversation(key).then((conversation) => {
-      if (!observer.closed) this.markSnapshot(key, conversation, sequence);
+      if (!observer.closed) {
+        this.markSnapshot(key, conversation, sequence);
+        // Only these reads set the task count: they run one at a time, so a
+        // slower, older read cannot overwrite a newer count.
+        this.markBackgroundTasks(key, runningTasks(record(conversation).tasks));
+      }
       // Covers prompts held before a restart, when no transition follows.
       const status = record(conversation).status;
       if (!observer.closed && (status === 'idle' || status === 'error')) this.flushHeld(key);
@@ -1216,9 +1223,8 @@ export class IntegratedAgentService {
   }
 
   private markSnapshot(key: string, conversation: unknown, since: number): void {
-    const snapshot = record(conversation);
-    if (isActivity(snapshot.status)) this.markActivitySince(key, snapshot.status, since, true);
-    this.markBackgroundTasks(key, runningTasks(snapshot.tasks));
+    const status = record(conversation).status;
+    if (isActivity(status)) this.markActivitySince(key, status, since, true);
   }
 
   // Background tasks only change how rows look, so activity, and the queues,
@@ -1280,6 +1286,10 @@ export class IntegratedAgentService {
 
   private activity(processId: string): string | undefined {
     return (this.database.connection.prepare('select activity from processes where id = ?').get(processId) as { activity: string } | undefined)?.activity;
+  }
+
+  private backgroundTasks(processId: string): number {
+    return (this.database.connection.prepare('select background_tasks from processes where id = ?').get(processId) as { background_tasks: number } | undefined)?.background_tasks ?? 0;
   }
 
   // Returns the replaced activity, or null when nothing changed.

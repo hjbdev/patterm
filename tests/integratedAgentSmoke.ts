@@ -440,6 +440,35 @@ async function observedActivity(database: DatabaseService): Promise<void> {
   emit({ kind: 'pending' });
   await settle();
   assert.equal(backgroundTasks(), 0, 'finished tasks are not counted');
+
+  // Only the agent's own reads, one at a time, set the count, so a viewer's
+  // older read that lands late cannot bring back a finished task.
+  tasks = [{ id: 'shell', status: 'running' }];
+  emit({ kind: 'pending' });
+  await settle();
+  assert.equal(backgroundTasks(), 1);
+  let releaseOlder!: (value: unknown) => void;
+  conversation = () => new Promise((resolve) => { releaseOlder = resolve; });
+  const olderRead = service.conversation('process_observed');
+  tasks = [];
+  conversation = async () => ({ status: snapshot, tasks });
+  emit({ kind: 'pending' });
+  await settle();
+  assert.equal(backgroundTasks(), 0);
+  releaseOlder({ status: 'idle', tasks: [{ id: 'shell', status: 'running' }] });
+  await olderRead;
+  assert.equal(backgroundTasks(), 0, 'a late, older read does not restore a finished task');
+
+  // OpenCode ends a subagent task with a status alone; while tasks are
+  // counted, a status re-reads them.
+  tasks = [{ id: 'child', kind: 'subagent', status: 'running' }];
+  emit({ kind: 'pending' });
+  await settle();
+  assert.equal(backgroundTasks(), 1);
+  tasks = [];
+  emit({ kind: 'status', status: 'idle' });
+  await settle();
+  assert.equal(backgroundTasks(), 0, 'a status alone clears finished tasks');
   conversation = async () => ({ status: snapshot });
 
   // A turn that ended while disconnected is caught by the reconnect handoff.
