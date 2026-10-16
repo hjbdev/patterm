@@ -38,13 +38,15 @@
                   <div class="mt-1.5 h-1 overflow-hidden rounded-full bg-white/[0.06]">
                     <div v-if="!limit.expired" class="h-full rounded-full" :class="barClass(limit.usedPercent)" :style="{ width: `${Math.min(100, Math.max(0, limit.usedPercent))}%` }" />
                   </div>
-                  <p class="mt-1 text-[11px] text-muted-foreground/80">
+                  <div class="mt-1 flex flex-wrap items-baseline gap-x-3 text-[11px] text-muted-foreground/80">
                     <!-- Each part wraps whole, breaking only between parts. -->
-                    <template v-if="limit.expired"><span class="whitespace-nowrap">Window reset since last seen</span> · </template>
-                    <template v-else-if="limit.resetsAt"><span class="whitespace-nowrap">Resets in {{ untilLabel(limit.resetsAt, now) }}</span> · </template>
-                    <template v-if="pace(limit)"><span class="whitespace-nowrap">{{ pace(limit) }}</span> · </template>
-                    <span class="whitespace-nowrap">seen {{ relativeTime(limit.observedAt, now) }}</span>
-                  </p>
+                    <p class="min-w-0">
+                      <span v-if="limit.expired" class="whitespace-nowrap">Window reset since last seen</span>
+                      <span v-else-if="limit.resetsAt" class="whitespace-nowrap">Resets in {{ untilLabel(limit.resetsAt, now) }}</span>
+                      <template v-if="pace(limit)"> · <span class="whitespace-nowrap">{{ pace(limit) }}</span></template>
+                    </p>
+                    <span class="ml-auto whitespace-nowrap">Seen {{ relativeTime(limit.observedAt, now) }}</span>
+                  </div>
                 </li>
               </ul>
             </section>
