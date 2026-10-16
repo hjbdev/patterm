@@ -52,7 +52,7 @@
           :aria-label="`${expanded ? 'Hide' : 'Show'} ${memberLabel}`"
           :title="memberLabel"
           @pointerdown.stop
-          @click.stop="emit('toggle', $event)"
+          @click.stop="emit('toggle')"
         >
           <MemberCount :count="memberCount" :open="expanded" :shimmer="subagentPulse(activity) === 'working'" :bare="countInRing(activity)" />
         </button>
@@ -107,7 +107,7 @@ const props = withDefaults(defineProps<{
 }>(), { subtitle: null, waiting: false });
 // `expand` asks to open or close the family after the agent was clicked:
 // clicking opens it, and clicking it again while it's selected closes it.
-const emit = defineEmits<{ toggle: [event: MouseEvent]; expand: [open: boolean] }>();
+const emit = defineEmits<{ toggle: []; expand: [open: boolean] }>();
 
 const sidebar = useSidebar();
 const root = computed(() => props.tab.family.root.session);

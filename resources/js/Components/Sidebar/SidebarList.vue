@@ -37,7 +37,7 @@
               :subtitle="subtitle(entry.tab)"
               :waiting="Boolean(familyWaitingOn(sidebar, entry.tab.family))"
               expand-on-select
-              @toggle="toggle(entry.tab, $event)"
+              @toggle="setExpanded(entry.tab.family.rootId, !expanded(entry.tab))"
               @expand="(open) => setFamilyOpen(entry.tab, open)"
             />
             <SidebarMemberRow v-else :process="entry.tab.process" :tab="entry.tab" />
@@ -113,10 +113,9 @@ import { useSidebarKeys } from '../../Composables/useSidebarKeys';
 import { useSidebarReorder } from '../../Composables/useSidebarReorder';
 import { useSettledValues } from '../../Composables/useSettledValues';
 
-// The sidebar's list. Closed families are one line, subtitles appear where
-// they matter, and which families are open is the user's choice, remembered
-// on this device. Selecting an agent opens it; Alt-click a count to open or
-// close every family.
+// The sidebar's list. Subtitles show on every row or none, and which families
+// are open is the user's choice, remembered on this device. Selecting an agent
+// opens it.
 withDefaults(defineProps<{ placement?: 'docked' | 'drawer' }>(), { placement: 'docked' });
 const sidebar = useSidebar();
 const pendingLaunches = useProjectHarnessLaunches(() => sidebar.projectId.value);
@@ -196,19 +195,13 @@ function revealed(sessionId: string): boolean {
   return Boolean(mention.value?.ancestors.has(sessionId));
 }
 
-function toggle(tab: AgentTab, event: MouseEvent): void {
-  if (event.altKey) expansion.setAll(!expanded(tab));
-  else setExpanded(tab.family.rootId, !expanded(tab));
-}
-
-// What a family waits on always shows; its status line shows when it's open,
-// or everywhere if the user asks for every summary. Recaps from before status
-// lines existed show their first line instead.
+// What a family waits on always shows; its status line shows when subtitles
+// are on. Recaps from before status lines existed show their first line instead.
 function subtitle(tab: AgentTab): string | null {
   const waitingOn = familyWaitingOn(sidebar, tab.family);
   if (waitingOn) return waitingOn;
   const summary = tab.family.root.session.summary;
-  if (!summary || !(expansion.state.value.summaries || expanded(tab))) return null;
+  if (!summary || !expansion.state.value.subtitles) return null;
   const coverage: Record<string, string> = { stale: 'Summary history changed', catching_up: 'Summary catching up',
     partial: 'Partial conversation recap', paused: 'Summary catch-up paused' };
   return coverage[summary.coverage ?? ''] ?? summary.status ?? summary.text;

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The sidebar's view options replace Expand all, Collapse all, and Show every
+  summary with one Show subtitles toggle, on by default. Opening a family no
+  longer changes whether its subtitle shows, and Alt-click no longer opens or
+  closes every family.
+
 ### Fixed
 
 - Claude and Codex auto-summary token usage now counts in Usage totals, daily charts, models, and
