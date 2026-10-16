@@ -924,6 +924,12 @@ async function checkStreamedActivity(input: {
     assert.equal((await read()).status, 'working', 'finishing the OpenCode shell does not finish its execution');
     assert.ok(!statuses(mark).includes('idle'), 'OpenCode never streams idle between a tool and the execution end');
 
+    // A finished compaction re-reads the snapshot for its usage.
+    mark = events.length;
+    daemonState.emit('session.compaction.ended', { sessionID: first });
+    await waitFor(() => events.slice(mark).some((event) => event.kind === 'replace' && event.message?.text === 'Conversation compacted'));
+    assert.ok(events.slice(mark).some((event) => event.kind === 'pending'), 'a finished compaction re-reads the snapshot');
+
     // A permission request is streamed and read as permission, and its reply
     // returns to work. The request also re-reads the snapshot for the dock.
     mark = events.length;

@@ -987,6 +987,9 @@ function receiveSystem(event: JsonRecord): void {
     else delete usage.contextTokens;
     upsertMessage({ id: compactNotice ?? `compact_${++noticeSequence}`, role: 'assistant', kind: 'notice', level: 'info', text: `Conversation compacted${metadata.trigger === 'auto' ? ' automatically' : ''}${before}${after}` }, true, true);
     compactNotice = null;
+    // Subscribers re-read the snapshot for the new usage; auto-compaction
+    // continues the turn, so no idle event follows.
+    publish({ kind: 'pending' });
     return;
   }
   // Output of local slash commands such as /cost or /context.

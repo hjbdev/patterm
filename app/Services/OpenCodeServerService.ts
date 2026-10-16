@@ -486,6 +486,8 @@ export class OpenCodeServerService {
         text: type.endsWith('.started') ? 'Compacting the conversation…' : failed ? `Compaction failed: ${String(record(data.error).message ?? 'unknown error')}` : 'Conversation compacted',
         createdAt: at, ...(type.endsWith('.started') ? {} : { completedAt: at })
       } });
+      // The snapshot's usage drops the pre-compaction context.
+      if (type.endsWith('.ended')) emit({ kind: 'pending' });
       return;
     }
     // V2 content events update only the affected row. The snapshot is re-read

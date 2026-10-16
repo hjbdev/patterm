@@ -786,8 +786,13 @@ process.stdin.on('data', (chunk) => {
       .run(directory, JSON.stringify(noticePrepared.argv), now, now);
     database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor) values ('session_notices','project_test','process_notices','claude','integrated','identity_notices',?,?, 'orchestrator','found','user')`)
       .run(noticePrepared.resumeId, now);
+    const noticeEvents: Array<{ kind: string; message?: { text?: string } }> = [];
+    const releaseNotices = await noticeService.subscribe('process_notices', (event) => noticeEvents.push(event as { kind: string; message?: { text?: string } }));
     await noticeService.prompt('process_notices', { text: 'notice me', references: [], attachments: [] });
     const noticed = await waitForConversation(noticeService, 'process_notices', /Recovered after/) as { messages: { data: Array<{ kind: string; level?: string; text: string }> } };
+    const compacted = noticeEvents.findIndex((event) => event.kind === 'replace' && event.message?.text?.startsWith('Conversation compacted'));
+    assert.equal(noticeEvents[compacted + 1]?.kind, 'pending', 'compaction asks subscribers to re-read usage');
+    releaseNotices();
     const notices = noticed.messages.data.filter((row) => row.kind === 'notice').map((row) => [row.level, row.text]);
     assert.ok(notices.some(([, text]) => text === 'Recovered after 2 retries'), 'a retry run is one row that settles as recovered');
     assert.ok(notices.some(([, text]) => text === 'Conversation compacted automatically from 180k tokens to 22k'), 'compaction is one row');
