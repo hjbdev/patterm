@@ -3,7 +3,7 @@ import { actionCluster, createPaletteDocument, recordsRecent, rendererCommands, 
 import { baseName } from '../resources/js/lib/serverPath';
 import { worktreeName } from '../resources/js/lib/worktreeDiff';
 import { describeDuration } from '../resources/js/lib/timers';
-import { listCommandPaletteCommands, runCommandPaletteCommand } from '../app/Commands/CommandPalette';
+import { listCommandPaletteCommands, runCommandPaletteCommand, quitConfirmation } from '../app/Commands/CommandPalette';
 
 const command = (id: string, label: string, extra: Partial<CommandDescriptor> = {}): CommandDescriptor => ({ id, label, group: 'open', kind: 'navigate', ...extra });
 const search = command('renderer:workspace-search', 'Search workspace content…', { kind: 'renderer' });
@@ -61,6 +61,17 @@ const integratedApplication = { ...application, currentWorkbench: () => ({ proje
 const integratedContext = { active_project_id: 'p', active_terminal_id: null, active_tab: 'agents', active_session_id: 'root' };
 
 async function main() {
+  // Paired-host records are visible in both standalone and linked projects,
+  // but quitting this app only stops work owned by this machine.
+  const remoteSession = session('host:remote', { host: 'host' });
+  const remoteProcess = { id: 'host:command', host: 'host', status: 'running' };
+  const remoteOnly = { ...project, project: { ...project.project, host: 'host' }, projectSessions: [remoteSession], processes: [remoteProcess] };
+  const linkedRemoteOnly = { ...project, projectSessions: [remoteSession], processes: [remoteProcess] };
+  assert.equal(quitConfirmation(application, [remoteOnly, linkedRemoteOnly] as unknown as Parameters<typeof quitConfirmation>[1]), undefined, 'Remote work must not trigger a local Quit warning');
+  const mixed = { ...integratedProject, projectSessions: [...integratedProject.projectSessions, remoteSession], processes: [...integratedProject.processes, remoteProcess] };
+  assert.match(quitConfirmation(application, [mixed, remoteOnly] as unknown as Parameters<typeof quitConfirmation>[1]) ?? '', /3 agents and 1 command/, 'Linked projects count only their local records');
+  const assistantApplication = { ...application, database: { connection: { prepare: () => ({ all: () => [{ id: 'assistant', kind: 'agent' }, { id: 'assistant-command', kind: 'command' }] }) } } } as unknown as typeof application;
+  assert.match(quitConfirmation(assistantApplication, [remoteOnly] as unknown as Parameters<typeof quitConfirmation>[1]) ?? '', /1 agent and 1 command/, 'Local Assistant work outside the workbench still counts');
   const quitCommands = (await listCommandPaletteCommands(application, context)).commands;
   assert.equal(quitCommands.find(item => item.id === 'renderer:quit')?.confirmation, undefined, 'An empty app needs no Quit confirmation');
   let shutdowns = 0;
