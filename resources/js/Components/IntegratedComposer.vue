@@ -13,7 +13,7 @@
         :id="listboxId"
         ref="menu"
         role="listbox"
-        :aria-label="mode === 'mention' ? (agents.length || launchers.length ? 'Agents and worktree files' : 'Worktree files') : 'Slash commands'"
+        :aria-label="mode === 'mention' ? (agents.length || processes.length || launchers.length ? 'Agents, processes, and worktree files' : 'Worktree files') : 'Slash commands'"
         class="absolute inset-x-2 bottom-full z-40 mb-2 max-h-80 overflow-y-auto rounded-xl border border-border bg-popover p-1 shadow-lg"
       >
         <template v-if="mode === 'mention'">
@@ -36,13 +36,12 @@
               <span v-if="agent.parent" class="min-w-0 flex-1 truncate text-right text-xs text-muted-foreground">{{ agent.parent }}</span>
             </button>
           </div>
-          <div v-if="agentMatches.length && launcherMatches.length" aria-hidden="true" class="mx-2 my-1 border-t border-border/60" />
-          <!-- Presets and harnesses ask the agent to launch a new one. -->
-          <div v-if="launcherMatches.length" role="group" aria-label="New agents">
+          <div v-if="agentMatches.length && processMatches.length" aria-hidden="true" class="mx-2 my-1 border-t border-border/60" />
+          <div v-if="processMatches.length" role="group" aria-label="Processes">
             <button
-              v-for="(launcher, index) in launcherMatches"
+              v-for="(process, index) in processMatches"
               :id="optionId(agentMatches.length + index)"
-              :key="launcher.token"
+              :key="process.processId"
               type="button"
               role="option"
               tabindex="-1"
@@ -50,6 +49,27 @@
               class="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-sm"
               :class="agentMatches.length + index === menuIndex && 'bg-muted'"
               @mouseenter="menuIndex = agentMatches.length + index"
+              @mousedown.prevent="chooseProcess(process)"
+            >
+              <TabActivity :spec="processStatusIcon(process.process)"><TerminalSquare class="h-3.5 w-3.5" aria-hidden="true" /></TabActivity>
+              <span class="min-w-0 truncate"><span v-for="(run, runIndex) in mentionRuns(process)" :key="runIndex" :class="run.match && 'font-semibold text-primary'">{{ run.text }}</span></span>
+              <span v-if="process.owner" class="min-w-0 flex-1 truncate text-right text-xs text-muted-foreground">{{ process.owner }}</span>
+            </button>
+          </div>
+          <div v-if="(agentMatches.length || processMatches.length) && launcherMatches.length" aria-hidden="true" class="mx-2 my-1 border-t border-border/60" />
+          <!-- Presets and harnesses ask the agent to launch a new one. -->
+          <div v-if="launcherMatches.length" role="group" aria-label="New agents">
+            <button
+              v-for="(launcher, index) in launcherMatches"
+              :id="optionId(launcherOffset + index)"
+              :key="launcher.token"
+              type="button"
+              role="option"
+              tabindex="-1"
+              :aria-selected="launcherOffset + index === menuIndex"
+              class="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-sm"
+              :class="launcherOffset + index === menuIndex && 'bg-muted'"
+              @mouseenter="menuIndex = launcherOffset + index"
               @mousedown.prevent="chooseLauncher(launcher)"
             >
               <AgentIcon :harness="launcher.harness" class="h-3.5 w-3.5 text-orange-300" />
@@ -57,7 +77,7 @@
               <span class="min-w-0 flex-1 truncate text-right text-xs text-muted-foreground">{{ launcher.kind === 'preset' ? `${harnessLabel(launcher.harness)} preset` : 'New agent' }}</span>
             </button>
           </div>
-          <div v-if="(agentMatches.length || launcherMatches.length) && (files.length || searchError)" aria-hidden="true" class="mx-2 my-1 border-t border-border/60" />
+          <div v-if="namedCount && (files.length || searchError)" aria-hidden="true" class="mx-2 my-1 border-t border-border/60" />
           <div role="group" aria-label="Worktree files">
             <button
               v-for="(file, index) in files"
@@ -77,7 +97,7 @@
             </button>
           </div>
           <p v-if="searchError" class="px-2 py-1.5 text-xs text-destructive">{{ searchError }}</p>
-          <p v-else-if="!files.length && !namedCount" class="px-2 py-1.5 text-xs text-muted-foreground" role="status">{{ searching ? 'Searching…' : agents.length || launchers.length ? 'No matching agents or files' : 'No matching worktree files' }}</p>
+          <p v-else-if="!files.length && !namedCount" class="px-2 py-1.5 text-xs text-muted-foreground" role="status">{{ searching ? 'Searching…' : agents.length || processes.length || launchers.length ? 'No matching agents, processes, or files' : 'No matching worktree files' }}</p>
         </template>
         <template v-else>
           <button
@@ -155,7 +175,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useId, watch } from 'vue';
 import { EditorContent } from '@tiptap/vue-3';
-import { ArrowUp, Paperclip, Square } from 'lucide-vue-next';
+import { ArrowUp, Paperclip, Square, TerminalSquare } from 'lucide-vue-next';
 import { Button } from './ui/button';
 import AgentIcon from './AgentIcon.vue';
 import ComposerWorkingBorder from './ComposerWorkingBorder.vue';
@@ -178,12 +198,12 @@ import {
   slashQuery,
   type ComposerSendPayload
 } from '../lib/integratedComposer';
-import type { MentionAgent, MentionLauncher } from '../lib/agentMentions';
+import type { MentionAgent, MentionLauncher, MentionProcess } from '../lib/agentMentions';
 import { harnessLabel } from '../lib/harnesses';
 import type { ComposerChip } from '../lib/composerDocument';
 import { createComposerEditor, type ComposerEditor } from '../lib/composerEditor';
 import { interceptMcpCallbackPaste } from '../lib/mcpCallbackPaste';
-import { sessionStatusIcon } from '../lib/statusIcons';
+import { processStatusIcon, sessionStatusIcon } from '../lib/statusIcons';
 import { touchScreen } from '../lib/touch';
 
 interface Selector { id: string; label: string; value: string; options: Array<{ value: string; label: string }> }
@@ -203,6 +223,8 @@ const props = defineProps<{
   working?: boolean;
   // Other agents the @ menu offers.
   agents?: MentionAgent[] | undefined;
+  // Live processes, such as shells and dev servers, the @ menu offers.
+  processes?: MentionProcess[] | undefined;
   // Presets and harnesses the @ menu offers for launching a new agent.
   launchers?: MentionLauncher[] | undefined;
 }>();
@@ -229,18 +251,22 @@ const searching = ref(false);
 const accept = 'image/png,image/jpeg,image/gif,image/webp,.pdf,.md,.markdown,.txt,.json,.yaml,.yml,.toml,.ts,.tsx,.js,.jsx,.mjs,.cjs,.py,.rb,.go,.rs,.java,.c,.h,.cpp,.hpp,.sh,.zsh,.css,.scss,.html,.sql,.csv,.xml,.log,.ini,.conf,.env';
 
 const agents = computed(() => props.agents ?? []);
+const processes = computed(() => props.processes ?? []);
 const launchers = computed(() => props.launchers ?? []);
-// The current mention's text. Agents and launchers match it at once; files
+// The current mention's text. Agents, processes, and launchers match it at once; files
 // arrive from a debounced search.
 const agentQuery = ref('');
 const agentMatches = computed(() => mode.value === 'mention' ? rankCommands(agents.value, agentQuery.value) : []);
+const processMatches = computed(() => mode.value === 'mention' ? rankCommands(processes.value, agentQuery.value) : []);
 const launcherMatches = computed(() => mode.value === 'mention' ? rankCommands(launchers.value, agentQuery.value) : []);
+const launcherOffset = computed(() => agentMatches.value.length + processMatches.value.length);
 // The rows above the files, which match without a search.
-const namedCount = computed(() => agentMatches.value.length + launcherMatches.value.length);
+const namedCount = computed(() => launcherOffset.value + launcherMatches.value.length);
 const commandMatches = computed(() => rankCommands(props.controls.commands, slashQuery(draft.value.text)?.query ?? ''));
 const menuItems = computed(() => mode.value === 'mention'
   ? [
       ...agentMatches.value.map((agent) => ({ kind: 'agent' as const, agent })),
+      ...processMatches.value.map((process) => ({ kind: 'process' as const, process })),
       ...launcherMatches.value.map((launcher) => ({ kind: 'launcher' as const, launcher })),
       ...files.value.map((file) => ({ kind: 'file' as const, file }))
     ]
@@ -252,7 +278,7 @@ const previewSessionId = computed(() => {
 });
 const placeholder = computed(() => {
   if (props.ended) return props.restartable ? 'Type /restart to resume this conversation' : 'This session has ended';
-  const mentions = agents.value.length || launchers.value.length ? 'type @ for agents and files' : 'type @ for files';
+  const mentions = agents.value.length || processes.value.length || launchers.value.length ? 'type @ for agents and files' : 'type @ for files';
   return props.controls.commands.length ? `Message agent, ${mentions}, / for commands` : `Message agent, ${mentions}`;
 });
 // The editable element is the combobox that owns the menus.
@@ -429,6 +455,12 @@ function chooseAgent(agent: MentionAgent): void {
   focusEditor();
 }
 
+function chooseProcess(process: MentionProcess): void {
+  editor.value?.replace(mentionRange.start, mentionRange.caret, { kind: 'process', token: process.processId, name: process.name, harness: null });
+  closeMenus();
+  focusEditor();
+}
+
 function chooseLauncher(launcher: MentionLauncher): void {
   editor.value?.replace(mentionRange.start, mentionRange.caret, { kind: launcher.kind, token: launcher.token, name: launcher.name, harness: launcher.harness });
   closeMenus();
@@ -455,11 +487,16 @@ function onKeydown(event: KeyboardEvent): void {
   if (event.key === 'Enter' && event.shiftKey) return;
   const accepting = event.key === 'Enter' || event.key === 'Tab';
   const highlighted = menuOpen.value ? menuItems.value[menuIndex.value] : undefined;
-  // Agents and launchers match without a search, so a highlighted one is
-  // never stale.
+  // Agents, processes, and launchers match without a search, so a highlighted
+  // one is never stale.
   if (accepting && highlighted?.kind === 'agent') {
     event.preventDefault();
     chooseAgent(highlighted.agent);
+    return;
+  }
+  if (accepting && highlighted?.kind === 'process') {
+    event.preventDefault();
+    chooseProcess(highlighted.process);
     return;
   }
   if (accepting && highlighted?.kind === 'launcher') {

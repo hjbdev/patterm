@@ -207,6 +207,7 @@
         :restartable="canRestart"
         :working="streamStatus === 'working' && !ended"
         :agents="mentionAgents"
+        :processes="mentionProcesses"
         :launchers="mentionLaunchers"
         @send="sendRequest"
         @command="runPattermCommand($event, '')"
@@ -273,7 +274,7 @@ import LoadingBar from './LoadingBar.vue';
 import ShimmerText from './ShimmerText.vue';
 import Markdown from './Markdown.vue';
 import ResumeConversationDialog from './ResumeConversationDialog.vue';
-import type { MentionAgent, MentionLauncher } from '../lib/agentMentions';
+import type { MentionAgent, MentionLauncher, MentionProcess } from '../lib/agentMentions';
 import { archiveTranscript } from '../lib/historyTranscript';
 import type { CloseRequestRecord, ConversationMessageRecord } from '../types';
 import {
@@ -314,7 +315,7 @@ import { onWorkspaceRequest, type WorkspaceRequest } from '../lib/workspaceReque
 // `onLaunched` is a prop rather than an emit: /new and /resume close this tab
 // before they answer, which can unmount the pane, and Vue drops emits from an
 // unmounted component.
-const props = defineProps<{ processId: string; projectId?: string | null; projectPath?: string | null; exited?: boolean; restartable?: boolean; mentionAgents?: MentionAgent[]; mentionLaunchers?: MentionLauncher[]; embedded?: boolean; closeRequest?: CloseRequestRecord | null | undefined; closeSubagents?: number | undefined; onLaunched?: (sessionId: string) => void; onNewSession?: (processId: string) => Promise<void>; onRestartSession?: (processId: string) => Promise<void> }>();
+const props = defineProps<{ processId: string; projectId?: string | null; projectPath?: string | null; exited?: boolean; restartable?: boolean; mentionAgents?: MentionAgent[]; mentionProcesses?: MentionProcess[]; mentionLaunchers?: MentionLauncher[]; embedded?: boolean; closeRequest?: CloseRequestRecord | null | undefined; closeSubagents?: number | undefined; onLaunched?: (sessionId: string) => void; onNewSession?: (processId: string) => Promise<void>; onRestartSession?: (processId: string) => Promise<void> }>();
 const emit = defineEmits<{ transcript: [messages: TranscriptMessage[], status: string, loaded: boolean] }>();
 // Conversation state is replaced, never mutated in place (stream events and
 // snapshots produce new arrays), so shallow refs skip deep proxying of every

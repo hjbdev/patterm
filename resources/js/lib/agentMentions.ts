@@ -1,11 +1,13 @@
 // Agent mentions. The Integrated composer offers the project's other live
-// agents in its @ menu, shows a picked agent as a chip, and sends it as the
-// agent's process ID, which agents pass to send_message. The menu also offers
+// agents and processes in its @ menu, shows a picked one as a chip, and sends
+// it as its process ID, which agents pass to send_message or
+// get_process_output. The menu also offers
 // presets and harnesses, sent as launch tokens such as
 // `[patterm_preset:smartypants]` that ask the agent to spawn_agent with them.
 // Transcripts show IDs and tokens as chips too.
 
 import { agentLabel, buildAgentTabFamilies } from './agentTabs';
+import { activeProcesses, type LiveProcessRecord } from './processTabs';
 import { HARNESS_LABELS, harnessLabel, launchableHarnesses } from './harnessLabels';
 import { FIGURE_ID } from '../../../app/Services/TranscriptProjection';
 import type { HarnessInstallationRecord, ProcessRecord, ProjectWorkbench, SessionRecord } from '../types';
@@ -17,6 +19,15 @@ export interface MentionAgent {
   name: string;
   // The parent agent's title, for subagents.
   parent: string | null;
+}
+
+export interface MentionProcess {
+  process: LiveProcessRecord;
+  processId: string;
+  // The process's name, which the menu searches.
+  name: string;
+  // The title of the agent that started it.
+  owner: string | null;
 }
 
 export interface MentionLauncher {
@@ -76,6 +87,15 @@ export function mentionableAgents(sessions: readonly SessionRecord[], selfProces
     if (!session.processId || session.processId === selfProcessId) return [];
     const parent = session.parentId ? byId.get(session.parentId) : undefined;
     return [{ session, processId: session.processId, name: agentLabel(session), parent: parent ? agentLabel(parent) : null }];
+  });
+}
+
+// Live processes, such as shells and dev servers, each naming the agent that
+// started it.
+export function mentionableProcesses(processes: readonly ProcessRecord[], sessions: readonly SessionRecord[]): MentionProcess[] {
+  return activeProcesses(processes).map((process) => {
+    const owner = process.parentProcessId ? sessionForProcess(sessions, process.parentProcessId) : null;
+    return { process, processId: process.id, name: process.name, owner: owner ? agentLabel(owner) : null };
   });
 }
 

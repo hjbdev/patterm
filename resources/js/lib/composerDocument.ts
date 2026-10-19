@@ -8,12 +8,12 @@
 export const CHIP = '￼';
 
 export interface ComposerChip {
-  // A running agent, or a preset or harness to launch a new agent with.
-  kind: 'agent' | 'preset' | 'harness';
-  // What the message sends in the chip's place: the agent's process ID, or a
-  // launch token (see agentMentions).
+  // A running agent or process, or a preset or harness to launch a new agent with.
+  kind: 'agent' | 'process' | 'preset' | 'harness';
+  // What the message sends in the chip's place: the agent's or process's ID,
+  // or a launch token (see agentMentions).
   token: string;
-  // The agent's title, the preset's name, or the harness's label.
+  // The agent's title, the process's name, the preset's name, or the harness's label.
   name: string;
   harness: string | null;
 }

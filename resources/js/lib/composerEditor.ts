@@ -1,5 +1,5 @@
 // The Integrated composer's editor: Tiptap set up as a plain-text box whose
-// only other content is mention chips: agents, presets, and harnesses. The composer works in offsets into the
+// only other content is mention chips: agents, processes, presets, and harnesses. The composer works in offsets into the
 // draft text (see composerDocument), so its menu logic reads as it would for
 // a text box.
 
