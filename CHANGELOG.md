@@ -22,11 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shells and dev servers, alongside agents. A picked process is sent as its
   process ID.
 - Snooze an agent until its next message from its tab or sidebar menu, with
-  an optional reminder. Snoozed agents move to the end of the tab strip as a
-  moon, or to a Snoozed group in the sidebar. They wake when a turn ends, when
-  they ask for permission or a question, or when you message them. A wake at
-  the end of a turn sends its own notification, with the reminder, in place of
-  "Finished its turn", and the reminder stays on the agent until you dismiss it.
+  an optional reminder. Snoozed agents are hidden until they wake. Show snoozed,
+  in the sidebar's view options or the command palette, brings them back as a
+  moon at the end of the tab strip or a Snoozed group in the sidebar. They wake
+  when a turn ends, when they ask for permission or a question, or when you
+  message them. A wake at the end of a turn sends its own notification, with
+  the reminder, in place of "Finished its turn", and the reminder stays on the
+  agent until you dismiss it.
 
 ### Fixed
 

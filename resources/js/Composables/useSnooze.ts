@@ -1,7 +1,30 @@
-import { reactive } from 'vue';
+import { reactive, ref } from 'vue';
 import { toast } from 'vue-sonner';
 import { agentLabel } from '../lib/agentTabs';
 import type { SessionRecord } from '../types';
+
+const SHOW_SNOOZED_KEY = 'patterm.showSnoozed.v1';
+
+// Whether snoozed agents show in the tab strip and sidebar, remembered on
+// this device. Hidden by default: snoozing is for getting them out of the way.
+export const showSnoozed = ref(readShowSnoozed());
+
+export function setShowSnoozed(value: boolean): void {
+  showSnoozed.value = value;
+  try {
+    localStorage.setItem(SHOW_SNOOZED_KEY, String(value));
+  } catch {
+    // Kept for this session only.
+  }
+}
+
+function readShowSnoozed(): boolean {
+  try {
+    return localStorage.getItem(SHOW_SNOOZED_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
 
 // Snoozing tucks an agent away until its next message. Menus open the one
 // dialog the workbench renders, which takes an optional reminder.

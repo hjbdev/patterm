@@ -127,7 +127,8 @@ import { useMediaQuery } from '@vueuse/core';
 import AssistantDock from '../Components/Assistant/AssistantDock.vue';
 import CloseConfirmDialog from '../Components/CloseConfirmDialog.vue';
 import SnoozeDialog from '../Components/SnoozeDialog.vue';
-import { snoozedLast } from '../lib/snooze';
+import { snoozedLast, tabSnoozed } from '../lib/snooze';
+import { showSnoozed } from '../Composables/useSnooze';
 import CommandPalette from '../Components/CommandPalette.vue';
 import LaunchAgentMenu from '../Components/LaunchAgentMenu.vue';
 import HarnessLaunchTabs from '../Components/HarnessLaunchTabs.vue';
@@ -301,7 +302,9 @@ const tabLayoutScope = computed(() => showingAll.value ? ALL_AGENTS_SCOPE : acti
 function updateCurrentTabLayout(change: TabLayout): void {
   const scope = tabLayoutScope.value;
   if (!scope) return;
-  const layout = showingAll.value ? keepHiddenTabs(currentTabLayout.value ?? EMPTY_TAB_LAYOUT, change, (key) => hiddenTabKeys.value.has(key)) : change;
+  // Tabs that don't show, from hidden projects or snoozed, keep their places.
+  const hidden = (key: string) => (showingAll.value && hiddenTabKeys.value.has(key)) || hiddenSnoozedKeys.value.has(key);
+  const layout = showingAll.value || hiddenSnoozedKeys.value.size ? keepHiddenTabs(currentTabLayout.value ?? EMPTY_TAB_LAYOUT, change, hidden) : change;
   tabLayoutByProject.value = { ...tabLayoutByProject.value, [scope]: layout };
   writeStoredTabLayout(scope, layout);
 }
@@ -347,7 +350,12 @@ const currentStripTabs = computed(() => buildStripTabs(
 // sidebar groups its own list.
 const allAgentsOptions = useSidebarExpansion(() => ALL_AGENTS_SCOPE);
 const groupedByProject = computed(() => showingAll.value && allAgentsOptions.state.value.groupByProject);
-const shownStripTabs = computed(() => snoozedLast(groupedByProject.value ? tabsGroupedByProject(currentStripTabs.value, listedSummaries.value, stripTabProject) : currentStripTabs.value));
+// Snoozed tabs wait at the end, or stay out of sight unless you show them.
+const shownStripTabs = computed(() => {
+  const tabs = snoozedLast(groupedByProject.value ? tabsGroupedByProject(currentStripTabs.value, listedSummaries.value, stripTabProject) : currentStripTabs.value);
+  return showSnoozed.value ? tabs : tabs.filter((tab) => !tabSnoozed(tab));
+});
+const hiddenSnoozedKeys = computed(() => new Set(showSnoozed.value ? [] : currentStripTabs.value.filter(tabSnoozed).map((tab) => tab.key)));
 function stripTabProject(tab: StripTab): ProjectSummary | null {
   return projectOf(tab.kind === 'agent' ? tab.family.rootId : tab.process.id);
 }

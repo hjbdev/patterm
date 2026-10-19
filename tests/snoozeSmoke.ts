@@ -7,7 +7,7 @@ import { SnoozeActions } from '../app/Actions/SnoozeActions';
 import type { RaiseNotificationInput } from '../app/Services/NotificationService';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import { removeTree } from './fixtures/TempTree';
-import { moveAwakeTab, snoozedLast } from '../resources/js/lib/snooze';
+import { moveAwakeTab, setTabPinned, snoozedLast } from '../resources/js/lib/snooze';
 import type { StripTab } from '../resources/js/lib/tabStrip';
 import type { SessionRecord } from '../resources/js/types';
 
@@ -22,6 +22,12 @@ function tabOrder(): void {
   assert.deepEqual(tabs.map((each) => each.key), ['first', 'second', 'pinned-asleep', 'asleep']);
   assert.deepEqual(moveAwakeTab(tabs, 'second', 0), { order: ['second', 'first', 'pinned-asleep', 'asleep'], pinned: ['pinned-asleep'] });
   assert.equal(moveAwakeTab(tabs, 'pinned-asleep', 3), null);
+
+  // Unpinning moves a tab to the start of the awake unpinned tabs, not past
+  // a pinned tab that sleeps at the end.
+  const pinnedAwake = snoozedLast([tab('pinned-awake', true, false), tab('first', false, false), tab('second', false, false), tab('pinned-asleep', true, true)]);
+  assert.deepEqual(setTabPinned(pinnedAwake, 'pinned-awake', false), { order: ['pinned-awake', 'first', 'second', 'pinned-asleep'], pinned: ['pinned-asleep'] });
+  assert.deepEqual(setTabPinned(pinnedAwake, 'pinned-asleep', false), { order: ['pinned-awake', 'first', 'second', 'pinned-asleep'], pinned: ['pinned-awake'] });
 }
 
 function main(): void {

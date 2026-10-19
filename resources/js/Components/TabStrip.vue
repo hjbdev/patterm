@@ -166,7 +166,7 @@ import HostBadge from './HostBadge.vue';
 import { computed, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue';
 import { Clock, Copy, Moon, Pencil, Pin, PinOff, Sun, Timer as TimerIcon, X } from 'lucide-vue-next';
 import { canSnooze, openSnooze, unsnooze } from '../Composables/useSnooze';
-import { moveAwakeTab, tabSnoozed } from '../lib/snooze';
+import { moveAwakeTab, setTabPinned, tabSnoozed } from '../lib/snooze';
 import { confirmClose } from '../Composables/useCloseConfirm';
 import { cn } from '@/lib/utils';
 import {
@@ -180,7 +180,7 @@ import { mentionPreview } from '../lib/integratedComposer';
 import { ownedProcessesForSessions } from '../lib/processTabs';
 import { activityLookup, countInRing, describeActivity, memberLabel, subagentCountClass, subagentPulse } from '../lib/rowActivity';
 import MemberCount from './MemberCount.vue';
-import { setStripTabPinned, type StripTab, type TabLayout } from '../lib/tabStrip';
+import type { StripTab, TabLayout } from '../lib/tabStrip';
 import { timersForProcesses } from '../lib/timers';
 import type { ProcessRecord, ProjectSummary, SessionRecord, TimerRecord } from '../types';
 import ProjectLogo from './ProjectLogo.vue';
@@ -397,7 +397,7 @@ function popoverReference(key: string): HTMLElement {
 }
 
 function setPinned(tab: StripTab, pinned: boolean): void {
-  const layout = setStripTabPinned(props.tabs, tab.key, pinned);
+  const layout = setTabPinned(props.tabs, tab.key, pinned);
   void animateTabMoves([...tabElements.values()], () => emit('update:layout', layout));
 }
 
