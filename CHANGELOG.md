@@ -30,6 +30,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the reminder, in place of "Finished its turn", and the reminder stays on the
   agent until you dismiss it.
 
+### Changed
+
+- The board, a project's page in sidebar mode and in All agents, is now a
+  canvas. Each agent family shows as a flowchart: the root agent on top, its
+  subagents in a row beneath it, and deeper subagents stacked under them.
+  Drag the background or scroll to pan, pinch or Ctrl+scroll to zoom, and
+  drag a card to move it. Moved cards keep their place on that device, and
+  Tidy up puts them back.
+
 ### Fixed
 
 - Agent launch screens and tabs keep showing loading until the agent opens,
