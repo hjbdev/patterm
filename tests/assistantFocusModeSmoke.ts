@@ -95,7 +95,7 @@ async function main(): Promise<void> {
     const ui = new McpToolRegistry();
     registerAssistantTools(ui, assistant, settings);
     const notification = (id: string, overrides: Partial<NotificationRecord> = {}): NotificationRecord => ({
-      id, project_id: 'p', process_id: 'proc-other', session_id: null, source: 'integrated', kind: 'turn_finished', urgency: 'normal', delivery: 'all', audience: 'user',
+      id, project_id: 'p', process_id: 'proc-other', session_id: null, source: 'integrated', kind: 'turn_finished', urgency: 'normal', delivery: 'all', held: false, audience: 'user',
       routed_to_process_id: null, title: 'other', body: 'Finished its turn', occurrences: 1, created_at: now, updated_at: now,
       read_at: null, resolved_at: null, url: '/', project_name: 'Project p', process_name: 'other', ...overrides
     });

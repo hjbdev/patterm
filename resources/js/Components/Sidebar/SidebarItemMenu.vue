@@ -11,6 +11,15 @@
         <PinOff v-if="tab.pinned" class="h-4 w-4" /><Pin v-else class="h-4 w-4" />
         <span>{{ tab.pinned ? 'Unpin' : 'Pin to top' }}</span>
       </ContextMenuItem>
+      <!-- Agents in the list, not their subagents, can be snoozed. -->
+      <template v-if="tab && session">
+        <ContextMenuItem v-if="isSnoozed(session)" @select="unsnooze(session.processId!)">
+          <Sun class="h-4 w-4" /><span>Wake</span>
+        </ContextMenuItem>
+        <ContextMenuItem v-else :disabled="!canSnooze(session)" @select="openSnooze(session)">
+          <Moon class="h-4 w-4" /><span>Snooze…</span>
+        </ContextMenuItem>
+      </template>
       <ContextMenuItem v-if="session" :disabled="!session.processId" @select="openTimer(session)">
         <Clock class="h-4 w-4" /><span>Set timer</span>
       </ContextMenuItem>
@@ -26,7 +35,9 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { Clock, Copy, Pencil, Pin, PinOff, X } from 'lucide-vue-next';
+import { Clock, Copy, Moon, Pencil, Pin, PinOff, Sun, X } from 'lucide-vue-next';
+import { canSnooze, openSnooze, unsnooze } from '../../Composables/useSnooze';
+import { isSnoozed } from '../../lib/snooze';
 import type { StripTab } from '../../lib/tabStrip';
 import type { ProcessRecord, SessionRecord } from '../../types';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '../ui/context-menu';

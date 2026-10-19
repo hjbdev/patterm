@@ -8,6 +8,8 @@
     <DropdownMenuContent align="end">
       <DropdownMenuItem @select="openRename"><Pencil class="h-4 w-4" /><span>Rename…</span></DropdownMenuItem>
       <DropdownMenuItem @select="emit('changeLogo')"><ImageIcon class="h-4 w-4" /><span>Change logo…</span></DropdownMenuItem>
+      <DropdownMenuItem v-if="projectSnoozed(project)" @select="wakeProject(project.id)"><Sun class="h-4 w-4" /><span>Wake</span></DropdownMenuItem>
+      <DropdownMenuItem v-else-if="canSnoozeProject(project)" @select="openProjectSnooze(project)"><SnoozeIcon class="h-4 w-4" /><span>Snooze…</span></DropdownMenuItem>
       <template v-if="project.kind !== 'personal'">
         <DropdownMenuSeparator />
         <DropdownMenuItem class="text-destructive focus:text-destructive" @select="openRemove"><Trash2 class="h-4 w-4" /><span>Remove…</span></DropdownMenuItem>
@@ -51,7 +53,10 @@
 
 <script setup lang="ts">
 import { ref } from 'vue';
-import { Image as ImageIcon, MoreHorizontal, Pencil, Trash2 } from 'lucide-vue-next';
+import { Image as ImageIcon, MoreHorizontal, Pencil, Sun, Trash2 } from 'lucide-vue-next';
+import { canSnoozeProject, openProjectSnooze, wakeProject } from '../Composables/useProjectSnooze';
+import { projectSnoozed } from '../lib/projectSnooze';
+import SnoozeIcon from './SnoozeIcon.vue';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from './ui/dropdown-menu';

@@ -54,6 +54,10 @@
           </div>
         </template>
       </TransitionGroup>
+      <!-- Snoozed projects fold to their names until they wake. -->
+      <div v-if="snoozedProjects.length" class="mt-3 space-y-0.5">
+        <SnoozedProjectHeader v-for="project in snoozedProjects" :key="project.id" :project="project" />
+      </div>
       <template v-if="processTabs.length">
         <button
           type="button"
@@ -124,7 +128,10 @@ import { useSidebarExpansion } from '../../Composables/useSidebarExpansion';
 import { useSidebarKeys } from '../../Composables/useSidebarKeys';
 import { useSidebarReorder } from '../../Composables/useSidebarReorder';
 import { useSettledValues } from '../../Composables/useSettledValues';
-import { groupByProject } from '../../lib/allAgents';
+import { allAgents as allAgentsState, groupByProject, projectShown } from '../../lib/allAgents';
+import { tabSnoozed } from '../../lib/snooze';
+import { projectSnoozed } from '../../lib/projectSnooze';
+import SnoozedProjectHeader from '../SnoozedProjectHeader.vue';
 import HostBadge from '../HostBadge.vue';
 import ProjectLogo from '../ProjectLogo.vue';
 import type { ProjectSummary } from '../../types';
@@ -140,7 +147,7 @@ const expansion = useSidebarExpansion(() => sidebar.expansionScope.value);
 // Grouped by status, a family moves once its new status has lasted a moment,
 // so output blips don't bounce it between groups. Needing you moves at once.
 const liveStatuses = computed(() => new Map<string, SidebarStatus>(expansion.state.value.groupByStatus
-  ? sidebar.tabs.value.flatMap((tab) => tab.kind === 'agent' && !tab.pinned ? [[tab.key, familyStatus(sidebar, tab.family, sidebar.activity(tab.family.root.session))] as const] : [])
+  ? sidebar.tabs.value.flatMap((tab) => tab.kind === 'agent' && !tab.pinned && !tabSnoozed(tab) ? [[tab.key, familyStatus(sidebar, tab.family, sidebar.activity(tab.family.root.session))] as const] : [])
   : []));
 const status = useSettledValues(() => liveStatuses.value, {
   minimumMs: 2_000,
@@ -148,21 +155,28 @@ const status = useSettledValues(() => liveStatuses.value, {
   delayFor: (next) => next === 'working' ? 1_500 : 2_500
 });
 
+// In All agents, snoozed projects you haven't switched off.
+const snoozedProjects = computed(() => sidebar.allAgents.value
+  ? sidebar.projects.value.filter((project) => projectSnoozed(project) && projectShown(allAgentsState, project.id))
+  : []);
+
 // All agents groups by project unless you'd rather sort them yourself.
 const byProject = computed(() => sidebar.allAgents.value && expansion.state.value.groupByProject);
 
 // Pinned rows first, in the order you gave them. The rest are agents, grouped
 // by project or status if you ask; your order holds within each group.
+// Snoozed agents wait at the end until their next message.
 interface Group { id: string; label: string | null; tabs: StripTab[]; project?: ProjectSummary }
 const groups = computed<Group[]>(() => {
-  const tabs = sidebar.tabs.value;
+  const tabs = sidebar.tabs.value.filter((tab) => !tabSnoozed(tab));
   const open = tabs.filter((tab) => !tab.pinned && tab.kind === 'agent');
   const rest = byProject.value
     ? groupByProject(open, sidebar.projects.value, sidebar.projectOf).map(({ project, items }) => ({ id: `project:${project.id}`, label: project.name, project, tabs: items }))
     : expansion.state.value.groupByStatus
     ? SIDEBAR_STATUSES.map(({ id, label }) => ({ id, label, tabs: open.filter((tab) => (status(tab.key) ?? 'idle') === id) }))
     : [{ id: 'open', label: null, tabs: open }];
-  return [{ id: 'pinned', label: null, tabs: tabs.filter((tab) => tab.pinned) }, ...rest].filter((group) => group.tabs.length);
+  const snoozed = { id: 'snoozed', label: 'Snoozed', tabs: sidebar.tabs.value.filter(tabSnoozed) };
+  return [{ id: 'pinned', label: null, tabs: tabs.filter((tab) => tab.pinned) }, ...rest, snoozed].filter((group) => group.tabs.length);
 });
 type Entry =
   | { kind: 'divider'; key: string }
@@ -221,11 +235,14 @@ function revealed(sessionId: string): boolean {
   return Boolean(mention.value?.ancestors.has(sessionId));
 }
 
-// What a family waits on always shows; its status line shows when subtitles
-// are on. Recaps from before status lines existed show their first line instead.
+// What a family waits on always shows, then a snooze reminder; its status
+// line shows when subtitles are on. Recaps from before status lines existed
+// show their first line instead.
 function subtitle(tab: AgentTab): string | null {
   const waitingOn = familyWaitingOn(sidebar, tab.family);
   if (waitingOn) return waitingOn;
+  const reminder = tab.family.root.session.snooze?.reminder;
+  if (reminder) return reminder;
   const summary = tab.family.root.session.summary;
   if (!summary || !expansion.state.value.subtitles) return null;
   const coverage: Record<string, string> = { stale: 'Summary history changed', catching_up: 'Summary catching up',

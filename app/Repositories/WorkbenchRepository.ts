@@ -18,6 +18,9 @@ export interface ProjectSummaryDto {
   // 'personal' marks the Personal project, which is not a repository. Absent
   // on records from older paired hosts.
   kind?: ProjectKind;
+  // Snoozed until this time: its notifications are held and All agents
+  // tucks it away. Null when awake; absent on older paired hosts.
+  snoozedUntil?: string | null;
   // The paired host that owns this record; absent for this host's own.
   host?: string;
   // Connected paired hosts this project is linked with, and the qualified ID
@@ -34,11 +37,17 @@ export interface ProjectSummaryDto {
 
 export interface CloseRequestDto { summary: string; requestedAt: string; }
 
+// `snoozedAt` is set while the agent sleeps until its next message; a
+// reminder left for that message stays after it wakes, until dismissed.
+export interface SnoozeDto { snoozedAt: string | null; reminder: string | null; }
+
 export interface SessionDto {
   summary?: AutoSummaryDto | null;
   host?: string;
   // The agent asked to be closed and is waiting for the user's answer.
   closeRequest?: CloseRequestDto | null;
+  // Older paired hosts omit it.
+  snooze?: SnoozeDto | null;
   id: string;
   parentId: string | null;
   processId: string | null;
@@ -127,6 +136,7 @@ interface ProjectRow {
   path: string;
   logo: string | null;
   kind: ProjectKind;
+  snoozed_until: string | null;
   context_revision: number;
 }
 
@@ -157,6 +167,8 @@ interface ProcessRow {
   auto_summary_model: string | null;
   close_requested_at: string | null;
   close_request_summary: string | null;
+  snoozed_at: string | null;
+  snooze_reminder: string | null;
   id: string;
   parent_process_id: string | null;
   kind: string;
@@ -211,7 +223,7 @@ export class WorkbenchRepository {
   // Personal still lists while anything runs there, so no agent goes missing.
   private projectRows(): ProjectRow[] {
     const showPersonal = this.settings.appearanceSettings().personalProject;
-    return this.db.prepare(`select id, name, path, logo, kind, context_revision from projects where kind in ${USER_PROJECT_KINDS_SQL}
+    return this.db.prepare(`select id, name, path, logo, kind, snoozed_until, context_revision from projects where kind in ${USER_PROJECT_KINDS_SQL}
       and (kind <> 'personal' or ? or exists (select 1 from processes where processes.project_id = projects.id and processes.status = 'running'))
       order by kind = 'personal' desc, created_at asc`).all(showPersonal ? 1 : 0) as ProjectRow[];
   }
@@ -221,7 +233,7 @@ export class WorkbenchRepository {
   }
 
   getProject(id: string): ProjectSummaryDto | null {
-    const row = this.db.prepare(`select id, name, path, logo, kind, context_revision from projects where id = ?`).get(id) as ProjectRow | undefined;
+    const row = this.db.prepare(`select id, name, path, logo, kind, snoozed_until, context_revision from projects where id = ?`).get(id) as ProjectRow | undefined;
     return row ? projectSummary(row) : null;
   }
 
@@ -302,7 +314,7 @@ export class WorkbenchRepository {
 }
 
 function projectSummary(row: ProjectRow): ProjectSummaryDto {
-  return { id: row.id, name: row.name, path: row.path, logo: row.logo, kind: row.kind };
+  return { id: row.id, name: row.name, path: row.path, logo: row.logo, kind: row.kind, snoozedUntil: row.snoozed_until };
 }
 
 // Derive each session's parent session via the backing process tree:
@@ -311,6 +323,7 @@ function mapSessions(sessions: SessionRow[], processes: ProcessRow[]): SessionDt
   const statuses = new Map(processes.map((process) => [process.id, process.status]));
   const summaries = new Map(processes.map((process) => [process.id, mapAutoSummary(process)]));
   const closeRequests = new Map(processes.map((process) => [process.id, mapCloseRequest(process)]));
+  const snoozes = new Map(processes.map((process) => [process.id, mapSnooze(process)]));
   const backgroundTasks = new Map(processes.map((process) => [process.id, process.background_tasks]));
   const parentProcessByProcessId = new Map<string, string | null>();
   const activityByProcessId = new Map<string, string>();
@@ -335,6 +348,7 @@ function mapSessions(sessions: SessionRow[], processes: ProcessRow[]): SessionDt
       processStatus: session.process_id ? statuses.get(session.process_id) ?? null : null,
       summary: session.process_id ? summaries.get(session.process_id) ?? null : null,
       closeRequest: session.process_id ? closeRequests.get(session.process_id) ?? null : null,
+      snooze: session.process_id ? snoozes.get(session.process_id) ?? null : null,
       ptyProcessId: session.pty_process_id ?? null,
       worktreeId: session.worktree_id,
       harness: session.harness,
@@ -385,6 +399,11 @@ function mapAutoSummary(row: ProcessRow): AutoSummaryDto | null {
 function mapCloseRequest(row: ProcessRow): CloseRequestDto | null {
   if (!row.close_requested_at || row.status !== 'running' || row.activity === 'working' || row.activity === 'thinking') return null;
   return { summary: row.close_request_summary ?? '', requestedAt: row.close_requested_at };
+}
+
+function mapSnooze(row: ProcessRow): SnoozeDto | null {
+  const snoozedAt = row.status === 'running' ? row.snoozed_at : null;
+  return snoozedAt || row.snooze_reminder ? { snoozedAt, reminder: row.snooze_reminder } : null;
 }
 
 function parseArgv(raw: string | null): string[] {

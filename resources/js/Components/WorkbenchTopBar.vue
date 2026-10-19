@@ -46,15 +46,17 @@
         </DropdownMenuItem>
         <DropdownMenuSeparator v-if="projects.length" />
         <DropdownMenuItem
-          v-for="projectGroup in projects"
+          v-for="projectGroup in switcherProjects"
           :key="projectGroup.project.id"
           class="py-1 text-[13px] data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
+          :class="projectSnoozed(projectGroup.project) && 'text-muted-foreground opacity-70'"
           @select="emit('selectProject', projectGroup.project.id)"
           @pointerenter="prefetchProject(projectGroup.project.id, Tier.Intent)"
           @focus="prefetchProject(projectGroup.project.id, Tier.Intent)"
         >
           <ProjectStatusLogo :project="projectGroup.project" :states="agentStates(projectGroup.project.id)" class="mr-2" />
           <span class="min-w-0 flex-1 truncate">{{ projectGroup.project.name }}</span>
+          <SnoozeIcon v-if="projectSnoozed(projectGroup.project)" class="ml-1.5 h-3.5 w-3.5 shrink-0" />
           <HostBadge v-if="projectGroup.project.host" :host="projectGroup.project.host" class="ml-1.5" />
           <UnreadDot :urgency="projectUnread(projectGroup.project.id) ? 'normal' : null" />
           <Badge v-if="openAgentCount(projectGroup) > 0" variant="secondary" class="ml-2 h-5 px-1.5 text-[10px] tabular-nums">
@@ -75,9 +77,10 @@
             <Badge v-if="totalAgentCount > 0" variant="secondary" class="h-5 px-1.5 text-[10px] tabular-nums">{{ totalAgentCount }}</Badge>
           </button>
           <div v-if="projects.length" class="my-2 border-t border-border" />
-          <button v-for="projectGroup in projects" :key="projectGroup.project.id" type="button" class="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="!allAgents && projectGroup.project.id === activeProjectId ? 'bg-primary/10' : ''" @click="selectMobileProject(projectGroup.project.id)">
+          <button v-for="projectGroup in switcherProjects" :key="projectGroup.project.id" type="button" class="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="[!allAgents && projectGroup.project.id === activeProjectId ? 'bg-primary/10' : '', projectSnoozed(projectGroup.project) && 'text-muted-foreground opacity-70']" @click="selectMobileProject(projectGroup.project.id)">
             <ProjectStatusLogo :project="projectGroup.project" :states="agentStates(projectGroup.project.id)" :size="16" />
             <span class="min-w-0 flex-1 truncate">{{ projectGroup.project.name }}</span>
+            <SnoozeIcon v-if="projectSnoozed(projectGroup.project)" class="h-4 w-4 shrink-0" />
             <HostBadge v-if="projectGroup.project.host" :host="projectGroup.project.host" />
             <UnreadDot :urgency="projectUnread(projectGroup.project.id) ? 'normal' : null" />
             <Badge v-if="openAgentCount(projectGroup) > 0" variant="secondary" class="h-5 px-1.5 text-[10px] tabular-nums">{{ openAgentCount(projectGroup) }}</Badge>
@@ -147,6 +150,8 @@ import AssistantButton from './Assistant/AssistantButton.vue';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { CalendarClock, ChevronDown, Gauge, Layers, LayoutGrid, Menu, Search, Settings } from 'lucide-vue-next';
 import { allAgents as allAgentsState, listedProjects, openAgentCount, projectShown } from '../lib/allAgents';
+import { projectSnoozed, snoozedProjectsLast } from '../lib/projectSnooze';
+import SnoozeIcon from './SnoozeIcon.vue';
 import { readRecentProjectIds, rememberRecentProject, shownRecentProjects } from '../lib/recentProjects';
 import type { ProjectWorkbench } from '../types';
 import { Badge } from './ui/badge';
@@ -245,7 +250,9 @@ onBeforeUnmount(cancelProjectMenuClose);
 const activeProject = computed(() => props.projects.find((project) => project.project.id === props.activeProjectId) ?? null);
 const shownAgentCount = computed(() => props.allAgents ? props.allAgentsCount ?? 0 : activeProject.value ? openAgentCount(activeProject.value) : 0);
 // What All agents would show: the projects switched on in its Projects menu.
-const totalAgentCount = computed(() => listedProjects(props.projects).filter((project) => projectShown(allAgentsState, project.project.id)).reduce((total, project) => total + openAgentCount(project), 0));
+// Snoozed projects wait at the bottom, muted.
+const switcherProjects = computed(() => snoozedProjectsLast(props.projects, (item) => item.project));
+const totalAgentCount = computed(() => listedProjects(props.projects).filter((project) => projectShown(allAgentsState, project.project.id) && !projectSnoozed(project.project)).reduce((total, project) => total + openAgentCount(project), 0));
 
 
 // A release newer than this install marks Settings until it is installed.

@@ -125,7 +125,7 @@ import ResponsiveMenu from './ResponsiveMenu.vue';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger } from './ui/dropdown-menu';
-import { allAgents, launchTargets, targetsWithHarness, type LaunchTarget } from '../lib/allAgents';
+import { allAgents, allAgentsHiding, launchTargets, targetsWithHarness, type LaunchTarget } from '../lib/allAgents';
 import HostBadge from './HostBadge.vue';
 import ProjectLogo from './ProjectLogo.vue';
 import SettingsChoice from './settings/SettingsChoice.vue';
@@ -180,7 +180,7 @@ const pendingLabel = computed(() => {
   const preset = presets.value.presets.find((candidate) => candidate.id === pending.value?.presetId);
   return `${harnessLabel(pending.value.harness)}${preset ? ` · ${preset.name}` : ''}`;
 });
-const shownTargets = computed(() => launchTargets(projects.value, allAgents));
+const shownTargets = computed(() => launchTargets(projects.value, allAgentsHiding(allAgents, projects.value)));
 const targetHost = computed(() => project.value?.project.host ?? hostOptions.value.find((option) => option.value === targetProjectId.value)?.label ?? '');
 // Another host has its own CLIs; its presets stay there, so a launch there
 // uses that host's default preset.
