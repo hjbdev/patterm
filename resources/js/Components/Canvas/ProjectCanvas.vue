@@ -57,7 +57,7 @@
       @pointermove="onPointerMove"
       @pointerup="onPointerUp"
       @pointercancel="onPointerUp"
-      @lostpointercapture="onPointerUp"
+      @lostpointercapture.self="onPointerUp"
       @wheel.prevent="onWheel"
     >
       <p v-if="!nodes.length" class="pt-24 text-center text-[13px] text-muted-foreground">No agents running</p>
