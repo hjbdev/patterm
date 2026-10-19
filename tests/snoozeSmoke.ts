@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { SnoozeActions } from '../app/Actions/SnoozeActions';
+import type { RaiseNotificationInput } from '../app/Services/NotificationService';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import { removeTree } from './fixtures/TempTree';
 
@@ -21,7 +22,8 @@ function main(): void {
       values ('session_root', 'project_a', 'root', 'claude', 'orchestrator', 'tui', ?)`).run(at);
 
     let changes = 0;
-    const snoozes = new SnoozeActions(database, { append: () => 'event' }, () => { changes += 1; });
+    const raised: RaiseNotificationInput[] = [];
+    const snoozes = new SnoozeActions(database, { append: () => 'event' }, () => { changes += 1; }, (input) => { raised.push(input); });
     const snooze = () => new WorkbenchRepository(database).snapshot().projects[0]!.projectSessions[0]!.snooze ?? null;
 
     // Snoozing keeps the reminder; an idle agent stays asleep until a turn ends.
@@ -37,6 +39,12 @@ function main(): void {
     // The turn ending wakes it, by PTY id too, and the reminder stays.
     snoozes.activity('pty_root', 'thinking', 'idle');
     assert.deepEqual(snooze(), { snoozedAt: null, reminder: 'Check the CI run.' });
+    // Waking announces itself with the reminder. A TUI agent has no
+    // turn-finished notice to replace, so nothing is held for one.
+    assert.equal(raised.length, 1);
+    assert.equal(raised[0]!.processId, 'root');
+    assert.equal(raised[0]!.body, 'Woke from snooze: Check the CI run.');
+    assert.equal(snoozes.announcedWake('root'), false);
     assert.deepEqual(snoozes.dismissReminder({ process_id: 'root' }), { dismissed: true });
     assert.equal(snooze(), null);
 
@@ -45,6 +53,7 @@ function main(): void {
     assert.deepEqual(snooze()?.reminder, null);
     snoozes.activity('root', 'idle', 'permission');
     assert.equal(snooze(), null);
+    assert.equal(raised.length, 1, 'a permission request keeps its own notice');
 
     // Reconnect snapshots from idle to idle wake nothing; user input does.
     snoozes.snooze({ process_id: 'root', reminder: 'Merge it' });
@@ -52,6 +61,16 @@ function main(): void {
     assert.ok(snooze()?.snoozedAt);
     snoozes.userInput('pty_root');
     assert.deepEqual(snooze(), { snoozedAt: null, reminder: 'Merge it' });
+    assert.equal(raised.length, 1, 'the user woke it, so nothing is announced');
+
+    // An Integrated agent's wake replaces its turn-finished notice, once.
+    db.prepare(`update sessions set interface_mode = 'integrated' where id = 'session_root'`).run();
+    snoozes.snooze({ process_id: 'root' });
+    snoozes.activity('root', 'working', 'idle');
+    assert.equal(raised.at(-1)?.body, 'Woke from snooze');
+    assert.equal(snoozes.announcedWake('root'), true);
+    assert.equal(snoozes.announcedWake('root'), false);
+    db.prepare(`update sessions set interface_mode = 'tui' where id = 'session_root'`).run();
 
     // A reminder can't be dismissed while still asleep; waking by hand drops it.
     snoozes.snooze({ process_id: 'root', reminder: 'Later' });

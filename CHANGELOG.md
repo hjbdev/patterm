@@ -24,8 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Snooze an agent until its next message from its tab or sidebar menu, with
   an optional reminder. Snoozed agents move to the end of the tab strip as a
   moon, or to a Snoozed group in the sidebar. They wake when a turn ends, when
-  they ask for permission or a question, or when you message them, and the
-  reminder stays on the agent until you dismiss it.
+  they ask for permission or a question, or when you message them. A wake at
+  the end of a turn sends its own notification, with the reminder, in place of
+  "Finished its turn", and the reminder stays on the agent until you dismiss it.
 
 ### Fixed
 

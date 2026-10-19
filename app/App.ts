@@ -377,7 +377,7 @@ async function createApplicationResources(
     (harness) => settings.idleCompactionSettings()[harness as keyof IdleCompactionSettings] === true,
     (event, data) => debugLog.write('idle-compaction', event, data), Date.now,
     (processId) => !assistant || assistant.voiceActive(processId));
-  const snoozes = new SnoozeActions(database, timeline, notifyWorkbenchChanged);
+  const snoozes = new SnoozeActions(database, timeline, notifyWorkbenchChanged, raiseNotification);
   defer(integrated.onActivityChange(({ processId, previous, activity }) => snoozes.activity(processId, previous, activity)));
   let closeRequests: CloseRequestActions | null = null;
   defer(integrated.onActivityChange(integratedActivityNotifications({
@@ -385,6 +385,7 @@ async function createApplicationResources(
     raise: raiseNotification,
     closeRequests: () => closeRequests,
     isAssistant: (processId) => assistant?.isAssistantProcess(processId) === true,
+    wokeFromSnooze: (processId) => snoozes.announcedWake(processId),
     compacting: (processId) => idleCompaction.compacting(processId),
     triage: (processId) => triage.decide(processId),
     log: (event, data) => debugLog.write('notifications', event, data)

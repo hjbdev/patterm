@@ -61,6 +61,7 @@ async function main(): Promise<void> {
       raise: (input) => { raised.push(input.kind); void notifications.raise(input); },
       closeRequests: () => closeRequests,
       isAssistant: () => false,
+      wokeFromSnooze: () => false,
       compacting: (processId) => compaction.compacting(processId),
       triage: () => ({ quiet: false, reason: 'disabled' }),
       log: () => {}

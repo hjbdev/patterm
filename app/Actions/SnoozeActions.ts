@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { awaitingUser } from '../Services/Activity';
 import type { DatabaseService } from '../Services/DatabaseService';
-import { BODY_LIMIT, clean } from '../Services/NotificationService';
+import { BODY_LIMIT, clean, type RaiseNotificationInput } from '../Services/NotificationService';
 import type { TimelineService } from '../Services/TimelineService';
 
 const id = z.string().min(1).max(200);
@@ -19,6 +19,7 @@ interface ProcessContext {
   project_id: string;
   session_id: string | null;
   status: string;
+  integrated: number;
   snoozed_at: string | null;
   snooze_reminder: string | null;
 }
@@ -26,11 +27,17 @@ interface ProcessContext {
 // The user snoozes an agent until its next message: the end of a turn, or a
 // request for the user. Talking to it wakes it too. A reminder left with the
 // snooze stays on the agent after it wakes, until the user dismisses it.
+// Waking at the end of a turn announces itself, with the reminder, in place
+// of the turn-finished notice; requests and errors keep their own notices.
 export class SnoozeActions {
+  // Agents whose turn just woke them, until the turn-finished notice is skipped.
+  private readonly announced = new Set<string>();
+
   constructor(
     private readonly database: DatabaseService,
     private readonly timeline: Pick<TimelineService, 'append'>,
-    private readonly onChanged: () => void
+    private readonly onChanged: () => void,
+    private readonly raise: (input: RaiseNotificationInput) => void = () => undefined
   ) {}
 
   snooze(raw: unknown): { snoozed: true } {
@@ -68,7 +75,14 @@ export class SnoozeActions {
   // process id.
   activity(processId: string, previous: string | null | undefined, activity: string): void {
     const turnEnded = (previous === 'working' || previous === 'thinking') && activity !== 'working' && activity !== 'thinking';
-    if (turnEnded || awaitingUser(activity) || activity === 'error') this.wake(processId, 'message');
+    if (awaitingUser(activity) || activity === 'error') this.wake(processId, 'message');
+    else if (turnEnded) this.wake(processId, 'message', true);
+  }
+
+  // Whether the turn that just ended woke the agent and announced it, so the
+  // turn-finished notice is left out. Answers once per wake.
+  announcedWake(processId: string): boolean {
+    return this.announced.delete(processId);
   }
 
   // The user typed to the agent. Accepts a Patterm or PTY process id.
@@ -76,16 +90,20 @@ export class SnoozeActions {
     this.wake(processId, 'user');
   }
 
-  private wake(processId: string, reason: 'message' | 'user'): void {
+  private wake(processId: string, reason: 'message' | 'user', announce = false): void {
     const process = this.process(processId);
     if (!process?.snoozed_at) return;
     this.database.connection.prepare(`update processes set snoozed_at = null where id = ?`).run(process.id);
     this.timeline.append({ event_type: 'agent.woke', project_id: process.project_id, session_id: process.session_id, process_id: process.id, actor_type: reason === 'user' ? 'user' : 'agent', metadata: { reason } });
     this.onChanged();
+    if (!announce) return;
+    // Only Integrated agents announce finished turns.
+    if (process.integrated) this.announced.add(process.id);
+    this.raise({ processId: process.id, source: 'runtime', kind: 'turn_finished', body: process.snooze_reminder ? `Woke from snooze: ${process.snooze_reminder}` : 'Woke from snooze', dedupeKey: 'snooze:woke' });
   }
 
   private process(processId: string): ProcessContext | null {
-    return (this.database.connection.prepare(`select processes.id, processes.project_id, processes.status,
+    return (this.database.connection.prepare(`select processes.id, processes.project_id, processes.status, sessions.interface_mode = 'integrated' as integrated,
         processes.snoozed_at, processes.snooze_reminder, sessions.id as session_id
       from processes
       left join sessions on sessions.process_id = processes.id
