@@ -8,7 +8,8 @@ import type { RaiseNotificationInput } from '../app/Services/NotificationService
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import { removeTree } from './fixtures/TempTree';
 import { moveAwakeTab, setTabPinned, snoozedLast } from '../resources/js/lib/snooze';
-import type { StripTab } from '../resources/js/lib/tabStrip';
+import { EMPTY_TAB_LAYOUT, withLiveTabs, type StripTab } from '../resources/js/lib/tabStrip';
+import { keepHiddenTabs } from '../resources/js/lib/allAgents';
 import type { SessionRecord } from '../resources/js/types';
 
 // Snoozed tabs wait at the end, pinned or not, and reordering awake tabs
@@ -28,6 +29,13 @@ function tabOrder(): void {
   const pinnedAwake = snoozedLast([tab('pinned-awake', true, false), tab('first', false, false), tab('second', false, false), tab('pinned-asleep', true, true)]);
   assert.deepEqual(setTabPinned(pinnedAwake, 'pinned-awake', false), { order: ['pinned-awake', 'first', 'second', 'pinned-asleep'], pinned: ['pinned-asleep'] });
   assert.deepEqual(setTabPinned(pinnedAwake, 'pinned-asleep', false), { order: ['pinned-awake', 'first', 'second', 'pinned-asleep'], pinned: ['pinned-awake'] });
+
+  // With nothing saved yet, a hidden snoozed tab keeps its slot when the
+  // shown tabs are reordered, so it returns there when it wakes.
+  const previous = withLiveTabs(EMPTY_TAB_LAYOUT, ['A', 'B', 'C']);
+  assert.deepEqual(keepHiddenTabs(previous, { order: ['C', 'B'], pinned: [] }, (key) => key === 'A'), { order: ['A', 'C', 'B'], pinned: [] });
+  // A saved layout keeps its own order, keys for tabs not live now, and pins.
+  assert.deepEqual(withLiveTabs({ order: ['B', 'gone'], pinned: ['B'] }, ['A', 'B']), { order: ['B', 'gone', 'A'], pinned: ['B'] });
 }
 
 function main(): void {

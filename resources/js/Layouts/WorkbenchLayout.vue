@@ -45,7 +45,8 @@
           <div class="min-w-0 flex-1 sm:hidden">
             <MobileTabs
               :project-id="activeProject.project.id"
-              :families="currentAgentFamilies"
+              :families="shownAgentFamilies"
+              :all-families="currentAgentFamilies"
               :processes="currentStripProcesses"
               :all-processes="scopeProcesses"
               :project-of="showingAll ? projectOf : undefined"
@@ -159,7 +160,7 @@ import { assistant } from '../lib/assistant';
 import { openCommandPaletteKey } from '../lib/commandPalette';
 import { isNavigationModeToggle, navigationModeAction } from '../lib/navigationMode';
 import { activeProcesses, topLevelProcessesForSessions } from '../lib/processTabs';
-import { agentTabKey, buildStripTabs, EMPTY_TAB_LAYOUT, processTabKey, readStoredTabLayout, writeStoredTabLayout, type StripTab, type TabLayout } from '../lib/tabStrip';
+import { agentTabKey, buildStripTabs, EMPTY_TAB_LAYOUT, processTabKey, readStoredTabLayout, withLiveTabs, writeStoredTabLayout, type StripTab, type TabLayout } from '../lib/tabStrip';
 import { ALL_AGENTS_SCOPE, allAgents, buildAllAgentsView, keepHiddenTabs, listedProjects, projectShown, tabsGroupedByProject } from '../lib/allAgents';
 import { useSidebarExpansion } from '../Composables/useSidebarExpansion';
 import type { ProcessRecord, ProjectSummary, SessionRecord } from '../types';
@@ -304,7 +305,9 @@ function updateCurrentTabLayout(change: TabLayout): void {
   if (!scope) return;
   // Tabs that don't show, from hidden projects or snoozed, keep their places.
   const hidden = (key: string) => (showingAll.value && hiddenTabKeys.value.has(key)) || hiddenSnoozedKeys.value.has(key);
-  const layout = showingAll.value || hiddenSnoozedKeys.value.size ? keepHiddenTabs(currentTabLayout.value ?? EMPTY_TAB_LAYOUT, change, hidden) : change;
+  // Hidden tabs the saved layout hasn't recorded yet keep their places too.
+  const previous = withLiveTabs(currentTabLayout.value ?? EMPTY_TAB_LAYOUT, currentStripTabs.value.map((tab) => tab.key));
+  const layout = showingAll.value || hiddenSnoozedKeys.value.size ? keepHiddenTabs(previous, change, hidden) : change;
   tabLayoutByProject.value = { ...tabLayoutByProject.value, [scope]: layout };
   writeStoredTabLayout(scope, layout);
 }
@@ -360,6 +363,8 @@ function stripTabProject(tab: StripTab): ProjectSummary | null {
   return projectOf(tab.kind === 'agent' ? tab.family.rootId : tab.process.id);
 }
 const currentAgentFamilies = computed(() => currentStripTabs.value.flatMap((tab) => tab.kind === 'agent' ? [tab.family] : []));
+// The phone tab menu lists what the strip shows, so snoozed agents can hide there too.
+const shownAgentFamilies = computed(() => shownStripTabs.value.flatMap((tab) => tab.kind === 'agent' ? [tab.family] : []));
 const currentStripProcesses = computed(() => currentStripTabs.value.flatMap((tab) => tab.kind === 'process' ? [tab.process] : []));
 
 // Agents show as tabs or in the sidebar, as chosen in Settings → Appearance.

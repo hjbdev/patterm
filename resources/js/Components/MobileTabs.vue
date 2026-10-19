@@ -87,6 +87,8 @@ import { unreadUrgency } from '../Composables/useNotifications';
 const props = defineProps<{
   projectId: string;
   families: AgentTabFamily[];
+  // Every family, listed or not, so a hidden one you're in still names the menu.
+  allFamilies?: AgentTabFamily[] | undefined;
   processes: LiveProcessRecord[];
   allProcesses: ProcessRecord[];
   activeTerminalId: string | null;
@@ -105,7 +107,7 @@ const open = ref(false);
 const activeLaunch = useSelectedHarnessLaunch();
 const launchProjectIds = computed(() => props.shownProjectIds ?? [props.projectId]);
 const pendingLaunches = useHarnessLaunchesFor(() => launchProjectIds.value);
-const activeAgent = computed(() => props.families.flatMap((family) => family.options).find((option) =>
+const activeAgent = computed(() => (props.allFamilies ?? props.families).flatMap((family) => family.options).find((option) =>
   option.session.id === props.activeSessionId || Boolean(props.activeTerminalId && option.session.ptyProcessId === props.activeTerminalId)
 )?.session ?? null);
 const activeProcess = computed(() => props.allProcesses.find((process) => process.ptyProcessId && process.ptyProcessId === props.activeTerminalId) ?? null);
@@ -113,7 +115,7 @@ const activeProcess = computed(() => props.allProcesses.find((process) => proces
 const activeHost = computed(() => activeLaunch.value ? activeLaunch.value.input.host : activeProcess.value?.host ?? activeAgent.value?.host);
 
 // Each agent's activity with its subagents'.
-const activityFor = computed(() => activityLookup(props.families));
+const activityFor = computed(() => activityLookup(props.allFamilies ?? props.families));
 
 function ownedProcesses(family: AgentTabFamily): LiveProcessRecord[] {
   return ownedProcessesForSessions(family.options.map((option) => option.session), props.allProcesses);

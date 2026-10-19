@@ -62,6 +62,13 @@ export function reconcileTabOrder(order: readonly TabKey[], liveKeys: readonly T
   return [...next];
 }
 
+// A saved layout with every live tab it doesn't know yet added at the end,
+// where the strip shows them. Keys it has for tabs not live now stay.
+export function withLiveTabs(layout: TabLayout, liveKeys: readonly TabKey[]): TabLayout {
+  const known = new Set(layout.order);
+  return { order: [...layout.order, ...liveKeys.filter((key) => !known.has(key))], pinned: layout.pinned };
+}
+
 // The layout of the visible strip. Saving it forgets closed tabs.
 export function stripTabLayout(tabs: readonly StripTab[]): TabLayout {
   return {
