@@ -16,7 +16,23 @@
       </button>
     </template>
     <template #header-actions>
-      <LaunchAgentMenu :project-id="projectId" :choose-project="Boolean(projectOf)" nested @started="open = false" />
+      <div class="flex items-center gap-1">
+        <!-- Phones have no sidebar, so the canvas is reached from here. -->
+        <button
+          v-if="canvasHome"
+          type="button"
+          aria-label="Canvas"
+          :aria-pressed="board.open.value"
+          :class="cn(
+            'flex h-7 w-7 shrink-0 items-center justify-center rounded-tab text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
+            board.open.value && 'bg-primary/10 text-foreground'
+          )"
+          @click="openCanvas"
+        >
+          <Workflow class="h-3.5 w-3.5" />
+        </button>
+        <LaunchAgentMenu :project-id="projectId" :choose-project="Boolean(projectOf)" nested @started="open = false" />
+      </div>
     </template>
     <template #mobile>
       <HarnessLaunchTabs v-for="id in launchProjectIds" :key="id" :project-id="id" vertical @select="open = false" />
@@ -64,10 +80,11 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { useBoardIsHome, useBoardRoute } from '../Composables/useBoard';
 import { useHarnessLaunchesFor, useSelectedHarnessLaunch } from '../Composables/useHarnessLaunch';
 import ProjectLogo from './ProjectLogo.vue';
 import { harnessLaunchLabel } from '../lib/harnessLaunches';
-import { ChevronDown, LoaderCircle } from 'lucide-vue-next';
+import { ChevronDown, LoaderCircle, Workflow } from 'lucide-vue-next';
 import { cn } from '@/lib/utils';
 import { agentLabel, agentOptionIndent, familyOwnerLabel, type AgentTabFamily } from '../lib/agentTabs';
 import { ownedProcessesForSessions, type LiveProcessRecord } from '../lib/processTabs';
@@ -102,6 +119,13 @@ const emit = defineEmits<{
 }>();
 
 const open = ref(false);
+const board = useBoardRoute();
+const canvasHome = useBoardIsHome();
+
+function openCanvas(): void {
+  open.value = false;
+  board.show();
+}
 const activeLaunch = useSelectedHarnessLaunch();
 const launchProjectIds = computed(() => props.shownProjectIds ?? [props.projectId]);
 const pendingLaunches = useHarnessLaunchesFor(() => launchProjectIds.value);

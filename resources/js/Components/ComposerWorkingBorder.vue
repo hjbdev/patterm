@@ -4,7 +4,7 @@
        no painting: each straight side is a clip holding a sliding gradient,
        and each corner is the composer's own border arc, faded in and out as
        the comet passes. -->
-  <div ref="root" class="composer-comet" aria-hidden="true">
+  <div ref="root" class="composer-comet" :style="{ borderRadius: `${radius}px` }" aria-hidden="true">
     <template v-for="layer in LAYERS" :key="layer.name">
       <span v-for="side in SIDES" :key="`${layer.name}-${side}`" class="composer-comet-side" :style="sideStyle(layer, side)">
         <span class="composer-comet-bar" :data-bar="`${layer.name}-${side}`" :style="barStyle(layer, side)" />
@@ -17,8 +17,10 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, type CSSProperties } from 'vue';
 
-// The composer's rounded-xl corner, measured to the middle of its 1px border.
-const RADIUS = 11.5;
+// The host's corner radius, rounded-xl for the composer; it doesn't change.
+const props = withDefaults(defineProps<{ radius?: number }>(), { radius: 12 });
+// The corner, measured to the middle of the host's 1px border.
+const RADIUS = props.radius - 0.5;
 const QUARTER = (Math.PI * RADIUS) / 2;
 // One lap, whatever the composer's size.
 const DURATION = 3600;
@@ -62,8 +64,8 @@ function fade(peak: number): string {
 function sideStyle(layer: Layer, side: Side): CSSProperties {
   const band = `${0.5 - layer.width / 2}px`;
   return HORIZONTAL.has(side)
-    ? { left: '12px', right: '12px', [side]: band, height: `${layer.width}px` }
-    : { top: '12px', bottom: '12px', [side]: band, width: `${layer.width}px` };
+    ? { left: `${props.radius}px`, right: `${props.radius}px`, [side]: band, height: `${layer.width}px` }
+    : { top: `${props.radius}px`, bottom: `${props.radius}px`, [side]: band, width: `${layer.width}px` };
 }
 
 function barStyle(layer: Layer, side: Side): CSSProperties {
@@ -208,7 +210,6 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-motion: reduce) {
   .composer-comet {
     border: 1px solid hsl(var(--primary) / 0.3);
-    border-radius: 12px;
   }
 
   .composer-comet > * {

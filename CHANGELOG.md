@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The All agents canvas shows each agent's project logo, with its harness in
+  the corner. A comet runs around a working agent's pill, work flows down the
+  edges to busy subagents, and cards glide to new places and fade in.
+- Phones reach the canvas from a Canvas button in the tab menu, beside the +
+  that launches an agent, since they have no sidebar.
 - The board, a project's page in sidebar mode and in All agents, is now a
   canvas. Each agent family shows as a flowchart: the root agent on top, its
   subagents in a row beneath it, and deeper subagents stacked under them.
