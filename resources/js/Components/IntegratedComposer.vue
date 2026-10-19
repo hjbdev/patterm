@@ -33,6 +33,7 @@
             >
               <TabActivity :spec="sessionStatusIcon(agent.session)"><AgentIcon :harness="agent.session.harness" class="h-3.5 w-3.5" /></TabActivity>
               <span class="min-w-0 truncate"><span v-for="(run, runIndex) in mentionRuns(agent)" :key="runIndex" :class="run.match && 'font-semibold text-primary'">{{ run.text }}</span></span>
+              <HostBadge v-if="agent.session.host" :host="agent.session.host" />
               <span v-if="agent.parent" class="min-w-0 flex-1 truncate text-right text-xs text-muted-foreground">{{ agent.parent }}</span>
             </button>
           </div>
@@ -53,6 +54,7 @@
             >
               <TabActivity :spec="processStatusIcon(process.process)"><TerminalSquare class="h-3.5 w-3.5" aria-hidden="true" /></TabActivity>
               <span class="min-w-0 truncate"><span v-for="(run, runIndex) in mentionRuns(process)" :key="runIndex" :class="run.match && 'font-semibold text-primary'">{{ run.text }}</span></span>
+              <HostBadge v-if="process.process.host" :host="process.process.host" />
               <span v-if="process.owner" class="min-w-0 flex-1 truncate text-right text-xs text-muted-foreground">{{ process.owner }}</span>
             </button>
           </div>
@@ -181,6 +183,7 @@ import AgentIcon from './AgentIcon.vue';
 import ComposerWorkingBorder from './ComposerWorkingBorder.vue';
 import IntegratedControlDrawer from './IntegratedControlDrawer.vue';
 import IntegratedControlPicker from './IntegratedControlPicker.vue';
+import HostBadge from './HostBadge.vue';
 import TabActivity from './TabActivity.vue';
 import {
   addFiles,
@@ -450,13 +453,13 @@ function chooseFile(file: WorktreeFile): void {
 }
 
 function chooseAgent(agent: MentionAgent): void {
-  editor.value?.replace(mentionRange.start, mentionRange.caret, { kind: 'agent', token: agent.processId, name: agent.name, harness: agent.session.harness });
+  editor.value?.replace(mentionRange.start, mentionRange.caret, { kind: 'agent', token: agent.processId, name: agent.name, harness: agent.session.harness, ...(agent.session.host ? { host: agent.session.host } : {}) });
   closeMenus();
   focusEditor();
 }
 
 function chooseProcess(process: MentionProcess): void {
-  editor.value?.replace(mentionRange.start, mentionRange.caret, { kind: 'process', token: process.processId, name: process.name, harness: null });
+  editor.value?.replace(mentionRange.start, mentionRange.caret, { kind: 'process', token: process.processId, name: process.name, harness: null, ...(process.process.host ? { host: process.process.host } : {}) });
   closeMenus();
   focusEditor();
 }

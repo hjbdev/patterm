@@ -55,7 +55,8 @@ const AgentMention = Node.create({
       kind: { default: 'agent', parseHTML: (element) => element.getAttribute('data-kind') ?? 'agent', renderHTML: (attributes) => ({ 'data-kind': attributes.kind }) },
       token: { default: '', parseHTML: (element) => element.getAttribute('data-token') ?? '', renderHTML: (attributes) => ({ 'data-token': attributes.token }) },
       name: { default: '', parseHTML: (element) => element.getAttribute('data-name') ?? '', renderHTML: (attributes) => ({ 'data-name': attributes.name }) },
-      harness: { default: null, parseHTML: (element) => element.getAttribute('data-harness'), renderHTML: (attributes) => attributes.harness ? { 'data-harness': attributes.harness } : {} }
+      harness: { default: null, parseHTML: (element) => element.getAttribute('data-harness'), renderHTML: (attributes) => attributes.harness ? { 'data-harness': attributes.harness } : {} },
+      host: { default: null, parseHTML: (element) => element.getAttribute('data-host'), renderHTML: (attributes) => attributes.host ? { 'data-host': attributes.host } : {} }
     };
   },
   // Copied chips paste back as chips, and as `@title` elsewhere.
@@ -103,7 +104,7 @@ function linesOf(doc: ProseMirrorNode): ComposerLine[] {
     const line: ComposerLine = [];
     paragraph.forEach((child) => {
       if (child.isText) line.push({ text: child.text ?? '' });
-      else if (child.type.name === MENTION) line.push({ chip: { kind: child.attrs.kind, token: String(child.attrs.token), name: String(child.attrs.name), harness: child.attrs.harness ?? null } });
+      else if (child.type.name === MENTION) line.push({ chip: { kind: child.attrs.kind, token: String(child.attrs.token), name: String(child.attrs.name), harness: child.attrs.harness ?? null, ...(child.attrs.host ? { host: String(child.attrs.host) } : {}) } });
     });
     lines.push(line);
   });

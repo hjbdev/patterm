@@ -16,6 +16,8 @@ export interface ComposerChip {
   // The agent's title, the process's name, the preset's name, or the harness's label.
   name: string;
   harness: string | null;
+  // The paired host the agent or process runs on.
+  host?: string | undefined;
 }
 
 export type ComposerInline = { text: string } | { chip: ComposerChip };

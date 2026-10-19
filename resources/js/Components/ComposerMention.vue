@@ -1,5 +1,5 @@
 <template>
-  <NodeViewWrapper as="span" contenteditable="false"><MentionChip :label="node.attrs.name" :harness="node.attrs.harness" :agent="node.attrs.kind !== 'process'" :launch="node.attrs.kind === 'preset' || node.attrs.kind === 'harness'" /></NodeViewWrapper>
+  <NodeViewWrapper as="span" contenteditable="false"><MentionChip :label="node.attrs.name" :host="node.attrs.host ?? undefined" :harness="node.attrs.harness" :agent="node.attrs.kind !== 'process'" :launch="node.attrs.kind === 'preset' || node.attrs.kind === 'harness'" /></NodeViewWrapper>
 </template>
 
 <script setup lang="ts">
