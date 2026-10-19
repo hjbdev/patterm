@@ -9,7 +9,7 @@ import { HistorySearchIndexService } from './HistorySearchIndexService';
 import os from 'node:os';
 
 interface WorkerInput {
-  action?: 'parse_file' | 'import' | 'reset_imports' | 'delete_conversation' | 'delete_project_history';
+  action?: 'parse_file' | 'import' | 'reset_imports' | 'delete_conversation' | 'delete_project_history' | 'migrate';
   appDataPath?: string;
   input?: Parameters<AgentHistoryImportService['importWithParser']>[0];
   reimport?: boolean;
@@ -73,7 +73,7 @@ export async function runHistoryImportWorker(message: unknown, reportProgress?: 
     if (payload.action === 'parse_file') {
       return { ok: true, result: parseHistoryFile(payload) };
     }
-    if (payload.action === 'import' || payload.action === 'reset_imports' || payload.action === 'delete_conversation' || payload.action === 'delete_project_history') {
+    if (payload.action === 'import' || payload.action === 'reset_imports' || payload.action === 'delete_conversation' || payload.action === 'delete_project_history' || payload.action === 'migrate') {
       return { ok: true, result: await runQueuedHistoryImport(payload, reportProgress) };
     }
     throw new Error('unknown history worker action');
@@ -103,6 +103,7 @@ async function runQueuedHistoryImport(payload: WorkerInput, reportProgress?: Pro
     historyDatabase.initialize();
     // Legacy app.db rows are copied before new imports so existing local history survives the split.
     copyLegacyHistoryIfNeeded(appDatabase, historyDatabase);
+    if (payload.action === 'migrate') return { migrated: true };
     const search = new HistorySearchIndexService(historyDatabase);
     const discovery = new ProviderHistoryDiscoveryService();
     const imports = new AgentHistoryImportService(historyDatabase, discovery, null, search, appDatabase);

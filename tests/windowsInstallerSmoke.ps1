@@ -245,6 +245,18 @@ try {
         if ($versionInfo.ProductName -ne 'Patterm' -or $versionInfo.FileDescription -ne 'Patterm') { throw "Built executable still displays the wrong product name: $($versionInfo.ProductName) / $($versionInfo.FileDescription)" }
         if ($versionInfo.ProductVersion -ne $global:pattermInstallerFixture.Version) { throw 'Built executable reports the wrong product version.' }
         if (-not (Test-Path -LiteralPath (Join-Path $installed 'electron/resources/app/main.cjs'))) { throw 'Direct executable launch has no app bootstrap.' }
+        # The prebuilt llama.cpp CPU binary for semantic search must load with
+        # the packaged Electron's Node. A script file avoids native argument quoting.
+        $runtimeCheck = Join-Path $installed 'semantic-runtime-check.cjs'
+        Set-Content -LiteralPath $runtimeCheck -Value "import('node-llama-cpp').then((m) => m.getLlama({ gpu: false, build: 'never', skipDownload: true })).then(() => process.exit(0), (error) => { console.error(error); process.exit(1); });"
+        $env:ELECTRON_RUN_AS_NODE = '1'
+        try {
+            & $exe $runtimeCheck
+            if ($LASTEXITCODE -ne 0) { throw 'The semantic search runtime does not load in the built package.' }
+        } finally {
+            Remove-Item Env:ELECTRON_RUN_AS_NODE
+            Remove-Item -LiteralPath $runtimeCheck -Force
+        }
         if ($CheckStartRegistration) {
             & (Join-Path $PSScriptRoot 'windowsStartRegistrationSmoke.ps1') -Executable $exe -Directory $fixture
         }

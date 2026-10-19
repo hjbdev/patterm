@@ -11,7 +11,7 @@ type ImportInput = z.input<typeof historyImportInput>;
 const RECENT_JOB_LIMIT = 20;
 const LOG_SOURCE = 'history-import-queue';
 
-export type HistoryImportJobAction = 'import' | 'reset_imports' | 'delete_conversation' | 'delete_project_history';
+export type HistoryImportJobAction = 'import' | 'reset_imports' | 'delete_conversation' | 'delete_project_history' | 'migrate';
 export type HistoryImportQueueJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'stale';
 
 export interface HistoryImportWorkerMessage {
@@ -117,6 +117,12 @@ export class AgentHistoryImportQueueService {
 
   resetImports(input: ImportInput = { trigger: 'manual' }, reimport = true): HistoryImportQueueEnqueueResult {
     return this.enqueue({ action: 'reset_imports', input, reimport });
+  }
+
+  // Applies pending history.db migrations in the worker that owns them, so
+  // features that only read or index history never migrate concurrently.
+  migrate(): HistoryImportQueueEnqueueResult {
+    return this.enqueue({ action: 'migrate', input: { trigger: 'manual' } });
   }
 
   deleteConversation(conversationId: string): HistoryImportQueueEnqueueResult {
@@ -563,13 +569,13 @@ function watcherCoalesceKey(message: HistoryImportWorkerMessage): string | null 
   return `${message.action}:${message.input.trigger}:${message.input.provider ?? '*'}:${message.input.path ?? '*'}`;
 }
 
-function launchUtilityProcessWorker(workerPath: string): HistoryImportWorkerProcess {
+export function launchUtilityProcessWorker(workerPath: string, serviceName = 'Patterm Conversation History Importer'): HistoryImportWorkerProcess {
   const electron = require('electron') as { utilityProcess?: { fork?: (modulePath: string, args?: string[], options?: Record<string, unknown>) => HistoryImportWorkerProcess } } | string;
   if (typeof electron === 'string' || !electron.utilityProcess?.fork) {
-    throw new Error('Electron utilityProcess is unavailable; conversation history imports must run in an Electron utility process');
+    throw new Error(`Electron utilityProcess is unavailable; ${serviceName} must run in an Electron utility process`);
   }
   return electron.utilityProcess.fork(workerPath, [], {
-    serviceName: 'Patterm Conversation History Importer',
+    serviceName,
     stdio: 'inherit'
   });
 }

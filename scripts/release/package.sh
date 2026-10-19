@@ -61,11 +61,14 @@ cp "$ROOT/package.json" "$ROOT/LICENSE" "$ROOT/THIRD_PARTY_NOTICES.md" "$STAGE/"
 # The tag determines the packaged version, including prerelease suffixes.
 node -e 'const fs = require("fs"); const file = process.argv[1]; const data = JSON.parse(fs.readFileSync(file, "utf8")); data.version = process.argv[2]; fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);' "$STAGE/package.json" "$VERSION"
 
-# Production dependencies only. None are native, so one install serves both architectures.
+# Production dependencies only. node-llama-cpp's prebuilt CPU binaries are
+# optional packages per platform, so each architecture packages from its own install.
 cp "$ROOT/pnpm-lock.yaml" "$ROOT/pnpm-workspace.yaml" "$STAGE/"
 (cd "$STAGE" && pnpm install --prod --frozen-lockfile --ignore-scripts --config.node-linker=hoisted --reporter=silent)
 rm -f "$STAGE/pnpm-lock.yaml" "$STAGE/pnpm-workspace.yaml"
 [[ ! -e "$STAGE/node_modules/electron" ]] || { printf 'error: the production install includes electron\n' >&2; exit 1; }
+# llama.cpp's source, which node-llama-cpp needs only to build from source. Patterm uses its prebuilt binaries.
+rm -f "$STAGE/node_modules/node-llama-cpp/llama/gitRelease.bundle"
 # Remove them, and shiki's re-exports of them.
 for name in "${GPL_SHIKI[@]}"; do
   rm -f "$STAGE"/node_modules/{@shikijs/langs/dist,@shikijs/themes/dist,shiki/dist/langs,shiki/dist/themes}/"$name".{mjs,d.mts}

@@ -27,6 +27,9 @@ import { CrossHostService, REMOTE_CONTEXT_READ_TOOLS } from './Services/CrossHos
 import { AutoSummaryService } from './Services/AutoSummaryService';
 import { AutoSummaryRunner } from './Services/AutoSummaryRunner';
 import { AutoSummaryActions, registerAutoSummaryControl } from './Actions/AutoSummaryActions';
+import { registerSemanticSearchTools, SemanticSearchActions } from './Actions/SemanticSearchActions';
+import { HybridHistorySearchService } from './Services/SemanticSearch/HybridHistorySearchService';
+import { SemanticSearchService } from './Services/SemanticSearch/SemanticSearchService';
 import { acquireApplicationLock } from './Runtime/ApplicationLock';
 import { launchNodeHistoryWorker } from './Runtime/NodeHistoryWorker';
 import path from 'node:path';
@@ -424,13 +427,29 @@ async function createApplicationResources(
   autoSummaries.start();
   defer(() => autoSummaries.dispose());
   const resumeCapture = new ResumeIdCaptureService(database, searchService);
+  // Created after the queue it asks for migrations; imports only wake it.
+  let semanticSearch: SemanticSearchService | null = null;
   const historyImportQueue = new AgentHistoryImportQueueService(options.appDataPath, undefined, options.runtime === 'node' ? launchNodeHistoryWorker : undefined, debugLog, {
     onResult: (result) => {
       if (applyHistoryImportEffects(result, timeline, resumeCapture)) notifyWorkbenchChanged();
       if (historyChanged(result)) { autoSummaries.historyChanged(); notifyChanged(['history']); }
+      semanticSearch?.historyChanged();
     }
   });
   defer(() => historyImportQueue.dispose());
+  semanticSearch = new SemanticSearchService({
+    appDataPath: options.appDataPath,
+    settings,
+    historyDatabase,
+    ...(options.runtime === 'node' ? { launchWorker: launchNodeHistoryWorker } : {}),
+    requestMigration: () => { historyImportQueue.migrate(); },
+    onChanged: () => notifyChanged(['semantic-search']),
+    debugLog
+  });
+  const semanticSearchService = semanticSearch;
+  defer(() => semanticSearchService.dispose());
+  const semanticSearchActions = new SemanticSearchActions(semanticSearchService);
+  const historySearch = new HybridHistorySearchService(historyReadService, historyDatabase, semanticSearchService);
   const historyWatcher = new AgentHistoryWatcherService({
     enabledWatchSources: () => historySourceService.enabledWatchSources(),
     import: (input) => historyImportQueue.import(input)
@@ -624,6 +643,7 @@ async function createApplicationResources(
     historySourceService,
     historyImportQueue,
     historyReadService,
+    historySearch,
     historyMedia: new ConversationMediaService(historyDatabase),
     historyWatcher,
     timers,
@@ -637,6 +657,7 @@ async function createApplicationResources(
     crossHost
   });
   registerAutoSummaryControl(mcp, autoSummaryActions);
+  registerSemanticSearchTools(mcp, semanticSearchActions);
   registerMcpServerTools(mcp, mcpServers);
   registerAssistantTools(mcp, assistantService, settings);
   registerIdleCompactionTools(mcp, settings);
@@ -750,6 +771,7 @@ async function createApplicationResources(
   });
 
   updates.start();
+  semanticSearchService.start();
 
   const application: PattermApplication = {
     database,

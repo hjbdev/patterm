@@ -13,7 +13,7 @@
           <span class="min-w-0 flex-1">
             <span class="block truncate font-medium">{{ conversation.title || conversation.providerConversationId || 'Untitled conversation' }}</span>
             <span class="block truncate text-[11px] leading-4 text-muted-foreground/80">{{ describe(conversation) }}</span>
-            <span v-if="conversation.match?.preview" class="mt-0.5 block truncate text-xs text-muted-foreground"><template v-for="(segment, segmentIndex) in matchSegments(conversation.match.preview)" :key="segmentIndex"><mark v-if="segment.match" class="bg-transparent font-semibold text-foreground">{{ segment.text }}</mark><template v-else>{{ segment.text }}</template></template></span>
+            <span v-if="conversation.match?.preview" class="mt-0.5 block truncate text-xs text-muted-foreground"><span v-if="conversation.match.semantic" class="text-muted-foreground/60">Related · </span><template v-for="(segment, segmentIndex) in matchSegments(conversation.match.preview)" :key="segmentIndex"><mark v-if="segment.match" class="bg-transparent font-semibold text-foreground">{{ segment.text }}</mark><template v-else>{{ segment.text }}</template></template></span>
           </span>
         </div>
         <p v-if="loading && visible.length" class="px-2 py-2 text-xs text-muted-foreground">Loading more…</p>
@@ -36,7 +36,7 @@ import type { ConversationRecord } from '../types';
 import { topicCall } from '../lib/serverQuery';
 import { useWorkbench } from '../Composables/useWorkbench';
 
-type ConversationResult = ConversationRecord & { sessionClosedAt?: string | null; match?: { messageId: string | null; preview: string | null } };
+type ConversationResult = ConversationRecord & { sessionClosedAt?: string | null; match?: { messageId: string | null; preview: string | null; semantic?: boolean } };
 
 const PAGE_SIZE = 50;
 const SEARCH_LIMIT = 30;

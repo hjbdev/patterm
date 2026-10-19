@@ -28,6 +28,7 @@ import { AgentHistoryDeleteService } from '../Services/AgentHistory/AgentHistory
 import { AgentHistoryImportService, historyConfigureInput, historyImportInput } from '../Services/AgentHistory/AgentHistoryImportService';
 import type { AgentHistoryImportQueueService } from '../Services/AgentHistory/AgentHistoryImportQueueService';
 import { ConversationMediaService, mediaGetInput, mediaListInput } from '../Services/AgentHistory/ConversationMediaService';
+import type { HybridHistorySearchService } from '../Services/SemanticSearch/HybridHistorySearchService';
 import { AgentHistoryReadService, type ConversationSessionState, conversationHistorySearchInput, conversationSearchInput, historyGetInput, historyListInput } from '../Services/AgentHistory/AgentHistoryReadService';
 import type { AgentHistorySourceService } from '../Services/AgentHistory/AgentHistorySourceService';
 import type { AgentHistoryWatcherService } from '../Services/AgentHistory/AgentHistoryWatcherService';
@@ -103,6 +104,8 @@ interface RegistryServices {
   historySourceService?: AgentHistorySourceService;
   historyImportQueue?: AgentHistoryImportQueueService;
   historyReadService?: AgentHistoryReadService;
+  // Keyword search fused with semantic search when this host has it on.
+  historySearch?: Pick<HybridHistorySearchService, 'search' | 'searchConversations'>;
   historyMedia?: ConversationMediaService;
   historyDeleteService?: AgentHistoryDeleteService;
   historyWatcher?: AgentHistoryWatcherService;
@@ -1359,7 +1362,8 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     const current = caller(context);
     if (!current) throw new Error('conversation history search requires an active MCP caller identity');
     const input = conversationHistoryToolInput.parse(args);
-    return requireHistoryRead(services).search({ ...input, project_id: current.project_id });
+    const search = { ...input, project_id: current.project_id };
+    return services.historySearch ? services.historySearch.search(search) : requireHistoryRead(services).search(search);
   };
 
   registry.register(
@@ -1371,7 +1375,8 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       usageNotes: [
         'Results are restricted to the active caller project and exclude unlinked conversations.',
         'For a message result, call history_get with conversation_id and anchor_message_id. For a conversation result, pass conversation_id only.',
-        'Call spawn_agent with conversation_id to resume the provider conversation with its original context.'
+        'Call spawn_agent with conversation_id to resume the provider conversation with its original context.',
+        'When the owner has turned on semantic search on this host, results also include messages related in meaning, marked match: "semantic". A plain-language description of what you are looking for works as well as exact words.'
       ]
     },
     searchConversationHistory
@@ -1482,7 +1487,8 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       const projectId = projectFor(context, input.project_id);
       if (!projectId) throw new Error('no project is available');
       const sessions = input.resumable ? conversationSessionStates(services.database, projectId) : [];
-      return requireHistoryRead(services).searchConversations({ ...input, project_id: projectId }, sessions);
+      const search = { ...input, project_id: projectId };
+      return services.historySearch ? services.historySearch.searchConversations(search, sessions) : requireHistoryRead(services).searchConversations(search, sessions);
     }
   );
 

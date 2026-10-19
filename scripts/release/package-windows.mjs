@@ -49,11 +49,14 @@ try {
   manifest.version = options.version;
   fs.writeFileSync(path.join(stage, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 
-  // Production dependencies only; none are native.
+  // Production dependencies only. The one native package, node-llama-cpp's
+  // prebuilt CPU binary, installs for this runner's platform.
   for (const file of ['pnpm-lock.yaml', 'pnpm-workspace.yaml']) fs.copyFileSync(path.join(ROOT, file), path.join(stage, file));
   execSync('pnpm install --prod --frozen-lockfile --ignore-scripts --config.node-linker=hoisted --reporter=silent', { cwd: stage, stdio: 'inherit' });
   for (const file of ['pnpm-lock.yaml', 'pnpm-workspace.yaml']) fs.rmSync(path.join(stage, file));
   if (fs.existsSync(path.join(stage, 'node_modules', 'electron'))) fail('the production install includes electron');
+  // llama.cpp's source, which node-llama-cpp needs only to build from source. Patterm uses its prebuilt binaries.
+  fs.rmSync(path.join(stage, 'node_modules', 'node-llama-cpp', 'llama', 'gitRelease.bundle'), { force: true });
   for (const grammar of GPL_SHIKI) {
     for (const dir of ['@shikijs/langs/dist', '@shikijs/themes/dist', 'shiki/dist/langs', 'shiki/dist/themes']) {
       for (const extension of ['mjs', 'd.mts']) fs.rmSync(path.join(stage, 'node_modules', dir, `${grammar}.${extension}`), { force: true });

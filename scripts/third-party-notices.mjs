@@ -6,7 +6,7 @@
 // dependency's licence needs review.
 import { execFileSync, execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,6 +22,8 @@ const overrides = {
   '@vue/devtools-api': { license: 'MIT', file: 'vue-devtools-api.LICENSE' },
   http_ece: { license: 'MIT', file: 'http_ece.LICENSE' },
   lru_map: { license: 'MIT', file: 'lru_map.LICENSE' },
+  'simple-git': { license: 'MIT', file: 'simple-git.LICENSE' },
+  '@simple-git/argv-parser': { license: 'MIT', file: 'simple-git.LICENSE' },
   'vaul-vue': { license: 'MIT', file: 'vaul-vue.LICENSE' }
 };
 // JavaScript dependencies bundled into the renderer or MCP shim. Keep their
@@ -87,6 +89,28 @@ const copied = [
     note: 'resources/js/assets/agents/claude-code.svg, codex.svg, and opencode.svg come from it unmodified. The names and logos are trademarks of their owners.'
   }
 ];
+// node-llama-cpp's prebuilt binaries come in one optional package per
+// platform, and an install has only its own. They are listed once here so the
+// notices are the same on every build machine.
+const llamaVersion = JSON.parse(readFileSync(path.join(root, 'node_modules/node-llama-cpp/package.json'), 'utf8')).version;
+const llamaCppTag = JSON.parse(readFileSync(path.join(root, 'node_modules/node-llama-cpp/llama/llama.cpp.info.json'), 'utf8')).tag;
+const prebuiltPlatformPackage = /^@node-llama-cpp\//;
+const prebuilt = [
+  {
+    name: '@node-llama-cpp/linux-x64, linux-arm64, mac-x64, mac-arm64-metal, win-x64, win-arm64',
+    version: llamaVersion,
+    license: 'MIT',
+    files: ['node-llama-cpp-binaries.LICENSE'],
+    note: 'Prebuilt CPU binaries for node-llama-cpp. Each release includes only the package for its own platform.'
+  },
+  {
+    name: 'llama.cpp and ggml',
+    version: llamaCppTag,
+    license: 'MIT',
+    files: ['llama.cpp.LICENSE', 'llama.cpp.LICENSE-jsonhpp'],
+    note: 'Compiled into the node-llama-cpp binaries, with nlohmann/json. They run the optional semantic search model on the CPU.'
+  }
+];
 // Libraries the Rust toolchain links statically into the musl sidecar.
 const linked = [
   {
@@ -109,6 +133,7 @@ const notes = {
   // Apache-2.0 requires stating that modified files were changed.
   alacritty_terminal: 'Patterm ships a modified copy from native/terminal-core/vendor/alacritty_terminal. src/event_loop.rs is changed so that bytes read from the PTY just before a read error still reach the terminal; the change is marked "Changed by Patterm".',
   // MPL-2.0 requires telling recipients where to get the source.
+  'node-llama-cpp': 'It runs EmbeddingGemma 2 (Apache-2.0) for optional semantic history search. Patterm does not ship the model; Settings downloads it from Hugging Face only when the owner asks.',
   'web-push': 'Patterm ships it unmodified. Its source is available from https://github.com/web-push-libs/web-push and in the installed node_modules/web-push directory.'
 };
 // Font binaries are vendored unchanged from pinned Fontsource packages.
@@ -158,9 +183,13 @@ function npmPackages() {
   }
   const shipped = new Set();
   function include(entry, bundled = false) {
-    // Vue lists TypeScript as a peer for build-time SFC tooling. The compiler
-    // and its platform binaries are not bundled into Patterm's renderer.
-    if (bundled && entry.path === tree.devDependencies?.typescript?.path && !bundledDev.includes('typescript')) return;
+    // Vue lists TypeScript as a peer for build-time SFC tooling, and
+    // node-llama-cpp as an optional peer for one CLI command. The compiler and
+    // its platform binaries are not bundled or installed with releases.
+    if (entry.path === tree.devDependencies?.typescript?.path && !bundledDev.includes('typescript')) return;
+    if (prebuiltPlatformPackage.test(entry.from ?? entry.name ?? '')) return;
+    // Optional packages built for other platforms are never installed here.
+    if (!existsSync(entry.path)) return;
     const dir = realpathSync(entry.path);
     if (shipped.has(dir)) return;
     shipped.add(dir);
@@ -283,7 +312,8 @@ const packages = [
   ...crates().map((pkg) => resolve(pkg, 'Rust crate')),
   ...copied.map((entry) => bundled(entry, 'copied source')),
   ...fonts.map((entry) => bundled(entry, 'font')),
-  ...linked.map((entry) => bundled(entry, 'statically linked'))
+  ...linked.map((entry) => bundled(entry, 'statically linked')),
+  ...prebuilt.map((entry) => bundled(entry, 'prebuilt binary'))
 ].sort(byName);
 const notices = render(packages);
 

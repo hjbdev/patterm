@@ -2,6 +2,7 @@ import { contextSchemas } from '../Actions/ProjectContextAction';
 import { MCP_SERVER_TOOLS } from '../MCP/registerMcpServerTools';
 import { HOST_TOOLS } from '../MCP/registerHostTools';
 import { UPDATE_TOOLS } from '../MCP/registerUpdateTools';
+import { SEMANTIC_SEARCH_TOOLS } from '../Actions/SemanticSearchActions';
 
 // Tools the UI may call through patterm:mcp:call from a browser or a paired
 // host. Agent-only tools and owner tools that act on the machine itself are
@@ -21,6 +22,7 @@ export const BROWSER_TOOLS = new Set([
   ...MCP_SERVER_TOOLS,
   ...HOST_TOOLS,
   ...UPDATE_TOOLS,
+  ...SEMANTIC_SEARCH_TOOLS,
   'process_create', 'process_restart', 'stop_process', 'close_process', 'close_request_answer', 'rename_process',
   'history_sources', 'history_configure', 'history_import',
   'history_import_status', 'history_reset_imports', 'history_list',

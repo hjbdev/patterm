@@ -48,6 +48,11 @@ test('Mac zip preserves a runnable app, bundled dependencies, and renderer', {
     execFileSync(executable, ['-e', "const { DatabaseSync } = require('node:sqlite'); const db = new DatabaseSync(':memory:'); db.exec('SELECT 1'); db.close(); require('zod'); require('ws');"], {
       cwd: app, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 15_000
     });
+    console.log('Checking the semantic search runtime');
+    // The prebuilt llama.cpp binary (Metal on Apple silicon, where no CPU-only build exists) must load from the signed bundle. No model is needed.
+    execFileSync(executable, ['-e', "import('node-llama-cpp').then((m) => m.getLlama({ gpu: process.arch === 'arm64' ? 'metal' : false, build: 'never', skipDownload: true })).then(() => process.exit(0), (error) => { console.error(error); process.exit(1); })"], {
+      cwd: app, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 60_000, stdio: 'inherit'
+    });
     const data = path.join(temporary, 'data');
     const env = { ...process.env, PATTERM_APP_DATA_PATH: data };
     delete env.ELECTRON_RUN_AS_NODE;

@@ -67,6 +67,8 @@ try {
   execSync('pnpm install --prod --frozen-lockfile --ignore-scripts --config.node-linker=hoisted --reporter=silent', { cwd: app, stdio: 'inherit' });
   for (const file of ['pnpm-lock.yaml', 'pnpm-workspace.yaml']) fs.rmSync(path.join(app, file));
   if (fs.existsSync(path.join(app, 'node_modules', 'electron'))) fail('the production install includes electron');
+  // llama.cpp's source, which node-llama-cpp needs only to build from source. Patterm uses its prebuilt binaries.
+  fs.rmSync(path.join(app, 'node_modules', 'node-llama-cpp', 'llama', 'gitRelease.bundle'), { force: true });
   for (const grammar of GPL_SHIKI) {
     for (const dir of ['@shikijs/langs/dist', '@shikijs/themes/dist', 'shiki/dist/langs', 'shiki/dist/themes']) {
       for (const extension of ['mjs', 'd.mts']) fs.rmSync(path.join(app, 'node_modules', dir, `${grammar}.${extension}`), { force: true });
@@ -112,6 +114,9 @@ try {
     `version=${options.version}`, `commit=${commit}`, ...(dirty ? ['dirty=true'] : []), `built_at=${new Date().toISOString().replace(/\.\d+Z$/, 'Z')}`, ''
   ].join('\n'));
 
+  // --deep signs nested bundles, not loose Mach-O files such as
+  // node-llama-cpp's prebuilt addon and libraries in node_modules.
+  for (const file of nativeLibraries(path.join(app, 'node_modules'))) execFileSync('codesign', ['--force', '--sign', '-', file], { stdio: 'inherit' });
   // The original Electron signature no longer covers the modified bundle.
   // Ad-hoc signing makes local test builds executable, including on Apple Silicon.
   execFileSync('codesign', ['--force', '--deep', '--sign', '-', bundle], { stdio: 'inherit' });
@@ -140,6 +145,13 @@ function filesContaining(dir, pattern) {
     .filter((entry) => entry.isFile() && /\.(m?js|json)$/.test(entry.name))
     .map((entry) => path.join(entry.parentPath, entry.name))
     .filter((file) => pattern.test(fs.readFileSync(file, 'utf8')));
+}
+
+// Mach-O addons and libraries shipped in npm packages.
+function nativeLibraries(dir) {
+  return fs.readdirSync(dir, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile() && /\.(node|dylib|so)$/.test(entry.name))
+    .map((entry) => path.join(entry.parentPath, entry.name));
 }
 
 function sha256(file) {

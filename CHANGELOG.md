@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Optional semantic conversation-history search, off by default. Settings ›
+  Conversation history installs Google's EmbeddingGemma 2 (Q8_0, 310 MB,
+  Apache-2.0) on request, verified against a pinned SHA-256, and a separate
+  switch turns search on. A low-priority background worker embeds stored,
+  redacted history after imports finish, reusing vectors for unchanged text,
+  and the resume picker and `search_conversation_history` add related
+  conversations to keyword results. Everything runs on the host's CPU through
+  llama.cpp; keyword search is unchanged while the index builds, when search
+  is off, or if the model fails.
 - The Integrated composer's @ menu offers the project's live processes, such as
   shells and dev servers, alongside agents. A picked process is sent as its
   process ID.
