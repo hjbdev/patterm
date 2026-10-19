@@ -19,7 +19,7 @@
 
     <SettingsRow v-if="installed || counts?.indexed" label="Index">
       <template #description>{{ indexDescription }}</template>
-      <Button type="button" size="sm" variant="outline" :disabled="busy || !running" @click="rebuild">Rebuild…</Button>
+      <Button type="button" size="sm" variant="outline" :disabled="busy || !ready" @click="rebuild">Rebuild…</Button>
       <template v-if="indexError" #below>
         <p role="alert" class="text-xs text-destructive">{{ indexError }}</p>
       </template>
@@ -43,7 +43,8 @@ const error = ref('');
 const install = computed(() => state.value?.model.install ?? null);
 const installed = computed(() => install.value?.status === 'installed');
 const counts = computed(() => state.value?.index.counts ?? null);
-const running = computed(() => Boolean(state.value?.enabled) && !['off', 'error'].includes(state.value?.index.state ?? 'off'));
+// Rebuild needs a worker that has opened the upgraded history database.
+const ready = computed(() => Boolean(state.value?.enabled) && ['loading', 'indexing', 'waiting', 'idle'].includes(state.value?.index.state ?? 'off'));
 const percent = computed(() => {
   const current = install.value;
   return current?.status === 'downloading' && current.totalBytes > 0 ? Math.floor((current.receivedBytes / current.totalBytes) * 100) : 0;
@@ -73,7 +74,7 @@ const indexDescription = computed(() => {
     indexing: 'Indexing in the background.',
     waiting: 'Waiting for imports to finish.',
     idle: 'Up to date.',
-    schema_missing: 'Waiting for the history database upgrade.',
+    schema_missing: 'Preparing conversation history…',
     error: 'Stopped after an error.'
   }[value.index.state];
   return `${summary}${queued}${failed}. ${phase}`;

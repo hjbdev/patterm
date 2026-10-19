@@ -111,7 +111,7 @@ export class EmbeddingWorkerRuntime {
   private maintain(id: number, operation: 'reconcile' | 'rebuild' | 'clear'): void {
     try {
       const indexer = this.ensureIndexer();
-      if (!indexer) throw new Error('conversation history has not been upgraded for semantic search yet');
+      if (!indexer) throw new Error('Conversation history is still being prepared for semantic search. Try again in a moment.');
       if (operation === 'rebuild') indexer.rebuild();
       else if (operation === 'clear') indexer.clear();
       else indexer.reconcile();
