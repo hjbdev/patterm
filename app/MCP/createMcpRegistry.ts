@@ -113,7 +113,7 @@ interface RegistryServices {
   timers?: TimerService;
   notifications?: NotificationActions;
   closeRequests?: Pick<CloseRequestActions, 'request' | 'answer' | 'clear'>;
-  snoozes?: Pick<SnoozeActions, 'snooze' | 'unsnooze' | 'dismissReminder'>;
+  snoozes?: Pick<SnoozeActions, 'snooze' | 'unsnooze' | 'dismissReminder' | 'userInput'>;
   usage?: GetUsageSummaryAction;
   assistant?: Pick<AssistantService, 'deliverAgentMessage'> & Partial<Pick<AssistantService, 'setFocus' | 'focusItems'>>;
   assistantInbox?: Pick<AssistantInbox, 'hold'>;
@@ -545,8 +545,10 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       const input = integratedSendInput.parse(args);
       const processId = processFor(context, input.process_id);
       services.autoSummaries?.userInput(processId);
-      // A message, even one queued mid-turn, withdraws a close request.
+      // A message, even one queued mid-turn, withdraws a close request and
+      // wakes a snoozed agent.
       services.closeRequests?.clear(processId);
+      services.snoozes?.userInput(processId);
       return requireIntegrated(services).prompt(processId, {
         text: input.text,
         ...(input.references ? { references: input.references } : {}),
@@ -593,6 +595,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       if (input.action === 'steer') {
         services.autoSummaries?.userInput(processId);
         services.closeRequests?.clear(processId);
+        services.snoozes?.userInput(processId);
       }
       return requireIntegrated(services).updateQueued(processId, input.message_id, input.action);
     }

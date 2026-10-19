@@ -166,7 +166,7 @@ import HostBadge from './HostBadge.vue';
 import { computed, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue';
 import { Clock, Copy, Moon, Pencil, Pin, PinOff, Sun, Timer as TimerIcon, X } from 'lucide-vue-next';
 import { canSnooze, openSnooze, unsnooze } from '../Composables/useSnooze';
-import { tabSnoozed } from '../lib/snooze';
+import { moveAwakeTab, tabSnoozed } from '../lib/snooze';
 import { confirmClose } from '../Composables/useCloseConfirm';
 import { cn } from '@/lib/utils';
 import {
@@ -180,7 +180,7 @@ import { mentionPreview } from '../lib/integratedComposer';
 import { ownedProcessesForSessions } from '../lib/processTabs';
 import { activityLookup, countInRing, describeActivity, memberLabel, subagentCountClass, subagentPulse } from '../lib/rowActivity';
 import MemberCount from './MemberCount.vue';
-import { moveStripTab, setStripTabPinned, type StripTab, type TabLayout } from '../lib/tabStrip';
+import { setStripTabPinned, type StripTab, type TabLayout } from '../lib/tabStrip';
 import { timersForProcesses } from '../lib/timers';
 import type { ProcessRecord, ProjectSummary, SessionRecord, TimerRecord } from '../types';
 import ProjectLogo from './ProjectLogo.vue';
@@ -272,7 +272,10 @@ const {
   tabs: () => props.tabs.map((tab) => ({ key: tab.key, group: tabSnoozed(tab) ? 'snoozed' : tab.pinned ? 'pinned' : 'tabs' })),
   element: (key) => tabElements.get(key),
   onDragStart: () => hover.close(),
-  onDrop: (key, index) => emit('update:layout', moveStripTab(props.tabs, key, index))
+  onDrop: (key, index) => {
+    const layout = moveAwakeTab(props.tabs, key, index);
+    if (layout) emit('update:layout', layout);
+  }
 });
 const hover = useHoverPopover(() => Boolean(draggingKey.value));
 

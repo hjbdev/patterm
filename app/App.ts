@@ -378,7 +378,10 @@ async function createApplicationResources(
     (event, data) => debugLog.write('idle-compaction', event, data), Date.now,
     (processId) => !assistant || assistant.voiceActive(processId));
   const snoozes = new SnoozeActions(database, timeline, notifyWorkbenchChanged, raiseNotification);
-  defer(integrated.onActivityChange(({ processId, previous, activity }) => snoozes.activity(processId, previous, activity)));
+  // An automatic compaction is not a message, so it never wakes an agent.
+  defer(integrated.onActivityChange(({ processId, previous, activity }) => {
+    if (!idleCompaction.compacting(processId)) snoozes.activity(processId, previous, activity);
+  }));
   let closeRequests: CloseRequestActions | null = null;
   defer(integrated.onActivityChange(integratedActivityNotifications({
     notifications: notificationService,

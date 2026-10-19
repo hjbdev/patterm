@@ -2,7 +2,8 @@ import { computed, inject, onBeforeUnmount, provide, ref, type ComputedRef, type
 import { matchesAgentTabSelection, type AgentTabFamily } from '../../lib/agentTabs';
 import { ownedProcessesForSessions, type LiveProcessRecord } from '../../lib/processTabs';
 import { activityLookup, type RowActivity } from '../../lib/rowActivity';
-import { moveStripTab, setStripTabPinned, type StripTab, type TabLayout } from '../../lib/tabStrip';
+import { setStripTabPinned, type StripTab, type TabLayout } from '../../lib/tabStrip';
+import { moveAwakeTab } from '../../lib/snooze';
 import { timersForProcesses } from '../../lib/timers';
 import { ALL_AGENTS_SCOPE } from '../../lib/allAgents';
 import { unreadUrgency } from '../../Composables/useNotifications';
@@ -128,7 +129,8 @@ export function provideSidebarContext(input: SidebarInput): SidebarContext {
       const index = beforeKey ? rest.findIndex((tab) => tab.key === beforeKey)
         : afterKey ? rest.findIndex((tab) => tab.key === afterKey) + 1
           : rest.length;
-      input.updateLayout(moveStripTab(tabs, key, index));
+      const layout = moveAwakeTab(tabs, key, index);
+      if (layout) input.updateLayout(layout);
     },
     // The list slides the row to its new group.
     setPinned: (tab, pinned) => input.updateLayout(setStripTabPinned(input.tabs(), tab.key, pinned)),

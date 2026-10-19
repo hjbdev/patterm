@@ -7,6 +7,22 @@ import { SnoozeActions } from '../app/Actions/SnoozeActions';
 import type { RaiseNotificationInput } from '../app/Services/NotificationService';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import { removeTree } from './fixtures/TempTree';
+import { moveAwakeTab, snoozedLast } from '../resources/js/lib/snooze';
+import type { StripTab } from '../resources/js/lib/tabStrip';
+import type { SessionRecord } from '../resources/js/types';
+
+// Snoozed tabs wait at the end, pinned or not, and reordering awake tabs
+// leaves them there.
+function tabOrder(): void {
+  const tab = (key: string, pinned: boolean, snoozed: boolean) => ({
+    key, kind: 'agent', pinned,
+    family: { root: { session: { snooze: snoozed ? { snoozedAt: 'now', reminder: null } : null, exitedAt: null } as SessionRecord } }
+  }) as StripTab;
+  const tabs = snoozedLast([tab('pinned-asleep', true, true), tab('first', false, false), tab('second', false, false), tab('asleep', false, true)]);
+  assert.deepEqual(tabs.map((each) => each.key), ['first', 'second', 'pinned-asleep', 'asleep']);
+  assert.deepEqual(moveAwakeTab(tabs, 'second', 0), { order: ['second', 'first', 'pinned-asleep', 'asleep'], pinned: ['pinned-asleep'] });
+  assert.equal(moveAwakeTab(tabs, 'pinned-asleep', 3), null);
+}
 
 function main(): void {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-snooze-test-'));
@@ -68,6 +84,8 @@ function main(): void {
     snoozes.snooze({ process_id: 'root' });
     snoozes.activity('root', 'working', 'idle');
     assert.equal(raised.at(-1)?.body, 'Woke from snooze');
+    // Each snooze's wake alerts on its own rather than updating the last one.
+    assert.notEqual(raised.at(-1)?.dedupeKey, raised[0]!.dedupeKey);
     assert.equal(snoozes.announcedWake('root'), true);
     assert.equal(snoozes.announcedWake('root'), false);
     db.prepare(`update sessions set interface_mode = 'tui' where id = 'session_root'`).run();
@@ -89,5 +107,6 @@ function main(): void {
   }
 }
 
+tabOrder();
 main();
 console.log('snooze smoke passed');

@@ -99,7 +99,8 @@ export class SnoozeActions {
     if (!announce) return;
     // Only Integrated agents announce finished turns.
     if (process.integrated) this.announced.add(process.id);
-    this.raise({ processId: process.id, source: 'runtime', kind: 'turn_finished', body: process.snooze_reminder ? `Woke from snooze: ${process.snooze_reminder}` : 'Woke from snooze', dedupeKey: 'snooze:woke' });
+    // Keyed by the snooze, so each wake alerts afresh.
+    this.raise({ processId: process.id, source: 'runtime', kind: 'turn_finished', body: process.snooze_reminder ? `Woke from snooze: ${process.snooze_reminder}` : 'Woke from snooze', dedupeKey: `snooze:woke:${process.snoozed_at}` });
   }
 
   private process(processId: string): ProcessContext | null {
