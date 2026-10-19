@@ -144,6 +144,8 @@
                       <Button type="button" size="sm" variant="outline" class="text-destructive hover:text-destructive" :disabled="historyBusy" @click="resetAndReimportHistory">Reset and re-import…</Button>
                     </SettingsRow>
                   </SettingsSection>
+
+                  <SemanticSearchSettings />
                   <p v-if="historyError" role="alert" class="text-xs text-destructive">{{ historyError }}</p>
                 </SettingsPanel>
               </TabsContent>
@@ -219,6 +221,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../Components/ui/tabs'
 import AboutSettings from '../Components/AboutSettings.vue';
 import AgentIcon from '../Components/AgentIcon.vue';
 import AutoSummarySettings from '../Components/AutoSummarySettings.vue';
+import SemanticSearchSettings from '../Components/SemanticSearchSettings.vue';
 import FigureSettings from '../Components/FigureSettings.vue';
 import HarnessPresetSettings from '../Components/HarnessPresetSettings.vue';
 import IdleCompactionSettings from '../Components/IdleCompactionSettings.vue';

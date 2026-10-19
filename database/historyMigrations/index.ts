@@ -8,6 +8,7 @@ import indexHistorySearchRows from './2026_09_09_000004_index_history_search_row
 import createConversationUsage from './2026_10_05_000005_create_conversation_usage';
 import createConversationSkillUses from './2026_10_05_000006_create_conversation_skill_uses';
 import createConversationMedia from './2026_10_10_000007_create_conversation_media';
+import createHistoryEmbeddings from './2026_10_19_000010_create_history_embeddings';
 
 export const historyMigrations: Migration[] = [
   createConversationHistorySchema,
@@ -18,5 +19,6 @@ export const historyMigrations: Migration[] = [
   createConversationSkillUses,
   createConversationMedia,
   addSummaryProse,
-  addProviderRateLimitReadings
+  addProviderRateLimitReadings,
+  createHistoryEmbeddings
 ];

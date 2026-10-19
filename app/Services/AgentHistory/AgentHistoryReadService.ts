@@ -148,6 +148,26 @@ export class AgentHistoryReadService {
     };
   }
 
+  // Rows for results that semantic search found and the keyword queries
+  // above did not return.
+  conversationsByIds(ids: readonly string[]) {
+    if (!ids.length || !this.database || !databaseAvailable(this.database)) return [];
+    const rows = this.database.connection.prepare(`
+      select conversations.*,
+        (select count(*) from conversation_messages where conversation_id = conversations.id) as message_count
+      from conversations where id in (${ids.map(() => '?').join(', ')})
+    `).all(...ids) as ConversationRow[];
+    return rows.map(mapConversation);
+  }
+
+  messageTexts(ids: readonly string[]): Map<string, { conversationId: string; seq: number; text: string }> {
+    if (!ids.length || !this.database || !databaseAvailable(this.database)) return new Map();
+    const rows = this.database.connection.prepare(`
+      select id, conversation_id, seq, text from conversation_messages where id in (${ids.map(() => '?').join(', ')})
+    `).all(...ids) as Array<{ id: string; conversation_id: string; seq: number; text: string }>;
+    return new Map(rows.map((row) => [row.id, { conversationId: row.conversation_id, seq: row.seq, text: row.text }]));
+  }
+
   findConversation(conversationId: string) {
     if (!this.database) return null;
     if (!databaseAvailable(this.database)) return null;

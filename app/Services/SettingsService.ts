@@ -109,6 +109,13 @@ export const updateRecordInput = z.object({
 });
 export type UpdateRecord = z.infer<typeof updateRecordInput>;
 const UPDATE_SETTINGS_KEY = 'updates.v1';
+// Semantic history search is off until the owner installs the model and
+// turns it on. The setting belongs to this host, like its history.
+export const semanticSearchSettingsInput = z.object({
+  enabled: z.boolean().default(false)
+}).strict();
+export type SemanticSearchSettings = z.infer<typeof semanticSearchSettingsInput>;
+const SEMANTIC_SEARCH_SETTINGS_KEY = 'semantic_search.v1';
 const UPDATE_RECORD_KEY = 'updates.record.v1';
 
 const ASSISTANT_SETTINGS_KEY = 'assistant.settings.v1';
@@ -282,6 +289,16 @@ export class SettingsService {
   saveUpdateSettings(input: unknown): UpdateSettings {
     const settings = updateSettingsInput.parse(input);
     this.write(UPDATE_SETTINGS_KEY, JSON.stringify(settings));
+    return settings;
+  }
+
+  semanticSearchSettings(): SemanticSearchSettings {
+    return this.readParsed(SEMANTIC_SEARCH_SETTINGS_KEY, semanticSearchSettingsInput);
+  }
+
+  saveSemanticSearchSettings(input: unknown): SemanticSearchSettings {
+    const settings = semanticSearchSettingsInput.parse(input);
+    this.write(SEMANTIC_SEARCH_SETTINGS_KEY, JSON.stringify(settings));
     return settings;
   }
 
