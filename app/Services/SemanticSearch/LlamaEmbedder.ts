@@ -1,5 +1,5 @@
 import type { Llama, LlamaEmbeddingContext, LlamaModel } from 'node-llama-cpp';
-import { prepareVector } from './EmbeddingModel';
+import { prepareVector, QUERY_PROMPT } from './EmbeddingModel';
 import type { DocumentEmbedder } from './HistoryEmbeddingIndexer';
 
 const DOCUMENT_CONTEXT_TOKENS = 1_024;
@@ -43,7 +43,7 @@ export class LlamaEmbedder implements DocumentEmbedder {
 
   async embedQuery(text: string): Promise<Float32Array | null> {
     await this.load();
-    return await this.embed(this.queries!, text, QUERY_CONTEXT_TOKENS);
+    return await this.embed(this.queries!, QUERY_PROMPT + text, QUERY_CONTEXT_TOKENS);
   }
 
   async dispose(): Promise<void> {

@@ -107,7 +107,8 @@ export class EmbeddingModelInstaller {
           received += value.byteLength;
           if (received > this.manifest.bytes) throw new Error('The download is larger than the pinned model');
           hash.update(value);
-          await file.write(value);
+          // A write may persist only part of the chunk; the hash covers all of it.
+          for (let offset = 0; offset < value.byteLength;) offset += (await file.write(value, offset)).bytesWritten;
           if (Date.now() - reported >= PROGRESS_INTERVAL_MS) {
             reported = Date.now();
             this.set({ status: 'downloading', receivedBytes: received, totalBytes: this.manifest.bytes });

@@ -66,12 +66,14 @@ export class HistoryEmbeddingIndexer {
   }
 
   // Drops every published passage and vector and queues all history again.
+  // Queued generations advance too, so a step already embedding against the
+  // old vectors goes stale instead of publishing a partial conversation.
   rebuild(): { queued: number } {
     this.db.transaction(() => {
       this.db.prepare(`delete from history_embedding_passages`).run();
       this.db.prepare(`delete from history_embedding_state`).run();
       this.db.prepare(`delete from history_embedding_vectors`).run();
-      this.db.prepare(`update history_embedding_queue set attempts = 0, retry_after = null, last_error = null`).run();
+      this.db.prepare(`update history_embedding_queue set generation = generation + 1, attempts = 0, retry_after = null, last_error = null`).run();
     })();
     return this.reconcile();
   }
@@ -81,7 +83,7 @@ export class HistoryEmbeddingIndexer {
       this.db.prepare(`delete from history_embedding_passages`).run();
       this.db.prepare(`delete from history_embedding_state`).run();
       this.db.prepare(`delete from history_embedding_vectors`).run();
-      this.db.prepare(`insert into history_embedding_queue (conversation_id, marked_at) select id, ? from conversations where true on conflict(conversation_id) do nothing`).run(SETTLED_LONG_AGO);
+      this.db.prepare(`insert into history_embedding_queue (conversation_id, marked_at) select id, ? from conversations where true on conflict(conversation_id) do update set generation = generation + 1`).run(SETTLED_LONG_AGO);
     })();
   }
 

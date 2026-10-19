@@ -145,6 +145,16 @@ async function main() {
   history.connection.prepare(`update history_embedding_queue set retry_after = null`).run();
   assert.equal(await indexer.step(), 'indexed');
 
+  // A rebuild during inference makes the job stale, so it cannot publish a
+  // conversation whose cached vectors the rebuild just dropped.
+  addMessage('beta', 5, 'A rebuild lands while this line is embedding');
+  embedder.beforeEmbed = () => indexer.rebuild();
+  assert.equal(await indexer.step(), 'stale');
+  while ((await indexer.step()) === 'indexed');
+  assert.equal(indexer.counts().pending, 0);
+  const betaMessages = history.connection.prepare(`select count(*) as count from conversation_messages where conversation_id = 'beta'`).get() as { count: number };
+  assert.equal(passageRows('beta').length, betaMessages.count, 'every passage is published after the rebuild');
+
   // Deleting a conversation removes its passages and its queue entry.
   addConversation('doomed', 'project_a', ['Temporary conversation to delete']);
   while ((await indexer.step()) === 'indexed');
@@ -181,6 +191,15 @@ async function main() {
   assert.deepEqual((await hybrid.searchConversations({ query: 'cobalt furnace overheated during night shift broke', project_id: 'project_b' })).conversations.map((row) => row.id), ['alpha']);
   history.connection.exec(`update conversations set project_id = 'project_a' where id = 'alpha'`);
 
+  // Keyword hits are read after the query embeds, so a move made meanwhile counts.
+  const moving = new HybridHistorySearchService(read, history, { active: true, embedQuery: async (text: string) => {
+    history.connection.exec(`update conversations set project_id = 'project_b' where id = 'alpha'`);
+    return fakeVector(QUERY_PROMPT + text);
+  } });
+  assert.ok(!(await moving.searchConversations({ query: 'thermostat', project_id: 'project_a' })).conversations.some((row) => row.id === 'alpha'));
+  assert.ok(!(await moving.search({ query: 'thermostat', project_id: 'project_a' })).results.some((row) => row.conversationId === 'alpha'));
+  history.connection.exec(`update conversations set project_id = 'project_a' where id = 'alpha'`);
+
   // Resumable searches hide sub-agent conversations semantically too.
   addConversation('child', 'project_a', ['The cobalt furnace overheated during the night shift'], { sessionId: 'session_child' });
   while ((await indexer.step()) === 'indexed');
@@ -192,6 +211,8 @@ async function main() {
   assert.deepEqual(await off.searchConversations({ query: 'thermostat', project_id: 'project_a' }), { ...read.searchConversations({ query: 'thermostat', project_id: 'project_a' }), semantic: false });
   const failing = new HybridHistorySearchService(read, history, { active: true, embedQuery: async () => null });
   assert.equal((await failing.search({ query: 'thermostat', project_id: 'project_a' })).semantic, false);
+
+  await loadFailureChecks();
 
   // A model or chunker change drops incompatible vectors and queues everything.
   const other = new HistoryEmbeddingIndexer(history.connection, embedder, 'other-model-key', later);
@@ -236,6 +257,25 @@ async function installerChecks() {
   assert.equal(cancelled.state().status, 'absent');
   assert.equal(fs.existsSync(cancelled.modelPath), false);
 
+  // Writes that persist only part of a chunk are completed, not skipped.
+  const realOpen = fs.promises.open;
+  fs.promises.open = (async (...args: Parameters<typeof realOpen>) => {
+    const handle = await realOpen(...args);
+    const write = handle.write.bind(handle) as (buffer: Uint8Array, offset: number, length: number) => Promise<{ bytesWritten: number }>;
+    (handle as unknown as { write: unknown }).write = (buffer: Uint8Array, offset = 0) => write(buffer, offset, Math.max(1, Math.floor((buffer.byteLength - offset) / 2)));
+    return handle;
+  }) as typeof realOpen;
+  const partialWrites = new EmbeddingModelInstaller(root, () => undefined, respond(body) as typeof fetch, manifest);
+  try {
+    partialWrites.install();
+    await partialWrites.settled();
+  } finally {
+    fs.promises.open = realOpen;
+  }
+  assert.equal(partialWrites.state().status, 'installed');
+  assert.deepEqual(fs.readFileSync(partialWrites.modelPath), body);
+  await partialWrites.remove();
+
   const good = new EmbeddingModelInstaller(root, () => undefined, respond(body) as typeof fetch, manifest);
   good.install();
   await good.settled();
@@ -245,6 +285,26 @@ async function installerChecks() {
   assert.equal(new EmbeddingModelInstaller(root, () => undefined, respond(body) as typeof fetch, manifest).installed, false, 'a damaged file is not trusted');
   await good.remove();
   assert.equal(fs.existsSync(good.directory), false);
+}
+
+// A model that fails to load on a query, with nothing left to index, stops
+// the worker with a visible error instead of failing each search quietly.
+async function loadFailureChecks() {
+  const broken = new FakeEmbedder();
+  let loads = 0;
+  broken.load = async () => { loads++; throw new Error('no prebuilt binary'); };
+  const events: Array<{ type: string; fatal?: boolean; error?: string }> = [];
+  const runtime = new EmbeddingWorkerRuntime((event) => events.push(event as never), () => undefined, () => broken);
+  runtime.handle({ type: 'start', appDataPath: directory, modelPath: 'unused', modelKey: EMBEDDING_MODEL_KEY, threads: 1 });
+  await waitFor(() => events.some((event) => event.type === 'status'), 'worker status');
+  runtime.handle({ type: 'query', id: 1, text: 'cobalt furnace' });
+  await waitFor(() => events.some((event) => event.type === 'query_result'), 'first query result');
+  runtime.handle({ type: 'query', id: 2, text: 'cobalt furnace' });
+  await waitFor(() => events.filter((event) => event.type === 'query_result').length === 2, 'query results');
+  assert.ok(events.some((event) => event.type === 'error' && event.fatal && /no prebuilt binary/.test(event.error ?? '')));
+  assert.ok(events.filter((event) => event.type === 'query_result').every((event) => event.error));
+  assert.equal(loads, 1, 'a failed load is not retried on every search');
+  await runtime.stop();
 }
 
 // The service drives an in-process worker runtime through the same message

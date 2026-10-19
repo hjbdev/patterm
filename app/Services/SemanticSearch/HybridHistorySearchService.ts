@@ -39,8 +39,10 @@ export class HybridHistorySearchService {
   // One row per conversation for the resume picker.
   async searchConversations(raw: z.input<typeof conversationSearchInput>, sessions: readonly ConversationSessionState[] = []) {
     const input = conversationSearchInput.parse(raw);
-    const keyword = this.read.searchConversations({ ...input, limit: Math.max(input.limit, CANDIDATES) }, sessions).conversations;
+    // Keyword rows are read after the wait so they reflect the same moment
+    // as the live checks below; a conversation can move while a query embeds.
     const vector = await this.queryVector(input.query);
+    const keyword = this.read.searchConversations({ ...input, limit: Math.max(input.limit, CANDIDATES) }, sessions).conversations;
     if (!vector) return { conversations: keyword.slice(0, input.limit), semantic: false };
     const hidden = input.resumable ? sessions.filter((session) => session.role === 'child' || session.role === 'routine').map((session) => session.id) : undefined;
     const scope = { projectId: input.project_id, provider: input.provider, hiddenSessions: hidden };
@@ -71,8 +73,8 @@ export class HybridHistorySearchService {
   // Message-level results for the search_conversation_history agent tool.
   async search(raw: z.input<typeof conversationHistorySearchInput>) {
     const input = conversationHistorySearchInput.parse(raw);
-    const keyword = this.read.search({ ...input, limit: Math.max(input.limit, CANDIDATES) });
     const vector = await this.queryVector(input.query);
+    const keyword = this.read.search({ ...input, limit: Math.max(input.limit, CANDIDATES) });
     if (!vector) return { query: input.query, semantic: false, results: keyword.results.slice(0, input.limit).map((row) => ({ ...row, match: 'keyword' })) };
     const best = new Map<string, PassageHit>();
     for (const hit of this.nearest(vector, { projectId: input.project_id, provider: input.provider }, PASSAGE_CANDIDATES)) if (!best.has(hit.messageId)) best.set(hit.messageId, hit);

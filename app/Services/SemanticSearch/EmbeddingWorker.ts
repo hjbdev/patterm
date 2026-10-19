@@ -100,8 +100,7 @@ export class EmbeddingWorkerRuntime {
     this.lastUse = Date.now();
     try {
       if (!this.embedder) throw new Error('semantic search is not running');
-      if (this.loadError) throw new Error(this.loadError);
-      const vector = await this.embedder.embedQuery(text);
+      const vector = await (await this.loadedEmbedder()).embedQuery(text);
       if (!vector) throw new Error('the model returned no usable vector for this query');
       this.send({ type: 'query_result', id, vector: encodeVector(vector) });
     } catch (error) {
@@ -153,10 +152,7 @@ export class EmbeddingWorkerRuntime {
         await this.sleep(IDLE_POLL_MS);
         continue;
       }
-      if (this.loadError) {
-        this.send({ type: 'error', error: this.loadError, fatal: true });
-        continue;
-      }
+      if (this.loadError) continue;
       if (step === 'idle' || step === 'waiting') {
         if (step === 'idle') indexer.collectGarbage();
         this.status(step, true);
@@ -189,24 +185,25 @@ export class EmbeddingWorkerRuntime {
     return this.indexer;
   }
 
-  // A model that cannot load is fatal for the worker, not a failure of the
-  // conversation that happened to need it first.
   private trackedEmbedder(): DocumentEmbedder {
-    return {
-      embedDocuments: async (texts) => {
-        const embedder = this.embedder!;
-        if (!embedder.loaded) {
-          this.status('loading', true);
-          try {
-            await embedder.load();
-          } catch (error) {
-            this.loadError = `The embedding model could not load: ${errorMessage(error)}`;
-            throw error;
-          }
-        }
-        return await embedder.embedDocuments(texts);
-      }
-    };
+    return { embedDocuments: async (texts) => await (await this.loadedEmbedder()).embedDocuments(texts) };
+  }
+
+  // A model that cannot load is fatal for the worker, not a failure of the
+  // conversation or query that happened to need it first.
+  private async loadedEmbedder(): Promise<QueryEmbedder> {
+    const embedder = this.embedder!;
+    if (this.loadError) throw new Error(this.loadError);
+    if (embedder.loaded) return embedder;
+    this.status('loading', true);
+    try {
+      await embedder.load();
+    } catch (error) {
+      this.loadError = `The embedding model could not load: ${errorMessage(error)}`;
+      this.send({ type: 'error', error: this.loadError, fatal: true });
+      throw error;
+    }
+    return embedder;
   }
 
   private async unloadWhenIdle(): Promise<void> {
