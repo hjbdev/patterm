@@ -9,7 +9,7 @@ import { SEMANTIC_SEARCH_TOOLS } from '../Actions/SemanticSearchActions';
 // not listed.
 export const BROWSER_TOOLS = new Set([
   ...Object.keys(contextSchemas),
-  'project_create', 'fs_directories', 'project_list', 'project_get', 'project_logo_candidates', 'project_set_logo', 'project_rename', 'project_remove',
+  'project_create', 'fs_directories', 'project_list', 'project_get', 'project_logo_candidates', 'project_set_logo', 'project_snooze', 'project_wake', 'project_rename', 'project_remove',
   'harness_launch', 'harness_list', 'harness_discover', 'harness_presets', 'opencode_service_restart',
   'integrated_get', 'integrated_history', 'integrated_image', 'integrated_send', 'integrated_controls', 'integrated_files_search', 'integrated_delivery', 'integrated_configure', 'integrated_command', 'integrated_interrupt',
   'integrated_permission_reply', 'integrated_question_reply', 'integrated_form_reply', 'integrated_task_stop', 'integrated_task_output', 'integrated_queue_update', 'integrated_new',
@@ -24,6 +24,7 @@ export const BROWSER_TOOLS = new Set([
   ...UPDATE_TOOLS,
   ...SEMANTIC_SEARCH_TOOLS,
   'process_create', 'process_restart', 'stop_process', 'close_process', 'close_request_answer', 'rename_process',
+  'agent_snooze', 'agent_unsnooze', 'agent_snooze_reminder_dismiss',
   'history_sources', 'history_configure', 'history_import',
   'history_import_status', 'history_reset_imports', 'history_list',
   'history_get', 'history_search', 'history_delete', 'history_resume',

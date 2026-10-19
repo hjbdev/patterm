@@ -10,6 +10,8 @@ export interface IntegratedActivityNotificationContext {
   // Created after this listener is registered.
   closeRequests(): Pick<CloseRequestActions, 'clear' | 'pending' | 'announce'> | null;
   isAssistant(processId: string): boolean;
+  // The turn woke a snoozed agent, which announced that instead.
+  wokeFromSnooze(processId: string): boolean;
   // An automatic idle compaction is running. Registered before the idle
   // compaction service's listener, so a compaction's end still reads true.
   compacting(processId: string): boolean;
@@ -39,6 +41,8 @@ export function integratedActivityNotifications(context: IntegratedActivityNotif
       if (!compacting) context.raise({ processId, source: 'integrated', kind: 'failure', body: 'The agent reported an error' });
     }
     else if (activity === 'idle') {
+      // Asked on every idle change, so a wake never outlives its turn.
+      const woke = context.wokeFromSnooze(processId);
       context.notifications.resolve({ process_id: processId, kinds: ['permission'] });
       // Reconnect snapshots are not turns the user has not seen.
       const turnEnded = !snapshot && !compacting && (previous === 'working' || previous === 'thinking' || awaitingUser(previous));
@@ -47,8 +51,8 @@ export function integratedActivityNotifications(context: IntegratedActivityNotif
       const closeRequests = context.closeRequests();
       if (closeRequests?.pending(processId)) void closeRequests.announce(processId).catch(() => undefined);
       // The assistant's own turns are read in its panel, not announced, and
-      // neither is a turn that reported.
-      else if (!context.isAssistant(processId) && !reportedThisTurn) {
+      // neither is a turn that reported or woke a snoozed agent.
+      else if (!woke && !context.isAssistant(processId) && !reportedThisTurn) {
         const decision = context.triage(processId);
         if (decision.reason !== 'disabled') context.log('triage', { processId, ...decision });
         context.raise({ processId, source: 'integrated', kind: 'turn_finished', body: 'Finished its turn', dedupeKey: 'integrated:turn_finished', quiet: decision.quiet });

@@ -3,6 +3,8 @@ import addSummaryMemory from './2026_10_12_000048_add_summary_memory';
 import addContextRevisions from './2026_10_15_000049_add_context_revisions';
 import addHarnessRateLimitReadings from './2026_10_16_000051_add_harness_rate_limit_readings';
 import addProcessBackgroundTasks from './2026_10_16_000052_add_process_background_tasks';
+import addProcessSnooze from './2026_10_19_000053_add_process_snooze';
+import addProjectSnooze from './2026_10_19_000054_add_project_snooze';
 import createInitialSchema from './2026_06_03_000001_create_initial_schema';
 import addProcessRuntimeColumns from './2026_06_03_000002_add_process_runtime_columns';
 import addProcessWorktreeId from './2026_06_03_000003_add_process_worktree_id';
@@ -108,5 +110,7 @@ export const migrations: Migration[] = [
   addContextRevisions,
   addAutoSummaryUsage,
   addHarnessRateLimitReadings,
-  addProcessBackgroundTasks
+  addProcessBackgroundTasks,
+  addProcessSnooze,
+  addProjectSnooze
 ];

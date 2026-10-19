@@ -41,6 +41,8 @@ export class NotificationDelivery {
   private deliver(id: string): void {
     const notification = this.targets.current(id);
     if (!notification || notification.resolved_at || notification.read_at) return;
+    // A repeat while its project slept turned it into a held, in-app notice.
+    if (notification.held || notification.delivery !== 'all') return;
     if (this.presence.present()) return;
     this.targets.desktop(notification);
     void this.targets.push(notification).catch((error: unknown) => {

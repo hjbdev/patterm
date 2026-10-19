@@ -39,6 +39,8 @@ import { QuitApplicationAction } from './Actions/QuitApplicationAction';
 import { terminalInventory, type TerminalHostOptions } from './Services/TerminalHostService';
 import { createRegistryActions } from './Actions/RegistryActions';
 import { CloseRequestActions } from './Actions/CloseRequestActions';
+import { SnoozeActions } from './Actions/SnoozeActions';
+import { ProjectSnoozeActions } from './Actions/ProjectSnoozeActions';
 import { GetUsageSummaryAction } from './Actions/UsageActions';
 import { UsageService } from './Services/UsageService';
 import { harnessProviders } from './Harness/providers';
@@ -376,12 +378,18 @@ async function createApplicationResources(
     (harness) => settings.idleCompactionSettings()[harness as keyof IdleCompactionSettings] === true,
     (event, data) => debugLog.write('idle-compaction', event, data), Date.now,
     (processId) => !assistant || assistant.voiceActive(processId));
+  const snoozes = new SnoozeActions(database, timeline, notifyWorkbenchChanged, raiseNotification);
+  // An automatic compaction is not a message, so it never wakes an agent.
+  defer(integrated.onActivityChange(({ processId, previous, activity }) => {
+    if (!idleCompaction.compacting(processId)) snoozes.activity(processId, previous, activity);
+  }));
   let closeRequests: CloseRequestActions | null = null;
   defer(integrated.onActivityChange(integratedActivityNotifications({
     notifications: notificationService,
     raise: raiseNotification,
     closeRequests: () => closeRequests,
     isAssistant: (processId) => assistant?.isAssistantProcess(processId) === true,
+    wokeFromSnooze: (processId) => snoozes.announcedWake(processId),
     compacting: (processId) => idleCompaction.compacting(processId),
     triage: (processId) => triage.decide(processId),
     log: (event, data) => debugLog.write('notifications', event, data)
@@ -538,8 +546,11 @@ async function createApplicationResources(
     searchService
   });
   closeRequests = new CloseRequestActions(database, timeline, actions.closeProcess, messageProcess, notifyWorkbenchChanged, notificationService);
+  const projectSnoozes = new ProjectSnoozeActions(database, timeline, notificationService, raiseNotification, notifyWorkbenchChanged);
+  defer(() => projectSnoozes.dispose());
   const answeredCloseRequests = closeRequests;
   notifications.onUserInput((processId) => answeredCloseRequests.clear(processId));
+  notifications.onUserInput((processId) => snoozes.userInput(processId));
 
   // Paired hosts. Only the server can be reached by other hosts, so only it
   // shows pairing codes; any host can pair to a server.
@@ -649,6 +660,8 @@ async function createApplicationResources(
     timers,
     notifications,
     closeRequests,
+    projectSnoozes,
+    snoozes,
     assistant: assistantService,
     assistantInbox,
     routines,
@@ -710,7 +723,8 @@ async function createApplicationResources(
     historyImportQueue,
     searchService,
     startupFrames.values(),
-    (processId, exitCode) => raiseNotification({ processId, source: 'runtime', kind: 'failure', body: `Exited with code ${exitCode}` })
+    (processId, exitCode) => raiseNotification({ processId, source: 'runtime', kind: 'failure', body: `Exited with code ${exitCode}` }),
+    (processId, previous, activity) => snoozes.activity(processId, previous, activity)
   );
   stopBuffering();
   startupFrames.clear();
@@ -742,6 +756,7 @@ async function createApplicationResources(
   await mcpSocket.start();
   timers.activate();
   routines.activate();
+  projectSnoozes.activate();
   debugLog.write('mcp', 'socket.listening', { address: mcpSocket.address, elapsed_ms: Date.now() - mcpStartedAt });
   debugLog.write('startup', 'critical.ready', { elapsed_ms: Date.now() - startupStartedAt });
 

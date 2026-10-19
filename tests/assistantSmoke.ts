@@ -213,7 +213,7 @@ async function main(): Promise<void> {
 
     // Notifications for the user arrive as one digest message.
     const notification = (id: string, overrides: Partial<NotificationRecord> = {}): NotificationRecord => ({
-      id, project_id: 'p', process_id: 'proc-x', session_id: null, source: 'integrated', kind: 'permission', urgency: 'high', delivery: 'all', audience: 'user',
+      id, project_id: 'p', process_id: 'proc-x', session_id: null, source: 'integrated', kind: 'permission', urgency: 'high', delivery: 'all', held: false, audience: 'user',
       routed_to_process_id: null, title: 'Reviewer', body: 'Waiting for your permission', occurrences: 1, created_at: now, updated_at: now,
       read_at: null, resolved_at: null, url: '/', project_name: 'Project p', process_name: 'Reviewer', ...overrides
     });

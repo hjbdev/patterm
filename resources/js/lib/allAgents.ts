@@ -46,6 +46,13 @@ export function setProjectShown(state: AllAgentsState, projectId: string, shown:
   state.hidden = shown ? rest : [...rest, projectId];
 }
 
+// What All agents leaves out: the projects you switched off, and any that
+// are snoozed. Snoozed ones collapse to a heading instead of disappearing.
+export function allAgentsHiding(state: AllAgentsState, projects: readonly ProjectWorkbench[]): AllAgentsState {
+  const snoozed = projects.filter((item) => item.project.snoozedUntil && !state.hidden.includes(item.project.id)).map((item) => item.project.id);
+  return snoozed.length ? { ...state, hidden: [...state.hidden, ...snoozed] } : state;
+}
+
 // Projects that can be listed: the assistant's own project never shows.
 export function listedProjects(projects: readonly ProjectWorkbench[]): ProjectWorkbench[] {
   return projects.filter((item) => item.project.kind !== 'assistant');

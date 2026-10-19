@@ -14,6 +14,8 @@ export interface NotificationRecord {
   kind: string;
   urgency: NotificationUrgency;
   delivery: 'in_app' | 'all';
+  // Raised while its project was snoozed; older hosts omit it.
+  held?: boolean;
   audience: 'user' | 'parent';
   title: string;
   body: string;
@@ -135,7 +137,8 @@ export function startNotifications(router: Router): void {
   }
 
   function show(notification: NotificationRecord): void {
-    if (!toastsEnabled.value || trayOpen.value || notification.audience !== 'user' || RANK[notification.urgency] < RANK.normal) return;
+    // A snoozed project's notifications wait for its summary.
+    if (!toastsEnabled.value || trayOpen.value || notification.held || notification.audience !== 'user' || RANK[notification.urgency] < RANK.normal) return;
     if (!visible() || notification.read_at || notification.resolved_at) return;
     if (inView(notification)) return;
     // A drag that starts on the close icon dismisses again on the click that

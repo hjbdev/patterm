@@ -172,7 +172,7 @@ async function main(): Promise<void> {
     // Turned on, it is listed first.
     const settings = new SettingsService(database);
     settings.updateAppearanceSettings({ ...settings.appearanceSettings(), personalProject: true });
-    assert.deepEqual(repo.listProjects()[0], { id: PERSONAL_PROJECT_ID, name: 'Personal', path: personalDir, logo: null, kind: 'personal' });
+    assert.deepEqual(repo.listProjects()[0], { id: PERSONAL_PROJECT_ID, name: 'Personal', path: personalDir, logo: null, kind: 'personal', snoozedUntil: null });
     assert.equal(repo.listProjects().filter((project) => project.kind === 'personal').length, 1, 'one Personal project');
     assert.equal(repo.snapshot().projects[0]?.project.id, PERSONAL_PROJECT_ID, 'first in the snapshot too');
 

@@ -5,6 +5,8 @@ import type { AssistantMemoryService } from '../Services/AssistantMemoryService'
 import type { LaunchingMcpIdentities } from './McpHelperAccess';
 import { RenameProcessAction, renameSessionInput } from '../Actions/RenameProcessAction';
 import { closeRequestAnswerInput, requestCloseInput, type CloseRequestActions } from '../Actions/CloseRequestActions';
+import { snoozeInput, snoozeTargetInput, type SnoozeActions } from '../Actions/SnoozeActions';
+import { projectSnoozeInput, projectWakeInput, type ProjectSnoozeActions } from '../Actions/ProjectSnoozeActions';
 import { createProjectInput } from '../Actions/CreateProjectAction';
 import { listDirectoriesInput } from '../Actions/ListDirectoriesAction';
 import { projectLogoCandidatesInput, setProjectLogoInput } from '../Actions/ProjectLogoAction';
@@ -112,6 +114,8 @@ interface RegistryServices {
   timers?: TimerService;
   notifications?: NotificationActions;
   closeRequests?: Pick<CloseRequestActions, 'request' | 'answer' | 'clear'>;
+  projectSnoozes?: Pick<ProjectSnoozeActions, 'snooze' | 'wake'>;
+  snoozes?: Pick<SnoozeActions, 'snooze' | 'unsnooze' | 'dismissReminder' | 'userInput'>;
   usage?: GetUsageSummaryAction;
   assistant?: Pick<AssistantService, 'deliverAgentMessage'> & Partial<Pick<AssistantService, 'setFocus' | 'focusItems'>>;
   assistantInbox?: Pick<AssistantInbox, 'hold'>;
@@ -543,8 +547,10 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       const input = integratedSendInput.parse(args);
       const processId = processFor(context, input.process_id);
       services.autoSummaries?.userInput(processId);
-      // A message, even one queued mid-turn, withdraws a close request.
+      // A message, even one queued mid-turn, withdraws a close request and
+      // wakes a snoozed agent.
       services.closeRequests?.clear(processId);
+      services.snoozes?.userInput(processId);
       return requireIntegrated(services).prompt(processId, {
         text: input.text,
         ...(input.references ? { references: input.references } : {}),
@@ -591,6 +597,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       if (input.action === 'steer') {
         services.autoSummaries?.userInput(processId);
         services.closeRequests?.clear(processId);
+        services.snoozes?.userInput(processId);
       }
       return requireIntegrated(services).updateQueued(processId, input.message_id, input.action);
     }
@@ -1176,6 +1183,27 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       return services.closeRequests.answer({ ...input, process_id: processFor(context, input.process_id) });
     }
   );
+  // Snoozing is the user's choice about their own attention, so agents
+  // neither see nor call these.
+  const snoozesFor = (tool: string) => {
+    if (!services.snoozes) throw new Error(`${tool}: snoozing is unavailable`);
+    return services.snoozes;
+  };
+  registry.register(
+    { name: 'agent_snooze', namespace: 'process', description: 'Snooze an agent until its next message, with an optional reminder.', hidden: true, inputSchema: { type: 'object', required: ['process_id'] } },
+    (args, context) => {
+      const input = snoozeInput.parse(args);
+      return snoozesFor('agent_snooze').snooze({ ...input, process_id: processFor(context, input.process_id) });
+    }
+  );
+  registry.register(
+    { name: 'agent_unsnooze', namespace: 'process', description: 'Wake a snoozed agent and drop its reminder.', hidden: true, inputSchema: { type: 'object', required: ['process_id'] } },
+    (args, context) => snoozesFor('agent_unsnooze').unsnooze({ process_id: processFor(context, snoozeTargetInput.parse(args).process_id) })
+  );
+  registry.register(
+    { name: 'agent_snooze_reminder_dismiss', namespace: 'process', description: 'Dismiss the reminder a woken agent shows.', hidden: true, inputSchema: { type: 'object', required: ['process_id'] } },
+    (args, context) => snoozesFor('agent_snooze_reminder_dismiss').dismissReminder({ process_id: processFor(context, snoozeTargetInput.parse(args).process_id) })
+  );
   registry.register({
     name: 'notification_list',
     namespace: 'notification',
@@ -1692,6 +1720,23 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       const input = setProjectLogoInput.parse(args);
       return services.actions.projectLogo.set({ ...input, project_id: projectFor(context, input.project_id) ?? '' });
     }
+  );
+
+  // Snoozing a project is the user's choice about their own attention.
+  const projectSnoozesFor = (tool: string) => {
+    if (!services.projectSnoozes) throw new Error(`${tool}: project snoozing is unavailable`);
+    return services.projectSnoozes;
+  };
+  registry.register(
+    { name: 'project_snooze', namespace: 'project', hidden: true, changes: ['workbench'], description: 'Snooze a project until a time, holding its notifications.', inputSchema: { type: 'object', required: ['project_id', 'until'] } },
+    (args, context) => {
+      const input = projectSnoozeInput.parse(args);
+      return projectSnoozesFor('project_snooze').snooze({ ...input, project_id: projectFor(context, input.project_id) ?? '' });
+    }
+  );
+  registry.register(
+    { name: 'project_wake', namespace: 'project', hidden: true, changes: ['workbench'], description: 'Wake a snoozed project and summarise its held notifications.', inputSchema: { type: 'object', required: ['project_id'] } },
+    (args, context) => projectSnoozesFor('project_wake').wake({ project_id: projectFor(context, projectWakeInput.parse(args).project_id) ?? '' })
   );
 
   registry.register(

@@ -12,6 +12,8 @@
       <!-- One grouping at a time; with neither, All agents keeps the order you give it. -->
       <DropdownMenuCheckboxItem v-if="sidebar.allAgents.value" :model-value="expansion.state.value.groupByProject" class="text-[13px]" @update:model-value="setGrouping('project', Boolean($event))" @select.prevent>Group by project</DropdownMenuCheckboxItem>
       <DropdownMenuCheckboxItem v-model="expansion.state.value.followActive" class="text-[13px]" @select.prevent>Open the agent I'm in</DropdownMenuCheckboxItem>
+      <!-- Shared with the tab strip, which toggles it from the command palette. -->
+      <DropdownMenuCheckboxItem :model-value="showSnoozed" class="text-[13px]" @update:model-value="setShowSnoozed(Boolean($event))" @select.prevent>Show snoozed</DropdownMenuCheckboxItem>
       <template v-if="sidebar.allAgents.value">
         <DropdownMenuSeparator />
         <AllAgentsProjectsMenu />
@@ -24,6 +26,7 @@
 import { computed } from 'vue';
 import { SlidersHorizontal } from 'lucide-vue-next';
 import { useSidebarExpansion } from '../../Composables/useSidebarExpansion';
+import { setShowSnoozed, showSnoozed } from '../../Composables/useSnooze';
 import AllAgentsProjectsMenu from '../AllAgentsProjectsMenu.vue';
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuSeparator, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { useSidebar } from './sidebarContext';

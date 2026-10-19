@@ -11,7 +11,7 @@
         <p v-if="displayError" role="alert" class="mx-auto w-full max-w-[50rem] shrink-0 break-words px-4 pb-4 text-sm text-destructive 2xl:max-w-[1000px]">{{ displayError }}</p>
       </div>
       <div v-if="ended" class="mx-auto w-full max-w-[50rem] shrink-0 px-4 2xl:max-w-[1000px]"><p role="status" class="border-t border-border/60 py-3 text-sm text-muted-foreground">{{ canRestart ? 'This agent has stopped. Use /restart to resume this conversation.' : 'This agent session has ended. The transcript is read-only.' }}</p></div>
-      <div v-if="permissions.length || questions.length || forms.length || (closeRequest && !ended)" class="shrink-0 pb-2">
+      <div v-if="permissions.length || questions.length || forms.length || ((closeRequest || snooze) && !ended)" class="shrink-0 pb-2">
         <!-- The same width and inset as the composer below. -->
         <div class="mx-auto max-h-[55vh] w-full max-w-[50rem] space-y-2 overflow-y-auto overscroll-contain px-4 2xl:max-w-[1000px]" role="group" aria-label="Pending requests">
         <div v-if="permissions.length" class="relative pb-2">
@@ -162,6 +162,7 @@
             </div>
           </section>
         </template>
+        <SnoozeCard v-if="snooze && !ended" :process-id="processId" :snooze="snooze" />
         <CloseRequestCard v-if="closeRequest && !ended" :key="`${processId}:${closeRequest.requestedAt}`" :process-id="processId" :request="closeRequest" :subagents="closeSubagents" />
         </div>
       </div>
@@ -263,6 +264,7 @@ import { awaitingUser } from '../lib/activity';
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, shallowRef, watch } from 'vue';
 import { Button } from './ui/button';
 import CloseRequestCard from './CloseRequestCard.vue';
+import SnoozeCard from './SnoozeCard.vue';
 import ConversationTranscript from './ConversationTranscript.vue';
 import IntegratedComposer from './IntegratedComposer.vue';
 import IntegratedModelActivity from './IntegratedModelActivity.vue';
@@ -276,7 +278,7 @@ import Markdown from './Markdown.vue';
 import ResumeConversationDialog from './ResumeConversationDialog.vue';
 import type { MentionAgent, MentionLauncher, MentionProcess } from '../lib/agentMentions';
 import { archiveTranscript } from '../lib/historyTranscript';
-import type { CloseRequestRecord, ConversationMessageRecord } from '../types';
+import type { CloseRequestRecord, ConversationMessageRecord, SnoozeRecord } from '../types';
 import {
   applyConversationStreamEvent,
   buildFormAnswer,
@@ -315,7 +317,7 @@ import { onWorkspaceRequest, type WorkspaceRequest } from '../lib/workspaceReque
 // `onLaunched` is a prop rather than an emit: /new and /resume close this tab
 // before they answer, which can unmount the pane, and Vue drops emits from an
 // unmounted component.
-const props = defineProps<{ processId: string; projectId?: string | null; projectPath?: string | null; exited?: boolean; restartable?: boolean; mentionAgents?: MentionAgent[]; mentionProcesses?: MentionProcess[]; mentionLaunchers?: MentionLauncher[]; embedded?: boolean; closeRequest?: CloseRequestRecord | null | undefined; closeSubagents?: number | undefined; onLaunched?: (sessionId: string) => void; onNewSession?: (processId: string) => Promise<void>; onRestartSession?: (processId: string) => Promise<void> }>();
+const props = defineProps<{ processId: string; projectId?: string | null; projectPath?: string | null; exited?: boolean; restartable?: boolean; mentionAgents?: MentionAgent[]; mentionProcesses?: MentionProcess[]; mentionLaunchers?: MentionLauncher[]; embedded?: boolean; closeRequest?: CloseRequestRecord | null | undefined; snooze?: SnoozeRecord | null | undefined; closeSubagents?: number | undefined; onLaunched?: (sessionId: string) => void; onNewSession?: (processId: string) => Promise<void>; onRestartSession?: (processId: string) => Promise<void> }>();
 const emit = defineEmits<{ transcript: [messages: TranscriptMessage[], status: string, loaded: boolean] }>();
 // Conversation state is replaced, never mutated in place (stream events and
 // snapshots produce new arrays), so shallow refs skip deep proxying of every

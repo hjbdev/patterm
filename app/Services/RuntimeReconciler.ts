@@ -63,7 +63,9 @@ export class RuntimeReconciler {
     initialFrames: Iterable<AnyFrame> = [],
     // Called when a running process exits with a non-zero code. Stops never
     // reach this: the sidecar reports no exit after a stop request.
-    private readonly onProcessFailed: (processId: string, exitCode: number) => void = () => {}
+    private readonly onProcessFailed: (processId: string, exitCode: number) => void = () => {},
+    // Called after a PTY agent's activity changes, with the state it left.
+    private readonly onActivityChanged: (processId: string, previous: string, activity: string) => void = () => {}
   ) {
     this.unsubscribe = terminal.onFrame((frame) => {
       this.dispatchLifecycleFrame(frame);
@@ -199,12 +201,16 @@ export class RuntimeReconciler {
     }
 
     const now = new Date().toISOString();
+    const previous = this.database.connection
+      .prepare(`select id, activity from processes where pty_process_id = ? and activity != ?`)
+      .all(ptyId, activity) as Array<{ id: string; activity: string }>;
     const changed = this.database.connection
       .prepare(`update processes set activity = ?, updated_at = ? where pty_process_id = ? and activity != ?`)
       .run(activity, now, ptyId, activity).changes;
 
     if (changed > 0) {
       this.notifyChanged(['workbench']);
+      for (const row of previous) this.onActivityChanged(row.id, row.activity, activity);
     }
   }
 
