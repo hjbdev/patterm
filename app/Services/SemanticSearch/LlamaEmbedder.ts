@@ -4,6 +4,10 @@ import type { DocumentEmbedder } from './HistoryEmbeddingIndexer';
 
 const DOCUMENT_CONTEXT_TOKENS = 1_024;
 const QUERY_CONTEXT_TOKENS = 512;
+// node-llama-cpp publishes no CPU-only build for Apple silicon; its one
+// prebuilt there is the Metal build, which also carries the CPU backend.
+// Weights stay on the CPU either way (gpuLayers: 0).
+const PREBUILT_BACKEND = process.platform === 'darwin' && process.arch === 'arm64' ? 'metal' : false;
 
 // llama.cpp on the CPU only, with the prebuilt binaries node-llama-cpp ships
 // for each platform. Nothing is compiled or downloaded at runtime. Queries
@@ -53,7 +57,7 @@ export class LlamaEmbedder implements DocumentEmbedder {
 
   private async open(): Promise<void> {
     const { getLlama, LlamaLogLevel } = await import('node-llama-cpp');
-    this.llama = await getLlama({ gpu: false, build: 'never', skipDownload: true, maxThreads: this.threads, logLevel: LlamaLogLevel.error, progressLogs: false });
+    this.llama = await getLlama({ gpu: PREBUILT_BACKEND, build: 'never', skipDownload: true, maxThreads: this.threads, logLevel: LlamaLogLevel.error, progressLogs: false });
     this.model = await this.llama.loadModel({ modelPath: this.modelPath, gpuLayers: 0, useMmap: true });
     this.documents = await this.model.createEmbeddingContext({ contextSize: DOCUMENT_CONTEXT_TOKENS, batchSize: DOCUMENT_CONTEXT_TOKENS, threads: this.threads });
     this.queries = await this.model.createEmbeddingContext({ contextSize: QUERY_CONTEXT_TOKENS, batchSize: QUERY_CONTEXT_TOKENS, threads: this.threads });
