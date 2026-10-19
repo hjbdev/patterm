@@ -20,6 +20,15 @@ function helpers(): void {
   assert.equal(nextWorkdayStart(at('2026-10-19T17:30:00'), '09:00').getTime(), at('2026-10-20T09:00:00').getTime(), 'after it starts, tomorrow');
   assert.equal(nextWorkdayStart(at('2026-10-19T09:00:00'), '09:00').getTime(), at('2026-10-20T09:00:00').getTime(), 'at the start, tomorrow');
   assert.equal(notificationSettingsInput.parse({}).workdayStart, '09:00');
+  // A start inside today's daylight-saving gap keeps tomorrow's own time.
+  const zone = process.env.TZ;
+  process.env.TZ = 'Europe/Berlin';
+  try {
+    assert.equal(nextWorkdayStart(new Date('2026-03-29T12:00:00'), '02:30').toISOString(), new Date('2026-03-30T02:30:00').toISOString());
+  } finally {
+    if (zone === undefined) delete process.env.TZ;
+    else process.env.TZ = zone;
+  }
   assert.throws(() => notificationSettingsInput.parse({ workdayStart: '25:00' }));
 
   const project = (id: string, snoozedUntil: string | null) => ({ project: { id, name: id, path: `/${id}`, snoozedUntil }, projectSessions: [], processes: [], timers: [] }) as unknown as ProjectWorkbench;
@@ -85,6 +94,18 @@ async function main(): Promise<void> {
     assert.equal((db.prepare(`select count(*) as count from notifications where held = 1`).get() as { count: number }).count, 0);
     // Held ones stay unread for the list.
     assert.ok(notifications.unread().some((row) => row.project_id === 'project_a' && row.count >= 2));
+
+    // A repeat of a notice from before the snooze is held and counted too,
+    // in this snooze and the next.
+    const before = await notifications.raise({ processId: 'agent', source: 'terminal', kind: 'attention', title: 'Build', body: 'done' });
+    assert.ok(before.status === 'raised' && !before.notification.held);
+    for (const cycle of [1, 2]) {
+      snoozes.snooze({ project_id: 'project_a', until: new Date(now + 3_600_000).toISOString() });
+      const repeat = await notifications.raise({ processId: 'agent', source: 'terminal', kind: 'attention', title: 'Build', body: 'done' });
+      assert.ok(repeat.status === 'updated' && repeat.notification.held && repeat.notification.delivery === 'in_app', `cycle ${cycle}`);
+      assert.deepEqual(snoozes.wake({ project_id: 'project_a' }), { woke: true, held: 1 });
+    }
+    raised.length = 1;
 
     // Waking by hand with nothing held sends no summary.
     snoozes.snooze({ project_id: 'project_a', until: '2026-10-21T08:00:00Z' });

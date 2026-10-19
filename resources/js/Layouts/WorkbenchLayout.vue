@@ -46,9 +46,9 @@
             <MobileTabs
               :project-id="activeProject.project.id"
               :families="shownAgentFamilies"
-              :all-families="currentAgentFamilies"
+              :all-families="everyAgentFamilies"
               :processes="currentStripProcesses"
-              :all-processes="scopeProcesses"
+              :all-processes="everyAgentsView ? everyAgentsView.processes : scopeProcesses"
               :project-of="showingAll ? projectOf : undefined"
               :shown-project-ids="showingAll ? shownProjectIds : undefined"
               :active-terminal-id="activeWorkspacePage === 'workbench' && projectViewMode === 'agents' ? activeTerminalId : null"
@@ -310,7 +310,7 @@ function updateCurrentTabLayout(change: TabLayout): void {
   // Tabs that don't show, from hidden projects or snoozed, keep their places.
   const hidden = (key: string) => (showingAll.value && hiddenTabKeys.value.has(key)) || hiddenSnoozedKeys.value.has(key);
   // Hidden tabs the saved layout hasn't recorded yet keep their places too.
-  const previous = withLiveTabs(currentTabLayout.value ?? EMPTY_TAB_LAYOUT, currentStripTabs.value.map((tab) => tab.key));
+  const previous = withLiveTabs(currentTabLayout.value ?? EMPTY_TAB_LAYOUT, everyStripTabs.value.map((tab) => tab.key));
   const layout = showingAll.value || hiddenSnoozedKeys.value.size ? keepHiddenTabs(previous, change, hidden) : change;
   tabLayoutByProject.value = { ...tabLayoutByProject.value, [scope]: layout };
   writeStoredTabLayout(scope, layout);
@@ -372,6 +372,17 @@ function stripTabProject(tab: StripTab): ProjectSummary | null {
   return projectOf(tab.kind === 'agent' ? tab.family.rootId : tab.process.id);
 }
 const currentAgentFamilies = computed(() => currentStripTabs.value.flatMap((tab) => tab.kind === 'agent' ? [tab.family] : []));
+// All agents with snoozed projects' tabs too, which the strip leaves out:
+// their tabs keep their slots, and the phone menu still names an agent you're
+// in whose project is snoozed.
+const everyAgentsView = computed(() => showingAll.value ? buildAllAgentsView(projects.value, allAgents.hidden) : null);
+const everyStripTabs = computed(() => {
+  const view = everyAgentsView.value;
+  if (!view) return currentStripTabs.value;
+  const sessions = activeAgentSessions(view.sessions);
+  return buildStripTabs(buildAgentTabFamilies(sessions, selectedAgentByRoot.value), topLevelProcessesForSessions(sessions, activeProcesses(view.processes)), currentTabLayout.value);
+});
+const everyAgentFamilies = computed(() => everyStripTabs.value.flatMap((tab) => tab.kind === 'agent' ? [tab.family] : []));
 // The phone tab menu lists what the strip shows, so snoozed agents can hide there too.
 const shownAgentFamilies = computed(() => shownStripTabs.value.flatMap((tab) => tab.kind === 'agent' ? [tab.family] : []));
 const currentStripProcesses = computed(() => currentStripTabs.value.flatMap((tab) => tab.kind === 'process' ? [tab.process] : []));

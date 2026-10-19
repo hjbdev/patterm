@@ -6,12 +6,13 @@ export function projectSnoozed(project: Pick<ProjectSummary, 'snoozedUntil'> | n
 
 // The next start of the workday after `now`: today if it hasn't come yet,
 // otherwise tomorrow. `start` is HH:MM local time.
+// Each day's time is set on that day, so a start that falls in today's
+// daylight-saving gap doesn't shift tomorrow's.
 export function nextWorkdayStart(now: Date, start: string): Date {
-  const [hours, minutes] = start.split(':').map(Number);
-  const next = new Date(now);
-  next.setHours(hours ?? 9, minutes ?? 0, 0, 0);
-  if (next <= now) next.setDate(next.getDate() + 1);
-  return next;
+  const [hours = 9, minutes = 0] = start.split(':').map(Number);
+  const on = (days: number) => new Date(now.getFullYear(), now.getMonth(), now.getDate() + days, hours, minutes);
+  const today = on(0);
+  return today > now ? today : on(1);
 }
 
 // "09:00 tomorrow", "17:30 today", or a weekday and time further out.

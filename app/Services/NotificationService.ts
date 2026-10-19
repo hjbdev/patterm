@@ -155,13 +155,13 @@ export class NotificationService {
     if (process && dedupeKey) {
       const existing = db.prepare(`select * from notifications where process_id = ? and dedupe_key = ? and resolved_at is null order by created_at desc limit 1`)
         .get(process.id, dedupeKey) as NotificationRow | undefined;
-      if (existing) return { status: 'updated', notification: this.touch(existing.id, title, text, at, 'updated') };
+      if (existing) return { status: 'updated', notification: this.touch(existing.id, title, text, at, 'updated', held) };
     }
     if (process && input.source === 'mcp') {
       const since = new Date(this.now() - RATE_WINDOW_MS).toISOString();
       const recent = db.prepare(`select id from notifications where process_id = ? and source = 'mcp' and created_at >= ? order by created_at desc`)
         .all(process.id, since) as Array<{ id: string }>;
-      if (recent.length >= RATE_LIMIT) return { status: 'rate_limited', notification: this.touch(recent[0]!.id, title, text, at, 'updated') };
+      if (recent.length >= RATE_LIMIT) return { status: 'rate_limited', notification: this.touch(recent[0]!.id, title, text, at, 'updated', held) };
     }
 
     const id = `notification_${randomUUID()}`;
@@ -180,9 +180,13 @@ export class NotificationService {
   }
 
   // Ends a project's hold: its held notifications become ordinary unread
-  // ones, and the count is what its summary reports.
+  // ones. The summary counts those meant for the user; a child agent's
+  // records are for its parent.
   releaseHeld(projectId: string): number {
-    return Number(this.database.connection.prepare(`update notifications set held = 0 where project_id = ? and held = 1`).run(projectId).changes);
+    const db = this.database.connection;
+    const { count } = db.prepare(`select count(*) as count from notifications where project_id = ? and held = 1 and audience = 'user'`).get(projectId) as { count: number };
+    db.prepare(`update notifications set held = 0 where project_id = ? and held = 1`).run(projectId);
+    return count;
   }
 
   private projectSnoozed(projectId: string | null): boolean {
@@ -316,8 +320,11 @@ export class NotificationService {
     return ids.length;
   }
 
-  private touch(id: string, title: string, body: string, at: string, type: 'updated'): NotificationRecord {
+  // A repeat while its project is snoozed is held like a new notice, so the
+  // project's summary counts it.
+  private touch(id: string, title: string, body: string, at: string, type: 'updated', held = false): NotificationRecord {
     this.database.connection.prepare(`update notifications set title = ?, body = ?, updated_at = ?, read_at = null, occurrences = occurrences + 1 where id = ?`).run(title, body, at, id);
+    if (held) this.database.connection.prepare(`update notifications set held = 1, delivery = 'in_app' where id = ?`).run(id);
     const notification = this.get(id)!;
     this.onChange({ type, notification });
     return notification;
