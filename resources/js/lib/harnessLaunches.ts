@@ -21,7 +21,7 @@ export interface HarnessLaunch {
 
 export function harnessLaunchLabel(launch: HarnessLaunch): string {
   const name = harnessLabel(launch.input.harness);
-  return launch.state === 'starting' ? `Starting ${name}…` : `${name} · ${launch.state === 'failed' ? 'Launch failed' : 'Ready'}`;
+  return launch.state === 'failed' ? `${name} · Launch failed` : `Starting ${name}…`;
 }
 
 // Temporary renderer records, not processes or sessions. Native launch and
