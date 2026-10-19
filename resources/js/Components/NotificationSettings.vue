@@ -21,6 +21,9 @@
       <SettingsRow label="Quiet routine turns" description="When an Integrated agent is only waiting on other agents or reporting progress, its finished turn stays in the app without a toast or push. Questions, decisions and results still reach you." html-for="notify-quiet" save-key="notifications.delivery.quiet" toggle>
         <Switch id="notify-quiet" :model-value="draft.quietRoutineTurns" :disabled="loading" @update:model-value="(value) => { draft.quietRoutineTurns = value; save('notifications.delivery.quiet'); }" />
       </SettingsRow>
+      <SettingsRow label="Work starts at" description="Snoozing a project until tomorrow holds its notifications until this time." html-for="notify-workday" save-key="notifications.delivery.workday">
+        <Input id="notify-workday" type="time" class="w-28" :model-value="draft.workdayStart" :disabled="loading" @change="(event: Event) => { const value = (event.target as HTMLInputElement).value; if (value) { draft.workdayStart = value; save('notifications.delivery.workday'); } }" />
+      </SettingsRow>
     </SettingsSection>
 
     <SettingsSection v-if="isBrowser" title="This device" :description="deviceHint" scope="notifications.device">
@@ -45,6 +48,7 @@ import { notificationSettingsInput, type NotificationCategory } from '../../../a
 import { setNotificationToasts } from '../Composables/useNotifications';
 import { autosave } from '../Composables/useSettingsAutosave';
 import { Button } from './ui/button';
+import { Input } from './ui/input';
 import { Switch } from './ui/switch';
 import SettingsChoice from './settings/SettingsChoice.vue';
 import SettingsPanel from './settings/SettingsPanel.vue';

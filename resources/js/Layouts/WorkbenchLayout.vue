@@ -61,9 +61,10 @@
           <!-- The vertical padding leaves room for a tab's mention glow, which the scroller would clip. -->
           <div v-else class="-my-2 hidden min-w-0 flex-1 items-center gap-1 overflow-x-auto py-2 [scrollbar-width:none] sm:flex" @wheel="scrollTabStrip">
             <TabStrip
-              v-if="currentStripTabs.length"
+              v-if="currentStripTabs.length || snoozedProjectsShown.length"
               class="shrink-0"
               :tabs="shownStripTabs"
+              :snoozed-projects="snoozedProjectsShown"
               :grouped-by-project="groupedByProject"
               :sessions="activeAgentModeSessions"
               :processes="scopeProcesses"
@@ -115,6 +116,7 @@
     <AssistantDock />
     <CloseConfirmDialog />
     <SnoozeDialog />
+    <ProjectSnoozeDialog />
     <template v-if="sidebarMode">
       <SidebarDialogs />
     </template>
@@ -128,7 +130,9 @@ import { useMediaQuery } from '@vueuse/core';
 import AssistantDock from '../Components/Assistant/AssistantDock.vue';
 import CloseConfirmDialog from '../Components/CloseConfirmDialog.vue';
 import SnoozeDialog from '../Components/SnoozeDialog.vue';
+import ProjectSnoozeDialog from '../Components/ProjectSnoozeDialog.vue';
 import { snoozedLast, tabSnoozed } from '../lib/snooze';
+import { projectSnoozed } from '../lib/projectSnooze';
 import { showSnoozed } from '../Composables/useSnooze';
 import CommandPalette from '../Components/CommandPalette.vue';
 import LaunchAgentMenu from '../Components/LaunchAgentMenu.vue';
@@ -161,7 +165,7 @@ import { openCommandPaletteKey } from '../lib/commandPalette';
 import { isNavigationModeToggle, navigationModeAction } from '../lib/navigationMode';
 import { activeProcesses, topLevelProcessesForSessions } from '../lib/processTabs';
 import { agentTabKey, buildStripTabs, EMPTY_TAB_LAYOUT, processTabKey, readStoredTabLayout, withLiveTabs, writeStoredTabLayout, type StripTab, type TabLayout } from '../lib/tabStrip';
-import { ALL_AGENTS_SCOPE, allAgents, buildAllAgentsView, keepHiddenTabs, listedProjects, projectShown, tabsGroupedByProject } from '../lib/allAgents';
+import { ALL_AGENTS_SCOPE, allAgents, allAgentsHiding, buildAllAgentsView, keepHiddenTabs, listedProjects, projectShown, tabsGroupedByProject } from '../lib/allAgents';
 import { useSidebarExpansion } from '../Composables/useSidebarExpansion';
 import type { ProcessRecord, ProjectSummary, SessionRecord } from '../types';
 import { startPrefetch } from '../lib/prefetch';
@@ -321,16 +325,21 @@ const currentTabLayout = computed(() => {
 // All agents lists every shown project's agents instead of the route's
 // project's. Opening one goes to its own project and keeps the list.
 const showingAll = computed(() => allAgents.active && Boolean(activeProject.value));
-const allAgentsView = computed(() => buildAllAgentsView(projects.value, allAgents.hidden));
+const allAgentsHidden = computed(() => allAgentsHiding(allAgents, projects.value));
+const allAgentsView = computed(() => buildAllAgentsView(projects.value, allAgentsHidden.value.hidden));
 const scopeProcesses = computed(() => showingAll.value ? allAgentsView.value.processes : activeProject.value?.processes ?? []);
 const scopeTimers = computed(() => showingAll.value ? allAgentsView.value.timers : activeProject.value?.timers ?? []);
 const listedSummaries = computed(() => listedProjects(projects.value).map((item) => item.project));
+// Snoozed projects All agents folds to a heading, unless you switched them off.
+const snoozedProjectsShown = computed(() => showingAll.value
+  ? listedSummaries.value.filter((project) => projectSnoozed(project) && projectShown(allAgents, project.id))
+  : []);
 // The projects whose agents and starting launches show.
 const shownProjectIds = computed(() => showingAll.value
-  ? listedSummaries.value.filter((project) => projectShown(allAgents, project.id)).map((project) => project.id)
+  ? listedSummaries.value.filter((project) => projectShown(allAgentsHidden.value, project.id)).map((project) => project.id)
   : activeProjectId.value ? [activeProjectId.value] : []);
 // Tabs of the projects switched off, whose places All agents keeps.
-const hiddenTabKeys = computed(() => new Set(listedProjects(projects.value).filter((item) => !projectShown(allAgents, item.project.id))
+const hiddenTabKeys = computed(() => new Set(listedProjects(projects.value).filter((item) => !projectShown(allAgentsHidden.value, item.project.id))
   .flatMap((item) => [...item.projectSessions.map((session) => agentTabKey(session.id)), ...item.processes.map((process) => processTabKey(process.id))])));
 function projectOf(id: string): ProjectSummary | null {
   return allAgentsView.value.owners.get(id) ?? null;

@@ -54,6 +54,10 @@
           </div>
         </template>
       </TransitionGroup>
+      <!-- Snoozed projects fold to their names until they wake. -->
+      <div v-if="snoozedProjects.length" class="mt-3 space-y-0.5">
+        <SnoozedProjectHeader v-for="project in snoozedProjects" :key="project.id" :project="project" />
+      </div>
       <template v-if="processTabs.length">
         <button
           type="button"
@@ -124,8 +128,10 @@ import { useSidebarExpansion } from '../../Composables/useSidebarExpansion';
 import { useSidebarKeys } from '../../Composables/useSidebarKeys';
 import { useSidebarReorder } from '../../Composables/useSidebarReorder';
 import { useSettledValues } from '../../Composables/useSettledValues';
-import { groupByProject } from '../../lib/allAgents';
+import { allAgents as allAgentsState, groupByProject, projectShown } from '../../lib/allAgents';
 import { tabSnoozed } from '../../lib/snooze';
+import { projectSnoozed } from '../../lib/projectSnooze';
+import SnoozedProjectHeader from '../SnoozedProjectHeader.vue';
 import HostBadge from '../HostBadge.vue';
 import ProjectLogo from '../ProjectLogo.vue';
 import type { ProjectSummary } from '../../types';
@@ -148,6 +154,11 @@ const status = useSettledValues(() => liveStatuses.value, {
   immediate: (next) => next === 'attention',
   delayFor: (next) => next === 'working' ? 1_500 : 2_500
 });
+
+// In All agents, snoozed projects you haven't switched off.
+const snoozedProjects = computed(() => sidebar.allAgents.value
+  ? sidebar.projects.value.filter((project) => projectSnoozed(project) && projectShown(allAgentsState, project.id))
+  : []);
 
 // All agents groups by project unless you'd rather sort them yourself.
 const byProject = computed(() => sidebar.allAgents.value && expansion.state.value.groupByProject);

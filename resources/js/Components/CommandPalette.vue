@@ -73,6 +73,8 @@ import { toast } from 'vue-sonner';
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
 import { ArrowRight, ArrowUpRight, Brain, Check, ChevronLeft, ChevronRight, CircleStop, Clock, Copy, Ellipsis, Folder, GitBranch, GitCompare, History, Link, ListTodo, LogOut, MessageSquarePlus, MessagesSquare, NotebookPen, PanelRight, Pause, Pencil, Play, Rocket, RotateCcw, Search, Settings, ShieldCheck, SlidersHorizontal, Sparkles, Square, Terminal, TerminalSquare, Unlink, X, Zap } from 'lucide-vue-next';
 import { setShowSnoozed, showSnoozed } from '../Composables/useSnooze';
+import { canSnoozeProject, openProjectSnooze, wakeProject } from '../Composables/useProjectSnooze';
+import { projectSnoozed } from '../lib/projectSnooze';
 import { actionCluster, createPaletteDocument, rankedCommands, readRecentIds, recordsRecent, rememberRecent, rendererCommands, SECTION_TITLES, withIntegratedSelectors, type CommandDescriptor, type CommandRunResult, type PaletteRow, type PaletteSection } from '../lib/commandPalette';
 import { agentLabel } from '../lib/agentTabs';
 import { restartAssistant } from '../lib/assistant';
@@ -178,7 +180,10 @@ const currentControls = computed(() => {
 const sessionsById = computed(() => new Map(projects.value.flatMap(project => project.projectSessions.map(session => [session.id, session] as const))));
 const processesById = computed(() => new Map(projects.value.flatMap(project => project.processes.map(process => [process.id, process] as const))));
 
-const localCommands = computed(() => rendererCommands(props.context.active_project_id, activeProject.value?.project.kind !== 'personal', showSnoozed.value));
+const localCommands = computed(() => {
+  const project = activeProject.value?.project;
+  return rendererCommands(props.context.active_project_id, project?.kind !== 'personal', showSnoozed.value, project && canSnoozeProject(project) ? projectSnoozed(project) : null);
+});
 // Launching, resuming, and timers each open a page of their own.
 const sourceCommands = computed<CommandDescriptor[]>(() => {
   if (!props.context.active_project_id) return [];
@@ -665,6 +670,11 @@ async function handleResult(result: CommandRunResult): Promise<void> {
   if (result.navigate) emit('navigate', result.navigate);
   if (result.rendererAction === 'settings') emit('settings');
   if (result.rendererAction === 'toggleSnoozed') setShowSnoozed(!showSnoozed.value);
+  if (result.rendererAction === 'snoozeProject') {
+    const project = activeProject.value?.project;
+    if (project && projectSnoozed(project)) wakeProject(project.id);
+    else if (project) openProjectSnooze(project);
+  }
   if (result.rendererAction === 'usage') emit('usage');
   if (result.rendererAction === 'routines') emit('routines');
   if (result.rendererAction === 'workspaceSearch') emit('workspaceSearch', query.value);

@@ -12,6 +12,8 @@ export interface ProjectSummary {
   logo?: string | null;
   // 'personal' marks the Personal project, which is not a repository.
   kind?: 'workspace' | 'personal' | 'assistant';
+  // Snoozed until this time: notifications held, tucked away in All agents.
+  snoozedUntil?: string | null;
   // The paired host that owns a record, which then has a host-qualified ID
   // such as `workstation:process_7`. Absent for this host's own records.
   host?: string;

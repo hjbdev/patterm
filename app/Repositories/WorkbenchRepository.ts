@@ -18,6 +18,9 @@ export interface ProjectSummaryDto {
   // 'personal' marks the Personal project, which is not a repository. Absent
   // on records from older paired hosts.
   kind?: ProjectKind;
+  // Snoozed until this time: its notifications are held and All agents
+  // tucks it away. Null when awake; absent on older paired hosts.
+  snoozedUntil?: string | null;
   // The paired host that owns this record; absent for this host's own.
   host?: string;
   // Connected paired hosts this project is linked with, and the qualified ID
@@ -133,6 +136,7 @@ interface ProjectRow {
   path: string;
   logo: string | null;
   kind: ProjectKind;
+  snoozed_until: string | null;
   context_revision: number;
 }
 
@@ -219,7 +223,7 @@ export class WorkbenchRepository {
   // Personal still lists while anything runs there, so no agent goes missing.
   private projectRows(): ProjectRow[] {
     const showPersonal = this.settings.appearanceSettings().personalProject;
-    return this.db.prepare(`select id, name, path, logo, kind, context_revision from projects where kind in ${USER_PROJECT_KINDS_SQL}
+    return this.db.prepare(`select id, name, path, logo, kind, snoozed_until, context_revision from projects where kind in ${USER_PROJECT_KINDS_SQL}
       and (kind <> 'personal' or ? or exists (select 1 from processes where processes.project_id = projects.id and processes.status = 'running'))
       order by kind = 'personal' desc, created_at asc`).all(showPersonal ? 1 : 0) as ProjectRow[];
   }
@@ -229,7 +233,7 @@ export class WorkbenchRepository {
   }
 
   getProject(id: string): ProjectSummaryDto | null {
-    const row = this.db.prepare(`select id, name, path, logo, kind, context_revision from projects where id = ?`).get(id) as ProjectRow | undefined;
+    const row = this.db.prepare(`select id, name, path, logo, kind, snoozed_until, context_revision from projects where id = ?`).get(id) as ProjectRow | undefined;
     return row ? projectSummary(row) : null;
   }
 
@@ -310,7 +314,7 @@ export class WorkbenchRepository {
 }
 
 function projectSummary(row: ProjectRow): ProjectSummaryDto {
-  return { id: row.id, name: row.name, path: row.path, logo: row.logo, kind: row.kind };
+  return { id: row.id, name: row.name, path: row.path, logo: row.logo, kind: row.kind, snoozedUntil: row.snoozed_until };
 }
 
 // Derive each session's parent session via the backing process tree:

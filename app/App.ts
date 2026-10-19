@@ -40,6 +40,7 @@ import { terminalInventory, type TerminalHostOptions } from './Services/Terminal
 import { createRegistryActions } from './Actions/RegistryActions';
 import { CloseRequestActions } from './Actions/CloseRequestActions';
 import { SnoozeActions } from './Actions/SnoozeActions';
+import { ProjectSnoozeActions } from './Actions/ProjectSnoozeActions';
 import { GetUsageSummaryAction } from './Actions/UsageActions';
 import { UsageService } from './Services/UsageService';
 import { harnessProviders } from './Harness/providers';
@@ -545,6 +546,8 @@ async function createApplicationResources(
     searchService
   });
   closeRequests = new CloseRequestActions(database, timeline, actions.closeProcess, messageProcess, notifyWorkbenchChanged, notificationService);
+  const projectSnoozes = new ProjectSnoozeActions(database, timeline, notificationService, raiseNotification, notifyWorkbenchChanged);
+  defer(() => projectSnoozes.dispose());
   const answeredCloseRequests = closeRequests;
   notifications.onUserInput((processId) => answeredCloseRequests.clear(processId));
   notifications.onUserInput((processId) => snoozes.userInput(processId));
@@ -657,6 +660,7 @@ async function createApplicationResources(
     timers,
     notifications,
     closeRequests,
+    projectSnoozes,
     snoozes,
     assistant: assistantService,
     assistantInbox,
@@ -752,6 +756,7 @@ async function createApplicationResources(
   await mcpSocket.start();
   timers.activate();
   routines.activate();
+  projectSnoozes.activate();
   debugLog.write('mcp', 'socket.listening', { address: mcpSocket.address, elapsed_ms: Date.now() - mcpStartedAt });
   debugLog.write('startup', 'critical.ready', { elapsed_ms: Date.now() - startupStartedAt });
 

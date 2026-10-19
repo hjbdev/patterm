@@ -140,6 +140,9 @@
         />
       </div>
     </TransitionGroup>
+    <div v-if="snoozedProjects?.length" class="ml-2 flex items-center gap-1 before:mr-1 before:h-[18px] before:w-px before:bg-white/10">
+      <SnoozedProjectHeader v-for="project in snoozedProjects" :key="project.id" :project="project" chip />
+    </div>
 
     <Dialog v-model:open="renameOpen">
       <DialogContent class="sm:max-w-sm">
@@ -163,6 +166,7 @@
 
 <script setup lang="ts">
 import HostBadge from './HostBadge.vue';
+import SnoozedProjectHeader from './SnoozedProjectHeader.vue';
 import { computed, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue';
 import { Clock, Copy, Moon, Pencil, Pin, PinOff, Sun, Timer as TimerIcon, X } from 'lucide-vue-next';
 import { canSnooze, openSnooze, unsnooze } from '../Composables/useSnooze';
@@ -215,6 +219,8 @@ const props = withDefaults(
     // project groups, which a divider separates.
     projectOf?: ((id: string) => ProjectSummary | null) | undefined;
     groupedByProject?: boolean | undefined;
+    // While showing all agents: snoozed projects, folded to their names.
+    snoozedProjects?: ProjectSummary[] | undefined;
     class?: string | undefined;
   }>(),
   {

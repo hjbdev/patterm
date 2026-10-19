@@ -9,7 +9,7 @@ export interface CommandRunResult {
   navigate?: { projectId?: string | undefined; tab?: string | undefined; terminalProcessId?: string | undefined; sessionId?: string | undefined; processId?: string | undefined; recordId?: string | undefined };
   refresh?: boolean;
   message?: string;
-  rendererAction?: 'settings' | 'usage' | 'toggleSnoozed' | 'routines' | 'workspaceSearch' | 'terminalSearch' | 'pickProjectDirectory' | 'quit' | 'createTodo' | 'createScratchpad'
+  rendererAction?: 'settings' | 'usage' | 'toggleSnoozed' | 'snoozeProject' | 'routines' | 'workspaceSearch' | 'terminalSearch' | 'pickProjectDirectory' | 'quit' | 'createTodo' | 'createScratchpad'
     | 'copy' | 'integrated' | 'sessionContext' | 'reviewChanges' | 'openTarget' | 'launchSet' | 'restartAssistant';
   integrated?: 'interrupt' | 'new' | 'restart' | 'configure';
   processId?: string;
@@ -80,7 +80,9 @@ export interface PaletteRow {
 // These destinations belong to the renderer and must remain available while
 // the backend is loading, disconnected, or running an older command catalogue.
 // The Personal project is not a repository, so it has no Worktrees page.
-export function rendererCommands(projectId: string | null, repository = true, snoozedShown = false) {
+// `projectSnoozed` is whether the open project is snoozed, or null when it
+// can't be, such as a paired host's.
+export function rendererCommands(projectId: string | null, repository = true, snoozedShown = false, projectSnoozed: boolean | null = null) {
   return [
     ...(projectId ? ['Agents', 'Todos', 'Scratchpads', ...(repository ? ['Worktrees'] : []), 'History', 'Media'].map(label => ({
       id: `navigate:project-tab:${encodeURIComponent(projectId)}:${label.toLowerCase()}`,
@@ -93,6 +95,7 @@ export function rendererCommands(projectId: string | null, repository = true, sn
       { id: 'renderer:scratchpad-create', label: 'New scratchpad', aliases: ['new scratchpads', 'new note', 'create note'], group: 'create', kind: 'renderer', pages: ['scratchpads'], result: { rendererAction: 'createScratchpad' as const } }
     ] : []),
     { id: 'renderer:settings', label: 'Settings', group: 'navigation', kind: 'renderer', result: { rendererAction: 'settings' as const } },
+    ...(projectId && projectSnoozed !== null ? [{ id: 'renderer:project-snooze', label: projectSnoozed ? 'Wake project' : 'Snooze project…', aliases: ['snooze', 'mute project', 'quiet project'], group: 'navigation', kind: 'renderer', result: { rendererAction: 'snoozeProject' as const } }] : []),
     { id: 'renderer:toggle-snoozed', label: snoozedShown ? 'Hide snoozed agents' : 'Show snoozed agents', aliases: ['snoozed', 'snooze'], group: 'navigation', kind: 'renderer', result: { rendererAction: 'toggleSnoozed' as const } },
     { id: 'renderer:usage', label: 'Usage', aliases: ['tokens', 'limits', 'quota', 'rate limits'], group: 'navigation', kind: 'renderer', result: { rendererAction: 'usage' as const } },
     { id: 'renderer:routines', label: 'Scheduled', aliases: ['routines', 'schedule', 'once', 'later', 'cron', 'recurring'], group: 'navigation', kind: 'renderer', result: { rendererAction: 'routines' as const } },

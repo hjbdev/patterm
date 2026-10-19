@@ -17,7 +17,7 @@ const source = page.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1];
 const parsed = ts.createSourceFile('palette.ts', source, ts.ScriptTarget.Latest, true);
 const executable = parsed.statements.filter(statement => !ts.isImportDeclaration(statement)).map(statement => statement.getFullText(parsed)).join('\n');
 const dependencies = { computed, nextTick, reactive, ref, watch, ...library, useId: () => 'palette', useWorkbench: () => ({ revision: ref(0), projects: ref([]) }), onMounted: () => {}, onBeforeUnmount: () => {}, defineEmits: () => () => {}, agentLabel: session => session.displayName, publishedIntegratedControls: () => null, sendWorkspaceRequest: () => false, toast: { success: () => {}, error: () => {} },
-  harnessLabel: id => id, showSnoozed: ref(false), setShowSnoozed: () => {}, launchParams: () => ({}), launchSummary: () => '', presetLabel: () => '', worktreeLabel: () => '', interfaceLabel: () => '', resumeInPlace: rows => rows,
+  harnessLabel: id => id, showSnoozed: ref(false), setShowSnoozed: () => {}, canSnoozeProject: () => false, openProjectSnooze: () => {}, wakeProject: () => {}, projectSnoozed: () => false, launchParams: () => ({}), launchSummary: () => '', presetLabel: () => '', worktreeLabel: () => '', interfaceLabel: () => '', resumeInPlace: rows => rows,
   displayPath: path => path, sessionStatusIcon: () => ({ label: 'Idle' }), processStatusIcon: () => ({ label: 'Exited' }), Sparkles: {}, Brain: {}, ShieldCheck: {}, Zap: {}, ...timers,
   usePaletteSources: () => {
     const empty = computed(() => []);

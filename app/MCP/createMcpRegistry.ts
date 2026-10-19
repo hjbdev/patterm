@@ -6,6 +6,7 @@ import type { LaunchingMcpIdentities } from './McpHelperAccess';
 import { RenameProcessAction, renameSessionInput } from '../Actions/RenameProcessAction';
 import { closeRequestAnswerInput, requestCloseInput, type CloseRequestActions } from '../Actions/CloseRequestActions';
 import { snoozeInput, snoozeTargetInput, type SnoozeActions } from '../Actions/SnoozeActions';
+import { projectSnoozeInput, projectWakeInput, type ProjectSnoozeActions } from '../Actions/ProjectSnoozeActions';
 import { createProjectInput } from '../Actions/CreateProjectAction';
 import { listDirectoriesInput } from '../Actions/ListDirectoriesAction';
 import { projectLogoCandidatesInput, setProjectLogoInput } from '../Actions/ProjectLogoAction';
@@ -113,6 +114,7 @@ interface RegistryServices {
   timers?: TimerService;
   notifications?: NotificationActions;
   closeRequests?: Pick<CloseRequestActions, 'request' | 'answer' | 'clear'>;
+  projectSnoozes?: Pick<ProjectSnoozeActions, 'snooze' | 'wake'>;
   snoozes?: Pick<SnoozeActions, 'snooze' | 'unsnooze' | 'dismissReminder' | 'userInput'>;
   usage?: GetUsageSummaryAction;
   assistant?: Pick<AssistantService, 'deliverAgentMessage'> & Partial<Pick<AssistantService, 'setFocus' | 'focusItems'>>;
@@ -1718,6 +1720,23 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       const input = setProjectLogoInput.parse(args);
       return services.actions.projectLogo.set({ ...input, project_id: projectFor(context, input.project_id) ?? '' });
     }
+  );
+
+  // Snoozing a project is the user's choice about their own attention.
+  const projectSnoozesFor = (tool: string) => {
+    if (!services.projectSnoozes) throw new Error(`${tool}: project snoozing is unavailable`);
+    return services.projectSnoozes;
+  };
+  registry.register(
+    { name: 'project_snooze', namespace: 'project', hidden: true, changes: ['workbench'], description: 'Snooze a project until a time, holding its notifications.', inputSchema: { type: 'object', required: ['project_id', 'until'] } },
+    (args, context) => {
+      const input = projectSnoozeInput.parse(args);
+      return projectSnoozesFor('project_snooze').snooze({ ...input, project_id: projectFor(context, input.project_id) ?? '' });
+    }
+  );
+  registry.register(
+    { name: 'project_wake', namespace: 'project', hidden: true, changes: ['workbench'], description: 'Wake a snoozed project and summarise its held notifications.', inputSchema: { type: 'object', required: ['project_id'] } },
+    (args, context) => projectSnoozesFor('project_wake').wake({ project_id: projectFor(context, projectWakeInput.parse(args).project_id) ?? '' })
   );
 
   registry.register(

@@ -37,7 +37,10 @@ export const notificationSettingsInput = z.object({
   toasts: z.boolean().default(true),
   // Integrated turns that only report progress or wait on other agents stay
   // in the app instead of toasting and pushing.
-  quietRoutineTurns: z.boolean().default(false)
+  quietRoutineTurns: z.boolean().default(false),
+  // When the workday starts, as HH:MM local time: "until tomorrow" project
+  // snoozes end then.
+  workdayStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).default('09:00')
 });
 
 export type NotificationSettings = z.infer<typeof notificationSettingsInput>;
