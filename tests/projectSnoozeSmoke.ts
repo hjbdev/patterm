@@ -7,6 +7,7 @@ import { SettingsService } from '../app/Services/SettingsService';
 import { NotificationService, type RaiseNotificationInput } from '../app/Services/NotificationService';
 import { notificationSettingsInput } from '../app/Services/NotificationSettings';
 import { ProjectSnoozeActions } from '../app/Actions/ProjectSnoozeActions';
+import { NotificationDelivery } from '../app/Services/NotificationDelivery';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import { allAgentsHiding } from '../resources/js/lib/allAgents';
 import { nextWorkdayStart, snoozedProjectsLast } from '../resources/js/lib/projectSnooze';
@@ -105,6 +106,23 @@ async function main(): Promise<void> {
       assert.ok(repeat.status === 'updated' && repeat.notification.held && repeat.notification.delivery === 'in_app', `cycle ${cycle}`);
       assert.deepEqual(snoozes.wake({ project_id: 'project_a' }), { woke: true, held: 1 });
     }
+    raised.length = 1;
+
+    // A delivery queued before the snooze doesn't go out once a repeat has
+    // made the notice held.
+    let delivered = 0;
+    const delivery = new NotificationDelivery({ present: () => false }, {
+      current: (id) => notifications.get(id), desktop: () => { delivered += 1; }, push: async () => { delivered += 1; }, log: () => {}
+    });
+    const urgent = await notifications.raise({ processId: 'agent', source: 'runtime', kind: 'failure', urgency: 'high', body: 'Crashed', dedupeKey: 'crash' });
+    assert.ok(urgent.status === 'raised' && urgent.notification.delivery === 'all');
+    delivery.handle({ type: 'raised', notification: urgent.notification });
+    snoozes.snooze({ project_id: 'project_a', until: new Date(now + 3_600_000).toISOString() });
+    await notifications.raise({ processId: 'agent', source: 'runtime', kind: 'failure', urgency: 'high', body: 'Crashed', dedupeKey: 'crash' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    delivery.dispose();
+    assert.equal(delivered, 0);
+    snoozes.wake({ project_id: 'project_a' });
     raised.length = 1;
 
     // Waking by hand with nothing held sends no summary.
