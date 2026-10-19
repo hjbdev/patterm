@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The Integrated composer's @ menu offers the project's live processes, such as
+  shells and dev servers, alongside agents. A picked process is sent as its
+  process ID.
+
 ### Fixed
 
 - Agent launch screens and tabs keep showing loading until the agent opens,
