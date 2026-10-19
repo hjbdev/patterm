@@ -5,7 +5,7 @@
         v-for="(tab, index) in tabs"
         :key="tab.key"
         :ref="(element) => setTabElement(tab.key, element)"
-        :class="cn('strip-tab group/tab relative shrink-0 rounded-tab', tab.pinned ? 'w-8' : 'w-56', startsProject(index) && 'ml-2 before:absolute before:-left-[5px] before:top-1 before:h-[18px] before:w-px before:bg-white/10')"
+        :class="cn('strip-tab group/tab relative shrink-0 rounded-tab', compact(tab) ? 'w-8' : 'w-56', (startsProject(index) || startsSnoozed(index)) && 'ml-2 before:absolute before:-left-[5px] before:top-1 before:h-[18px] before:w-px before:bg-white/10')"
         :data-dragging="draggingKey === tab.key ? 'true' : undefined"
         @pointerdown="onTabPointerDown($event, tab.key); if (tab.kind === 'agent') prefetchTab(tab.family.root.session)"
         @click.capture="consumeTabClick($event, tab.key)"
@@ -21,17 +21,22 @@
               <button
                 type="button"
                 :data-patterm-tab-id="tab.key"
-                :aria-label="tab.pinned ? `${hostLabel(agentLabel(tab.family.root.session), tab.family.root.session.host)}, ${describeActivity(activityFor(tab.family.root.session))}` : undefined"
+                :aria-label="compact(tab) ? `${hostLabel(agentLabel(tab.family.root.session), tab.family.root.session.host)}, ${tabSnoozed(tab) ? 'Snoozed' : describeActivity(activityFor(tab.family.root.session))}` : undefined"
                 :class="cn(
                   'mention-target relative isolate flex h-[26px] w-full touch-none select-none items-center gap-2 overflow-hidden rounded-tab bg-transparent text-[13px] transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
-                  tab.pinned ? 'justify-center' : 'justify-between pl-2 pr-6',
+                  compact(tab) ? 'justify-center' : 'justify-between pl-2 pr-6',
                   isFamilyActive(tab.family) && 'bg-primary/10',
                   mentionPreview === tab.family.rootId && 'mention-glow'
                 )"
                 @click="selectSession(tab.family.rootId, tab.family.root.session)"
               >
-                <TabWash :activity="activityFor(tab.family.root.session)" />
-                <template v-if="tab.pinned">
+                <TabWash v-if="!tabSnoozed(tab)" :activity="activityFor(tab.family.root.session)" />
+                <!-- Snoozed tabs sit at the end of the strip, quiet until the agent's next message. -->
+                <template v-if="tabSnoozed(tab)">
+                  <Moon class="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                  <UnreadDot class="absolute right-1 top-1" :urgency="unreadUrgency(tab.family.root.session.processId)" />
+                </template>
+                <template v-else-if="tab.pinned">
                   <RowStatus :activity="activityFor(tab.family.root.session)" :count="familyMenuCount(tab.family)" :count-label="familyMemberLabel(tab.family)" />
                   <UnreadDot class="absolute right-1 top-1" :urgency="unreadUrgency(tab.family.root.session.processId)" />
                 </template>
@@ -66,6 +71,14 @@
                 <Pin v-else class="h-4 w-4" />
                 <span>{{ tab.pinned ? 'Unpin tab' : 'Pin tab' }}</span>
               </ContextMenuItem>
+              <ContextMenuItem v-if="tabSnoozed(tab)" @select="unsnooze(tab.family.root.session.processId!)">
+                <Sun class="h-4 w-4" />
+                <span>Wake</span>
+              </ContextMenuItem>
+              <ContextMenuItem v-else :disabled="!canSnooze(tab.family.root.session)" @select="openSnooze(tab.family.root.session)">
+                <Moon class="h-4 w-4" />
+                <span>Snooze…</span>
+              </ContextMenuItem>
               <ContextMenuItem :disabled="!tab.family.root.session.processId" @select="openSetTimer(tab.family.root.session)">
                 <Clock class="h-4 w-4" />
                 <span>Set timer</span>
@@ -95,7 +108,7 @@
               :processes="ownedProcesses(tab.family)"
               :timers="familyTimers(tab.family)"
               :now="now"
-              :show-label="tab.pinned"
+              :show-label="compact(tab)"
               :activity="activityFor"
               :session-active="(session) => matchesAgentTabSelection(session, activeTerminalId ?? null, activeSessionId ?? null)"
               :process-active="(process) => process.ptyProcessId === activeTerminalId"
@@ -118,9 +131,9 @@
           @select="selectProcess(tab.process)"
           @update:pinned="setPinned(tab, $event)"
         />
-        <!-- Pinned tabs have no room for a close button; their menus still close them. -->
+        <!-- Pinned and snoozed tabs have no room for a close button; their menus still close them. -->
         <CloseRowButton
-          v-if="!tab.pinned"
+          v-if="!compact(tab)"
           :label="tab.kind === 'agent' ? agentLabel(tab.family.root.session) : tab.process.name"
           :class="cn('absolute right-1 top-[3px] opacity-0 transition-opacity group-hover/tab:opacity-100 focus-visible:opacity-100', tabActive(tab) && 'opacity-100')"
           @close="tab.kind === 'agent' ? closeAgent(tab.family.root.session) : confirmClose(tab.process.id, tab.process.name, 'process')"
@@ -151,7 +164,9 @@
 <script setup lang="ts">
 import HostBadge from './HostBadge.vue';
 import { computed, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue';
-import { Clock, Copy, Pencil, Pin, PinOff, Timer as TimerIcon, X } from 'lucide-vue-next';
+import { Clock, Copy, Moon, Pencil, Pin, PinOff, Sun, Timer as TimerIcon, X } from 'lucide-vue-next';
+import { canSnooze, openSnooze, unsnooze } from '../Composables/useSnooze';
+import { tabSnoozed } from '../lib/snooze';
 import { confirmClose } from '../Composables/useCloseConfirm';
 import { cn } from '@/lib/utils';
 import {
@@ -215,9 +230,20 @@ const props = withDefaults(
 function tabProject(tab: StripTab): ProjectSummary | null {
   return props.projectOf?.(tab.kind === 'agent' ? tab.family.rootId : tab.process.id) ?? null;
 }
+// Pinned and snoozed tabs show only their status.
+function compact(tab: StripTab): boolean {
+  return tab.pinned || tabSnoozed(tab);
+}
+
+// A rule sets snoozed tabs apart from the rest.
+function startsSnoozed(index: number): boolean {
+  const tab = props.tabs[index], previous = props.tabs[index - 1];
+  return Boolean(tab && previous && tabSnoozed(tab) && !tabSnoozed(previous));
+}
+
 function startsProject(index: number): boolean {
   const tab = props.tabs[index], previous = props.tabs[index - 1];
-  return Boolean(props.groupedByProject && tab && previous && !tab.pinned && !previous.pinned && tabProject(tab)?.id !== tabProject(previous)?.id);
+  return Boolean(props.groupedByProject && tab && previous && !compact(tab) && !compact(previous) && tabProject(tab)?.id !== tabProject(previous)?.id);
 }
 
 const emit = defineEmits<{
@@ -243,7 +269,7 @@ const {
   consumeClick: consumeTabClick,
   cancel: cancelTabDrag
 } = useTabStripDrag({
-  tabs: () => props.tabs.map((tab) => ({ key: tab.key, group: tab.pinned ? 'pinned' : 'tabs' })),
+  tabs: () => props.tabs.map((tab) => ({ key: tab.key, group: tabSnoozed(tab) ? 'snoozed' : tab.pinned ? 'pinned' : 'tabs' })),
   element: (key) => tabElements.get(key),
   onDragStart: () => hover.close(),
   onDrop: (key, index) => emit('update:layout', moveStripTab(props.tabs, key, index))
@@ -320,9 +346,9 @@ function familyMemberLabel(family: AgentTabFamily): string {
   return memberLabel(family.options.length - 1, ownedProcesses(family).length);
 }
 
-// Pinned tabs hide their label, so their menu always opens to show it.
+// Pinned and snoozed tabs hide their label, so their menu always opens to show it.
 function hasPopover(tab: Extract<StripTab, { kind: 'agent' }>): boolean {
-  return tab.pinned
+  return compact(tab)
     || familyMenuCount(tab.family) > 0
     || Boolean(tab.family.root.session.summary)
     || familyTimers(tab.family).length > 0;
@@ -353,7 +379,7 @@ watch(
 );
 
 // A tab opening, closing, or changing group mid-drag invalidates the slots.
-watch(() => props.tabs.map((tab) => `${tab.key}:${tab.pinned}`).join(' '), cancelTabDrag);
+watch(() => props.tabs.map((tab) => `${tab.key}:${tab.pinned}:${tabSnoozed(tab)}`).join(' '), cancelTabDrag);
 
 function setTabElement(key: string, element: Element | ComponentPublicInstance | null): void {
   if (element instanceof HTMLElement) {

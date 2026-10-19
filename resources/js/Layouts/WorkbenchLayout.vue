@@ -113,6 +113,7 @@
 
     <AssistantDock />
     <CloseConfirmDialog />
+    <SnoozeDialog />
     <template v-if="sidebarMode">
       <SidebarDialogs />
     </template>
@@ -125,6 +126,8 @@ import { RouterView } from 'vue-router';
 import { useMediaQuery } from '@vueuse/core';
 import AssistantDock from '../Components/Assistant/AssistantDock.vue';
 import CloseConfirmDialog from '../Components/CloseConfirmDialog.vue';
+import SnoozeDialog from '../Components/SnoozeDialog.vue';
+import { snoozedLast } from '../lib/snooze';
 import CommandPalette from '../Components/CommandPalette.vue';
 import LaunchAgentMenu from '../Components/LaunchAgentMenu.vue';
 import HarnessLaunchTabs from '../Components/HarnessLaunchTabs.vue';
@@ -344,7 +347,7 @@ const currentStripTabs = computed(() => buildStripTabs(
 // sidebar groups its own list.
 const allAgentsOptions = useSidebarExpansion(() => ALL_AGENTS_SCOPE);
 const groupedByProject = computed(() => showingAll.value && allAgentsOptions.state.value.groupByProject);
-const shownStripTabs = computed(() => groupedByProject.value ? tabsGroupedByProject(currentStripTabs.value, listedSummaries.value, stripTabProject) : currentStripTabs.value);
+const shownStripTabs = computed(() => snoozedLast(groupedByProject.value ? tabsGroupedByProject(currentStripTabs.value, listedSummaries.value, stripTabProject) : currentStripTabs.value));
 function stripTabProject(tab: StripTab): ProjectSummary | null {
   return projectOf(tab.kind === 'agent' ? tab.family.rootId : tab.process.id);
 }

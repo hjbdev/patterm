@@ -5,6 +5,7 @@ import type { AssistantMemoryService } from '../Services/AssistantMemoryService'
 import type { LaunchingMcpIdentities } from './McpHelperAccess';
 import { RenameProcessAction, renameSessionInput } from '../Actions/RenameProcessAction';
 import { closeRequestAnswerInput, requestCloseInput, type CloseRequestActions } from '../Actions/CloseRequestActions';
+import { snoozeInput, snoozeTargetInput, type SnoozeActions } from '../Actions/SnoozeActions';
 import { createProjectInput } from '../Actions/CreateProjectAction';
 import { listDirectoriesInput } from '../Actions/ListDirectoriesAction';
 import { projectLogoCandidatesInput, setProjectLogoInput } from '../Actions/ProjectLogoAction';
@@ -112,6 +113,7 @@ interface RegistryServices {
   timers?: TimerService;
   notifications?: NotificationActions;
   closeRequests?: Pick<CloseRequestActions, 'request' | 'answer' | 'clear'>;
+  snoozes?: Pick<SnoozeActions, 'snooze' | 'unsnooze' | 'dismissReminder'>;
   usage?: GetUsageSummaryAction;
   assistant?: Pick<AssistantService, 'deliverAgentMessage'> & Partial<Pick<AssistantService, 'setFocus' | 'focusItems'>>;
   assistantInbox?: Pick<AssistantInbox, 'hold'>;
@@ -1175,6 +1177,27 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       const input = closeRequestAnswerInput.parse(args);
       return services.closeRequests.answer({ ...input, process_id: processFor(context, input.process_id) });
     }
+  );
+  // Snoozing is the user's choice about their own attention, so agents
+  // neither see nor call these.
+  const snoozesFor = (tool: string) => {
+    if (!services.snoozes) throw new Error(`${tool}: snoozing is unavailable`);
+    return services.snoozes;
+  };
+  registry.register(
+    { name: 'agent_snooze', namespace: 'process', description: 'Snooze an agent until its next message, with an optional reminder.', hidden: true, inputSchema: { type: 'object', required: ['process_id'] } },
+    (args, context) => {
+      const input = snoozeInput.parse(args);
+      return snoozesFor('agent_snooze').snooze({ ...input, process_id: processFor(context, input.process_id) });
+    }
+  );
+  registry.register(
+    { name: 'agent_unsnooze', namespace: 'process', description: 'Wake a snoozed agent and drop its reminder.', hidden: true, inputSchema: { type: 'object', required: ['process_id'] } },
+    (args, context) => snoozesFor('agent_unsnooze').unsnooze({ process_id: processFor(context, snoozeTargetInput.parse(args).process_id) })
+  );
+  registry.register(
+    { name: 'agent_snooze_reminder_dismiss', namespace: 'process', description: 'Dismiss the reminder a woken agent shows.', hidden: true, inputSchema: { type: 'object', required: ['process_id'] } },
+    (args, context) => snoozesFor('agent_snooze_reminder_dismiss').dismissReminder({ process_id: processFor(context, snoozeTargetInput.parse(args).process_id) })
   );
   registry.register({
     name: 'notification_list',

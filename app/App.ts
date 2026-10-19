@@ -39,6 +39,7 @@ import { QuitApplicationAction } from './Actions/QuitApplicationAction';
 import { terminalInventory, type TerminalHostOptions } from './Services/TerminalHostService';
 import { createRegistryActions } from './Actions/RegistryActions';
 import { CloseRequestActions } from './Actions/CloseRequestActions';
+import { SnoozeActions } from './Actions/SnoozeActions';
 import { GetUsageSummaryAction } from './Actions/UsageActions';
 import { UsageService } from './Services/UsageService';
 import { harnessProviders } from './Harness/providers';
@@ -376,6 +377,8 @@ async function createApplicationResources(
     (harness) => settings.idleCompactionSettings()[harness as keyof IdleCompactionSettings] === true,
     (event, data) => debugLog.write('idle-compaction', event, data), Date.now,
     (processId) => !assistant || assistant.voiceActive(processId));
+  const snoozes = new SnoozeActions(database, timeline, notifyWorkbenchChanged);
+  defer(integrated.onActivityChange(({ processId, previous, activity }) => snoozes.activity(processId, previous, activity)));
   let closeRequests: CloseRequestActions | null = null;
   defer(integrated.onActivityChange(integratedActivityNotifications({
     notifications: notificationService,
@@ -540,6 +543,7 @@ async function createApplicationResources(
   closeRequests = new CloseRequestActions(database, timeline, actions.closeProcess, messageProcess, notifyWorkbenchChanged, notificationService);
   const answeredCloseRequests = closeRequests;
   notifications.onUserInput((processId) => answeredCloseRequests.clear(processId));
+  notifications.onUserInput((processId) => snoozes.userInput(processId));
 
   // Paired hosts. Only the server can be reached by other hosts, so only it
   // shows pairing codes; any host can pair to a server.
@@ -649,6 +653,7 @@ async function createApplicationResources(
     timers,
     notifications,
     closeRequests,
+    snoozes,
     assistant: assistantService,
     assistantInbox,
     routines,
@@ -710,7 +715,8 @@ async function createApplicationResources(
     historyImportQueue,
     searchService,
     startupFrames.values(),
-    (processId, exitCode) => raiseNotification({ processId, source: 'runtime', kind: 'failure', body: `Exited with code ${exitCode}` })
+    (processId, exitCode) => raiseNotification({ processId, source: 'runtime', kind: 'failure', body: `Exited with code ${exitCode}` }),
+    (processId, previous, activity) => snoozes.activity(processId, previous, activity)
   );
   stopBuffering();
   startupFrames.clear();

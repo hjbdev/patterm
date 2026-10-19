@@ -7,7 +7,7 @@
       :style="activeTerminalId ? { maxWidth: `calc(var(--patterm-terminal-max-width, 960px) + ${docked ? width : 0}px)` } : { '--patterm-context-width': `${width}px` }"
     >
       <div class="relative min-h-0 min-w-0 flex-1">
-        <IntegratedConversation v-if="integratedAgent" :process-id="integratedAgent.processId" :project-id="activeProject?.project.id ?? null" :project-path="activeProject?.project.path ?? null" :exited="integratedAgent.exited" :restartable="selectedAgent?.sessionRole === 'orchestrator' && selectedAgent?.processStatus !== 'closed'" :mention-agents="mentionAgents" :mention-processes="mentionProcesses" :mention-launchers="mentionLaunchers" :close-request="selectedAgent?.closeRequest" :close-subagents="closeSubagents" class="h-full" @launched="selectLaunchedAgent" />
+        <IntegratedConversation v-if="integratedAgent" :process-id="integratedAgent.processId" :project-id="activeProject?.project.id ?? null" :project-path="activeProject?.project.path ?? null" :exited="integratedAgent.exited" :restartable="selectedAgent?.sessionRole === 'orchestrator' && selectedAgent?.processStatus !== 'closed'" :mention-agents="mentionAgents" :mention-processes="mentionProcesses" :mention-launchers="mentionLaunchers" :close-request="selectedAgent?.closeRequest" :snooze="selectedAgent?.snooze" :close-subagents="closeSubagents" class="h-full" @launched="selectLaunchedAgent" />
         <!-- Hidden rather than unmounted so switching back skips renderer setup. A null ID detaches the PTY. -->
         <TerminalPane v-show="!integratedAgent" title="Terminal" :process-id="integratedAgent ? null : activeTerminalId" :capture-enabled="!!activeProject" @capture-selection="capture" />
       </div>
@@ -27,7 +27,14 @@
         <SessionContextPanel v-if="selectedAgent" :project-id="activeProject!.project.id" :session-id="selectedAgent.id" :summary="selectedAgent.summary" :can-summarize="!selectedAgent.parentId" :active-worktree-id="diffWorktree?.id ?? null" @open-worktree="openWorktree" @close="close" />
       </SheetContent>
     </Sheet>
-    <!-- TUI agents have no composer; their close request sits under the terminal. -->
+    <!-- TUI agents have no composer; their snooze and close request sit under the terminal. -->
+    <SnoozeCard
+      v-if="activeTerminalId && !integratedAgent && selectedAgent?.processId && selectedAgent.snooze && !selectedAgent.exitedAt"
+      :process-id="selectedAgent.processId"
+      :snooze="selectedAgent.snooze"
+      class="mx-auto mt-3 w-full"
+      :style="{ maxWidth: `calc(var(--patterm-terminal-max-width, 960px) + ${docked ? width : 0}px)` }"
+    />
     <CloseRequestCard
       v-if="activeTerminalId && !integratedAgent && selectedAgent?.processId && selectedAgent.closeRequest && !selectedAgent.exitedAt"
       :key="`${selectedAgent.processId}:${selectedAgent.closeRequest.requestedAt}`"
@@ -68,6 +75,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { PanelRight } from 'lucide-vue-next';
 import AgentEmptyState from '../Components/AgentEmptyState.vue';
 import { allAgents } from '../lib/allAgents';
+import SnoozeCard from '../Components/SnoozeCard.vue';
 import CloseRequestCard from '../Components/CloseRequestCard.vue';
 import IntegratedConversation from '../Components/IntegratedConversation.vue';
 import TerminalPane from '../Components/TerminalPane.vue';

@@ -51,12 +51,16 @@ export type ActivityState = 'working' | 'thinking' | 'idle' | 'permission' | 'qu
 
 // sessions → AGENTS
 export interface CloseRequestRecord { summary: string; requestedAt: string; }
+// `snoozedAt` is set while the agent sleeps until its next message; a
+// reminder left for that message stays after it wakes, until dismissed.
+export interface SnoozeRecord { snoozedAt: string | null; reminder: string | null; }
 
 export interface SessionRecord {
   summary?: AutoSummaryRecord | null;
   host?: string;
   // The agent asked to be closed and is waiting for the user's answer.
   closeRequest?: CloseRequestRecord | null;
+  snooze?: SnoozeRecord | null;
   id: string;
   // Parent agent that spawned this one (null for a root/orchestrator).
   parentId: string | null;

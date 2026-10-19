@@ -34,11 +34,17 @@ export interface ProjectSummaryDto {
 
 export interface CloseRequestDto { summary: string; requestedAt: string; }
 
+// `snoozedAt` is set while the agent sleeps until its next message; a
+// reminder left for that message stays after it wakes, until dismissed.
+export interface SnoozeDto { snoozedAt: string | null; reminder: string | null; }
+
 export interface SessionDto {
   summary?: AutoSummaryDto | null;
   host?: string;
   // The agent asked to be closed and is waiting for the user's answer.
   closeRequest?: CloseRequestDto | null;
+  // Older paired hosts omit it.
+  snooze?: SnoozeDto | null;
   id: string;
   parentId: string | null;
   processId: string | null;
@@ -157,6 +163,8 @@ interface ProcessRow {
   auto_summary_model: string | null;
   close_requested_at: string | null;
   close_request_summary: string | null;
+  snoozed_at: string | null;
+  snooze_reminder: string | null;
   id: string;
   parent_process_id: string | null;
   kind: string;
@@ -311,6 +319,7 @@ function mapSessions(sessions: SessionRow[], processes: ProcessRow[]): SessionDt
   const statuses = new Map(processes.map((process) => [process.id, process.status]));
   const summaries = new Map(processes.map((process) => [process.id, mapAutoSummary(process)]));
   const closeRequests = new Map(processes.map((process) => [process.id, mapCloseRequest(process)]));
+  const snoozes = new Map(processes.map((process) => [process.id, mapSnooze(process)]));
   const backgroundTasks = new Map(processes.map((process) => [process.id, process.background_tasks]));
   const parentProcessByProcessId = new Map<string, string | null>();
   const activityByProcessId = new Map<string, string>();
@@ -335,6 +344,7 @@ function mapSessions(sessions: SessionRow[], processes: ProcessRow[]): SessionDt
       processStatus: session.process_id ? statuses.get(session.process_id) ?? null : null,
       summary: session.process_id ? summaries.get(session.process_id) ?? null : null,
       closeRequest: session.process_id ? closeRequests.get(session.process_id) ?? null : null,
+      snooze: session.process_id ? snoozes.get(session.process_id) ?? null : null,
       ptyProcessId: session.pty_process_id ?? null,
       worktreeId: session.worktree_id,
       harness: session.harness,
@@ -385,6 +395,11 @@ function mapAutoSummary(row: ProcessRow): AutoSummaryDto | null {
 function mapCloseRequest(row: ProcessRow): CloseRequestDto | null {
   if (!row.close_requested_at || row.status !== 'running' || row.activity === 'working' || row.activity === 'thinking') return null;
   return { summary: row.close_request_summary ?? '', requestedAt: row.close_requested_at };
+}
+
+function mapSnooze(row: ProcessRow): SnoozeDto | null {
+  const snoozedAt = row.status === 'running' ? row.snoozed_at : null;
+  return snoozedAt || row.snooze_reminder ? { snoozedAt, reminder: row.snooze_reminder } : null;
 }
 
 function parseArgv(raw: string | null): string[] {
