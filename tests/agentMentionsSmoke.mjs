@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { mentionLaunchers, mentionableAgents, sessionForProcess, splitProcessMentions } = require('../dist/tests/resources/js/lib/agentMentions.js');
+const { mentionLaunchers, mentionableAgents, mentionableProcesses, sessionForProcess, splitProcessMentions } = require('../dist/tests/resources/js/lib/agentMentions.js');
 
 function session(id, processId, fields = {}) {
   return {
@@ -28,6 +28,22 @@ test('mentionable agents are the other live agents, subagents after their roots'
   assert.deepEqual(agents.map((agent) => agent.name), ['Orchestrator', 'Review: PR #16', 'My reviewer', 'Terminal agent']);
   assert.deepEqual(agents.map((agent) => agent.parent), [null, 'Orchestrator', 'Me', null], 'subagents name their parent');
   assert.deepEqual(mentionableAgents([session('s_a', 'process_7'), session('s_b', 'process_8', { harness: 'codex' })], 'process_99').map((agent) => agent.name), ['claude', 'codex'], 'untitled agents fall back to their harness');
+});
+
+test('mentionable processes are the live ones, naming the agent that started them', () => {
+  const process = (id, fields = {}) => ({ id, parentProcessId: null, kind: 'shell', name: id, command: 'bash', cwd: null, argv: [], status: 'running', activity: 'idle', ptyProcessId: `pty_${id}`, worktreeId: null, autoRestart: false, exitedAt: null, exitCode: null, ...fields });
+  const processes = [
+    process('process_10', { name: 'dev server', parentProcessId: 'process_1' }),
+    process('process_11', { name: 'shell' }),
+    process('process_12', { status: 'exited', ptyProcessId: null }),
+    process('process_13', { name: 'orphan', parentProcessId: 'process_99' })
+  ];
+  const mentions = mentionableProcesses(processes, [session('s_root', 'process_1', { displayName: 'Orchestrator' })]);
+  assert.deepEqual(mentions.map((item) => [item.processId, item.name, item.owner]), [
+    ['process_10', 'dev server', 'Orchestrator'],
+    ['process_11', 'shell', null],
+    ['process_13', 'orphan', null]
+  ], 'ended processes are left out');
 });
 
 test('process IDs split out of message text as whole words', () => {

@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   conversations to keyword results. Everything runs on the host's CPU through
   llama.cpp; keyword search is unchanged while the index builds, when search
   is off, or if the model fails.
+- The Integrated composer's @ menu offers the project's live processes, such as
+  shells and dev servers, alongside agents. A picked process is sent as its
+  process ID.
 
 ### Fixed
 

@@ -7,7 +7,7 @@
       :style="activeTerminalId ? { maxWidth: `calc(var(--patterm-terminal-max-width, 960px) + ${docked ? width : 0}px)` } : { '--patterm-context-width': `${width}px` }"
     >
       <div class="relative min-h-0 min-w-0 flex-1">
-        <IntegratedConversation v-if="integratedAgent" :process-id="integratedAgent.processId" :project-id="activeProject?.project.id ?? null" :project-path="activeProject?.project.path ?? null" :exited="integratedAgent.exited" :restartable="selectedAgent?.sessionRole === 'orchestrator' && selectedAgent?.processStatus !== 'closed'" :mention-agents="mentionAgents" :mention-launchers="mentionLaunchers" :close-request="selectedAgent?.closeRequest" :close-subagents="closeSubagents" class="h-full" @launched="selectLaunchedAgent" />
+        <IntegratedConversation v-if="integratedAgent" :process-id="integratedAgent.processId" :project-id="activeProject?.project.id ?? null" :project-path="activeProject?.project.path ?? null" :exited="integratedAgent.exited" :restartable="selectedAgent?.sessionRole === 'orchestrator' && selectedAgent?.processStatus !== 'closed'" :mention-agents="mentionAgents" :mention-processes="mentionProcesses" :mention-launchers="mentionLaunchers" :close-request="selectedAgent?.closeRequest" :close-subagents="closeSubagents" class="h-full" @launched="selectLaunchedAgent" />
         <!-- Hidden rather than unmounted so switching back skips renderer setup. A null ID detaches the PTY. -->
         <TerminalPane v-show="!integratedAgent" title="Terminal" :process-id="integratedAgent ? null : activeTerminalId" :capture-enabled="!!activeProject" @capture-selection="capture" />
       </div>
@@ -77,7 +77,7 @@ import WorktreeDiffDrawer from '../Components/WorktreeDiffDrawer.vue';
 import { Button } from '../Components/ui/button';
 import { Sheet, SheetContent, SheetTitle } from '../Components/ui/sheet';
 import { APPEARANCE_SETTINGS_CHANGED_EVENT, lastKnownAppearanceSettings, loadAppearanceSettings, normalizeAppearanceSettings, type AppearanceSettings } from '../appearance/AppearanceSettings';
-import { mentionableAgents, mentionLaunchers as buildMentionLaunchers } from '../lib/agentMentions';
+import { mentionableAgents, mentionableProcesses, mentionLaunchers as buildMentionLaunchers } from '../lib/agentMentions';
 import type { HarnessPreset } from '../lib/paletteSources';
 import { contextCall, type Scratchpad, type SessionWorktree } from '../lib/projectContext';
 import { useWorkbench } from '../Composables/useWorkbench';
@@ -111,9 +111,13 @@ const closeSubagents = computed(() => {
   }
   return count;
 });
-// The project's other live agents, offered in the composer's @ menu.
+// The project's other live agents and its live processes, offered in the
+// composer's @ menu.
 const mentionAgents = computed(() => integratedAgent.value && activeProject.value
   ? mentionableAgents(activeProject.value.projectSessions, integratedAgent.value.processId)
+  : []);
+const mentionProcesses = computed(() => integratedAgent.value && activeProject.value
+  ? mentionableProcesses(activeProject.value.processes, activeProject.value.projectSessions)
   : []);
 // Presets and harnesses the @ menu offers for launching a new agent. Presets
 // are cached until settings change.

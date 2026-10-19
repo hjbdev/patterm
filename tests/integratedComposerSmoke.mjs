@@ -34,14 +34,14 @@ function file(name, type, body = 'data') {
   return new File([body], name, { type });
 }
 
-function createHarness({ processId = 'composer_test', provider = 'codex', agents, launchers } = {}) {
+function createHarness({ processId = 'composer_test', provider = 'codex', agents, processes, launchers } = {}) {
   const lifecycle = { mounted: [], beforeUnmount: [] };
   const emitted = [];
   const calls = [];
   const uploads = [];
   const timers = new Map();
   let timerId = 0;
-  const props = reactive({ processId, provider, controls: { selectors: [], commands: [{ name: 'compact', description: 'Compact' }] }, controlling: true, sending: false, pending: false, ended: false, agents, launchers });
+  const props = reactive({ processId, provider, controls: { selectors: [], commands: [{ name: 'compact', description: 'Compact' }] }, controlling: true, sending: false, pending: false, ended: false, agents, processes, launchers });
   const windowMock = {
     patterm: {
       runtime: 'browser',
@@ -88,9 +88,9 @@ function createHarness({ processId = 'composer_test', provider = 'codex', agents
   };
   const setup = new Function(...Object.keys(bindings), `${outputText}
 return {
-  editor, picker, mode, menuIndex, files, searchError, searching, menuOpen, canSend, agentMatches, launcherMatches, placeholder,
+  editor, picker, mode, menuIndex, files, searchError, searching, menuOpen, canSend, agentMatches, processMatches, launcherMatches, menuItems, placeholder,
   getDraft: () => draft.value,
-  evaluate, onKeydown, submit, chooseFile, chooseAgent, chooseLauncher, chooseCommand, onPaste, onDrop, onPick
+  evaluate, onKeydown, submit, chooseFile, chooseAgent, chooseProcess, chooseLauncher, chooseCommand, onPaste, onDrop, onPick
 };`);
   const scope = effectScope();
   const pane = scope.run(() => setup(...Object.keys(bindings).map(key => bindings[key])));
@@ -726,6 +726,26 @@ test('a picked agent becomes a chip and is sent as its process ID', async () => 
   assert.deepEqual(composer.draftFor('composer_agent_send').chips, []);
   await flush();
   assert.equal(editor.getText(), '', 'the editor follows the emptied draft');
+  harness.scope.stop();
+});
+
+test('processes follow the agents, keep their host, and are sent as process IDs', async () => {
+  composer.clearDrafts();
+  const shell = (id, host) => ({ process: { id, name: 'shell', status: 'running', activity: 'idle', ptyProcessId: `pty_${id}`, ...(host ? { host } : {}) }, processId: id, name: 'shell', owner: null });
+  const launchers = [{ kind: 'harness', name: 'Codex', harness: 'codex', token: '[patterm_harness:codex]' }];
+  const harness = createHarness({ processId: 'composer_process', agents: [mentionAgent('process_7', 'Shell fixer')], processes: [shell('process_9'), shell('beta:process_4', 'beta')], launchers });
+  const editor = harness.setEditor('tail @sh');
+  harness.pane.evaluate();
+  assert.deepEqual(harness.pane.menuItems.value.slice(0, 3).map((item) => item.kind === 'agent' ? item.agent.processId : item.process.processId), ['process_7', 'process_9', 'beta:process_4'], 'processes sit between agents and launchers');
+  harness.pane.onKeydown({ key: 'ArrowDown', preventDefault() {} });
+  harness.pane.onKeydown({ key: 'ArrowDown', preventDefault() {} });
+  harness.pane.onKeydown({ key: 'Enter', preventDefault() {} });
+  await flush();
+  assert.deepEqual(harness.pane.getDraft().chips, [{ kind: 'process', token: 'beta:process_4', name: 'shell', harness: null, host: 'beta' }], 'a remote process chip keeps its host');
+  editor.replace(7, 7, 'and @sh');
+  harness.pane.chooseProcess(harness.pane.processMatches.value[0]);
+  harness.pane.submit();
+  assert.equal(harness.emitted[0].payload.text, 'tail beta:process_4 and process_9');
   harness.scope.stop();
 });
 
