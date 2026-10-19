@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Agent launch screens and tabs keep showing loading until the agent opens,
+  avoiding a brief Ready state before navigation.
+
 ## [0.2.9] - 2026-10-17
 
 ### Fixed
