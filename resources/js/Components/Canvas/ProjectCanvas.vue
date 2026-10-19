@@ -66,6 +66,10 @@
           <g fill="none" stroke-width="1.5" :stroke="EDGE_COLOUR">
             <path v-for="edge in drawnEdges" :key="edge.id" :d="edge.path" />
           </g>
+          <!-- Work flows down the edge to a subagent while it works. -->
+          <g fill="none" stroke-width="1.5" stroke="hsl(var(--primary) / 0.55)" stroke-linecap="round" class="canvas-flow">
+            <path v-for="edge in flowingEdges" :key="edge.id" :d="edge.path" stroke-dasharray="2 10" />
+          </g>
           <circle v-for="anchor in anchors" :key="anchor.id" :cx="anchor.x" :cy="anchor.y" r="3.5" fill="hsl(var(--background))" :stroke="EDGE_COLOUR" stroke-width="1.5" />
         </svg>
         <CanvasCard
@@ -139,7 +143,7 @@ const hiddenProcesses = computed(() => Math.max(0, processTabs.value.length - PR
 // Every agent in every family, roots first, with its own processes.
 const families = computed(() => digests.value.map((digest) => {
   const owned = processesByOwner(sidebar.ownedProcesses(digest.family));
-  const project = sidebar.allAgents.value ? sidebar.projectOf(digest.tab)?.name ?? null : null;
+  const project = sidebar.allAgents.value ? sidebar.projectOf(digest.tab) : null;
   const nodes: CanvasNode[] = [];
   const visit = (agent: AgentNode, isRoot: boolean): { tree: CanvasTree; count: number } => {
     const node: CanvasNode = { id: agent.session.id, session: agent.session, digest, isRoot, descendants: 0, processes: owned.get(agent.session.processId ?? '') ?? [], project };
@@ -182,8 +186,11 @@ const positions = computed(() => new Map(nodes.value.map((node) => [node.id, ove
 const drawnEdges = computed(() => layout.value.edges.flatMap((edge) => {
   const from = positions.value.get(edge.from);
   const to = positions.value.get(edge.to);
-  return from && to ? [{ id: edge.id, path: edgePath(edge.kind, from, to) }] : [];
+  return from && to ? [{ id: edge.id, to: edge.to, path: edgePath(edge.kind, from, to) }] : [];
 }));
+
+const workingIds = computed(() => new Set(nodes.value.filter((node) => sidebar.activity(node.session).self === 'working').map((node) => node.id)));
+const flowingEdges = computed(() => drawnEdges.value.filter((edge) => workingIds.value.has(edge.to)));
 
 // One dot where a parent's edges leave it, whatever their number.
 const anchors = computed(() => {
@@ -397,6 +404,18 @@ const views = new Map<string, { view: Viewport; fitted: boolean }>();
 </script>
 
 <style scoped>
+.canvas-flow path {
+  animation: canvas-flow 900ms linear infinite;
+}
+
+@keyframes canvas-flow {
+  to { stroke-dashoffset: -12; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .canvas-flow path { animation: none; }
+}
+
 .canvas-surface {
   background-image: radial-gradient(circle at 1px 1px, hsl(var(--muted-foreground) / 0.16) 1px, transparent 0);
 }

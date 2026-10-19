@@ -9,8 +9,8 @@ const source = page.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1];
 const parsed = ts.createSourceFile('mobile-tabs.ts', source, ts.ScriptTarget.Latest, true);
 const executable = parsed.statements.filter(statement => !ts.isImportDeclaration(statement)).map(statement => statement.getFullText(parsed)).join('\n');
 const { outputText } = ts.transpileModule(executable, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } });
-const setup = new Function('computed', 'ref', 'useHarnessLaunchesFor', 'useSelectedHarnessLaunch', 'defineProps', 'defineEmits', 'ownedProcessesForSessions',
-  `${outputText}\nreturn { open, activeAgent, activeProcess, isFamilyActive, selectFamily, selectSession, selectProcess };`);
+const setup = new Function('computed', 'ref', 'useHarnessLaunchesFor', 'useSelectedHarnessLaunch', 'defineProps', 'defineEmits', 'ownedProcessesForSessions', 'useBoardRoute', 'useBoardIsHome',
+  `${outputText}\nreturn { open, activeAgent, activeProcess, isFamilyActive, selectFamily, selectSession, selectProcess, openCanvas };`);
 
 test('Mobile tabs select the family and expose its children without launching or losing the active title', () => {
   const root = { id: 'root', displayName: 'Parent', ptyProcessId: 'root-pty' };
@@ -20,8 +20,9 @@ test('Mobile tabs select the family and expose its children without launching or
   const family = { rootId: root.id, root: { session: root }, active: child, options: [{ session: root }, { session: child }] };
   const props = reactive({ families: [family], processes: [standalone], allProcesses: [owned, standalone], activeSessionId: child.id, activeTerminalId: child.ptyProcessId });
   const events = [];
+  const board = { open: ref(false), show: () => events.push(['canvas']) };
   const tabs = setup(computed, ref, () => computed(() => []), () => computed(() => null), () => props, () => (name, ...args) => events.push([name, ...args]),
-    () => [owned]);
+    () => [owned], () => board, () => computed(() => true));
 
   assert.equal(tabs.activeAgent.value?.id, child.id, 'Child session supplies the current tab title');
   assert.equal(tabs.activeProcess.value, null);
@@ -48,6 +49,10 @@ test('Mobile tabs select the family and expose its children without launching or
   props.activeTerminalId = standalone.ptyProcessId;
   assert.equal(tabs.activeProcess.value?.id, standalone.id, 'Standalone process supplies the current tab title');
   assert.equal(tabs.isFamilyActive(family), false, 'The family closes when another tab is active');
+  tabs.open.value = true;
+  tabs.openCanvas();
+  assert.deepEqual(events.pop(), ['canvas']);
+  assert.equal(tabs.open.value, false, 'Opening the canvas closes the drawer');
 });
 
 test('Mobile drawer lists the root once and derives expansion from selection', () => {

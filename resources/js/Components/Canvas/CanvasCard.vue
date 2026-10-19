@@ -7,8 +7,8 @@
       :data-canvas-id="node.id"
       :class="cn(
         'absolute left-0 top-0 isolate flex flex-col rounded-[12px] border px-3.5 pb-3 pt-3 transition-[background-color,border-color,box-shadow] duration-150',
-        active ? 'border-white/[0.14] bg-[hsl(0_0%_12.5%)]' : 'border-white/[0.06] bg-[hsl(0_0%_10.5%)] hover:bg-[hsl(0_0%_11.5%)]',
-        dragging ? 'z-10 cursor-grabbing shadow-[0_12px_32px_rgb(0_0_0/0.45)]' : 'cursor-pointer'
+        active ? 'border-white/[0.14] bg-[hsl(0_0%_12.5%)]' : working ? 'border-white/[0.1] bg-[hsl(0_0%_11%)] hover:bg-[hsl(0_0%_12%)]' : 'border-white/[0.06] bg-[hsl(0_0%_10.5%)] hover:bg-[hsl(0_0%_11.5%)]',
+        dragging ? 'z-10 cursor-grabbing shadow-[0_12px_32px_rgb(0_0_0/0.45)]' : 'canvas-card-glide cursor-pointer'
       )"
       :style="{ width: `${CARD_WIDTH}px`, height: `${CARD_HEIGHT}px`, transform: `translate(${position.x}px, ${position.y}px)` }"
       @click="open"
@@ -24,7 +24,14 @@
         @focus="onFocus"
       />
       <div class="pointer-events-none relative flex min-w-0 items-start gap-2.5">
-        <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/[0.06] bg-white/[0.03] text-foreground/80">
+        <!-- In All agents, the project says where it works; its harness rides in the corner. -->
+        <span v-if="node.project" class="relative h-8 w-8 shrink-0">
+          <ProjectLogo :project="node.project" :size="32" />
+          <span class="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-[5px] border border-white/[0.08] bg-[hsl(0_0%_10.5%)] text-foreground/80">
+            <AgentIcon :harness="node.session.harness" class="h-2.5 w-2.5" />
+          </span>
+        </span>
+        <span v-else class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/[0.06] bg-white/[0.03] text-foreground/80">
           <AgentIcon :harness="node.session.harness" class="h-4 w-4" />
         </span>
         <span class="min-w-0 flex-1">
@@ -34,8 +41,10 @@
           </span>
           <span class="block truncate text-xs leading-4 text-muted-foreground">{{ model ?? harnessLabel(node.session.harness ?? '') }}</span>
         </span>
-        <span :class="cn('flex h-6 shrink-0 items-center gap-1.5 rounded-md pl-1.5 pr-2 text-xs', PILL_TONES[pill.tone])" :title="describeActivity(activity)">
-          <RowStatus :activity="activity" />
+        <span :class="cn('relative flex h-6 shrink-0 items-center gap-1.5 rounded-md text-xs', pill.tone === 'working' ? 'px-2' : 'pl-1.5 pr-2', PILL_TONES[pill.tone])" :title="describeActivity(activity)">
+          <ComposerWorkingBorder v-if="pill.tone === 'working'" :radius="6" />
+          <!-- While it works, the comet is the pill's only motion. -->
+          <RowStatus v-if="pill.tone !== 'working'" :activity="activity" />
           {{ pill.label }}
         </span>
       </div>
@@ -83,9 +92,11 @@ import { harnessLabel } from '../../lib/harnesses';
 import { hostLabel } from '../../lib/hosts';
 import type { LiveProcessRecord } from '../../lib/processTabs';
 import { describeActivity, processActivity } from '../../lib/rowActivity';
-import type { SessionRecord } from '../../types';
+import type { ProjectSummary, SessionRecord } from '../../types';
 import AgentIcon from '../AgentIcon.vue';
+import ComposerWorkingBorder from '../ComposerWorkingBorder.vue';
 import HostBadge from '../HostBadge.vue';
+import ProjectLogo from '../ProjectLogo.vue';
 import RowStatus from '../RowStatus.vue';
 import SidebarItemMenu from '../Sidebar/SidebarItemMenu.vue';
 import { useSidebar } from '../Sidebar/sidebarContext';
@@ -98,8 +109,8 @@ export interface CanvasNode {
   isRoot: boolean;
   descendants: number;
   processes: LiveProcessRecord[];
-  // The project's name, in All agents.
-  project: string | null;
+  // The agent's project, in All agents.
+  project: ProjectSummary | null;
 }
 
 type Tone = 'attention' | 'error' | 'working' | 'quiet';
@@ -107,7 +118,7 @@ type Tone = 'attention' | 'error' | 'working' | 'quiet';
 const PILL_TONES: Record<Tone, string> = {
   attention: 'bg-warning/10 text-warning',
   error: 'bg-destructive/10 text-destructive',
-  working: 'bg-white/[0.06] text-foreground/90',
+  working: 'border border-primary/15 bg-primary/[0.08] text-foreground',
   quiet: 'bg-white/[0.03] text-muted-foreground'
 };
 
@@ -121,6 +132,7 @@ const name = computed(() => agentLabel(props.node.session));
 const model = computed(() => modelLabel(props.node.session.model));
 const activity = computed(() => sidebar.activity(props.node.session));
 const active = computed(() => sidebar.sessionActive(props.node.session));
+const working = computed(() => activity.value.self === 'working');
 
 // A root says what its family needs; a subagent says only how it is.
 const pill = computed((): { label: string; tone: Tone } => {
@@ -156,7 +168,7 @@ const text = computed((): { shown: string; full: string; urgent?: boolean; muted
   return { shown: 'No summary yet', full: '', muted: true };
 });
 
-const place = computed(() => props.node.isRoot ? [props.node.project, props.node.digest.branch].filter(Boolean).join(' · ') : '');
+const place = computed(() => props.node.isRoot ? [props.node.project?.name, props.node.digest.branch].filter(Boolean).join(' · ') : '');
 
 const shownProcesses = computed(() => props.node.processes.slice(0, PROCESSES_SHOWN));
 const hiddenProcesses = computed(() => Math.max(0, props.node.processes.length - PROCESSES_SHOWN));
@@ -179,6 +191,26 @@ function open(): void {
   z-index: -1;
   border-radius: inherit;
   pointer-events: none;
+}
+
+/* Cards glide to a new place when the layout changes, and arrive softly. */
+.canvas-card-glide {
+  transition-property: background-color, border-color, box-shadow, transform;
+  transition-duration: 150ms, 150ms, 150ms, 320ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+[data-canvas-card] {
+  animation: canvas-card-in 260ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+@keyframes canvas-card-in {
+  from { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .canvas-card-glide { transition-property: background-color, border-color, box-shadow; }
+  [data-canvas-card] { animation: none; }
 }
 
 .canvas-tint[data-tone='permission'] { background: radial-gradient(260px 140px at 28px 24px, hsl(var(--warning) / 0.1), transparent 70%); }
