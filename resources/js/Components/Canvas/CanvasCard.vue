@@ -21,7 +21,7 @@
         :aria-current="active ? 'page' : undefined"
         :aria-label="`${name}: ${pill.label}`"
         class="absolute inset-0 rounded-[inherit] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-        @focus="emit('focus', node.id)"
+        @focus="onFocus"
       />
       <div class="pointer-events-none relative flex min-w-0 items-start gap-2.5">
         <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/[0.06] bg-white/[0.03] text-foreground/80">
@@ -160,6 +160,12 @@ const place = computed(() => props.node.isRoot ? [props.node.project, props.node
 
 const shownProcesses = computed(() => props.node.processes.slice(0, PROCESSES_SHOWN));
 const hiddenProcesses = computed(() => Math.max(0, props.node.processes.length - PROCESSES_SHOWN));
+
+// Only a card reached by keyboard pans into view; a press on a clipped card
+// would otherwise move it from under the pointer.
+function onFocus(event: FocusEvent): void {
+  if (event.target instanceof HTMLElement && event.target.matches(':focus-visible')) emit('focus', props.node.id);
+}
 
 function open(): void {
   sidebar.selectSession(props.node.digest.family.rootId, props.node.session);

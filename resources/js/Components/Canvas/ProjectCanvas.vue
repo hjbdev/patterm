@@ -57,6 +57,7 @@
       @pointermove="onPointerMove"
       @pointerup="onPointerUp"
       @pointercancel="onPointerUp"
+      @lostpointercapture="onPointerUp"
       @wheel.prevent="onWheel"
     >
       <p v-if="!nodes.length" class="pt-24 text-center text-[13px] text-muted-foreground">No agents running</p>
@@ -195,16 +196,15 @@ const anchors = computed(() => {
   return [...seen.values()];
 });
 
+// Cards not shown, such as a hidden project's in All agents, keep their places.
 function saveOverrides(next: Record<string, Point>): void {
-  // Agents that have gone take their places with them.
-  const present = new Set(nodes.value.map((node) => node.id));
-  const kept = Object.fromEntries(Object.entries(next).filter(([id]) => present.has(id)));
-  overrides.value = kept;
-  writeCanvasPositions(scope.value, kept);
+  overrides.value = next;
+  writeCanvasPositions(scope.value, next);
 }
 
 function tidy(): void {
-  saveOverrides({});
+  const shown = new Set(nodes.value.map((node) => node.id));
+  saveOverrides(Object.fromEntries(Object.entries(overrides.value).filter(([id]) => !shown.has(id))));
   fit();
 }
 
@@ -270,6 +270,8 @@ function onPointerDown(event: PointerEvent): void {
 function onPointerMove(event: PointerEvent): void {
   const press = drag.value ?? pan.value;
   if (!press || press.pointerId !== event.pointerId) return;
+  // Released outside the canvas before it took the pointer.
+  if (!(event.buttons & 1)) return onPointerUp(event);
   const dx = event.clientX - press.start.x;
   const dy = event.clientY - press.start.y;
   if (!press.moved) {
