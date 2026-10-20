@@ -26,6 +26,8 @@ async function main(): Promise<void> {
     const settings = new SettingsService(database);
     const memory = new AssistantMemoryService(database, settings, () => time);
     assert.equal(memory.snapshot(), '');
+    assert.equal(memory.read({}).enabled, false, 'a disabled store can be checked without loading notes');
+    assert.match(new AgentContextService().buildAssistant(), /assistant_memory_read/, 'an assistant launched with memory off knows how to activate it later');
     assert.throws(() => memory.write({ lines: [{ text: 'disabled', importance: 'high' }] }), /disabled/);
     settings.updateAssistantSettings({ ...settings.assistantSettings(), memoryEnabled: true, memoryBudgetTokens: 2000 });
     const write = (text: string, importance: 'low' | 'medium' | 'high' = 'high', project_id: string | null = null) => memory.write({ lines: [{ text, importance, project_id }] }).ids[0]!;
@@ -127,7 +129,7 @@ async function main(): Promise<void> {
       const ordinaryCatalog = registry.publicTools({ identity: 'mcp-starting-worker' });
       assert.ok(ordinaryCatalog.length > 0, 'pre-registration catalogue discovery remains available');
       assert.ok(!ordinaryCatalog.some((item) => item.name === tool));
-      assert.equal(registry.publicTools({ identity: 'mcp-starting-assistant' }).some((item) => item.name === tool), memoryEnabled, 'launching assistants discover enabled memory tools before registration');
+      assert.ok(registry.publicTools({ identity: 'mcp-starting-assistant' }).some((item) => item.name === tool), 'launching assistants discover memory tools even while disabled');
       assert.ok(registry.publicTools({ identity: 'unregistered' }).length > 0);
     }
     await assert.rejects(registry.callPublic(tool, {}, { identity: 'mcp-starting-assistant' }), /identity/);
@@ -175,8 +177,21 @@ async function main(): Promise<void> {
     await assert.rejects(registry.call(tool, {}, { remote: { host_id: 'remote', host_name: 'remote', project_id: 'p' } }), /Only the assistant/);
     settings.updateAssistantSettings({ ...settings.assistantSettings(), memoryEnabled: false });
     assert.equal(memory.snapshot(), '');
-    assert.ok(!registry.publicTools({ identity: 'mcp-assistant' }).some((item) => item.name === tool));
-    await assert.rejects(registry.callPublic(tool, {}, { identity: 'mcp-assistant' }), /disabled/);
+    const disabledCatalogue = registry.publicTools({ identity: 'mcp-assistant' }).filter((item) => item.name.startsWith('assistant_memory_'));
+    assert.equal(disabledCatalogue.length, 3, 'native discovery does not depend on the memory switch');
+    const disabled = await registry.callPublic(tool, {}, assistantCaller) as ReturnType<AssistantMemoryService['read']>;
+    assert.equal(disabled.enabled, false);
+    assert.doesNotMatch(disabled.text, /memory_/, 'disabled reads do not disclose saved notes');
+    await assert.rejects(registry.callPublic('assistant_memory_write', { lines: [{ text: 'disabled', importance: 'high' }] }, assistantCaller), /disabled/);
+    await assert.rejects(registry.callPublic('assistant_memory_search', { query: 'Project' }, assistantCaller), /disabled/);
+    settings.updateAssistantSettings({ ...settings.assistantSettings(), memoryEnabled: true });
+    assert.deepEqual(registry.publicTools({ identity: 'mcp-assistant' }).filter((item) => item.name.startsWith('assistant_memory_')), disabledCatalogue);
+    const enabled = await registry.callPublic(tool, {}, assistantCaller) as ReturnType<AssistantMemoryService['read']>;
+    assert.equal(enabled.enabled, true);
+    assert.match(enabled.text, /before replying/);
+    const saved = await registry.callPublic('assistant_memory_write', { lines: [{ text: 'Prefers metric units.', importance: 'high' }] }, assistantCaller) as ReturnType<AssistantMemoryService['write']>;
+    assert.match(memory.read({ since_revision: enabled.revision }).text, /Prefers metric units/);
+    assert.ok(saved.revision > enabled.revision);
     const latest = remove.revision;
     database.dispose();
     database.initialize();
