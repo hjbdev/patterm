@@ -5,7 +5,7 @@
 // card the user has dragged keeps where they put it.
 
 export const CARD_WIDTH = 300;
-export const CARD_HEIGHT = 140;
+export const CARD_HEIGHT = 152;
 // Between a root and its row of subagents, and between rows of families.
 const ROW_GAP = 48;
 const FAMILY_ROW_GAP = 72;

@@ -19,33 +19,25 @@
         type="button"
         data-canvas-node
         :aria-current="active ? 'page' : undefined"
-        :aria-label="`${name}: ${pill.label}`"
+        :aria-label="`${name}: ${status.label}`"
         class="absolute inset-0 rounded-[inherit] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         @focus="onFocus"
       />
-      <div class="pointer-events-none relative flex min-w-0 items-start gap-2.5">
-        <!-- In All agents, the project says where it works; its harness rides in the corner. -->
-        <span v-if="node.project" class="relative h-8 w-8 shrink-0">
-          <ProjectLogo :project="node.project" :size="32" />
-          <span class="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-[5px] border border-white/[0.08] bg-[hsl(0_0%_10.5%)] text-foreground/80">
-            <AgentIcon :harness="node.session.harness" class="h-2.5 w-2.5" />
+      <!-- While it works, the comet circles the card. -->
+      <ComposerWorkingBorder v-if="status.tone === 'working'" />
+      <!-- The title comes first and wraps rather than losing its end; who
+           and how sit beneath it. -->
+      <div class="pointer-events-none relative min-w-0">
+        <span class="line-clamp-2 text-sm font-medium leading-5 text-foreground" :title="hostLabel(name, node.session.host)">{{ name }}<HostBadge v-if="node.session.host" :host="node.session.host" class="ml-1.5 align-middle" /></span>
+        <span class="mt-1 flex min-w-0 items-center gap-1.5 text-xs leading-4 text-muted-foreground">
+          <!-- In All agents, the project says where it works. -->
+          <ProjectLogo v-if="node.project" :project="node.project" :size="14" />
+          <AgentIcon :harness="node.session.harness" class="h-3 w-3 shrink-0 text-foreground/70" />
+          <span class="truncate">{{ model ?? harnessLabel(node.session.harness ?? '') }}</span>
+          <span aria-hidden="true">·</span>
+          <span :class="cn('flex shrink-0 items-center gap-1', STATUS_TONES[status.tone])" :title="describeActivity(activity)">
+            <span v-if="status.tone !== 'working'" class="flex h-3 w-3 items-center justify-center"><RowStatus :activity="activity" /></span>{{ status.label }}
           </span>
-        </span>
-        <span v-else class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/[0.06] bg-white/[0.03] text-foreground/80">
-          <AgentIcon :harness="node.session.harness" class="h-4 w-4" />
-        </span>
-        <span class="min-w-0 flex-1">
-          <span class="flex min-w-0 items-center gap-1.5">
-            <span class="min-w-0 truncate text-sm font-medium leading-5 text-foreground" :title="hostLabel(name, node.session.host)">{{ name }}</span>
-            <HostBadge v-if="node.session.host" :host="node.session.host" />
-          </span>
-          <span class="block truncate text-xs leading-4 text-muted-foreground">{{ model ?? harnessLabel(node.session.harness ?? '') }}</span>
-        </span>
-        <span :class="cn('relative flex h-6 shrink-0 items-center gap-1.5 rounded-md text-xs', pill.tone === 'working' ? 'px-2' : 'pl-1.5 pr-2', PILL_TONES[pill.tone])" :title="describeActivity(activity)">
-          <ComposerWorkingBorder v-if="pill.tone === 'working'" :radius="6" />
-          <!-- While it works, the comet is the pill's only motion. -->
-          <RowStatus v-if="pill.tone !== 'working'" :activity="activity" />
-          {{ pill.label }}
         </span>
       </div>
 
@@ -115,11 +107,11 @@ export interface CanvasNode {
 
 type Tone = 'attention' | 'error' | 'working' | 'quiet';
 
-const PILL_TONES: Record<Tone, string> = {
-  attention: 'bg-warning/10 text-warning',
-  error: 'bg-destructive/10 text-destructive',
-  working: 'border border-primary/15 bg-primary/[0.08] text-foreground',
-  quiet: 'bg-white/[0.03] text-muted-foreground'
+const STATUS_TONES: Record<Tone, string> = {
+  attention: 'text-warning',
+  error: 'text-destructive',
+  working: 'text-foreground/90',
+  quiet: ''
 };
 
 const PROCESSES_SHOWN = 2;
@@ -135,7 +127,7 @@ const active = computed(() => sidebar.sessionActive(props.node.session));
 const working = computed(() => activity.value.self === 'working');
 
 // A root says what its family needs; a subagent says only how it is.
-const pill = computed((): { label: string; tone: Tone } => {
+const status = computed((): { label: string; tone: Tone } => {
   const self = activity.value.self;
   if (self === 'error') return { label: 'Error', tone: 'error' };
   if (self === 'dead') return { label: 'Exited', tone: 'quiet' };
@@ -149,7 +141,7 @@ const pill = computed((): { label: string; tone: Tone } => {
   }
 });
 
-const tint = computed(() => pill.value.tone === 'attention' ? 'permission' : pill.value.tone === 'error' ? 'error' : null);
+const tint = computed(() => status.value.tone === 'attention' ? 'permission' : status.value.tone === 'error' ? 'error' : null);
 
 // A root's question comes first, in its words, then where it stands; a
 // subagent's summary says what it's for.
