@@ -49,7 +49,7 @@ test('small Markdown appears immediately and stays visible while highlighting lo
   const root = { children: [] };
   const app = renderer.createApp({ render: () => h(component, { source: source.value }) });
   app.mount(root);
-  const markdown = () => root.children.find((node) => node.tag === 'div');
+  const markdown = () => root.children.find((node) => node.tag === 'div')?.children.find((node) => node.props?.class === 'markdown-text contents');
   try {
     assert.match(markdown().props?.innerHTML ?? '', /<h1>Header 1<\/h1>/, 'content must appear before idle callbacks or syntax highlighting');
     assert.equal(globalThis.finishMarkdownHighlight, undefined, 'highlighting starts after the plain content is shown');

@@ -10,9 +10,15 @@
     v-else
     ref="root"
     class="markdown prose prose-zinc prose-invert prose-sm max-w-none text-foreground [font-size:0.875rem] [overflow-wrap:anywhere] prose-p:my-2 prose-a:text-primary prose-code:rounded prose-code:bg-secondary/50 prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-code:text-[0.85em] prose-code:font-normal prose-code:text-foreground prose-code:before:content-none prose-code:after:content-none prose-pre:border prose-pre:border-border prose-pre:bg-background prose-pre:text-foreground prose-blockquote:border-border prose-blockquote:text-muted-foreground prose-th:border-border prose-td:border-border marker:text-muted-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
-    v-html="rendered"
     v-stream-reveal="Boolean(revealAppends)"
-  />
+  >
+    <template v-for="(block, index) in blocks" :key="index">
+      <div v-if="block.figure" :data-mention="block.figure.text">
+        <slot name="mention" :part="block.figure" />
+      </div>
+      <div v-else class="markdown-text contents" v-html="block.html" />
+    </template>
+  </div>
   <Teleport v-for="(mention, index) in mentions" :key="index" :to="mention.element">
     <slot name="mention" :part="mention.part" />
   </Teleport>
@@ -32,7 +38,8 @@ import { appendedTextStart } from '../lib/streamReveal';
 // With a `mention` slot, process IDs and launch tokens render through it as
 // chips. Each is teleported into its placeholder in the rendered HTML, so it
 // keeps the surrounding providers, and moves rather than remounts as text
-// streams in.
+// streams in. Standalone figures stay outside that replaced HTML: moving
+// an iframe between Teleport targets reloads its document.
 const props = withDefaults(defineProps<{ source: string; revealAppends?: boolean }>(), { revealAppends: false });
 const slots = useSlots();
 
@@ -90,12 +97,38 @@ const PREVIEW_LIMIT = 40 * 1024;
 
 const rendered = ref('');
 
+// Split only top-level figure paragraphs, after parsing the whole Markdown so
+// reference links and fenced code retain their normal meaning. The surrounding
+// HTML may change on each delta; the figure's parent never moves.
+const blocks = computed(() => {
+  const html = rendered.value;
+  if (!slots.mention || !html.includes('[patterm_figure:')) return [{ html }];
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  const result: { html?: string; figure?: MentionPart }[] = [];
+  let pending = '';
+  for (const node of Array.from(template.content.childNodes)) {
+    const element = node instanceof HTMLElement ? node : null;
+    const placeholder = element?.tagName === 'P' && element.childNodes.length === 1 ? element.firstElementChild : null;
+    const part = placeholder?.tagName === 'SPAN' && placeholder.hasAttribute('data-mention')
+      ? splitProcessMentions(placeholder.getAttribute('data-mention') ?? '')[0] : undefined;
+    if (part?.figure) {
+      result.push({ html: pending }, { figure: part });
+      pending = '';
+    } else {
+      pending += element?.outerHTML ?? node.textContent ?? '';
+    }
+  }
+  result.push({ html: pending });
+  return result;
+});
+
 const root = ref<HTMLElement | null>(null);
 const mentions = shallowRef<{ element: HTMLElement; part: MentionPart }[]>([]);
 const codeBlocks = shallowRef<HTMLElement[]>([]);
 watch([() => rendered.value, root], () => {
   const found = root.value && slots.mention
-    ? Array.from(root.value.querySelectorAll<HTMLElement>('[data-mention]'), (element) => ({ element, part: splitProcessMentions(element.dataset.mention ?? '')[0]! }))
+    ? Array.from(root.value.querySelectorAll<HTMLElement>('.markdown-text [data-mention]'), (element) => ({ element, part: splitProcessMentions(element.dataset.mention ?? '')[0]! }))
     : [];
   // A new empty list would still render the component again.
   if (found.length || mentions.value.length) mentions.value = found;
@@ -234,6 +267,10 @@ function capText(value: string, limit: number): string {
 </script>
 
 <style scoped>
+.markdown :deep(> .markdown-text:last-child > :last-child) {
+  margin-bottom: 0;
+}
+
 .markdown :deep(h1) {
   font-size: 1.125rem;
 }
@@ -309,7 +346,8 @@ function capText(value: string, limit: number): string {
   overflow-wrap: normal;
 }
 
-.markdown :deep(> :first-child) {
+.markdown :deep(> :first-child),
+.markdown :deep(> .markdown-text:first-child > :first-child) {
   margin-top: 0;
 }
 
