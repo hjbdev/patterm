@@ -28,7 +28,7 @@
       <!-- The title comes first and wraps rather than losing its end; who
            and how sit beneath it. -->
       <div class="pointer-events-none relative min-w-0">
-        <span class="line-clamp-2 text-sm font-medium leading-5 text-foreground" :title="hostLabel(name, node.session.host)">{{ name }}<HostBadge v-if="node.session.host" :host="node.session.host" class="ml-1.5 align-middle" /></span>
+        <span class="line-clamp-2 text-sm font-medium leading-5 text-foreground" :title="hostLabel(name, node.session.host)">{{ name }}</span>
         <span class="mt-1 flex min-w-0 items-center gap-1.5 text-xs leading-4 text-muted-foreground">
           <!-- In All agents, the project says where it works. -->
           <ProjectLogo v-if="node.project" :project="node.project" :size="14" />
@@ -38,6 +38,8 @@
           <span :class="cn('flex shrink-0 items-center gap-1', STATUS_TONES[status.tone])" :title="describeActivity(activity)">
             <span v-if="status.tone !== 'working'" class="flex h-3 w-3 items-center justify-center"><RowStatus :activity="activity" /></span>{{ status.label }}
           </span>
+          <!-- Outside the title's clamp, so a long title never hides it. -->
+          <template v-if="node.session.host"><span aria-hidden="true">·</span><HostBadge :host="node.session.host" /></template>
         </span>
       </div>
 
