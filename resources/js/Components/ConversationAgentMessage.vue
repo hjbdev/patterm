@@ -40,6 +40,7 @@
       <div class="flex max-w-full items-baseline gap-1.5 text-xs">
         <span class="truncate font-medium text-foreground">{{ senderName }}</span>
         <span v-if="origin.status" class="shrink-0 text-muted-foreground">reported {{ origin.status }}</span>
+        <span v-else-if="origin.closeRequested" class="shrink-0 text-muted-foreground">asked to close</span>
       </div>
       <Bubble variant="muted" align="start" class="max-w-[min(82%,64ch)]">
         <BubbleContent>

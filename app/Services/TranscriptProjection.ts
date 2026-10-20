@@ -1158,14 +1158,17 @@ export type TranscriptRow =
 // Who wrote a user turn that Patterm typed in: another agent's message or
 // report, or Patterm itself (timers, notifications, focus digests). `body` is
 // the text without Patterm's header or reply hint; `status` is a report's, and
-// `name` is the sender's name when the header carries one.
+// `name` is the sender's name when the header carries one, and
+// `closeRequested` marks a child's request_close routed to its parent.
 export type TranscriptOrigin =
-  | { kind: 'agent'; processId: string; status?: string; name?: string; body: string }
+  | { kind: 'agent'; processId: string; status?: string; name?: string; closeRequested?: true; body: string }
   | { kind: 'patterm'; label: string; detail: string; body: string };
 
 const AGENT_MESSAGE = /^\[message from ([^\s\]]+)\]\r?\n/;
 const AGENT_REPORT = /^\[report from ([^\s\]:]+): ([^\]]+)\](?:\r?\n|$)/;
 const ASSISTANT_MESSAGE = /^\[agent message from ([^\s\],]+)(?: \(([^\n]*?)\))?, not the user\]\r?\n/;
+const CLOSE_REQUEST = /^\[Close requested by ([^\s\]]+)(?: \(([^\n]*?)\))?\]\r?\n/;
+const CLOSE_HINT = /\s*Close it with close_process once its work is settled, or send it follow-ups with send_message\.\s*$/;
 const PATTERM_MESSAGE = /^\[Patterm (timer|notifications|focus digest)\b([^\n]*?)\](?:\r?\n|$)/;
 const PATTERM_LABELS: Record<string, string> = { timer: 'Timer', notifications: 'Notifications', 'focus digest': 'Focus digest' };
 const REPLY_HINT = /\s*\(Reply with send_message target_process_id "assistant"\.\)\s*$/;
@@ -1182,6 +1185,8 @@ export function transcriptMessageOrigin(message: TranscriptMessage): TranscriptO
   if (match) return { kind: 'agent', processId: match[1]!, status: match[2]!.trim(), body: text.slice(match[0].length) };
   match = ASSISTANT_MESSAGE.exec(text);
   if (match) return { kind: 'agent', processId: match[1]!, ...(match[2] ? { name: match[2] } : {}), body: text.slice(match[0].length) };
+  match = CLOSE_REQUEST.exec(text);
+  if (match) return { kind: 'agent', processId: match[1]!, ...(match[2] ? { name: match[2] } : {}), closeRequested: true, body: text.slice(match[0].length).replace(CLOSE_HINT, '') };
   match = PATTERM_MESSAGE.exec(text);
   if (match) return { kind: 'patterm', label: PATTERM_LABELS[match[1]!]!, detail: match[2]!.trim(), body: text.slice(match[0].length) };
   return undefined;

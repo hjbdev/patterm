@@ -634,6 +634,7 @@ assert.deepEqual([0, 42_900, 185_000, 4_380_000].map(elapsedLabel), ['0s', '42s'
   assert.deepEqual(origin('[message from process_42]\nHello\n\n(Reply with send_message target_process_id "assistant".)'), { kind: 'agent', processId: 'process_42', body: 'Hello' });
   assert.deepEqual(origin('[report from process_7: done]\nTitle\nBody'), { kind: 'agent', processId: 'process_7', status: 'done', body: 'Title\nBody' });
   assert.deepEqual(origin('[agent message from process_9 (Proj / Name), not the user]\nHi'), { kind: 'agent', processId: 'process_9', name: 'Proj / Name', body: 'Hi' });
+  assert.deepEqual(origin('[Close requested by process_5 (Review #487)]\nAll checked.\nClose it with close_process once its work is settled, or send it follow-ups with send_message.'), { kind: 'agent', processId: 'process_5', name: 'Review #487', closeRequested: true, body: 'All checked.' });
   assert.deepEqual(origin('[Patterm timer timer_1 (wait): condition met]\nprocess_7 reported done'), { kind: 'patterm', label: 'Timer', detail: 'timer_1 (wait): condition met', body: 'process_7 reported done' });
   assert.deepEqual(origin('[Patterm notifications]\nA needs input'), { kind: 'patterm', label: 'Notifications', detail: '', body: 'A needs input' });
   assert.equal(origin('Please read [message from process_1] in the log'), undefined);
