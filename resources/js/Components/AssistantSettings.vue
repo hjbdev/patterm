@@ -7,7 +7,7 @@
         <Switch id="assistant-enabled" :model-value="settings?.enabled ?? true" :disabled="!settings" @update:model-value="save('assistant.general.enabled', { enabled: $event })" />
       </SettingsRow>
     </SettingsSection>
-    <SettingsSection title="Memory" description="Start a new assistant conversation to apply changes." scope="assistant.memory">
+    <SettingsSection title="Memory" description="Changes apply on the assistant's next request. Saved notes stay when memory is off." scope="assistant.memory">
       <SettingsRow label="Saved memory" description="Keep useful facts across conversations. Older notes are gradually compressed; high-importance notes last longer." html-for="assistant-memory-enabled" save-key="assistant.memory.enabled" toggle>
         <Switch id="assistant-memory-enabled" :model-value="settings?.memoryEnabled ?? false" :disabled="!settings" @update:model-value="save('assistant.memory.enabled', { memoryEnabled: $event })" />
       </SettingsRow>

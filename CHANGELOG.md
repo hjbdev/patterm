@@ -55,6 +55,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Assistant memory can be enabled or disabled in the current conversation.
+  The assistant checks the switch on each request, and its instructions require
+  saving newly learned durable preferences, facts, decisions and lasting results
+  before replying. Disabled checks reveal no saved notes, and turning memory
+  off preserves the existing store. An opt-in native Codex acceptance test checks
+  activation, automatic saving and recall in a fresh conversation.
 - HTML figures keep their loaded page and interactive state while surrounding
   reply text streams, avoiding repeated iframe reloads and flicker.
 

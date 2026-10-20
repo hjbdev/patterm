@@ -7,15 +7,16 @@ import type { McpCallContext, McpToolRegistry } from './ToolRegistry';
 const jsonSchema = zodToJsonSchema as unknown as (schema: z.ZodTypeAny, options: { $refStrategy: 'none' }) => Record<string, unknown>;
 
 export function registerAssistantMemoryTools(registry: McpToolRegistry, memory: AssistantMemoryService, isAssistant: (context: McpCallContext) => boolean, visibleToAssistant: (context: McpCallContext) => boolean): void {
-  const unavailable = (context: McpCallContext) => !memory.enabled() ? 'Saved assistant memory is disabled in Settings › Assistant.'
-    : !visibleToAssistant(context) ? 'Only the assistant session can access saved memory.' : null;
+  // Native clients cache the catalogue. Keep these discoverable for the
+  // assistant while disabled so enabling memory works in the same thread.
+  const unavailable = (context: McpCallContext) => !visibleToAssistant(context) ? 'Only the assistant session can access saved memory.' : null;
   const check = (context: McpCallContext) => {
     if (!isAssistant(context)) throw new Error('Only the assistant session can access saved memory.');
     const reason = unavailable(context); if (reason) throw new Error(reason);
   };
   registry.register({
     name: 'assistant_memory_read', namespace: 'assistant.memory', changes: [], unavailable,
-    description: 'Assistant only: a bounded snapshot, or complete changes since a revision. Never advance the revision if requiresRefresh is true.',
+    description: 'Assistant only: required before each new request, including while disabled. Returns enabled:false without notes when off; otherwise a bounded snapshot or complete changes since a revision. Follow the returned recording instructions. Never advance the revision if requiresRefresh is true.',
     inputSchema: jsonSchema(memoryReadInput, { $refStrategy: 'none' })
   }, (args, context) => { check(context); return memory.read(args ?? {}); });
   registry.register({
@@ -25,7 +26,7 @@ export function registerAssistantMemoryTools(registry: McpToolRegistry, memory: 
   }, (args, context) => { check(context); return memory.search(args); });
   registry.register({
     name: 'assistant_memory_write', namespace: 'assistant.memory', changes: [], unavailable,
-    description: 'Assistant only: note useful facts, supersede outdated active IDs, or compress 2–6 related notes into one shorter summary or zero lines. Replacements retain scope, importance and the oldest input age.',
+    description: 'Assistant only, when memory is enabled: required before replying after learning a durable preference, fact, decision or lasting result. Note useful facts, supersede outdated active IDs, or compress 2–6 related notes into one shorter summary or zero lines. Replacements retain scope, importance and the oldest input age.',
     inputSchema: jsonSchema(memoryWriteInput, { $refStrategy: 'none' }),
     usageNotes: ['Each record is at most 300 characters. Low/medium/high affects retention; no importance pins a fact forever.', 'Pressure asks for opportunistic compression at a natural checkpoint. Search candidate text and choose a related subset; never combine unrelated facts just to fill a group.', 'Exact restatement does not refresh a note. Summaries can be compressed again. Replaced/forgotten history is searchable only when explicitly requested.']
   }, (args, context) => { check(context); return memory.write(args); });
