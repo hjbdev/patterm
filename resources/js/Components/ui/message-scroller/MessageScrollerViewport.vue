@@ -171,7 +171,7 @@ onBeforeUnmount(() => {
     :data-scrollable="scrollableAttr"
     :data-autoscrolling="autoscrolling ? '' : undefined"
     :class="cn(
-      'size-full min-h-0 min-w-0 [scrollbar-width:thin] [scrollbar-gutter:stable] overflow-y-auto overscroll-contain [contain:content]',
+      'size-full min-h-0 min-w-0 outline-none [scrollbar-width:thin] [scrollbar-gutter:stable] overflow-y-auto overscroll-contain [contain:content]',
       props.class,
     )"
     @scroll="handleScroll()"
