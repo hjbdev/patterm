@@ -61,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before replying. Disabled checks reveal no saved notes, and turning memory
   off preserves the existing store. An opt-in native Codex acceptance test checks
   activation, automatic saving and recall in a fresh conversation.
+- HTML figures keep their loaded page and interactive state while surrounding
+  reply text streams, avoiding repeated iframe reloads and flicker.
+
 - A child's close request in its parent's conversation shows as a message from that agent, not from the user.
 - Conversations no longer show a border around the message area when focused.
 - Agent launch screens and tabs keep showing loading until the agent opens,
