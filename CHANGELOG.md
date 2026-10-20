@@ -53,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Conversations no longer show a border around the message area when focused.
 - Agent launch screens and tabs keep showing loading until the agent opens,
   avoiding a brief Ready state before navigation.
 
