@@ -94,7 +94,9 @@ function verifyConversationSearch(): void {
     const retitled = titles.sync();
     assert.equal(retitled.length, 2, 'only an exact provider and resume ID match takes a title, and placeholders are ignored');
     assert.equal(read.list({ project_id: 'search_project' }).conversations.find((conversation) => conversation.providerConversationId === 'search_titled')?.title, 'Sapphire renderer cleanup', 'a name copied from the first prompt gives way to the generated title');
-    for (const id of retitled) search.indexConversation(id);
+    assert.deepEqual(new Set(search.staleTitles()), new Set(retitled), 'retitled conversations need reindexing until it is done');
+    for (const id of search.staleTitles()) search.indexConversation(id);
+    assert.deepEqual(search.staleTitles(), [], 'a finished reindex is current');
     assert.deepEqual(titles.sync(), [], 'an unchanged title is not rewritten');
     const plain = read.list({ project_id: 'search_project' }).conversations.find((conversation) => conversation.providerConversationId === 'search_plain');
     assert.equal(plain?.title, 'Emerald ledger cleanup', 'the newest session title wins over the first prompt');
@@ -103,6 +105,14 @@ function verifyConversationSearch(): void {
     assert.equal(read.searchConversations({ query: 'unrelated', project_id: 'search_project' }).conversations.length, 1, 'the native title stays searchable');
     imports.import({ provider: 'claude', trigger: 'manual' });
     assert.equal(read.list({ project_id: 'search_project' }).conversations.find((conversation) => conversation.providerConversationId === 'search_plain')?.title, 'Emerald ledger cleanup', 're-importing keeps the session title');
+    // A reindex interrupted after clearing its state row is found again.
+    historyDatabase.connection.prepare(`delete from conversation_history_index_state where conversation_id = ?`).run(retitled[0]);
+    assert.deepEqual(search.staleTitles(), [retitled[0]], 'an unfinished reindex is retried');
+    search.indexConversation(retitled[0]!);
+    // Renaming back to the first prompt clears the override.
+    appDatabase.connection.prepare(`update sessions set display_name = 'An unrelated note', auto_title = null where id = 'title_new'`).run();
+    assert.equal(titles.sync().length, 1);
+    assert.equal(read.list({ project_id: 'search_project' }).conversations.find((conversation) => conversation.providerConversationId === 'search_plain')?.title, 'An unrelated note', 'a name equal to the native title shows the native title');
     assert.deepEqual(sessionTitles({ harness: 'claude', interface_mode: 'tui', display_name: null, auto_title: null, last_title: '\u2733 Fix the parser' }), ['Fix the parser'], 'a Claude terminal title drops its spinner');
 
     // A harness's own child threads link by directory but are not the session's conversation.
@@ -1394,9 +1404,14 @@ async function runTitleSyncCoalescing(appDataPath: string): Promise<void> {
     await waitFor(() => workers.length === 2);
     workers[1]!.complete();
     await waitFor(() => workers.length === 3);
+    // A rename during the follow-up still gets its own sync: no file event
+    // would bring it in later.
+    queue.syncTitles();
     workers[2]!.complete();
+    await waitFor(() => workers.length === 4);
+    workers[3]!.complete();
     await waitFor(() => queue.status().counts.running === 0);
-    assert.equal(workers.length, 3, 'renames while a sync runs are covered by one follow-up sync');
+    assert.equal(workers.length, 4, 'each rename during a sync is covered by one more sync');
   } finally {
     queue.dispose();
   }

@@ -135,10 +135,10 @@ async function runQueuedHistoryImport(payload: WorkerInput, reportProgress?: Pro
 }
 
 async function syncTitles(historyDatabase: HistoryDatabaseService, appDatabase: DatabaseService, search: HistorySearchIndexService): Promise<number> {
-  const changed = new ConversationTitleSync(historyDatabase, appDatabase).sync();
+  const changed = new ConversationTitleSync(historyDatabase, appDatabase).sync().length;
   // Every indexed message row carries its conversation's title.
-  for (const id of changed) await search.indexConversationAsync(id);
-  return changed.length;
+  for (const id of search.staleTitles()) await search.indexConversationAsync(id);
+  return changed;
 }
 
 function localParseFile(discovery: ProviderHistoryDiscoveryService): HistoryFileParser {

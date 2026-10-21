@@ -425,7 +425,9 @@ export class AgentHistoryImportQueueService {
     const dirty = this.dirtyWatcherKeys.get(coalesceKey);
     const retrySuggested = resultBoolean(job.result, 'retrySuggested') || (resultNumber(job.result, 'unstableFiles') ?? 0) > 0;
     if (!dirty && !retrySuggested) return;
-    if (job.followUpCount >= WATCHER_FOLLOW_UP_LIMIT) {
+    // A title sync is dirty only when a title changed while it ran, and no
+    // file event follows a rename to catch it later, so it is never capped.
+    if (job.followUpCount >= WATCHER_FOLLOW_UP_LIMIT && job.message.action !== 'sync_titles') {
       this.dirtyWatcherKeys.delete(coalesceKey);
       this.log('job.follow_up_suppressed', job, { coalesce_key: coalesceKey, retry_suggested: retrySuggested, follow_up_count: job.followUpCount });
       return;

@@ -80,6 +80,18 @@ export class HistorySearchIndexService {
     this.updateIndexState(conversationId, currentConversation, currentMessageCount);
   }
 
+  // Conversations whose title changed since they were indexed, or whose
+  // indexing never finished: a reindex clears the state row first and writes
+  // it last. Read from the index rather than from what a sync changed, so an
+  // interrupted reindex is picked up again by the next sync.
+  staleTitles(): string[] {
+    const rows = this.database.connection.prepare(`
+      select conversations.id, conversations.provider, conversations.title, conversations.session_title, conversation_history_index_state.title as indexed_title
+      from conversations left join conversation_history_index_state on conversation_history_index_state.conversation_id = conversations.id
+    `).all() as Array<Pick<ConversationRow, 'id' | 'provider' | 'title' | 'session_title'> & { indexed_title: string | null }>;
+    return rows.filter((row) => headerTitle(row) !== row.indexed_title).map((row) => row.id);
+  }
+
   removeConversation(conversationId: string): void {
     this.database.connection.transaction(() => {
       this.database.connection
@@ -203,10 +215,14 @@ function conversationArtifact(row: ConversationRow): ArtifactRow {
     owner_id: row.id,
     conversation_id: row.id,
     project_id: row.project_id,
-    // Both titles stay searchable: the session's name and the native one.
-    title: [row.session_title, row.title].filter(Boolean).join('\n') || `${row.provider} conversation`,
+    title: headerTitle(row),
     body: [row.provider, row.provider_conversation_id, row.cwd, row.provider_version, row.status, row.link_reason, ...metadataText(row.metadata)].filter(Boolean).join('\n')
   };
+}
+
+// Both titles stay searchable: the session's name and the native one.
+function headerTitle(row: Pick<ConversationRow, 'provider' | 'title' | 'session_title'>): string {
+  return [row.session_title, row.title].filter(Boolean).join('\n') || `${row.provider} conversation`;
 }
 
 function conversationHeaderSignature(row: ConversationRow): string {

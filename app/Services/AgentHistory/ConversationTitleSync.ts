@@ -17,7 +17,7 @@ interface SessionTitleRow {
 export class ConversationTitleSync {
   constructor(private readonly history: AgentHistoryDb, private readonly app: AgentHistoryDb) {}
 
-  // Returns the conversations whose title changed, for reindexing.
+  // Returns the conversations whose title changed.
   sync(): string[] {
     const titles = new Map<string, { provider: string; resumeId: string; candidates: string[] }>();
     // A resumed native conversation takes the title of its newest session.
@@ -33,11 +33,12 @@ export class ConversationTitleSync {
     if (!titles.size) return [];
     // Resuming from the picker named the new session after the conversation's
     // title, which used to be its first prompt. A candidate that only repeats
-    // the native title says nothing new, so the next one is used.
+    // the native title says nothing new, so the next one is used, and with
+    // none left the native title shows again.
     const title = `coalesce(nullif(@first, title), nullif(@second, title), nullif(@third, title))`;
     const update = this.history.connection.prepare(`
       update conversations set session_title = ${title}
-      where provider = @provider and provider_conversation_id = @resume_id and ${title} is not null and session_title is not ${title}
+      where provider = @provider and provider_conversation_id = @resume_id and session_title is not ${title}
       returning id
     `);
     return this.history.connection.transaction(() => [...titles.values()].flatMap(({ provider, resumeId, candidates }) => {
