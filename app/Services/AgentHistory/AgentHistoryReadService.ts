@@ -50,7 +50,9 @@ const HIDDEN_RESUME_ROLES = new Set(['child', 'routine']);
 // Both lookups are evaluated once per query: SQLite builds an ephemeral index
 // for the uncorrelated IN list and the materialized close times. Reading the
 // JSON per row made broad searches take seconds.
-const NOT_HIDDEN = `coalesce(conversations.session_id, '') not in (select value from json_each(@hidden_sessions))`;
+// Subagent and reviewer threads a harness started itself record their parent.
+const NOT_HIDDEN = `coalesce(conversations.session_id, '') not in (select value from json_each(@hidden_sessions))
+  and json_extract(conversations.metadata, '$.parentThreadId') is null and json_extract(conversations.metadata, '$.parentId') is null`;
 const SESSION_CLOSED_CTE = `session_closed as materialized (
   select json_extract(value, '$[0]') as id, json_extract(value, '$[1]') as exited_at from json_each(@closed_sessions)
 )`;
@@ -66,14 +68,15 @@ export class AgentHistoryReadService {
   constructor(private readonly database: AgentHistoryDb | null) {}
 
   // The imported conversation for a Patterm session, matched by the session
-  // itself or by its native resume ID.
+  // itself or by its native resume ID. The resume ID wins: other threads, such
+  // as a harness's reviewers, link to the session by working directory.
   conversationIdForSession(input: { sessionId: string; provider: string | null; resumeId: string | null; projectId: string }): string | null {
     if (!this.database || !databaseAvailable(this.database)) return null;
     const row = this.database.connection.prepare(`
       select id from conversations
-      where project_id = ? and (session_id = ? or (provider = ? and provider_conversation_id = ?))
-      order by updated_at desc limit 1
-    `).get(input.projectId, input.sessionId, input.provider ?? '', input.resumeId ?? '') as { id: string } | undefined;
+      where project_id = @project_id and (session_id = @session_id or (provider = @provider and provider_conversation_id = @resume_id))
+      order by (provider = @provider and provider_conversation_id = @resume_id) desc, updated_at desc limit 1
+    `).get({ project_id: input.projectId, session_id: input.sessionId, provider: input.provider ?? '', resume_id: input.resumeId ?? '' }) as { id: string } | undefined;
     return row?.id ?? null;
   }
 
@@ -263,9 +266,7 @@ export class AgentHistoryReadService {
     }
     const rows = this.database.connection.prepare(`
       select conversation_history_fts.kind, conversation_history_fts.owner_id,
-        conversations.id as conversation_id, conversations.provider, conversations.title,
-        conversations.session_id, conversations.process_id,
-        conversations.started_at, conversations.updated_at,
+        conversations.*, conversations.id as conversation_id,
         snippet(conversation_history_fts, 5, '[', ']', '...', 24) as preview,
         bm25(conversation_history_fts) as score
       from conversation_history_fts
@@ -287,17 +288,20 @@ export class AgentHistoryReadService {
   }
 }
 
-interface ConversationRow { id: string; provider: string; provider_conversation_id: string | null; project_id: string | null; session_id: string | null; process_id: string | null; worktree_id: string | null; source_file_id: string | null; title: string | null; cwd: string | null; provider_version: string | null; started_at: string | null; updated_at: string | null; ended_at: string | null; status: string; link_confidence: number | null; link_reason: string | null; metadata: string; created_at: string; imported_at: string; message_count: number; }
+interface ConversationRow { id: string; provider: string; provider_conversation_id: string | null; project_id: string | null; session_id: string | null; process_id: string | null; worktree_id: string | null; source_file_id: string | null; title: string | null; session_title?: string | null; cwd: string | null; provider_version: string | null; started_at: string | null; updated_at: string | null; ended_at: string | null; status: string; link_confidence: number | null; link_reason: string | null; metadata: string; created_at: string; imported_at: string; message_count: number; }
 interface MessageRow { id: string; conversation_id: string; provider_message_id: string | null; parent_provider_message_id: string | null; turn_id: string | null; seq: number; role: string; kind: string; text: string; tool_name: string | null; tool_status: string | null; tool_input_summary: string | null; tool_output_summary: string | null; redaction_count: number; token_count: number | null; provider_created_at: string | null; metadata: string; created_at: string; }
 interface ImportBatchRow { id: string; trigger: string; provider: string | null; source_id: string | null; project_id: string | null; started_at: string; finished_at: string | null; status: string; files_seen: number; files_imported: number; conversations_imported: number; messages_imported: number; skipped_count: number; error_count: number; }
 interface ImportFileRow { id: string; source_id: string | null; batch_id: string | null; provider: string; path: string; source_kind: string; status: string; warning: string | null; error: string | null; last_imported_at: string | null; }
-interface ConversationSearchRow { kind: string; owner_id: string; conversation_id: string; provider: string; title: string | null; session_id: string | null; process_id: string | null; started_at: string | null; updated_at: string | null; preview: string; score: number; }
+interface ConversationSearchRow { kind: string; owner_id: string; conversation_id: string; provider: string; title: string | null; session_title?: string | null; session_id: string | null; process_id: string | null; started_at: string | null; updated_at: string | null; preview: string; score: number; }
 
-function mapConversation(row: ConversationRow) { return { id: row.id, provider: row.provider, providerConversationId: row.provider_conversation_id, projectId: row.project_id, sessionId: row.session_id, processId: row.process_id, worktreeId: row.worktree_id, sourceFileId: row.source_file_id, title: row.title, cwd: row.cwd, providerVersion: row.provider_version, startedAt: row.started_at, updatedAt: row.updated_at, endedAt: row.ended_at, status: row.status, linkConfidence: row.link_confidence, linkReason: row.link_reason, metadata: parseJson(row.metadata), createdAt: row.created_at, importedAt: row.imported_at, messageCount: row.message_count }; }
+function mapConversation(row: ConversationRow) { return { id: row.id, provider: row.provider, providerConversationId: row.provider_conversation_id, projectId: row.project_id, sessionId: row.session_id, processId: row.process_id, worktreeId: row.worktree_id, sourceFileId: row.source_file_id, title: displayTitle(row), nativeTitle: row.title, cwd: row.cwd, providerVersion: row.provider_version, startedAt: row.started_at, updatedAt: row.updated_at, endedAt: row.ended_at, status: row.status, linkConfidence: row.link_confidence, linkReason: row.link_reason, metadata: parseJson(row.metadata), createdAt: row.created_at, importedAt: row.imported_at, messageCount: row.message_count }; }
 function mapMessage(row: MessageRow) { return { id: row.id, conversationId: row.conversation_id, providerMessageId: row.provider_message_id, parentProviderMessageId: row.parent_provider_message_id, turnId: row.turn_id, seq: row.seq, role: row.role, kind: row.kind, text: row.text, toolName: row.tool_name, toolStatus: row.tool_status, toolInputSummary: row.tool_input_summary, toolOutputSummary: row.tool_output_summary, redactionCount: row.redaction_count, tokenCount: row.token_count, providerCreatedAt: row.provider_created_at, metadata: parseJson(row.metadata), createdAt: row.created_at }; }
 function mapBatch(row: ImportBatchRow, activeBatchIds: Set<string>) { return { id: row.id, trigger: row.trigger, provider: row.provider, sourceId: row.source_id, projectId: row.project_id, startedAt: row.started_at, finishedAt: row.finished_at, status: importBatchStatus(row, activeBatchIds), filesSeen: row.files_seen, filesImported: row.files_imported, conversationsImported: row.conversations_imported, messagesImported: row.messages_imported, skippedCount: row.skipped_count, errorCount: row.error_count }; }
 function mapImportFile(row: ImportFileRow) { return { id: row.id, sourceId: row.source_id, batchId: row.batch_id, provider: row.provider, path: row.path, sourceKind: row.source_kind, status: row.status, warning: row.warning, error: row.error, lastImportedAt: row.last_imported_at }; }
-function mapConversationSearchResult(row: ConversationSearchRow) { return { kind: row.kind, conversationId: row.conversation_id, messageId: row.kind === 'conversation_message' ? row.owner_id : null, provider: row.provider, title: row.title, sessionId: row.session_id, processId: row.process_id, startedAt: row.started_at, updatedAt: row.updated_at, preview: row.preview, score: row.score }; }
+function mapConversationSearchResult(row: ConversationSearchRow) { return { kind: row.kind, conversationId: row.conversation_id, messageId: row.kind === 'conversation_message' ? row.owner_id : null, provider: row.provider, title: displayTitle(row), sessionId: row.session_id, processId: row.process_id, startedAt: row.started_at, updatedAt: row.updated_at, preview: row.preview, score: row.score }; }
+// The session's title wins over the native one, usually the first prompt. The
+// column is optional so reads keep working before the worker migrates.
+function displayTitle(row: { title: string | null; session_title?: string | null }): string | null { return row.session_title || row.title; }
 function parseJson(value: string) { try { return JSON.parse(value) as Record<string, unknown>; } catch { return {}; } }
 function importBatchStatus(row: ImportBatchRow, activeBatchIds: Set<string>): string {
   if (row.status !== 'running' || activeBatchIds.has(row.id)) return row.status;

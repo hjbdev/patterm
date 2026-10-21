@@ -160,6 +160,7 @@ async function main(): Promise<void> {
     } as unknown as TerminalService;
     const registryTimeline = new TimelineService(database);
     let importedHistoryProjectId: string | null | undefined;
+    let titleSyncs = 0;
     let listedHistoryProjectId: string | null | undefined;
     let searchedHistoryInput: { project_id: string } | undefined;
     const handledNotifications: string[] = [];
@@ -175,6 +176,9 @@ async function main(): Promise<void> {
         import(input: { project_id?: string | null }) {
           importedHistoryProjectId = input.project_id;
           return { queued: true };
+        },
+        syncTitles() {
+          titleSyncs += 1;
         }
       } as unknown as AgentHistoryImportQueueService,
       historyReadService: {
@@ -327,9 +331,11 @@ async function main(): Promise<void> {
       assert.equal((database.connection.prepare("select name from processes where id = 'proc_identity'").get() as { name: string }).name, name);
     }
     await registry.call('rename_process', { process_id: 'proc_identity', name: 'renamed orchestrator' });
+    assert.equal(titleSyncs, 3, 'each rename copies the title onto conversation history');
     const discarded = { renamed: false, reason: 'user_override' };
     assert.deepEqual(await registry.call('session_rename', { name: 'Agent replacement' }, identityContext), discarded);
     assert.deepEqual(await registry.call('rename_process', { process_id: 'proc_identity', name: 'Legacy replacement' }, identityContext), discarded);
+    assert.equal(titleSyncs, 3, 'a discarded rename does not');
     assert.equal((database.connection.prepare("select title_set_by_user from sessions where id = 'session_identity'").get() as { title_set_by_user: number }).title_set_by_user, 1);
     assert.equal((database.connection.prepare("select name from processes where id = 'proc_identity'").get() as { name: string }).name, 'renamed orchestrator');
 

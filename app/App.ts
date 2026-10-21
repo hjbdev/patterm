@@ -6,6 +6,7 @@ import { AssistantMemoryService } from './Services/AssistantMemoryService';
 import { registerAssistantTools } from './MCP/registerAssistantTools';
 import { registerIdleCompactionTools } from './MCP/registerIdleCompactionTools';
 import { integratedActivityNotifications } from './Listeners/IntegratedActivityNotifications';
+import { integratedHistoryCheckpoints } from './Listeners/IntegratedHistoryCheckpoints';
 import { registerHostTools } from './MCP/registerHostTools';
 import { registerProjectTools } from './MCP/registerProjectTools';
 import { RemoveProjectAction } from './Actions/RemoveProjectAction';
@@ -445,6 +446,7 @@ async function createApplicationResources(
     }
   });
   defer(() => historyImportQueue.dispose());
+  autoSummaries.setTitleListener(() => historyImportQueue.syncTitles());
   semanticSearch = new SemanticSearchService({
     appDataPath: options.appDataPath,
     settings,
@@ -464,6 +466,13 @@ async function createApplicationResources(
   });
 
   defer(() => historyWatcher.stop());
+  defer(integrated.onActivityChange(integratedHistoryCheckpoints({
+    provider: (processId) => {
+      const row = database.connection.prepare('select harness from sessions where process_id = ? or id = ? limit 1').get(processId, processId) as { harness: string | null } | undefined;
+      return row?.harness === 'claude' || row?.harness === 'codex' || row?.harness === 'opencode' ? row.harness : null;
+    },
+    flush: (provider) => historyWatcher.flush(provider)
+  })));
 
   const modelCatalog = new HarnessModelCatalogService({ database, settings, env: resolvedEnv, openCodeServer, debugLog, onChanged: () => notifyChanged(['settings']) });
   defer(() => modelCatalog.dispose());
@@ -846,7 +855,7 @@ function historyChanged(result: unknown): boolean {
   const row = result && typeof result === 'object' ? result as Record<string, unknown> : {};
   const importResult = row.import && typeof row.import === 'object' ? row.import as Record<string, unknown> : row;
   const positive = (value: unknown) => typeof value === 'number' && value > 0;
-  return positive(importResult.conversationsImported) || positive(row.deletedConversations) || row.deleted === true;
+  return positive(importResult.conversationsImported) || positive(row.retitled) || positive(row.deletedConversations) || row.deleted === true;
 }
 
 function applyHistoryImportEffects(result: unknown, timeline: TimelineService, resumeCapture: ResumeIdCaptureService): boolean {

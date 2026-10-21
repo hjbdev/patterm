@@ -11,7 +11,7 @@ type ImportInput = z.input<typeof historyImportInput>;
 const RECENT_JOB_LIMIT = 20;
 const LOG_SOURCE = 'history-import-queue';
 
-export type HistoryImportJobAction = 'import' | 'reset_imports' | 'delete_conversation' | 'delete_project_history' | 'migrate';
+export type HistoryImportJobAction = 'import' | 'reset_imports' | 'delete_conversation' | 'delete_project_history' | 'migrate' | 'sync_titles';
 export type HistoryImportQueueJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'stale';
 
 export interface HistoryImportWorkerMessage {
@@ -123,6 +123,12 @@ export class AgentHistoryImportQueueService {
   // features that only read or index history never migrate concurrently.
   migrate(): HistoryImportQueueEnqueueResult {
     return this.enqueue({ action: 'migrate', input: { trigger: 'manual' } });
+  }
+
+  // Copies session titles onto their conversations after a session is renamed
+  // or titled. One queued sync covers every change made before it runs.
+  syncTitles(): HistoryImportQueueEnqueueResult {
+    return this.enqueue({ action: 'sync_titles', input: { trigger: 'manual' } });
   }
 
   deleteConversation(conversationId: string): HistoryImportQueueEnqueueResult {
@@ -419,7 +425,9 @@ export class AgentHistoryImportQueueService {
     const dirty = this.dirtyWatcherKeys.get(coalesceKey);
     const retrySuggested = resultBoolean(job.result, 'retrySuggested') || (resultNumber(job.result, 'unstableFiles') ?? 0) > 0;
     if (!dirty && !retrySuggested) return;
-    if (job.followUpCount >= WATCHER_FOLLOW_UP_LIMIT) {
+    // A title sync is dirty only when a title changed while it ran, and no
+    // file event follows a rename to catch it later, so it is never capped.
+    if (job.followUpCount >= WATCHER_FOLLOW_UP_LIMIT && job.message.action !== 'sync_titles') {
       this.dirtyWatcherKeys.delete(coalesceKey);
       this.log('job.follow_up_suppressed', job, { coalesce_key: coalesceKey, retry_suggested: retrySuggested, follow_up_count: job.followUpCount });
       return;
@@ -500,6 +508,7 @@ function summarizeResult(result: unknown): unknown {
     unstableFiles: numberValue(row.unstableFiles),
     retrySuggested: typeof row.retrySuggested === 'boolean' ? row.retrySuggested : null,
     deletedConversations: numberValue(row.deletedConversations),
+    retitled: numberValue(row.retitled),
     import: row.import && typeof row.import === 'object' ? summarizeResult(row.import) : null
   };
 }
@@ -565,6 +574,8 @@ function resultBoolean(result: unknown, key: string): boolean {
 }
 
 function watcherCoalesceKey(message: HistoryImportWorkerMessage): string | null {
+  // A title sync reads every session, so a queued one already covers the next.
+  if (message.action === 'sync_titles') return message.action;
   if (message.action !== 'import' || message.input.trigger !== 'watcher') return null;
   return `${message.action}:${message.input.trigger}:${message.input.provider ?? '*'}:${message.input.path ?? '*'}`;
 }

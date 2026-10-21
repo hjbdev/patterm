@@ -5,7 +5,7 @@ import { defaultFileFingerprint, digestJson, isoFromString, nonNegative, parsedI
 
 export class ClaudeHistoryAdapter implements ProviderHistoryAdapter {
   readonly provider = 'claude' as const;
-  readonly parserVersion = 'claude-jsonl-v11';
+  readonly parserVersion = 'claude-jsonl-v12';
 
   defaultSources(homeDir: string): HistorySourceCandidate[] {
     const projects = path.join(homeDir, '.claude', 'projects');
@@ -84,24 +84,36 @@ export class ClaudeHistoryAdapter implements ProviderHistoryAdapter {
       startedAt ??= createdAt;
       updatedAt = createdAt ?? updatedAt;
 
-      const type = stringValue(row.type) ?? 'event';
+      // A prompt sent while Claude is working is delivered into the running
+      // turn and recorded only as a queued command, never as a user row.
+      // Its source ID is the prompt's own, so a user row with that ID, before
+      // or after it, is the same prompt.
+      const queued = queuedPrompt(row);
+      if (queued?.sourceUuid) {
+        if (seenUuids.has(queued.sourceUuid)) continue;
+        seenUuids.add(queued.sourceUuid);
+      }
+      const type = queued ? 'user' : stringValue(row.type) ?? 'event';
       // Queue operations echo a prompt before its real user row, so importing
       // them shows every queued prompt twice. A compaction summary is context
       // for the model, not something the user said.
-      if (type === 'attachment' || row.attachment || type === 'system' || type === 'queue-operation' || row.isMeta === true || row.isCompactSummary === true) continue;
-      const message = row.message && typeof row.message === 'object' ? row.message as Record<string, unknown> : null;
+      if (!queued && (type === 'attachment' || row.attachment || type === 'system' || type === 'queue-operation' || row.isMeta === true || row.isCompactSummary === true)) continue;
+      const message = queued ? { role: 'user', content: queued.content } : row.message && typeof row.message === 'object' ? row.message as Record<string, unknown> : null;
       const role = mapRole(stringValue(message?.role) ?? stringValue(row.role));
       const command = type === 'user' ? localCommand(message?.content ?? row.content) : null;
       if (command === '') continue;
       const extracted = command ? [command] : extractClaudeContent(message?.content ?? row.content, type, row, toolNamesByUseId);
       const rowSeq = seq;
+      // A queued prompt keeps the ID it was submitted with, which Integrated
+      // sessions also use for the prompt's own row.
+      const rowId = (queued ? queued.sourceUuid : null) ?? stringValue(row.uuid) ?? stringValue(row.messageId) ?? `${conversationId}:${seq}`;
       for (const item of extracted) {
         const text = item.text;
         const itemRole = item.role ?? role;
         if (item.kind.includes('tool') && !text && !item.toolName && !item.toolInputSummary && !item.toolOutputSummary) continue;
         title ??= itemRole === 'user' && item.kind === 'message' && text && !command ? firstLine(text) : null;
         messages.push({
-          providerMessageId: extracted.length > 1 ? `${stringValue(row.uuid) ?? stringValue(row.messageId) ?? `${conversationId}:${seq}`}:${item.index}` : stringValue(row.uuid) ?? stringValue(row.messageId) ?? `${conversationId}:${seq}`,
+          providerMessageId: extracted.length > 1 ? `${rowId}:${item.index}` : rowId,
           parentProviderMessageId: stringValue(row.parentUuid),
           turnId: stringValue(row.promptId),
           seq: seq++,
@@ -114,7 +126,7 @@ export class ClaudeHistoryAdapter implements ProviderHistoryAdapter {
           toolOutputSummary: item.toolOutputSummary,
           providerCreatedAt: createdAt,
           tokenCount: null,
-          metadata: { type, contentType: item.contentType, isSidechain: row.isSidechain ?? null, toolUseId: item.toolUseId ?? null, source: 'claude-jsonl' }
+          metadata: { type, contentType: item.contentType, isSidechain: row.isSidechain ?? null, toolUseId: item.toolUseId ?? null, source: 'claude-jsonl', ...(queued ? { queued: true } : {}) }
         });
       }
       const messageSeq = seq > rowSeq ? rowSeq : seq ? seq - 1 : null;
@@ -144,6 +156,12 @@ export class ClaudeHistoryAdapter implements ProviderHistoryAdapter {
     // clears old guidance without deleting native resume links.
     return { provider: this.provider, sourcePath: filePath, sourceKind: 'jsonl', parserVersion: this.parserVersion, warnings, conversations: messages.length || (!parsed.warnings.length && !parsed.partialTrailingLine && hasSessionId) ? [conversation] : [] };
   }
+}
+
+function queuedPrompt(row: Record<string, unknown>): { content: unknown; sourceUuid: string | null } | null {
+  const attachment = row.attachment && typeof row.attachment === 'object' ? row.attachment as Record<string, unknown> : null;
+  if (attachment?.type !== 'queued_command' || attachment.commandMode !== 'prompt') return null;
+  return { content: attachment.prompt, sourceUuid: stringValue(attachment.source_uuid) };
 }
 
 function subagentFiles(filePath: string): string[] {

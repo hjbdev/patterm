@@ -13,6 +13,7 @@ import { AgentHistoryReadService } from '../app/Services/AgentHistory/AgentHisto
 import { AgentHistoryWatcherService } from '../app/Services/AgentHistory/AgentHistoryWatcherService';
 import { runHistoryImportWorker } from '../app/Services/AgentHistory/AgentHistoryImportWorker';
 import { HistorySearchIndexService } from '../app/Services/AgentHistory/HistorySearchIndexService';
+import { ConversationTitleSync, sessionTitles } from '../app/Services/AgentHistory/ConversationTitleSync';
 import { ClaudeHistoryAdapter } from '../app/Services/AgentHistory/ClaudeHistoryAdapter';
 import { CodexHistoryAdapter } from '../app/Services/AgentHistory/CodexHistoryAdapter';
 import { readJsonl } from '../app/Services/AgentHistory/HistoryAdapterUtils';
@@ -26,6 +27,7 @@ import { HistoryDatabaseService } from '../app/Services/HistoryDatabaseService';
 import { SearchService } from '../app/Services/SearchService';
 import { TimelineService } from '../app/Services/TimelineService';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
+import { integratedHistoryCheckpoints } from '../app/Listeners/IntegratedHistoryCheckpoints';
 import { WorkbenchSeeder } from './fixtures/WorkbenchSeeder';
 
 // The /resume picker searches whole conversations: one ranked row each,
@@ -78,9 +80,88 @@ function verifyConversationSearch(): void {
     assert.equal((resumable[0] as { sessionClosedAt?: string | null }).sessionClosedAt, closedAt, 'the close time is returned');
     assert.equal(read.list({ project_id: 'search_project' }, sessions).conversations.length, 4, 'plain listings still include them');
     assert.deepEqual(read.searchConversations({ query: 'sapphire', project_id: 'search_project', resumable: true }, sessions).conversations.map((conversation) => conversation.providerConversationId), ['search_titled'], 'resumable search hides them too');
+
+    // Session titles are stored on the conversation their session resumes.
+    const addSession = appDatabase.connection.prepare(`insert into sessions (id, project_id, harness, session_role, resume_id, started_at, interface_mode, display_name, auto_title, last_title)
+      values (?, 'search_project', ?, 'orchestrator', ?, ?, ?, ?, ?, ?)`);
+    addSession.run('title_old', 'claude', 'search_plain', '2026-01-01T00:00:00.000Z', 'integrated', null, 'Stale generated title', null);
+    addSession.run('title_new', 'claude', 'search_plain', '2026-01-02T00:00:00.000Z', 'integrated', null, 'Emerald ledger cleanup', null);
+    addSession.run('title_placeholder', 'claude', 'search_needle', now, 'integrated', null, null, 'Claude Code');
+    addSession.run('title_codex_tui', 'codex', 'search_titled', now, 'tui', null, null, 'project');
+    addSession.run('title_wrong_harness', 'codex', 'search_routine', now, 'integrated', 'Not this conversation', null, null);
+    addSession.run('title_resumed', 'claude', 'search_titled', now, 'integrated', 'Refactor the sapphire renderer', 'Sapphire renderer cleanup', null);
+    const titles = new ConversationTitleSync(historyDatabase, appDatabase);
+    const retitled = titles.sync();
+    assert.equal(retitled.length, 2, 'only an exact provider and resume ID match takes a title, and placeholders are ignored');
+    assert.equal(read.list({ project_id: 'search_project' }).conversations.find((conversation) => conversation.providerConversationId === 'search_titled')?.title, 'Sapphire renderer cleanup', 'a name copied from the first prompt gives way to the generated title');
+    assert.deepEqual(new Set(search.staleTitles()), new Set(retitled), 'retitled conversations need reindexing until it is done');
+    for (const id of search.staleTitles()) search.indexConversation(id);
+    assert.deepEqual(search.staleTitles(), [], 'a finished reindex is current');
+    assert.deepEqual(titles.sync(), [], 'an unchanged title is not rewritten');
+    const plain = read.list({ project_id: 'search_project' }).conversations.find((conversation) => conversation.providerConversationId === 'search_plain');
+    assert.equal(plain?.title, 'Emerald ledger cleanup', 'the newest session title wins over the first prompt');
+    assert.equal(plain?.nativeTitle, 'An unrelated note', 'the native title is kept');
+    assert.deepEqual(read.searchConversations({ query: 'emerald', project_id: 'search_project' }).conversations.map((conversation) => conversation.providerConversationId), ['search_plain'], 'the session title is searchable');
+    assert.equal(read.searchConversations({ query: 'unrelated', project_id: 'search_project' }).conversations.length, 1, 'the native title stays searchable');
+    imports.import({ provider: 'claude', trigger: 'manual' });
+    assert.equal(read.list({ project_id: 'search_project' }).conversations.find((conversation) => conversation.providerConversationId === 'search_plain')?.title, 'Emerald ledger cleanup', 're-importing keeps the session title');
+    // A reindex interrupted after clearing its state row is found again.
+    historyDatabase.connection.prepare(`delete from conversation_history_index_state where conversation_id = ?`).run(retitled[0]);
+    assert.deepEqual(search.staleTitles(), [retitled[0]], 'an unfinished reindex is retried');
+    search.indexConversation(retitled[0]!);
+    // Renaming back to the first prompt clears the override.
+    appDatabase.connection.prepare(`update sessions set display_name = 'An unrelated note', auto_title = null where id = 'title_new'`).run();
+    assert.equal(titles.sync().length, 1);
+    assert.equal(read.list({ project_id: 'search_project' }).conversations.find((conversation) => conversation.providerConversationId === 'search_plain')?.title, 'An unrelated note', 'a name equal to the native title shows the native title');
+    assert.deepEqual(sessionTitles({ harness: 'claude', interface_mode: 'tui', display_name: null, auto_title: null, last_title: '\u2733 Fix the parser' }), ['Fix the parser'], 'a Claude terminal title drops its spinner');
+
+    // A harness's own child threads link by directory but are not the session's conversation.
+    historyDatabase.connection.prepare(`update conversations set session_id = 'session_main', updated_at = ?, metadata = json_set(metadata, '$.parentThreadId', 'search_plain') where provider_conversation_id = 'search_needle'`).run(closedAt);
+    historyDatabase.connection.prepare(`update conversations set session_id = 'session_main' where provider_conversation_id = 'search_plain'`).run();
+    const main = read.list({ project_id: 'search_project' }).conversations.find((conversation) => conversation.providerConversationId === 'search_plain')!;
+    assert.equal(read.conversationIdForSession({ sessionId: 'session_main', provider: 'claude', resumeId: 'search_plain', projectId: 'search_project' }), main.id, 'the resume ID match wins over a newer linked thread');
+    assert.equal(read.list({ project_id: 'search_project', resumable: true }, sessions).conversations.some((conversation) => conversation.providerConversationId === 'search_needle'), false, 'child threads are not offered for resume');
   } finally {
     historyDatabase.dispose();
     appDatabase.dispose();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+// Prompts sent mid-turn are recorded only as queued commands, and a Codex
+// child rollout repeats its parent's session_meta after its own.
+function verifyNativeThreadIdentity(): void {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-history-identity-'));
+  try {
+    const claudeFile = path.join(directory, 'claude.jsonl');
+    const base = { cwd: directory, sessionId: 'queued_session', timestamp: '2026-07-01T00:00:00.000Z' };
+    fs.writeFileSync(claudeFile, [
+      { ...base, type: 'user', uuid: 'u1', message: { role: 'user', content: 'Start the build' } },
+      { ...base, type: 'queue-operation', operation: 'enqueue', content: 'Also check the logs' },
+      { ...base, type: 'attachment', uuid: 'a1', attachment: { type: 'queued_command', prompt: [{ type: 'text', text: 'Also check the logs' }], source_uuid: 'client_1', commandMode: 'prompt' } },
+      { ...base, type: 'attachment', uuid: 'a2', attachment: { type: 'queued_command', prompt: '<task-notification>done</task-notification>', source_uuid: 'task_1', commandMode: 'task-notification' } },
+      { ...base, type: 'attachment', uuid: 'a3', attachment: { type: 'queued_command', prompt: 'Already a user row', source_uuid: 'u2', commandMode: 'prompt' } },
+      { ...base, type: 'user', uuid: 'u2', message: { role: 'user', content: 'Already a user row' } },
+      { ...base, type: 'assistant', uuid: 'r1', message: { role: 'assistant', content: 'Done' } }
+    ].map((row) => JSON.stringify(row)).join('\n') + '\n');
+    const claude = new ClaudeHistoryAdapter().parseFile(claudeFile).conversations[0]!;
+    assert.deepEqual(claude.messages.map((message) => [message.providerMessageId, message.role, message.text]), [
+      ['u1', 'user', 'Start the build'],
+      ['client_1', 'user', 'Also check the logs'],
+      ['u2', 'user', 'Already a user row'],
+      ['r1', 'assistant', 'Done']
+    ], 'a mid-turn prompt is imported once under its submitted ID; task notifications and queue echoes are not');
+
+    const codexFile = path.join(directory, 'child.jsonl');
+    fs.writeFileSync(codexFile, [
+      { timestamp: '2026-07-01T00:00:00.000Z', type: 'session_meta', payload: { id: 'child_thread', parent_thread_id: 'parent_thread', cwd: directory } },
+      { timestamp: '2026-07-01T00:00:00.000Z', type: 'session_meta', payload: { id: 'parent_thread', cwd: directory } },
+      { timestamp: '2026-07-01T00:00:01.000Z', type: 'response_item', payload: { type: 'message', id: 'msg_1', role: 'user', content: [{ type: 'input_text', text: 'Review the PR' }] } }
+    ].map((row) => JSON.stringify(row)).join('\n') + '\n');
+    const codex = new CodexHistoryAdapter().parseFile(codexFile).conversations[0]!;
+    assert.equal(codex.providerConversationId, 'child_thread', 'a child rollout keeps its own thread ID instead of replacing its parent');
+    assert.equal(codex.metadata.parentThreadId, 'parent_thread', 'the parent thread is recorded');
+  } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
 }
@@ -137,6 +218,7 @@ async function main(): Promise<void> {
   verifySecretRedaction();
   verifyScopedScanLinking();
   verifyConversationSearch();
+  verifyNativeThreadIdentity();
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-history-'));
   verifyChunkedJsonlReader(tempDir);
   let database: DatabaseService | null = null;
@@ -393,6 +475,8 @@ async function main(): Promise<void> {
     await runWatcherFollowUpCap(tempDir);
     await runOpenCodeWatcherDebounce(tempDir);
     await runWatcherMaxWait(tempDir);
+    await runIntegratedTurnFlush(tempDir);
+    await runTitleSyncCoalescing(tempDir);
     await runLargeWatcherStart(tempDir);
 
     // Removing a project deletes its conversations and keeps them from returning.
@@ -1268,6 +1352,68 @@ async function runWatcherMaxWait(appDataPath: string): Promise<void> {
     assert.equal(importCount, 1, 'watcher imports during continuous writes once the maximum wait passes');
   } finally {
     watcher.stop();
+  }
+}
+
+// An Integrated turn's end imports its provider at once, not after the debounce.
+async function runIntegratedTurnFlush(appDataPath: string): Promise<void> {
+  const sourceDir = path.join(appDataPath, 'turn-flush-source');
+  fs.mkdirSync(sourceDir, { recursive: true });
+  fs.writeFileSync(path.join(sourceDir, 'turn.jsonl'), '{}\n');
+  const imports: unknown[] = [];
+  const watcher = new AgentHistoryWatcherService({
+    enabledWatchSources: () => [{ provider: 'claude', sourceKind: 'manual_directory', path: sourceDir, exists: true, enabled: true, watch_enabled: true }],
+    import: (input) => {
+      imports.push(input);
+      return { job_id: 'test', status: 'queued', position: null, queue_depth: 1 };
+    }
+  }, { debounceMs: 60_000, maxWaitMs: 60_000 });
+  try {
+    watcher.start();
+    const checkpoint = integratedHistoryCheckpoints({ provider: (processId) => processId === 'process_claude' ? 'claude' : null, flush: (provider) => watcher.flush(provider) });
+    checkpoint({ processId: 'process_claude', previous: 'idle', activity: 'working', snapshot: false });
+    checkpoint({ processId: 'process_claude', previous: 'working', activity: 'thinking', snapshot: false });
+    assert.equal(imports.length, 0, 'a turn in progress waits');
+    checkpoint({ processId: 'process_raw', previous: 'working', activity: 'idle', snapshot: false });
+    assert.equal(imports.length, 0, 'agents without native history are skipped');
+    checkpoint({ processId: 'process_claude', previous: 'thinking', activity: 'idle', snapshot: false });
+    assert.deepEqual(imports, [{ provider: 'claude', path: sourceDir, trigger: 'watcher' }], 'the end of a turn imports its provider now');
+    checkpoint({ processId: 'process_claude', previous: 'working', activity: 'permission', snapshot: false });
+    assert.equal(imports.length, 2, 'stopping for the user also imports the turn so far');
+    watcher.flush('codex');
+    assert.equal(imports.length, 2, 'other providers are left alone');
+  } finally {
+    watcher.stop();
+  }
+}
+
+async function runTitleSyncCoalescing(appDataPath: string): Promise<void> {
+  const workers: ControlledWorker[] = [];
+  const queue = new AgentHistoryImportQueueService(appDataPath, () => {}, () => {
+    const worker = new ControlledWorker({ retitled: 1 });
+    workers.push(worker);
+    return worker;
+  });
+  try {
+    queue.syncTitles();
+    queue.syncTitles();
+    queue.import({ provider: 'claude', trigger: 'manual' });
+    queue.syncTitles();
+    assert.equal(queue.status().counts.queued, 1, 'a title sync behind a running one waits as a follow-up, not a queued copy');
+    workers[0]!.complete();
+    await waitFor(() => workers.length === 2);
+    workers[1]!.complete();
+    await waitFor(() => workers.length === 3);
+    // A rename during the follow-up still gets its own sync: no file event
+    // would bring it in later.
+    queue.syncTitles();
+    workers[2]!.complete();
+    await waitFor(() => workers.length === 4);
+    workers[3]!.complete();
+    await waitFor(() => queue.status().counts.running === 0);
+    assert.equal(workers.length, 4, 'each rename during a sync is covered by one more sync');
+  } finally {
+    queue.dispose();
   }
 }
 

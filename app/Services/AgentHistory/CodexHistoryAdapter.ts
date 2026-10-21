@@ -5,7 +5,7 @@ import { defaultFileFingerprint, isoFromString, nonNegative, parsedImage, readJs
 
 export class CodexHistoryAdapter implements ProviderHistoryAdapter {
   readonly provider = 'codex' as const;
-  readonly parserVersion = 'codex-jsonl-v6';
+  readonly parserVersion = 'codex-jsonl-v7';
 
   defaultSources(homeDir: string): HistorySourceCandidate[] {
     const sessions = path.join(homeDir, '.codex', 'sessions');
@@ -35,6 +35,7 @@ export class CodexHistoryAdapter implements ProviderHistoryAdapter {
 
     let conversationId = path.basename(filePath, '.jsonl');
     let hasSessionId = false;
+    let parentThreadId: string | null = null;
     let cwd: string | null = null;
     let providerVersion: string | null = null;
     let title: string | null = null;
@@ -69,8 +70,11 @@ export class CodexHistoryAdapter implements ProviderHistoryAdapter {
       const row = record as Record<string, unknown>;
       const payload = row.payload && typeof row.payload === 'object' ? row.payload as Record<string, unknown> : row;
       const rowType = stringValue(row.type) ?? stringValue(payload.type) ?? 'event';
-      if (rowType === 'session_meta' && stringValue(payload.id)) {
+      // A subagent or reviewer rollout opens with its own session_meta, then
+      // repeats its parent's. Only the first one names this file's thread.
+      if (rowType === 'session_meta' && stringValue(payload.id) && !hasSessionId) {
         conversationId = stringValue(payload.id)!;
+        parentThreadId = stringValue(payload.parent_thread_id);
         hasSessionId = true;
       }
       cwd ??= stringValue(payload.cwd);
@@ -124,7 +128,7 @@ export class CodexHistoryAdapter implements ProviderHistoryAdapter {
       endedAt: updatedAt,
       status: parsed.partialTrailingLine ? 'active' : 'imported',
       sourcePath: filePath,
-      metadata: { source: 'codex-jsonl' },
+      metadata: { source: 'codex-jsonl', ...(parentThreadId ? { parentThreadId } : {}) },
       messages,
       media,
       usage: usage.usage,
