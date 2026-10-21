@@ -60,6 +60,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Claude subagent conversations no longer show internal image sizing and
+  coordinate hints as user messages.
 - Conversation history keeps prompts sent to Claude while it was working.
   Claude records these only as queued commands, which the importer skipped,
   so they were missing from history and from older turns of Integrated
