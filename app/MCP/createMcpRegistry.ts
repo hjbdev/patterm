@@ -964,7 +964,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     return services.actions.closeProcess.execute(processFor(context, input.process_id));
   });
 
-  const renameProcess = new RenameProcessAction(services.database);
+  const renameProcess = new RenameProcessAction(services.database, () => services.historyImportQueue?.syncTitles());
   registry.register({
     name: 'session_rename',
     namespace: 'session',

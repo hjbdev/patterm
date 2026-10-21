@@ -42,6 +42,7 @@ export class AutoSummaryService {
   private error: string | null = null;
   private errorAt: string | null = null;
   private settings: AutoSummarySettings;
+  private onTitled: () => void = () => {};
 
   constructor(private readonly database: DatabaseService, private readonly settingsService: SettingsService,
     private readonly terminal: Pick<TerminalService, 'request' | 'onFrame'>,
@@ -49,6 +50,11 @@ export class AutoSummaryService {
     private readonly notify: () => void, private readonly now: () => number = Date.now,
     private readonly history: { readonly connection: SqliteConnection; ensureAvailable?: () => boolean } | null = null) {
     this.settings = settingsService.autoSummarySettings();
+  }
+
+  // Generated titles are copied onto conversation history.
+  setTitleListener(listener: () => void): void {
+    this.onTitled = listener;
   }
 
   start(): void {
@@ -195,6 +201,7 @@ export class AutoSummaryService {
               this.setCoverage(thread.id, coverage);
               const memory = summaryMemory.parse(Object.fromEntries(Object.entries(result.memory).map(([key, value]) => [key, proseText(value)])));
               const at = new Date(this.now()).toISOString();
+              let titled = false;
               const saved = this.database.connection.transaction(() => {
                 if (!reader.save(batch, JSON.stringify(memory), at)) return false;
                 // Historical batches update memory, but never replace a current
@@ -204,12 +211,13 @@ export class AutoSummaryService {
                     auto_summary_provider = ?, auto_summary_model = ?, auto_summary_coverage = ? where id = ?`)
                     .run(summarySnapshot(result.summary), coverage === 'complete' ? oneLine(result.status) : 'Partial conversation recap',
                       at, settings.provider, settings.models[settings.provider], coverage, thread.id);
-                  if (settings.titles && result.title) this.database.connection.prepare('update sessions set auto_title = ? where id = ?')
-                    .run(oneLine(result.title), thread.session_id);
+                  if (settings.titles && result.title) titled = this.database.connection.prepare('update sessions set auto_title = ? where id = ? and auto_title is not ?')
+                    .run(oneLine(result.title), thread.session_id, oneLine(result.title)).changes > 0;
                 }
                 return true;
               })();
               if (saved) { pending.failures = 0; this.notify(); }
+              if (saved && titled) this.onTitled();
             } catch (error) { this.failed(pending, settings, controller, error); }
           })().finally(() => { pending.controller = null; this.jobs.delete(controller); });
           this.jobs.set(controller, job);

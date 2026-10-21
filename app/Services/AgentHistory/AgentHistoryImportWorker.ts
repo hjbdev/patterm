@@ -6,10 +6,11 @@ import type { AgentHistoryProvider, HistorySourceCandidate, ParseHistoryFileOpti
 import { DatabaseService } from '../DatabaseService';
 import { HistoryDatabaseService } from '../HistoryDatabaseService';
 import { HistorySearchIndexService } from './HistorySearchIndexService';
+import { ConversationTitleSync } from './ConversationTitleSync';
 import os from 'node:os';
 
 interface WorkerInput {
-  action?: 'parse_file' | 'import' | 'reset_imports' | 'delete_conversation' | 'delete_project_history' | 'migrate';
+  action?: 'parse_file' | 'import' | 'reset_imports' | 'delete_conversation' | 'delete_project_history' | 'migrate' | 'sync_titles';
   appDataPath?: string;
   input?: Parameters<AgentHistoryImportService['importWithParser']>[0];
   reimport?: boolean;
@@ -73,7 +74,7 @@ export async function runHistoryImportWorker(message: unknown, reportProgress?: 
     if (payload.action === 'parse_file') {
       return { ok: true, result: parseHistoryFile(payload) };
     }
-    if (payload.action === 'import' || payload.action === 'reset_imports' || payload.action === 'delete_conversation' || payload.action === 'delete_project_history' || payload.action === 'migrate') {
+    if (payload.action === 'import' || payload.action === 'reset_imports' || payload.action === 'delete_conversation' || payload.action === 'delete_project_history' || payload.action === 'migrate' || payload.action === 'sync_titles') {
       return { ok: true, result: await runQueuedHistoryImport(payload, reportProgress) };
     }
     throw new Error('unknown history worker action');
@@ -110,11 +111,14 @@ async function runQueuedHistoryImport(payload: WorkerInput, reportProgress?: Pro
     if (payload.action === 'reset_imports') {
       const deleted = new AgentHistoryDeleteService(historyDatabase, search).resetImportedHistory();
       const imported = payload.reimport === false ? null : await imports.importWithParser(input, localParseFile(discovery), reportProgress);
-      return { ...deleted, import: imported };
+      return { ...deleted, import: imported, retitled: imported ? await syncTitles(historyDatabase, appDatabase, search) : 0 };
     }
     if (payload.action === 'import') {
-      return await imports.importWithParser(input, localParseFile(discovery), reportProgress);
+      const imported = await imports.importWithParser(input, localParseFile(discovery), reportProgress);
+      // New conversations take the title their session already has.
+      return { ...imported, retitled: await syncTitles(historyDatabase, appDatabase, search) };
     }
+    if (payload.action === 'sync_titles') return { retitled: await syncTitles(historyDatabase, appDatabase, search) };
     if (payload.action === 'delete_conversation') {
       if (!payload.conversation_id) throw new Error('history delete is missing conversation_id');
       return new AgentHistoryDeleteService(historyDatabase, search).deleteConversation(payload.conversation_id);
@@ -128,6 +132,13 @@ async function runQueuedHistoryImport(payload: WorkerInput, reportProgress?: Pro
     historyDatabase.dispose();
     appDatabase.dispose();
   }
+}
+
+async function syncTitles(historyDatabase: HistoryDatabaseService, appDatabase: DatabaseService, search: HistorySearchIndexService): Promise<number> {
+  const changed = new ConversationTitleSync(historyDatabase, appDatabase).sync();
+  // Every indexed message row carries its conversation's title.
+  for (const id of changed) await search.indexConversationAsync(id);
+  return changed.length;
 }
 
 function localParseFile(discovery: ProviderHistoryDiscoveryService): HistoryFileParser {

@@ -150,7 +150,7 @@ export class HistorySearchIndexService {
   private conversationRows(conversationId?: string): ConversationRow[] {
     const where = conversationId ? 'where id = @conversation_id' : '';
     return this.database.connection.prepare(`
-      select id, provider, provider_conversation_id, project_id, title, cwd, provider_version, status, link_reason, metadata
+      select id, provider, provider_conversation_id, project_id, title, session_title, cwd, provider_version, status, link_reason, metadata
       from conversations ${where}
     `).all(conversationId ? { conversation_id: conversationId } : {}) as ConversationRow[];
   }
@@ -173,7 +173,7 @@ export class HistorySearchIndexService {
       select conversation_messages.id, conversation_messages.conversation_id, conversation_messages.seq, conversation_messages.role, conversation_messages.kind,
         conversation_messages.text, conversation_messages.tool_name, conversation_messages.tool_status,
         conversation_messages.tool_input_summary, conversation_messages.tool_output_summary,
-        conversations.provider, conversations.title, conversations.project_id
+        conversations.provider, coalesce(conversations.session_title, conversations.title) as title, conversations.project_id
       from conversation_messages
       join conversations on conversations.id = conversation_messages.conversation_id
       ${where}
@@ -192,7 +192,7 @@ export class HistorySearchIndexService {
   }
 }
 
-interface ConversationRow { id: string; provider: string; provider_conversation_id: string | null; project_id: string | null; title: string | null; cwd: string | null; provider_version: string | null; status: string; link_reason: string | null; metadata: string; }
+interface ConversationRow { id: string; provider: string; provider_conversation_id: string | null; project_id: string | null; title: string | null; session_title: string | null; cwd: string | null; provider_version: string | null; status: string; link_reason: string | null; metadata: string; }
 interface MessageRow { id: string; conversation_id: string; seq: number; role: string; kind: string; text: string; tool_name: string | null; tool_status: string | null; tool_input_summary: string | null; tool_output_summary: string | null; provider: string; title: string | null; project_id: string | null; }
 interface MessageArtifactPage { artifacts: ArtifactRow[]; nextSeq: number; }
 interface IndexStateRow { message_count: number; project_id: string | null; title: string; body_signature: string; }
@@ -203,7 +203,8 @@ function conversationArtifact(row: ConversationRow): ArtifactRow {
     owner_id: row.id,
     conversation_id: row.id,
     project_id: row.project_id,
-    title: row.title ?? `${row.provider} conversation`,
+    // Both titles stay searchable: the session's name and the native one.
+    title: [row.session_title, row.title].filter(Boolean).join('\n') || `${row.provider} conversation`,
     body: [row.provider, row.provider_conversation_id, row.cwd, row.provider_version, row.status, row.link_reason, ...metadataText(row.metadata)].filter(Boolean).join('\n')
   };
 }

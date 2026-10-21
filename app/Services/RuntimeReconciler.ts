@@ -58,7 +58,7 @@ export class RuntimeReconciler {
     terminal: LifecycleSource,
     // Exits also release todo leases, so they change project context too.
     private readonly notifyChanged: (topics: readonly ChangeTopic[]) => void,
-    private readonly historyImport: { import(input: z.input<typeof historyImportInput>): unknown } | null = null,
+    private readonly historyImport: { import(input: z.input<typeof historyImportInput>): unknown; syncTitles?(): unknown } | null = null,
     private readonly search: SearchService | null = null,
     initialFrames: Iterable<AnyFrame> = [],
     // Called when a running process exits with a non-zero code. Stops never
@@ -217,6 +217,7 @@ export class RuntimeReconciler {
   private handleTitle(ptyId: string, title: string): void {
     if (new UpdateSessionTitleAction(this.database).forPty(ptyId, title)) {
       this.notifyChanged(['workbench']);
+      this.historyImport?.syncTitles?.();
     }
   }
 

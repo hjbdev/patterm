@@ -39,6 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Conversations keep their session's title. The resume picker, history pages,
+  and search show a chosen name or generated title instead of the first
+  prompt, and re-imports no longer overwrite it.
+- An Integrated turn reaches conversation history when it ends or stops for
+  you, instead of up to two minutes later.
 - Canvas cards lead with the agent's full title, wrapping to two lines instead
   of cutting it short. Beneath it sit the project's logo in All agents, the
   harness, the model, and the status. A comet runs around a working agent's
@@ -55,6 +60,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Conversation history keeps prompts sent to Claude while it was working.
+  Claude records these only as queued commands, which the importer skipped,
+  so they were missing from history and from older turns of Integrated
+  conversations.
+- A Codex subagent or reviewer thread no longer replaces its parent
+  conversation in history. Child threads are hidden from the resume picker,
+  and an ended Codex agent's output reads its own conversation rather than a
+  reviewer's.
 - Assistant memory can be enabled or disabled in the current conversation.
   The assistant checks the switch on each request, and its instructions require
   saving newly learned durable preferences, facts, decisions and lasting results

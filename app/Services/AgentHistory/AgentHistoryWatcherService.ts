@@ -64,6 +64,19 @@ export class AgentHistoryWatcherService {
     this.start();
   }
 
+  // Imports a provider's sources now, when an Integrated turn ends and its
+  // native file holds the whole turn. A pending debounced import still runs:
+  // the queue may drop this one behind a busy import, and a harness can finish
+  // writing after it reports the turn's end. The rescan also watches folders
+  // created since, such as Codex's daily directories.
+  flush(provider: AgentHistoryProvider): void {
+    for (const source of this.sources.values()) {
+      if (source.provider !== provider) continue;
+      this.scheduleScan(source);
+      this.imports.import({ provider: source.provider, path: source.path, trigger: 'watcher' });
+    }
+  }
+
   private watchSource(source: HistorySourceCandidate): void {
     const sourceKey = keyFor(source);
     this.sources.set(sourceKey, source);
