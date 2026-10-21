@@ -1138,7 +1138,9 @@ function parentOf(event: JsonRecord): string | null {
 // A subagent's opening prompt arrives as a user frame under its Task tool.
 // It is shown nested (the main agent's own prompts are local rows already).
 function applySubagentPrompt(event: JsonRecord, parent: string | null): void {
-  if (!parent) return;
+  // Claude also sends internal user frames, such as image coordinate hints.
+  // Match the history importer's filtering rather than displaying them as prompts.
+  if (!parent || event.isMeta === true) return;
   const content = record(event.message).content;
   const text = typeof content === 'string'
     ? content

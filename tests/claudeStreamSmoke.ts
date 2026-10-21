@@ -276,6 +276,8 @@ process.stdin.on('data', (chunk) => {
       frame({type:'system',subtype:'task_started',task_id:'task_wf',description:'Review',workflow_name:'review-changes',task_type:'workflow'});
       frame({type:'system',subtype:'task_updated',task_id:'task_wf',patch:{status:'completed'}});
       frame({type:'user',parent_tool_use_id:'toolu_task',uuid:'child-prompt',message:{role:'user',content:[{type:'text',text:'Look around'}]}});
+      // Native image sizing hints are internal companion messages, not prompts.
+      frame({type:'user',parent_tool_use_id:'toolu_task',uuid:'image-hint',isMeta:true,turnCompanion:true,message:{role:'user',content:'[Image: original 390x3000, displayed at 260x2000. Multiply coordinates by 1.50 to map to original image.]'}});
       frame({type:'stream_event',parent_tool_use_id:null,event:{type:'message_start',message:{id:'msg_main2'}}});
       frame({type:'stream_event',parent_tool_use_id:null,event:{type:'content_block_start',index:0,content_block:{type:'text',text:''}}});
       frame({type:'stream_event',parent_tool_use_id:'toolu_task',event:{type:'message_start',message:{id:'msg_child'}}});
@@ -857,6 +859,7 @@ process.stdin.on('data', (chunk) => {
     assert.deepEqual(byId.get('toolu_child_read')?.tool?.input, { file_path: '/tmp/c.ts' });
     assert.equal(byId.get('toolu_child_read')?.text, 'child file');
     assert.equal(byId.get('subagent_child-prompt')?.parentId, 'toolu_task', 'the subagent prompt nests under its Task');
+    assert.equal(byId.has('subagent_image-hint'), false, 'internal image sizing hints never become user bubbles');
     assert.equal(byId.get('msg_main2_0')?.text, 'Main text', 'the main stream keeps its blocks while a subagent streams');
     assert.equal(byId.get('msg_main2_0')?.parentId, undefined);
     assert.deepEqual((nestedView as unknown as { tasks: unknown }).tasks, [
