@@ -147,10 +147,20 @@ export class SandboxService {
     return rows.find((row) => statuses.includes(row.status) && (target === row.path || target.startsWith(row.path + path.sep))) ?? null;
   }
 
-  // The project owning a sandbox that covers this path, or that a sandbox
-  // there would belong to, so another project cannot register it.
+  // The project owning a sandbox that covers this path, so another project
+  // cannot register it. Symlinks are resolved on both sides, so an alias of
+  // the path is caught too.
   ownerOfPath(target: string): string | null {
-    return this.forPath(target, ['creating', 'ready', 'failed'])?.project_id ?? null;
+    const candidates = new Set([target, canonicalPath(target)]);
+    const rows = this.database.connection.prepare('select * from sandboxes where deleted_at is null').all() as unknown as SandboxRow[];
+    for (const row of rows) {
+      for (const root of new Set([row.path, canonicalPath(row.path)])) {
+        for (const candidate of candidates) {
+          if (candidate === root || candidate.startsWith(root + path.sep)) return row.project_id;
+        }
+      }
+    }
+    return null;
   }
 
   // The sandbox an agent's tools run in, from its MCP identity.
@@ -537,6 +547,23 @@ export class SandboxService {
 
   private log(event: string, row: SandboxRow, error: unknown): void {
     this.options.log?.(event, { sandbox_id: row.id, error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+// Resolves symlinks in the longest existing prefix of a path, which may not
+// exist yet itself.
+function canonicalPath(target: string): string {
+  const resolved = path.resolve(target);
+  let existing = resolved;
+  while (!fs.existsSync(existing)) {
+    const parent = path.dirname(existing);
+    if (parent === existing) return resolved;
+    existing = parent;
+  }
+  try {
+    return path.join(fs.realpathSync(existing), path.relative(existing, resolved));
+  } catch {
+    return resolved;
   }
 }
 

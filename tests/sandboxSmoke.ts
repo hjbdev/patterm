@@ -244,6 +244,12 @@ async function main(): Promise<void> {
     await assert.rejects(worktrees.create({ project_id: 'q', name: 'steal', repo_path: repo, actor_type: 'agent' }), /another project's sandboxed worktree/);
     await assert.rejects(worktrees.link({ project_id: 'q', worktree_path: path.join(repo, 'src'), actor_type: 'agent' }), /another project's sandboxed worktree/);
     await assert.rejects(worktrees.link({ project_id: 'q', worktree_path: dir, repo_path: repo, actor_type: 'agent' }), /another project's sandboxed worktree/);
+    // An alias of the path is the same sandbox.
+    fs.symlinkSync(repo, path.join(dir, 'alias'));
+    await assert.rejects(worktrees.create({ project_id: 'q', name: 'steal', repo_path: path.join(dir, 'alias'), worktree_path: path.join(dir, 'never'), actor_type: 'agent' }), /another project's sandboxed worktree/);
+    await assert.rejects(worktrees.create({ project_id: 'q', name: 'steal', repo_path: path.join(dir, 'alias', 'src'), worktree_path: path.join(dir, 'never'), actor_type: 'agent' }), /another project's sandboxed worktree/);
+    await assert.rejects(worktrees.link({ project_id: 'q', worktree_path: dir, repo_path: path.join(dir, 'alias'), actor_type: 'agent' }), /another project's sandboxed worktree/);
+    assert.ok(!fs.existsSync(path.join(dir, 'never')));
     assert.equal(backend.calls.length, remoteCalls, 'no git ran in the sandbox for the other project');
     assert.throws(() => worktrees.abandon({ worktree_id: 'w', actor_type: 'agent' }), /Delete this worktree's sandbox/);
 

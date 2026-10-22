@@ -83,6 +83,8 @@ export class WorktreeService {
     const friendlyId = slug(input.name);
     const branch = input.branch?.trim() || `patterm/${friendlyId}`;
     const worktreePath = normalizePath(input.worktree_path ?? path.join(repoPath, '.worktrees', friendlyId));
+    // The repository git resolved is where the next commands run.
+    this.refuseOtherSandbox(input.project_id, repoPath, worktreePath);
 
     if (fs.existsSync(worktreePath)) {
       throw new Error(`worktree path already exists: ${worktreePath}`);
@@ -124,6 +126,7 @@ export class WorktreeService {
 
     const git = this.deps.git ?? new GitService();
     const repoPath = storedPath(input.repo_path ? await git.root(input.repo_path) : await git.root(worktreePath));
+    this.refuseOtherSandbox(input.project_id, repoPath);
     const branch = input.branch === undefined ? await git.branch(worktreePath) : input.branch;
 
     return this.insert({
