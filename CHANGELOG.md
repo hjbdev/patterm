@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Remote sandboxes for Integrated agents, on your own Fly.io Sprites account.
+  Add a Sprites token in Settings › Sandboxes, then choose Run in sandbox
+  when starting an agent. Patterm creates a worktree, copies it to a new
+  sprite at the same path, and keeps the agent running here with your own
+  Claude Code, Codex or OpenCode login while its file and shell tools run in
+  the sprite: Claude and OpenCode through Patterm's sandbox tools, with their
+  built-in ones switched off, and Codex through its own exec-server there.
+  Agents and child agents launched on that worktree join its sandbox, diff
+  review reads the sandbox's copy, and a busy agent keeps its sprite awake.
+  Settings › Sandboxes lists sandboxes and deletes them, and can share this
+  machine's GitHub CLI login with new ones.
 - Optional semantic conversation-history search, off by default. Settings ›
   Conversation history installs Google's EmbeddingGemma 2 (Q8_0, 310 MB,
   Apache-2.0) on request, verified against a pinned SHA-256, and a separate

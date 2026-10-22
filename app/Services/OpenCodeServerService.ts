@@ -130,6 +130,27 @@ export function openCodeModelRef(model: string, reasoning: string | null): OpenC
 
 // OpenCode owns its shared daemon. Patterm registers a runtime-only MCP bridge
 // and durable per-session context; it never edits the user's OpenCode config.
+interface PermissionRule {
+  action: string;
+  resource: string;
+  effect: 'allow' | 'deny' | 'ask';
+}
+
+// OpenCode's built-in tools touch the local disk; a deny rule over every
+// resource removes a tool from the session. A sandboxed session loses them
+// for Patterm's sandbox tools, and every other session loses those instead.
+const OPENCODE_LOCAL_TOOLS = ['shell', 'read', 'glob', 'grep', 'edit'];
+
+function sandboxPermissions(bridgeName: string, sandboxed: boolean): PermissionRule[] {
+  return sandboxed
+    ? OPENCODE_LOCAL_TOOLS.map((action) => ({ action, resource: '*', effect: 'deny' as const }))
+    : [{ action: `${bridgeName}_sandbox_*`, resource: '*', effect: 'deny' }];
+}
+
+function isSandboxRule(rule: PermissionRule, bridgeName: string): boolean {
+  return rule.resource === '*' && rule.effect === 'deny' && (OPENCODE_LOCAL_TOOLS.includes(rule.action) || rule.action === `${bridgeName}_sandbox_*`);
+}
+
 export class OpenCodeServerService {
   private readonly token: string;
   private readonly selections = new Map<string, { agent?: string; model?: string; variant?: string }>();
@@ -1641,9 +1662,10 @@ export class OpenCodeServerService {
 
     let sessionId = input.resumeId;
     const selectedModel = input.model ? openCodeModelRef(input.model, input.reasoning ?? null) : null;
+    const permissions = sandboxPermissions(bridgeName, Boolean(input.sandbox));
     if (sessionId) {
       const existing = await this.api(executable, cwd, 'GET', `/api/session/${encodeURIComponent(sessionId)}`) as {
-        data?: { location?: { directory?: string } };
+        data?: { location?: { directory?: string }; permissions?: PermissionRule[] | null };
       };
       if (!pathsMatch(existing.data?.location?.directory, cwd)) throw new Error('OpenCode session directory does not match the Patterm launch directory');
       const attached = this.database.connection.prepare(`select id from sessions where harness = 'opencode' and resume_id = ? and exited_at is null`).get(sessionId);
@@ -1651,12 +1673,15 @@ export class OpenCodeServerService {
       if (selectedModel) {
         await this.api(executable, cwd, 'POST', `/api/session/${encodeURIComponent(sessionId)}/model`, { model: selectedModel });
       }
+      const kept = (existing.data?.permissions ?? []).filter((rule) => !isSandboxRule(rule, bridgeName));
+      await this.api(executable, cwd, 'PATCH', `/api/session/${encodeURIComponent(sessionId)}`, { permissions: [...kept, ...permissions] });
     } else {
       // An explicit title stops OpenCode generating one, so pass only a name
       // the user chose.
       const created = await this.api(executable, cwd, 'POST', '/api/session', {
         ...(input.name ? { title: input.name } : {}),
         location: { directory: cwd },
+        permissions,
         ...(selectedModel ? { model: selectedModel } : {})
       }) as { data?: { id?: string } };
       sessionId = created.data?.id ?? null;

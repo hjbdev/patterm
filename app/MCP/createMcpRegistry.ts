@@ -63,6 +63,8 @@ import type { AssistantInbox } from '../Services/AssistantInbox';
 import { queuedDetail, SendMessageAction } from '../Actions/SendMessageAction';
 import { REMOTE_READ_TOOLS, type CrossHostService } from '../Services/CrossHostService';
 import { isUserProjectKind } from '../Services/PersonalProject';
+import type { SandboxService } from '../Services/Sandbox/SandboxService';
+import { registerSandboxTools } from './sandboxTools';
 
 const CONVERSATION_OUTPUT_HINT = 'Use get_conversation_output for the latest answer, turn state, last report, and older messages.';
 
@@ -120,7 +122,8 @@ interface RegistryServices {
   assistant?: Pick<AssistantService, 'deliverAgentMessage'> & Partial<Pick<AssistantService, 'setFocus' | 'focusItems'>>;
   assistantInbox?: Pick<AssistantInbox, 'hold'>;
   assistantMemory?: AssistantMemoryService;
-  launchingIdentities?: Pick<LaunchingMcpIdentities, 'role'>;
+  launchingIdentities?: Pick<LaunchingMcpIdentities, 'role'> & Partial<Pick<LaunchingMcpIdentities, 'sandbox'>>;
+  sandboxes?: SandboxService;
   routines?: RoutineService;
   crossHost?: CrossHostService;
 }
@@ -144,6 +147,7 @@ const spawnAgentInput = z.object({
   name: z.string().optional(),
   worktree_id: z.string().nullable().optional(),
   detached: z.boolean().default(false),
+  sandbox: z.boolean().default(false),
   // Only the assistant may name another project; other agents spawn in their own.
   project_id: z.string().min(1).optional()
 }).superRefine((input, context) => {
@@ -456,7 +460,8 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
         'Codex only: pass service_tier to override the preset speed, such as priority for Fast or default for Standard. harness_models lists the tiers each model supports.',
         'To continue prior work, pass a conversation_id returned by search_conversation_history. Provider, worktree, and cwd are inferred; presets cannot be switched while resuming.',
         'Pass detached: true to open the agent as a regular top-level tab that outlives the calling agent. It also works with conversation_id. A detached agent has no parent: it cannot call report_to_parent, its notify_user requests go straight to the user, and you cannot wait for it with timer_fire_when_reported_any/all.',
-        'Only spawn detached agents when the user has specifically asked for one; never detach on your own initiative.'
+        'Only spawn detached agents when the user has specifically asked for one; never detach on your own initiative.',
+        'A child of an agent running in a sandbox shares that sandbox unless you pass another worktree_id. Pass sandbox: true to give the child its own new sandbox and worktree; only do so when the user asks.'
       ]
     },
     async (args, context) => {
@@ -482,8 +487,11 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
         });
         return processInfo(launched.process_id, 'agent', launched.name, 'running', parentProcessId);
       }
-      const worktreeId = scopedNullableWorktreeId(services.database, parent, input.worktree_id);
+      // A sandboxed parent's children work in its sandbox by default.
+      const inherited = input.worktree_id === undefined && !input.sandbox && parent?.worktree_id && services.sandboxes?.forWorktree(parent.worktree_id) ? parent.worktree_id : null;
+      const worktreeId = inherited ?? scopedNullableWorktreeId(services.database, parent, input.worktree_id);
       const launched = await services.harnessLauncher.launch({
+        sandbox: input.sandbox,
         harness: input.agent,
         preset: input.preset ?? null,
         model: input.model ?? null,
@@ -2222,6 +2230,12 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     }
   }
 
+  if (services.sandboxes) {
+    registerSandboxTools(registry, services.sandboxes, {
+      cwdFor: (context) => { try { return caller(context)?.cwd ?? null; } catch { return null; } },
+      launchingSandbox: (identity) => services.launchingIdentities?.sandbox?.(identity) ?? null
+    });
+  }
   return registry;
 }
 

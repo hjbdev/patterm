@@ -888,7 +888,12 @@ const TOOL_TITLES: Record<TranscriptToolFamily, string> = {
   task: 'Task', todo: 'Todos', skill: 'Skill', mcp: 'MCP', generic: 'Tool'
 };
 
-export function buildTranscriptTool(name: string, detail: { input?: unknown; state?: unknown; result?: unknown; images?: unknown; row?: Record<string, unknown> }, output: string): TranscriptTool {
+export function buildTranscriptTool(name: string, detail: { input?: unknown; state?: unknown; result?: unknown; images?: unknown; row?: Record<string, unknown> }, rawOutput: string): TranscriptTool {
+  // Patterm's sandbox tools stand in for the harness's own file and shell
+  // tools, so they show as those tools, with their JSON result unpacked.
+  const sandbox = sandboxToolResult(name, rawOutput, detail.result);
+  if (sandbox) detail = { ...detail, result: sandbox.result };
+  const output = sandbox ? sandbox.output : rawOutput;
   const rawInput = detail.input ?? record(detail.state).input;
   const input = record(rawInput);
   const state = detail.state;
@@ -964,6 +969,8 @@ function checklistSummary(checklist: NonNullable<TranscriptTool['checklist']>): 
 }
 
 function toolFamily(name: string, input: Record<string, unknown>, row: Record<string, unknown>): TranscriptToolFamily {
+  const sandboxTool = sandboxToolKind(name);
+  if (sandboxTool) return TOOL_FAMILY_BY_NAME[sandboxTool] ?? 'generic';
   const key = name.toLowerCase().replace(/[^a-z0-9]/g, '');
   if (key.startsWith('mcp') || name.includes('__') || OPENCODE_BRIDGE.test(name)) return 'mcp';
   const family = TOOL_FAMILY_BY_NAME[key];
@@ -986,6 +993,46 @@ function toolStatus(state: unknown, output: string): TranscriptToolStatus {
 // bridge as patterm_<socket hash>_<tool>.
 const CLAUDE_MCP = /^mcp__(.+?)__(.+)$/;
 const OPENCODE_BRIDGE = /^patterm_[0-9a-f]{12}_(.+)$/;
+
+// bash, read, edit, write, grep or glob for a Patterm sandbox tool.
+function sandboxToolKind(name: string): string | null {
+  const parts = mcpNameParts(name);
+  return parts.server === 'patterm' && parts.tool?.startsWith('sandbox_') ? parts.tool.slice('sandbox_'.length) : null;
+}
+
+function sandboxToolResult(name: string, output: string, result: unknown): { output: string; result: Record<string, unknown> } | null {
+  const kind = sandboxToolKind(name);
+  if (!kind) return null;
+  const parsed = sandboxPayload(result) ?? sandboxPayload(output);
+  if (!parsed) return null;
+  const text = (value: unknown) => typeof value === 'string' ? value : '';
+  if (kind === 'bash') {
+    const exit = parsed.exit_code;
+    const lines = [text(parsed.stdout).trimEnd(), text(parsed.stderr).trimEnd(), text(parsed.error), parsed.background ? `Running in the background; output goes to ${text(parsed.log)}` : '', typeof exit === 'number' && exit !== 0 ? `Exit code ${exit}` : ''];
+    return { output: lines.filter(Boolean).join('\n'), result: parsed };
+  }
+  if (kind === 'read') return { output: [text(parsed.content), text(parsed.more)].filter(Boolean).join('\n'), result: { filePath: parsed.file_path } };
+  if (kind === 'grep') return { output: text(parsed.matches), result: parsed };
+  if (kind === 'glob') return { output: text(parsed.files), result: parsed };
+  return { output: '', result: { filePath: parsed.file_path, ...(text(parsed.diff) ? { gitDiff: text(parsed.diff) } : {}) } };
+}
+
+// The tool's JSON reply, from the text itself or from an MCP result whose
+// first text part holds it, as Claude records the whole result.
+function sandboxPayload(value: unknown): Record<string, unknown> | null {
+  let current: unknown = value;
+  for (let depth = 0; depth < 3; depth++) {
+    if (typeof current === 'string') {
+      try { current = JSON.parse(current) as unknown; } catch { return null; }
+      continue;
+    }
+    const row = record(current);
+    const parts = Array.isArray(row.content) ? row.content : Array.isArray(current) ? current : null;
+    if (!parts) return Object.keys(row).length ? row : null;
+    current = record(parts.find((part) => record(part).type === 'text')).text;
+  }
+  return null;
+}
 
 function mcpNameParts(name: string): { server?: string | undefined; tool?: string | undefined } {
   const claude = CLAUDE_MCP.exec(name);

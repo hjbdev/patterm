@@ -9,6 +9,8 @@ export interface HarnessLaunchInput {
   preset?: string;
   interfaceMode?: AgentInterface;
   host?: string;
+  // Set up a new remote sandbox for the agent's tools first.
+  sandbox?: boolean;
 }
 
 export interface HarnessLaunch {
@@ -21,7 +23,8 @@ export interface HarnessLaunch {
 
 export function harnessLaunchLabel(launch: HarnessLaunch): string {
   const name = harnessLabel(launch.input.harness);
-  return launch.state === 'failed' ? `${name} · Launch failed` : `Starting ${name}…`;
+  if (launch.state === 'failed') return `${name} · Launch failed`;
+  return launch.input.sandbox ? `Setting up a sandbox for ${name}…` : `Starting ${name}…`;
 }
 
 // Temporary renderer records, not processes or sessions. Native launch and
@@ -39,7 +42,8 @@ function start(input: HarnessLaunchInput, call: (args: Record<string, unknown>) 
     harness: launch.input.harness,
     project_id: launch.input.targetProjectId,
     ...(launch.input.preset ? { preset: launch.input.preset } : {}),
-    ...(launch.input.interfaceMode ? { interface_mode: launch.input.interfaceMode } : {})
+    ...(launch.input.interfaceMode ? { interface_mode: launch.input.interfaceMode } : {}),
+    ...(launch.input.sandbox ? { sandbox: true, interface_mode: 'integrated' } : {})
   })).then((result) => {
     const sessionId = (result as { session_id?: unknown } | null)?.session_id;
     if (typeof sessionId !== 'string' || !sessionId) throw new Error('The launch returned no session. Check the project’s agents before launching again.');

@@ -63,7 +63,16 @@ export class WorktreeFileService implements IntegratedInputResolver {
     private readonly uploads: UploadService
   ) {}
 
+  // Whether an agent's worktree lives in a sandbox, where this machine's
+  // copy is stale. Set once sandboxes exist.
+  private sandboxed: ((processId: string) => boolean) | null = null;
+
+  setSandboxed(check: (processId: string) => boolean): void {
+    this.sandboxed = check;
+  }
+
   async resolve(processId: string, input: IntegratedPromptInput): Promise<ResolvedIntegratedPrompt> {
+    if (this.sandboxed?.(processId) && input.references?.length) return this.resolve(processId, { ...input, text: sandboxReferenceText(input), references: [] });
     const references = new Map<string, ResolvedIntegratedPrompt['references'][number]>();
     for (const reference of (input.references ?? []).slice(0, 20)) {
       const resolved = await this.resolveReference(processId, reference);
@@ -342,4 +351,15 @@ function normaliseMessageId(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const id = value.trim();
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ? id : undefined;
+}
+
+// A harness would read a referenced file from this machine's stale copy, so
+// a sandboxed agent gets the paths to open with its sandbox tools instead.
+function sandboxReferenceText(input: IntegratedPromptInput): string {
+  const paths = (input.references ?? []).slice(0, 20).flatMap((reference) => {
+    const value = typeof reference?.path === 'string' ? slashPath(reference.path) : '';
+    return value && !value.includes('\0') && !value.split('/').includes('..') ? [value] : [];
+  });
+  const missing = paths.filter((value) => !input.text.includes(value));
+  return missing.length ? `${input.text.trim()}\n\nFiles mentioned: ${missing.map((value) => `\`${value}\``).join(', ')}` : input.text;
 }

@@ -92,6 +92,12 @@ const EMPTY_TREES: Record<string, string> = {
 const STATUSES: Record<string, DiffFileStatus> = { A: 'added', M: 'modified', D: 'deleted', R: 'renamed', C: 'copied', T: 'type_changed' };
 const RAW_ENTRY = /^:(\d{6}) (\d{6}) ([0-9a-f]+) ([0-9a-f]+) ([A-Z])\d*$/;
 const NUMSTAT_ENTRY = /^(\d+|-)\t(\d+|-)\t([\s\S]*)$/;
+export interface RemoteWorkingFile {
+  kind: 'missing' | 'file' | 'symlink' | 'directory' | 'other';
+  bytes?: Buffer;
+  target?: string;
+}
+
 const BINARY = Symbol('binary');
 const TOO_LARGE = Symbol('tooLarge');
 type FileSide = string | null | typeof BINARY | typeof TOO_LARGE;
@@ -108,6 +114,9 @@ export class DiffService {
       worktrees: Pick<WorktreeService, 'get'>;
       git?: GitService;
       now?: () => number;
+      // Reads working-tree files of a worktree that lives in a sandbox, or
+      // returns null for a worktree on this machine.
+      remoteFiles?: (root: string, filePath: string, maxBytes: number) => Promise<RemoteWorkingFile | null>;
     }
   ) {
     this.git = deps.git ?? new GitService();
@@ -283,6 +292,13 @@ export class DiffService {
   // Reads the working tree without following symlinks out of it. A symlink's
   // contents are its target text, as git diffs it.
   private async workingTreeSide(root: string, filePath: string, change: TrackedChange | undefined): Promise<FileSide> {
+    const remote = await this.deps.remoteFiles?.(root, filePath, MAX_TEXT_BYTES + 1);
+    if (remote) {
+      if (remote.kind === 'symlink') return remote.target ?? null;
+      if (remote.kind === 'directory' && change?.newMode === GITLINK_MODE) return this.submoduleSide(path.join(root, filePath), change.newObject);
+      if (remote.kind !== 'file' || !remote.bytes) return null;
+      return remote.bytes.length > MAX_TEXT_BYTES ? TOO_LARGE : textOrBinary(remote.bytes);
+    }
     const target = await containedPath(root, filePath);
     if (!target) return null;
     const stat = await lstatIfExists(target);

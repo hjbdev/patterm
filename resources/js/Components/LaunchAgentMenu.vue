@@ -34,6 +34,10 @@
       </template>
       <template v-else>
       <InterfaceModeToggle menu :model-value="interfaceMode" @update:model-value="saveInterface" />
+      <DropdownMenuCheckboxItem v-if="sandboxAvailable" v-model:model-value="sandbox" class="text-xs" title="Run the agent's file and shell tools on a new remote sandbox with its own worktree" @select.prevent>
+        <Box class="mr-2 h-3.5 w-3.5 text-muted-foreground" />
+        Run in sandbox
+      </DropdownMenuCheckboxItem>
       <div v-if="hostOptions.length > 1" class="px-1 py-1" @keydown.stop>
         <SettingsChoice v-model="targetProjectId" :options="hostOptions" aria-label="Launch on" segmented class="w-full" />
       </div>
@@ -84,6 +88,11 @@
         <div v-if="hostOptions.length > 1" class="pb-2">
           <SettingsChoice v-model="targetProjectId" :options="hostOptions" aria-label="Launch on" segmented class="w-full" />
         </div>
+        <label v-if="sandboxAvailable" class="flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm">
+          <Box class="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span class="min-w-0 flex-1">Run in sandbox</span>
+          <Switch v-model:model-value="sandbox" />
+        </label>
         <p v-if="!launchableHarnesses.length" class="py-3 text-sm text-muted-foreground">No agent CLIs found on PATH</p>
         <div class="divide-y divide-border">
           <div v-for="harness in launchableHarnesses" :key="harness.id" class="py-1">
@@ -113,7 +122,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
-import { Check, ChevronDown, ChevronLeft, Plus } from 'lucide-vue-next';
+import { Box, Check, ChevronDown, ChevronLeft, Plus } from 'lucide-vue-next';
 import { toast } from 'vue-sonner';
 import { useHarnessLaunch } from '../Composables/useHarnessLaunch';
 import { useWorkbench } from '../Composables/useWorkbench';
@@ -124,7 +133,8 @@ import InterfaceModeToggle from './InterfaceModeToggle.vue';
 import ResponsiveMenu from './ResponsiveMenu.vue';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
-import { DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger } from './ui/dropdown-menu';
+import { DropdownMenuCheckboxItem, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger } from './ui/dropdown-menu';
+import { Switch } from './ui/switch';
 import { allAgents, allAgentsHiding, launchTargets, targetsWithHarness, type LaunchTarget } from '../lib/allAgents';
 import HostBadge from './HostBadge.vue';
 import ProjectLogo from './ProjectLogo.vue';
@@ -246,6 +256,19 @@ async function saveInterface(value: unknown): Promise<void> {
     toast.error(caught instanceof Error ? caught.message : 'Failed to save the agent interface preference');
   }
 }
+// Offered once a sandbox provider is set up, for agents on this host. It
+// applies to the next launch only.
+const sandboxConfigured = ref(false);
+const sandbox = ref(false);
+const sandboxAvailable = computed(() => sandboxConfigured.value && !remoteTarget.value && !props.chooseProject);
+watch(menuOpen, async (open) => {
+  if (!open) return;
+  try {
+    sandboxConfigured.value = (await window.patterm.call('settings_sandboxes_get', {}) as { configured?: unknown }).configured === true;
+  } catch {
+    sandboxConfigured.value = false;
+  }
+});
 const expandedHarness = ref<string | null>(null);
 const presets = ref<HarnessPresetSettings>({ presets: [], defaultPresetIdByHarness: {} });
 
@@ -316,8 +339,10 @@ function launchHarness(harness: string, presetId: string | null, target: Pick<La
     targetProjectId: target.targetProjectId,
     ...(presetId && !target.host ? { preset: presetId } : {}),
     ...(target.host ? { host: target.host } : {}),
+    ...(sandbox.value && sandboxAvailable.value ? { sandbox: true } : {}),
     interfaceMode: interfaceMode.value
   });
+  sandbox.value = false;
   emit('started');
 }
 </script>

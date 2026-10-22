@@ -3,6 +3,7 @@ import { MCP_SERVER_TOOLS } from '../MCP/registerMcpServerTools';
 import { HOST_TOOLS } from '../MCP/registerHostTools';
 import { UPDATE_TOOLS } from '../MCP/registerUpdateTools';
 import { SEMANTIC_SEARCH_TOOLS } from '../Actions/SemanticSearchActions';
+import { SANDBOX_SETTINGS_TOOLS } from '../MCP/sandboxTools';
 
 // Tools the UI may call through patterm:mcp:call from a browser or a paired
 // host. Agent-only tools and owner tools that act on the machine itself are
@@ -23,6 +24,7 @@ export const BROWSER_TOOLS = new Set([
   ...HOST_TOOLS,
   ...UPDATE_TOOLS,
   ...SEMANTIC_SEARCH_TOOLS,
+  ...SANDBOX_SETTINGS_TOOLS,
   'process_create', 'process_restart', 'stop_process', 'close_process', 'close_request_answer', 'rename_process',
   'agent_snooze', 'agent_unsnooze', 'agent_snooze_reminder_dismiss',
   'history_sources', 'history_configure', 'history_import',

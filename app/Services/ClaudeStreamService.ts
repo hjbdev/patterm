@@ -25,6 +25,10 @@ interface ClaudeRuntime {
   pattermSessionId: string;
 }
 
+// Built-in tools that touch the local disk or run local commands. A
+// sandboxed agent uses Patterm's sandbox tools instead.
+export const CLAUDE_SANDBOXED_TOOLS = ['Bash', 'BashOutput', 'KillShell', 'Read', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'Glob', 'Grep', 'LS'];
+
 export class ClaudeStreamService {
   // Native model and command catalogue per host control socket. A relaunch
   // gets a new socket, so an entry never outlives the host it describes.
@@ -62,6 +66,7 @@ export class ClaudeStreamService {
       socketPath, executable: input.executable, cwd: input.cwd, sessionId,
       resume: Boolean(input.resumeId), context: input.context, mcpConfigPath,
       model: input.model ?? null, reasoning: input.reasoning ?? null,
+      ...(input.sandbox ? { disallowedTools: CLAUDE_SANDBOXED_TOOLS } : {}),
       ...(this.images ? { imageDirectory: this.images.directory } : {})
     }), { mode: 0o600 });
     const pid = await this.launcher.launch({ harness: 'claude', key, nodePath: this.nodePath, script: this.hostScript, configPath, cwd: input.cwd, env: this.env });

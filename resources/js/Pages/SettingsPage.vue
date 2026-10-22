@@ -170,6 +170,10 @@
                 <FigureSettings />
               </TabsContent>
 
+              <TabsContent value="sandboxes" class="m-0">
+                <SandboxSettings />
+              </TabsContent>
+
               <TabsContent value="harnesses" class="m-0">
                 <HarnessPresetSettings />
               </TabsContent>
@@ -200,7 +204,7 @@
 <script setup lang="ts">
 import AssistantButton from '../Components/Assistant/AssistantButton.vue';
 import { computed, onBeforeUnmount, reactive, ref } from 'vue';
-import { ArrowLeft, AudioLines, Bell, ChartColumn, ChevronDown, Cpu, History, Info, KeyRound, Palette, Plug, Server, Shrink, Sparkles } from 'lucide-vue-next';
+import { ArrowLeft, AudioLines, Bell, Box, ChartColumn, ChevronDown, Cpu, History, Info, KeyRound, Palette, Plug, Server, Shrink, Sparkles } from 'lucide-vue-next';
 import {
   DIFF_VIEWER_OPTIONS,
   NAVIGATION_OPTIONS,
@@ -224,6 +228,7 @@ import AutoSummarySettings from '../Components/AutoSummarySettings.vue';
 import SemanticSearchSettings from '../Components/SemanticSearchSettings.vue';
 import FigureSettings from '../Components/FigureSettings.vue';
 import HarnessPresetSettings from '../Components/HarnessPresetSettings.vue';
+import SandboxSettings from '../Components/SandboxSettings.vue';
 import IdleCompactionSettings from '../Components/IdleCompactionSettings.vue';
 import AssistantSettings from '../Components/AssistantSettings.vue';
 import McpServerSettings from '../Components/McpServerSettings.vue';
@@ -260,6 +265,7 @@ const NAV = [
   { value: 'compaction', label: 'Idle compaction', icon: Shrink },
   { value: 'figures', label: 'Figures', icon: ChartColumn },
   { value: 'harnesses', label: 'Harnesses', icon: Cpu },
+  { value: 'sandboxes', label: 'Sandboxes', icon: Box },
   { value: 'mcp', label: 'MCP servers', icon: Plug },
   { value: 'hosts', label: 'Hosts', icon: Server },
   { value: 'access', label: 'Remote access', icon: KeyRound },

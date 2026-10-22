@@ -44,7 +44,7 @@ export class McpHelperAccess {
 // helpers before Patterm registers the session, so those helpers are
 // recognised from the moment the identity is made.
 export class LaunchingMcpIdentities {
-  private readonly launching = new Map<string, { harness: string; role: string | null }>();
+  private readonly launching = new Map<string, { harness: string; role: string | null; sandbox?: string }>();
 
   reserve(identity: string, harness: string, role: string | null = null): () => void {
     this.launching.set(identity, { harness, role });
@@ -57,5 +57,16 @@ export class LaunchingMcpIdentities {
 
   role(identity: string): string | null {
     return this.launching.get(identity)?.role ?? null;
+  }
+
+  // A harness lists its tools while it starts, before its session exists,
+  // so a sandboxed launch names its sandbox here.
+  attachSandbox(identity: string, sandboxId: string): void {
+    const entry = this.launching.get(identity);
+    if (entry) entry.sandbox = sandboxId;
+  }
+
+  sandbox(identity: string): string | null {
+    return this.launching.get(identity)?.sandbox ?? null;
   }
 }

@@ -42,6 +42,14 @@ export interface IntegratedLaunchInput {
   // A restart reconnects MCP servers a shared daemon keeps across sessions,
   // so their tool lists are fetched again.
   reconnectMcp?: boolean;
+  // The remote sandbox holding this agent's worktree at `path`. Its own file
+  // and shell tools are switched off in favour of Patterm's sandbox tools,
+  // except Codex, which runs them through its exec-server there.
+  sandbox?: {
+    id: string;
+    path: string;
+    codex?: { environmentId: string; execServerUrl: string; authBearerToken: string };
+  };
 }
 
 // Launch settings a running agent reports. A missing key is one it does not
