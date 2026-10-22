@@ -114,6 +114,8 @@ import { registerUpdateTools } from './MCP/registerUpdateTools';
 import { detectReleaseInstall, UpdateService } from './Services/UpdateService';
 import { UpdateInstaller } from './Services/UpdateInstaller';
 import { quitConfirmation } from './Commands/CommandPalette';
+import { SandboxService } from './Services/Sandbox/SandboxService';
+import { SandboxGitService } from './Services/Sandbox/SandboxGitService';
 
 export interface AppOptions {
   appDataPath: string;
@@ -421,9 +423,36 @@ async function createApplicationResources(
     // Windows ignores a $SHELL inherited from Git Bash or MSYS; raw terminals use PowerShell.
     ...(resolvedEnv.SHELL && process.platform !== 'win32' ? { shell: resolvedEnv.SHELL } : {})
   });
-  const git = new GitService();
-  const worktreeService = new WorktreeService({ database, timeline, workbench, git });
-  const diffService = new DiffService({ worktrees: worktreeService, git });
+  // Remote sandboxes on the owner's own provider account. Agents on a
+  // sandboxed worktree run here and use tools that run on the sandbox's copy.
+  const sandboxes = new SandboxService(database, settings, {
+    runtimeDir: harnessRuntimeDir,
+    env: resolvedEnv,
+    onChanged: () => notifyChanged(['settings', 'workbench']),
+    log: (event, data) => debugLog.write('sandbox', event, data)
+  });
+  defer(() => sandboxes.dispose());
+  sandboxes.restore();
+  integratedInputs.setSandboxed((processId) => Boolean(sandboxes.forProcess(processId)));
+  codexAppServer.setSandboxEnvironments((processId) => sandboxes.codexEnvironmentFor(processId));
+  defer(integrated.onActivityChange(({ processId, activity }) => {
+    const sandbox = sandboxes.forProcess(processId);
+    if (sandbox?.status === 'ready') sandboxes.setBusy(sandbox, processId, activity === 'working' || activity === 'thinking');
+  }));
+  const git: GitService = new SandboxGitService(sandboxes);
+  const worktreeService = new WorktreeService({ database, timeline, workbench, git, sandboxOwner: (target) => sandboxes.ownerOfPath(target), hasSandbox: (worktreeId) => Boolean(sandboxes.forWorktree(worktreeId)) });
+  const diffService = new DiffService({
+    worktrees: worktreeService,
+    git,
+    remoteFiles: (root, filePath, maxBytes) => {
+      const sandbox = sandboxes.forPath(root);
+      return sandbox ? sandboxes.readWorkingFile(sandbox, root, filePath, maxBytes) : Promise.resolve(null);
+    },
+    remoteStats: (root, paths, maxBytes) => {
+      const sandbox = sandboxes.forPath(root);
+      return sandbox ? sandboxes.statWorkingFiles(sandbox, root, paths, maxBytes) : Promise.resolve(null);
+    }
+  });
   const summaryService = new SummaryService(database, timeline, searchService);
   const historyDiscovery = new ProviderHistoryDiscoveryService();
   const historySourceService = new AgentHistorySourceService(database, historyDiscovery);
@@ -511,6 +540,11 @@ async function createApplicationResources(
     openCodeServer,
     integrated,
     settings,
+    sandboxes,
+    createWorktree: async (projectId, name, base) => {
+      const { worktree } = await worktreeService.create({ project_id: projectId, name, actor_type: 'system', ...base });
+      return { id: worktree.id, worktree_path: worktree.worktreePath };
+    },
     database,
     timeline,
     terminal,
@@ -676,7 +710,8 @@ async function createApplicationResources(
     routines,
     assistantMemory,
     launchingIdentities,
-    crossHost
+    crossHost,
+    sandboxes
   });
   registerAutoSummaryControl(mcp, autoSummaryActions);
   registerSemanticSearchTools(mcp, semanticSearchActions);

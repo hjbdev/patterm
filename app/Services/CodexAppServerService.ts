@@ -147,6 +147,14 @@ export class CodexAppServerService {
     private readonly options: { requestTimeoutMs?: number | undefined; launcher?: IntegratedHostLauncher; images?: TranscriptImageStore } = {}
   ) {}
 
+  // The sandbox environment of a sandboxed agent, opening its tunnel again
+  // after a Patterm restart. Set once sandboxes exist.
+  private sandboxEnvironment: ((processId: string) => Promise<(CodexSandboxEnvironment & { cwd: string }) | null>) | null = null;
+
+  setSandboxEnvironments(resolve: (processId: string) => Promise<(CodexSandboxEnvironment & { cwd: string }) | null>): void {
+    this.sandboxEnvironment = resolve;
+  }
+
   // Listed entries carry native item times when the producer recorded them.
   private readonly projectEntry = (entry: unknown): IntegratedConversationMessage[] => {
     const value = record(entry);
@@ -169,6 +177,9 @@ export class CodexAppServerService {
       '-c', 'approval_policy="on-request"',
       '-c', 'approvals_reviewer="auto_review"',
       ...overrides.flatMap((override) => ['-c', override]),
+      // Codex's own command sandbox (bubblewrap) cannot start inside a sandbox
+      // VM, and the VM is already the isolation boundary.
+      ...(input.sandbox ? ['-c', 'sandbox_mode="danger-full-access"'] : []),
       ...(input.model ? ['-c', `model=${JSON.stringify(input.model)}`] : []),
       ...(input.reasoning ? ['-c', `model_reasoning_effort=${JSON.stringify(input.reasoning)}`] : []),
       ...(input.serviceTier ? ['-c', `service_tier=${JSON.stringify(input.serviceTier)}`] : []),
@@ -184,9 +195,12 @@ export class CodexAppServerService {
     try {
       await waitForSocket(socketPath, pid);
       const client = await this.connect(socketPath);
+      const sandbox = input.sandbox?.codex;
+      if (sandbox) await addEnvironment(client, sandbox);
+      const environments = sandbox ? { environments: [{ environmentId: sandbox.environmentId, cwd: input.cwd }] } : {};
       const response = await client.request(input.resumeId ? 'thread/resume' : 'thread/start', input.resumeId
         ? { threadId: input.resumeId, cwd: input.cwd, developerInstructions: input.context, approvalPolicy: 'on-request', approvalsReviewer: 'auto_review', excludeTurns: true, ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}) }
-        : { cwd: input.cwd, developerInstructions: input.context, ephemeral: false, ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}) });
+        : { cwd: input.cwd, developerInstructions: input.context, ephemeral: false, ...environments, ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}) });
       const thread = record(record(response).thread);
       if (typeof thread.id !== 'string') throw new Error('Codex app-server did not return a thread ID');
       return {
@@ -335,11 +349,16 @@ export class CodexAppServerService {
       mode: this.collaborationModes.get(processId) ?? 'default',
       settings: { model: model ?? await this.defaultModel(client), reasoning_effort: effort ?? null, developer_instructions: null }
     };
+    // Every turn names the sandbox: a resumed thread has no sticky environment,
+    // and a restarted Patterm may have reopened the tunnel on another port.
+    const sandbox = await this.sandboxEnvironment?.(processId) ?? null;
+    if (sandbox) await addEnvironment(client, sandbox);
     try {
       // clientUserMessageId is correlation only; Codex does not deduplicate.
       const response = record(await client.request('turn/start', {
         threadId: runtime.threadId,
         input: items,
+        ...(sandbox ? { environments: [{ environmentId: sandbox.environmentId, cwd: sandbox.cwd }] } : {}),
         ...(model ? { model } : {}),
         ...(effort ? { effort } : {}),
         ...(serviceTier ? { serviceTier } : {}),
@@ -1969,6 +1988,23 @@ async function stopRuntime(argv: string[]): Promise<void> {
 
 // A POSIX host removes its launch config as SIGTERM stops it. A Windows host
 // is ended without running its own cleanup.
+export interface CodexSandboxEnvironment {
+  environmentId: string;
+  execServerUrl: string;
+  authBearerToken: string;
+  cwd?: string;
+}
+
+// Registers the sandbox's exec-server with this app-server. Adding the same
+// environment again replaces its URL, so a reopened tunnel is picked up.
+async function addEnvironment(client: CodexRpcClient, environment: CodexSandboxEnvironment): Promise<void> {
+  await client.request('environment/add', {
+    environmentId: environment.environmentId,
+    execServerUrl: environment.execServerUrl,
+    authBearerToken: environment.authBearerToken
+  });
+}
+
 function removeForcedHostConfig(configPath: string | null): void {
   if (process.platform === 'win32' && configPath?.endsWith('.json')) fs.rmSync(configPath, { force: true });
 }

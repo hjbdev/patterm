@@ -23,6 +23,8 @@ interface HostConfig {
   reasoning?: string | null;
   // Absent for hosts launched before transcript images existed.
   imageDirectory?: string;
+  // Built-in tools switched off, for an agent whose tools run in a sandbox.
+  disallowedTools?: string[];
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -383,6 +385,7 @@ function startClaude(forceResume = false): void {
     // ExitPlanMode only when a permission prompt tool is named, as the SDK does.
     '--permission-prompt-tool', 'stdio',
     ...contextArgs(),
+    ...(config.disallowedTools?.length ? ['--disallowedTools', config.disallowedTools.join(',')] : []),
     '--permission-mode', mode,
     ...(model !== 'default' ? ['--model', model] : []),
     ...(effort ? ['--effort', effort] : []),

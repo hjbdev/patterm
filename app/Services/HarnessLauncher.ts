@@ -26,6 +26,7 @@ import type { McpServerRegistry } from './McpServerRegistry';
 import { CLAUDE_CONTEXT_FILE, CLAUDE_MCP_CONFIG } from '../Harness/providers';
 import type { LaunchingMcpIdentities } from '../MCP/McpHelperAccess';
 import type { AssistantMemoryService } from './AssistantMemoryService';
+import type { SandboxRow, SandboxService } from './Sandbox/SandboxService';
 
 export const launchHarnessInput = z.object({
   harness: z.enum(['claude', 'codex', 'opencode', 'rawpty']).optional(),
@@ -42,7 +43,11 @@ export const launchHarnessInput = z.object({
   session_role: z.enum(['orchestrator', 'child', 'assistant', 'routine']).default('orchestrator'),
   name: z.string().optional(),
   initial_prompt: z.string().optional(),
-  interface_mode: z.enum(['tui', 'integrated']).optional()
+  interface_mode: z.enum(['tui', 'integrated']).optional(),
+  // Run the agent's file and shell tools in a new remote sandbox, on a new
+  // worktree branched from the chosen worktree's commit or the default
+  // branch. Agents launched on a worktree that has a sandbox use it anyway.
+  sandbox: z.boolean().default(false)
 }).superRefine((value, context) => {
   if (!value.harness && !value.preset) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['harness'], message: 'harness or preset is required' });
@@ -106,7 +111,10 @@ export interface HarnessLauncherDeps {
   // Browsers on other machines view these terminals, so agent CLIs must not
   // expect a sign-in redirect to reach this machine's loopback listeners.
   // Lets MCP helpers of a launch that is still starting use its identity.
-  launchingIdentities?: Pick<LaunchingMcpIdentities, 'reserve'>;
+  launchingIdentities?: Pick<LaunchingMcpIdentities, 'reserve'> & Partial<Pick<LaunchingMcpIdentities, 'attachSandbox'>>;
+  sandboxes?: Pick<SandboxService, 'configured' | 'forWorktree' | 'provision' | 'codexEnvironment' | 'beginLaunch' | 'baseRef' | 'localHead'>;
+  // Creates the worktree a new sandbox holds.
+  createWorktree?: (projectId: string, name: string, base: { repo_path?: string; base_ref: string }) => Promise<{ id: string; worktree_path: string }>;
   assistantMemory?: Pick<AssistantMemoryService, 'snapshot'>;
 }
 
@@ -167,10 +175,25 @@ export class HarnessLauncher {
     });
   }
 
+  // A chosen sandbox cannot be deleted until the launch has registered its
+  // session, which then keeps it.
   private async startPrepared(input: ParsedLaunchHarnessInput, selection: HarnessLaunchSelection, resume: HarnessResume | null, identity: string): Promise<LaunchHarnessResult> {
+    const sandbox = await this.sandbox(input, selection.harness);
+    const endLaunch = sandbox ? this.deps.sandboxes!.beginLaunch(sandbox.id) : null;
+    try {
+      return await this.startIn(input, selection, resume, identity, sandbox);
+    } finally {
+      endLaunch?.();
+    }
+  }
+
+  private async startIn(input: ParsedLaunchHarnessInput, selection: HarnessLaunchSelection, resume: HarnessResume | null, identity: string, sandbox: SandboxRow | null): Promise<LaunchHarnessResult> {
     const timing = createLaunchTiming(this.deps.debugLog);
-    const interfaceMode = input.interface_mode ?? this.deps.settings?.agentInterface() ?? 'tui';
     const harness = selection.harness;
+    if (sandbox) input.worktree_id = sandbox.worktree_id;
+    // Sandboxed tools exist only in Integrated conversations.
+    const interfaceMode = sandbox ? 'integrated' : input.interface_mode ?? this.deps.settings?.agentInterface() ?? 'tui';
+    if (sandbox) this.deps.launchingIdentities?.attachSandbox?.(identity, sandbox.id);
     if (interfaceMode === 'integrated' && harness === 'rawpty') throw new Error('Raw terminal does not support Integrated conversations');
     if (selection.serviceTier && harness !== 'codex') throw new Error(`${providerName(harness)} does not support service tier overrides`);
     timing.mark('input.parsed', { harness, preset: selection.presetName, model: selection.model, interface_mode: interfaceMode });
@@ -202,20 +225,26 @@ export class HarnessLauncher {
       : input.session_role === 'assistant' ? contextService.buildAssistant(this.deps.assistantMemory?.snapshot()).trim()
       : input.session_role === 'routine' ? contextService.buildRoutine().trim()
       : contextService.build(input.project_id, { figures: interfaceMode === 'integrated' && this.deps.settings?.figuresEnabled() !== false }).trim();
+    const launchContext = sandbox ? `${agentContext}\n\n${sandboxContext(harness, sandbox.path)}`.trim() : agentContext;
     timing.mark('context.built', { context_chars: agentContext.length });
     const project = this.deps.workbench.getProject(input.project_id);
     const worktree = input.worktree_id ? this.worktree(input.worktree_id) : null;
-    const cwd = storedPath(input.cwd === undefined ? worktree?.worktree_path ?? project?.path ?? process.cwd() : nativePath(input.cwd));
+    const cwd = sandbox ? sandboxCwd(sandbox.path, input.cwd)
+      : storedPath(input.cwd === undefined ? worktree?.worktree_path ?? project?.path ?? process.cwd() : nativePath(input.cwd));
     const displayName = input.name?.trim() || provider.displayName;
     let providerSessionId = resume?.resume_id ?? null;
     let integratedArgv: string[] | null = null;
     let integratedLaunch: { input: IntegratedLaunchInput; result: IntegratedLaunchResult } | null = null;
     if (interfaceMode === 'integrated') {
       if (!this.deps.integrated || harness === 'rawpty') throw new Error(`${providerName(harness)} Integrated conversations are unavailable`);
-      const launchInput = {
-        executable: install.executablePath, cwd, name: input.name?.trim() || null, context: agentContext, mcp, mcpServers, resumeId: providerSessionId,
+      const launchInput: IntegratedLaunchInput = {
+        executable: install.executablePath, cwd, name: input.name?.trim() || null, context: launchContext, mcp, mcpServers, resumeId: providerSessionId,
         model: selection.model, reasoning: selection.reasoning, serviceTier: selection.serviceTier,
-        reconnectMcp: resume?.reconnect_mcp === true
+        reconnectMcp: resume?.reconnect_mcp === true,
+        ...(sandbox ? { sandbox: {
+          id: sandbox.id, path: sandbox.path,
+          ...(harness === 'codex' ? { codex: await this.deps.sandboxes!.codexEnvironment(sandbox) } : {})
+        } } : {})
       };
       const prepared = await this.deps.integrated.prepare(harness as 'claude' | 'codex' | 'opencode', launchInput);
       integratedLaunch = { input: launchInput, result: prepared };
@@ -232,7 +261,7 @@ export class HarnessLauncher {
     }
 
     if (interfaceMode === 'integrated') {
-      return this.registerIntegrated(input, selection, resume, displayName, cwd, identity, integratedArgv!, providerSessionId!, agentContext, integratedLaunch!, timing);
+      return this.registerIntegrated(input, selection, resume, displayName, cwd, identity, integratedArgv!, providerSessionId!, launchContext, integratedLaunch!, timing);
     }
     const plan = provider.buildLaunch({
       executablePath: install.executablePath,
@@ -476,9 +505,39 @@ export class HarnessLauncher {
     };
   }
 
-  private worktree(worktreeId: string): { worktree_path: string } {
-    const row = this.deps.database.connection.prepare(`select worktree_path from worktrees where id = ?`).get(worktreeId) as
-      | { worktree_path: string }
+  // The sandbox a launch runs in: a new one when asked, or the one its
+  // worktree already has.
+  private async sandbox(input: ParsedLaunchHarnessInput, harness: string): Promise<SandboxRow | null> {
+    const sandboxes = this.deps.sandboxes;
+    let worktreeId = input.worktree_id;
+    if (!input.sandbox) {
+      const existing = sandboxes?.forWorktree(worktreeId) ?? null;
+      if (!existing) return null;
+      if (existing.status !== 'ready') throw new Error(existing.status === 'creating' ? 'This worktree\'s sandbox is still being set up' : 'This worktree\'s sandbox could not be set up; delete it in Settings › Sandboxes and start the agent again');
+      if (input.interface_mode === 'tui' || harness === 'rawpty') throw new Error('Agents on a sandboxed worktree run as Integrated conversations');
+      return existing;
+    }
+    if (!sandboxes) throw new Error('Sandboxes are unavailable');
+    if (!sandboxes.configured()) throw new Error('Add a Sprites token in Settings › Sandboxes to run agents in sandboxes');
+    if (harness === 'rawpty') throw new Error('Raw terminals cannot run in a sandbox');
+    if (input.interface_mode === 'tui') throw new Error('Sandboxed agents run as Integrated conversations');
+    if (!this.deps.createWorktree) throw new Error('Sandboxes are unavailable');
+    // Like a fresh clone, a sandbox starts from commits only; the chosen
+    // worktree's uncommitted changes stay with it.
+    const source = worktreeId ? this.worktree(worktreeId) : null;
+    const projectPath = this.deps.workbench.getProject(input.project_id)?.path;
+    if (!source && !projectPath) throw new Error('This project has no repository for a sandbox');
+    const base = source
+      ? { repo_path: source.repo_path, base_ref: await sandboxes.localHead(source.worktree_path) }
+      : { base_ref: await sandboxes.baseRef(projectPath!) };
+    const created = await this.deps.createWorktree(input.project_id, `sandbox-${randomUUID().slice(0, 6)}`, base);
+    worktreeId = created.id;
+    return sandboxes.provision({ project_id: input.project_id, worktree_id: worktreeId, path: storedPath(created.worktree_path) });
+  }
+
+  private worktree(worktreeId: string): { worktree_path: string; repo_path: string } {
+    const row = this.deps.database.connection.prepare(`select worktree_path, repo_path from worktrees where id = ?`).get(worktreeId) as
+      | { worktree_path: string; repo_path: string }
       | undefined;
     if (!row) {
       throw new Error(`unknown worktree: ${worktreeId}`);
@@ -499,6 +558,22 @@ export class HarnessLauncher {
       submit: true
     });
   }
+}
+
+// Tells the agent where its work happens and which tools reach it.
+function sandboxContext(harness: string, worktreePath: string): string {
+  const tools = harness === 'codex'
+    ? 'Your shell commands and file patches already run there.'
+    : 'Use the sandbox_bash, sandbox_read, sandbox_edit, sandbox_write, sandbox_grep and sandbox_glob tools for every file and command; this machine\'s copy is out of date.';
+  return `This conversation runs in a remote sandbox. The project is at ${worktreePath} on the sandbox machine, which has its own processes, ports and network. ${tools} The sandbox has no git credentials: commit there, then push with the sandbox_push tool, which pushes from the owner's machine. Patterm brings the sandbox's work into the local worktree whenever its agents go idle.`;
+}
+
+// A sandboxed agent works inside its worktree; another directory there is
+// fine, but nothing outside it exists in the sandbox.
+function sandboxCwd(root: string, requested: string | undefined): string {
+  if (requested === undefined) return root;
+  const cwd = storedPath(nativePath(requested));
+  return cwd === root || cwd.startsWith(root + path.sep) ? cwd : root;
 }
 
 function providerName(harness: string): string {

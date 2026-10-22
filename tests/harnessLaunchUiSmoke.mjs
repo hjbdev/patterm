@@ -196,7 +196,8 @@ test('menu and empty-state handlers submit every launch with click-time argument
     return new Function(...Object.keys(values), `${js};return launchHarness;`)(...Object.values(values));
   }
   const props = { projectId: 'p1' }, targetProjectId = { value: 'p1' }, interfaceMode = { value: 'tui' };
-  const menuLaunch = handler(menu, { interfaceMode, menuOpen: { value: true }, startHarness: input => calls.push(input), emit() {} });
+  const sandbox = { value: false }, sandboxAvailable = { value: false };
+  const menuLaunch = handler(menu, { interfaceMode, sandbox, sandboxAvailable, menuOpen: { value: true }, startHarness: input => calls.push(input), emit() {} });
   menuLaunch('opencode', null, { projectId: props.projectId, targetProjectId: targetProjectId.value, host: null });
   menuLaunch('claude', 'fast', { projectId: 'p1', targetProjectId: 'p1:remote', host: 'remote' });
   props.projectId = 'p2'; targetProjectId.value = 'p2'; interfaceMode.value = 'integrated';
@@ -208,5 +209,13 @@ test('menu and empty-state handlers submit every launch with click-time argument
   emptyLaunch('opencode'); emptyLaunch('claude');
   assert.equal(calls.length, 4);
   assert.equal(calls[3].projectId, 'p2');
+  // A sandbox launch asks for one only while sandboxes are offered, then the toggle resets.
+  sandbox.value = true;
+  menuLaunch('claude', null, { projectId: 'p2', targetProjectId: 'p2', host: null });
+  assert.equal(calls[4].sandbox, undefined);
+  sandbox.value = true; sandboxAvailable.value = true;
+  menuLaunch('claude', null, { projectId: 'p2', targetProjectId: 'p2', host: null });
+  assert.equal(calls[5].sandbox, true);
+  assert.equal(sandbox.value, false);
   assert.doesNotMatch(menu + empty, /:disabled="launching"/);
 });

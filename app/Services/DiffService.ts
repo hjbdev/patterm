@@ -92,6 +92,20 @@ const EMPTY_TREES: Record<string, string> = {
 const STATUSES: Record<string, DiffFileStatus> = { A: 'added', M: 'modified', D: 'deleted', R: 'renamed', C: 'copied', T: 'type_changed' };
 const RAW_ENTRY = /^:(\d{6}) (\d{6}) ([0-9a-f]+) ([0-9a-f]+) ([A-Z])\d*$/;
 const NUMSTAT_ENTRY = /^(\d+|-)\t(\d+|-)\t([\s\S]*)$/;
+export interface RemoteWorkingFile {
+  kind: 'missing' | 'file' | 'symlink' | 'directory' | 'other';
+  bytes?: Buffer;
+  target?: string;
+}
+
+export interface RemoteFileStat {
+  kind: 'missing' | 'file' | 'symlink' | 'other';
+  size: number;
+  lines: number;
+  binary: boolean;
+  version: string;
+}
+
 const BINARY = Symbol('binary');
 const TOO_LARGE = Symbol('tooLarge');
 type FileSide = string | null | typeof BINARY | typeof TOO_LARGE;
@@ -108,6 +122,11 @@ export class DiffService {
       worktrees: Pick<WorktreeService, 'get'>;
       git?: GitService;
       now?: () => number;
+      // Reads working-tree files of a worktree that lives in a sandbox, or
+      // returns null for a worktree on this machine.
+      remoteFiles?: (root: string, filePath: string, maxBytes: number) => Promise<RemoteWorkingFile | null>;
+      // Stats working-tree files there in one call, or returns null here.
+      remoteStats?: (root: string, paths: string[], maxBytes: number) => Promise<Map<string, RemoteFileStat> | null>;
     }
   ) {
     this.git = deps.git ?? new GitService();
@@ -203,10 +222,13 @@ export class DiffService {
     // Nested repositories are listed as directories; they have no file diff.
     const untrackedPaths = others.split('\0').filter((entry) => entry && !entry.endsWith('/'));
     const listedUntracked = untrackedPaths.slice(0, UNTRACKED_LIMIT);
-    const [untrackedStats, trackedStats] = await Promise.all([
-      mapLimit(listedUntracked, UNTRACKED_READ_CONCURRENCY, (filePath) => untrackedFile(root, filePath)),
-      mapLimit(tracked, UNTRACKED_READ_CONCURRENCY, async (change) => (change.status === 'deleted' ? null : lstatIfExists(path.join(root, change.path)).catch(() => null)))
-    ]);
+    const remote = await this.deps.remoteStats?.(root, [...listedUntracked, ...tracked.filter((change) => change.status !== 'deleted').map((change) => change.path)], MAX_TEXT_BYTES) ?? null;
+    const [untrackedStats, trackedVersions] = remote
+      ? [listedUntracked.map((filePath) => remoteUntrackedFile(remote.get(filePath))), tracked.map((change) => (change.status === 'deleted' ? 'missing' : remote.get(change.path)?.version ?? 'missing'))]
+      : await Promise.all([
+        mapLimit(listedUntracked, UNTRACKED_READ_CONCURRENCY, (filePath) => untrackedFile(root, filePath)),
+        mapLimit(tracked, UNTRACKED_READ_CONCURRENCY, async (change) => fileVersion(change.status === 'deleted' ? null : await lstatIfExists(path.join(root, change.path)).catch(() => null)))
+      ]);
 
     const files: DiffFile[] = tracked.map((change, index) => ({
       path: change.path,
@@ -217,7 +239,7 @@ export class DiffService {
       binary: change.binary,
       untracked: false,
       ...classifyDiffPath(change.path),
-      version: `${change.oldObject}:${fileVersion(trackedStats[index] ?? null)}`
+      version: `${change.oldObject}:${trackedVersions[index] ?? 'missing'}`
     }));
     listedUntracked.forEach((filePath, index) => {
       const stats = untrackedStats[index];
@@ -283,6 +305,13 @@ export class DiffService {
   // Reads the working tree without following symlinks out of it. A symlink's
   // contents are its target text, as git diffs it.
   private async workingTreeSide(root: string, filePath: string, change: TrackedChange | undefined): Promise<FileSide> {
+    const remote = await this.deps.remoteFiles?.(root, filePath, MAX_TEXT_BYTES + 1);
+    if (remote) {
+      if (remote.kind === 'symlink') return remote.target ?? null;
+      if (remote.kind === 'directory' && change?.newMode === GITLINK_MODE) return this.submoduleSide(path.join(root, filePath), change.newObject);
+      if (remote.kind !== 'file' || !remote.bytes) return null;
+      return remote.bytes.length > MAX_TEXT_BYTES ? TOO_LARGE : textOrBinary(remote.bytes);
+    }
     const target = await containedPath(root, filePath);
     if (!target) return null;
     const stat = await lstatIfExists(target);
@@ -389,6 +418,13 @@ async function untrackedFile(root: string, filePath: string): Promise<{ addition
   if (!bytes) return { additions: 0, binary: false, version };
   const binary = isBinary(bytes);
   return { additions: binary || large ? 0 : countLines(bytes), binary, version };
+}
+
+// The same summary as untrackedFile, from a sandbox's stat of the file.
+function remoteUntrackedFile(stat: RemoteFileStat | undefined): { additions: number; binary: boolean; version: string } | null {
+  if (!stat || stat.kind === 'missing' || stat.kind === 'other') return null;
+  if (stat.kind === 'symlink') return { additions: 1, binary: false, version: stat.version };
+  return { additions: stat.binary || stat.size > MAX_TEXT_BYTES ? 0 : stat.lines, binary: stat.binary, version: stat.version };
 }
 
 function fileVersion(stat: { size: number; mtimeMs: number } | null): string {
