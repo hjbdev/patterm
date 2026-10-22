@@ -18,7 +18,7 @@ import { removeTree } from './fixtures/TempTree';
 // recorded.
 class LocalBackend implements SandboxBackend {
   readonly id = 'sprites';
-  readonly calls: Array<{ argv: string[]; cwd?: string; stdin?: number }> = [];
+  readonly calls: Array<{ argv: string[]; cwd?: string; stdin?: number; script?: string }> = [];
   readonly services: Array<{ name: string; service: string; spec: SandboxServiceSpec }> = [];
   readonly holds: string[] = [];
   created: string[] = [];
@@ -35,8 +35,8 @@ class LocalBackend implements SandboxBackend {
 
   exec(_name: string, argv: string[], options: SandboxExecOptions = {}): Promise<SandboxExecResult> {
     const input = options.stdin === undefined ? undefined : Buffer.isBuffer(options.stdin) ? options.stdin : Buffer.from(options.stdin);
-    this.calls.push({ argv, ...(options.cwd ? { cwd: options.cwd } : {}), ...(input ? { stdin: input.length } : {}) });
-    const script = argv[0] === 'sh' && argv[1] === '-c' ? argv[2] ?? '' : '';
+    const script = argv.length === 1 && argv[0] === 'sh' ? input?.toString('utf8') ?? '' : argv[0] === 'sh' && argv[1] === '-c' ? argv[2] ?? '' : '';
+    this.calls.push({ argv, ...(options.cwd ? { cwd: options.cwd } : {}), ...(input ? { stdin: input.length } : {}), ...(script ? { script } : {}) });
     if (script.includes('patterm-worktree.bundle') || argv[0] === 'gh' || (argv[0] === 'git' && argv[1] === 'apply')) {
       return Promise.resolve({ stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), exitCode: 0 });
     }
@@ -79,6 +79,7 @@ async function main(): Promise<void> {
     git(repo, ['init', '-q', '-b', 'main']);
     git(repo, ['add', '-A']);
     git(repo, ['commit', '-qm', 'init']);
+    git(repo, ['remote', 'add', 'origin', 'https://someone:remote-secret@example.com/repo.git']);
     fs.writeFileSync(path.join(repo, 'src', 'price.js'), 'export const total = (a, b) => a * b;\n');
     db.prepare('insert into projects(id,name,path,created_at,updated_at) values(?,?,?,?,?)').run('p', 'Project', repo, now, now);
     db.prepare(`insert into worktrees(id,project_id,repo_path,worktree_path,branch,created_by,created_at) values('w','p',?,?,'main','user',?)`).run(repo, repo, now);
@@ -86,7 +87,8 @@ async function main(): Promise<void> {
     const settings = new SettingsService(database);
     const backend = new LocalBackend();
     let changes = 0;
-    const sandboxes = new SandboxService(database, settings, { runtimeDir: path.join(dir, 'runtime'), backend: () => backend, onChanged: () => { changes += 1; } });
+    const logged: string[] = [];
+    const sandboxes = new SandboxService(database, settings, { runtimeDir: path.join(dir, 'runtime'), backend: () => backend, onChanged: () => { changes += 1; }, log: (event) => logged.push(event) });
 
     // The token is stored but never returned.
     assert.equal(sandboxes.configured(), false);
@@ -97,6 +99,9 @@ async function main(): Promise<void> {
     assert.ok(!JSON.stringify(state).includes('sprite-token-secret'));
     assert.ok(!JSON.stringify(sandboxes.state()).includes('sprite-token-secret'));
 
+    // Another project cannot have a sandbox on this project's worktree.
+    await assert.rejects(sandboxes.provision({ project_id: 'q', worktree_id: 'w', path: repo }), /Another project/);
+
     // Provisioning creates the sprite, uploads a bundle of the branch over
     // stdin, clones it at the same path, and applies uncommitted changes.
     const row = await sandboxes.provision({ project_id: 'p', worktree_id: 'w', path: repo });
@@ -105,13 +110,17 @@ async function main(): Promise<void> {
     assert.match(backend.created[0]!, /^patterm-[0-9a-f]{10}$/);
     const upload = backend.calls.find((call) => call.argv.join(' ').includes('cat > /tmp/patterm-worktree.bundle'));
     assert.ok(upload?.stdin && upload.stdin > 0, 'the bundle goes over stdin');
-    const clone = backend.calls.find((call) => call.argv[2]?.includes('git clone'));
-    assert.ok(clone?.argv[2]?.includes(repo) && clone.argv[2].includes("-B 'main'"));
+    const clone = backend.calls.find((call) => call.script?.includes('git init'))!;
+    assert.ok(clone?.script?.includes(repo) && clone.script.includes("-B 'main'"));
+    assert.deepEqual(clone.argv, ['sh'], 'the setup script goes over stdin');
+    assert.ok(clone.script!.includes("git remote add origin 'https://example.com/repo.git'"));
+    assert.ok(!JSON.stringify(backend.calls).includes('remote-secret'), 'credentials in the remote URL stay here');
     assert.ok(backend.calls.some((call) => call.argv.join(' ') === 'git apply --binary -' && call.cwd === repo && (call.stdin ?? 0) > 0));
     assert.ok(changes > 0);
     assert.equal(await sandboxes.provision({ project_id: 'p', worktree_id: 'w', path: repo }).then((again) => again.id), row.id, 'a worktree keeps its sandbox');
     assert.equal(sandboxes.forPath(path.join(repo, 'src'))?.id, row.id);
     assert.equal(sandboxes.forPath(`${repo}-other`), null);
+    assert.equal(sandboxes.ownerOfPath(path.join(repo, 'src')), 'p');
 
     // Agents on the worktree run in its sandbox.
     db.prepare(`insert into processes(id,project_id,kind,name,status,cwd,worktree_id,created_at,updated_at) values('proc','p','agent','A','running',?,'w',?,?)`).run(repo, now, now);
@@ -119,6 +128,12 @@ async function main(): Promise<void> {
     assert.equal(sandboxes.forIdentity('mcp-a')?.id, row.id);
     assert.equal(sandboxes.forProcess('proc')?.id, row.id);
     assert.equal(sandboxes.forIdentity('mcp-unknown'), null);
+
+    // Concurrent first launches agree on one exec-server token.
+    const [first, second] = await Promise.all([sandboxes.codexEnvironment(row), sandboxes.codexEnvironment(row)]);
+    assert.equal(first.authBearerToken, second.authBearerToken);
+    assert.equal(backend.services.length, 1);
+    assert.equal(sandboxes.get(row.id)?.exec_token, first.authBearerToken);
 
     // Codex gets a token-protected exec-server and a loopback URL.
     const codex = await sandboxes.codexEnvironmentFor('proc');
@@ -190,6 +205,37 @@ async function main(): Promise<void> {
     assert.deepEqual(await sandboxes.readWorkingFile(row, repo, 'notes/todo.md', 100), { kind: 'file', bytes: Buffer.from('one\nthree\n') });
     assert.equal((await sandboxes.readWorkingFile(row, repo, 'absent.txt', 100)).kind, 'missing');
     await assert.rejects(sandboxes.readWorkingFile(row, repo, '../outside.txt', 100), /outside the worktree/);
+
+    // Diff summaries stat the sandbox's files in one call.
+    fs.writeFileSync(path.join(repo, 'notes', 'bin.dat'), Buffer.from([1, 0, 2]));
+    fs.symlinkSync('todo.md', path.join(repo, 'notes', 'link'));
+    fs.writeFileSync(path.join(repo, 'notes', 'open.txt'), 'a\nb');
+    const stats = await sandboxes.statWorkingFiles(row, repo, ['notes/todo.md', 'notes/bin.dat', 'notes/link', 'notes/open.txt', 'gone.txt'], 1024);
+    assert.deepEqual([...stats.values()].map((stat) => [stat.kind, stat.lines, stat.binary]), [['file', 2, false], ['file', 0, true], ['symlink', 1, false], ['file', 2, false], ['missing', 0, false]]);
+    const version = stats.get('notes/todo.md')!.version;
+    fs.writeFileSync(path.join(repo, 'notes', 'todo.md'), 'one\nfour\n');
+    assert.notEqual((await sandboxes.statWorkingFiles(row, repo, ['notes/todo.md'], 1024)).get('notes/todo.md')!.version, version, 'an edit changes the version');
+
+    // After a restart, a working agent holds its sandbox awake again, and
+    // removing the token makes later provider calls fail quietly.
+    db.prepare(`update processes set activity = 'working' where id = 'proc'`).run();
+    const restarted = new SandboxService(database, settings, { runtimeDir: path.join(dir, 'runtime'), backend: () => backend, log: (event) => logged.push(event) });
+    const holdsBefore = backend.holds.length;
+    restarted.restore();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(backend.holds.slice(holdsBefore), ['hold:patterm']);
+    await restarted.saveSettings({ token: null });
+    restarted.setBusy(row, 'proc', true);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(logged.includes('hold.failed'));
+    await restarted.dispose();
+    await sandboxes.saveSettings({ token: 'sprite-token-secret' });
+    db.prepare(`update processes set activity = 'idle' where id = 'proc'`).run();
+
+    // A launch that has chosen the sandbox keeps it from being deleted.
+    const endLaunch = sandboxes.beginLaunch(row.id);
+    await assert.rejects(sandboxes.delete(row.id), /still being set up/);
+    endLaunch();
 
     // Deleting refuses while agents use it, then removes the sprite.
     await assert.rejects(sandboxes.delete(row.id), /Stop the agents/);

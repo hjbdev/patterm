@@ -52,6 +52,14 @@ export interface WorkingFile {
   target?: string;
 }
 
+export interface WorkingFileStat {
+  kind: 'missing' | 'file' | 'symlink' | 'other';
+  size: number;
+  lines: number;
+  binary: boolean;
+  version: string;
+}
+
 type BackendFactory = (token: string) => SandboxBackend;
 
 // Remote sandboxes for worktrees. A sandbox holds a copy of one worktree at
@@ -61,9 +69,11 @@ export class SandboxService {
   private readonly tunnels = new Map<string, Promise<SandboxTunnel>>();
   private readonly holds = new Map<string, { keys: Set<string>; timer: NodeJS.Timeout }>();
   private readonly provisioning = new Map<string, Promise<SandboxRow>>();
-  // Sandboxes whose Codex exec-server was defined since Patterm started; the
-  // provider keeps it running and restarts it, so later turns skip the call.
-  private readonly execServers = new Map<string, Promise<void>>();
+  // Launches between choosing a sandbox and registering their session.
+  private readonly launching = new Map<string, number>();
+  // Sandboxes whose Codex exec-server was defined since Patterm started, with
+  // its token; the provider keeps it running, so later turns skip the call.
+  private readonly execServers = new Map<string, Promise<string>>();
 
   constructor(
     private readonly database: DatabaseService,
@@ -88,6 +98,13 @@ export class SandboxService {
     const token = input.token === undefined ? current.token : input.token?.trim() || null;
     if (token && token !== current.token) await this.factory(token).verify();
     this.settings.saveSandboxSettings({ ...current, token, shareGitHub: input.share_github ?? current.shareGitHub });
+    // Another token may reach another account, so nothing opened with the
+    // old one is reused.
+    if (token !== current.token) {
+      for (const id of [...this.holds.keys()]) this.stopHold(id);
+      this.execServers.clear();
+      await Promise.all([...this.tunnels.keys()].map((id) => this.closeTunnel(id)));
+    }
     this.options.onChanged?.();
     return this.state();
   }
@@ -121,10 +138,17 @@ export class SandboxService {
     return (this.database.connection.prepare('select * from sandboxes where worktree_id = ? and deleted_at is null').get(worktreeId) as SandboxRow | undefined) ?? null;
   }
 
-  // The sandbox whose copy contains this local path, if any.
-  forPath(target: string): SandboxRow | null {
-    const rows = this.database.connection.prepare(`select * from sandboxes where deleted_at is null and status = 'ready'`).all() as unknown as SandboxRow[];
-    return rows.find((row) => target === row.path || target.startsWith(row.path + path.sep)) ?? null;
+  // The sandbox whose copy contains this local path, if any. Worktree
+  // registration keeps other projects out of a sandbox's path.
+  forPath(target: string, statuses: SandboxRow['status'][] = ['ready']): SandboxRow | null {
+    const rows = this.database.connection.prepare('select * from sandboxes where deleted_at is null').all() as unknown as SandboxRow[];
+    return rows.find((row) => statuses.includes(row.status) && (target === row.path || target.startsWith(row.path + path.sep))) ?? null;
+  }
+
+  // The project owning a sandbox that covers this path, or that a sandbox
+  // there would belong to, so another project cannot register it.
+  ownerOfPath(target: string): string | null {
+    return this.forPath(target, ['creating', 'ready', 'failed'])?.project_id ?? null;
   }
 
   // The sandbox an agent's tools run in, from its MCP identity.
@@ -152,14 +176,35 @@ export class SandboxService {
     if (existing?.status === 'ready') return Promise.resolve(existing);
     const running = this.provisioning.get(input.worktree_id);
     if (running) return running;
+    // Git and diff requests for the path go to the sandbox, so it must not
+    // also be a worktree of another project.
+    const others = this.database.connection.prepare('select worktree_path from worktrees where project_id != ?').all(input.project_id) as Array<{ worktree_path: string }>;
+    if (others.some((row) => row.worktree_path === input.path || row.worktree_path.startsWith(input.path + path.sep) || input.path.startsWith(row.worktree_path + path.sep))) {
+      return Promise.reject(new Error('Another project registers this worktree, so it cannot have a sandbox'));
+    }
     const promise = this.create(input, existing).finally(() => this.provisioning.delete(input.worktree_id));
     this.provisioning.set(input.worktree_id, promise);
     return promise;
   }
 
+  // Marks a launch that has chosen this sandbox but has no session yet, so
+  // the sandbox cannot be deleted under it. Call the result when it ends.
+  beginLaunch(id: string): () => void {
+    this.launching.set(id, (this.launching.get(id) ?? 0) + 1);
+    let ended = false;
+    return () => {
+      if (ended) return;
+      ended = true;
+      const count = (this.launching.get(id) ?? 1) - 1;
+      if (count > 0) this.launching.set(id, count);
+      else this.launching.delete(id);
+    };
+  }
+
   async delete(id: string): Promise<void> {
     const row = this.get(id);
     if (!row) return;
+    if ((row.worktree_id && this.provisioning.has(row.worktree_id)) || this.launching.has(row.id)) throw new Error('This sandbox is still being set up for an agent; delete it once the agent has started');
     const live = this.database.connection.prepare('select count(*) as count from sessions where worktree_id = ? and exited_at is null').get(row.worktree_id) as { count: number };
     if (live.count > 0) throw new Error('Stop the agents using this sandbox before deleting it');
     await this.closeTunnel(row.id);
@@ -202,26 +247,47 @@ export class SandboxService {
     return { kind: 'other' };
   }
 
+  // Sizes, line counts and content versions of working-tree files for a diff
+  // summary, in one call. Paths go over stdin; lines of a file over maxBytes
+  // are not counted.
+  async statWorkingFiles(row: SandboxRow, root: string, paths: string[], maxBytes: number): Promise<Map<string, WorkingFileStat>> {
+    const stats = new Map<string, WorkingFileStat>();
+    if (!paths.length) return stats;
+    const script = [
+      'cd -- "$1" || exit 3',
+      'while IFS= read -r -d \'\' f; do',
+      '  if [ -L "$f" ]; then printf \'L\\t0\\t1\\t0\\t%s\\0\' "$(readlink -- "$f" | cksum)"',
+      '  elif [ -f "$f" ]; then',
+      '    size=$(wc -c < "$f" | tr -d \' \'); nul=$(head -c 8000 -- "$f" | tr -dc \'\\000\' | wc -c | tr -d \' \'); lines=0',
+      '    if [ "$size" -le "$2" ] && [ "$nul" = 0 ]; then lines=$(wc -l < "$f" | tr -d \' \'); [ -n "$(tail -c1 -- "$f" | tr -d \'\\000\')" ] && lines=$((lines + 1)); fi',
+      '    printf \'F\\t%s\\t%s\\t%s\\t%s\\0\' "$size" "$lines" "$nul" "$(cksum < "$f")"',
+      '  elif [ -e "$f" ]; then printf \'O\\t0\\t0\\t0\\t-\\0\'',
+      '  else printf \'M\\t0\\t0\\t0\\t-\\0\'; fi',
+      'done'
+    ].join('\n');
+    const result = await this.exec(row, ['bash', '-c', script, 'bash', root, String(maxBytes)], { stdin: paths.map((entry) => `${entry}\0`).join(''), timeoutMs: 120_000 });
+    if (result.exitCode !== 0) throw new Error(result.stderr.toString('utf8').trim() || 'could not read the sandbox\'s working tree');
+    const records = result.stdout.toString('utf8').split('\0');
+    paths.forEach((entry, index) => {
+      const [kind, size, lines, nul, version] = (records[index] ?? '').split('\t');
+      stats.set(entry, {
+        kind: kind === 'L' ? 'symlink' : kind === 'F' ? 'file' : kind === 'O' ? 'other' : 'missing',
+        size: Number(size) || 0, lines: Number(lines) || 0, binary: Number(nul) > 0, version: version?.trim().replace(/\s+/g, ':') || 'missing'
+      });
+    });
+    return stats;
+  }
+
   // Codex runs its commands and patches through its own exec-server, started
   // in the sandbox and reached through a loopback tunnel that needs a token.
   async codexEnvironment(row: SandboxRow): Promise<{ environmentId: string; execServerUrl: string; authBearerToken: string }> {
-    let token = row.exec_token;
-    if (!token) {
-      token = randomBytes(32).toString('hex');
-      this.database.connection.prepare('update sandboxes set exec_token = ?, updated_at = ? where id = ?').run(token, new Date().toISOString(), row.id);
-    }
-    const digest = createHash('sha256').update(token).digest('hex');
     let service = this.execServers.get(row.id);
     if (!service) {
-      service = this.backend(row.backend).ensureService(row.remote_name, CODEX_EXEC_SERVICE, {
-        command: 'codex',
-        args: ['exec-server', '--listen', `ws://127.0.0.1:${CODEX_EXEC_PORT}`, '--ws-auth', 'capability-token', '--ws-token-sha256', digest],
-        dir: row.path
-      });
+      service = this.startExecServer(row);
       service.catch(() => this.execServers.delete(row.id));
       this.execServers.set(row.id, service);
     }
-    await service;
+    const token = await service;
     const tunnel = await this.tunnel(row);
     return { environmentId: `patterm-sandbox-${row.id}`, execServerUrl: `ws://127.0.0.1:${tunnel.port}`, authBearerToken: token };
   }
@@ -237,22 +303,45 @@ export class SandboxService {
 
   // Keeps the sandbox from pausing while any of its agents is working, so
   // commands they left running keep their state.
+  // Keys are process IDs; each renewal drops agents that stopped or went
+  // idle without an activity change reaching here.
   setBusy(row: SandboxRow, key: string, busy: boolean): void {
     let hold = this.holds.get(row.id);
     if (busy) {
       if (hold) { hold.keys.add(key); return; }
-      const renew = () => { void this.backend(row.backend).hold(row.remote_name, 'patterm', HOLD_SECONDS).catch((error: unknown) => this.log('hold.failed', row, error)); };
+      const renew = () => {
+        const current = this.holds.get(row.id);
+        if (!current) return;
+        for (const processId of current.keys) if (!this.working(processId)) current.keys.delete(processId);
+        if (!current.keys.size) { this.endHold(row); return; }
+        this.call(row, 'hold.failed', (backend) => backend.hold(row.remote_name, 'patterm', HOLD_SECONDS));
+      };
       hold = { keys: new Set([key]), timer: setInterval(renew, HOLD_RENEW_MS) };
       hold.timer.unref?.();
       this.holds.set(row.id, hold);
-      renew();
+      this.call(row, 'hold.failed', (backend) => backend.hold(row.remote_name, 'patterm', HOLD_SECONDS));
       return;
     }
     if (!hold) return;
     hold.keys.delete(key);
-    if (hold.keys.size) return;
-    this.stopHold(row.id);
-    void this.backend(row.backend).release(row.remote_name, 'patterm').catch((error: unknown) => this.log('release.failed', row, error));
+    if (!hold.keys.size) this.endHold(row);
+  }
+
+  // After a restart, holds sandboxes awake for agents that are still working
+  // and reopens the tunnels of Codex agents whose app-server kept running.
+  restore(): void {
+    const rows = this.database.connection.prepare(`
+      select sandboxes.*, sessions.process_id as session_process_id, sessions.harness as session_harness from sessions
+      join sandboxes on sandboxes.worktree_id = sessions.worktree_id and sandboxes.deleted_at is null and sandboxes.status = 'ready'
+      where sessions.exited_at is null and sessions.process_id is not null
+    `).all() as Array<SandboxRow & { session_process_id: string; session_harness: string }>;
+    for (const { session_process_id: processId, session_harness: harness, ...row } of rows) {
+      if (this.working(processId)) this.setBusy(row, processId, true);
+      if (harness === 'codex' && row.exec_token) {
+        this.execServers.set(row.id, Promise.resolve(row.exec_token));
+        void Promise.resolve().then(() => this.tunnel(row)).catch((error: unknown) => this.log('tunnel.failed', row, error));
+      }
+    }
   }
 
   async dispose(): Promise<void> {
@@ -286,7 +375,9 @@ export class SandboxService {
       throw new Error(`Could not set up the sandbox: ${message}`);
     }
     this.options.onChanged?.();
-    return this.get(id)!;
+    const row = this.get(id);
+    if (!row) throw new Error('The sandbox was deleted while it was being set up');
+    return row;
   }
 
   // Sends the worktree's branch as a git bundle and clones it at the same
@@ -298,14 +389,20 @@ export class SandboxService {
     };
     const branch = (await git(['branch', '--show-current'])).stdout.toString().trim();
     const head = (await git(['rev-parse', 'HEAD'])).stdout.toString().trim();
-    const origin = await git(['remote', 'get-url', 'origin']).then((result) => result.stdout.toString().trim()).catch(() => '');
+    const origin = withoutCredentials(await git(['remote', 'get-url', 'origin']).then((result) => result.stdout.toString().trim()).catch(() => ''));
+    // Diff review compares a branch with the default branch, so its refs go
+    // too, and origin/HEAD keeps naming it.
+    const originHead = await git(['symbolic-ref', '-q', 'refs/remotes/origin/HEAD']).then((result) => result.stdout.toString().trim()).catch(() => '');
+    const defaults = [...new Set([originHead.replace(/^refs\/remotes\/origin\//, ''), 'main', 'master'].filter(Boolean))];
+    const listed = await git(['for-each-ref', '--format=%(refname)', ...defaults.flatMap((name) => [`refs/heads/${name}`, `refs/remotes/origin/${name}`])])
+      .then((result) => result.stdout.toString().split('\n').filter(Boolean)).catch(() => [] as string[]);
     const userName = await git(['config', '--get', 'user.name']).then((result) => result.stdout.toString().trim()).catch(() => '');
     const userEmail = await git(['config', '--get', 'user.email']).then((result) => result.stdout.toString().trim()).catch(() => '');
     const changes = (await git(['diff', '--binary', 'HEAD'], 'buffer')).stdout as Buffer;
     fs.mkdirSync(this.options.runtimeDir, { recursive: true, mode: 0o700 });
     const bundle = path.join(this.options.runtimeDir, `sandbox-${randomUUID()}.bundle`);
     try {
-      await git(['bundle', 'create', bundle, 'HEAD', ...(branch ? [branch] : [])]);
+      await git(['bundle', 'create', bundle, 'HEAD', ...new Set([...(branch ? [`refs/heads/${branch}`] : []), ...listed])]);
       await this.must(backend.exec(name, ['sh', '-c', 'cat > /tmp/patterm-worktree.bundle'], { stdin: fs.readFileSync(bundle), timeoutMs: 15 * 60_000 }), 'upload the worktree');
     } finally {
       fs.rmSync(bundle, { force: true });
@@ -316,15 +413,21 @@ export class SandboxService {
       `sudo mkdir -p ${shellQuote(path.dirname(worktreePath))}`,
       `sudo chown "$(id -u):$(id -g)" ${shellQuote(path.dirname(worktreePath))}`,
       `rm -rf ${target}`,
-      `git clone -q --no-checkout /tmp/patterm-worktree.bundle ${target}`,
+      `git init -q ${target}`,
       `cd ${target}`,
-      `git checkout -q ${branch ? `-B ${shellQuote(branch)} ` : ''}${shellQuote(head)}`,
-      origin ? `git remote set-url origin ${shellQuote(origin)}` : 'git remote remove origin',
+      `git fetch -q --update-head-ok /tmp/patterm-worktree.bundle 'refs/heads/*:refs/heads/*' 'refs/remotes/origin/*:refs/remotes/origin/*'`,
+      // A detached HEAD has no branch ref to fetch.
+      'git fetch -q /tmp/patterm-worktree.bundle HEAD',
+      `git checkout -q ${branch ? `-B ${shellQuote(branch)}` : '--detach'} ${shellQuote(head)}`,
+      origin ? `git remote add origin ${shellQuote(origin)}` : 'true',
+      originHead && listed.includes(originHead) ? `git symbolic-ref refs/remotes/origin/HEAD ${shellQuote(originHead)}` : 'true',
       userName ? `git config --global user.name ${shellQuote(userName)}` : 'true',
       userEmail ? `git config --global user.email ${shellQuote(userEmail)}` : 'true',
       'rm -f /tmp/patterm-worktree.bundle'
     ].join('\n');
-    await this.must(backend.exec(name, ['sh', '-c', script], { timeoutMs: 15 * 60_000 }), 'clone the worktree');
+    // The script names the remote and the git user, so it goes over stdin
+    // rather than into a command line.
+    await this.must(backend.exec(name, ['sh'], { stdin: script, timeoutMs: 15 * 60_000 }), 'clone the worktree');
     if (changes.length) await this.must(backend.exec(name, ['git', 'apply', '--binary', '-'], { cwd: worktreePath, stdin: changes, timeoutMs: 5 * 60_000 }), 'apply uncommitted changes');
   }
 
@@ -342,6 +445,41 @@ export class SandboxService {
     const done = await result;
     if (done.exitCode !== 0) throw new Error(`could not ${action}: ${done.stderr.toString('utf8').trim().slice(-2_000) || `exit ${done.exitCode}`}`);
     return done;
+  }
+
+  // Starts Codex's exec-server with a token made once per sandbox. Callers
+  // share this promise, so concurrent launches agree on the token.
+  private async startExecServer(row: SandboxRow): Promise<string> {
+    let token = this.get(row.id)?.exec_token ?? null;
+    if (!token) {
+      token = randomBytes(32).toString('hex');
+      this.database.connection.prepare('update sandboxes set exec_token = ?, updated_at = ? where id = ?').run(token, new Date().toISOString(), row.id);
+    }
+    const digest = createHash('sha256').update(token).digest('hex');
+    await this.backend(row.backend).ensureService(row.remote_name, CODEX_EXEC_SERVICE, {
+      command: 'codex',
+      args: ['exec-server', '--listen', `ws://127.0.0.1:${CODEX_EXEC_PORT}`, '--ws-auth', 'capability-token', '--ws-token-sha256', digest],
+      dir: row.path
+    });
+    return token;
+  }
+
+  private working(processId: string): boolean {
+    const row = this.database.connection.prepare(`
+      select processes.activity from processes join sessions on sessions.process_id = processes.id
+      where processes.id = ? and sessions.exited_at is null and processes.status = 'running'
+    `).get(processId) as { activity: string | null } | undefined;
+    return row?.activity === 'working' || row?.activity === 'thinking';
+  }
+
+  private endHold(row: SandboxRow): void {
+    this.stopHold(row.id);
+    this.call(row, 'release.failed', (backend) => backend.release(row.remote_name, 'patterm'));
+  }
+
+  // Background provider calls log failures, including a removed token.
+  private call(row: SandboxRow, event: string, run: (backend: SandboxBackend) => Promise<unknown>): void {
+    void Promise.resolve().then(() => run(this.backend(row.backend))).catch((error: unknown) => this.log(event, row, error));
   }
 
   private tunnel(row: SandboxRow): Promise<SandboxTunnel> {
@@ -390,3 +528,17 @@ export class SandboxService {
   }
 }
 
+// An HTTPS remote can carry a token as its user info; the sandbox gets the
+// remote without it.
+function withoutCredentials(remote: string): string {
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(remote)) return remote;
+  try {
+    const url = new URL(remote);
+    if (!url.username && !url.password) return remote;
+    url.username = '';
+    url.password = '';
+    return url.toString();
+  } catch {
+    return '';
+  }
+}

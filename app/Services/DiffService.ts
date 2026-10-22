@@ -98,6 +98,14 @@ export interface RemoteWorkingFile {
   target?: string;
 }
 
+export interface RemoteFileStat {
+  kind: 'missing' | 'file' | 'symlink' | 'other';
+  size: number;
+  lines: number;
+  binary: boolean;
+  version: string;
+}
+
 const BINARY = Symbol('binary');
 const TOO_LARGE = Symbol('tooLarge');
 type FileSide = string | null | typeof BINARY | typeof TOO_LARGE;
@@ -117,6 +125,8 @@ export class DiffService {
       // Reads working-tree files of a worktree that lives in a sandbox, or
       // returns null for a worktree on this machine.
       remoteFiles?: (root: string, filePath: string, maxBytes: number) => Promise<RemoteWorkingFile | null>;
+      // Stats working-tree files there in one call, or returns null here.
+      remoteStats?: (root: string, paths: string[], maxBytes: number) => Promise<Map<string, RemoteFileStat> | null>;
     }
   ) {
     this.git = deps.git ?? new GitService();
@@ -212,10 +222,13 @@ export class DiffService {
     // Nested repositories are listed as directories; they have no file diff.
     const untrackedPaths = others.split('\0').filter((entry) => entry && !entry.endsWith('/'));
     const listedUntracked = untrackedPaths.slice(0, UNTRACKED_LIMIT);
-    const [untrackedStats, trackedStats] = await Promise.all([
-      mapLimit(listedUntracked, UNTRACKED_READ_CONCURRENCY, (filePath) => untrackedFile(root, filePath)),
-      mapLimit(tracked, UNTRACKED_READ_CONCURRENCY, async (change) => (change.status === 'deleted' ? null : lstatIfExists(path.join(root, change.path)).catch(() => null)))
-    ]);
+    const remote = await this.deps.remoteStats?.(root, [...listedUntracked, ...tracked.filter((change) => change.status !== 'deleted').map((change) => change.path)], MAX_TEXT_BYTES) ?? null;
+    const [untrackedStats, trackedVersions] = remote
+      ? [listedUntracked.map((filePath) => remoteUntrackedFile(remote.get(filePath))), tracked.map((change) => (change.status === 'deleted' ? 'missing' : remote.get(change.path)?.version ?? 'missing'))]
+      : await Promise.all([
+        mapLimit(listedUntracked, UNTRACKED_READ_CONCURRENCY, (filePath) => untrackedFile(root, filePath)),
+        mapLimit(tracked, UNTRACKED_READ_CONCURRENCY, async (change) => fileVersion(change.status === 'deleted' ? null : await lstatIfExists(path.join(root, change.path)).catch(() => null)))
+      ]);
 
     const files: DiffFile[] = tracked.map((change, index) => ({
       path: change.path,
@@ -226,7 +239,7 @@ export class DiffService {
       binary: change.binary,
       untracked: false,
       ...classifyDiffPath(change.path),
-      version: `${change.oldObject}:${fileVersion(trackedStats[index] ?? null)}`
+      version: `${change.oldObject}:${trackedVersions[index] ?? 'missing'}`
     }));
     listedUntracked.forEach((filePath, index) => {
       const stats = untrackedStats[index];
@@ -405,6 +418,13 @@ async function untrackedFile(root: string, filePath: string): Promise<{ addition
   if (!bytes) return { additions: 0, binary: false, version };
   const binary = isBinary(bytes);
   return { additions: binary || large ? 0 : countLines(bytes), binary, version };
+}
+
+// The same summary as untrackedFile, from a sandbox's stat of the file.
+function remoteUntrackedFile(stat: RemoteFileStat | undefined): { additions: number; binary: boolean; version: string } | null {
+  if (!stat || stat.kind === 'missing' || stat.kind === 'other') return null;
+  if (stat.kind === 'symlink') return { additions: 1, binary: false, version: stat.version };
+  return { additions: stat.binary || stat.size > MAX_TEXT_BYTES ? 0 : stat.lines, binary: stat.binary, version: stat.version };
 }
 
 function fileVersion(stat: { size: number; mtimeMs: number } | null): string {

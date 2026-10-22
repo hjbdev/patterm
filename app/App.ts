@@ -432,6 +432,7 @@ async function createApplicationResources(
     log: (event, data) => debugLog.write('sandbox', event, data)
   });
   defer(() => sandboxes.dispose());
+  sandboxes.restore();
   integratedInputs.setSandboxed((processId) => Boolean(sandboxes.forProcess(processId)));
   codexAppServer.setSandboxEnvironments((processId) => sandboxes.codexEnvironmentFor(processId));
   defer(integrated.onActivityChange(({ processId, activity }) => {
@@ -439,13 +440,17 @@ async function createApplicationResources(
     if (sandbox?.status === 'ready') sandboxes.setBusy(sandbox, processId, activity === 'working' || activity === 'thinking');
   }));
   const git: GitService = new SandboxGitService(sandboxes);
-  const worktreeService = new WorktreeService({ database, timeline, workbench, git });
+  const worktreeService = new WorktreeService({ database, timeline, workbench, git, sandboxOwner: (target) => sandboxes.ownerOfPath(target) });
   const diffService = new DiffService({
     worktrees: worktreeService,
     git,
     remoteFiles: (root, filePath, maxBytes) => {
       const sandbox = sandboxes.forPath(root);
       return sandbox ? sandboxes.readWorkingFile(sandbox, root, filePath, maxBytes) : Promise.resolve(null);
+    },
+    remoteStats: (root, paths, maxBytes) => {
+      const sandbox = sandboxes.forPath(root);
+      return sandbox ? sandboxes.statWorkingFiles(sandbox, root, paths, maxBytes) : Promise.resolve(null);
     }
   });
   const summaryService = new SummaryService(database, timeline, searchService);

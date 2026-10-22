@@ -111,7 +111,7 @@ export interface HarnessLauncherDeps {
   // expect a sign-in redirect to reach this machine's loopback listeners.
   // Lets MCP helpers of a launch that is still starting use its identity.
   launchingIdentities?: Pick<LaunchingMcpIdentities, 'reserve'> & Partial<Pick<LaunchingMcpIdentities, 'attachSandbox'>>;
-  sandboxes?: Pick<SandboxService, 'configured' | 'forWorktree' | 'provision' | 'codexEnvironment'>;
+  sandboxes?: Pick<SandboxService, 'configured' | 'forWorktree' | 'provision' | 'codexEnvironment' | 'beginLaunch'>;
   // Creates a worktree for a sandboxed launch that names none.
   createWorktree?: (projectId: string, name: string) => Promise<{ id: string; worktree_path: string }>;
   assistantMemory?: Pick<AssistantMemoryService, 'snapshot'>;
@@ -174,10 +174,21 @@ export class HarnessLauncher {
     });
   }
 
+  // A chosen sandbox cannot be deleted until the launch has registered its
+  // session, which then keeps it.
   private async startPrepared(input: ParsedLaunchHarnessInput, selection: HarnessLaunchSelection, resume: HarnessResume | null, identity: string): Promise<LaunchHarnessResult> {
+    const sandbox = await this.sandbox(input, selection.harness);
+    const endLaunch = sandbox ? this.deps.sandboxes!.beginLaunch(sandbox.id) : null;
+    try {
+      return await this.startIn(input, selection, resume, identity, sandbox);
+    } finally {
+      endLaunch?.();
+    }
+  }
+
+  private async startIn(input: ParsedLaunchHarnessInput, selection: HarnessLaunchSelection, resume: HarnessResume | null, identity: string, sandbox: SandboxRow | null): Promise<LaunchHarnessResult> {
     const timing = createLaunchTiming(this.deps.debugLog);
     const harness = selection.harness;
-    const sandbox = await this.sandbox(input, harness);
     if (sandbox) input.worktree_id = sandbox.worktree_id;
     // Sandboxed tools exist only in Integrated conversations.
     const interfaceMode = sandbox ? 'integrated' : input.interface_mode ?? this.deps.settings?.agentInterface() ?? 'tui';

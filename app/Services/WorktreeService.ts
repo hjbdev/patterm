@@ -62,6 +62,8 @@ export class WorktreeService {
       timeline: TimelineService;
       workbench: WorkbenchRepository;
       git?: GitService;
+      // The project whose sandbox holds a path; git there runs in that sandbox.
+      sandboxOwner?: (path: string) => string | null;
     }
   ) {}
 
@@ -115,6 +117,8 @@ export class WorktreeService {
     if (existing) {
       return { worktree: mapWorktree(existing) };
     }
+    const owner = this.deps.sandboxOwner?.(storedPath(worktreePath)) ?? this.deps.sandboxOwner?.(storedPath(realPath));
+    if (owner && owner !== input.project_id) throw new Error('This directory is another project\'s sandboxed worktree');
 
     const git = this.deps.git ?? new GitService();
     const repoPath = storedPath(input.repo_path ? await git.root(input.repo_path) : await git.root(worktreePath));
