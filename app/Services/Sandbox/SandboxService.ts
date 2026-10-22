@@ -124,17 +124,34 @@ function stateRef(id: string): string {
   return `refs/patterm/sandbox-state/${id.replace(/[^A-Za-z0-9_-]/g, '-')}`;
 }
 
-// Whether a path, or a parent that must become a directory, is already on
-// disk where git would replace it.
-function obstructs(root: string, entry: string): boolean {
+// Whether something on disk that the last sync did not write (`synced`)
+// stands where git would put a new path: the path itself, a file where it
+// needs a directory, or a directory where it needs a file.
+function obstructs(root: string, entry: string, synced: Set<string>): boolean {
   const parts = entry.split('/');
   for (let depth = 1; depth <= parts.length; depth += 1) {
-    const target = path.join(root, ...parts.slice(0, depth));
+    const relative = parts.slice(0, depth).join('/');
     let stat: fs.Stats;
-    try { stat = fs.lstatSync(target); } catch { return false; }
-    if (depth === parts.length || !stat.isDirectory()) return true;
+    try { stat = fs.lstatSync(path.join(root, relative)); } catch { return false; }
+    if (stat.isDirectory()) {
+      if (depth === parts.length) return !onlySynced(root, relative, synced);
+      continue;
+    }
+    return !synced.has(relative);
   }
   return false;
+}
+
+// Whether a directory holds nothing but files the last sync wrote.
+function onlySynced(root: string, directory: string, synced: Set<string>, budget = { left: 10_000 }): boolean {
+  let entries: fs.Dirent[];
+  try { entries = fs.readdirSync(path.join(root, directory), { withFileTypes: true }); } catch { return false; }
+  for (const entry of entries) {
+    if ((budget.left -= 1) < 0) return false;
+    const relative = `${directory}/${entry.name}`;
+    if (entry.isDirectory() ? !onlySynced(root, relative, synced, budget) : !synced.has(relative)) return false;
+  }
+  return true;
 }
 
 type BackendFactory = (token: string) => SandboxBackend;
@@ -649,14 +666,17 @@ export class SandboxService {
 
     // The worktree's index lock keeps git here from staging or committing
     // while the files, refs and index change.
-    return this.withIndexLock(row.path, async (lockPath, indexPath) => {
+    return this.withIndexLock(row.path, async (lockPath, replaceIndex) => {
       const currentHead = await this.localHead(row.path);
       await this.assertUnchanged(row, currentHead);
       // Paths the sync adds were absent last time. One on disk now, or a
       // file where it needs a directory, is ignored or new here, and git
       // would replace it without asking.
       const added = (await this.local(row.path, ['diff-tree', '-r', '-z', '--name-only', '--diff-filter=A', row.synced_tree!, target])).stdout.toString('utf8').split('\0').filter(Boolean);
-      const obstructed = added.filter((entry) => obstructs(row.path, entry));
+      // Files the last sync wrote may give way, as the checks above showed
+      // them unchanged; anything else on disk belongs to this machine.
+      const synced = added.length ? new Set((await this.local(row.path, ['ls-tree', '-r', '-z', '--name-only', row.synced_tree!])).stdout.toString('utf8').split('\0').filter(Boolean)) : new Set<string>();
+      const obstructed = added.filter((entry) => obstructs(row.path, entry, synced));
       if (obstructed.length) throw new Error(`Local files would be overwritten, so nothing was synced: ${obstructed.slice(0, 5).join(', ')}${obstructed.length > 5 ? ', …' : ''}`);
       // Git writes the files only where they still match the last sync.
       const move = (from: string, to: string) => this.withIndex(row.path, async (env) => {
@@ -680,18 +700,19 @@ export class SandboxService {
       }
       // Uncommitted work stays uncommitted here, and new files untracked.
       // The new index is written into the lock and takes its place.
-      await this.local(row.path, ['read-tree', head], { env: { GIT_INDEX_FILE: lockPath } });
-      await this.local(row.path, ['update-index', '-q', '--refresh'], { env: { GIT_INDEX_FILE: lockPath }, allowFailure: true });
-      fs.renameSync(lockPath, indexPath);
       await this.local(row.path, ['update-ref', '-d', syncRef(row.id)], { allowFailure: true });
       await this.keepTree(row, target);
+      await this.local(row.path, ['read-tree', head], { env: { GIT_INDEX_FILE: lockPath } });
+      await this.local(row.path, ['update-index', '-q', '--refresh'], { env: { GIT_INDEX_FILE: lockPath }, allowFailure: true });
+      replaceIndex();
       return { head, branch: branch || null, tree: target, changed: true };
     });
   }
 
-  // Holds a worktree's index lock as git does, creating it exclusively; the
-  // callback may rename it into place as the new index.
-  private async withIndexLock<T>(worktreePath: string, run: (lockPath: string, indexPath: string) => Promise<T>): Promise<T> {
+  // Holds a worktree's index lock as git does, creating it exclusively. The
+  // callback may rename it into place as the new index, which releases it:
+  // after that the path may be another git command's lock, so it is left.
+  private async withIndexLock<T>(worktreePath: string, run: (lockPath: string, replaceIndex: () => void) => Promise<T>): Promise<T> {
     const indexPath = path.resolve(worktreePath, (await this.local(worktreePath, ['rev-parse', '--git-path', 'index'])).stdout.toString().trim());
     const lockPath = `${indexPath}.lock`;
     try {
@@ -699,10 +720,14 @@ export class SandboxService {
     } catch {
       throw new Error('Git is busy in the local worktree, so nothing was synced; sync again in a moment');
     }
+    let held = true;
     try {
-      return await run(lockPath, indexPath);
+      return await run(lockPath, () => {
+        fs.renameSync(lockPath, indexPath);
+        held = false;
+      });
     } finally {
-      fs.rmSync(lockPath, { force: true });
+      if (held) fs.rmSync(lockPath, { force: true });
     }
   }
 

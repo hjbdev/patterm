@@ -281,6 +281,29 @@ async function main(): Promise<void> {
       fs.rmSync(path.join(worktree, 'blocked'));
     });
     assert.equal(fs.readFileSync(path.join(worktree, 'blocked', 'child'), 'utf8'), 'remote\n');
+    // A synced file the sandbox turns into a directory, and back; but not
+    // over an ignored local file inside it.
+    fs.writeFileSync(path.join(copy, 'shape'), 'file\n');
+    git(copy, ['add', 'shape']);
+    git(copy, ['commit', '-qm', 'shape file']);
+    await sandboxes.sync(row.id);
+    git(copy, ['rm', '-q', 'shape']);
+    fs.mkdirSync(path.join(copy, 'shape'));
+    fs.writeFileSync(path.join(copy, 'shape', 'child'), 'child\n');
+    git(copy, ['add', 'shape']);
+    git(copy, ['commit', '-qm', 'shape directory']);
+    await sandboxes.sync(row.id);
+    assert.equal(fs.readFileSync(path.join(worktree, 'shape', 'child'), 'utf8'), 'child\n');
+    fs.writeFileSync(path.join(worktree, 'shape', 'blocked'), 'local data\n');
+    git(copy, ['rm', '-q', '-r', 'shape']);
+    fs.writeFileSync(path.join(copy, 'shape'), 'file again\n');
+    git(copy, ['add', 'shape']);
+    git(copy, ['commit', '-qm', 'shape file again']);
+    await refuses(/would be overwritten.*shape/, () => {
+      assert.equal(fs.readFileSync(path.join(worktree, 'shape', 'blocked'), 'utf8'), 'local data\n');
+      fs.rmSync(path.join(worktree, 'shape', 'blocked'));
+    });
+    assert.equal(fs.readFileSync(path.join(worktree, 'shape'), 'utf8'), 'file again\n');
     // Git already busy here.
     const lock = path.join(repo, '.git', 'worktrees', 'wt', 'index.lock');
     fs.writeFileSync(lock, '');
