@@ -119,6 +119,24 @@ function syncRef(id: string): string {
   return `refs/patterm/sandbox/${id.replace(/[^A-Za-z0-9_-]/g, '-')}`;
 }
 
+// Keeps the last synced tree from being pruned.
+function stateRef(id: string): string {
+  return `refs/patterm/sandbox-state/${id.replace(/[^A-Za-z0-9_-]/g, '-')}`;
+}
+
+// Whether a path, or a parent that must become a directory, is already on
+// disk where git would replace it.
+function obstructs(root: string, entry: string): boolean {
+  const parts = entry.split('/');
+  for (let depth = 1; depth <= parts.length; depth += 1) {
+    const target = path.join(root, ...parts.slice(0, depth));
+    let stat: fs.Stats;
+    try { stat = fs.lstatSync(target); } catch { return false; }
+    if (depth === parts.length || !stat.isDirectory()) return true;
+  }
+  return false;
+}
+
 type BackendFactory = (token: string) => SandboxBackend;
 
 // Remote sandboxes for worktrees. A sandbox holds a copy of one worktree at
@@ -137,6 +155,7 @@ export class SandboxService {
   private readonly execServers = new Map<string, Promise<string>>();
   // One sync at a time per sandbox; a sync asked for while one runs follows it.
   private readonly syncs = new Map<string, Promise<SyncResult>>();
+  private disposed = false;
 
   constructor(
     private readonly database: DatabaseService,
@@ -296,6 +315,7 @@ export class SandboxService {
       this.stopHold(row.id);
       this.execServers.delete(row.id);
       await this.backend().destroy(row.remote_name);
+      await this.local(row.path, ['update-ref', '-d', stateRef(row.id)], { allowFailure: true }).catch(() => undefined);
       const now = new Date().toISOString();
       this.database.connection.prepare('update sandboxes set deleted_at = ?, updated_at = ? where id = ?').run(now, now, row.id);
     } finally {
@@ -434,8 +454,12 @@ export class SandboxService {
     }
   }
 
+  // Stops new syncs and lets running ones finish, so none outlives the
+  // database it records into.
   async dispose(): Promise<void> {
+    this.disposed = true;
     for (const id of [...this.holds.keys()]) this.stopHold(id);
+    await Promise.allSettled([...this.syncs.values()]);
     await Promise.all([...this.tunnels.keys()].map((id) => this.closeTunnel(id)));
   }
 
@@ -457,6 +481,7 @@ export class SandboxService {
       if (await backend.status(name) === null) await backend.create(name);
       const baseline = await this.copyWorktree(backend, name, input.path);
       await this.runSetup(backend, name, input.path);
+      await this.keepTree({ id, path: input.path }, baseline.tree);
       this.database.connection.prepare(`update sandboxes set status = 'ready', error = null, synced_head = ?, synced_tree = ?, updated_at = ? where id = ?`)
         .run(baseline.head, baseline.tree, new Date().toISOString(), id);
     } catch (error) {
@@ -546,6 +571,7 @@ export class SandboxService {
   // uncommitted files (ignored files excepted). Refuses when the local
   // worktree changed since the last sync, so nothing made here is lost.
   sync(id: string): Promise<SyncResult> {
+    if (this.disposed) return Promise.reject(new Error('Patterm is shutting down'));
     const next = (this.syncs.get(id) ?? Promise.resolve(null)).catch(() => null).then(() => this.syncNow(id));
     this.syncs.set(id, next);
     void next.catch(() => undefined).finally(() => { if (this.syncs.get(id) === next) this.syncs.delete(id); });
@@ -604,6 +630,7 @@ export class SandboxService {
     const localBranch = (await this.local(row.path, ['symbolic-ref', '-q', '--short', 'HEAD'], { allowFailure: true })).stdout.toString().trim();
     if (head === localHead && branch === localBranch && target === row.synced_tree) {
       await this.local(row.path, ['update-ref', '-d', syncRef(row.id)], { allowFailure: true });
+      await this.keepTree(row, target);
       return { head, branch: branch || null, tree: target, changed: false };
     }
     // This worktree's own branch follows the sandbox. Another branch that
@@ -620,33 +647,69 @@ export class SandboxService {
       }
     }
 
-    // Git writes the files only where they still match the last sync, and
-    // refuses to overwrite anything changed, staged, untracked or ignored.
-    await this.assertUnchanged(row, localHead);
-    // Paths the sync adds were absent last time; one on disk now is ignored
-    // or new here, and git would replace it without asking.
-    const added = (await this.local(row.path, ['diff-tree', '-r', '-z', '--name-only', '--diff-filter=A', row.synced_tree!, target])).stdout.toString('utf8').split('\0').filter(Boolean);
-    const obstructed = added.filter((entry) => fs.existsSync(path.join(row.path, entry)) || isSymlink(path.join(row.path, entry)));
-    if (obstructed.length) throw new Error(`Local files would be overwritten, so nothing was synced: ${obstructed.slice(0, 5).join(', ')}${obstructed.length > 5 ? ', …' : ''}`);
-    await this.local(row.path, ['read-tree', row.synced_tree!]);
-    await this.local(row.path, ['update-index', '-q', '--refresh'], { allowFailure: true });
-    const written = await this.local(row.path, ['read-tree', '-m', '-u', row.synced_tree!, target], { allowFailure: true });
-    if (written.code !== 0) {
-      await this.local(row.path, ['read-tree', localHead]);
-      throw new Error(`Local files would be overwritten, so nothing was synced: ${written.stderr.toString('utf8').trim().slice(-1_000)}`);
+    // The worktree's index lock keeps git here from staging or committing
+    // while the files, refs and index change.
+    return this.withIndexLock(row.path, async (lockPath, indexPath) => {
+      const currentHead = await this.localHead(row.path);
+      await this.assertUnchanged(row, currentHead);
+      // Paths the sync adds were absent last time. One on disk now, or a
+      // file where it needs a directory, is ignored or new here, and git
+      // would replace it without asking.
+      const added = (await this.local(row.path, ['diff-tree', '-r', '-z', '--name-only', '--diff-filter=A', row.synced_tree!, target])).stdout.toString('utf8').split('\0').filter(Boolean);
+      const obstructed = added.filter((entry) => obstructs(row.path, entry));
+      if (obstructed.length) throw new Error(`Local files would be overwritten, so nothing was synced: ${obstructed.slice(0, 5).join(', ')}${obstructed.length > 5 ? ', …' : ''}`);
+      // Git writes the files only where they still match the last sync.
+      const move = (from: string, to: string) => this.withIndex(row.path, async (env) => {
+        await this.local(row.path, ['read-tree', from], { env });
+        await this.local(row.path, ['update-index', '-q', '--refresh'], { env, allowFailure: true });
+        return this.local(row.path, ['read-tree', '-m', '-u', from, to], { env, allowFailure: true });
+      });
+      const written = await move(row.synced_tree!, target);
+      if (written.code !== 0) throw new Error(`Local files would be overwritten, so nothing was synced: ${written.stderr.toString('utf8').trim().slice(-1_000)}`);
+      try {
+        if (branch) {
+          const old = branch === localBranch ? currentHead : branchTip ?? '0'.repeat(head.length);
+          await this.local(row.path, ['update-ref', '-m', 'patterm: sync from sandbox', `refs/heads/${branch}`, head, old]);
+          await this.local(row.path, ['symbolic-ref', 'HEAD', `refs/heads/${branch}`]);
+        } else {
+          await this.local(row.path, ['update-ref', '--no-deref', '-m', 'patterm: sync from sandbox', 'HEAD', head, currentHead]);
+        }
+      } catch (error) {
+        await move(target, row.synced_tree!);
+        throw error;
+      }
+      // Uncommitted work stays uncommitted here, and new files untracked.
+      // The new index is written into the lock and takes its place.
+      await this.local(row.path, ['read-tree', head], { env: { GIT_INDEX_FILE: lockPath } });
+      await this.local(row.path, ['update-index', '-q', '--refresh'], { env: { GIT_INDEX_FILE: lockPath }, allowFailure: true });
+      fs.renameSync(lockPath, indexPath);
+      await this.local(row.path, ['update-ref', '-d', syncRef(row.id)], { allowFailure: true });
+      await this.keepTree(row, target);
+      return { head, branch: branch || null, tree: target, changed: true };
+    });
+  }
+
+  // Holds a worktree's index lock as git does, creating it exclusively; the
+  // callback may rename it into place as the new index.
+  private async withIndexLock<T>(worktreePath: string, run: (lockPath: string, indexPath: string) => Promise<T>): Promise<T> {
+    const indexPath = path.resolve(worktreePath, (await this.local(worktreePath, ['rev-parse', '--git-path', 'index'])).stdout.toString().trim());
+    const lockPath = `${indexPath}.lock`;
+    try {
+      fs.closeSync(fs.openSync(lockPath, 'wx'));
+    } catch {
+      throw new Error('Git is busy in the local worktree, so nothing was synced; sync again in a moment');
     }
-    if (branch) {
-      const old = branch === localBranch ? localHead : branchTip ?? '0'.repeat(head.length);
-      await this.local(row.path, ['update-ref', '-m', 'patterm: sync from sandbox', `refs/heads/${branch}`, head, old]);
-      await this.local(row.path, ['symbolic-ref', 'HEAD', `refs/heads/${branch}`]);
-    } else {
-      await this.local(row.path, ['update-ref', '--no-deref', '-m', 'patterm: sync from sandbox', 'HEAD', head]);
+    try {
+      return await run(lockPath, indexPath);
+    } finally {
+      fs.rmSync(lockPath, { force: true });
     }
-    // Uncommitted work stays uncommitted here, and new files untracked.
-    await this.local(row.path, ['read-tree', head]);
-    await this.local(row.path, ['update-index', '-q', '--refresh'], { allowFailure: true });
-    await this.local(row.path, ['update-ref', '-d', syncRef(row.id)], { allowFailure: true });
-    return { head, branch: branch || null, tree: target, changed: true };
+  }
+
+  // The synced tree is only in Patterm's database; a ref keeps git from
+  // pruning it. It points at a tree, never a commit.
+  private async keepTree(row: Pick<SandboxRow, 'id' | 'path'>, tree: string): Promise<void> {
+    await this.local(row.path, ['update-ref', stateRef(row.id), tree]);
   }
 
   // The local worktree must be exactly what the last sync left: the same

@@ -18,6 +18,8 @@ class MappedBackend implements SandboxBackend {
   destroyed: string[] = [];
   // Runs before the next command, to change things mid-sync.
   beforeNext: (() => void) | null = null;
+  // Holds every command until it settles.
+  gate: Promise<void> | null = null;
   private readonly created = new Set<string>();
 
   constructor(private readonly root: string, private readonly remote: string) {}
@@ -35,7 +37,8 @@ class MappedBackend implements SandboxBackend {
     return this.toRemote(local);
   }
 
-  exec(_name: string, argv: string[], options: SandboxExecOptions = {}): Promise<SandboxExecResult> {
+  async exec(_name: string, argv: string[], options: SandboxExecOptions = {}): Promise<SandboxExecResult> {
+    await this.gate;
     const before = this.beforeNext;
     this.beforeNext = null;
     before?.();
@@ -99,7 +102,7 @@ async function main(): Promise<void> {
     fs.mkdirSync(remote);
     fs.writeFileSync(path.join(remote, 'gitconfig'), '');
     // This machine hides a file the sandbox does not.
-    fs.writeFileSync(path.join(dir, 'excludes'), 'hidden-here.txt\n');
+    fs.writeFileSync(path.join(dir, 'excludes'), 'hidden-here.txt\nblocked\n');
     fs.writeFileSync(path.join(dir, 'gitconfig'), `[core]\n\texcludesFile = ${path.join(dir, 'excludes')}\n`);
 
     // A repository with an origin, a setup script and an ignored folder.
@@ -254,6 +257,54 @@ async function main(): Promise<void> {
     assert.equal((await sandboxes.sync(row.id)).changed, true);
     assert.equal(fs.readFileSync(path.join(worktree, 'hidden-here.txt'), 'utf8'), 'hidden\n');
     assert.equal((await sandboxes.sync(row.id)).changed, false);
+    // Pruning cannot take the synced tree away.
+    git(worktree, ['gc', '-q', '--prune=now']);
+    assert.equal((await sandboxes.sync(row.id)).changed, false);
+
+    // Work committed here while the sandbox's work is in transit.
+    fs.writeFileSync(path.join(copy, 'transit.txt'), 'remote 3\n');
+    const committedFrom = git(worktree, ['rev-parse', 'HEAD']);
+    backend.beforeNext = () => {
+      git(worktree, ['add', '-A']);
+      git(worktree, ['commit', '-qm', 'committed here']);
+    };
+    await assert.rejects(sandboxes.sync(row.id), /changed since the last sync/);
+    assert.equal(git(worktree, ['log', '-1', '--format=%s']), 'committed here');
+    git(worktree, ['reset', '-q', committedFrom]);
+    await sandboxes.sync(row.id);
+    // A local ignored file where the sandbox needs a directory.
+    fs.writeFileSync(path.join(worktree, 'blocked'), 'local data\n');
+    fs.mkdirSync(path.join(copy, 'blocked'));
+    fs.writeFileSync(path.join(copy, 'blocked', 'child'), 'remote\n');
+    await refuses(/would be overwritten.*blocked\/child/, () => {
+      assert.equal(fs.readFileSync(path.join(worktree, 'blocked'), 'utf8'), 'local data\n');
+      fs.rmSync(path.join(worktree, 'blocked'));
+    });
+    assert.equal(fs.readFileSync(path.join(worktree, 'blocked', 'child'), 'utf8'), 'remote\n');
+    // Git already busy here.
+    const lock = path.join(repo, '.git', 'worktrees', 'wt', 'index.lock');
+    fs.writeFileSync(lock, '');
+    fs.writeFileSync(path.join(copy, 'transit.txt'), 'remote 4\n');
+    await refuses(/Git is busy/, () => fs.rmSync(lock));
+    assert.equal(fs.readFileSync(path.join(worktree, 'transit.txt'), 'utf8'), 'remote 4\n');
+
+    // Shutting down waits for a running sync and refuses new ones.
+    const closing = new SandboxService(database, new SettingsService(database), { runtimeDir: path.join(dir, 'runtime'), backend: () => backend });
+    let release!: () => void;
+    backend.gate = new Promise((resolve) => { release = resolve; });
+    fs.writeFileSync(path.join(copy, 'transit.txt'), 'remote 5\n');
+    let synced = false;
+    const running = closing.sync(row.id).then(() => { synced = true; });
+    const disposed = closing.dispose();
+    await assert.rejects(closing.sync(row.id), /shutting down/);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(synced, false);
+    backend.gate = null;
+    release();
+    await disposed;
+    assert.equal(synced, true, 'dispose waited for the sync');
+    await running;
+    assert.equal(fs.readFileSync(path.join(worktree, 'transit.txt'), 'utf8'), 'remote 5\n');
 
     // Rewritten history in the sandbox still comes back.
     git(copy, ['commit', '-qa', '--amend', '-m', 'feature, amended']);
