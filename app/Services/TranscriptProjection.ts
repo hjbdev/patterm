@@ -994,7 +994,7 @@ function toolStatus(state: unknown, output: string): TranscriptToolStatus {
 const CLAUDE_MCP = /^mcp__(.+?)__(.+)$/;
 const OPENCODE_BRIDGE = /^patterm_[0-9a-f]{12}_(.+)$/;
 
-// bash, read, edit, write, grep or glob for a Patterm sandbox tool.
+// bash, read, edit, write, grep, glob or push for a Patterm sandbox tool.
 function sandboxToolKind(name: string): string | null {
   const parts = mcpNameParts(name);
   return parts.server === 'patterm' && parts.tool?.startsWith('sandbox_') ? parts.tool.slice('sandbox_'.length) : null;
@@ -1014,6 +1014,10 @@ function sandboxToolResult(name: string, output: string, result: unknown): { out
   if (kind === 'read') return { output: [text(parsed.content), text(parsed.more)].filter(Boolean).join('\n'), result: { filePath: parsed.file_path } };
   if (kind === 'grep') return { output: text(parsed.matches), result: parsed };
   if (kind === 'glob') return { output: text(parsed.files), result: parsed };
+  if (kind === 'push') {
+    const exit = parsed.exit_code;
+    return { output: [text(parsed.stdout).trimEnd(), text(parsed.stderr).trimEnd(), typeof exit === 'number' && exit !== 0 ? `Exit code ${exit}` : ''].filter(Boolean).join('\n'), result: parsed };
+  }
   return { output: '', result: { filePath: parsed.file_path, ...(text(parsed.diff) ? { gitDiff: text(parsed.diff) } : {}) } };
 }
 

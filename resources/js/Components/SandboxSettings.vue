@@ -1,6 +1,6 @@
 <template>
   <SettingsPanel title="Sandboxes">
-    <template #description>Run an agent’s file and shell tools on its own remote machine. The agent itself keeps running here with your logins; only its worktree, commands and tests move to the sandbox. Sandboxes run on your own <a href="https://sprites.dev" target="_blank" rel="noreferrer" class="underline underline-offset-2 hover:text-foreground">Fly.io Sprites</a> account and are billed by Fly.io.</template>
+    <template #description>Run an agent’s file and shell tools on its own remote machine, started from your repository’s committed code. The agent itself keeps running here with your logins. Its work comes back to a local worktree whenever it goes idle, and pushes go from this machine, so the sandbox never holds your git credentials. A repository’s <code class="text-[11px]">.agents/setup</code> script runs in each new sandbox. Sandboxes run on your own <a href="https://sprites.dev" target="_blank" rel="noreferrer" class="underline underline-offset-2 hover:text-foreground">Fly.io Sprites</a> account and are billed by Fly.io.</template>
     <p v-if="error" role="alert" class="text-xs text-destructive">{{ error }}</p>
 
     <SettingsSection title="Provider" scope="sandboxes">
@@ -10,9 +10,6 @@
           <Button type="submit" size="sm" variant="outline" :disabled="busy || !token.trim()">{{ busy ? 'Checking…' : 'Save' }}</Button>
           <Button v-if="state?.configured && !token" type="button" size="sm" variant="ghost" class="text-muted-foreground hover:text-destructive" :disabled="busy" @click="removeToken">Remove</Button>
         </form>
-      </SettingsRow>
-      <SettingsRow label="Share GitHub login" description="Copy this machine’s GitHub CLI token into new sandboxes, so agents there can push and open pull requests as you." html-for="sandbox-share-github" save-key="sandboxes.github" toggle>
-        <Switch id="sandbox-share-github" :model-value="state?.share_github ?? false" :disabled="!state" @update:model-value="saveShareGitHub" />
       </SettingsRow>
     </SettingsSection>
 
@@ -27,9 +24,13 @@
               <span :class="sandbox.status === 'ready' ? 'text-muted-foreground' : 'text-warning'">{{ statusLabel(sandbox) }}</span>
             </div>
             <div class="truncate text-muted-foreground" :title="sandbox.error ?? sandbox.path">{{ sandbox.error ?? sandbox.path }}</div>
+            <div v-if="sandbox.sync_error" class="truncate text-warning" :title="sandbox.sync_error">Sync failed: {{ sandbox.sync_error }}</div>
           </div>
-          <Button type="button" size="sm" variant="ghost" class="h-7 px-2 text-xs text-muted-foreground hover:text-destructive" :disabled="sandbox.agents > 0 || deleting === sandbox.id" :title="sandbox.agents > 0 ? 'Stop its agents first' : 'Delete the sandbox and everything in it'" @click="remove(sandbox)">
-            {{ deleting === sandbox.id ? 'Deleting…' : 'Delete' }}
+          <Button v-if="sandbox.status === 'ready'" type="button" size="sm" variant="ghost" class="h-7 px-2 text-xs text-muted-foreground" :disabled="busyId === sandbox.id" :title="sandbox.synced_at ? `Last synced ${new Date(sandbox.synced_at).toLocaleString()}` : 'Bring the sandbox’s work into its local worktree'" @click="syncNow(sandbox)">
+            {{ busyId === sandbox.id && action === 'sync' ? 'Syncing…' : 'Sync' }}
+          </Button>
+          <Button type="button" size="sm" variant="ghost" class="h-7 px-2 text-xs text-muted-foreground hover:text-destructive" :disabled="sandbox.agents > 0 || busyId === sandbox.id" :title="sandbox.agents > 0 ? 'Stop its agents first' : 'Bring its work back, then delete the sandbox'" @click="remove(sandbox)">
+            {{ busyId === sandbox.id && action === 'delete' ? 'Deleting…' : 'Delete' }}
           </Button>
         </li>
       </ul>
@@ -48,15 +49,15 @@ import SettingsRow from './settings/SettingsRow.vue';
 import SettingsSection from './settings/SettingsSection.vue';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
-import { Switch } from './ui/switch';
 
-interface SandboxSummary { id: string; name: string; path: string; status: string; error: string | null; agents: number }
-interface SandboxState { backend: string; configured: boolean; share_github: boolean; sandboxes: SandboxSummary[] }
+interface SandboxSummary { id: string; name: string; path: string; status: string; error: string | null; synced_at: string | null; sync_error: string | null; agents: number }
+interface SandboxState { backend: string; configured: boolean; sandboxes: SandboxSummary[] }
 
 const state = ref<SandboxState | null>(null);
 const token = ref('');
 const busy = ref(false);
-const deleting = ref<string | null>(null);
+const busyId = ref<string | null>(null);
+const action = ref<'sync' | 'delete' | null>(null);
 const error = ref('');
 
 async function load(): Promise<void> {
@@ -94,21 +95,31 @@ function removeToken(): void {
   void update({ token: null }, 'sandboxes.token');
 }
 
-function saveShareGitHub(value: boolean): void {
-  void update({ share_github: value }, 'sandboxes.github');
+async function run(sandbox: SandboxSummary, kind: 'sync' | 'delete', call: () => Promise<unknown>): Promise<boolean> {
+  busyId.value = sandbox.id;
+  action.value = kind;
+  error.value = '';
+  try {
+    state.value = await call() as SandboxState;
+    return true;
+  } catch (caught) {
+    error.value = message(caught);
+    return false;
+  } finally {
+    busyId.value = null;
+    action.value = null;
+  }
+}
+
+function syncNow(sandbox: SandboxSummary): void {
+  void run(sandbox, 'sync', () => window.patterm.call('settings_sandboxes_sync', { sandbox_id: sandbox.id }));
 }
 
 async function remove(sandbox: SandboxSummary): Promise<void> {
-  if (!window.confirm(`Delete ${sandbox.name}? Its copy of ${sandbox.path}, including changes that were never pushed, is deleted from Fly.io.`)) return;
-  deleting.value = sandbox.id;
-  error.value = '';
-  try {
-    state.value = await window.patterm.call('settings_sandboxes_delete', { sandbox_id: sandbox.id }) as SandboxState;
-  } catch (caught) {
-    error.value = message(caught);
-  } finally {
-    deleting.value = null;
-  }
+  if (!window.confirm(`Delete ${sandbox.name}? Its work comes back to ${sandbox.path} first, then the sandbox is deleted from Fly.io.`)) return;
+  if (await run(sandbox, 'delete', () => window.patterm.call('settings_sandboxes_delete', { sandbox_id: sandbox.id }))) return;
+  if (sandbox.status === 'ready' && !window.confirm(`${error.value}\n\nDelete ${sandbox.name} anyway? Work that didn’t come back is lost.`)) return;
+  if (sandbox.status === 'ready') await run(sandbox, 'delete', () => window.patterm.call('settings_sandboxes_delete', { sandbox_id: sandbox.id, discard: true }));
 }
 
 function statusLabel(sandbox: SandboxSummary): string {

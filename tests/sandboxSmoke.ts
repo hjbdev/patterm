@@ -98,7 +98,7 @@ async function main(): Promise<void> {
     assert.equal(sandboxes.configured(), false);
     await assert.rejects(sandboxes.provision({ project_id: 'p', worktree_id: 'w', path: repo }), /Sprites token/);
     db.prepare('delete from sandboxes').run();
-    const state = await sandboxes.saveSettings({ token: 'sprite-token-secret', share_github: false });
+    const state = await sandboxes.saveSettings({ token: 'sprite-token-secret' });
     assert.equal(state.configured, true);
     assert.ok(!JSON.stringify(state).includes('sprite-token-secret'));
     assert.ok(!JSON.stringify(sandboxes.state()).includes('sprite-token-secret'));
@@ -107,7 +107,7 @@ async function main(): Promise<void> {
     await assert.rejects(sandboxes.provision({ project_id: 'q', worktree_id: 'w', path: repo }), /Another project/);
 
     // Provisioning creates the sprite, uploads a bundle of the branch over
-    // stdin, clones it at the same path, and applies uncommitted changes.
+    // stdin and clones it at the same path. Uncommitted changes stay here.
     const row = await sandboxes.provision({ project_id: 'p', worktree_id: 'w', path: repo });
     assert.equal(row.status, 'ready');
     assert.equal(backend.created.length, 1);
@@ -119,7 +119,7 @@ async function main(): Promise<void> {
     assert.deepEqual(clone.argv, ['sh'], 'the setup script goes over stdin');
     assert.ok(clone.script!.includes("git remote add origin 'https://example.com/repo.git'"));
     assert.ok(!JSON.stringify(backend.calls).includes('remote-secret'), 'credentials in the remote URL stay here');
-    assert.ok(backend.calls.some((call) => call.argv.join(' ') === 'git apply --binary -' && call.cwd === repo && (call.stdin ?? 0) > 0));
+    assert.ok(!backend.calls.some((call) => call.argv[0] === 'git' && call.argv[1] === 'apply'), 'uncommitted changes are not copied');
     assert.ok(changes > 0);
     assert.equal(await sandboxes.provision({ project_id: 'p', worktree_id: 'w', path: repo }).then((again) => again.id), row.id, 'a worktree keeps its sandbox');
     assert.equal(sandboxes.forPath(path.join(repo, 'src'))?.id, row.id);
@@ -163,11 +163,11 @@ async function main(): Promise<void> {
     const registry = new McpToolRegistry();
     registerSandboxTools(registry, sandboxes, { cwdFor: () => repo, launchingSandbox: (identity) => identity === 'mcp-launching' ? row.id : null });
     const names = (identity: string | null) => registry.publicTools({ identity }).map((tool) => tool.name).filter((name) => name.startsWith('sandbox_'));
-    assert.equal(names('mcp-a').length, 6);
-    assert.equal(names('mcp-launching').length, 6, 'a launching sandboxed agent lists the tools');
+    assert.equal(names('mcp-a').length, 7);
+    assert.equal(names('mcp-launching').length, 7, 'a launching sandboxed agent lists the tools');
     db.prepare(`insert into sessions(id,project_id,process_id,harness,interface_mode,session_role,started_at,cwd,mcp_identity) values('s2','p',null,'claude','integrated','orchestrator',?,?,'mcp-b')`).run(now, dir);
     assert.equal(names('mcp-b').length, 0);
-    assert.equal(names(null).length, 6, 'OpenCode lists them, and denies them by permission outside sandboxes');
+    assert.equal(names(null).length, 7, 'OpenCode lists them, and denies them by permission outside sandboxes');
     assert.ok(!registry.publicTools({ identity: 'mcp-a' }).some((tool) => tool.name.startsWith('settings_sandboxes')), 'owner settings stay hidden');
     await assert.rejects(registry.callPublic('sandbox_bash', { command: 'true' }, { identity: 'mcp-b' }));
 
@@ -264,7 +264,7 @@ async function main(): Promise<void> {
     // While it is being deleted, nothing can launch into it.
     let openGate!: () => void;
     backend.destroyGate = new Promise((resolve) => { openGate = resolve; });
-    const deleting = sandboxes.delete(row.id);
+    const deleting = sandboxes.delete(row.id, { discard: true });
     await new Promise((resolve) => setImmediate(resolve));
     assert.throws(() => sandboxes.beginLaunch(row.id), /being deleted/);
     await assert.rejects(sandboxes.provision({ project_id: 'p', worktree_id: 'w', path: repo }), /being deleted/);
@@ -286,6 +286,8 @@ async function main(): Promise<void> {
     assert.equal(edit.family, 'edit');
     assert.deepEqual(edit.changes, { additions: 1, deletions: 1 });
     assert.equal(buildTranscriptTool('mcp__other__sandbox_bash', {}, '{}').family, 'mcp');
+    const push = buildTranscriptTool('mcp__patterm__sandbox_push', { input: {} }, JSON.stringify({ branch: 'b', exit_code: 1, stdout: '', stderr: 'rejected' }));
+    assert.equal(push.output, 'rejected\nExit code 1');
     // Claude records the whole MCP result, with the reply as its text part.
     const envelope = { content: [{ type: 'text', text: JSON.stringify({ file_path: `${repo}/a.txt`, diff: unifiedDiff('a.txt', 'a\n', 'b\n') }) }] };
     const recorded = buildTranscriptTool('mcp__patterm__sandbox_write', { input: { file_path: `${repo}/a.txt`, content: 'b\n' }, result: envelope }, JSON.stringify(envelope));

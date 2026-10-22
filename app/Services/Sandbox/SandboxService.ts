@@ -1,21 +1,22 @@
-import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { promisify } from 'node:util';
 import type { DatabaseService } from '../DatabaseService';
 import type { SettingsService } from '../SettingsService';
 import { resolveService } from '../../Platform/ServiceProcess';
 import type { SandboxBackend, SandboxExecOptions, SandboxExecResult, SandboxTunnel } from './SandboxBackend';
 import { SpritesBackend, shellQuote } from './SpritesBackend';
 
-const execFileAsync = promisify(execFile);
 const CODEX_EXEC_SERVICE = 'patterm-codex-exec';
 const CODEX_EXEC_PORT = 7777;
 // A busy agent holds its sandbox awake for this long, renewed well before it
 // lapses; a crashed Patterm lets the hold expire.
 const HOLD_SECONDS = 600;
 const HOLD_RENEW_MS = 4 * 60_000;
+const SETUP_TIMEOUT_MS = 30 * 60_000;
+// A repository's own setup script, run once in each new sandbox.
+const SETUP_SCRIPT = '.agents/setup';
 
 export interface SandboxRow {
   id: string;
@@ -28,6 +29,10 @@ export interface SandboxRow {
   error: string | null;
   exec_token: string | null;
   exec_port: number | null;
+  synced_head: string | null;
+  synced_patch: string | null;
+  synced_at: string | null;
+  sync_error: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -42,6 +47,8 @@ export interface SandboxSummary {
   path: string;
   status: string;
   error: string | null;
+  synced_at: string | null;
+  sync_error: string | null;
   created_at: string;
   agents: number;
 }
@@ -60,6 +67,25 @@ export interface WorkingFileStat {
   version: string;
 }
 
+export interface SyncResult {
+  head: string;
+  branch: string | null;
+  patch: string;
+  changed: boolean;
+}
+
+// A worktree's uncommitted changes, untracked files included, as one patch
+// from a throwaway index; the same command runs here and in a sandbox.
+const PATCH_ARGS = ['-c', 'core.quotePath=false', 'diff', '--cached', '--binary', '--no-color', '--no-ext-diff', 'HEAD'];
+const WORKING_PATCH_SCRIPT = [
+  'set -e',
+  'index=$(mktemp); trap \'rm -f "$index"\' EXIT',
+  'export GIT_INDEX_FILE="$index"',
+  'git read-tree HEAD',
+  'git add -A',
+  `git ${PATCH_ARGS.join(' ')}`
+].join('\n');
+
 type BackendFactory = (token: string) => SandboxBackend;
 
 // Remote sandboxes for worktrees. A sandbox holds a copy of one worktree at
@@ -76,6 +102,8 @@ export class SandboxService {
   // Sandboxes whose Codex exec-server was defined since Patterm started, with
   // its token; the provider keeps it running, so later turns skip the call.
   private readonly execServers = new Map<string, Promise<string>>();
+  // One sync at a time per sandbox; a sync asked for while one runs follows it.
+  private readonly syncs = new Map<string, Promise<SyncResult>>();
 
   constructor(
     private readonly database: DatabaseService,
@@ -90,16 +118,16 @@ export class SandboxService {
   ) {}
 
   // Settings as clients see them: whether a token is saved, never the token.
-  state(): { backend: string; configured: boolean; share_github: boolean; sandboxes: SandboxSummary[] } {
+  state(): { backend: string; configured: boolean; sandboxes: SandboxSummary[] } {
     const settings = this.settings.sandboxSettings();
-    return { backend: settings.backend, configured: Boolean(settings.token), share_github: settings.shareGitHub, sandboxes: this.list() };
+    return { backend: settings.backend, configured: Boolean(settings.token), sandboxes: this.list() };
   }
 
-  async saveSettings(input: { token?: string | null | undefined; share_github?: boolean | undefined }): Promise<ReturnType<SandboxService['state']>> {
+  async saveSettings(input: { token?: string | null | undefined }): Promise<ReturnType<SandboxService['state']>> {
     const current = this.settings.sandboxSettings();
     const token = input.token === undefined ? current.token : input.token?.trim() || null;
     if (token && token !== current.token) await this.factory(token).verify();
-    this.settings.saveSandboxSettings({ ...current, token, shareGitHub: input.share_github ?? current.shareGitHub });
+    this.settings.saveSandboxSettings({ ...current, token });
     // Another token may reach another account, so nothing opened with the
     // old one is reused.
     if (token !== current.token) {
@@ -127,7 +155,7 @@ export class SandboxService {
     `).all(projectId ?? null, projectId ?? null) as Array<SandboxRow & { agents: number }>;
     return rows.map((row) => ({
       id: row.id, project_id: row.project_id, worktree_id: row.worktree_id, backend: row.backend, name: row.remote_name,
-      path: row.path, status: row.status, error: row.error, created_at: row.created_at, agents: row.agents
+      path: row.path, status: row.status, error: row.error, synced_at: row.synced_at, sync_error: row.sync_error, created_at: row.created_at, agents: row.agents
     }));
   }
 
@@ -182,7 +210,7 @@ export class SandboxService {
   }
 
   // Creates the sandbox for a worktree, or returns the one it has. The copy
-  // starts from the worktree's commit plus its uncommitted tracked changes.
+  // starts from the worktree's commit; nothing uncommitted goes with it.
   provision(input: { project_id: string; worktree_id: string; path: string }): Promise<SandboxRow> {
     const existing = this.forWorktree(input.worktree_id);
     if (existing && this.deleting.has(existing.id)) return Promise.reject(new Error('This worktree\'s sandbox is being deleted'));
@@ -215,7 +243,9 @@ export class SandboxService {
     };
   }
 
-  async delete(id: string): Promise<void> {
+  // Brings the sandbox's work into the local worktree first, unless asked to
+  // discard it.
+  async delete(id: string, options: { discard?: boolean } = {}): Promise<void> {
     const row = this.get(id);
     if (!row) return;
     if ((row.worktree_id && this.provisioning.has(row.worktree_id)) || this.launching.has(row.id)) throw new Error('This sandbox is still being set up for an agent; delete it once the agent has started');
@@ -224,6 +254,11 @@ export class SandboxService {
     if (live.count > 0) throw new Error('Stop the agents using this sandbox before deleting it');
     this.deleting.add(row.id);
     try {
+      if (row.status === 'ready' && !options.discard) {
+        await this.sync(row.id).catch((error: unknown) => {
+          throw new Error(`Could not bring the sandbox's work back, so it was not deleted: ${error instanceof Error ? error.message : String(error)}`);
+        });
+      }
       await this.closeTunnel(row.id);
       this.stopHold(row.id);
       this.execServers.delete(row.id);
@@ -387,9 +422,10 @@ export class SandboxService {
     this.options.onChanged?.();
     try {
       if (await backend.status(name) === null) await backend.create(name);
-      await this.copyWorktree(backend, name, input.path);
-      if (this.settings.sandboxSettings().shareGitHub) await this.shareGitHub(backend, name);
-      this.database.connection.prepare(`update sandboxes set status = 'ready', error = null, updated_at = ? where id = ?`).run(new Date().toISOString(), id);
+      const baseline = await this.copyWorktree(backend, name, input.path);
+      await this.runSetup(backend, name, input.path);
+      this.database.connection.prepare(`update sandboxes set status = 'ready', error = null, synced_head = ?, synced_patch = ?, updated_at = ? where id = ?`)
+        .run(baseline.head, baseline.patch, new Date().toISOString(), id);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.database.connection.prepare(`update sandboxes set status = 'failed', error = ?, updated_at = ? where id = ?`).run(message, new Date().toISOString(), id);
@@ -403,12 +439,10 @@ export class SandboxService {
   }
 
   // Sends the worktree's branch as a git bundle and clones it at the same
-  // path, then applies uncommitted tracked changes. Untracked files stay here.
-  private async copyWorktree(backend: SandboxBackend, name: string, worktreePath: string): Promise<void> {
-    const git = (args: string[], encoding: 'utf8' | 'buffer' = 'utf8') => {
-      const command = resolveService('git', args);
-      return execFileAsync(command.command, command.args, { cwd: worktreePath, encoding, maxBuffer: 2 * 1024 * 1024 * 1024, windowsHide: true, env: this.options.env ?? process.env });
-    };
+  // path. Only commits go; the local worktree's state at that moment is the
+  // baseline the first sync expects.
+  private async copyWorktree(backend: SandboxBackend, name: string, worktreePath: string): Promise<{ head: string; patch: string }> {
+    const git = (args: string[]) => this.local(worktreePath, args);
     const branch = (await git(['branch', '--show-current'])).stdout.toString().trim();
     const head = (await git(['rev-parse', 'HEAD'])).stdout.toString().trim();
     const origin = withoutCredentials(await git(['remote', 'get-url', 'origin']).then((result) => result.stdout.toString().trim()).catch(() => ''));
@@ -420,7 +454,6 @@ export class SandboxService {
       .then((result) => result.stdout.toString().split('\n').filter(Boolean)).catch(() => [] as string[]);
     const userName = await git(['config', '--get', 'user.name']).then((result) => result.stdout.toString().trim()).catch(() => '');
     const userEmail = await git(['config', '--get', 'user.email']).then((result) => result.stdout.toString().trim()).catch(() => '');
-    const changes = (await git(['diff', '--binary', 'HEAD'], 'buffer')).stdout as Buffer;
     fs.mkdirSync(this.options.runtimeDir, { recursive: true, mode: 0o700 });
     const bundle = path.join(this.options.runtimeDir, `sandbox-${randomUUID()}.bundle`);
     try {
@@ -450,17 +483,138 @@ export class SandboxService {
     // The script names the remote and the git user, so it goes over stdin
     // rather than into a command line.
     await this.must(backend.exec(name, ['sh'], { stdin: script, timeoutMs: 15 * 60_000 }), 'clone the worktree');
-    if (changes.length) await this.must(backend.exec(name, ['git', 'apply', '--binary', '-'], { cwd: worktreePath, stdin: changes, timeoutMs: 5 * 60_000 }), 'apply uncommitted changes');
+    return { head, patch: digest(await this.workingPatch(worktreePath)) };
   }
 
-  // The GitHub CLI token goes over the exec stream's stdin, never a command
-  // line, on either machine.
-  private async shareGitHub(backend: SandboxBackend, name: string): Promise<void> {
-    const gh = resolveService('gh', ['auth', 'token']);
-    const token = (await execFileAsync(gh.command, gh.args, { encoding: 'utf8', windowsHide: true, env: this.options.env ?? process.env, timeout: 30_000 })).stdout.trim();
-    if (!token) throw new Error('The GitHub CLI on this machine is not signed in');
-    await this.must(backend.exec(name, ['gh', 'auth', 'login', '--with-token'], { stdin: `${token}\n`, timeoutMs: 60_000 }), 'sign in to GitHub');
-    await this.must(backend.exec(name, ['gh', 'auth', 'setup-git'], { timeoutMs: 60_000 }), 'set up GitHub for git');
+  // Runs the repository's setup script once, in the new sandbox, so agents
+  // start with dependencies installed.
+  private async runSetup(backend: SandboxBackend, name: string, worktreePath: string): Promise<void> {
+    const script = [
+      `[ -f ${SETUP_SCRIPT} ] || exit 0`,
+      `if [ -x ${SETUP_SCRIPT} ]; then ./${SETUP_SCRIPT}; else bash ${SETUP_SCRIPT}; fi > /tmp/patterm-setup.log 2>&1 && exit 0`,
+      'status=$?; tail -c 2000 /tmp/patterm-setup.log >&2; exit $status'
+    ].join('\n');
+    await this.must(backend.exec(name, ['bash', '-lc', script], { cwd: worktreePath, timeoutMs: SETUP_TIMEOUT_MS }), `run ${SETUP_SCRIPT}`);
+  }
+
+  // The commit a sandbox for a new conversation starts from: the remote's
+  // default branch, freshly fetched, else this checkout's HEAD.
+  async baseRef(repoPath: string): Promise<string> {
+    await this.local(repoPath, ['fetch', '-q', 'origin'], { timeoutMs: 60_000 }).catch(() => undefined);
+    const originHead = (await this.local(repoPath, ['symbolic-ref', '-q', 'refs/remotes/origin/HEAD']).catch(() => null))?.stdout.toString().trim();
+    return originHead ? (await this.local(repoPath, ['rev-parse', originHead])).stdout.toString().trim() : this.localHead(repoPath);
+  }
+
+  async localHead(worktreePath: string): Promise<string> {
+    return (await this.local(worktreePath, ['rev-parse', 'HEAD'])).stdout.toString().trim();
+  }
+
+  // Makes the local worktree match the sandbox: its branch, commits and
+  // uncommitted files (ignored files excepted). Refuses when the local
+  // worktree changed since the last sync, so nothing made here is lost.
+  sync(id: string): Promise<SyncResult> {
+    const next = (this.syncs.get(id) ?? Promise.resolve(null)).catch(() => null).then(() => this.syncNow(id));
+    this.syncs.set(id, next);
+    void next.catch(() => undefined).finally(() => { if (this.syncs.get(id) === next) this.syncs.delete(id); });
+    return next;
+  }
+
+  // Syncs, then pushes the branch from this machine, where the owner's git
+  // credentials and network reach the remote. The sandbox needs neither.
+  async push(row: SandboxRow, options: { forceWithLease?: boolean } = {}): Promise<{ branch: string; exit_code: number; stdout: string; stderr: string }> {
+    await this.sync(row.id);
+    const branch = (await this.local(row.path, ['symbolic-ref', '-q', '--short', 'HEAD']).catch(() => null))?.stdout.toString().trim();
+    if (!branch) throw new Error('The sandbox is not on a branch; check one out before pushing');
+    const result = await this.local(row.path, ['push', ...(options.forceWithLease ? ['--force-with-lease'] : []), '-u', 'origin', branch], { timeoutMs: 5 * 60_000, allowFailure: true });
+    return { branch, exit_code: result.code, stdout: result.stdout.toString('utf8'), stderr: result.stderr.toString('utf8') };
+  }
+
+  private async syncNow(id: string): Promise<SyncResult> {
+    const row = this.get(id);
+    if (!row || row.status !== 'ready') throw new Error('This sandbox is not ready');
+    try {
+      const result = await this.pullBack(row);
+      this.database.connection.prepare('update sandboxes set synced_head = ?, synced_patch = ?, synced_at = ?, sync_error = null, updated_at = ? where id = ?')
+        .run(result.head, result.patch, new Date().toISOString(), new Date().toISOString(), row.id);
+      this.options.onChanged?.();
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.database.connection.prepare('update sandboxes set sync_error = ?, updated_at = ? where id = ?').run(message, new Date().toISOString(), row.id);
+      this.options.onChanged?.();
+      throw error;
+    }
+  }
+
+  private async pullBack(row: SandboxRow): Promise<SyncResult> {
+    const localHead = await this.localHead(row.path);
+    if (localHead !== row.synced_head || digest(await this.workingPatch(row.path)) !== row.synced_patch) {
+      throw new Error('The local worktree has changed since the last sync. Commit or discard those changes in the sandbox instead, then sync again');
+    }
+    const state = await this.must(this.exec(row, ['sh', '-c', 'git rev-parse HEAD && git symbolic-ref -q --short HEAD || true'], { cwd: row.path, timeoutMs: 60_000 }), 'read the sandbox\'s branch');
+    const [remoteHead = '', remoteBranch = ''] = state.stdout.toString('utf8').split('\n').map((line) => line.trim());
+    if (!/^[0-9a-f]{40,64}$/.test(remoteHead)) throw new Error('The sandbox has no commit checked out');
+    if (remoteHead !== localHead) {
+      // New commits only, when the sandbox still has the last synced one.
+      const bundle = await this.must(this.exec(row, ['sh', '-c', [
+        'set -e; file=$(mktemp)',
+        'if git cat-file -e "$1^{commit}" 2>/dev/null; then git bundle create -q "$file" HEAD "^$1"; else git bundle create -q "$file" HEAD; fi',
+        'cat "$file"; rm -f "$file"'
+      ].join('\n'), 'sh', localHead], { cwd: row.path, timeoutMs: 5 * 60_000 }), 'bundle the sandbox\'s commits');
+      fs.mkdirSync(this.options.runtimeDir, { recursive: true, mode: 0o700 });
+      const file = path.join(this.options.runtimeDir, `sandbox-sync-${randomUUID()}.bundle`);
+      try {
+        fs.writeFileSync(file, bundle.stdout, { mode: 0o600 });
+        await this.local(row.path, ['fetch', '-q', file, 'HEAD']);
+      } finally {
+        fs.rmSync(file, { force: true });
+      }
+    }
+    const patch = await this.must(this.exec(row, ['bash', '-c', WORKING_PATCH_SCRIPT], { cwd: row.path, timeoutMs: 5 * 60_000 }), 'read the sandbox\'s changes');
+    const localBranch = (await this.local(row.path, ['symbolic-ref', '-q', '--short', 'HEAD'], { allowFailure: true })).stdout.toString().trim();
+    // Nothing moved: leave the files, and their timestamps, alone.
+    if (remoteHead === localHead && remoteBranch === localBranch && digest(patch.stdout) === row.synced_patch) {
+      return { head: remoteHead, branch: remoteBranch || null, patch: row.synced_patch, changed: false };
+    }
+    await this.local(row.path, ['checkout', '-q', '-f', ...(remoteBranch ? ['-B', remoteBranch] : ['--detach']), remoteHead]);
+    await this.local(row.path, ['clean', '-q', '-fd']);
+    if (patch.stdout.length) await this.local(row.path, ['apply', '--binary', '-'], { stdin: patch.stdout });
+    const synced = digest(await this.workingPatch(row.path));
+    return { head: remoteHead, branch: remoteBranch || null, patch: synced, changed: remoteHead !== localHead || remoteBranch !== localBranch || synced !== row.synced_patch };
+  }
+
+  // Every uncommitted change in a worktree, untracked files included, as one
+  // binary patch. A throwaway index leaves the real one alone.
+  private async workingPatch(worktreePath: string): Promise<Buffer> {
+    fs.mkdirSync(this.options.runtimeDir, { recursive: true, mode: 0o700 });
+    const index = { GIT_INDEX_FILE: path.join(this.options.runtimeDir, `sandbox-index-${randomUUID()}`) };
+    try {
+      await this.local(worktreePath, ['read-tree', 'HEAD'], { env: index });
+      await this.local(worktreePath, ['add', '-A'], { env: index });
+      return (await this.local(worktreePath, PATCH_ARGS, { env: index })).stdout;
+    } finally {
+      fs.rmSync(index.GIT_INDEX_FILE, { force: true });
+    }
+  }
+
+  private local(cwd: string, args: string[], options: { stdin?: Buffer; timeoutMs?: number; allowFailure?: boolean; env?: Record<string, string> } = {}): Promise<{ code: number; stdout: Buffer; stderr: Buffer }> {
+    const command = resolveService('git', args);
+    return new Promise((resolve, reject) => {
+      const child = spawn(command.command, command.args, { cwd, windowsHide: true, env: { ...(this.options.env ?? process.env), GIT_TERMINAL_PROMPT: '0', ...options.env } });
+      const out: Buffer[] = [];
+      const err: Buffer[] = [];
+      const timer = options.timeoutMs ? setTimeout(() => child.kill('SIGKILL'), options.timeoutMs) : null;
+      child.stdout.on('data', (chunk: Buffer) => out.push(chunk));
+      child.stderr.on('data', (chunk: Buffer) => err.push(chunk));
+      child.on('error', reject);
+      child.on('close', (code) => {
+        if (timer) clearTimeout(timer);
+        const result = { code: code ?? -1, stdout: Buffer.concat(out), stderr: Buffer.concat(err) };
+        if (result.code !== 0 && !options.allowFailure) reject(new Error(result.stderr.toString('utf8').trim() || `git ${args[0]} exited with ${result.code}`));
+        else resolve(result);
+      });
+      child.stdin.end(options.stdin);
+    });
   }
 
   private async must(result: Promise<SandboxExecResult>, action: string): Promise<SandboxExecResult> {
@@ -494,9 +648,12 @@ export class SandboxService {
     return row?.activity === 'working' || row?.activity === 'thinking';
   }
 
+  // Once no agent is working, the sandbox's work comes back here and it may
+  // pause.
   private endHold(row: SandboxRow): void {
     this.stopHold(row.id);
     this.call(row, 'release.failed', (backend) => backend.release(row.remote_name, 'patterm'));
+    this.call(row, 'sync.failed', () => this.sync(row.id));
   }
 
   // Background provider calls log failures, including a removed token.
@@ -548,6 +705,10 @@ export class SandboxService {
   private log(event: string, row: SandboxRow, error: unknown): void {
     this.options.log?.(event, { sandbox_id: row.id, error: error instanceof Error ? error.message : String(error) });
   }
+}
+
+function digest(value: Buffer | string): string {
+  return createHash('sha256').update(value).digest('hex');
 }
 
 // Resolves symlinks in the longest existing prefix of a path, which may not

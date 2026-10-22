@@ -541,8 +541,8 @@ async function createApplicationResources(
     integrated,
     settings,
     sandboxes,
-    createWorktree: async (projectId, name) => {
-      const { worktree } = await worktreeService.create({ project_id: projectId, name, actor_type: 'system' });
+    createWorktree: async (projectId, name, base) => {
+      const { worktree } = await worktreeService.create({ project_id: projectId, name, actor_type: 'system', ...base });
       return { id: worktree.id, worktree_path: worktree.worktreePath };
     },
     database,

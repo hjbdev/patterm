@@ -5,8 +5,8 @@ import type { SandboxRow, SandboxService } from '../Services/Sandbox/SandboxServ
 import { SandboxExecTimeout } from '../Services/Sandbox/SandboxBackend';
 import { shellQuote } from '../Services/Sandbox/SpritesBackend';
 
-export const SANDBOX_AGENT_TOOLS = ['sandbox_bash', 'sandbox_read', 'sandbox_write', 'sandbox_edit', 'sandbox_grep', 'sandbox_glob'] as const;
-export const SANDBOX_SETTINGS_TOOLS = ['settings_sandboxes_get', 'settings_sandboxes_update', 'settings_sandboxes_delete'] as const;
+export const SANDBOX_AGENT_TOOLS = ['sandbox_bash', 'sandbox_read', 'sandbox_write', 'sandbox_edit', 'sandbox_grep', 'sandbox_glob', 'sandbox_push'] as const;
+export const SANDBOX_SETTINGS_TOOLS = ['settings_sandboxes_get', 'settings_sandboxes_update', 'settings_sandboxes_sync', 'settings_sandboxes_delete'] as const;
 
 const MAX_OUTPUT_CHARS = 30_000;
 const MAX_LINE_CHARS = 2_000;
@@ -31,8 +31,10 @@ const grepInput = z.object({
   head_limit: z.number().int().min(1).optional()
 }).strict();
 const globInput = z.object({ pattern: z.string().min(1), path: z.string().optional() }).strict();
-const updateInput = z.object({ token: z.string().max(4096).nullable().optional(), share_github: z.boolean().optional() }).strict();
-const deleteInput = z.object({ sandbox_id: z.string().min(1) }).strict();
+const pushInput = z.object({ force_with_lease: z.boolean().optional() }).strict();
+const updateInput = z.object({ token: z.string().max(4096).nullable().optional() }).strict();
+const syncInput = z.object({ sandbox_id: z.string().min(1) }).strict();
+const deleteInput = z.object({ sandbox_id: z.string().min(1), discard: z.boolean().optional() }).strict();
 
 const NOTE = 'This agent\'s project lives in a remote sandbox at the same absolute path; files on this machine are a stale copy.';
 
@@ -154,18 +156,31 @@ export function registerSandboxTools(registry: McpToolRegistry, sandboxes: Sandb
     return { files: limitLines(result.stdout.toString('utf8'), 1_000) };
   });
 
+  tool('sandbox_push', 'Push the sandbox\'s current branch to origin. Patterm first brings the sandbox\'s commits and files into the local worktree, then pushes from this machine with the owner\'s git credentials, which the sandbox does not have. Commit first; uncommitted changes are not pushed. Open pull requests with your git provider\'s tools afterwards.', pushInput, {
+    type: 'object',
+    properties: { force_with_lease: { type: 'boolean', description: 'Push with --force-with-lease, after rewriting the branch\'s history.' } }
+  }, (input, row) => sandboxes.push(row, { forceWithLease: input.force_with_lease === true }));
+
   // Owner settings: hidden from agents, never echoing the token.
   registry.register(
     { name: 'settings_sandboxes_get', namespace: 'settings', description: 'Read sandbox settings and the sandboxes that exist.', hidden: true, changes: [], inputSchema: { type: 'object' } },
     () => sandboxes.state()
   );
   registry.register(
-    { name: 'settings_sandboxes_update', namespace: 'settings', description: 'Save the sandbox provider token or whether to share the GitHub login.', hidden: true, changes: ['settings'], inputSchema: { type: 'object' } },
+    { name: 'settings_sandboxes_update', namespace: 'settings', description: 'Save or remove the sandbox provider token.', hidden: true, changes: ['settings'], inputSchema: { type: 'object' } },
     (args) => sandboxes.saveSettings(updateInput.parse(args))
   );
   registry.register(
-    { name: 'settings_sandboxes_delete', namespace: 'settings', description: 'Delete a sandbox and everything in it.', hidden: true, changes: ['settings', 'workbench'], inputSchema: { type: 'object', required: ['sandbox_id'] } },
-    async (args) => { await sandboxes.delete(deleteInput.parse(args).sandbox_id); return sandboxes.state(); }
+    { name: 'settings_sandboxes_sync', namespace: 'settings', description: 'Bring a sandbox\'s branch, commits and files into its local worktree.', hidden: true, changes: ['settings', 'workbench'], inputSchema: { type: 'object', required: ['sandbox_id'] } },
+    async (args) => { await sandboxes.sync(syncInput.parse(args).sandbox_id); return sandboxes.state(); }
+  );
+  registry.register(
+    { name: 'settings_sandboxes_delete', namespace: 'settings', description: 'Bring a sandbox\'s work back, then delete the sandbox. With discard, delete it without bringing anything back.', hidden: true, changes: ['settings', 'workbench'], inputSchema: { type: 'object', required: ['sandbox_id'] } },
+    async (args) => {
+      const input = deleteInput.parse(args);
+      await sandboxes.delete(input.sandbox_id, { discard: input.discard === true });
+      return sandboxes.state();
+    }
   );
 }
 

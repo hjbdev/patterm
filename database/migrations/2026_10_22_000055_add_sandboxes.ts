@@ -5,8 +5,10 @@ export default {
   up(schema) {
     // A remote machine holding one worktree. Agents launched on that
     // worktree run here with their own logins, while their file and shell
-    // tools run on the remote copy at the same absolute path. A deleted
-    // sandbox keeps its row so its agents' history still names it.
+    // tools run on the remote copy at the same absolute path. Its work is
+    // synced back into the local worktree, which records the last state it
+    // received. A deleted sandbox keeps its row so its agents' history
+    // still names it.
     schema.sql(`
       create table sandboxes (
         id text primary key,
@@ -19,6 +21,10 @@ export default {
         error text,
         exec_token text,
         exec_port integer,
+        synced_head text,
+        synced_patch text,
+        synced_at text,
+        sync_error text,
         created_at text not null,
         updated_at text not null,
         deleted_at text

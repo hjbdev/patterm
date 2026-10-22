@@ -44,8 +44,9 @@ export const launchHarnessInput = z.object({
   name: z.string().optional(),
   initial_prompt: z.string().optional(),
   interface_mode: z.enum(['tui', 'integrated']).optional(),
-  // Run the agent's file and shell tools in a new remote sandbox holding its
-  // worktree. Agents launched on a worktree that has a sandbox use it anyway.
+  // Run the agent's file and shell tools in a new remote sandbox, on a new
+  // worktree branched from the chosen worktree's commit or the default
+  // branch. Agents launched on a worktree that has a sandbox use it anyway.
   sandbox: z.boolean().default(false)
 }).superRefine((value, context) => {
   if (!value.harness && !value.preset) {
@@ -111,9 +112,9 @@ export interface HarnessLauncherDeps {
   // expect a sign-in redirect to reach this machine's loopback listeners.
   // Lets MCP helpers of a launch that is still starting use its identity.
   launchingIdentities?: Pick<LaunchingMcpIdentities, 'reserve'> & Partial<Pick<LaunchingMcpIdentities, 'attachSandbox'>>;
-  sandboxes?: Pick<SandboxService, 'configured' | 'forWorktree' | 'provision' | 'codexEnvironment' | 'beginLaunch'>;
-  // Creates a worktree for a sandboxed launch that names none.
-  createWorktree?: (projectId: string, name: string) => Promise<{ id: string; worktree_path: string }>;
+  sandboxes?: Pick<SandboxService, 'configured' | 'forWorktree' | 'provision' | 'codexEnvironment' | 'beginLaunch' | 'baseRef' | 'localHead'>;
+  // Creates the worktree a new sandbox holds.
+  createWorktree?: (projectId: string, name: string, base: { repo_path?: string; base_ref: string }) => Promise<{ id: string; worktree_path: string }>;
   assistantMemory?: Pick<AssistantMemoryService, 'snapshot'>;
 }
 
@@ -520,21 +521,23 @@ export class HarnessLauncher {
     if (!sandboxes.configured()) throw new Error('Add a Sprites token in Settings › Sandboxes to run agents in sandboxes');
     if (harness === 'rawpty') throw new Error('Raw terminals cannot run in a sandbox');
     if (input.interface_mode === 'tui') throw new Error('Sandboxed agents run as Integrated conversations');
-    let worktreePath: string;
-    if (worktreeId) {
-      worktreePath = this.worktree(worktreeId).worktree_path;
-    } else {
-      if (!this.deps.createWorktree) throw new Error('Choose a worktree for the sandbox');
-      const created = await this.deps.createWorktree(input.project_id, `sandbox-${randomUUID().slice(0, 6)}`);
-      worktreeId = created.id;
-      worktreePath = created.worktree_path;
-    }
-    return sandboxes.provision({ project_id: input.project_id, worktree_id: worktreeId, path: storedPath(worktreePath) });
+    if (!this.deps.createWorktree) throw new Error('Sandboxes are unavailable');
+    // Like a fresh clone, a sandbox starts from commits only; the chosen
+    // worktree's uncommitted changes stay with it.
+    const source = worktreeId ? this.worktree(worktreeId) : null;
+    const projectPath = this.deps.workbench.getProject(input.project_id)?.path;
+    if (!source && !projectPath) throw new Error('This project has no repository for a sandbox');
+    const base = source
+      ? { repo_path: source.repo_path, base_ref: await sandboxes.localHead(source.worktree_path) }
+      : { base_ref: await sandboxes.baseRef(projectPath!) };
+    const created = await this.deps.createWorktree(input.project_id, `sandbox-${randomUUID().slice(0, 6)}`, base);
+    worktreeId = created.id;
+    return sandboxes.provision({ project_id: input.project_id, worktree_id: worktreeId, path: storedPath(created.worktree_path) });
   }
 
-  private worktree(worktreeId: string): { worktree_path: string } {
-    const row = this.deps.database.connection.prepare(`select worktree_path from worktrees where id = ?`).get(worktreeId) as
-      | { worktree_path: string }
+  private worktree(worktreeId: string): { worktree_path: string; repo_path: string } {
+    const row = this.deps.database.connection.prepare(`select worktree_path, repo_path from worktrees where id = ?`).get(worktreeId) as
+      | { worktree_path: string; repo_path: string }
       | undefined;
     if (!row) {
       throw new Error(`unknown worktree: ${worktreeId}`);
@@ -562,7 +565,7 @@ function sandboxContext(harness: string, worktreePath: string): string {
   const tools = harness === 'codex'
     ? 'Your shell commands and file patches already run there.'
     : 'Use the sandbox_bash, sandbox_read, sandbox_edit, sandbox_write, sandbox_grep and sandbox_glob tools for every file and command; this machine\'s copy is out of date.';
-  return `This conversation runs in a remote sandbox. The project is at ${worktreePath} on the sandbox machine, which has its own processes, ports and network. ${tools}`;
+  return `This conversation runs in a remote sandbox. The project is at ${worktreePath} on the sandbox machine, which has its own processes, ports and network. ${tools} The sandbox has no git credentials: commit there, then push with the sandbox_push tool, which pushes from the owner's machine. Patterm brings the sandbox's work into the local worktree whenever its agents go idle.`;
 }
 
 // A sandboxed agent works inside its worktree; another directory there is

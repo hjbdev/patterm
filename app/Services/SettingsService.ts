@@ -121,10 +121,7 @@ const UPDATE_RECORD_KEY = 'updates.record.v1';
 // stored like MCP server secrets and never returned to a client.
 export const sandboxSettingsInput = z.object({
   backend: z.literal('sprites').default('sprites'),
-  token: z.string().trim().min(1).max(4096).nullable().default(null),
-  // Copies this machine's GitHub CLI token into new sandboxes so agents can
-  // push and open pull requests there.
-  shareGitHub: z.boolean().default(false)
+  token: z.string().trim().min(1).max(4096).nullable().default(null)
 }).strict();
 export type SandboxSettings = z.infer<typeof sandboxSettingsInput>;
 const SANDBOX_SETTINGS_KEY = 'sandbox.settings.v1';
