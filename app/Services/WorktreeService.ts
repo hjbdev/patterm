@@ -64,6 +64,8 @@ export class WorktreeService {
       git?: GitService;
       // The project whose sandbox holds a path; git there runs in that sandbox.
       sandboxOwner?: (path: string) => string | null;
+      // Whether a worktree has a sandbox, which needs it registered.
+      hasSandbox?: (worktreeId: string) => boolean;
     }
   ) {}
 
@@ -74,6 +76,7 @@ export class WorktreeService {
     if (!requestedRepoPath) {
       throw new Error(`project ${project.id} has no path`);
     }
+    this.refuseOtherSandbox(input.project_id, requestedRepoPath, input.worktree_path);
 
     const git = this.deps.git ?? new GitService();
     const repoPath = storedPath(await git.root(requestedRepoPath));
@@ -117,8 +120,7 @@ export class WorktreeService {
     if (existing) {
       return { worktree: mapWorktree(existing) };
     }
-    const owner = this.deps.sandboxOwner?.(storedPath(worktreePath)) ?? this.deps.sandboxOwner?.(storedPath(realPath));
-    if (owner && owner !== input.project_id) throw new Error('This directory is another project\'s sandboxed worktree');
+    this.refuseOtherSandbox(input.project_id, worktreePath, realPath, input.repo_path);
 
     const git = this.deps.git ?? new GitService();
     const repoPath = storedPath(input.repo_path ? await git.root(input.repo_path) : await git.root(worktreePath));
@@ -153,6 +155,8 @@ export class WorktreeService {
     if (!row) {
       throw new Error(`unknown worktree: ${input.worktree_id}`);
     }
+    // Its sandbox finds its agents through this registration.
+    if (this.deps.hasSandbox?.(row.id)) throw new Error('Delete this worktree\'s sandbox in Settings › Sandboxes before abandoning it');
 
     db.transaction(() => {
       // sessions.worktree_id has no FK. Process and historical diff snapshot FKs
@@ -169,6 +173,15 @@ export class WorktreeService {
     })();
 
     return { worktree_id: row.id, abandoned: true, deleted: false };
+  }
+
+  // Git for a path inside a sandbox runs in that sandbox, so another
+  // project's agents cannot name one.
+  private refuseOtherSandbox(projectId: string, ...paths: Array<string | undefined>): void {
+    for (const target of paths) {
+      const owner = target ? this.deps.sandboxOwner?.(storedPath(normalizePath(target))) : null;
+      if (owner && owner !== projectId) throw new Error('This directory is another project\'s sandboxed worktree');
+    }
   }
 
   get(worktreeId: string): WorktreeRow {

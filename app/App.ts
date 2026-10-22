@@ -440,7 +440,7 @@ async function createApplicationResources(
     if (sandbox?.status === 'ready') sandboxes.setBusy(sandbox, processId, activity === 'working' || activity === 'thinking');
   }));
   const git: GitService = new SandboxGitService(sandboxes);
-  const worktreeService = new WorktreeService({ database, timeline, workbench, git, sandboxOwner: (target) => sandboxes.ownerOfPath(target) });
+  const worktreeService = new WorktreeService({ database, timeline, workbench, git, sandboxOwner: (target) => sandboxes.ownerOfPath(target), hasSandbox: (worktreeId) => Boolean(sandboxes.forWorktree(worktreeId)) });
   const diffService = new DiffService({
     worktrees: worktreeService,
     git,

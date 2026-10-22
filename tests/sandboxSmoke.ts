@@ -11,6 +11,9 @@ import { SandboxService } from '../app/Services/Sandbox/SandboxService';
 import { SandboxGitService } from '../app/Services/Sandbox/SandboxGitService';
 import { SandboxExecTimeout, type SandboxBackend, type SandboxExecOptions, type SandboxExecResult, type SandboxServiceSpec } from '../app/Services/Sandbox/SandboxBackend';
 import { buildTranscriptTool } from '../app/Services/TranscriptProjection';
+import { TimelineService } from '../app/Services/TimelineService';
+import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
+import { WorktreeService } from '../app/Services/WorktreeService';
 import { removeTree } from './fixtures/TempTree';
 
 // Runs sandbox commands on this machine, so the tools and git routing can be
@@ -23,10 +26,11 @@ class LocalBackend implements SandboxBackend {
   readonly holds: string[] = [];
   created: string[] = [];
   destroyed: string[] = [];
+  destroyGate: Promise<void> | null = null;
 
   async verify(): Promise<void> {}
   async create(name: string): Promise<void> { this.created.push(name); }
-  async destroy(name: string): Promise<void> { this.destroyed.push(name); }
+  async destroy(name: string): Promise<void> { await this.destroyGate; this.destroyed.push(name); }
   async status(name: string): Promise<string | null> { return this.created.includes(name) ? 'running' : null; }
   async ensureService(name: string, service: string, spec: SandboxServiceSpec): Promise<void> { this.services.push({ name, service, spec }); }
   async hold(_name: string, key: string): Promise<void> { this.holds.push(`hold:${key}`); }
@@ -232,6 +236,17 @@ async function main(): Promise<void> {
     await sandboxes.saveSettings({ token: 'sprite-token-secret' });
     db.prepare(`update processes set activity = 'idle' where id = 'proc'`).run();
 
+    // Another project cannot reach the sandbox through worktree paths, and
+    // the worktree stays registered while it has a sandbox.
+    db.prepare('insert into projects(id,name,path,created_at,updated_at) values(?,?,?,?,?)').run('q', 'Other', dir, now, now);
+    const worktrees = new WorktreeService({ database, timeline: new TimelineService(database), workbench: new WorkbenchRepository(database), git: routed, sandboxOwner: (target) => sandboxes.ownerOfPath(target), hasSandbox: (id) => Boolean(sandboxes.forWorktree(id)) });
+    const remoteCalls = backend.calls.length;
+    await assert.rejects(worktrees.create({ project_id: 'q', name: 'steal', repo_path: repo, actor_type: 'agent' }), /another project's sandboxed worktree/);
+    await assert.rejects(worktrees.link({ project_id: 'q', worktree_path: path.join(repo, 'src'), actor_type: 'agent' }), /another project's sandboxed worktree/);
+    await assert.rejects(worktrees.link({ project_id: 'q', worktree_path: dir, repo_path: repo, actor_type: 'agent' }), /another project's sandboxed worktree/);
+    assert.equal(backend.calls.length, remoteCalls, 'no git ran in the sandbox for the other project');
+    assert.throws(() => worktrees.abandon({ worktree_id: 'w', actor_type: 'agent' }), /Delete this worktree's sandbox/);
+
     // A launch that has chosen the sandbox keeps it from being deleted.
     const endLaunch = sandboxes.beginLaunch(row.id);
     await assert.rejects(sandboxes.delete(row.id), /still being set up/);
@@ -240,7 +255,17 @@ async function main(): Promise<void> {
     // Deleting refuses while agents use it, then removes the sprite.
     await assert.rejects(sandboxes.delete(row.id), /Stop the agents/);
     db.prepare(`update sessions set exited_at = ? where id = 's'`).run(now);
-    await sandboxes.delete(row.id);
+    // While it is being deleted, nothing can launch into it.
+    let openGate!: () => void;
+    backend.destroyGate = new Promise((resolve) => { openGate = resolve; });
+    const deleting = sandboxes.delete(row.id);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.throws(() => sandboxes.beginLaunch(row.id), /being deleted/);
+    await assert.rejects(sandboxes.provision({ project_id: 'p', worktree_id: 'w', path: repo }), /being deleted/);
+    await assert.rejects(sandboxes.delete(row.id), /already being deleted/);
+    await assert.rejects(sandboxes.codexEnvironmentFor('proc'), /not available/, 'a sandboxed Codex turn never runs here instead');
+    openGate();
+    await deleting;
     assert.deepEqual(backend.destroyed, [row.remote_name]);
     assert.equal(sandboxes.forWorktree('w'), null);
     assert.equal(sandboxes.list().length, 0);

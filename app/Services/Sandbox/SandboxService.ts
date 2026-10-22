@@ -71,6 +71,8 @@ export class SandboxService {
   private readonly provisioning = new Map<string, Promise<SandboxRow>>();
   // Launches between choosing a sandbox and registering their session.
   private readonly launching = new Map<string, number>();
+  // Sandboxes being deleted; no launch may choose them.
+  private readonly deleting = new Set<string>();
   // Sandboxes whose Codex exec-server was defined since Patterm started, with
   // its token; the provider keeps it running, so later turns skip the call.
   private readonly execServers = new Map<string, Promise<string>>();
@@ -173,6 +175,7 @@ export class SandboxService {
   // starts from the worktree's commit plus its uncommitted tracked changes.
   provision(input: { project_id: string; worktree_id: string; path: string }): Promise<SandboxRow> {
     const existing = this.forWorktree(input.worktree_id);
+    if (existing && this.deleting.has(existing.id)) return Promise.reject(new Error('This worktree\'s sandbox is being deleted'));
     if (existing?.status === 'ready') return Promise.resolve(existing);
     const running = this.provisioning.get(input.worktree_id);
     if (running) return running;
@@ -190,6 +193,7 @@ export class SandboxService {
   // Marks a launch that has chosen this sandbox but has no session yet, so
   // the sandbox cannot be deleted under it. Call the result when it ends.
   beginLaunch(id: string): () => void {
+    if (this.deleting.has(id)) throw new Error('This worktree\'s sandbox is being deleted');
     this.launching.set(id, (this.launching.get(id) ?? 0) + 1);
     let ended = false;
     return () => {
@@ -205,14 +209,20 @@ export class SandboxService {
     const row = this.get(id);
     if (!row) return;
     if ((row.worktree_id && this.provisioning.has(row.worktree_id)) || this.launching.has(row.id)) throw new Error('This sandbox is still being set up for an agent; delete it once the agent has started');
+    if (this.deleting.has(row.id)) throw new Error('This sandbox is already being deleted');
     const live = this.database.connection.prepare('select count(*) as count from sessions where worktree_id = ? and exited_at is null').get(row.worktree_id) as { count: number };
     if (live.count > 0) throw new Error('Stop the agents using this sandbox before deleting it');
-    await this.closeTunnel(row.id);
-    this.stopHold(row.id);
-    this.execServers.delete(row.id);
-    await this.backend().destroy(row.remote_name);
-    const now = new Date().toISOString();
-    this.database.connection.prepare('update sandboxes set deleted_at = ?, updated_at = ? where id = ?').run(now, now, row.id);
+    this.deleting.add(row.id);
+    try {
+      await this.closeTunnel(row.id);
+      this.stopHold(row.id);
+      this.execServers.delete(row.id);
+      await this.backend().destroy(row.remote_name);
+      const now = new Date().toISOString();
+      this.database.connection.prepare('update sandboxes set deleted_at = ?, updated_at = ? where id = ?').run(now, now, row.id);
+    } finally {
+      this.deleting.delete(row.id);
+    }
     this.options.onChanged?.();
   }
 
@@ -296,7 +306,9 @@ export class SandboxService {
   // working directory its session runs in.
   async codexEnvironmentFor(processId: string): Promise<{ environmentId: string; execServerUrl: string; authBearerToken: string; cwd: string } | null> {
     const row = this.forProcess(processId);
-    if (row?.status !== 'ready') return null;
+    if (!row) return null;
+    // A sandboxed agent never falls back to running here.
+    if (row.status !== 'ready' || this.deleting.has(row.id)) throw new Error('This agent\'s sandbox is not available');
     const session = this.database.connection.prepare('select cwd from sessions where process_id = ? order by started_at desc limit 1').get(processId) as { cwd: string | null } | undefined;
     return { ...await this.codexEnvironment(row), cwd: session?.cwd ?? row.path };
   }
