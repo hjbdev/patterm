@@ -22,7 +22,7 @@ export default {
         exec_token text,
         exec_port integer,
         synced_head text,
-        synced_patch text,
+        synced_tree text,
         synced_at text,
         sync_error text,
         created_at text not null,

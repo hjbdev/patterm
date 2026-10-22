@@ -30,7 +30,7 @@ export interface SandboxRow {
   exec_token: string | null;
   exec_port: number | null;
   synced_head: string | null;
-  synced_patch: string | null;
+  synced_tree: string | null;
   synced_at: string | null;
   sync_error: string | null;
   created_at: string;
@@ -70,21 +70,54 @@ export interface WorkingFileStat {
 export interface SyncResult {
   head: string;
   branch: string | null;
-  patch: string;
+  tree: string;
   changed: boolean;
 }
 
-// A worktree's uncommitted changes, untracked files included, as one patch
-// from a throwaway index; the same command runs here and in a sandbox.
-const PATCH_ARGS = ['-c', 'core.quotePath=false', 'diff', '--cached', '--binary', '--no-color', '--no-ext-diff', 'HEAD'];
-const WORKING_PATCH_SCRIPT = [
+// Reads a sandbox's commit, branch, the commits the caller lacks (it passes
+// its own commit) and its uncommitted files as a patch against that commit,
+// all from one moment. Prints four header lines, then the bundle and patch.
+const SNAPSHOT_REF = 'refs/patterm/snapshot';
+const SNAPSHOT_SCRIPT = [
   'set -e',
-  'index=$(mktemp); trap \'rm -f "$index"\' EXIT',
-  'export GIT_INDEX_FILE="$index"',
-  'git read-tree HEAD',
-  'git add -A',
-  `git ${PATCH_ARGS.join(' ')}`
+  'tmp=$(mktemp -d); trap \'rm -rf "$tmp"; git update-ref -d refs/patterm/snapshot 2>/dev/null || true\' EXIT',
+  'head=$(git rev-parse HEAD); branch=$(git symbolic-ref -q --short HEAD || true); here=$1',
+  'GIT_INDEX_FILE="$tmp/index" git read-tree "$head"',
+  'GIT_INDEX_FILE="$tmp/index" git add -A',
+  'GIT_INDEX_FILE="$tmp/index" git -c core.quotePath=false diff --cached --binary --no-color --no-ext-diff "$head" > "$tmp/patch"',
+  ': > "$tmp/bundle"',
+  // Nothing to send when the caller already has the commit.
+  'if [ "$head" != "$here" ] && ! { git cat-file -e "$here^{commit}" 2>/dev/null && git merge-base --is-ancestor "$head" "$here"; }; then',
+  '  git update-ref refs/patterm/snapshot "$head"',
+  '  if git cat-file -e "$here^{commit}" 2>/dev/null; then git bundle create -q "$tmp/bundle" refs/patterm/snapshot "^$here"; else git bundle create -q "$tmp/bundle" refs/patterm/snapshot; fi',
+  'fi',
+  'printf \'%s\\n%s\\n%s\\n%s\\n\' "$head" "$branch" "$(wc -c < "$tmp/bundle" | tr -d \' \')" "$(wc -c < "$tmp/patch" | tr -d \' \')"',
+  'cat "$tmp/bundle" "$tmp/patch"'
 ].join('\n');
+
+function parseSnapshot(output: Buffer): { head: string; branch: string; bundle: Buffer; patch: Buffer } {
+  const lines: string[] = [];
+  let offset = 0;
+  for (let index = 0; index < 4; index += 1) {
+    const end = output.indexOf(10, offset);
+    if (end === -1) throw new Error('The sandbox sent an incomplete snapshot');
+    lines.push(output.subarray(offset, end).toString('utf8'));
+    offset = end + 1;
+  }
+  const [head = '', branch = '', bundleBytes = '', patchBytes = ''] = lines;
+  const bundleLength = Number(bundleBytes);
+  const patchLength = Number(patchBytes);
+  if (!/^[0-9a-f]{40,64}$/.test(head)) throw new Error('The sandbox has no commit checked out');
+  if (!Number.isInteger(bundleLength) || !Number.isInteger(patchLength) || offset + bundleLength + patchLength !== output.length) {
+    throw new Error('The sandbox sent an incomplete snapshot');
+  }
+  return { head, branch, bundle: output.subarray(offset, offset + bundleLength), patch: output.subarray(offset + bundleLength) };
+}
+
+// Where a sync parks the sandbox's commit until a branch or HEAD holds it.
+function syncRef(id: string): string {
+  return `refs/patterm/sandbox/${id.replace(/[^A-Za-z0-9_-]/g, '-')}`;
+}
 
 type BackendFactory = (token: string) => SandboxBackend;
 
@@ -424,8 +457,8 @@ export class SandboxService {
       if (await backend.status(name) === null) await backend.create(name);
       const baseline = await this.copyWorktree(backend, name, input.path);
       await this.runSetup(backend, name, input.path);
-      this.database.connection.prepare(`update sandboxes set status = 'ready', error = null, synced_head = ?, synced_patch = ?, updated_at = ? where id = ?`)
-        .run(baseline.head, baseline.patch, new Date().toISOString(), id);
+      this.database.connection.prepare(`update sandboxes set status = 'ready', error = null, synced_head = ?, synced_tree = ?, updated_at = ? where id = ?`)
+        .run(baseline.head, baseline.tree, new Date().toISOString(), id);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.database.connection.prepare(`update sandboxes set status = 'failed', error = ?, updated_at = ? where id = ?`).run(message, new Date().toISOString(), id);
@@ -441,7 +474,7 @@ export class SandboxService {
   // Sends the worktree's branch as a git bundle and clones it at the same
   // path. Only commits go; the local worktree's state at that moment is the
   // baseline the first sync expects.
-  private async copyWorktree(backend: SandboxBackend, name: string, worktreePath: string): Promise<{ head: string; patch: string }> {
+  private async copyWorktree(backend: SandboxBackend, name: string, worktreePath: string): Promise<{ head: string; tree: string }> {
     const git = (args: string[]) => this.local(worktreePath, args);
     const branch = (await git(['branch', '--show-current'])).stdout.toString().trim();
     const head = (await git(['rev-parse', 'HEAD'])).stdout.toString().trim();
@@ -483,7 +516,7 @@ export class SandboxService {
     // The script names the remote and the git user, so it goes over stdin
     // rather than into a command line.
     await this.must(backend.exec(name, ['sh'], { stdin: script, timeoutMs: 15 * 60_000 }), 'clone the worktree');
-    return { head, patch: digest(await this.workingPatch(worktreePath)) };
+    return { head, tree: await this.stateTree(worktreePath) };
   }
 
   // Runs the repository's setup script once, in the new sandbox, so agents
@@ -534,8 +567,8 @@ export class SandboxService {
     if (!row || row.status !== 'ready') throw new Error('This sandbox is not ready');
     try {
       const result = await this.pullBack(row);
-      this.database.connection.prepare('update sandboxes set synced_head = ?, synced_patch = ?, synced_at = ?, sync_error = null, updated_at = ? where id = ?')
-        .run(result.head, result.patch, new Date().toISOString(), new Date().toISOString(), row.id);
+      this.database.connection.prepare('update sandboxes set synced_head = ?, synced_tree = ?, synced_at = ?, sync_error = null, updated_at = ? where id = ?')
+        .run(result.head, result.tree, new Date().toISOString(), new Date().toISOString(), row.id);
       this.options.onChanged?.();
       return result;
     } catch (error) {
@@ -548,52 +581,131 @@ export class SandboxService {
 
   private async pullBack(row: SandboxRow): Promise<SyncResult> {
     const localHead = await this.localHead(row.path);
-    if (localHead !== row.synced_head || digest(await this.workingPatch(row.path)) !== row.synced_patch) {
-      throw new Error('The local worktree has changed since the last sync. Commit or discard those changes in the sandbox instead, then sync again');
+    await this.assertUnchanged(row, localHead);
+
+    // One remote call reads a consistent snapshot: the commit, its branch,
+    // the commits this machine lacks, and the files as a patch against that
+    // commit.
+    const snapshot = await this.must(this.exec(row, ['bash', '-c', SNAPSHOT_SCRIPT, 'bash', localHead], { cwd: row.path, timeoutMs: 5 * 60_000 }), 'read the sandbox\'s work');
+    const { head, branch, bundle, patch } = parseSnapshot(snapshot.stdout);
+    if (branch) await this.local(row.path, ['check-ref-format', '--branch', branch]);
+    if (bundle.length) {
+      await this.withFile(bundle, (file) => this.local(row.path, ['fetch', '-q', '--no-write-fetch-head', file, `${SNAPSHOT_REF}:${syncRef(row.id)}`]));
     }
-    const state = await this.must(this.exec(row, ['sh', '-c', 'git rev-parse HEAD && git symbolic-ref -q --short HEAD || true'], { cwd: row.path, timeoutMs: 60_000 }), 'read the sandbox\'s branch');
-    const [remoteHead = '', remoteBranch = ''] = state.stdout.toString('utf8').split('\n').map((line) => line.trim());
-    if (!/^[0-9a-f]{40,64}$/.test(remoteHead)) throw new Error('The sandbox has no commit checked out');
-    if (remoteHead !== localHead) {
-      // New commits only, when the sandbox still has the last synced one.
-      const bundle = await this.must(this.exec(row, ['sh', '-c', [
-        'set -e; file=$(mktemp)',
-        'if git cat-file -e "$1^{commit}" 2>/dev/null; then git bundle create -q "$file" HEAD "^$1"; else git bundle create -q "$file" HEAD; fi',
-        'cat "$file"; rm -f "$file"'
-      ].join('\n'), 'sh', localHead], { cwd: row.path, timeoutMs: 5 * 60_000 }), 'bundle the sandbox\'s commits');
-      fs.mkdirSync(this.options.runtimeDir, { recursive: true, mode: 0o700 });
-      const file = path.join(this.options.runtimeDir, `sandbox-sync-${randomUUID()}.bundle`);
-      try {
-        fs.writeFileSync(file, bundle.stdout, { mode: 0o600 });
-        await this.local(row.path, ['fetch', '-q', file, 'HEAD']);
-      } finally {
-        fs.rmSync(file, { force: true });
+    await this.local(row.path, ['cat-file', '-e', `${head}^{commit}`]).catch(() => { throw new Error('The sandbox\'s commit did not arrive'); });
+
+    // The result is built as a tree first, so a patch that does not apply
+    // fails before anything here changes.
+    const target = await this.withIndex(row.path, async (env) => {
+      await this.local(row.path, ['read-tree', head], { env });
+      if (patch.length) await this.local(row.path, ['apply', '--cached', '--binary', '-'], { env, stdin: patch });
+      return (await this.local(row.path, ['write-tree'], { env })).stdout.toString().trim();
+    });
+    const localBranch = (await this.local(row.path, ['symbolic-ref', '-q', '--short', 'HEAD'], { allowFailure: true })).stdout.toString().trim();
+    if (head === localHead && branch === localBranch && target === row.synced_tree) {
+      await this.local(row.path, ['update-ref', '-d', syncRef(row.id)], { allowFailure: true });
+      return { head, branch: branch || null, tree: target, changed: false };
+    }
+    // This worktree's own branch follows the sandbox. Another branch that
+    // exists here only moves forward to the sandbox's commit, never losing
+    // a commit, and never while another worktree has it checked out.
+    let branchTip: string | null = null;
+    if (branch && branch !== localBranch) {
+      const existing = await this.local(row.path, ['rev-parse', '-q', '--verify', `refs/heads/${branch}^{commit}`], { allowFailure: true });
+      if (existing.code === 0) {
+        branchTip = existing.stdout.toString().trim();
+        const used = (await this.local(row.path, ['worktree', 'list', '--porcelain'])).stdout.toString('utf8').split('\n').includes(`branch refs/heads/${branch}`);
+        const forward = (await this.local(row.path, ['merge-base', '--is-ancestor', branchTip, head], { allowFailure: true })).code === 0;
+        if (used || !forward) throw new Error(`The sandbox is on ${branch}, which already exists here ${used ? 'and is checked out in another worktree' : 'with commits the sandbox does not have'}; rename the branch in the sandbox, then sync again`);
       }
     }
-    const patch = await this.must(this.exec(row, ['bash', '-c', WORKING_PATCH_SCRIPT], { cwd: row.path, timeoutMs: 5 * 60_000 }), 'read the sandbox\'s changes');
-    const localBranch = (await this.local(row.path, ['symbolic-ref', '-q', '--short', 'HEAD'], { allowFailure: true })).stdout.toString().trim();
-    // Nothing moved: leave the files, and their timestamps, alone.
-    if (remoteHead === localHead && remoteBranch === localBranch && digest(patch.stdout) === row.synced_patch) {
-      return { head: remoteHead, branch: remoteBranch || null, patch: row.synced_patch, changed: false };
+
+    // Git writes the files only where they still match the last sync, and
+    // refuses to overwrite anything changed, staged, untracked or ignored.
+    await this.assertUnchanged(row, localHead);
+    // Paths the sync adds were absent last time; one on disk now is ignored
+    // or new here, and git would replace it without asking.
+    const added = (await this.local(row.path, ['diff-tree', '-r', '-z', '--name-only', '--diff-filter=A', row.synced_tree!, target])).stdout.toString('utf8').split('\0').filter(Boolean);
+    const obstructed = added.filter((entry) => fs.existsSync(path.join(row.path, entry)) || isSymlink(path.join(row.path, entry)));
+    if (obstructed.length) throw new Error(`Local files would be overwritten, so nothing was synced: ${obstructed.slice(0, 5).join(', ')}${obstructed.length > 5 ? ', …' : ''}`);
+    await this.local(row.path, ['read-tree', row.synced_tree!]);
+    await this.local(row.path, ['update-index', '-q', '--refresh'], { allowFailure: true });
+    const written = await this.local(row.path, ['read-tree', '-m', '-u', row.synced_tree!, target], { allowFailure: true });
+    if (written.code !== 0) {
+      await this.local(row.path, ['read-tree', localHead]);
+      throw new Error(`Local files would be overwritten, so nothing was synced: ${written.stderr.toString('utf8').trim().slice(-1_000)}`);
     }
-    await this.local(row.path, ['checkout', '-q', '-f', ...(remoteBranch ? ['-B', remoteBranch] : ['--detach']), remoteHead]);
-    await this.local(row.path, ['clean', '-q', '-fd']);
-    if (patch.stdout.length) await this.local(row.path, ['apply', '--binary', '-'], { stdin: patch.stdout });
-    const synced = digest(await this.workingPatch(row.path));
-    return { head: remoteHead, branch: remoteBranch || null, patch: synced, changed: remoteHead !== localHead || remoteBranch !== localBranch || synced !== row.synced_patch };
+    if (branch) {
+      const old = branch === localBranch ? localHead : branchTip ?? '0'.repeat(head.length);
+      await this.local(row.path, ['update-ref', '-m', 'patterm: sync from sandbox', `refs/heads/${branch}`, head, old]);
+      await this.local(row.path, ['symbolic-ref', 'HEAD', `refs/heads/${branch}`]);
+    } else {
+      await this.local(row.path, ['update-ref', '--no-deref', '-m', 'patterm: sync from sandbox', 'HEAD', head]);
+    }
+    // Uncommitted work stays uncommitted here, and new files untracked.
+    await this.local(row.path, ['read-tree', head]);
+    await this.local(row.path, ['update-index', '-q', '--refresh'], { allowFailure: true });
+    await this.local(row.path, ['update-ref', '-d', syncRef(row.id)], { allowFailure: true });
+    return { head, branch: branch || null, tree: target, changed: true };
   }
 
-  // Every uncommitted change in a worktree, untracked files included, as one
-  // binary patch. A throwaway index leaves the real one alone.
-  private async workingPatch(worktreePath: string): Promise<Buffer> {
+  // The local worktree must be exactly what the last sync left: the same
+  // commit, an index matching it, and the same files.
+  private async assertUnchanged(row: SandboxRow, localHead: string): Promise<void> {
+    const staged = await this.local(row.path, ['diff', '--cached', '--quiet', 'HEAD', '--'], { allowFailure: true });
+    if (localHead !== row.synced_head || staged.code !== 0 || !await this.sameFiles(row.path, row.synced_tree!)) {
+      throw new Error('The local worktree has changed since the last sync. Commit or discard those changes in the sandbox instead, then sync again');
+    }
+  }
+
+  // Whether the worktree's files are the tree a sync wrote. A file this
+  // checkout's own ignore rules hide (a global excludes file, say) drops out
+  // of a reading here; it still matches while it is on disk unchanged.
+  private async sameFiles(worktreePath: string, written: string): Promise<boolean> {
+    const current = await this.stateTree(worktreePath);
+    if (current === written) return true;
+    const fields = (await this.local(worktreePath, ['diff-tree', '-r', '-z', '--name-status', written, current])).stdout.toString('utf8').split('\0').filter(Boolean);
+    for (let index = 0; index < fields.length; index += 2) {
+      const [status, entry] = [fields[index], fields[index + 1] ?? ''];
+      if (status !== 'D' || isSymlink(path.join(worktreePath, entry)) || !fs.existsSync(path.join(worktreePath, entry))) return false;
+      const [onDisk, expected] = await Promise.all([
+        this.local(worktreePath, ['hash-object', '--', entry]).then((result) => result.stdout.toString().trim()),
+        this.local(worktreePath, ['rev-parse', `${written}:${entry}`]).then((result) => result.stdout.toString().trim())
+      ]);
+      if (onDisk !== expected) return false;
+    }
+    return true;
+  }
+
+  // A worktree's commit plus every uncommitted change, untracked files
+  // included and ignored ones not, as a tree. A throwaway index leaves the
+  // real one alone.
+  private stateTree(worktreePath: string): Promise<string> {
+    return this.withIndex(worktreePath, async (env) => {
+      await this.local(worktreePath, ['read-tree', 'HEAD'], { env });
+      await this.local(worktreePath, ['add', '-A'], { env });
+      return (await this.local(worktreePath, ['write-tree'], { env })).stdout.toString().trim();
+    });
+  }
+
+  private async withIndex<T>(worktreePath: string, run: (env: Record<string, string>) => Promise<T>): Promise<T> {
     fs.mkdirSync(this.options.runtimeDir, { recursive: true, mode: 0o700 });
-    const index = { GIT_INDEX_FILE: path.join(this.options.runtimeDir, `sandbox-index-${randomUUID()}`) };
+    const env = { GIT_INDEX_FILE: path.join(this.options.runtimeDir, `sandbox-index-${randomUUID()}`) };
     try {
-      await this.local(worktreePath, ['read-tree', 'HEAD'], { env: index });
-      await this.local(worktreePath, ['add', '-A'], { env: index });
-      return (await this.local(worktreePath, PATCH_ARGS, { env: index })).stdout;
+      return await run(env);
     } finally {
-      fs.rmSync(index.GIT_INDEX_FILE, { force: true });
+      fs.rmSync(env.GIT_INDEX_FILE, { force: true });
+    }
+  }
+
+  private async withFile<T>(bytes: Buffer, run: (file: string) => Promise<T>): Promise<T> {
+    fs.mkdirSync(this.options.runtimeDir, { recursive: true, mode: 0o700 });
+    const file = path.join(this.options.runtimeDir, `sandbox-sync-${randomUUID()}.bundle`);
+    try {
+      fs.writeFileSync(file, bytes, { mode: 0o600 });
+      return await run(file);
+    } finally {
+      fs.rmSync(file, { force: true });
     }
   }
 
@@ -707,8 +819,8 @@ export class SandboxService {
   }
 }
 
-function digest(value: Buffer | string): string {
-  return createHash('sha256').update(value).digest('hex');
+function isSymlink(target: string): boolean {
+  try { return fs.lstatSync(target).isSymbolicLink(); } catch { return false; }
 }
 
 // Resolves symlinks in the longest existing prefix of a path, which may not

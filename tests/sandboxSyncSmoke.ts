@@ -16,6 +16,8 @@ class MappedBackend implements SandboxBackend {
   readonly id = 'sprites';
   readonly holds: string[] = [];
   destroyed: string[] = [];
+  // Runs before the next command, to change things mid-sync.
+  beforeNext: (() => void) | null = null;
   private readonly created = new Set<string>();
 
   constructor(private readonly root: string, private readonly remote: string) {}
@@ -34,11 +36,16 @@ class MappedBackend implements SandboxBackend {
   }
 
   exec(_name: string, argv: string[], options: SandboxExecOptions = {}): Promise<SandboxExecResult> {
+    const before = this.beforeNext;
+    this.beforeNext = null;
+    before?.();
     const stdin = options.stdin === undefined ? undefined : Buffer.isBuffer(options.stdin) ? options.stdin : Buffer.from(options.stdin);
     // Scripts arrive over stdin; their paths move like any other.
     const input = argv.length === 1 && argv[0] === 'sh' && stdin ? Buffer.from(this.toRemote(stdin.toString('utf8')).replace(/sudo /g, '')) : stdin;
     return new Promise((resolve, reject) => {
-      const child = spawn(argv[0]!, argv.slice(1).map((arg) => this.toRemote(arg)), { cwd: options.cwd ? this.toRemote(options.cwd) : this.remote, env: { ...process.env, ...options.env } });
+      // The sandbox has its own, empty git settings.
+      const env = { ...process.env, GIT_CONFIG_GLOBAL: path.join(this.remote, 'gitconfig'), ...options.env };
+      const child = spawn(argv[0]!, argv.slice(1).map((arg) => this.toRemote(arg)), { cwd: options.cwd ? this.toRemote(options.cwd) : this.remote, env });
       const out: Buffer[] = [];
       const err: Buffer[] = [];
       child.stdout.on('data', (chunk: Buffer) => out.push(chunk));
@@ -90,6 +97,10 @@ async function main(): Promise<void> {
     const now = new Date().toISOString();
     const remote = path.join(dir, 'remote');
     fs.mkdirSync(remote);
+    fs.writeFileSync(path.join(remote, 'gitconfig'), '');
+    // This machine hides a file the sandbox does not.
+    fs.writeFileSync(path.join(dir, 'excludes'), 'hidden-here.txt\n');
+    fs.writeFileSync(path.join(dir, 'gitconfig'), `[core]\n\texcludesFile = ${path.join(dir, 'excludes')}\n`);
 
     // A repository with an origin, a setup script and an ignored folder.
     const origin = path.join(dir, 'origin.git');
@@ -164,6 +175,86 @@ async function main(): Promise<void> {
     await sandboxes.sync(row.id);
     assert.equal(sandboxes.get(row.id)?.sync_error, null);
 
+    // Nothing made here is overwritten, whatever form it takes. Each refusal
+    // leaves the worktree as it was, and the next sync works once it is put
+    // back.
+    const refuses = async (pattern: RegExp, undo: () => void) => {
+      const before = git(worktree, ['rev-parse', 'HEAD']);
+      await assert.rejects(sandboxes.sync(row.id), pattern);
+      assert.equal(git(worktree, ['rev-parse', 'HEAD']), before);
+      undo();
+      await sandboxes.sync(row.id);
+    };
+    // An edit and a new file made while the sandbox's work is in transit.
+    fs.writeFileSync(path.join(copy, 'transit.txt'), 'remote\n');
+    backend.beforeNext = () => {
+      fs.writeFileSync(path.join(worktree, 'keep.txt'), 'edited during sync\n');
+      fs.writeFileSync(path.join(worktree, 'mine.txt'), 'mine\n');
+    };
+    await refuses(/changed since the last sync/, () => {
+      assert.equal(fs.readFileSync(path.join(worktree, 'keep.txt'), 'utf8'), 'edited during sync\n');
+      assert.equal(fs.readFileSync(path.join(worktree, 'mine.txt'), 'utf8'), 'mine\n');
+      assert.equal(fs.existsSync(path.join(worktree, 'transit.txt')), false);
+      fs.writeFileSync(path.join(worktree, 'keep.txt'), 'edited again\n');
+      fs.rmSync(path.join(worktree, 'mine.txt'));
+    });
+    assert.equal(fs.readFileSync(path.join(worktree, 'transit.txt'), 'utf8'), 'remote\n');
+    // Content only in the index.
+    fs.writeFileSync(path.join(worktree, 'keep.txt'), 'staged only\n');
+    git(worktree, ['add', 'keep.txt']);
+    fs.writeFileSync(path.join(worktree, 'keep.txt'), 'edited again\n');
+    fs.writeFileSync(path.join(copy, 'transit.txt'), 'remote 2\n');
+    await refuses(/changed since the last sync/, () => {
+      assert.equal(git(worktree, ['show', ':keep.txt']), 'staged only');
+      git(worktree, ['reset', '-q', '--', 'keep.txt']);
+    });
+    // An ignored file a sandbox commit starts tracking.
+    fs.mkdirSync(path.join(worktree, 'deps'), { recursive: true });
+    fs.writeFileSync(path.join(worktree, 'deps', 'state'), 'local data\n');
+    fs.writeFileSync(path.join(copy, 'deps', 'state'), 'remote data\n');
+    git(copy, ['add', '-f', 'deps/state']);
+    git(copy, ['commit', '-qm', 'track state']);
+    await refuses(/would be overwritten/, () => {
+      assert.equal(fs.readFileSync(path.join(worktree, 'deps', 'state'), 'utf8'), 'local data\n');
+      fs.rmSync(path.join(worktree, 'deps'), { recursive: true });
+    });
+    assert.equal(fs.readFileSync(path.join(worktree, 'deps', 'state'), 'utf8'), 'remote data\n');
+    // A branch of the same name here, with a commit the sandbox lacks, and
+    // one checked out in another worktree.
+    git(repo, ['checkout', '-q', '-b', 'existing']);
+    fs.writeFileSync(path.join(repo, 'unpublished.txt'), 'unpublished\n');
+    git(repo, ['add', 'unpublished.txt']);
+    git(repo, ['commit', '-qm', 'unpublished']);
+    const existing = git(repo, ['rev-parse', 'existing']);
+    git(repo, ['checkout', '-q', 'main']);
+    git(copy, ['checkout', '-q', '-b', 'existing']);
+    await refuses(/already exists here with commits/, () => {
+      assert.equal(git(repo, ['rev-parse', 'existing']), existing);
+      git(copy, ['branch', '-q', '-m', 'patterm/s1-next']);
+    });
+    assert.equal(git(worktree, ['branch', '--show-current']), 'patterm/s1-next');
+    git(copy, ['branch', '-q', '-M', 'main']);
+    await refuses(/checked out in another worktree/, () => git(copy, ['branch', '-q', '-m', 'patterm/s1-next']));
+    // Back on its own branch, which moves forward.
+    git(copy, ['checkout', '-q', 'patterm/s1']);
+    git(copy, ['branch', '-q', '-D', 'patterm/s1-next']);
+    await sandboxes.sync(row.id);
+    assert.equal(git(worktree, ['branch', '--show-current']), 'patterm/s1');
+
+    // A sandbox that went back to an earlier commit.
+    const earlier = git(copy, ['rev-parse', 'HEAD~1']);
+    git(copy, ['reset', '-q', '--hard', 'HEAD~1']);
+    await sandboxes.sync(row.id);
+    assert.equal(git(worktree, ['rev-parse', 'HEAD']), earlier);
+    assert.equal(fs.existsSync(path.join(worktree, 'deps', 'state')), false);
+
+    // A file only this machine's ignore rules hide comes back once, and
+    // does not count as a local change afterwards.
+    fs.writeFileSync(path.join(copy, 'hidden-here.txt'), 'hidden\n');
+    assert.equal((await sandboxes.sync(row.id)).changed, true);
+    assert.equal(fs.readFileSync(path.join(worktree, 'hidden-here.txt'), 'utf8'), 'hidden\n');
+    assert.equal((await sandboxes.sync(row.id)).changed, false);
+
     // Rewritten history in the sandbox still comes back.
     git(copy, ['commit', '-qa', '--amend', '-m', 'feature, amended']);
     await sandboxes.sync(row.id);
@@ -184,15 +275,18 @@ async function main(): Promise<void> {
     sandboxes.setBusy(sandboxes.get(row.id)!, 'proc', false);
     for (let tries = 0; tries < 100 && !fs.existsSync(path.join(worktree, 'idle.txt')); tries += 1) await new Promise((resolve) => setTimeout(resolve, 50));
     assert.equal(fs.readFileSync(path.join(worktree, 'idle.txt'), 'utf8'), 'idle\n');
+    // A sync asked for now runs after that one finishes.
+    await sandboxes.sync(row.id);
     assert.deepEqual(backend.holds, ['hold:patterm', 'release:patterm']);
 
     // Deleting brings the last changes back first; it refuses to lose a
     // local change unless told to discard.
     fs.writeFileSync(path.join(copy, 'last.txt'), 'last\n');
+    const kept = fs.readFileSync(path.join(worktree, 'keep.txt'));
     fs.writeFileSync(path.join(worktree, 'keep.txt'), 'local again\n');
     await assert.rejects(sandboxes.delete(row.id), /not deleted/);
     assert.deepEqual(backend.destroyed, []);
-    fs.writeFileSync(path.join(worktree, 'keep.txt'), 'edited again\n');
+    fs.writeFileSync(path.join(worktree, 'keep.txt'), kept);
     await sandboxes.delete(row.id);
     assert.equal(fs.readFileSync(path.join(worktree, 'last.txt'), 'utf8'), 'last\n');
     assert.equal(backend.destroyed.length, 1);
