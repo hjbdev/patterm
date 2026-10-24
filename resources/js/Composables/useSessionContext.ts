@@ -1,11 +1,11 @@
 import { computed, onBeforeUnmount, ref, shallowRef, watch, type Ref } from 'vue';
-import { CircleDot, GitPullRequest, Link2 } from 'lucide-vue-next';
+import { AppWindow, CircleDot, GitPullRequest, Link2 } from 'lucide-vue-next';
 import { contextCall, contextRead, lastContextRead, useContextClock, useContextVersion, type Page, type Reference, type Scratchpad, type SessionContext, type Todo } from '../lib/projectContext';
 import { worktreeName } from '../lib/worktreeDiff';
 import { useWorkbench } from './useWorkbench';
 import { useWorktreeDiffTotals } from './useWorktreeDiff';
 
-export interface LinkChanges { url: string; resource_type: 'generic' | 'issue' | 'pull_request'; identifier: string; title: string }
+export interface LinkChanges { url: string; resource_type: 'generic' | 'issue' | 'pull_request' | 'preview'; identifier: string; title: string }
 
 // Matches the service limit on worktrees linked to one session.
 export const MAX_LINKED_WORKTREES = 10;
@@ -195,5 +195,6 @@ export function linkDetail(link: Reference): string {
 export function linkIcon(link: Reference) {
   if (link.resource_type === 'pull_request') return GitPullRequest;
   if (link.resource_type === 'issue') return CircleDot;
+  if (link.resource_type === 'preview') return AppWindow;
   return Link2;
 }

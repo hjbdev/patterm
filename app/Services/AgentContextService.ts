@@ -11,6 +11,7 @@ Project: ${projectId}
 - Read session_context for assigned todos, scratchpads, and links. Read tool help for revision guards and lease renewal.
 - Link every git worktree you work in to your session (at most 10): worktree_create and worktree_link do this automatically; otherwise call worktree_attach.
 - After you open or find a PR or issue for this work, verify it through the provider MCP/CLI, then reference_attach its URL to your session (target_id is inferred) and related todos, setting provider and resource_type.
+- When you start or find a dev server, preview deploy, or other page the user will want to open, reference_attach its URL to your session with resource_type preview. Local URLs are fine; no provider check is needed.
 - Use spawn_agent only for explicitly delegated Patterm work, never to satisfy host-internal planning/review requirements or replace unavailable host-native subagents.
 - Children must report_to_parent when finished, blocked, failed, or without findings, and again after each follow-up. Parents wait with timer_fire_when_reported_any/all; idle output is not completion.
 - When your task is fully complete and nothing is left to do, call request_close with a short summary; the user (or your parent) decides whether to close you.

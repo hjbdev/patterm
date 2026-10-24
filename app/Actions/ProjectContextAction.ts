@@ -11,6 +11,8 @@ const status = z.enum(['backlog', 'open', 'in_progress', 'completed']);
 const priority = z.enum(['low', 'medium', 'high']);
 // Agents may omit target_id for session targets; it resolves to their own session.
 const target = { target_type: z.enum(['todo', 'scratchpad', 'session']), target_id: id.optional() };
+// preview: a dev server, preview deploy, or other page the user opens to see the work.
+const resourceType = z.enum(['generic', 'issue', 'pull_request', 'preview']);
 const ttl = z.number().int().min(1).max(86400).default(300);
 const token = z.string().uuid();
 const query = z.string().max(500).optional();
@@ -40,9 +42,9 @@ export const contextSchemas = {
   'scratchpad_detach': input({ scratchpad_id: id, session_id: id.optional() }),
   'worktree_attach': input({ worktree_id: id, session_id: id.optional() }),
   'worktree_detach': input({ worktree_id: id, session_id: id.optional() }),
-  'reference_attach': input({ ...target, url: z.string().url().max(4096), provider: z.enum(['generic', 'linear', 'github']).default('generic'), resource_type: z.enum(['generic', 'issue', 'pull_request']).default('generic'), external_id: z.string().max(500).optional(), identifier: z.string().max(500).optional(), title: title.optional() }),
+  'reference_attach': input({ ...target, url: z.string().url().max(4096), provider: z.enum(['generic', 'linear', 'github']).default('generic'), resource_type: resourceType.default('generic'), external_id: z.string().max(500).optional(), identifier: z.string().max(500).optional(), title: title.optional() }),
   'reference_list': input({ ...target, ...page }),
-  'reference_update': input({ reference_id: id, revision, url: z.string().url().max(4096).optional(), resource_type: z.enum(['generic', 'issue', 'pull_request']).optional(), title: z.string().max(500).optional(), identifier: z.string().max(500).optional(), external_id: z.string().max(500).optional() }),
+  'reference_update': input({ reference_id: id, revision, url: z.string().url().max(4096).optional(), resource_type: resourceType.optional(), title: z.string().max(500).optional(), identifier: z.string().max(500).optional(), external_id: z.string().max(500).optional() }),
   'reference_detach': input({ ...target, reference_id: id }),
   'session_context': input({ session_id: id.optional(), ...page })
 };
