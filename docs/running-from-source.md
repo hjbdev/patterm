@@ -82,8 +82,9 @@ node scripts/install-service.mjs --public-origin http://localhost:8787 --output-
 systemd-analyze --user verify /tmp/patterm-unit-preview/patterm.service
 ```
 
-The unit uses `Restart=on-failure`, `KillMode=control-group`, and
-`TimeoutStopSec=25`. The installer quotes command arguments, escapes systemd
+The unit uses `Restart=on-failure`, `KillMode=control-group`,
+`TimeoutStopSec=25`, and `OOMPolicy=continue`, so the kernel killing one child
+process for memory does not stop the whole unit. The installer quotes command arguments, escapes systemd
 specifier characters in unit paths, and preserves literal environment values.
 The environment file uses systemd syntax; do not source it as a shell script.
 

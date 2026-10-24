@@ -14,6 +14,7 @@ RestartSec=5
 KillMode=control-group
 TimeoutStopSec=25
 UMask=0077
+OOMPolicy=continue
 StandardOutput=journal
 StandardError=journal
 

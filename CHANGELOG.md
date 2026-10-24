@@ -60,6 +60,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- When the kernel kills a memory-hungry child process, such as a browser an
+  agent started, the service, terminal hosts and Integrated agent hosts keep
+  running. Previously systemd stopped the whole unit, which ended Integrated
+  conversations with "The Codex host is no longer running".
 - Claude subagent conversations no longer show internal image sizing and
   coordinate hints as user messages.
 - Conversation history keeps prompts sent to Claude while it was working.

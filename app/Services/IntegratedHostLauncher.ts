@@ -47,7 +47,9 @@ export const detachedHostLauncher: IntegratedHostLauncher = {
 // Service mode: each host runs in its own transient systemd user unit, so a
 // restart of the web service's control group does not kill Integrated agents.
 // The unit prefix includes a data directory hash so an isolated server never
-// stops another server's hosts.
+// stops another server's hosts. OOMPolicy=continue keeps the host running when
+// the kernel kills one of its children, such as a browser an agent started;
+// systemd's default stops the whole unit and ends the conversation.
 export function systemdHostLauncher(appDataPath: string, env: NodeJS.ProcessEnv): IntegratedHostLauncher {
   const scope = createHash('sha256').update(path.resolve(appDataPath)).digest('hex').slice(0, 8);
   const prefix = (harness: string) => `patterm-integrated-${scope}-${harness}`;
@@ -61,6 +63,7 @@ export function systemdHostLauncher(appDataPath: string, env: NodeJS.ProcessEnv)
         await systemctl('systemd-run', [
           '--user', '--quiet', '--collect', `--unit=${unit}`, '--service-type=exec',
           '--property=KillMode=control-group', '--property=TimeoutStopSec=25', '--property=UMask=0077',
+          '--property=OOMPolicy=continue',
           `--working-directory=${input.cwd}`, `--setenv=PATTERM_HOST_ENV_FILE=${envFile}`,
           '--', input.nodePath, input.script, input.configPath
         ], env);

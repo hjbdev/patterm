@@ -49,11 +49,11 @@ test('preview writes only private files in the requested directory and produces 
     assert.deepEqual(fs.readdirSync(output).sort(), ['patterm-terminal@.service', 'patterm.env', 'patterm.service']);
     for (const name of fs.readdirSync(output)) assert.equal(fs.statSync(path.join(output, name)).mode & 0o777, 0o600);
     const unit = fs.readFileSync(path.join(output, 'patterm.service'), 'utf8');
-    for (const directive of ['Restart=on-failure', 'KillMode=control-group', 'TimeoutStopSec=25', 'WantedBy=default.target']) assert.ok(unit.includes(directive));
+    for (const directive of ['Restart=on-failure', 'KillMode=control-group', 'TimeoutStopSec=25', 'OOMPolicy=continue', 'WantedBy=default.target']) assert.ok(unit.includes(directive));
     const verification = spawnSync('systemd-analyze', ['--user', 'verify', path.join(output, 'patterm.service')], { encoding: 'utf8' });
     if (verification.error?.code !== 'ENOENT') assert.equal(verification.status, 0, verification.stderr);
     const terminalUnit = fs.readFileSync(path.join(output, 'patterm-terminal@.service'), 'utf8');
-    for (const directive of ['KillMode=control-group', 'TimeoutStopSec=25', 'UMask=0077']) assert.ok(terminalUnit.includes(directive));
+    for (const directive of ['KillMode=control-group', 'TimeoutStopSec=25', 'UMask=0077', 'OOMPolicy=continue']) assert.ok(terminalUnit.includes(directive));
     assert.doesNotMatch(terminalUnit, /^(PartOf|BindsTo|Requires|WantedBy|Restart)=/m);
     assert.match(fs.readFileSync(path.join(output, 'patterm.env'), 'utf8'), /^PATTERM_TERMINAL_SERVICE="patterm-terminal"$/m);
     assert.doesNotMatch(fs.readFileSync(path.join(output, 'patterm.env'), 'utf8'), /PATTERM_OWNER_LOGIN/);
