@@ -7,7 +7,7 @@ import { CloseProcessAction } from '../app/Actions/CloseProcessAction';
 import { ipcPath } from '../app/Platform/Ipc';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { IntegratedAgentService, type IntegratedProviderService } from '../app/Services/IntegratedAgentService';
-import type { IntegratedHostLauncher } from '../app/Services/IntegratedHostLauncher';
+import { systemdHostLauncher, type IntegratedHostLauncher } from '../app/Services/IntegratedHostLauncher';
 import type { TerminalService } from '../app/Services/TerminalService';
 
 async function main(): Promise<void> {
@@ -126,7 +126,33 @@ async function main(): Promise<void> {
     database.dispose();
     fs.rmSync(directory, { recursive: true, force: true });
   }
+  if (process.platform === 'linux') await systemdLauncherSmoke();
   console.log('retired Integrated hosts smoke ok');
+}
+
+// Records the transient unit's arguments with stand-in systemd commands, so
+// no live user manager is touched.
+async function systemdLauncherSmoke(): Promise<void> {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-systemd-hosts-'));
+  try {
+    const bin = path.join(directory, 'bin');
+    const log = path.join(directory, 'calls.log');
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, 'systemd-run'), `#!/bin/sh\nprintf '%s\\n' "$@" >> '${log}'\n`, { mode: 0o755 });
+    fs.writeFileSync(path.join(bin, 'systemctl'), '#!/bin/sh\necho 4242\n', { mode: 0o755 });
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}` };
+    const configPath = path.join(directory, 'host.json');
+    const pid = await systemdHostLauncher(directory, env).launch({
+      harness: 'codex', key: 'smoke', nodePath: process.execPath, script: 'host.js', configPath, cwd: directory, env: {}
+    });
+    assert.equal(pid, 4242);
+    const args = fs.readFileSync(log, 'utf8').split('\n');
+    // A child killed for memory must not stop the host and its conversation.
+    assert.ok(args.includes('--property=OOMPolicy=continue'), args.join(' '));
+    assert.ok(args.includes('--property=KillMode=control-group'));
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 void main().catch((error) => { console.error(error); process.exitCode = 1; });
