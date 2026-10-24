@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Session links have a Preview type for dev servers, preview deploys, and
+  other pages to open. Agents are now told to attach the dev server and preview
+  URLs they start or find to their session, local URLs included, where before
+  they were only prompted for PRs and issues.
 - Optional semantic conversation-history search, off by default. Settings ›
   Conversation history installs Google's EmbeddingGemma 2 (Q8_0, 310 MB,
   Apache-2.0) on request, verified against a pinned SHA-256, and a separate

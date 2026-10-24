@@ -164,6 +164,10 @@ async function main(): Promise<void> {
     assert.equal(call<Page<ReferenceRow>>('reference_list', { target_type: 'session' }, 'bob').total, 1);
     assert.throws(() => call('reference_attach', { target_type: 'session', url: pr.url }), /owner requests/);
     assert.throws(() => call('reference_attach', { target_type: 'todo', url: pr.url }, 'bob'), /todo targets/);
+    const preview = call<ReferenceRow>('reference_attach', { target_type: 'session', url: 'http://localhost:5173/', resource_type: 'preview', title: 'Vite dev server' }, 'bob');
+    assert.deepEqual([preview.url, preview.provider, preview.resource_type], ['http://localhost:5173/', 'generic', 'preview'], 'Agents attach local dev server previews');
+    assert.throws(() => call('reference_attach', { target_type: 'session', url: preview.url, resource_type: 'deploy' }, 'bob'));
+    call('reference_detach', { target_type: 'session', reference_id: preview.id }, 'bob');
     call('reference_detach', { target_type: 'session', reference_id: pr.id }, 'bob');
     assert.equal(call<Page<ReferenceRow>>('reference_list', { target_type: 'session', target_id: bob }).total, 0);
     const registry = createTestMcpRegistry({ tempDir: dir, database, timeline,

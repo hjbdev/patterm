@@ -22,9 +22,10 @@ export function registerProjectContextTools(registry: McpToolRegistry, action: P
         'Lease acquisition returns a secret token; retain it to renew/release. TTL is 1–86400 seconds, default 300. Expired/replaced tokens fail. Only the owner can revoke another holder.',
         'Scratchpad reads return body, total_lines, offset, and truncated; paginate using the same revision to obtain a consistent full body. Default 200 lines, maximum 1000. Atomic append may omit revision; it appends exactly the supplied text.',
         'Titles allow 500 characters and note bodies 262144. Only requested content is loaded; terminal output is never collected automatically.',
-        'Resolve external identifiers with your provider MCP or CLI first, then attach the verified URL. Patterm stores references and does not fetch or synchronise external resources.',
+        'Resolve PR and issue identifiers with your provider MCP or CLI first, then attach the verified URL. Patterm stores references and does not fetch or synchronise external resources.',
         'Session scratchpad and worktree attachments, session references, and session context infer the caller\'s session for agents; owner requests require it.',
-        'After opening or finding a PR or issue for your work, attach it to your session, for example reference_attach {target_type:"session", url, provider:"github", resource_type:"pull_request", identifier:"#42"}. Providers are github, linear, and generic; resource types are pull_request, issue, and generic.'
+        'After opening or finding a PR or issue for your work, attach it to your session, for example reference_attach {target_type:"session", url, provider:"github", resource_type:"pull_request", identifier:"#42"}. Providers are github, linear, and generic; resource types are pull_request, issue, preview, and generic.',
+        'When you start or find a dev server, preview deploy, or other page the user will want to open, attach it with resource_type preview, for example reference_attach {target_type:"session", url:"http://localhost:5173", resource_type:"preview", title:"Vite dev server"}. Local URLs need no provider check.'
       ]
     }, (args, context) => action.execute(operation, args, context.identity));
   }
@@ -38,7 +39,7 @@ const descriptions: Partial<Record<ContextOperation, string>> = {
   'worktree_detach': 'Unlink a worktree from a session without changing its files, branch, or project registration. Agents may omit session_id for their own session. A session\'s own working directory cannot be detached.',
   'todo_update': 'Edit a todo with a revision guard; set status to completed to complete, or open to reopen. Completion releases its lease.',
   'todo_lease_acquire': 'Acquire exclusive, expiring work ownership of a todo. Returns the token required for renewal and release.',
-  'reference_attach': 'Attach a verified HTTP(S) external reference, such as a PR or issue, to a todo, scratchpad, or session. Agents may omit target_id for their own session. Repeated attachment is idempotent.',
+  'reference_attach': 'Attach an HTTP(S) link, such as a PR, issue, or dev server preview, to a todo, scratchpad, or session. Agents may omit target_id for their own session. Repeated attachment is idempotent.',
   'scratchpad_update': 'Replace scratchpad content or metadata with a revision guard; set status to archived or active to archive or restore.'
 };
 

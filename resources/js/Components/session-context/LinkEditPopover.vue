@@ -27,7 +27,7 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue';
-import { CircleDot, GitPullRequest, Link2 } from 'lucide-vue-next';
+import { AppWindow, CircleDot, GitPullRequest, Link2 } from 'lucide-vue-next';
 import { useAutofocus } from '../../Composables/useAutofocus';
 import type { LinkChanges } from '../../Composables/useSessionContext';
 import type { Reference } from '../../lib/projectContext';
@@ -38,7 +38,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 const KINDS = [
   { value: 'generic', label: 'Link', icon: Link2 },
   { value: 'issue', label: 'Issue', icon: CircleDot },
-  { value: 'pull_request', label: 'PR', icon: GitPullRequest }
+  { value: 'pull_request', label: 'PR', icon: GitPullRequest },
+  { value: 'preview', label: 'Preview', icon: AppWindow }
 ] as const;
 
 const props = withDefaults(defineProps<{ link: Reference; busy?: boolean | undefined }>(), { busy: false });
