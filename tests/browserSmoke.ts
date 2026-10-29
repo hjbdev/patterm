@@ -63,7 +63,7 @@ async function extractionChecks(): Promise<void> {
   if (process.platform !== 'win32') {
     const linking = path.join(root, 'link.zip');
     fs.writeFileSync(linking, zip([{ name: 'a/link', data: '../../outside', mode: 0o120777 }]));
-    await assert.rejects(extractZip(linking, path.join(root, 'link')), /escapes/);
+    await assert.rejects(extractZip(linking, path.join(root, 'link')), /leaves its folder/);
     // Links that each stay inside, chained, would still climb out.
     const chained = path.join(root, 'chained.zip');
     fs.writeFileSync(chained, zip([
@@ -71,8 +71,27 @@ async function extractionChecks(): Promise<void> {
       { name: 'alias/up', data: '..', mode: 0o120777 },
       { name: 'alias/up/escaped', data: 'x' }
     ]));
-    await assert.rejects(extractZip(chained, path.join(root, 'chained', 'out')));
+    await assert.rejects(extractZip(chained, path.join(root, 'chained', 'out')), /leaves its folder/);
     assert.equal(fs.existsSync(path.join(root, 'chained', 'escaped')), false, 'nothing lands beside the destination');
+    // Nor can `..` hide behind an earlier link, and refusing it creates nothing.
+    const hidden = path.join(root, 'hidden.zip');
+    fs.writeFileSync(hidden, zip([
+      { name: 'alias', data: '.', mode: 0o120777 },
+      { name: 'escape', data: 'alias/..', mode: 0o120777 },
+      { name: 'escape/outside_created/link', data: '.', mode: 0o120777 }
+    ]));
+    await assert.rejects(extractZip(hidden, path.join(root, 'hidden', 'out')), /leaves its folder/);
+    assert.deepEqual(fs.readdirSync(path.join(root, 'hidden')), ['out']);
+    assert.deepEqual(fs.readdirSync(path.join(root, 'hidden', 'out')), []);
+    // Links that only point down, as in Chrome's macOS bundle, are kept.
+    const bundle = path.join(root, 'bundle.zip');
+    fs.writeFileSync(bundle, zip([
+      { name: 'F.framework/Versions/1/Resources/r', data: 'r' },
+      { name: 'F.framework/Versions/Current', data: '1', mode: 0o120777 },
+      { name: 'F.framework/Resources', data: 'Versions/Current/Resources', mode: 0o120777 }
+    ]));
+    await extractZip(bundle, path.join(root, 'bundle'));
+    assert.equal(fs.readFileSync(path.join(root, 'bundle', 'F.framework', 'Resources', 'r'), 'utf8'), 'r');
   }
 }
 

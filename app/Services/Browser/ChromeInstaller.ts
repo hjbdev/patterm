@@ -163,9 +163,9 @@ function googleMd5(headers: Headers): string | null {
 
 // Extracts a zip, keeping executable bits and the symbolic links macOS app
 // bundles use, and refusing anything that would land outside `destination`.
-// Links are made last, so no file is written through one, and each is
-// checked against the real folder it lands in, so a chain of links can't
-// climb out either.
+// A link may only point down from its own folder, as Chrome's do: no
+// absolute target and no `..`, so no chain of links can climb out. Links are
+// checked as they are read and made last, so no file is written through one.
 export async function extractZip(archive: string, destination: string): Promise<void> {
   await fs.promises.mkdir(destination, { recursive: true });
   const root = await fs.promises.realpath(destination);
@@ -191,7 +191,9 @@ export async function extractZip(archive: string, destination: string): Promise<
             if ((mode & 0o170000) === 0o120000) {
               const chunks: Buffer[] = [];
               for await (const chunk of stream) chunks.push(chunk as Buffer);
-              found.push({ name: entry.fileName, target, link: Buffer.concat(chunks).toString('utf8') });
+              const link = Buffer.concat(chunks).toString('utf8');
+              if (!pointsDown(link)) throw new Error(`Archive link leaves its folder: ${entry.fileName}`);
+              found.push({ name: entry.fileName, target, link });
               return;
             }
             await fs.promises.mkdir(path.dirname(target), { recursive: true });
@@ -210,10 +212,14 @@ export async function extractZip(archive: string, destination: string): Promise<
   });
   for (const { name, target, link } of links) {
     await fs.promises.mkdir(path.dirname(target), { recursive: true });
-    const parent = await fs.promises.realpath(path.dirname(target));
-    if (path.isAbsolute(link) || !within(parent) || !within(path.resolve(parent, link))) throw new Error(`Archive link escapes its folder: ${name}`);
-    await fs.promises.symlink(link, path.join(parent, path.basename(target)));
+    if (!within(await fs.promises.realpath(path.dirname(target)))) throw new Error(`Archive link escapes its folder: ${name}`);
+    await fs.promises.symlink(link, target);
   }
+}
+
+// A relative link target that only descends from the link's own folder.
+function pointsDown(link: string): boolean {
+  return link.length > 0 && !path.isAbsolute(link) && !/^[A-Za-z]:/.test(link) && !link.split(/[\\/]/).includes('..');
 }
 
 function errorMessage(error: unknown): string {
