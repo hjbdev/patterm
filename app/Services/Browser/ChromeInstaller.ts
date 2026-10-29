@@ -162,20 +162,25 @@ function googleMd5(headers: Headers): string | null {
 }
 
 // Extracts a zip, keeping executable bits and the symbolic links macOS app
-// bundles use, and refusing entries that would land outside `destination`.
-export function extractZip(archive: string, destination: string): Promise<void> {
-  const root = path.resolve(destination);
-  return new Promise((resolve, reject) => {
+// bundles use, and refusing anything that would land outside `destination`.
+// Links are made last, so no file is written through one, and each is
+// checked against the real folder it lands in, so a chain of links can't
+// climb out either.
+export async function extractZip(archive: string, destination: string): Promise<void> {
+  await fs.promises.mkdir(destination, { recursive: true });
+  const root = await fs.promises.realpath(destination);
+  const within = (candidate: string) => candidate === root || candidate.startsWith(root + path.sep);
+  const links = await new Promise<Array<{ name: string; target: string; link: string }>>((resolve, reject) => {
+    const found: Array<{ name: string; target: string; link: string }> = [];
     yauzl.open(archive, { lazyEntries: true, autoClose: true }, (openError, zip) => {
       if (openError || !zip) { reject(openError ?? new Error('Could not open the archive')); return; }
       const fail = (error: unknown) => { zip.close(); reject(error); };
       zip.on('error', fail);
-      zip.on('end', () => resolve());
+      zip.on('end', () => resolve(found));
       zip.on('entry', (entry: yauzl.Entry) => {
         const target = path.resolve(root, entry.fileName);
-        if (target !== root && !target.startsWith(root + path.sep)) { fail(new Error(`Archive entry escapes its folder: ${entry.fileName}`)); return; }
+        if (!within(target)) { fail(new Error(`Archive entry escapes its folder: ${entry.fileName}`)); return; }
         const mode = (entry.externalFileAttributes >>> 16) & 0xffff;
-        const kind = mode & 0o170000;
         if (entry.fileName.endsWith('/')) {
           fs.promises.mkdir(target, { recursive: true }).then(() => zip.readEntry(), fail);
           return;
@@ -183,29 +188,32 @@ export function extractZip(archive: string, destination: string): Promise<void> 
         zip.openReadStream(entry, (streamError, stream) => {
           if (streamError || !stream) { fail(streamError ?? new Error('Could not read the archive')); return; }
           void (async () => {
-            await fs.promises.mkdir(path.dirname(target), { recursive: true });
-            if (kind === 0o120000) {
+            if ((mode & 0o170000) === 0o120000) {
               const chunks: Buffer[] = [];
               for await (const chunk of stream) chunks.push(chunk as Buffer);
-              const link = Buffer.concat(chunks).toString('utf8');
-              const resolved = path.resolve(path.dirname(target), link);
-              if (path.isAbsolute(link) || (resolved !== root && !resolved.startsWith(root + path.sep))) throw new Error(`Archive link escapes its folder: ${entry.fileName}`);
-              await fs.promises.symlink(link, target);
-            } else {
-              await new Promise<void>((done, failed) => {
-                const out = fs.createWriteStream(target, { mode: (mode & 0o777) || 0o644 });
-                stream.on('error', failed);
-                out.on('error', failed);
-                out.on('close', () => done());
-                stream.pipe(out);
-              });
+              found.push({ name: entry.fileName, target, link: Buffer.concat(chunks).toString('utf8') });
+              return;
             }
+            await fs.promises.mkdir(path.dirname(target), { recursive: true });
+            await new Promise<void>((done, failed) => {
+              const out = fs.createWriteStream(target, { mode: (mode & 0o777) || 0o644 });
+              stream.on('error', failed);
+              out.on('error', failed);
+              out.on('close', () => done());
+              stream.pipe(out);
+            });
           })().then(() => zip.readEntry(), fail);
         });
       });
       zip.readEntry();
     });
   });
+  for (const { name, target, link } of links) {
+    await fs.promises.mkdir(path.dirname(target), { recursive: true });
+    const parent = await fs.promises.realpath(path.dirname(target));
+    if (path.isAbsolute(link) || !within(parent) || !within(path.resolve(parent, link))) throw new Error(`Archive link escapes its folder: ${name}`);
+    await fs.promises.symlink(link, path.join(parent, path.basename(target)));
+  }
 }
 
 function errorMessage(error: unknown): string {

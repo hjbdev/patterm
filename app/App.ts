@@ -476,6 +476,7 @@ async function createApplicationResources(
     raiseHelp: (processId, reason) => raiseNotification({ processId, source: 'mcp', kind: 'attention', urgency: 'high', title: 'Needs you in its browser', body: reason, dedupeKey: 'browser-help' }),
     resolveHelp: (processId) => { notificationService.resolve({ process_id: processId, kinds: ['attention'] }); },
     messageAgent: (processId, text) => sendAgentInput(database, terminal, { process_id: processId, kind: 'text', text, submit: true }, integrated),
+    isLive: (sessionId) => Boolean(database.connection.prepare('select 1 from sessions where id = ? and exited_at is null').get(sessionId)),
     env: resolvedEnv
   });
   defer(() => browsers.dispose());
@@ -484,7 +485,7 @@ async function createApplicationResources(
   reapBrowsers = () => {
     reaping ??= setTimeout(() => {
       reaping = null;
-      void browsers.reap((sessionId) => browserActions.isLive(sessionId)).catch((error: unknown) => {
+      void browsers.reap().catch((error: unknown) => {
         debugLog.write('browser', 'reap.failed', { message: error instanceof Error ? error.message : String(error) });
       });
     }, 1_000);

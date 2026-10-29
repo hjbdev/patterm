@@ -63,6 +63,8 @@ export interface BrowserServiceOptions {
   resolveHelp: (processId: string) => void;
   // Tells the agent the user is done.
   messageAgent: (processId: string, text: string) => Promise<unknown>;
+  // Whether a session is still running. Its browser lasts as long as it does.
+  isLive: (sessionId: string) => boolean;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
 }
@@ -118,6 +120,9 @@ export class BrowserService {
   private readonly launching = new Map<string, Promise<ManagedBrowser>>();
   private readonly idleTimer: NodeJS.Timeout;
   private disposed = false;
+  // Frame numbers only ever rise, across browsers and Patterm restarts, so a
+  // viewer's cursor from an earlier browser never hides a new one's frames.
+  private frameSeq = Date.now();
 
   constructor(private readonly options: BrowserServiceOptions) {
     this.idleTimer = setInterval(() => this.stopIdleScreencasts(), 5_000);
@@ -243,8 +248,10 @@ export class BrowserService {
   }
 
   // Stops the browsers of sessions that have ended and removes their
-  // profiles, including ones left from before a restart.
-  async reap(isLive: (sessionId: string) => boolean): Promise<void> {
+  // profiles, including ones left from before a restart. A browser still
+  // starting checks for itself once it is up.
+  async reap(): Promise<void> {
+    const isLive = this.options.isLive;
     for (const sessionId of [...this.browsers.keys()]) {
       if (!isLive(sessionId)) await this.stop(sessionId, { removeProfile: true });
     }
@@ -290,6 +297,8 @@ export class BrowserService {
 
   private async launch(sessionId: string, processId: string, chrome: InstalledChrome): Promise<ManagedBrowser> {
     if (!/^[A-Za-z0-9_.:-]+$/.test(sessionId)) throw new Error('Invalid session id');
+    // A first download can outlast the session that asked for it.
+    if (!this.options.isLive(sessionId)) throw new Error('The session has ended');
     const env = this.options.env ?? process.env;
     const platform = this.options.platform ?? process.platform;
     const profile = path.join(this.profiles, safeName(sessionId));
@@ -333,13 +342,22 @@ export class BrowserService {
       };
       cdp.on((event) => this.onEvent(browser, event));
       await cdp.send('Target.setDiscoverTargets', { discover: true });
+      if (this.disposed || !this.options.isLive(sessionId)) {
+        cdp.close();
+        throw new Error('The session has ended');
+      }
       this.browsers.set(sessionId, browser);
       child.once('exit', () => void this.shutdown(browser));
       this.options.onChanged();
       return browser;
     } catch (error) {
+      const stopped = exited ? Promise.resolve() : new Promise<void>((resolve) => { child.once('exit', () => resolve()); setTimeout(resolve, 5_000).unref(); });
       stopChild(child, 'SIGKILL', platform !== 'win32');
       if (display) stopChild(display.process, 'SIGTERM');
+      if (!this.options.isLive(sessionId)) {
+        await stopped;
+        await fs.promises.rm(profile, { recursive: true, force: true });
+      }
       throw error;
     }
   }
@@ -369,7 +387,7 @@ export class BrowserService {
       const metadata = event.params.metadata as { deviceWidth?: number; deviceHeight?: number } | undefined;
       void browser.cdp.send('Page.screencastFrameAck', { sessionId: event.params.sessionId }, event.sessionId).catch(() => {});
       browser.frame = {
-        seq: (browser.frame?.seq ?? 0) + 1,
+        seq: ++this.frameSeq,
         data: event.params.data as string,
         width: metadata?.deviceWidth ?? VIEWPORT.width,
         height: metadata?.deviceHeight ?? VIEWPORT.height,

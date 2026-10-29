@@ -70,17 +70,26 @@ function shortUrl(url: string): string {
   return url.replace(/^https?:\/\//, '').replace(/\/$/, '');
 }
 
-// Acting needs control of the agent; another window may hold it.
-let pending = 0, queue: Promise<unknown> = Promise.resolve();
+// Input goes out in order, one call at a time, and only while it is still
+// meant: closing the peek, switching agents, or any failed call drops what
+// hasn't been sent rather than sending it late. Pointer moves and scrolling
+// give way first when calls back up, and nothing queues past a small limit.
+const MAX_PENDING = 24;
+let pending = 0, epoch = 0, queue: Promise<unknown> = Promise.resolve();
 function send(tool: Parameters<typeof browserControl>[0], args: Record<string, unknown> = {}, droppable = false): Promise<unknown> {
-  if (droppable && pending > 6) return Promise.resolve();
+  if (pending >= (droppable ? 6 : MAX_PENDING)) {
+    if (!droppable) error.value = 'The browser is slow to respond; that input was not sent.';
+    return Promise.resolve();
+  }
   pending++;
-  const id = props.processId;
-  const sent = queue.then(() => browserControl(tool, { process_id: id, ...args }));
+  const id = props.processId, sentIn = epoch;
+  const sent = queue.then(() => sentIn === epoch ? browserControl(tool, { process_id: id, ...args }) : undefined);
   queue = sent.catch(() => undefined).finally(() => { pending--; });
-  return sent.then(() => { error.value = ''; }, (cause: unknown) => {
+  return sent.then(() => { if (sentIn === epoch) error.value = ''; }, (cause: unknown) => {
+    if (sentIn !== epoch) return;
+    epoch++;
     const message = cause instanceof Error ? cause.message : String(cause);
-    error.value = /Take control/.test(message) ? 'Another window controls this agent. Take control of it to use its browser.' : message;
+    error.value = /Take control/.test(message) ? 'Take control of this agent to use its browser.' : message;
   });
 }
 
@@ -218,7 +227,7 @@ function paste(event: ClipboardEvent): void {
   if (text) void send('browser_input', { input: { kind: 'text', text: text.slice(0, 10_000) } });
 }
 
-watch(() => props.processId, () => void stream());
+watch(() => props.processId, () => { epoch++; void stream(); });
 watch(() => props.url, (url) => { if (url) void send('browser_navigate', { url }); });
 onMounted(() => {
   void stream();
@@ -226,6 +235,7 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
   generation++;
+  epoch++;
   if (moveFrame) cancelAnimationFrame(moveFrame);
 });
 </script>

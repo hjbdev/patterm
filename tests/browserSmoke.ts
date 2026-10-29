@@ -64,6 +64,15 @@ async function extractionChecks(): Promise<void> {
     const linking = path.join(root, 'link.zip');
     fs.writeFileSync(linking, zip([{ name: 'a/link', data: '../../outside', mode: 0o120777 }]));
     await assert.rejects(extractZip(linking, path.join(root, 'link')), /escapes/);
+    // Links that each stay inside, chained, would still climb out.
+    const chained = path.join(root, 'chained.zip');
+    fs.writeFileSync(chained, zip([
+      { name: 'alias', data: '.', mode: 0o120777 },
+      { name: 'alias/up', data: '..', mode: 0o120777 },
+      { name: 'alias/up/escaped', data: 'x' }
+    ]));
+    await assert.rejects(extractZip(chained, path.join(root, 'chained', 'out')));
+    assert.equal(fs.existsSync(path.join(root, 'chained', 'escaped')), false, 'nothing lands beside the destination');
   }
 }
 
@@ -171,8 +180,10 @@ async function liveChecks(): Promise<void> {
     onChanged: () => {},
     raiseHelp: (processId, reason) => helps.push(`${processId}:${reason}`),
     resolveHelp: (processId) => helps.push(`resolved:${processId}`),
-    messageAgent: async (processId, text) => { messages.push(`${processId}:${text}`); }
+    messageAgent: async (processId, text) => { messages.push(`${processId}:${text}`); },
+    isLive: () => live
   });
+  let live = true;
   try {
     const opened = await service.open('session_live', 'process_live');
     assert.match(opened.cdp_url, /^http:\/\/127\.0\.0\.1:\d+$/);
@@ -212,15 +223,43 @@ async function liveChecks(): Promise<void> {
     assert.match(messages[0] ?? '', /^process_live:\[browser\] The user finished in your browser\./);
 
     // An ended session's browser stops and its profile goes.
-    await service.reap(() => false);
+    live = false;
+    await service.reap();
     assert.equal(service.state('session_live').running, false);
     assert.equal(fs.existsSync(path.join(root, 'live', 'profiles', 'session_live')), false);
     await assert.rejects(service.input('session_live', { kind: 'text', text: 'x' }), /no browser/);
 
     // Opening a page in a stopped browser starts it without waiting for it.
+    live = true;
+    const before = (frame as { seq: number }).seq;
     assert.deepEqual(await service.navigate('session_live', 'process_live', 'data:text/html,again'), { starting: true });
     for (let tries = 0; tries < 100 && !service.state('session_live').tabs.some((tab) => tab.url.startsWith('data:')); tries++) await new Promise((resolve) => setTimeout(resolve, 100));
     assert.ok(service.state('session_live').tabs.some((tab) => tab.url.startsWith('data:')), 'the page opens once the browser starts');
+    // A viewer still holding the old browser's cursor sees the new browser.
+    const restarted = await service.frame('session_live', before, 10_000);
+    assert.ok(restarted.data && restarted.seq > before, 'frame numbers keep rising across browsers');
+    await service.stop('session_live');
+
+    // A session that ends while its browser starts never gets one.
+    let release: () => void = () => {};
+    const slow = new BrowserService({
+      directory: path.join(root, 'late'),
+      installer: { ensure: () => new Promise((resolve) => { release = () => resolve({ version: 'test', executable }); }), state: () => ({ status: 'absent' }) },
+      onChanged: () => {}, raiseHelp: () => {}, resolveHelp: () => {}, messageAgent: async () => {},
+      isLive: () => lateLive
+    });
+    let lateLive = true;
+    try {
+      const opening = slow.open('session_late', 'process_late');
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      lateLive = false;
+      release();
+      await assert.rejects(opening, /ended/);
+      assert.equal(slow.state('session_late').running, false);
+      assert.equal(fs.existsSync(path.join(root, 'late', 'profiles', 'session_late')), false);
+    } finally {
+      await slow.dispose();
+    }
   } finally {
     await service.dispose();
   }

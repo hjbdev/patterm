@@ -99,11 +99,6 @@ export class BrowserActions {
     return { ok: true };
   }
 
-  // A session that is running now. Its browser lasts as long as it does.
-  isLive(sessionId: string): boolean {
-    return Boolean(this.database.connection.prepare('select 1 from sessions where id = ? and exited_at is null').get(sessionId));
-  }
-
   private agent(context: McpCallContext): { sessionId: string; processId: string } {
     if (context.remote) throw new Error('Browsers belong to agents on their own host');
     const row = context.identity
