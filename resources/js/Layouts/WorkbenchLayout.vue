@@ -106,10 +106,8 @@
     <CloseConfirmDialog />
     <SnoozeDialog />
     <ProjectSnoozeDialog />
-    <!-- The list's row menus open these, docked or on a phone. -->
-    <template v-if="sidebarMode || mobile">
-      <SidebarDialogs />
-    </template>
+    <!-- Row menus open these: the sidebar's, and the agent header's in any layout. -->
+    <SidebarDialogs />
   </TooltipProvider>
 </template>
 

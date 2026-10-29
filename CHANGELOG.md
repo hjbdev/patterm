@@ -34,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Chips open as sheets and the peek fills the screen. A question or permission
   sits in place of the composer, with full-width answers, and after you answer
   a Next waiting pill opens the next agent waiting on you. A server opens as a
-  page with its preview, Stop or Restart, and the agent that started it. The
+  page with its preview, Stop, and the agent that started it. The
   Library holds the project pages, each saying what's new, then Scheduled,
   Usage, Notifications, Settings and the list's options. The project menu marks
   projects with an agent waiting, and a dot beside the project name says one

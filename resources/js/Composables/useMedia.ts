@@ -49,6 +49,11 @@ export function useMedia(props: { projectId: string; sessionId?: string | undefi
     total.value = 0;
     loaded.value = false;
     if (enabled()) void load(0, options.pageSize);
+    else {
+      generation += 1;
+      loading.value = false;
+      error.value = '';
+    }
   }, { immediate: true });
   useTopicRefresh(['history'], () => { if (enabled()) void refresh(); });
 

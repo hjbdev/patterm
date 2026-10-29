@@ -9,7 +9,7 @@ import { familyTabOf, type AgentTab, type SidebarContext } from './sidebarContex
 
 // The agent that started a server, and the list row it belongs to.
 export function serverOwner(sidebar: SidebarContext, process: ProcessRecord): { tab: AgentTab; session: SessionRecord } | null {
-  if (!process.parentProcessId || process.host) return null;
+  if (!process.parentProcessId) return null;
   const tab = familyTabOf(sidebar, { processId: process.id });
   const session = tab?.family.options.find((option) => option.session.processId === process.parentProcessId)?.session;
   return tab && session ? { tab, session } : null;

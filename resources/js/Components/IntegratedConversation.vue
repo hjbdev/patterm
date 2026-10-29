@@ -341,9 +341,10 @@ const usage = shallowRef<IntegratedUsage | null>(null);
 const tasks = shallowRef<IntegratedTask[]>([]);
 const queue = shallowRef<IntegratedQueuedMessage[]>([]);
 const transcriptMessages = computed(() => outgoingTranscript(props.processId, messages.value, queue.value));
-// A phone docks a pending prompt in the composer's place. Once you've answered
+// A phone docks a pending prompt in the composer's place, once it has control:
+// until then the composer stays, with its Take control. Once you've answered
 // one here, the next agent waiting on you is offered in that spot.
-const docked = computed(() => phoneLayout.value && !ended.value && permissions.value.length + questions.value.length + forms.value.length > 0);
+const docked = computed(() => phoneLayout.value && !ended.value && controlling.value && permissions.value.length + questions.value.length + forms.value.length > 0);
 const answered = ref(false);
 watch(() => props.processId, () => { answered.value = false; });
 watch([messages, queue, () => outgoingFor(props.processId).map((entry) => entry.row.delivery?.state)], () => {

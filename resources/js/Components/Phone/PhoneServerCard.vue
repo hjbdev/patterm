@@ -1,7 +1,6 @@
 <template>
   <!-- A server opened on a phone: its page at phone width, how it's doing with
-       Stop or Restart, and the agent that started it. Its log is the terminal
-       below. -->
+       Stop, and the agent that started it. Its log is the terminal below. -->
   <section class="shrink-0 space-y-2.5 border-b border-white/5 px-3 pb-3 pt-1">
     <button v-if="server?.url && !previewOpen" type="button" class="relative block h-48 w-full overflow-hidden rounded-xl border border-border/40 bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :aria-label="`Open preview of ${address}`" @click="previewOpen = true">
       <iframe :src="server.url" :title="`Preview of ${server.label}`" tabindex="-1" loading="lazy" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer" class="pointer-events-none h-full w-full" />
@@ -10,8 +9,7 @@
     <div class="flex items-center gap-2">
       <RowStatus :activity="processActivity(process)" />
       <span class="min-w-0 flex-1 truncate text-sm">{{ statusText }}</span>
-      <Button v-if="running" variant="secondary" size="sm" class="h-9 px-3" :disabled="busy" @click="act('stop_process')"><Square class="mr-1.5 h-3.5 w-3.5" />Stop</Button>
-      <Button v-else variant="secondary" size="sm" class="h-9 px-3" :disabled="busy" @click="act('process_restart')"><RotateCw class="mr-1.5 h-3.5 w-3.5" />Restart</Button>
+      <Button v-if="running" variant="secondary" size="sm" class="h-9 px-3" :disabled="busy" @click="stop"><Square class="mr-1.5 h-3.5 w-3.5" />Stop</Button>
     </div>
     <button v-if="owner" type="button" class="flex min-h-11 w-full items-center gap-2.5 rounded-lg bg-white/[0.04] px-3 text-left text-[13px] transition-colors hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" @click="sidebar.selectSession(owner.tab.family.rootId, owner.session)">
       <span class="text-muted-foreground">Started by</span>
@@ -30,7 +28,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { ChevronRight, Maximize2, RotateCw, Square } from 'lucide-vue-next';
+import { ChevronRight, Maximize2, Square } from 'lucide-vue-next';
 import PeekPane from '../peek/PeekPane.vue';
 import RowStatus from '../RowStatus.vue';
 import { serverOwner, serverPreview } from '../Sidebar/serverPeek';
@@ -55,15 +53,16 @@ watch([() => props.process.id, () => owner.value?.session.id], async ([id, owner
 const address = computed(() => server.value?.url ? previewAddress(server.value.url) : '');
 const previewOpen = ref(false);
 
-// Stop while it runs; Restart once it has stopped.
+// A stopped server leaves the list and this page with it, so there's no
+// Restart here.
 const running = computed(() => props.process.status === 'running');
 const statusText = computed(() => processStatusIcon(props.process).label);
 
 const busy = ref(false), error = ref('');
-async function act(tool: 'stop_process' | 'process_restart'): Promise<void> {
+async function stop(): Promise<void> {
   busy.value = true;
   error.value = '';
-  try { await window.patterm.call(tool, { process_id: props.process.id }); }
+  try { await window.patterm.call('stop_process', { process_id: props.process.id }); }
   catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause); }
   finally { busy.value = false; }
 }
