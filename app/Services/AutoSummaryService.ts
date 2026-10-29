@@ -209,7 +209,7 @@ export class AutoSummaryService {
                 if (coverage !== 'catching_up') {
                   this.database.connection.prepare(`update processes set auto_summary = ?, auto_status = ?, auto_summary_at = ?,
                     auto_summary_provider = ?, auto_summary_model = ?, auto_summary_coverage = ? where id = ?`)
-                    .run(summarySnapshot(result.summary), coverage === 'complete' ? oneLine(result.status) : 'Partial conversation recap',
+                    .run(summarySnapshot(result.summary), oneLine(result.status),
                       at, settings.provider, settings.models[settings.provider], coverage, thread.id);
                   if (settings.titles && result.title) titled = this.database.connection.prepare('update sessions set auto_title = ? where id = ? and auto_title is not ?')
                     .run(oneLine(result.title), thread.session_id, oneLine(result.title)).changes > 0;

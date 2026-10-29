@@ -110,6 +110,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The sidebar keeps showing an agent's status line while its summary catches
+  up, is paused or is out of date, instead of replacing it with "Summary
+  catching up" and similar labels. A partial recap keeps its real status line
+  rather than "Partial conversation recap".
 - When the kernel kills a memory-hungry child process, such as a browser an
   agent started, the service, terminal hosts and Integrated agent hosts keep
   running. Previously systemd stopped the whole unit, which ended Integrated

@@ -97,13 +97,13 @@ under 40 characters, or unchanged since the last recap, make no request.
 ### Coverage
 
 Each agent recap has a coverage state. Incomplete coverage appears in recap
-tooltips. The regenerate icon beside Close in Session context opens a dialog
+tooltips; the sidebar keeps showing the status line. The regenerate icon beside Close in Session context opens a dialog
 with progress, estimated usage, and regenerate, pause, and resume controls.
 
 - **Complete**: everything retained has been read.
 - **Partial**: the thread was already larger than 32 KiB of prose when it was
   first seen. Patterm does not rebuild it automatically. It starts from the most
-  recent text (about 6 KiB) and labels the status "Partial conversation recap".
+  recent text (about 6 KiB).
 - **Catching up**: unread history remains, from a rebuild or a long import.
   Intermediate batches update the memory but do not replace the visible recap or
   status.
