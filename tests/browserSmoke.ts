@@ -81,7 +81,7 @@ async function installerChecks(): Promise<void> {
   assert.equal(chromePlatform('darwin', 'arm64'), 'mac-arm64');
   assert.equal(chromePlatform('win32', 'x64'), 'win64');
   assert.equal(chromePlatform('freebsd', 'x64'), null);
-  assert.match(chromeExecutable('/x', 'mac-arm64'), /Google Chrome for Testing\.app\/Contents\/MacOS\/Google Chrome for Testing$/);
+  assert.equal(chromeExecutable('/x', 'mac-arm64'), path.join('/x', 'chrome-mac-arm64', 'Google Chrome for Testing.app', 'Contents', 'MacOS', 'Google Chrome for Testing'));
 
   const body = zip([{ name: 'chrome-linux64/', mode: 0o40755 }, { name: 'chrome-linux64/chrome', data: '#!/bin/sh\n', mode: 0o100755 }]);
   const md5 = createHash('md5').update(body).digest('base64');
