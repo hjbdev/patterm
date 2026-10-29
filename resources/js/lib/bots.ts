@@ -34,9 +34,9 @@ export async function saveBots(settings: BotSettings): Promise<BotSettings> {
   return saved;
 }
 
-// Starts a bot that isn't running.
-export async function startBot(botId: string): Promise<void> {
-  await window.patterm.call('bot_start', { bot_id: botId });
+// Starts a bot that isn't running, on a new conversation when `fresh`.
+export async function startBot(botId: string, fresh = false): Promise<void> {
+  await window.patterm.call('bot_start', { bot_id: botId, fresh });
 }
 
 // Restarts a running bot. Like sending it a message, this needs control of
@@ -113,6 +113,22 @@ export function botRows(settings: BotSettings, projects: readonly ProjectWorkben
     const waitingHelperProjectId = waitingHelper ? projects.find((project) => project.projectSessions.some((candidate) => candidate.id === waitingHelper.id))?.project.id ?? null : null;
     return { bot, session, activity, waitingHelper, waitingHelperProjectId, line };
   });
+}
+
+export interface AssistantRow {
+  session: SessionRecord | null;
+  activity: RowActivity | null;
+  line: string | null;
+}
+
+// The global assistant's row in the Bots section. Its agents already list
+// with everyone else's, so only its own status shows here. It starts when
+// first opened, so until then it has no status rather than an exited one.
+export function assistantRow(project: ProjectWorkbench | null, processId: string | null): AssistantRow {
+  const session = processId ? project?.projectSessions.find((candidate) => candidate.sessionRole === 'assistant' && candidate.processId === processId) : null;
+  if (!session) return { session: null, activity: null, line: null };
+  const activity = activityLookup(buildAgentTabFamilies([session], {}))(session);
+  return { session, activity, line: session.asking ?? session.summary?.status ?? null };
 }
 
 function helpersOf(bot: SessionRecord, sessions: readonly SessionRecord[]): SessionRecord[] {

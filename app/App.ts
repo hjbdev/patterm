@@ -538,7 +538,12 @@ async function createApplicationResources(
   const assistantService = assistant;
   defer(() => assistantService.dispose());
   const bots = new BotService(database, options.appDataPath, harnessLauncher, settings, workbench,
-    { stop: (processId) => actions.stopProcess.execute(processId), transferTimers: (from, to) => timers.transferOwner(from, to) },
+    {
+      stop: (processId) => actions.stopProcess.execute(processId),
+      transferTimers: (from, to) => timers.transferOwner(from, to),
+      holdTimers: (processId) => timers.holdOwner(processId),
+      releaseTimers: (timerIds) => { for (const id of timerIds) timers.resume(id); }
+    },
     {
       log: (event, data) => debugLog.write('bots', event, data),
       conversationSaved: (harness, cwd, resumeId) => harness !== 'claude' || claudeConversationSaved({ cwd, sessionId: resumeId, env: process.env })
@@ -779,11 +784,12 @@ async function createApplicationResources(
   if (!persistent) defer(() => integrated.stopAll());
   const mcpStartedAt = Date.now();
   await mcpSocket.start();
+  // Bots carry on after a restart, unlike other agents, which wait to be
+  // resumed. Their launches need the MCP socket. Started before timers
+  // activate, so it holds the bots' timers until their new sessions adopt them.
+  void bots.ensureAll();
   timers.activate();
   routines.activate();
-  // Bots carry on after a restart, unlike other agents, which wait to be
-  // resumed. Their launches need the MCP socket.
-  void bots.ensureAll();
   projectSnoozes.activate();
   debugLog.write('mcp', 'socket.listening', { address: mcpSocket.address, elapsed_ms: Date.now() - mcpStartedAt });
   debugLog.write('startup', 'critical.ready', { elapsed_ms: Date.now() - startupStartedAt });

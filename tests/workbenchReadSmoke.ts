@@ -13,7 +13,7 @@ import { DatabaseService } from '../app/Services/DatabaseService';
 import type { HarnessLauncher } from '../app/Services/HarnessLauncher';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { TimelineService } from '../app/Services/TimelineService';
-import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
+import { listedProject, WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import type { AgentHistoryImportQueueService } from '../app/Services/AgentHistory/AgentHistoryImportQueueService';
 import type { AgentHistoryReadService } from '../app/Services/AgentHistory/AgentHistoryReadService';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
@@ -30,11 +30,11 @@ async function main(): Promise<void> {
     const database = new DatabaseService(tempDir);
     database.initialize();
 
-    // The global Assistant is hidden from the workbench but Quit still stops it.
+    // The global Assistant's project rides along hidden, listed nowhere, but Quit still stops it.
     database.connection.exec("insert into projects (id, name, path, kind, created_at, updated_at) values ('assistant_quit', 'Assistant', '/tmp', 'assistant', 'now', 'now'); insert into processes (id, project_id, kind, name, status, activity, created_at, updated_at) values ('assistant_quit', 'assistant_quit', 'agent', 'Assistant', 'running', 'working', 'now', 'now')");
     let shutdowns = 0;
     const assistantOnly = { database, currentWorkbench: () => new WorkbenchRepository(database).snapshot(), timers: { list: () => [] }, shutdown: async () => { shutdowns++; } } as unknown as Parameters<typeof runCommandPaletteCommand>[0];
-    assert.deepEqual(assistantOnly.currentWorkbench().projects, []);
+    assert.deepEqual(assistantOnly.currentWorkbench().projects.filter(listedProject), []);
     await assert.rejects(runCommandPaletteCommand(assistantOnly, { id: 'renderer:quit', context: { active_project_id: null, active_terminal_id: null, active_tab: null } }), /Confirm Quit/);
     assert.equal(shutdowns, 0);
     database.connection.exec("delete from processes where id = 'assistant_quit'; delete from projects where id = 'assistant_quit'");

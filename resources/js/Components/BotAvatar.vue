@@ -5,9 +5,14 @@
        you, has an error or asked to close, and dimmed once it has exited. -->
   <span :class="cn('bot-avatar', props.class)" :data-dead="dead ? '' : undefined" :style="{ width: `${px}px`, height: `${px}px` }" :title="description ?? undefined">
     <span v-if="moving" class="bot-avatar-ring" :data-faint="faint ? '' : undefined" :style="{ animationDelay: `${syncDelay()}ms` }" aria-hidden="true" />
-    <img v-if="avatar.kind === 'picture' && avatar.picture" :src="avatar.picture" alt="" class="bot-avatar-body rounded-full object-cover" :style="{ width: `${px}px`, height: `${px}px` }" />
-    <span v-else-if="avatar.kind === 'emoji' && avatar.emoji" class="bot-avatar-body bot-avatar-emoji" :style="{ fontSize: `${Math.round(px * 0.84)}px` }" aria-hidden="true">{{ avatar.emoji }}</span>
-    <ProfileFace v-else :look="avatar.look" :size="px" :motion="animate" class="bot-avatar-body" />
+    <span class="bot-avatar-body" :style="{ width: `${px}px`, height: `${px}px` }">
+      <!-- The assistant, which has no avatar of its own, passes its mark. -->
+      <slot>
+        <img v-if="avatar?.kind === 'picture' && avatar.picture" :src="avatar.picture" alt="" class="size-full rounded-full object-cover" />
+        <span v-else-if="avatar?.kind === 'emoji' && avatar.emoji" class="bot-avatar-emoji" :style="{ fontSize: `${Math.round(px * 0.84)}px` }" aria-hidden="true">{{ avatar.emoji }}</span>
+        <ProfileFace v-else-if="avatar" :look="avatar.look" :size="px" :motion="animate" />
+      </slot>
+    </span>
     <span v-if="mark" class="bot-avatar-badge"><StatusIcon :spec="mark" class="h-full w-full" aria-hidden="true" /></span>
     <span v-if="description" class="sr-only">{{ description }}</span>
   </span>
@@ -22,7 +27,7 @@ import { activityIcon, CLOSING_MARK } from '../lib/statusIcons';
 import ProfileFace from './ProfileFace.vue';
 import StatusIcon from './StatusIcon.vue';
 
-const props = withDefaults(defineProps<{ avatar: BotAvatar; size?: number; activity?: RowActivity | null; motion?: boolean; class?: string }>(), { size: 20, activity: null, motion: false, class: '' });
+const props = withDefaults(defineProps<{ avatar?: BotAvatar; size?: number; activity?: RowActivity | null; motion?: boolean; class?: string }>(), { size: 20, activity: null, motion: false, class: '' });
 
 const px = computed(() => props.size ?? 20);
 const animate = computed(() => props.motion ?? false);
@@ -45,7 +50,7 @@ function syncDelay(): number {
 
 <style scoped>
 .bot-avatar { position: relative; display: inline-flex; flex: none; align-items: center; justify-content: center; }
-.bot-avatar-body { position: relative; display: block; transition: opacity 0.2s; }
+.bot-avatar-body { position: relative; display: flex; align-items: center; justify-content: center; transition: opacity 0.2s; }
 .bot-avatar[data-dead] .bot-avatar-body { opacity: 0.42; }
 .bot-avatar-emoji { line-height: 1; font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif; }
 .bot-avatar-ring {

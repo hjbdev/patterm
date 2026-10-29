@@ -256,10 +256,11 @@ export class WorkbenchRepository {
 
   snapshot(): WorkbenchSnapshotDto {
     const harnesses = this.listHarnesses();
-    // The bots' hidden project rides along so the sidebar can list bots and
-    // open their conversations. It never joins the user's project lists.
-    const bots = this.db.prepare(`select id, name, path, logo, kind, snoozed_until, context_revision from projects where kind = 'bots'`).all() as ProjectRow[];
-    const projectRows = [...this.projectRows(), ...bots];
+    // The bots' and the assistant's hidden projects ride along so the
+    // sidebar can list them with their status and open their conversations.
+    // They never join the user's project lists.
+    const hidden = this.db.prepare(`select id, name, path, logo, kind, snoozed_until, context_revision from projects where kind in ('bots', 'assistant')`).all() as ProjectRow[];
+    const projectRows = [...this.projectRows(), ...hidden];
     const timers = this.timers?.list() ?? [];
 
     return { projects: projectRows.map((project) => this.projectWorkbench(project, timers)), harnesses, sidebarState: this.settings.sidebarState(), terminalAvailable: this.terminalAvailable() };
@@ -324,6 +325,12 @@ export class WorkbenchRepository {
     };
   }
 
+}
+
+// The snapshot also carries the bots' and the assistant's hidden projects;
+// lists of the user's projects, agents and processes leave them out.
+export function listedProject(project: ProjectWorkbenchDto): boolean {
+  return project.project.kind !== 'bots' && project.project.kind !== 'assistant';
 }
 
 function projectSummary(row: ProjectRow): ProjectSummaryDto {

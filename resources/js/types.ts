@@ -43,7 +43,7 @@ export interface SidebarState {
   knownSections: string[];
 }
 
-export type SessionRole = 'orchestrator' | 'child' | 'process' | 'bot';
+export type SessionRole = 'orchestrator' | 'child' | 'process' | 'assistant' | 'routine' | 'bot';
 export type ResumeStatus = 'unknown' | 'found' | 'missing' | 'imported';
 export type AgentInterface = 'tui' | 'integrated';
 

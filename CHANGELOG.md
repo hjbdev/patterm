@@ -85,7 +85,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   projects, chosen ones or all of them; it starts helpers there for real work,
   and they stay out of the sidebar and out of its conversation while it
   relays what matters in short replies. Bots list above the agents with their
-  last line, and a helper waiting on you shows on its bot's row. Faces are
+  last line, and a helper waiting on you shows on its bot's row. The assistant
+  leads the list while it is on and opens its panel. Faces are
   built from a colour, shape, finish, marking, eyes, mouth, cheeks, a hat with
   its own accent colour and an idle motion, or shuffled.
 

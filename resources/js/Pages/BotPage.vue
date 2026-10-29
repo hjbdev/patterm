@@ -83,7 +83,7 @@ async function restart(fresh: boolean): Promise<void> {
   try {
     const processId = live.value ? row.value?.session?.processId : null;
     if (processId) await restartBot(processId, fresh);
-    else await startBot(bot.id);
+    else await startBot(bot.id, fresh);
   } catch (caught) {
     error.value = caught instanceof Error ? caught.message : String(caught);
   } finally {

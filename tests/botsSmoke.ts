@@ -8,12 +8,13 @@ import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import { AgentContextService } from '../app/Services/AgentContextService';
 import { BotService, botProjectId } from '../app/Services/BotService';
 import { BROWSER_TOOLS, INTEGRATED_CONTROL_TOOLS } from '../app/Http/BrowserTools';
+import type { AgentHistoryReadService } from '../app/Services/AgentHistory/AgentHistoryReadService';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import type { HarnessResume, LaunchHarnessInput } from '../app/Services/HarnessLauncher';
 import { SettingsService } from '../app/Services/SettingsService';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { TimelineService } from '../app/Services/TimelineService';
-import { botHidden, botRows, hiddenFromBot } from '../resources/js/lib/bots';
+import { assistantRow, botHidden, botRows, hiddenFromBot } from '../resources/js/lib/bots';
 import { randomLook } from '../resources/js/lib/faces';
 import type { ProjectWorkbench, SessionRecord } from '../resources/js/types';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
@@ -105,14 +106,31 @@ async function main(): Promise<void> {
     };
     const stopped: string[] = [];
     const transferred: Array<{ from: readonly string[]; to: string }> = [];
+    // Fake timers: which process owns each, and which are held.
+    const timerOwners = new Map<string, string>();
+    const paused = new Set<string>();
+    const events: string[] = [];
     const stop = (processId: string) => {
       stopped.push(processId);
+      events.push(`stop ${processId}`);
       db.prepare(`update processes set status = 'exited' where id = ?`).run(processId);
       db.prepare(`update sessions set exited_at = ? where process_id = ?`).run(new Date().toISOString(), processId);
       return Promise.resolve();
     };
     const unsaved = new Set<string>();
-    const bots = new BotService(database, dir, launcher, settings, workbench, { stop, transferTimers: (from, to) => transferred.push({ from, to }) },
+    const bots = new BotService(database, dir, launcher, settings, workbench, {
+      stop,
+      transferTimers: (from, to) => {
+        transferred.push({ from, to });
+        for (const [id, owner] of timerOwners) if (from.includes(owner)) timerOwners.set(id, to);
+      },
+      holdTimers: (processId) => {
+        const ids = [...timerOwners].filter(([id, owner]) => owner === processId && !paused.has(id)).map(([id]) => id);
+        for (const id of ids) { paused.add(id); events.push(`hold ${id}`); }
+        return ids;
+      },
+      releaseTimers: (ids) => { for (const id of ids) { paused.delete(id); events.push(`release ${id} to ${timerOwners.get(id)}`); } }
+    },
       { conversationSaved: (_harness, _cwd, resumeId) => !unsaved.has(resumeId) });
 
     // Every bot starts once, in its own folder in the hidden bots project.
@@ -190,13 +208,39 @@ async function main(): Promise<void> {
     await starting;
     await reconciled;
     assert.equal(running('late'), 0);
+    // A restart holds the bot's timers before its session stops, so none
+    // fires into the gap, and releases them once the new session owns them.
+    const before = bots.state('fable').process_id!;
+    timerOwners.set('timer-1', before);
+    events.length = 0;
+    await bots.restart('fable');
+    const after = bots.state('fable').process_id!;
+    assert.deepEqual(events, ['hold timer-1', `stop ${before}`, `release timer-1 to ${after}`]);
+    // At startup, a stopped bot's timers are held before the first await,
+    // ahead of timers activating, until its new session adopts them.
+    await stop(after);
+    events.length = 0;
+    const startup = bots.ensureAll();
+    assert.deepEqual([...paused], ['timer-1'], 'held synchronously');
+    await startup;
+    assert.deepEqual(events, ['hold timer-1', `release timer-1 to ${bots.state('fable').process_id}`]);
+    assert.equal(paused.size, 0);
+    // New conversation on a stopped bot starts fresh; a running bot is left alone.
+    await stop(bots.state('fable').process_id!);
+    await bots.ensure('fable', true);
+    assert.equal(launches.at(-1)!.resume, null);
+    const count = launches.length;
+    await bots.ensure('fable', true);
+    assert.equal(launches.length, count);
     // Restarting a bot needs control of its conversation, like writing to it.
     assert.equal(INTEGRATED_CONTROL_TOOLS.has('bot_restart'), true);
     assert.equal(BROWSER_TOOLS.has('bot_restart'), false);
     assert.equal(BROWSER_TOOLS.has('bot_start'), true);
 
     // Bots reach only the projects their purview names, through every scoped tool.
-    const registry = createTestMcpRegistry({ tempDir: dir, database, timeline, terminal: { request: async () => ({}) } as unknown as TerminalService, workbench, bots });
+    const conversations: Record<string, { projectId: string }> = { permitted: { projectId: 'p' }, elsewhere: { projectId: 'q' }, private: { projectId: botProjectId('other') } };
+    const historyReadService = { get: (input: { conversation_id: string }) => ({ conversation: conversations[input.conversation_id] ?? null, messages: [] }) } as unknown as AgentHistoryReadService;
+    const registry = createTestMcpRegistry({ tempDir: dir, database, timeline, terminal: { request: async () => ({}) } as unknown as TerminalService, workbench, bots, historyReadService });
     const fable = { identity: (db.prepare(`select mcp_identity from sessions where bot_id = 'fable' and exited_at is null`).get() as { mcp_identity: string }).mcp_identity };
     db.prepare(`insert into processes(id,project_id,kind,name,status,created_at,updated_at) values('proc-q','q','agent','Other','running',?,?)`).run(now, now);
     const listed = await registry.callPublic('list_processes', { project_id: 'p' }, fable) as { processes: Array<{ process_id: string }> };
@@ -208,6 +252,15 @@ async function main(): Promise<void> {
     const overview = await registry.callPublic('get_project_status', {}, fable) as { projects: Array<{ project_id: string }> };
     assert.deepEqual(overview.projects.map((project) => project.project_id), ['p']);
     await assert.rejects(registry.callPublic('spawn_agent', { agent: 'claude', project_id: 'q' }, fable), /outside this bot's projects/);
+    // Helpers start only in a named project the bot works in, never in its
+    // own hidden one, where the user couldn't open them.
+    await assert.rejects(registry.callPublic('spawn_agent', { agent: 'claude' }, fable), /pass the project_id of one of this bot's projects/);
+    await assert.rejects(registry.callPublic('spawn_agent', { agent: 'claude', project_id: botProjectId('fable') }, fable), /pass the project_id/);
+    await assert.rejects(registry.callPublic('spawn_process', { argv: ['true'] }, fable), /pass the project_id/);
+    // History reads follow the purview too.
+    await registry.callPublic('history_get', { conversation_id: 'permitted' }, fable);
+    await assert.rejects(registry.callPublic('history_get', { conversation_id: 'elsewhere' }, fable), /outside the caller project scope/);
+    await assert.rejects(registry.callPublic('history_get', { conversation_id: 'private' }, fable), /outside the caller project scope/);
     // Reads that omit a project see only the bot itself, never every project.
     const own = await registry.callPublic('list_processes', {}, fable) as { processes: Array<{ process_id: string }> };
     assert.deepEqual(own.processes.map((process) => process.process_id), [bots.state('fable').process_id]);
@@ -256,6 +309,20 @@ async function main(): Promise<void> {
   assert.equal(row!.line, 'A helper is waiting: Deploy to production?');
   assert.equal(botRows({ bots: [bot('fable', 'Fable')] }, [], [botsProject])[0]!.line, 'Watching the deploy');
   assert.equal(botRows({ bots: [bot('new', 'New')] }, projects, [botsProject])[0]!.session, null);
+  // The assistant's row reads its live session, not the routine runs that
+  // share its project.
+  const assistantProject = { ...workbenchOf('project_assistant', [
+    session('old-assistant', { sessionRole: 'assistant', exitedAt: '2026-10-29T10:30:00.000Z' }),
+    session('assistant', { sessionRole: 'assistant', activity: 'question', asking: 'Which project?', startedAt: '2026-10-29T11:00:00.000Z' }),
+    session('routine', { sessionRole: 'routine', activity: 'working', startedAt: '2026-10-29T12:00:00.000Z' })
+  ]), project: { id: 'project_assistant', name: 'Assistant', path: '/tmp', kind: 'assistant' } } as ProjectWorkbench;
+  const live = assistantRow(assistantProject, 'proc-assistant');
+  assert.equal(live.session?.id, 'assistant');
+  assert.equal(live.activity?.self, 'question');
+  assert.equal(live.line, 'Which project?');
+  assert.deepEqual(assistantRow(assistantProject, null), { session: null, activity: null, line: null }, 'not started yet, not exited');
+  assert.equal(assistantRow(assistantProject, 'proc-routine').session, null, 'never a routine run');
+  assert.deepEqual(assistantRow(null, null), { session: null, activity: null, line: null });
   // Helpers' reports and Patterm's notes stay out of a bot's conversation.
   for (const text of ['[report from process_7: completed]\nDone', '[message from process_7]\nhi', '[Patterm timer t1: condition met]', '[Attention needed by process_7]', '[Close requested by process_7]\nall done']) {
     assert.equal(hiddenFromBot(text), true, text);

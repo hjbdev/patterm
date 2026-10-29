@@ -3,7 +3,7 @@ import type { BotService } from '../Services/BotService';
 import type { SettingsService } from '../Services/SettingsService';
 import type { McpToolRegistry } from './ToolRegistry';
 
-const botStartInput = z.object({ bot_id: z.string().min(1) });
+const botStartInput = z.object({ bot_id: z.string().min(1), fresh: z.boolean().default(false) });
 const botRestartInput = z.object({
   // The bot's current process. Browsers send this over their socket, which
   // checks they control it, like any write to an Integrated session.
@@ -28,8 +28,11 @@ export function registerBotTools(registry: McpToolRegistry, bots: Pick<BotServic
     }
   );
   registry.register(
-    { name: 'bot_start', namespace: 'bots', description: 'Start a bot that isn\'t running, resuming its conversation.', hidden: true, changes: ['workbench'], inputSchema: { type: 'object', required: ['bot_id'] } },
-    (args) => bots.ensure(botStartInput.parse(args).bot_id)
+    { name: 'bot_start', namespace: 'bots', description: 'Start a bot that isn\'t running, resuming its conversation, or with fresh true on a new one. A running bot is left as it is.', hidden: true, changes: ['workbench'], inputSchema: { type: 'object', required: ['bot_id'] } },
+    (args) => {
+      const input = botStartInput.parse(args);
+      return bots.ensure(input.bot_id, input.fresh);
+    }
   );
   registry.register(
     { name: 'bot_restart', namespace: 'bots', description: 'Restart a running bot on its conversation, or with fresh true on a new one.', hidden: true, changes: ['workbench'], inputSchema: { type: 'object', required: ['process_id'] } },

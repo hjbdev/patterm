@@ -266,6 +266,17 @@ async function main() {
   }
   await assert.rejects(createPaletteDocument('todo', null, async () => { throw new Error('Must not call'); }), /Select a project/);
   await assert.rejects(createPaletteDocument('scratchpad', 'p', async () => { throw new Error('Save failed'); }), /Save failed/);
+
+  // The bots' and the assistant's hidden projects ride along in the
+  // workbench, but the palette lists neither them nor their sessions.
+  const hiddenProjects = [
+    { project: { id: 'project_bot_fable', name: 'Fable', path: '/tmp/fable', kind: 'bots' }, projectSessions: [session('fable', { sessionRole: 'bot' })], processes: [], worktrees: [], timers: [] },
+    { project: { id: 'project_assistant', name: 'Assistant', path: '/tmp/assistant', kind: 'assistant' }, projectSessions: [session('assistant', { sessionRole: 'assistant' })], processes: [], worktrees: [], timers: [] }
+  ];
+  const withHidden = { ...application, currentWorkbench: () => ({ projects: [project, ...hiddenProjects], harnesses: [] }) } as unknown as typeof application;
+  const hiddenIds = (await listCommandPaletteCommands(withHidden, context)).commands.map((entry) => entry.id).filter((id) => /project_bot_fable|project_assistant/.test(id));
+  assert.deepEqual(hiddenIds, []);
+  assert.equal((await listCommandPaletteCommands(withHidden, { ...context, active_project_id: 'project_bot_fable' })).commands.some((entry) => entry.id.startsWith('spawn:')), false, 'a bot project is never the active project');
   console.log('Command palette smoke checks passed');
 }
 void main().catch((error: unknown) => {

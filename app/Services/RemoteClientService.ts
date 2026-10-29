@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ProjectWorkbenchDto, WorkbenchSnapshotDto } from '../Repositories/WorkbenchRepository';
+import { listedProject, type ProjectWorkbenchDto, type WorkbenchSnapshotDto } from '../Repositories/WorkbenchRepository';
 import type { HostService, PeerHost } from './HostService';
 import type { PeerIdentity, PeerLinkService } from './PeerLinkService';
 import type { ProjectLinkService } from './ProjectLinkService';
@@ -114,8 +114,10 @@ export class RemoteClientService {
     private readonly options: RemoteClientOptions
   ) {
     // The flag tells a paired host it may cache this host's history reads:
-    // its changes are announced. Older hosts send no flag.
+    // its changes are announced. Older hosts send no flag. The bots' and the
+    // assistant's projects stay on this host.
     peers.handle('workbench.read', () => this.options.localWorkbench().projects
+      .filter(listedProject)
       .map((project) => ({ ...project, project: { ...project.project, sharesHistory: true } })));
     peers.handle('client.rpc', (raw, peer) => this.serveRequest(raw, peer));
     peers.handle('client.conversation', (raw, peer) => this.serveConversation(raw, peer));

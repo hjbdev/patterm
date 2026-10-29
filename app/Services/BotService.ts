@@ -37,7 +37,14 @@ export class BotService {
     private readonly launcher: Pick<HarnessLauncher, 'launch' | 'resume'>,
     private readonly settings: Pick<SettingsService, 'bots' | 'harnessPresets'>,
     private readonly workbench: Pick<WorkbenchRepository, 'listProjects'>,
-    private readonly processes: { stop(processId: string): Promise<unknown>; transferTimers(fromProcessIds: readonly string[], toProcessId: string): void },
+    // holdTimers pauses a process's pending timers and returns them, so none
+    // fires into the gap while a bot's session is replaced.
+    private readonly processes: {
+      stop(processId: string): Promise<unknown>;
+      transferTimers(fromProcessIds: readonly string[], toProcessId: string): void;
+      holdTimers(processId: string): string[];
+      releaseTimers(timerIds: readonly string[]): void;
+    },
     // conversationSaved: whether a CLI kept a conversation to resume. Claude
     // keeps one only after its first turn.
     private readonly options: { log?: (event: string, data: Record<string, unknown>) => void; conversationSaved?: (harness: string, cwd: string, resumeId: string) => boolean } = {}
@@ -73,18 +80,35 @@ export class BotService {
     return new AgentContextService().buildBot(bot, projects);
   }
 
-  ensure(botId: string): Promise<BotState> {
+  // Starts a bot that isn't running: on its latest conversation, or a new
+  // one when `fresh`. A running bot is left as it is.
+  ensure(botId: string, fresh = false): Promise<BotState> {
     return this.serial(botId, async () => {
       if (this.current(botId)) return this.state(botId);
-      return this.launch(this.requireBot(botId), false);
+      const held = this.holdTimers(botId);
+      try {
+        return await this.launch(this.requireBot(botId), fresh);
+      } finally {
+        this.processes.releaseTimers(held);
+      }
     });
   }
 
   // Brings every bot back after a restart. One that fails to start doesn't
-  // keep the others from starting.
+  // keep the others from starting. Their timers are held before the first
+  // await, so when this runs before timers activate, one that came due
+  // while Patterm was closed waits for the session that adopts it.
   async ensureAll(): Promise<void> {
-    for (const bot of this.settings.bots().bots) {
-      await this.ensure(bot.id).catch((error: unknown) => this.log('ensure.failed', { bot_id: bot.id, message: errorMessage(error) }));
+    const bots = this.settings.bots().bots;
+    const held = new Map(bots.map((bot) => [bot.id, this.holdTimers(bot.id)]));
+    for (const bot of bots) {
+      try {
+        await this.ensure(bot.id);
+      } catch (error) {
+        this.log('ensure.failed', { bot_id: bot.id, message: errorMessage(error) });
+      } finally {
+        this.processes.releaseTimers(held.get(bot.id) ?? []);
+      }
     }
   }
 
@@ -95,10 +119,16 @@ export class BotService {
     return this.serial(botId, async () => {
       const current = this.current(botId);
       if (processId && current?.process_id !== processId) throw new Error('This bot has already restarted');
-      if (current) await this.processes.stop(current.process_id);
-      const state = await this.launch(this.requireBot(botId), fresh);
-      this.log(fresh ? 'new_conversation' : 'restarted', { bot_id: botId, from: current?.process_id ?? null, to: state.process_id });
-      return state;
+      // If the launch fails, they resume on the stopped session, as after any stop.
+      const held = this.holdTimers(botId);
+      try {
+        if (current) await this.processes.stop(current.process_id);
+        const state = await this.launch(this.requireBot(botId), fresh);
+        this.log(fresh ? 'new_conversation' : 'restarted', { bot_id: botId, from: current?.process_id ?? null, to: state.process_id });
+        return state;
+      } finally {
+        this.processes.releaseTimers(held);
+      }
     });
   }
 
@@ -126,6 +156,12 @@ export class BotService {
     this.queue.set(botId, next);
     void next.finally(() => { if (this.queue.get(botId) === next) this.queue.delete(botId); }).catch(() => undefined);
     return next;
+  }
+
+  // Pauses the timers of the bot's sessions until a new session adopts them.
+  private holdTimers(botId: string): string[] {
+    const rows = this.database.connection.prepare(`select distinct process_id from sessions where session_role = 'bot' and bot_id = ? and process_id is not null`).all(botId) as Array<{ process_id: string }>;
+    return rows.flatMap((row) => this.processes.holdTimers(row.process_id));
   }
 
   private async stopAll(botId: string): Promise<void> {
