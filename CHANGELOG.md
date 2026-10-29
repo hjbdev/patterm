@@ -86,9 +86,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and they stay out of the sidebar and out of its conversation while it
   relays what matters in short replies. Bots list above the agents with their
   last line, and a helper waiting on you shows on its bot's row. Bots with no
-  projects or all of them list in every project; one with chosen projects
-  lists only in those. The assistant leads the list while it is on and opens
-  its panel. Faces are
+  projects or all of them list in every project and on the projects page; one
+  with chosen projects lists only in those. The assistant leads the list while
+  it is on and opens its panel. Faces are
   built from a colour, shape, finish, marking, eyes, mouth, cheeks, a hat with
   its own accent colour and an idle motion, or shuffled.
 

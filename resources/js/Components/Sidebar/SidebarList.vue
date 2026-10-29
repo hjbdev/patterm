@@ -1,7 +1,7 @@
 <template>
   <div class="flex h-full min-h-0 flex-col">
     <!-- Bots come first: each is one persistent conversation. -->
-    <SidebarBots :phone="placement === 'phone'" class="shrink-0 px-1 pt-1" />
+    <BotList :phone="placement === 'phone'" :project-id="sidebar.projectId.value" :all="sidebar.allAgents.value" class="shrink-0 px-1 pt-1" />
     <!-- On a phone the list is the home screen, which gives these their own places. -->
     <div v-if="placement !== 'phone'" class="flex h-8 shrink-0 items-center gap-0.5 pl-1.5 pr-1">
       <span class="flex-1"><SidebarViewOptions :label="sidebar.allAgents.value ? 'All agents' : 'Agents'" /></span>
@@ -112,7 +112,7 @@ import { useHarnessLaunchesFor } from '../../Composables/useHarnessLaunch';
 import { ChevronRight } from 'lucide-vue-next';
 import type { StripTab } from '../../lib/tabStrip';
 import LaunchAgentMenu from '../LaunchAgentMenu.vue';
-import SidebarBots from './SidebarBots.vue';
+import BotList from '../BotList.vue';
 import HarnessLaunchTabs from '../HarnessLaunchTabs.vue';
 import LibraryMenu from './LibraryMenu.vue';
 import SidebarAgentCard from './SidebarAgentCard.vue';

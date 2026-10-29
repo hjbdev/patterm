@@ -115,10 +115,19 @@ export function botRows(settings: BotSettings, projects: readonly ProjectWorkben
   });
 }
 
-// Global bots, with no projects or all of them, show in every project's
-// sidebar; the rest only in the projects they work in.
+// Global bots have no projects or all of them. They list in every project's
+// sidebar and on the projects page; the rest only in the projects they work in.
+export function isGlobalBot(bot: Bot): boolean {
+  return bot.purview.kind !== 'projects';
+}
+
 export function botShownIn(bot: Bot, projectId: string): boolean {
   return bot.purview.kind !== 'projects' || bot.purview.projectIds.includes(projectId);
+}
+
+// A bot row's second line.
+export function botLine(row: BotRow): string {
+  return row.line ?? (row.session ? (row.session.exitedAt ? 'Starting again…' : 'Ready') : 'Starting…');
 }
 
 // The project a bot's page opens beside when a link names none: the first
@@ -155,6 +164,14 @@ export function assistantRow(project: ProjectWorkbench | null, processId: string
   if (!session) return { session: null, activity: null, line: null };
   const activity = activityLookup(buildAgentTabFamilies([session], {}))(session);
   return { session, activity, line: session.asking ?? session.summary?.status ?? null };
+}
+
+// The assistant row's second line, from its live state in lib/assistant.
+export function assistantLine(state: { voiceActive: boolean; focus: boolean; focusPending: number; processId: string | null }, row: AssistantRow): string {
+  if (state.voiceActive) return 'On a voice call';
+  if (row.line) return row.line;
+  if (state.focus) return state.focusPending ? `Focus · ${state.focusPending} held` : 'Focus';
+  return state.processId ? 'Ready' : 'Starts when you open it';
 }
 
 function helpersOf(bot: SessionRecord, sessions: readonly SessionRecord[]): SessionRecord[] {

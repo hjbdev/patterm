@@ -14,7 +14,7 @@ import type { HarnessResume, LaunchHarnessInput } from '../app/Services/HarnessL
 import { SettingsService } from '../app/Services/SettingsService';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { TimelineService } from '../app/Services/TimelineService';
-import { assistantRow, botHidden, botHomeProjectId, botLinkTarget, botRows, botShownIn, hiddenFromBot } from '../resources/js/lib/bots';
+import { assistantLine, assistantRow, botHidden, botHomeProjectId, botLine, botLinkTarget, botRows, botShownIn, hiddenFromBot, isGlobalBot } from '../resources/js/lib/bots';
 import { randomLook } from '../resources/js/lib/faces';
 import type { ProjectWorkbench, SessionRecord } from '../resources/js/types';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
@@ -315,6 +315,8 @@ async function main(): Promise<void> {
   assert.equal(botShownIn(bot('everywhere', 'Everywhere', { purview: { kind: 'all' } }), 'p'), true);
   assert.equal(botShownIn(scoped, 'p'), false);
   assert.equal(botShownIn(scoped, 'q'), true);
+  // Only global bots list on the projects page.
+  assert.deepEqual([bot('generic', 'Generic'), bot('everywhere', 'Everywhere', { purview: { kind: 'all' } }), scoped].map(isGlobalBot), [true, true, false]);
   // A link into a bot's project opens it beside a project it lists in.
   assert.equal(botHomeProjectId(scoped, ['p', 'q']), 'q');
   assert.equal(botHomeProjectId(bot('generic', 'Generic'), ['p', 'q']), 'p');
@@ -342,6 +344,13 @@ async function main(): Promise<void> {
   assert.deepEqual(assistantRow(assistantProject, null), { session: null, activity: null, line: null }, 'not started yet, not exited');
   assert.equal(assistantRow(assistantProject, 'proc-routine').session, null, 'never a routine run');
   assert.deepEqual(assistantRow(null, null), { session: null, activity: null, line: null });
+  const idle = { voiceActive: false, focus: false, focusPending: 0, processId: null };
+  assert.equal(assistantLine(idle, assistantRow(null, null)), 'Starts when you open it');
+  assert.equal(assistantLine({ ...idle, processId: 'proc-assistant' }, live), 'Which project?');
+  assert.equal(assistantLine({ ...idle, processId: 'proc-assistant', voiceActive: true }, live), 'On a voice call');
+  assert.equal(assistantLine({ ...idle, processId: 'proc-assistant', focus: true, focusPending: 2 }, assistantRow(null, null)), 'Focus · 2 held');
+  assert.equal(botLine(botRows({ bots: [bot('new', 'New')] }, projects, [botsProject])[0]!), 'Starting…');
+  assert.equal(botLine(row!), 'A helper is waiting: Deploy to production?');
   // Helpers' reports and Patterm's notes stay out of a bot's conversation.
   for (const text of ['[report from process_7: completed]\nDone', '[message from process_7]\nhi', '[Patterm timer t1: condition met]', '[Attention needed by process_7]', '[Close requested by process_7]\nall done']) {
     assert.equal(hiddenFromBot(text), true, text);
