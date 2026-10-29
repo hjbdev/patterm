@@ -4,6 +4,8 @@ import 'vue-sonner/style.css';
 import App from './App.vue';
 import { createWebHashHistory, createWebHistory } from 'vue-router';
 import { createWorkbenchRouter, prefetchPages, reloadOnStaleBuild } from './router';
+// Ahead of the router's history, so it hears each popstate first.
+import { animatePhoneNavigation } from './lib/phoneTransitions';
 import { warmHighlightWorker } from './lib/markdownHighlightWorker';
 import { syncLoaders } from './lib/loaderSync';
 import './assets/fonts/fonts.css';
@@ -26,6 +28,7 @@ function mountWorkbench(): void {
   const router = createWorkbenchRouter(window.patterm.runtime === 'desktop' ? createWebHashHistory() : createWebHistory());
   // The desktop app ships its own build, which a server update never replaces.
   if (window.patterm.runtime !== 'desktop') reloadOnStaleBuild(router);
+  animatePhoneNavigation(router);
   const app = createApp(App).use(router);
   // The manifest's launch_handler reuses the open window instead of starting
   // another, so a launch that names a page (a shortcut) navigates here. A plain

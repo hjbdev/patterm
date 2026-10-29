@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is waiting elsewhere. In terminal sessions the header folds to one line while
   you type, and a key row with Esc, Tab, Ctrl and arrows sits over the
   keyboard.
+- On phones, an agent or page slides in over the list as in a native app, and
+  Back slides it away again. A back the browser animates itself, such as
+  Safari's edge swipe, keeps its own animation.
 - On tablets the agent list stays beside the conversation, and in landscape
   the peek docks beside it as on a desktop.
 - Session links have a Preview type for dev servers, preview deploys, and
