@@ -36,11 +36,16 @@ if (typeof window !== 'undefined') {
 export function animatePhoneNavigation(router: Router): void {
   if (!('startViewTransition' in document)) return;
   const shown = new WeakMap<RouteLocationNormalized, () => void>();
+  // Claimed as the navigation starts, before any page loads, so one that a
+  // slower page supersedes can't take or clear another's claim.
+  const animatedByBrowser = new WeakSet<RouteLocationNormalized>();
   let current: ViewTransition | null = null;
-  router.beforeResolve((to, from) => {
-    const animated = browserAnimated;
+  router.beforeEach((to) => {
+    if (browserAnimated) animatedByBrowser.add(to);
     browserAnimated = false;
-    if (!phoneLayout.value || animated || from === START_LOCATION || reducedMotion()) return;
+  });
+  router.beforeResolve((to, from) => {
+    if (!phoneLayout.value || animatedByBrowser.has(to) || from === START_LOCATION || reducedMotion()) return;
     const toDepth = depth(to), fromDepth = depth(from);
     if (toDepth === undefined || fromDepth === undefined || toDepth === fromDepth) return;
     const direction = toDepth > fromDepth ? 'push' : 'pop';
@@ -54,12 +59,14 @@ export function animatePhoneNavigation(router: Router): void {
       });
       const root = document.documentElement;
       root.dataset.phoneNavigation = direction;
-      // Starting a transition skips the one still running.
+      // Starting a transition skips the one still running, which rejects its
+      // `ready`; the page still updates.
       const transition = current = document.startViewTransition(async () => {
         resolve();
         await rendered;
         await nextTick();
       });
+      transition.ready.catch(() => { /* Skipped for a later navigation. */ });
       void transition.finished.finally(() => {
         if (current !== transition) return;
         current = null;
@@ -67,8 +74,5 @@ export function animatePhoneNavigation(router: Router): void {
       });
     });
   });
-  router.afterEach((to) => {
-    browserAnimated = false;
-    shown.get(to)?.();
-  });
+  router.afterEach((to) => { shown.get(to)?.(); });
 }
