@@ -61,8 +61,8 @@
           <SnoozeIcon v-if="projectSnoozed(projectGroup.project)" class="ml-1.5 h-3.5 w-3.5 shrink-0" />
           <HostBadge v-if="projectGroup.project.host" :host="projectGroup.project.host" class="ml-1.5" />
           <UnreadDot :urgency="projectUnread(projectGroup.project.id) ? 'normal' : null" />
-          <Badge v-if="openAgentCount(projectGroup) > 0" variant="secondary" class="ml-2 h-5 px-1.5 text-[10px] tabular-nums">
-            {{ openAgentCount(projectGroup) }}
+          <Badge v-if="openAgentCount(projectGroup, botHidden.sessions) > 0" variant="secondary" class="ml-2 h-5 px-1.5 text-[10px] tabular-nums">
+            {{ openAgentCount(projectGroup, botHidden.sessions) }}
           </Badge>
         </DropdownMenuItem>
         <DropdownMenuSeparator v-if="projects.length" />
@@ -82,7 +82,7 @@
             <SnoozeIcon v-if="projectSnoozed(projectGroup.project)" class="h-4 w-4 shrink-0" />
             <HostBadge v-if="projectGroup.project.host" :host="projectGroup.project.host" />
             <UnreadDot :urgency="projectUnread(projectGroup.project.id) ? 'normal' : null" />
-            <span v-if="openAgentCount(projectGroup) > 0" class="min-w-5 text-right text-[13px] tabular-nums text-muted-foreground">{{ openAgentCount(projectGroup) }}</span>
+            <span v-if="openAgentCount(projectGroup, botHidden.sessions) > 0" class="min-w-5 text-right text-[13px] tabular-nums text-muted-foreground">{{ openAgentCount(projectGroup, botHidden.sessions) }}</span>
           </button>
           <div v-if="projects.length" class="my-2 border-t border-border" />
           <button type="button" :class="[MOBILE_ROW, allAgents ? 'bg-primary/10' : '']" @click="selectMobileAllAgents">
@@ -165,6 +165,7 @@ import { Button } from './ui/button';
 import ResponsiveMenu from './ResponsiveMenu.vue';
 import ProjectStatusLogo from './ProjectStatusLogo.vue';
 import { projectOverviews, type AgentState } from '../lib/projectOverview';
+import { useBots } from '../Composables/useBots';
 import UnreadDot from './UnreadDot.vue';
 import { useUpdates } from '../lib/updates';
 import NotificationTray from './NotificationTray.vue';
@@ -183,6 +184,8 @@ const props = defineProps<{
   allAgents?: boolean;
   allAgentsCount?: number;
 }>();
+// A bot's helpers never count as the project's agents.
+const { hidden: botHidden } = useBots();
 
 const emit = defineEmits<{
   selectProject: [projectId: string | null];
@@ -198,7 +201,7 @@ watch(() => props.activeProjectId, (projectId) => {
   if (projectId) recentProjectIds.value = rememberRecentProject(recentProjectIds.value, projectId, globalThis.localStorage);
 }, { immediate: true });
 // The state of each project's live root agents, for the status on its logo.
-const projectAgentStates = computed(() => new Map(projectOverviews(props.projects).map((overview) => [overview.project.id, overview.agents.map((agent) => agent.state)])));
+const projectAgentStates = computed(() => new Map(projectOverviews(props.projects, botHidden.value.sessions).map((overview) => [overview.project.id, overview.agents.map((agent) => agent.state)])));
 const NO_AGENTS: AgentState[] = [];
 function agentStates(projectId: string): AgentState[] {
   return projectAgentStates.value.get(projectId) ?? NO_AGENTS;
@@ -260,11 +263,11 @@ function stopProjectMenuHover(): void {
 onBeforeUnmount(cancelProjectMenuClose);
 
 const activeProject = computed(() => props.projects.find((project) => project.project.id === props.activeProjectId) ?? null);
-const shownAgentCount = computed(() => props.allAgents ? props.allAgentsCount ?? 0 : activeProject.value ? openAgentCount(activeProject.value) : 0);
+const shownAgentCount = computed(() => props.allAgents ? props.allAgentsCount ?? 0 : activeProject.value ? openAgentCount(activeProject.value, botHidden.value.sessions) : 0);
 // What All agents would show: the projects switched on in its Projects menu.
 // Snoozed projects wait at the bottom, muted.
 const switcherProjects = computed(() => snoozedProjectsLast(props.projects, (item) => item.project));
-const totalAgentCount = computed(() => listedProjects(props.projects).filter((project) => projectShown(allAgentsState, project.project.id) && !projectSnoozed(project.project)).reduce((total, project) => total + openAgentCount(project), 0));
+const totalAgentCount = computed(() => listedProjects(props.projects).filter((project) => projectShown(allAgentsState, project.project.id) && !projectSnoozed(project.project)).reduce((total, project) => total + openAgentCount(project, botHidden.value.sessions), 0));
 
 
 // A release newer than this install marks Settings, and the ⋯ it sits behind,

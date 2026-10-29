@@ -19,6 +19,7 @@ export const BROWSER_TOOLS = new Set([
   'assistant_get', 'assistant_ensure', 'assistant_voice_start', 'assistant_voice_stop', 'assistant_set_focus_mode',
   'settings_assistant_get', 'settings_assistant_update',
   'settings_idle_compaction_get', 'settings_idle_compaction_update',
+  'settings_bots_get', 'settings_bots_update', 'bot_restart',
   ...MCP_SERVER_TOOLS,
   ...HOST_TOOLS,
   ...UPDATE_TOOLS,

@@ -39,6 +39,7 @@
 </template>
 
 <script setup lang="ts">
+import { useBots } from '../Composables/useBots';
 import AssistantButton from '../Components/Assistant/AssistantButton.vue';
 import { computed, inject, onBeforeUnmount, ref } from 'vue';
 import { RouterLink } from 'vue-router';
@@ -62,7 +63,9 @@ const now = ref(Date.now());
 const clock = setInterval(() => { now.value = Date.now(); }, 30_000);
 onBeforeUnmount(() => clearInterval(clock));
 
-const overviews = computed(() => projectOverviews(projects.value));
+// A bot's helpers never count as the project's agents.
+const { hidden: botHidden } = useBots();
+const overviews = computed(() => projectOverviews(projects.value, botHidden.value.sessions));
 const subtitle = computed(() => {
   if (!loaded.value) return 'Loading…';
   const agents = overviews.value.reduce((total, overview) => total + overview.agents.length, 0);

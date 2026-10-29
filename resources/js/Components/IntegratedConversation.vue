@@ -171,9 +171,9 @@
         <CloseRequestCard v-if="closeRequest && !ended" :key="`${processId}:${closeRequest.requestedAt}`" :process-id="processId" :request="closeRequest" :subagents="closeSubagents" />
         </div>
       </div>
-      <section v-if="queue.length && !ended" class="mx-auto mb-2 w-full max-w-[50rem] px-4 2xl:max-w-[1000px]" aria-label="Queued messages" data-component="integrated-queue">
+      <section v-if="shownQueue.length && !ended" class="mx-auto mb-2 w-full max-w-[50rem] px-4 2xl:max-w-[1000px]" aria-label="Queued messages" data-component="integrated-queue">
         <ul class="space-y-1 rounded-lg border border-border/60 px-3 py-1.5 text-xs">
-          <li v-for="item in queue" :key="item.id" class="flex min-w-0 items-center gap-2">
+          <li v-for="item in shownQueue" :key="item.id" class="flex min-w-0 items-center gap-2">
             <span v-if="item.delivery === 'held' || item.delivery === 'unconfirmed'" class="shrink-0" :class="item.error ? 'text-destructive' : 'text-muted-foreground'" :title="item.delivery === 'unconfirmed' ? `${item.error ?? ''} It may already have reached the agent; check before sending it again.`.trim() : item.error">{{ queueLabel(item) }}</span>
             <span class="min-w-0 flex-1 truncate">{{ item.text }}</span>
             <Button v-if="item.delivery === 'unconfirmed'" size="sm" variant="ghost" class="h-6 shrink-0 px-2 text-xs" :disabled="isResponding(`queue:${item.id}`)" @click="checkHeldDelivery(item)">Check delivery</Button>
@@ -206,6 +206,8 @@
       <NextWaitingPill v-if="phoneLayout && answered && !docked && !ended && !embedded" :process-id="processId" />
       <IntegratedComposer
         v-show="!docked"
+        :compact="compactComposer ?? false"
+        :addressee="addressee"
         :process-id="processId"
         :provider="provider"
         :controls="composerControls"
@@ -267,6 +269,7 @@
 </template>
 
 <script setup lang="ts">
+import { hiddenFromBot } from '../lib/bots';
 import { randomId } from '../lib/randomId';
 import { awaitingUser } from '../lib/activity';
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, shallowRef, watch } from 'vue';
@@ -328,7 +331,10 @@ import { onWorkspaceRequest, type WorkspaceRequest } from '../lib/workspaceReque
 // `onLaunched` is a prop rather than an emit: /new and /resume close this tab
 // before they answer, which can unmount the pane, and Vue drops emits from an
 // unmounted component.
-const props = defineProps<{ processId: string; projectId?: string | null; projectPath?: string | null; exited?: boolean; restartable?: boolean; mentionAgents?: MentionAgent[]; mentionProcesses?: MentionProcess[]; mentionLaunchers?: MentionLauncher[]; embedded?: boolean; closeRequest?: CloseRequestRecord | null | undefined; snooze?: SnoozeRecord | null | undefined; closeSubagents?: number | undefined; onLaunched?: (sessionId: string) => void; onNewSession?: (processId: string) => Promise<void>; onRestartSession?: (processId: string) => Promise<void> }>();
+// hideBackground: a bot's conversation, where its helpers' reports and
+// Patterm's messages stay out of view; the bot relays what matters.
+// compactComposer and addressee: a bot's one-row composer, named for the bot.
+const props = defineProps<{ processId: string; hideBackground?: boolean; compactComposer?: boolean; addressee?: string; projectId?: string | null; projectPath?: string | null; exited?: boolean; restartable?: boolean; mentionAgents?: MentionAgent[]; mentionProcesses?: MentionProcess[]; mentionLaunchers?: MentionLauncher[]; embedded?: boolean; closeRequest?: CloseRequestRecord | null | undefined; snooze?: SnoozeRecord | null | undefined; closeSubagents?: number | undefined; onLaunched?: (sessionId: string) => void; onNewSession?: (processId: string) => Promise<void>; onRestartSession?: (processId: string) => Promise<void> }>();
 const emit = defineEmits<{ transcript: [messages: TranscriptMessage[], status: string, loaded: boolean] }>();
 // Conversation state is replaced, never mutated in place (stream events and
 // snapshots produce new arrays), so shallow refs skip deep proxying of every
@@ -340,7 +346,11 @@ const forms = shallowRef<IntegratedFormRequest[]>([]);
 const usage = shallowRef<IntegratedUsage | null>(null);
 const tasks = shallowRef<IntegratedTask[]>([]);
 const queue = shallowRef<IntegratedQueuedMessage[]>([]);
-const transcriptMessages = computed(() => outgoingTranscript(props.processId, messages.value, queue.value));
+const transcriptMessages = computed(() => {
+  const all = outgoingTranscript(props.processId, messages.value, queue.value);
+  return props.hideBackground ? all.filter((message) => !(message.role === 'user' && message.kind === 'text' && hiddenFromBot(message.text))) : all;
+});
+const shownQueue = computed(() => props.hideBackground ? queue.value.filter((item) => !hiddenFromBot(item.text)) : queue.value);
 // A phone docks a pending prompt in the composer's place, once it has control:
 // until then the composer stays, with its Take control. Once you've answered
 // one here, the next agent waiting on you is offered in that spot.

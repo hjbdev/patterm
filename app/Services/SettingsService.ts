@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { DatabaseService } from './DatabaseService';
 import { autoSummarySettingsInput, type AutoSummarySettings } from './AutoSummarySettings';
 import { notificationSettingsInput, type NotificationSettings } from './NotificationSettings';
+import { botSettingsInput, readBotSettings, type BotSettings } from '../Bots/BotSettings';
 import { emptyHarnessPresetSettings, harnessPresetSettingsInput, presetHarnessInput, seededHarnessPresetSettings, type HarnessPresetSettings } from '../Harness/HarnessPresets';
 import { emptyHarnessModelCatalog, harnessModelCatalogInput, type HarnessModelCatalog } from '../Harness/ModelCatalog';
 import { ASSISTANT_VOICE_ACKNOWLEDGEMENTS, ASSISTANT_VOICE_PROFILES } from './AssistantVoiceProfile';
@@ -120,6 +121,7 @@ const UPDATE_RECORD_KEY = 'updates.record.v1';
 
 const ASSISTANT_SETTINGS_KEY = 'assistant.settings.v1';
 const HARNESS_PRESETS_KEY = 'harness.presets.v1';
+const BOT_SETTINGS_KEY = 'bots.v1';
 const HARNESS_MODEL_CATALOG_KEY = 'harness.models.v1';
 
 export const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
@@ -308,6 +310,18 @@ export class SettingsService {
 
   saveUpdateRecord(record: UpdateRecord): void {
     this.write(UPDATE_RECORD_KEY, JSON.stringify(updateRecordInput.parse(record)));
+  }
+
+  bots(): BotSettings {
+    const row = this.database.connection.prepare('select value from settings where key = ?').get(BOT_SETTINGS_KEY) as { value: string } | undefined;
+    try { return readBotSettings(row ? JSON.parse(row.value) : {}); }
+    catch { return { bots: [] }; }
+  }
+
+  updateBots(input: unknown): BotSettings {
+    const settings = botSettingsInput.parse(input);
+    this.write(BOT_SETTINGS_KEY, JSON.stringify(settings));
+    return settings;
   }
 
   harnessPresets(): HarnessPresetSettings {

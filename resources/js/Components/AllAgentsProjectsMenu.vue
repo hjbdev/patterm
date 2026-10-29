@@ -20,7 +20,7 @@
           <ProjectLogo :project="item.project" :size="14" />
           <span class="min-w-0 flex-1 truncate">{{ item.project.name }}</span>
           <HostBadge v-if="item.project.host" :host="item.project.host" />
-          <span class="text-xs tabular-nums text-muted-foreground">{{ openAgentCount(item) || '' }}</span>
+          <span class="text-xs tabular-nums text-muted-foreground">{{ openAgentCount(item, botHidden.sessions) || '' }}</span>
         </DropdownMenuCheckboxItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem class="gap-2 text-[13px]" :disabled="!allAgents.hidden.length" @select.prevent="allAgents.hidden = []">
@@ -37,6 +37,7 @@
 </template>
 
 <script setup lang="ts">
+import { useBots } from '../Composables/useBots';
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
 import { Crosshair, Layers, ListChecks } from 'lucide-vue-next';
@@ -49,6 +50,8 @@ import {
   DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger
 } from './ui/dropdown-menu';
 
+// A bot's helpers never count as the project's agents.
+const { hidden: botHidden } = useBots();
 const { projects } = useWorkbench();
 const route = useRoute();
 const listed = computed(() => listedProjects(projects.value));

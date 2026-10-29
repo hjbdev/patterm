@@ -219,7 +219,8 @@ stop agents, processes, timers, or imports. Installed Linux services keep PTYs i
 independent, versioned terminal-host units. App restart reconnects to live hosts;
 native processes and sleeps continue. Persist timer deadlines and deliver overdue
 callbacks after reconnection. Quit requires confirmation and stops all managed
-hosts, including older generations. Reboot still requires explicit native resume.
+hosts, including older generations. Reboot still requires explicit native resume, except for bots: Patterm resumes each
+bot's conversation when it starts.
 
 Bind the server to loopback and validate Host/Origin. Tailscale access must be
 restricted to the owner. Browser requests use the owner identity; do not accept

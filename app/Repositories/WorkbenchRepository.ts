@@ -50,6 +50,9 @@ export interface SessionDto {
   snooze?: SnoozeDto | null;
   id: string;
   parentId: string | null;
+  // The parent agent's process, which may sit in another project, such as a
+  // bot's. Older paired hosts omit it.
+  parentProcessId?: string | null;
   processId: string | null;
   // Lifecycle of the backing process; older hosts omit it.
   processStatus?: string | null;
@@ -58,6 +61,8 @@ export interface SessionDto {
   harness: string | null;
   interfaceMode: 'tui' | 'integrated';
   sessionRole: string;
+  // The bot this session runs. Older paired hosts omit it.
+  botId?: string | null;
   resumeStatus: string;
   activity: string;
   // Background tasks still running, such as a shell the agent waits on. Older
@@ -131,7 +136,7 @@ export interface WorkbenchSnapshotDto {
   terminalAvailable: boolean;
 }
 
-export type ProjectKind = 'workspace' | 'personal' | 'assistant';
+export type ProjectKind = 'workspace' | 'personal' | 'assistant' | 'bots';
 
 interface ProjectRow {
   id: string;
@@ -151,6 +156,7 @@ interface SessionRow {
   harness: string | null;
   interface_mode: 'tui' | 'integrated';
   session_role: string;
+  bot_id?: string | null;
   resume_status: string;
   last_title: string | null;
   display_name: string | null;
@@ -250,7 +256,10 @@ export class WorkbenchRepository {
 
   snapshot(): WorkbenchSnapshotDto {
     const harnesses = this.listHarnesses();
-    const projectRows = this.projectRows();
+    // The bots' hidden project rides along so the sidebar can list bots and
+    // open their conversations. It never joins the user's project lists.
+    const bots = this.db.prepare(`select id, name, path, logo, kind, snoozed_until, context_revision from projects where kind = 'bots'`).all() as ProjectRow[];
+    const projectRows = [...this.projectRows(), ...bots];
     const timers = this.timers?.list() ?? [];
 
     return { projects: projectRows.map((project) => this.projectWorkbench(project, timers)), harnesses, sidebarState: this.settings.sidebarState(), terminalAvailable: this.terminalAvailable() };
@@ -349,6 +358,7 @@ function mapSessions(sessions: SessionRow[], processes: ProcessRow[]): SessionDt
     return {
       id: session.id,
       parentId,
+      parentProcessId,
       processId: session.process_id,
       processStatus: session.process_id ? statuses.get(session.process_id) ?? null : null,
       summary: session.process_id ? summaries.get(session.process_id) ?? null : null,
@@ -359,6 +369,7 @@ function mapSessions(sessions: SessionRow[], processes: ProcessRow[]): SessionDt
       harness: session.harness,
       interfaceMode: session.interface_mode,
       sessionRole: session.session_role,
+      botId: session.bot_id ?? null,
       resumeStatus: session.resume_status,
       activity: session.process_id ? activityByProcessId.get(session.process_id) ?? 'idle' : 'idle',
       backgroundTasks: session.process_id ? backgroundTasks.get(session.process_id) ?? 0 : 0,

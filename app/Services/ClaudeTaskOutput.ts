@@ -69,9 +69,26 @@ function taskFile(location: ClaudeTaskLocation, taskId: string): string | null {
       // A dangling link falls through to the transcript directory.
     }
   }
-  const config = envValue(location.env, 'CLAUDE_CONFIG_DIR') || path.join(process.platform === 'win32' ? userHome(location.env) : location.env.HOME || os.homedir(), '.claude');
+  const config = claudeConfigDir(location.env);
   const transcript = sessionFile(path.join(config, 'projects'), location, ['subagents', `agent-${taskId}.jsonl`]);
   return transcript ?? empty;
+}
+
+function claudeConfigDir(env: NodeJS.ProcessEnv): string {
+  return envValue(env, 'CLAUDE_CONFIG_DIR') || path.join(process.platform === 'win32' ? userHome(env) : env.HOME || os.homedir(), '.claude');
+}
+
+// Whether Claude saved a conversation to resume. Claude writes it only after
+// the first turn, so resuming a session nobody messaged fails.
+export function claudeConversationSaved(location: ClaudeTaskLocation): boolean {
+  const root = path.join(claudeConfigDir(location.env), 'projects');
+  const name = `${location.sessionId}.jsonl`;
+  if (fs.existsSync(path.join(root, location.cwd.replace(/[^a-zA-Z0-9]/g, '-'), name))) return true;
+  try {
+    return fs.readdirSync(root).some((entry) => fs.existsSync(path.join(root, entry, name)));
+  } catch {
+    return false;
+  }
 }
 
 // Claude names the project directory after the cwd with every other character
