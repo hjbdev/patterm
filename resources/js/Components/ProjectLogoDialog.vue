@@ -29,7 +29,7 @@
 
         <p v-if="error" class="text-sm text-destructive">{{ error }}</p>
 
-        <DialogFooter class="gap-2 sm:justify-between">
+        <DialogFooter class="sm:justify-between">
           <Button v-if="project.logo" type="button" variant="ghost" class="text-muted-foreground" :disabled="busy" @click="remove">Use monogram</Button>
           <span v-else />
           <Button type="button" variant="outline" :disabled="busy" @click="fileInput?.click()">Upload image…</Button>

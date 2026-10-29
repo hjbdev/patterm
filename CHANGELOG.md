@@ -134,6 +134,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Dialog buttons stacked on a phone, such as Close agent and Cancel, have
+  space between them.
 - The sidebar keeps showing an agent's status line while its summary catches
   up, is paused or is out of date, instead of replacing it with "Summary
   catching up" and similar labels. A partial recap keeps its real status line
