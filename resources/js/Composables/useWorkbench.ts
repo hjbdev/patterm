@@ -24,8 +24,8 @@ type WorkbenchRead = HeldWorkbench | (WorkbenchVersion & { patches: WorkbenchPat
 const FOCUS_CHECK_INTERVAL_MS = 30_000;
 
 const projects = ref<ProjectWorkbench[]>([]);
-// The bots' hidden project, held apart so project lists never show it.
-const botsWorkbench = ref<ProjectWorkbench | null>(null);
+// Each bot's hidden project, held apart so project lists never show them.
+const botProjects = ref<ProjectWorkbench[]>([]);
 const harnesses = ref<HarnessInstallationRecord[]>([]);
 const sidebarState = ref<SidebarState>({
   projects: [],
@@ -119,7 +119,7 @@ export function useWorkbench() {
     sidebarState.value = normalizeSidebarState(saved ?? state);
   };
 
-  return { projects, botsWorkbench, harnesses, sidecarStatus, sidecarAvailable, sidebarState, updateSidebarState, loaded, epoch, refresh, revision, lifecycleRevision, archivedSessions, archivedProcesses, loadArchived };
+  return { projects, botProjects, harnesses, sidecarStatus, sidecarAvailable, sidebarState, updateSidebarState, loaded, epoch, refresh, revision, lifecycleRevision, archivedSessions, archivedProcesses, loadArchived };
 }
 
 // Reads one session or process the snapshot no longer lists. Each is read
@@ -181,7 +181,7 @@ function publish(lifecycle: boolean): void {
   const current = held();
   if (!current) return;
   projects.value = current.projects.filter((project) => project.project.kind !== 'bots');
-  botsWorkbench.value = current.projects.find((project) => project.project.kind === 'bots') ?? null;
+  botProjects.value = current.projects.filter((project) => project.project.kind === 'bots');
   harnesses.value = current.harnesses;
   sidecarAvailable.value = current.terminalAvailable;
   epoch.value = current.epoch;

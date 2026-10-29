@@ -56,7 +56,7 @@ import { Button } from '../Components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '../Components/ui/dropdown-menu';
 import { useBots } from '../Composables/useBots';
 import { useWorkbench } from '../Composables/useWorkbench';
-import { restartBot } from '../lib/bots';
+import { restartBot, startBot } from '../lib/bots';
 
 const route = useRoute();
 const router = useRouter();
@@ -81,7 +81,9 @@ async function restart(fresh: boolean): Promise<void> {
   busy.value = true;
   error.value = '';
   try {
-    await restartBot(bot.id, fresh);
+    const processId = live.value ? row.value?.session?.processId : null;
+    if (processId) await restartBot(processId, fresh);
+    else await startBot(bot.id);
   } catch (caught) {
     error.value = caught instanceof Error ? caught.message : String(caught);
   } finally {

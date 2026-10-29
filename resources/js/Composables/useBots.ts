@@ -17,14 +17,14 @@ async function load(): Promise<void> {
 
 // Call during a component's setup.
 export function useBots() {
-  const { projects, botsWorkbench } = useWorkbench();
+  const { projects, botProjects } = useWorkbench();
   useTopicRefresh(['settings'], () => void load());
   void load();
   return {
     settings,
-    rows: computed(() => botRows(settings.value, projects.value, botsWorkbench.value)),
+    rows: computed(() => botRows(settings.value, projects.value, botProjects.value)),
     // Bot sessions and their helpers, which agent lists leave out.
-    hidden: computed(() => botHidden(projects.value, botsWorkbench.value)),
+    hidden: computed(() => botHidden(projects.value, botProjects.value)),
     reload: load
   };
 }

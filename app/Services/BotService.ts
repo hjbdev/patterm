@@ -8,9 +8,12 @@ import type { HarnessLauncher } from './HarnessLauncher';
 import type { SettingsService } from './SettingsService';
 import type { WorkbenchRepository } from '../Repositories/WorkbenchRepository';
 
-// Every bot's conversation lives in this hidden project, each in its own
-// folder. Bots work in user projects through their purview instead.
-export const BOTS_PROJECT_ID = 'project_bots';
+// Each bot's conversation lives in its own hidden project, so agent scoping
+// keeps bots apart: one bot never sees another's sessions or history. Bots
+// work in user projects through their purview instead.
+export function botProjectId(botId: string): string {
+  return `project_bot_${botId.replace(/[^A-Za-z0-9_-]/g, '_')}`;
+}
 
 export interface BotState {
   bot_id: string;
@@ -23,9 +26,10 @@ interface BotRow { process_id: string; session_id: string; resume_id: string | n
 // Runs each bot as one persistent Integrated session, like the assistant:
 // ensure() reuses the live session, otherwise resumes the bot's latest
 // conversation, otherwise starts a new one. Bots come back on their own after
-// a restart, unlike other agents.
+// a restart, unlike other agents. Each bot's starts, restarts and stops run
+// one at a time, so a bot never ends up with two sessions.
 export class BotService {
-  private readonly launching = new Map<string, Promise<BotState>>();
+  private readonly queue = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly database: DatabaseService,
@@ -69,15 +73,11 @@ export class BotService {
     return new AgentContextService().buildBot(bot, projects);
   }
 
-  async ensure(botId: string): Promise<BotState> {
-    const bot = this.requireBot(botId);
-    if (this.current(botId)) return this.state(botId);
-    let launching = this.launching.get(botId);
-    if (!launching) {
-      launching = this.launch(bot, false).finally(() => this.launching.delete(botId));
-      this.launching.set(botId, launching);
-    }
-    return launching;
+  ensure(botId: string): Promise<BotState> {
+    return this.serial(botId, async () => {
+      if (this.current(botId)) return this.state(botId);
+      return this.launch(this.requireBot(botId), false);
+    });
   }
 
   // Brings every bot back after a restart. One that fails to start doesn't
@@ -89,33 +89,53 @@ export class BotService {
   }
 
   // Stops the bot's session and starts it again: on the same conversation,
-  // or a new one when `fresh`.
-  async restart(botId: string, fresh = false): Promise<BotState> {
-    const bot = this.requireBot(botId);
-    await this.launching.get(botId)?.catch(() => undefined);
-    const current = this.current(botId);
-    if (current) await this.processes.stop(current.process_id);
-    const launching = this.launch(bot, fresh).finally(() => this.launching.delete(botId));
-    this.launching.set(botId, launching);
-    const state = await launching;
-    this.log(fresh ? 'new_conversation' : 'restarted', { bot_id: botId, from: current?.process_id ?? null, to: state.process_id });
-    return state;
+  // or a new one when `fresh`. `processId`, when given, must still be the
+  // bot's session, so a stale request never replaces a newer one.
+  restart(botId: string, fresh = false, processId?: string): Promise<BotState> {
+    return this.serial(botId, async () => {
+      const current = this.current(botId);
+      if (processId && current?.process_id !== processId) throw new Error('This bot has already restarted');
+      if (current) await this.processes.stop(current.process_id);
+      const state = await this.launch(this.requireBot(botId), fresh);
+      this.log(fresh ? 'new_conversation' : 'restarted', { bot_id: botId, from: current?.process_id ?? null, to: state.process_id });
+      return state;
+    });
   }
 
-  // After the bots' settings change: start new bots, and stop the sessions
-  // of bots that were removed.
+  // Restarts the bot whose session runs in this process.
+  restartProcess(processId: string, fresh = false): Promise<BotState> {
+    const row = this.database.connection.prepare(`select bot_id from sessions where process_id = ? and session_role = 'bot'`).get(processId) as { bot_id: string } | undefined;
+    if (!row) return Promise.reject(new Error('That process is not a bot'));
+    return this.restart(row.bot_id, fresh, processId);
+  }
+
+  // After the bots' settings change: start new bots, and stop removed ones,
+  // including a launch still under way when the bot was removed.
   async reconcile(): Promise<void> {
     const ids = new Set(this.settings.bots().bots.map((bot) => bot.id));
-    const live = this.database.connection.prepare(`select sessions.bot_id, sessions.process_id from sessions join processes on processes.id = sessions.process_id
-      where sessions.session_role = 'bot' and sessions.exited_at is null and processes.status = 'running'`).all() as Array<{ bot_id: string; process_id: string }>;
-    for (const row of live) {
-      if (!ids.has(row.bot_id)) await this.processes.stop(row.process_id).catch((error: unknown) => this.log('stop.failed', { bot_id: row.bot_id, message: errorMessage(error) }));
-    }
+    const live = (this.database.connection.prepare(`select distinct sessions.bot_id from sessions join processes on processes.id = sessions.process_id
+      where sessions.session_role = 'bot' and sessions.exited_at is null and processes.status = 'running'`).all() as Array<{ bot_id: string }>).map((row) => row.bot_id);
+    const removed = new Set([...live, ...this.queue.keys()].filter((botId) => !ids.has(botId)));
+    await Promise.all([...removed].map((botId) => this.serial(botId, () => this.stopAll(botId)).catch((error: unknown) => this.log('stop.failed', { bot_id: botId, message: errorMessage(error) }))));
     await this.ensureAll();
   }
 
+  // Runs one bot's starts, restarts and stops in order.
+  private serial<T>(botId: string, task: () => Promise<T>): Promise<T> {
+    const next = (this.queue.get(botId) ?? Promise.resolve()).catch(() => undefined).then(task);
+    this.queue.set(botId, next);
+    void next.finally(() => { if (this.queue.get(botId) === next) this.queue.delete(botId); }).catch(() => undefined);
+    return next;
+  }
+
+  private async stopAll(botId: string): Promise<void> {
+    const rows = this.database.connection.prepare(`select sessions.process_id from sessions join processes on processes.id = sessions.process_id
+      where sessions.session_role = 'bot' and sessions.bot_id = ? and sessions.exited_at is null and processes.status = 'running'`).all(botId) as Array<{ process_id: string }>;
+    for (const row of rows) await this.processes.stop(row.process_id);
+  }
+
   private async launch(bot: Bot, fresh: boolean): Promise<BotState> {
-    const cwd = this.ensureFolder(bot.id);
+    const cwd = this.ensureProject(bot);
     // A conversation resumes only in the CLI it was started with.
     const harness = this.settings.harnessPresets().presets.find((preset) => preset.id === bot.presetId)?.harness;
     if (!harness) throw new Error(`${bot.name}'s profile no longer exists. Choose another in Settings › Bots.`);
@@ -123,7 +143,7 @@ export class BotService {
     const input = {
       harness,
       preset: bot.presetId,
-      project_id: BOTS_PROJECT_ID,
+      project_id: botProjectId(bot.id),
       cwd,
       session_role: 'bot' as const,
       bot_id: bot.id,
@@ -163,13 +183,12 @@ export class BotService {
     this.processes.transferTimers(previous, processId);
   }
 
-  private ensureFolder(botId: string): string {
-    const root = storedPath(path.join(this.appDataPath, 'bots'));
-    const cwd = storedPath(path.join(root, botId.replace(/[^A-Za-z0-9_-]/g, '_')));
+  private ensureProject(bot: Bot): string {
+    const cwd = storedPath(path.join(this.appDataPath, 'bots', bot.id.replace(/[^A-Za-z0-9_-]/g, '_')));
     fs.mkdirSync(cwd, { recursive: true, mode: 0o700 });
     const now = new Date().toISOString();
-    this.database.connection.prepare(`insert into projects (id, name, path, kind, created_at, updated_at) values (?, 'Bots', ?, 'bots', ?, ?)
-      on conflict(id) do update set path = excluded.path, kind = 'bots'`).run(BOTS_PROJECT_ID, root, now, now);
+    this.database.connection.prepare(`insert into projects (id, name, path, kind, created_at, updated_at) values (?, ?, ?, 'bots', ?, ?)
+      on conflict(id) do update set name = excluded.name, path = excluded.path, kind = 'bots', updated_at = excluded.updated_at`).run(botProjectId(bot.id), bot.name, cwd, now, now);
     return cwd;
   }
 

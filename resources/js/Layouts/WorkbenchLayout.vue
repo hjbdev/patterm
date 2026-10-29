@@ -137,7 +137,6 @@ import { TooltipProvider } from '../Components/ui/tooltip';
 import { APPEARANCE_SETTINGS_CHANGED_EVENT, applyUiFont, lastKnownAppearanceSettings, loadAppearanceSettings, navigationLayoutHint, normalizeAppearanceSettings, type AppearanceSettings, type NavigationLayout } from '../appearance/AppearanceSettings';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { useBots } from '../Composables/useBots';
-import { BOTS_PROJECT_ID } from '../lib/bots';
 import { useHarnessLaunchCleanup, useHarnessLaunchesFor } from '../Composables/useHarnessLaunch';
 import { useWorkbenchNavigation } from '../Composables/useWorkbenchNavigation';
 import {
@@ -159,17 +158,18 @@ import { useSidebarExpansion } from '../Composables/useSidebarExpansion';
 import type { ProcessRecord, ProjectSummary, SessionRecord } from '../types';
 import { startPrefetch } from '../lib/prefetch';
 
-const { projects, botsWorkbench, sidecarStatus, sidecarAvailable, loaded, refresh } = useWorkbench();
+const { projects, botProjects, sidecarStatus, sidecarAvailable, loaded, refresh } = useWorkbench();
 // Bots list in their own sidebar section; they and their helpers stay out of
 // the agent lists.
 const { hidden: botHidden } = useBots();
 const { router, route, activeProjectId, activeProject, selectedAgent, selectedProcess, activeTerminalId, projectViewMode,
   activeWorkspacePage, selectProject, pickProject, selectTerminal } = useWorkbenchNavigation();
-// Links into the bots' own project, such as a bot's notification, open the
-// bot beside one of your projects instead.
-watch([() => route.params.projectId, () => route.params.sessionId, botsWorkbench, projects], () => {
-  if (route.params.projectId !== BOTS_PROJECT_ID) return;
-  const botId = botsWorkbench.value?.projectSessions.find((session) => session.id === route.params.sessionId)?.botId;
+// Links into a bot's own project, such as its notification, open the bot
+// beside one of your projects instead.
+watch([() => route.params.projectId, () => route.params.sessionId, botProjects, projects], () => {
+  const own = botProjects.value.find((project) => project.project.id === route.params.projectId);
+  if (!own) return;
+  const botId = own.projectSessions.find((session) => session.id === route.params.sessionId)?.botId ?? own.projectSessions.find((session) => session.botId)?.botId;
   const projectId = listedProjects(projects.value)[0]?.project.id;
   if (botId && projectId) void router.replace({ name: 'bot', params: { projectId, botId } });
   else if (loaded.value) void router.replace({ name: 'projects' });

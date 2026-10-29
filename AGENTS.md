@@ -134,7 +134,9 @@ MCP calls must validate inputs and route through actions/services, not mutate st
 
 MCP tools enforce the caller's project scope. A project agent reads and changes
 only its own project's records; only the assistant and workspace routines reach
-across projects. A caller-supplied `project_id` never widens that scope.
+across projects. A bot is scoped to its own hidden project and also reaches the
+user projects its settings name, only when it names one. A caller-supplied
+`project_id` never widens that scope.
 Administrative and owner-only tools (settings, MCP servers, assistant) are
 registered `hidden: true`, so agents can neither list nor call them.
 
@@ -219,8 +221,8 @@ stop agents, processes, timers, or imports. Installed Linux services keep PTYs i
 independent, versioned terminal-host units. App restart reconnects to live hosts;
 native processes and sleeps continue. Persist timer deadlines and deliver overdue
 callbacks after reconnection. Quit requires confirmation and stops all managed
-hosts, including older generations. Reboot still requires explicit native resume, except for bots: Patterm resumes each
-bot's conversation when it starts.
+hosts, including older generations. Reboot still requires explicit native resume,
+except for bots: Patterm resumes each bot's conversation when it starts.
 
 Bind the server to loopback and validate Host/Origin. Tailscale access must be
 restricted to the owner. Browser requests use the owner identity; do not accept

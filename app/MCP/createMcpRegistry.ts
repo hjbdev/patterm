@@ -337,7 +337,8 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
   const caller = (context: McpCallContext) => {
     if (context.remote) return remoteCaller(services.database, context.remote);
     const row = resolveCaller(services.database, context.identity ?? null);
-    if (row?.session_role === 'bot') row.purview = (projectId) => services.bots?.allows(row.bot_id ?? null, projectId) ?? false;
+    // Purview only ever names user projects: never the assistant's or a bot's.
+    if (row?.session_role === 'bot') row.purview = (projectId) => isUserProject(services.database, projectId) && (services.bots?.allows(row.bot_id ?? null, projectId) ?? false);
     return row;
   };
   // An identity must name a running agent, even for tools that ignore it.
@@ -355,6 +356,8 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     const routines = services.routines;
     registerRoutineTools(registry, routines, (context) => {
       const current = caller(context);
+      // Routines would run where nobody sees them, in a bot's private project.
+      if (isBot(current)) throw new Error('Bots can\'t manage routines yet');
       return current ? { sessionId: current.session_id, projectId: current.project_id, workspace: hasWorkspaceScope(current) } : null;
     }, services.crossHost ? (host, tool, args, context) => {
       // Agents in a linked project save routines on the other host; it owns
@@ -406,7 +409,8 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
   };
   const projectFor = (context: McpCallContext, explicit?: string) => {
     const current = caller(context);
-    if (hasWorkspaceScope(current)) return explicit ? inPurview(current, workspaceProjectId(services.database, explicit)) : null;
+    if (hasWorkspaceScope(current)) return explicit ? workspaceProjectId(services.database, explicit) : null;
+    if (current && isBot(current)) return explicit && explicit !== current.project_id ? inPurview(current, explicit) : current.project_id;
     return explicit ? scopedProjectId(services.database, current, explicit) : current?.project_id ?? defaultProjectId();
   };
   const processFor = (context: McpCallContext, processId: string) => scopedProcessId(services.database, caller(context), processId);
@@ -482,7 +486,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
         if (!resumeConversationAgent) throw new Error('spawn_agent: conversation history is not available');
         const launched = await resumeConversationAgent.execute({
           conversation_id: input.conversation_id,
-          project_id: hasWorkspaceScope(parent) ? projectId : parent.project_id,
+          project_id: picksProject(parent) ? projectId : parent.project_id,
           actor_id: parent.session_id,
           parent_process_id: parentProcessId,
           name: input.name,
@@ -679,7 +683,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
   }, async (args, context) => {
     const input = listProcessesInput.parse(args ?? {});
     const current = caller(context);
-    const projectId = hasWorkspaceScope(current) ? projectFor(context, input.project_id) : current?.project_id ?? null;
+    const projectId = picksProject(current) ? projectFor(context, input.project_id) : current?.project_id ?? null;
     if (hasWorkspaceScope(current) && !projectId) throw new Error('list_processes: pass a project_id; assistant_overview lists every project');
     const local = listCliProcesses(services.database, input.kind, projectId, current?.process_id ?? null)
       .filter((row) => input.status === 'all' || row.status === 'running' || row.is_current);
@@ -706,13 +710,14 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     const input = projectStatusInput.parse(args ?? {});
     const current = caller(context);
     if (hasWorkspaceScope(current) && !input.project_id) return assistantOverview(services, current!);
-    const projectId = hasWorkspaceScope(current) ? projectFor(context, input.project_id) : projectFor(context);
+    if (isBot(current) && !input.project_id) return botOverview(services, current!);
+    const projectId = picksProject(current) ? projectFor(context, input.project_id) : projectFor(context);
     const remote = await remoteProcessesFor(context, current?.project_id ?? null, {});
     return {
       project: projectMeta(services.workbench.getProject(projectId ?? '') ?? null),
       caller: whoami(services.database, context.identity ?? null, false, registry),
       current_process_id: current?.process_id ?? '',
-      processes: [...listCliProcesses(services.database, undefined, hasWorkspaceScope(current) ? projectId : current?.project_id ?? null, current?.process_id ?? null), ...remote.processes],
+      processes: [...listCliProcesses(services.database, undefined, picksProject(current) ? projectId : current?.project_id ?? null, current?.process_id ?? null), ...remote.processes],
       ...(remote.unavailable.length ? { unavailable_hosts: remote.unavailable } : {})
     };
   });
@@ -2303,16 +2308,31 @@ function isAssistant(caller: CallerRow | null): boolean {
 }
 
 // Workspace routine runs read across projects like the assistant, without its
-// assistant-only tools such as Focus mode. Bots do too, within their purview.
+// assistant-only tools such as Focus mode.
 function hasWorkspaceScope(caller: CallerRow | null): boolean {
-  return caller?.session_role === 'assistant' || caller?.session_role === 'routine' || caller?.session_role === 'bot';
+  return caller?.session_role === 'assistant' || caller?.session_role === 'routine';
 }
 
-// A bot works only in the projects its purview names; everyone else with
-// workspace scope reaches every workspace project.
-function inPurview(caller: CallerRow | null, projectId: string): string {
-  if (caller?.purview && !caller.purview(projectId)) throw new Error('project is outside this bot\'s projects');
+// A bot is scoped like any agent to its own private project, and also reaches
+// the user projects its purview names when it names one. It never gets
+// workspace scope, so reads that omit a project see only the bot itself.
+function isBot(caller: CallerRow | null): boolean {
+  return caller?.session_role === 'bot';
+}
+
+// Callers that name the project each call works in, rather than having one.
+function picksProject(caller: CallerRow | null): boolean {
+  return hasWorkspaceScope(caller) || isBot(caller);
+}
+
+function inPurview(caller: CallerRow, projectId: string): string {
+  if (!caller.purview?.(projectId)) throw new Error('project is outside this bot\'s projects');
   return projectId;
+}
+
+function isUserProject(database: DatabaseService, projectId: string): boolean {
+  const row = database.connection.prepare(`select kind from projects where id = ?`).get(projectId) as { kind: string } | undefined;
+  return Boolean(row && isUserProjectKind(row.kind));
 }
 
 function workspaceProjectId(database: DatabaseService, projectId: string): string {
@@ -2322,8 +2342,20 @@ function workspaceProjectId(database: DatabaseService, projectId: string): strin
   return projectId;
 }
 
+// A bot's own processes, and the user projects its purview names with what
+// runs there. Nothing about other projects, notifications included.
+function botOverview(services: RegistryServices, current: CallerRow) {
+  const projects = services.workbench.listProjects().filter((project) => current.purview?.(project.id)).map((project) => ({
+    project_id: project.id,
+    name: project.name,
+    path: project.path,
+    processes: listActiveProcesses(services.database, project.id)
+  }));
+  return { current_process_id: current.process_id ?? '', own: listActiveProcesses(services.database, current.project_id), projects };
+}
+
 function assistantOverview(services: RegistryServices, current: CallerRow) {
-  const projects = services.workbench.listProjects().filter((project) => !current.purview || current.purview(project.id)).map((project) => ({
+  const projects = services.workbench.listProjects().map((project) => ({
     project_id: project.id,
     name: project.name,
     path: project.path,
@@ -2366,30 +2398,23 @@ function scopedProcessId(database: DatabaseService, caller: CallerRow | null, pr
     return processId;
   }
   if (hasWorkspaceScope(caller)) {
-    const row = database.connection.prepare(`select project_id from processes where id = ?`).get(processId) as { project_id: string } | undefined;
-    if (!row) throw new Error(`unknown process: ${processId}`);
-    // A bot reaches its own session and processes in its projects.
-    if (caller.purview && processId !== caller.process_id && !caller.purview(row.project_id)) throw new Error('process is outside this bot\'s projects');
+    if (!database.connection.prepare(`select 1 from processes where id = ?`).get(processId)) throw new Error(`unknown process: ${processId}`);
     return processId;
   }
   const row = database.connection.prepare(`select project_id from processes where id = ?`).get(processId) as { project_id: string } | undefined;
-  if (!row || row.project_id !== caller.project_id) {
+  // A bot also reaches processes in its purview's user projects.
+  if (!row || (row.project_id !== caller.project_id && !caller.purview?.(row.project_id))) {
     throw new Error('process is outside the current caller scope');
   }
   return processId;
 }
 
 function scopedWorktreeId(database: DatabaseService, caller: CallerRow | null, worktreeId: string): string {
-  if (!caller || (hasWorkspaceScope(caller) && !caller.purview)) {
-    return worktreeId;
-  }
-  if (caller.purview) {
-    const row = database.connection.prepare(`select project_id from worktrees where id = ?`).get(worktreeId) as { project_id: string } | undefined;
-    if (!row || !caller.purview(row.project_id)) throw new Error('worktree is outside this bot\'s projects');
+  if (!caller || hasWorkspaceScope(caller)) {
     return worktreeId;
   }
   const row = database.connection.prepare(`select project_id from worktrees where id = ?`).get(worktreeId) as { project_id: string } | undefined;
-  if (!row || row.project_id !== caller.project_id) {
+  if (!row || (row.project_id !== caller.project_id && !caller.purview?.(row.project_id))) {
     throw new Error('worktree is outside the current caller scope');
   }
   return worktreeId;

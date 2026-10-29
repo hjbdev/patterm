@@ -10,9 +10,6 @@ import type { ProjectWorkbench, SessionRecord } from '../types';
 // import without its zod and Node dependencies.
 
 export type { BotAvatar };
-
-// Mirrors BOTS_PROJECT_ID in app/Services/BotService.ts.
-export const BOTS_PROJECT_ID = 'project_bots';
 export type BotPurview = { kind: 'none' } | { kind: 'all' } | { kind: 'projects'; projectIds: string[] };
 
 export interface Bot {
@@ -37,8 +34,16 @@ export async function saveBots(settings: BotSettings): Promise<BotSettings> {
   return saved;
 }
 
-export async function restartBot(botId: string, fresh = false): Promise<void> {
-  await window.patterm.call('bot_restart', { bot_id: botId, fresh });
+// Starts a bot that isn't running.
+export async function startBot(botId: string): Promise<void> {
+  await window.patterm.call('bot_start', { bot_id: botId });
+}
+
+// Restarts a running bot. Like sending it a message, this needs control of
+// its conversation, so a browser sends it over its socket.
+export async function restartBot(processId: string, fresh = false): Promise<void> {
+  const args = { process_id: processId, fresh };
+  await (window.patterm.integratedCall ? window.patterm.integratedCall('bot_restart', args) : window.patterm.call('bot_restart', args));
 }
 
 // What a bot's conversation leaves out: its helpers' reports and messages and
@@ -50,11 +55,11 @@ export function hiddenFromBot(text: string): boolean {
 
 // Bot sessions and every helper below them, across projects: the agent lists
 // leave all of them out. Helpers run in the bot's projects, so they are
-// found through their parent's process, which sits in the bots' project.
-export function botHidden(projects: readonly ProjectWorkbench[], bots: ProjectWorkbench | null): { sessions: Set<string>; processes: Set<string> } {
+// found through their parent's process, which sits in the bot's own project.
+export function botHidden(projects: readonly ProjectWorkbench[], botProjects: readonly ProjectWorkbench[]): { sessions: Set<string>; processes: Set<string> } {
   const sessions = new Set<string>();
   const processes = new Set<string>();
-  for (const session of bots?.projectSessions ?? []) {
+  for (const session of botProjects.flatMap((project) => project.projectSessions)) {
     sessions.add(session.id);
     if (session.processId) processes.add(session.processId);
   }
@@ -91,10 +96,11 @@ export interface BotRow {
   line: string | null;
 }
 
-export function botRows(settings: BotSettings, projects: readonly ProjectWorkbench[], bots: ProjectWorkbench | null): BotRow[] {
-  const all = [...(bots?.projectSessions ?? []), ...projects.flatMap((project) => project.projectSessions)];
+export function botRows(settings: BotSettings, projects: readonly ProjectWorkbench[], botProjects: readonly ProjectWorkbench[]): BotRow[] {
+  const own = botProjects.flatMap((project) => project.projectSessions);
+  const all = [...own, ...projects.flatMap((project) => project.projectSessions)];
   return settings.bots.map((bot) => {
-    const sessions = (bots?.projectSessions ?? []).filter((session) => session.botId === bot.id);
+    const sessions = own.filter((session) => session.botId === bot.id);
     const session = sessions.find((candidate) => !candidate.exitedAt) ?? latest(sessions);
     if (!session) return { bot, session: null, activity: null, waitingHelper: null, waitingHelperProjectId: null, line: null };
     const helpers = helpersOf(session, all);
