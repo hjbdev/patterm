@@ -74,10 +74,15 @@ provideCommandContext({
   allGroups,
   filterState,
 })
+
+// Lets a list that opens with an empty search start on its first item.
+const root = ref<{ highlightFirstItem: () => void }>()
+defineExpose({ highlightFirstItem: () => root.value?.highlightFirstItem() })
 </script>
 
 <template>
   <ListboxRoot
+    ref="root"
     v-bind="(forwarded as any)"
     :class="cn('flex h-full w-full flex-col overflow-hidden rounded-md bg-popover text-popover-foreground', props.class)"
   >

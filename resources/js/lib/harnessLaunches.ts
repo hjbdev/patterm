@@ -9,6 +9,8 @@ export interface HarnessLaunchInput {
   preset?: string;
   interfaceMode?: AgentInterface;
   host?: string;
+  // Sent as the agent's first message once it is ready.
+  initialPrompt?: string;
 }
 
 export interface HarnessLaunch {
@@ -39,7 +41,8 @@ function start(input: HarnessLaunchInput, call: (args: Record<string, unknown>) 
     harness: launch.input.harness,
     project_id: launch.input.targetProjectId,
     ...(launch.input.preset ? { preset: launch.input.preset } : {}),
-    ...(launch.input.interfaceMode ? { interface_mode: launch.input.interfaceMode } : {})
+    ...(launch.input.interfaceMode ? { interface_mode: launch.input.interfaceMode } : {}),
+    ...(launch.input.initialPrompt ? { initial_prompt: launch.input.initialPrompt } : {})
   })).then((result) => {
     const sessionId = (result as { session_id?: unknown } | null)?.session_id;
     if (typeof sessionId !== 'string' || !sessionId) throw new Error('The launch returned no session. Check the project’s agents before launching again.');

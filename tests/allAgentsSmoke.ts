@@ -8,6 +8,7 @@ import {
   projectShown,
   readAllAgentsState,
   keepHiddenTabs,
+  chosenLaunchTarget,
   launchTargets,
   setProjectShown,
   tabsGroupedByProject,
@@ -117,5 +118,13 @@ assert.deepEqual(targets.map((target) => [target.projectId, target.targetProject
 const installed = (host: string | null) => host === 'gpu' ? [{ harness: 'opencode' }] : [{ harness: 'claude' }];
 assert.deepEqual(targetsWithHarness(targets, 'opencode', installed).map((target) => target.targetProjectId), ['gpu:web', 'gpu:docs']);
 assert.deepEqual(targetsWithHarness(targets, 'claude', installed).map((target) => target.targetProjectId), ['web']);
+
+// The launch menu starts in the chosen target. Choosing among shown projects
+// never falls back to a hidden one; a single project not yet listed still
+// launches in place.
+assert.equal(chosenLaunchTarget(targets, 'gpu:web', 'web', true)?.host, 'gpu');
+assert.equal(chosenLaunchTarget([], 'web', 'web', true), null);
+assert.equal(chosenLaunchTarget(targets, 'docs', 'docs', true), null);
+assert.deepEqual(chosenLaunchTarget([], 'web', 'web', false), { projectId: 'web', targetProjectId: 'web', host: null });
 
 console.log('all agents smoke passed');

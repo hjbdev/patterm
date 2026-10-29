@@ -41,7 +41,7 @@ export const harnessPresetRemoveInput = z.object({
 });
 
 export interface HarnessPresetDescription {
-  presets: Array<HarnessPreset & { default: boolean }>;
+  presets: Array<Omit<HarnessPreset, 'look'> & { default: boolean }>;
   defaultPresetIdByHarness: HarnessPresetSettings['defaultPresetIdByHarness'];
 }
 
@@ -56,11 +56,12 @@ export class HarnessPresetService {
   }
 
   // Agent-facing view: each preset carries its default flag so callers do not
-  // have to join against defaultPresetIdByHarness.
+  // have to join against defaultPresetIdByHarness. Faces are for people and
+  // stay out of it.
   describe(): HarnessPresetDescription {
     const settings = this.list();
     return {
-      presets: settings.presets.map((preset) => ({
+      presets: settings.presets.map(({ look: _look, ...preset }) => ({
         ...preset,
         default: settings.defaultPresetIdByHarness[preset.harness] === preset.id
       })),
@@ -81,7 +82,8 @@ export class HarnessPresetService {
       name: input.name,
       model: input.model,
       reasoning: input.model === null ? null : input.reasoning,
-      serviceTier: input.serviceTier
+      serviceTier: input.serviceTier,
+      look: null
     };
     const defaults = { ...current.defaultPresetIdByHarness };
     if (input.default || defaults[input.harness] === null) {

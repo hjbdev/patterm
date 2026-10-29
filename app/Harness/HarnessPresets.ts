@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { HarnessId } from './HarnessProvider';
+import { FACE_COLORS, FACE_EYES, FACE_FINISHES, FACE_HATS, FACE_IDLES, FACE_MARKINGS, FACE_MOUTHS, FACE_SHAPES } from './ProfileLook';
 
 // Named model/reasoning presets a user configures per agent harness. Presets are
 // resolved to provider flags at launch time (see HarnessLauncher). `rawpty` has
@@ -8,6 +9,20 @@ export const presetHarnessInput = z.enum(['claude', 'codex', 'opencode']);
 export type PresetHarness = z.infer<typeof presetHarnessInput>;
 
 export const PRESET_HARNESSES = presetHarnessInput.options;
+
+// A profile's face, from the parts in ProfileLook.
+export const profileLookInput = z.object({
+  color: z.enum(FACE_COLORS),
+  shape: z.enum(FACE_SHAPES),
+  finish: z.enum(FACE_FINISHES),
+  marking: z.enum(FACE_MARKINGS),
+  eyes: z.enum(FACE_EYES),
+  mouth: z.enum(FACE_MOUTHS),
+  cheeks: z.boolean(),
+  hat: z.enum(FACE_HATS),
+  accent: z.enum(FACE_COLORS),
+  idle: z.enum(FACE_IDLES)
+});
 
 export const harnessPresetInput = z.object({
   id: z.string().trim().min(1).max(80),
@@ -19,7 +34,11 @@ export const harnessPresetInput = z.object({
   reasoning: z.string().trim().min(1).max(60).nullable().default(null),
   // Codex service tier ID, such as `priority` for Fast or `default` for
   // Standard. Null keeps the CLI's own configured tier.
-  serviceTier: z.string().trim().min(1).max(60).nullable().default(null)
+  serviceTier: z.string().trim().min(1).max(60).nullable().default(null),
+  // The face the launch menu shows. Null draws one picked from the ID, and a
+  // look this version can't read falls back to that instead of failing the
+  // whole preset list.
+  look: profileLookInput.nullable().catch(null).default(null)
 });
 
 export type HarnessPreset = z.infer<typeof harnessPresetInput>;
@@ -83,7 +102,8 @@ export function seededHarnessPresetSettings(): HarnessPresetSettings {
     name: 'Default',
     model: null,
     reasoning: null,
-    serviceTier: null
+    serviceTier: null,
+    look: null
   }));
   return {
     presets,

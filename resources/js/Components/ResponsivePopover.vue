@@ -15,7 +15,7 @@
   </DrawerRoot>
   <Popover v-else v-model:open="open">
     <PopoverTrigger as-child><slot name="trigger" /></PopoverTrigger>
-    <PopoverContent align="start" :aria-label="title" :class="cn('w-80 max-w-[calc(100vw-2rem)] p-1.5', contentClass)">
+    <PopoverContent :align="align ?? 'start'" :aria-label="title" :class="cn('w-80 max-w-[calc(100vw-2rem)] p-1.5', contentClass)">
       <slot />
     </PopoverContent>
   </Popover>
@@ -27,6 +27,6 @@ import { cn } from '@/lib/utils';
 import { phoneLayout } from '../lib/phoneLayout';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 
-defineProps<{ title: string; contentClass?: string }>();
+defineProps<{ title: string; contentClass?: string; align?: 'start' | 'center' | 'end' }>();
 const open = defineModel<boolean>('open', { default: false });
 </script>

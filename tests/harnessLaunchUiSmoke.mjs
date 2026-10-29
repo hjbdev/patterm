@@ -199,14 +199,20 @@ test('menu and empty-state handlers submit every launch with click-time argument
   const menuLaunch = handler(menu, { interfaceMode, menuOpen: { value: true }, startHarness: input => calls.push(input), emit() {} });
   menuLaunch('opencode', null, { projectId: props.projectId, targetProjectId: targetProjectId.value, host: null });
   menuLaunch('claude', 'fast', { projectId: 'p1', targetProjectId: 'p1:remote', host: 'remote' });
+  // Tab's first message travels with the launch; blank ones don't.
+  menuLaunch('codex', 'smarty', { projectId: 'p1', targetProjectId: 'p1', host: null }, '  Review PR 126  ');
+  menuLaunch('codex', null, { projectId: 'p1', targetProjectId: 'p1', host: null }, '   ');
   props.projectId = 'p2'; targetProjectId.value = 'p2'; interfaceMode.value = 'integrated';
-  assert.deepEqual(calls.map(input => [input.harness, input.projectId, input.interfaceMode]), [['opencode', 'p1', 'tui'], ['claude', 'p1', 'tui']]);
+  assert.deepEqual(calls.map(input => [input.harness, input.projectId, input.interfaceMode]), [['opencode', 'p1', 'tui'], ['claude', 'p1', 'tui'], ['codex', 'p1', 'tui'], ['codex', 'p1', 'tui']]);
   // Another host keeps its presets, so the launch there drops the local one.
   assert.equal(calls[1].preset, undefined);
   assert.equal(calls[1].host, 'remote');
+  assert.equal(calls[2].preset, 'smarty');
+  assert.equal(calls[2].initialPrompt, 'Review PR 126');
+  assert.equal(calls[3].initialPrompt, undefined);
   const emptyLaunch = handler(empty, { props, startHarness: input => calls.push(input) });
   emptyLaunch('opencode'); emptyLaunch('claude');
-  assert.equal(calls.length, 4);
-  assert.equal(calls[3].projectId, 'p2');
+  assert.equal(calls.length, 6);
+  assert.equal(calls[5].projectId, 'p2');
   assert.doesNotMatch(menu + empty, /:disabled="launching"/);
 });
