@@ -52,8 +52,8 @@ export function latestQueryData<T>(prefix: QueryKey): T | undefined {
 // and reconnects, after which one may have been missed. Reads are keyed by
 // their topic's count, so a read that was under way when a change was
 // announced can't stand in for one made after.
-export type ServerTopic = 'settings' | 'mcp-servers' | 'routines' | 'history' | 'updates' | 'semantic-search';
-const SERVER_TOPICS: readonly ServerTopic[] = ['settings', 'mcp-servers', 'routines', 'history', 'updates', 'semantic-search'];
+export type ServerTopic = 'settings' | 'mcp-servers' | 'routines' | 'history' | 'updates' | 'semantic-search' | 'browser';
+const SERVER_TOPICS: readonly ServerTopic[] = ['settings', 'mcp-servers', 'routines', 'history', 'updates', 'semantic-search', 'browser'];
 const generations = Object.fromEntries(SERVER_TOPICS.map((topic) => [topic, ref(0)])) as Record<ServerTopic, Ref<number>>;
 
 // Starts on first use, not at import: the bundler may evaluate this module

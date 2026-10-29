@@ -1,7 +1,7 @@
 // Client-visible data that a change can affect. Clients update or refetch only
 // the views that depend on a changed topic. Workbench changes reach clients as
 // versioned snapshot patches; the other topics are refetch signals.
-export const CHANGE_TOPICS = ['workbench', 'context', 'settings', 'mcp-servers', 'routines', 'history', 'updates', 'semantic-search'] as const;
+export const CHANGE_TOPICS = ['workbench', 'context', 'settings', 'mcp-servers', 'routines', 'history', 'updates', 'semantic-search', 'browser'] as const;
 
 export type ChangeTopic = typeof CHANGE_TOPICS[number];
 

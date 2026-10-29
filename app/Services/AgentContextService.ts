@@ -12,6 +12,7 @@ Project: ${projectId}
 - Link every git worktree you work in to your session (at most 10): worktree_create and worktree_link do this automatically; otherwise call worktree_attach.
 - After you open or find a PR or issue for this work, verify it through the provider MCP/CLI, then reference_attach its URL to your session (target_id is inferred) and related todos, setting provider and resource_type.
 - When you start or find a dev server, preview deploy, or other page the user will want to open, reference_attach its URL to your session with resource_type preview. Local URLs are fine; no provider check is needed.
+- ${BROWSER_INSTRUCTION}
 - Use spawn_agent only for explicitly delegated Patterm work, never to satisfy host-internal planning/review requirements or replace unavailable host-native subagents.
 - Children must report_to_parent when finished, blocked, failed, or without findings, and again after each follow-up. Parents wait with timer_fire_when_reported_any/all; idle output is not completion.
 - When your task is fully complete and nothing is left to do, call request_close with a short summary; the user (or your parent) decides whether to close you.
@@ -84,4 +85,5 @@ ${scope(lines, hidden)}
 const FIGURE_INSTRUCTION = 'Patterm shows HTML pages in your replies. When the user asks for a chart, graph, table, diagram, or mockup, or one would explain better than prose, write a self-contained page, check it with html_preview when that tool is available, then call html_render (load them through tool search if they are deferred) and put the [patterm_figure:id] it returns on its own line. Use it instead of artifacts, image files, or ASCII charts.';
 // OpenCode rejects instructions over 8 KiB once JSON-encoded; this leaves room.
 const BOT_CONTEXT_BYTES = 7900;
+const BROWSER_INSTRUCTION = 'browser_open gives you your own Chrome to drive over CDP; see its help. Use browser_request_help for CAPTCHAs and sign-ins.';
 const PROCESS_NAME_INSTRUCTION = 'Use exact process names; never invent labels from IDs, like "Agent 789".';
