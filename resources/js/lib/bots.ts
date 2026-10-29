@@ -127,6 +127,20 @@ export function botHomeProjectId(bot: Bot | undefined, projectIds: readonly stri
   return projectIds.find((projectId) => !bot || botShownIn(bot, projectId)) ?? projectIds[0] ?? null;
 }
 
+export type BotLinkTarget = { botId: string; projectId: string } | 'projects' | 'wait';
+
+// Where a link into a bot's hidden project, such as its notification, goes:
+// the bot, beside a project it lists in, or the projects page once it's clear
+// there is none. `bots` is null until the bots' settings load, so a cold link
+// waits for them rather than settling beside the wrong project.
+export function botLinkTarget(own: ProjectWorkbench, sessionId: unknown, bots: readonly Bot[] | null, projectIds: readonly string[], workbenchLoaded: boolean): BotLinkTarget {
+  const botId = own.projectSessions.find((session) => session.id === sessionId)?.botId ?? own.projectSessions.find((session) => session.botId)?.botId;
+  if (botId && !bots) return 'wait';
+  const projectId = botId ? botHomeProjectId(bots?.find((bot) => bot.id === botId), projectIds) : null;
+  if (botId && projectId) return { botId, projectId };
+  return workbenchLoaded ? 'projects' : 'wait';
+}
+
 export interface AssistantRow {
   session: SessionRecord | null;
   activity: RowActivity | null;

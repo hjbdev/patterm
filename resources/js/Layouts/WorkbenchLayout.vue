@@ -137,7 +137,7 @@ import { TooltipProvider } from '../Components/ui/tooltip';
 import { APPEARANCE_SETTINGS_CHANGED_EVENT, applyUiFont, lastKnownAppearanceSettings, loadAppearanceSettings, navigationLayoutHint, normalizeAppearanceSettings, type AppearanceSettings, type NavigationLayout } from '../appearance/AppearanceSettings';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { useBots } from '../Composables/useBots';
-import { botHomeProjectId } from '../lib/bots';
+import { botLinkTarget } from '../lib/bots';
 import { useHarnessLaunchCleanup, useHarnessLaunchesFor } from '../Composables/useHarnessLaunch';
 import { useWorkbenchNavigation } from '../Composables/useWorkbenchNavigation';
 import {
@@ -162,18 +162,17 @@ import { startPrefetch } from '../lib/prefetch';
 const { projects, botProjects, sidecarStatus, sidecarAvailable, loaded, refresh } = useWorkbench();
 // Bots list in their own sidebar section; they and their helpers stay out of
 // the agent lists.
-const { hidden: botHidden, settings: botSettings } = useBots();
+const { hidden: botHidden, settings: botSettings, loaded: botsLoaded } = useBots();
 const { router, route, activeProjectId, activeProject, selectedAgent, selectedProcess, activeTerminalId, projectViewMode,
   activeWorkspacePage, selectProject, pickProject, selectTerminal } = useWorkbenchNavigation();
 // Links into a bot's own project, such as its notification, open the bot
 // beside one of your projects it shows in instead.
-watch([() => route.params.projectId, () => route.params.sessionId, botProjects, projects], () => {
+watch([() => route.params.projectId, () => route.params.sessionId, botProjects, projects, botsLoaded], () => {
   const own = botProjects.value.find((project) => project.project.id === route.params.projectId);
   if (!own) return;
-  const botId = own.projectSessions.find((session) => session.id === route.params.sessionId)?.botId ?? own.projectSessions.find((session) => session.botId)?.botId;
-  const projectId = botHomeProjectId(botSettings.value.bots.find((bot) => bot.id === botId), listedProjects(projects.value).map((project) => project.project.id));
-  if (botId && projectId) void router.replace({ name: 'bot', params: { projectId, botId } });
-  else if (loaded.value) void router.replace({ name: 'projects' });
+  const target = botLinkTarget(own, route.params.sessionId, botsLoaded.value ? botSettings.value.bots : null, listedProjects(projects.value).map((project) => project.project.id), loaded.value);
+  if (target === 'projects') void router.replace({ name: 'projects' });
+  else if (target !== 'wait') void router.replace({ name: 'bot', params: { projectId: target.projectId, botId: target.botId } });
 });
 useHarnessLaunchCleanup();
 // Reads ahead what the user is likely to open next, as the connection allows.

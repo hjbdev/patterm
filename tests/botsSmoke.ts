@@ -14,7 +14,7 @@ import type { HarnessResume, LaunchHarnessInput } from '../app/Services/HarnessL
 import { SettingsService } from '../app/Services/SettingsService';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { TimelineService } from '../app/Services/TimelineService';
-import { assistantRow, botHidden, botHomeProjectId, botRows, botShownIn, hiddenFromBot } from '../resources/js/lib/bots';
+import { assistantRow, botHidden, botHomeProjectId, botLinkTarget, botRows, botShownIn, hiddenFromBot } from '../resources/js/lib/bots';
 import { randomLook } from '../resources/js/lib/faces';
 import type { ProjectWorkbench, SessionRecord } from '../resources/js/types';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
@@ -320,6 +320,14 @@ async function main(): Promise<void> {
   assert.equal(botHomeProjectId(bot('generic', 'Generic'), ['p', 'q']), 'p');
   assert.equal(botHomeProjectId(scoped, ['p']), 'p', 'its projects are gone: any project will do');
   assert.equal(botHomeProjectId(undefined, []), null);
+  // A cold link waits for the bots' settings, whichever loads first, then
+  // opens the bot beside a project it lists in.
+  const scopedProject = workbenchOf(botProjectId('scoped'), [session('scoped-bot', { sessionRole: 'bot', botId: 'scoped' })]);
+  assert.equal(botLinkTarget(scopedProject, 'scoped-bot', null, ['p', 'q'], true), 'wait');
+  assert.deepEqual(botLinkTarget(scopedProject, 'scoped-bot', [scoped], ['p', 'q'], true), { botId: 'scoped', projectId: 'q' });
+  assert.equal(botLinkTarget(scopedProject, 'scoped-bot', [scoped], [], false), 'wait');
+  assert.equal(botLinkTarget(scopedProject, 'scoped-bot', [scoped], [], true), 'projects');
+  assert.equal(botLinkTarget(workbenchOf(botProjectId('empty'), []), undefined, null, ['p'], true), 'projects');
   // The assistant's row reads its live session, not the routine runs that
   // share its project.
   const assistantProject = { ...workbenchOf('project_assistant', [
