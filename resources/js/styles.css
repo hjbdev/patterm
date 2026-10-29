@@ -84,6 +84,45 @@
   }
 }
 
+/* A phone's page transitions (lib/phoneTransitions.ts), eased like the
+   drawers: the page opened slides in over the one it came from, which
+   drifts left and dims, and Back plays it the other way. */
+@keyframes phone-page-enter {
+  from { transform: translateX(100%); }
+}
+@keyframes phone-page-exit {
+  to { transform: translateX(100%); }
+}
+@keyframes phone-page-cover {
+  to { transform: translateX(-30%); filter: brightness(0.5); }
+}
+@keyframes phone-page-uncover {
+  from { transform: translateX(-30%); filter: brightness(0.5); }
+}
+
+:root[data-phone-navigation]::view-transition-old(root),
+:root[data-phone-navigation]::view-transition-new(root) {
+  animation-duration: 400ms;
+  animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+  animation-fill-mode: both;
+  mix-blend-mode: normal;
+}
+:root[data-phone-navigation='push']::view-transition-old(root) {
+  animation-name: phone-page-cover;
+}
+:root[data-phone-navigation='push']::view-transition-new(root) {
+  animation-name: phone-page-enter;
+  box-shadow: -8px 0 24px rgb(0 0 0 / 0.5);
+}
+:root[data-phone-navigation='pop']::view-transition-old(root) {
+  z-index: 1;
+  animation-name: phone-page-exit;
+  box-shadow: -8px 0 24px rgb(0 0 0 / 0.5);
+}
+:root[data-phone-navigation='pop']::view-transition-new(root) {
+  animation-name: phone-page-uncover;
+}
+
 /* A long press on a control opens its own menu, not a text selection or the
    system callout. */
 @media (hover: none) {
