@@ -243,9 +243,7 @@ function subtitle(tab: AgentTab): string | null {
   if (reminder) return reminder;
   const summary = tab.family.root.session.summary;
   if (!summary || !expansion.state.value.subtitles) return null;
-  const coverage: Record<string, string> = { stale: 'Summary history changed', catching_up: 'Summary catching up',
-    partial: 'Partial conversation recap', paused: 'Summary catch-up paused' };
-  return coverage[summary.coverage ?? ''] ?? summary.status ?? summary.text;
+  return summary.status ?? summary.text;
 }
 
 const { onKeydown } = useSidebarKeys({ toggle: setExpanded, move: sidebar.moveTab });
