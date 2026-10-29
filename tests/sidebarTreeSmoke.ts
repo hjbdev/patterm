@@ -10,6 +10,7 @@ import {
   familyUrgency,
   familyStatus,
   familyWaitingOn,
+  nextWaiting,
   nodeUrgency,
   processesByOwner,
   selectedThread,
@@ -113,6 +114,13 @@ const waitingRoot = buildAgentTabFamilies([session('lone', null, 'permission')])
 assert.equal(familyWaitingOn(view(), waitingRoot), 'Needs permission');
 const askingRoot = buildAgentTabFamilies([session('asker', null, 'question')])[0]!;
 assert.equal(familyWaitingOn(view(), askingRoot), 'Has a question', 'a question is not a permission');
+// An Integrated prompt says what it asks, naming a subagent that asks it.
+const saying = buildAgentTabFamilies([{ ...session('sayer', null, 'question'), asking: 'Which events go in the first pass?' }])[0]!;
+assert.equal(familyWaitingOn(view(), saying), 'Which events go in the first pass?');
+const sayingChild = buildAgentTabFamilies([session('lead'), { ...session('helper', 'lead', 'permission'), asking: 'Allow Edit CHANGELOG.md?' }])[0]!;
+assert.equal(familyWaitingOn(view(), sayingChild), 'helper: Allow Edit CHANGELOG.md?');
+const stale = buildAgentTabFamilies([{ ...session('moved', null, 'error'), asking: 'Allow Edit CHANGELOG.md?' }])[0]!;
+assert.notEqual(familyWaitingOn(view(), stale), 'Allow Edit CHANGELOG.md?', 'only a live prompt says what it asks');
 assert.equal(sessionAttention(view(), session('asker', null, 'question')), 'question');
 const mixed = buildAgentTabFamilies([session('mixed', null, 'working'), session('mixed-ask', 'mixed', 'question'), session('mixed-perm', 'mixed', 'permission')])[0]!;
 assert.equal(familyAttention(view(), mixed), 'permission', 'a permission outranks a question');
@@ -122,6 +130,14 @@ const closing = { ...session('done'), closeRequest: { summary: 'Merged.', reques
 assert.equal(sessionAttention(view(), closing), 'close', 'an agent asking to be closed needs you');
 assert.equal(familyWaitingOn(view(), buildAgentTabFamilies([closing])[0]!), 'Ready to close');
 assert.equal(activityLookup([])(closing).self, 'closing');
+
+// The phone's back button points at the next agent asking for something,
+// skipping the one shown and anyone merely working or ready to close.
+const queue = buildStripTabs(buildAgentTabFamilies([session('busy', null, 'working'), closing, session('first'), session('first-ask', 'first', 'question'), session('second', null, 'permission')]), []);
+const next = nextWaiting(queue, null);
+assert.deepEqual([next?.family.rootId, next?.session.id], ['first', 'first-ask'], 'a subagent asking puts its family next, naming the subagent');
+assert.equal(nextWaiting(queue, 'first')?.session.id, 'second', 'the agent shown is skipped');
+assert.equal(nextWaiting(buildStripTabs(buildAgentTabFamilies([{ ...session('gone', null, 'question'), exitedAt: '2026-10-29T00:00:00Z' }]), []), null), null, 'a stopped agent is not asking');
 
 // Grouped by status, anything waiting on you comes first, then any work below the root.
 const statusOf = (candidates: AgentTabFamily[], id: string, unread: Record<string, SidebarUrgency> = {}) => {

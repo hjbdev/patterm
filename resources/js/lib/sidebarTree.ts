@@ -62,12 +62,26 @@ export function waitingSession(view: SidebarTreeView, family: AgentTabFamily): S
   })?.session ?? family.options.find((option) => option.session.closeRequest)?.session ?? null;
 }
 
-// What a family is waiting on you for, naming the subagent when it isn't the root.
+// Another agent waiting for an answer, for the phone's back button and its
+// next-waiting link: the first family in list order, other than the one shown,
+// with a permission request or question anywhere in it, and the member asking.
+export function nextWaiting(tabs: readonly StripTab[], currentRootId: string | null): { family: AgentTabFamily; session: SessionRecord } | null {
+  for (const tab of tabs) {
+    if (tab.kind !== 'agent' || tab.family.rootId === currentRootId) continue;
+    const asking = tab.family.options.find((option) => !option.session.exitedAt && awaitingUser(option.session.activity));
+    if (asking) return { family: tab.family, session: asking.session };
+  }
+  return null;
+}
+
+// What a family is waiting on you for, naming the subagent when it isn't the
+// root. An Integrated agent's prompt says what it asks.
 export function familyWaitingOn(view: SidebarTreeView, family: AgentTabFamily): string | null {
   const session = waitingSession(view, family);
   if (!session) return null;
   if (session.exitedAt) return session === family.root.session ? 'Agent stopped · /restart to resume' : `${agentLabel(session)} has stopped`;
   if (!awaitingUser(session.activity) && session.activity !== 'error') return session === family.root.session ? 'Ready to close' : `${agentLabel(session)} is ready to close`;
+  if (awaitingUser(session.activity) && session.asking) return session === family.root.session ? session.asking : `${agentLabel(session)}: ${session.asking}`;
   const reason = awaitingUser(session.activity) ? waitingReason(session.activity) : 'stopped with an error';
   return session === family.root.session ? reason[0]!.toUpperCase() + reason.slice(1) : `${agentLabel(session)} ${reason}`;
 }

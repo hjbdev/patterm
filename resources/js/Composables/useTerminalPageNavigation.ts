@@ -20,13 +20,14 @@ export function useTerminalPageNavigation() {
   return navigation;
 }
 
-// A project's own page opens its first tab, unless it shows the board. It
-// runs before any terminal page mounts there, which the tab would only replace.
-export function useProjectFirstTab(boardIsHome: Readonly<Ref<boolean>>) {
+// A project's own page opens its first tab, unless the page is a home of its
+// own: the board, or a phone's agent list. It runs before any terminal page
+// mounts there, which the tab would only replace.
+export function useProjectFirstTab(staysHome: Readonly<Ref<boolean>>) {
   const { route, router, activeProject } = useWorkbenchNavigation();
   const firstTab = computed(() => projectFirstTab(activeProject.value));
-  watch([firstTab, boardIsHome, () => route.name], ([tab, board, name]) => {
-    if (tab && !board && name === 'project') void router.replace(tab);
+  watch([firstTab, staysHome, () => route.name], ([tab, home, name]) => {
+    if (tab && !home && name === 'project') void router.replace(tab);
   }, { immediate: true });
   return firstTab;
 }

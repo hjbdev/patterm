@@ -10,6 +10,7 @@ const HistoryPage = () => import('./Pages/HistoryPage.vue');
 const TodosPage = () => import('./Pages/TodosPage.vue');
 const ScratchpadsPage = () => import('./Pages/ScratchpadsPage.vue');
 const MediaPage = () => import('./Pages/MediaPage.vue');
+const LibraryPage = () => import('./Pages/LibraryPage.vue');
 const SettingsPage = () => import('./Pages/SettingsPage.vue');
 const UsagePage = () => import('./Pages/UsagePage.vue');
 const RoutinesPage = () => import('./Pages/RoutinesPage.vue');
@@ -38,6 +39,8 @@ export function createWorkbenchRouter(history: RouterHistory) {
       { path: '/projects/:projectId/todos/:recordId?', name: 'todos', component: TodosPage },
       { path: '/projects/:projectId/scratchpads/:recordId?', name: 'scratchpads', component: ScratchpadsPage },
       { path: '/projects/:projectId/media', name: 'media', component: MediaPage },
+      // A phone's list links its project pages and the app's from here.
+      { path: '/projects/:projectId/library', name: 'library', component: LibraryPage },
       { path: '/:pathMatch(.*)*', name: 'not-found', component: ProjectsPage }
     ]
   });
@@ -46,7 +49,7 @@ export function createWorkbenchRouter(history: RouterHistory) {
 }
 
 export function prefetchPages(): void {
-  for (const page of [TerminalPage, HarnessLaunchPage, ProjectPage, ProjectsPage, HistoryPage, TodosPage, ScratchpadsPage, MediaPage, ResourcesPage, SettingsPage, UsagePage, RoutinesPage, RoutineLogPage]) void page().catch(() => {
+  for (const page of [TerminalPage, HarnessLaunchPage, ProjectPage, ProjectsPage, HistoryPage, TodosPage, ScratchpadsPage, MediaPage, LibraryPage, ResourcesPage, SettingsPage, UsagePage, RoutinesPage, RoutineLogPage]) void page().catch(() => {
     // The page reports a failed load when it is opened.
   });
 }

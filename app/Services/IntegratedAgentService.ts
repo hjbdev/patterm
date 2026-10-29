@@ -5,6 +5,7 @@ import type { DatabaseService } from './DatabaseService';
 import type { IntegratedInputResolver, IntegratedPromptInput, IntegratedWorktreeFile, ResolvedIntegratedPrompt } from './IntegratedInput';
 import { TurnBusyError, UncertainDeliveryError, type IntegratedDeliveryState } from './IntegratedDelivery';
 import { HELD_QUEUE_EVENT_ID, type IntegratedConversationEvent, type IntegratedConversationListener, type IntegratedQueuedMessage } from './IntegratedConversation';
+import { pendingAsk } from './IntegratedAsking';
 import type { AgentHistoryReadService } from './AgentHistory/AgentHistoryReadService';
 import type { McpLaunchServer } from './McpServerRegistry';
 import type { UsageService } from './UsageService';
@@ -1234,6 +1235,7 @@ export class IntegratedAgentService {
         // Only these reads set the task count: they run one at a time, so a
         // slower, older read cannot overwrite a newer count.
         this.markBackgroundTasks(key, runningTasks(record(conversation).tasks));
+        this.markAsking(key, pendingAsk(conversation));
       }
       // Covers prompts held before a restart, when no transition follows.
       const status = record(conversation).status;
@@ -1288,6 +1290,14 @@ export class IntegratedAgentService {
   private markBackgroundTasks(processId: string, count: number): void {
     const result = this.database.connection.prepare(`update processes set background_tasks = ? where id = ? and status = 'running' and background_tasks != ?`)
       .run(count, processId, count);
+    if (result.changes > 0) this.onWorkbenchChange?.();
+  }
+
+  // What a waiting agent asks, for its list row. A read that lands after the
+  // answer moved the agent on writes nothing; leaving the prompt clears it.
+  private markAsking(processId: string, asking: string | null): void {
+    const result = this.database.connection.prepare(`update processes set asking = ? where id = ? and status = 'running' and asking is not ?
+      and (? is null or activity in ('permission', 'question'))`).run(asking, processId, asking, asking);
     if (result.changes > 0) this.onWorkbenchChange?.();
   }
 
@@ -1347,8 +1357,11 @@ export class IntegratedAgentService {
     const db = this.database.connection;
     const row = db.prepare(`select activity from processes where id = ? and status = 'running' and activity != ?`).get(processId, activity) as { activity: string } | undefined;
     if (!row) return null;
-    const result = db.prepare(`update processes set activity = ?, updated_at = ? where id = ? and status = 'running' and activity != ?`)
-      .run(activity, new Date().toISOString(), processId, activity);
+    // Moving off a prompt drops what it asked.
+    const result = db.prepare(`update processes set activity = ?, updated_at = ?,
+      asking = case when ? in ('permission', 'question') then asking else null end
+      where id = ? and status = 'running' and activity != ?`)
+      .run(activity, new Date().toISOString(), activity, processId, activity);
     return result.changes > 0 ? row.activity : null;
   }
 }

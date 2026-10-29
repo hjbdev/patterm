@@ -15,6 +15,7 @@
       >
         <Sparkles class="h-4 w-4" />
         <span v-if="assistant.voiceActive" class="absolute right-1 top-1 h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" aria-hidden="true" />
+        <UnreadDot v-else-if="unreadCount" class="absolute right-1 top-1" :urgency="highestUnread()" />
         <span v-else-if="assistant.focus && !open" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-muted-foreground" aria-hidden="true" />
       </Button>
     </TooltipTrigger>
@@ -29,11 +30,17 @@ import { Button } from '../ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { assistant } from '../../lib/assistant';
 import { assistantLayout, setAssistantLayout } from '../../lib/assistantLayout';
+import { highestUnread, totalUnread } from '../../Composables/useNotifications';
+import UnreadDot from '../UnreadDot.vue';
 
+// `unread` gives it the notifications' unread dot, where the bar has no bell.
+const props = defineProps<{ unread?: boolean }>();
 const open = computed(() => assistantLayout.open);
+const unreadCount = computed(() => props.unread ? totalUnread() : 0);
 const label = computed(() => {
   if (open.value) return 'Hide assistant';
   if (assistant.voiceActive) return 'Assistant · Voice call';
+  if (unreadCount.value) return `Assistant · ${unreadCount.value} unread`;
   if (assistant.focus) return `Assistant · Focus${assistant.focusPending ? `, ${assistant.focusPending} held` : ''}`;
   return 'Assistant';
 });

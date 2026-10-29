@@ -40,6 +40,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useWindowSize } from '@vueuse/core';
+import { touchScreen } from '../../lib/touch';
 import { assistantLayout } from '../../lib/assistantLayout';
 import { assistant } from '../../lib/assistant';
 import { provideAgentDigests } from '../../Composables/useAgentDigests';
@@ -58,9 +59,10 @@ provideAgentDigests();
 useBoardKeys();
 const { width } = useWindowSize();
 // A docked assistant takes its column first. The sidebar narrows to keep
-// 720 px of workspace, then rails once even its minimum width doesn't fit.
+// 720 px of workspace, then rails once even its minimum width doesn't fit. A
+// tablet keeps its list beside a narrower workspace instead.
 const ASSISTANT_DOCK_PX = 422;
-const fitWidth = computed(() => width.value - (assistant.enabled && assistantLayout.open && assistantLayout.docked && !assistantLayout.expanded ? ASSISTANT_DOCK_PX : 0) - 720);
+const fitWidth = computed(() => width.value - (assistant.enabled && assistantLayout.open && assistantLayout.docked && !assistantLayout.expanded ? ASSISTANT_DOCK_PX : 0) - (touchScreen() ? 480 : 720));
 const narrow = computed(() => fitWidth.value < SIDEBAR_WIDTH.min);
 // The stored width is the preference; the window may show less of it.
 const shownWidth = computed(() => Math.min(sidebarLayout.width, Math.max(SIDEBAR_WIDTH.min, fitWidth.value)));

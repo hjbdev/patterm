@@ -7,9 +7,9 @@
           data-sidebar-row
           :data-row-key="tab.key"
           :data-family="tab.family.rootId"
-          :data-node="memberCount ? tab.family.rootId : undefined"
-          :data-expandable="memberCount ? 'true' : undefined"
-          :data-expanded="memberCount ? String(expanded) : undefined"
+          :data-node="foldable ? tab.family.rootId : undefined"
+          :data-expandable="foldable ? 'true' : undefined"
+          :data-expanded="foldable ? String(expanded) : undefined"
           :data-patterm-tab-id="tab.key"
           :aria-current="active ? 'page' : undefined"
           :class="cn(
@@ -45,7 +45,7 @@
         <!-- Without a second line, the timer joins the first. -->
         <span v-if="timer && !twoLines" class="mr-0.5 flex items-center gap-1 text-[11px] tabular-nums text-muted-foreground" :title="timer.title"><TimerIcon class="h-3 w-3" />{{ timer.remaining }}</span>
         <button
-          v-if="memberCount"
+          v-if="foldable"
           type="button"
           tabindex="-1"
           :class="cn('flex h-5 items-center rounded px-1 transition-colors hover:bg-white/10 hover:text-foreground', subagentCountClass(activity))"
@@ -66,7 +66,7 @@
     <!-- The tree below the root, at any depth: each agent's subagents, then
          its processes. Members grow and shrink into place. -->
     <Transition :css="false" @enter="expandIn" @leave="collapseOut">
-      <div v-if="expanded && memberCount" class="sidebar-tree">
+      <div v-if="expanded && foldable" class="sidebar-tree">
         <TransitionGroup :css="false" @enter="expandIn" @leave="collapseOut">
           <SidebarNode v-for="child in tab.family.root.children" :key="child.session.id" :node="child" :root-id="tab.family.rootId" :parent-key="tab.key" :parent-host="root.host" :depth="1" :owned="owned" />
           <SidebarMemberRow v-for="process in rootProcesses" :key="process.id" :process="process" :root-id="tab.family.rootId" :parent-key="tab.key" :parent-host="root.host" />
@@ -109,7 +109,10 @@ const props = withDefaults(defineProps<{
   waiting?: boolean | undefined;
   // Shown while listing all agents, where rows from several projects mix.
   project?: ProjectSummary | null;
-}>(), { subtitle: null, waiting: false, project: null });
+  // Off, the row keeps its member count but its subagents and processes
+  // don't list below it; the agent's header lists them instead.
+  membersShown?: boolean;
+}>(), { subtitle: null, waiting: false, project: null, membersShown: true });
 // `expand` asks to open or close the family after the agent was clicked:
 // clicking opens it, and clicking it again while it's selected closes it.
 const emit = defineEmits<{ toggle: []; expand: [open: boolean] }>();
@@ -121,6 +124,7 @@ const label = computed(() => agentLabel(root.value));
 // A closed family holding the selection is highlighted, so you can see where you are.
 const active = computed(() => sidebar.sessionActive(root.value) || (!props.expanded && sidebar.familyActive(props.tab.family)));
 const memberCount = computed(() => sidebar.memberCount(props.tab.family));
+const foldable = computed(() => props.membersShown && memberCount.value > 0);
 const owned = computed(() => processesByOwner(sidebar.ownedProcesses(props.tab.family)));
 const rootProcesses = computed(() => owned.value.get(root.value.processId ?? '') ?? []);
 const memberLabel = computed(() => {
@@ -137,12 +141,12 @@ function ownerName(processId: string | null): string | null {
 }
 const twoLines = computed(() => Boolean(props.subtitle));
 // The first line keeps clear of the controls laid over it.
-const reserve = computed(() => 22 + (memberCount.value ? 34 : 0) + (timer.value && !twoLines.value ? 20 + 7 * timer.value.remaining.length : 0));
+const reserve = computed(() => 22 + (foldable.value ? 34 : 0) + (timer.value && !twoLines.value ? 20 + 7 * timer.value.remaining.length : 0));
 
 function select(): void {
   const wasSelected = sidebar.sessionActive(root.value);
   sidebar.selectSession(props.tab.family.rootId, root.value);
-  if (!memberCount.value) return;
+  if (!foldable.value) return;
   if (!props.expanded) emit('expand', true);
   else if (wasSelected) emit('expand', false);
 }

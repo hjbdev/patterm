@@ -17,7 +17,7 @@
 
     <ResponsiveMenu v-model:open="projectMenuOpen" title="Projects" desktop-class="w-72" @content-pointer-enter="cancelProjectMenuClose" @content-pointer-leave="scheduleProjectMenuClose" @content-keydown="stopProjectMenuHover" @open-auto-focus="keepHoverFocus" @close-auto-focus="keepHoverFocus">
       <template #trigger>
-        <Button variant="ghost" size="sm" class="h-[26px] max-w-[38vw] shrink-0 justify-between gap-1 rounded-tab px-2 py-0.5 text-[13px] sm:max-w-64 sm:gap-2" @pointerenter="openProjectMenuOnHover" @pointerleave="scheduleProjectMenuClose" @pointerdown="stopProjectMenuHover" @keydown="stopProjectMenuHover">
+        <Button variant="ghost" size="sm" class="h-[26px] max-w-[60vw] shrink-0 justify-between gap-1 rounded-tab px-2 py-0.5 text-[13px] sm:max-w-64 sm:gap-2" @pointerenter="openProjectMenuOnHover" @pointerleave="scheduleProjectMenuClose" @pointerdown="stopProjectMenuHover" @keydown="stopProjectMenuHover">
           <template v-if="allAgents">
             <Layers class="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
             <span class="truncate">All agents</span>
@@ -26,8 +26,10 @@
             <ProjectStatusLogo v-if="activeProject" :project="activeProject.project" :states="agentStates(activeProject.project.id)" />
             <span class="truncate">{{ activeProject?.project.name ?? 'Projects' }}</span>
             <HostBadge v-if="activeProject?.project.host" :host="activeProject.project.host" />
+            <!-- A phone shows one project's list, so another waiting shows here. -->
+            <span v-if="phoneLayout && elsewhereWaiting" class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" aria-label="An agent in another project is waiting" />
           </template>
-          <Badge v-if="shownAgentCount > 0" variant="secondary" class="ml-auto hidden h-5 px-1.5 text-[10px] tabular-nums sm:inline-flex">
+          <Badge v-if="shownAgentCount > 0" variant="secondary" class="ml-auto h-5 px-1.5 text-[10px] tabular-nums">
             {{ shownAgentCount }}
           </Badge>
           <ChevronDown class="h-4 w-4 shrink-0 opacity-70" />
@@ -69,26 +71,33 @@
           Project selector
         </DropdownMenuItem>
       </template>
+      <!-- On a phone: the projects, a ? on any with an agent waiting, then the
+           ways out to every project. -->
       <template #mobile>
         <div class="space-y-1">
-          <button type="button" class="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="allAgents ? 'bg-primary/10' : ''" @click="selectMobileAllAgents">
-            <Layers class="h-4 w-4 text-muted-foreground" />
-            <span class="min-w-0 flex-1 truncate">All agents</span>
-            <Badge v-if="totalAgentCount > 0" variant="secondary" class="h-5 px-1.5 text-[10px] tabular-nums">{{ totalAgentCount }}</Badge>
-          </button>
-          <div v-if="projects.length" class="my-2 border-t border-border" />
-          <button v-for="projectGroup in switcherProjects" :key="projectGroup.project.id" type="button" class="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" :class="[!allAgents && projectGroup.project.id === activeProjectId ? 'bg-primary/10' : '', projectSnoozed(projectGroup.project) && 'text-muted-foreground opacity-70']" @click="selectMobileProject(projectGroup.project.id)">
+          <button v-for="projectGroup in switcherProjects" :key="projectGroup.project.id" type="button" :class="[MOBILE_ROW, !allAgents && projectGroup.project.id === activeProjectId ? 'bg-primary/10' : '', projectSnoozed(projectGroup.project) && 'text-muted-foreground opacity-70']" @click="selectMobileProject(projectGroup.project.id)">
             <ProjectStatusLogo :project="projectGroup.project" :states="agentStates(projectGroup.project.id)" :size="16" />
             <span class="min-w-0 flex-1 truncate">{{ projectGroup.project.name }}</span>
+            <StatusIcon v-if="waiting(projectGroup.project.id)" :spec="activityIcon('question')" class="h-3.5 w-3.5" />
             <SnoozeIcon v-if="projectSnoozed(projectGroup.project)" class="h-4 w-4 shrink-0" />
             <HostBadge v-if="projectGroup.project.host" :host="projectGroup.project.host" />
             <UnreadDot :urgency="projectUnread(projectGroup.project.id) ? 'normal' : null" />
-            <Badge v-if="openAgentCount(projectGroup) > 0" variant="secondary" class="h-5 px-1.5 text-[10px] tabular-nums">{{ openAgentCount(projectGroup) }}</Badge>
+            <span v-if="openAgentCount(projectGroup) > 0" class="min-w-5 text-right text-[13px] tabular-nums text-muted-foreground">{{ openAgentCount(projectGroup) }}</span>
           </button>
           <div v-if="projects.length" class="my-2 border-t border-border" />
-          <button type="button" class="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" @click="selectMobileProject(null)">
-            <LayoutGrid class="h-4 w-4" />Project selector
+          <button type="button" :class="[MOBILE_ROW, allAgents ? 'bg-primary/10' : '']" @click="selectMobileAllAgents">
+            <Layers class="h-4 w-4 text-muted-foreground" />
+            <span class="min-w-0 flex-1 truncate">All agents</span>
+            <span v-if="totalAgentCount > 0" class="min-w-5 text-right text-[13px] tabular-nums text-muted-foreground">{{ totalAgentCount }}</span>
           </button>
+          <button type="button" :class="MOBILE_ROW" @click="selectMobileProject(null)">
+            <LayoutGrid class="h-4 w-4 text-muted-foreground" />All projects
+          </button>
+          <NewProjectDialog @created="selectMobileProject">
+            <template #trigger>
+              <button type="button" :class="[MOBILE_ROW, 'text-muted-foreground']"><Plus class="h-4 w-4" />New project</button>
+            </template>
+          </NewProjectDialog>
         </div>
       </template>
     </ResponsiveMenu>
@@ -96,22 +105,35 @@
     <slot name="terminal-tabs" />
 
     <div class="ml-auto flex shrink-0 items-center gap-1.5">
-      <AssistantButton />
+      <!-- The assistant carries the notifications' unread dot; the app's own
+           pages wait behind ⋯. A phone's Library has them instead. -->
+      <AssistantButton unread />
       <Button variant="ghost" size="sm" class="h-7 gap-2 rounded-tab px-2 text-xs text-muted-foreground" aria-label="Search or jump to" @click="emit('commandPalette')">
         <Search class="h-4 w-4" /><span class="hidden sm:inline">Search or jump to…</span><kbd class="hidden rounded border border-border/70 px-1 text-[10px] sm:inline">Ctrl K</kbd>
       </Button>
-      <!-- Phones keep Search and Notifications inline and move the rest into the menu drawer, which stays in the corner. -->
-      <Button variant="ghost" size="icon" class="hidden h-7 w-7 rounded-tab text-muted-foreground sm:inline-flex" aria-label="Scheduled" title="Scheduled" @click="emit('routines')">
-        <CalendarClock class="h-4 w-4" />
-      </Button>
-      <Button variant="ghost" size="icon" class="hidden h-7 w-7 rounded-tab text-muted-foreground sm:inline-flex" aria-label="Usage" title="Usage" @click="emit('usage')">
-        <Gauge class="h-4 w-4" />
-      </Button>
-      <NotificationTray />
-      <Button variant="ghost" size="icon" class="relative hidden h-7 w-7 rounded-tab text-muted-foreground sm:inline-flex" :aria-label="settingsLabel" :title="settingsLabel" @click="emit('settings')">
-        <Settings class="h-4 w-4" />
-        <span v-if="updateAvailable" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
-      </Button>
+      <NotificationTray v-if="!phoneLayout" v-model:open="notificationsOpen">
+        <DropdownMenu>
+          <DropdownMenuTrigger as-child>
+            <Button variant="ghost" size="icon" class="relative h-7 w-7 rounded-tab text-muted-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground" :aria-label="menuLabel" :title="menuLabel">
+              <Ellipsis class="h-4 w-4" />
+              <span v-if="updateAvailable || unreadWithoutAssistant" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" class="w-56">
+            <DropdownMenuItem class="text-[13px]" @select="emit('routines')"><CalendarClock class="mr-2 h-4 w-4 text-muted-foreground" />Scheduled</DropdownMenuItem>
+            <DropdownMenuItem class="text-[13px]" @select="emit('usage')"><Gauge class="mr-2 h-4 w-4 text-muted-foreground" />Usage</DropdownMenuItem>
+            <DropdownMenuItem class="text-[13px]" @select="openNotifications">
+              <Bell class="mr-2 h-4 w-4 text-muted-foreground" /><span class="flex-1">Notifications</span>
+              <span v-if="unread" class="tabular-nums text-muted-foreground">{{ unread }}</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem class="text-[13px]" @select="emit('settings')">
+              <Settings class="mr-2 h-4 w-4 text-muted-foreground" /><span class="flex-1">Settings</span>
+              <span v-if="updateAvailable" class="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </NotificationTray>
       <Tooltip v-if="!sidecarAvailable">
         <TooltipTrigger as-child>
           <Badge variant="outline" class="h-6 cursor-help border-destructive/40 bg-destructive/10 px-2 text-[11px] text-destructive">
@@ -123,23 +145,6 @@
           <p class="mt-1 text-muted-foreground">Agent and process terminals cannot launch until the native terminal sidecar starts.</p>
         </TooltipContent>
       </Tooltip>
-      <ResponsiveMenu v-model:open="appMenuOpen" mobile-only title="Patterm">
-        <template #trigger>
-          <Button variant="ghost" size="icon" class="relative h-7 w-7 rounded-tab text-muted-foreground" :aria-label="updateAvailable ? 'Menu: an update is available' : 'Menu'">
-            <Menu class="h-4 w-4" />
-            <span v-if="updateAvailable" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
-          </Button>
-        </template>
-        <template #mobile>
-          <div class="space-y-1">
-            <button v-for="item in appMenuItems" :key="item.label" type="button" class="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" @click="selectAppMenuItem(item)">
-              <component :is="item.icon" class="h-4 w-4 text-muted-foreground" />
-              <span class="min-w-0 flex-1 truncate">{{ item.label }}</span>
-              <span v-if="item.label === 'Settings' && updateAvailable" class="truncate text-xs text-muted-foreground">Patterm {{ updates?.latest?.version }} available</span>
-            </button>
-          </div>
-        </template>
-      </ResponsiveMenu>
     </div>
   </header>
 </template>
@@ -148,7 +153,12 @@
 import HostBadge from './HostBadge.vue';
 import AssistantButton from './Assistant/AssistantButton.vue';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { CalendarClock, ChevronDown, Gauge, Layers, LayoutGrid, Menu, Search, Settings } from 'lucide-vue-next';
+import { Bell, CalendarClock, ChevronDown, Ellipsis, Gauge, Layers, LayoutGrid, Plus, Search, Settings } from 'lucide-vue-next';
+import NewProjectDialog from './NewProjectDialog.vue';
+import StatusIcon from './StatusIcon.vue';
+import { activityIcon } from '../lib/statusIcons';
+import { assistant } from '../lib/assistant';
+import { phoneLayout } from '../lib/phoneLayout';
 import { allAgents as allAgentsState, listedProjects, openAgentCount, projectShown } from '../lib/allAgents';
 import { projectSnoozed, snoozedProjectsLast } from '../lib/projectSnooze';
 import SnoozeIcon from './SnoozeIcon.vue';
@@ -162,8 +172,8 @@ import { projectOverviews, type AgentState } from '../lib/projectOverview';
 import UnreadDot from './UnreadDot.vue';
 import { useUpdates } from '../lib/updates';
 import NotificationTray from './NotificationTray.vue';
-import { projectUnread } from '../Composables/useNotifications';
-import { DropdownMenuItem, DropdownMenuSeparator } from './ui/dropdown-menu';
+import { projectUnread, totalUnread } from '../Composables/useNotifications';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from './ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { prefetchProject, Tier } from '../lib/prefetch';
 
@@ -198,6 +208,12 @@ function agentStates(projectId: string): AgentState[] {
   return projectAgentStates.value.get(projectId) ?? NO_AGENTS;
 }
 const recentProjects = computed(() => shownRecentProjects(recentProjectIds.value, props.projects, props.activeProjectId));
+const MOBILE_ROW = 'flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+function waiting(projectId: string): boolean {
+  return agentStates(projectId).includes('waiting');
+}
+// Another awake project with an agent waiting on you.
+const elsewhereWaiting = computed(() => props.projects.some((item) => item.project.id !== props.activeProjectId && !projectSnoozed(item.project) && waiting(item.project.id)));
 
 const projectMenuOpen = ref(false);
 // Opening the switcher reads every project's running agents ahead; hovering
@@ -255,19 +271,22 @@ const switcherProjects = computed(() => snoozedProjectsLast(props.projects, (ite
 const totalAgentCount = computed(() => listedProjects(props.projects).filter((project) => projectShown(allAgentsState, project.project.id) && !projectSnoozed(project.project)).reduce((total, project) => total + openAgentCount(project), 0));
 
 
-// A release newer than this install marks Settings until it is installed.
+// A release newer than this install marks Settings, and the ⋯ it sits behind,
+// until it is installed.
 const updates = useUpdates();
 const updateAvailable = computed(() => updates.value?.status === 'available');
-const settingsLabel = computed(() => updateAvailable.value ? `Settings: Patterm ${updates.value?.latest?.version} is available` : 'Settings');
+const unread = computed(() => totalUnread());
+// Without the assistant to carry it, the unread dot falls to ⋯.
+const unreadWithoutAssistant = computed(() => !assistant.enabled && unread.value > 0);
+const menuLabel = computed(() => {
+  const marks = [unread.value && `${unread.value} unread`, updateAvailable.value && `Patterm ${updates.value?.latest?.version} is available`].filter(Boolean);
+  return marks.length ? `More: ${marks.join(', ')}` : 'More';
+});
 
-const appMenuOpen = ref(false);
-const appMenuItems = [
-  { label: 'Scheduled', icon: CalendarClock, select: () => emit('routines') },
-  { label: 'Usage', icon: Gauge, select: () => emit('usage') },
-  { label: 'Settings', icon: Settings, select: () => emit('settings') },
-];
-function selectAppMenuItem(item: typeof appMenuItems[number]): void {
-  appMenuOpen.value = false;
-  item.select();
+// The tray opens from ⋯ once its menu has closed, so the menu's closing
+// doesn't dismiss it straight away.
+const notificationsOpen = ref(false);
+function openNotifications(): void {
+  setTimeout(() => { notificationsOpen.value = true; });
 }
 </script>

@@ -15,7 +15,7 @@
         :class="cn(
           'relative isolate flex h-7 w-full min-w-0 select-none items-center gap-2 rounded-tab pl-2 text-left text-[13px] transition-[color,background-color,box-shadow] hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
           count ? 'pr-[60px]' : 'pr-7',
-          active || holdsSelection ? 'bg-primary/10 text-foreground' : 'text-foreground/85',
+          active || holdsSelection ? 'bg-primary/10 text-foreground' : peeked ? 'bg-muted/40 text-foreground' : 'text-foreground/85',
           session && mentionPreview === session.id && 'mention-glow'
         )"
         @click="select"
@@ -76,6 +76,8 @@ import SidebarItemMenu from './SidebarItemMenu.vue';
 import { useSidebar } from './sidebarContext';
 import { useSidebarNodes } from './sidebarNodes';
 import { mentionPreview } from '../../lib/integratedComposer';
+import { peekedProcessId } from '../../lib/peek';
+import { openServer } from './serverPeek';
 
 // One line for a subagent or a process. `tab` is set for top-level processes,
 // which can be pinned; `rootId` and `parentKey` for members of an agent
@@ -114,9 +116,12 @@ function close(): void {
   else if (props.process) closeProcess(props.process);
 }
 
+// A server opens its preview beside the agent that started it, when it has one.
+const peeked = computed(() => Boolean(props.process && peekedProcessId.value === props.process.id));
+
 function select(): void {
   if (props.process) {
-    sidebar.selectProcess(props.process);
+    void openServer(sidebar, props.process);
     return;
   }
   if (!props.session || !props.rootId) return;

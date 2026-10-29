@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- An agent's context sits in a header above its conversation or terminal:
+  its name, its summary's status line (click it for the whole summary and to
+  regenerate it), and a chip each for its worktrees, links, servers,
+  subagents, todos, scratchpads and images. Each chip opens its list, and +
+  links a worktree or adds a todo, scratchpad or link. The conversation fades
+  in under the header. This replaces the session context column.
+- A peek pane opens beside the agent on demand, reaching the page's edge: a
+  server's page live, with reload and open in browser; an image, stepping
+  through the session's images; or a worktree's changed files, with Open diff
+  review. A server opens there from its chip or its sidebar row when one of the
+  agent's preview links names its port. The command palette's session context
+  opens the full panel there. The pane keeps its width, and Esc closes it.
+- "Show subagents and servers" in the sidebar's view options lists a family's
+  members under it, as before, or leaves them to the agent's header for a
+  flatter list. "Hide subagents here" in an agent's row menu does the same for
+  one agent.
+- A waiting agent's row says what it asks: its question, or the permission as
+  a question, such as "Allow Edit CHANGELOG.md?".
+- Phones open on the agent list. The project's agents fill the screen with
+  touch-sized rows, and an agent opens over the list with the same chips, a
+  back button that shows when another agent is waiting, and ⋯ for its context
+  and actions. Swipe the title sideways for the agent beside it in the list.
+  Chips open as sheets and the peek fills the screen. A question or permission
+  sits in place of the composer, with full-width answers, and after you answer
+  a Next waiting pill opens the next agent waiting on you. A server opens as a
+  page with its preview, Stop, and the agent that started it. The
+  Library holds the project pages, each saying what's new, then Scheduled,
+  Usage, Notifications, Settings and the list's options. The project menu marks
+  projects with an agent waiting, and a dot beside the project name says one
+  is waiting elsewhere. In terminal sessions the header folds to one line while
+  you type, and a key row with Esc, Tab, Ctrl and arrows sits over the
+  keyboard.
+- On tablets the agent list stays beside the conversation, and in landscape
+  the peek docks beside it as on a desktop.
 - Session links have a Preview type for dev servers, preview deploys, and
   other pages to open. Agents are now told to attach the dev server and preview
   URLs they start or find to their session, local URLs included, where before
@@ -43,6 +77,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The top bar keeps the project switcher, the assistant, search and a ⋯ menu
+  holding Scheduled, Usage, Notifications and Settings. The assistant carries
+  the notifications' unread dot.
+- The sidebar's "Agents" heading opens its view options, and a Library menu
+  in its footer replaces the five page icons. It lists the project's pages,
+  each with what's new, and the canvas.
+- In the Integrated composer, Send turns into Stop while the agent works and
+  the box is empty, in place of a separate Stop button. Cost and
+  last-request time moved into the context meter's tooltip.
+- Phones no longer have the bottom bar or its Open tabs menu; the agent list
+  replaces them. The canvas isn't reachable from a phone.
+- The page's content security policy lets it frame http and https pages, for
+  previews in the peek pane. Previews load sandboxed and can't navigate the
+  app.
 - Conversations keep their session's title. The resume picker, history pages,
   and search show a chosen name or generated title instead of the first
   prompt, and re-imports no longer overwrite it.
@@ -53,8 +101,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   harness, the model, and the status. A comet runs around a working agent's
   card, work flows down the edges to busy subagents, and cards glide to new
   places and fade in.
-- Phones reach the canvas from a Canvas button in the tab menu, beside the +
-  that launches an agent, since they have no sidebar.
 - The board, a project's page in sidebar mode and in All agents, is now a
   canvas. Each agent family shows as a flowchart: the root agent on top, its
   subagents in a row beneath it, and deeper subagents stacked under them.

@@ -11,20 +11,24 @@
         <p v-if="displayError" role="alert" class="mx-auto w-full max-w-[50rem] shrink-0 break-words px-4 pb-4 text-sm text-destructive 2xl:max-w-[1000px]">{{ displayError }}</p>
       </div>
       <div v-if="ended" class="mx-auto w-full max-w-[50rem] shrink-0 px-4 2xl:max-w-[1000px]"><p role="status" class="border-t border-border/60 py-3 text-sm text-muted-foreground">{{ canRestart ? 'This agent has stopped. Use /restart to resume this conversation.' : 'This agent session has ended. The transcript is read-only.' }}</p></div>
-      <div v-if="permissions.length || questions.length || forms.length || ((closeRequest || snooze) && !ended)" class="shrink-0 pb-2">
+      <!-- On a phone a question or permission docks where the composer was,
+           within a thumb's reach, and the composer comes back once it's answered. -->
+      <div v-if="permissions.length || questions.length || forms.length || ((closeRequest || snooze) && !ended)" class="shrink-0 pb-2" :class="docked && 'pb-[calc(0.5rem+env(safe-area-inset-bottom))]'">
         <!-- The same width and inset as the composer below. -->
-        <div class="mx-auto max-h-[55vh] w-full max-w-[50rem] space-y-2 overflow-y-auto overscroll-contain px-4 2xl:max-w-[1000px]" role="group" aria-label="Pending requests">
+        <div class="mx-auto max-h-[55vh] w-full max-w-[50rem] space-y-2 overflow-y-auto overscroll-contain px-4 max-sm:max-h-[75vh] max-sm:px-2 2xl:max-w-[1000px]" role="group" aria-label="Pending requests">
         <div v-if="permissions.length" class="relative pb-2">
           <div v-if="permissions.length > 2" aria-hidden="true" class="absolute inset-x-3 bottom-0 top-3 rounded-xl border border-border bg-background" />
           <div v-if="permissions.length > 1" aria-hidden="true" class="absolute inset-x-1.5 bottom-1 top-1.5 rounded-xl border border-border bg-background" />
           <section
             v-for="permission in permissions.slice(0, 1)"
             :key="permission.id"
-            class="relative flex max-h-[calc(55vh-1rem)] flex-col rounded-xl border border-border bg-background p-4 text-sm shadow-sm [&>*]:shrink-0"
+            class="relative flex max-h-[calc(55vh-1rem)] flex-col rounded-xl border border-border bg-background p-4 text-sm shadow-sm max-sm:max-h-[calc(75vh-1rem)] max-sm:rounded-[18px] [&>*]:shrink-0"
             :aria-label="`Permission: ${permission.action}`"
           >
-            <p v-if="permissions.length > 1" class="mb-0.5 text-xs text-muted-foreground">1 of {{ permissions.length }} requests</p>
-            <p class="font-medium text-foreground">{{ permission.action }}</p>
+            <!-- A phone asks it as a question, as the list row does. -->
+            <p v-if="phoneLayout" class="mb-0.5 text-xs text-muted-foreground">Permission<template v-if="permissions.length > 1"> · 1 of {{ permissions.length }}</template></p>
+            <p v-else-if="permissions.length > 1" class="mb-0.5 text-xs text-muted-foreground">1 of {{ permissions.length }} requests</p>
+            <p class="font-medium text-foreground max-sm:text-[15px] max-sm:leading-snug">{{ phoneLayout ? permissionAsk(permission) : permission.action }}</p>
             <p v-if="permission.detail" class="mt-0.5 whitespace-pre-wrap break-words text-xs text-muted-foreground">{{ permission.detail }}</p>
             <pre v-if="permission.command" class="mt-3 max-h-40 min-h-12 !shrink overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/40 px-3 py-2 font-mono text-xs leading-5">{{ permission.command }}</pre>
             <p v-if="permission.cwd" class="mt-1 break-all font-mono text-xs text-muted-foreground">in {{ permission.cwd }}</p>
@@ -41,11 +45,12 @@
               :placeholder="permission.plan ? 'What should change in the plan? (optional)' : 'Tell the agent what to do instead (optional)'"
               :aria-label="`Feedback if you deny ${permission.action}`"
             >
-            <div class="mt-3 flex flex-wrap items-center justify-end gap-2">
+            <!-- On a phone the answers stack full width, Allow once on top. -->
+            <div class="mt-3 flex flex-wrap items-center justify-end gap-2 max-sm:flex-col-reverse max-sm:items-stretch">
               <p v-if="permission.always === false && !permission.plan" class="mr-auto text-xs text-muted-foreground">Only this request can be allowed.</p>
-              <Button size="sm" class="h-7 px-2.5" variant="ghost" :disabled="!canReply || isResponding(permission.id)" @click="replyPermission(permission.id, 'reject')">{{ permission.rejectLabel ?? 'Deny' }}</Button>
-              <Button v-if="permission.always !== false" size="sm" class="h-7 px-2.5" variant="secondary" :disabled="!canReply || isResponding(permission.id)" @click="replyPermission(permission.id, 'always')">{{ permission.alwaysLabel ?? 'Always allow' }}</Button>
-              <Button size="sm" class="h-7 px-2.5" :disabled="!canReply || isResponding(permission.id)" @click="replyPermission(permission.id, 'once')">{{ permission.onceLabel ?? 'Allow once' }}</Button>
+              <Button size="sm" :class="PERMISSION_BUTTON" variant="ghost" :disabled="!canReply || isResponding(permission.id)" @click="replyPermission(permission.id, 'reject')">{{ permission.rejectLabel ?? 'Deny' }}</Button>
+              <Button v-if="permission.always !== false" size="sm" :class="PERMISSION_BUTTON" variant="secondary" :disabled="!canReply || isResponding(permission.id)" @click="replyPermission(permission.id, 'always')">{{ permission.alwaysLabel ?? 'Always allow' }}</Button>
+              <Button size="sm" :class="PERMISSION_BUTTON" :disabled="!canReply || isResponding(permission.id)" @click="replyPermission(permission.id, 'once')">{{ permission.onceLabel ?? 'Allow once' }}</Button>
             </div>
           </section>
         </div>
@@ -197,7 +202,10 @@
         @open="openTask"
         @stop="stopTask"
       />
+      <!-- Answering one agent leads to the next one waiting. -->
+      <NextWaitingPill v-if="phoneLayout && answered && !docked && !ended && !embedded" :process-id="processId" />
       <IntegratedComposer
+        v-show="!docked"
         :process-id="processId"
         :provider="provider"
         :controls="composerControls"
@@ -221,9 +229,9 @@
              comet shows the work. -->
         <template v-if="!ended" #status>
           <span v-if="streamStatus === 'working'" role="status" class="sr-only text-xs text-muted-foreground sm:not-sr-only"><ShimmerText text="Working…" /></span>
+          <!-- The meter carries the last request's time; without one it shows here. -->
+          <IntegratedUsageMeter v-if="usage" :usage="usage" :last-request-at="modelActivityAt" />
           <IntegratedModelActivity v-else-if="modelActivityAt" :at="modelActivityAt" class="min-w-0 truncate whitespace-nowrap text-xs text-muted-foreground" />
-          <!-- Phones lead with the context ring, then the time. -->
-          <IntegratedUsageMeter v-if="usage" :usage="usage" class="max-sm:order-first" />
         </template>
       </IntegratedComposer>
       <ResumeConversationDialog
@@ -273,6 +281,7 @@ import IntegratedTaskShelf from './IntegratedTaskShelf.vue';
 import IntegratedTaskDrawer from './IntegratedTaskDrawer.vue';
 import IntegratedUsageMeter from './IntegratedUsageMeter.vue';
 import LoadingBar from './LoadingBar.vue';
+import NextWaitingPill from './NextWaitingPill.vue';
 import ShimmerText from './ShimmerText.vue';
 import Markdown from './Markdown.vue';
 import ResumeConversationDialog from './ResumeConversationDialog.vue';
@@ -310,6 +319,8 @@ import {
 } from '../lib/integratedConversation';
 import { completeSend, discardOutgoingMessage, beginSubmission, beginOutgoingMessage, outgoingFor, outgoingTranscript, reconcileOutgoingMessages, failOutgoingMessage, markSubmissionUncertain, clearSubmission, isAmbiguousTransportError, submissionFor, payloadHash, type ComposerSendPayload } from '../lib/integratedComposer';
 import { figureAnswerKey } from '../lib/htmlFigure';
+import { phoneLayout } from '../lib/phoneLayout';
+import { permissionAsk } from '../../../app/Services/IntegratedAsking';
 import { publishIntegratedControls } from '../lib/integratedControlsRegistry';
 import { onWorkspaceRequest, type WorkspaceRequest } from '../lib/workspaceRequests';
 
@@ -330,6 +341,12 @@ const usage = shallowRef<IntegratedUsage | null>(null);
 const tasks = shallowRef<IntegratedTask[]>([]);
 const queue = shallowRef<IntegratedQueuedMessage[]>([]);
 const transcriptMessages = computed(() => outgoingTranscript(props.processId, messages.value, queue.value));
+// A phone docks a pending prompt in the composer's place, once it has control:
+// until then the composer stays, with its Take control. Once you've answered
+// one here, the next agent waiting on you is offered in that spot.
+const docked = computed(() => phoneLayout.value && !ended.value && controlling.value && permissions.value.length + questions.value.length + forms.value.length > 0);
+const answered = ref(false);
+watch(() => props.processId, () => { answered.value = false; });
 watch([messages, queue, () => outgoingFor(props.processId).map((entry) => entry.row.delivery?.state)], () => {
   reconcileOutgoingMessages(props.processId, messages.value, queue.value);
 });
@@ -1065,10 +1082,13 @@ async function replyPermission(requestId: string, reply: 'once' | 'always' | 're
   transcriptRef.value?.followEnd();
   const message = reply === 'reject' ? denyFeedback.value[requestId]?.trim() : '';
   await respond(requestId, () => runMutation('integrated_permission_reply', { process_id: props.processId, request_id: requestId, reply, ...(message ? { message } : {}) }));
+  answered.value = true;
 }
 
 // Inputs inside request cards read as rows, without a border until used.
 const INLINE_INPUT_CLASS = 'block rounded-lg bg-transparent px-2 py-1.5 text-xs transition-colors placeholder:text-muted-foreground hover:bg-muted/40 focus:bg-muted/40 focus:outline-none';
+// Within a thumb's reach on a phone.
+const PERMISSION_BUTTON = 'h-7 px-2.5 max-sm:h-12 max-sm:rounded-xl max-sm:text-[15px]';
 
 // A tool called without input has nothing worth showing.
 function shownResources(resources: string[]): string[] {
@@ -1112,6 +1132,7 @@ async function replyQuestion(request: IntegratedQuestionRequest): Promise<void> 
   }
   transcriptRef.value?.followEnd();
   await respond(request.id, () => runMutation('integrated_question_reply', { process_id: props.processId, request_id: request.id, answers: built.answers }));
+  answered.value = true;
 }
 
 function isResponding(id: string): boolean {
@@ -1205,6 +1226,7 @@ async function replyForm(form: IntegratedFormRequest): Promise<void> {
   await respond(form.id, async () => {
     try {
       await mutate('integrated_form_reply', { process_id: props.processId, form_id: form.id, answer: built.answer });
+      answered.value = true;
       await refresh();
     } catch (cause) {
       formErrors.value = { ...formErrors.value, [form.id]: cause instanceof Error ? cause.message : String(cause) };
@@ -1217,6 +1239,7 @@ async function declineForm(form: IntegratedFormRequest): Promise<void> {
   await respond(form.id, async () => {
     try {
       await mutate('integrated_form_reply', { process_id: props.processId, form_id: form.id, answer: {}, action: 'decline' });
+      answered.value = true;
       await refresh();
     } catch (cause) {
       formErrors.value = { ...formErrors.value, [form.id]: cause instanceof Error ? cause.message : String(cause) };

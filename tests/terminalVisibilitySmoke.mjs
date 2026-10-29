@@ -30,7 +30,7 @@ function mount({ controlling = true, mouse = false, subscribeReply = () => undef
   let frameId = 0;
   const bindings = {
     ...module.exports, computed, ref, watch() {}, onMounted() {}, onBeforeUnmount() {}, touchScreen: () => false,
-    defineProps: () => ({}), defineEmits: () => (...args) => emitted.push(args), DEFAULT_APPEARANCE_SETTINGS: {},
+    defineProps: () => ({}), defineEmits: () => (...args) => emitted.push(args), defineExpose() {}, DEFAULT_APPEARANCE_SETTINGS: {},
     window: { open: (...args) => requests.push(['open', ...args]), patterm: { runtime: 'browser',
       terminalSubscribe: async args => { requests.push(['subscribe', args]); return subscribeReply(args); },
       terminalConfigure: async () => {},

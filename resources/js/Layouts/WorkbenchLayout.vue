@@ -21,11 +21,11 @@
     <div class="bg-[#080808]" :class="assistantDocked ? 'pr-[calc(var(--assistant-dock-width)+0.375rem)]' : ''">
     <RouterView v-if="showStandalonePage" />
 
-    <!-- On phones the bar sits at the bottom, within thumb reach. -->
-    <div v-else data-workbench :data-keyboard="keyboardOpen || undefined" class="flex h-dvh min-h-0 flex-col overflow-hidden bg-[#080808] text-foreground">
+    <div v-else data-workbench class="flex h-dvh min-h-0 flex-col overflow-hidden bg-[#080808] text-foreground">
+      <!-- A phone shows the bar over its list only; agents and pages open
+           over the list with a back button of their own. -->
       <WorkbenchTopBar
-        data-workbench-bar
-        class="max-sm:order-last"
+        v-if="!mobile || route.name === 'project'"
         :projects="projects"
         :active-project-id="activeProjectId"
         :sidecar-status="sidecarStatus"
@@ -41,23 +41,7 @@
           @routines="openRoutines"
       >
         <template v-if="activeProject" #terminal-tabs>
-          <!-- Phones get the same tab menu in either navigation mode. -->
-          <div class="min-w-0 flex-1 sm:hidden">
-            <MobileTabs
-              :project-id="activeProject.project.id"
-              :families="shownAgentFamilies"
-              :all-families="everyAgentFamilies"
-              :processes="currentStripProcesses"
-              :all-processes="everyAgentsView ? everyAgentsView.processes : scopeProcesses"
-              :project-of="showingAll ? projectOf : undefined"
-              :shown-project-ids="showingAll ? shownProjectIds : undefined"
-              :active-terminal-id="activeWorkspacePage === 'workbench' && projectViewMode === 'agents' ? activeTerminalId : null"
-              :active-session-id="activeWorkspacePage === 'workbench' && projectViewMode === 'agents' ? selectedAgent?.id ?? null : null"
-              @select="(rootId, session) => selectAgentTabTarget({ rootId, session })"
-              @select-process="selectAgentProcess"
-            />
-          </div>
-          <div v-if="sidebarMode" class="hidden flex-1 sm:block" />
+          <div v-if="sidebarMode || mobile" class="flex-1" />
           <!-- The vertical padding leaves room for a tab's mention glow, which the scroller would clip. -->
           <div v-else class="-my-2 hidden min-w-0 flex-1 items-center gap-1 overflow-x-auto py-2 [scrollbar-width:none] sm:flex" @wheel="scrollTabStrip">
             <TabStrip
@@ -91,12 +75,17 @@
       </WorkbenchTopBar>
 
       <div class="flex min-h-0 flex-1">
-      <WorkbenchSidebar v-if="sidebarMode" />
+      <WorkbenchSidebar v-if="sidebarMode && !mobile" />
 
-      <main id="workbench-main" class="relative mx-1.5 mb-1.5 max-sm:mb-0 max-sm:mt-1.5 min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border-t border-white/5 bg-background">
+      <main id="workbench-main" class="relative mx-1.5 mb-1.5 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border-t border-white/5 bg-background" :class="mobile && route.name !== 'project' && 'mt-1.5'">
         <div v-if="!loaded" class="p-5 text-sm text-muted-foreground">Loading project…</div>
         <div v-else-if="!activeProject" class="p-5 text-sm text-muted-foreground">Project not found. Select another project from the toolbar.</div>
-        <RouterView v-else />
+        <template v-else>
+          <PhonePageHeader v-if="mobile && phonePage" :project-id="activeProject.project.id" :title="phonePage.title" :up="phonePage.up" />
+          <div class="relative min-h-0 flex-1">
+            <RouterView />
+          </div>
+        </template>
         <div
           v-if="navigationMode"
           role="status"
@@ -117,16 +106,14 @@
     <CloseConfirmDialog />
     <SnoozeDialog />
     <ProjectSnoozeDialog />
-    <template v-if="sidebarMode">
-      <SidebarDialogs />
-    </template>
+    <!-- Row menus open these: the sidebar's, and the agent header's in any layout. -->
+    <SidebarDialogs />
   </TooltipProvider>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, provide, ref } from 'vue';
 import { RouterView } from 'vue-router';
-import { useMediaQuery } from '@vueuse/core';
 import AssistantDock from '../Components/Assistant/AssistantDock.vue';
 import CloseConfirmDialog from '../Components/CloseConfirmDialog.vue';
 import SnoozeDialog from '../Components/SnoozeDialog.vue';
@@ -137,19 +124,19 @@ import { showSnoozed } from '../Composables/useSnooze';
 import CommandPalette from '../Components/CommandPalette.vue';
 import LaunchAgentMenu from '../Components/LaunchAgentMenu.vue';
 import HarnessLaunchTabs from '../Components/HarnessLaunchTabs.vue';
-import MobileTabs from '../Components/MobileTabs.vue';
 import TabStrip from '../Components/TabStrip.vue';
 import WorkbenchTopBar from '../Components/WorkbenchTopBar.vue';
+import PhonePageHeader from '../Components/Phone/PhonePageHeader.vue';
 import AllAgentsOptions from '../Components/AllAgentsOptions.vue';
 import WorkspaceSearchDialog from '../Components/WorkspaceSearchDialog.vue';
 import SidebarDialogs from '../Components/Sidebar/SidebarDialogs.vue';
 import WorkbenchSidebar from '../Components/Sidebar/WorkbenchSidebar.vue';
+import { phoneLayout } from '../lib/phoneLayout';
 import { provideSidebarContext } from '../Components/Sidebar/sidebarContext';
 import { TooltipProvider } from '../Components/ui/tooltip';
 import { APPEARANCE_SETTINGS_CHANGED_EVENT, applyUiFont, lastKnownAppearanceSettings, loadAppearanceSettings, navigationLayoutHint, normalizeAppearanceSettings, type AppearanceSettings, type NavigationLayout } from '../appearance/AppearanceSettings';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { useHarnessLaunchCleanup, useHarnessLaunchesFor } from '../Composables/useHarnessLaunch';
-import { useSoftKeyboard } from '../Composables/useSoftKeyboard';
 import { useWorkbenchNavigation } from '../Composables/useWorkbenchNavigation';
 import {
   agentOptionTargetByDelta,
@@ -184,10 +171,23 @@ const paletteOpen = ref(false);
 provide(openCommandPaletteKey, () => { paletteOpen.value = true; });
 const searchOpen = ref(false);
 const searchQuery = ref('');
-const mobile = useMediaQuery('(max-width: 639px)');
-const keyboardOpen = useSoftKeyboard();
+const mobile = phoneLayout;
 const assistantDocked = computed(() => assistant.enabled && assistantLayout.open && assistantLayout.docked && !assistantLayout.expanded && !mobile.value);
 const showStandalonePage = computed(() => !activeProjectId.value || route.name === 'settings' || route.name === 'usage' || route.name === 'routines' || route.name === 'routineLog');
+// Pages opened over a phone's list, and where Back goes from each when
+// there's nothing in the project to step back to: up to the Library, or from
+// a todo or scratchpad, up to its list.
+const PHONE_PAGE_TITLES: Partial<Record<string, string>> = { library: 'Library', worktrees: 'Worktrees', history: 'History', todos: 'Todos', scratchpads: 'Scratchpads', media: 'Media', launch: 'New agent' };
+const phonePage = computed(() => {
+  const projectId = activeProjectId.value;
+  const name = typeof route.name === 'string' ? route.name : '';
+  const title = PHONE_PAGE_TITLES[name];
+  if (!projectId || !title) return null;
+  const up = name === 'library' || name === 'launch' ? { name: 'project', params: { projectId } }
+    : route.params.recordId ? { name, params: { projectId } }
+      : { name: 'library', params: { projectId } };
+  return { title, up };
+});
 
 function openSettings(): void {
   void router.push({ name: 'settings' });
@@ -373,8 +373,7 @@ function stripTabProject(tab: StripTab): ProjectSummary | null {
 }
 const currentAgentFamilies = computed(() => currentStripTabs.value.flatMap((tab) => tab.kind === 'agent' ? [tab.family] : []));
 // All agents with snoozed projects' tabs too, which the strip leaves out:
-// their tabs keep their slots, and the phone menu still names an agent you're
-// in whose project is snoozed.
+// their tabs keep their slots.
 const everyAgentsView = computed(() => showingAll.value ? buildAllAgentsView(projects.value, allAgents.hidden) : null);
 const everyStripTabs = computed(() => {
   const view = everyAgentsView.value;
@@ -382,10 +381,6 @@ const everyStripTabs = computed(() => {
   const sessions = activeAgentSessions(view.sessions);
   return buildStripTabs(buildAgentTabFamilies(sessions, selectedAgentByRoot.value), topLevelProcessesForSessions(sessions, activeProcesses(view.processes)), currentTabLayout.value);
 });
-const everyAgentFamilies = computed(() => everyStripTabs.value.flatMap((tab) => tab.kind === 'agent' ? [tab.family] : []));
-// The phone tab menu lists what the strip shows, so snoozed agents can hide there too.
-const shownAgentFamilies = computed(() => shownStripTabs.value.flatMap((tab) => tab.kind === 'agent' ? [tab.family] : []));
-const currentStripProcesses = computed(() => currentStripTabs.value.flatMap((tab) => tab.kind === 'process' ? [tab.process] : []));
 
 // Agents show as tabs or in the sidebar, as chosen in Settings → Appearance.
 const navigation = ref<NavigationLayout>(navigationLayoutHint());
