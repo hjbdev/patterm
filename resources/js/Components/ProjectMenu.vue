@@ -43,7 +43,7 @@
         <p>Files on disk stay: <span class="font-mono text-foreground">{{ project.path }}</span>, its worktree folders, and its branches.</p>
       </div>
       <p v-if="error" role="alert" class="text-sm text-destructive">{{ error }}</p>
-      <DialogFooter class="gap-2">
+      <DialogFooter>
         <Button type="button" variant="ghost" :disabled="busy" @click="removeOpen = false">Cancel</Button>
         <Button type="button" variant="ghost" class="text-destructive hover:text-destructive" :disabled="busy" @click="submitRemove">Remove project</Button>
       </DialogFooter>
