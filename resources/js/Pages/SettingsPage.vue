@@ -200,7 +200,7 @@
 <script setup lang="ts">
 import AssistantButton from '../Components/Assistant/AssistantButton.vue';
 import { computed, onBeforeUnmount, reactive, ref } from 'vue';
-import { ArrowLeft, AudioLines, Bell, ChartColumn, ChevronDown, History, Info, KeyRound, Palette, Plug, Server, Shrink, Smile, Sparkles } from 'lucide-vue-next';
+import { ArrowLeft, AudioLines, Bell, ChartColumn, ChevronDown, Cpu, History, Info, KeyRound, Palette, Plug, Server, Shrink, Sparkles } from 'lucide-vue-next';
 import {
   DIFF_VIEWER_OPTIONS,
   NAVIGATION_OPTIONS,
@@ -259,7 +259,7 @@ const NAV = [
   { value: 'assistant', label: 'Assistant', icon: AudioLines },
   { value: 'compaction', label: 'Idle compaction', icon: Shrink },
   { value: 'figures', label: 'Figures', icon: ChartColumn },
-  { value: 'harnesses', label: 'Profiles', icon: Smile },
+  { value: 'harnesses', label: 'Harnesses', icon: Cpu },
   { value: 'mcp', label: 'MCP servers', icon: Plug },
   { value: 'hosts', label: 'Hosts', icon: Server },
   { value: 'access', label: 'Remote access', icon: KeyRound },

@@ -19,12 +19,9 @@
         <button type="button" class="flex h-7 w-7 shrink-0 items-center justify-center rounded-tab text-muted-foreground hover:bg-muted/60 hover:text-foreground" aria-label="Back to profiles" title="Back (Esc)" @click="stopComposing">
           <ChevronLeft class="h-4 w-4" />
         </button>
-        <ProfileFace :look="composerRow.look" :size="20" motion />
+        <AgentIcon :harness="composerRow.harness" class="h-4 w-4 shrink-0 text-muted-foreground" />
         <span class="min-w-0 truncate text-[13px]">{{ composerRow.name }}</span>
-        <span class="ml-auto flex min-w-0 shrink-[3] items-center gap-1.5 pl-2 text-[11px] text-muted-foreground">
-          <AgentIcon :harness="composerRow.harness" class="h-3 w-3 shrink-0" />
-          <span class="truncate">{{ composed?.detail ?? composerNote }}</span>
-        </span>
+        <span class="ml-auto min-w-0 shrink-[3] truncate pl-2 text-[11px] text-muted-foreground">{{ composed?.detail ?? composerNote }}</span>
       </div>
       <Textarea v-model="message" rows="3" :placeholder="`Ask ${composerRow.name} to…`" aria-label="First message" class="min-h-20 resize-none rounded-none border-0 border-t border-border px-3 py-2.5 text-[13px] shadow-none focus-visible:ring-0" @keydown="onComposerKeydown" />
     </div>
@@ -41,13 +38,11 @@
         <div class="max-h-[min(20rem,50dvh)] overflow-y-auto overscroll-contain p-1">
           <CommandGroup v-if="matches.length" class="p-0">
             <CommandItem v-for="(row, index) in matches" :key="row.key" :value="row.key" data-launch-profile :class="cn('gap-2.5 px-2', phoneLayout ? 'min-h-11' : 'h-[34px]')" @select="launchRow(row)">
-              <ProfileFace :look="row.look" :size="20" :motion="highlighted === row.key" />
+              <!-- Profiles show their CLI; faces are for bots. -->
+              <AgentIcon :harness="row.harness" class="!h-4 !w-4 shrink-0 text-muted-foreground" />
               <!-- Long names and details both give way, so the message button stays in the row. -->
               <span class="min-w-0 truncate text-[13px]">{{ row.name }}</span>
-              <span class="ml-auto flex min-w-0 shrink-[3] items-center gap-1.5 pl-2 text-[11px] text-muted-foreground">
-                <AgentIcon :harness="row.harness" class="!h-3 !w-3 shrink-0" />
-                <span class="truncate">{{ row.detail }}</span>
-              </span>
+              <span class="ml-auto min-w-0 shrink-[3] truncate pl-2 text-[11px] text-muted-foreground">{{ row.detail }}</span>
               <button
                 v-if="phoneLayout || highlighted === row.key"
                 type="button"
@@ -124,7 +119,6 @@ import { cn } from '../lib/utils';
 import AgentIcon from './AgentIcon.vue';
 import HostBadge from './HostBadge.vue';
 import InterfaceModeToggle from './InterfaceModeToggle.vue';
-import ProfileFace from './ProfileFace.vue';
 import ProjectLogo from './ProjectLogo.vue';
 import ResponsivePopover from './ResponsivePopover.vue';
 import { Button } from './ui/button';
