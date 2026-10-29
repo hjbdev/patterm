@@ -72,6 +72,15 @@ export function launchTargets(projects: readonly ProjectWorkbench[], state: AllA
     ]);
 }
 
+// The target a launch menu starts in: the chosen one, or this project when
+// the workbench hasn't listed it yet. Choosing among shown projects never
+// falls back to a hidden one.
+export function chosenLaunchTarget(targets: readonly LaunchTarget[], chosen: string, projectId: string, choosing: boolean): Pick<LaunchTarget, 'projectId' | 'targetProjectId' | 'host'> | null {
+  const target = targets.find((option) => option.targetProjectId === chosen);
+  if (target) return target;
+  return choosing ? null : { projectId, targetProjectId: projectId, host: null };
+}
+
 // The targets whose host has this agent CLI.
 export function targetsWithHarness(targets: readonly LaunchTarget[], harness: string, harnessesOn: (host: string | null) => readonly { harness: string }[]): LaunchTarget[] {
   return targets.filter((target) => harnessesOn(target.host).some((record) => record.harness === harness));

@@ -74,3 +74,10 @@ export function rosterRows(settings: ProfileSettings, installed: readonly string
   const rest = settings.presets.filter((profile) => harnesses.includes(profile.harness) && !shown.has(profile.id)).map(row);
   return [...defaults, ...rest];
 }
+
+// A first message being written keeps its profile while that profile is
+// listed. After the host changes, it moves to the same CLI there, or to none
+// when that host doesn't have the CLI.
+export function composedRow(rows: readonly RosterRow[], row: RosterRow): RosterRow | null {
+  return rows.find((candidate) => candidate.key === row.key) ?? rows.find((candidate) => candidate.harness === row.harness) ?? null;
+}

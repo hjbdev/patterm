@@ -16,7 +16,7 @@ import {
   type ProfileLook
 } from '../resources/js/lib/faces';
 import { harnessLaunches } from '../resources/js/lib/harnessLaunches';
-import { profileDetail, profileName, rosterRows, type Profile, type ProfileSettings } from '../resources/js/lib/profiles';
+import { composedRow, profileDetail, profileName, rosterRows, type Profile, type ProfileSettings } from '../resources/js/lib/profiles';
 
 const base: ProfileLook = { color: 'pink', shape: 'egg', finish: 'soft', marking: 'belly', eyes: 'happy', mouth: 'cat', cheeks: true, hat: 'sprout', accent: 'lime', idle: 'bob' };
 
@@ -82,6 +82,15 @@ assert.deepEqual(rosterRows(settings, ['codex'], null).map((row) => row.presetId
 assert.deepEqual(rosterRows({ presets: [], defaultPresetIdByHarness: { claude: null, codex: null, opencode: null } }, ['opencode'], null).map((row) => [row.name, row.presetId]), [['OpenCode', null]]);
 // Another host launches each CLI with its own default, so local profiles don't apply.
 assert.deepEqual(rosterRows(settings, ['claude', 'codex'], 'workstation').map((row) => [row.name, row.presetId, row.detail]), [['Claude Code', null, 'workstation’s default'], ['Codex', null, 'workstation’s default']]);
+
+// A first message keeps its profile while listed, moves to the same CLI on
+// another host, and has none where that CLI is missing.
+const local = rosterRows(settings, ['claude', 'codex'], null);
+const fable = local.find((row) => row.presetId === 'fable')!;
+assert.equal(composedRow(local, fable)?.presetId, 'fable');
+assert.equal(composedRow(rosterRows(settings, ['claude', 'codex'], 'workstation'), fable)?.key, 'remote:claude');
+assert.equal(composedRow(rosterRows(settings, ['codex'], 'workstation'), fable), null);
+assert.equal(composedRow(local, composedRow(rosterRows(settings, ['claude'], 'workstation'), fable)!)?.presetId, 'd_claude');
 
 // Stored faces: seeded presets have none, an unreadable one falls back
 // instead of failing the list, and agents don't see faces.

@@ -14,19 +14,19 @@
     </template>
 
     <!-- Tab on a profile writes its first message here; Start sends it. -->
-    <div v-if="composing" data-launch-composer>
+    <div v-if="composerRow" data-launch-composer>
       <div class="flex h-10 items-center gap-2 pl-1 pr-3">
         <button type="button" class="flex h-7 w-7 shrink-0 items-center justify-center rounded-tab text-muted-foreground hover:bg-muted/60 hover:text-foreground" aria-label="Back to profiles" title="Back (Esc)" @click="stopComposing">
           <ChevronLeft class="h-4 w-4" />
         </button>
-        <ProfileFace :look="composing.look" :size="20" motion />
-        <span class="shrink-0 truncate text-[13px]">{{ composing.name }}</span>
-        <span class="ml-auto flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-          <AgentIcon :harness="composing.harness" class="h-3 w-3" />
-          <span class="truncate">{{ composing.detail }}</span>
+        <ProfileFace :look="composerRow.look" :size="20" motion />
+        <span class="min-w-0 truncate text-[13px]">{{ composerRow.name }}</span>
+        <span class="ml-auto flex min-w-0 shrink-[3] items-center gap-1.5 pl-2 text-[11px] text-muted-foreground">
+          <AgentIcon :harness="composerRow.harness" class="h-3 w-3 shrink-0" />
+          <span class="truncate">{{ composed?.detail ?? composerNote }}</span>
         </span>
       </div>
-      <Textarea v-model="message" rows="3" :placeholder="`Ask ${composing.name} to…`" aria-label="First message" class="min-h-20 resize-none rounded-none border-0 border-t border-border px-3 py-2.5 text-[13px] shadow-none focus-visible:ring-0" @keydown="onComposerKeydown" />
+      <Textarea v-model="message" rows="3" :placeholder="`Ask ${composerRow.name} to…`" aria-label="First message" class="min-h-20 resize-none rounded-none border-0 border-t border-border px-3 py-2.5 text-[13px] shadow-none focus-visible:ring-0" @keydown="onComposerKeydown" />
     </div>
 
     <Command v-else ref="command" @highlight="(item) => highlighted = typeof item?.value === 'string' ? item.value : null">
@@ -42,9 +42,10 @@
           <CommandGroup v-if="matches.length" class="p-0">
             <CommandItem v-for="(row, index) in matches" :key="row.key" :value="row.key" data-launch-profile :class="cn('gap-2.5 px-2', phoneLayout ? 'min-h-11' : 'h-[34px]')" @select="launchRow(row)">
               <ProfileFace :look="row.look" :size="20" :motion="highlighted === row.key" />
-              <span class="shrink-0 truncate text-[13px]">{{ row.name }}</span>
-              <span class="ml-auto flex min-w-0 items-center gap-1.5 pl-2 text-[11px] text-muted-foreground">
-                <AgentIcon :harness="row.harness" class="!h-3 !w-3" />
+              <!-- Long names and details both give way, so the message button stays in the row. -->
+              <span class="min-w-0 truncate text-[13px]">{{ row.name }}</span>
+              <span class="ml-auto flex min-w-0 shrink-[3] items-center gap-1.5 pl-2 text-[11px] text-muted-foreground">
+                <AgentIcon :harness="row.harness" class="!h-3 !w-3 shrink-0" />
                 <span class="truncate">{{ row.detail }}</span>
               </span>
               <button
@@ -97,7 +98,7 @@
       </DropdownMenu>
       <span class="flex-1" />
       <InterfaceModeToggle :compact="!phoneLayout" :model-value="interfaceMode" @update:model-value="saveInterface" />
-      <Button v-if="composing" type="button" size="sm" class="ml-1 h-7 gap-1.5 px-2.5 text-xs" @click="startComposed">
+      <Button v-if="composing" type="button" size="sm" class="ml-1 h-7 gap-1.5 px-2.5 text-xs" :disabled="!composed || !launchTarget" @click="startComposed">
         Start
         <CornerDownLeft class="h-3 w-3 opacity-60" />
       </Button>
@@ -116,9 +117,9 @@ import { useHarnessLaunch } from '../Composables/useHarnessLaunch';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { harnessLabel, launchableHarnesses as filterLaunchableHarnesses } from '../lib/harnesses';
 import { phoneLayout } from '../lib/phoneLayout';
-import { rosterRows, type ModelLabel, type ProfileSettings, type RosterRow } from '../lib/profiles';
+import { composedRow, rosterRows, type ModelLabel, type ProfileSettings, type RosterRow } from '../lib/profiles';
 import { harnessModels, harnessPresets } from '../lib/serverQuery';
-import { allAgents, allAgentsHiding, launchTargets, type LaunchTarget } from '../lib/allAgents';
+import { allAgents, allAgentsHiding, chosenLaunchTarget, launchTargets, type LaunchTarget } from '../lib/allAgents';
 import { cn } from '../lib/utils';
 import AgentIcon from './AgentIcon.vue';
 import HostBadge from './HostBadge.vue';
@@ -161,8 +162,8 @@ watch([targets, () => props.projectId], () => {
   targetProjectId.value = targets.value.find((option) => option.targetProjectId === props.projectId)?.targetProjectId ?? targets.value[0]?.targetProjectId ?? props.projectId;
 }, { immediate: true });
 const target = computed(() => targets.value.find((option) => option.targetProjectId === targetProjectId.value) ?? null);
-// A project the workbench hasn't listed yet still launches in place.
-const launchTarget = computed(() => target.value ?? { projectId: props.projectId, targetProjectId: props.projectId, host: null });
+// Null when choosing and no project is shown, so nothing starts.
+const launchTarget = computed(() => chosenLaunchTarget(targets.value, targetProjectId.value, props.projectId, Boolean(props.chooseProject)));
 
 function targetLabel(option: LaunchTarget | null): string {
   if (!option) return 'Choose a project';
@@ -173,11 +174,12 @@ function targetLabel(option: LaunchTarget | null): string {
 // be reached lists none.
 const hostHarnesses = ref<Record<string, HarnessInstallationRecord[]>>({});
 const loadingHost = ref<string | null>(null);
-watch([() => launchTarget.value.host, menuOpen], async ([host, open]) => {
-  if (!open || !host || hostHarnesses.value[host]) return;
+watch([() => launchTarget.value?.host, menuOpen], async ([host, open]) => {
+  const projectId = launchTarget.value?.targetProjectId;
+  if (!open || !host || !projectId || hostHarnesses.value[host]) return;
   loadingHost.value = host;
   try {
-    const result = await window.patterm.call('harness_list', { project_id: launchTarget.value.targetProjectId }) as { harnesses?: HarnessInstallationRecord[] } | HarnessInstallationRecord[];
+    const result = await window.patterm.call('harness_list', { project_id: projectId }) as { harnesses?: HarnessInstallationRecord[] } | HarnessInstallationRecord[];
     hostHarnesses.value = { ...hostHarnesses.value, [host]: filterLaunchableHarnesses(Array.isArray(result) ? result : result.harnesses ?? []) };
   } catch (caught) {
     toast.error(caught instanceof Error ? caught.message : `Could not list ${host}’s agents`);
@@ -191,6 +193,7 @@ const presets = ref<ProfileSettings>({ presets: [], defaultPresetIdByHarness: { 
 const catalog = ref<ModelCatalog | null>(null);
 const modelLabel: ModelLabel = (harness, model) => catalog.value?.providers[harness]?.models.find((entry) => entry.id === model)?.label ?? null;
 const rows = computed(() => {
+  if (!launchTarget.value) return [];
   const host = launchTarget.value.host;
   const installed = (host ? hostHarnesses.value[host] ?? [] : filterLaunchableHarnesses(harnesses.value)).map((record) => record.harness);
   return rosterRows(presets.value, installed, host, modelLabel);
@@ -200,11 +203,23 @@ const matches = computed(() => {
   if (!query) return rows.value;
   return rows.value.filter((row) => contains(row.name, query) || contains(row.detail, query) || contains(harnessLabel(row.harness), query));
 });
+// The profile a first message will start, re-checked when the host changes.
+// The composer keeps showing the chosen one while no CLI there matches.
+const composed = computed(() => composing.value ? composedRow(rows.value, composing.value) : null);
+const composerRow = computed(() => composed.value ?? composing.value);
 const emptyText = computed(() => {
+  if (!launchTarget.value) return 'No shown project to start in';
   if (search.value.trim()) return 'No matching profiles';
   const host = launchTarget.value.host;
   if (host && loadingHost.value === host) return `Listing ${host}’s agents…`;
   return host ? `No agent CLIs found on ${host}` : 'No agent CLIs found on PATH';
+});
+// Why Start is off while a first message waits for a CLI the target lacks.
+const composerNote = computed(() => {
+  if (!launchTarget.value) return 'No shown project to start in';
+  const host = launchTarget.value.host;
+  if (host && loadingHost.value === host) return `Listing ${host}’s agents…`;
+  return `Not on ${host ?? 'this host'}`;
 });
 
 watch(menuOpen, (open) => {
@@ -313,12 +328,12 @@ function onComposerKeydown(event: KeyboardEvent): void {
 }
 
 function startComposed(): void {
-  const row = composing.value;
-  if (row) launchHarness(row.harness, row.presetId, launchTarget.value, message.value);
+  const row = composed.value, target = launchTarget.value;
+  if (row && target) launchHarness(row.harness, row.presetId, target, message.value);
 }
 
 function launchRow(row: RosterRow): void {
-  launchHarness(row.harness, row.presetId, launchTarget.value);
+  if (launchTarget.value) launchHarness(row.harness, row.presetId, launchTarget.value);
 }
 
 function openProfiles(): void {
