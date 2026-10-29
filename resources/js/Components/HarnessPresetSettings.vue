@@ -1,5 +1,5 @@
 <template>
-  <SettingsPanel title="Harnesses" description="Choose the model, reasoning effort, and Codex speed each agent CLI launches with. The default preset applies when no preset is chosen.">
+  <SettingsPanel title="Profiles" description="Each profile starts an agent CLI with its own face, model, reasoning effort and Codex speed. A CLI's default profile applies when none is chosen.">
     <template #actions>
       <Button type="button" size="sm" variant="outline" :disabled="refreshBusy" @click="refreshModels">{{ refreshBusy ? 'Discovering…' : 'Discover models' }}</Button>
     </template>
@@ -16,7 +16,7 @@
         <span v-if="catalogError(harness)" class="block text-warning">{{ catalogError(harness) }}</span>
       </template>
       <template #actions>
-        <Button type="button" size="sm" variant="outline" @click="addPreset(harness)">Add preset</Button>
+        <Button type="button" size="sm" variant="outline" @click="addPreset(harness)">Add profile</Button>
       </template>
 
       <SettingsItem v-for="preset in presetsFor(harness)" :key="preset.id" :save-key="`harnesses.${harness}.${preset.id}`">
@@ -26,11 +26,12 @@
             :name="`default-preset-${harness}`"
             class="h-4 w-4 shrink-0 cursor-pointer appearance-none rounded-full border border-white/25 transition-[border-width,border-color] checked:border-[5px] checked:border-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             :checked="defaults[harness] === preset.id"
-            :aria-label="`Make ${preset.name} the default ${harnessName(harness)} preset`"
+            :aria-label="`Make ${preset.name} the default ${harnessName(harness)} profile`"
             @change="setDefault(harness, preset.id)"
           />
         </template>
         <template #title>
+          <ProfileFace :look="lookFor(preset)" :size="20" />
           <span class="truncate">{{ preset.name }}</span>
           <Badge v-if="defaults[harness] === preset.id" variant="secondary" class="h-4 px-1.5 text-[10px] font-medium">Default</Badge>
         </template>
@@ -42,40 +43,52 @@
           <Button type="button" size="sm" variant="ghost" class="h-7 px-2 text-destructive hover:text-destructive" @click="removePreset(harness, preset)">Delete</Button>
         </template>
       </SettingsItem>
-      <p v-if="!presetsFor(harness).length" class="px-3.5 py-3 text-xs text-muted-foreground">No presets. {{ harnessName(harness) }} launches with its own model.</p>
+      <p v-if="!presetsFor(harness).length" class="px-3.5 py-3 text-xs text-muted-foreground">No profiles. {{ harnessName(harness) }} launches with its own model.</p>
     </SettingsSection>
 
     <Dialog v-model:open="editorOpen">
-      <DialogContent class="max-h-[85dvh] overflow-y-auto sm:max-w-md">
+      <DialogContent class="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{{ editor?.id ? `Edit ${editorTitle}` : `Add ${editor ? harnessName(editor.harness) : ''} preset` }}</DialogTitle>
-          <DialogDescription>Agents started with this preset use these settings.</DialogDescription>
+          <DialogTitle>{{ editor?.id ? `Edit ${editorTitle}` : `Add ${editor ? harnessName(editor.harness) : ''} profile` }}</DialogTitle>
+          <DialogDescription>Agents started with this profile use these settings.</DialogDescription>
         </DialogHeader>
         <form v-if="editor" class="space-y-4" @submit.prevent="applyEditor">
-          <div class="grid items-center gap-3 sm:grid-cols-[90px_minmax(0,1fr)]">
-            <label class="text-xs text-muted-foreground" for="preset-name">Name</label>
-            <Input id="preset-name" v-model="editor.name" class="h-8 text-xs" placeholder="smartypants" autocomplete="off" />
-            <label class="text-xs text-muted-foreground" for="preset-model">Model</label>
-            <SettingsChoice id="preset-model" :model-value="editor.model" :options="modelChoices" aria-label="Model" @update:model-value="(value) => { editor!.model = value; onModelChange(); }" />
-            <template v-if="editor.model === CUSTOM_MODEL">
-              <label class="text-xs text-muted-foreground" for="preset-custom">Custom ID</label>
-              <Input id="preset-custom" v-model="editor.customModel" class="h-8 text-xs" placeholder="claude-opus-4-8" autocomplete="off" />
-            </template>
-            <label class="text-xs text-muted-foreground" for="preset-reasoning">Reasoning</label>
-            <SettingsChoice id="preset-reasoning" :model-value="editor.reasoning" :options="reasoningChoices" aria-label="Reasoning" :disabled="editor.model === DEFAULT_MODEL" @update:model-value="(value) => { editor!.reasoning = value; }" />
-            <template v-if="editor.harness === 'codex'">
-              <label class="text-xs text-muted-foreground" for="preset-speed">Speed</label>
-              <SettingsChoice id="preset-speed" :model-value="editor.serviceTier" :options="speedChoices" aria-label="Speed" @update:model-value="(value) => { editor!.serviceTier = value; }" />
-            </template>
+          <!-- The face beside its name and model, then every part below. -->
+          <div class="grid gap-4 sm:grid-cols-[176px_minmax(0,1fr)]">
+            <div class="flex flex-col items-center justify-center gap-3 rounded-lg border border-border py-5" :style="{ background: `radial-gradient(circle at 50% 38%, ${facePalette(editor.look.color).halo}, transparent 68%), hsl(0 0% 3%)` }">
+              <ProfileFace :look="editor.look" :size="96" motion />
+              <Button type="button" size="sm" variant="outline" class="h-7 gap-1.5 text-xs" @click="shuffleLook">
+                <Dices class="h-3.5 w-3.5" />
+                Shuffle
+              </Button>
+            </div>
+            <div class="grid content-start items-center gap-3 sm:grid-cols-[90px_minmax(0,1fr)]">
+              <label class="text-xs text-muted-foreground" for="preset-name">Name</label>
+              <Input id="preset-name" v-model="editor.name" class="h-8 text-xs" placeholder="smartypants" autocomplete="off" />
+              <label class="text-xs text-muted-foreground" for="preset-model">Model</label>
+              <SettingsChoice id="preset-model" :model-value="editor.model" :options="modelChoices" aria-label="Model" @update:model-value="(value) => { editor!.model = value; onModelChange(); }" />
+              <template v-if="editor.model === CUSTOM_MODEL">
+                <label class="text-xs text-muted-foreground" for="preset-custom">Custom ID</label>
+                <Input id="preset-custom" v-model="editor.customModel" class="h-8 text-xs" placeholder="claude-opus-4-8" autocomplete="off" />
+              </template>
+              <label class="text-xs text-muted-foreground" for="preset-reasoning">Reasoning</label>
+              <SettingsChoice id="preset-reasoning" :model-value="editor.reasoning" :options="reasoningChoices" aria-label="Reasoning" :disabled="editor.model === DEFAULT_MODEL" @update:model-value="(value) => { editor!.reasoning = value; }" />
+              <template v-if="editor.harness === 'codex'">
+                <label class="text-xs text-muted-foreground" for="preset-speed">Speed</label>
+                <SettingsChoice id="preset-speed" :model-value="editor.serviceTier" :options="speedChoices" aria-label="Speed" @update:model-value="(value) => { editor!.serviceTier = value; }" />
+              </template>
+              <span />
+              <label class="flex items-center gap-2 text-xs">
+                <Checkbox v-model="editor.isDefault" />
+                Default for {{ harnessName(editor.harness) }}
+              </label>
+            </div>
           </div>
-          <label class="flex items-center gap-2 text-xs">
-            <Checkbox v-model="editor.isDefault" />
-            Default for {{ harnessName(editor.harness) }}
-          </label>
+          <FaceMaker v-model="editor.look" />
           <p v-if="editorError" role="alert" class="text-xs text-destructive">{{ editorError }}</p>
           <DialogFooter>
             <Button type="button" variant="outline" size="sm" @click="editorOpen = false">Cancel</Button>
-            <Button type="submit" size="sm">{{ editor.id ? 'Save' : 'Add preset' }}</Button>
+            <Button type="submit" size="sm">{{ editor.id ? 'Save' : 'Add profile' }}</Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -91,7 +104,10 @@ import { Button } from './ui/button';
 import { Checkbox } from './ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { Input } from './ui/input';
+import { Dices } from 'lucide-vue-next';
 import AgentIcon from './AgentIcon.vue';
+import FaceMaker from './FaceMaker.vue';
+import ProfileFace from './ProfileFace.vue';
 import SettingsChoice from './settings/SettingsChoice.vue';
 import SettingsItem from './settings/SettingsItem.vue';
 import SettingsPanel from './settings/SettingsPanel.vue';
@@ -100,6 +116,7 @@ import { autosave, settingSaveStatus } from '../Composables/useSettingsAutosave'
 import { useWorkbench } from '../Composables/useWorkbench';
 import { harnessLabel } from '../lib/harnesses';
 import { harnessModels, topicChanged } from '../lib/serverQuery';
+import { facePalette, lookFor, randomLook, type ProfileLook } from '../lib/faces';
 
 type PresetHarness = 'claude' | 'codex' | 'opencode';
 type Harness = PresetHarness | 'rawpty';
@@ -111,6 +128,7 @@ interface HarnessPreset {
   model: string | null;
   reasoning: string | null;
   serviceTier: string | null;
+  look: ProfileLook | null;
 }
 
 interface PresetSettings {
@@ -147,6 +165,7 @@ interface EditorState {
   reasoning: string;
   serviceTier: string;
   isDefault: boolean;
+  look: ProfileLook;
 }
 
 const PRESET_HARNESSES: PresetHarness[] = ['claude', 'codex', 'opencode'];
@@ -227,7 +246,7 @@ function applySettings(settings: PresetSettings): void {
 function snapshot(): PresetSettings {
   return {
     // Electron IPC cannot clone Vue's reactive array or its proxy elements.
-    presets: presets.value.map(({ id, harness, name, model, reasoning, serviceTier }) => ({ id, harness, name, model, reasoning, serviceTier: serviceTier ?? null })),
+    presets: presets.value.map(({ id, harness, name, model, reasoning, serviceTier, look }) => ({ id, harness, name, model, reasoning, serviceTier: serviceTier ?? null, look: look ? { ...look } : null })),
     defaultPresetIdByHarness: { claude: defaults.claude, codex: defaults.codex, opencode: defaults.opencode }
   };
 }
@@ -276,7 +295,7 @@ function setDefault(harness: PresetHarness, presetId: string): void {
 function addPreset(harness: PresetHarness): void {
   editorError.value = '';
   editorTitle.value = '';
-  editor.value = { id: null, harness, name: '', model: modelsFor(harness)[0]?.id ?? DEFAULT_MODEL, customModel: '', reasoning: '', serviceTier: '', isDefault: presetsFor(harness).length === 0 };
+  editor.value = { id: null, harness, name: '', model: modelsFor(harness)[0]?.id ?? DEFAULT_MODEL, customModel: '', reasoning: '', serviceTier: '', isDefault: presetsFor(harness).length === 0, look: newLook() };
   editorOpen.value = true;
 }
 
@@ -292,7 +311,8 @@ function editPreset(harness: PresetHarness, preset: HarnessPreset): void {
     customModel: preset.model !== null && !known ? preset.model : '',
     reasoning: preset.reasoning ?? '',
     serviceTier: preset.serviceTier ?? '',
-    isDefault: defaults[harness] === preset.id
+    isDefault: defaults[harness] === preset.id,
+    look: lookFor(preset)
   };
   editorOpen.value = true;
 }
@@ -303,7 +323,7 @@ function applyEditor(): void {
   const name = current.name.trim();
   const model = current.model === DEFAULT_MODEL ? null : current.model === CUSTOM_MODEL ? current.customModel.trim() : current.model;
   if (!name) {
-    editorError.value = 'Give the preset a name.';
+    editorError.value = 'Give the profile a name.';
     return;
   }
   if (current.model === CUSTOM_MODEL && !model) {
@@ -312,7 +332,7 @@ function applyEditor(): void {
   }
   const duplicate = presets.value.some((preset) => preset.harness === current.harness && preset.id !== current.id && preset.name.toLowerCase() === name.toLowerCase());
   if (duplicate) {
-    editorError.value = `A ${current.harness} preset named '${name}' already exists.`;
+    editorError.value = `A ${harnessName(current.harness)} profile named '${name}' already exists.`;
     return;
   }
   const preset: HarnessPreset = {
@@ -321,7 +341,8 @@ function applyEditor(): void {
     name,
     model,
     reasoning: model === null ? null : current.reasoning.trim() || null,
-    serviceTier: current.harness === 'codex' ? current.serviceTier || null : null
+    serviceTier: current.harness === 'codex' ? current.serviceTier || null : null,
+    look: { ...current.look }
   };
   if (current.id) {
     presets.value = presets.value.map((candidate) => candidate.id === current.id ? preset : candidate);
@@ -338,12 +359,21 @@ function applyEditor(): void {
 }
 
 function removePreset(harness: PresetHarness, preset: HarnessPreset): void {
-  if (!window.confirm(`Delete the ${harnessName(harness)} preset “${preset.name}”?`)) return;
+  if (!window.confirm(`Delete the ${harnessName(harness)} profile “${preset.name}”?`)) return;
   presets.value = presets.value.filter((candidate) => candidate.id !== preset.id);
   if (defaults[harness] === preset.id) {
     defaults[harness] = presetsFor(harness)[0]?.id ?? null;
   }
   persist(`harnesses.${harness}`);
+}
+
+// A new profile starts with a random face.
+function newLook(): ProfileLook {
+  return randomLook(Math.floor(Math.random() * 2 ** 32));
+}
+
+function shuffleLook(): void {
+  if (editor.value) editor.value.look = newLook();
 }
 
 function onModelChange(): void {

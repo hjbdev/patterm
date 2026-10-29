@@ -6,8 +6,8 @@
     </DropdownMenuRadioItem>
   </DropdownMenuRadioGroup>
   <div v-else role="radiogroup" aria-label="Agent interface" class="inline-flex gap-0.5 rounded-tab bg-muted/40 p-0.5">
-    <button v-for="mode in modes" :key="mode.value" type="button" role="radio" :aria-checked="modelValue === mode.value" :data-state="modelValue === mode.value ? 'checked' : 'unchecked'" :class="cn(segmentClass, 'min-h-9 px-2.5 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring')" @click="select(mode.value)">
-      <component :is="mode.icon" class="h-4 w-4" />
+    <button v-for="mode in modes" :key="mode.value" type="button" role="radio" :aria-checked="modelValue === mode.value" :data-state="modelValue === mode.value ? 'checked' : 'unchecked'" :class="cn(segmentClass, compact ? 'h-6 px-2 text-xs' : 'min-h-9 px-2.5 text-sm', 'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring')" @click="select(mode.value)">
+      <component :is="mode.icon" :class="compact ? 'h-3.5 w-3.5' : 'h-4 w-4'" />
       {{ mode.label }}
     </button>
   </div>
@@ -19,7 +19,8 @@ import { cn } from '@/lib/utils';
 import { DropdownMenuRadioGroup, DropdownMenuRadioItem } from './ui/dropdown-menu';
 import type { AgentInterface } from '../types';
 
-defineProps<{ modelValue: AgentInterface; menu?: boolean }>();
+// `compact` sizes the buttons for a desktop popover footer.
+defineProps<{ modelValue: AgentInterface; menu?: boolean; compact?: boolean }>();
 const emit = defineEmits<{ 'update:modelValue': [value: AgentInterface] }>();
 
 const modes = [

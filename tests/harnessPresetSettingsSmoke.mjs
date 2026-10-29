@@ -16,11 +16,11 @@ test('preset settings send a plain, cloneable payload through Electron IPC', asy
     stdin: { contents: script.content, resolveDir: path.dirname(filename), loader: 'ts' },
     outfile: output, bundle: true, platform: 'node', format: 'cjs', external: ['vue'],
     plugins: [{ name: 'component-stubs', setup(builder) {
-      builder.onResolve({ filter: /^\.\/ui\/|^\.\/settings\/|^\.\/AgentIcon\.vue$|^\.\.\/Composables\/useWorkbench$|^\.\.\/lib\/harnesses$/ }, (args) => ({ path: args.path, namespace: 'stub' }));
+      builder.onResolve({ filter: /^\.\/ui\/|^\.\/settings\/|^\.\/(AgentIcon|FaceMaker|ProfileFace)\.vue$|^\.\.\/Composables\/useWorkbench$|^\.\.\/lib\/harnesses$/ }, (args) => ({ path: args.path, namespace: 'stub' }));
       builder.onLoad({ filter: /.*/, namespace: 'stub' }, (args) => ({ contents: args.path.includes('useWorkbench')
         ? 'export const useWorkbench = () => ({ harnesses: { value: [] } });'
         : args.path.includes('harnesses') ? 'export const harnessLabel = (value) => value;'
-          : args.path.includes('AgentIcon') || args.path.includes('settings/') ? 'export default {};'
+          : /AgentIcon|FaceMaker|ProfileFace|settings\//.test(args.path) ? 'export default {};'
             : 'export const Badge = {}; export const Button = {}; export const Checkbox = {}; export const Input = {}; export const Dialog = {}; export const DialogContent = {}; export const DialogDescription = {}; export const DialogFooter = {}; export const DialogHeader = {}; export const DialogTitle = {};' }));
     } }]
   });
@@ -54,6 +54,15 @@ test('preset settings send a plain, cloneable payload through Electron IPC', asy
     await state.save();
     assert.equal(state.error, '');
     assert.equal(saved?.presets[1]?.reasoning, 'high');
+    assert.equal(saved?.presets[0]?.look, null, 'A profile without a saved face keeps none');
+
+    // A face edited in the dialog is saved as a plain object.
+    state.editPreset('claude', state.presets[1]);
+    state.editor.look = { ...state.editor.look, hat: 'crown', accent: 'pink' };
+    state.applyEditor();
+    await state.save();
+    assert.equal(saved?.presets[1]?.look?.hat, 'crown');
+    assert.equal(saved?.presets[1]?.look?.accent, 'pink');
   } finally {
     app.unmount();
     delete globalThis.window;
