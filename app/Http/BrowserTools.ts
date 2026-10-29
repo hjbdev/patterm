@@ -36,7 +36,8 @@ export const BROWSER_TOOLS = new Set([
   'worktree_abandon', 'diff_current', 'diff_file'
 ]);
 
-// Terminal operations and Integrated tools that change what everyone viewing
-// a process sees, so only the client controlling it may send them.
+// Terminal operations, and Integrated and agent browser tools, that change
+// what everyone viewing a process sees, so only the client controlling it may
+// send them.
 export const CONTROL_OPERATIONS = new Set(['input', 'resize', 'configure', 'select', 'scroll', 'wheel', 'mouse']);
 export const INTEGRATED_CONTROL_TOOLS = new Set(['integrated_send', 'integrated_configure', 'integrated_command', 'integrated_interrupt', 'integrated_task_stop', 'integrated_queue_update', 'integrated_permission_reply', 'integrated_question_reply', 'integrated_form_reply', 'integrated_new', 'integrated_restart', 'assistant_restart', 'assistant_new', 'bot_restart', ...BROWSER_CONTROL_TOOLS]);
