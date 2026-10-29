@@ -15,6 +15,7 @@ const SettingsPage = () => import('./Pages/SettingsPage.vue');
 const UsagePage = () => import('./Pages/UsagePage.vue');
 const RoutinesPage = () => import('./Pages/RoutinesPage.vue');
 const RoutineLogPage = () => import('./Pages/RoutineLogPage.vue');
+const BotPage = () => import('./Pages/BotPage.vue');
 import { rememberProjectLocation } from './lib/projectLocations';
 
 export function createWorkbenchRouter(history: RouterHistory) {
@@ -31,6 +32,8 @@ export function createWorkbenchRouter(history: RouterHistory) {
       { path: '/projects/:projectId', name: 'project', component: ProjectPage },
       { path: '/projects/:projectId/launches/:launchId', name: 'launch', component: HarnessLaunchPage },
       { path: '/projects/:projectId/agents/:sessionId', name: 'agent', component: TerminalPage },
+      // A bot opens beside the project you're in, though it isn't part of it.
+      { path: '/projects/:projectId/bots/:botId', name: 'bot', component: BotPage },
       { path: '/projects/:projectId/processes/:processId', name: 'process', component: TerminalPage },
       { path: '/projects/:projectId/worktrees', name: 'worktrees', component: ResourcesPage },
       // The Diffs page is gone; its old links open the agent, whose sidebar lists its worktrees.

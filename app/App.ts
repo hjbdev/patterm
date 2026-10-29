@@ -5,6 +5,9 @@ import { AssistantService, type AssistantEvent } from './Services/AssistantServi
 import { AssistantMemoryService } from './Services/AssistantMemoryService';
 import { registerAssistantTools } from './MCP/registerAssistantTools';
 import { registerIdleCompactionTools } from './MCP/registerIdleCompactionTools';
+import { registerBotTools } from './MCP/registerBotTools';
+import { BotService } from './Services/BotService';
+import { claudeConversationSaved } from './Services/ClaudeTaskOutput';
 import { integratedActivityNotifications } from './Listeners/IntegratedActivityNotifications';
 import { integratedHistoryCheckpoints } from './Listeners/IntegratedHistoryCheckpoints';
 import { registerHostTools } from './MCP/registerHostTools';
@@ -502,7 +505,10 @@ async function createApplicationResources(
   mcpServerHandlers.proxyHeaders = (server, caller) => mcpHttpProxy.headers(server, caller);
   // Removing a project keeps launches out of it while it stops what runs there.
   const launchFence = new ProjectLaunchFence();
+  // Bots launch through the launcher, which asks them for their context.
+  let botService: BotService | null = null;
   const harnessLauncher = new HarnessLauncher({
+    botContext: (botId) => botService?.context(botId) ?? '',
     fence: launchFence,
     mcpServers: mcpServerRegistry,
     mcpHttpProxyUrl: mcpHttpProxy.url,
@@ -531,6 +537,18 @@ async function createApplicationResources(
     { log: (event, data) => debugLog.write('assistant', event, data), compacting: (processId) => idleCompaction.compacting(processId) });
   const assistantService = assistant;
   defer(() => assistantService.dispose());
+  const bots = new BotService(database, options.appDataPath, harnessLauncher, settings, workbench,
+    {
+      stop: (processId) => actions.stopProcess.execute(processId),
+      transferTimers: (from, to) => timers.transferOwner(from, to),
+      holdTimers: (processId) => timers.holdOwner(processId),
+      releaseTimers: (timerIds) => { for (const id of timerIds) timers.resume(id); }
+    },
+    {
+      log: (event, data) => debugLog.write('bots', event, data),
+      conversationSaved: (harness, cwd, resumeId) => harness !== 'claude' || claudeConversationSaved({ cwd, sessionId: resumeId, env: process.env })
+    });
+  botService = bots;
   assistantService.start();
   events.on('notifications:changed', (change: NotificationChange) => assistantService.handleNotification(change));
   const processLauncher = new ProcessLauncher({
@@ -542,6 +560,7 @@ async function createApplicationResources(
     notifyChanged: notifyWorkbenchChanged
   });
   const actions = createRegistryActions({
+    botAllows: (botId, projectId) => bots.allows(botId, projectId),
     integrated,
     openCodeServer,
     notifications: notificationService,
@@ -672,6 +691,7 @@ async function createApplicationResources(
     projectSnoozes,
     snoozes,
     assistant: assistantService,
+    bots,
     assistantInbox,
     routines,
     assistantMemory,
@@ -683,6 +703,7 @@ async function createApplicationResources(
   registerMcpServerTools(mcp, mcpServers);
   registerAssistantTools(mcp, assistantService, settings);
   registerIdleCompactionTools(mcp, settings);
+  registerBotTools(mcp, bots, settings, (event, data) => debugLog.write('bots', event, data));
   const releaseInstall = detectReleaseInstall(options.appRoot);
   const updateMode = options.runtime === 'node' ? 'server' : 'desktop';
   const updates = new UpdateService({
@@ -763,6 +784,10 @@ async function createApplicationResources(
   if (!persistent) defer(() => integrated.stopAll());
   const mcpStartedAt = Date.now();
   await mcpSocket.start();
+  // Bots carry on after a restart, unlike other agents, which wait to be
+  // resumed. Their launches need the MCP socket. Started before timers
+  // activate, so it holds the bots' timers until their new sessions adopt them.
+  void bots.ensureAll();
   timers.activate();
   routines.activate();
   projectSnoozes.activate();

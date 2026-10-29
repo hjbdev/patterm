@@ -57,10 +57,12 @@ export interface RegistryActionDeps {
   openCodeServer?: Pick<OpenCodeServerService, 'interrupt' | 'restartService'>;
   notifications?: Pick<NotificationService, 'resolve'>;
   onProcessesChanged?: () => void;
+  // Whether a bot's purview reaches a project.
+  botAllows?: (botId: string | null, projectId: string) => boolean;
 }
 
 export function createRegistryActions(deps: RegistryActionDeps): RegistryActions {
-  const contextService = new ProjectContextService(deps.database, deps.timeline);
+  const contextService = new ProjectContextService(deps.database, deps.timeline, Date.now, deps.botAllows);
   const projectContext = new ProjectContextAction(deps.database, contextService);
   return {
     projectContext,

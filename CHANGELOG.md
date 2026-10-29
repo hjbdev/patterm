@@ -77,21 +77,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   notification sums up what was held. All agents folds it to its name with a
   zzz icon, and the project switcher lists it last, muted. Set when your
   workday starts in Settings › Notifications.
-- Profiles have faces. Each one gets a little character, built in Settings ›
-  Profiles from a colour, shape, finish, marking, eyes, mouth, cheeks, a hat
-  with its own accent colour and an idle motion, or shuffled. Profiles without
-  one get a face picked from their ID, and the plain CLIs start with their own.
 - Tab on a profile in the launch menu writes the agent's first message before
   it starts. Enter sends it, Shift+Enter adds a line and Esc goes back.
+- Bots: persistent companions you text with, set up in Settings › Bots. Each
+  bot has a face (or an emoji or a picture), runs one of your profiles, and
+  keeps one conversation that Patterm resumes after a restart. Give it no
+  projects, chosen ones or all of them; it starts helpers there for real work,
+  and they stay out of the sidebar and out of its conversation while it
+  relays what matters in short replies. Bots list above the agents with their
+  last line, and a helper waiting on you shows on its bot's row. Bots with no
+  projects or all of them list in every project and on the projects page; one
+  with chosen projects lists only in those. The assistant leads the list while
+  it is on and opens its panel. Faces are
+  built from a colour, shape, finish, marking, eyes, mouth, cheeks, a hat with
+  its own accent colour and an idle motion, or shuffled.
 
 ### Changed
 
 - Starting an agent is one list instead of nested menus. Every profile is a
-  row with its face, name, harness icon and model, each CLI's default first
-  and named after it. Type to filter, then Enter, or press 1–9. The project
-  and paired host sit in the footer instead of a step after the agent, and New
-  profile… opens Settings. Harness presets are called profiles in Settings;
-  their IDs and names don't change, so `spawn_agent` presets keep working.
+  row with its harness icon, name and model, each CLI's default first and
+  named after it. Type to filter, then Enter, or press 1–9. The project and
+  paired host sit in the footer instead of a step after the agent, and New
+  profile… opens Settings › Harnesses. Harness presets are called profiles
+  there; their IDs and names don't change, so `spawn_agent` presets keep
+  working.
 
 - The top bar keeps the project switcher, the assistant, search, the
   notifications bell and a ⋯ menu holding Scheduled, Usage and Settings.

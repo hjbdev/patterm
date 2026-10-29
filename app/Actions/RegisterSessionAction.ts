@@ -10,7 +10,9 @@ export const registerSessionInput = z.object({
   mcp_identity: z.string().nullable().default(null),
   harness: z.string().min(1),
   interface_mode: z.enum(['tui', 'integrated']).default('tui'),
-  session_role: z.enum(['orchestrator', 'child', 'process', 'assistant', 'routine']).default('orchestrator'),
+  session_role: z.enum(['orchestrator', 'child', 'process', 'assistant', 'routine', 'bot']).default('orchestrator'),
+  // The bot this session runs, for role 'bot'.
+  bot_id: z.string().min(1).nullable().default(null),
   cwd: z.string().nullable().default(null),
   worktree_id: z.string().nullable().default(null),
   last_title: z.string().nullable().default(null),
@@ -47,8 +49,8 @@ export class RegisterSessionAction {
       .prepare(
         `insert into sessions
           (id, project_id, process_id, mcp_identity, harness, interface_mode, session_role, resume_status,
-           resume_id, started_at, cwd, worktree_id, last_title, display_name, model, reasoning, service_tier, created_by_actor)
-          values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           resume_id, started_at, cwd, worktree_id, last_title, display_name, model, reasoning, service_tier, created_by_actor, bot_id)
+          values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -68,7 +70,8 @@ export class RegisterSessionAction {
         input.model,
         input.reasoning,
         input.service_tier,
-        input.created_by_actor
+        input.created_by_actor,
+        input.bot_id
       );
 
     if (input.resume_id && (input.resumed_conversation_id || input.resumed_from_session_id || input.resume_status === 'imported')) {

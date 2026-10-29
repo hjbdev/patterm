@@ -11,7 +11,7 @@ export interface ProjectSummary {
   path: string;
   logo?: string | null;
   // 'personal' marks the Personal project, which is not a repository.
-  kind?: 'workspace' | 'personal' | 'assistant';
+  kind?: 'workspace' | 'personal' | 'assistant' | 'bots';
   // Snoozed until this time: notifications held, tucked away in All agents.
   snoozedUntil?: string | null;
   // The paired host that owns a record, which then has a host-qualified ID
@@ -43,7 +43,7 @@ export interface SidebarState {
   knownSections: string[];
 }
 
-export type SessionRole = 'orchestrator' | 'child' | 'process';
+export type SessionRole = 'orchestrator' | 'child' | 'process' | 'assistant' | 'routine' | 'bot';
 export type ResumeStatus = 'unknown' | 'found' | 'missing' | 'imported';
 export type AgentInterface = 'tui' | 'integrated';
 
@@ -66,6 +66,9 @@ export interface SessionRecord {
   id: string;
   // Parent agent that spawned this one (null for a root/orchestrator).
   parentId: string | null;
+  // The parent agent's process, which may sit in another project, such as a
+  // bot's.
+  parentProcessId?: string | null;
   // Sidecar PTY id backing this session, used to attach the terminal view.
   ptyProcessId: string | null;
   // Stable processes.id row backing this session, used for lifecycle actions.
@@ -76,6 +79,8 @@ export interface SessionRecord {
   harness: string | null;
   interfaceMode: AgentInterface;
   sessionRole: SessionRole;
+  // The bot this session runs, for role 'bot'.
+  botId?: string | null;
   resumeStatus: ResumeStatus;
   activity: ActivityState;
   // Background tasks still running, such as a shell the agent waits on. Older

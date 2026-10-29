@@ -37,13 +37,14 @@ const targets = {
 // Shared domain operations for the UI and MCP. Call mutations inside an action
 // transaction so relationship validation, writes, and timeline events commit together.
 export class ProjectContextService {
-  constructor(private readonly database: DatabaseService, private readonly timeline: TimelineService, private readonly now = Date.now) {}
+  // botAllows: whether a bot's purview reaches a project.
+  constructor(private readonly database: DatabaseService, private readonly timeline: TimelineService, private readonly now = Date.now, private readonly botAllows?: (botId: string | null, projectId: string) => boolean) {}
   private get db() { return this.database.connection; }
 
   actor(identity: string | null | undefined, projectId?: string): ContextActor {
     if (identity) {
-      const session = this.db.prepare(`select s.id,s.project_id,s.session_role from sessions s join processes p on p.id=s.process_id
-        where s.mcp_identity=? and s.exited_at is null and p.status='running'`).get(identity) as { id: string; project_id: string; session_role: string } | undefined;
+      const session = this.db.prepare(`select s.id,s.project_id,s.session_role,s.bot_id from sessions s join processes p on p.id=s.process_id
+        where s.mcp_identity=? and s.exited_at is null and p.status='running'`).get(identity) as { id: string; project_id: string; session_role: string; bot_id: string | null } | undefined;
       if (!session) throw new Error('Unknown or inactive agent identity');
       // The global assistant and workspace routine runs work in any workspace
       // project they name. They have no session there, so nothing links to them.
@@ -51,6 +52,13 @@ export class ProjectContextService {
         const project = projectId ? this.db.prepare(`select kind from projects where id=?`).get(projectId) as { kind: string } | undefined : undefined;
         if (!isUserProjectKind(project?.kind)) throw new Error(`${session.session_role === 'routine' ? 'A workspace routine' : 'The assistant'} must pass a workspace project_id`);
         return { projectId: projectId!, actorId: session.id, sessionId: null };
+      }
+      // A bot works in its own private project, and in the user projects its
+      // purview names when it names one, unlinked like the assistant there.
+      if (session.session_role === 'bot' && projectId && projectId !== session.project_id) {
+        const project = this.db.prepare(`select kind from projects where id=?`).get(projectId) as { kind: string } | undefined;
+        if (!isUserProjectKind(project?.kind) || !this.botAllows?.(session.bot_id, projectId)) throw new Error('Project is outside this bot\'s projects');
+        return { projectId, actorId: session.id, sessionId: null };
       }
       if (projectId && projectId !== session.project_id) throw new Error('Project is outside the caller scope');
       return { projectId: session.project_id, actorId: session.id, sessionId: session.id };

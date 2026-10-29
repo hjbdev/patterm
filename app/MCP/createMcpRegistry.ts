@@ -58,6 +58,7 @@ import { registerUsageTools } from './registerUsageTools';
 import { registerRoutineTools } from './registerRoutineTools';
 import type { RoutineService } from '../Services/RoutineService';
 import type { GetUsageSummaryAction } from '../Actions/UsageActions';
+import type { BotService } from '../Services/BotService';
 import type { AssistantService } from '../Services/AssistantService';
 import type { AssistantInbox } from '../Services/AssistantInbox';
 import { queuedDetail, SendMessageAction } from '../Actions/SendMessageAction';
@@ -118,6 +119,8 @@ interface RegistryServices {
   snoozes?: Pick<SnoozeActions, 'snooze' | 'unsnooze' | 'dismissReminder' | 'userInput'>;
   usage?: GetUsageSummaryAction;
   assistant?: Pick<AssistantService, 'deliverAgentMessage'> & Partial<Pick<AssistantService, 'setFocus' | 'focusItems'>>;
+  // Whether a bot's purview reaches a project.
+  bots?: Pick<BotService, 'allows'>;
   assistantInbox?: Pick<AssistantInbox, 'hold'>;
   assistantMemory?: AssistantMemoryService;
   launchingIdentities?: Pick<LaunchingMcpIdentities, 'role'>;
@@ -331,7 +334,13 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
   const registry = new McpToolRegistry();
   registerProjectContextTools(registry, services.actions.projectContext);
   if (services.usage) registerUsageTools(registry, services.usage);
-  const caller = (context: McpCallContext) => context.remote ? remoteCaller(services.database, context.remote) : resolveCaller(services.database, context.identity ?? null);
+  const caller = (context: McpCallContext) => {
+    if (context.remote) return remoteCaller(services.database, context.remote);
+    const row = resolveCaller(services.database, context.identity ?? null);
+    // Purview only ever names user projects: never the assistant's or a bot's.
+    if (row?.session_role === 'bot') row.purview = (projectId) => isUserProject(services.database, projectId) && (services.bots?.allows(row.bot_id ?? null, projectId) ?? false);
+    return row;
+  };
   // An identity must name a running agent, even for tools that ignore it.
   registry.setCallerCheck((context) => { if (!context.remote) resolveCaller(services.database, context.identity ?? null); });
   // Native MCP discovery happens during prepare, before session registration.
@@ -347,6 +356,8 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     const routines = services.routines;
     registerRoutineTools(registry, routines, (context) => {
       const current = caller(context);
+      // Routines would run where nobody sees them, in a bot's private project.
+      if (isBot(current)) throw new Error('Bots can\'t manage routines yet');
       return current ? { sessionId: current.session_id, projectId: current.project_id, workspace: hasWorkspaceScope(current) } : null;
     }, services.crossHost ? (host, tool, args, context) => {
       // Agents in a linked project save routines on the other host; it owns
@@ -399,7 +410,17 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
   const projectFor = (context: McpCallContext, explicit?: string) => {
     const current = caller(context);
     if (hasWorkspaceScope(current)) return explicit ? workspaceProjectId(services.database, explicit) : null;
+    if (current && isBot(current)) return explicit && explicit !== current.project_id ? inPurview(current, explicit) : current.project_id;
     return explicit ? scopedProjectId(services.database, current, explicit) : current?.project_id ?? defaultProjectId();
+  };
+  // Where an agent or process starts. A bot starts them only in one of its
+  // projects, never in its own hidden one, where the user couldn't open them.
+  const launchProjectFor = (context: McpCallContext, tool: string, explicit?: string) => {
+    const current = caller(context);
+    if (current && isBot(current) && (!explicit || explicit === current.project_id)) {
+      throw new Error(`${tool}: pass the project_id of one of this bot's projects. A bot's helpers run there; a bot without projects can't start them.`);
+    }
+    return projectFor(context, explicit);
   };
   const processFor = (context: McpCallContext, processId: string) => scopedProcessId(services.database, caller(context), processId);
   const worktreeFor = (context: McpCallContext, worktreeId: string) => scopedWorktreeId(services.database, caller(context), worktreeId);
@@ -461,7 +482,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     },
     async (args, context) => {
       const input = spawnAgentInput.parse(args);
-      const projectId = projectFor(context, input.project_id);
+      const projectId = launchProjectFor(context, 'spawn_agent', input.project_id);
       if (!projectId) {
         throw new Error(hasWorkspaceScope(caller(context)) ? 'spawn_agent: pass the project_id to spawn in' : 'spawn_agent: no project is available');
       }
@@ -474,7 +495,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
         if (!resumeConversationAgent) throw new Error('spawn_agent: conversation history is not available');
         const launched = await resumeConversationAgent.execute({
           conversation_id: input.conversation_id,
-          project_id: hasWorkspaceScope(parent) ? projectId : parent.project_id,
+          project_id: picksProject(parent) ? projectId : parent.project_id,
           actor_id: parent.session_id,
           parent_process_id: parentProcessId,
           name: input.name,
@@ -637,7 +658,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     },
     async (args, context) => {
       const input = spawnProcessInput.parse(args);
-      const projectId = projectFor(context, input.project_id);
+      const projectId = launchProjectFor(context, 'spawn_process', input.project_id);
       if (!projectId) {
         throw new Error('spawn_process: no project is available');
       }
@@ -671,7 +692,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
   }, async (args, context) => {
     const input = listProcessesInput.parse(args ?? {});
     const current = caller(context);
-    const projectId = hasWorkspaceScope(current) ? projectFor(context, input.project_id) : current?.project_id ?? null;
+    const projectId = picksProject(current) ? projectFor(context, input.project_id) : current?.project_id ?? null;
     if (hasWorkspaceScope(current) && !projectId) throw new Error('list_processes: pass a project_id; assistant_overview lists every project');
     const local = listCliProcesses(services.database, input.kind, projectId, current?.process_id ?? null)
       .filter((row) => input.status === 'all' || row.status === 'running' || row.is_current);
@@ -698,13 +719,14 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     const input = projectStatusInput.parse(args ?? {});
     const current = caller(context);
     if (hasWorkspaceScope(current) && !input.project_id) return assistantOverview(services, current!);
-    const projectId = hasWorkspaceScope(current) ? projectFor(context, input.project_id) : projectFor(context);
+    if (isBot(current) && !input.project_id) return botOverview(services, current!);
+    const projectId = picksProject(current) ? projectFor(context, input.project_id) : projectFor(context);
     const remote = await remoteProcessesFor(context, current?.project_id ?? null, {});
     return {
       project: projectMeta(services.workbench.getProject(projectId ?? '') ?? null),
       caller: whoami(services.database, context.identity ?? null, false, registry),
       current_process_id: current?.process_id ?? '',
-      processes: [...listCliProcesses(services.database, undefined, hasWorkspaceScope(current) ? projectId : current?.project_id ?? null, current?.process_id ?? null), ...remote.processes],
+      processes: [...listCliProcesses(services.database, undefined, picksProject(current) ? projectId : current?.project_id ?? null, current?.process_id ?? null), ...remote.processes],
       ...(remote.unavailable.length ? { unavailable_hosts: remote.unavailable } : {})
     };
   });
@@ -1530,7 +1552,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     },
     (args, context) => {
       const input = historyGetInput.parse(args);
-      assertConversationAccess(services, context, input.conversation_id);
+      assertConversationAccess(services, context, input.conversation_id, (projectId) => Boolean(caller(context)?.purview?.(projectId)));
       return requireHistoryRead(services).get(input);
     }
   );
@@ -2246,6 +2268,9 @@ interface CallerRow {
   project_id: string;
   process_id: string | null;
   session_role: string;
+  // The bot a 'bot' session runs, and whether its purview reaches a project.
+  bot_id?: string | null;
+  purview?: (projectId: string) => boolean;
   cwd: string | null;
   worktree_id: string | null;
   parent_process_id: string | null;
@@ -2263,7 +2288,7 @@ function resolveCaller(database: DatabaseService, identity: string | null): Call
     database.connection
       .prepare(
         `select sessions.id as session_id, sessions.project_id, sessions.process_id,
-                sessions.session_role, sessions.cwd, sessions.worktree_id, sessions.title,
+                sessions.session_role, sessions.bot_id, sessions.cwd, sessions.worktree_id, sessions.title,
                 processes.parent_process_id, projects.path as project_path
          from sessions
          left join processes on processes.id = sessions.process_id
@@ -2297,11 +2322,45 @@ function hasWorkspaceScope(caller: CallerRow | null): boolean {
   return caller?.session_role === 'assistant' || caller?.session_role === 'routine';
 }
 
+// A bot is scoped like any agent to its own private project, and also reaches
+// the user projects its purview names when it names one. It never gets
+// workspace scope, so reads that omit a project see only the bot itself.
+function isBot(caller: CallerRow | null): boolean {
+  return caller?.session_role === 'bot';
+}
+
+// Callers that name the project each call works in, rather than having one.
+function picksProject(caller: CallerRow | null): boolean {
+  return hasWorkspaceScope(caller) || isBot(caller);
+}
+
+function inPurview(caller: CallerRow, projectId: string): string {
+  if (!caller.purview?.(projectId)) throw new Error('project is outside this bot\'s projects');
+  return projectId;
+}
+
+function isUserProject(database: DatabaseService, projectId: string): boolean {
+  const row = database.connection.prepare(`select kind from projects where id = ?`).get(projectId) as { kind: string } | undefined;
+  return Boolean(row && isUserProjectKind(row.kind));
+}
+
 function workspaceProjectId(database: DatabaseService, projectId: string): string {
   const row = database.connection.prepare(`select kind from projects where id = ?`).get(projectId) as { kind: string } | undefined;
   if (!row) throw new Error(`unknown project: ${projectId}`);
   if (!isUserProjectKind(row.kind)) throw new Error('project is not a workspace project');
   return projectId;
+}
+
+// A bot's own processes, and the user projects its purview names with what
+// runs there. Nothing about other projects, notifications included.
+function botOverview(services: RegistryServices, current: CallerRow) {
+  const projects = services.workbench.listProjects().filter((project) => current.purview?.(project.id)).map((project) => ({
+    project_id: project.id,
+    name: project.name,
+    path: project.path,
+    processes: listActiveProcesses(services.database, project.id)
+  }));
+  return { current_process_id: current.process_id ?? '', own: listActiveProcesses(services.database, current.project_id), projects };
 }
 
 function assistantOverview(services: RegistryServices, current: CallerRow) {
@@ -2352,7 +2411,8 @@ function scopedProcessId(database: DatabaseService, caller: CallerRow | null, pr
     return processId;
   }
   const row = database.connection.prepare(`select project_id from processes where id = ?`).get(processId) as { project_id: string } | undefined;
-  if (!row || row.project_id !== caller.project_id) {
+  // A bot also reaches processes in its purview's user projects.
+  if (!row || (row.project_id !== caller.project_id && !caller.purview?.(row.project_id))) {
     throw new Error('process is outside the current caller scope');
   }
   return processId;
@@ -2363,7 +2423,7 @@ function scopedWorktreeId(database: DatabaseService, caller: CallerRow | null, w
     return worktreeId;
   }
   const row = database.connection.prepare(`select project_id from worktrees where id = ?`).get(worktreeId) as { project_id: string } | undefined;
-  if (!row || row.project_id !== caller.project_id) {
+  if (!row || (row.project_id !== caller.project_id && !caller.purview?.(row.project_id))) {
     throw new Error('worktree is outside the current caller scope');
   }
   return worktreeId;
@@ -2612,12 +2672,14 @@ function isIntegratedProcess(database: DatabaseService, processId: string): bool
   return Boolean(database.connection.prepare(`select 1 from sessions where process_id = ? and interface_mode = 'integrated' and exited_at is null`).get(processId));
 }
 
-function assertConversationAccess(services: RegistryServices, context: McpCallContext, conversationId: string): void {
+// inPurview: whether a bot caller works in a project, so it reads that
+// project's history as well as its own.
+function assertConversationAccess(services: RegistryServices, context: McpCallContext, conversationId: string, inPurview: (projectId: string) => boolean = () => false): void {
   const current = resolveCaller(services.database, context.identity ?? null);
   if (!current) return;
   const conversation = requireHistoryRead(services).get({ conversation_id: conversationId }).conversation;
   if (!conversation) throw new Error(`unknown conversation: ${conversationId}`);
-  if (conversation.projectId && conversation.projectId !== current.project_id) {
+  if (conversation.projectId && conversation.projectId !== current.project_id && !(isBot(current) && inPurview(conversation.projectId))) {
     throw new Error('conversation is outside the caller project scope');
   }
 }

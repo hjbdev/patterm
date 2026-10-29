@@ -86,8 +86,9 @@ export function targetsWithHarness(targets: readonly LaunchTarget[], harness: st
   return targets.filter((target) => harnessesOn(target.host).some((record) => record.harness === harness));
 }
 
-export function openAgentCount(project: ProjectWorkbench): number {
-  return activeAgentSessions(project.projectSessions).length;
+// `hidden`: sessions that never list, such as a bot's helpers.
+export function openAgentCount(project: ProjectWorkbench, hidden?: ReadonlySet<string>): number {
+  return activeAgentSessions(project.projectSessions).filter((session) => !hidden?.has(session.id)).length;
 }
 
 export interface AllAgentsView {

@@ -16,11 +16,11 @@ test('preset settings send a plain, cloneable payload through Electron IPC', asy
     stdin: { contents: script.content, resolveDir: path.dirname(filename), loader: 'ts' },
     outfile: output, bundle: true, platform: 'node', format: 'cjs', external: ['vue'],
     plugins: [{ name: 'component-stubs', setup(builder) {
-      builder.onResolve({ filter: /^\.\/ui\/|^\.\/settings\/|^\.\/(AgentIcon|FaceMaker|ProfileFace)\.vue$|^\.\.\/Composables\/useWorkbench$|^\.\.\/lib\/harnesses$/ }, (args) => ({ path: args.path, namespace: 'stub' }));
+      builder.onResolve({ filter: /^\.\/ui\/|^\.\/settings\/|^\.\/AgentIcon\.vue$|^\.\.\/Composables\/useWorkbench$|^\.\.\/lib\/harnesses$/ }, (args) => ({ path: args.path, namespace: 'stub' }));
       builder.onLoad({ filter: /.*/, namespace: 'stub' }, (args) => ({ contents: args.path.includes('useWorkbench')
         ? 'export const useWorkbench = () => ({ harnesses: { value: [] } });'
         : args.path.includes('harnesses') ? 'export const harnessLabel = (value) => value;'
-          : /AgentIcon|FaceMaker|ProfileFace|settings\//.test(args.path) ? 'export default {};'
+          : args.path.includes('AgentIcon') || args.path.includes('settings/') ? 'export default {};'
             : 'export const Badge = {}; export const Button = {}; export const Checkbox = {}; export const Input = {}; export const Dialog = {}; export const DialogContent = {}; export const DialogDescription = {}; export const DialogFooter = {}; export const DialogHeader = {}; export const DialogTitle = {};' }));
     } }]
   });
@@ -56,13 +56,14 @@ test('preset settings send a plain, cloneable payload through Electron IPC', asy
     assert.equal(saved?.presets[1]?.reasoning, 'high');
     assert.equal(saved?.presets[0]?.look, null, 'A profile without a saved face keeps none');
 
-    // A face edited in the dialog is saved as a plain object.
+    // Editing a profile keeps a face saved earlier, as a plain object.
+    state.presets[1].look = { color: 'pink', shape: 'egg', finish: 'soft', marking: 'none', eyes: 'dots', mouth: 'smile', cheeks: false, hat: 'crown', accent: 'pink', idle: 'still' };
     state.editPreset('claude', state.presets[1]);
-    state.editor.look = { ...state.editor.look, hat: 'crown', accent: 'pink' };
+    state.editor.reasoning = 'low';
     state.applyEditor();
     await state.save();
+    assert.equal(saved?.presets[1]?.reasoning, 'low');
     assert.equal(saved?.presets[1]?.look?.hat, 'crown');
-    assert.equal(saved?.presets[1]?.look?.accent, 'pink');
   } finally {
     app.unmount();
     delete globalThis.window;

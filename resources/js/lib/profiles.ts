@@ -1,8 +1,9 @@
-import { lookFor, type ProfileLook } from './faces';
+import type { ProfileLook } from './faces';
 import { harnessLabel } from './harnessLabels';
 
-// Profiles are harness presets with a face. The backend and agent tools keep
-// calling them presets, so IDs and names stay valid in spawn_agent calls.
+// Profiles are harness presets. The backend and agent tools keep calling them
+// presets, so IDs and names stay valid in spawn_agent calls. A saved look is
+// kept for bots; profiles themselves show their CLI's icon.
 // The shapes mirror app/Harness/HarnessPresets, which the renderer can't
 // import without its Node dependencies.
 type PresetHarness = 'claude' | 'codex' | 'opencode';
@@ -47,7 +48,6 @@ export interface RosterRow {
   presetId: string | null;
   name: string;
   detail: string;
-  look: ProfileLook;
 }
 
 // One flat list: each installed CLI's default profile first, then the rest in
@@ -58,17 +58,16 @@ export function rosterRows(settings: ProfileSettings, installed: readonly string
   const harnesses = HARNESS_ORDER.filter((harness) => installed.includes(harness));
   if (remoteHost) {
     return harnesses.map((harness) => ({
-      key: `remote:${harness}`, harness, presetId: null, name: harnessLabel(harness), detail: `${remoteHost}’s default`,
-      look: lookFor({ id: `preset_default_${harness}` })
+      key: `remote:${harness}`, harness, presetId: null, name: harnessLabel(harness), detail: `${remoteHost}’s default`
     }));
   }
-  const row = (profile: Profile): RosterRow => ({ key: profile.id, harness: profile.harness, presetId: profile.id, name: profileName(profile), detail: profileDetail(profile, modelLabel), look: lookFor(profile) });
+  const row = (profile: Profile): RosterRow => ({ key: profile.id, harness: profile.harness, presetId: profile.id, name: profileName(profile), detail: profileDetail(profile, modelLabel) });
   const defaults = harnesses.map((harness) => {
     const id = settings.defaultPresetIdByHarness[harness as PresetHarness];
     const profile = settings.presets.find((candidate) => candidate.id === id && candidate.harness === harness);
     if (profile) return row(profile);
     const fallback = settings.presets.find((candidate) => candidate.harness === harness);
-    return fallback ? row(fallback) : { key: `cli:${harness}`, harness, presetId: null, name: harnessLabel(harness), detail: 'Default model', look: lookFor({ id: `preset_default_${harness}` }) };
+    return fallback ? row(fallback) : { key: `cli:${harness}`, harness, presetId: null, name: harnessLabel(harness), detail: 'Default model' };
   });
   const shown = new Set(defaults.map((entry) => entry.key));
   const rest = settings.presets.filter((profile) => harnesses.includes(profile.harness) && !shown.has(profile.id)).map(row);

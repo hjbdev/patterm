@@ -119,7 +119,7 @@ async function main(): Promise<void> {
     assert.equal(health.status, 200);
     assert.match(health.headers.get('content-security-policy') ?? '', /script-src 'self' 'wasm-unsafe-eval';/);
     assert.match(await (await fetch(base)).text(), /Patterm/);
-    for (const route of ['/settings', '/usage', '/routines', '/routines/log', '/projects', '/projects/example', '/projects/example/agents/session', '/projects/example/processes/process', '/projects/example/worktrees', '/projects/example/agents/session/diffs', '/projects/example/history?conversation=one', '/projects/example/todos', '/projects/example/todos/todo-id', '/projects/example/scratchpads', '/projects/example/scratchpads/scratchpad-id', '/projects/example/media?session=one', '/projects/example/library']) {
+    for (const route of ['/settings', '/usage', '/routines', '/routines/log', '/projects', '/projects/example', '/projects/example/agents/session', '/projects/example/bots/bot-id', '/projects/example/processes/process', '/projects/example/worktrees', '/projects/example/agents/session/diffs', '/projects/example/history?conversation=one', '/projects/example/todos', '/projects/example/todos/todo-id', '/projects/example/scratchpads', '/projects/example/scratchpads/scratchpad-id', '/projects/example/media?session=one', '/projects/example/library']) {
       const page = await fetch(`${base}${route}`);
       assert.equal(page.status, 200, route);
       assert.match(page.headers.get('content-type') ?? '', /text\/html/);

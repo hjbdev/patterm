@@ -39,13 +39,18 @@ export const launchHarnessInput = z.object({
   actor_id: z.string().nullable().default(null),
   parent_process_id: z.string().nullable().default(null),
   // `routine` is a workspace routine run: like the assistant it reaches every project.
-  session_role: z.enum(['orchestrator', 'child', 'assistant', 'routine']).default('orchestrator'),
+  session_role: z.enum(['orchestrator', 'child', 'assistant', 'routine', 'bot']).default('orchestrator'),
+  // The bot a 'bot' session runs; its context comes from the bot's settings.
+  bot_id: z.string().min(1).nullable().default(null),
   name: z.string().optional(),
   initial_prompt: z.string().optional(),
   interface_mode: z.enum(['tui', 'integrated']).optional()
 }).superRefine((value, context) => {
   if (!value.harness && !value.preset) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['harness'], message: 'harness or preset is required' });
+  }
+  if ((value.session_role === 'bot') !== Boolean(value.bot_id)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['bot_id'], message: 'bot sessions, and only they, need a bot_id' });
   }
 });
 
@@ -97,6 +102,8 @@ export interface HarnessLauncherDeps {
   openCodeServer?: Pick<OpenCodeServerService, 'prepare'> & Partial<Pick<OpenCodeServerService, 'prompt'>>;
   integrated?: Pick<IntegratedAgentService, 'prepare' | 'prompt' | 'stop' | 'cleanupLaunch' | 'observe'>;
   settings?: Pick<SettingsService, 'agentInterface' | 'figuresEnabled'>;
+  // A bot session's system context: its SMS-style brief and purview.
+  botContext?: (botId: string) => string;
   // Preset lookup for defaulting the model/reasoning at launch. Defaults to the
   // application settings table.
   presetSettings?: Pick<SettingsService, 'harnessPresets'>;
@@ -201,6 +208,7 @@ export class HarnessLauncher {
     const agentContext = harness === 'rawpty' ? ''
       : input.session_role === 'assistant' ? contextService.buildAssistant(this.deps.assistantMemory?.snapshot()).trim()
       : input.session_role === 'routine' ? contextService.buildRoutine().trim()
+      : input.session_role === 'bot' ? (this.deps.botContext?.(input.bot_id!) ?? '').trim()
       : contextService.build(input.project_id, { figures: interfaceMode === 'integrated' && this.deps.settings?.figuresEnabled() !== false }).trim();
     timing.mark('context.built', { context_chars: agentContext.length });
     const project = this.deps.workbench.getProject(input.project_id);
@@ -300,6 +308,7 @@ export class HarnessLauncher {
           harness,
           interface_mode: interfaceMode,
           session_role: input.session_role,
+          bot_id: input.bot_id ?? null,
           mcp_identity: identity,
           cwd,
           worktree_id: input.worktree_id ?? null,
@@ -380,7 +389,7 @@ export class HarnessLauncher {
       });
       const { session_id } = new RegisterSessionAction(this.deps.database, this.deps.timeline).execute({
         project_id: input.project_id, process_id, harness: selection.harness, interface_mode: 'integrated',
-        session_role: input.session_role, mcp_identity: identity, cwd, worktree_id: input.worktree_id ?? null,
+        session_role: input.session_role, bot_id: input.bot_id ?? null, mcp_identity: identity, cwd, worktree_id: input.worktree_id ?? null,
         last_title: displayName, display_name: input.name?.trim() || null, resume_id: providerSessionId,
         resume_status: resume ? 'imported' : 'found', model: selection.model, reasoning: selection.reasoning,
         service_tier: selection.serviceTier, resumed_conversation_id: resume?.conversation_id ?? null,

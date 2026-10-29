@@ -142,13 +142,25 @@
       </div>
 
       <!-- Tiptap's editable element takes its role, classes and ARIA state from editorAttributes. -->
-      <EditorContent v-if="editor" :editor="editor.tiptap" class="composer-editor" />
+      <!-- A compact composer, as in a bot's chat, is one row: the text and send. -->
+      <div :class="compact ? 'flex items-end gap-1 pb-1.5 pr-1.5' : ''">
+        <EditorContent v-if="editor" :editor="editor.tiptap" :class="cn('composer-editor', compact && 'min-w-0 flex-1')" />
+        <template v-if="compact">
+          <Button v-if="!controlling && (!ended || restartable)" type="button" size="sm" class="mb-0.5" @click="emit('takeControl')">Take control</Button>
+          <Button v-else-if="stoppable" type="button" size="icon" class="mb-0.5 h-8 w-8 shrink-0" aria-label="Stop response" title="Stop response" @click="emit('interrupt')">
+            <Square class="h-3.5 w-3.5 fill-current" />
+          </Button>
+          <Button v-else type="submit" size="icon" class="mb-0.5 h-8 w-8 shrink-0" :disabled="!canSend" :aria-label="sending ? 'Sending' : 'Send message'" :title="sendTitle">
+            <ArrowUp class="h-4 w-4" />
+          </Button>
+        </template>
+      </div>
 
       <!-- Phones keep one row: status on the left, then attach, the drawer
            that holds the pickers, and send (order 1, 2 and 4). Send turns into
            Stop while the agent works and the box is empty; with something
            typed it sends, to the queue. -->
-      <div class="flex min-h-11 items-center gap-2 px-2 pb-1 sm:flex-wrap">
+      <div v-if="!compact" class="flex min-h-11 items-center gap-2 px-2 pb-1 sm:flex-wrap">
         <div v-if="controls.selectors.length" class="hidden flex-wrap items-center gap-2 sm:flex">
           <IntegratedControlPicker v-for="selector in controls.selectors" :key="selector.id" :selector="selector" :disabled="!controlling || sending || ended" @select="emit('configure', selector.id, $event)" />
         </div>
@@ -177,6 +189,7 @@
 </template>
 
 <script setup lang="ts">
+import { cn } from '@/lib/utils';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useId, watch } from 'vue';
 import { EditorContent } from '@tiptap/vue-3';
 import { ArrowUp, Paperclip, Square, TerminalSquare } from 'lucide-vue-next';
@@ -232,6 +245,10 @@ const props = defineProps<{
   processes?: MentionProcess[] | undefined;
   // Presets and harnesses the @ menu offers for launching a new agent.
   launchers?: MentionLauncher[] | undefined;
+  // One row without pickers, usage or attachments, for a bot's chat; the
+  // placeholder names who you're messaging.
+  compact?: boolean;
+  addressee?: string | undefined;
 }>();
 const emit = defineEmits<{
   send: [request: ComposerSendPayload & { hash: string }];
@@ -283,12 +300,15 @@ const previewSessionId = computed(() => {
 });
 const placeholder = computed(() => {
   if (props.ended) return props.restartable ? 'Type /restart to resume this conversation' : 'This session has ended';
+  if (props.compact) return `Message ${props.addressee ?? 'agent'}`;
   const mentions = agents.value.length || processes.value.length || launchers.value.length ? 'type @ for agents and files' : 'type @ for files';
   return props.controls.commands.length ? `Message agent, ${mentions}, / for commands` : `Message agent, ${mentions}`;
 });
 // The editable element is the combobox that owns the menus.
 const editorAttributes = computed<Record<string, string>>(() => ({
-  class: 'block max-h-44 min-h-14 w-full overflow-y-auto bg-transparent px-4 pb-1 pt-3 text-sm leading-5 outline-none',
+  class: props.compact
+    ? 'block max-h-44 min-h-10 w-full overflow-y-auto bg-transparent px-4 py-2.5 text-sm leading-5 outline-none'
+    : 'block max-h-44 min-h-14 w-full overflow-y-auto bg-transparent px-4 pb-1 pt-3 text-sm leading-5 outline-none',
   'data-patterm-integrated-input': '',
   role: 'combobox',
   'aria-label': 'Message agent',

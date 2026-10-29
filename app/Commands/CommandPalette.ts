@@ -1,7 +1,7 @@
 import type { PattermApplication } from '../App';
 import { FinishedSubagentsAction, type FinishedSubagent } from '../Actions/FinishedSubagentsAction';
 import type { RestartAllResult } from '../Actions/RestartAgentSessionAction';
-import type { HarnessInstallationDto, ProcessDto, ProjectWorkbenchDto, SessionDto, WorktreeDto } from '../Repositories/WorkbenchRepository';
+import { listedProject, type HarnessInstallationDto, type ProcessDto, type ProjectWorkbenchDto, type SessionDto, type WorktreeDto } from '../Repositories/WorkbenchRepository';
 
 export type CommandGroup = 'current' | 'agent' | 'process' | 'create' | 'navigation' | 'worktree' | 'project' | 'app';
 // Page rows open their actions instead of running.
@@ -112,10 +112,11 @@ const RESPONDING = new Set(['working', 'thinking', 'permission', 'question']);
 
 export async function listCommandPaletteCommands(application: PattermApplication, context: CommandPaletteContext): Promise<{ commands: CommandDescriptor[] }> {
   const snapshot = application.currentWorkbench();
-  const activeProject = projectForContext(snapshot.projects, context);
+  const listed = snapshot.projects.filter(listedProject);
+  const activeProject = projectForContext(listed, context);
   const current = currentTarget(activeProject, context);
   // Rows from the open project come first.
-  const projects = activeProject ? [activeProject, ...snapshot.projects.filter((project) => project !== activeProject)] : snapshot.projects;
+  const projects = activeProject ? [activeProject, ...listed.filter((project) => project !== activeProject)] : listed;
   const commands: CommandDescriptor[] = [];
 
   if (activeProject && current) commands.push(...await currentCommands(application, activeProject, current));
@@ -125,7 +126,7 @@ export async function listCommandPaletteCommands(application: PattermApplication
     commands.push(...createCommands(snapshot.harnesses, activeProject));
     commands.push(...worktreeRows(activeProject));
   }
-  commands.push(projectCreateCommand(), ...projectRows(snapshot.projects, activeProject));
+  commands.push(projectCreateCommand(), ...projectRows(listed, activeProject));
 
   const assistantRestart = await assistantRestartCommand(application);
   if (assistantRestart) commands.push(assistantRestart);
@@ -145,7 +146,7 @@ export async function listCommandPaletteCommands(application: PattermApplication
 export async function runCommandPaletteCommand(application: PattermApplication, payload: CommandRunPayload): Promise<CommandRunResult> {
   if (application.isShuttingDown?.() && payload.id !== 'renderer:quit') throw new Error('Patterm is shutting down');
   const snapshot = application.currentWorkbench();
-  const activeProject = projectForContext(snapshot.projects, payload.context);
+  const activeProject = projectForContext(snapshot.projects.filter(listedProject), payload.context);
   const id = payload.id;
   const input = payload.input ?? {};
 

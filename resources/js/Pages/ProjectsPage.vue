@@ -31,6 +31,7 @@
     <main class="mx-1.5 mb-1.5 flex min-h-0 flex-1 overflow-hidden rounded-xl border-t border-white/5 bg-background">
       <div class="min-w-0 flex-1 overflow-y-auto">
         <div class="mx-auto w-full max-w-[46rem] px-4 pb-10 pt-8 sm:px-6 sm:pt-10">
+          <div class="-mx-2 mb-5"><BotList :phone="mobile" /></div>
           <ProjectOverviewList :overviews="overviews" :now="now" :loaded="loaded" @open-project="pickProject" @open-session="openSession" />
         </div>
       </div>
@@ -39,12 +40,15 @@
 </template>
 
 <script setup lang="ts">
+import { useBots } from '../Composables/useBots';
 import AssistantButton from '../Components/Assistant/AssistantButton.vue';
 import { computed, inject, onBeforeUnmount, ref } from 'vue';
+import { useMediaQuery } from '@vueuse/core';
 import { RouterLink } from 'vue-router';
 import { Gauge, Plus, Search, Settings } from 'lucide-vue-next';
 import NewProjectDialog from '../Components/NewProjectDialog.vue';
 import NotificationTray from '../Components/NotificationTray.vue';
+import BotList from '../Components/BotList.vue';
 import ProjectOverviewList from '../Components/ProjectOverviewList.vue';
 import { Button } from '../Components/ui/button';
 import { useWorkbench } from '../Composables/useWorkbench';
@@ -56,13 +60,17 @@ import type { SessionRecord } from '../types';
 const { projects, loaded, sidecarAvailable, refresh } = useWorkbench();
 const { route, router, pickProject, selectTerminal } = useWorkbenchNavigation();
 const openCommandPalette = inject(openCommandPaletteKey, () => {});
+// Bots list as in the sidebar, which on phones is the agent list.
+const mobile = useMediaQuery('(max-width: 639px)');
 
 // Relative times on this page show minutes at most.
 const now = ref(Date.now());
 const clock = setInterval(() => { now.value = Date.now(); }, 30_000);
 onBeforeUnmount(() => clearInterval(clock));
 
-const overviews = computed(() => projectOverviews(projects.value));
+// A bot's helpers never count as the project's agents.
+const { hidden: botHidden } = useBots();
+const overviews = computed(() => projectOverviews(projects.value, botHidden.value.sessions));
 const subtitle = computed(() => {
   if (!loaded.value) return 'Loading…';
   const agents = overviews.value.reduce((total, overview) => total + overview.agents.length, 0);

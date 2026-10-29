@@ -112,7 +112,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, provide, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue';
 import { RouterView } from 'vue-router';
 import AssistantDock from '../Components/Assistant/AssistantDock.vue';
 import CloseConfirmDialog from '../Components/CloseConfirmDialog.vue';
@@ -136,6 +136,8 @@ import { provideSidebarContext } from '../Components/Sidebar/sidebarContext';
 import { TooltipProvider } from '../Components/ui/tooltip';
 import { APPEARANCE_SETTINGS_CHANGED_EVENT, applyUiFont, lastKnownAppearanceSettings, loadAppearanceSettings, navigationLayoutHint, normalizeAppearanceSettings, type AppearanceSettings, type NavigationLayout } from '../appearance/AppearanceSettings';
 import { useWorkbench } from '../Composables/useWorkbench';
+import { useBots } from '../Composables/useBots';
+import { botLinkTarget } from '../lib/bots';
 import { useHarnessLaunchCleanup, useHarnessLaunchesFor } from '../Composables/useHarnessLaunch';
 import { useWorkbenchNavigation } from '../Composables/useWorkbenchNavigation';
 import {
@@ -157,9 +159,21 @@ import { useSidebarExpansion } from '../Composables/useSidebarExpansion';
 import type { ProcessRecord, ProjectSummary, SessionRecord } from '../types';
 import { startPrefetch } from '../lib/prefetch';
 
-const { projects, sidecarStatus, sidecarAvailable, loaded, refresh } = useWorkbench();
+const { projects, botProjects, sidecarStatus, sidecarAvailable, loaded, refresh } = useWorkbench();
+// Bots list in their own sidebar section; they and their helpers stay out of
+// the agent lists.
+const { hidden: botHidden, settings: botSettings, loaded: botsLoaded } = useBots();
 const { router, route, activeProjectId, activeProject, selectedAgent, selectedProcess, activeTerminalId, projectViewMode,
   activeWorkspacePage, selectProject, pickProject, selectTerminal } = useWorkbenchNavigation();
+// Links into a bot's own project, such as its notification, open the bot
+// beside one of your projects it shows in instead.
+watch([() => route.params.projectId, () => route.params.sessionId, botProjects, projects, botsLoaded], () => {
+  const own = botProjects.value.find((project) => project.project.id === route.params.projectId);
+  if (!own) return;
+  const target = botLinkTarget(own, route.params.sessionId, botsLoaded.value ? botSettings.value.bots : null, listedProjects(projects.value).map((project) => project.project.id), loaded.value);
+  if (target === 'projects') void router.replace({ name: 'projects' });
+  else if (target !== 'wait') void router.replace({ name: 'bot', params: { projectId: target.projectId, botId: target.botId } });
+});
 useHarnessLaunchCleanup();
 // Reads ahead what the user is likely to open next, as the connection allows.
 startPrefetch(() => activeProjectId.value);
@@ -327,7 +341,8 @@ const currentTabLayout = computed(() => {
 const showingAll = computed(() => allAgents.active && Boolean(activeProject.value));
 const allAgentsHidden = computed(() => allAgentsHiding(allAgents, projects.value));
 const allAgentsView = computed(() => buildAllAgentsView(projects.value, allAgentsHidden.value.hidden));
-const scopeProcesses = computed(() => showingAll.value ? allAgentsView.value.processes : activeProject.value?.processes ?? []);
+const scopeProcesses = computed(() => (showingAll.value ? allAgentsView.value.processes : activeProject.value?.processes ?? [])
+  .filter((process) => !botHidden.value.processes.has(process.id)));
 const scopeTimers = computed(() => showingAll.value ? allAgentsView.value.timers : activeProject.value?.timers ?? []);
 const listedSummaries = computed(() => listedProjects(projects.value).map((item) => item.project));
 // Snoozed projects All agents folds to a heading, unless you switched them off.
@@ -349,7 +364,8 @@ function ownerProjectId(id: string): string | null {
   return (showingAll.value ? projectOf(id)?.id : null) ?? activeProject.value?.project.id ?? null;
 }
 
-const agentModeSessions = computed<SessionRecord[]>(() => showingAll.value ? allAgentsView.value.sessions : activeProject.value?.projectSessions ?? []);
+const agentModeSessions = computed<SessionRecord[]>(() => (showingAll.value ? allAgentsView.value.sessions : activeProject.value?.projectSessions ?? [])
+  .filter((session) => !botHidden.value.sessions.has(session.id)));
 const activeAgentModeSessions = computed<SessionRecord[]>(() => activeAgentSessions(agentModeSessions.value));
 const activeProjectProcesses = computed<ProcessRecord[]>(() => activeProcesses(scopeProcesses.value));
 const topLevelProcesses = computed(() => topLevelProcessesForSessions(activeAgentModeSessions.value, activeProjectProcesses.value));
@@ -378,8 +394,9 @@ const everyAgentsView = computed(() => showingAll.value ? buildAllAgentsView(pro
 const everyStripTabs = computed(() => {
   const view = everyAgentsView.value;
   if (!view) return currentStripTabs.value;
-  const sessions = activeAgentSessions(view.sessions);
-  return buildStripTabs(buildAgentTabFamilies(sessions, selectedAgentByRoot.value), topLevelProcessesForSessions(sessions, activeProcesses(view.processes)), currentTabLayout.value);
+  const sessions = activeAgentSessions(view.sessions.filter((session) => !botHidden.value.sessions.has(session.id)));
+  const processes = view.processes.filter((process) => !botHidden.value.processes.has(process.id));
+  return buildStripTabs(buildAgentTabFamilies(sessions, selectedAgentByRoot.value), topLevelProcessesForSessions(sessions, activeProcesses(processes)), currentTabLayout.value);
 });
 
 // Agents show as tabs or in the sidebar, as chosen in Settings → Appearance.

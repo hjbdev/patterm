@@ -1,5 +1,5 @@
 <template>
-  <SettingsPanel title="Profiles" description="Each profile starts an agent CLI with its own face, model, reasoning effort and Codex speed. A CLI's default profile applies when none is chosen.">
+  <SettingsPanel title="Harnesses" description="Each profile starts an agent CLI with its own model, reasoning effort and Codex speed. A CLI's default profile applies when none is chosen.">
     <template #actions>
       <Button type="button" size="sm" variant="outline" :disabled="refreshBusy" @click="refreshModels">{{ refreshBusy ? 'Discovering…' : 'Discover models' }}</Button>
     </template>
@@ -31,7 +31,6 @@
           />
         </template>
         <template #title>
-          <ProfileFace :look="lookFor(preset)" :size="20" />
           <span class="truncate">{{ preset.name }}</span>
           <Badge v-if="defaults[harness] === preset.id" variant="secondary" class="h-4 px-1.5 text-[10px] font-medium">Default</Badge>
         </template>
@@ -47,22 +46,13 @@
     </SettingsSection>
 
     <Dialog v-model:open="editorOpen">
-      <DialogContent class="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent class="max-h-[85dvh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{{ editor?.id ? `Edit ${editorTitle}` : `Add ${editor ? harnessName(editor.harness) : ''} profile` }}</DialogTitle>
           <DialogDescription>Agents started with this profile use these settings.</DialogDescription>
         </DialogHeader>
         <form v-if="editor" class="space-y-4" @submit.prevent="applyEditor">
-          <!-- The face beside its name and model, then every part below. -->
-          <div class="grid gap-4 sm:grid-cols-[176px_minmax(0,1fr)]">
-            <div class="flex flex-col items-center justify-center gap-3 rounded-lg border border-border py-5" :style="{ background: `radial-gradient(circle at 50% 38%, ${facePalette(editor.look.color).halo}, transparent 68%), hsl(0 0% 3%)` }">
-              <ProfileFace :look="editor.look" :size="96" motion />
-              <Button type="button" size="sm" variant="outline" class="h-7 gap-1.5 text-xs" @click="shuffleLook">
-                <Dices class="h-3.5 w-3.5" />
-                Shuffle
-              </Button>
-            </div>
-            <div class="grid content-start items-center gap-3 sm:grid-cols-[90px_minmax(0,1fr)]">
+          <div class="grid items-center gap-3 sm:grid-cols-[90px_minmax(0,1fr)]">
               <label class="text-xs text-muted-foreground" for="preset-name">Name</label>
               <Input id="preset-name" v-model="editor.name" class="h-8 text-xs" placeholder="smartypants" autocomplete="off" />
               <label class="text-xs text-muted-foreground" for="preset-model">Model</label>
@@ -77,14 +67,11 @@
                 <label class="text-xs text-muted-foreground" for="preset-speed">Speed</label>
                 <SettingsChoice id="preset-speed" :model-value="editor.serviceTier" :options="speedChoices" aria-label="Speed" @update:model-value="(value) => { editor!.serviceTier = value; }" />
               </template>
-              <span />
-              <label class="flex items-center gap-2 text-xs">
-                <Checkbox v-model="editor.isDefault" />
-                Default for {{ harnessName(editor.harness) }}
-              </label>
-            </div>
           </div>
-          <FaceMaker v-model="editor.look" />
+          <label class="flex items-center gap-2 text-xs">
+            <Checkbox v-model="editor.isDefault" />
+            Default for {{ harnessName(editor.harness) }}
+          </label>
           <p v-if="editorError" role="alert" class="text-xs text-destructive">{{ editorError }}</p>
           <DialogFooter>
             <Button type="button" variant="outline" size="sm" @click="editorOpen = false">Cancel</Button>
@@ -104,10 +91,7 @@ import { Button } from './ui/button';
 import { Checkbox } from './ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { Input } from './ui/input';
-import { Dices } from 'lucide-vue-next';
 import AgentIcon from './AgentIcon.vue';
-import FaceMaker from './FaceMaker.vue';
-import ProfileFace from './ProfileFace.vue';
 import SettingsChoice from './settings/SettingsChoice.vue';
 import SettingsItem from './settings/SettingsItem.vue';
 import SettingsPanel from './settings/SettingsPanel.vue';
@@ -116,7 +100,7 @@ import { autosave, settingSaveStatus } from '../Composables/useSettingsAutosave'
 import { useWorkbench } from '../Composables/useWorkbench';
 import { harnessLabel } from '../lib/harnesses';
 import { harnessModels, topicChanged } from '../lib/serverQuery';
-import { facePalette, lookFor, randomLook, type ProfileLook } from '../lib/faces';
+import type { ProfileLook } from '../lib/faces';
 
 type PresetHarness = 'claude' | 'codex' | 'opencode';
 type Harness = PresetHarness | 'rawpty';
@@ -165,7 +149,6 @@ interface EditorState {
   reasoning: string;
   serviceTier: string;
   isDefault: boolean;
-  look: ProfileLook;
 }
 
 const PRESET_HARNESSES: PresetHarness[] = ['claude', 'codex', 'opencode'];
@@ -295,7 +278,7 @@ function setDefault(harness: PresetHarness, presetId: string): void {
 function addPreset(harness: PresetHarness): void {
   editorError.value = '';
   editorTitle.value = '';
-  editor.value = { id: null, harness, name: '', model: modelsFor(harness)[0]?.id ?? DEFAULT_MODEL, customModel: '', reasoning: '', serviceTier: '', isDefault: presetsFor(harness).length === 0, look: newLook() };
+  editor.value = { id: null, harness, name: '', model: modelsFor(harness)[0]?.id ?? DEFAULT_MODEL, customModel: '', reasoning: '', serviceTier: '', isDefault: presetsFor(harness).length === 0 };
   editorOpen.value = true;
 }
 
@@ -311,8 +294,7 @@ function editPreset(harness: PresetHarness, preset: HarnessPreset): void {
     customModel: preset.model !== null && !known ? preset.model : '',
     reasoning: preset.reasoning ?? '',
     serviceTier: preset.serviceTier ?? '',
-    isDefault: defaults[harness] === preset.id,
-    look: lookFor(preset)
+    isDefault: defaults[harness] === preset.id
   };
   editorOpen.value = true;
 }
@@ -342,7 +324,8 @@ function applyEditor(): void {
     model,
     reasoning: model === null ? null : current.reasoning.trim() || null,
     serviceTier: current.harness === 'codex' ? current.serviceTier || null : null,
-    look: { ...current.look }
+    // A face saved earlier is kept for bots.
+    look: presets.value.find((candidate) => candidate.id === current.id)?.look ?? null
   };
   if (current.id) {
     presets.value = presets.value.map((candidate) => candidate.id === current.id ? preset : candidate);
@@ -365,15 +348,6 @@ function removePreset(harness: PresetHarness, preset: HarnessPreset): void {
     defaults[harness] = presetsFor(harness)[0]?.id ?? null;
   }
   persist(`harnesses.${harness}`);
-}
-
-// A new profile starts with a random face.
-function newLook(): ProfileLook {
-  return randomLook(Math.floor(Math.random() * 2 ** 32));
-}
-
-function shuffleLook(): void {
-  if (editor.value) editor.value.look = newLook();
 }
 
 function onModelChange(): void {

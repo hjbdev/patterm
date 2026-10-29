@@ -19,6 +19,7 @@ export const BROWSER_TOOLS = new Set([
   'assistant_get', 'assistant_ensure', 'assistant_voice_start', 'assistant_voice_stop', 'assistant_set_focus_mode',
   'settings_assistant_get', 'settings_assistant_update',
   'settings_idle_compaction_get', 'settings_idle_compaction_update',
+  'settings_bots_get', 'settings_bots_update', 'bot_start',
   ...MCP_SERVER_TOOLS,
   ...HOST_TOOLS,
   ...UPDATE_TOOLS,
@@ -36,4 +37,4 @@ export const BROWSER_TOOLS = new Set([
 // Terminal operations and Integrated tools that change what everyone viewing
 // a process sees, so only the client controlling it may send them.
 export const CONTROL_OPERATIONS = new Set(['input', 'resize', 'configure', 'select', 'scroll', 'wheel', 'mouse']);
-export const INTEGRATED_CONTROL_TOOLS = new Set(['integrated_send', 'integrated_configure', 'integrated_command', 'integrated_interrupt', 'integrated_task_stop', 'integrated_queue_update', 'integrated_permission_reply', 'integrated_question_reply', 'integrated_form_reply', 'integrated_new', 'integrated_restart', 'assistant_restart', 'assistant_new']);
+export const INTEGRATED_CONTROL_TOOLS = new Set(['integrated_send', 'integrated_configure', 'integrated_command', 'integrated_interrupt', 'integrated_task_stop', 'integrated_queue_update', 'integrated_permission_reply', 'integrated_question_reply', 'integrated_form_reply', 'integrated_new', 'integrated_restart', 'assistant_restart', 'assistant_new', 'bot_restart']);

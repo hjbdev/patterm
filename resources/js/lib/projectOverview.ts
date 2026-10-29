@@ -37,8 +37,9 @@ export function agentState(session: SessionRecord): AgentState {
 
 // The Personal project first, then projects with live agents, then the most
 // recently active.
-export function projectOverviews(projects: readonly ProjectWorkbench[]): ProjectOverview[] {
-  return projects.map(projectOverview)
+// `hidden`: sessions that never list, such as a bot's helpers.
+export function projectOverviews(projects: readonly ProjectWorkbench[], hidden?: ReadonlySet<string>): ProjectOverview[] {
+  return projects.map((project) => projectOverview(project, hidden))
     .sort((a, b) => Number(b.project.kind === 'personal') - Number(a.project.kind === 'personal')
       || Number(b.agents.length > 0) - Number(a.agents.length > 0) || time(b.lastActiveAt) - time(a.lastActiveAt));
 }
@@ -56,8 +57,8 @@ export function displayPath(path: string): string {
   return path.replace(/^(?:\/(?:home|Users)\/[^/]+|[a-zA-Z]:[\\/]Users[\\/][^\\/]+)(?=[\\/]|$)/, '~');
 }
 
-function projectOverview(workbench: ProjectWorkbench): ProjectOverview {
-  const agents = buildAgentTree(activeAgentSessions(workbench.projectSessions)).map(projectAgent);
+function projectOverview(workbench: ProjectWorkbench, hidden?: ReadonlySet<string>): ProjectOverview {
+  const agents = buildAgentTree(activeAgentSessions(workbench.projectSessions).filter((session) => !hidden?.has(session.id))).map(projectAgent);
   const times = workbench.projectSessions.flatMap((session) => [session.startedAt, session.exitedAt]).filter((value): value is string => Boolean(value));
   return {
     project: workbench.project,

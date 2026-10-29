@@ -5,7 +5,7 @@ import path from 'node:path';
 import { McpToolRegistry } from '../app/MCP/ToolRegistry';
 import { registerAssistantTools } from '../app/MCP/registerAssistantTools';
 import { INTEGRATED_CONTROL_TOOLS } from '../app/Http/BrowserTools';
-import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
+import { listedProject, WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import { ASSISTANT_PROJECT_ID, AssistantService, type AssistantEvent } from '../app/Services/AssistantService';
 import { AssistantInbox } from '../app/Services/AssistantInbox';
 import type { CodexRealtimeEvent, RealtimeInitialItem } from '../app/Services/CodexAppServerService';
@@ -183,7 +183,11 @@ async function main(): Promise<void> {
     assert.equal(launches[0]!.input.project_id, ASSISTANT_PROJECT_ID);
     assert.ok(fs.existsSync(path.join(dir, 'assistant')));
     assert.deepEqual(workbench.listProjects().map((project) => project.id), ['p', 'q'], 'the assistant project is not listed');
-    assert.ok(!workbench.snapshot().projects.some((project) => project.project.id === ASSISTANT_PROJECT_ID));
+    // The snapshot carries it for the sidebar's Bots section, but no list of
+    // the user's projects shows it.
+    const carried = workbench.snapshot().projects.find((project) => project.project.id === ASSISTANT_PROJECT_ID);
+    assert.equal(carried?.project.kind, 'assistant');
+    assert.equal(listedProject(carried!), false);
     assert.ok(assistant.isAssistantProcess('proc-assistant-1'));
     assert.ok(events.some((event) => event.type === 'state' && event.state.process_id === 'proc-assistant-1'));
 
