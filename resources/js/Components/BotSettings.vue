@@ -27,7 +27,7 @@
           <DialogDescription>Changes to a running bot apply when it restarts.</DialogDescription>
         </DialogHeader>
         <form v-if="editor" class="space-y-4" @submit.prevent="applyEditor">
-          <div class="grid gap-4 sm:grid-cols-[176px_minmax(0,1fr)]">
+          <div class="grid gap-4 sm:grid-cols-[208px_minmax(0,1fr)]">
             <div class="flex flex-col items-center justify-center gap-3 rounded-lg border border-border px-3 py-5" :style="{ background: `radial-gradient(circle at 50% 38%, ${facePalette(editor.avatar.look.color).halo}, transparent 68%), hsl(0 0% 3%)` }">
               <BotAvatar :avatar="editor.avatar" :size="96" motion />
               <SettingsChoice v-model="editor.avatar.kind" :options="AVATAR_KINDS" aria-label="Avatar" segmented />
@@ -57,6 +57,8 @@
                   <span v-if="!userProjects.length" class="text-xs text-muted-foreground">No projects yet.</span>
                 </div>
               </template>
+              <span />
+              <p class="-mt-1 text-xs text-muted-foreground">{{ editor.purviewKind === 'projects' ? 'Lists in these projects only.' : 'Lists in every project.' }}</p>
               <template v-if="editor.avatar.kind === 'emoji'">
                 <label class="text-xs text-muted-foreground" for="bot-emoji">Emoji</label>
                 <div class="flex flex-wrap items-center gap-1">

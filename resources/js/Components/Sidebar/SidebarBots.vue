@@ -1,8 +1,9 @@
 <template>
   <!-- Bots sit above the agents: each a conversation row with its face and
        its last line. Their helpers never list; one waiting on you shows here.
-       The global assistant leads them while it is on, and opens its panel. -->
-  <div v-if="rows.length || assistantRow" class="mb-1 border-b border-white/[0.06] pb-1">
+       The global assistant leads them while it is on, and opens its panel.
+       A bot with chosen projects lists only in those. -->
+  <div v-if="shownRows.length || assistantRow" class="mb-1 border-b border-white/[0.06] pb-1">
     <div class="flex h-7 items-center gap-2 pl-2 pr-0.5 text-xs text-muted-foreground">
       <span class="flex-1">Bots</span>
       <Button variant="ghost" size="icon" class="h-5 w-5 rounded-tab text-muted-foreground [&_svg]:h-3.5 [&_svg]:w-3.5" title="New bot" aria-label="New bot" @click="openSettings">
@@ -25,7 +26,7 @@
         <span class="block truncate text-xs leading-4" :class="assistantRow.session?.asking ? 'text-foreground/75' : 'text-muted-foreground'">{{ assistantLine }}</span>
       </span>
     </button>
-    <div v-for="row in rows" :key="row.bot.id" class="group/bot relative">
+    <div v-for="row in shownRows" :key="row.bot.id" class="group/bot relative">
       <button
         type="button"
         data-sidebar-bot
@@ -59,6 +60,7 @@ import { Plus, Sparkles } from 'lucide-vue-next';
 import { cn } from '@/lib/utils';
 import { useBots } from '../../Composables/useBots';
 import { assistant } from '../../lib/assistant';
+import { botShownIn } from '../../lib/bots';
 import { assistantLayout, setAssistantLayout } from '../../lib/assistantLayout';
 import BotAvatar from '../BotAvatar.vue';
 import { useSidebar } from './sidebarContext';
@@ -70,6 +72,8 @@ const router = useRouter();
 const { rows, assistantRow } = useBots();
 const sidebar = useSidebar();
 const activeBotId = computed(() => route.name === 'bot' ? String(route.params.botId) : null);
+// All agents mode lists every bot.
+const shownRows = computed(() => sidebar.allAgents.value ? rows.value : rows.value.filter((row) => botShownIn(row.bot, sidebar.projectId.value)));
 
 const assistantLine = computed(() => {
   if (assistant.voiceActive) return 'On a voice call';

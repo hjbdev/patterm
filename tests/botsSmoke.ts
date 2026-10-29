@@ -14,7 +14,7 @@ import type { HarnessResume, LaunchHarnessInput } from '../app/Services/HarnessL
 import { SettingsService } from '../app/Services/SettingsService';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { TimelineService } from '../app/Services/TimelineService';
-import { assistantRow, botHidden, botRows, hiddenFromBot } from '../resources/js/lib/bots';
+import { assistantRow, botHidden, botHomeProjectId, botRows, botShownIn, hiddenFromBot } from '../resources/js/lib/bots';
 import { randomLook } from '../resources/js/lib/faces';
 import type { ProjectWorkbench, SessionRecord } from '../resources/js/types';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
@@ -309,6 +309,17 @@ async function main(): Promise<void> {
   assert.equal(row!.line, 'A helper is waiting: Deploy to production?');
   assert.equal(botRows({ bots: [bot('fable', 'Fable')] }, [], [botsProject])[0]!.line, 'Watching the deploy');
   assert.equal(botRows({ bots: [bot('new', 'New')] }, projects, [botsProject])[0]!.session, null);
+  // Global bots list in every project; a bot with chosen projects only in those.
+  const scoped = bot('scoped', 'Scoped', { purview: { kind: 'projects', projectIds: ['q'] } });
+  assert.equal(botShownIn(bot('generic', 'Generic'), 'p'), true);
+  assert.equal(botShownIn(bot('everywhere', 'Everywhere', { purview: { kind: 'all' } }), 'p'), true);
+  assert.equal(botShownIn(scoped, 'p'), false);
+  assert.equal(botShownIn(scoped, 'q'), true);
+  // A link into a bot's project opens it beside a project it lists in.
+  assert.equal(botHomeProjectId(scoped, ['p', 'q']), 'q');
+  assert.equal(botHomeProjectId(bot('generic', 'Generic'), ['p', 'q']), 'p');
+  assert.equal(botHomeProjectId(scoped, ['p']), 'p', 'its projects are gone: any project will do');
+  assert.equal(botHomeProjectId(undefined, []), null);
   // The assistant's row reads its live session, not the routine runs that
   // share its project.
   const assistantProject = { ...workbenchOf('project_assistant', [

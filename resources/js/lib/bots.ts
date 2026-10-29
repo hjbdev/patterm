@@ -115,6 +115,18 @@ export function botRows(settings: BotSettings, projects: readonly ProjectWorkben
   });
 }
 
+// Global bots, with no projects or all of them, show in every project's
+// sidebar; the rest only in the projects they work in.
+export function botShownIn(bot: Bot, projectId: string): boolean {
+  return bot.purview.kind !== 'projects' || bot.purview.projectIds.includes(projectId);
+}
+
+// The project a bot's page opens beside when a link names none: the first
+// one it shows in.
+export function botHomeProjectId(bot: Bot | undefined, projectIds: readonly string[]): string | null {
+  return projectIds.find((projectId) => !bot || botShownIn(bot, projectId)) ?? projectIds[0] ?? null;
+}
+
 export interface AssistantRow {
   session: SessionRecord | null;
   activity: RowActivity | null;
