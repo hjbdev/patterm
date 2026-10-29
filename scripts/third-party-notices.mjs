@@ -24,7 +24,8 @@ const overrides = {
   lru_map: { license: 'MIT', file: 'lru_map.LICENSE' },
   'simple-git': { license: 'MIT', file: 'simple-git.LICENSE' },
   '@simple-git/argv-parser': { license: 'MIT', file: 'simple-git.LICENSE' },
-  'vaul-vue': { license: 'MIT', file: 'vaul-vue.LICENSE' }
+  'vaul-vue': { license: 'MIT', file: 'vaul-vue.LICENSE' },
+  'patchright-core': { license: 'Apache-2.0', file: 'patchright-core.LICENSE' }
 };
 // JavaScript dependencies bundled into the renderer or MCP shim. Keep their
 // complete dependency graphs in the notices even though release installs omit them.

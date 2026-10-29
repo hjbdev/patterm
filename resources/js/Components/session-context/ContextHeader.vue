@@ -45,8 +45,12 @@
           </LinkAttachPopover>
         </ResponsivePopover>
 
+        <!-- The agent's own browser, once it has one. It opens beside the
+             conversation. -->
+        <button v-if="browser?.running" type="button" :class="CHIP" @click="emit('peek', { kind: 'browser' })"><Globe :class="CHIP_ICON" />Browser<span v-if="browser.help" class="h-1.5 w-1.5 rounded-full bg-foreground" aria-label="needs you" /></button>
+
         <!-- Servers the agent started, and preview links. One with a page opens
-             it beside the conversation. -->
+             it in the agent's browser beside the conversation. -->
         <ResponsivePopover v-if="servers.length" v-bind="chip('servers')" :title="serversLabel">
           <template #trigger><button type="button" :class="CHIP"><MonitorPlay :class="CHIP_ICON" /><span class="max-w-48 truncate">{{ serversLabel }}</span></button></template>
           <div v-for="server in servers" :key="server.key" class="group/row flex items-center rounded-md pr-1 transition-colors hover:bg-muted/40">
@@ -118,7 +122,7 @@
 import { computed, ref, watch } from 'vue';
 import { RouterLink } from 'vue-router';
 import { cn } from '@/lib/utils';
-import { AppWindow, ChevronDown, ExternalLink, FolderGit2, Images, Link2, ListTodo, MonitorPlay, Network, NotebookPen, Plus, SquareTerminal } from 'lucide-vue-next';
+import { AppWindow, ChevronDown, ExternalLink, FolderGit2, Globe, Images, Link2, ListTodo, MonitorPlay, Network, NotebookPen, Plus, SquareTerminal } from 'lucide-vue-next';
 import AutoSummaryControls from '../AutoSummaryControls.vue';
 import CreateContextItemDialog from '../CreateContextItemDialog.vue';
 import HostBadge from '../HostBadge.vue';
@@ -136,6 +140,7 @@ import LinkAttachPopover from './LinkAttachPopover.vue';
 import { useMedia } from '../../Composables/useMedia';
 import { linkIcon, linkLabel, MAX_LINKED_WORKTREES, useSessionContext } from '../../Composables/useSessionContext';
 import { agentLabel } from '../../lib/agentTabs';
+import { hasBrowser, useBrowserState } from '../../lib/browser';
 import { relativeTime } from '../../lib/format';
 import type { Peek } from '../../lib/peek';
 import { phoneLayout } from '../../lib/phoneLayout';
@@ -165,6 +170,7 @@ const { now, todos, scratchpads, links, worktrees, linkedWorktrees, worktreeOpti
   linkWorktree, unlinkWorktree, assignTodo, unassignTodo, setTodoStatus, attachScratchpad, detachScratchpad, attachLink, updateLink, detachLink } = useSessionContext(sessionProps, { diffTotals: computed(() => openChip.value === 'worktrees') });
 const pages = computed(() => links.value.filter((link) => link.resource_type !== 'preview'));
 const openTodos = computed(() => todos.value.filter((todo) => todo.status !== 'completed').length);
+const browser = useBrowserState(() => props.session.processId);
 
 // A paired host's media stays on that host.
 const media = useMedia(sessionProps, { pageSize: 8, enabled: () => !props.session.id.includes(':') });
@@ -214,7 +220,8 @@ function openProcess(process: ProcessRecord): void {
 }
 function openServer(server: (typeof servers.value)[number]): void {
   openChip.value = null;
-  if (server.url) emit('peek', { kind: 'preview', url: server.url, label: server.label, port: server.port, processId: server.process?.id ?? null });
+  if (server.url && hasBrowser(props.session.processId)) emit('peek', { kind: 'browser', url: server.url, serverProcessId: server.process?.id ?? null });
+  else if (server.url) window.open(server.url, '_blank', 'noopener,noreferrer');
   else if (server.process) sidebar.selectProcess(server.process);
 }
 function openDiff(worktree: SessionWorktree): void {

@@ -6,10 +6,11 @@ import type { SessionWorktree } from './projectContext';
 export interface PeekImage { key: string; sha256: string; name?: string; to: RouteLocationRaw }
 
 // What the peek pane beside an agent shows: one thing at a time, so opening
-// another replaces it. A preview of a server the agent started names it.
+// another replaces it. The agent's browser may open with a page, such as a
+// server the agent started, which it names.
 export type Peek =
   | { kind: 'context' }
-  | { kind: 'preview'; url: string; label: string; port?: string | null; processId?: string | null }
+  | { kind: 'browser'; url?: string | undefined; serverProcessId?: string | null | undefined }
   | { kind: 'image'; images: PeekImage[]; index: number }
   | { kind: 'diff'; worktree: SessionWorktree };
 
@@ -25,5 +26,5 @@ export function takePeek(sessionId: string): Peek | null {
   return queued?.sessionId === sessionId ? queued.peek : null;
 }
 
-// The server whose preview the peek shows, so its sidebar row can say so.
+// The server whose page the peek's browser opened, so its sidebar row can say so.
 export const peekedProcessId = ref<string | null>(null);

@@ -1,4 +1,5 @@
 import { linkLabel } from '../../Composables/useSessionContext';
+import { hasBrowser } from '../../lib/browser';
 import { queuePeek, type Peek } from '../../lib/peek';
 import { phoneLayout } from '../../lib/phoneLayout';
 import { contextRead, type SessionContext } from '../../lib/projectContext';
@@ -23,14 +24,14 @@ export async function serverPreview(sidebar: SidebarContext, process: ProcessRec
   return familyServers([process], previews, linkLabel)[0] ?? null;
 }
 
-// A server opens its preview in the peek beside the agent that started it,
-// when it has one. Otherwise it opens as itself, as it always does on a phone,
+// A server's page opens in the browser of the agent that started it, in the
+// peek beside that agent, when it has a page. Otherwise it opens as itself, as it always does on a phone,
 // where a server has its own page.
 export async function openServer(sidebar: SidebarContext, process: ProcessRecord): Promise<void> {
   const owner = phoneLayout.value ? null : serverOwner(sidebar, process);
-  const server = owner ? await serverPreview(sidebar, process, owner) : null;
+  const server = owner && hasBrowser(owner.session.processId) ? await serverPreview(sidebar, process, owner) : null;
   if (!owner || !server?.url) return sidebar.selectProcess(process);
-  const peek: Peek = { kind: 'preview', url: server.url, label: server.label, port: server.port, processId: process.id };
+  const peek: Peek = { kind: 'browser', url: server.url, serverProcessId: process.id };
   if (sendWorkspaceRequest({ kind: 'peek', sessionId: owner.session.id, peek })) return;
   queuePeek(owner.session.id, peek);
   sidebar.selectSession(owner.tab.family.rootId, owner.session);

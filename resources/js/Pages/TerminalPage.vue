@@ -36,9 +36,9 @@
           class="mt-3 w-full"
         />
       </div>
-      <aside v-if="docked && peek && selectedAgent" ref="panel" tabindex="-1" role="complementary" :aria-label="peekLabel" class="relative z-30 flex shrink-0 flex-col border-l border-border/30 bg-background outline-none" :style="{ width: `${width}px`, maxWidth: '100%' }" @keydown.esc.stop.prevent="close">
-        <div role="separator" tabindex="0" aria-label="Resize peek" aria-orientation="vertical" :aria-valuenow="width" :aria-valuemin="PEEK_WIDTH.min" :aria-valuemax="PEEK_WIDTH.max" class="absolute inset-y-0 -left-1 w-2 cursor-col-resize focus-visible:bg-primary/40" @pointerdown="startResize" @pointermove="resize" @pointerup="endResize" @pointercancel="endResize" @keydown.left.prevent="setWidth(width + 20)" @keydown.right.prevent="setWidth(width - 20)" />
-        <PeekPane v-model:peek="peek" :project-id="activeProject!.project.id" :session-id="selectedAgent.id" :summary="selectedAgent.summary" :can-summarize="!selectedAgent.parentId" :active-worktree-id="diffWorktree?.id ?? null" @open-worktree="openWorktree" @close="close" />
+      <aside v-if="docked && peek && selectedAgent" ref="panel" tabindex="-1" role="complementary" :aria-label="peekLabel" class="relative z-30 flex shrink-0 flex-col border-l border-border/30 bg-background outline-none" :style="{ width: `${paneWidth}px`, maxWidth: '100%' }" @keydown.esc.stop.prevent="close">
+        <div role="separator" tabindex="0" aria-label="Resize peek" aria-orientation="vertical" :aria-valuenow="paneWidth" :aria-valuemin="PEEK_WIDTH.min" :aria-valuemax="PEEK_WIDTH.max" class="absolute inset-y-0 -left-1 w-2 cursor-col-resize focus-visible:bg-primary/40" @pointerdown="startResize" @pointermove="resize" @pointerup="endResize" @pointercancel="endResize" @keydown.left.prevent="setWidth(paneWidth + 20)" @keydown.right.prevent="setWidth(paneWidth - 20)" />
+        <PeekPane v-model:peek="peek" :project-id="activeProject!.project.id" :session-id="selectedAgent.id" :process-id="selectedAgent.processId" :summary="selectedAgent.summary" :can-summarize="!selectedAgent.parentId" :active-worktree-id="diffWorktree?.id ?? null" @open-worktree="openWorktree" @close="close" />
       </aside>
     </div>
     <div v-else-if="route.name !== 'project'" class="p-5 text-sm text-muted-foreground">This terminal is no longer available. Select another tab or launch an agent.</div>
@@ -47,9 +47,9 @@
     </div>
     <!-- Over a narrow workspace the peek is a sheet, and on a phone it fills the screen. -->
     <Sheet :open="sheetOpen" @update:open="open => { if (!open) close() }">
-      <SheetContent side="right" hide-close aria-describedby="" class="flex w-[85vw] flex-col gap-0 border-border/30 p-0 pt-[env(safe-area-inset-top)] max-sm:w-full max-sm:max-w-none" :class="peek?.kind === 'context' ? 'max-w-sm' : 'max-w-2xl'" @open-auto-focus="focusSheet" @close-auto-focus="returnFocus">
+      <SheetContent side="right" hide-close aria-describedby="" class="flex w-[85vw] flex-col gap-0 border-border/30 p-0 pt-[env(safe-area-inset-top)] max-sm:w-full max-sm:max-w-none" :class="peek?.kind === 'context' ? 'max-w-sm' : peek?.kind === 'browser' ? 'max-w-4xl' : 'max-w-2xl'" @open-auto-focus="focusSheet" @close-auto-focus="returnFocus">
         <SheetTitle class="sr-only">{{ peekLabel }}</SheetTitle>
-        <PeekPane v-if="selectedAgent && peek" v-model:peek="peek" :project-id="activeProject!.project.id" :session-id="selectedAgent.id" :summary="selectedAgent.summary" :can-summarize="!selectedAgent.parentId" :active-worktree-id="diffWorktree?.id ?? null" @open-worktree="openWorktree" @close="close" />
+        <PeekPane v-if="selectedAgent && peek" v-model:peek="peek" :project-id="activeProject!.project.id" :session-id="selectedAgent.id" :process-id="selectedAgent.processId" :summary="selectedAgent.summary" :can-summarize="!selectedAgent.parentId" :active-worktree-id="diffWorktree?.id ?? null" @open-worktree="openWorktree" @close="close" />
       </SheetContent>
     </Sheet>
     <p v-if="captureError" role="alert" class="p-2 text-sm text-destructive">{{ captureError }}</p>
@@ -93,6 +93,7 @@ import { useSoftKeyboard } from '../Composables/useSoftKeyboard';
 import { onWorkspaceRequest } from '../lib/workspaceRequests';
 import { harnessPresets } from '../lib/serverQuery';
 import { peekedProcessId, takePeek, type Peek } from '../lib/peek';
+import { useBrowserState } from '../lib/browser';
 const { harnesses } = useWorkbench();
 const { route, router, activeProject, selectedAgent, selectedProcess, activeTerminalId, selectLaunchedAgent } = useTerminalPageNavigation();
 const terminalPane = ref<InstanceType<typeof TerminalPane> | null>(null);
@@ -164,14 +165,19 @@ function storePreference(key: string, value: string) {
   }
 }
 // The peek pane opens on demand beside the agent, with one thing in it, and
-// keeps the width it was last given.
+// keeps the width it was last given. The browser keeps its own, wider one, so
+// its pages stay readable.
 const PEEK_WIDTH = { min: 260, max: 900 } as const;
-const storedWidth = Number(preference('patterm.context.width'));
-const width = ref(Number.isFinite(storedWidth) && storedWidth >= PEEK_WIDTH.min ? Math.min(PEEK_WIDTH.max, storedWidth) : 420);
+function storedWidth(key: string, fallback: number): number {
+  const stored = Number(preference(key));
+  return Number.isFinite(stored) && stored >= PEEK_WIDTH.min ? Math.min(PEEK_WIDTH.max, stored) : fallback;
+}
+const width = ref(storedWidth('patterm.context.width', 420));
+const browserWidth = ref(storedWidth('patterm.peek.browser.width', 720));
 const peek = ref<Peek | null>(null), captureError = ref('');
 const peekLabel = computed(() => {
   switch (peek.value?.kind) {
-    case 'preview': return `Peek: ${peek.value.label}`;
+    case 'browser': return 'Peek: browser';
     case 'image': return 'Peek: image';
     case 'diff': return `Peek: ${peek.value.worktree.branch ?? 'changes'}`;
     default: return 'Session context';
@@ -185,18 +191,25 @@ let observer: ResizeObserver | undefined, drag: {
   x: number;
   width: number;
 } | null = null;
+const paneWidth = computed(() => peek.value?.kind === 'browser' ? browserWidth.value : width.value);
 function setWidth(value: number) {
-  width.value = Math.max(PEEK_WIDTH.min, Math.min(PEEK_WIDTH.max, value));
-  storePreference('patterm.context.width', String(width.value));
+  const next = Math.max(PEEK_WIDTH.min, Math.min(PEEK_WIDTH.max, value));
+  if (peek.value?.kind === 'browser') {
+    browserWidth.value = next;
+    storePreference('patterm.peek.browser.width', String(next));
+  } else {
+    width.value = next;
+    storePreference('patterm.context.width', String(next));
+  }
   updateNarrow();
 }
 // The peek docks while the conversation keeps 560 px beside it, or 440 on a
 // tablet, which would rather see both than either full width.
 function updateNarrow() {
-  narrow.value = (workspace.value?.clientWidth ?? 1200) < width.value + (touchScreen() ? 440 : 560);
+  narrow.value = (workspace.value?.clientWidth ?? 1200) < paneWidth.value + (touchScreen() ? 440 : 560);
 }
 function startResize(event: PointerEvent) {
-  drag = { x: event.clientX, width: width.value };
+  drag = { x: event.clientX, width: paneWidth.value };
   (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
   event.preventDefault();
 }
@@ -248,8 +261,19 @@ watch(() => selectedAgent.value?.id, (id) => {
   peek.value = id ? takePeek(id) : null;
 }, { immediate: true });
 watch(peek, (next) => {
-  peekedProcessId.value = next?.kind === 'preview' ? next.processId ?? null : null;
+  peekedProcessId.value = next?.kind === 'browser' ? next.serverProcessId ?? null : null;
+  updateNarrow();
 }, { immediate: true });
+// An agent that asks for the user in its browser opens it beside its
+// conversation, once per request, so closing it sticks.
+const browser = useBrowserState(() => selectedAgent.value?.processId);
+const shownHelp = new Set<string>();
+watch(() => browser.value?.help?.requestedAt, (requestedAt) => {
+  const processId = selectedAgent.value?.processId;
+  if (!requestedAt || !processId || shownHelp.has(`${processId}:${requestedAt}`)) return;
+  shownHelp.add(`${processId}:${requestedAt}`);
+  if (peek.value?.kind !== 'browser') void openPeek({ kind: 'browser' });
+});
 function appearanceChanged(event: Event) {
   diffLayout.value = normalizeAppearanceSettings((event as CustomEvent<AppearanceSettings>).detail).diffViewer;
 }

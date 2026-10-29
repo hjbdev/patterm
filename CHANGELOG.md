@@ -9,16 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Each agent can have its own Chrome, which Patterm runs for the session.
+  `browser_open` starts it and returns its CDP URL, and the agent drives it
+  with code; Patterm ships patchright-core for that and points agents at it.
+  Patterm downloads Chrome for Testing from Google the first time an agent
+  needs it. On Linux the browser runs headed on its own Xvfb display, which
+  sites tell from a person less easily than headless Chrome; elsewhere, or
+  without Xvfb, it runs headless. The browser keeps its sign-ins for the
+  session and stops, with its profile deleted, when the session ends.
+- The agent's browser shows in the peek pane, streamed from the host, and you
+  can click, scroll, type, paste, switch tabs and enter addresses in it. An
+  agent that hits a CAPTCHA or a sign-in calls `browser_request_help`: you get
+  a notification, the browser opens beside its conversation, and Done tells
+  the agent to carry on. A Browser chip in the agent's header opens it any
+  time. This replaces the framed server previews, so the page no longer frames
+  other sites.
+
 - An agent's context sits in a header above its conversation or terminal:
   its name, its summary's status line (click it for the whole summary and to
   regenerate it), and a chip each for its worktrees, links, servers,
   subagents, todos, scratchpads and images. Each chip opens its list, and +
   links a worktree or adds a todo, scratchpad or link. The conversation fades
   in under the header. This replaces the session context column.
-- A peek pane opens beside the agent on demand, reaching the page's edge: a
-  server's page live, with reload and open in browser; an image, stepping
-  through the session's images; or a worktree's changed files, with Open diff
-  review. A server opens there from its chip or its sidebar row when one of the
+- A peek pane opens beside the agent on demand, reaching the page's edge: the
+  agent's browser; an image, stepping through the session's images; or a
+  worktree's changed files, with Open diff review. A server's page opens there,
+  in the agent's browser, from its chip or its sidebar row when one of the
   agent's preview links names its port. The command palette's session context
   opens the full panel there. The pane keeps its width, and Esc closes it.
 - "Show subagents and servers" in the sidebar's view options lists a family's
@@ -112,9 +128,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   last-request time moved into the context meter's tooltip.
 - Phones no longer have the bottom bar or its Open tabs menu; the agent list
   replaces them. The canvas isn't reachable from a phone.
-- The page's content security policy lets it frame http and https pages, for
-  previews in the peek pane. Previews load sandboxed and can't navigate the
-  app.
 - Conversations keep their session's title. The resume picker, history pages,
   and search show a chosen name or generated title instead of the first
   prompt, and re-imports no longer overwrite it.

@@ -1,17 +1,12 @@
 <template>
-  <!-- One thing beside the agent: a server's page, an image, a worktree's
+  <!-- One thing beside the agent: its browser, an image, a worktree's
        changes, or the whole session context. Opening another replaces it; Esc
        or × closes it. -->
-  <SessionContextPanel v-if="peek.kind === 'context'" :project-id="projectId" :session-id="sessionId" :summary="summary" :can-summarize="Boolean(canSummarize)" :active-worktree-id="activeWorktreeId" @open-worktree="emit('openWorktree', $event)" @close="emit('close')" />
+  <PeekBrowser v-if="peek.kind === 'browser' && processId" :process-id="processId" :url="peek.url" @close="emit('close')" />
+  <SessionContextPanel v-else-if="peek.kind === 'context'" :project-id="projectId" :session-id="sessionId" :summary="summary" :can-summarize="Boolean(canSummarize)" :active-worktree-id="activeWorktreeId" @open-worktree="emit('openWorktree', $event)" @close="emit('close')" />
   <div v-else class="flex min-h-0 flex-1 flex-col">
     <header class="flex h-11 shrink-0 items-center gap-1 pl-4 pr-2">
-      <template v-if="peek.kind === 'preview'">
-        <h2 class="shrink-0 truncate text-[13px] font-medium">{{ peek.label }}</h2>
-        <a :href="peek.url" target="_blank" rel="noopener noreferrer" class="ml-1 min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground transition-colors hover:text-foreground" :title="peek.url">{{ address }}</a>
-        <Button variant="ghost" size="icon" :class="ACTION" aria-label="Reload" title="Reload" @click="reloads += 1"><RotateCw class="h-3.5 w-3.5" /></Button>
-        <Button as="a" variant="ghost" size="icon" :class="ACTION" :href="peek.url" target="_blank" rel="noopener noreferrer" aria-label="Open in browser" title="Open in browser"><ExternalLink class="h-3.5 w-3.5" /></Button>
-      </template>
-      <template v-else-if="peek.kind === 'image'">
+      <template v-if="peek.kind === 'image'">
         <h2 class="min-w-0 truncate text-[13px] font-medium">{{ image?.name ?? 'Image' }}</h2>
         <span class="shrink-0 text-xs tabular-nums text-muted-foreground">{{ peek.index + 1 }} of {{ peek.images.length }}</span>
         <span class="flex-1" />
@@ -21,7 +16,7 @@
         </template>
         <Button v-if="image" as-child variant="ghost" size="icon" :class="ACTION"><RouterLink :to="image.to" aria-label="Show in conversation" title="Show in conversation"><MessageSquare class="h-3.5 w-3.5" /></RouterLink></Button>
       </template>
-      <template v-else>
+      <template v-else-if="peek.kind === 'diff'">
         <h2 class="min-w-0 truncate text-[13px] font-medium">{{ peek.worktree.branch ?? 'Changes' }}</h2>
         <DiffStat v-if="totals" :additions="totals.additions" :deletions="totals.deletions" class="shrink-0" />
         <span class="flex-1" />
@@ -29,10 +24,7 @@
       </template>
       <Button variant="ghost" size="icon" :class="ACTION" aria-label="Close peek" @click="emit('close')"><X class="h-4 w-4" /></Button>
     </header>
-    <!-- The page fills the pane. One that refuses to be framed, or plain HTTP
-         from a secure page, shows blank; Open in browser still works. -->
-    <iframe v-if="peek.kind === 'preview'" :key="`${peek.url}:${reloads}`" :src="peek.url" :title="peek.label" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads" referrerpolicy="no-referrer" class="min-h-0 w-full flex-1 bg-white" />
-    <template v-else-if="peek.kind === 'image'">
+    <template v-if="peek.kind === 'image'">
       <!-- Swipe or arrow keys step through the images. -->
       <div class="flex min-h-0 flex-1 touch-pan-y items-center justify-center px-3 pb-3" tabindex="-1" @keydown.left.prevent="step(-1)" @keydown.right.prevent="step(1)" @pointerdown="swipeStart" @pointerup="swipeEnd">
         <img v-if="imageUrl" :src="imageUrl" :alt="image?.name ?? 'Image'" class="max-h-full max-w-full rounded-md object-contain" draggable="false">
@@ -44,33 +36,30 @@
         </span>
       </div>
     </template>
-    <PeekDiff v-else :worktree-id="peek.worktree.id" @review="emit('openWorktree', peek.worktree)" @loaded="totals = $event.totals" />
+    <PeekDiff v-else-if="peek.kind === 'diff'" :worktree-id="peek.worktree.id" @review="emit('openWorktree', peek.worktree)" @loaded="totals = $event.totals" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { RouterLink } from 'vue-router';
-import { ChevronLeft, ChevronRight, ExternalLink, FileDiff, MessageSquare, RotateCw, X } from 'lucide-vue-next';
+import { ChevronLeft, ChevronRight, FileDiff, MessageSquare, X } from 'lucide-vue-next';
 import DiffStat from '../DiffStat.vue';
 import SessionContextPanel from '../session-context/SessionContextPanel.vue';
 import { Button } from '../ui/button';
 import MediaThumb from './MediaThumb.vue';
+import PeekBrowser from './PeekBrowser.vue';
 import PeekDiff from './PeekDiff.vue';
 import type { SessionWorktree } from '../../lib/projectContext';
 import type { Peek } from '../../lib/peek';
-import { previewAddress } from '../../lib/servers';
 import { transcriptImageUrl } from '../../lib/transcriptImages';
 import type { DiffTotals } from '../../lib/worktreeDiff';
 import type { AutoSummaryRecord } from '../../types';
 
-const props = defineProps<{ peek: Peek; projectId: string; sessionId: string; summary?: AutoSummaryRecord | null | undefined; canSummarize?: boolean | undefined; activeWorktreeId?: string | null | undefined }>();
+// `processId` is the agent's, whose browser the peek shows.
+const props = defineProps<{ peek: Peek; projectId: string; sessionId: string; processId?: string | null | undefined; summary?: AutoSummaryRecord | null | undefined; canSummarize?: boolean | undefined; activeWorktreeId?: string | null | undefined }>();
 const emit = defineEmits<{ close: []; 'update:peek': [peek: Peek]; openWorktree: [worktree: SessionWorktree] }>();
 const ACTION = 'h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground';
-
-const reloads = ref(0);
-// The address without its scheme, as a browser's bar shows it.
-const address = computed(() => props.peek.kind === 'preview' ? previewAddress(props.peek.url) : '');
 
 const totals = ref<DiffTotals | null>(null);
 watch(() => props.peek.kind === 'diff' ? props.peek.worktree.id : null, () => { totals.value = null; });

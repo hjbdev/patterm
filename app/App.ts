@@ -32,6 +32,9 @@ import { AutoSummaryService } from './Services/AutoSummaryService';
 import { AutoSummaryRunner } from './Services/AutoSummaryRunner';
 import { AutoSummaryActions, registerAutoSummaryControl } from './Actions/AutoSummaryActions';
 import { registerSemanticSearchTools, SemanticSearchActions } from './Actions/SemanticSearchActions';
+import { BrowserActions, registerBrowserTools } from './Actions/BrowserActions';
+import { BrowserService } from './Services/Browser/BrowserService';
+import { ChromeInstaller } from './Services/Browser/ChromeInstaller';
 import { HybridHistorySearchService } from './Services/SemanticSearch/HybridHistorySearchService';
 import { SemanticSearchService } from './Services/SemanticSearch/SemanticSearchService';
 import { acquireApplicationLock } from './Runtime/ApplicationLock';
@@ -305,6 +308,7 @@ async function createApplicationResources(
         workbenchSync?.invalidate();
         remoteClient?.localChanged();
       }
+      if (topic === 'workbench' && !fromPeer) reapBrowsers?.();
       if (topic !== 'workbench') changedTopics.add(topic);
     }
     if (!changedTopics.size || topicsScheduled) return;
@@ -318,6 +322,8 @@ async function createApplicationResources(
     });
   };
   const notifyWorkbenchChanged = () => notifyChanged(['workbench']);
+  // Stops the browsers of sessions that ended, once the change settles.
+  let reapBrowsers: (() => void) | null = null;
   const transcriptImages = new TranscriptImageStore(path.join(options.appDataPath, 'transcript-images'));
   const openCodeServer = new OpenCodeServerService(database, resolvedEnv, { persistent, images: transcriptImages });
   const harnessRuntimeDir = path.join(options.appDataPath, 'harness');
@@ -462,6 +468,29 @@ async function createApplicationResources(
   const semanticSearchService = semanticSearch;
   defer(() => semanticSearchService.dispose());
   const semanticSearchActions = new SemanticSearchActions(semanticSearchService);
+  const browserDirectory = path.join(options.appDataPath, 'browser');
+  const browsers = new BrowserService({
+    directory: browserDirectory,
+    installer: new ChromeInstaller(path.join(browserDirectory, 'chrome'), () => notifyChanged(['browser'])),
+    onChanged: () => notifyChanged(['browser']),
+    raiseHelp: (processId, reason) => raiseNotification({ processId, source: 'mcp', kind: 'attention', urgency: 'high', title: 'Needs you in its browser', body: reason, dedupeKey: 'browser-help' }),
+    resolveHelp: (processId) => { notificationService.resolve({ process_id: processId, kinds: ['attention'] }); },
+    messageAgent: (processId, text) => sendAgentInput(database, terminal, { process_id: processId, kind: 'text', text, submit: true }, integrated),
+    isLive: (sessionId) => Boolean(database.connection.prepare('select 1 from sessions where id = ? and exited_at is null').get(sessionId)),
+    env: resolvedEnv
+  });
+  defer(() => browsers.dispose());
+  const browserActions = new BrowserActions(browsers, database);
+  let reaping: NodeJS.Timeout | null = null;
+  reapBrowsers = () => {
+    reaping ??= setTimeout(() => {
+      reaping = null;
+      void browsers.reap().catch((error: unknown) => {
+        debugLog.write('browser', 'reap.failed', { message: error instanceof Error ? error.message : String(error) });
+      });
+    }, 1_000);
+  };
+  defer(() => { if (reaping) clearTimeout(reaping); reapBrowsers = null; });
   const historySearch = new HybridHistorySearchService(historyReadService, historyDatabase, semanticSearchService);
   const historyWatcher = new AgentHistoryWatcherService({
     enabledWatchSources: () => historySourceService.enabledWatchSources(),
@@ -700,6 +729,7 @@ async function createApplicationResources(
   });
   registerAutoSummaryControl(mcp, autoSummaryActions);
   registerSemanticSearchTools(mcp, semanticSearchActions);
+  registerBrowserTools(mcp, browserActions);
   registerMcpServerTools(mcp, mcpServers);
   registerAssistantTools(mcp, assistantService, settings);
   registerIdleCompactionTools(mcp, settings);
@@ -817,10 +847,12 @@ async function createApplicationResources(
   const quit = new QuitApplicationAction(database, terminal, timers, integrated, async () => {
     reconciler.dispose();
     await mcpSocket.stop();
+    await browsers.stopAll();
   });
 
   updates.start();
   semanticSearchService.start();
+  reapBrowsers?.();
 
   const application: PattermApplication = {
     database,
