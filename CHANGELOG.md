@@ -93,9 +93,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profile… opens Settings. Harness presets are called profiles in Settings;
   their IDs and names don't change, so `spawn_agent` presets keep working.
 
-- The top bar keeps the project switcher, the assistant, search and a ⋯ menu
-  holding Scheduled, Usage, Notifications and Settings. The assistant carries
-  the notifications' unread dot.
+- The top bar keeps the project switcher, the assistant, search, the
+  notifications bell and a ⋯ menu holding Scheduled, Usage and Settings.
 - The sidebar's "Agents" heading opens its view options, and a Library menu
   in its footer replaces the five page icons. It lists the project's pages,
   each with what's new, and the canvas.

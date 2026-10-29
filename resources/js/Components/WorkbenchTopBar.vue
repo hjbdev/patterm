@@ -105,27 +105,24 @@
     <slot name="terminal-tabs" />
 
     <div class="ml-auto flex shrink-0 items-center gap-1.5">
-      <!-- The assistant carries the notifications' unread dot; the app's own
-           pages wait behind ⋯. A phone's Library has them instead. -->
-      <AssistantButton unread />
+      <!-- The app's own pages wait behind ⋯. A phone's Library has them and
+           the notifications instead. -->
+      <AssistantButton />
       <Button variant="ghost" size="sm" class="h-7 gap-2 rounded-tab px-2 text-xs text-muted-foreground" aria-label="Search or jump to" @click="emit('commandPalette')">
         <Search class="h-4 w-4" /><span class="hidden sm:inline">Search or jump to…</span><kbd class="hidden rounded border border-border/70 px-1 text-[10px] sm:inline">Ctrl K</kbd>
       </Button>
-      <NotificationTray v-if="!phoneLayout" v-model:open="notificationsOpen">
+      <template v-if="!phoneLayout">
+        <NotificationTray />
         <DropdownMenu>
           <DropdownMenuTrigger as-child>
             <Button variant="ghost" size="icon" class="relative h-7 w-7 rounded-tab text-muted-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground" :aria-label="menuLabel" :title="menuLabel">
               <Ellipsis class="h-4 w-4" />
-              <span v-if="updateAvailable || unreadWithoutAssistant" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
+              <span v-if="updateAvailable" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" class="w-56">
             <DropdownMenuItem class="text-[13px]" @select="emit('routines')"><CalendarClock class="mr-2 h-4 w-4 text-muted-foreground" />Scheduled</DropdownMenuItem>
             <DropdownMenuItem class="text-[13px]" @select="emit('usage')"><Gauge class="mr-2 h-4 w-4 text-muted-foreground" />Usage</DropdownMenuItem>
-            <DropdownMenuItem class="text-[13px]" @select="openNotifications">
-              <Bell class="mr-2 h-4 w-4 text-muted-foreground" /><span class="flex-1">Notifications</span>
-              <span v-if="unread" class="tabular-nums text-muted-foreground">{{ unread }}</span>
-            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem class="text-[13px]" @select="emit('settings')">
               <Settings class="mr-2 h-4 w-4 text-muted-foreground" /><span class="flex-1">Settings</span>
@@ -133,7 +130,7 @@
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-      </NotificationTray>
+      </template>
       <Tooltip v-if="!sidecarAvailable">
         <TooltipTrigger as-child>
           <Badge variant="outline" class="h-6 cursor-help border-destructive/40 bg-destructive/10 px-2 text-[11px] text-destructive">
@@ -153,11 +150,10 @@
 import HostBadge from './HostBadge.vue';
 import AssistantButton from './Assistant/AssistantButton.vue';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { Bell, CalendarClock, ChevronDown, Ellipsis, Gauge, Layers, LayoutGrid, Plus, Search, Settings } from 'lucide-vue-next';
+import { CalendarClock, ChevronDown, Ellipsis, Gauge, Layers, LayoutGrid, Plus, Search, Settings } from 'lucide-vue-next';
 import NewProjectDialog from './NewProjectDialog.vue';
 import StatusIcon from './StatusIcon.vue';
 import { activityIcon } from '../lib/statusIcons';
-import { assistant } from '../lib/assistant';
 import { phoneLayout } from '../lib/phoneLayout';
 import { allAgents as allAgentsState, listedProjects, openAgentCount, projectShown } from '../lib/allAgents';
 import { projectSnoozed, snoozedProjectsLast } from '../lib/projectSnooze';
@@ -172,7 +168,7 @@ import { projectOverviews, type AgentState } from '../lib/projectOverview';
 import UnreadDot from './UnreadDot.vue';
 import { useUpdates } from '../lib/updates';
 import NotificationTray from './NotificationTray.vue';
-import { projectUnread, totalUnread } from '../Composables/useNotifications';
+import { projectUnread } from '../Composables/useNotifications';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from './ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { prefetchProject, Tier } from '../lib/prefetch';
@@ -275,18 +271,5 @@ const totalAgentCount = computed(() => listedProjects(props.projects).filter((pr
 // until it is installed.
 const updates = useUpdates();
 const updateAvailable = computed(() => updates.value?.status === 'available');
-const unread = computed(() => totalUnread());
-// Without the assistant to carry it, the unread dot falls to ⋯.
-const unreadWithoutAssistant = computed(() => !assistant.enabled && unread.value > 0);
-const menuLabel = computed(() => {
-  const marks = [unread.value && `${unread.value} unread`, updateAvailable.value && `Patterm ${updates.value?.latest?.version} is available`].filter(Boolean);
-  return marks.length ? `More: ${marks.join(', ')}` : 'More';
-});
-
-// The tray opens from ⋯ once its menu has closed, so the menu's closing
-// doesn't dismiss it straight away.
-const notificationsOpen = ref(false);
-function openNotifications(): void {
-  setTimeout(() => { notificationsOpen.value = true; });
-}
+const menuLabel = computed(() => updateAvailable.value ? `More: Patterm ${updates.value?.latest?.version} is available` : 'More');
 </script>
