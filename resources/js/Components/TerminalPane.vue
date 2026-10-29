@@ -69,7 +69,7 @@ import {
   terminalFrameMode,
   type TerminalFrameMode
 } from '../terminal/TerminalFrameCadence';
-import { isPasteShortcut, TerminalInputRouter, type TerminalInputDispatch } from '../terminal/TerminalInputRouter';
+import { isPasteShortcut, keyToTerminalInput, TerminalInputRouter, type TerminalInputDispatch } from '../terminal/TerminalInputRouter';
 import { interceptMcpCallbackPaste } from '../lib/mcpCallbackPaste';
 import { touchScreen } from '../lib/touch';
 import { TerminalRenderer, type TerminalGridSize } from '../terminal/TerminalRenderer';
@@ -252,6 +252,15 @@ onMounted(async () => {
   if (inputSink.value) {
     inputRouter = new TerminalInputRouter(inputSink.value, {
       sendInput(input) {
+        // With the key row's Ctrl held, a letter typed next goes as its control code.
+        if (ctrlHeld.value && input.kind === 'text') {
+          ctrlHeld.value = false;
+          const control = input.text.length === 1 ? keyToTerminalInput({ key: input.text, ctrlKey: true, metaKey: false, altKey: false, shiftKey: false }) : null;
+          if (control) {
+            sendTerminalInput({ kind: 'text', text: control });
+            return;
+          }
+        }
         // Covers paste events and the paste shortcut, which reads the clipboard.
         if (input.kind === 'paste' && canControl() && interceptMcpCallbackPaste(input.text, (text) => sendTerminalInput({ kind: 'paste', text }))) return;
         sendTerminalInput(input);
@@ -1232,6 +1241,20 @@ function sendTerminalInput(input: TerminalInputDispatch): void {
 function focusInputSink(): void {
   inputSink.value?.focus({ preventScroll: true });
 }
+
+// Keys from the key row over a phone's keyboard, which has no Esc, Tab, Ctrl
+// or arrows. Ctrl holds until the next key, from the row or the keyboard.
+const ctrlHeld = ref(false);
+function pressKey(key: string): void {
+  if (key === 'Control') ctrlHeld.value = !ctrlHeld.value;
+  else {
+    const text = keyToTerminalInput({ key, ctrlKey: ctrlHeld.value, metaKey: false, altKey: false, shiftKey: false });
+    ctrlHeld.value = false;
+    if (text) sendTerminalInput({ kind: 'text', text });
+  }
+  focusInputSink();
+}
+defineExpose({ pressKey, ctrlHeld });
 
 function handleConnectionError(event: Event): void {
   connectionError.value = String((event as CustomEvent).detail);

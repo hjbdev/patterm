@@ -81,6 +81,9 @@ export interface SessionRecord {
   // Background tasks still running, such as a shell the agent waits on. Older
   // paired hosts omit it.
   backgroundTasks?: number;
+  // What an Integrated agent waiting on you asks, in one line. Older paired
+  // hosts omit it.
+  asking?: string | null;
   lastTitle: string | null;
   displayName: string | null;
   // Chosen, then generated, then native name. Older paired hosts omit it.

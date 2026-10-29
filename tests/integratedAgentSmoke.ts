@@ -9,8 +9,27 @@ import type { IntegratedConversationEvent, IntegratedConversationListener } from
 import type { AgentHistoryReadService } from '../app/Services/AgentHistory/AgentHistoryReadService';
 import { IntegratedAgentService, type IntegratedProviderService } from '../app/Services/IntegratedAgentService';
 import { McpToolRegistry } from '../app/MCP/ToolRegistry';
+import { ASKING_MAX_LENGTH, pendingAsk } from '../app/Services/IntegratedAsking';
+
+// What each harness's pending request reads as on a list row.
+function askingLines(): void {
+  const permission = (row: Record<string, unknown>) => pendingAsk({ permissions: { data: [{ id: 'p', resources: [], ...row }] } });
+  assert.equal(permission({ action: 'Edit', detail: 'CHANGELOG.md' }), 'Allow Edit CHANGELOG.md?', 'Claude names the tool and its target');
+  assert.equal(permission({ action: 'Bash', command: 'git status\ngit log' }), 'Run git status?', 'a command reads as itself');
+  assert.equal(permission({ action: 'Run this command?', command: 'cargo test' }), 'Run cargo test?', 'Codex');
+  assert.equal(permission({ action: 'Apply these file changes?' }), 'Apply these file changes?');
+  assert.equal(permission({ action: 'Subagent: edit', resources: ['src/a.ts'] }), 'Subagent: Allow edit src/a.ts?', 'OpenCode, for a subagent');
+  assert.equal(pendingAsk({ forms: { data: [{ id: 'f', title: 'Sign in to Linear', fields: [], declinable: true }] } }), 'Sign in to Linear');
+  assert.equal(pendingAsk({ questions: { data: [{ id: 'q', questions: [{ id: '1', question: '  Which\n level?  ', options: [] }] }] } }), 'Which level?', 'one line');
+  const long = pendingAsk({ questions: { data: [{ id: 'q', questions: [{ id: '1', question: 'x'.repeat(300), options: [] }] }] } })!;
+  assert.equal(long.length, ASKING_MAX_LENGTH);
+  assert.ok(long.endsWith('…'));
+  assert.equal(pendingAsk({ status: 'idle', permissions: { data: [] } }), null);
+  assert.equal(pendingAsk(null), null);
+}
 
 async function main(): Promise<void> {
+  askingLines();
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-integrated-agent-'));
   const database = new DatabaseService(directory);
   try {
@@ -510,7 +529,36 @@ async function observedActivity(database: DatabaseService): Promise<void> {
   await settle();
   await settle();
   assert.equal(backgroundTasks(), 0, 'a read that predates a task\'s end does not leave it counted');
+
+  // A waiting agent's row says what it asks, read from the snapshot a prompt
+  // re-reads, and leaving the prompt clears it.
+  const asking = () => (database.connection.prepare(`select asking from processes where id = 'process_observed'`).get() as { asking: string | null }).asking;
+  const question = { data: [{ id: 'ask', questions: [{ id: 'q', question: 'Which events go in the first pass?', options: [{ label: 'Throws' }] }] }] };
+  conversation = async () => ({ status: 'question', questions: question });
+  emit({ kind: 'status', status: 'question' });
+  emit({ kind: 'pending' });
+  await settle();
+  assert.equal(asking(), 'Which events go in the first pass?', 'the pending event a prompt brings is read for what it asks');
+  const permission = { data: [{ id: 'perm', action: 'Edit', detail: 'CHANGELOG.md', resources: [] }] };
+  conversation = async () => ({ status: 'permission', permissions: permission, questions: question });
+  emit({ kind: 'pending' });
+  await settle();
+  assert.equal(asking(), 'Allow Edit CHANGELOG.md?', 'an approval comes before a question');
+  // A read that started before the answer lands after it.
+  let releaseAsk!: (value: unknown) => void;
+  conversation = () => new Promise((resolve) => { releaseAsk = resolve; });
+  emit({ kind: 'pending' });
+  await settle();
+  emit({ kind: 'status', status: 'working' });
+  assert.equal(asking(), null, 'moving on from the prompt clears it at once');
+  releaseAsk({ status: 'permission', permissions: permission });
+  await settle();
+  await settle();
+  assert.equal(asking(), null, 'a read that lands after the answer does not bring the prompt back');
+  assert.equal(activity(), 'working');
   conversation = async () => ({ status: snapshot });
+  emit({ kind: 'status', status: 'idle' });
+  await settle();
 
   // A turn that ended while disconnected is caught by the reconnect handoff.
   snapshot = 'idle';

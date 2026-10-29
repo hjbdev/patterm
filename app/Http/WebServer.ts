@@ -273,7 +273,7 @@ export class WebServer {
   private async handleHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Referrer-Policy', 'no-referrer');
-    response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+    response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-src 'self' http: https:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
     if (request.url === PEER_PAIR_PATH && request.method === 'POST') {
       await this.handlePeerPair(request, response);
       return;
@@ -333,7 +333,7 @@ export class WebServer {
       return;
     }
     const pathname = decodeURIComponent(url.pathname);
-    const isPage = /^\/(?:settings|usage|routines(?:\/log)?)\/?$/.test(pathname) || /^\/projects(?:\/[^/]+(?:\/(?:worktrees|history|media|(?:todos|scratchpads)(?:\/[^/]+)?|processes\/[^/]+|agents\/[^/]+(?:\/diffs)?))?)?\/?$/.test(pathname);
+    const isPage = /^\/(?:settings|usage|routines(?:\/log)?)\/?$/.test(pathname) || /^\/projects(?:\/[^/]+(?:\/(?:worktrees|history|media|library|(?:todos|scratchpads)(?:\/[^/]+)?|processes\/[^/]+|agents\/[^/]+(?:\/diffs)?))?)?\/?$/.test(pathname);
     const relative = isPage ? 'index.html' : pathname.replace(/^\/+/, '') || 'index.html';
     const filename = path.resolve(this.options.rendererPath, relative);
     if (!filename.startsWith(path.resolve(this.options.rendererPath) + path.sep)) {

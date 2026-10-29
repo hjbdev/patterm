@@ -4,6 +4,7 @@ import { useWorkbench } from './useWorkbench';
 import type { ProjectViewMode } from '../lib/workbenchNavigation';
 import { lastProjectLocation, resolveProjectReturnPath } from '../lib/projectLocations';
 import { allAgents } from '../lib/allAgents';
+import { phoneLayout } from '../lib/phoneLayout';
 
 export function useWorkbenchNavigation() {
   const route = useRoute();
@@ -36,7 +37,8 @@ export function useWorkbenchNavigation() {
   const activeWorkspacePage = computed(() => route.name === 'history' ? 'history' : 'workbench');
 
   function selectProject(projectId: string | null) {
-    if (projectId && projectId !== activeProjectId.value) {
+    // A phone opens a project at its list, which is the phone's home screen.
+    if (projectId && projectId !== activeProjectId.value && !phoneLayout.value) {
       const project = projects.value.find((item) => item.project.id === projectId);
       const returnPath = resolveProjectReturnPath(project, lastProjectLocation(projectId));
       if (returnPath) return router.push(returnPath);

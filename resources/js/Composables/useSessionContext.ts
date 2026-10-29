@@ -12,7 +12,8 @@ export const MAX_LINKED_WORKTREES = 10;
 
 // The worktrees, todos, scratchpads and links attached to one agent session,
 // with the mutations the session context sidebar offers.
-export function useSessionContext(props: { projectId: string; sessionId: string }) {
+// `diffTotals` false skips the worktrees' diff totals until they're shown.
+export function useSessionContext(props: { projectId: string; sessionId: string }, options: { diffTotals?: Readonly<Ref<boolean>> } = {}) {
   const now = useContextClock();
   const { projects } = useWorkbench();
   const context = ref<SessionContext | null>(null);
@@ -45,7 +46,7 @@ export function useSessionContext(props: { projectId: string; sessionId: string 
   const todoPickerLoaded = todoPicker.loaded, notePickerLoaded = notePicker.loaded;
   const truncated = computed(() => !!context.value && (['todos', 'scratchpads', 'references'] as const).some(key => context.value![key].total > context.value![key].items.length));
   const empty = computed(() => !!context.value && !worktrees.value.length && !todos.value.length && !scratchpads.value.length && !links.value.length);
-  const { states: diffTotals, refresh: refreshDiffTotals } = useWorktreeDiffTotals(computed(() => worktrees.value.map(worktree => worktree.id)));
+  const { states: diffTotals, refresh: refreshDiffTotals } = useWorktreeDiffTotals(computed(() => options.diffTotals?.value === false ? [] : worktrees.value.map(worktree => worktree.id)));
   let generation = 0;
 
   // Cached until the project's context changes, so switching back to a

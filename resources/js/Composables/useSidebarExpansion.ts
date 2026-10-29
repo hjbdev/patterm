@@ -11,22 +11,27 @@ export interface SidebarExpansion {
   groupByStatus: boolean;
   // Only while showing all agents. Off, the list keeps the order you give it.
   groupByProject: boolean;
+  // Subagents and servers listed under their agent. Off, the list is flatter,
+  // and each agent's header still lists them. `hiddenMembers` turns them off
+  // for single agents.
+  members: boolean;
+  hiddenMembers: string[];
 }
 
-const DEFAULTS: SidebarExpansion = { overrides: {}, followActive: false, subtitles: true, processes: false, groupByStatus: false, groupByProject: true };
+const DEFAULTS: SidebarExpansion = { overrides: {}, followActive: false, subtitles: true, processes: false, groupByStatus: false, groupByProject: true, members: true, hiddenMembers: [] };
 const KEY_PREFIX = 'patterm.sidebar.expansion.';
 
 function read(projectId: string): SidebarExpansion {
   try {
     const value = JSON.parse(localStorage.getItem(KEY_PREFIX + projectId) ?? 'null') as Partial<SidebarExpansion> | null;
-    return { ...DEFAULTS, ...value, overrides: { ...value?.overrides } };
+    return { ...DEFAULTS, ...value, overrides: { ...value?.overrides }, hiddenMembers: Array.isArray(value?.hiddenMembers) ? value.hiddenMembers : [] };
   } catch {
-    return { ...DEFAULTS, overrides: {} };
+    return { ...DEFAULTS, overrides: {}, hiddenMembers: [] };
   }
 }
 
 // One state per project, shared by everything showing it, so the view options
-// in the mobile drawer's header change the list below them.
+// (in the list's heading or a phone's Library) and a row's menu change the list.
 const states = new Map<string, Ref<SidebarExpansion>>();
 const scope = effectScope(true);
 
@@ -54,5 +59,13 @@ export function useSidebarExpansion(projectId: () => string) {
   function setOpen(sessionId: string, open: boolean): void {
     state.value.overrides = { ...state.value.overrides, [sessionId]: open };
   }
-  return { state, isOpen, isNodeOpen, setOpen };
+  // Whether the list shows this agent's subagents and servers under it.
+  function membersShown(rootId: string): boolean {
+    return state.value.members && !state.value.hiddenMembers.includes(rootId);
+  }
+  function setMembersHidden(rootId: string, hidden: boolean): void {
+    const rest = state.value.hiddenMembers.filter((id) => id !== rootId);
+    state.value.hiddenMembers = hidden ? [...rest, rootId] : rest;
+  }
+  return { state, isOpen, isNodeOpen, setOpen, membersShown, setMembersHidden };
 }

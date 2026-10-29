@@ -1,9 +1,8 @@
 <template>
   <div class="flex h-full min-h-0 flex-col">
-    <div class="flex h-8 shrink-0 items-center gap-0.5 pl-3 pr-1">
-      <span class="flex-1 text-xs text-muted-foreground">{{ sidebar.allAgents.value ? 'All agents' : 'Agents' }}</span>
-      <BoardButton />
-      <SidebarViewOptions />
+    <!-- On a phone the list is the home screen, which gives these their own places. -->
+    <div v-if="placement !== 'phone'" class="flex h-8 shrink-0 items-center gap-0.5 pl-1.5 pr-1">
+      <span class="flex-1"><SidebarViewOptions :label="sidebar.allAgents.value ? 'All agents' : 'Agents'" /></span>
       <LaunchAgentMenu :project-id="sidebar.projectId.value" :choose-project="sidebar.allAgents.value" />
     </div>
     <div ref="list" class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1 pb-2 [scrollbar-width:thin]" @keydown="onKeydown">
@@ -42,7 +41,8 @@
             <SidebarFamily
               v-if="entry.tab.kind === 'agent'"
               :tab="entry.tab"
-              :expanded="expanded(entry.tab) || revealed(entry.tab.family.rootId)"
+              :expanded="expansion.membersShown(entry.tab.family.rootId) && (expanded(entry.tab) || revealed(entry.tab.family.rootId))"
+              :members-shown="expansion.membersShown(entry.tab.family.rootId)"
               :subtitle="subtitle(entry.tab)"
               :waiting="Boolean(familyWaitingOn(sidebar, entry.tab.family))"
               :project="rowProject(entry.tab)"
@@ -92,16 +92,15 @@
         </Transition>
       </template>
     </div>
-    <div class="flex shrink-0 items-center border-t border-white/5 px-1 pt-1">
-      <SidebarPages class="flex-1">
-        <template #end>
-          <span class="flex-1" />
-          <SidebarCollapseButton v-if="placement === 'docked'" />
-        </template>
-      </SidebarPages>
+    <slot v-if="placement === 'phone'" name="footer" />
+    <!-- The project's pages and the canvas wait in the Library menu. -->
+    <div v-else class="flex shrink-0 items-center gap-0.5 px-1 pt-1.5">
+      <LibraryMenu v-if="!sidebar.allAgents.value" />
+      <span class="flex-1" />
+      <SidebarCollapseButton v-if="placement === 'docked'" />
     </div>
     <!-- The agent you point at gets a card beside it. -->
-    <SidebarAgentCard :list="list" />
+    <SidebarAgentCard v-if="placement !== 'phone'" :list="list" />
   </div>
 </template>
 
@@ -112,12 +111,11 @@ import { ChevronRight } from 'lucide-vue-next';
 import type { StripTab } from '../../lib/tabStrip';
 import LaunchAgentMenu from '../LaunchAgentMenu.vue';
 import HarnessLaunchTabs from '../HarnessLaunchTabs.vue';
-import BoardButton from './BoardButton.vue';
+import LibraryMenu from './LibraryMenu.vue';
 import SidebarAgentCard from './SidebarAgentCard.vue';
 import SidebarCollapseButton from './SidebarCollapseButton.vue';
 import SidebarFamily from './SidebarFamily.vue';
 import SidebarMemberRow from './SidebarMemberRow.vue';
-import SidebarPages from './SidebarPages.vue';
 import SidebarViewOptions from './SidebarViewOptions.vue';
 import { useSidebar, type AgentTab } from './sidebarContext';
 import { familyStatus, familyWaitingOn, selectedThread, SIDEBAR_STATUSES, type SidebarStatus } from '../../lib/sidebarTree';
@@ -139,7 +137,7 @@ import type { ProjectSummary } from '../../types';
 // The sidebar's list. Subtitles show on every row or none, and which families
 // are open is the user's choice, remembered on this device. Selecting an agent
 // opens it.
-withDefaults(defineProps<{ placement?: 'docked' | 'drawer' }>(), { placement: 'docked' });
+withDefaults(defineProps<{ placement?: 'docked' | 'drawer' | 'phone' }>(), { placement: 'docked' });
 const sidebar = useSidebar();
 const pendingLaunches = useHarnessLaunchesFor(() => sidebar.shownProjectIds.value);
 const expansion = useSidebarExpansion(() => sidebar.expansionScope.value);

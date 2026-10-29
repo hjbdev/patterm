@@ -78,6 +78,15 @@ export interface SidebarInput {
   updateLayout: (layout: TabLayout) => void;
 }
 
+// The list row a session or process belongs to: the agent family that holds
+// the session, or whose agents started the process.
+export function familyTabOf(sidebar: SidebarContext, of: { sessionId?: string | null | undefined; processId?: string | null | undefined }): AgentTab | null {
+  return sidebar.tabs.value.find((tab): tab is AgentTab => tab.kind === 'agent' && (
+    (Boolean(of.sessionId) && tab.family.options.some((option) => option.session.id === of.sessionId))
+    || (Boolean(of.processId) && sidebar.ownedProcesses(tab.family).some((process) => process.id === of.processId))
+  )) ?? null;
+}
+
 export function provideSidebarContext(input: SidebarInput): SidebarContext {
   const owned = computed(() => new Map(input.tabs().flatMap((tab) => tab.kind === 'agent'
     ? [[tab.family.rootId, ownedProcessesForSessions(tab.family.options.map((option) => option.session), input.processes())] as const]

@@ -145,7 +145,9 @@
       <EditorContent v-if="editor" :editor="editor.tiptap" class="composer-editor" />
 
       <!-- Phones keep one row: status on the left, then attach, the drawer
-           that holds the pickers, stop, and send (order 1 to 4). -->
+           that holds the pickers, and send (order 1, 2 and 4). Send turns into
+           Stop while the agent works and the box is empty; with something
+           typed it sends, to the queue. -->
       <div class="flex min-h-11 items-center gap-2 px-2 pb-1 sm:flex-wrap">
         <div v-if="controls.selectors.length" class="hidden flex-wrap items-center gap-2 sm:flex">
           <IntegratedControlPicker v-for="selector in controls.selectors" :key="selector.id" :selector="selector" :disabled="!controlling || sending || ended" @select="emit('configure', selector.id, $event)" />
@@ -157,15 +159,15 @@
           <slot name="status" />
         </div>
         <span v-if="sending" class="text-xs text-muted-foreground" role="status">Sending…</span>
-        <Button type="button" size="icon" variant="ghost" class="h-8 w-8 text-muted-foreground max-sm:order-1" :disabled="!controlling || ended" aria-label="Attach files" title="Attach files" @click="picker?.click()">
+        <Button type="button" size="icon" variant="ghost" class="h-8 w-8 shrink-0 text-muted-foreground max-sm:order-1" :disabled="!controlling || ended" aria-label="Attach files" title="Attach files" @click="picker?.click()">
           <Paperclip class="h-4 w-4" />
         </Button>
         <Button v-if="!controlling && (!ended || restartable)" type="button" size="sm" class="max-sm:order-4" @click="emit('takeControl')">Take control</Button>
-        <Button v-else type="submit" size="icon" class="h-8 w-8 max-sm:order-4" :disabled="!canSend" :aria-label="sending ? 'Sending' : 'Send message'" :title="sendTitle">
-          <ArrowUp class="h-4 w-4" />
+        <Button v-else-if="stoppable" type="button" size="icon" class="h-8 w-8 shrink-0 max-sm:order-4" aria-label="Stop response" title="Stop response" @click="emit('interrupt')">
+          <Square class="h-3.5 w-3.5 fill-current" />
         </Button>
-        <Button type="button" size="icon" variant="outline" class="h-8 w-8 max-sm:order-3" :disabled="!controlling || ended" aria-label="Stop response" title="Stop response" @click="emit('interrupt')">
-          <Square class="h-3.5 w-3.5" />
+        <Button v-else type="submit" size="icon" class="h-8 w-8 shrink-0 max-sm:order-4" :disabled="!canSend" :aria-label="sending ? 'Sending' : 'Send message'" :title="sendTitle">
+          <ArrowUp class="h-4 w-4" />
         </Button>
         <IntegratedControlDrawer v-if="controls.selectors.length" :selectors="controls.selectors" :disabled="!controlling || sending || ended" @select="(id, value) => emit('configure', id, value)" />
       </div>
@@ -303,6 +305,9 @@ const recoveryCommand = computed(() => Boolean(props.ended && props.restartable
 const canSend = computed(() => props.controlling && (!props.ended || recoveryCommand.value) && !props.sending && !props.pending
   && (draft.value.text.trim().length > 0 || draft.value.attachments.length > 0)
   && !draft.value.attachments.some((attachment) => attachment.status !== 'ready'));
+// While the agent works, an empty box offers Stop in Send's place.
+const stoppable = computed(() => Boolean(props.working) && props.controlling && !props.ended && !props.sending
+  && !draft.value.text.trim() && !draft.value.attachments.length);
 const sendTitle = computed(() => {
   if (props.pending) return 'Resolve the pending delivery before sending again';
   if (props.sending) return 'Sending';

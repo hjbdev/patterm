@@ -1,11 +1,13 @@
+import type { Peek } from './peek';
 import type { SessionWorktree } from './projectContext';
 
-// Requests from the command palette to the view that shows an agent. That view
+// Requests from the command palette and the sidebar to the view that shows an agent. That view
 // owns the state, such as Integrated controls and the diff viewer.
 export type WorkspaceRequest =
   | { kind: 'integrated'; processId: string; action: 'interrupt' | 'new' | 'restart' }
   | { kind: 'integrated'; processId: string; action: 'configure'; selector: string; value: string }
   | { kind: 'session-context'; sessionId: string }
+  | { kind: 'peek'; sessionId: string; peek: Peek }
   | { kind: 'review-changes'; sessionId: string; worktree: SessionWorktree };
 
 const WORKSPACE_REQUEST_EVENT = 'patterm:workspace-request';

@@ -1,8 +1,10 @@
 <template>
-  <section class="rounded-xl border border-border bg-background p-4 text-sm shadow-sm" :aria-label="request.questions[0]?.question ?? 'Question'">
+  <section class="rounded-xl border border-border bg-background p-4 text-sm shadow-sm max-sm:rounded-[18px]" :aria-label="request.questions[0]?.question ?? 'Question'">
     <p v-if="note" class="mb-2 text-xs text-muted-foreground">{{ note }}</p>
-    <!-- Several questions show one at a time, as in Claude Code's terminal. -->
-    <nav v-if="request.questions.length > 1" class="-mx-2 mb-2 flex flex-wrap gap-1" aria-label="Questions">
+    <!-- Several questions show one at a time, as in Claude Code's terminal. A
+         phone counts them and steps with Back and Next. -->
+    <p v-if="request.questions.length > 1 && phoneLayout" class="mb-0.5 text-xs text-muted-foreground">Question {{ current + 1 }} of {{ request.questions.length }}</p>
+    <nav v-else-if="request.questions.length > 1" class="-mx-2 mb-2 flex flex-wrap gap-1" aria-label="Questions">
       <button
         v-for="(item, index) in request.questions"
         :key="item.key"
@@ -19,14 +21,14 @@
     <fieldset v-if="question" :key="question.key">
       <legend class="contents">
         <span v-if="question.header && request.questions.length === 1" class="mb-0.5 block text-xs text-muted-foreground">{{ question.header }}</span>
-        <span class="block font-medium text-foreground">{{ question.question }}</span>
+        <span class="block font-medium text-foreground max-sm:text-[15px] max-sm:leading-snug">{{ question.question }}</span>
       </legend>
       <p v-if="question.multiple" class="mt-0.5 text-xs text-muted-foreground">Choose any that apply.</p>
       <div class="-mx-2 mt-2 space-y-0.5">
         <label
           v-for="option in question.options"
           :key="option.label"
-          class="flex cursor-pointer items-start gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-muted/40"
+          class="flex cursor-pointer items-start gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-muted/40 max-sm:min-h-12 max-sm:rounded-xl max-sm:py-3 max-sm:text-[14.5px]"
           :class="isChosen(question, option.label) && 'bg-muted/40'"
         >
           <Checkbox
@@ -53,7 +55,7 @@
         <!-- Your own answer reads as one more option, with the text as its subtitle. -->
         <label
           v-if="question.custom && question.options.length"
-          class="flex cursor-pointer items-start gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-muted/40"
+          class="flex cursor-pointer items-start gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-muted/40 max-sm:min-h-12 max-sm:rounded-xl max-sm:py-3 max-sm:text-[14.5px]"
           :class="otherChecked(question) && 'bg-muted/40'"
         >
           <Checkbox
@@ -73,7 +75,7 @@
             @change="toggleOther(question, true)"
           >
           <span class="min-w-0 flex-1">
-            <span class="block text-foreground">Something else</span>
+            <span class="block text-foreground">Something else<template v-if="phoneLayout">…</template></span>
             <input
               ref="otherInput"
               class="block w-full bg-transparent text-xs text-muted-foreground placeholder:text-muted-foreground/70 focus:text-foreground focus:outline-none"
@@ -99,13 +101,14 @@
         >
       </div>
     </fieldset>
-    <div class="mt-3 flex items-center justify-end gap-2">
+    <!-- On a phone, the answers and buttons grow to a fingertip. -->
+    <div class="mt-3 flex items-center justify-end gap-2 max-sm:flex-wrap">
       <p v-if="attempted && question && !ready(question)" role="alert" class="mr-auto text-xs text-destructive">Answer this question to send.</p>
       <p v-else-if="error" role="alert" class="mr-auto text-xs text-destructive">{{ error }}</p>
-      <Button v-if="declinable" size="sm" variant="ghost" class="h-7 px-2.5" :disabled="disabled" @click="emit('decline')">Decline</Button>
-      <Button v-if="current > 0" size="sm" variant="ghost" class="h-7 px-2.5" @click="current -= 1">Back</Button>
-      <Button v-if="!last" size="sm" class="h-7 px-2.5" :disabled="disabled" @click="current += 1">Next</Button>
-      <Button v-else size="sm" class="h-7 px-2.5" :disabled="disabled" @click="send">{{ request.questions.length > 1 ? 'Send answers' : 'Send answer' }}</Button>
+      <Button v-if="declinable" size="sm" variant="ghost" :class="ANSWER_BUTTON" :disabled="disabled" @click="emit('decline')">Decline</Button>
+      <Button v-if="current > 0" size="sm" variant="ghost" :class="ANSWER_BUTTON" @click="current -= 1">Back</Button>
+      <Button v-if="!last" size="sm" :class="ANSWER_BUTTON" :disabled="disabled" @click="current += 1">Next</Button>
+      <Button v-else size="sm" :class="ANSWER_BUTTON" :disabled="disabled" @click="send">{{ request.questions.length > 1 ? 'Send answers' : 'Send answer' }}</Button>
     </div>
   </section>
 </template>
@@ -116,6 +119,7 @@ import { Check } from 'lucide-vue-next';
 import { Button } from './ui/button';
 import { Checkbox } from './ui/checkbox';
 import { RADIO_CLASS } from '../lib/utils';
+import { phoneLayout } from '../lib/phoneLayout';
 import type { IntegratedQuestion, IntegratedQuestionRequest } from '../lib/integratedConversation';
 
 
@@ -139,6 +143,7 @@ const emit = defineEmits<{
   decline: [];
 }>();
 
+const ANSWER_BUTTON = 'h-7 px-2.5 max-sm:h-12 max-sm:flex-1 max-sm:rounded-xl max-sm:text-[15px]';
 const current = ref(0);
 // Questions whose "Something else" row is chosen, even before any text is typed.
 const otherChosen = ref<Record<string, boolean>>({});
