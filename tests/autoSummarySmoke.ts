@@ -157,6 +157,7 @@ async function main() {
     await discover(); for (let i = 0; i < 6 && state('huge').position < 40; i++) await advance();
     assert.ok(calls.length - beforeHuge < 3, 'bootstrap samples a bounded tail');
     assert.equal(state('huge').origin, 'partial'); assert.equal(summary('huge').auto_summary_coverage, 'partial');
+    assert.equal(summary('huge').auto_status, 'Waiting on review', 'a partial recap keeps its real status line');
     message('huge', 40, 'user', 'New direction'); index.publish('huge'); await advance(); await advance(2000);
     assert.equal(summary('huge').auto_summary_coverage, 'partial', 'new activity does not erase incomplete origin');
     const info = service.control('huge-session', 'rebuild', 'project'); assert.ok(info.estimatedCalls > 1); assert.equal(info.rebuilding, true);

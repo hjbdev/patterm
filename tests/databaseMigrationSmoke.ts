@@ -10,6 +10,7 @@ import { DatabaseService } from '../app/Services/DatabaseService';
 import { HistoryDatabaseService } from '../app/Services/HistoryDatabaseService';
 import { migrations } from '../database/migrations';
 import addSessionTitleOverride from '../database/migrations/2026_09_09_000019_add_session_title_override';
+import clearPartialSummaryStatus from '../database/migrations/2026_10_29_000056_clear_partial_summary_status';
 import { historyMigrations } from '../database/historyMigrations';
 import { assertTaskRemovalMigration } from './taskRemovalMigrationSmoke';
 import { assertDatabaseBackups } from './databaseBackupSmoke';
@@ -78,6 +79,7 @@ function main(): void {
     assertOuterRollbackUndoesInnerTransaction();
     assertTaskIdentifierBackfill();
     assertSessionTitleOverrideUpgrade(tempDir);
+    assertPartialSummaryStatusCleared();
     assertBranchUpgradePaths();
     assertTaskRemovalMigration();
     assertDatabaseBackups();
@@ -338,6 +340,22 @@ function assertSessionTitleOverrideUpgrade(tempDir: string): void {
     ]);
     db.exec("insert into sessions (id) values ('new')");
     assert.equal((db.prepare("select title_set_by_user from sessions where id = 'new'").get() as { title_set_by_user: number }).title_set_by_user, 0);
+  } finally {
+    db.close();
+  }
+}
+
+function assertPartialSummaryStatusCleared(): void {
+  const db = openSqliteConnection(':memory:');
+  try {
+    db.exec('create table processes (id text primary key, auto_status text)');
+    db.exec("insert into processes values ('partial', 'Partial conversation recap'), ('real', 'Waiting on review'), ('none', null)");
+    new Migrator(db, [clearPartialSummaryStatus]).migrate();
+    assert.deepEqual(db.prepare('select id, auto_status from processes order by id').all(), [
+      { id: 'none', auto_status: null },
+      { id: 'partial', auto_status: null },
+      { id: 'real', auto_status: 'Waiting on review' }
+    ]);
   } finally {
     db.close();
   }
