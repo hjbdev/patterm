@@ -19,6 +19,7 @@ export interface Bot {
   avatar: BotAvatar;
   purview: BotPurview;
   instructions: string;
+  memory: boolean;
 }
 
 export interface BotSettings { bots: Bot[] }

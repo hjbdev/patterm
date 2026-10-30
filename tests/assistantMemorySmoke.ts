@@ -13,6 +13,7 @@ import type { TerminalService } from '../app/Services/TerminalService';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
 import { LaunchingMcpIdentities } from '../app/MCP/McpHelperAccess';
 import { removeTree } from './fixtures/TempTree';
+import { randomLook } from '../resources/js/lib/faces';
 
 async function main(): Promise<void> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-memory-'));
@@ -198,6 +199,38 @@ async function main(): Promise<void> {
     settings.updateAssistantSettings({ ...settings.assistantSettings(), memoryEnabled: true });
     assert.ok(memory.read({}).revision > latest, 'revision and facts survive restart');
     assert.equal(row(corrected).status, 'forgotten');
+
+    // Bots keep their own notes and revisions, apart from the assistant's and
+    // each other's, and only name projects in their purview.
+    database.connection.prepare('insert into projects(id,name,path,created_at,updated_at) values(?,?,?,?,?)').run('q', 'Other', dir, now, now);
+    const botSettings = (id: string, memoryOn: boolean) => ({ id, name: id, presetId: 'preset_default_claude', avatar: { kind: 'face', look: randomLook(1), emoji: null, picture: null }, purview: { kind: 'projects', projectIds: ['p'] }, instructions: '', memory: memoryOn });
+    settings.updateBots({ bots: [botSettings('fable', true), botSettings('pal', false)] });
+    for (const id of ['fable', 'pal']) {
+      database.connection.prepare("insert into processes(id,project_id,kind,name,status,created_at,updated_at) values(?,?,'agent',?,'running',?,?)").run(`proc-${id}`, 'p', id, now, now);
+      database.connection.prepare('insert into sessions(id,project_id,process_id,harness,session_role,bot_id,started_at,cwd,mcp_identity) values(?,?,?,?,?,?,?,?,?)').run(id, 'p', `proc-${id}`, 'claude', 'bot', id, now, dir, `mcp-${id}`);
+    }
+    const fable = { identity: 'mcp-fable' };
+    const assistantRevision = memory.read({}).revision;
+    assert.ok(registry.publicTools(fable).some((item) => item.name === tool), 'bots discover memory tools');
+    const fresh = await registry.callPublic(tool, {}, fable) as ReturnType<AssistantMemoryService['read']>;
+    assert.equal(fresh.revision, 0, 'a bot starts with an empty memory of its own');
+    assert.doesNotMatch(fresh.text, /Prefers metric units/, 'a bot never reads the assistant\'s notes');
+    const botNote = await registry.callPublic('assistant_memory_write', { lines: [{ text: 'Likes being called Hal.', importance: 'high', project_id: 'p' }] }, fable) as ReturnType<AssistantMemoryService['write']>;
+    assert.equal(botNote.revision, 1);
+    assert.equal(memory.read({}).revision, assistantRevision, 'bot writes leave the assistant\'s revision alone');
+    assert.doesNotMatch(memory.read({}).text, /Hal/);
+    assert.match(memory.snapshot(undefined, 'fable'), /Likes being called Hal/);
+    assert.match(memory.read({ since_revision: 0 }, 'fable').text, /Hal/);
+    assert.doesNotMatch(memory.search({ query: 'Hal' }).text, /Hal\./, 'assistant search leaves bot notes out');
+    await assert.rejects(registry.callPublic('assistant_memory_write', { mode: 'supersede', replaces: saved.ids, lines: [] }, fable), /stale/, 'a bot can\'t replace the assistant\'s notes');
+    await assert.rejects(registry.callPublic('assistant_memory_write', { lines: [{ text: 'Outside purview.', importance: 'low', project_id: 'q' }] }, fable), /one of your projects/);
+    assert.throws(() => memory.write({ mode: 'supersede', replaces: botNote.ids, lines: [] }), /stale/, 'the assistant can\'t replace a bot\'s notes');
+    const pal = await registry.callPublic(tool, {}, { identity: 'mcp-pal' }) as ReturnType<AssistantMemoryService['read']>;
+    assert.equal(pal.enabled, false, 'a bot with memory off reads nothing');
+    await assert.rejects(registry.callPublic('assistant_memory_search', { query: 'Hal' }, { identity: 'mcp-pal' }), /disabled for this bot/);
+    settings.updateBots({ bots: [botSettings('fable', true), botSettings('pal', true)] });
+    assert.doesNotMatch((await registry.callPublic(tool, {}, { identity: 'mcp-pal' }) as ReturnType<AssistantMemoryService['read']>).text, /Hal/, 'bots never read each other\'s notes');
+    assert.match(new AgentContextService().buildBot({ name: 'Fable', instructions: '' }, 'none'), /assistant_memory_read/);
   } finally {
     database.dispose();
     removeTree(dir);

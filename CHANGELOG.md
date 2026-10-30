@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Bots have saved memory of their own, like the assistant's. Each bot keeps
+  notes that only it can read, separate from the assistant's and other bots'
+  notes, and can tie a note only to projects in its purview. Memory is on by
+  default and can be turned off per bot in Settings › Bots; turning it off
+  keeps the notes it already saved.
 - Agents can ask for passwords, API keys and tokens with `secret_request`
   instead of in the conversation. The request appears in the session context
   and as a notification, and you enter the value there, choose which hosts or
