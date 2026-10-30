@@ -55,9 +55,12 @@ if (process.env.REJECT_PROMPT && method === 'POST' && route.endsWith('/prompt'))
 if (process.env.REJECT_COMPACT && method === 'POST' && route.endsWith('/compact')) { console.log('HTTP ' + process.env.REJECT_COMPACT); process.exit(1); }
 fs.appendFileSync(process.env.RECORD, JSON.stringify({method,route,body})+'\\n');
 if (process.env.MCP_OVERLAP && method === 'PUT' && route.startsWith('/api/experimental/mcp/') && !route.startsWith('/api/experimental/mcp/patterm_')) {
-  // A native install waits for its server to connect.
+  // A native install waits for its server to connect. Each one holds until
+  // every install has started, so sequential installs time out instead.
   fs.appendFileSync(process.env.MCP_OVERLAP, 'start\\n');
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+  const deadline = Date.now() + 10000;
+  const started = () => fs.readFileSync(process.env.MCP_OVERLAP, 'utf8').split('\\n').filter((line) => line === 'start').length;
+  while (started() < Number(process.env.MCP_OVERLAP_COUNT) && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
   fs.appendFileSync(process.env.MCP_OVERLAP, 'end\\n');
 }
 if (process.env.FAIL_API) { console.error(json); process.exit(1); }
@@ -260,7 +263,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     // waits for its connection, so they run together.
     const overlap = path.join(directory, 'mcp-overlap.log');
     const servers = ['one', 'two', 'three'].map((name) => ({ ...helped, id: `mcpsrv_${name}`, name: `overlap_${name}` }));
-    await new OpenCodeServerService(database, { ...env, MCP_OVERLAP: overlap }, { persistent: true })
+    await new OpenCodeServerService(database, { ...env, MCP_OVERLAP: overlap, MCP_OVERLAP_COUNT: String(servers.length) }, { persistent: true })
       .prepare({ ...input, cwd: fs.mkdtempSync(path.join(directory, 'fresh-')), mcp: { ...mcp, env: { ...mcp.env, PATTERM_MCP_SOCKET: `${socketPath}-fresh` } }, mcpServers: servers });
     assert.deepEqual(fs.readFileSync(overlap, 'utf8').trim().split('\n').slice(0, servers.length), servers.map(() => 'start'),
       'global MCP servers install concurrently, not one after another');
