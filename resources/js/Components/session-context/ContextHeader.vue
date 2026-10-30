@@ -26,7 +26,9 @@
           <AutoSummaryControls v-if="canSummarize" :key="session.id" :project-id="projectId" :session-id="session.id" class="-my-1" />
         </p>
       </div>
-      <div v-if="!folded" class="flex items-center gap-1.5" :class="phoneLayout ? 'mt-1.5 overflow-x-auto px-3 [scrollbar-width:none]' : 'mt-2.5 flex-wrap'">
+      <!-- An open chip stays mounted while the header folds: typing in its
+           form opens a phone's keyboard, which folds the header. -->
+      <div v-if="!folded || openChip" class="flex items-center gap-1.5" :class="phoneLayout ? 'mt-1.5 overflow-x-auto px-3 [scrollbar-width:none]' : 'mt-2.5 flex-wrap'">
         <ResponsivePopover v-if="worktrees.length" v-bind="chip('worktrees')" title="Worktrees" content-class="w-[22rem]">
           <template #trigger><button type="button" :class="CHIP"><FolderGit2 :class="CHIP_ICON" />{{ counted(worktrees.length, 'worktree', 'worktrees') }}</button></template>
           <ContextWorktreeRow v-for="worktree in worktrees" :key="worktree.id" dense :worktree="worktree" :state="diffTotals.get(worktree.id)" :active="worktree.id === activeWorktreeId" :busy="busy" @open="openDiff(worktree)" @unlink="unlinkWorktree(worktree.id)" />
