@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Agents can ask for passwords, API keys and tokens with `secret_request`
+  instead of in the conversation. The request appears in the session context
+  and as a notification, and you enter the value there, choose which hosts or
+  sites it is for, and decide how the agent may use it:
+  - **Proxy**: requests to the allowed hosts go through a loopback proxy that
+    adds the key as a header or query parameter. The key never reaches the
+    agent's processes and can't be sent anywhere else.
+  - **Commands**: `patterm-secret run --env NAME=secret -- <command>` passes
+    it to one command's environment and masks it in that command's output;
+    `patterm-secret write <file>` writes a `.env` file with mode 0600 and
+    excludes it from git. The agent can read it this way, and the form says so.
+  - **Browser**: `browser_fill_secret` types a login's username or password
+    into the agent's browser, only on https pages of the allowed sites.
+  Secrets belong to the session and follow it when the conversation resumes.
+  Values are encrypted with AES-256-GCM; the desktop app seals the key with
+  the system keyring, and the server keeps it in a 0600 file beside the
+  database. Imported history and summaries mask stored values. Secrets are
+  entered only on the agent's own host. `patterm-secret` is not yet available
+  to OpenCode agents, which share one server.
 - Each agent can have its own Chrome, which Patterm runs for the session.
   `browser_open` starts it and returns its CDP URL, and the agent drives it
   with code; Patterm ships patchright-core for that and points agents at it.

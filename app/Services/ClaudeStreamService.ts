@@ -64,7 +64,7 @@ export class ClaudeStreamService {
       model: input.model ?? null, reasoning: input.reasoning ?? null,
       ...(this.images ? { imageDirectory: this.images.directory } : {})
     }), { mode: 0o600 });
-    const pid = await this.launcher.launch({ harness: 'claude', key, nodePath: this.nodePath, script: this.hostScript, configPath, cwd: input.cwd, env: this.env });
+    const pid = await this.launcher.launch({ harness: 'claude', key, nodePath: this.nodePath, script: this.hostScript, configPath, cwd: input.cwd, env: { ...this.env, ...input.shellEnv } });
     try {
       await waitForSocket(socketPath, pid);
       // Wait briefly for the child spawn outcome so a missing executable fails

@@ -34,6 +34,11 @@ import { AutoSummaryActions, registerAutoSummaryControl } from './Actions/AutoSu
 import { registerSemanticSearchTools, SemanticSearchActions } from './Actions/SemanticSearchActions';
 import { BrowserActions, registerBrowserTools } from './Actions/BrowserActions';
 import { BrowserService } from './Services/Browser/BrowserService';
+import { SecretActions, registerSecretTools } from './Actions/SecretActions';
+import { SecretService } from './Services/Secrets/SecretService';
+import { SecretVault, type SecretKeyWrapper } from './Services/Secrets/SecretVault';
+import { SecretProxyService } from './Services/Secrets/SecretProxyService';
+import { SecretRedactor } from './Services/AgentHistory/SecretRedactor';
 import { ChromeInstaller } from './Services/Browser/ChromeInstaller';
 import { HybridHistorySearchService } from './Services/SemanticSearch/HybridHistorySearchService';
 import { SemanticSearchService } from './Services/SemanticSearch/SemanticSearchService';
@@ -148,6 +153,9 @@ export interface AppOptions {
   appRoot?: string;
   // Replaces the release download endpoints, for tests.
   updates?: { fetch?: typeof fetch; releasesUrl?: string; apiUrl?: string };
+  // Seals the agent secrets key with the system keyring. The desktop app
+  // passes Electron's safeStorage; without it the key file is plain.
+  secretKeyWrapper?: SecretKeyWrapper;
 }
 
 export interface BootstrapPayload {
@@ -445,6 +453,8 @@ async function createApplicationResources(
   autoSummaries.start();
   defer(() => autoSummaries.dispose());
   const resumeCapture = new ResumeIdCaptureService(database, searchService);
+  // Created with the browsers; history imports mask its stored values.
+  let secrets: SecretService | null = null;
   // Created after the queue it asks for migrations; imports only wake it.
   let semanticSearch: SemanticSearchService | null = null;
   const historyImportQueue = new AgentHistoryImportQueueService(options.appDataPath, undefined, options.runtime === 'node' ? launchNodeHistoryWorker : undefined, debugLog, {
@@ -452,7 +462,8 @@ async function createApplicationResources(
       if (applyHistoryImportEffects(result, timeline, resumeCapture)) notifyWorkbenchChanged();
       if (historyChanged(result)) { autoSummaries.historyChanged(); notifyChanged(['history']); }
       semanticSearch?.historyChanged();
-    }
+    },
+    secretValues: () => secrets?.knownValues() ?? []
   });
   defer(() => historyImportQueue.dispose());
   autoSummaries.setTitleListener(() => historyImportQueue.syncTitles());
@@ -481,6 +492,31 @@ async function createApplicationResources(
   });
   defer(() => browsers.dispose());
   const browserActions = new BrowserActions(browsers, database);
+  let secretProxy: SecretProxyService | null = null;
+  const secretService = new SecretService(database, new SecretVault(path.join(options.appDataPath, 'secrets.key'), options.secretKeyWrapper ?? null), {
+    requested: (processId, secret) => raiseNotification({
+      processId, source: 'mcp', kind: 'attention', urgency: 'high', title: 'Needs a secret',
+      body: `${secret.name}: ${secret.purpose}`, dedupeKey: `secret:${secret.id}`
+    }),
+    settled: (processId, secretId) => { notificationService.resolve({ process_id: processId, dedupe_key: `secret:${secretId}` }); },
+    messageAgent: (processId, text) => sendAgentInput(database, terminal, { process_id: processId, kind: 'text', text, submit: true }, integrated),
+    proxyUrls: (secret) => secretProxy?.urls(secret) ?? {},
+    changed: () => {
+      SecretRedactor.useKnownValues(secretService.knownValues());
+      notifyChanged(['secrets']);
+    }
+  });
+  secrets = secretService;
+  try {
+    SecretRedactor.useKnownValues(secretService.knownValues());
+  } catch (error) {
+    debugLog.write('secrets', 'known_values.failed', { message: error instanceof Error ? error.message : String(error) });
+  }
+  const startedSecretProxy = new SecretProxyService(path.join(options.appDataPath, 'secret-proxy.json'), secretService);
+  defer(() => startedSecretProxy.stop());
+  await startedSecretProxy.start();
+  secretProxy = startedSecretProxy;
+  const secretActions = new SecretActions(secretService, browsers);
   let reaping: NodeJS.Timeout | null = null;
   reapBrowsers = () => {
     reaping ??= setTimeout(() => {
@@ -654,7 +690,8 @@ async function createApplicationResources(
     // A paired host's UI runs the same tools as a browser, except ones that
     // change this host's settings or pairing.
     allowedTools: new Set([
-      ...[...BROWSER_TOOLS].filter((tool) => !tool.startsWith('hosts_') && !tool.startsWith('settings_') && !(MCP_SERVER_TOOLS as readonly string[]).includes(tool)),
+      // Secrets are entered only on the agent's own host.
+      ...[...BROWSER_TOOLS].filter((tool) => !tool.startsWith('hosts_') && !tool.startsWith('settings_') && !tool.startsWith('secret_') && !(MCP_SERVER_TOOLS as readonly string[]).includes(tool)),
       // The command palette pauses, resumes, and cancels timers.
       'timer_cancel', 'timer_pause', 'timer_resume',
       // Socket-only for browsers; the peer route checks control itself.
@@ -730,6 +767,7 @@ async function createApplicationResources(
   registerAutoSummaryControl(mcp, autoSummaryActions);
   registerSemanticSearchTools(mcp, semanticSearchActions);
   registerBrowserTools(mcp, browserActions);
+  registerSecretTools(mcp, secretActions);
   registerMcpServerTools(mcp, mcpServers);
   registerAssistantTools(mcp, assistantService, settings);
   registerIdleCompactionTools(mcp, settings);
@@ -806,7 +844,8 @@ async function createApplicationResources(
       if (typeof input.url === 'string') nativeOAuthCallbacks.observe(input.url);
       return opened;
     },
-    mcpServerHandlers);
+    mcpServerHandlers,
+    { env: (identity, refs) => secretService.envValues(identity, refs) });
   defer(() => mcpSocket.stop());
   // Release activity observation before the database closes; persistent
   // hosts keep running and are observed again after reconnect.

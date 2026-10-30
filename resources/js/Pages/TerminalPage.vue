@@ -94,6 +94,7 @@ import { onWorkspaceRequest } from '../lib/workspaceRequests';
 import { harnessPresets } from '../lib/serverQuery';
 import { peekedProcessId, takePeek, type Peek } from '../lib/peek';
 import { useBrowserState } from '../lib/browser';
+import { useSessionSecrets } from '../lib/secrets';
 const { harnesses } = useWorkbench();
 const { route, router, activeProject, selectedAgent, selectedProcess, activeTerminalId, selectLaunchedAgent } = useTerminalPageNavigation();
 const terminalPane = ref<InstanceType<typeof TerminalPane> | null>(null);
@@ -273,6 +274,15 @@ watch(() => browser.value?.help?.requestedAt, (requestedAt) => {
   if (!requestedAt || !processId || shownHelp.has(`${processId}:${requestedAt}`)) return;
   shownHelp.add(`${processId}:${requestedAt}`);
   if (peek.value?.kind !== 'browser') void openPeek({ kind: 'browser' });
+});
+// A request for a secret opens the session context, where its form waits.
+const secrets = useSessionSecrets(() => selectedAgent.value?.processId);
+const shownSecretRequests = new Set<string>();
+watch(() => secrets.value?.secrets.filter((secret) => secret.status === 'requested').map((secret) => secret.id) ?? [], (requested) => {
+  const fresh = requested.filter((id) => !shownSecretRequests.has(id));
+  if (!fresh.length) return;
+  for (const id of fresh) shownSecretRequests.add(id);
+  if (peek.value?.kind !== 'context') void openPeek({ kind: 'context' });
 });
 function appearanceChanged(event: Event) {
   diffLayout.value = normalizeAppearanceSettings((event as CustomEvent<AppearanceSettings>).detail).diffViewer;

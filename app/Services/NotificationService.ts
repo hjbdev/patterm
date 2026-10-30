@@ -237,7 +237,7 @@ export class NotificationService {
     return this.update('read', 'read_at', at, input);
   }
 
-  resolve(input: { ids?: string[] | undefined; process_id?: string | undefined; kinds?: NotificationKind[] | undefined }): number {
+  resolve(input: { ids?: string[] | undefined; process_id?: string | undefined; kinds?: NotificationKind[] | undefined; dedupe_key?: string | undefined }): number {
     const at = new Date(this.now()).toISOString();
     return this.update('resolved', 'resolved_at', at, input);
   }
@@ -302,13 +302,14 @@ export class NotificationService {
     return Number(this.database.connection.prepare(`delete from notifications where coalesce(resolved_at, read_at) < ?`).run(cutoff).changes);
   }
 
-  private update(type: 'read' | 'resolved', column: 'read_at' | 'resolved_at', at: string, input: { ids?: string[] | undefined; process_id?: string | undefined; session_id?: string | undefined; kinds?: NotificationKind[] | undefined; all?: boolean | undefined }): number {
+  private update(type: 'read' | 'resolved', column: 'read_at' | 'resolved_at', at: string, input: { ids?: string[] | undefined; process_id?: string | undefined; session_id?: string | undefined; kinds?: NotificationKind[] | undefined; dedupe_key?: string | undefined; all?: boolean | undefined }): number {
     const where = [`${column} is null`];
     const params: string[] = [];
     if (input.ids?.length) { where.push(`id in (${input.ids.map(() => '?').join(', ')})`); params.push(...input.ids); }
     else if (input.process_id) { where.push('process_id = ?'); params.push(input.process_id); }
     else if (input.session_id) { where.push('session_id = ?'); params.push(input.session_id); }
     else if (!input.all) return 0;
+    if (input.dedupe_key) { where.push('dedupe_key = ?'); params.push(input.dedupe_key); }
     if (input.kinds?.length) { where.push(`kind in (${input.kinds.map(() => '?').join(', ')})`); params.push(...input.kinds); }
     const db = this.database.connection;
     const ids = (db.prepare(`select id from notifications where ${where.join(' and ')}`).all(...params) as Array<{ id: string }>).map((row) => row.id);

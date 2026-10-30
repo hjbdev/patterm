@@ -10,6 +10,7 @@ import { withEnv } from '../app/Platform/Environment';
 import { resolveCommand } from '../app/Platform/Executable';
 import { ipcPath } from '../app/Platform/Ipc';
 import { killProcessTree } from '../app/Platform/ProcessTree';
+import { secretCli } from './secretCli';
 
 // The stdio server forwards direct tool calls to the application's registry.
 // A catalogue request at startup keeps schemas and public names in one place.
@@ -40,6 +41,7 @@ type ShimRequest =
   | { op: 'mcp-proxy-headers'; server: string }
   | { op: 'mcp-endpoint'; server: string; rejected?: string | null }
   | { op: 'mcp-exec'; server: string }
+  | { op: 'secret-env'; refs: string[] }
   | { tool: string; args: unknown };
 
 // OpenCode 2 sends `ai.opencode/sessionID`; earlier builds sent `sessionID`.
@@ -327,7 +329,11 @@ const MODES: Record<string, (args: string[]) => Promise<void>> = {
   '--mcp-headers': ([serverId]) => printHeaders(required(serverId)),
   '--mcp-bridge': ([serverId]) => bridge(required(serverId)),
   '--mcp-proxy-headers': ([serverId]) => printProxyHeaders(required(serverId)),
-  '--mcp-exec': ([serverId]) => exec(required(serverId))
+  '--mcp-exec': ([serverId]) => exec(required(serverId)),
+  '--secret': async (args) => {
+    const code = await secretCli(args, async (refs) => (await registryRequest({ op: 'secret-env', refs }) as { values: string[] }).values);
+    process.exitCode = code;
+  }
 };
 
 function required(serverId: string | undefined): string {
@@ -340,7 +346,7 @@ if (require.main === module) {
   const run = MODES[mode];
   (run ? run(process.argv.slice(3)) : main()).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(mode === '--open' ? `xdg-open: ${message}\n` : `patterm-mcp ${run ? mode.slice(2) : 'shim'} failed: ${message}\n`);
+    process.stderr.write(mode === '--open' ? `xdg-open: ${message}\n` : mode === '--secret' ? `patterm-secret: ${message}\n` : `patterm-mcp ${run ? mode.slice(2) : 'shim'} failed: ${message}\n`);
     process.exit(1);
   });
 }

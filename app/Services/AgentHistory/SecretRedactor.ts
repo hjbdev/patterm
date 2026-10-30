@@ -12,10 +12,24 @@ const SECRET_PATTERNS: RegExp[] = [
   /\b(authorization\s*[:=]\s*bearer\s+)[A-Za-z0-9._~+/-]+=*/gi
 ];
 
+// Values the user stored as agent secrets. They are masked exactly, before
+// the patterns, wherever they turn up.
+let knownValues: string[] = [];
+
 export class SecretRedactor {
+  static useKnownValues(values: readonly string[]): void {
+    knownValues = [...values].filter(Boolean).sort((a, b) => b.length - a.length);
+  }
+
   redact(input: string | null | undefined): RedactedText {
     let text = input ?? '';
     let redactionCount = 0;
+    for (const value of knownValues) {
+      if (!text.includes(value)) continue;
+      const parts = text.split(value);
+      redactionCount += parts.length - 1;
+      text = parts.join('[REDACTED]');
+    }
     for (const pattern of SECRET_PATTERNS) {
       text = text.replace(pattern, (...args: unknown[]) => {
         redactionCount += 1;

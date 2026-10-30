@@ -179,7 +179,7 @@ export class CodexAppServerService {
       executable: input.executable, args, cwd: input.cwd, appServerSocketPath,
       controlSocketPath: socketPath, logPath
     }), { mode: 0o600 });
-    const pid = await (this.options.launcher ?? detachedHostLauncher).launch({ harness: 'codex', key, nodePath: this.nodePath, script: this.hostScript, configPath, cwd: input.cwd, env: { ...this.env, ...CODEX_MCP_PROXY_ENV } });
+    const pid = await (this.options.launcher ?? detachedHostLauncher).launch({ harness: 'codex', key, nodePath: this.nodePath, script: this.hostScript, configPath, cwd: input.cwd, env: { ...this.env, ...input.shellEnv, ...CODEX_MCP_PROXY_ENV } });
 
     try {
       await waitForSocket(socketPath, pid);

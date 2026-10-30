@@ -189,6 +189,46 @@ export class BrowserService {
     }
   }
 
+  // Types a secret into a field, as keystrokes, so it never passes through
+  // the agent. The page must be on a site the user allowed for the secret,
+  // checked in the page itself, not from the tab list.
+  async fillSecret(sessionId: string, input: { targetId?: string | undefined; selector: string; value: string; allowed: (host: string) => boolean }): Promise<{ target_id: string; host: string }> {
+    const browser = this.browsers.get(sessionId);
+    if (!browser) throw new Error('Your browser is not running. Call browser_open and load the sign-in page first.');
+    const targetId = input.targetId ?? browser.activeTargetId ?? [...browser.tabs.keys()].at(-1);
+    if (!targetId || !browser.tabs.has(targetId)) throw new Error('That tab is not open');
+    const { sessionId: attached } = await browser.cdp.send<{ sessionId: string }>('Target.attachToTarget', { targetId, flatten: true });
+    try {
+      // Text input goes only to a focused page, and Patterm's Chrome has no
+      // focused window. Detaching ends the emulation.
+      await browser.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true }, attached);
+      const check = await browser.cdp.send<{ result: { value?: { host: string; secure: boolean; found: boolean } } }>('Runtime.evaluate', {
+        expression: `(() => {
+          const element = document.querySelector(${JSON.stringify(input.selector)});
+          const editable = element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element?.isContentEditable;
+          if (editable) { element.focus(); element.select?.(); }
+          return { host: location.host, secure: location.protocol === 'https:' || ['localhost', '127.0.0.1'].includes(location.hostname), found: Boolean(editable) };
+        })()`,
+        returnByValue: true
+      }, attached);
+      const page = check.result.value;
+      if (!page) throw new Error('Could not read the page');
+      if (!input.allowed(page.host)) throw new Error(`The user allowed this secret only on other sites, not ${page.host || 'this page'}`);
+      if (!page.secure) throw new Error('Secrets are filled only on https pages');
+      if (!page.found) throw new Error(`No text field matches ${input.selector}`);
+      await browser.cdp.send('Input.insertText', { text: input.value }, attached);
+      // Compares lengths, so the value never comes back out of the page.
+      const typed = await browser.cdp.send<{ result: { value?: number } }>('Runtime.evaluate', {
+        expression: `(() => { const element = document.activeElement; return element && 'value' in element ? String(element.value).length : (element?.textContent ?? '').length; })()`,
+        returnByValue: true
+      }, attached);
+      if (typed.result.value !== input.value.length) throw new Error('The field did not take the secret. Click it in the page first, or ask the user with browser_request_help.');
+      return { target_id: targetId, host: page.host };
+    } finally {
+      await browser.cdp.send('Target.detachFromTarget', { sessionId: attached }).catch(() => {});
+    }
+  }
+
   // Opens `url` in the session's watched tab. A browser that isn't running
   // starts in the background, since it may first need Chrome downloaded and
   // the user's request shouldn't wait on that; its state shows the progress.

@@ -8,6 +8,7 @@ import { HistoryDatabaseService } from '../HistoryDatabaseService';
 import { HistorySearchIndexService } from './HistorySearchIndexService';
 import { ConversationTitleSync } from './ConversationTitleSync';
 import os from 'node:os';
+import { SecretRedactor } from './SecretRedactor';
 
 interface WorkerInput {
   action?: 'parse_file' | 'import' | 'reset_imports' | 'delete_conversation' | 'delete_project_history' | 'migrate' | 'sync_titles';
@@ -21,6 +22,8 @@ interface WorkerInput {
   options?: ParseHistoryFileOptions;
   conversation_id?: string;
   project_id?: string;
+  // Stored agent secrets, masked in what this worker imports.
+  secretValues?: string[];
 }
 
 interface ParentPort {
@@ -70,6 +73,7 @@ function lowerWorkerPriority(): void {
 
 export async function runHistoryImportWorker(message: unknown, reportProgress?: ProgressReporter): Promise<WorkerResult> {
   const payload = message as WorkerInput;
+  if (Array.isArray(payload.secretValues)) SecretRedactor.useKnownValues(payload.secretValues);
   try {
     if (payload.action === 'parse_file') {
       return { ok: true, result: parseHistoryFile(payload) };
