@@ -19,6 +19,8 @@ import { SecretVault } from '../app/Services/Secrets/SecretVault';
 import type { TimelineService } from '../app/Services/TimelineService';
 import { Masker, maskSet, secretCli } from '../mcp/secretCli';
 
+// Windows has no POSIX modes, and agents there don't get patterm-secret.
+const posix = process.platform !== 'win32';
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-secrets-'));
 
 function vaultChecks(): void {
@@ -26,7 +28,7 @@ function vaultChecks(): void {
   const vault = new SecretVault(keyPath);
   const sealed = vault.seal('secret_a', 'hunter22');
   assert.equal(new SecretVault(keyPath).open('secret_a', sealed), 'hunter22', 'a new vault reads the saved key');
-  assert.equal(fs.statSync(keyPath).mode & 0o777, 0o600);
+  if (posix) assert.equal(fs.statSync(keyPath).mode & 0o777, 0o600);
   assert.throws(() => vault.open('secret_b', sealed), /unreadable/, 'a ciphertext moved to another record fails');
   assert.equal(vault.protectedByKeyring, false);
 
@@ -78,13 +80,37 @@ async function cliChecks(): Promise<void> {
     assert.equal(await secretCli(['write', '.env.local', 'API_KEY=api', 'OTHER=other'], fetchValues), 0);
     assert.deepEqual(asked, [['api', 'other']]);
     assert.equal(fs.readFileSync('.env.local', 'utf8'), 'KEEP=1\nAPI_KEY="abc 123\\"x"\nOTHER=plain\n');
-    assert.equal(fs.statSync('.env.local').mode & 0o777, 0o600);
+    if (posix) assert.equal(fs.statSync('.env.local').mode & 0o777, 0o600);
     assert.match(fs.readFileSync(path.join(repo, '.git', 'info', 'exclude'), 'utf8'), /^\/\.env\.local$/m);
     assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }), '', 'git ignores the written file');
     await assert.rejects(secretCli(['run', '--env', '1BAD=api', '--', 'true'], fetchValues), /expected NAME=secret/);
   } finally {
     process.chdir(previous);
   }
+}
+
+// The built shim fetches values as the agent and masks them in output. It
+// runs sh, so only where agents get patterm-secret.
+async function shimChecks(socketPath: string): Promise<void> {
+  const shim = path.resolve(__dirname, '../../mcp/patterm-mcp.js');
+  // Async, so this process's socket server can answer the shim.
+  const run = (identity: string, args: string[]) => new Promise<{ stdout: string; stderr: string; status: number | null }>((resolve) => {
+    const child = spawn(process.execPath, [shim, '--secret', ...args], { env: { ...process.env, PATTERM_MCP_SOCKET: socketPath, PATTERM_MCP_IDENTITY: identity } });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('close', (status) => resolve({ stdout, stderr, status }));
+  });
+  const echoed = await run('identity_a', ['run', '--env', 'KEY=stripe_test', '--', 'sh', '-c', 'echo "got $KEY"; echo "len ${#KEY}" >&2; exit 3']);
+  assert.equal(echoed.stdout, 'got [secret:stripe_test]\n');
+  assert.equal(echoed.stderr, 'len 18\n', 'the child receives the real value');
+  assert.equal(echoed.status, 3, 'the exit code passes through');
+  const stranger = await run('identity_x', ['run', '--env', 'KEY=stripe_test', '--', 'true']);
+  assert.notEqual(stranger.status, 0);
+  assert.match(stranger.stderr, /running Patterm agent/);
+  const login = await run('identity_a', ['run', '--env', 'P=github_login.password', '--', 'true']);
+  assert.match(login.stderr, /did not allow "github_login" in commands/);
 }
 
 async function serviceChecks(): Promise<void> {
@@ -212,25 +238,7 @@ async function serviceChecks(): Promise<void> {
   });
   await socket.start();
   try {
-    const shim = path.resolve(__dirname, '../../mcp/patterm-mcp.js');
-    // Async, so this process's socket server can answer the shim.
-    const run = (identity: string, args: string[]) => new Promise<{ stdout: string; stderr: string; status: number | null }>((resolve) => {
-      const child = spawn(process.execPath, [shim, '--secret', ...args], { env: { ...process.env, PATTERM_MCP_SOCKET: socketPath, PATTERM_MCP_IDENTITY: identity } });
-      let stdout = '';
-      let stderr = '';
-      child.stdout.on('data', (chunk) => { stdout += chunk; });
-      child.stderr.on('data', (chunk) => { stderr += chunk; });
-      child.on('close', (status) => resolve({ stdout, stderr, status }));
-    });
-    const echoed = await run('identity_a', ['run', '--env', 'KEY=stripe_test', '--', 'sh', '-c', 'echo "got $KEY"; echo "len ${#KEY}" >&2; exit 3']);
-    assert.equal(echoed.stdout, 'got [secret:stripe_test]\n');
-    assert.equal(echoed.stderr, 'len 18\n', 'the child receives the real value');
-    assert.equal(echoed.status, 3, 'the exit code passes through');
-    const stranger = await run('identity_x', ['run', '--env', 'KEY=stripe_test', '--', 'true']);
-    assert.notEqual(stranger.status, 0);
-    assert.match(stranger.stderr, /running Patterm agent/);
-    const login = await run('identity_a', ['run', '--env', 'P=github_login.password', '--', 'true']);
-    assert.match(login.stderr, /did not allow "github_login" in commands/);
+    if (posix) await shimChecks(socketPath);
   } finally {
     socket.stop();
   }
