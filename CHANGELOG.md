@@ -15,9 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default and can be turned off per bot in Settings › Bots; turning it off
   keeps the notes it already saved.
 - Agents can ask for passwords, API keys and tokens with `secret_request`
-  instead of in the conversation. The request appears in the session context
-  and as a notification, and you enter the value there, choose which hosts or
-  sites it is for, and decide how the agent may use it:
+  instead of in the conversation. A Secrets chip in the agent's header (and a
+  bot's) shows the session's secrets, with a dot while one is requested; a new
+  request opens its list without taking focus from what you were typing, on
+  desktop, the web client and phones. You enter the value from there, choose
+  which hosts or sites it is for, and decide how the agent may use it:
   - **Proxy**: `secret_run` with `urls` gives the command a local base URL
     for the allowed host, and Patterm's proxy adds the key as a header or
     query parameter. The key never reaches the agent's processes and can't be

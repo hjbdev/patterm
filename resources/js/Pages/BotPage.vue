@@ -8,7 +8,8 @@
           <div class="truncate text-sm font-medium">{{ row.bot.name }}</div>
           <div class="truncate text-xs text-muted-foreground">{{ purviewLabel }}</div>
         </div>
-        <button v-if="browser?.running" type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-white/[0.06] px-2.5 text-[12.5px] text-foreground/85 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" @click="peek = { kind: 'browser' }"><Globe class="h-3.5 w-3.5 shrink-0 text-muted-foreground" /><span class="py-1 [text-box:trim-both_cap_alphabetic]">Browser</span><span v-if="browser.help" class="h-1.5 w-1.5 rounded-full bg-foreground" aria-label="needs you" /></button>
+        <button v-if="browser?.running" type="button" :class="CHIP" @click="peek = { kind: 'browser' }"><Globe :class="CHIP_ICON" /><span :class="CHIP_LABEL">Browser</span><span v-if="browser.help" class="h-1.5 w-1.5 rounded-full bg-foreground" aria-label="needs you" /></button>
+        <SecretsChip v-if="row.session && hasSecrets(row.session.processId)" :process-id="row.session.processId" />
         <Button v-if="row.waitingHelper && row.waitingHelperProjectId" variant="ghost" size="sm" class="h-7 text-xs text-warning hover:text-warning" @click="openHelper">Open waiting helper</Button>
         <DropdownMenu>
           <DropdownMenuTrigger as-child>
@@ -69,6 +70,8 @@ import { Globe, MoreHorizontal } from 'lucide-vue-next';
 import BotAvatar from '../Components/BotAvatar.vue';
 import IntegratedConversation from '../Components/IntegratedConversation.vue';
 import PeekPane from '../Components/peek/PeekPane.vue';
+import { CHIP, CHIP_ICON, CHIP_LABEL } from '../Components/session-context/rowAction';
+import SecretsChip from '../Components/session-context/SecretsChip.vue';
 import { Button } from '../Components/ui/button';
 import { Sheet, SheetContent, SheetTitle } from '../Components/ui/sheet';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '../Components/ui/dropdown-menu';
@@ -78,7 +81,7 @@ import { restartBot, startBot } from '../lib/bots';
 import { useBrowserState } from '../lib/browser';
 import type { Peek } from '../lib/peek';
 import { phoneLayout } from '../lib/phoneLayout';
-import { useSessionSecrets } from '../lib/secrets';
+import { hasSecrets } from '../lib/secrets';
 
 const route = useRoute();
 const router = useRouter();
@@ -113,16 +116,6 @@ watch(() => browser.value?.help?.requestedAt, (requestedAt) => {
   if (!requestedAt || !processId || shownHelp.has(`${processId}:${requestedAt}`)) return;
   shownHelp.add(`${processId}:${requestedAt}`);
   if (peek.value?.kind !== 'browser') peek.value = { kind: 'browser' };
-}, { immediate: true });
-// A request for a secret opens the session context, where its form waits,
-// unless the browser is already asking for the user.
-const secrets = useSessionSecrets(() => row.value?.session?.processId);
-const shownSecretRequests = new Set<string>();
-watch(() => secrets.value?.secrets.filter((secret) => secret.status === 'requested').map((secret) => secret.id) ?? [], (requested) => {
-  const fresh = requested.filter((id) => !shownSecretRequests.has(id));
-  if (!fresh.length) return;
-  for (const id of fresh) shownSecretRequests.add(id);
-  if (!peek.value) peek.value = { kind: 'context' };
 }, { immediate: true });
 
 const purviewLabel = computed(() => {

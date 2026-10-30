@@ -26,7 +26,10 @@
           <AutoSummaryControls v-if="canSummarize" :key="session.id" :project-id="projectId" :session-id="session.id" class="-my-1" />
         </p>
       </div>
-      <div v-if="!folded" class="flex items-center gap-1.5" :class="phoneLayout ? 'mt-1.5 overflow-x-auto px-3 [scrollbar-width:none]' : 'mt-2.5 flex-wrap'">
+      <!-- Folding hides the chips without unmounting them, so an open chip's
+           form survives the phone keyboard that typing in it brings up, and
+           a new secret request still opens its list. -->
+      <div v-show="!folded || openChip" class="flex items-center gap-1.5" :class="phoneLayout ? 'mt-1.5 overflow-x-auto px-3 [scrollbar-width:none]' : 'mt-2.5 flex-wrap'">
         <ResponsivePopover v-if="worktrees.length" v-bind="chip('worktrees')" title="Worktrees" content-class="w-[22rem]">
           <template #trigger><button type="button" :class="CHIP"><FolderGit2 :class="CHIP_ICON" /><span :class="CHIP_LABEL">{{ counted(worktrees.length, 'worktree', 'worktrees') }}</span></button></template>
           <ContextWorktreeRow v-for="worktree in worktrees" :key="worktree.id" dense :worktree="worktree" :state="diffTotals.get(worktree.id)" :active="worktree.id === activeWorktreeId" :busy="busy" @open="openDiff(worktree)" @unlink="unlinkWorktree(worktree.id)" />
@@ -48,6 +51,10 @@
         <!-- The agent's own browser, once it has one. It opens beside the
              conversation. -->
         <button v-if="browser?.running" type="button" :class="CHIP" @click="emit('peek', { kind: 'browser' })"><Globe :class="CHIP_ICON" /><span :class="CHIP_LABEL">Browser</span><span v-if="browser.help" class="h-1.5 w-1.5 rounded-full bg-foreground" aria-label="needs you" /></button>
+
+        <!-- Secrets the agent asked for or was given. A new request opens the
+             list, where its form waits. They stay on the agent's own host. -->
+        <SecretsChip v-if="hasSecrets(session.processId)" v-bind="chip('secrets')" :process-id="session.processId" />
 
         <!-- Servers the agent started, and preview links. One with a page opens
              it in the agent's browser beside the conversation. -->
@@ -137,6 +144,8 @@ import ContextScratchpadRow from './ContextScratchpadRow.vue';
 import ContextTodoRow from './ContextTodoRow.vue';
 import ContextWorktreeRow from './ContextWorktreeRow.vue';
 import LinkAttachPopover from './LinkAttachPopover.vue';
+import { CHIP, CHIP_ICON, CHIP_LABEL } from './rowAction';
+import SecretsChip from './SecretsChip.vue';
 import { useMedia } from '../../Composables/useMedia';
 import { linkIcon, linkLabel, MAX_LINKED_WORKTREES, useSessionContext } from '../../Composables/useSessionContext';
 import { agentLabel } from '../../lib/agentTabs';
@@ -146,6 +155,7 @@ import type { Peek } from '../../lib/peek';
 import { phoneLayout } from '../../lib/phoneLayout';
 import type { SessionWorktree } from '../../lib/projectContext';
 import { processActivity } from '../../lib/rowActivity';
+import { hasSecrets } from '../../lib/secrets';
 import { familyServers } from '../../lib/servers';
 import type { ProcessRecord, SessionRecord } from '../../types';
 
@@ -155,12 +165,7 @@ const props = defineProps<{ projectId: string; session: SessionRecord; inner?: s
 const emit = defineEmits<{ peek: [peek: Peek] }>();
 const sidebar = useSidebar();
 
-const CHIP = 'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-white/[0.06] px-2.5 text-[12.5px] text-foreground/85 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-white/[0.14] data-[state=open]:text-foreground max-sm:h-8 max-sm:rounded-lg max-sm:px-3 max-sm:text-[13px]';
 const ADD_CHIP = cn(CHIP, 'w-7 justify-center px-0 max-sm:w-8 max-sm:px-0');
-const CHIP_ICON = 'h-3.5 w-3.5 shrink-0 text-muted-foreground';
-// Trimmed to cap height so centring centres the letters, not the font's line box;
-// the padding gives back room for descenders under truncate's clip.
-const CHIP_LABEL = 'py-1 [text-box:trim-both_cap_alphabetic]';
 const ROW = 'flex min-h-8 w-full min-w-0 flex-1 items-center gap-2.5 rounded-md px-2 py-1 text-left text-[13px] outline-none transition-colors hover:bg-muted/40 focus-visible:ring-1 focus-visible:ring-ring max-sm:min-h-11 max-sm:text-sm';
 const ADD_ROW = `${ROW} text-muted-foreground hover:text-foreground`;
 const ROW_ACTION = 'flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100 [@media(hover:none)]:opacity-100';
