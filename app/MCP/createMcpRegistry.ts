@@ -345,13 +345,20 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
   registry.setCallerCheck((context) => { if (!context.remote) resolveCaller(services.database, context.identity ?? null); });
   // Native MCP discovery happens during prepare, before session registration.
   // Catalogue filtering must not use the strict tool-call authorizer.
-  const visibleToAssistant = (context: McpCallContext) => {
-    if (context.remote || !context.identity) return false;
+  const sessionRole = (context: McpCallContext) => {
+    if (context.remote || !context.identity) return null;
     const session = services.database.connection.prepare('select session_role from sessions where mcp_identity = ? and exited_at is null').get(context.identity) as { session_role: string } | undefined;
-    return (session?.session_role ?? services.launchingIdentities?.role(context.identity)) === 'assistant';
+    return session?.session_role ?? services.launchingIdentities?.role(context.identity) ?? null;
   };
-  if (services.assistantMemory) registerAssistantMemoryTools(registry, services.assistantMemory,
-    (context) => !context.remote && isAssistant(caller(context)), visibleToAssistant);
+  const visibleToAssistant = (context: McpCallContext) => sessionRole(context) === 'assistant';
+  // Saved memory: the assistant's notes, or the calling bot's own.
+  const visibleToMemoryOwner = (context: McpCallContext) => ['assistant', 'bot'].includes(sessionRole(context) ?? '');
+  if (services.assistantMemory) registerAssistantMemoryTools(registry, services.assistantMemory, (context) => {
+    if (context.remote) return undefined;
+    const current = caller(context);
+    if (isAssistant(current)) return null;
+    return isBot(current) && current?.bot_id ? current.bot_id : undefined;
+  }, visibleToMemoryOwner);
   if (services.routines) {
     const routines = services.routines;
     registerRoutineTools(registry, routines, (context) => {

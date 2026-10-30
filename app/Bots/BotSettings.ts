@@ -34,7 +34,9 @@ export const botInput = z.object({
   avatar: botAvatarInput,
   purview: botPurviewInput.default({ kind: 'none' }),
   // Added to the bot's system context, such as what it looks after.
-  instructions: z.string().trim().max(2000).default('')
+  instructions: z.string().trim().max(2000).default(''),
+  // Saved notes the bot keeps across conversations, like the assistant's.
+  memory: z.boolean().default(true)
 });
 
 export type Bot = z.infer<typeof botInput>;

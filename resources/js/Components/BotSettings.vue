@@ -59,6 +59,11 @@
               </template>
               <span />
               <p class="-mt-1 text-xs text-muted-foreground">{{ editor.purviewKind === 'projects' ? 'Lists in these projects only.' : 'Lists in every project.' }}</p>
+              <label class="text-xs text-muted-foreground" for="bot-memory">Memory</label>
+              <div class="flex items-center gap-2">
+                <Switch id="bot-memory" v-model="editor.memory" />
+                <span class="text-xs text-muted-foreground">Keeps useful facts across conversations.</span>
+              </div>
               <template v-if="editor.avatar.kind === 'emoji'">
                 <label class="text-xs text-muted-foreground" for="bot-emoji">Emoji</label>
                 <div class="flex flex-wrap items-center gap-1">
@@ -110,6 +115,7 @@ import { Button } from './ui/button';
 import { Checkbox } from './ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { Input } from './ui/input';
+import { Switch } from './ui/switch';
 import { Textarea } from './ui/textarea';
 
 interface EditorState {
@@ -121,6 +127,7 @@ interface EditorState {
   purviewKind: BotPurview['kind'];
   projectIds: string[];
   instructions: string;
+  memory: boolean;
 }
 
 const AVATAR_KINDS = [
@@ -189,7 +196,7 @@ function newFace(): Avatar['look'] {
 function addBot(): void {
   editorError.value = '';
   const fallback = presets.value.defaultPresetIdByHarness.claude ?? presets.value.presets[0]?.id ?? '';
-  editor.value = { id: `bot_${randomId()}`, isNew: true, name: '', presetId: fallback, avatar: { kind: 'face', look: newFace(), emoji: null, picture: null }, purviewKind: 'none', projectIds: [], instructions: '' };
+  editor.value = { id: `bot_${randomId()}`, isNew: true, name: '', presetId: fallback, avatar: { kind: 'face', look: newFace(), emoji: null, picture: null }, purviewKind: 'none', projectIds: [], instructions: '', memory: true };
   editorOpen.value = true;
 }
 
@@ -200,7 +207,7 @@ function editBot(bot: Bot): void {
     id: bot.id, isNew: false, name: bot.name, presetId: bot.presetId,
     avatar: { ...bot.avatar, look: { ...bot.avatar.look } },
     purviewKind: bot.purview.kind, projectIds: bot.purview.kind === 'projects' ? [...bot.purview.projectIds] : [],
-    instructions: bot.instructions
+    instructions: bot.instructions, memory: bot.memory
   };
   editorOpen.value = true;
 }
@@ -260,7 +267,7 @@ async function applyEditor(): Promise<void> {
   if (current.avatar.kind === 'picture' && !current.avatar.picture) { editorError.value = 'Choose a picture.'; return; }
   if (current.purviewKind === 'projects' && !current.projectIds.length) { editorError.value = 'Choose at least one project, or None.'; return; }
   const purview: BotPurview = current.purviewKind === 'projects' ? { kind: 'projects', projectIds: current.projectIds } : { kind: current.purviewKind };
-  const bot: Bot = { id: current.id, name, presetId: current.presetId, avatar: current.avatar, purview, instructions: current.instructions.trim() };
+  const bot: Bot = { id: current.id, name, presetId: current.presetId, avatar: current.avatar, purview, instructions: current.instructions.trim(), memory: current.memory };
   const next = current.isNew ? [...bots.value, bot] : bots.value.map((candidate) => candidate.id === bot.id ? bot : candidate);
   if (await persist(next)) editorOpen.value = false;
 }
