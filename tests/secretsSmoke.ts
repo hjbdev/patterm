@@ -195,7 +195,9 @@ async function serviceChecks(): Promise<void> {
     const started = Date.now();
     const held = await actions.run({
       command: node("require('child_process').spawn(process.execPath,['-e','setTimeout(()=>{},8000)'],{stdio:'inherit'}).unref()"),
-      env: { KEY: 'stripe_test' }, timeout_seconds: 1
+      // On Windows the orphan outlives the call, and its working folder can't
+      // be removed while it runs, so it runs outside the test's folder.
+      env: { KEY: 'stripe_test' }, timeout_seconds: 1, cwd: os.tmpdir()
     }, agent) as { timed_out: boolean };
     assert.equal(held.timed_out, true);
     assert.ok(Date.now() - started < 4000, 'the call returns at its timeout, not when the child ends');
