@@ -233,17 +233,21 @@ export function outgoingTranscript(processId: string, messages: TranscriptMessag
   // Prompts the harness queued natively follow the running turn as greyed
   // messages, as a send does on the other harnesses. Patterm's held queue
   // keeps its own list above the composer.
+  // The native row, once admitted, carries its attachments; the local copy is
+  // released as soon as one exists.
   const waiting = queue.filter((item) => item.delivery === 'queue' || item.delivery === 'steer').map((item): TranscriptMessage => {
-    const local = entries.find((entry) => entry.row.id === item.id || entry.payload.messageId === item.id)?.row;
+    const row = messages.find((message) => message.id === item.id)
+      ?? entries.find((entry) => entry.row.id === item.id || entry.payload.messageId === item.id)?.row;
     return {
-      ...(local ?? { id: item.id, role: 'user', kind: 'text', text: item.text }),
+      ...(row ?? { id: item.id, role: 'user', kind: 'text', text: item.text }),
       delivery: { state: 'queued', messageId: item.id }
     };
   });
   if (!pending.length) return waiting.length ? [...visible, ...waiting] : visible;
   // Keep the send beside the content visible at submission, even while more
-  // assistant rows stream in. Entries sharing an anchor retain send order.
-  const result = [...visible];
+  // assistant rows stream in. Entries sharing an anchor retain send order, and
+  // a send made behind queued messages stays after them.
+  const result = [...visible, ...waiting];
   const lastAtAnchor = new Map<string | null, string>();
   for (const entry of pending) {
     const afterId = lastAtAnchor.get(entry.afterId) ?? entry.afterId;
@@ -251,7 +255,7 @@ export function outgoingTranscript(processId: string, messages: TranscriptMessag
     result.splice(index === -1 && afterId !== null ? result.length : index + 1, 0, entry.row);
     lastAtAnchor.set(entry.afterId, transcriptMessageKey(entry.row));
   }
-  return [...result, ...waiting];
+  return result;
 }
 
 export function reconcileOutgoingMessages(processId: string, messages: TranscriptMessage[], queue: IntegratedQueuedMessage[]): void {
