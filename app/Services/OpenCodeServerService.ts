@@ -1581,9 +1581,10 @@ export class OpenCodeServerService {
   // daemon already had. That starts a new client for every session in the
   // directory.
   // A server that fails to start shows as failed in OpenCode and does not stop
-  // the launch.
+  // the launch. Each install waits for its server to connect, so they run
+  // together: a new directory otherwise waits for every server in turn.
   private async installGlobalMcpServers(executable: string, cwd: string, location: URLSearchParams, configs: Record<string, Record<string, unknown>>, daemonRestarted: boolean, reconnect: boolean): Promise<void> {
-    for (const [name, config] of Object.entries(configs)) {
+    await Promise.all(Object.entries(configs).map(async ([name, config]) => {
       const key = `${cwd}\0${name}`;
       const body = JSON.stringify(config);
       const route = `/api/experimental/mcp/${encodeURIComponent(name)}`;
@@ -1596,7 +1597,7 @@ export class OpenCodeServerService {
       } catch {
         this.installedMcp.delete(key);
       }
-    }
+    }));
   }
 
   async prepare(input: IntegratedLaunchInput): Promise<IntegratedLaunchResult> {
