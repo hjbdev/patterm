@@ -81,7 +81,7 @@ export class SecretRunner {
       clearTimeout(timer);
       // Anything the command left running in the background holds the
       // secrets too, so it ends with the command.
-      endRun(child);
+      void endRun(child);
       own.delete(child);
       if (!own.size) this.running.delete(input.sessionId);
     }
@@ -128,26 +128,28 @@ export class SecretRunner {
 // the shell runs: once it has exited, its ID may belong to another process.
 // Node marks the exit before the output closes, so the check is the
 // process's own state.
-function endRun(child: ChildProcess): void {
-  if (!child.pid) return;
+function endRun(child: ChildProcess): Promise<void> {
+  if (!child.pid) return Promise.resolve();
   if (process.platform === 'win32') {
-    if (child.exitCode === null && child.signalCode === null) void killProcessTree(child.pid);
-    return;
+    return child.exitCode === null && child.signalCode === null ? killProcessTree(child.pid) : Promise.resolve();
   }
   try {
     process.kill(-child.pid, 'SIGKILL');
   } catch {
     // Already gone.
   }
+  return Promise.resolve();
 }
 
 // Ends a command that ran out of time or whose agent stopped. A child it
 // left behind may hold its output open, which would keep the call waiting,
-// so the output closes too.
+// so the output closes too, once the tree has ended, so the call returns
+// only when the command is gone.
 function abortRun(child: ChildProcess): void {
-  endRun(child);
-  child.stdout?.destroy();
-  child.stderr?.destroy();
+  void endRun(child).finally(() => {
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+  });
 }
 
 function dotenvQuote(value: string): string {

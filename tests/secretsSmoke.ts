@@ -297,7 +297,8 @@ async function main(): Promise<void> {
     await serviceChecks();
     allowlistChecks();
   } finally {
-    fs.rmSync(root, { recursive: true, force: true });
+    // Windows can hold a just-ended process's folder for a moment.
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
   console.log('secrets smoke passed');
 }
