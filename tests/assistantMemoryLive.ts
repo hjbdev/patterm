@@ -27,7 +27,7 @@ async function main(): Promise<void> {
   const identities = new Set<string>();
   const registry = new McpToolRegistry();
   const isAssistant = (context: { identity?: string | null }) => Boolean(context.identity && identities.has(context.identity));
-  registerAssistantMemoryTools(registry, memory, isAssistant, isAssistant);
+  registerAssistantMemoryTools(registry, memory, (context) => isAssistant(context) ? null : undefined, isAssistant);
   const calls: string[] = [];
   registry.setRouter((name) => { calls.push(name); return null; });
   const socket = new McpSocketServer(path.join(directory, 'mcp.sock'), registry);

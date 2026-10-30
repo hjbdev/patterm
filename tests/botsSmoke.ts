@@ -22,7 +22,7 @@ import { removeTree } from './fixtures/TempTree';
 
 const look = randomLook(1);
 const bot = (id: string, name: string, extra: Partial<Bot> = {}): Bot => ({
-  id, name, presetId: 'preset_default_claude', avatar: { kind: 'face', look, emoji: null, picture: null }, purview: { kind: 'none' }, instructions: '', ...extra
+  id, name, presetId: 'preset_default_claude', avatar: { kind: 'face', look, emoji: null, picture: null }, purview: { kind: 'none' }, instructions: '', memory: true, ...extra
 });
 
 async function main(): Promise<void> {

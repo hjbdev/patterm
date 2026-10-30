@@ -9,6 +9,7 @@ import addProcessAsking from './2026_10_29_000055_add_process_asking';
 import clearPartialSummaryStatus from './2026_10_29_000056_clear_partial_summary_status';
 import addSessionBot from './2026_10_29_000057_add_session_bot';
 import addSessionSecrets from './2026_10_30_000058_add_session_secrets';
+import addBotMemory from './2026_10_30_000059_add_bot_memory';
 import createInitialSchema from './2026_06_03_000001_create_initial_schema';
 import addProcessRuntimeColumns from './2026_06_03_000002_add_process_runtime_columns';
 import addProcessWorktreeId from './2026_06_03_000003_add_process_worktree_id';
@@ -120,5 +121,6 @@ export const migrations: Migration[] = [
   addProcessAsking,
   clearPartialSummaryStatus,
   addSessionBot,
-  addSessionSecrets
+  addSessionSecrets,
+  addBotMemory
 ];
