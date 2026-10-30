@@ -88,6 +88,11 @@ assert.equal(codex[0]?.kind, 'tool');
 assert.equal(codex[0]?.title, 'exec_command');
 assert.equal(codex[0]?.text, 'done');
 assert.equal(normaliseMessages([{ id: 'bare', type: 'assistant', text: 'plain' }]).length, 1, 'bare arrays are accepted');
+assert.deepEqual(normaliseMessages([
+  { id: 'msg_instructions', type: 'synthetic', text: 'Instructions from: /repo/AGENTS.md\n# AGENTS.md' },
+  { id: 'msg_agent', type: 'agent-switched', text: 'build' },
+  { id: 'msg_model', type: 'model-switched', text: 'gpt' }
+]), [], 'OpenCode synthetic and switch rows stay out of the transcript');
 assert.deepEqual(mergeTranscriptWindows(
   [{ id: 'old', role: 'user', kind: 'text', text: 'earlier' }, { id: 'shared', role: 'assistant', kind: 'text', text: 'partial' }],
   [{ id: 'shared', role: 'assistant', kind: 'text', text: 'complete' }, { id: 'new', role: 'user', kind: 'text', text: 'latest' }]
