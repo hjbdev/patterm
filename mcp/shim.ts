@@ -99,7 +99,7 @@ function describe(tool: McpToolDescriptor): string {
 
 // Only what the client is shown counts as a change.
 function signaturesOf(tools: McpToolDescriptor[]): Signatures {
-  return new Map(tools.map((tool) => [tool.name, JSON.stringify([describe(tool), tool.inputSchema])]));
+  return new Map(tools.map((tool) => [tool.name, JSON.stringify([describe(tool), tool.inputSchema, tool.annotations ?? null])]));
 }
 
 function sameSignatures(a: Signatures, b: Signatures): boolean {
@@ -109,7 +109,8 @@ function sameSignatures(a: Signatures, b: Signatures): boolean {
 function toolConfig(tool: McpToolDescriptor) {
   return {
     description: describe(tool),
-    inputSchema: fromJsonSchema<Record<string, unknown>>(tool.inputSchema as JsonSchemaType)
+    inputSchema: fromJsonSchema<Record<string, unknown>>(tool.inputSchema as JsonSchemaType),
+    ...(tool.annotations ? { annotations: tool.annotations } : {})
   };
 }
 
@@ -167,8 +168,8 @@ async function main(): Promise<void> {
           const registered = entry.tools.get(tool.name);
           if (!registered) register(entry, tool);
           else if (signatures.get(tool.name) !== nextSignatures.get(tool.name)) {
-            const { description, inputSchema } = toolConfig(tool);
-            registered.update({ description, paramsSchema: inputSchema });
+            const { description, inputSchema, annotations } = toolConfig(tool);
+            registered.update({ description, paramsSchema: inputSchema, ...(annotations ? { annotations } : {}) });
           }
         }
       }

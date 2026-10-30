@@ -32,6 +32,10 @@ export class SessionContextService {
     db.prepare(`insert into session_scratchpads (session_id, scratchpad_id)
       select ?, a.scratchpad_id from session_scratchpads a join scratchpads s on s.id = a.scratchpad_id
       where a.session_id = ? and s.project_id = ?`).run(sessionId, predecessor.id, projectId);
+    // Secrets follow the conversation. Unique names keep a secret the new
+    // session already holds.
+    db.prepare(`update session_secrets set session_id = ? where session_id = ?
+      and name not in (select name from session_secrets where session_id = ?)`).run(sessionId, predecessor.id, sessionId);
     // Keep link order. The new session's own worktree is never a link.
     db.prepare(`insert into session_worktrees (session_id, worktree_id, created_at)
       select ?, a.worktree_id, a.created_at from session_worktrees a join worktrees w on w.id = a.worktree_id

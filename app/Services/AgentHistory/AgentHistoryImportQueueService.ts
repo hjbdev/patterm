@@ -93,6 +93,7 @@ export class AgentHistoryImportQueueService {
   private active: QueuedJob | null = null;
   private staleTimer: NodeJS.Timeout | null = null;
   private readonly staleMs: number;
+  private readonly secretValues: () => string[];
   private readonly dirtyWatcherKeys = new Map<string, HistoryImportWorkerMessage>();
   private readonly waiters = new Map<string, (job: QueuedJob) => void>();
 
@@ -101,8 +102,9 @@ export class AgentHistoryImportQueueService {
     private readonly onDone: () => void = () => {},
     private readonly launchWorker: HistoryImportWorkerLauncher = launchUtilityProcessWorker,
     private readonly debugLog: Pick<DebugLogService, 'write'> | null = null,
-    options: { staleMs?: number; runJob?: HistoryImportQueueRunner; onResult?: HistoryImportResultHandler } = {}
+    options: { staleMs?: number; runJob?: HistoryImportQueueRunner; onResult?: HistoryImportResultHandler; secretValues?: () => string[] } = {}
   ) {
+    this.secretValues = options.secretValues ?? (() => []);
     this.staleMs = options.staleMs ?? HISTORY_IMPORT_STALE_MS;
     this.runJob = options.runJob;
     this.onResult = options.onResult;
@@ -314,7 +316,7 @@ export class AgentHistoryImportQueueService {
       release();
     });
     try {
-      worker.postMessage({ appDataPath: this.appDataPath, ...job.message });
+      worker.postMessage({ appDataPath: this.appDataPath, ...job.message, secretValues: this.secretValues() });
     } catch (error) {
       this.finishJob(job, 'failed', errorMessage(error), null);
       try {

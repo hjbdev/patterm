@@ -4,6 +4,7 @@ import { HOST_TOOLS } from '../MCP/registerHostTools';
 import { UPDATE_TOOLS } from '../MCP/registerUpdateTools';
 import { SEMANTIC_SEARCH_TOOLS } from '../Actions/SemanticSearchActions';
 import { BROWSER_CONTROL_TOOLS, BROWSER_VIEW_TOOLS } from '../Actions/BrowserActions';
+import { SECRET_CONTROL_TOOLS, SECRET_VIEW_TOOLS } from '../Actions/SecretActions';
 
 // Tools the UI may call through patterm:mcp:call from a browser or a paired
 // host. Agent-only tools and owner tools that act on the machine itself are
@@ -26,6 +27,7 @@ export const BROWSER_TOOLS = new Set([
   ...UPDATE_TOOLS,
   ...SEMANTIC_SEARCH_TOOLS,
   ...BROWSER_VIEW_TOOLS,
+  ...SECRET_VIEW_TOOLS,
   'process_create', 'process_restart', 'stop_process', 'close_process', 'close_request_answer', 'rename_process',
   'agent_snooze', 'agent_unsnooze', 'agent_snooze_reminder_dismiss',
   'history_sources', 'history_configure', 'history_import',
@@ -40,4 +42,4 @@ export const BROWSER_TOOLS = new Set([
 // what everyone viewing a process sees, so only the client controlling it may
 // send them.
 export const CONTROL_OPERATIONS = new Set(['input', 'resize', 'configure', 'select', 'scroll', 'wheel', 'mouse']);
-export const INTEGRATED_CONTROL_TOOLS = new Set(['integrated_send', 'integrated_configure', 'integrated_command', 'integrated_interrupt', 'integrated_task_stop', 'integrated_queue_update', 'integrated_permission_reply', 'integrated_question_reply', 'integrated_form_reply', 'integrated_new', 'integrated_restart', 'assistant_restart', 'assistant_new', 'bot_restart', ...BROWSER_CONTROL_TOOLS]);
+export const INTEGRATED_CONTROL_TOOLS = new Set(['integrated_send', 'integrated_configure', 'integrated_command', 'integrated_interrupt', 'integrated_task_stop', 'integrated_queue_update', 'integrated_permission_reply', 'integrated_question_reply', 'integrated_form_reply', 'integrated_new', 'integrated_restart', 'assistant_restart', 'assistant_new', 'bot_restart', ...BROWSER_CONTROL_TOOLS, ...SECRET_CONTROL_TOOLS]);

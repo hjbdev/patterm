@@ -3,7 +3,7 @@
        changes, or the whole session context. Opening another replaces it; Esc
        or × closes it. -->
   <PeekBrowser v-if="peek.kind === 'browser' && processId" :process-id="processId" :url="peek.url" @close="emit('close')" />
-  <SessionContextPanel v-else-if="peek.kind === 'context'" :project-id="projectId" :session-id="sessionId" :summary="summary" :can-summarize="Boolean(canSummarize)" :active-worktree-id="activeWorktreeId" @open-worktree="emit('openWorktree', $event)" @close="emit('close')" />
+  <SessionContextPanel v-else-if="peek.kind === 'context'" :project-id="projectId" :session-id="sessionId" :process-id="processId" :summary="summary" :can-summarize="Boolean(canSummarize)" :active-worktree-id="activeWorktreeId" @open-worktree="emit('openWorktree', $event)" @close="emit('close')" />
   <div v-else class="flex min-h-0 flex-1 flex-col">
     <header class="flex h-11 shrink-0 items-center gap-1 pl-4 pr-2">
       <template v-if="peek.kind === 'image'">

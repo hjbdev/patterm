@@ -64,6 +64,8 @@
           </div>
         </section>
 
+        <ContextSecrets v-if="hasSecrets(processId)" :process-id="processId" />
+
         <!-- A paired host's history stays on that host. -->
         <ContextMedia v-if="!sessionId.includes(':')" :project-id="projectId" :session-id="sessionId" />
       </div>
@@ -89,6 +91,9 @@ import ContextScratchpadRow from './ContextScratchpadRow.vue';
 import ContextTodoRow from './ContextTodoRow.vue';
 import ContextWorktreeRow from './ContextWorktreeRow.vue';
 import LinkAttachPopover from './LinkAttachPopover.vue';
+import ContextSecrets from './ContextSecrets.vue';
+import { SECTION_ADD, sectionHeading } from './rowAction';
+import { hasSecrets } from '../../lib/secrets';
 import { MAX_LINKED_WORKTREES, useSessionContext } from '../../Composables/useSessionContext';
 import { relativeTime } from '../../lib/format';
 import type { SessionWorktree } from '../../lib/projectContext';
@@ -96,7 +101,7 @@ import type { AutoSummaryRecord } from '../../types';
 
 // Flat sections with counts, one add picker per section, and row
 // actions that appear on hover.
-const props = defineProps<{ projectId: string; sessionId: string; canSummarize?: boolean; summary?: AutoSummaryRecord | null | undefined; activeWorktreeId?: string | null | undefined }>();
+const props = defineProps<{ projectId: string; sessionId: string; processId?: string | null | undefined; canSummarize?: boolean; summary?: AutoSummaryRecord | null | undefined; activeWorktreeId?: string | null | undefined }>();
 const emit = defineEmits<{ openWorktree: [worktree: SessionWorktree]; close: [] }>();
 const { now, todos, scratchpads, links, worktrees, linkedWorktrees, worktreeOptions, todoOptions, noteOptions, todoQuery, noteQuery, todoPickerOpen, notePickerOpen, todoPickerLoaded, notePickerLoaded, diffTotals, truncated, error, busy, refresh,
   linkWorktree, unlinkWorktree, assignTodo, unassignTodo, setTodoStatus, attachScratchpad, detachScratchpad, attachLink, updateLink, detachLink } = useSessionContext(props);
@@ -104,10 +109,8 @@ const todoDialogOpen = ref(false), noteDialogOpen = ref(false), draftTitle = ref
 const scroller = ref<HTMLElement>();
 // The panel stays mounted across agents, so each one starts at the top.
 watch(() => props.sessionId, () => { scroller.value?.scrollTo({ top: 0 }); });
-// The negative margin lines the add buttons up with the row actions below them.
-const ADD = '-mr-1 ml-auto h-6 w-6 text-muted-foreground/70 hover:text-foreground';
-// Empty sections recede so the ones in use stand out.
-const heading = (count: number) => (count ? 'text-muted-foreground' : 'text-muted-foreground/60');
+const ADD = SECTION_ADD;
+const heading = sectionHeading;
 
 function createTodo(title: string) {
   draftTitle.value = title;

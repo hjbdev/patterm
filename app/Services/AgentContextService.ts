@@ -85,5 +85,5 @@ ${scope(lines, hidden)}
 const FIGURE_INSTRUCTION = 'Patterm shows HTML pages in your replies. When the user asks for a chart, graph, table, diagram, or mockup, or one would explain better than prose, write a self-contained page, check it with html_preview when that tool is available, then call html_render (load them through tool search if they are deferred) and put the [patterm_figure:id] it returns on its own line. Use it instead of artifacts, image files, or ASCII charts.';
 // OpenCode rejects instructions over 8 KiB once JSON-encoded; this leaves room.
 const BOT_CONTEXT_BYTES = 7900;
-const BROWSER_INSTRUCTION = 'browser_open gives you your own Chrome to drive over CDP; see its help. Use browser_request_help for CAPTCHAs and sign-ins.';
+const BROWSER_INSTRUCTION = 'browser_open gives you a Chrome to drive over CDP (see help). Use browser_request_help for CAPTCHAs, secret_request for passwords and keys.';
 const PROCESS_NAME_INSTRUCTION = 'Use exact process names; never invent labels from IDs, like "Agent 789".';

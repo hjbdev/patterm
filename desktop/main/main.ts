@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { inspect } from 'node:util';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, safeStorage, shell } from 'electron';
 import { createApplication, type PattermApplication } from '../../app/App';
 import { registerCommandRoutes } from '../../routes/commands';
 import { registerIpcRoutes } from '../../routes/ipc';
@@ -79,6 +79,14 @@ async function createWindow(): Promise<void> {
     ...(process.platform === 'win32' ? { terminalHosts: { appDataPath: app.getPath('userData') } } : {}),
     launchDiagnostics,
     launchIdentity,
+    secretKeyWrapper: {
+      // Linux falls back to a fixed built-in key without a keyring; that
+      // protects nothing, so the key file stays plain and says so.
+      available: () => safeStorage.isEncryptionAvailable()
+        && (process.platform !== 'linux' || safeStorage.getSelectedStorageBackend() !== 'basic_text'),
+      wrap: (key) => safeStorage.encryptString(key.toString('base64')),
+      unwrap: (sealed) => Buffer.from(safeStorage.decryptString(sealed), 'base64')
+    },
     pagePreviewer: new ElectronPagePreviewer(
       !app.isPackaged && !isInstalledLaunch() ? path.join(__dirname, '../../../../resources/js/assets/fonts') : path.join(__dirname, '../../../renderer/figure-fonts'),
       () => patterm?.settings.appearanceSettings() ?? { uiFont: { preset: 'inter', customFamily: '' }, terminalFont: { preset: 'jetbrains-nerd', customFamily: '' } }
