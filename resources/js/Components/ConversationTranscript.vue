@@ -147,6 +147,9 @@
           </div>
         </MessageScrollerContent>
       </MessageScrollerViewport>
+      <!-- Once the reader scrolls up, the transcript fades out above the
+           composer rather than stopping at a hard edge. -->
+      <div class="pointer-events-none invisible absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-background to-transparent opacity-0 transition-[opacity,visibility] duration-200 group-data-[scrollable~=end]/message-scroller:visible group-data-[scrollable~=end]/message-scroller:opacity-100" aria-hidden="true" />
       <MessageScrollerButton direction="end" />
     </MessageScroller>
   </MessageScrollerProvider>
