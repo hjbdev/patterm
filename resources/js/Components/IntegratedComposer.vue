@@ -143,14 +143,14 @@
 
       <!-- Tiptap's editable element takes its role, classes and ARIA state from editorAttributes. -->
       <!-- A compact composer, as in a bot's chat, is one row: the text and send. -->
-      <div :class="compact ? 'flex items-end gap-1 pb-1.5 pr-1.5' : ''">
+      <div :class="compact ? 'flex items-end gap-1 p-1.5' : ''">
         <EditorContent v-if="editor" :editor="editor.tiptap" :class="cn('composer-editor', compact && 'min-w-0 flex-1')" />
         <template v-if="compact">
-          <Button v-if="!controlling && (!ended || restartable)" type="button" size="sm" class="mb-0.5" @click="emit('takeControl')">Take control</Button>
-          <Button v-else-if="stoppable" type="button" size="icon" class="mb-0.5 h-8 w-8 shrink-0" aria-label="Stop response" title="Stop response" @click="emit('interrupt')">
+          <Button v-if="!controlling && (!ended || restartable)" type="button" size="sm" @click="emit('takeControl')">Take control</Button>
+          <Button v-else-if="stoppable" type="button" size="icon" class="h-8 w-8 shrink-0" aria-label="Stop response" title="Stop response" @click="emit('interrupt')">
             <Square class="h-3.5 w-3.5 fill-current" />
           </Button>
-          <Button v-else type="submit" size="icon" class="mb-0.5 h-8 w-8 shrink-0" :disabled="!canSend" :aria-label="sending ? 'Sending' : 'Send message'" :title="sendTitle">
+          <Button v-else type="submit" size="icon" class="h-8 w-8 shrink-0" :disabled="!canSend" :aria-label="sending ? 'Sending' : 'Send message'" :title="sendTitle">
             <ArrowUp class="h-4 w-4" />
           </Button>
         </template>
@@ -307,7 +307,7 @@ const placeholder = computed(() => {
 // The editable element is the combobox that owns the menus.
 const editorAttributes = computed<Record<string, string>>(() => ({
   class: props.compact
-    ? 'block max-h-44 min-h-10 w-full overflow-y-auto bg-transparent px-4 py-2.5 text-sm leading-5 outline-none'
+    ? 'block max-h-44 min-h-8 w-full overflow-y-auto bg-transparent px-2.5 py-1.5 text-sm leading-5 outline-none'
     : 'block max-h-44 min-h-14 w-full overflow-y-auto bg-transparent px-4 pb-1 pt-3 text-sm leading-5 outline-none',
   'data-patterm-integrated-input': '',
   role: 'combobox',
