@@ -5,7 +5,9 @@
     <div class="contents" :inert="openedTask ? true : undefined">
       <div class="relative flex min-h-0 flex-1 flex-col">
         <LoadingBar :active="loadingTranscript" label="Loading conversation" :inline="embedded === true" />
-        <div class="min-h-0 flex-1">
+        <!-- Runs on under the composer's top padding when nothing sits
+             between them, so text fades out at the card's edge. -->
+        <div class="min-h-0 flex-1" :class="composerAdjoins && '-mb-4'">
           <ConversationTranscript ref="transcriptRef" :key="processId" :messages="transcriptMessages" :truncated="historyTruncated" :history-unavailable="historyUnavailable" :has-older="Boolean(historyCursor)" :loading-older="loadingOlder" :history-error="historyError" :process-id="processId" :live="streaming" :working="streamStatus === 'working' && !ended" :settling="loadingTranscript" :can-retry="canReply && !submission" auto-load-older @load-older="loadOlder" @retry-message="retryMessage" />
         </div>
         <p v-if="displayError" role="alert" class="mx-auto w-full max-w-[50rem] shrink-0 break-words px-4 pb-4 text-sm text-destructive 2xl:max-w-[1000px]">{{ displayError }}</p>
@@ -356,6 +358,9 @@ const shownQueue = computed(() => props.hideBackground ? queue.value.filter((ite
 // one here, the next agent waiting on you is offered in that spot.
 const docked = computed(() => phoneLayout.value && !ended.value && controlling.value && permissions.value.length + questions.value.length + forms.value.length > 0);
 const answered = ref(false);
+const composerAdjoins = computed(() => !ended.value && !displayError.value && !uncertain.value && streamStatus.value !== 'error'
+  && !tasks.value.length && !permissions.value.length && !questions.value.length && !forms.value.length && !props.closeRequest && !props.snooze
+  && !(phoneLayout.value && answered.value && !props.embedded));
 watch(() => props.processId, () => { answered.value = false; });
 watch([messages, queue, () => outgoingFor(props.processId).map((entry) => entry.row.delivery?.state)], () => {
   reconcileOutgoingMessages(props.processId, messages.value, queue.value);

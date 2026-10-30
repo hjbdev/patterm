@@ -139,6 +139,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- An Integrated conversation scrolled up from the bottom fades out above the
+  composer's edge, like it does under the header, instead of stopping at a
+  hard edge above it.
 - Starting an agent is one list instead of nested menus. Every profile is a
   row with its harness icon, name and model, each CLI's default first and
   named after it. Type to filter, then Enter, or press 1–9. The project and
