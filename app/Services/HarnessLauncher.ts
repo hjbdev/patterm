@@ -223,8 +223,7 @@ export class HarnessLauncher {
       const launchInput = {
         executable: install.executablePath, cwd, name: input.name?.trim() || null, context: agentContext, mcp, mcpServers, resumeId: providerSessionId,
         model: selection.model, reasoning: selection.reasoning, serviceTier: selection.serviceTier,
-        reconnectMcp: resume?.reconnect_mcp === true,
-        shellEnv: this.secretCommandEnv(identity)
+        reconnectMcp: resume?.reconnect_mcp === true
       };
       const prepared = await this.deps.integrated.prepare(harness as 'claude' | 'codex' | 'opencode', launchInput);
       integratedLaunch = { input: launchInput, result: prepared };
@@ -480,40 +479,10 @@ export class HarnessLauncher {
     // A dedicated variable keeps the agent's MCP identity out of the general
     // environment, where nested MCP shims would otherwise inherit it.
     return {
-      PATH: [binDir, this.secretCommandDir(), inheritedPath].filter(Boolean).join(path.delimiter),
+      PATH: [binDir, inheritedPath].filter(Boolean).join(path.delimiter),
       BROWSER: opener,
       PATTERM_TERMINAL_IDENTITY: identity
     };
-  }
-
-  // `patterm-secret` for Integrated agents, whose shells don't take the
-  // xdg-open shim. OpenCode's shared server has no per-agent environment.
-  private secretCommandEnv(identity: string): Record<string, string> {
-    if (process.platform === 'win32') return {};
-    return {
-      PATH: [this.secretCommandDir(), this.deps.inheritedPath ?? process.env.PATH ?? ''].filter(Boolean).join(path.delimiter),
-      PATTERM_TERMINAL_IDENTITY: identity
-    };
-  }
-
-  // Agents run `patterm-secret` to use secrets the user gave their session.
-  // It asks Patterm as the agent, so it works only in that agent's shell.
-  private secretCommandDir(): string {
-    const dir = path.join(this.deps.runtimeDir, 'secret-bin');
-    const command = path.join(dir, 'patterm-secret');
-    const script = [
-      '#!/bin/sh',
-      `PATTERM_MCP_SOCKET=${shellQuote(this.deps.socketPath)} PATTERM_MCP_IDENTITY="$PATTERM_TERMINAL_IDENTITY" \\`,
-      `  ELECTRON_RUN_AS_NODE=1 exec ${shellQuote(this.deps.nodePath)} ${shellQuote(this.deps.shimPath)} --secret "$@"`,
-      ''
-    ].join('\n');
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    if (!fs.existsSync(command) || fs.readFileSync(command, 'utf8') !== script) {
-      const temporary = `${command}.${process.pid}.tmp`;
-      fs.writeFileSync(temporary, script, { mode: 0o700 });
-      fs.renameSync(temporary, command);
-    }
-    return dir;
   }
 
   private worktree(worktreeId: string): { worktree_path: string } {

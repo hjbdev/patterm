@@ -57,7 +57,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 const KINDS = [{ value: 'api_key', label: 'API key' }, { value: 'login', label: 'Login' }] as const;
 const USE_HINTS: Record<SecretUse, string> = {
   proxy: 'Patterm adds the key to the agent\'s requests to these hosts. The agent never sees it.',
-  env: 'The agent can pass it to commands with patterm-secret, so it can read it.',
+  env: 'The agent can pass it to commands it runs with secret_run, so it can read it.',
   browser: 'Patterm types it into pages on these sites in the agent\'s browser.'
 };
 

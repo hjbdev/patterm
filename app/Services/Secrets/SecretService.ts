@@ -85,6 +85,8 @@ export interface LiveSession {
   id: string;
   project_id: string;
   process_id: string | null;
+  // Where the agent works; secret_run and secret_write default to it.
+  cwd: string | null;
 }
 
 // Hostnames, optionally `*.` wildcards or with a port. No schemes or paths.
@@ -126,15 +128,16 @@ export class SecretService {
 
   liveSession(identity: string | null): LiveSession {
     const row = identity
-      ? this.database.connection.prepare('select id, project_id, process_id from sessions where mcp_identity = ? and exited_at is null').get(identity) as LiveSession | undefined
+      ? this.database.connection.prepare(`select s.id, s.project_id, s.process_id, p.cwd from sessions s left join processes p on p.id = s.process_id
+        where s.mcp_identity = ? and s.exited_at is null`).get(identity) as LiveSession | undefined
       : undefined;
     if (!row) throw new Error('Secrets belong to a running Patterm agent');
     return row;
   }
 
   sessionForProcess(processId: string): LiveSession {
-    const row = this.database.connection.prepare(`select id, project_id, process_id from sessions where process_id = ?
-      order by exited_at is null desc, started_at desc limit 1`).get(processId) as LiveSession | undefined;
+    const row = this.database.connection.prepare(`select s.id, s.project_id, s.process_id, p.cwd from sessions s left join processes p on p.id = s.process_id
+      where s.process_id = ? order by s.exited_at is null desc, s.started_at desc limit 1`).get(processId) as LiveSession | undefined;
     if (!row) throw new Error('That agent has no session');
     return row;
   }
@@ -240,28 +243,22 @@ export class SecretService {
     return { secret, value: values[chosen]! };
   }
 
-  // `patterm-secret`'s view: values by `name` or `name.field`, for the
-  // caller's live session.
-  envValues(identity: string | null, refs: string[]): string[] {
-    const session = this.liveSession(identity);
-    return refs.map((ref) => {
-      const [name, field] = ref.split('.', 2) as [string, SecretField?];
-      return this.reveal(session.id, name, 'env', field).value;
-    });
+  // A value for a command's environment or a file, by `name` or `name.field`.
+  commandValue(sessionId: string, ref: string): string {
+    const [name, field] = ref.split('.', 2) as [string, SecretField?];
+    return this.reveal(sessionId, name, 'env', field).value;
   }
 
-  // `patterm-secret run --url`'s view: proxy URLs by `name` or `name@host`.
-  // They go only to the command's environment, never to a conversation.
-  proxyUrls(identity: string | null, refs: string[]): string[] {
-    const session = this.liveSession(identity);
-    return refs.map((ref) => {
-      const [name, requested] = ref.split('@', 2) as [string, string?];
-      const { secret } = this.reveal(session.id, name, 'proxy');
-      const host = requested ? normaliseHost(requested) : secret.allowed_hosts.length === 1 && !secret.allowed_hosts[0]!.startsWith('*.') ? secret.allowed_hosts[0]! : null;
-      if (!host) throw new Error(`"${name}" allows ${secret.allowed_hosts.join(', ')}; name one as ${name}@<host>`);
-      if (host.startsWith('*.') || !hostAllowed(secret.allowed_hosts, host)) throw new Error(`The user allowed "${name}" only for ${secret.allowed_hosts.join(', ')}`);
-      return this.hooks.proxyUrl(secret, host);
-    });
+  // A fresh proxy URL, by `name` or `name@host`. It goes only into a
+  // command's environment, never to a conversation, where other agents could
+  // read it.
+  proxyUrl(sessionId: string, ref: string): string {
+    const [name, requested] = ref.split('@', 2) as [string, string?];
+    const { secret } = this.reveal(sessionId, name, 'proxy');
+    const host = requested ? normaliseHost(requested) : secret.allowed_hosts.length === 1 && !secret.allowed_hosts[0]!.startsWith('*.') ? secret.allowed_hosts[0]! : null;
+    if (!host) throw new Error(`"${name}" allows ${secret.allowed_hosts.join(', ')}; name one as ${name}@<host>`);
+    if (host.startsWith('*.') || !hostAllowed(secret.allowed_hosts, host)) throw new Error(`The user allowed "${name}" only for ${secret.allowed_hosts.join(', ')}`);
+    return this.hooks.proxyUrl(secret, host);
   }
 
   // The proxy's view: a ready secret of a live session that allows it.
@@ -295,15 +292,15 @@ export class SecretService {
     if (secret.status !== 'ready') return ['The user has not filled it in yet; you will get a message when they do.'];
     const lines: string[] = [];
     const env = secret.name.toUpperCase();
-    if (secret.uses.includes('env')) {
-      lines.push(secret.kind === 'login'
-        ? `Run a command with it: \`patterm-secret run --env ${env}_USER=${secret.name}.username --env ${env}_PASSWORD=${secret.name}.password -- <command>\`.`
-        : `Run a command with it: \`patterm-secret run --env ${env}=${secret.name} -- <command>\`, or write it to a git-excluded file with \`patterm-secret write .env.local ${env}=${secret.name}\`. Output that contains it is masked.`);
-    }
     if (secret.uses.includes('proxy')) {
       const [host] = secret.allowed_hosts;
       const ref = secret.allowed_hosts.length === 1 && !host!.startsWith('*.') ? secret.name : `${secret.name}@<host>`;
-      lines.push(`Call ${secret.allowed_hosts.join(', ')} through Patterm's proxy, which adds the credential: \`patterm-secret run --url ${env}_URL=${ref} -- <command>\` sets ${env}_URL to a local address that stands in for https://<host>/. Use it as the API's base URL and leave out your own authentication.`);
+      lines.push(`Call ${secret.allowed_hosts.join(', ')} through Patterm's proxy, which adds the credential: secret_run with urls {"${env}_URL": "${ref}"} gives the command ${env}_URL, a local address that stands in for https://<host>/. Use it as the API's base URL and leave out your own authentication.`);
+    }
+    if (secret.uses.includes('env')) {
+      lines.push(secret.kind === 'login'
+        ? `Run a command with it: secret_run with env {"${env}_USER": "${secret.name}.username", "${env}_PASSWORD": "${secret.name}.password"}.`
+        : `Run a command with it: secret_run with env {"${env}": "${secret.name}"}, or write it to a git-excluded file with secret_write. Output that contains it is masked.`);
     }
     if (secret.uses.includes('browser')) {
       lines.push(`Fill it into a page on ${secret.allowed_hosts.join(', ')} with browser_fill_secret.`);
@@ -319,7 +316,7 @@ export class SecretService {
 }
 
 const USE_LABEL: Record<SecretUse, string> = {
-  env: 'in commands (patterm-secret)',
+  env: 'in commands',
   proxy: 'through the proxy',
   browser: 'in the browser'
 };

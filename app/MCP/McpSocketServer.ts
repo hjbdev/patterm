@@ -18,7 +18,6 @@ interface SocketRequest {
   opencodeSessionId?: unknown;
   server?: unknown;
   rejected?: unknown;
-  refs?: unknown;
 }
 
 // Who asked for a server: an agent's identity, or OpenCode's shared daemon,
@@ -39,13 +38,6 @@ export interface McpServerSocketHandlers {
   proxyHeaders?(serverId: string, caller: McpHelperCaller): Promise<Record<string, string>>;
 }
 
-// Answers `patterm-secret`: the values an agent's command may receive, by
-// `name` or `name.field`, and proxy URLs, by `name` or `name@host`.
-export interface SecretSocketHandlers {
-  env(identity: string | null, refs: string[]): string[];
-  urls(identity: string | null, refs: string[]): string[];
-}
-
 const MCP_SERVER_OPS = new Set(['mcp-headers', 'mcp-proxy-headers', 'mcp-endpoint', 'mcp-exec']);
 
 // A line-delimited JSON RPC over a local socket. The Electron app hosts the MCP
@@ -63,8 +55,7 @@ export class McpSocketServer {
     private readonly resolveOpenCodeIdentity?: (token: unknown, sessionId: unknown) => string,
     // The shim's `--open` mode, used as xdg-open inside agent terminals.
     private readonly openUrl?: (input: { identity: unknown; url: unknown }) => unknown,
-    private readonly mcpServers?: McpServerSocketHandlers,
-    private readonly secrets?: SecretSocketHandlers
+    private readonly mcpServers?: McpServerSocketHandlers
   ) {}
 
   get address(): string {
@@ -130,14 +121,6 @@ export class McpSocketServer {
       if (request.op === 'open-url') {
         if (!this.openUrl) throw new Error('Opening links is unavailable');
         this.write(socket, { id, result: this.openUrl({ identity: request.identity, url: request.url }) });
-        return;
-      }
-      if (request.op === 'secret-env' || request.op === 'secret-url') {
-        if (!this.secrets) throw new Error('Secrets are unavailable');
-        if (!Array.isArray(request.refs) || !request.refs.every((ref) => typeof ref === 'string')) throw new Error('request is missing secret names');
-        const identity = typeof request.identity === 'string' && request.identity ? request.identity : null;
-        const values = request.op === 'secret-env' ? this.secrets.env(identity, request.refs as string[]) : this.secrets.urls(identity, request.refs as string[]);
-        this.write(socket, { id, result: { values } });
         return;
       }
       if (typeof request.op === 'string' && MCP_SERVER_OPS.has(request.op)) {

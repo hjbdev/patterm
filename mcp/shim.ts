@@ -10,7 +10,6 @@ import { withEnv } from '../app/Platform/Environment';
 import { resolveCommand } from '../app/Platform/Executable';
 import { ipcPath } from '../app/Platform/Ipc';
 import { killProcessTree } from '../app/Platform/ProcessTree';
-import { secretCli } from './secretCli';
 
 // The stdio server forwards direct tool calls to the application's registry.
 // A catalogue request at startup keeps schemas and public names in one place.
@@ -41,7 +40,6 @@ type ShimRequest =
   | { op: 'mcp-proxy-headers'; server: string }
   | { op: 'mcp-endpoint'; server: string; rejected?: string | null }
   | { op: 'mcp-exec'; server: string }
-  | { op: 'secret-env' | 'secret-url'; refs: string[] }
   | { tool: string; args: unknown };
 
 // OpenCode 2 sends `ai.opencode/sessionID`; earlier builds sent `sessionID`.
@@ -101,7 +99,7 @@ function describe(tool: McpToolDescriptor): string {
 
 // Only what the client is shown counts as a change.
 function signaturesOf(tools: McpToolDescriptor[]): Signatures {
-  return new Map(tools.map((tool) => [tool.name, JSON.stringify([describe(tool), tool.inputSchema])]));
+  return new Map(tools.map((tool) => [tool.name, JSON.stringify([describe(tool), tool.inputSchema, tool.annotations ?? null])]));
 }
 
 function sameSignatures(a: Signatures, b: Signatures): boolean {
@@ -111,7 +109,8 @@ function sameSignatures(a: Signatures, b: Signatures): boolean {
 function toolConfig(tool: McpToolDescriptor) {
   return {
     description: describe(tool),
-    inputSchema: fromJsonSchema<Record<string, unknown>>(tool.inputSchema as JsonSchemaType)
+    inputSchema: fromJsonSchema<Record<string, unknown>>(tool.inputSchema as JsonSchemaType),
+    ...(tool.annotations ? { annotations: tool.annotations } : {})
   };
 }
 
@@ -169,8 +168,8 @@ async function main(): Promise<void> {
           const registered = entry.tools.get(tool.name);
           if (!registered) register(entry, tool);
           else if (signatures.get(tool.name) !== nextSignatures.get(tool.name)) {
-            const { description, inputSchema } = toolConfig(tool);
-            registered.update({ description, paramsSchema: inputSchema });
+            const { description, inputSchema, annotations } = toolConfig(tool);
+            registered.update({ description, paramsSchema: inputSchema, ...(annotations ? { annotations } : {}) });
           }
         }
       }
@@ -329,12 +328,7 @@ const MODES: Record<string, (args: string[]) => Promise<void>> = {
   '--mcp-headers': ([serverId]) => printHeaders(required(serverId)),
   '--mcp-bridge': ([serverId]) => bridge(required(serverId)),
   '--mcp-proxy-headers': ([serverId]) => printProxyHeaders(required(serverId)),
-  '--mcp-exec': ([serverId]) => exec(required(serverId)),
-  '--secret': async (args) => {
-    const ask = (op: 'secret-env' | 'secret-url') => async (refs: string[]) => refs.length ? (await registryRequest({ op, refs }) as { values: string[] }).values : [];
-    const code = await secretCli(args, { values: ask('secret-env'), urls: ask('secret-url') });
-    process.exitCode = code;
-  }
+  '--mcp-exec': ([serverId]) => exec(required(serverId))
 };
 
 function required(serverId: string | undefined): string {
@@ -347,7 +341,7 @@ if (require.main === module) {
   const run = MODES[mode];
   (run ? run(process.argv.slice(3)) : main()).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(mode === '--open' ? `xdg-open: ${message}\n` : mode === '--secret' ? `patterm-secret: ${message}\n` : `patterm-mcp ${run ? mode.slice(2) : 'shim'} failed: ${message}\n`);
+    process.stderr.write(mode === '--open' ? `xdg-open: ${message}\n` : `patterm-mcp ${run ? mode.slice(2) : 'shim'} failed: ${message}\n`);
     process.exit(1);
   });
 }

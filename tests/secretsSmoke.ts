@@ -1,14 +1,11 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { Writable } from 'node:stream';
 import { SECRET_CONTROL_TOOLS, SECRET_VIEW_TOOLS, SecretActions } from '../app/Actions/SecretActions';
 import { BROWSER_TOOLS, INTEGRATED_CONTROL_TOOLS } from '../app/Http/BrowserTools';
-import { McpSocketServer } from '../app/MCP/McpSocketServer';
-import type { McpToolRegistry } from '../app/MCP/ToolRegistry';
 import { SecretRedactor } from '../app/Services/AgentHistory/SecretRedactor';
 import type { BrowserService } from '../app/Services/Browser/BrowserService';
 import { DatabaseService } from '../app/Services/DatabaseService';
@@ -17,9 +14,9 @@ import { SecretProxyService } from '../app/Services/Secrets/SecretProxyService';
 import { hostAllowed, normaliseHost, SecretService, type SecretRecord } from '../app/Services/Secrets/SecretService';
 import { SecretVault } from '../app/Services/Secrets/SecretVault';
 import type { TimelineService } from '../app/Services/TimelineService';
-import { Masker, maskSet, secretCli } from '../mcp/secretCli';
+import { Masker, maskSet, SecretRunner } from '../app/Services/Secrets/SecretRunner';
 
-// Windows has no POSIX modes, and agents there don't get patterm-secret.
+// Windows has no POSIX modes.
 const posix = process.platform !== 'win32';
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-secrets-'));
 
@@ -56,74 +53,21 @@ function hostChecks(): void {
 }
 
 function maskerChecks(): void {
-  const chunks: Buffer[] = [];
-  const sink = new Writable({ write(chunk: Buffer, _encoding, done) { chunks.push(chunk); done(); } });
-  const masker = new Masker(maskSet(['s3cr3t-value'], ['token']), sink);
+  const masker = new Masker(maskSet([{ value: 's3cr3t-value', label: 'token' }]));
   // Split across writes, and base64-encoded.
   masker.write(Buffer.from('key=s3cr3t-'));
   masker.write(Buffer.from(`value and ${Buffer.from('s3cr3t-value').toString('base64')} done`));
-  masker.end();
-  const text = Buffer.concat(chunks).toString();
-  assert.equal(text, 'key=[secret:token] and [secret:token] done');
+  assert.deepEqual(masker.end(), { text: 'key=[secret:token] and [secret:token] done', truncated: false });
+  // Long output keeps its end, masked before it is cut.
+  const long = new Masker(maskSet([{ value: 's3cr3t-value', label: 'token' }]));
+  long.write(Buffer.from(`${'x'.repeat(70_000)} s3cr3t-value end`));
+  const kept = long.end();
+  assert.ok(kept.truncated && kept.text.length === 64 * 1024 && kept.text.endsWith(' [secret:token] end'));
 }
 
-async function cliChecks(): Promise<void> {
-  const repo = path.join(root, 'repo');
-  fs.mkdirSync(repo);
-  execFileSync('git', ['init', '-q'], { cwd: repo });
-  const previous = process.cwd();
-  process.chdir(repo);
-  try {
-    const asked: string[][] = [];
-    const fetchValues = async (refs: string[]) => { asked.push(refs); return refs.map((ref) => (ref === 'api' ? 'abc 123"x' : 'plain')); };
-    fs.writeFileSync('.env.local', 'KEEP=1\nAPI_KEY=old\n');
-    assert.equal(await secretCli(['write', '.env.local', 'API_KEY=api', 'OTHER=other'], { values: fetchValues, urls: async () => [] }), 0);
-    assert.deepEqual(asked, [['api', 'other']]);
-    assert.equal(fs.readFileSync('.env.local', 'utf8'), 'KEEP=1\nAPI_KEY="abc 123\\"x"\nOTHER=plain\n');
-    if (posix) assert.equal(fs.statSync('.env.local').mode & 0o777, 0o600);
-    assert.match(fs.readFileSync(path.join(repo, '.git', 'info', 'exclude'), 'utf8'), /^\/\.env\.local$/m);
-    fs.mkdirSync('app');
-    // Already ignored in its own folder: nothing to add.
-    fs.mkdirSync('logs');
-    fs.writeFileSync('logs/.gitignore', '.env\n');
-    execFileSync('git', ['add', 'logs/.gitignore'], { cwd: repo });
-    assert.equal(await secretCli(['write', 'logs/.env', 'API_KEY=api'], { values: fetchValues, urls: async () => [] }), 0);
-    assert.doesNotMatch(fs.readFileSync(path.join(repo, '.git', 'info', 'exclude'), 'utf8'), /logs/);
-    assert.equal(await secretCli(['write', 'app/.env', 'API_KEY=api'], { values: fetchValues, urls: async () => [] }), 0);
-    assert.match(fs.readFileSync(path.join(repo, '.git', 'info', 'exclude'), 'utf8'), /^\/app\/\.env$/m, 'a file in a folder is excluded by its path from the top');
-    assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }), 'A  logs/.gitignore\n', 'git ignores the written files');
-    await assert.rejects(secretCli(['run', '--env', '1BAD=api', '--', 'true'], { values: fetchValues, urls: async () => [] }), /expected NAME=secret/);
-  } finally {
-    process.chdir(previous);
-  }
-}
-
-// The built shim fetches values as the agent and masks them in output. It
-// runs sh, so only where agents get patterm-secret.
-async function shimChecks(socketPath: string): Promise<void> {
-  const shim = path.resolve(__dirname, '../../mcp/patterm-mcp.js');
-  // Async, so this process's socket server can answer the shim.
-  const run = (identity: string, args: string[]) => new Promise<{ stdout: string; stderr: string; status: number | null }>((resolve) => {
-    const child = spawn(process.execPath, [shim, '--secret', ...args], { env: { ...process.env, PATTERM_MCP_SOCKET: socketPath, PATTERM_MCP_IDENTITY: identity } });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.on('close', (status) => resolve({ stdout, stderr, status }));
-  });
-  const echoed = await run('identity_a', ['run', '--env', 'KEY=stripe_test', '--', 'sh', '-c', 'echo "got $KEY"; echo "len ${#KEY}" >&2; exit 3']);
-  assert.equal(echoed.stdout, 'got [secret:stripe_test]\n');
-  assert.equal(echoed.stderr, 'len 18\n', 'the child receives the real value');
-  assert.equal(echoed.status, 3, 'the exit code passes through');
-  const stranger = await run('identity_x', ['run', '--env', 'KEY=stripe_test', '--', 'true']);
-  assert.notEqual(stranger.status, 0);
-  assert.match(stranger.stderr, /running Patterm agent/);
-  // The command gets a proxy URL; its output, and so the conversation, doesn't.
-  const proxied = await run('identity_a', ['run', '--url', 'U=stripe_test', '--', 'sh', '-c', 'case "$U" in http://127.0.0.1:*/127.0.0.1/) echo "is url" >&2;; esac; echo "base $U"']);
-  assert.equal(proxied.stderr, 'is url\n');
-  assert.match(proxied.stdout, /^base http:\/\/127\.0\.0\.1:\d+\/\[secret:stripe_test url\]\/127\.0\.0\.1\/\n$/);
-  const login = await run('identity_a', ['run', '--env', 'P=github_login.password', '--', 'true']);
-  assert.match(login.stderr, /did not allow "github_login" in commands/);
+// A command for sh and cmd.exe alike: node with single-quoted JavaScript.
+function node(script: string): string {
+  return `"${process.execPath}" -e "${script}"`;
 }
 
 async function serviceChecks(): Promise<void> {
@@ -148,7 +92,8 @@ async function serviceChecks(): Promise<void> {
   });
   let filled: { selector: string; value: string; allowed: (host: string) => boolean } | null = null;
   const browsers = { fillSecret: async (_session: string, input: typeof filled & object) => { filled = input; return { target_id: 't', host: 'github.com' }; } } as unknown as BrowserService;
-  const actions = new SecretActions(secrets, browsers);
+  const runner = new SecretRunner(() => ({ ...process.env, PATTERM_TERMINAL_IDENTITY: 'leak' }));
+  const actions = new SecretActions(secrets, browsers, runner);
   const agent = { identity: 'identity_a' };
 
   // Requests never carry a value, and listing never shows one.
@@ -167,7 +112,7 @@ async function serviceChecks(): Promise<void> {
   assert.match(messages.at(-1)!, /provided the secret "stripe_test"/);
   assert.doesNotMatch(messages.at(-1)!, /sk_test/);
   // Proxy URLs never reach a conversation, where other agents could read them.
-  assert.match(messages.at(-1)!, /patterm-secret run --url STRIPE_TEST_URL=stripe_test/);
+  assert.match(messages.at(-1)!, /secret_run with urls \{"STRIPE_TEST_URL": "stripe_test"\}/);
   assert.doesNotMatch(messages.at(-1)! + JSON.stringify(actions.list(agent)), /http:\/\/127\.0\.0\.1|secret_[0-9a-f-]{36}\./);
   assert.doesNotMatch(JSON.stringify(actions.list(agent)), /sk_test/);
   assert.doesNotMatch(JSON.stringify(actions.sessionList({ process_id: 'process_a' })), /sk_test/);
@@ -201,11 +146,10 @@ async function serviceChecks(): Promise<void> {
   proxy = new SecretProxyService(path.join(root, 'db', 'secret-proxy.json'), secrets);
   await proxy.start();
   try {
-    const [target] = secrets.proxyUrls('identity_a', [`stripe_test@127.0.0.1:${upstreamPort}`]) as [string];
+    const target = secrets.proxyUrl('session_a', `stripe_test@127.0.0.1:${upstreamPort}`);
     assert.match(target, new RegExp(`^http://127\\.0\\.0\\.1:\\d+/secret_[^/]+\\.[^/.]+\\.[^/.]+/127\\.0\\.0\\.1:${upstreamPort}/$`));
-    assert.notEqual(secrets.proxyUrls('identity_a', ['stripe_test'])[0], secrets.proxyUrls('identity_a', ['stripe_test'])[0], 'each command gets its own URL');
-    assert.throws(() => secrets.proxyUrls('identity_a', ['stripe_test@evil.example']), /only for 127\.0\.0\.1/);
-    assert.throws(() => secrets.proxyUrls('identity_x', ['stripe_test']), /running Patterm agent/);
+    assert.notEqual(secrets.proxyUrl('session_a', 'stripe_test'), secrets.proxyUrl('session_a', 'stripe_test'), 'each command gets its own URL');
+    assert.throws(() => secrets.proxyUrl('session_a', 'stripe_test@evil.example'), /only for 127\.0\.0\.1/);
     const response = await fetch(`${target}v1/charges?limit=1`, { method: 'POST', headers: { Authorization: 'Bearer agent-made-up' }, body: 'amount=1' });
     assert.equal(response.status, 201);
     assert.deepEqual(await response.json(), { ok: true });
@@ -221,6 +165,47 @@ async function serviceChecks(): Promise<void> {
     assert.equal(seen.at(-1)!.url, '/q?a=1&key=sk_test_1234567890');
     assert.equal(seen.at(-1)!.authorization, undefined);
     assert.equal(secrets.reveal('session_a', 'stripe_test', 'env').value, 'sk_test_1234567890', 'saving without values keeps the stored one');
+
+    // secret_run: the command gets values and proxy URLs; its output, and so
+    // the conversation, gets neither.
+    const ran = await actions.run({
+      command: node("console.log('got '+process.env.KEY); console.error('len '+process.env.KEY.length+' '+(process.env.PATTERM_TERMINAL_IDENTITY||'none')); process.exit(3)"),
+      env: { KEY: 'stripe_test' }
+    }, agent);
+    assert.deepEqual(ran, { exit_code: 3, signal: null, timed_out: false, stdout: 'got [secret:stripe_test]\n', stderr: 'len 18 none\n', truncated: false });
+    const proxied = await actions.run({
+      command: node("fetch(process.env.U+'v1/run').then(r=>r.json()).then(j=>console.log('base '+process.env.U+' '+JSON.stringify(j)))"),
+      urls: { U: `stripe_test@127.0.0.1:${upstreamPort}` }
+    }, agent) as { stdout: string; exit_code: number };
+    assert.equal(proxied.exit_code, 0);
+    assert.match(proxied.stdout, new RegExp(`^base http://127\\.0\\.0\\.1:\\d+/\\[secret:stripe_test@127\\.0\\.0\\.1:${upstreamPort} url\\]/127\\.0\\.0\\.1:${upstreamPort}/ \\{"ok":true\\}\\n$`));
+    assert.equal(seen.at(-1)!.url, '/v1/run?key=sk_test_1234567890', 'the command reached the API through the proxy');
+    const slow = await actions.run({ command: node('setTimeout(()=>{},20000)'), env: { KEY: 'stripe_test' }, timeout_seconds: 1 }, agent) as { timed_out: boolean };
+    assert.equal(slow.timed_out, true);
+    await assert.rejects(actions.run({ command: 'echo hi' }, agent), /at least one secret/);
+    await assert.rejects(actions.run({ command: 'echo hi', env: { KEY: 'stripe_test' } }, { identity: 'identity_x' }), /running Patterm agent/);
+
+    // secret_write: a 0600 dotenv file, kept out of git.
+    const repo = path.join(root, 'repo');
+    fs.mkdirSync(path.join(repo, 'app'), { recursive: true });
+    fs.mkdirSync(path.join(repo, 'logs'));
+    execFileSync('git', ['init', '-q'], { cwd: repo });
+    await actions.save({ process_id: 'process_a', secret_id: null, name: 'odd_key', kind: 'api_key', values: { value: 'abc 123"x' }, allowed_hosts: [], uses: ['env'] });
+    fs.writeFileSync(path.join(repo, '.env.local'), 'KEEP=1\nAPI_KEY=old\n');
+    const written = await actions.write({ path: 'repo/.env.local', env: { API_KEY: 'odd_key', OTHER: 'stripe_test' } }, agent);
+    assert.doesNotMatch(JSON.stringify(written), /abc 123|sk_test/, 'secret_write never returns values');
+    assert.equal(fs.readFileSync(path.join(repo, '.env.local'), 'utf8'), 'KEEP=1\nAPI_KEY="abc 123\\"x"\nOTHER=sk_test_1234567890\n');
+    if (posix) assert.equal(fs.statSync(path.join(repo, '.env.local')).mode & 0o777, 0o600);
+    const exclude = () => fs.readFileSync(path.join(repo, '.git', 'info', 'exclude'), 'utf8');
+    assert.match(exclude(), /^\/\.env\.local$/m);
+    // Already ignored in its own folder: nothing to add.
+    fs.writeFileSync(path.join(repo, 'logs', '.gitignore'), '.env\n');
+    execFileSync('git', ['add', 'logs/.gitignore'], { cwd: repo });
+    await actions.write({ path: 'repo/logs/.env', env: { API_KEY: 'odd_key' } }, agent);
+    assert.doesNotMatch(exclude(), /logs/);
+    await actions.write({ path: path.join(repo, 'app', '.env'), env: { API_KEY: 'odd_key' } }, agent);
+    assert.match(exclude(), /^\/app\/\.env$/m, 'a file in a folder is excluded by its path from the top');
+    assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }), 'A  logs/.gitignore\n', 'git ignores the written files');
 
     // An exited session's URLs stop working.
     db.prepare('update sessions set exited_at = ? where id = ?').run(now, 'session_a');
@@ -240,32 +225,19 @@ async function serviceChecks(): Promise<void> {
   assert.equal(filled!.value, 'me');
   await assert.rejects(actions.fill({ secret: 'stripe_test', selector: '#x' }, agent), /did not allow/);
 
-  // The shim fetches values as the agent and masks them in output.
-  const socketPath = path.join(root, 'db', 'mcp.sock');
-  const socket = new McpSocketServer(socketPath, {} as McpToolRegistry, undefined, undefined, undefined, undefined, {
-    env: (identity, refs) => secrets.envValues(identity, refs),
-    urls: (identity, refs) => secrets.proxyUrls(identity, refs)
-  });
-  await socket.start();
-  try {
-    if (posix) await shimChecks(socketPath);
-  } finally {
-    socket.stop();
-  }
-
   // A resumed conversation keeps its secrets.
   db.prepare("update sessions set exited_at = ? where id = 'session_a'").run(now);
   db.prepare("insert into processes(id,project_id,kind,name,status,activity,cwd,argv,created_at,updated_at) values('process_b','project_a','agent','A','running','working',?,'[]',?,?)").run(root, now, now);
   db.prepare(`insert into sessions(id,project_id,process_id,harness,interface_mode,resume_id,started_at,session_role,resume_status,created_by_actor,mcp_identity)
     values('session_b','project_a','process_b','claude','tui','native_a',?,'orchestrator','found','user','identity_b')`).run(new Date(Date.now() + 1000).toISOString());
   new SessionContextService(database).inherit('session_b', 'project_a', 'claude', 'native_a', { record: () => undefined } as unknown as TimelineService);
-  assert.deepEqual(secrets.list('session_b').map((secret: SecretRecord) => secret.name).sort(), ['github_login', 'stripe_test']);
+  assert.deepEqual(secrets.list('session_b').map((secret: SecretRecord) => secret.name).sort(), ['github_login', 'odd_key', 'stripe_test']);
   assert.equal(secrets.list('session_a').length, 0);
 
   // Declining or forgetting deletes the record and tells the agent.
   await assert.rejects(actions.remove({ process_id: 'process_a', secret_id: secrets.list('session_b')[0]!.id }), /another session/);
   await actions.remove({ process_id: 'process_b', secret_id: secrets.list('session_b')[0]!.id });
-  assert.equal(secrets.list('session_b').length, 1);
+  assert.equal(secrets.list('session_b').length, 2);
   assert.match(messages.at(-1)!, /removed the secret/);
   database.dispose();
 }
@@ -283,7 +255,6 @@ async function main(): Promise<void> {
     vaultChecks();
     hostChecks();
     maskerChecks();
-    await cliChecks();
     await serviceChecks();
     allowlistChecks();
   } finally {

@@ -9,8 +9,17 @@ messages, or Patterm's records of the conversation.
 
 | Use | How the agent uses it | Can the agent read the value? |
 | --- | --- | --- |
-| Proxy | `patterm-secret run --url NAME=secret -- <command>` gives the command a local base URL that stands in for `https://<host>/`; Patterm forwards its requests over HTTPS with the key added as a header or query parameter. | No. |
-| Commands | `patterm-secret run --env NAME=secret -- <command>` or `patterm-secret write <file> NAME=secret`. | Yes, through the command. |
+| Proxy | `secret_run` with `urls: {"STRIPE_URL": "stripe_test"}` gives the command a local base URL that stands in for `https://<host>/`; Patterm forwards its requests over HTTPS with the key added as a header or query parameter. | No. |
+| Commands | `secret_run` with `env: {"STRIPE_KEY": "stripe_test"}`, or `secret_write` for a dotenv file. | Yes, through the command. |
+
+`secret_run` and `secret_write` are MCP tools, so they work the same for every
+harness and platform. Patterm runs the command itself, with `sh -c` (`cmd.exe`
+on Windows), no stdin, a timeout (50 s by default, at most 600 s; some
+harnesses stop waiting for a tool after about a minute), and the last 64 KB of
+each output stream. The command runs outside the harness's own sandbox, such
+as Codex's read-only or no-network modes. The harness still decides whether to
+ask before each call: the tools are marked as not read-only and destructive,
+and a run must name at least one secret.
 | Browser | `browser_fill_secret` types it into a field of the agent's browser. | Not directly; the page can, and so can the agent's own CDP scripts. |
 
 Prefer the proxy for API keys. Only it stops an agent that misbehaves from
@@ -19,8 +28,8 @@ sending the key somewhere else; the other uses keep it out of transcripts.
 ## What protects what
 
 - **Scope.** A secret belongs to one session and moves to the next session when
-  its conversation resumes. Tools and `patterm-secret` find the session from
-  the caller's MCP identity, so another agent's shell can't use it. A paired
+  its conversation resumes. The tools find the session from the caller's MCP
+  identity, so another agent can't use it. A paired
   host can't list or enter them.
 - **Hosts.** The proxy forwards only to the allowed hosts (`*.example.com`
   wildcards allowed; an entry without a port allows any port) and only over
@@ -35,8 +44,8 @@ sending the key somewhere else; the other uses keep it out of transcripts.
 - **Browser.** Filling checks the page's own `location`, not the tab list, and
   requires HTTPS outside loopback. Two-factor codes stay with
   `browser_request_help`.
-- **Masking.** `patterm-secret run` masks the value, its URL, base64 and JSON
-  string forms in the command's output. Output is held back at most 100 ms, so
+- **Masking.** `secret_run` masks the value, its URL, base64 and JSON string
+  forms in the command's output, before it keeps or returns any. Output is held back at most 100 ms, so
   a value printed in two pieces with a longer pause between them can slip
   through. Imported history (text and tool metadata) and automatic summaries
   mask every stored value of six characters or more.
@@ -51,11 +60,11 @@ sending the key somewhere else; the other uses keep it out of transcripts.
 
 - An upstream API that echoes the key in a response (an error message, for
   example) hands it to the agent. The proxy does not rewrite response bodies.
-- Agents run as the same OS user, so one that reads another running agent's
-  process environment directly can find its values and proxy URLs. Patterm
-  separates agents only within its own tools.
+- Agents and their commands run as the same OS user, so an agent that reads a
+  running `secret_run` command's process environment directly can find its
+  values and proxy URLs. Patterm separates agents only within its own tools.
 - Query-parameter injection puts the key in the URL the upstream server sees
   and may log.
-- `patterm-secret`, and so the proxy and command uses, is not on OpenCode
-  agents' PATH: OpenCode's shared server has no per-agent environment. Windows
-  agents don't get it either. Browser filling works for every harness.
+- `secret_run` waits for the command to finish; it can't start a server that
+  keeps running. Write the secret with `secret_write` and start the server in
+  your own shell instead.

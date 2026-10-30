@@ -77,7 +77,7 @@ export class SecretProxyService {
     if (request.headers.host !== `127.0.0.1:${this.port}` && request.headers.host !== `localhost:${this.port}`) return fail(403, 'Forbidden');
     if (request.headers.origin) return fail(403, 'Browser requests are not allowed');
     const match = /^\/([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)\/([^/?#]+)(\/[^#]*)?$/.exec(request.url ?? '');
-    if (!match) return fail(404, 'Use the URL patterm-secret run --url gives your command');
+    if (!match) return fail(404, 'Use the URL secret_run gives your command');
     const [, id, nonce, signature, rawHost, rest] = match as unknown as [string, string, string, string, string, string | undefined];
     let host: string;
     try {

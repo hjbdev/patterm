@@ -36,9 +36,6 @@ export interface IntegratedLaunchInput {
   };
   // The user's global MCP servers for this harness.
   mcpServers?: McpLaunchServer[];
-  // PATH and identity for Patterm's commands in the agent's shell, such as
-  // `patterm-secret`.
-  shellEnv?: Record<string, string>;
   resumeId: string | null;
   model?: string | null;
   reasoning?: string | null;

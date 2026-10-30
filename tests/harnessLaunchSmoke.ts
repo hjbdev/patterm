@@ -400,10 +400,7 @@ async function main(): Promise<void> {
       assert.deepEqual(spawnEnv, {}, 'Windows agents get no xdg-open shim');
       assert.equal(fs.existsSync(opener), false);
     } else {
-      const secretCommand = path.join(path.dirname(path.dirname(opener)), 'secret-bin', 'patterm-secret');
-      assert.equal(spawnEnv.PATH, `${path.dirname(opener)}:${path.dirname(secretCommand)}:/usr/bin`, 'the xdg-open shim and patterm-secret precede the inherited PATH');
-      assert.ok(fs.statSync(secretCommand).mode & 0o100, 'patterm-secret is executable');
-      assert.match(fs.readFileSync(secretCommand, 'utf8'), /PATTERM_MCP_IDENTITY="\$PATTERM_TERMINAL_IDENTITY"[\s\S]*--secret "\$@"/, 'patterm-secret asks Patterm as the agent');
+      assert.equal(spawnEnv.PATH, `${path.dirname(opener)}:/usr/bin`, 'the xdg-open shim precedes the inherited PATH');
       assert.equal(spawnEnv.BROWSER, opener);
       assert.equal(spawnEnv.PATTERM_TERMINAL_IDENTITY, agentIdentity, 'the opener reports as the agent session');
       assert.ok(fs.statSync(opener).mode & 0o100, 'the xdg-open shim is executable');

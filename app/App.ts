@@ -38,6 +38,7 @@ import { SecretActions, registerSecretTools } from './Actions/SecretActions';
 import { SecretService } from './Services/Secrets/SecretService';
 import { SecretVault, type SecretKeyWrapper } from './Services/Secrets/SecretVault';
 import { SecretProxyService } from './Services/Secrets/SecretProxyService';
+import { SecretRunner } from './Services/Secrets/SecretRunner';
 import { SecretRedactor } from './Services/AgentHistory/SecretRedactor';
 import { ChromeInstaller } from './Services/Browser/ChromeInstaller';
 import { HybridHistorySearchService } from './Services/SemanticSearch/HybridHistorySearchService';
@@ -519,7 +520,9 @@ async function createApplicationResources(
   defer(() => startedSecretProxy.stop());
   await startedSecretProxy.start();
   secretProxy = startedSecretProxy;
-  const secretActions = new SecretActions(secretService, browsers);
+  const secretRunner = new SecretRunner(() => resolvedEnv);
+  defer(() => secretRunner.stop());
+  const secretActions = new SecretActions(secretService, browsers, secretRunner);
   let reaping: NodeJS.Timeout | null = null;
   reapBrowsers = () => {
     reaping ??= setTimeout(() => {
@@ -847,8 +850,7 @@ async function createApplicationResources(
       if (typeof input.url === 'string') nativeOAuthCallbacks.observe(input.url);
       return opened;
     },
-    mcpServerHandlers,
-    { env: (identity, refs) => secretService.envValues(identity, refs), urls: (identity, refs) => secretService.proxyUrls(identity, refs) });
+    mcpServerHandlers);
   defer(() => mcpSocket.stop());
   // Release activity observation before the database closes; persistent
   // hosts keep running and are observed again after reconnect.

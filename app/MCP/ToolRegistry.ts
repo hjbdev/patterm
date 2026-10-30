@@ -6,6 +6,8 @@ export interface McpToolDescriptor {
   description: string;
   inputSchema: Record<string, unknown>;
   usageNotes?: string[];
+  // MCP tool hints. Harnesses that honour them ask before a destructive call.
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean; openWorldHint?: boolean };
   hidden?: boolean;
   // Client-visible data a successful call can change. Reads declare none.
   // Tools that omit it count as changing workbench and context data.
