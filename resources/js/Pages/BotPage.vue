@@ -8,7 +8,7 @@
           <div class="truncate text-sm font-medium">{{ row.bot.name }}</div>
           <div class="truncate text-xs text-muted-foreground">{{ purviewLabel }}</div>
         </div>
-        <button v-if="browser?.running" type="button" :class="CHIP" @click="peek = { kind: 'browser' }"><Globe :class="CHIP_ICON" />Browser<span v-if="browser.help" class="h-1.5 w-1.5 rounded-full bg-foreground" aria-label="needs you" /></button>
+        <button v-if="browser?.running" type="button" :class="CHIP" @click="peek = { kind: 'browser' }"><Globe :class="CHIP_ICON" /><span :class="CHIP_LABEL">Browser</span><span v-if="browser.help" class="h-1.5 w-1.5 rounded-full bg-foreground" aria-label="needs you" /></button>
         <SecretsChip v-if="row.session && hasSecrets(row.session.processId)" :process-id="row.session.processId" />
         <Button v-if="row.waitingHelper && row.waitingHelperProjectId" variant="ghost" size="sm" class="h-7 text-xs text-warning hover:text-warning" @click="openHelper">Open waiting helper</Button>
         <DropdownMenu>
@@ -70,7 +70,7 @@ import { Globe, MoreHorizontal } from 'lucide-vue-next';
 import BotAvatar from '../Components/BotAvatar.vue';
 import IntegratedConversation from '../Components/IntegratedConversation.vue';
 import PeekPane from '../Components/peek/PeekPane.vue';
-import { CHIP, CHIP_ICON } from '../Components/session-context/rowAction';
+import { CHIP, CHIP_ICON, CHIP_LABEL } from '../Components/session-context/rowAction';
 import SecretsChip from '../Components/session-context/SecretsChip.vue';
 import { Button } from '../Components/ui/button';
 import { Sheet, SheetContent, SheetTitle } from '../Components/ui/sheet';

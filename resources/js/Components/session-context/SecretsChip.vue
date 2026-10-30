@@ -4,7 +4,7 @@
        a form opens only when a row is chosen. -->
   <ResponsivePopover v-if="secrets.length" v-model:open="open" title="Secrets" content-class="w-[22rem]" :keep-focus="requestOpened">
     <template #trigger>
-      <button type="button" :class="CHIP"><KeyRound :class="CHIP_ICON" />{{ secrets.length === 1 ? '1 secret' : `${secrets.length} secrets` }}<span v-if="requested" class="h-1.5 w-1.5 rounded-full bg-foreground" aria-label="needs you" /></button>
+      <button type="button" :class="CHIP"><KeyRound :class="CHIP_ICON" /><span :class="CHIP_LABEL">{{ secrets.length === 1 ? '1 secret' : `${secrets.length} secrets` }}</span><span v-if="requested" class="h-1.5 w-1.5 rounded-full bg-foreground" aria-label="needs you" /></button>
     </template>
     <ContextSecrets dense :process-id="processId" />
   </ResponsivePopover>
@@ -15,7 +15,7 @@ import { computed, ref, watch } from 'vue';
 import { KeyRound } from 'lucide-vue-next';
 import ResponsivePopover from '../ResponsivePopover.vue';
 import ContextSecrets from './ContextSecrets.vue';
-import { CHIP, CHIP_ICON } from './rowAction';
+import { CHIP, CHIP_ICON, CHIP_LABEL } from './rowAction';
 import { takeFreshRequests } from '../../lib/secretRequests';
 import { useSessionSecrets } from '../../lib/secrets';
 
