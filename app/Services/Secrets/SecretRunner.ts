@@ -37,12 +37,17 @@ export interface SecretRunResult {
 // alike. Patterm starts it, so values never pass through the agent's own
 // shell, and masks them in the output before anything is kept or returned.
 export class SecretRunner {
-  private readonly running = new Map<string, Set<ChildProcess>>();
+  // Each running command and how to end it.
+  private readonly running = new Map<string, Map<ChildProcess, () => void>>();
 
-  constructor(private readonly baseEnv: () => NodeJS.ProcessEnv) {}
+  constructor(
+    private readonly baseEnv: () => NodeJS.ProcessEnv,
+    // Ends a command's process tree; replaceable in tests.
+    private readonly endTree: (child: ChildProcess) => Promise<void> = endRun
+  ) {}
 
   async run(input: SecretRunInput): Promise<SecretRunResult> {
-    const own = this.running.get(input.sessionId) ?? new Set<ChildProcess>();
+    const own = this.running.get(input.sessionId) ?? new Map<ChildProcess, () => void>();
     if (own.size >= RUNS_PER_SESSION) throw new Error(`At most ${RUNS_PER_SESSION} secret_run commands run at once`);
     const env: NodeJS.ProcessEnv = {};
     for (const [key, value] of Object.entries(this.baseEnv())) {
@@ -58,7 +63,17 @@ export class SecretRunner {
       // Node's validation errors quote the environment, values included.
       throw new Error(`Could not start the command (${(error as NodeJS.ErrnoException).code ?? 'invalid input'})`);
     }
-    own.add(child);
+    // A command that ran out of time or whose agent stopped ends, and so does
+    // its output, which a child it left behind may hold open. The call
+    // returns only after the whole tree has ended, however its output closed.
+    let aborting: Promise<void> | null = null;
+    const abort = () => {
+      aborting ??= this.endTree(child).finally(() => {
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+      });
+    };
+    own.set(child, abort);
     this.running.set(input.sessionId, own);
     const stdout = new Masker(masks);
     const stderr = new Masker(masks);
@@ -67,7 +82,7 @@ export class SecretRunner {
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
-      abortRun(child);
+      abort();
     }, input.timeoutSeconds * 1000);
     try {
       const { code, signal } = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
@@ -81,7 +96,7 @@ export class SecretRunner {
       clearTimeout(timer);
       // Anything the command left running in the background holds the
       // secrets too, so it ends with the command.
-      void endRun(child);
+      await (aborting ?? this.endTree(child));
       own.delete(child);
       if (!own.size) this.running.delete(input.sessionId);
     }
@@ -91,7 +106,7 @@ export class SecretRunner {
   stop(isLive: (sessionId: string) => boolean = () => false): void {
     for (const [session, children] of this.running) {
       if (isLive(session)) continue;
-      for (const child of children) abortRun(child);
+      for (const abort of children.values()) abort();
     }
   }
 
@@ -128,7 +143,7 @@ export class SecretRunner {
 // the shell runs: once it has exited, its ID may belong to another process.
 // Node marks the exit before the output closes, so the check is the
 // process's own state.
-function endRun(child: ChildProcess): Promise<void> {
+export function endRun(child: ChildProcess): Promise<void> {
   if (!child.pid) return Promise.resolve();
   if (process.platform === 'win32') {
     return child.exitCode === null && child.signalCode === null ? killProcessTree(child.pid) : Promise.resolve();
@@ -139,17 +154,6 @@ function endRun(child: ChildProcess): Promise<void> {
     // Already gone.
   }
   return Promise.resolve();
-}
-
-// Ends a command that ran out of time or whose agent stopped. A child it
-// left behind may hold its output open, which would keep the call waiting,
-// so the output closes too, once the tree has ended, so the call returns
-// only when the command is gone.
-function abortRun(child: ChildProcess): void {
-  void endRun(child).finally(() => {
-    child.stdout?.destroy();
-    child.stderr?.destroy();
-  });
 }
 
 function dotenvQuote(value: string): string {

@@ -14,7 +14,7 @@ import { SecretProxyService } from '../app/Services/Secrets/SecretProxyService';
 import { hostAllowed, normaliseHost, SecretService, type SecretRecord } from '../app/Services/Secrets/SecretService';
 import { SecretVault } from '../app/Services/Secrets/SecretVault';
 import type { TimelineService } from '../app/Services/TimelineService';
-import { Masker, maskSet, SecretRunner } from '../app/Services/Secrets/SecretRunner';
+import { endRun, Masker, maskSet, SecretRunner } from '../app/Services/Secrets/SecretRunner';
 
 // Windows has no POSIX modes.
 const posix = process.platform !== 'win32';
@@ -201,6 +201,17 @@ async function serviceChecks(): Promise<void> {
     }, agent) as { timed_out: boolean };
     assert.equal(held.timed_out, true);
     assert.ok(Date.now() - started < 4000, 'the call returns at its timeout, not when the child ends');
+    // The call returns only once the tree has ended, even if the output
+    // closes first.
+    let settled = false;
+    const late = new SecretRunner(() => process.env, async (child) => {
+      await endRun(child);
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      settled = true;
+    });
+    const lateRun = await late.run({ sessionId: 'late', command: node('setTimeout(()=>{},20000)'), cwd: os.tmpdir(), env: [{ name: 'K', value: 'fake-value', label: 'k', mask: 'fake-value' }], timeoutSeconds: 1 });
+    assert.equal(lateRun.timed_out, true);
+    assert.equal(settled, true, 'the call waited for the tree to end');
     // A stopped agent's commands end with it.
     const stopping = actions.run({ command: node('setTimeout(()=>{},20000)'), env: { KEY: 'stripe_test' }, timeout_seconds: 30 }, agent) as Promise<{ exit_code: number | null; timed_out: boolean }>;
     await new Promise((resolve) => setTimeout(resolve, 300));
@@ -298,7 +309,15 @@ async function main(): Promise<void> {
     allowlistChecks();
   } finally {
     // Windows can hold a just-ended process's folder for a moment.
-    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    try {
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    } catch (error) {
+      // Show what still runs, since something left behind holds the folder.
+      if (process.platform === 'win32') {
+        console.error(execFileSync('powershell', ['-NoProfile', '-Command', "Get-CimInstance Win32_Process | Where-Object { $_.Name -in 'node.exe','cmd.exe','git.exe' } | Select-Object ProcessId,ParentProcessId,Name,CommandLine | Format-List | Out-String -Width 400"], { encoding: 'utf8' }));
+      }
+      throw error;
+    }
   }
   console.log('secrets smoke passed');
 }
