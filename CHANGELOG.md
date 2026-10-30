@@ -174,6 +174,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Claude conversations no longer show Claude Code's system prompt and
+  repeated request content. Claude Code 2.1.312 records each API request in
+  its transcript, and history imported those rows as messages.
 - Dialog buttons stacked on a phone, such as Close agent and Cancel, have
   space between them.
 - The sidebar keeps showing an agent's status line while its summary catches
