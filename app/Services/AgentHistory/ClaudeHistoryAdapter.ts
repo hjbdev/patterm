@@ -5,7 +5,7 @@ import { defaultFileFingerprint, digestJson, isoFromString, nonNegative, parsedI
 
 export class ClaudeHistoryAdapter implements ProviderHistoryAdapter {
   readonly provider = 'claude' as const;
-  readonly parserVersion = 'claude-jsonl-v12';
+  readonly parserVersion = 'claude-jsonl-v13';
 
   defaultSources(homeDir: string): HistorySourceCandidate[] {
     const projects = path.join(homeDir, '.claude', 'projects');
@@ -96,8 +96,10 @@ export class ClaudeHistoryAdapter implements ProviderHistoryAdapter {
       const type = queued ? 'user' : stringValue(row.type) ?? 'event';
       // Queue operations echo a prompt before its real user row, so importing
       // them shows every queued prompt twice. A compaction summary is context
-      // for the model, not something the user said.
-      if (!queued && (type === 'attachment' || row.attachment || type === 'system' || type === 'queue-operation' || row.isMeta === true || row.isCompactSummary === true)) continue;
+      // for the model, not something the user said. Only user and assistant
+      // rows are the conversation; others, such as api-request-blob, record
+      // what was sent to the model, system prompt included.
+      if (!queued && (type !== 'user' && type !== 'assistant' || row.attachment || row.isMeta === true || row.isCompactSummary === true)) continue;
       const message = queued ? { role: 'user', content: queued.content } : row.message && typeof row.message === 'object' ? row.message as Record<string, unknown> : null;
       const role = mapRole(stringValue(message?.role) ?? stringValue(row.role));
       const command = type === 'user' ? localCommand(message?.content ?? row.content) : null;

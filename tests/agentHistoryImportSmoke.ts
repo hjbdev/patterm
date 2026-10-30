@@ -142,7 +142,10 @@ function verifyNativeThreadIdentity(): void {
       { ...base, type: 'attachment', uuid: 'a2', attachment: { type: 'queued_command', prompt: '<task-notification>done</task-notification>', source_uuid: 'task_1', commandMode: 'task-notification' } },
       { ...base, type: 'attachment', uuid: 'a3', attachment: { type: 'queued_command', prompt: 'Already a user row', source_uuid: 'u2', commandMode: 'prompt' } },
       { ...base, type: 'user', uuid: 'u2', message: { role: 'user', content: 'Already a user row' } },
-      { ...base, type: 'assistant', uuid: 'r1', message: { role: 'assistant', content: 'Done' } }
+      { ...base, type: 'assistant', uuid: 'r1', message: { role: 'assistant', content: 'Done' } },
+      // Claude Code 2.1.312 records each API request, system prompt included.
+      { type: 'api-request-blob', sessionId: 'queued_session', hash: 'h1', message: { role: 'system', content: [{ type: 'text', text: 'You are Claude Code' }] } },
+      { type: 'api-request-blob', sessionId: 'queued_session', hash: 'h2', message: { role: 'user', content: 'Start the build' } }
     ].map((row) => JSON.stringify(row)).join('\n') + '\n');
     const claude = new ClaudeHistoryAdapter().parseFile(claudeFile).conversations[0]!;
     assert.deepEqual(claude.messages.map((message) => [message.providerMessageId, message.role, message.text]), [
@@ -150,7 +153,7 @@ function verifyNativeThreadIdentity(): void {
       ['client_1', 'user', 'Also check the logs'],
       ['u2', 'user', 'Already a user row'],
       ['r1', 'assistant', 'Done']
-    ], 'a mid-turn prompt is imported once under its submitted ID; task notifications and queue echoes are not');
+    ], 'a mid-turn prompt is imported once under its submitted ID; task notifications, queue echoes and recorded API requests are not');
 
     const codexFile = path.join(directory, 'child.jsonl');
     fs.writeFileSync(codexFile, [
