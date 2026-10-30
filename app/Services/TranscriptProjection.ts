@@ -388,6 +388,9 @@ export function normaliseMessages(value: unknown): TranscriptMessage[] {
       }
       continue;
     }
+    // OpenCode injects AGENTS.md instructions as synthetic rows and records
+    // agent or model switches; none of them is conversation.
+    if (row.type === 'synthetic' || row.type === 'agent-switched' || row.type === 'model-switched') continue;
     // Assistant content parts carry text and tool records; user content parts
     // keep their attachments available for later transcript display.
     const parent = stringField(row.parentId);
