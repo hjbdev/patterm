@@ -500,7 +500,10 @@ async function createApplicationResources(
     }),
     settled: (processId, secretId) => { notificationService.resolve({ process_id: processId, dedupe_key: `secret:${secretId}` }); },
     messageAgent: (processId, text) => sendAgentInput(database, terminal, { process_id: processId, kind: 'text', text, submit: true }, integrated),
-    proxyUrls: (secret) => secretProxy?.urls(secret) ?? {},
+    proxyUrl: (secret, host) => {
+      if (!secretProxy) throw new Error('The secrets proxy is starting');
+      return secretProxy.url(secret, host);
+    },
     changed: () => {
       SecretRedactor.useKnownValues(secretService.knownValues());
       notifyChanged(['secrets']);
@@ -845,7 +848,7 @@ async function createApplicationResources(
       return opened;
     },
     mcpServerHandlers,
-    { env: (identity, refs) => secretService.envValues(identity, refs) });
+    { env: (identity, refs) => secretService.envValues(identity, refs), urls: (identity, refs) => secretService.proxyUrls(identity, refs) });
   defer(() => mcpSocket.stop());
   // Release activity observation before the database closes; persistent
   // hosts keep running and are observed again after reconnect.

@@ -76,8 +76,8 @@ export interface SecretServiceHooks {
   requested(processId: string, secret: SecretRecord): void;
   settled(processId: string, secretId: string): void;
   messageAgent(processId: string, text: string): Promise<unknown>;
-  // Proxy base URLs for a ready secret, keyed by host.
-  proxyUrls(secret: SecretRecord): Record<string, string>;
+  // A fresh proxy base URL that stands in for `https://<host>/`.
+  proxyUrl(secret: SecretRecord, host: string): string;
   changed(): void;
 }
 
@@ -250,6 +250,20 @@ export class SecretService {
     });
   }
 
+  // `patterm-secret run --url`'s view: proxy URLs by `name` or `name@host`.
+  // They go only to the command's environment, never to a conversation.
+  proxyUrls(identity: string | null, refs: string[]): string[] {
+    const session = this.liveSession(identity);
+    return refs.map((ref) => {
+      const [name, requested] = ref.split('@', 2) as [string, string?];
+      const { secret } = this.reveal(session.id, name, 'proxy');
+      const host = requested ? normaliseHost(requested) : secret.allowed_hosts.length === 1 && !secret.allowed_hosts[0]!.startsWith('*.') ? secret.allowed_hosts[0]! : null;
+      if (!host) throw new Error(`"${name}" allows ${secret.allowed_hosts.join(', ')}; name one as ${name}@<host>`);
+      if (host.startsWith('*.') || !hostAllowed(secret.allowed_hosts, host)) throw new Error(`The user allowed "${name}" only for ${secret.allowed_hosts.join(', ')}`);
+      return this.hooks.proxyUrl(secret, host);
+    });
+  }
+
   // The proxy's view: a ready secret of a live session that allows it.
   proxyCredential(id: string): { secret: SecretRecord; value: string } {
     const row = this.database.connection.prepare(`select s.* from session_secrets s join sessions x on x.id = s.session_id
@@ -287,8 +301,9 @@ export class SecretService {
         : `Run a command with it: \`patterm-secret run --env ${env}=${secret.name} -- <command>\`, or write it to a git-excluded file with \`patterm-secret write .env.local ${env}=${secret.name}\`. Output that contains it is masked.`);
     }
     if (secret.uses.includes('proxy')) {
-      const urls = this.hooks.proxyUrls(secret);
-      lines.push(`Send requests through Patterm's proxy, which adds the credential: ${Object.entries(urls).map(([host, url]) => `use ${url} in place of https://${host}/`).join('; ')}. Leave out your own authentication.`);
+      const [host] = secret.allowed_hosts;
+      const ref = secret.allowed_hosts.length === 1 && !host!.startsWith('*.') ? secret.name : `${secret.name}@<host>`;
+      lines.push(`Call ${secret.allowed_hosts.join(', ')} through Patterm's proxy, which adds the credential: \`patterm-secret run --url ${env}_URL=${ref} -- <command>\` sets ${env}_URL to a local address that stands in for https://<host>/. Use it as the API's base URL and leave out your own authentication.`);
     }
     if (secret.uses.includes('browser')) {
       lines.push(`Fill it into a page on ${secret.allowed_hosts.join(', ')} with browser_fill_secret.`);

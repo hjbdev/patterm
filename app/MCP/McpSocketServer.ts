@@ -40,9 +40,10 @@ export interface McpServerSocketHandlers {
 }
 
 // Answers `patterm-secret`: the values an agent's command may receive, by
-// `name` or `name.field`.
+// `name` or `name.field`, and proxy URLs, by `name` or `name@host`.
 export interface SecretSocketHandlers {
   env(identity: string | null, refs: string[]): string[];
+  urls(identity: string | null, refs: string[]): string[];
 }
 
 const MCP_SERVER_OPS = new Set(['mcp-headers', 'mcp-proxy-headers', 'mcp-endpoint', 'mcp-exec']);
@@ -131,11 +132,12 @@ export class McpSocketServer {
         this.write(socket, { id, result: this.openUrl({ identity: request.identity, url: request.url }) });
         return;
       }
-      if (request.op === 'secret-env') {
+      if (request.op === 'secret-env' || request.op === 'secret-url') {
         if (!this.secrets) throw new Error('Secrets are unavailable');
         if (!Array.isArray(request.refs) || !request.refs.every((ref) => typeof ref === 'string')) throw new Error('request is missing secret names');
         const identity = typeof request.identity === 'string' && request.identity ? request.identity : null;
-        this.write(socket, { id, result: { values: this.secrets.env(identity, request.refs as string[]) } });
+        const values = request.op === 'secret-env' ? this.secrets.env(identity, request.refs as string[]) : this.secrets.urls(identity, request.refs as string[]);
+        this.write(socket, { id, result: { values } });
         return;
       }
       if (typeof request.op === 'string' && MCP_SERVER_OPS.has(request.op)) {

@@ -41,7 +41,7 @@ type ShimRequest =
   | { op: 'mcp-proxy-headers'; server: string }
   | { op: 'mcp-endpoint'; server: string; rejected?: string | null }
   | { op: 'mcp-exec'; server: string }
-  | { op: 'secret-env'; refs: string[] }
+  | { op: 'secret-env' | 'secret-url'; refs: string[] }
   | { tool: string; args: unknown };
 
 // OpenCode 2 sends `ai.opencode/sessionID`; earlier builds sent `sessionID`.
@@ -331,7 +331,8 @@ const MODES: Record<string, (args: string[]) => Promise<void>> = {
   '--mcp-proxy-headers': ([serverId]) => printProxyHeaders(required(serverId)),
   '--mcp-exec': ([serverId]) => exec(required(serverId)),
   '--secret': async (args) => {
-    const code = await secretCli(args, async (refs) => (await registryRequest({ op: 'secret-env', refs }) as { values: string[] }).values);
+    const ask = (op: 'secret-env' | 'secret-url') => async (refs: string[]) => refs.length ? (await registryRequest({ op, refs }) as { values: string[] }).values : [];
+    const code = await secretCli(args, { values: ask('secret-env'), urls: ask('secret-url') });
     process.exitCode = code;
   }
 };

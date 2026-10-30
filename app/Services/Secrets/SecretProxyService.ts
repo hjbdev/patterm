@@ -8,21 +8,6 @@ export interface SecretProxyCredentials {
   proxyCredential(id: string): { secret: SecretRecord; value: string };
 }
 
-// A proxy URL's credential: the secret ID and its signature.
-const PROXY_TOKEN = /secret_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[A-Za-z0-9_-]{32}/g;
-
-// Proxy URLs reach their agent through its messages and secret_list, and from
-// there its transcript and terminal, which other agents can read. Agents'
-// reads show them hidden, so only the owner, through secret_list, can use one.
-export function hideProxyTokens(value: unknown): unknown {
-  if (typeof value === 'string') return value.includes('secret_') ? value.replace(PROXY_TOKEN, '[proxy URL hidden; its agent gets it from secret_list]') : value;
-  if (Array.isArray(value)) return value.map(hideProxyTokens);
-  if (value && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype) {
-    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, hideProxyTokens(entry)]));
-  }
-  return value;
-}
-
 // Request headers that belong to one hop, or that would let a caller steer
 // the upstream connection.
 const HOP_HEADERS = new Set(['host', 'connection', 'keep-alive', 'proxy-authorization', 'proxy-connection', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'origin', 'referer']);
@@ -31,7 +16,7 @@ const LOOPBACK = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 // A reverse proxy that adds a secret's credential to requests bound for the
 // hosts the user allowed. The value never enters the agent's processes, so
 // it can't be printed or sent anywhere else. Each URL carries a signed secret
-// ID: it works only while that secret is ready and its session runs.
+// ID and nonce: it works only while that secret is ready and its session runs.
 export class SecretProxyService {
   private readonly server: http.Server;
   private readonly key: Buffer;
@@ -70,15 +55,16 @@ export class SecretProxyService {
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
   }
 
-  // The base URL that stands in for each allowed host. Wildcard hosts take
-  // any matching name in the same position.
-  urls(secret: SecretRecord): Record<string, string> {
-    const token = `${secret.id}.${this.sign(secret.id)}`;
-    return Object.fromEntries(secret.allowed_hosts.map((host) => [host, `http://127.0.0.1:${this.port}/${token}/${host.replace(/^\*\./, '<subdomain>.')}/`]));
+  // A base URL that stands in for `https://<host>/`. Each one carries its own
+  // nonce and reaches only the command it was made for, never a conversation,
+  // where other agents could read it.
+  url(secret: SecretRecord, host: string): string {
+    const nonce = randomBytes(12).toString('base64url');
+    return `http://127.0.0.1:${this.port}/${secret.id}.${nonce}.${this.sign(`${secret.id}.${nonce}`)}/${host}/`;
   }
 
-  private sign(id: string): string {
-    return createHmac('sha256', this.key).update(id).digest('base64url').slice(0, 32);
+  private sign(payload: string): string {
+    return createHmac('sha256', this.key).update(payload).digest('base64url').slice(0, 32);
   }
 
   private forward(request: http.IncomingMessage, response: http.ServerResponse): void {
@@ -90,17 +76,16 @@ export class SecretProxyService {
     // No browser pages or DNS rebinding.
     if (request.headers.host !== `127.0.0.1:${this.port}` && request.headers.host !== `localhost:${this.port}`) return fail(403, 'Forbidden');
     if (request.headers.origin) return fail(403, 'Browser requests are not allowed');
-    const match = /^\/([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)\/([^/?#]+)(\/[^#]*)?$/.exec(request.url ?? '');
-    if (!match) return fail(404, 'Use the proxy URL from secret_list');
-    const [, id, signature, rawHost, rest] = match as unknown as [string, string, string, string, string | undefined];
+    const match = /^\/([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)\/([^/?#]+)(\/[^#]*)?$/.exec(request.url ?? '');
+    if (!match) return fail(404, 'Use the URL patterm-secret run --url gives your command');
+    const [, id, nonce, signature, rawHost, rest] = match as unknown as [string, string, string, string, string, string | undefined];
     let host: string;
     try {
       host = normaliseHost(decodeURIComponent(rawHost));
     } catch {
       return fail(400, 'Invalid upstream host');
     }
-    if (host.startsWith('*.')) return fail(400, 'Replace <subdomain> with the host you want');
-    const expected = Buffer.from(this.sign(id));
+    const expected = Buffer.from(this.sign(`${id}.${nonce}`));
     const actual = Buffer.from(signature);
     if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return fail(401, 'Invalid proxy URL');
     let credential: { secret: SecretRecord; value: string };

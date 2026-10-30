@@ -6,12 +6,16 @@ import { withEnv } from '../app/Platform/Environment';
 import { resolveCommand } from '../app/Platform/Executable';
 
 type Fetch = (refs: string[]) => Promise<string[]>;
+// Values by `name` or `name.field`; proxy URLs by `name` or `name@host`.
+export interface SecretSource { values: Fetch; urls: Fetch }
 
-const USAGE = `usage: patterm-secret run --env NAME=secret[.field] [--env ...] -- <command> [args...]
+const USAGE = `usage: patterm-secret run [--env NAME=secret[.field]] [--url NAME=secret[@host]] ... -- <command> [args...]
        patterm-secret write <file> NAME=secret[.field] [...]
 
 Secrets come from your Patterm session; ask for one with the secret_request tool.
-A login's fields are .username and .password. Output that contains a value is masked.`;
+--env passes a value; a login's fields are .username and .password.
+--url passes a local proxy address that stands in for https://<host>/ and adds
+the key, so the command never holds it. Output that contains either is masked.`;
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 // Output is held back this long at most, so a value split across writes is
@@ -21,10 +25,10 @@ const FLUSH_MS = 100;
 // The `patterm-secret` command agents run in their shells. Values travel from
 // Patterm to the child process's environment, or to a file, and never to the
 // agent's own environment or arguments.
-export async function secretCli(args: string[], fetchValues: Fetch): Promise<number> {
+export async function secretCli(args: string[], source: SecretSource): Promise<number> {
   const [command, ...rest] = args;
-  if (command === 'run') return run(rest, fetchValues);
-  if (command === 'write') return write(rest, fetchValues);
+  if (command === 'run') return run(rest, source);
+  if (command === 'write') return write(rest, source.values);
   process.stderr.write(`${USAGE}\n`);
   return command === 'help' || command === '--help' || command === '-h' ? 0 : 2;
 }
@@ -37,21 +41,29 @@ function assignment(text: string): { name: string; ref: string } {
   return { name, ref };
 }
 
-async function run(args: string[], fetchValues: Fetch): Promise<number> {
-  const assignments: Array<{ name: string; ref: string }> = [];
+async function run(args: string[], source: SecretSource): Promise<number> {
+  const envs: Array<{ name: string; ref: string }> = [];
+  const urls: Array<{ name: string; ref: string }> = [];
   let index = 0;
   for (; index < args.length; index += 1) {
     const arg = args[index]!;
     if (arg === '--') { index += 1; break; }
-    if (arg === '--env' || arg === '-e') assignments.push(assignment(args[++index] ?? ''));
-    else if (arg.startsWith('--env=')) assignments.push(assignment(arg.slice(6)));
+    if (arg === '--env' || arg === '-e') envs.push(assignment(args[++index] ?? ''));
+    else if (arg.startsWith('--env=')) envs.push(assignment(arg.slice(6)));
+    else if (arg === '--url') urls.push(assignment(args[++index] ?? ''));
+    else if (arg.startsWith('--url=')) urls.push(assignment(arg.slice(6)));
     else break;
   }
   const command = args.slice(index);
-  if (!assignments.length || !command.length) throw new Error(`nothing to run\n${USAGE}`);
-  const values = await fetchValues(assignments.map((entry) => entry.ref));
-  const env = withEnv(process.env, Object.fromEntries(assignments.map((entry, i) => [entry.name, values[i]!])));
-  const masks = maskSet(values, assignments.map((entry) => entry.ref));
+  if ((!envs.length && !urls.length) || !command.length) throw new Error(`nothing to run\n${USAGE}`);
+  const [values, addresses] = await Promise.all([source.values(envs.map((entry) => entry.ref)), source.urls(urls.map((entry) => entry.ref))]);
+  const assignments = [...envs, ...urls];
+  const given = [...values, ...addresses];
+  const env = withEnv(process.env, Object.fromEntries(assignments.map((entry, i) => [entry.name, given[i]!])));
+  // A proxy URL's token is a credential too: it stays out of the output, and
+  // so out of the conversation, where other agents could read it.
+  const tokens = addresses.map((address) => new URL(address).pathname.split('/')[1]!);
+  const masks = maskSet([...values, ...tokens], [...envs.map((entry) => entry.ref), ...urls.map((entry) => `${entry.ref} url`)]);
   const target = resolveCommand(command[0]!, command.slice(1), env);
   const child = spawn(target.command, target.args, { stdio: ['inherit', 'pipe', 'pipe'], env, windowsHide: true, windowsVerbatimArguments: target.verbatim });
   const out = new Masker(masks, process.stdout);
@@ -107,26 +119,31 @@ function dotenvQuote(value: string): string {
 // which the agent must sort out with the user.
 function excludeFromGit(file: string): string | null {
   const git = (...args: string[]) => execFileSync('git', args, { cwd: path.dirname(file), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  let top: string;
+  let prefix: string;
   try {
-    top = git('rev-parse', '--show-toplevel');
+    prefix = git('rev-parse', '--show-prefix');
   } catch {
     return null;
   }
-  const relative = path.relative(top, file).split(path.sep).join('/');
+  // Git runs in the file's folder, so its pathspecs are the file name. The
+  // exclude entry is from the top, built from git's own prefix for the folder,
+  // since the top and the file's path can name it differently (Windows short
+  // names, symlinks).
+  const relative = `${prefix}${path.basename(file)}`;
   try {
-    git('ls-files', '--error-unmatch', '--', relative);
+    git('ls-files', '--error-unmatch', '--', path.basename(file));
     process.stderr.write(`patterm-secret: warning: git tracks ${relative}; the secret will be committed unless you untrack it\n`);
     return null;
   } catch {
     // Not tracked.
   }
   try {
-    if (git('check-ignore', '-q', '--', relative) === '') return 'existing ignore rules';
+    if (git('check-ignore', '-q', '--', path.basename(file)) === '') return 'existing ignore rules';
   } catch {
     // Not ignored yet.
   }
-  const exclude = path.resolve(top, git('rev-parse', '--git-path', 'info/exclude'));
+  // Relative to the folder git ran in.
+  const exclude = path.resolve(path.dirname(file), git('rev-parse', '--git-path', 'info/exclude'));
   fs.mkdirSync(path.dirname(exclude), { recursive: true });
   const current = fs.existsSync(exclude) ? fs.readFileSync(exclude, 'utf8') : '';
   const entry = `/${relative}`;

@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import type { McpCallContext, McpToolRegistry } from '../MCP/ToolRegistry';
 import type { BrowserService } from '../Services/Browser/BrowserService';
-import { hideProxyTokens } from '../Services/Secrets/SecretProxyService';
 import { hostAllowed, SECRET_NAME, SECRET_USES, type SecretService } from '../Services/Secrets/SecretService';
 
 // What the UI reads, and the calls that answer an agent. Answering messages
@@ -53,7 +52,7 @@ const removeInput = z.object({ process_id: id, secret_id: id, note: z.string().t
 
 export const SECRET_INSTRUCTIONS = [
   'When a task needs a password, API key or token, call secret_request. Never ask the user to paste one into the conversation, and never print, echo, log or commit a secret value.',
-  'The user enters it in Patterm and chooses how you may use it: in commands through `patterm-secret run`, through Patterm\'s egress proxy for API requests, or typed into your browser with browser_fill_secret. A message arrives when it is ready; secret_list shows each secret\'s usage.',
+  'The user enters it in Patterm and chooses how you may use it: through Patterm\'s egress proxy for API requests (`patterm-secret run --url`), as a value in commands (`patterm-secret run --env`), or typed into your browser with browser_fill_secret. A message arrives when it is ready; secret_list shows each secret\'s usage.',
   'Prefer the proxy for API keys: the key never reaches your processes, and it works only for the hosts the user allowed.'
 ];
 
@@ -129,11 +128,7 @@ export class SecretActions {
   }
 }
 
-// The tools that give an agent its own proxy URLs.
-const PROXY_URL_TOOLS = new Set(['secret_list', 'secret_request']);
-
 export function registerSecretTools(registry: McpToolRegistry, actions: SecretActions): void {
-  registry.setResultFilter((tool, result) => (PROXY_URL_TOOLS.has(tool) ? result : hideProxyTokens(result)));
   registry.register(
     {
       name: 'secret_request', namespace: 'secrets', changes: ['secrets'],
