@@ -300,6 +300,9 @@ function allowlistChecks(): void {
   }
 }
 
+// When this run began, to list what it started if cleanup fails.
+const runStartedAt = Date.now();
+
 async function main(): Promise<void> {
   try {
     vaultChecks();
@@ -314,7 +317,8 @@ async function main(): Promise<void> {
     } catch (error) {
       // Show what still runs, since something left behind holds the folder.
       if (process.platform === 'win32') {
-        console.error(execFileSync('powershell', ['-NoProfile', '-Command', "Get-CimInstance Win32_Process | Where-Object { $_.Name -in 'node.exe','cmd.exe','git.exe' } | Select-Object ProcessId,ParentProcessId,Name,CommandLine | Format-List | Out-String -Width 400"], { encoding: 'utf8' }));
+        const since = new Date(runStartedAt).toISOString();
+        console.error(execFileSync('powershell', ['-NoProfile', '-Command', `Get-CimInstance Win32_Process | Where-Object { $_.CreationDate -ge [datetime]'${since}' } | Select-Object ProcessId,ParentProcessId,Name,CreationDate,CommandLine | Format-List | Out-String -Width 400`], { encoding: 'utf8' }));
       }
       throw error;
     }
