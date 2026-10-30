@@ -849,7 +849,11 @@ test('provider rows and native queues replace optimistic rows by identity', () =
     assert.deepEqual(composer.outgoingTranscript(provider, [native], []), [native]);
     if (provider === 'opencode') {
       const queue = [{ id, text: 'hello', delivery: 'queue' }];
-      assert.deepEqual(composer.outgoingTranscript(provider, [native], queue), []);
+      const waiting = composer.outgoingTranscript(provider, [native], queue);
+      assert.equal(waiting.length, 1, 'a natively queued prompt shows once, as a message');
+      assert.deepEqual([waiting[0].id, waiting[0].text, waiting[0].delivery.state], [id, 'hello', 'queued']);
+      const assistant = { id: 'reply', role: 'assistant', kind: 'text', text: 'working' };
+      assert.deepEqual(composer.outgoingTranscript(provider, [assistant], queue).map((row) => row.id), ['reply', id], 'it follows the running turn');
       composer.reconcileOutgoingMessages(provider, [], queue);
       assert.equal(composer.outgoingTranscript(provider, [], []).length, 1, 'leaving the queue cannot hide the message before its native row arrives');
       composer.reconcileOutgoingMessages(provider, [native], []);

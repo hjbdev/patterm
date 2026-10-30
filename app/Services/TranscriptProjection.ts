@@ -59,7 +59,8 @@ export interface TranscriptTool {
 export interface TranscriptMessage {
   id: string;
   clientMessageId?: string;
-  delivery?: { state: 'sending' | 'accepted' | 'uncertain' | 'failed'; messageId: string; error?: string };
+  // `queued`: the harness holds it until the running turn takes it.
+  delivery?: { state: 'sending' | 'queued' | 'accepted' | 'uncertain' | 'failed'; messageId: string; error?: string };
   role: 'user' | 'assistant';
   kind: 'text' | 'tool' | 'reasoning' | 'notice';
   // Notice severity: retries and compaction are info, warnings are warning.

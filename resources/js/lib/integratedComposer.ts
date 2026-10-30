@@ -230,7 +230,17 @@ export function outgoingTranscript(processId: string, messages: TranscriptMessag
   const queued = new Set(queue.map((item) => item.id));
   const visible = queue.length ? messages.filter((message) => !queued.has(message.id)) : messages;
   const pending = entries.filter((entry) => !isQueued(entry, queued) && !messages.some((message) => matchesOutgoing(entry, message)));
-  if (!pending.length) return visible;
+  // Prompts the harness queued natively follow the running turn as greyed
+  // messages, as a send does on the other harnesses. Patterm's held queue
+  // keeps its own list above the composer.
+  const waiting = queue.filter((item) => item.delivery === 'queue' || item.delivery === 'steer').map((item): TranscriptMessage => {
+    const local = entries.find((entry) => entry.row.id === item.id || entry.payload.messageId === item.id)?.row;
+    return {
+      ...(local ?? { id: item.id, role: 'user', kind: 'text', text: item.text }),
+      delivery: { state: 'queued', messageId: item.id }
+    };
+  });
+  if (!pending.length) return waiting.length ? [...visible, ...waiting] : visible;
   // Keep the send beside the content visible at submission, even while more
   // assistant rows stream in. Entries sharing an anchor retain send order.
   const result = [...visible];
@@ -241,7 +251,7 @@ export function outgoingTranscript(processId: string, messages: TranscriptMessag
     result.splice(index === -1 && afterId !== null ? result.length : index + 1, 0, entry.row);
     lastAtAnchor.set(entry.afterId, transcriptMessageKey(entry.row));
   }
-  return result;
+  return [...result, ...waiting];
 }
 
 export function reconcileOutgoingMessages(processId: string, messages: TranscriptMessage[], queue: IntegratedQueuedMessage[]): void {

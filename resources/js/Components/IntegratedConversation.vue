@@ -8,7 +8,7 @@
         <!-- Runs on under the composer's top padding when nothing sits
              between them, so text fades out at the card's edge. -->
         <div class="min-h-0 flex-1" :class="composerAdjoins && '-mb-4'">
-          <ConversationTranscript ref="transcriptRef" :key="processId" :messages="transcriptMessages" :truncated="historyTruncated" :history-unavailable="historyUnavailable" :has-older="Boolean(historyCursor)" :loading-older="loadingOlder" :history-error="historyError" :process-id="processId" :live="streaming" :working="streamStatus === 'working' && !ended" :settling="loadingTranscript" :can-retry="canReply && !submission" auto-load-older @load-older="loadOlder" @retry-message="retryMessage" />
+          <ConversationTranscript ref="transcriptRef" :key="processId" :messages="transcriptMessages" :truncated="historyTruncated" :history-unavailable="historyUnavailable" :has-older="Boolean(historyCursor)" :loading-older="loadingOlder" :history-error="historyError" :process-id="processId" :live="streaming" :working="streamStatus === 'working' && !ended" :settling="loadingTranscript" :can-retry="canReply && !submission" :can-cancel="canReply" auto-load-older @load-older="loadOlder" @retry-message="retryMessage" @cancel-message="cancelQueued" />
         </div>
         <p v-if="displayError" role="alert" class="mx-auto w-full max-w-[50rem] shrink-0 break-words px-4 pb-4 text-sm text-destructive 2xl:max-w-[1000px]">{{ displayError }}</p>
       </div>
@@ -352,7 +352,8 @@ const transcriptMessages = computed(() => {
   const all = outgoingTranscript(props.processId, messages.value, queue.value);
   return props.hideBackground ? all.filter((message) => !(message.role === 'user' && message.kind === 'text' && hiddenFromBot(message.text))) : all;
 });
-const shownQueue = computed(() => props.hideBackground ? queue.value.filter((item) => !hiddenFromBot(item.text)) : queue.value);
+// Natively queued prompts show in the transcript; this lists Patterm's held ones.
+const shownQueue = computed(() => queue.value.filter((item) => (item.delivery === 'held' || item.delivery === 'unconfirmed') && !(props.hideBackground && hiddenFromBot(item.text))));
 // A phone docks a pending prompt in the composer's place, once it has control:
 // until then the composer stays, with its Take control. Once you've answered
 // one here, the next agent waiting on you is offered in that spot.
@@ -1047,6 +1048,11 @@ async function updateQueued(item: IntegratedQueuedMessage, action: 'steer' | 'ca
     // replace its local copy.
     if (action === 'cancel' && (item.delivery === 'held' || item.delivery === 'unconfirmed') && !error.value) discardOutgoingMessage(props.processId, item.id);
   });
+}
+
+function cancelQueued(messageId: string): void {
+  const item = queue.value.find((queued) => queued.id === messageId);
+  if (item && !isResponding(`queue:${item.id}`)) void updateQueued(item, 'cancel');
 }
 
 // Native evidence settles an unconfirmed held message; the refresh drops it.

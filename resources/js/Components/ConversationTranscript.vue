@@ -39,7 +39,7 @@
                 <ConversationAgentMessage v-if="row.kind === 'message' && row.origin" :message="row.message" :origin="row.origin" :open="rowOpen(row.id)" @toggle="toggleRow(row.id)" />
                 <template v-else-if="row.kind === 'message' && row.message.role === 'user'">
                   <div class="flex w-full flex-col items-end gap-2" :data-delivery="row.message.delivery?.state">
-                    <div class="flex w-full flex-col items-end gap-2 transition-opacity duration-200 motion-reduce:transition-none" :class="row.message.delivery?.state === 'sending' || row.message.delivery?.state === 'uncertain' ? 'opacity-50' : ''">
+                    <div class="flex w-full flex-col items-end gap-2 transition-opacity duration-200 motion-reduce:transition-none" :class="row.message.delivery?.state === 'sending' || row.message.delivery?.state === 'queued' || row.message.delivery?.state === 'uncertain' ? 'opacity-50' : ''">
                     <div v-if="attachmentsOf(row.message).length" class="flex max-w-[min(82%,64ch)] flex-wrap justify-end gap-2">
                       <template v-for="(attachment, index) in attachmentsOf(row.message)" :key="`${row.id}:attachment:${index}`">
                       <TranscriptImage v-if="attachment.image && attachment.sha256" :image="{ sha256: attachment.sha256, name: attachment.name }" :gallery="attachmentImages(row.message)" :max-height="200" :max-width="320" />
@@ -68,7 +68,11 @@
                       <span v-for="file in row.message.fileReferences" :key="file" class="max-w-full truncate rounded-md border border-border/70 bg-background/60 px-2 py-1 font-mono text-[11px] text-muted-foreground">{{ file }}</span>
                     </div>
                     </div>
-                    <div v-if="row.message.delivery && row.message.delivery.state !== 'accepted'" class="flex max-w-[min(82%,64ch)] flex-wrap items-center justify-end gap-x-2 gap-y-1 text-xs" :class="row.message.delivery.state === 'failed' ? 'text-destructive' : 'text-muted-foreground'">
+                    <div v-if="row.message.delivery?.state === 'queued'" class="flex max-w-[min(82%,64ch)] items-center justify-end gap-2 text-xs text-muted-foreground">
+                      <span role="status">Queued</span>
+                      <button type="button" class="rounded-sm font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50" :disabled="!canCancel" @click="emit('cancel-message', row.message.delivery.messageId)">Cancel</button>
+                    </div>
+                    <div v-else-if="row.message.delivery && row.message.delivery.state !== 'accepted'" class="flex max-w-[min(82%,64ch)] flex-wrap items-center justify-end gap-x-2 gap-y-1 text-xs" :class="row.message.delivery.state === 'failed' ? 'text-destructive' : 'text-muted-foreground'">
                       <span role="status" class="inline-flex items-center gap-1.5">
                         <Loader2 v-if="row.message.delivery.state === 'sending'" class="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden="true" />
                         <AlertTriangle v-else class="h-3 w-3" aria-hidden="true" />
@@ -201,8 +205,8 @@ import {
   type TranscriptRow
 } from '../lib/integratedConversation';
 
-const props = withDefaults(defineProps<{ messages: TranscriptMessage[]; truncated?: boolean; historyUnavailable?: boolean; hasOlder?: boolean; loadingOlder?: boolean; historyError?: string; processId: string; live?: boolean; working?: boolean; autoLoadOlder?: boolean; activeMessageId?: string | null; settling?: boolean; canRetry?: boolean }>(), { truncated: false, historyUnavailable: false, hasOlder: false, loadingOlder: false, historyError: '', live: false, working: false, autoLoadOlder: false, activeMessageId: null, settling: false, canRetry: false });
-const emit = defineEmits<{ 'load-older': []; 'retry-message': [messageId: string] }>();
+const props = withDefaults(defineProps<{ messages: TranscriptMessage[]; truncated?: boolean; historyUnavailable?: boolean; hasOlder?: boolean; loadingOlder?: boolean; historyError?: string; processId: string; live?: boolean; working?: boolean; autoLoadOlder?: boolean; activeMessageId?: string | null; settling?: boolean; canRetry?: boolean; canCancel?: boolean }>(), { truncated: false, historyUnavailable: false, hasOlder: false, loadingOlder: false, historyError: '', live: false, working: false, autoLoadOlder: false, activeMessageId: null, settling: false, canRetry: false, canCancel: false });
+const emit = defineEmits<{ 'load-older': []; 'retry-message': [messageId: string]; 'cancel-message': [messageId: string] }>();
 
 // Pages by id, drawn where a reply places [patterm_figure:<id>].
 const figures = computed(() => {
