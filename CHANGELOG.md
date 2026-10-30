@@ -169,6 +169,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A bot's request for help in its browser, or for a secret, now shows on its
+  page. The browser or session context opens beside the bot's conversation,
+  and the header has a Browser button that marks a pending request. Opening
+  the notification previously showed only the conversation.
 - Claude conversations no longer show Claude Code's system prompt and
   repeated request content. Claude Code 2.1.312 records each API request in
   its transcript, and history imported those rows as messages.
