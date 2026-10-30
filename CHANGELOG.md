@@ -174,6 +174,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An agent's browser on a machine without a usable GPU, such as one on a
+  virtual display, now has WebGL. Sites such as x.com treat a browser without
+  WebGL as a bot.
+
 - A bot's request for help in its browser, or for a secret, now shows on its
   page. The browser or session context opens beside the bot's conversation,
   and the header has a Browser button that marks a pending request. Opening

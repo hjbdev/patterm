@@ -226,12 +226,18 @@ async function liveChecks(): Promise<void> {
     const { targetInfos } = await cdp.send<{ targetInfos: Array<{ targetId: string; type: string }> }>('Target.getTargets');
     const page = targetInfos.find((target) => target.targetId === state.activeTargetId)!;
     const { sessionId } = await cdp.send<{ sessionId: string }>('Target.attachToTarget', { targetId: page.targetId, flatten: true });
-    await cdp.send('Runtime.evaluate', { expression: 'document.body.innerHTML = "<input id=box>"; document.getElementById("box").focus()' }, sessionId);
+    await cdp.send('Runtime.evaluate', { expression: 'document.body.innerHTML = "<input id=box>"; window.inputs = 0; document.getElementById("box").addEventListener("input", (event) => { if (event.isTrusted) window.inputs++; }); document.getElementById("box").focus()' }, sessionId);
     await service.input('session_live', { kind: 'text', text: 'typed by a person' });
     const typed = await cdp.send<{ result: { value: string } }>('Runtime.evaluate', { expression: 'document.getElementById("box").value', returnByValue: true }, sessionId);
     assert.equal(typed.result.value, 'typed by a person');
+    // Frameworks such as React update their state from trusted input events.
+    const inputs = await cdp.send<{ result: { value: number } }>('Runtime.evaluate', { expression: 'window.inputs', returnByValue: true }, sessionId);
+    assert.ok(inputs.result.value > 0, 'typing fires trusted input events');
     const webdriver = await cdp.send<{ result: { value: unknown } }>('Runtime.evaluate', { expression: 'navigator.webdriver', returnByValue: true }, sessionId);
     assert.equal(webdriver.result.value, false);
+    // Sites treat a browser without WebGL as a bot.
+    const webgl = await cdp.send<{ result: { value: boolean } }>('Runtime.evaluate', { expression: 'Boolean(document.createElement("canvas").getContext("webgl"))', returnByValue: true }, sessionId);
+    assert.equal(webgl.result.value, true, 'WebGL is available');
     cdp.close();
 
     await service.requestHelp('session_live', 'process_live', 'Solve the CAPTCHA');

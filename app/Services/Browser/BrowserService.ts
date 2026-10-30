@@ -354,6 +354,10 @@ export class BrowserService {
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-blink-features=AutomationControlled',
+      // Without a usable GPU, as on a virtual display, Chrome turns WebGL off,
+      // and sites such as x.com treat a browser without WebGL as a bot. This
+      // lets it fall back to software rendering instead.
+      '--enable-unsafe-swiftshader',
       `--window-size=${VIEWPORT.width},${VIEWPORT.height}`,
       '--window-position=0,0',
       '--password-store=basic',
