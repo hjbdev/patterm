@@ -8,7 +8,7 @@
           <div class="truncate text-sm font-medium">{{ row.bot.name }}</div>
           <div class="truncate text-xs text-muted-foreground">{{ purviewLabel }}</div>
         </div>
-        <button v-if="browser?.running" type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-white/[0.06] px-2.5 text-[12.5px] text-foreground/85 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" @click="peek = { kind: 'browser' }"><Globe class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />Browser<span v-if="browser.help" class="h-1.5 w-1.5 rounded-full bg-foreground" aria-label="needs you" /></button>
+        <button v-if="browser?.running" type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-white/[0.06] px-2.5 text-[12.5px] text-foreground/85 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" @click="peek = { kind: 'browser' }"><Globe class="h-3.5 w-3.5 shrink-0 text-muted-foreground" /><span class="py-1 [text-box:trim-both_cap_alphabetic]">Browser</span><span v-if="browser.help" class="h-1.5 w-1.5 rounded-full bg-foreground" aria-label="needs you" /></button>
         <Button v-if="row.waitingHelper && row.waitingHelperProjectId" variant="ghost" size="sm" class="h-7 text-xs text-warning hover:text-warning" @click="openHelper">Open waiting helper</Button>
         <DropdownMenu>
           <DropdownMenuTrigger as-child>

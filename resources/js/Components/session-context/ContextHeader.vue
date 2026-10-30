@@ -28,7 +28,7 @@
       </div>
       <div v-if="!folded" class="flex items-center gap-1.5" :class="phoneLayout ? 'mt-1.5 overflow-x-auto px-3 [scrollbar-width:none]' : 'mt-2.5 flex-wrap'">
         <ResponsivePopover v-if="worktrees.length" v-bind="chip('worktrees')" title="Worktrees" content-class="w-[22rem]">
-          <template #trigger><button type="button" :class="CHIP"><FolderGit2 :class="CHIP_ICON" />{{ counted(worktrees.length, 'worktree', 'worktrees') }}</button></template>
+          <template #trigger><button type="button" :class="CHIP"><FolderGit2 :class="CHIP_ICON" /><span :class="CHIP_LABEL">{{ counted(worktrees.length, 'worktree', 'worktrees') }}</span></button></template>
           <ContextWorktreeRow v-for="worktree in worktrees" :key="worktree.id" dense :worktree="worktree" :state="diffTotals.get(worktree.id)" :active="worktree.id === activeWorktreeId" :busy="busy" @open="openDiff(worktree)" @unlink="unlinkWorktree(worktree.id)" />
           <div :class="SEPARATOR" />
           <ContextPicker :items="worktreeOptions" placeholder="Search worktrees…" label="Search worktrees to link" empty-text="This project has no worktrees." align="start" :disabled="busy || linkedWorktrees >= MAX_LINKED_WORKTREES" @select="linkWorktree">
@@ -37,7 +37,7 @@
         </ResponsivePopover>
 
         <ResponsivePopover v-if="pages.length" v-bind="chip('links')" title="Links">
-          <template #trigger><button type="button" :class="CHIP"><component :is="pages.length === 1 ? linkIcon(pages[0]!) : Link2" :class="CHIP_ICON" /><span class="max-w-48 truncate">{{ pages.length === 1 ? linkLabel(pages[0]!) : `${pages.length} links` }}</span></button></template>
+          <template #trigger><button type="button" :class="CHIP"><component :is="pages.length === 1 ? linkIcon(pages[0]!) : Link2" :class="CHIP_ICON" /><span :class="[CHIP_LABEL, 'max-w-48 truncate']">{{ pages.length === 1 ? linkLabel(pages[0]!) : `${pages.length} links` }}</span></button></template>
           <ContextLinkRow v-for="link in pages" :key="link.id" dense :link="link" :busy="busy" @update="(changes, done) => updateLink(link, changes).then(done)" @detach="detachLink(link.id)" />
           <div :class="SEPARATOR" />
           <LinkAttachPopover :busy="busy" align="start" @attach="(url, done) => attachLink(url).then(done)">
@@ -47,12 +47,12 @@
 
         <!-- The agent's own browser, once it has one. It opens beside the
              conversation. -->
-        <button v-if="browser?.running" type="button" :class="CHIP" @click="emit('peek', { kind: 'browser' })"><Globe :class="CHIP_ICON" />Browser<span v-if="browser.help" class="h-1.5 w-1.5 rounded-full bg-foreground" aria-label="needs you" /></button>
+        <button v-if="browser?.running" type="button" :class="CHIP" @click="emit('peek', { kind: 'browser' })"><Globe :class="CHIP_ICON" /><span :class="CHIP_LABEL">Browser</span><span v-if="browser.help" class="h-1.5 w-1.5 rounded-full bg-foreground" aria-label="needs you" /></button>
 
         <!-- Servers the agent started, and preview links. One with a page opens
              it in the agent's browser beside the conversation. -->
         <ResponsivePopover v-if="servers.length" v-bind="chip('servers')" :title="serversLabel">
-          <template #trigger><button type="button" :class="CHIP"><MonitorPlay :class="CHIP_ICON" /><span class="max-w-48 truncate">{{ serversLabel }}</span></button></template>
+          <template #trigger><button type="button" :class="CHIP"><MonitorPlay :class="CHIP_ICON" /><span :class="[CHIP_LABEL, 'max-w-48 truncate']">{{ serversLabel }}</span></button></template>
           <div v-for="server in servers" :key="server.key" class="group/row flex items-center rounded-md pr-1 transition-colors hover:bg-muted/40">
             <button type="button" :class="[ROW, 'relative isolate hover:bg-transparent']" @click="openServer(server)">
               <RowStatus v-if="server.process" :activity="processActivity(server.process)" />
@@ -67,7 +67,7 @@
 
         <!-- The rest of the agent's family, whether or not the sidebar lists them. -->
         <ResponsivePopover v-if="agents.length" v-bind="chip('agents')" :title="agentsLabel">
-          <template #trigger><button type="button" :class="CHIP"><Network :class="CHIP_ICON" />{{ agentsLabel }}</button></template>
+          <template #trigger><button type="button" :class="CHIP"><Network :class="CHIP_ICON" /><span :class="CHIP_LABEL">{{ agentsLabel }}</span></button></template>
           <button v-for="member in agents" :key="member.id" type="button" :class="[ROW, 'relative isolate']" @click="openAgent(member)">
             <RowStatus :activity="sidebar.activity(member)" />
             <span class="min-w-0 flex-1 truncate">{{ agentLabel(member) }}</span>
@@ -76,12 +76,12 @@
         </ResponsivePopover>
 
         <ResponsivePopover v-if="openTodos" v-bind="chip('todos')" title="Todos" content-class="w-[22rem]">
-          <template #trigger><button type="button" :class="CHIP"><ListTodo :class="CHIP_ICON" />{{ counted(openTodos, 'todo', 'todos') }}</button></template>
+          <template #trigger><button type="button" :class="CHIP"><ListTodo :class="CHIP_ICON" /><span :class="CHIP_LABEL">{{ counted(openTodos, 'todo', 'todos') }}</span></button></template>
           <ContextTodoRow v-for="todo in todos" :key="todo.id" dense :todo="todo" :project-id="projectId" :now="now" :busy="busy" @status="setTodoStatus(todo, $event)" @unassign="unassignTodo(todo.id)" />
         </ResponsivePopover>
 
         <ResponsivePopover v-if="scratchpads.length" v-bind="chip('scratchpads')" title="Scratchpads">
-          <template #trigger><button type="button" :class="CHIP"><NotebookPen :class="CHIP_ICON" />{{ counted(scratchpads.length, 'scratchpad', 'scratchpads') }}</button></template>
+          <template #trigger><button type="button" :class="CHIP"><NotebookPen :class="CHIP_ICON" /><span :class="CHIP_LABEL">{{ counted(scratchpads.length, 'scratchpad', 'scratchpads') }}</span></button></template>
           <ContextScratchpadRow v-for="note in scratchpads" :key="note.id" dense :note="note" :project-id="projectId" :busy="busy" @detach="detachScratchpad(note.id)" />
         </ResponsivePopover>
 
@@ -158,6 +158,9 @@ const sidebar = useSidebar();
 const CHIP = 'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-white/[0.06] px-2.5 text-[12.5px] text-foreground/85 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-white/[0.14] data-[state=open]:text-foreground max-sm:h-8 max-sm:rounded-lg max-sm:px-3 max-sm:text-[13px]';
 const ADD_CHIP = cn(CHIP, 'w-7 justify-center px-0 max-sm:w-8 max-sm:px-0');
 const CHIP_ICON = 'h-3.5 w-3.5 shrink-0 text-muted-foreground';
+// Trimmed to cap height so centring centres the letters, not the font's line box;
+// the padding gives back room for descenders under truncate's clip.
+const CHIP_LABEL = 'py-1 [text-box:trim-both_cap_alphabetic]';
 const ROW = 'flex min-h-8 w-full min-w-0 flex-1 items-center gap-2.5 rounded-md px-2 py-1 text-left text-[13px] outline-none transition-colors hover:bg-muted/40 focus-visible:ring-1 focus-visible:ring-ring max-sm:min-h-11 max-sm:text-sm';
 const ADD_ROW = `${ROW} text-muted-foreground hover:text-foreground`;
 const ROW_ACTION = 'flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100 [@media(hover:none)]:opacity-100';
