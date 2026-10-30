@@ -183,6 +183,20 @@ async function serviceChecks(): Promise<void> {
     const slow = await actions.run({ command: node('setTimeout(()=>{},20000)'), env: { KEY: 'stripe_test' }, timeout_seconds: 1 }, agent) as { timed_out: boolean };
     assert.equal(slow.timed_out, true);
     await assert.rejects(actions.run({ command: 'echo hi' }, agent), /at least one secret/);
+    if (posix) {
+      // Whatever a command leaves running ends with it.
+      const left = await actions.run({ command: 'sleep 30 >/dev/null 2>&1 & echo $!', env: { KEY: 'stripe_test' } }, agent) as { stdout: string };
+      const pid = Number(left.stdout.trim());
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      assert.throws(() => process.kill(pid, 0), 'the background child was ended');
+    }
+    // A stopped agent's commands end with it.
+    const stopping = actions.run({ command: node('setTimeout(()=>{},20000)'), env: { KEY: 'stripe_test' }, timeout_seconds: 30 }, agent) as Promise<{ exit_code: number | null; timed_out: boolean }>;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    runner.stop((sessionId) => sessionId !== 'session_a');
+    const stopped = await stopping;
+    assert.equal(stopped.timed_out, false);
+    assert.notEqual(stopped.exit_code, 0);
     await assert.rejects(actions.run({ command: 'echo hi', env: { KEY: 'stripe_test' } }, { identity: 'identity_x' }), /running Patterm agent/);
 
     // secret_write: a 0600 dotenv file, kept out of git.
@@ -190,6 +204,7 @@ async function serviceChecks(): Promise<void> {
     fs.mkdirSync(path.join(repo, 'app'), { recursive: true });
     fs.mkdirSync(path.join(repo, 'logs'));
     execFileSync('git', ['init', '-q'], { cwd: repo });
+    await assert.rejects(actions.save({ process_id: 'process_a', secret_id: null, name: 'nul_key', kind: 'api_key', values: { value: 'fake\u0000value' }, allowed_hosts: [], uses: ['env'] }), /NUL/);
     await actions.save({ process_id: 'process_a', secret_id: null, name: 'odd_key', kind: 'api_key', values: { value: 'abc 123"x' }, allowed_hosts: [], uses: ['env'] });
     fs.writeFileSync(path.join(repo, '.env.local'), 'KEEP=1\nAPI_KEY=old\n');
     const written = await actions.write({ path: 'repo/.env.local', env: { API_KEY: 'odd_key', OTHER: 'stripe_test' } }, agent);
@@ -205,6 +220,19 @@ async function serviceChecks(): Promise<void> {
     assert.doesNotMatch(exclude(), /logs/);
     await actions.write({ path: path.join(repo, 'app', '.env'), env: { API_KEY: 'odd_key' } }, agent);
     assert.match(exclude(), /^\/app\/\.env$/m, 'a file in a folder is excluded by its path from the top');
+    // Pattern characters in a path are literal.
+    const bracketed = await actions.write({ path: 'repo/app/[tenant]/.env', env: { API_KEY: 'odd_key' } }, agent) as { excluded_by: string | null; warning?: string };
+    assert.deepEqual([bracketed.excluded_by, bracketed.warning], ['.git/info/exclude', undefined]);
+    assert.match(exclude(), /^\/app\/\\\[tenant\\\]\/\.env$/m);
+    if (posix) {
+      // A symlink would hide where the secret really goes.
+      fs.writeFileSync(path.join(repo, 'tracked.env'), 'KEY=placeholder\n');
+      fs.symlinkSync('tracked.env', path.join(repo, '.env.link'));
+      await assert.rejects(actions.write({ path: 'repo/.env.link', env: { API_KEY: 'odd_key' } }, agent), /symlink/);
+      assert.equal(fs.readFileSync(path.join(repo, 'tracked.env'), 'utf8'), 'KEY=placeholder\n');
+      fs.rmSync(path.join(repo, 'tracked.env'));
+      fs.rmSync(path.join(repo, '.env.link'));
+    }
     assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }), 'A  logs/.gitignore\n', 'git ignores the written files');
 
     // An exited session's URLs stop working.

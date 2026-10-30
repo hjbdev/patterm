@@ -9,9 +9,6 @@ const execFileAsync = promisify(execFile);
 // Output kept per stream, after masking. A command that prints more keeps
 // its last part, where errors usually are.
 const OUTPUT_LIMIT = 64 * 1024;
-// Masked output is held back this long at most, so a value split across
-// writes is still masked without holding up the rest.
-const FLUSH_MS = 100;
 // Commands one session may run at once.
 const RUNS_PER_SESSION = 4;
 export const DEFAULT_RUN_SECONDS = 50;
@@ -54,7 +51,13 @@ export class SecretRunner {
     }
     for (const entry of input.env) env[entry.name] = entry.value;
     const masks = maskSet(input.env.map((entry) => ({ value: entry.mask, label: entry.label })));
-    const child = spawn(input.command, { cwd: input.cwd, env, shell: true, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' });
+    let child: ChildProcess;
+    try {
+      child = spawn(input.command, { cwd: input.cwd, env, shell: true, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' });
+    } catch (error) {
+      // Node's validation errors quote the environment, values included.
+      throw new Error(`Could not start the command (${(error as NodeJS.ErrnoException).code ?? 'invalid input'})`);
+    }
     own.add(child);
     this.running.set(input.sessionId, own);
     const stdout = new Masker(masks);
@@ -68,7 +71,7 @@ export class SecretRunner {
     }, input.timeoutSeconds * 1000);
     try {
       const { code, signal } = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
-        child.once('error', reject);
+        child.once('error', (error: NodeJS.ErrnoException) => reject(new Error(`Could not start the command (${error.code ?? 'error'})`)));
         child.once('close', (code, signal) => resolve({ code, signal }));
       });
       const out = stdout.end();
@@ -76,15 +79,18 @@ export class SecretRunner {
       return { exit_code: code, signal, timed_out: timedOut, stdout: out.text, stderr: err.text, truncated: out.truncated || err.truncated };
     } finally {
       clearTimeout(timer);
+      // Anything the command left running in the background holds the
+      // secrets too, so it ends with the command.
+      endRun(child, true);
       own.delete(child);
       if (!own.size) this.running.delete(input.sessionId);
     }
   }
 
-  // Ends a session's commands, such as when it stops.
-  stop(sessionId?: string): void {
+  // Ends every command, or those of sessions that are no longer running.
+  stop(isLive: (sessionId: string) => boolean = () => false): void {
     for (const [session, children] of this.running) {
-      if (sessionId && session !== sessionId) continue;
+      if (isLive(session)) continue;
       for (const child of children) endRun(child);
     }
   }
@@ -93,6 +99,10 @@ export class SecretRunner {
   // there, with mode 0600, and keeps it out of git. Returns how it is
   // excluded, or a warning.
   async write(file: string, entries: Array<{ name: string; value: string }>): Promise<{ excluded: string | null; warning: string | null }> {
+    // A symlink would put the secret in a file the git checks never see.
+    const existing = await fs.promises.lstat(file).catch(() => null);
+    if (existing?.isSymbolicLink()) throw new Error(`${file} is a symlink; write to the file it points to`);
+    if (existing && !existing.isFile()) throw new Error(`${file} is not a file`);
     let lines: string[] = [];
     try {
       lines = (await fs.promises.readFile(file, 'utf8')).split('\n');
@@ -114,10 +124,11 @@ export class SecretRunner {
 }
 
 // Each command leads its own process group on POSIX, so the shell's children
-// end with it; Windows ends the tree.
-function endRun(child: ChildProcess): void {
+// end with it, even after the shell exits. Windows ends the tree while the
+// command runs; once it has exited its ID may belong to another process.
+function endRun(child: ChildProcess, exited = false): void {
   if (!child.pid) return;
-  if (process.platform === 'win32') { void killProcessTree(child.pid); return; }
+  if (process.platform === 'win32') { if (!exited) void killProcessTree(child.pid); return; }
   try {
     process.kill(-child.pid, 'SIGKILL');
   } catch {
@@ -163,9 +174,19 @@ async function excludeFromGit(file: string): Promise<{ excluded: string | null; 
   const exclude = path.resolve(folder, await git('rev-parse', '--git-path', 'info/exclude'));
   await fs.promises.mkdir(path.dirname(exclude), { recursive: true });
   const current = await fs.promises.readFile(exclude, 'utf8').catch(() => '');
-  const entry = `/${relative}`;
+  const entry = `/${gitignoreLiteral(relative)}`;
   if (!current.split('\n').includes(entry)) await fs.promises.appendFile(exclude, `${current && !current.endsWith('\n') ? '\n' : ''}${entry}\n`);
+  try {
+    await git('check-ignore', '-q', '--', name);
+  } catch {
+    return { excluded: null, warning: `git does not ignore ${relative}; keep it out of commits yourself` };
+  }
   return { excluded: '.git/info/exclude', warning: null };
+}
+
+// A path as a gitignore pattern that matches only itself.
+function gitignoreLiteral(relative: string): string {
+  return relative.replace(/[\\[\]*?]/g, '\\$&').replace(/^([!#])/, '\\$1').replace(/ $/, '\\ ');
 }
 
 // Raw and common encodings of each value, longest first.
@@ -180,15 +201,15 @@ export function maskSet(entries: Array<{ value: string; label: string }>): Array
   return [...masks].map(([needle, label]) => ({ needle: Buffer.from(needle), label })).sort((a, b) => b.needle.length - a.needle.length);
 }
 
-// Replaces values in a byte stream and keeps the last OUTPUT_LIMIT bytes of
-// the result. It holds back the last few bytes, which may be the start of a
-// value split across writes, and flushes them when the stream goes quiet.
+// Collects a stream's output, masks values in it, and keeps the last
+// OUTPUT_LIMIT bytes. It masks as it goes, holding back the last few bytes,
+// which may be the start of a value split across writes, so nothing kept
+// ever holds a value.
 export class Masker {
   private carry: Buffer = Buffer.alloc(0);
   private kept: Buffer[] = [];
   private size = 0;
   private dropped = false;
-  private timer: NodeJS.Timeout | null = null;
   private readonly keep: number;
 
   constructor(private readonly masks: Array<{ needle: Buffer; label: Buffer }>) {
@@ -200,20 +221,12 @@ export class Masker {
     const cut = Math.max(0, text.length - this.keep);
     this.append(text.subarray(0, cut));
     this.carry = text.subarray(cut);
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = this.carry.length ? setTimeout(() => this.flush(), FLUSH_MS) : null;
   }
 
   end(): { text: string; truncated: boolean } {
-    this.flush();
-    return { text: Buffer.concat(this.kept).toString('utf8'), truncated: this.dropped };
-  }
-
-  private flush(): void {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = null;
     this.append(this.carry);
     this.carry = Buffer.alloc(0);
+    return { text: Buffer.concat(this.kept).toString('utf8'), truncated: this.dropped };
   }
 
   private append(bytes: Buffer): void {

@@ -317,7 +317,7 @@ async function createApplicationResources(
         workbenchSync?.invalidate();
         remoteClient?.localChanged();
       }
-      if (topic === 'workbench' && !fromPeer) reapBrowsers?.();
+      if (topic === 'workbench' && !fromPeer) reapSessions?.();
       if (topic !== 'workbench') changedTopics.add(topic);
     }
     if (!changedTopics.size || topicsScheduled) return;
@@ -331,8 +331,9 @@ async function createApplicationResources(
     });
   };
   const notifyWorkbenchChanged = () => notifyChanged(['workbench']);
-  // Stops the browsers of sessions that ended, once the change settles.
-  let reapBrowsers: (() => void) | null = null;
+  // Stops the browsers and secret commands of sessions that ended, once the
+  // change settles.
+  let reapSessions: (() => void) | null = null;
   const transcriptImages = new TranscriptImageStore(path.join(options.appDataPath, 'transcript-images'));
   const openCodeServer = new OpenCodeServerService(database, resolvedEnv, { persistent, images: transcriptImages });
   const harnessRuntimeDir = path.join(options.appDataPath, 'harness');
@@ -524,15 +525,17 @@ async function createApplicationResources(
   defer(() => secretRunner.stop());
   const secretActions = new SecretActions(secretService, browsers, secretRunner);
   let reaping: NodeJS.Timeout | null = null;
-  reapBrowsers = () => {
+  reapSessions = () => {
     reaping ??= setTimeout(() => {
       reaping = null;
+      // A stopped or closed agent's secret commands end with it.
+      secretRunner.stop((sessionId) => Boolean(database.connection.prepare('select 1 from sessions where id = ? and exited_at is null').get(sessionId)));
       void browsers.reap().catch((error: unknown) => {
         debugLog.write('browser', 'reap.failed', { message: error instanceof Error ? error.message : String(error) });
       });
     }, 1_000);
   };
-  defer(() => { if (reaping) clearTimeout(reaping); reapBrowsers = null; });
+  defer(() => { if (reaping) clearTimeout(reaping); reapSessions = null; });
   const historySearch = new HybridHistorySearchService(historyReadService, historyDatabase, semanticSearchService);
   const historyWatcher = new AgentHistoryWatcherService({
     enabledWatchSources: () => historySourceService.enabledWatchSources(),
@@ -896,7 +899,7 @@ async function createApplicationResources(
 
   updates.start();
   semanticSearchService.start();
-  reapBrowsers?.();
+  reapSessions?.();
 
   const application: PattermApplication = {
     database,

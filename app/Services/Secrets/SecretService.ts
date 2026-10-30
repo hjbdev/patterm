@@ -336,6 +336,8 @@ function checkHeader(injection: SecretInjection, value: string): void {
 }
 
 function checkValues(kind: SecretKind, values: SecretValues): SecretValues {
+  // Environments and files can't hold NUL characters.
+  if (Object.values(values).some((value: string) => value.includes('\0'))) throw new Error('Secrets can\'t contain NUL characters');
   if (kind === 'login') {
     if (!('username' in values) || !values.password) throw new Error('Enter the username and password');
     return { username: values.username, password: values.password };

@@ -11,16 +11,18 @@ messages, or Patterm's records of the conversation.
 | --- | --- | --- |
 | Proxy | `secret_run` with `urls: {"STRIPE_URL": "stripe_test"}` gives the command a local base URL that stands in for `https://<host>/`; Patterm forwards its requests over HTTPS with the key added as a header or query parameter. | No. |
 | Commands | `secret_run` with `env: {"STRIPE_KEY": "stripe_test"}`, or `secret_write` for a dotenv file. | Yes, through the command. |
+| Browser | `browser_fill_secret` types it into a field of the agent's browser. | Not directly; the page can, and so can the agent's own CDP scripts. |
 
 `secret_run` and `secret_write` are MCP tools, so they work the same for every
 harness and platform. Patterm runs the command itself, with `sh -c` (`cmd.exe`
 on Windows), no stdin, a timeout (50 s by default, at most 600 s; some
 harnesses stop waiting for a tool after about a minute), and the last 64 KB of
-each output stream. The command runs outside the harness's own sandbox, such
+each output stream. Anything it leaves running in the background ends with it,
+and its commands end when its agent stops (on Windows, background processes
+outlive a command that has already exited). The command runs outside the harness's own sandbox, such
 as Codex's read-only or no-network modes. The harness still decides whether to
 ask before each call: the tools are marked as not read-only and destructive,
 and a run must name at least one secret.
-| Browser | `browser_fill_secret` types it into a field of the agent's browser. | Not directly; the page can, and so can the agent's own CDP scripts. |
 
 Prefer the proxy for API keys. Only it stops an agent that misbehaves from
 sending the key somewhere else; the other uses keep it out of transcripts.
@@ -45,10 +47,12 @@ sending the key somewhere else; the other uses keep it out of transcripts.
   requires HTTPS outside loopback. Two-factor codes stay with
   `browser_request_help`.
 - **Masking.** `secret_run` masks the value, its URL, base64 and JSON string
-  forms in the command's output, before it keeps or returns any. Output is held back at most 100 ms, so
-  a value printed in two pieces with a longer pause between them can slip
-  through. Imported history (text and tool metadata) and automatic summaries
-  mask every stored value of six characters or more.
+  forms in the command's output, before it keeps or returns any. Imported
+  history (text and tool metadata) and automatic summaries mask every stored
+  value of six characters or more.
+- **Files.** `secret_write` refuses symlinks, writes mode 0600, and adds the
+  file to `.git/info/exclude` as a literal path, then checks that git ignores
+  it. It warns instead when git tracks the file or still doesn't ignore it.
 - **Storage.** Values are encrypted with AES-256-GCM, bound to their record ID.
   The data key is in `secrets.key` beside the database, never in it, so database
   copies and backups hold no usable values. The desktop app seals the key with
