@@ -300,9 +300,6 @@ function allowlistChecks(): void {
   }
 }
 
-// When this run began, to list what it started if cleanup fails.
-const runStartedAt = Date.now();
-
 async function main(): Promise<void> {
   try {
     vaultChecks();
@@ -315,10 +312,23 @@ async function main(): Promise<void> {
     try {
       fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     } catch (error) {
-      // Show what still runs, since something left behind holds the folder.
+      // Show which entries can't go, and what they are.
       if (process.platform === 'win32') {
-        const since = new Date(runStartedAt).toISOString();
-        console.error(execFileSync('powershell', ['-NoProfile', '-Command', `Get-CimInstance Win32_Process | Where-Object { $_.CreationDate -ge [datetime]'${since}' } | Select-Object ProcessId,ParentProcessId,Name,CreationDate,CommandLine | Format-List | Out-String -Width 400`], { encoding: 'utf8' }));
+        const stuck: string[] = [];
+        const visit = (dir: string) => {
+          for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) visit(full);
+            try {
+              fs.rmSync(full, { recursive: true, force: true });
+            } catch (inner) {
+              const stat = fs.lstatSync(full);
+              stuck.push(`${path.relative(root, full)} ${(inner as NodeJS.ErrnoException).code} mode=${(stat.mode & 0o777).toString(8)}`);
+            }
+          }
+        };
+        try { visit(root); } catch (walk) { stuck.push(`walk failed: ${String(walk)}`); }
+        console.error(`entries that could not be removed:\n${stuck.join('\n') || '(none; only the folder itself)'}`);
       }
       throw error;
     }
