@@ -190,6 +190,15 @@ async function serviceChecks(): Promise<void> {
       await new Promise((resolve) => setTimeout(resolve, 200));
       assert.throws(() => process.kill(pid, 0), 'the background child was ended');
     }
+    // A command whose shell exits while a child it left holds the output
+    // open still returns at its timeout.
+    const started = Date.now();
+    const held = await actions.run({
+      command: node("require('child_process').spawn(process.execPath,['-e','setTimeout(()=>{},8000)'],{stdio:'inherit'}).unref()"),
+      env: { KEY: 'stripe_test' }, timeout_seconds: 1
+    }, agent) as { timed_out: boolean };
+    assert.equal(held.timed_out, true);
+    assert.ok(Date.now() - started < 4000, 'the call returns at its timeout, not when the child ends');
     // A stopped agent's commands end with it.
     const stopping = actions.run({ command: node('setTimeout(()=>{},20000)'), env: { KEY: 'stripe_test' }, timeout_seconds: 30 }, agent) as Promise<{ exit_code: number | null; timed_out: boolean }>;
     await new Promise((resolve) => setTimeout(resolve, 300));

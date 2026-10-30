@@ -67,7 +67,7 @@ export class SecretRunner {
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
-      endRun(child);
+      abortRun(child);
     }, input.timeoutSeconds * 1000);
     try {
       const { code, signal } = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
@@ -81,7 +81,7 @@ export class SecretRunner {
       clearTimeout(timer);
       // Anything the command left running in the background holds the
       // secrets too, so it ends with the command.
-      endRun(child, true);
+      endRun(child);
       own.delete(child);
       if (!own.size) this.running.delete(input.sessionId);
     }
@@ -91,7 +91,7 @@ export class SecretRunner {
   stop(isLive: (sessionId: string) => boolean = () => false): void {
     for (const [session, children] of this.running) {
       if (isLive(session)) continue;
-      for (const child of children) endRun(child);
+      for (const child of children) abortRun(child);
     }
   }
 
@@ -124,16 +124,30 @@ export class SecretRunner {
 }
 
 // Each command leads its own process group on POSIX, so the shell's children
-// end with it, even after the shell exits. Windows ends the tree while the
-// command runs; once it has exited its ID may belong to another process.
-function endRun(child: ChildProcess, exited = false): void {
+// end with it, even after the shell exits. Windows ends the tree only while
+// the shell runs: once it has exited, its ID may belong to another process.
+// Node marks the exit before the output closes, so the check is the
+// process's own state.
+function endRun(child: ChildProcess): void {
   if (!child.pid) return;
-  if (process.platform === 'win32') { if (!exited) void killProcessTree(child.pid); return; }
+  if (process.platform === 'win32') {
+    if (child.exitCode === null && child.signalCode === null) void killProcessTree(child.pid);
+    return;
+  }
   try {
     process.kill(-child.pid, 'SIGKILL');
   } catch {
     // Already gone.
   }
+}
+
+// Ends a command that ran out of time or whose agent stopped. A child it
+// left behind may hold its output open, which would keep the call waiting,
+// so the output closes too.
+function abortRun(child: ChildProcess): void {
+  endRun(child);
+  child.stdout?.destroy();
+  child.stderr?.destroy();
 }
 
 function dotenvQuote(value: string): string {
