@@ -84,7 +84,10 @@ const availableUses = computed<SecretUse[]>(() => kind.value === 'login' ? ['bro
 const entered = computed(() => kind.value === 'login' ? Boolean(password.value) : Boolean(value.value));
 const canSave = computed(() => Boolean(name.value.trim()) && uses.value.length > 0 && (entered.value || keeping.value));
 const hint = computed(() => {
-  const parts = uses.value.includes('env') ? ['Commands can read the value, so the agent could see it.'] : uses.value.length ? ['The agent never sees the value.'] : ['Choose at least one use.'];
+  const parts = !uses.value.length ? ['Choose at least one use.']
+    : uses.value.includes('env') ? ['Commands can read the value, so the agent could see it.']
+    : uses.value.includes('browser') ? ['Once filled, the page and the agent\'s browser scripts can read it.']
+    : ['The agent never sees the value.'];
   if (!props.keyringProtected) parts.push('Stored encrypted with a key file on this machine, not a keyring.');
   return parts.join(' ');
 });

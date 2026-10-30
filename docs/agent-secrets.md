@@ -26,15 +26,19 @@ sending the key somewhere else; the other uses keep it out of transcripts.
   wildcards allowed; an entry without a port allows any port) and only over
   HTTPS, except for `localhost` and `127.0.0.1`. It refuses requests that carry
   an `Origin` header or another `Host`, so web pages can't use it. A proxy URL
-  works only while its secret is ready and its session runs.
+  works only while its secret is ready and its session runs. The URL is a
+  bearer credential, so every agent tool result hides it except `secret_list`
+  and `secret_request`, which answer only for the caller's own session.
+  Another agent reading this one's conversation, terminal or history through
+  Patterm sees it hidden.
 - **Browser.** Filling checks the page's own `location`, not the tab list, and
   requires HTTPS outside loopback. Two-factor codes stay with
   `browser_request_help`.
 - **Masking.** `patterm-secret run` masks the value, its URL, base64 and JSON
   string forms in the command's output. Output is held back at most 100 ms, so
   a value printed in two pieces with a longer pause between them can slip
-  through. Imported history and automatic summaries mask every stored value of
-  six characters or more.
+  through. Imported history (text and tool metadata) and automatic summaries
+  mask every stored value of six characters or more.
 - **Storage.** Values are encrypted with AES-256-GCM, bound to their record ID.
   The data key is in `secrets.key` beside the database, never in it, so database
   copies and backups hold no usable values. The desktop app seals the key with
@@ -46,6 +50,10 @@ sending the key somewhere else; the other uses keep it out of transcripts.
 
 - An upstream API that echoes the key in a response (an error message, for
   example) hands it to the agent. The proxy does not rewrite response bodies.
+- Agents run as the same OS user, so one that reads another harness's
+  transcript files on disk directly can find that agent's proxy URLs, and
+  could read a running agent's environment the same way. Patterm separates
+  agents only within its own tools.
 - Query-parameter injection puts the key in the URL the upstream server sees
   and may log.
 - `patterm-secret` is not on OpenCode agents' PATH: OpenCode's shared server has

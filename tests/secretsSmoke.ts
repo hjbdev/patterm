@@ -5,10 +5,10 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { Writable } from 'node:stream';
-import { SECRET_CONTROL_TOOLS, SECRET_VIEW_TOOLS, SecretActions } from '../app/Actions/SecretActions';
+import { registerSecretTools, SECRET_CONTROL_TOOLS, SECRET_VIEW_TOOLS, SecretActions } from '../app/Actions/SecretActions';
 import { BROWSER_TOOLS, INTEGRATED_CONTROL_TOOLS } from '../app/Http/BrowserTools';
 import { McpSocketServer } from '../app/MCP/McpSocketServer';
-import type { McpToolRegistry } from '../app/MCP/ToolRegistry';
+import { McpToolRegistry } from '../app/MCP/ToolRegistry';
 import { SecretRedactor } from '../app/Services/AgentHistory/SecretRedactor';
 import type { BrowserService } from '../app/Services/Browser/BrowserService';
 import { DatabaseService } from '../app/Services/DatabaseService';
@@ -136,9 +136,16 @@ async function serviceChecks(): Promise<void> {
   assert.throws(() => secrets.reveal('session_a', 'stripe_test', 'env'), /did not allow/);
   assert.equal(secrets.reveal('session_a', 'stripe_test', 'proxy').value, 'sk_test_1234567890');
 
-  // History and summaries mask stored values.
+  // History and summaries mask stored values, in text and in tool metadata.
   SecretRedactor.useKnownValues(secrets.knownValues());
   assert.equal(new SecretRedactor().redact('saw sk_test_1234567890 here').text, 'saw [REDACTED] here');
+  assert.deepEqual(new SecretRedactor().maskKnown({ toolMetadata: { output: ['key sk_test_1234567890'], exit: 0 } }), { toolMetadata: { output: ['key [REDACTED]'], exit: 0 } });
+
+  // A header can't carry line breaks; saving says so instead of crashing the proxy later.
+  await assert.rejects(actions.save({ process_id: 'process_a', secret_id: null, name: 'bad_header', kind: 'api_key', values: { value: 'abc\r\nX-Evil: 1' }, allowed_hosts: ['127.0.0.1'], uses: ['proxy'] }), /can't go in an HTTP header/);
+  await assert.rejects(actions.save({ process_id: 'process_a', secret_id: null, name: 'bad_prefix', kind: 'api_key', values: { value: 'fine-value' }, allowed_hosts: ['127.0.0.1'], uses: ['proxy'], injection: { in: 'header', name: 'X-Key', prefix: 'a\n' } }), /can't go in an HTTP header/);
+  await actions.save({ process_id: 'process_a', secret_id: null, name: 'query_key', kind: 'api_key', values: { value: 'line\nbreak-ok' }, allowed_hosts: ['127.0.0.1'], uses: ['proxy'], injection: { in: 'query', name: 'key', prefix: '' } });
+  await actions.remove({ process_id: 'process_a', secret_id: secrets.list('session_a').find((secret) => secret.name === 'query_key')!.id });
 
   // The proxy adds the credential only for allowed hosts and live sessions.
   const seen: Array<{ url: string; authorization: string | undefined; host: string | undefined }> = [];
@@ -164,6 +171,15 @@ async function serviceChecks(): Promise<void> {
     assert.equal((await fetch(target.replace(/\.[^./]+\/127/, '.forged/127'))).status, 401, 'a forged signature fails');
     assert.equal((await fetch(target.replace(`/127.0.0.1:${upstreamPort}/`, `/localhost:${upstreamPort}/`))).status, 403, 'other hosts are refused');
     assert.equal((await fetch(target, { headers: { origin: 'https://evil.example' } })).status, 403, 'browser pages are refused');
+    // Agents' tool results hide proxy URLs, so another agent reading this
+    // one's conversation or terminal can't use them; secret_list keeps them.
+    const registry = new McpToolRegistry();
+    registerSecretTools(registry, actions);
+    registry.register({ name: 'get_conversation_output', namespace: 'test', description: 'test', inputSchema: { type: 'object' } }, () => ({ messages: [{ text: `use ${base} now` }] }));
+    const read = JSON.stringify(await registry.callPublic('get_conversation_output', {}, agent));
+    assert.doesNotMatch(read, /secret_[0-9a-f-]{36}\./, 'a conversation read hides the URL');
+    assert.match(read, /proxy URL hidden/);
+    assert.match(JSON.stringify(await registry.callPublic('secret_list', {}, agent)), new RegExp(base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'secret_list gives the owner its URL');
     // Query injection.
     await actions.save({ process_id: 'process_a', secret_id: id, name: 'stripe_test', kind: 'api_key', values: null, allowed_hosts: ['127.0.0.1'], uses: ['proxy', 'env'], injection: { in: 'query', name: 'key', prefix: '' } });
     await fetch(`${target}q?a=1`);

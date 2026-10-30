@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { McpCallContext, McpToolRegistry } from '../MCP/ToolRegistry';
 import type { BrowserService } from '../Services/Browser/BrowserService';
+import { hideProxyTokens } from '../Services/Secrets/SecretProxyService';
 import { hostAllowed, SECRET_NAME, SECRET_USES, type SecretService } from '../Services/Secrets/SecretService';
 
 // What the UI reads, and the calls that answer an agent. Answering messages
@@ -128,7 +129,11 @@ export class SecretActions {
   }
 }
 
+// The tools that give an agent its own proxy URLs.
+const PROXY_URL_TOOLS = new Set(['secret_list', 'secret_request']);
+
 export function registerSecretTools(registry: McpToolRegistry, actions: SecretActions): void {
+  registry.setResultFilter((tool, result) => (PROXY_URL_TOOLS.has(tool) ? result : hideProxyTokens(result)));
   registry.register(
     {
       name: 'secret_request', namespace: 'secrets', changes: ['secrets'],

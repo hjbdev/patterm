@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { validateHeaderName, validateHeaderValue } from 'node:http';
 import type { DatabaseService } from '../DatabaseService';
 import type { SecretVault } from './SecretVault';
 
@@ -185,7 +186,12 @@ export class SecretService {
     if (input.values) ciphertext = this.vault.seal(secretId, JSON.stringify(checkValues(input.kind, input.values)));
     else if (!ciphertext || previous?.kind !== input.kind) throw new Error('Enter the secret');
     const at = new Date().toISOString();
-    const injection = uses.includes('proxy') ? JSON.stringify(input.injection ?? DEFAULT_INJECTION) : null;
+    const chosen = input.injection ?? DEFAULT_INJECTION;
+    if (uses.includes('proxy') && chosen.in === 'header') {
+      const values = JSON.parse(this.vault.open(secretId, ciphertext)) as { value?: string };
+      checkHeader(chosen, values.value ?? '');
+    }
+    const injection = uses.includes('proxy') ? JSON.stringify(chosen) : null;
     if (previous) {
       db.prepare(`update session_secrets set name = ?, kind = ?, status = 'ready', allowed_hosts = ?, uses = ?, injection = ?, ciphertext = ?, updated_at = ? where id = ?`)
         .run(input.name, input.kind, JSON.stringify(hosts), JSON.stringify(uses), injection, ciphertext, at, secretId);
@@ -305,6 +311,17 @@ const USE_LABEL: Record<SecretUse, string> = {
 
 // Shorter values would mask ordinary words in transcripts.
 const MASK_MIN_LENGTH = 6;
+
+// The proxy sends it as a header, which can't hold line breaks or other
+// control characters.
+function checkHeader(injection: SecretInjection, value: string): void {
+  try {
+    validateHeaderName(injection.name);
+    validateHeaderValue(injection.name, `${injection.prefix}${value}`);
+  } catch {
+    throw new Error('That value or prefix can\'t go in an HTTP header. Remove line breaks and control characters, or send it as a query parameter.');
+  }
+}
 
 function checkValues(kind: SecretKind, values: SecretValues): SecretValues {
   if (kind === 'login') {

@@ -469,7 +469,7 @@ export class AgentHistoryImportService {
       let count = 0;
       for (const message of conversation.messages) {
         const redacted = this.redactMessage(message);
-        insert.run(randomUUID(), id, message.providerMessageId, message.parentProviderMessageId, message.turnId, message.seq, message.role, message.kind, redacted.text, message.toolName, message.toolStatus, redacted.toolInputSummary, redacted.toolOutputSummary, redacted.redactionCount, message.tokenCount, message.providerCreatedAt, stableJson(message.metadata), now);
+        insert.run(randomUUID(), id, message.providerMessageId, message.parentProviderMessageId, message.turnId, message.seq, message.role, message.kind, redacted.text, message.toolName, message.toolStatus, redacted.toolInputSummary, redacted.toolOutputSummary, redacted.redactionCount, message.tokenCount, message.providerCreatedAt, stableJson(this.redactor.maskKnown(message.metadata)), now);
         count += 1;
       }
       return count;
@@ -547,7 +547,7 @@ export class AgentHistoryImportService {
         redactionCount: redacted.redactionCount,
         tokenCount: message.tokenCount,
         providerCreatedAt: message.providerCreatedAt,
-        metadata: stableJson(message.metadata),
+        metadata: stableJson(this.redactor.maskKnown(message.metadata)),
         createdAt: now
       });
       if (rows.length % IMPORT_MESSAGE_CHUNK_SIZE === 0) await yieldToMain();
@@ -582,7 +582,7 @@ export class AgentHistoryImportService {
         redactionCount: redacted.redactionCount,
         tokenCount: message.tokenCount,
         providerCreatedAt: message.providerCreatedAt,
-        metadata: stableJson(message.metadata),
+        metadata: stableJson(this.redactor.maskKnown(message.metadata)),
         createdAt: now
       } satisfies ConversationMessageImportRow;
     });
@@ -786,7 +786,7 @@ export class AgentHistoryImportService {
         tool_output_summary: redacted.toolOutputSummary,
         token_count: message.tokenCount,
         provider_created_at: message.providerCreatedAt,
-        metadata: stableJson(message.metadata)
+        metadata: stableJson(this.redactor.maskKnown(message.metadata))
       };
     }));
   }

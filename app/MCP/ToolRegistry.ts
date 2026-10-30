@@ -71,6 +71,7 @@ export class McpToolRegistry {
   private readonly tools = new Map<string, RegisteredTool>();
   private router: McpCallRouter | null = null;
   private checkCaller: ((context: McpCallContext) => void) | null = null;
+  private filterResult: ((toolName: string, result: unknown) => unknown) | null = null;
 
   setRouter(router: McpCallRouter): void {
     this.router = router;
@@ -79,6 +80,12 @@ export class McpToolRegistry {
   // Runs before every public call, so no tool can skip checking its caller.
   setCallerCheck(check: (context: McpCallContext) => void): void {
     this.checkCaller = check;
+  }
+
+  // Runs on every public result, so no tool can hand an agent what another
+  // agent must not see.
+  setResultFilter(filter: (toolName: string, result: unknown) => unknown): void {
+    this.filterResult = filter;
   }
 
   // Every tool name is snake_case, so harnesses that cannot pass dots show
@@ -121,7 +128,8 @@ export class McpToolRegistry {
     const reason = tool.descriptor.unavailable?.(context);
     if (reason) throw new Error(reason);
     this.checkCaller?.(context);
-    return this.router?.(tool.descriptor.name, args, context) ?? tool.handler(args, context);
+    const result = await (this.router?.(tool.descriptor.name, args, context) ?? tool.handler(args, context));
+    return this.filterResult ? this.filterResult(tool.descriptor.name, result) : result;
   }
 
   async call(toolName: string, args: unknown, context: McpCallContext = {}) {

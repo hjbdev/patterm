@@ -8,6 +8,21 @@ export interface SecretProxyCredentials {
   proxyCredential(id: string): { secret: SecretRecord; value: string };
 }
 
+// A proxy URL's credential: the secret ID and its signature.
+const PROXY_TOKEN = /secret_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[A-Za-z0-9_-]{32}/g;
+
+// Proxy URLs reach their agent through its messages and secret_list, and from
+// there its transcript and terminal, which other agents can read. Agents'
+// reads show them hidden, so only the owner, through secret_list, can use one.
+export function hideProxyTokens(value: unknown): unknown {
+  if (typeof value === 'string') return value.includes('secret_') ? value.replace(PROXY_TOKEN, '[proxy URL hidden; its agent gets it from secret_list]') : value;
+  if (Array.isArray(value)) return value.map(hideProxyTokens);
+  if (value && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype) {
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, hideProxyTokens(entry)]));
+  }
+  return value;
+}
+
 // Request headers that belong to one hop, or that would let a caller steer
 // the upstream connection.
 const HOP_HEADERS = new Set(['host', 'connection', 'keep-alive', 'proxy-authorization', 'proxy-connection', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'origin', 'referer']);
@@ -115,15 +130,21 @@ export class SecretProxyService {
     } else {
       target.searchParams.set(injection.name, `${injection.prefix}${credential.value}`);
     }
-    const upstream = (secure ? https : http).request(target, { method: request.method, headers }, (reply) => {
-      const out: http.OutgoingHttpHeaders = {};
-      for (const [name, value] of Object.entries(reply.headers)) {
-        if (!HOP_HEADERS.has(name) && value !== undefined) out[name] = value;
-      }
-      response.writeHead(reply.statusCode ?? 502, reply.statusMessage, out);
-      reply.pipe(response);
-      reply.once('error', () => response.destroy());
-    });
+    let upstream: http.ClientRequest;
+    try {
+      upstream = (secure ? https : http).request(target, { method: request.method, headers }, (reply) => {
+        const out: http.OutgoingHttpHeaders = {};
+        for (const [name, value] of Object.entries(reply.headers)) {
+          if (!HOP_HEADERS.has(name) && value !== undefined) out[name] = value;
+        }
+        response.writeHead(reply.statusCode ?? 502, reply.statusMessage, out);
+        reply.pipe(response);
+        reply.once('error', () => response.destroy());
+      });
+    } catch {
+      // An invalid header throws here, outside the request's error event.
+      return fail(502, 'Patterm could not build the upstream request; check the secret\'s header settings');
+    }
     upstream.once('error', (error) => fail(502, `Patterm could not reach ${host}: ${error.message}`));
     response.once('close', () => upstream.destroy());
     request.pipe(upstream);

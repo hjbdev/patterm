@@ -41,6 +41,18 @@ export class SecretRedactor {
     return { text, redactionCount };
   }
 
+  // Stored secret values anywhere in structured data, such as a tool's
+  // metadata. Patterns are left to the text fields.
+  maskKnown<T>(value: T): T {
+    if (!knownValues.length) return value;
+    if (typeof value === 'string') return knownValues.reduce((text, known) => text.split(known).join('[REDACTED]'), value as string) as T;
+    if (Array.isArray(value)) return value.map((entry) => this.maskKnown(entry)) as T;
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, this.maskKnown(entry)])) as T;
+    }
+    return value;
+  }
+
   redactAndCap(input: string | null | undefined, cap: number): RedactedText {
     const redacted = this.redact(input);
     if (redacted.text.length <= cap) {
