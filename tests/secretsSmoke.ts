@@ -19,6 +19,9 @@ import { endRun, Masker, maskSet, SecretRunner } from '../app/Services/Secrets/S
 // Windows has no POSIX modes.
 const posix = process.platform !== 'win32';
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-secrets-'));
+// Closed before the folder goes, even when a check fails: Windows can't
+// remove an open database.
+const databases: DatabaseService[] = [];
 
 function vaultChecks(): void {
   const keyPath = path.join(root, 'vault', 'secrets.key');
@@ -72,6 +75,7 @@ function node(script: string): string {
 
 async function serviceChecks(): Promise<void> {
   const database = new DatabaseService(path.join(root, 'db'));
+  databases.push(database);
   database.initialize();
   const db = database.connection;
   const now = new Date().toISOString();
@@ -289,7 +293,6 @@ async function serviceChecks(): Promise<void> {
   await actions.remove({ process_id: 'process_b', secret_id: secrets.list('session_b')[0]!.id });
   assert.equal(secrets.list('session_b').length, 2);
   assert.match(messages.at(-1)!, /removed the secret/);
-  database.dispose();
 }
 
 function allowlistChecks(): void {
@@ -301,38 +304,27 @@ function allowlistChecks(): void {
 }
 
 async function main(): Promise<void> {
+  let failure: unknown = null;
   try {
     vaultChecks();
     hostChecks();
     maskerChecks();
     await serviceChecks();
     allowlistChecks();
+  } catch (error) {
+    failure = error;
   } finally {
-    // Windows can hold a just-ended process's folder for a moment.
+    for (const database of databases) database.dispose();
     try {
+      // Windows can hold a just-ended process's folder for a moment.
       fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     } catch (error) {
-      // Show which entries can't go, and what they are.
-      if (process.platform === 'win32') {
-        const stuck: string[] = [];
-        const visit = (dir: string) => {
-          for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-            const full = path.join(dir, entry.name);
-            if (entry.isDirectory()) visit(full);
-            try {
-              fs.rmSync(full, { recursive: true, force: true });
-            } catch (inner) {
-              const stat = fs.lstatSync(full);
-              stuck.push(`${path.relative(root, full)} ${(inner as NodeJS.ErrnoException).code} mode=${(stat.mode & 0o777).toString(8)}`);
-            }
-          }
-        };
-        try { visit(root); } catch (walk) { stuck.push(`walk failed: ${String(walk)}`); }
-        console.error(`entries that could not be removed:\n${stuck.join('\n') || '(none; only the folder itself)'}`);
-      }
-      throw error;
+      // A cleanup failure must not hide the check that failed.
+      if (failure) console.error('cleanup also failed:', error);
+      else failure = error;
     }
   }
+  if (failure) throw failure;
   console.log('secrets smoke passed');
 }
 
