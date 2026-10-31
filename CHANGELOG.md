@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An Integrated OpenCode conversation no longer briefly shows a finished
   background subagent's raw `<subagent>` result as a message from you.
+- An Integrated Codex conversation can scroll back through its whole history
+  again. Codex returns at most 100 items per page, which Patterm took as the
+  start of the thread, so long conversations showed only their newest rows.
+- An Integrated Codex agent keeps the model and thinking level you picked after
+  Patterm restarts. The picker used to fall back to the launch or default
+  model, and the next message switched the agent to it.
 
 ## [0.3.0] - 2026-10-31
 
