@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   providers can be told apart. OpenCode's own plans show as "Zen" and "Go".
   Searching the picker matches the provider too.
 
+### Fixed
+
+- An Integrated OpenCode conversation no longer briefly shows a finished
+  background subagent's raw `<subagent>` result as a message from you.
+
 ## [0.3.0] - 2026-10-31
 
 ### Added
