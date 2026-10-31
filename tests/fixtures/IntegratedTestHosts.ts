@@ -23,6 +23,22 @@ export class IntegratedTestHosts implements IntegratedHostLauncher {
     return child.pid ?? null;
   }
 
+  async waitForExit(pid: number): Promise<void> {
+    const host = [...this.hosts].find(([child]) => child.pid === pid);
+    if (!host) throw new Error(`Unknown test host: ${pid}`);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        host[1],
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`Test host ${pid} did not exit`)), 5_000);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async stopAll(): Promise<void> {
     await Promise.all([...this.hosts].map(async ([child, closed]) => {
       if (child.exitCode === null && child.signalCode === null) {

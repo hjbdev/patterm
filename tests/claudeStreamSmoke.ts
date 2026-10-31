@@ -1256,7 +1256,7 @@ process.stdin.on('data', (chunk) => {
     const reconnected = new ClaudeStreamService(database, runtimeDirectory, process.execPath, process.env, undefined, hosts);
     assert.match(JSON.stringify(await reconnected.conversation('process_test')), /Native Claude reply/);
     await reconnected.stop('process_test');
-    await hosts.stopAll();
+    await hosts.waitForExit(Number(prepared.argv[3]));
     // A host that has ended reports a resumable state, not a raw socket error.
     // A named pipe leaves no file behind, so Windows waits for it to close.
     if (process.platform === 'win32') {
