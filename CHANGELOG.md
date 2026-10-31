@@ -183,6 +183,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Windows smoke tests wait for Claude hosts to exit before removing temporary
+  directories, and host-pairing heartbeat checks use a controlled clock so
+  busy runners do not cause spurious disconnects.
 - An OpenCode agent's conversation no longer shows the AGENTS.md instructions
   OpenCode adds when the agent works in a new directory, as if the agent had
   written them. Agent and model switch records stay hidden too.
