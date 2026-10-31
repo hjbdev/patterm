@@ -187,6 +187,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An integrated OpenCode agent's messages to its own subagents no longer show
+  as your messages after a reload; they stay inside the subagent's row. A
+  failure or attention request a child routes to its parent now shows as that
+  child's message instead of as yours.
 - Windows smoke tests wait for Claude hosts to exit before removing temporary
   directories, and host-pairing heartbeat checks use a controlled clock so
   busy runners do not cause spurious disconnects.
