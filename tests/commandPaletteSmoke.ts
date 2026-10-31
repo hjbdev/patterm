@@ -165,18 +165,19 @@ async function main() {
     currentWorkbench: () => ({ projects: [integratedProject, otherProject], harnesses: ['claude', 'codex', 'rawpty'].map(harness => ({ harness, status: 'available' })) }),
     settings: { harnessPresets: () => presetSettings }
   } as unknown as typeof application;
-  const presetRows = (await listCommandPaletteCommands(withPresets, integratedContext)).commands.filter(item => item.id.startsWith('spawn:preset:'));
+  const spawnRows = (await listCommandPaletteCommands(withPresets, integratedContext)).commands.filter(item => item.id.startsWith('spawn:agent:') || item.id.startsWith('spawn:preset:'));
+  const presetRows = spawnRows.filter(item => item.id.startsWith('spawn:preset:'));
   assert.deepEqual(presetRows.map(item => [item.id, item.label, item.hint]), [
     ['spawn:preset:claude_opus', 'Spawn Opus max', 'claude-opus · max'],
-    ['spawn:preset:codex_fast', 'Spawn Fast', 'gpt-fast · Default'],
     ['spawn:preset:codex_default', 'Spawn Codex', 'gpt-big']
-  ], 'The icon names the agent, a preset called Default reads as it, and a model-less default preset and presets of missing agents are left out');
+  ], 'The icon names the agent, a preset called Default reads as it, and default presets and presets of missing agents have no row');
+  assert.deepEqual(spawnRows.filter(item => item.id.startsWith('spawn:agent:')).map(item => [item.id, item.aliases]), [['spawn:agent:claude', undefined], ['spawn:agent:codex', ['Spawn Fast']]], 'Spawn Codex is found by its default preset');
   assert.ok(presetRows.every(item => item.searchOnly), 'Preset rows wait for typing');
   assert.equal(rankedCommands(presetRows as CommandDescriptor[], 'spawn opus')[0]?.command.id, 'spawn:preset:claude_opus', 'Spawn <preset> finds the row');
   assert.equal(rankedCommands(presetRows as CommandDescriptor[], 'claude opus')[0]?.command.id, 'spawn:preset:claude_opus', 'The agent name finds its presets');
-  assert.equal(rankedCommands(presetRows as CommandDescriptor[], 'fast')[0]?.command.id, 'spawn:preset:codex_fast');
+  assert.equal(rankedCommands(spawnRows as CommandDescriptor[], 'fast')[0]?.command.id, 'spawn:agent:codex');
   assert.ok(!rankedCommands(presetRows as CommandDescriptor[], '').length, 'Preset rows stay out of the opening list');
-  assert.equal(rankedCommands(presetRows as CommandDescriptor[], '', ['spawn:preset:codex_fast'])[0]?.command.id, 'spawn:preset:codex_fast', 'A preset run before shows under Recent');
+  assert.equal(rankedCommands(presetRows as CommandDescriptor[], '', ['spawn:preset:claude_opus'])[0]?.command.id, 'spawn:preset:claude_opus', 'A preset run before shows under Recent');
   calls.length = 0;
   await runCommandPaletteCommand(withPresets, { id: 'spawn:preset:claude_opus', context: integratedContext, input: { preset: 'other', interface_mode: 'tui' } });
   assert.deepEqual(calls, [{ name: 'harness_launch', args: { harness: 'claude', project_id: 'p', preset: 'claude_opus', interface_mode: 'tui' } }]);

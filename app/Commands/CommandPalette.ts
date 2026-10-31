@@ -1,7 +1,7 @@
 import type { PattermApplication } from '../App';
 import { FinishedSubagentsAction, type FinishedSubagent } from '../Actions/FinishedSubagentsAction';
 import type { RestartAllResult } from '../Actions/RestartAgentSessionAction';
-import type { HarnessPresetSettings } from '../Harness/HarnessPresets';
+import type { HarnessPresetSettings, PresetHarness } from '../Harness/HarnessPresets';
 import { listedProject, type HarnessInstallationDto, type ProcessDto, type ProjectWorkbenchDto, type SessionDto, type WorktreeDto } from '../Repositories/WorkbenchRepository';
 
 export type CommandGroup = 'current' | 'agent' | 'process' | 'create' | 'navigation' | 'worktree' | 'project' | 'app';
@@ -511,7 +511,7 @@ function processRows(project: ProjectWorkbenchDto, activeProject: ProjectWorkben
 function createCommands(harnesses: HarnessInstallationDto[], presets: HarnessPresetSettings | null, project: ProjectWorkbenchDto): CommandDescriptor[] {
   const available = harnesses.filter((harness) => harness.status === 'available' && harness.harness !== 'rawpty').map((harness) => harness.harness);
   return [
-    ...available.map((harness) => ({ id: `spawn:agent:${harness}`, label: `Spawn ${HARNESS_LABELS[harness] ?? harness}`, group: 'create' as const, kind: 'backend' as const })),
+    ...available.map((harness) => spawnHarnessCommand(harness, presets)),
     ...presetCommands(presets, available),
     { id: 'spawn:terminal', label: 'New terminal', group: 'create', kind: 'backend' },
     { id: 'spawn:process', label: 'New process…', hint: 'Run a command in this project', group: 'create', kind: 'backend', input: { type: 'process-form', title: 'New process' } },
@@ -520,17 +520,28 @@ function createCommands(harnesses: HarnessInstallationDto[], presets: HarnessPre
   ];
 }
 
-// One row per preset of an installed agent, found by typing its name. The icon
-// names the agent, so the label names only the preset; a preset called Default
-// reads as the agent. A default preset that sets no model launches like Spawn
-// Claude, so it is left out.
+// Spawn Claude launches with Claude's default preset, so it is also found by
+// that preset's name.
+function spawnHarnessCommand(harness: string, settings: HarnessPresetSettings | null): CommandDescriptor {
+  const preset = settings?.presets.find((candidate) => candidate.id === settings.defaultPresetIdByHarness[harness as PresetHarness]);
+  return {
+    id: `spawn:agent:${harness}`,
+    label: `Spawn ${HARNESS_LABELS[harness] ?? harness}`,
+    ...(preset && preset.name.toLowerCase() !== 'default' ? { aliases: [`Spawn ${preset.name}`] } : {}),
+    group: 'create',
+    kind: 'backend'
+  };
+}
+
+// One row per other preset of an installed agent, found by typing its name.
+// The icon names the agent, so the label names only the preset; a preset
+// called Default reads as the agent.
 function presetCommands(settings: HarnessPresetSettings | null, harnesses: string[]): CommandDescriptor[] {
   if (!settings) return [];
   return settings.presets.flatMap((preset) => {
-    const isDefault = settings.defaultPresetIdByHarness[preset.harness] === preset.id;
-    if (!harnesses.includes(preset.harness) || (isDefault && !preset.model)) return [];
+    if (!harnesses.includes(preset.harness) || settings.defaultPresetIdByHarness[preset.harness] === preset.id) return [];
     const harness = HARNESS_LABELS[preset.harness] ?? preset.harness;
-    const hint = [preset.model ?? `${harness}'s own model`, preset.reasoning, isDefault ? 'Default' : ''].filter(Boolean).join(' · ');
+    const hint = [preset.model ?? `${harness}'s own model`, preset.reasoning].filter(Boolean).join(' · ');
     return [{
       id: `spawn:preset:${preset.id}`,
       label: `Spawn ${preset.name.toLowerCase() === 'default' ? harness : preset.name}`,
