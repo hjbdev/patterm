@@ -514,12 +514,12 @@ async function main(): Promise<void> {
     assert.deepEqual(terminalRequests.filter((request) => request.method === 'terminal.process.input').at(-1)?.params, {
       process_id: 'proc_identity',
       kind: 'paste',
-      text: 'timer fired',
+      text: `[Patterm timer ${timer.timer_id}: time elapsed]\ntimer fired`,
       submit: true
-    });
-    await registry.callPublic('timer_set', { seconds: 0, label: 'reminder' }, identityContext);
+    }, 'timer_set sends its body under a Patterm header, so it never reads as the user');
+    const reminder = await registry.callPublic('timer_set', { seconds: 0, label: 'reminder' }, identityContext) as { timer_id: string };
     await waitForTerminalInputCount(terminalRequests, timerInputCount + 2, 'timer_set defaults to a useful callback message');
-    assert.equal((terminalRequests.filter((request) => request.method === 'terminal.process.input').at(-1)?.params as { text: string }).text, '[system] timer reminder fired');
+    assert.equal((terminalRequests.filter((request) => request.method === 'terminal.process.input').at(-1)?.params as { text: string }).text, `[Patterm timer ${reminder.timer_id} (reminder): time elapsed]`);
 
     database.connection
       .prepare(

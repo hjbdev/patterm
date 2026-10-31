@@ -543,10 +543,15 @@ export class TimerService {
   }
 
   // Watch timers say why they fired and what each watched process did, so
-  // the owner need not read output to find out. Delay timers send their body.
+  // the owner need not read output to find out. Delay timers send their body
+  // under the same header, so neither the agent nor its transcript mistakes
+  // it for the user's message.
   private callbackText(entry: TimerEntry, trigger: 'condition' | 'timeout', computed?: WatchedState[]): string {
-    if (entry.kind === 'delay') return entry.body;
     const name = `${entry.id}${entry.label ? ` (${entry.label})` : ''}`;
+    if (entry.kind === 'delay') {
+      const body = entry.body.trim();
+      return `[Patterm timer ${name}: time elapsed]${body ? `\n${body}` : ''}`;
+    }
     if (entry.kind === 'output') return this.outputCallbackText(entry, name, trigger, computed?.[0]);
     const report = entry.kind === 'report_any' || entry.kind === 'report_all';
     const states = computed ?? entry.watched.map((id) => report ? this.processReportState(entry, id) : this.processIdleState(entry, id));

@@ -24,7 +24,7 @@ test('overdue timers retain their deadline and wait for runtime reconciliation',
   assert.equal(fixture.delivery.calls.length, 0, 'loading records must not deliver to unreconciled processes');
   timers.activate();
   t.mock.timers.tick(1);
-  assert.deepEqual(fixture.delivery.calls, [{ process_id: 'pty_owner', kind: 'text', text: 'deadline', submit: true }]);
+  assert.deepEqual(fixture.delivery.calls, [{ process_id: 'pty_owner', kind: 'text', text: `[Patterm timer ${original.id} (wait): time elapsed]\ndeadline`, submit: true }]);
   timers.dispose();
   assert.deepEqual(fixture.create().listMcp(), [], 'delivered callbacks are not restored');
 });
@@ -71,7 +71,7 @@ test('a restarted owner\'s callbacks move to its successor and stay moved after 
   assert.deepEqual(timers.listMcp().map((timer) => `${timer.owner_process_id}:${timer.body}`).sort(), ['other:kept', 'successor:moved']);
   timers.activate();
   t.mock.timers.tick(10_000);
-  assert.deepEqual(fixture.delivery.calls.map((call) => `${call.process_id}:${call.text}`).sort(), ['other:kept', 'successor:moved']);
+  assert.deepEqual(fixture.delivery.calls.map((call) => `${call.process_id}:${call.text.split('\n').at(-1)}`).sort(), ['other:kept', 'successor:moved']);
 });
 
 test('idle watchers retain evidence that a child was busy before restart', (t) => {
