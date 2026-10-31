@@ -1,15 +1,22 @@
-## Patterm 0.2.9
+## Patterm 0.3.0
 
-Windows Start menu branding fix:
+- Bots are persistent companions with their own conversations, project access
+  and saved memory.
+- Agents can use a session browser, show it beside their conversation and ask
+  for help with sign-ins or CAPTCHAs.
+- Session secrets support browser sign-ins, commands and a proxy that adds
+  credentials without exposing them to the agent's processes.
+- A new agent header brings worktrees, links, servers and other context into
+  chips, with a peek pane for browsers, images and changed files.
+- Phones and tablets get an agent list, page transitions, context sheets and
+  controls for moving between agents waiting for an answer.
+- Agent and project snoozing, a canvas of agent families, a simpler launch menu
+  and optional local semantic conversation-history search.
+- Faster OpenCode startup and fixes for queued messages, subagent prompts,
+  conversation history, browser rendering and service survival under memory
+  pressure.
 
-- The Windows executable embeds Patterm’s product name, version and icon, so
-  Windows lists the app as Patterm instead of Electron.
-- Upgrades remove the old Electron shortcut when its app identity and target
-  both identify it as Patterm. The new app also repairs this on launch when
-  upgrading through an older in-app updater. Other applications’ Electron
-  shortcuts are kept.
-- Start menu and notification shortcuts can launch Patterm.exe directly with
-  the installed resources and production data directory.
+See CHANGELOG.md for the full list of changes since 0.2.9.
 
 ## Platform support
 
