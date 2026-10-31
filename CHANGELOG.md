@@ -187,6 +187,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- OpenCode first launches in a project no longer wait for MCP handshakes one
+  after another inside its configuration queue. Patterm registers servers
+  disabled, then connects them concurrently through OpenCode's native API,
+  preserving tools, resources, prompts and authentication.
+
 - An integrated OpenCode agent's messages to its own subagents no longer show
   as your messages after a reload; they stay inside the subagent's row. A
   failure or attention request a child routes to its parent now shows as that
