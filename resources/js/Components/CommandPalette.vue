@@ -624,6 +624,7 @@ async function execute(command: CommandDescriptor, input: Record<string, unknown
       ?? await window.patterm.commandsRun({ id: command.id, context: props.context, input }) as CommandRunResult;
     if (recordsRecent(command)) recentIds.value = rememberRecent(recentIds.value, command.id, storage());
     if (command.id.startsWith('spawn:agent:')) sources.rememberHarness(command.id.slice('spawn:agent:'.length));
+    else if (command.id.startsWith('spawn:preset:') && command.harness) sources.rememberHarness(command.harness);
     await handleResult(result);
     open.value = false;
   } catch (caught) {
