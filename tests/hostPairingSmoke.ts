@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { mock } from 'node:test';
 import { HostActions, PEER_PAIR_PATH } from '../app/Actions/HostActions';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { defaultHostName, HostService, PEER_PROTOCOL_VERSION } from '../app/Services/HostService';
@@ -60,6 +61,9 @@ async function main(): Promise<void> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-hosts-'));
   const databases: DatabaseService[] = [];
   const cleanup: Array<() => Promise<void> | void> = [];
+  // Heartbeats advance only when the test can service socket I/O. Synchronous
+  // Git setup and a loaded Windows runner must not impersonate a dead peer.
+  mock.timers.enable({ apis: ['setInterval'] });
   const open = (name: string) => {
     const database = new DatabaseService(path.join(dir, name));
     database.initialize();
@@ -245,8 +249,15 @@ async function main(): Promise<void> {
     await until(() => laptop.hosts.peer(workstationId)?.name === 'workstation-renamed', 'the rename');
 
     // The heartbeat keeps a quiet link open, and a dropped link reconnects.
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    assert.ok(laptop.links.connected(workstationId));
+    for (let beat = 0; beat < 3; beat++) {
+      mock.timers.tick(200);
+      // Each response follows the automatic pong on the same socket, so the
+      // next tick checks that both hosts actually processed their pongs.
+      await laptop.links.request(workstationId, 'peer.ping');
+      await workstation.links.request(laptopId, 'peer.ping');
+      assert.ok(laptop.links.connected(workstationId));
+      assert.ok(workstation.links.connected(laptopId));
+    }
     await workstationServer.close();
     await until(() => !laptop.links.connected(workstationId), 'the link to drop');
     assert.equal(laptop.actions.overview().peers[0]!.link.state, 'connecting');
@@ -327,6 +338,7 @@ async function main(): Promise<void> {
     console.log('host pairing smoke passed');
   } finally {
     for (const close of cleanup.reverse()) await close();
+    mock.timers.reset();
     for (const database of databases) database.dispose();
     removeTree(dir);
   }

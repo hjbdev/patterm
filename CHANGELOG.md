@@ -187,6 +187,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Windows smoke tests wait for Claude hosts to exit before removing temporary
+  directories, and host-pairing heartbeat checks use a controlled clock so
+  busy runners do not cause spurious disconnects.
 - OpenCode starts much faster in a project it hasn't opened before. Patterm
   now adds your global MCP servers to OpenCode all at once instead of waiting
   for each one to connect in turn, which took about 10 seconds with 11 servers.
