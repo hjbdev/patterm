@@ -849,7 +849,11 @@ test('provider rows and native queues replace optimistic rows by identity', () =
     assert.deepEqual(composer.outgoingTranscript(provider, [native], []), [native]);
     if (provider === 'opencode') {
       const queue = [{ id, text: 'hello', delivery: 'queue' }];
-      assert.deepEqual(composer.outgoingTranscript(provider, [native], queue), []);
+      const waiting = composer.outgoingTranscript(provider, [native], queue);
+      assert.equal(waiting.length, 1, 'a natively queued prompt shows once, as a message');
+      assert.deepEqual([waiting[0].id, waiting[0].text, waiting[0].delivery.state], [id, 'hello', 'queued']);
+      const assistant = { id: 'reply', role: 'assistant', kind: 'text', text: 'working' };
+      assert.deepEqual(composer.outgoingTranscript(provider, [assistant], queue).map((row) => row.id), ['reply', id], 'it follows the running turn');
       composer.reconcileOutgoingMessages(provider, [], queue);
       assert.equal(composer.outgoingTranscript(provider, [], []).length, 1, 'leaving the queue cannot hide the message before its native row arrives');
       composer.reconcileOutgoingMessages(provider, [native], []);
@@ -857,6 +861,32 @@ test('provider rows and native queues replace optimistic rows by identity', () =
     assert.equal(composer.outgoingFor(provider).length, 0);
     assert.equal(composer.submissionFor(provider), undefined);
   }
+});
+
+test('a send behind a natively queued message stays after it', () => {
+  composer.clearDrafts();
+  const reply = { id: 'reply', role: 'assistant', kind: 'text', text: 'working' };
+  const send = (text, transcript) => {
+    composer.draftFor('opencode').text = text;
+    const prepared = composer.payloadFor('opencode');
+    composer.beginOutgoingMessage('opencode', { ...prepared.payload, hash: prepared.hash }, transcript, 'opencode');
+    composer.completeSend('opencode', { ...prepared.payload, hash: prepared.hash }, { preserveDraft: true });
+    return `msg_${prepared.payload.messageId}`;
+  };
+  const first = send('first', [reply]);
+  const queue = [{ id: first, text: 'first', delivery: 'queue' }];
+  const second = send('second', composer.outgoingTranscript('opencode', [reply], queue));
+  assert.deepEqual(composer.outgoingTranscript('opencode', [reply], queue).map((row) => row.id), ['reply', first, second]);
+  queue.push({ id: second, text: 'second', delivery: 'queue' });
+  assert.deepEqual(composer.outgoingTranscript('opencode', [reply], queue).map((row) => row.id), ['reply', first, second]);
+});
+
+test('a queued message keeps its native attachments once the local copy is released', () => {
+  composer.clearDrafts();
+  const native = { id: 'msg_1', role: 'user', kind: 'text', text: '', attachments: [{ name: 'shot.png', mime: 'image/png', sha256: 'abc' }] };
+  const [row] = composer.outgoingTranscript('opencode', [native], [{ id: 'msg_1', text: '', delivery: 'queue' }]);
+  assert.deepEqual(row.attachments, native.attachments);
+  assert.equal(row.delivery.state, 'queued');
 });
 
 test('a message Patterm holds during compaction shows only in the queue', () => {
