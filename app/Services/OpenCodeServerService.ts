@@ -515,10 +515,13 @@ export class OpenCodeServerService {
     }
     // The native user admission row keeps its inbox id, which is the same id
     // the message snapshot uses, so a reconnect never duplicates the prompt.
+    // Synthetic items, such as a finished background subagent's result, are
+    // not the user's and the snapshot drops them.
     if (type === 'session.inbox.enqueued') {
       const inboxID = typeof data.inboxID === 'string' ? data.inboxID : '';
-      const payload = record(record(data.item).payload);
-      if (inboxID && typeof payload.text === 'string') {
+      const item = record(data.item);
+      const payload = record(item.payload);
+      if (inboxID && item.type === 'user' && typeof payload.text === 'string') {
         emit({ kind: 'replace', message: { id: inboxID, role: 'user', kind: 'text', text: payload.text, createdAt: at, completedAt: at } });
       }
       return;
@@ -738,8 +741,9 @@ export class OpenCodeServerService {
     else if (type.startsWith('session.tool.')) this.applyToolEvent(projection, data, type, nested, at);
     else if (type === 'session.inbox.enqueued') {
       const inboxID = typeof data.inboxID === 'string' ? data.inboxID : '';
-      const payload = record(record(data.item).payload);
-      if (inboxID && typeof payload.text === 'string') nested({ kind: 'replace', message: { id: inboxID, role: 'user', kind: 'text', text: payload.text, createdAt: at, completedAt: at } });
+      const item = record(data.item);
+      const payload = record(item.payload);
+      if (inboxID && item.type === 'user' && typeof payload.text === 'string') nested({ kind: 'replace', message: { id: inboxID, role: 'user', kind: 'text', text: payload.text, createdAt: at, completedAt: at } });
     }
   }
 

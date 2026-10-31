@@ -233,6 +233,8 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
   const socket = new McpSocketServer(socketPath, registry, undefined, (token, id) => service.resolveIdentity(token, id));
   const clients: Client[] = [];
   let modernClient: ModernClient | null = null;
+  // An open fake daemon stream would keep the process alive after a failure.
+  let closeDaemon: (() => void) | null = null;
   try {
     checkHistory(directory);
     await socket.start();
@@ -694,6 +696,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
       response.end();
     });
     await new Promise<void>((resolve) => daemon.listen(0, '127.0.0.1', () => resolve()));
+    closeDaemon = () => { daemon.closeAllConnections(); daemon.close(); };
     const daemonPort = (daemon.address() as AddressInfo).port;
     fs.mkdirSync(path.join(directory, 'opencode'), { recursive: true });
     fs.writeFileSync(path.join(directory, 'opencode', 'service.json'), JSON.stringify({
@@ -755,6 +758,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     daemonState.emit('session.tool.progress', { sessionID: first, assistantMessageID: 'msg_v2', id: 'call_1', metadata: { shellID: 'sh_1' } });
     daemonState.emit('session.tool.success', { sessionID: first, assistantMessageID: 'msg_v2', id: 'call_1', content: [{ type: 'text', text: 'ls output' }], metadata: { status: 'completed', truncated: false, exit: 0 }, executed: false }, 7_000);
     daemonState.emit('session.inbox.enqueued', { sessionID: first, inboxID: 'msg_inbox_1', item: { type: 'user', payload: { text: 'run ls', delivery: 'queue' } } }, 8_000);
+    daemonState.emit('session.inbox.enqueued', { sessionID: first, inboxID: 'msg_inbox_synthetic', item: { type: 'synthetic', payload: { text: '<subagent id="ses_child">done</subagent>', description: 'Subagent completed' }, delivery: 'steer' } }, 8_000);
     await waitFor(() => streamed.some((event) => event.kind === 'replace' && event.message?.id === 'msg_v2-2' && event.message.text === 'ls output'));
     const v2 = streamed.slice(beforeV2);
     assert.ok(v2.some((event) => event.kind === 'append' && event.id === 'msg_v2-0' && event.delta === ' more'), 'reasoning ordinal 0 maps to its content index');
@@ -765,6 +769,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     assert.ok(v2Tool.some((event) => event.message?.tool?.input !== undefined && (event.message.tool.state as { status?: string } | undefined)?.status === 'running'), 'the native tool call id maps to its content index');
     assert.ok(v2Tool.some((event) => event.message?.text === 'ls output' && (event.message.tool?.state as { status?: string } | undefined)?.status === 'completed'), 'tool success replaces output and state');
     assert.ok(v2.some((event) => event.kind === 'replace' && event.message?.id === 'msg_inbox_1' && event.message.role === 'user' && event.message.text === 'run ls'), 'user admission keeps the native inbox id');
+    assert.ok(!v2.some((event) => event.message?.id === 'msg_inbox_synthetic'), 'a synthetic inbox item never shows as a user row');
     assert.ok(!v2.some((event) => event.kind === 'pending'), 'native V2 events never force a full-snapshot cycle');
     // Row times: seeded rows start with their native message, and an ended
     // event's envelope time finishes them. Events without one use the host clock.
@@ -781,6 +786,8 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const beforeChild = streamed.length;
     daemonState.emit('session.tool.input.started', { sessionID: first, assistantMessageID: 'msg_v2', id: 'call_sub', name: 'subagent' });
     daemonState.emit('session.tool.progress', { sessionID: first, assistantMessageID: 'msg_v2', id: 'call_sub', metadata: { sessionID: 'ses_live_child', status: 'running' } });
+    daemonState.emit('session.inbox.enqueued', { sessionID: 'ses_live_child', inboxID: 'msg_child_prompt', item: { type: 'user', payload: { text: 'explore' }, delivery: 'steer' } });
+    daemonState.emit('session.inbox.enqueued', { sessionID: 'ses_live_child', inboxID: 'msg_child_synthetic', item: { type: 'synthetic', payload: { text: '<subagent id="ses_grandchild">done</subagent>' }, delivery: 'steer' } });
     daemonState.emit('session.text.started', { sessionID: 'ses_live_child', assistantMessageID: 'msg_child', ordinal: 0 });
     daemonState.emit('session.text.delta', { sessionID: 'ses_live_child', assistantMessageID: 'msg_child', ordinal: 0, delta: 'child text' });
     daemonState.emit('session.text.ended', { sessionID: 'ses_live_child', assistantMessageID: 'msg_child', ordinal: 0, text: 'child text' });
@@ -790,6 +797,8 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const subRow = childEvents.find((event) => event.kind === 'replace' && event.message?.tool?.name === 'subagent')?.message?.id;
     assert.ok(subRow, 'the subagent tool row streams');
     assert.equal(childEvents.find((event) => event.kind === 'replace' && event.message?.text === 'child text')?.message?.parentId, subRow, 'child content nests under the subagent row');
+    assert.equal(childEvents.find((event) => event.message?.id === 'msg_child_prompt')?.message?.parentId, subRow, "a subagent's prompt nests under its row");
+    assert.ok(!childEvents.some((event) => event.message?.id === 'msg_child_synthetic'), "a subagent's synthetic inbox item never shows");
     const childText = [...childEvents].reverse().find((event) => event.kind === 'replace' && event.message?.text === 'child text')?.message;
     assert.ok(childText?.createdAt && childText.completedAt, 'without an envelope time the host clock stamps live rows');
     assert.ok(!childEvents.some((event) => event.kind === 'status'), 'a subagent going idle does not settle the parent');
@@ -818,15 +827,9 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
       (error: unknown) => error instanceof ProviderCommandError && error.status === 400 && error.message === 'Unknown agent',
       'native HTTP errors keep their status and tagged message'
     );
-    try {
-      await checkStreamedActivity({ database, env: { ...env, XDG_STATE_HOME: directory }, first, daemonState, daemonResponses, daemonFrame, waitFor });
-      await checkActivityOrdering(database, env);
-    } catch (error) {
-      // An open stream would keep the process alive after a failure.
-      daemon.closeAllConnections();
-      daemon.close();
-      throw error;
-    }
+    await checkStreamedActivity({ database, env: { ...env, XDG_STATE_HOME: directory }, first, daemonState, daemonResponses, daemonFrame, waitFor });
+    await checkActivityOrdering(database, env);
+    closeDaemon = null;
     await new Promise<void>((resolve) => daemon.close(() => resolve()));
     // A daemon that has gone away is rediscovered; without a live service the
     // CLI transport takes over.
@@ -947,6 +950,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     }
     console.log('OpenCode shared-server bridge smoke passed');
   } finally {
+    closeDaemon?.();
     await modernClient?.close();
     for (const client of clients) await client.close();
     socket.stop();
