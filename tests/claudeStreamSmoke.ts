@@ -15,6 +15,8 @@ import type { TerminalService } from '../app/Services/TerminalService';
 import { normaliseMessages } from '../resources/js/lib/integratedConversation';
 import { ipcPath } from '../app/Platform/Ipc';
 import { writeNodeCli } from './fixtures/IntegratedFakeCli';
+import { IntegratedTestHosts } from './fixtures/IntegratedTestHosts';
+import { removeTree } from './fixtures/TempTree';
 
 async function main(): Promise<void> {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-claude-stream-'));
@@ -418,6 +420,8 @@ process.stdin.on('data', (chunk) => {
 `);
 
   const database = new DatabaseService(directory);
+  const hosts = new IntegratedTestHosts();
+  const cleanup: Array<() => void> = [];
   try {
     database.initialize();
     const now = new Date().toISOString();
@@ -427,7 +431,7 @@ process.stdin.on('data', (chunk) => {
     process.env.ARGV_FILE = argvPath;
     process.env.STREAM_FRAMES = '1';
     const images = new TranscriptImageStore(path.join(directory, 'transcript-images'));
-    const service = new ClaudeStreamService(database, runtimeDirectory, process.execPath, process.env, undefined, undefined, images);
+    const service = new ClaudeStreamService(database, runtimeDirectory, process.execPath, process.env, undefined, hosts, images);
     const prepared = await service.prepare({
       executable,
       cwd: directory,
@@ -445,6 +449,7 @@ process.stdin.on('data', (chunk) => {
 
     const events: IntegratedConversationEvent[] = [];
     const release = await service.subscribe('process_test', (event) => events.push(event));
+    cleanup.push(release);
 
     await service.prompt('process_test', { text: 'Hello', references: [], attachments: [] });
     // The reply ends with the question request; a fresh CLI can take a while to start.
@@ -559,6 +564,7 @@ process.stdin.on('data', (chunk) => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     const late: IntegratedConversationEvent[] = [];
     const releaseLate = await service.subscribe('process_test', (event) => late.push(event));
+    cleanup.push(releaseLate);
     await waitFor(() => late.some((event) => event.kind === 'pending'));
     assert.equal(late[0]?.kind, 'pending', 'a reconnected subscription gets a fresh boundary');
     const boundary = (await service.conversation('process_test') as { revision: number }).revision;
@@ -600,7 +606,7 @@ process.stdin.on('data', (chunk) => {
     assert.equal(nativeSnapshot.model, 'sonnet', 'snapshots still report the current settings');
     assert.match(String(initial.revision), /^[\w-]{16}$/);
     assert.equal(nativeSnapshot.controls_revision, initial.revision, 'a snapshot reports the revision of the controls it matches');
-    const restartedService = new ClaudeStreamService(database, runtimeDirectory, process.execPath, process.env);
+    const restartedService = new ClaudeStreamService(database, runtimeDirectory, process.execPath, process.env, undefined, hosts);
     assert.notEqual((await restartedService.conversation('process_test') as Record<string, unknown>).controls_revision, initial.revision,
       'the same host state from a restarted service has a new revision, so clients read its controls again');
     await assert.rejects(service.configure('process_test', 'model', 'gpt-5'), /Unknown Claude setting/);
@@ -715,7 +721,7 @@ process.stdin.on('data', (chunk) => {
     assert.equal(await service.reconcile('process_test', clientMessageId), 'accepted');
 
     // A delayed native acknowledgement stays unknown until a replay frame lands.
-    const delayedService = new ClaudeStreamService(database, runtimeDirectory, process.execPath, { ...process.env, DELAY_ACK: '1' });
+    const delayedService = new ClaudeStreamService(database, runtimeDirectory, process.execPath, { ...process.env, DELAY_ACK: '1' }, undefined, hosts);
     const delayedPrepared = await delayedService.prepare({
       executable, cwd: directory, name: 'Claude delayed', context: 'Project context',
       mcp: { command: process.execPath, args: ['shim.js'], env: { PATTERM_MCP_SOCKET: '/tmp/mcp.sock', PATTERM_MCP_IDENTITY: 'identity_test' } },
@@ -735,7 +741,7 @@ process.stdin.on('data', (chunk) => {
     // Only answerable control requests become prompts. Elicitations become
     // forms, unknown dialogs are cancelled, unhandled subtypes get a protocol
     // error, subagent permissions are labelled, and a withdrawn request goes.
-    const controlService = new ClaudeStreamService(database, runtimeDirectory, process.execPath, { ...process.env, STREAM_FRAMES: '', CONTROL_REQUESTS: '1' });
+    const controlService = new ClaudeStreamService(database, runtimeDirectory, process.execPath, { ...process.env, STREAM_FRAMES: '', CONTROL_REQUESTS: '1' }, undefined, hosts);
     const controlPrepared = await controlService.prepare({
       executable, cwd: directory, name: 'Claude control', context: 'Project context',
       mcp: { command: process.execPath, args: ['shim.js'], env: { PATTERM_MCP_SOCKET: '/tmp/mcp.sock', PATTERM_MCP_IDENTITY: 'identity_control' } },
@@ -778,7 +784,7 @@ process.stdin.on('data', (chunk) => {
 
     // Harness state becomes notice rows: one row per retry run that settles as
     // recovered, one per compaction, stderr as a warning, and command output.
-    const noticeService = new ClaudeStreamService(database, runtimeDirectory, process.execPath, { ...process.env, STREAM_FRAMES: '', NOTICES: '1' });
+    const noticeService = new ClaudeStreamService(database, runtimeDirectory, process.execPath, { ...process.env, STREAM_FRAMES: '', NOTICES: '1' }, undefined, hosts);
     const noticePrepared = await noticeService.prepare({
       executable, cwd: directory, name: 'Claude notices', context: 'Project context',
       mcp: { command: process.execPath, args: ['shim.js'], env: { PATTERM_MCP_SOCKET: '/tmp/mcp.sock', PATTERM_MCP_IDENTITY: 'identity_notices' } },
@@ -790,6 +796,7 @@ process.stdin.on('data', (chunk) => {
       .run(noticePrepared.resumeId, now);
     const noticeEvents: Array<{ kind: string; message?: { text?: string } }> = [];
     const releaseNotices = await noticeService.subscribe('process_notices', (event) => noticeEvents.push(event as { kind: string; message?: { text?: string } }));
+    cleanup.push(releaseNotices);
     await noticeService.prompt('process_notices', { text: 'notice me', references: [], attachments: [] });
     const noticed = await waitForConversation(noticeService, 'process_notices', /Recovered after/) as { messages: { data: Array<{ kind: string; level?: string; text: string }> } };
     const compacted = noticeEvents.findIndex((event) => event.kind === 'replace' && event.message?.text?.startsWith('Conversation compacted'));
@@ -821,7 +828,7 @@ process.stdin.on('data', (chunk) => {
 
     // Subagent rows have their own budget, and rows under a trimmed Task row
     // are dropped rather than shown in the main thread.
-    const trimService = new ClaudeStreamService(database, runtimeDirectory, process.execPath, { ...process.env, STREAM_FRAMES: '', TRIM_SUBAGENTS: '1' });
+    const trimService = new ClaudeStreamService(database, runtimeDirectory, process.execPath, { ...process.env, STREAM_FRAMES: '', TRIM_SUBAGENTS: '1' }, undefined, hosts);
     const trimPrepared = await trimService.prepare({
       executable, cwd: directory, name: 'Claude trim', context: 'Project context',
       mcp: { command: process.execPath, args: ['shim.js'], env: { PATTERM_MCP_SOCKET: '/tmp/mcp.sock', PATTERM_MCP_IDENTITY: 'identity_trim' } },
@@ -841,7 +848,7 @@ process.stdin.on('data', (chunk) => {
 
     // Subagent rows carry the Task tool id, and concurrent streams keep their
     // own blocks.
-    const subagentService = new ClaudeStreamService(database, runtimeDirectory, process.execPath, { ...process.env, STREAM_FRAMES: '', SUBAGENTS: '1' });
+    const subagentService = new ClaudeStreamService(database, runtimeDirectory, process.execPath, { ...process.env, STREAM_FRAMES: '', SUBAGENTS: '1' }, undefined, hosts);
     const subagentPrepared = await subagentService.prepare({
       executable, cwd: directory, name: 'Claude subagent', context: 'Project context',
       mcp: { command: process.execPath, args: ['shim.js'], env: { PATTERM_MCP_SOCKET: '/tmp/mcp.sock', PATTERM_MCP_IDENTITY: 'identity_subagent' } },
@@ -881,7 +888,7 @@ process.stdin.on('data', (chunk) => {
     await subagentService.stop('process_subagent');
 
     // A failed native turn reports an error status and keeps its message.
-    const errorService = new ClaudeStreamService(database, runtimeDirectory, process.execPath, { ...process.env, STREAM_FRAMES: '1', ERROR_RESULT: '1' });
+    const errorService = new ClaudeStreamService(database, runtimeDirectory, process.execPath, { ...process.env, STREAM_FRAMES: '1', ERROR_RESULT: '1' }, undefined, hosts);
     const errorPrepared = await errorService.prepare({
       executable, cwd: directory, name: 'Claude error', context: 'Project context',
       mcp: { command: process.execPath, args: ['shim.js'], env: { PATTERM_MCP_SOCKET: '/tmp/mcp.sock', PATTERM_MCP_IDENTITY: 'identity_error' } },
@@ -898,7 +905,7 @@ process.stdin.on('data', (chunk) => {
 
     // An interrupted turn settles as idle, with no error row, and its running
     // tool is no longer shown as in progress.
-    const interruptService = new ClaudeStreamService(database, runtimeDirectory, process.execPath, { ...process.env, INTERRUPT_TURN: '1' });
+    const interruptService = new ClaudeStreamService(database, runtimeDirectory, process.execPath, { ...process.env, INTERRUPT_TURN: '1' }, undefined, hosts);
     const interruptPrepared = await interruptService.prepare({
       executable, cwd: directory, name: 'Claude interrupt', context: 'Project context',
       mcp: { command: process.execPath, args: ['shim.js'], env: { PATTERM_MCP_SOCKET: '/tmp/mcp.sock', PATTERM_MCP_IDENTITY: 'identity_interrupt' } },
@@ -931,7 +938,7 @@ process.stdin.on('data', (chunk) => {
     const launchActivity = async (name: string, legacy: boolean) => {
       const activityService = new ClaudeStreamService(database, runtimeDirectory, process.execPath, {
         ...baseEnv, STREAM_FRAMES: '', ACTIVITY: '1', ENV_FILE: envPath, ...(legacy ? { CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '0' } : {})
-      });
+      }, undefined, hosts);
       const launched = await activityService.prepare({
         executable, cwd: directory, name, context: 'Project context',
         mcp: { command: process.execPath, args: ['shim.js'], env: { PATTERM_MCP_SOCKET: '/tmp/mcp.sock', PATTERM_MCP_IDENTITY: `identity_activity_${name}` } },
@@ -944,6 +951,7 @@ process.stdin.on('data', (chunk) => {
         .run(`session_activity_${name}`, processId, `identity_activity_${name}`, launched.resumeId, now);
       const activityEvents: IntegratedConversationEvent[] = [];
       const releaseActivity = await activityService.subscribe(processId, (event) => activityEvents.push(event));
+      cleanup.push(releaseActivity);
       const statuses = () => activityEvents.flatMap((event) => event.kind === 'status' ? [event.status] : []);
       // Event positions, to order a transcript row against status changes.
       const published = (id: string) => activityEvents.findIndex((event) => event.kind === 'replace' && event.message?.id === id);
@@ -953,6 +961,7 @@ process.stdin.on('data', (chunk) => {
         const observing = new IntegratedAgentService(database, { claude: activityService });
         const changes: string[] = [];
         observing.onActivityChange((change) => changes.push(change.activity));
+        cleanup.push(() => observing.dispose());
         observing.observe(processId);
         await new Promise((resolve) => setTimeout(resolve, 100));
         return {
@@ -1164,7 +1173,7 @@ process.stdin.on('data', (chunk) => {
     await refused.close();
 
     // A missing executable fails the launch without crashing the host.
-    const missingService = new ClaudeStreamService(database, runtimeDirectory, process.execPath);
+    const missingService = new ClaudeStreamService(database, runtimeDirectory, process.execPath, process.env, undefined, hosts);
     await assert.rejects(
       missingService.prepare({
         executable: path.join(directory, 'does-not-exist-claude'),
@@ -1180,7 +1189,7 @@ process.stdin.on('data', (chunk) => {
     // A native CLI that exits before close must still be cleaned up: the
     // graceful interrupt fails, the stop path runs, and the real close action
     // marks the process closed.
-    const dyingService = new ClaudeStreamService(database, runtimeDirectory, process.execPath, { ...process.env, EXIT_AFTER_PROMPT: '1' });
+    const dyingService = new ClaudeStreamService(database, runtimeDirectory, process.execPath, { ...process.env, EXIT_AFTER_PROMPT: '1' }, undefined, hosts);
     const dyingPrepared = await dyingService.prepare({
       executable, cwd: directory, name: 'Claude dying', context: 'Project context',
       mcp: { command: process.execPath, args: ['shim.js'], env: { PATTERM_MCP_SOCKET: '/tmp/mcp.sock', PATTERM_MCP_IDENTITY: 'identity_dying' } },
@@ -1244,9 +1253,10 @@ process.stdin.on('data', (chunk) => {
       await new Promise<void>((resolve) => legacyHost.close(() => resolve()));
     }
 
-    const reconnected = new ClaudeStreamService(database, runtimeDirectory, process.execPath);
+    const reconnected = new ClaudeStreamService(database, runtimeDirectory, process.execPath, process.env, undefined, hosts);
     assert.match(JSON.stringify(await reconnected.conversation('process_test')), /Native Claude reply/);
     await reconnected.stop('process_test');
+    await hosts.waitForExit(Number(prepared.argv[3]));
     // A host that has ended reports a resumable state, not a raw socket error.
     // A named pipe leaves no file behind, so Windows waits for it to close.
     if (process.platform === 'win32') {
@@ -1254,9 +1264,14 @@ process.stdin.on('data', (chunk) => {
     } else await waitFor(() => !fs.existsSync(prepared.argv[2]!));
     await assert.rejects(reconnected.conversation('process_test'), /host is no longer running\. Resume the conversation to continue\./);
   } finally {
-    database.dispose();
-    // Windows cannot remove a directory that an exiting host or CLI still runs in.
-    fs.rmSync(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+    for (const dispose of cleanup.reverse()) dispose();
+    try {
+      // Also runs after an assertion fails, before a locked cwd can mask it.
+      await hosts.stopAll();
+    } finally {
+      database.dispose();
+      removeTree(directory);
+    }
   }
 }
 
