@@ -54,9 +54,14 @@ const rows = fs.existsSync(process.env.RECORD) ? fs.readFileSync(process.env.REC
 if (process.env.REJECT_PROMPT && method === 'POST' && route.endsWith('/prompt')) { console.log('HTTP 400 Bad Request'); process.exit(1); }
 if (process.env.REJECT_COMPACT && method === 'POST' && route.endsWith('/compact')) { console.log('HTTP ' + process.env.REJECT_COMPACT); process.exit(1); }
 fs.appendFileSync(process.env.RECORD, JSON.stringify({method,route,body})+'\\n');
-if (process.env.MCP_OVERLAP && method === 'PUT' && route.startsWith('/api/experimental/mcp/') && !route.startsWith('/api/experimental/mcp/patterm_')) {
-  // A native install waits for its server to connect. Each one holds until
-  // every install has started, so sequential installs time out instead.
+if (process.env.FAIL_MCP_CONNECT && method === 'POST' && route.split('?')[0] === '/api/experimental/mcp/helped/connect' && !fs.existsSync(process.env.FAIL_MCP_CONNECT)) {
+  fs.writeFileSync(process.env.FAIL_MCP_CONNECT, 'failed'); console.log('HTTP 500 Internal Server Error'); process.exit(1);
+}
+if (process.env.MCP_OVERLAP && method === 'PUT' && route.startsWith('/api/experimental/mcp/') && !route.startsWith('/api/experimental/mcp/patterm_') && body.config.disabled !== true) {
+  console.error('Enabled PUT serializes native MCP reconciliation'); process.exit(1);
+}
+if (process.env.MCP_OVERLAP && method === 'POST' && route.startsWith('/api/experimental/mcp/') && !route.startsWith('/api/experimental/mcp/patterm_') && route.split('?')[0].endsWith('/connect')) {
+  // Connect holds until every connection has started, not for a fixed timing window.
   fs.appendFileSync(process.env.MCP_OVERLAP, 'start\\n');
   const deadline = Date.now() + 10000;
   const started = () => fs.readFileSync(process.env.MCP_OVERLAP, 'utf8').split('\\n').filter((line) => line === 'start').length;
@@ -74,7 +79,11 @@ else if (method === 'GET' && route.startsWith('/api/agent?')) console.log(JSON.s
 else if (method === 'GET' && route.startsWith('/api/command?')) console.log(JSON.stringify({data:[{name:'review',description:'Review changes'}, ...(process.env.CUSTOM_UNDO ? [{name:'undo',description:'Custom undo'}] : [])]}));
 else if (method === 'GET' && route.startsWith('/api/mcp?')) {
   const names = new Set(rows.filter(x => x.method === 'PUT' && x.route.startsWith('/api/experimental/mcp/')).map(x => x.route.split('/').at(-1).split('?')[0]));
-  console.log(JSON.stringify({data:[...names].map(name => ({name,status:{status:'connected'}}))}));
+  console.log(JSON.stringify({data:[...names].map(name => {
+    const last = rows.findLast(x => x.route.split('?')[0] === '/api/experimental/mcp/' + name || x.route.split('?')[0] === '/api/experimental/mcp/' + name + '/connect');
+    const connected = rows.some(x => x.method === 'POST' && x.route.split('?')[0] === '/api/experimental/mcp/' + name + '/connect');
+    return {name,status:{status:connected || last.body?.config.disabled !== true ? 'connected' : 'disabled'}};
+  })}));
 } else if (method === 'POST' && route.endsWith('/interrupt')) {
   if (process.env.FAIL_INTERRUPT) { console.log('HTTP 500 Internal Server Error'); process.exit(1); }
   console.log(JSON.stringify({data:{}}));
@@ -237,6 +246,9 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const registrations = requests.filter((request) => request.route.startsWith('/api/experimental/mcp/patterm_') && request.method === 'PUT');
     const helpers = requests.filter((request) => request.route.startsWith('/api/experimental/mcp/helped') && request.method === 'PUT');
     assert.ok(helpers.length > 0);
+    assert.ok(helpers.every((request) => request.body.config.disabled === true), 'stage helpers without connecting inside native configuration reconciliation');
+    assert.equal(requests.filter((request) => request.route.split('?')[0] === '/api/experimental/mcp/helped/connect').length, 1,
+      'connect a staged helper once, and leave it alone on subsequent launches');
     assert.ok(helpers.every((request) => JSON.stringify(request.body) === JSON.stringify(helpers[0].body)), 'every session gets the same shared helper');
     const helperEnv = helpers[0].body.config.environment as Record<string, string>;
     assert.equal(helperEnv.PATTERM_MCP_IDENTITY, undefined, 'shared helpers never carry one agent identity');
@@ -245,6 +257,9 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const bridgeEnv = registrations[0].body.config.environment as Record<string, string>;
     assert.equal(bridgeEnv.PATTERM_MCP_IDENTITY, undefined, 'never configure a shared MCP client with an agent identity');
     assert.equal(registrations[0].body.config.codemode, false, 'compact orchestration tools remain directly discoverable');
+    assert.equal(registrations[0].body.config.disabled, true, 'the bridge also stages without holding the native configuration lock for its handshake');
+    assert.equal(requests.filter((request) => request.route.startsWith('/api/experimental/mcp/patterm_') && request.method === 'POST').length, 1,
+      'a connected bridge is reused without reconnecting other sessions');
     assert.equal(requests.filter((request) => request.route.startsWith('/api/experimental/session/') && request.route.endsWith('/instructions/entries/patterm')).length, 2);
     // Replacing an unchanged server is a no-op in OpenCode, so a restart
     // reconnects it to fetch its tool list again.
@@ -259,14 +274,21 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const coldRequests = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line)).slice(coldCount);
     assert.deepEqual(coldRequests.filter((request) => request.route.startsWith('/api/experimental/mcp/helped')).map((request) => `${request.method} ${request.route.split('?')[0]}`),
       ['PUT /api/experimental/mcp/helped', 'POST /api/experimental/mcp/helped/connect'], 'a restart reconnects even when Patterm forgot what it installed');
-    // A directory the daemon has not seen installs every server; each install
-    // waits for its connection, so they run together.
+    // Configuration PUTs share a native lock; only POST /connect can overlap
+    // handshakes. Reject enabled PUTs, and hold connects at a rendezvous.
     const overlap = path.join(directory, 'mcp-overlap.log');
     const servers = ['one', 'two', 'three'].map((name) => ({ ...helped, id: `mcpsrv_${name}`, name: `overlap_${name}` }));
     await new OpenCodeServerService(database, { ...env, MCP_OVERLAP: overlap, MCP_OVERLAP_COUNT: String(servers.length) }, { persistent: true })
       .prepare({ ...input, cwd: fs.mkdtempSync(path.join(directory, 'fresh-')), mcp: { ...mcp, env: { ...mcp.env, PATTERM_MCP_SOCKET: `${socketPath}-fresh` } }, mcpServers: servers });
     assert.deepEqual(fs.readFileSync(overlap, 'utf8').trim().split('\n').slice(0, servers.length), servers.map(() => 'start'),
-      'global MCP servers install concurrently, not one after another');
+      'global MCP servers connect concurrently outside native configuration reconciliation');
+    const retryService = new OpenCodeServerService(database, { ...env, FAIL_MCP_CONNECT: path.join(directory, 'failed-connect') }, { persistent: true });
+    await retryService.prepare(input);
+    const retryCount = fs.readFileSync(record, 'utf8').trim().split('\n').length;
+    await retryService.prepare(input);
+    const retries = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line)).slice(retryCount);
+    assert.deepEqual(retries.filter((request) => request.route.startsWith('/api/experimental/mcp/helped')).map((request) => request.method), ['PUT', 'POST'],
+      'a failed connection is not cached as installed and is retried on the next launch');
     for (const [index, id] of [first, second].entries()) {
       database.connection.prepare(`insert into processes (id,project_id,kind,name,status,created_at,updated_at) values (?, 'project_test','agent','Fixture','running',?,?)`).run(`process_${index}`, now, now);
       database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor) values (?, 'project_test',?,'opencode',?,?,?,'orchestrator','found','user')`).run(`session_${index}`, `process_${index}`, `identity_${index}`, id, now);

@@ -1584,19 +1584,30 @@ export class OpenCodeServerService {
   // daemon already had. That starts a new client for every session in the
   // directory.
   // A server that fails to start shows as failed in OpenCode and does not stop
-  // the launch. Each install waits for its server to connect, so they run
-  // together: a new directory otherwise waits for every server in turn.
+  // the launch. Native configuration reconciliation is serial and an enabled
+  // PUT waits for the handshake under that lock. Stage all configs disabled,
+  // then connect through the per-server endpoint concurrently; resources,
+  // prompts, authentication and tool discovery remain owned by OpenCode.
   private async installGlobalMcpServers(executable: string, cwd: string, location: URLSearchParams, configs: Record<string, Record<string, unknown>>, daemonRestarted: boolean, reconnect: boolean): Promise<void> {
+    const pending: Array<{ key: string; body: string; route: string }> = [];
     await Promise.all(Object.entries(configs).map(async ([name, config]) => {
       const key = `${cwd}\0${name}`;
       const body = JSON.stringify(config);
       const route = `/api/experimental/mcp/${encodeURIComponent(name)}`;
       try {
-        if (daemonRestarted || this.installedMcp.get(key) !== body) {
-          await this.api(executable, cwd, 'PUT', `${route}?${location}`, { config });
-          this.installedMcp.set(key, body);
+        const changed = daemonRestarted || this.installedMcp.get(key) !== body;
+        if (changed) {
+          await this.api(executable, cwd, 'PUT', `${route}?${location}`, { config: { ...config, disabled: true } });
         }
-        if (reconnect && !daemonRestarted) await this.api(executable, cwd, 'POST', `${route}/connect?${location}`);
+        if (changed || reconnect) pending.push({ key, body, route });
+      } catch {
+        this.installedMcp.delete(key);
+      }
+    }));
+    await Promise.all(pending.map(async ({ key, body, route }) => {
+      try {
+        await this.api(executable, cwd, 'POST', `${route}/connect?${location}`);
+        this.installedMcp.set(key, body);
       } catch {
         this.installedMcp.delete(key);
       }
@@ -1612,7 +1623,7 @@ export class OpenCodeServerService {
     const location = new URLSearchParams({ 'location[directory]': cwd });
     const bridge = {
       config: {
-        type: 'local', command: [mcp.command, ...mcp.args], disabled: false, codemode: false,
+        type: 'local', command: [mcp.command, ...mcp.args], disabled: true, codemode: false,
         environment: {
           ELECTRON_RUN_AS_NODE: '1',
           PATTERM_MCP_SOCKET: mcp.env.PATTERM_MCP_SOCKET,
@@ -1631,6 +1642,10 @@ export class OpenCodeServerService {
       };
       const status = listed.data?.find((server) => server.name === bridgeName)?.status.status;
       if (status === 'connected') break;
+      if (status === 'disabled' && attempt === 0) {
+        await this.api(executable, cwd, 'POST', `/api/experimental/mcp/${bridgeName}/connect?${location}`);
+        continue;
+      }
       if (status !== 'pending' || attempt >= 20) throw new Error(`OpenCode MCP bridge did not connect (${status ?? 'missing'})`);
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
