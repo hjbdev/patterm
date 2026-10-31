@@ -313,7 +313,7 @@ export class CodexAppServerService {
       threadId: runtime.threadId, limit: CODEX_OLDER_PAGE, sortDirection: 'desc', cursor: parseNativeCursor(cursor)
     }));
     const newest = Array.isArray(response.data) ? response.data : [];
-    return { messages: { data: [...newest].reverse().flatMap(this.projectEntry) }, cursor: nativeCursor(response, CODEX_OLDER_PAGE) };
+    return { messages: { data: [...newest].reverse().flatMap(this.projectEntry) }, cursor: nativeCursor(response) };
   }
 
   async prompt(processId: string, input: ResolvedIntegratedPrompt): Promise<{ turnId: string }> {
@@ -326,6 +326,7 @@ export class CodexAppServerService {
       if (attachment.mime.startsWith('image/')) items.push({ type: 'localImage', path: attachment.path });
     }
     if (!items.length) throw new Error('Message is empty');
+    await this.adoptThreadSettings(processId, runtime, client);
     const model = this.models.get(processId) ?? runtime.model;
     const effort = this.efforts.get(processId) ?? (this.models.has(processId) ? null : runtime.reasoning);
     const serviceTier = this.tiers.get(processId);
@@ -490,13 +491,14 @@ export class CodexAppServerService {
       this.readThreadStatuses(client, descendantThreads(channel))
     ]);
     if (channel.seed !== generation) return;
+    const cursor = nativeCursor(response);
     const state: CodexConversationState = {
       revision: this.revision(channel.processId),
       messages: [...parentMessages, ...childMessages],
       status: 'unknown',
-      truncated: newest.length >= CODEX_MESSAGE_WINDOW,
+      truncated: Boolean(cursor),
       historyUnavailable: unavailable,
-      cursor: nativeCursor(response)
+      cursor
     };
     const queued = channel.queue;
     channel.queue = [];
@@ -800,7 +802,7 @@ export class CodexAppServerService {
   async controls(processId: string): Promise<IntegratedControls> {
     const runtime = this.runtime(processId);
     const client = await this.client(runtime);
-    const [response, configTier] = await Promise.all([this.modelList(client), this.configTier(client)]);
+    const [response, configTier] = await Promise.all([this.modelList(client), this.configTier(client), this.adoptThreadSettings(processId, runtime, client)]);
     const models = (Array.isArray(response.data) ? response.data : []).flatMap((value) => {
       const model = record(value);
       const id = typeof model.id === 'string' ? model.id : typeof model.model === 'string' ? model.model : null;
@@ -842,6 +844,20 @@ export class CodexAppServerService {
         { name: 'shell', description: 'Run a shell command outside the sandbox' }
       ]
     };
+  }
+
+  // Picks are kept in memory, so after a Patterm restart the picker would fall
+  // back to the launch or catalogue default, and the next turn would switch
+  // the thread to it. Codex keeps the model and effort the last turn ran with
+  // on the thread, so those are the starting point instead. A failed read
+  // keeps the launch settings.
+  private async adoptThreadSettings(processId: string, runtime: CodexRuntime, client: CodexRpcClient): Promise<void> {
+    if (this.models.has(processId)) return;
+    const response = await client.request('thread/read', { threadId: runtime.threadId, includeTurns: false }).catch(() => null);
+    const thread = record(record(response).thread);
+    if (this.models.has(processId) || typeof thread.model !== 'string' || !thread.model) return;
+    this.models.set(processId, thread.model);
+    if (typeof thread.reasoningEffort === 'string' && thread.reasoningEffort && !this.efforts.has(processId)) this.efforts.set(processId, thread.reasoningEffort);
   }
 
   // The model catalogue is treated as fixed for one connection. A restarted
@@ -1070,7 +1086,7 @@ export class CodexAppServerService {
       threadId: taskId, limit: CODEX_TASK_ITEMS, sortDirection: 'desc', ...(cursor ? { cursor: parseNativeCursor(cursor) } : {})
     }));
     const newest = Array.isArray(response.data) ? response.data : [];
-    return messagesTaskOutput([...newest].reverse().flatMap(this.projectEntry), nativeCursor(response, CODEX_TASK_ITEMS), since);
+    return messagesTaskOutput([...newest].reverse().flatMap(this.projectEntry), nativeCursor(response), since);
   }
 
   // The command's row carries its output: Codex streams a background
@@ -1701,11 +1717,13 @@ function isUncertainRpcFailure(error: unknown): boolean {
 // The renderer carries cursors as strings. Codex 0.159 returns an opaque
 // string, which happens to hold JSON, and accepts it back only as that string;
 // builds that returned an object cursor get an object back, so it is marked.
-// A short page is the start of the thread, whatever cursor comes with it.
+// Only the cursor marks the start of the thread: Codex caps a page below the
+// limit asked for (0.166 returns at most 100 items), so a short page can still
+// have older items before it.
 const OBJECT_CURSOR = 'object:';
 
-function nativeCursor(response: JsonRecord, limit = CODEX_MESSAGE_WINDOW): string | null {
-  if (!Array.isArray(response.data) || response.data.length < limit) return null;
+function nativeCursor(response: JsonRecord): string | null {
+  if (!Array.isArray(response.data) || !response.data.length) return null;
   const next = response.nextCursor;
   if (typeof next === 'string') return next || null;
   return next && typeof next === 'object' ? `${OBJECT_CURSOR}${JSON.stringify(next)}` : null;
