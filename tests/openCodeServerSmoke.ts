@@ -54,6 +54,15 @@ const rows = fs.existsSync(process.env.RECORD) ? fs.readFileSync(process.env.REC
 if (process.env.REJECT_PROMPT && method === 'POST' && route.endsWith('/prompt')) { console.log('HTTP 400 Bad Request'); process.exit(1); }
 if (process.env.REJECT_COMPACT && method === 'POST' && route.endsWith('/compact')) { console.log('HTTP ' + process.env.REJECT_COMPACT); process.exit(1); }
 fs.appendFileSync(process.env.RECORD, JSON.stringify({method,route,body})+'\\n');
+if (process.env.MCP_OVERLAP && method === 'PUT' && route.startsWith('/api/experimental/mcp/') && !route.startsWith('/api/experimental/mcp/patterm_')) {
+  // A native install waits for its server to connect. Each one holds until
+  // every install has started, so sequential installs time out instead.
+  fs.appendFileSync(process.env.MCP_OVERLAP, 'start\\n');
+  const deadline = Date.now() + 10000;
+  const started = () => fs.readFileSync(process.env.MCP_OVERLAP, 'utf8').split('\\n').filter((line) => line === 'start').length;
+  while (started() < Number(process.env.MCP_OVERLAP_COUNT) && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+  fs.appendFileSync(process.env.MCP_OVERLAP, 'end\\n');
+}
 if (process.env.FAIL_API) { console.error(json); process.exit(1); }
  if (route === '/api/info') console.log(JSON.stringify({version:process.env.WRONG_VERSION && !(process.env.RESTARTED && fs.existsSync(process.env.RESTARTED)) ? '2.0.13' : '2.0.14',pid:4242}));
 else if (method === 'GET' && route.startsWith('/api/model/default?')) console.log(JSON.stringify({data:{providerID:'openai',id:'gpt-other',modelID:'gpt-other'}}));
@@ -250,6 +259,14 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const coldRequests = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line)).slice(coldCount);
     assert.deepEqual(coldRequests.filter((request) => request.route.startsWith('/api/experimental/mcp/helped')).map((request) => `${request.method} ${request.route.split('?')[0]}`),
       ['PUT /api/experimental/mcp/helped', 'POST /api/experimental/mcp/helped/connect'], 'a restart reconnects even when Patterm forgot what it installed');
+    // A directory the daemon has not seen installs every server; each install
+    // waits for its connection, so they run together.
+    const overlap = path.join(directory, 'mcp-overlap.log');
+    const servers = ['one', 'two', 'three'].map((name) => ({ ...helped, id: `mcpsrv_${name}`, name: `overlap_${name}` }));
+    await new OpenCodeServerService(database, { ...env, MCP_OVERLAP: overlap, MCP_OVERLAP_COUNT: String(servers.length) }, { persistent: true })
+      .prepare({ ...input, cwd: fs.mkdtempSync(path.join(directory, 'fresh-')), mcp: { ...mcp, env: { ...mcp.env, PATTERM_MCP_SOCKET: `${socketPath}-fresh` } }, mcpServers: servers });
+    assert.deepEqual(fs.readFileSync(overlap, 'utf8').trim().split('\n').slice(0, servers.length), servers.map(() => 'start'),
+      'global MCP servers install concurrently, not one after another');
     for (const [index, id] of [first, second].entries()) {
       database.connection.prepare(`insert into processes (id,project_id,kind,name,status,created_at,updated_at) values (?, 'project_test','agent','Fixture','running',?,?)`).run(`process_${index}`, now, now);
       database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor) values (?, 'project_test',?,'opencode',?,?,?,'orchestrator','found','user')`).run(`session_${index}`, `process_${index}`, `identity_${index}`, id, now);

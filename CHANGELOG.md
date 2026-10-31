@@ -183,6 +183,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- OpenCode starts much faster in a project it hasn't opened before. Patterm
+  now adds your global MCP servers to OpenCode all at once instead of waiting
+  for each one to connect in turn, which took about 10 seconds with 11 servers.
+
 - An OpenCode agent's conversation no longer shows the AGENTS.md instructions
   OpenCode adds when the agent works in a new directory, as if the agent had
   written them. Agent and model switch records stay hidden too.
