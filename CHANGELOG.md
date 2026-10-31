@@ -139,6 +139,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- An OpenCode launch that finds the shared server on a different version from
+  the CLI now restarts the server itself, like the native TUI, when no
+  OpenCode turn is running. While turns are running it still asks first,
+  because a restart interrupts them.
 - A message you send to an OpenCode agent mid-turn shows in the conversation
   as a greyed-out message, with Queued and Cancel beneath it, until the agent
   takes it, as it does on the other harnesses. It no longer sits in a separate
