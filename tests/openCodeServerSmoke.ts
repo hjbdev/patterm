@@ -47,7 +47,7 @@ async function main(): Promise<void> {
 const fs = require('node:fs');
 const [, , api, method, route, , json] = process.argv;
  if (api === '--version') { console.log('opencode v2.0.14'); process.exit(0); }
-if (api === 'service' && method === 'restart') { if (process.env.RESTARTED) fs.writeFileSync(process.env.RESTARTED, ''); process.exit(0); }
+if (api === 'service' && method === 'restart') { if (process.env.RESTARTED) fs.appendFileSync(process.env.RESTARTED, 'r'); process.exit(0); }
 if (api !== 'api') process.exit(2);
 const body = json ? JSON.parse(json) : undefined;
 const rows = fs.existsSync(process.env.RECORD) ? fs.readFileSync(process.env.RECORD, 'utf8').trim().split('\\n').filter(Boolean).map(JSON.parse) : [];
@@ -876,7 +876,18 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const idleRestarted = path.join(directory, 'idle-restarted');
     const idleStale = new OpenCodeServerService(database, { ...env, WRONG_VERSION: '1', RESTARTED: idleRestarted, ACTIVE_EMPTY: '1' });
     assert.ok((await idleStale.prepare(input)).resumeId.startsWith('ses'));
-    assert.ok(fs.existsSync(idleRestarted), 'an idle stale server is restarted before the launch');
+    assert.equal(fs.readFileSync(idleRestarted, 'utf8'), 'r', 'an idle stale server is restarted before the launch');
+    // Launches that find the same stale server restart it once: the later
+    // launch reads the versions again after the first one's restart.
+    const concurrentRestarted = path.join(directory, 'concurrent-restarted');
+    const concurrentStale = new OpenCodeServerService(database, { ...env, WRONG_VERSION: '1', RESTARTED: concurrentRestarted, ACTIVE_EMPTY: '1' });
+    await Promise.all([concurrentStale.prepare(input), concurrentStale.prepare(input)]);
+    assert.equal(fs.readFileSync(concurrentRestarted, 'utf8'), 'r', 'concurrent launches share one restart');
+    // An unreadable activity snapshot does not show the server is idle.
+    const unknownRestarted = path.join(directory, 'unknown-restarted');
+    const unknownActivity = new OpenCodeServerService(database, { ...env, WRONG_VERSION: '1', RESTARTED: unknownRestarted, ACTIVE_MALFORMED: '1' });
+    await assert.rejects(unknownActivity.prepare(input), (error: Error) => isOpenCodeVersionMismatch(error.message) && /did not say/.test(error.message));
+    assert.ok(!fs.existsSync(unknownRestarted), 'a server with unknown activity is not restarted');
 
     // Optional real beta acceptance uses isolated native service state, no model
     // calls or credentials, and always stops only that temporary service.

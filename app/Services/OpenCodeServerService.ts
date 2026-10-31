@@ -134,8 +134,9 @@ export class OpenCodeServerService {
   private readonly token: string;
   private readonly selections = new Map<string, { agent?: string; model?: string; variant?: string }>();
   private readonly installedMcp = new Map<string, string>();
-  // Launches that find the same stale server share one restart.
-  private restarting: Promise<{ version: string }> | null = null;
+  // Server replacements run one at a time, so a launch never restarts a
+  // server another launch has just replaced.
+  private replacing: Promise<unknown> = Promise.resolve();
   // Monotonic event revisions per process. Snapshots capture the counter before
   // their native reads, so an event that lands during a read is never dropped
   // by the renderer's boundary check.
@@ -1606,17 +1607,7 @@ export class OpenCodeServerService {
     const { executable, cwd, mcp } = input;
     // The native API caps each durable instruction entry at 8 KiB.
     if (Buffer.byteLength(JSON.stringify(input.context)) > 8 * 1024) throw new Error('Patterm context exceeds the OpenCode instruction limit');
-    const versions = await this.versions(executable, cwd);
-    if (!versions.matched) {
-      // Like the native TUI, replace a stale server, but only while no turn
-      // is running on it: a restart interrupts every running turn, including
-      // sessions outside Patterm, so that case still waits for the user.
-      const running = Object.keys(record(record(await this.api(executable, cwd, 'GET', '/api/session/active')).data)).length;
-      if (running) {
-        throw new Error(`${OPENCODE_VERSION_MISMATCH}: CLI ${versions.cli ?? 'unknown'}, server ${versions.server ?? 'unknown'}, with ${running} OpenCode ${running === 1 ? 'turn' : 'turns'} running.`);
-      }
-      await this.restartService(executable);
-    }
+    if (!(await this.versions(executable, cwd)).matched) await this.replaceStaleService(executable, cwd);
     const bridgeName = `patterm_${createHash('sha256').update(mcp.env.PATTERM_MCP_SOCKET ?? '').digest('hex').slice(0, 12)}`;
     const location = new URLSearchParams({ 'location[directory]': cwd });
     const bridge = {
@@ -1688,8 +1679,33 @@ export class OpenCodeServerService {
   // Patterm, so it runs unasked only while no turn is running. Patterm's own
   // conversation streams reconnect, and the next launch reinstalls the bridge.
   restartService(executable: string): Promise<{ version: string }> {
-    this.restarting ??= this.replaceService(executable).finally(() => { this.restarting = null; });
-    return this.restarting;
+    return this.exclusively(() => this.replaceService(executable));
+  }
+
+  // Like the native TUI, a launch replaces a stale server, but only while no
+  // turn is running on it: a restart interrupts every running turn, including
+  // sessions outside Patterm, so that case still waits for the user. The
+  // versions are read again once it is this launch's turn, because an earlier
+  // launch may have replaced the server already.
+  private replaceStaleService(executable: string, cwd: string): Promise<unknown> {
+    return this.exclusively(async () => {
+      const versions = await this.versions(executable, cwd);
+      if (versions.matched) return;
+      // A snapshot that cannot be read does not show the server is idle.
+      const data = record(await this.api(executable, cwd, 'GET', '/api/session/active')).data;
+      const running = data && typeof data === 'object' && !Array.isArray(data) ? Object.keys(data).length : null;
+      if (running !== 0) {
+        const turns = running === null ? 'and OpenCode did not say which turns are running' : `with ${running} OpenCode ${running === 1 ? 'turn' : 'turns'} running`;
+        throw new Error(`${OPENCODE_VERSION_MISMATCH}: CLI ${versions.cli ?? 'unknown'}, server ${versions.server ?? 'unknown'}, ${turns}.`);
+      }
+      return this.replaceService(executable);
+    });
+  }
+
+  private exclusively<T>(task: () => Promise<T>): Promise<T> {
+    const result = this.replacing.then(task);
+    this.replacing = result.catch(() => undefined);
+    return result;
   }
 
   private async replaceService(executable: string): Promise<{ version: string }> {
