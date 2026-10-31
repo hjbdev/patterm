@@ -68,6 +68,9 @@ export interface SessionDto {
   // Background tasks still running, such as a shell the agent waits on. Older
   // paired hosts omit it.
   backgroundTasks?: number;
+  // When the backing process last changed activity, status or name, for
+  // sorting by recent activity. Older paired hosts omit it.
+  activityAt?: string | null;
   // What an Integrated agent waiting on you asks, in one line. Null while
   // nothing is pending; older paired hosts omit it.
   asking?: string | null;
@@ -193,6 +196,7 @@ interface ProcessRow {
   auto_restart: number;
   exited_at: string | null;
   exit_code: number | null;
+  updated_at: string;
 }
 
 interface WorktreeRow {
@@ -348,9 +352,11 @@ function mapSessions(sessions: SessionRow[], processes: ProcessRow[]): SessionDt
   const asking = new Map(processes.map((process) => [process.id, process.asking]));
   const parentProcessByProcessId = new Map<string, string | null>();
   const activityByProcessId = new Map<string, string>();
+  const activityAtByProcessId = new Map<string, string>();
   for (const process of processes) {
     parentProcessByProcessId.set(process.id, process.parent_process_id);
     activityByProcessId.set(process.id, process.activity);
+    activityAtByProcessId.set(process.id, process.updated_at);
   }
   const sessionByProcessId = new Map<string, string>();
   for (const session of sessions) {
@@ -380,6 +386,7 @@ function mapSessions(sessions: SessionRow[], processes: ProcessRow[]): SessionDt
       resumeStatus: session.resume_status,
       activity: session.process_id ? activityByProcessId.get(session.process_id) ?? 'idle' : 'idle',
       backgroundTasks: session.process_id ? backgroundTasks.get(session.process_id) ?? 0 : 0,
+      activityAt: session.process_id ? activityAtByProcessId.get(session.process_id) ?? null : null,
       asking: session.process_id ? asking.get(session.process_id) ?? null : null,
       lastTitle: session.last_title,
       displayName: session.display_name,

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The sidebar's view options can sort agents by recent activity. An agent
+  moves up when it or one of its subagents changes state, within each group.
+  The choice is remembered on this device.
 - The command palette spawns presets directly. Type a preset's name, such as
   "spawn opus", to find a row like Spawn Opus max, with the agent's icon and
   the preset's model and reasoning. Spawn Claude still launches Claude's

@@ -165,3 +165,19 @@ export function mostUrgent(urgencies: readonly (SidebarUrgency | null)[]): Sideb
   if (urgencies.includes('normal')) return 'normal';
   return urgencies.find(Boolean) ?? null;
 }
+
+// When a family last changed state: its agent or any subagent below it.
+// Agents from older paired hosts fall back to when they started.
+export function familyActivityAt(node: AgentNode): string {
+  return node.children.reduce((latest, child) => {
+    const at = familyActivityAt(child);
+    return at > latest ? at : latest;
+  }, node.session.activityAt ?? node.session.startedAt);
+}
+
+// Agents with the most recent activity first; other tabs keep their place
+// after them, in the order given.
+export function sortByActivity(tabs: readonly StripTab[]): StripTab[] {
+  const at = new Map(tabs.map((tab) => [tab.key, tab.kind === 'agent' ? familyActivityAt(tab.family.root) : '']));
+  return [...tabs].sort((a, b) => (at.get(b.key) ?? '').localeCompare(at.get(a.key) ?? ''));
+}

@@ -121,7 +121,7 @@ import SidebarFamily from './SidebarFamily.vue';
 import SidebarMemberRow from './SidebarMemberRow.vue';
 import SidebarViewOptions from './SidebarViewOptions.vue';
 import { useSidebar, type AgentTab } from './sidebarContext';
-import { familyStatus, familyWaitingOn, selectedThread, SIDEBAR_STATUSES, type SidebarStatus } from '../../lib/sidebarTree';
+import { familyStatus, familyWaitingOn, selectedThread, sortByActivity, SIDEBAR_STATUSES, type SidebarStatus } from '../../lib/sidebarTree';
 import { collapseOut, expandIn, rowTops, slideFrom } from '../../lib/sidebarMotion';
 import { sidebarNodesKey } from './sidebarNodes';
 import { useSidebarMention } from './sidebarMention';
@@ -165,12 +165,14 @@ const snoozedProjects = computed(() => sidebar.allAgents.value
 const byProject = computed(() => sidebar.allAgents.value && expansion.state.value.groupByProject);
 
 // Pinned rows first, in the order you gave them. The rest are agents, grouped
-// by project or status if you ask; your order holds within each group.
+// by project or status if you ask; your order, or recent activity, holds
+// within each group.
 // Snoozed agents wait at the end until their next message.
 interface Group { id: string; label: string | null; tabs: StripTab[]; project?: ProjectSummary }
 const groups = computed<Group[]>(() => {
   const tabs = sidebar.tabs.value.filter((tab) => !tabSnoozed(tab));
-  const open = tabs.filter((tab) => !tab.pinned && tab.kind === 'agent');
+  const agents = tabs.filter((tab) => !tab.pinned && tab.kind === 'agent');
+  const open = expansion.state.value.sortByActivity ? sortByActivity(agents) : agents;
   const rest = byProject.value
     ? groupByProject(open, sidebar.projects.value, sidebar.projectOf).map(({ project, items }) => ({ id: `project:${project.id}`, label: project.name, project, tabs: items }))
     : expansion.state.value.groupByStatus
@@ -251,8 +253,10 @@ function subtitle(tab: AgentTab): string | null {
 
 const { onKeydown } = useSidebarKeys({ toggle: setExpanded, move: sidebar.moveTab });
 const { setElement, draggingKey, dropLine, onPointerDown, consumeClick } = useSidebarReorder(
+  // Sorted by recent activity, only pinned and snoozed rows keep an order to drag.
   () => [
-    ...groups.value.flatMap((group) => group.tabs.map((tab) => ({ key: tab.key, group: group.id }))),
+    ...groups.value.filter((group) => !expansion.state.value.sortByActivity || group.id === 'pinned' || group.id === 'snoozed')
+      .flatMap((group) => group.tabs.map((tab) => ({ key: tab.key, group: group.id }))),
     ...processTabs.value.map((tab) => ({ key: tab.key, group: 'processes' }))
   ],
   sidebar.moveTab
