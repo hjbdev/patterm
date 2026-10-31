@@ -871,6 +871,12 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const restartable = new OpenCodeServerService(database, { ...env, WRONG_VERSION: '1', RESTARTED: restarted });
     assert.deepEqual(await restartable.restartService(executable), { version: '2.0.14' });
     assert.ok(fs.existsSync(restarted), 'the CLI restarted the shared server');
+    // Like the native TUI, a launch replaces a stale server unasked, but only
+    // while no turn is running on it.
+    const idleRestarted = path.join(directory, 'idle-restarted');
+    const idleStale = new OpenCodeServerService(database, { ...env, WRONG_VERSION: '1', RESTARTED: idleRestarted, ACTIVE_EMPTY: '1' });
+    assert.ok((await idleStale.prepare(input)).resumeId.startsWith('ses'));
+    assert.ok(fs.existsSync(idleRestarted), 'an idle stale server is restarted before the launch');
 
     // Optional real beta acceptance uses isolated native service state, no model
     // calls or credentials, and always stops only that temporary service.
