@@ -182,6 +182,13 @@ async function main() {
   await runCommandPaletteCommand(withPresets, { id: 'spawn:preset:claude_opus', context: integratedContext, input: { preset: 'other', interface_mode: 'tui' } });
   assert.deepEqual(calls, [{ name: 'harness_launch', args: { harness: 'claude', project_id: 'p', preset: 'claude_opus', interface_mode: 'tui' } }]);
   await assert.rejects(runCommandPaletteCommand(withPresets, { id: 'spawn:preset:gone', context: integratedContext }), /no longer exists/);
+  // A paired host keeps its own presets, so its projects get none of these.
+  const remoteProject = { ...project, project: { ...project.project, id: 'remote:p', host: 'remote' } };
+  const remotePresets = { ...withPresets, currentWorkbench: () => ({ projects: [remoteProject], harnesses: withPresets.currentWorkbench().harnesses }) } as unknown as typeof application;
+  const remoteContext = { active_project_id: 'remote:p', active_terminal_id: null, active_tab: null };
+  const remoteSpawns = (await listCommandPaletteCommands(remotePresets, remoteContext)).commands.filter(item => item.id.startsWith('spawn:'));
+  assert.ok(!remoteSpawns.some(item => item.id.startsWith('spawn:preset:') || item.aliases), 'No local preset rows or aliases for a paired host project');
+  await assert.rejects(runCommandPaletteCommand(remotePresets, { id: 'spawn:preset:claude_opus', context: remoteContext }), /this host/);
   calls.length = 0;
   await runCommandPaletteCommand(recording, { id: 'history:resume:conversation_1', context: integratedContext, input: { interface_mode: 'integrated', replace_process_id: 'root_process' } });
   assert.deepEqual(calls, [{ name: 'history_resume', args: { conversation_id: 'conversation_1', project_id: 'p', interface_mode: 'integrated', replace_process_id: 'root_process' } }]);

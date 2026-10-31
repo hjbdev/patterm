@@ -80,6 +80,7 @@ import { agentLabel } from '../lib/agentTabs';
 import { restartAssistant } from '../lib/assistant';
 import { harnessLabel } from '../lib/harnesses';
 import { publishedIntegratedControls } from '../lib/integratedControlsRegistry';
+import { topicGeneration } from '../lib/serverQuery';
 import { interfaceLabel, launchParams, launchSummary, presetLabel, resumeInPlace, worktreeLabel } from '../lib/paletteSources';
 import { displayPath } from '../lib/projectOverview';
 import { processStatusIcon, sessionStatusIcon } from '../lib/statusIcons';
@@ -144,7 +145,8 @@ const contextKey = computed(() => JSON.stringify(props.context));
 const { revision: workbenchRevision, projects } = useWorkbench();
 let loadedFor = '';
 let revisionTimer: ReturnType<typeof setTimeout> | null = null;
-const commandKey = () => `${contextKey.value}\0${workbenchRevision.value}`;
+// Preset rows also follow settings.
+const commandKey = () => `${contextKey.value}\0${workbenchRevision.value}\0${topicGeneration('settings')}`;
 const query = ref('');
 const commands = ref<CommandDescriptor[]>([]);
 const highlighted = ref(0);
@@ -273,7 +275,7 @@ watch(contextKey, () => {
   loadedFor = '';
   if (open.value) void reloadCommands();
 });
-watch(workbenchRevision, () => {
+watch([workbenchRevision, () => topicGeneration('settings')], () => {
   if (!open.value || revisionTimer) return;
   revisionTimer = setTimeout(() => {
     revisionTimer = null;

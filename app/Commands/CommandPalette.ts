@@ -130,7 +130,10 @@ export async function listCommandPaletteCommands(application: PattermApplication
   for (const project of projects) commands.push(...agentRows(project, activeProject, current));
   for (const project of projects) commands.push(...processRows(project, activeProject, current));
   if (activeProject) {
-    commands.push(...createCommands(snapshot.harnesses, application.settings?.harnessPresets() ?? null, activeProject));
+    // Presets belong to this host; a paired host's project launches with that
+    // host's default.
+    const presets = activeProject.project.host ? null : application.settings?.harnessPresets() ?? null;
+    commands.push(...createCommands(snapshot.harnesses, presets, activeProject));
     commands.push(...worktreeRows(activeProject));
   }
   commands.push(projectCreateCommand(), ...projectRows(listed, activeProject));
@@ -185,6 +188,7 @@ export async function runCommandPaletteCommand(application: PattermApplication, 
   }
   if (id.startsWith('spawn:preset:')) {
     if (!projectId) throw new Error('No active project');
+    if (activeProject?.project.host) throw new Error('Presets launch only in this host\'s projects');
     const presetId = id.slice('spawn:preset:'.length);
     const preset = application.settings?.harnessPresets().presets.find((candidate) => candidate.id === presetId);
     if (!preset) throw new Error('That preset no longer exists');
