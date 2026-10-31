@@ -139,6 +139,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A message you send to an OpenCode agent mid-turn shows in the conversation
+  as a greyed-out message, with Queued and Cancel beneath it, until the agent
+  takes it, as it does on the other harnesses. It no longer sits in a separate
+  list above the composer.
 - An Integrated conversation scrolled up from the bottom fades out above the
   composer's edge, like it does under the header, instead of stopping at a
   hard edge above it.

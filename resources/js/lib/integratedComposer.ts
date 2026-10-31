@@ -230,10 +230,24 @@ export function outgoingTranscript(processId: string, messages: TranscriptMessag
   const queued = new Set(queue.map((item) => item.id));
   const visible = queue.length ? messages.filter((message) => !queued.has(message.id)) : messages;
   const pending = entries.filter((entry) => !isQueued(entry, queued) && !messages.some((message) => matchesOutgoing(entry, message)));
-  if (!pending.length) return visible;
+  // Prompts the harness queued natively follow the running turn as greyed
+  // messages, as a send does on the other harnesses. Patterm's held queue
+  // keeps its own list above the composer.
+  // The native row, once admitted, carries its attachments; the local copy is
+  // released as soon as one exists.
+  const waiting = queue.filter((item) => item.delivery === 'queue' || item.delivery === 'steer').map((item): TranscriptMessage => {
+    const row = messages.find((message) => message.id === item.id)
+      ?? entries.find((entry) => entry.row.id === item.id || entry.payload.messageId === item.id)?.row;
+    return {
+      ...(row ?? { id: item.id, role: 'user', kind: 'text', text: item.text }),
+      delivery: { state: 'queued', messageId: item.id }
+    };
+  });
+  if (!pending.length) return waiting.length ? [...visible, ...waiting] : visible;
   // Keep the send beside the content visible at submission, even while more
-  // assistant rows stream in. Entries sharing an anchor retain send order.
-  const result = [...visible];
+  // assistant rows stream in. Entries sharing an anchor retain send order, and
+  // a send made behind queued messages stays after them.
+  const result = [...visible, ...waiting];
   const lastAtAnchor = new Map<string | null, string>();
   for (const entry of pending) {
     const afterId = lastAtAnchor.get(entry.afterId) ?? entry.afterId;
