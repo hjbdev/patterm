@@ -189,6 +189,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Disconnecting a Claude conversation viewer while replies or streamed events
+  are pending no longer crashes its host and ends the native conversation.
 - OpenCode first launches in a project no longer wait for MCP handshakes one
   after another inside its configuration queue. Patterm registers servers
   disabled, then connects them concurrently through OpenCode's native API,
