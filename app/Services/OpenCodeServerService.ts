@@ -741,8 +741,9 @@ export class OpenCodeServerService {
     else if (type.startsWith('session.tool.')) this.applyToolEvent(projection, data, type, nested, at);
     else if (type === 'session.inbox.enqueued') {
       const inboxID = typeof data.inboxID === 'string' ? data.inboxID : '';
-      const payload = record(record(data.item).payload);
-      if (inboxID && typeof payload.text === 'string') nested({ kind: 'replace', message: { id: inboxID, role: 'user', kind: 'text', text: payload.text, createdAt: at, completedAt: at } });
+      const item = record(data.item);
+      const payload = record(item.payload);
+      if (inboxID && item.type === 'user' && typeof payload.text === 'string') nested({ kind: 'replace', message: { id: inboxID, role: 'user', kind: 'text', text: payload.text, createdAt: at, completedAt: at } });
     }
   }
 

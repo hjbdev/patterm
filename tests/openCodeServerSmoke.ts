@@ -786,6 +786,8 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const beforeChild = streamed.length;
     daemonState.emit('session.tool.input.started', { sessionID: first, assistantMessageID: 'msg_v2', id: 'call_sub', name: 'subagent' });
     daemonState.emit('session.tool.progress', { sessionID: first, assistantMessageID: 'msg_v2', id: 'call_sub', metadata: { sessionID: 'ses_live_child', status: 'running' } });
+    daemonState.emit('session.inbox.enqueued', { sessionID: 'ses_live_child', inboxID: 'msg_child_prompt', item: { type: 'user', payload: { text: 'explore' }, delivery: 'steer' } });
+    daemonState.emit('session.inbox.enqueued', { sessionID: 'ses_live_child', inboxID: 'msg_child_synthetic', item: { type: 'synthetic', payload: { text: '<subagent id="ses_grandchild">done</subagent>' }, delivery: 'steer' } });
     daemonState.emit('session.text.started', { sessionID: 'ses_live_child', assistantMessageID: 'msg_child', ordinal: 0 });
     daemonState.emit('session.text.delta', { sessionID: 'ses_live_child', assistantMessageID: 'msg_child', ordinal: 0, delta: 'child text' });
     daemonState.emit('session.text.ended', { sessionID: 'ses_live_child', assistantMessageID: 'msg_child', ordinal: 0, text: 'child text' });
@@ -795,6 +797,8 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const subRow = childEvents.find((event) => event.kind === 'replace' && event.message?.tool?.name === 'subagent')?.message?.id;
     assert.ok(subRow, 'the subagent tool row streams');
     assert.equal(childEvents.find((event) => event.kind === 'replace' && event.message?.text === 'child text')?.message?.parentId, subRow, 'child content nests under the subagent row');
+    assert.equal(childEvents.find((event) => event.message?.id === 'msg_child_prompt')?.message?.parentId, subRow, "a subagent's prompt nests under its row");
+    assert.ok(!childEvents.some((event) => event.message?.id === 'msg_child_synthetic'), "a subagent's synthetic inbox item never shows");
     const childText = [...childEvents].reverse().find((event) => event.kind === 'replace' && event.message?.text === 'child text')?.message;
     assert.ok(childText?.createdAt && childText.completedAt, 'without an envelope time the host clock stamps live rows');
     assert.ok(!childEvents.some((event) => event.kind === 'status'), 'a subagent going idle does not settle the parent');
