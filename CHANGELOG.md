@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The model picker in an Integrated OpenCode conversation shows each model's
+  provider beside its name, so models with the same name from different
+  providers can be told apart. OpenCode's own plans show as "Zen" and "Go".
+  Searching the picker matches the provider too.
+
 ## [0.3.0] - 2026-10-31
 
 ### Added

@@ -234,7 +234,7 @@ export interface ConversationProjection {
   queue: IntegratedQueuedMessage[];
 }
 
-export interface IntegratedControlSelector { id: string; label: string; value: string; options: Array<{ value: string; label: string }> }
+export interface IntegratedControlSelector { id: string; label: string; value: string; options: Array<{ value: string; label: string; description?: string }> }
 // Patterm commands run in the renderer and never reach the native agent.
 export interface IntegratedNativeCommand { name: string; description?: string; source?: 'patterm' }
 // `revision`, when the provider has one, matches the `controls_revision` its

@@ -121,6 +121,7 @@ export function withIntegratedSelectors(commands: CommandDescriptor[], processId
     actions: selector.options.map(option => ({
       id: `integrated:configure:${processId}:${selector.id}:${option.value}`,
       label: option.label,
+      ...(option.description ? { hint: option.description } : {}),
       ...(option.value === selector.value ? { current: true } : {}),
       group: 'current',
       kind: 'renderer',

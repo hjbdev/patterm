@@ -224,7 +224,7 @@ import { interceptMcpCallbackPaste } from '../lib/mcpCallbackPaste';
 import { processStatusIcon, sessionStatusIcon } from '../lib/statusIcons';
 import { touchScreen } from '../lib/touch';
 
-interface Selector { id: string; label: string; value: string; options: Array<{ value: string; label: string }> }
+interface Selector { id: string; label: string; value: string; options: Array<{ value: string; label: string; description?: string }> }
 interface NativeCommand { name: string; description?: string; source?: 'patterm' }
 interface WorktreeFile { path: string; name: string; matches?: number[] }
 

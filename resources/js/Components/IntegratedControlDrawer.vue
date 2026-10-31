@@ -35,6 +35,7 @@
           @click="choose(editing, option.value); editingId = null"
         >
           <span class="min-w-0 flex-1 truncate">{{ option.label }}</span>
+          <span v-if="option.description" class="max-w-[45%] shrink-0 truncate text-xs text-muted-foreground">{{ option.description }}</span>
           <Check v-if="option.value === editing.value" class="h-4 w-4 shrink-0" aria-hidden="true" />
         </button>
         <p v-if="!filteredOptions.length" class="py-6 text-center text-sm text-muted-foreground">No matching {{ editing.label.toLowerCase() }}.</p>
@@ -101,7 +102,7 @@ import { SliderRange, SliderRoot, SliderThumb, SliderTrack } from 'reka-ui';
 import { Button } from './ui/button';
 import ResponsiveMenu from './ResponsiveMenu.vue';
 
-type Option = { value: string; label: string };
+type Option = { value: string; label: string; description?: string };
 type Selector = { id: string; label: string; value: string; options: Option[] };
 
 // Claude and Codex call reasoning `effort`, OpenCode `variant`. Their levels
@@ -119,7 +120,7 @@ const FILTER_AFTER = 8;
 const editing = computed(() => props.selectors.find((selector) => selector.id === editingId.value) ?? null);
 const filteredOptions = computed(() => {
   const query = filter.value.trim().toLowerCase();
-  return editing.value?.options.filter((option) => !query || option.label.toLowerCase().includes(query) || option.value.toLowerCase().includes(query)) ?? [];
+  return editing.value?.options.filter((option) => !query || option.label.toLowerCase().includes(query) || option.description?.toLowerCase().includes(query) || option.value.toLowerCase().includes(query)) ?? [];
 });
 watch(open, () => { editingId.value = null; });
 watch(editingId, () => { filter.value = ''; });

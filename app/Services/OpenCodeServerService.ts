@@ -1241,17 +1241,23 @@ export class OpenCodeServerService {
   async controls(processId: string): Promise<IntegratedControls> {
     const runtime = this.runtime(processId);
     const location = `?${new URLSearchParams({ 'location[directory]': runtime.cwd })}`;
-    const [modelResult, agentResult, commandResult, defaultResult] = await Promise.all([
+    const [modelResult, agentResult, commandResult, defaultResult, providerResult] = await Promise.all([
       this.api(runtime.executable, runtime.cwd, 'GET', `/api/model${location}`),
       this.api(runtime.executable, runtime.cwd, 'GET', `/api/agent${location}`),
       this.api(runtime.executable, runtime.cwd, 'GET', `/api/command${location}`),
-      this.api(runtime.executable, runtime.cwd, 'GET', `/api/model/default${location}`)
+      this.api(runtime.executable, runtime.cwd, 'GET', `/api/model/default${location}`),
+      // Provider names only label the model list, so the picker survives without them.
+      this.api(runtime.executable, runtime.cwd, 'GET', `/api/provider${location}`).catch(() => null)
     ]);
+    const providerNames = new Map(dataRows(providerResult).flatMap((item) => {
+      const id = stringValue(item.id);
+      return id ? [[id, providerLabel(stringValue(item.name) ?? id)] as [string, string]] : [];
+    }));
     const models = dataRows(modelResult).flatMap((item) => {
       const providerID = stringValue(item.providerID);
       const id = stringValue(item.id ?? item.modelID);
       return providerID && id && item.enabled !== false
-        ? [{ value: `${providerID}/${id}`, label: stringValue(item.name) ?? `${providerID}/${id}` }]
+        ? [{ value: `${providerID}/${id}`, label: stringValue(item.name) ?? `${providerID}/${id}`, description: providerNames.get(providerID) ?? providerID }]
         : [];
     });
     const agents = dataRows(agentResult).flatMap((item) => {
@@ -1979,6 +1985,12 @@ function dataRows(value: unknown): Array<Record<string, unknown>> {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value ? value : undefined;
+}
+
+// Every model runs in OpenCode, so its own plans drop the prefix: "OpenCode Go"
+// shows as "Go", and plain "OpenCode", its Zen plan, as "Zen".
+function providerLabel(name: string): string {
+  return name.replace(/^opencode\b\s*/i, '') || 'Zen';
 }
 
 // OpenCode reports idle sessions by omitting them from the server-scoped active
