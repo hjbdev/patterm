@@ -93,6 +93,8 @@ async function main(): Promise<void> {
     const windowed = windowRepo.snapshot().projects.find((item) => item.project.id === 'p_window')!;
     assert.deepEqual(windowed.projectSessions.map((session) => session.id), ['s_live', 's_recent', 's_assigned'], 'sessions that ended over a day ago leave the snapshot unless assigned');
     assert.deepEqual(windowed.processes.map((process) => process.id), ['cmd_running', 'cmd_recent'], 'processes that ended over a day ago leave the snapshot');
+    db.prepare(`update processes set updated_at = ? where id = 'agent_live'`).run(at(1));
+    assert.equal(windowRepo.snapshot().projects.find((item) => item.project.id === 'p_window')!.projectSessions.find((session) => session.id === 's_live')?.activityAt, at(1), 'a session carries its process\'s last change for sorting by activity');
     const windowSessions = () => windowRepo.snapshot().projects.find((item) => item.project.id === 'p_window')!.projectSessions.map((session) => session.id);
     db.prepare(`insert into todo_assignments (todo_id, assignee_id, session_id) values ('t_window', 's_old', 's_old')`).run();
     assert.ok(windowSessions().includes('s_old'), 'assigning a todo to an ended session brings it back into the snapshot');

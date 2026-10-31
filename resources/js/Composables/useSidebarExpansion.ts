@@ -9,6 +9,8 @@ export interface SidebarExpansion {
   subtitles: boolean;
   processes: boolean;
   groupByStatus: boolean;
+  // Newest activity first within each group, instead of the order you give it.
+  sortByActivity: boolean;
   // Only while showing all agents. Off, the list keeps the order you give it.
   groupByProject: boolean;
   // Subagents and servers listed under their agent. Off, the list is flatter,
@@ -18,7 +20,7 @@ export interface SidebarExpansion {
   hiddenMembers: string[];
 }
 
-const DEFAULTS: SidebarExpansion = { overrides: {}, followActive: false, subtitles: true, processes: false, groupByStatus: false, groupByProject: true, members: true, hiddenMembers: [] };
+const DEFAULTS: SidebarExpansion = { overrides: {}, followActive: false, subtitles: true, processes: false, groupByStatus: false, sortByActivity: false, groupByProject: true, members: true, hiddenMembers: [] };
 const KEY_PREFIX = 'patterm.sidebar.expansion.';
 
 function read(projectId: string): SidebarExpansion {

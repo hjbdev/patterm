@@ -15,6 +15,7 @@ import {
   processesByOwner,
   selectedThread,
   sessionAttention,
+  sortByActivity,
   type SidebarTreeView,
   type SidebarUrgency
 } from '../resources/js/lib/sidebarTree';
@@ -215,6 +216,20 @@ Object.defineProperty(globalThis, 'localStorage', {
   configurable: true,
   value: { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => store.set(key, value), removeItem: (key: string) => store.delete(key) }
 });
+// Sorted by recent activity, a family's newest change, its own or a
+// subagent's, puts it first. Agents without a time sort by when they started.
+{
+  const at = (record: SessionRecord, activityAt: string | null) => ({ ...record, activityAt });
+  const sortTabs = buildStripTabs(buildAgentTabFamilies([
+    at(session('quiet'), '2026-01-02T00:00:00.000Z'),
+    at(session('busy'), '2026-01-01T00:00:00.000Z'),
+    at(session('busy-helper', 'busy'), '2026-01-03T00:00:00.000Z'),
+    at(session('fresh'), '2026-01-02T12:00:00.000Z'),
+    session('old-host')
+  ]), []);
+  assert.deepEqual(sortByActivity(sortTabs).map((tab) => tab.key), ['agent:busy', 'agent:fresh', 'agent:quiet', 'agent:old-host']);
+}
+
 void (async () => {
   const expansion = useSidebarExpansion(() => 'one');
   assert.equal(expansion.isOpen('root', true), false, 'families start closed');

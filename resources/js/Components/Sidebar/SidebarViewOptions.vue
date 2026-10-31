@@ -16,6 +16,7 @@
       <DropdownMenuCheckboxItem :model-value="groupingByStatus" class="text-[13px]" @update:model-value="setGrouping('status', Boolean($event))" @select.prevent>Group by status</DropdownMenuCheckboxItem>
       <!-- One grouping at a time; with neither, All agents keeps the order you give it. -->
       <DropdownMenuCheckboxItem v-if="sidebar.allAgents.value" :model-value="expansion.state.value.groupByProject" class="text-[13px]" @update:model-value="setGrouping('project', Boolean($event))" @select.prevent>Group by project</DropdownMenuCheckboxItem>
+      <DropdownMenuCheckboxItem v-model="expansion.state.value.sortByActivity" class="text-[13px]" @select.prevent>Sort by recent activity</DropdownMenuCheckboxItem>
       <DropdownMenuCheckboxItem v-model="expansion.state.value.followActive" class="text-[13px]" @select.prevent>Open the agent I'm in</DropdownMenuCheckboxItem>
       <!-- Shared with the tab strip, which toggles it from the command palette. -->
       <DropdownMenuCheckboxItem :model-value="showSnoozed" class="text-[13px]" @update:model-value="setShowSnoozed(Boolean($event))" @select.prevent>Show snoozed</DropdownMenuCheckboxItem>
