@@ -183,6 +183,7 @@ let holdCount = 0;
 let longChild = false;
 // Set by renaming a thread to "fail-items": later transcript reads fail.
 let itemsFail = false;
+let threadSettings = {};
 function serve(socket) {
   const notify = (method, params) => socket.send(JSON.stringify({jsonrpc:'2.0', method, params}));
   let initialized = false;
@@ -200,6 +201,9 @@ function serve(socket) {
           notify('thread/status/changed', {threadId:'thread_test', status:{type:'active', activeFlags:[]}});
         }
         return;
+      }
+      if (request.method === 'turn/start' && request.params.threadId === 'thread_test') {
+        threadSettings = {...(request.params.model ? {model:request.params.model} : {}), ...(request.params.effort ? {reasoningEffort:request.params.effort} : {})};
       }
       // Like the real app-server, the host's one connection initialises once.
       if (request.method === 'initialize') {
@@ -390,7 +394,9 @@ function serve(socket) {
           ? [...items, ...Array.from({length:250},(_,index)=>({turnId:'turn_test',item:{type:'agentMessage',id:'history_' + index,text:'history ' + index}}))]
           : items;
         const selected = process.env.DELAY_ITEMS && itemsListCalls === 1 ? [] : base;
-        const limit = typeof request.params.limit === 'number' ? request.params.limit : selected.length;
+        // Codex 0.166 returns at most 100 items whatever limit is asked for.
+        // STALE_REFRESH needs a full window, which new rows then trim.
+        const limit = Math.min(typeof request.params.limit === 'number' ? request.params.limit : selected.length, process.env.STALE_REFRESH ? Infinity : 100);
         // Like Codex, a descending read returns an opaque object cursor that
         // continues past the rows already returned.
         const skip = request.params.cursor && typeof request.params.cursor === 'object' ? request.params.cursor.skip : 0;
@@ -428,7 +434,8 @@ function serve(socket) {
         else if (request.params.threadId === 'thread_long') send({jsonrpc:'2.0', id:request.id, result:{thread:{id:'thread_long',parentThreadId:'thread_test',turns:[],status:longChild ? {type:'active',activeFlags:[]} : {type:'idle'}}}});
         else if (request.params.threadId === 'thread_child' || request.params.threadId === 'thread_native') send({jsonrpc:'2.0', id:request.id, result:{thread:{id:request.params.threadId,parentThreadId:'thread_test',turns:[]}}});
         else if (process.env.HOLD_TURN || process.env.CHILD_OUTLIVES) send({jsonrpc:'2.0', id:request.id, result:{thread:{turns:[],status:holdTurn ? {type:'active',activeFlags:holdApproval ? ['waitingOnApproval'] : []} : {type:'idle'}}}});
-        else send({jsonrpc:'2.0', id:request.id, result:{thread:{turns:[]}}});
+        // Like Codex, the thread keeps the model and effort its last turn ran with.
+        else send({jsonrpc:'2.0', id:request.id, result:{thread:{turns:[],...threadSettings}}});
       }
       else if (request.method === 'turn/interrupt') {
         send({jsonrpc:'2.0', id:request.id, result:{}});
@@ -646,6 +653,19 @@ if (socketPath) {
   assert.equal(restoredTurn.model, 'gpt-test', 'a new bridge instance retains the session launch model');
   assert.equal(restoredTurn.effort, 'high', 'a new bridge instance retains the session launch reasoning');
   presetRestoredService.disconnect();
+  // Picks live in memory. A new bridge instance starts from the settings the
+  // thread last ran with, not the launch preset.
+  await service.configure('process_test', 'effort', 'low');
+  await service.prompt('process_test', { text: 'Lower effort', references: [], attachments: [] });
+  const pickRestoredService = new CodexAppServerService(database, runtimeDirectory);
+  assert.equal((await pickRestoredService.controls('process_test')).selectors.find((item) => item.id === 'effort')?.value, 'low', 'a new bridge instance shows the effort the thread last ran with');
+  await pickRestoredService.prompt('process_test', { text: 'After picked restart', references: [], attachments: [] });
+  const pickedConversation = JSON.parse(JSON.stringify(await pickRestoredService.conversation('process_test'))) as { messages: { data: Array<{ id: string; text: string }> } };
+  const pickedTurn = JSON.parse(pickedConversation.messages.data.filter((message) => message.id === 'turn_echo').at(-1)!.text) as { model?: string; effort?: string };
+  assert.equal(pickedTurn.model, 'gpt-test');
+  assert.equal(pickedTurn.effort, 'low', 'a new bridge instance keeps the effort the thread last ran with');
+  pickRestoredService.disconnect();
+  await service.configure('process_test', 'effort', 'high');
   assert.ok(!turnEcho.input.some((item) => item.type === 'mention'), 'filesystem paths never use app/plugin mention items');
   // Voice: the browser's offer is answered through the thread, and realtime
   // notifications reach only that thread's listeners.
