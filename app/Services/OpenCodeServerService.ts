@@ -134,6 +134,7 @@ export class OpenCodeServerService {
   private readonly token: string;
   private readonly selections = new Map<string, { agent?: string; model?: string; variant?: string }>();
   private readonly installedMcp = new Map<string, string>();
+  private readonly preparing = new Map<string, Promise<IntegratedLaunchResult>>();
   // Server replacements run one at a time, so a launch never restarts a
   // server another launch has just replaced.
   private replacing: Promise<unknown> = Promise.resolve();
@@ -1589,7 +1590,7 @@ export class OpenCodeServerService {
   // then connect through the per-server endpoint concurrently; resources,
   // prompts, authentication and tool discovery remain owned by OpenCode.
   private async installGlobalMcpServers(executable: string, cwd: string, location: URLSearchParams, configs: Record<string, Record<string, unknown>>, daemonRestarted: boolean, reconnect: boolean): Promise<void> {
-    const pending: Array<{ key: string; body: string; route: string }> = [];
+    const pending: Array<{ name: string; key: string; body: string; route: string }> = [];
     await Promise.all(Object.entries(configs).map(async ([name, config]) => {
       const key = `${cwd}\0${name}`;
       const body = JSON.stringify(config);
@@ -1599,14 +1600,23 @@ export class OpenCodeServerService {
         if (changed) {
           await this.api(executable, cwd, 'PUT', `${route}?${location}`, { config: { ...config, disabled: true } });
         }
-        if (changed || reconnect) pending.push({ key, body, route });
+        if (changed || reconnect) pending.push({ name, key, body, route });
       } catch {
         this.installedMcp.delete(key);
       }
     }));
-    await Promise.all(pending.map(async ({ key, body, route }) => {
+    if (!pending.length) return;
+    const listed = await this.api(executable, cwd, 'GET', `/api/mcp?${location}`) as {
+      data?: Array<{ name: string; status: { status: string } }>;
+    };
+    const statuses = new Map((listed.data ?? []).map((server) => [server.name, server.status.status]));
+    await Promise.all(pending.map(async ({ name, key, body, route }) => {
       try {
-        await this.api(executable, cwd, 'POST', `${route}/connect?${location}`);
+        // An empty Patterm cache does not mean the native client is new: an
+        // unchanged disabled PUT leaves a surviving connection untouched.
+        if (reconnect || statuses.get(name) === 'disabled') {
+          await this.api(executable, cwd, 'POST', `${route}/connect?${location}`);
+        }
         this.installedMcp.set(key, body);
       } catch {
         this.installedMcp.delete(key);
@@ -1615,6 +1625,16 @@ export class OpenCodeServerService {
   }
 
   async prepare(input: IntegratedLaunchInput): Promise<IntegratedLaunchResult> {
+    // A directory's bridge and MCP clients are shared. Later launches reuse
+    // the first launch's installation rather than racing a second connect.
+    const previous = this.preparing.get(input.cwd) ?? Promise.resolve();
+    const prepared = previous.catch(() => undefined).then(() => this.prepareInDirectory(input));
+    this.preparing.set(input.cwd, prepared);
+    try { return await prepared; }
+    finally { if (this.preparing.get(input.cwd) === prepared) this.preparing.delete(input.cwd); }
+  }
+
+  private async prepareInDirectory(input: IntegratedLaunchInput): Promise<IntegratedLaunchResult> {
     const { executable, cwd, mcp } = input;
     // The native API caps each durable instruction entry at 8 KiB.
     if (Buffer.byteLength(JSON.stringify(input.context)) > 8 * 1024) throw new Error('Patterm context exceeds the OpenCode instruction limit');

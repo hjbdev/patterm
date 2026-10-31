@@ -53,8 +53,9 @@ const body = json ? JSON.parse(json) : undefined;
 const rows = fs.existsSync(process.env.RECORD) ? fs.readFileSync(process.env.RECORD, 'utf8').trim().split('\\n').filter(Boolean).map(JSON.parse) : [];
 if (process.env.REJECT_PROMPT && method === 'POST' && route.endsWith('/prompt')) { console.log('HTTP 400 Bad Request'); process.exit(1); }
 if (process.env.REJECT_COMPACT && method === 'POST' && route.endsWith('/compact')) { console.log('HTTP ' + process.env.REJECT_COMPACT); process.exit(1); }
-fs.appendFileSync(process.env.RECORD, JSON.stringify({method,route,body})+'\\n');
-if (process.env.FAIL_MCP_CONNECT && method === 'POST' && route.split('?')[0] === '/api/experimental/mcp/helped/connect' && !fs.existsSync(process.env.FAIL_MCP_CONNECT)) {
+const failMcpConnect = process.env.FAIL_MCP_CONNECT && method === 'POST' && route.split('?')[0] === '/api/experimental/mcp/helped/connect' && !fs.existsSync(process.env.FAIL_MCP_CONNECT);
+fs.appendFileSync(process.env.RECORD, JSON.stringify({method,route,body,...(failMcpConnect ? {failed:true} : {})})+'\\n');
+if (failMcpConnect) {
   fs.writeFileSync(process.env.FAIL_MCP_CONNECT, 'failed'); console.log('HTTP 500 Internal Server Error'); process.exit(1);
 }
 if (process.env.MCP_OVERLAP && method === 'PUT' && route.startsWith('/api/experimental/mcp/') && !route.startsWith('/api/experimental/mcp/patterm_') && body.config.disabled !== true) {
@@ -80,8 +81,8 @@ else if (method === 'GET' && route.startsWith('/api/command?')) console.log(JSON
 else if (method === 'GET' && route.startsWith('/api/mcp?')) {
   const names = new Set(rows.filter(x => x.method === 'PUT' && x.route.startsWith('/api/experimental/mcp/')).map(x => x.route.split('/').at(-1).split('?')[0]));
   console.log(JSON.stringify({data:[...names].map(name => {
-    const last = rows.findLast(x => x.route.split('?')[0] === '/api/experimental/mcp/' + name || x.route.split('?')[0] === '/api/experimental/mcp/' + name + '/connect');
-    const connected = rows.some(x => x.method === 'POST' && x.route.split('?')[0] === '/api/experimental/mcp/' + name + '/connect');
+    const last = rows.findLast(x => x.method === 'PUT' && x.route.split('?')[0] === '/api/experimental/mcp/' + name);
+    const connected = rows.some(x => x.method === 'POST' && !x.failed && x.route.split('?')[0] === '/api/experimental/mcp/' + name + '/connect');
     return {name,status:{status:connected || last.body?.config.disabled !== true ? 'connected' : 'disabled'}};
   })}));
 } else if (method === 'POST' && route.endsWith('/interrupt')) {
@@ -274,6 +275,11 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const coldRequests = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line)).slice(coldCount);
     assert.deepEqual(coldRequests.filter((request) => request.route.startsWith('/api/experimental/mcp/helped')).map((request) => `${request.method} ${request.route.split('?')[0]}`),
       ['PUT /api/experimental/mcp/helped', 'POST /api/experimental/mcp/helped/connect'], 'a restart reconnects even when Patterm forgot what it installed');
+    const survivingCount = fs.readFileSync(record, 'utf8').trim().split('\n').length;
+    await new OpenCodeServerService(database, env, { persistent: true }).prepare(input);
+    const survivingRequests = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line)).slice(survivingCount);
+    assert.equal(survivingRequests.filter((request) => request.method === 'POST' && request.route.startsWith('/api/experimental/mcp/')).length, 0,
+      'a cold Patterm cache must not reconnect surviving native clients on an ordinary launch');
     // Configuration PUTs share a native lock; only POST /connect can overlap
     // handshakes. Reject enabled PUTs, and hold connects at a rendezvous.
     const overlap = path.join(directory, 'mcp-overlap.log');
@@ -282,13 +288,21 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
       .prepare({ ...input, cwd: fs.mkdtempSync(path.join(directory, 'fresh-')), mcp: { ...mcp, env: { ...mcp.env, PATTERM_MCP_SOCKET: `${socketPath}-fresh` } }, mcpServers: servers });
     assert.deepEqual(fs.readFileSync(overlap, 'utf8').trim().split('\n').slice(0, servers.length), servers.map(() => 'start'),
       'global MCP servers connect concurrently outside native configuration reconciliation');
-    const retryService = new OpenCodeServerService(database, { ...env, FAIL_MCP_CONNECT: path.join(directory, 'failed-connect') }, { persistent: true });
+    const retryRecord = path.join(directory, 'retry.jsonl');
+    const retryService = new OpenCodeServerService(database, { ...env, RECORD: retryRecord, FAIL_MCP_CONNECT: path.join(directory, 'failed-connect') }, { persistent: true });
     await retryService.prepare(input);
-    const retryCount = fs.readFileSync(record, 'utf8').trim().split('\n').length;
+    const retryCount = fs.readFileSync(retryRecord, 'utf8').trim().split('\n').length;
     await retryService.prepare(input);
-    const retries = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line)).slice(retryCount);
+    const retries = fs.readFileSync(retryRecord, 'utf8').trim().split('\n').map((line) => JSON.parse(line)).slice(retryCount);
     assert.deepEqual(retries.filter((request) => request.route.startsWith('/api/experimental/mcp/helped')).map((request) => request.method), ['PUT', 'POST'],
       'a failed connection is not cached as installed and is retried on the next launch');
+    const concurrentRecord = path.join(directory, 'concurrent.jsonl');
+    const concurrentService = new OpenCodeServerService(database, { ...env, RECORD: concurrentRecord }, { persistent: true });
+    const concurrent = await Promise.all([concurrentService.prepare(input), concurrentService.prepare(input)]);
+    assert.notEqual(concurrent[0].resumeId, concurrent[1].resumeId, 'overlapping launches still create separate sessions');
+    const concurrentRequests = fs.readFileSync(concurrentRecord, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    assert.equal(concurrentRequests.filter((request) => request.method === 'POST' && request.route.split('?')[0] === '/api/experimental/mcp/helped/connect').length, 1,
+      'overlapping cold launches do not reconnect the same shared helper twice');
     for (const [index, id] of [first, second].entries()) {
       database.connection.prepare(`insert into processes (id,project_id,kind,name,status,created_at,updated_at) values (?, 'project_test','agent','Fixture','running',?,?)`).run(`process_${index}`, now, now);
       database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor) values (?, 'project_test',?,'opencode',?,?,?,'orchestrator','found','user')`).run(`session_${index}`, `process_${index}`, `identity_${index}`, id, now);
