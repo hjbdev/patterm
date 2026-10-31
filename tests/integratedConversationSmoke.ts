@@ -482,6 +482,7 @@ assert.equal(attachments[2]?.detail, '/tmp/report.pdf');
   assert.deepEqual(grouped.map((row) => row.id), ['tools:read_1', 'task_1', 'orphan', 'tools:read_2'], 'a subagent row breaks tool grouping');
   assert.equal(transcriptRowIndexForMessage(grouped, 'grandchild'), 1, 'jumping to a nested row finds its subagent row');
   assert.deepEqual(normaliseMessages([{ id: 'native', type: 'assistant', parentId: 'task_1', content: [{ type: 'text', text: 'Native child' }] }])[0]?.parentId, 'task_1', 'native rows keep their parent');
+  assert.equal(normaliseMessages([{ id: 'prompt', type: 'user', parentId: 'task_1', text: 'Lead update' }])[0]?.parentId, 'task_1', 'an OpenCode subagent prompt keeps its parent');
   const cyclic = nestSubagentMessages([
     { id: 'a', role: 'assistant', kind: 'text', text: 'a', parentId: 'b' },
     { id: 'b', role: 'assistant', kind: 'text', text: 'b', parentId: 'a' }
@@ -640,6 +641,8 @@ assert.deepEqual([0, 42_900, 185_000, 4_380_000].map(elapsedLabel), ['0s', '42s'
   assert.deepEqual(origin('[report from process_7: done]\nTitle\nBody'), { kind: 'agent', processId: 'process_7', status: 'done', body: 'Title\nBody' });
   assert.deepEqual(origin('[agent message from process_9 (Proj / Name), not the user]\nHi'), { kind: 'agent', processId: 'process_9', name: 'Proj / Name', body: 'Hi' });
   assert.deepEqual(origin('[Close requested by process_5 (Review #487)]\nAll checked.\nClose it with close_process once its work is settled, or send it follow-ups with send_message.'), { kind: 'agent', processId: 'process_5', name: 'Review #487', closeRequested: true, body: 'All checked.' });
+  assert.deepEqual(origin('[Failure reported by process_6 (preview (serve))]\npreview\nExited with code 1'), { kind: 'agent', processId: 'process_6', name: 'preview (serve)', status: 'failure', body: 'preview\nExited with code 1' });
+  assert.deepEqual(origin('[Attention needed by process_8 (Worker)]\nStuck'), { kind: 'agent', processId: 'process_8', name: 'Worker', body: 'Stuck' });
   assert.deepEqual(origin('[Patterm timer timer_1 (wait): condition met]\nprocess_7 reported done'), { kind: 'patterm', label: 'Timer', detail: 'timer_1 (wait): condition met', body: 'process_7 reported done' });
   assert.deepEqual(origin('[Patterm notifications]\nA needs input'), { kind: 'patterm', label: 'Notifications', detail: '', body: 'A needs input' });
   assert.equal(origin('Please read [message from process_1] in the log'), undefined);

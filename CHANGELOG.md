@@ -187,6 +187,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An integrated OpenCode agent's messages to its own subagents no longer show
+  as your messages after a reload; they stay inside the subagent's row. A
+  failure or attention request a child routes to its parent now shows as that
+  child's message instead of as yours.
 - OpenCode starts much faster in a project it hasn't opened before. Patterm
   now adds your global MCP servers to OpenCode all at once instead of waiting
   for each one to connect in turn, which took about 10 seconds with 11 servers.
