@@ -149,6 +149,46 @@ async function main() {
   calls.length = 0;
   await runCommandPaletteCommand(recording, { id: 'spawn:agent:codex', context: integratedContext, input: { preset: 'fast', worktree_id: 'w', interface_mode: 'tui', initial_prompt: ' Fix the tests ', name: 'ignored', model: 'ignored' } });
   assert.deepEqual(calls, [{ name: 'harness_launch', args: { harness: 'codex', project_id: 'p', preset: 'fast', worktree_id: 'w', initial_prompt: 'Fix the tests', interface_mode: 'tui' } }]);
+  // Each preset of an installed agent gets a row, found by typing its name.
+  const presetSettings = {
+    presets: [
+      { id: 'claude_default', harness: 'claude', name: 'Default', model: null, reasoning: null, serviceTier: null, look: null },
+      { id: 'claude_opus', harness: 'claude', name: 'Opus max', model: 'claude-opus', reasoning: 'max', serviceTier: null, look: null },
+      { id: 'codex_fast', harness: 'codex', name: 'Fast', model: 'gpt-fast', reasoning: null, serviceTier: null, look: null },
+      { id: 'codex_default', harness: 'codex', name: 'Default', model: 'gpt-big', reasoning: null, serviceTier: null, look: null },
+      { id: 'opencode_big', harness: 'opencode', name: 'Big', model: 'big', reasoning: null, serviceTier: null, look: null }
+    ],
+    defaultPresetIdByHarness: { claude: 'claude_default', codex: 'codex_fast', opencode: null }
+  };
+  const withPresets = {
+    ...recording,
+    currentWorkbench: () => ({ projects: [integratedProject, otherProject], harnesses: ['claude', 'codex', 'rawpty'].map(harness => ({ harness, status: 'available' })) }),
+    settings: { harnessPresets: () => presetSettings }
+  } as unknown as typeof application;
+  const spawnRows = (await listCommandPaletteCommands(withPresets, integratedContext)).commands.filter(item => item.id.startsWith('spawn:agent:') || item.id.startsWith('spawn:preset:'));
+  const presetRows = spawnRows.filter(item => item.id.startsWith('spawn:preset:'));
+  assert.deepEqual(presetRows.map(item => [item.id, item.label, item.hint]), [
+    ['spawn:preset:claude_opus', 'Spawn Opus max', 'claude-opus · max'],
+    ['spawn:preset:codex_default', 'Spawn Codex', 'gpt-big']
+  ], 'The icon names the agent, a preset called Default reads as it, and default presets and presets of missing agents have no row');
+  assert.deepEqual(spawnRows.filter(item => item.id.startsWith('spawn:agent:')).map(item => [item.id, item.aliases]), [['spawn:agent:claude', undefined], ['spawn:agent:codex', ['Spawn Fast']]], 'Spawn Codex is found by its default preset');
+  assert.ok(presetRows.every(item => item.searchOnly), 'Preset rows wait for typing');
+  assert.equal(rankedCommands(presetRows as CommandDescriptor[], 'spawn opus')[0]?.command.id, 'spawn:preset:claude_opus', 'Spawn <preset> finds the row');
+  assert.equal(rankedCommands(presetRows as CommandDescriptor[], 'claude opus')[0]?.command.id, 'spawn:preset:claude_opus', 'The agent name finds its presets');
+  assert.equal(rankedCommands(spawnRows as CommandDescriptor[], 'fast')[0]?.command.id, 'spawn:agent:codex');
+  assert.ok(!rankedCommands(presetRows as CommandDescriptor[], '').length, 'Preset rows stay out of the opening list');
+  assert.equal(rankedCommands(presetRows as CommandDescriptor[], '', ['spawn:preset:claude_opus'])[0]?.command.id, 'spawn:preset:claude_opus', 'A preset run before shows under Recent');
+  calls.length = 0;
+  await runCommandPaletteCommand(withPresets, { id: 'spawn:preset:claude_opus', context: integratedContext, input: { preset: 'other', interface_mode: 'tui' } });
+  assert.deepEqual(calls, [{ name: 'harness_launch', args: { harness: 'claude', project_id: 'p', preset: 'claude_opus', interface_mode: 'tui' } }]);
+  await assert.rejects(runCommandPaletteCommand(withPresets, { id: 'spawn:preset:gone', context: integratedContext }), /no longer exists/);
+  // A paired host keeps its own presets, so its projects get none of these.
+  const remoteProject = { ...project, project: { ...project.project, id: 'remote:p', host: 'remote' } };
+  const remotePresets = { ...withPresets, currentWorkbench: () => ({ projects: [remoteProject], harnesses: withPresets.currentWorkbench().harnesses }) } as unknown as typeof application;
+  const remoteContext = { active_project_id: 'remote:p', active_terminal_id: null, active_tab: null };
+  const remoteSpawns = (await listCommandPaletteCommands(remotePresets, remoteContext)).commands.filter(item => item.id.startsWith('spawn:'));
+  assert.ok(!remoteSpawns.some(item => item.id.startsWith('spawn:preset:') || item.aliases), 'No local preset rows or aliases for a paired host project');
+  await assert.rejects(runCommandPaletteCommand(remotePresets, { id: 'spawn:preset:claude_opus', context: remoteContext }), /this host/);
   calls.length = 0;
   await runCommandPaletteCommand(recording, { id: 'history:resume:conversation_1', context: integratedContext, input: { interface_mode: 'integrated', replace_process_id: 'root_process' } });
   assert.deepEqual(calls, [{ name: 'history_resume', args: { conversation_id: 'conversation_1', project_id: 'p', interface_mode: 'integrated', replace_process_id: 'root_process' } }]);

@@ -1,6 +1,7 @@
 import type { PattermApplication } from '../App';
 import { FinishedSubagentsAction, type FinishedSubagent } from '../Actions/FinishedSubagentsAction';
 import type { RestartAllResult } from '../Actions/RestartAgentSessionAction';
+import type { HarnessPresetSettings, PresetHarness } from '../Harness/HarnessPresets';
 import { listedProject, type HarnessInstallationDto, type ProcessDto, type ProjectWorkbenchDto, type SessionDto, type WorktreeDto } from '../Repositories/WorkbenchRepository';
 
 export type CommandGroup = 'current' | 'agent' | 'process' | 'create' | 'navigation' | 'worktree' | 'project' | 'app';
@@ -64,6 +65,12 @@ export interface CommandDescriptor {
   inline?: boolean;
   // Run by the renderer without a round trip.
   result?: CommandRunResult;
+  // Other names the row is found by.
+  aliases?: string[];
+  // The agent whose icon the row shows.
+  harness?: string;
+  // Listed only once the user types, such as one row per preset.
+  searchOnly?: boolean;
 }
 
 export interface CommandRunPayload {
@@ -123,7 +130,10 @@ export async function listCommandPaletteCommands(application: PattermApplication
   for (const project of projects) commands.push(...agentRows(project, activeProject, current));
   for (const project of projects) commands.push(...processRows(project, activeProject, current));
   if (activeProject) {
-    commands.push(...createCommands(snapshot.harnesses, activeProject));
+    // Presets belong to this host; a paired host's project launches with that
+    // host's default.
+    const presets = activeProject.project.host ? null : application.settings?.harnessPresets() ?? null;
+    commands.push(...createCommands(snapshot.harnesses, presets, activeProject));
     commands.push(...worktreeRows(activeProject));
   }
   commands.push(projectCreateCommand(), ...projectRows(listed, activeProject));
@@ -174,6 +184,15 @@ export async function runCommandPaletteCommand(application: PattermApplication, 
     if (!projectId) throw new Error('No active project');
     const harness = id.slice('spawn:agent:'.length);
     const result = (await callTool(application, 'harness_launch', { harness, project_id: projectId, ...launchOptions(input) })) as { session_id?: string; pty_process_id?: string | null };
+    return { navigate: { projectId, ...(result.pty_process_id ? { terminalProcessId: result.pty_process_id } : { sessionId: result.session_id }) }, refresh: true };
+  }
+  if (id.startsWith('spawn:preset:')) {
+    if (!projectId) throw new Error('No active project');
+    if (activeProject?.project.host) throw new Error('Presets launch only in this host\'s projects');
+    const presetId = id.slice('spawn:preset:'.length);
+    const preset = application.settings?.harnessPresets().presets.find((candidate) => candidate.id === presetId);
+    if (!preset) throw new Error('That preset no longer exists');
+    const result = (await callTool(application, 'harness_launch', { harness: preset.harness, project_id: projectId, ...launchOptions(input), preset: preset.id })) as { session_id?: string; pty_process_id?: string | null };
     return { navigate: { projectId, ...(result.pty_process_id ? { terminalProcessId: result.pty_process_id } : { sessionId: result.session_id }) }, refresh: true };
   }
   if (id.startsWith('history:resume:')) {
@@ -493,16 +512,51 @@ function processRows(project: ProjectWorkbenchDto, activeProject: ProjectWorkben
   });
 }
 
-function createCommands(harnesses: HarnessInstallationDto[], project: ProjectWorkbenchDto): CommandDescriptor[] {
+function createCommands(harnesses: HarnessInstallationDto[], presets: HarnessPresetSettings | null, project: ProjectWorkbenchDto): CommandDescriptor[] {
+  const available = harnesses.filter((harness) => harness.status === 'available' && harness.harness !== 'rawpty').map((harness) => harness.harness);
   return [
-    ...harnesses
-      .filter((harness) => harness.status === 'available' && harness.harness !== 'rawpty')
-      .map((harness) => ({ id: `spawn:agent:${harness.harness}`, label: `Spawn ${HARNESS_LABELS[harness.harness] ?? harness.harness}`, group: 'create' as const, kind: 'backend' as const })),
+    ...available.map((harness) => spawnHarnessCommand(harness, presets)),
+    ...presetCommands(presets, available),
     { id: 'spawn:terminal', label: 'New terminal', group: 'create', kind: 'backend' },
     { id: 'spawn:process', label: 'New process…', hint: 'Run a command in this project', group: 'create', kind: 'backend', input: { type: 'process-form', title: 'New process' } },
     { id: 'worktree:create', label: 'Create worktree', hint: project.project.name, group: 'create', kind: 'backend', pages: ['worktrees'], input: { type: 'text', title: 'Create worktree', placeholder: 'Worktree name' } },
     { id: 'worktree:link', label: 'Link worktree…', hint: 'Choose an existing worktree directory', group: 'create', kind: 'backend', pages: ['worktrees'], input: { type: 'text', title: 'Link worktree', placeholder: '/path/to/worktree' } }
   ];
+}
+
+// Spawn Claude launches with Claude's default preset, so it is also found by
+// that preset's name.
+function spawnHarnessCommand(harness: string, settings: HarnessPresetSettings | null): CommandDescriptor {
+  const preset = settings?.presets.find((candidate) => candidate.id === settings.defaultPresetIdByHarness[harness as PresetHarness]);
+  return {
+    id: `spawn:agent:${harness}`,
+    label: `Spawn ${HARNESS_LABELS[harness] ?? harness}`,
+    ...(preset && preset.name.toLowerCase() !== 'default' ? { aliases: [`Spawn ${preset.name}`] } : {}),
+    group: 'create',
+    kind: 'backend'
+  };
+}
+
+// One row per other preset of an installed agent, found by typing its name.
+// The icon names the agent, so the label names only the preset; a preset
+// called Default reads as the agent.
+function presetCommands(settings: HarnessPresetSettings | null, harnesses: string[]): CommandDescriptor[] {
+  if (!settings) return [];
+  return settings.presets.flatMap((preset) => {
+    if (!harnesses.includes(preset.harness) || settings.defaultPresetIdByHarness[preset.harness] === preset.id) return [];
+    const harness = HARNESS_LABELS[preset.harness] ?? preset.harness;
+    const hint = [preset.model ?? `${harness}'s own model`, preset.reasoning].filter(Boolean).join(' · ');
+    return [{
+      id: `spawn:preset:${preset.id}`,
+      label: `Spawn ${preset.name.toLowerCase() === 'default' ? harness : preset.name}`,
+      hint,
+      aliases: [`Spawn ${harness} ${preset.name}`],
+      harness: preset.harness,
+      searchOnly: true,
+      group: 'create',
+      kind: 'backend'
+    } satisfies CommandDescriptor];
+  });
 }
 
 function worktreeRows(project: ProjectWorkbenchDto): CommandDescriptor[] {

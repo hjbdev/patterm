@@ -51,6 +51,8 @@ export interface CommandDescriptor {
   harness?: string;
   // Rows such as duration presets read better without icons.
   iconless?: boolean;
+  // Listed only once the user types or has run it, such as one row per preset.
+  searchOnly?: boolean;
 }
 
 export type PaletteSection = 'current' | 'recent' | 'suggested' | 'agent' | 'process' | 'create' | 'navigation' | 'worktree' | 'project' | 'search' | 'app';
@@ -171,7 +173,7 @@ const SECTION_LIMITS: Partial<Record<PaletteSection, number>> = { recent: 5, sug
 const INLINE_FALLBACK = 5;
 
 // Agents come first among things to create, then terminals and records.
-const CREATE_ORDER = ['page:launch', 'page:conversations', 'spawn:agent:', 'spawn:terminal', 'spawn:process', 'renderer:todo-create', 'renderer:scratchpad-create', 'worktree:', 'renderer:project-create'];
+const CREATE_ORDER = ['page:launch', 'page:conversations', 'spawn:agent:', 'spawn:preset:', 'spawn:terminal', 'spawn:process', 'renderer:todo-create', 'renderer:scratchpad-create', 'worktree:', 'renderer:project-create'];
 
 export interface RankOptions {
   // The workbench page, such as todos, used to rank commands made for it.
@@ -230,10 +232,11 @@ function sectionedRows(candidates: CommandDescriptor[], recentIds: string[], pag
     for (const command of members.slice(0, SECTION_LIMITS[section] ?? members.length)) add(command, section);
   };
   take('recent', recentIds.flatMap(id => candidates.find(command => command.id === id && !used.has(command)) ?? []));
+  const listed = candidates.filter(command => !command.searchOnly);
   // The agents page has its own section; other pages lift their commands.
-  if (page && page !== 'agents') take('suggested', candidates.filter(command => !used.has(command) && command.pages?.includes(page)));
+  if (page && page !== 'agents') take('suggested', listed.filter(command => !used.has(command) && command.pages?.includes(page)));
   for (const section of SECTION_ORDER) {
-    const members = candidates.filter(command => !used.has(command) && sectionFor(command) === section);
+    const members = listed.filter(command => !used.has(command) && sectionFor(command) === section);
     take(section, section === 'create' ? members.sort((a, b) => createRank(a) - createRank(b)) : members);
     if (section === 'navigation' && contentSearch) add(contentSearch, 'navigation');
   }

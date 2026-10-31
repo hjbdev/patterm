@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The command palette spawns presets directly. Type a preset's name, such as
+  "spawn opus", to find a row like Spawn Opus max, with the agent's icon and
+  the preset's model and reasoning. Spawn Claude still launches Claude's
+  default preset and is found by its name too. Preset rows stay out of the
+  opening list until you type, and a preset you launched shows under Recent.
+
 ### Changed
 
 - The model picker in an Integrated OpenCode conversation shows each model's
