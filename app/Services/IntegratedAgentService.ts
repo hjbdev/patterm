@@ -64,7 +64,8 @@ export interface IntegratedControlSelector {
   id: string;
   label: string;
   value: string;
-  options: Array<{ value: string; label: string }>;
+  // `description` is secondary text, such as the provider that serves a model.
+  options: Array<{ value: string; label: string; description?: string }>;
 }
 
 export interface IntegratedCommand {

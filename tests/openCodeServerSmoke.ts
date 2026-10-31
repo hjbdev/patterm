@@ -74,8 +74,11 @@ if (process.env.FAIL_API) { console.error(json); process.exit(1); }
 else if (method === 'GET' && route.startsWith('/api/model/default?')) console.log(JSON.stringify({data:{providerID:'openai',id:'gpt-other',modelID:'gpt-other'}}));
 else if (method === 'GET' && route.startsWith('/api/model?')) console.log(JSON.stringify({data:[
   {providerID:'openai',modelID:'gpt-other',name:'GPT Other',enabled:true,variants:[{id:'low'},{id:'high'}]},
-  {providerID:'openai',modelID:'gpt-test',name:'GPT Test',enabled:true,variants:[{id:'low'},{id:'high'}],limit:{context:400000,output:128000}}
+  {providerID:'openai',modelID:'gpt-test',name:'GPT Test',enabled:true,variants:[{id:'low'},{id:'high'}],limit:{context:400000,output:128000}},
+  {providerID:'opencode',modelID:'zen-model',name:'Zen Model',enabled:true},
+  {providerID:'opencode-go',modelID:'go-model',name:'Go Model',enabled:true}
 ]}));
+else if (method === 'GET' && route.startsWith('/api/provider?')) console.log(JSON.stringify({data:[{id:'openai',name:'OpenAI'},{id:'opencode',name:'OpenCode'},{id:'opencode-go',name:'OpenCode Go'}]}));
 else if (method === 'GET' && route.startsWith('/api/agent?')) console.log(JSON.stringify({data:[{name:'build',description:'Build'},{name:'plan',description:'Plan'}]}));
 else if (method === 'GET' && route.startsWith('/api/command?')) console.log(JSON.stringify({data:[{name:'review',description:'Review changes'}, ...(process.env.CUSTOM_UNDO ? [{name:'undo',description:'Custom undo'}] : [])]}));
 else if (method === 'GET' && route.startsWith('/api/mcp?')) {
@@ -321,6 +324,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const controls = await service.controls('process_0');
     assert.deepEqual(controls.selectors.map((selector) => selector.id), ['model', 'variant', 'agent']);
     assert.deepEqual(controls.selectors[1]?.options.map((option) => option.value), ['default', 'low', 'high']);
+    assert.deepEqual(controls.selectors[0]?.options.map((option) => option.description), ['OpenAI', 'OpenAI', 'Zen', 'Go'], 'each model names the provider that serves it, without OpenCode\'s own prefix');
     assert.deepEqual(controls.commands.at(-1), { name: 'review', description: 'Review changes' }, 'custom commands follow the TUI built-ins');
     await service.configure('process_0', 'agent', 'plan');
     await service.configure('process_0', 'model', 'openai/gpt-test');

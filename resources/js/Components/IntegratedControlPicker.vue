@@ -6,14 +6,15 @@
         <ChevronsUpDown class="h-3 w-3 shrink-0 opacity-60" aria-hidden="true" />
       </Button>
     </PopoverTrigger>
-    <PopoverContent align="start" class="w-64 max-w-[calc(100vw-2rem)] p-0">
+    <PopoverContent align="start" class="w-80 max-w-[calc(100vw-2rem)] p-0">
       <Command>
         <CommandInput :placeholder="`Search ${selector.label.toLowerCase()}…`" :aria-label="`Search ${selector.label.toLowerCase()}`" />
         <CommandList class="max-h-72">
           <CommandEmpty>No matching {{ selector.label.toLowerCase() }}.</CommandEmpty>
           <CommandGroup :heading="selector.label">
-            <CommandItem v-for="option in selector.options" :key="option.value" :value="`${option.label} ${option.value}`" @select="choose(option.value)">
+            <CommandItem v-for="option in selector.options" :key="option.value" :value="`${option.label} ${option.description ?? ''} ${option.value}`" @select="choose(option.value)">
               <span class="min-w-0 flex-1 truncate">{{ option.label }}</span>
+              <span v-if="option.description" class="max-w-[45%] shrink-0 truncate text-xs text-muted-foreground">{{ option.description }}</span>
               <Check v-if="option.value === selector.value" class="h-4 w-4 shrink-0" aria-hidden="true" />
             </CommandItem>
           </CommandGroup>
@@ -31,7 +32,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 
 const props = defineProps<{
-  selector: { id: string; label: string; value: string; options: Array<{ value: string; label: string }> };
+  selector: { id: string; label: string; value: string; options: Array<{ value: string; label: string; description?: string }> };
   disabled: boolean;
 }>();
 const emit = defineEmits<{ select: [value: string] }>();
