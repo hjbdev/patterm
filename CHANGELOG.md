@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `timer_set` callback now starts with a `[Patterm timer …]` header, as
+  other timer callbacks do. It no longer shows in the transcript, or reads to
+  the agent, as a message the user typed.
 - An Integrated OpenCode conversation no longer briefly shows a finished
   background subagent's raw `<subagent>` result as a message from you.
 - An Integrated Codex conversation can scroll back through its whole history

@@ -644,6 +644,7 @@ assert.deepEqual([0, 42_900, 185_000, 4_380_000].map(elapsedLabel), ['0s', '42s'
   assert.deepEqual(origin('[Failure reported by process_6 (preview (serve))]\npreview\nExited with code 1'), { kind: 'agent', processId: 'process_6', name: 'preview (serve)', status: 'failure', body: 'preview\nExited with code 1' });
   assert.deepEqual(origin('[Attention needed by process_8 (Worker)]\nStuck'), { kind: 'agent', processId: 'process_8', name: 'Worker', body: 'Stuck' });
   assert.deepEqual(origin('[Patterm timer timer_1 (wait): condition met]\nprocess_7 reported done'), { kind: 'patterm', label: 'Timer', detail: 'timer_1 (wait): condition met', body: 'process_7 reported done' });
+  assert.deepEqual(origin('[Patterm timer timer_2 (check): time elapsed]\nMeasure the rate'), { kind: 'patterm', label: 'Timer', detail: 'timer_2 (check): time elapsed', body: 'Measure the rate' }, 'a timer_set callback shows as Patterm, not the user');
   assert.deepEqual(origin('[Patterm notifications]\nA needs input'), { kind: 'patterm', label: 'Notifications', detail: '', body: 'A needs input' });
   assert.equal(origin('Please read [message from process_1] in the log'), undefined);
   assert.equal(transcriptMessageOrigin({ id: 'a', role: 'assistant', kind: 'text', text: '[message from process_1]\nx' }), undefined);

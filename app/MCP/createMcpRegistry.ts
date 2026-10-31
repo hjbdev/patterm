@@ -1272,7 +1272,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
   }, (args, context) => {
     const input = timerSetInput.parse(args);
     const owner = input.owner_process_id ? processFor(context, input.owner_process_id) : caller(context)?.process_id;
-    const timer = timerService.setDelay({ seconds: input.seconds, ownerProcessId: owner, body: input.body ?? `[system] timer${input.label ? ` ${input.label}` : ''} fired`, label: input.label });
+    const timer = timerService.setDelay({ seconds: input.seconds, ownerProcessId: owner, body: input.body ?? '', label: input.label });
     return { timer_id: timer.id };
   });
   registry.register({
