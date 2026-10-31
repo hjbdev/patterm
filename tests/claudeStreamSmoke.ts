@@ -447,6 +447,23 @@ process.stdin.on('data', (chunk) => {
     database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor) values ('session_test','project_test','process_test','claude','integrated','identity_test',?,?, 'orchestrator','found','user')`)
       .run(prepared.resumeId, now);
 
+    // A viewer can disappear with host replies still unread. Losing that
+    // socket must not end the native conversation or prevent a new viewer.
+    for (let attempt = 0; attempt < 8; attempt++) {
+      await new Promise<void>((resolve, reject) => {
+        const socket = net.createConnection(ipcPath(prepared.argv[2]!));
+        socket.once('error', reject);
+        socket.once('close', () => resolve());
+        socket.once('connect', () => {
+          const requests = [{ id: 'disconnect', method: 'subscribe' },
+            ...Array.from({ length: 32 }, (_, id) => ({ id, method: 'conversation' }))];
+          socket.write(requests.map((request) => JSON.stringify(request) + '\n').join(''), () => socket.destroy());
+        });
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await service.conversation('process_test');
+    }
+
     const events: IntegratedConversationEvent[] = [];
     const release = await service.subscribe('process_test', (event) => events.push(event));
     cleanup.push(release);

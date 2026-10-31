@@ -140,6 +140,9 @@ removeStaleIpc(config.socketPath);
 startClaude();
 
 const server = net.createServer((socket) => {
+  // A viewer may disconnect with replies or streamed events still unread.
+  // Socket errors belong to that connection, not the native Claude process.
+  socket.on('error', () => { subscribers.delete(socket); socket.destroy(); });
   let buffer = '';
   socket.setEncoding('utf8');
   socket.on('data', (chunk) => {
