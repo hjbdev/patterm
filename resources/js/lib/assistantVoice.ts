@@ -1,3 +1,5 @@
+import { randomId } from './randomId';
+
 // One GPT-Live voice call. The browser owns the microphone and the WebRTC peer;
 // Patterm relays only the offer and answer to the bot's Codex thread, so
 // audio flows directly between this client and OpenAI.
@@ -12,8 +14,9 @@ export class AssistantVoiceSession {
   private input: AnalyserNode | null = null;
   private readonly samples = new Uint8Array(512);
   private stopped = false;
-  // The server's ID for this call, so hanging up never ends a newer one.
-  private callId: string | null = null;
+  // Names this call to the server from the start, so hanging up ends only
+  // this call, even one still connecting, and never a newer one.
+  private readonly callId = randomId();
 
   constructor(
     // The bot the call is with, and its name for the call controls.
@@ -56,8 +59,7 @@ export class AssistantVoiceSession {
     // OpenAI's WebRTC endpoint expects the client to open its events channel.
     peer.createDataChannel('oai-events');
     await peer.setLocalDescription(await peer.createOffer());
-    const answer = await window.patterm.call('bot_voice_start', { bot_id: this.bot.id, sdp: peer.localDescription?.sdp ?? '' }) as { sdp?: unknown; call_id?: unknown };
-    if (typeof answer?.call_id === 'string') this.callId = answer.call_id;
+    const answer = await window.patterm.call('bot_voice_start', { bot_id: this.bot.id, sdp: peer.localDescription?.sdp ?? '', call_id: this.callId }) as { sdp?: unknown };
     if (this.stopped) {
       // Hung up while it connected: end the call the server just started.
       await this.hangUp();
@@ -86,7 +88,7 @@ export class AssistantVoiceSession {
   }
 
   private async hangUp(): Promise<void> {
-    await window.patterm.call('bot_voice_stop', { bot_id: this.bot.id, ...(this.callId ? { call_id: this.callId } : {}) }).catch(() => undefined);
+    await window.patterm.call('bot_voice_stop', { call_id: this.callId }).catch(() => undefined);
   }
 
   private fail(detail: string): void {

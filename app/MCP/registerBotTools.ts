@@ -15,10 +15,10 @@ const botRestartInput = z.object({
 });
 const botStateInput = z.object({ bot_id: z.string().min(1).optional() }).strict();
 // A browser's SDP offer for one audio track and a data channel is a few KiB.
-const voiceStartInput = z.object({ bot_id: z.string().min(1), sdp: z.string().min(1).max(64 * 1024) }).strict();
-// A client hangs up its own call by ID, or cancels its bot's call still
-// connecting when it has no ID yet.
-const voiceStopInput = z.object({ bot_id: z.string().min(1).optional(), call_id: z.string().min(1).optional() }).strict();
+// The client names the call, so it can hang it up even before the answer.
+const callId = z.string().min(8).max(80);
+const voiceStartInput = z.object({ bot_id: z.string().min(1), sdp: z.string().min(1).max(64 * 1024), call_id: callId.optional() }).strict();
+const voiceStopInput = z.object({ call_id: callId }).strict();
 const focusSetInput = z.object({ bot_id: z.string().min(1), enabled: z.boolean() }).strict();
 
 // Owner-only bot controls for Settings › Bots, the bot's page and the
@@ -70,14 +70,14 @@ export function registerBotTools(
     async (args) => {
       const input = voiceStartInput.parse(args);
       await bots.ensure(input.bot_id);
-      return relay.startVoice(input.bot_id, input.sdp);
+      return relay.startVoice(input.bot_id, input.sdp, input.call_id);
     }
   );
   registry.register(
-    { name: 'bot_voice_stop', namespace: 'bots', description: 'End a voice call: the one call_id names, or a bot\'s call still connecting.', hidden: true, changes: [], inputSchema: { type: 'object' } },
+    { name: 'bot_voice_stop', namespace: 'bots', description: 'End the voice call call_id names, or cancel it while it connects.', hidden: true, changes: [], inputSchema: { type: 'object', required: ['call_id'] } },
     async (args) => {
       const input = voiceStopInput.parse(args ?? {});
-      await relay.hangUp({ botId: input.bot_id, callId: input.call_id });
+      await relay.hangUp(input.call_id);
       return { bots: relay.list() };
     }
   );

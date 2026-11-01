@@ -247,7 +247,9 @@ async function main(): Promise<void> {
     await wait(0);
     assert.equal(assistant.voiceActive(assistant.state().process_id!), true, 'voice startup blocks compaction');
     finishVoiceStart();
-    assert.deepEqual(await startingVoice, { sdp: 'answer-sdp', call_id: 'call_1' });
+    const answered = await startingVoice;
+    assert.deepEqual(answered, { sdp: 'answer-sdp', call_id: answered.call_id });
+    assert.match(answered.call_id, /^[0-9a-f-]{36}$/, 'call IDs are unique across restarts');
     assert.equal(assistant.voiceActive(assistant.state().process_id!), true);
 
     assert.deepEqual(voiceOffer, { sdp: 'offer-sdp', voice: 'maple', options: {} }, 'the default profile adds no start parameters, and an empty thread no brief');
@@ -309,12 +311,22 @@ async function main(): Promise<void> {
     // newer one running, and a call connecting can be cancelled by its bot.
     const older = await assistant.startVoice('offer-a');
     const newer = await assistant.startVoice('offer-b');
-    await relay.hangUp({ botId: ASSISTANT_BOT_ID, callId: older.call_id });
+    await relay.hangUp(older.call_id);
     assert.equal(assistant.state().voice.active, true, 'a stale hangup does not end the newer call');
-    await relay.hangUp({ botId: ASSISTANT_BOT_ID });
-    assert.equal(assistant.state().voice.active, true, 'without an ID only a connecting call is cancelled');
-    await relay.hangUp({ botId: ASSISTANT_BOT_ID, callId: newer.call_id });
+    // A client whose attempt failed hangs up its own ID, never another
+    // client's call still connecting.
+    voiceStartGate = new Promise<void>((resolve) => { releaseStart = resolve; });
+    await relay.hangUp(newer.call_id);
+    const pending = relay.startVoice(ASSISTANT_BOT_ID, 'offer-c', 'client-1-call');
+    await wait(0);
+    await assert.rejects(relay.startVoice(ASSISTANT_BOT_ID, 'offer-d', 'client-2-call'), /already starting/);
+    await relay.hangUp('client-2-call');
+    releaseStart();
+    assert.equal((await pending).call_id, 'client-1-call');
+    assert.equal(assistant.state().voice.active, true);
+    await relay.hangUp('client-1-call');
     assert.equal(assistant.state().voice.active, false);
+    voiceStartGate = Promise.resolve();
 
     // Forwarding can be turned off.
     setAssistant(settings, { digests: false });
