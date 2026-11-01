@@ -12,6 +12,8 @@ export class AssistantVoiceSession {
   private input: AnalyserNode | null = null;
   private readonly samples = new Uint8Array(512);
   private stopped = false;
+  // The server's ID for this call, so hanging up never ends a newer one.
+  private callId: string | null = null;
 
   constructor(
     // The bot the call is with, and its name for the call controls.
@@ -54,8 +56,13 @@ export class AssistantVoiceSession {
     // OpenAI's WebRTC endpoint expects the client to open its events channel.
     peer.createDataChannel('oai-events');
     await peer.setLocalDescription(await peer.createOffer());
-    const answer = await window.patterm.call('bot_voice_start', { bot_id: this.bot.id, sdp: peer.localDescription?.sdp ?? '' }) as { sdp?: unknown };
-    if (this.stopped) return;
+    const answer = await window.patterm.call('bot_voice_start', { bot_id: this.bot.id, sdp: peer.localDescription?.sdp ?? '' }) as { sdp?: unknown; call_id?: unknown };
+    if (typeof answer?.call_id === 'string') this.callId = answer.call_id;
+    if (this.stopped) {
+      // Hung up while it connected: end the call the server just started.
+      await this.hangUp();
+      return;
+    }
     if (typeof answer?.sdp !== 'string') throw new Error(`${this.bot.name} did not answer the voice call`);
     await peer.setRemoteDescription({ type: 'answer', sdp: answer.sdp });
   }
@@ -75,7 +82,11 @@ export class AssistantVoiceSession {
     this.stopped = true;
     this.release();
     this.onStatus('ended');
-    await window.patterm.call('bot_voice_stop', {}).catch(() => undefined);
+    await this.hangUp();
+  }
+
+  private async hangUp(): Promise<void> {
+    await window.patterm.call('bot_voice_stop', { bot_id: this.bot.id, ...(this.callId ? { call_id: this.callId } : {}) }).catch(() => undefined);
   }
 
   private fail(detail: string): void {
@@ -83,7 +94,7 @@ export class AssistantVoiceSession {
     this.stopped = true;
     this.release();
     this.onStatus('failed', detail);
-    void window.patterm.call('bot_voice_stop', {}).catch(() => undefined);
+    void this.hangUp();
   }
 
   private analyser(source: MediaStreamAudioSourceNode): AnalyserNode {

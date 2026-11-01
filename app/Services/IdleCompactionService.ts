@@ -66,7 +66,7 @@ interface CompactionRow {
   notice: string | null;
 }
 
-// Assistant compaction is admitted only with voice inactive. Voice startup
+// A bot's compaction, the assistant's included, is admitted only with voice inactive. Voice startup
 // also checks the automatic compaction notice before steering speech.
 //
 // Compacts each Integrated agent at most once per idle period. An admitted
@@ -91,7 +91,7 @@ export class IdleCompactionService {
     private readonly enabled: (harness: string) => boolean,
     private readonly log: (event: string, data: Record<string, unknown>) => void = () => {},
     private readonly now: () => number = Date.now,
-    private readonly assistantVoiceActive: (processId: string) => boolean = () => true
+    private readonly voiceActive: (processId: string) => boolean = () => true
   ) {}
 
   // Native agents run on while Patterm restarts, so a saved idle time keeps
@@ -246,7 +246,7 @@ export class IdleCompactionService {
       if (!this.due(processId)) return;
     }
     // Recheck after the async model lookup: a voice call may have started.
-    if (row.role === 'assistant' && this.assistantVoiceActive(processId)) {
+    if ((row.role === 'assistant' || row.role === 'bot') && this.voiceActive(processId)) {
       this.write(processId, null, null);
       this.log('skipped', { processId, harness: row.harness, reason: 'voice active' });
       return;

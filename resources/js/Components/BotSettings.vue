@@ -232,8 +232,8 @@ function harnessOf(presetId: string | null): string | null {
 
 // The name saves once typing pauses, or when the field loses focus.
 const userName = ref('');
-watch(() => settings.value.userName, (value) => { if (nameTimer === undefined) userName.value = value ?? ''; }, { immediate: true });
 let nameTimer: ReturnType<typeof setTimeout> | undefined;
+watch(() => settings.value.userName, (value) => { if (nameTimer === undefined) userName.value = value ?? ''; }, { immediate: true });
 function typeName(value: string): void {
   userName.value = value;
   clearTimeout(nameTimer);

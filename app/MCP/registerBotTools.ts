@@ -16,6 +16,9 @@ const botRestartInput = z.object({
 const botStateInput = z.object({ bot_id: z.string().min(1).optional() }).strict();
 // A browser's SDP offer for one audio track and a data channel is a few KiB.
 const voiceStartInput = z.object({ bot_id: z.string().min(1), sdp: z.string().min(1).max(64 * 1024) }).strict();
+// A client hangs up its own call by ID, or cancels its bot's call still
+// connecting when it has no ID yet.
+const voiceStopInput = z.object({ bot_id: z.string().min(1).optional(), call_id: z.string().min(1).optional() }).strict();
 const focusSetInput = z.object({ bot_id: z.string().min(1), enabled: z.boolean() }).strict();
 
 // Owner-only bot controls for Settings › Bots, the bot's page and the
@@ -23,7 +26,7 @@ const focusSetInput = z.object({ bot_id: z.string().min(1), enabled: z.boolean()
 export function registerBotTools(
   registry: McpToolRegistry,
   bots: Pick<BotService, 'list' | 'reconcile' | 'ensure' | 'restartProcess'>,
-  relay: Pick<BotRelay, 'list' | 'state' | 'settingsChanged' | 'startVoice' | 'stopVoice' | 'setFocus'>,
+  relay: Pick<BotRelay, 'list' | 'state' | 'settingsChanged' | 'startVoice' | 'hangUp' | 'setFocus'>,
   settings: Pick<SettingsService, 'bots' | 'updateBots'>,
   log: (event: string, data: Record<string, unknown>) => void
 ) {
@@ -71,9 +74,10 @@ export function registerBotTools(
     }
   );
   registry.register(
-    { name: 'bot_voice_stop', namespace: 'bots', description: 'End the voice call.', hidden: true, changes: [], inputSchema: { type: 'object' } },
-    async () => {
-      await relay.stopVoice();
+    { name: 'bot_voice_stop', namespace: 'bots', description: 'End a voice call: the one call_id names, or a bot\'s call still connecting.', hidden: true, changes: [], inputSchema: { type: 'object' } },
+    async (args) => {
+      const input = voiceStopInput.parse(args ?? {});
+      await relay.hangUp({ botId: input.bot_id, callId: input.call_id });
       return { bots: relay.list() };
     }
   );

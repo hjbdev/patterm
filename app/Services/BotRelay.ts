@@ -40,9 +40,13 @@ type Delivery = { process_id: string; delivery: 'delivered' | 'uncertain' | 'que
 // digests and Focus in its settings; the assistant has them all by default.
 // One voice call runs at a time, since the user has one microphone.
 export class BotRelay {
-  private voice: { botId: string; processId: string } | null = null;
-  private voiceStartingProcessId: string | null = null;
+  // The live call, and a call still connecting. Each call has an ID, so a
+  // client hangs up only its own call; a start cancelled while it connects
+  // is hung up as soon as Codex answers it.
+  private voice: { botId: string; processId: string; callId: string } | null = null;
+  private starting: { botId: string; processId: string; callId: string; cancelled: boolean } | null = null;
   private voiceStoppingProcessId: string | null = null;
+  private calls = 0;
   private releaseRealtime: (() => void) | null = null;
   private readonly listeners = new Set<(event: BotRelayEvent) => void>();
   private readonly digests = new Map<string, { batch: NotificationRecord[]; timer: NodeJS.Timeout | null }>();
@@ -96,6 +100,7 @@ export class BotRelay {
 
   // Before a bot's session stops, its voice call ends with it.
   async stopping(botId: string, processId: string): Promise<void> {
+    if (this.starting?.processId === processId) this.starting.cancelled = true;
     if (this.voice?.processId === processId) await this.stopVoice();
     this.emitState(botId);
   }
@@ -104,10 +109,12 @@ export class BotRelay {
   // Focus for bots that lost it so their held items are delivered, and
   // refresh every client.
   async settingsChanged(): Promise<void> {
-    if (this.voice) {
-      const bot = this.bot(this.voice.botId);
-      if (!bot || !bot.enabled || !this.voiceAvailable(bot)) await this.stopVoice();
-    }
+    const lost = (botId: string) => {
+      const bot = this.bot(botId);
+      return !bot || !this.voiceAvailable(bot);
+    };
+    if (this.starting && lost(this.starting.botId)) this.starting.cancelled = true;
+    if (this.voice && lost(this.voice.botId)) await this.stopVoice();
     for (const bot of this.settings.bots().bots) {
       if (!bot.focus && this.inbox.focus(bot.id).enabled) this.inbox.setFocus(bot.id, false);
       else if (!bot.focus) this.scheduleFlush(bot.id);
@@ -116,17 +123,18 @@ export class BotRelay {
   }
 
   voiceActive(processId: string): boolean {
-    return this.voice?.processId === processId || this.voiceStartingProcessId === processId || this.voiceStoppingProcessId === processId;
+    return this.voice?.processId === processId || this.starting?.processId === processId || this.voiceStoppingProcessId === processId;
   }
 
-  async startVoice(botId: string, sdp: string): Promise<{ sdp: string }> {
+  async startVoice(botId: string, sdp: string): Promise<{ sdp: string; call_id: string }> {
     const bot = this.requireBot(botId);
     if (!this.voiceAvailable(bot)) throw new Error(`${bot.name} has no voice. Turn voice on in Settings › Bots and choose a Codex profile.`);
     const processId = this.bots.currentProcess(botId);
     if (!processId) throw new Error(`${bot.name} is not running`);
-    if (this.voiceStartingProcessId) throw new Error('Voice is already starting');
+    if (this.starting) throw new Error('Voice is already starting');
     if (this.options.compacting?.(processId)) throw new Error(`${bot.name} is compacting. Try voice again when it finishes.`);
-    this.voiceStartingProcessId = processId;
+    const call = { botId, processId, callId: `call_${++this.calls}`, cancelled: false };
+    this.starting = call;
     try {
       if (this.voice) await this.stopVoice().catch(() => undefined);
       this.releaseRealtime?.();
@@ -138,15 +146,22 @@ export class BotRelay {
         options: botVoiceOptions({ profile: bot.voice.profile, acknowledgements: bot.voice.acknowledgements, botName: bot.name, assistant: bot.id === ASSISTANT_BOT_ID, userName: this.settings.bots().userName }),
         ...(brief ? { initialItems: [{ role: 'developer' as const, text: brief }] } : {})
       });
-      this.voice = { botId, processId };
+      // Voice was turned off, the bot restarted, or the client hung up
+      // while the call connected: end the call Codex just answered.
+      const now = this.bot(botId);
+      if (call.cancelled || !now || !this.voiceAvailable(now) || this.bots.currentProcess(botId) !== processId) {
+        await this.codex.realtimeStop(processId).catch((error: unknown) => this.log('voice.stop_failed', { bot_id: botId, message: errorMessage(error) }));
+        throw new Error('The voice call was cancelled');
+      }
+      this.voice = { botId, processId, callId: call.callId };
       this.log('voice.started', { bot_id: botId, profile: bot.voice.profile, acknowledgements: bot.voice.acknowledgements, brief_chars: brief?.length ?? 0 });
       this.emitState(botId);
-      return answer;
+      return { ...answer, call_id: call.callId };
     } catch (error) {
       this.releaseVoice();
       throw error;
     } finally {
-      this.voiceStartingProcessId = null;
+      if (this.starting === call) this.starting = null;
     }
   }
 
@@ -165,6 +180,22 @@ export class BotRelay {
       this.log('voice.brief_failed', { bot_id: bot.id, message: errorMessage(error) });
       return null;
     }
+  }
+
+  // Hangs up one call by its ID, or cancels the bot's call still
+  // connecting when the client had no ID yet. With neither, everything ends.
+  async hangUp(input: { botId?: string | undefined; callId?: string | undefined }): Promise<void> {
+    if (input.callId) {
+      if (this.starting?.callId === input.callId) this.starting.cancelled = true;
+      if (this.voice?.callId === input.callId) await this.stopVoice();
+      return;
+    }
+    if (input.botId) {
+      if (this.starting?.botId === input.botId) this.starting.cancelled = true;
+      return;
+    }
+    if (this.starting) this.starting.cancelled = true;
+    await this.stopVoice();
   }
 
   async stopVoice(): Promise<void> {
