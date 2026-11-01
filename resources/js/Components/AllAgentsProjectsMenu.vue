@@ -2,7 +2,7 @@
   <!-- Which projects All agents shows. Toggling one keeps the menu open, so
        several can be set at once. -->
   <DropdownMenuSub>
-    <DropdownMenuSubTrigger class="gap-2 text-[13px]">
+    <DropdownMenuSubTrigger class="gap-2 pl-8 text-[13px]">
       <Layers class="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
       <span class="flex-1">Projects</span>
       <span class="text-xs tabular-nums text-muted-foreground">{{ shownCount }}/{{ listed.length }}</span>
