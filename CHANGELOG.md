@@ -25,8 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   You can rename it, give it a face, emoji or picture, add notes to its
   instructions, and run it on any profile, not only Codex. Switching to a
   profile of another harness starts a new conversation, and voice calls need
-  a Codex profile. Like other bots, it starts with Patterm and resumes its
-  conversation, and turning it back on starts it again. Its existing
+  a Codex profile. Once you have opened it, it comes back with Patterm and
+  resumes its conversation like other bots, and turning it back on starts it
+  again. Its existing
   conversation, saved memory, Focus mode and held items carry over.
 - Voice calls, notification digests and Focus mode are now options for every
   bot, not only the assistant. Turn them on in a bot's editor; a bot with

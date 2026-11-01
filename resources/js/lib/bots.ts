@@ -195,7 +195,7 @@ export function assistantLine(state: { voiceActive: boolean; focus: boolean; foc
   if (state.voiceActive) return 'On a voice call';
   if (row.line) return row.line;
   if (state.focus) return state.focusPending ? `Focus · ${state.focusPending} held` : 'Focus';
-  return state.processId ? 'Ready' : 'Starting…';
+  return state.processId ? 'Ready' : 'Starts when you open it';
 }
 
 function helpersOf(bot: SessionRecord, sessions: readonly SessionRecord[]): SessionRecord[] {

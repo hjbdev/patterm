@@ -312,6 +312,9 @@ async function main(): Promise<void> {
     assert.equal(launches.slice(launchesBefore).some((launch) => launch.input.bot_id === ASSISTANT_BOT_ID), false);
     await assert.rejects(bots.ensure(ASSISTANT_BOT_ID), /turned off/);
     settings.updateBots({ bots: [{ ...settings.bots().bots[0]!, enabled: true, presetId: null }, ...settings.bots().bots.slice(1)] });
+    // Until its first conversation it starts only when opened, not with Patterm.
+    await bots.ensureAll();
+    assert.equal(bots.currentProcess(ASSISTANT_BOT_ID), null);
     assert.equal(bots.harness(ASSISTANT_BOT_ID), 'codex', 'no profile runs Codex with its own configuration');
     await bots.ensure(ASSISTANT_BOT_ID);
     const assistantLaunch = launches.at(-1)!.input;
@@ -399,7 +402,7 @@ async function main(): Promise<void> {
   // The assistant and turned-off bots don't list as bot rows: the assistant has its own.
   assert.deepEqual(botRows({ bots: [readBotSettings({}).bots[0]!, bot('off', 'Off', { enabled: false }), bot('on', 'On')], userName: null }, projects, [botsProject]).map((item) => item.bot.id), ['on']);
   const idle = { voiceActive: false, focus: false, focusPending: 0, processId: null };
-  assert.equal(assistantLine(idle, assistantRow(null, null)), 'Starting…');
+  assert.equal(assistantLine(idle, assistantRow(null, null)), 'Starts when you open it');
   assert.equal(assistantLine({ ...idle, processId: 'proc-assistant' }, live), 'Which project?');
   assert.equal(assistantLine({ ...idle, processId: 'proc-assistant', voiceActive: true }, live), 'On a voice call');
   assert.equal(assistantLine({ ...idle, processId: 'proc-assistant', focus: true, focusPending: 2 }, assistantRow(null, null)), 'Focus · 2 held');

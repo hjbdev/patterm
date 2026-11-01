@@ -142,7 +142,9 @@ export class BotService {
   // await, so when this runs before timers activate, one that came due
   // while Patterm was closed waits for the session that adopts it.
   async ensureAll(): Promise<void> {
-    const bots = this.settings.bots().bots.filter((bot) => bot.enabled);
+    // The assistant first starts when the user opens it, so a fresh install
+    // runs no assistant it never asked for. After that it comes back like any bot.
+    const bots = this.settings.bots().bots.filter((bot) => bot.enabled && (bot.id !== ASSISTANT_BOT_ID || this.hasSession(bot.id)));
     const held = new Map(bots.map((bot) => [bot.id, this.holdTimers(bot.id)]));
     for (const bot of bots) {
       try {
@@ -217,6 +219,10 @@ export class BotService {
   private async stop(botId: string, processId: string): Promise<void> {
     await this.options.stopping?.(botId, processId).catch((error: unknown) => this.log('stopping.failed', { bot_id: botId, message: errorMessage(error) }));
     await this.processes.stop(processId);
+  }
+
+  private hasSession(botId: string): boolean {
+    return Boolean(this.database.connection.prepare(`select 1 from sessions where session_role = ? and bot_id = ? limit 1`).get(botRole(botId), botId));
   }
 
   private assertEnabled(bot: Bot): void {
