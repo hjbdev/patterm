@@ -48,9 +48,11 @@ test('prompt variables are filled from the run time and previous runs', () => {
 test('assistant delivery hands reports to the assistant, stays quiet on no findings, and notifies problems directly', async (t) => {
   const handed: Array<{ processId: string; message: string }> = [];
   let assistantUp = true;
+  let delivery = 'delivered';
   const fixture = setup(t, Date.parse('2026-11-02T06:59:00Z'), async (processId, message) => {
     if (!assistantUp) throw new Error('the assistant is not running');
     handed.push({ processId, message });
+    return { delivery };
   });
   const routine = fixture.routines.create({ name: 'Memory review', days: [0, 1, 2, 3, 4, 5, 6], time: '07:00', timezone: 'Europe/London', prompt: 'Review', delivery: 'assistant' }, { type: 'user', id: null });
   assert.equal(routine.delivery, 'assistant');
@@ -77,6 +79,11 @@ test('assistant delivery hands reports to the assistant, stays quiet on no findi
   await run('failed');
   assert.equal(handed.length, 1);
   assert.match(fixture.notifications.at(-1)!.title!, /Memory review: failed/, 'failures reach the user directly');
+  delivery = 'uncertain';
+  await run('completed');
+  assert.equal(handed.length, 2, 'an uncertain handoff is not resent');
+  assert.match(fixture.notifications.at(-1)!.title!, /Memory review: done/, 'an uncertain handoff also reaches the user directly');
+  delivery = 'delivered';
   assistantUp = false;
   await run('completed');
   assert.match(fixture.notifications.at(-1)!.title!, /Memory review: done/, 'the report falls back to a notification when the assistant is unavailable');

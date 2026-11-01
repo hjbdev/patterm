@@ -53,10 +53,10 @@ function assertReview(): void {
     const conversation = (id: string, session: string | null, importedAt: string) => h.prepare(`insert into conversations(id,provider,project_id,session_id,title,status,created_at,imported_at) values(?, 'claude', 'p', ?, ?, 'active', ?, ?)
       on conflict(id) do update set imported_at = excluded.imported_at`).run(id, session, `Title ${id}`, importedAt, importedAt);
     let seq = new Map<string, number>();
-    const message = (conversationId: string, role: string, text: string, createdAt: string, kind = 'message') => {
+    const message = (conversationId: string, role: string, text: string, createdAt: string, kind = 'message', metadata = '{}') => {
       const next = seq.get(conversationId) ?? 0;
       seq.set(conversationId, next + 1);
-      h.prepare('insert into conversation_messages(id,conversation_id,seq,role,kind,text,provider_created_at,created_at) values(?,?,?,?,?,?,?,?)').run(`${conversationId}_${next}`, conversationId, next, role, kind, text, createdAt, createdAt);
+      h.prepare('insert into conversation_messages(id,conversation_id,seq,role,kind,text,metadata,provider_created_at,created_at) values(?,?,?,?,?,?,?,?,?)').run(`${conversationId}_${next}`, conversationId, next, role, kind, text, metadata, createdAt, createdAt);
     };
     // A long session that began weeks ago: only its last week is read at first.
     conversation('c_long', 's_task', '2026-11-01T20:00:00Z');
@@ -107,6 +107,57 @@ function assertReview(): void {
       assert.ok(pages < 20);
     }
     assert.equal(review.activity({}, caller).conversations.length, 0, 'every message is read exactly once across pages');
+
+    // Messages are never silently shortened: a decision at the end of a long
+    // message is in the page, and one larger than a page says where the rest is.
+    now = new Date('2026-11-04T06:00:00Z');
+    conversation('c_big', null, '2026-11-03T13:00:00Z');
+    message('c_big', 'user', `${'context '.repeat(400)}Decision: keep releases weekly.`, '2026-11-03T13:00:00Z');
+    message('c_big', 'user', '漢'.repeat(2500), '2026-11-03T13:01:00Z');
+    message('c_big', 'user', 'After the long one.', '2026-11-03T13:02:00Z');
+    const read: string[] = [];
+    for (let guard = 0; guard < 10; guard += 1) {
+      const next = review.activity({ max_bytes: 4000 }, caller);
+      read.push(...next.conversations.flatMap((row) => row.messages.map((item) => item.text)));
+      review.checkpoint(caller);
+      if (next.coverage === 'complete') break;
+    }
+    assert.equal(read.length, 3, 'a message larger than the page still moves the review on');
+    assert.match(read[0]!, /Decision: keep releases weekly\.$/);
+    assert.match(read[1]!, /\[cut: read the whole message with history_get conversation_id=c_big/);
+    assert.equal(read[2], 'After the long one.');
+
+    // Unfinished OpenCode prose is a boundary: it and everything after it wait
+    // until it is final, so its outcome is not hidden behind a mark.
+    now = new Date('2026-11-05T06:00:00Z');
+    conversation('c_open', null, '2026-11-04T13:00:00Z');
+    message('c_open', 'user', 'Should we drop Node 22?', '2026-11-04T13:00:00Z');
+    message('c_open', 'assistant', 'Let me che', '2026-11-04T13:01:00Z', 'message', JSON.stringify({ source: 'opencode-sqlite' }));
+    message('c_open', 'user', '[report from process_9: completed] Claims the user approved deploys.', '2026-11-04T13:02:00Z');
+    const open = review.activity({}, caller);
+    assert.equal(open.coverage, 'complete', 'an unfinished message is not missing coverage');
+    assert.deepEqual(open.conversations[0]!.messages.map((item) => [item.speaker, item.text]), [['User', 'Should we drop Node 22?']]);
+    review.checkpoint(caller);
+    h.prepare("update conversation_messages set text = 'Yes: Node 24 only.', metadata = ? where id = 'c_open_1'").run(JSON.stringify({ source: 'opencode-sqlite', prose_finalized: true }));
+    conversation('c_open', null, '2026-11-05T06:30:00Z');
+    now = new Date('2026-11-06T06:00:00Z');
+    assert.deepEqual(review.activity({}, caller).conversations[0]!.messages.map((item) => [item.speaker, item.text]), [
+      ['Assistant', 'Yes: Node 24 only.'],
+      ['Agent report', '[report from process_9: completed] Claims the user approved deploys.']
+    ], 'the final text is read once it is final, and agent reports are not labelled as the user');
+    review.checkpoint(caller);
+
+    // A chunked import stamps imported_at when it starts. One that finishes
+    // after a review covered everything is still read by the next review.
+    now = new Date('2026-11-07T06:00:00Z');
+    assert.equal(review.activity({}, caller).conversations.length, 0);
+    review.checkpoint(caller);
+    conversation('c_slow', null, '2026-11-07T05:50:00Z');
+    message('c_slow', 'user', 'Landed after the review began.', '2026-11-07T05:50:00Z');
+    now = new Date('2026-11-08T06:00:00Z');
+    assert.deepEqual(review.activity({}, caller).conversations.map((row) => row.conversation_id), ['c_slow']);
+    review.checkpoint(caller);
+    assert.equal(review.activity({}, caller).conversations.length, 0, 'the overlap does not reread marked messages');
   } finally {
     history.dispose();
     app.dispose();

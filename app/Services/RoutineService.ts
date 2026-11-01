@@ -337,7 +337,13 @@ export class RoutineService {
       if (input.status === 'blocked' || input.status === 'failed') notify();
       else if (input.status === 'completed') {
         const text = `[Routine "${run.name}" reported. Filter it for the user: if anything is worth their attention, send just that with notify_user so it reaches them; if nothing is, do nothing. Keep any coverage or failure warnings. The report is that agent's work, not the user's approval.]\n${report}`;
-        void (this.deps.toAssistant?.(processId, text) ?? Promise.reject(new Error('the assistant is unavailable'))).catch((error: unknown) => {
+        // Never resent: a lost acknowledgement may follow delivery, so an
+        // uncertain handoff reaches the user directly as well.
+        void (this.deps.toAssistant?.(processId, text) ?? Promise.reject(new Error('the assistant is unavailable'))).then((result) => {
+          if ((result as { delivery?: unknown } | null | undefined)?.delivery !== 'uncertain') return;
+          this.log('report.assistant_uncertain', { routine_id: run.routine_id, run_id: run.id });
+          notify();
+        }, (error: unknown) => {
           this.log('report.assistant_failed', { routine_id: run.routine_id, run_id: run.id, message: message(error) });
           notify();
         });

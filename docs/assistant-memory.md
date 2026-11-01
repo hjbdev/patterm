@@ -59,7 +59,11 @@ every project since the last review, in pages, grouped by conversation. Only the
 assistant and workspace routines can call it. Each conversation keeps the last
 message reviewed, so a long-running session is read only from where the
 previous review stopped, even after a full reimport. A conversation seen for
-the first time is read from its last seven days. `memory_review_checkpoint`
+the first time is read from its last seven days. Messages are whole and
+labelled User, Assistant or Agent report; one larger than a page is cut and says
+how to read the rest. A message still being written waits for a later review.
+Each review also rechecks the day before the last one it covered, so a large
+import that finished late is not missed. `memory_review_checkpoint`
 marks a page as reviewed; a page left unchecked is read again next time. A
 review never reads its own conversations or earlier runs of the same routine.
 
@@ -67,7 +71,8 @@ A routine with delivery "tell the assistant" (`assistant`) hands each completed
 report to the assistant, which tells you only what is worth your attention.
 Failed and blocked reports, runs that end without reporting, and runs that could
 not start notify you directly. A `no_findings` report stays quiet. If the
-assistant is not running, the report becomes an ordinary notification.
+assistant is not running, or Patterm can't confirm it received the report, the
+report becomes an ordinary notification.
 
 Patterm does not create the routine. To set it up, ask the assistant to create
 this workspace routine, or create it in Routines:
