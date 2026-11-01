@@ -141,9 +141,14 @@ export function mergeCodexSeedEvents(state: CodexConversationState, events: Code
     if (event.kind === 'replace' && event.message) {
       const message = event.message;
       const index = state.messages.findIndex((current) => current.id === message.id);
+      // Output that began before the read is the start of that row's delta
+      // stream; the read's own row, if any, is the real one.
+      if (placeholders.has(message)) {
+        pending.set(message.id, (pending.get(message.id) ?? '') + message.text);
+        if (index < 0) state.messages.push({ ...message, text: '' });
+        continue;
+      }
       if (index < 0) state.messages.push(message);
-      // Output that began before the read: the read's own row is the real one.
-      else if (placeholders.has(message)) state.messages[index] = { ...state.messages[index]!, text: mergeCodexText(state.messages[index]!.text, message.text) };
       else state.messages[index] = { ...keepCodexTimes(state.messages[index], message), text: mergeCodexText(state.messages[index]!.text, message.text) };
       continue;
     }

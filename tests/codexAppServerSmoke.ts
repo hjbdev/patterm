@@ -152,15 +152,18 @@ async function main(): Promise<void> {
     // missed becomes a running command row; one it has keeps its own row.
     const seeded = projectCodexItem({ type: 'commandExecution', id: 'seeded', command: 'ls', aggregatedOutput: 'a\n', status: 'inProgress' })!;
     const state: CodexConversationState = { revision: 0, status: 'working', truncated: false, messages: [seeded] };
+    // The read already holds both chunks of the seeded command's output, and
+    // the missed command prints the same line twice.
     mergeCodexSeedEvents(state, [
-      { revision: 0, kind: 'replace', message: codexOutputPlaceholder('missed', 'commandExecution', 'early\n') },
-      { revision: 0, kind: 'append', id: 'missed', delta: 'more\n' },
-      { revision: 0, kind: 'replace', message: codexOutputPlaceholder('seeded', 'commandExecution', 'a\nb\n') }
+      { revision: 0, kind: 'replace', message: codexOutputPlaceholder('missed', 'commandExecution', 'tick\n') },
+      { revision: 0, kind: 'replace', message: codexOutputPlaceholder('seeded', 'commandExecution', 'a\n') },
+      { revision: 0, kind: 'append', id: 'missed', delta: 'tick\n' },
+      { revision: 0, kind: 'append', id: 'seeded', delta: 'b\n' }
     ]);
     const missed = state.messages.find((message) => message.id === 'missed');
-    assert.deepEqual([missed?.kind, missed?.tool?.name, missed?.text], ['tool', 'commandExecution', 'early\nmore\n'], 'early output during the seed read is not prose');
+    assert.deepEqual([missed?.kind, missed?.tool?.name, missed?.text], ['tool', 'commandExecution', 'tick\ntick\n'], 'early output during the seed read is not prose, and repeated lines are kept');
     const kept = state.messages.find((message) => message.id === 'seeded');
-    assert.deepEqual([kept?.title, kept?.text, (kept?.tool?.input as { command?: string } | undefined)?.command], ['ls', 'a\nb\n', 'ls'], 'a seeded command keeps its own row');
+    assert.deepEqual([kept?.title, kept?.text, (kept?.tool?.input as { command?: string } | undefined)?.command], ['ls', 'a\nb\n', 'ls'], 'a seeded command keeps its own row without repeating output it already has');
   }
   const titled = elicitationForm({ id: 'e', title: 'Connect Linear?', message: 'Linear needs your workspace', source: 'the linear MCP server', schema: { type: 'object', properties: {} } });
   assert.deepEqual([titled.title, titled.detail], ['Connect Linear?', 'Linear needs your workspace\nRequested by the linear MCP server'], 'a display title heads the form and the message stays visible');
