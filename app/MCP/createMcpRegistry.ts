@@ -59,8 +59,9 @@ import { registerRoutineTools } from './registerRoutineTools';
 import type { RoutineService } from '../Services/RoutineService';
 import type { GetUsageSummaryAction } from '../Actions/UsageActions';
 import type { BotService } from '../Services/BotService';
-import type { AssistantService } from '../Services/AssistantService';
-import type { AssistantInbox } from '../Services/AssistantInbox';
+import type { BotRelay } from '../Services/BotRelay';
+import { ASSISTANT_BOT_ID } from '../Bots/BotIdentity';
+import type { BotInbox } from '../Services/BotInbox';
 import { queuedDetail, SendMessageAction } from '../Actions/SendMessageAction';
 import { REMOTE_READ_TOOLS, type CrossHostService } from '../Services/CrossHostService';
 import { isUserProjectKind } from '../Services/PersonalProject';
@@ -118,10 +119,11 @@ interface RegistryServices {
   projectSnoozes?: Pick<ProjectSnoozeActions, 'snooze' | 'wake'>;
   snoozes?: Pick<SnoozeActions, 'snooze' | 'unsnooze' | 'dismissReminder' | 'userInput'>;
   usage?: GetUsageSummaryAction;
-  assistant?: Pick<AssistantService, 'deliverAgentMessage'> & Partial<Pick<AssistantService, 'setFocus' | 'focusItems'>>;
+  // Delivers to bots besides the user: agent messages and Focus mode.
+  assistant?: Pick<BotRelay, 'deliverAgentMessage'> & Partial<Pick<BotRelay, 'setFocus' | 'focusItems'>>;
   // Whether a bot's purview reaches a project.
   bots?: Pick<BotService, 'allows'>;
-  assistantInbox?: Pick<AssistantInbox, 'hold'>;
+  assistantInbox?: Pick<BotInbox, 'hold'>;
   assistantMemory?: AssistantMemoryService;
   launchingIdentities?: Pick<LaunchingMcpIdentities, 'role'>;
   routines?: RoutineService;
@@ -777,17 +779,22 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     return assistantOverview(services, current);
   });
 
-  const assistantOnly = (context: Parameters<typeof caller>[0], tool: string) => {
+  // Focus mode belongs to the assistant and bots that have it turned on.
+  const focusOwner = (context: Parameters<typeof caller>[0], tool: string) => {
     const current = caller(context);
-    if (!current || !isAssistant(current)) throw new Error(`${tool}: only the assistant session can call this`);
+    const botId = isAssistant(current) ? current?.bot_id ?? ASSISTANT_BOT_ID : isBot(current) ? current?.bot_id ?? null : null;
+    if (!botId) throw new Error(`${tool}: only the assistant and bots can call this`);
     const { setFocus, focusItems } = services.assistant ?? {};
-    if (!setFocus || !focusItems) throw new Error(`${tool}: the assistant is unavailable`);
-    return { setFocus: setFocus.bind(services.assistant), focusItems: focusItems.bind(services.assistant) };
+    if (!setFocus || !focusItems) throw new Error(`${tool}: Focus mode is unavailable`);
+    return {
+      setFocus: (enabled: boolean) => setFocus.call(services.assistant, botId, enabled),
+      focusItems: (input: Parameters<typeof focusItems>[1]) => focusItems.call(services.assistant, botId, input)
+    };
   };
   registry.register({
     name: 'assistant_focus_set',
     namespace: 'assistant',
-    description: 'Assistant only: turn Focus mode on or off. While on, notifications, agent messages, reports, and timer callbacks are held instead of interrupting you.',
+    description: 'Assistant and bots with Focus mode: turn Focus mode on or off. While on, notifications, agent messages, reports, and timer callbacks are held instead of interrupting you.',
     inputSchema: { type: 'object', required: ['enabled'], properties: { enabled: { type: 'boolean', description: 'True holds incoming items; false delivers everything held as one digest.' } } },
     changes: [],
     usageNotes: [
@@ -797,13 +804,13 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     ]
   }, (args, context) => {
     const input = assistantFocusSetInput.parse(args ?? {});
-    const { focus } = assistantOnly(context, 'assistant_focus_set').setFocus(input.enabled);
+    const { focus } = focusOwner(context, 'assistant_focus_set').setFocus(input.enabled);
     return focus;
   });
   registry.register({
     name: 'assistant_focus',
     namespace: 'assistant',
-    description: 'Assistant only: Focus mode status, with held items or a delivered focus digest\'s items in full.',
+    description: 'Assistant and bots with Focus mode: Focus mode status, with held items or a delivered focus digest\'s items in full.',
     inputSchema: { type: 'object', properties: {
       digest_id: { type: 'string', description: 'A focus digest ID; omit to list items still held.' },
       limit: { type: 'number', description: 'Items per page, oldest first (default 20, at most 100).' },
@@ -812,7 +819,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     changes: []
   }, (args, context) => {
     const input = assistantFocusItemsInput.parse(args ?? {});
-    return assistantOnly(context, 'assistant_focus').focusItems({ digestId: input.digest_id, limit: input.limit, offset: input.offset });
+    return focusOwner(context, 'assistant_focus').focusItems({ digestId: input.digest_id, limit: input.limit, offset: input.offset });
   });
 
   const projectManager = (context: McpCallContext, tool: string) => {
@@ -1100,9 +1107,9 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     });
     services.notifications?.reported(sender.process_id);
     const heading = [`[report from ${sender.process_id}: ${input.status}]`, input.title?.trim()].filter(Boolean).join('\n');
-    // A parent assistant in Focus mode reads the report when focus ends.
+    // A parent bot in Focus mode reads the report when focus ends.
     if (services.assistantInbox?.hold(sender.parent_process_id, { kind: 'report', sourceProcessId: sender.process_id, title: `Report from ${sender.process_id}: ${input.status}${input.title?.trim() ? ` — ${input.title.trim()}` : ''}`, body: input.body, dedupeKey: `report:${eventId}` })) {
-      return { ok: true, event_id: eventId, delivery: 'queued', detail: 'Your parent assistant is in Focus mode. The report is saved and reaches it when focus ends; do not resend it.' };
+      return { ok: true, event_id: eventId, delivery: 'queued', detail: 'Your parent is in Focus mode. The report is saved and reaches it when focus ends; do not resend it.' };
     }
     const delivered = await sendAgentInput(services.database, services.terminal, {
       process_id: sender.parent_process_id,

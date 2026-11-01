@@ -1,4 +1,5 @@
-import type { AssistantService } from '../Services/AssistantService';
+import type { BotRelay } from '../Services/BotRelay';
+import { ASSISTANT_BOT_ID } from '../Bots/BotIdentity';
 import type { DatabaseService } from '../Services/DatabaseService';
 import type { IntegratedAgentService } from '../Services/IntegratedAgentService';
 import type { TerminalService } from '../Services/TerminalService';
@@ -36,7 +37,7 @@ export class SendMessageAction {
     private readonly timeline: TimelineService,
     private readonly options: {
       integrated?: Pick<IntegratedAgentService, 'prompt'> | undefined;
-      assistant?: Pick<AssistantService, 'deliverAgentMessage'> | undefined;
+      assistant?: Pick<BotRelay, 'deliverAgentMessage'> | undefined;
       notifications?: Pick<NotificationActions, 'userInput'> | undefined;
     } = {}
   ) {}
@@ -92,7 +93,7 @@ export class SendMessageAction {
     this.recent.set(sender.process_id, [...recent, { at: now, slot }]);
     let delivered: { process_id: string; delivery: 'delivered' | 'uncertain' | 'queued'; detail?: string };
     try {
-      delivered = await this.options.assistant.deliverAgentMessage(sender.process_id, message);
+      delivered = await this.options.assistant.deliverAgentMessage(ASSISTANT_BOT_ID, sender.process_id, message);
     } catch (error) {
       // An undelivered message does not count against the sender.
       this.recent.set(sender.process_id, (this.recent.get(sender.process_id) ?? []).filter((entry) => entry.slot !== slot));

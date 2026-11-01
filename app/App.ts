@@ -1,9 +1,8 @@
 import { EventEmitter } from 'node:events';
 import { inspect } from 'node:util';
 import { McpHttpProxyService } from './Services/McpHttpProxyService';
-import { AssistantService, type AssistantEvent } from './Services/AssistantService';
+import { BotRelay, type BotRelayEvent } from './Services/BotRelay';
 import { AssistantMemoryService } from './Services/AssistantMemoryService';
-import { registerAssistantTools } from './MCP/registerAssistantTools';
 import { registerIdleCompactionTools } from './MCP/registerIdleCompactionTools';
 import { registerBotTools } from './MCP/registerBotTools';
 import { BotService } from './Services/BotService';
@@ -113,7 +112,7 @@ import { PresenceService } from './Services/PresenceService';
 import { PushService, pushSubject } from './Services/PushService';
 import { NotificationActions } from './Actions/NotificationActions';
 import { sendAgentInput } from './Services/AgentInputService';
-import { AssistantInbox } from './Services/AssistantInbox';
+import { BotInbox } from './Services/BotInbox';
 import { ensurePersonalProject } from './Services/PersonalProject';
 import { McpServerRegistry } from './Services/McpServerRegistry';
 import { codexMcpStartupNotice } from './Harness/McpDelivery';
@@ -189,8 +188,8 @@ export interface PattermApplication {
   onNotificationsChanged(handler: (change: NotificationChange) => void): () => void;
   // The user is away and a notification should reach the desktop.
   onDesktopNotification(handler: (notification: NotificationRecord) => void): () => void;
-  // Global assistant state and voice session events, for every client.
-  onAssistantEvent(handler: (event: AssistantEvent) => void): () => void;
+  // Bots' session, voice and Focus state, and voice call events, for every client.
+  onAssistantEvent(handler: (event: BotRelayEvent) => void): () => void;
   // Marks client-visible data as changed. Workbench changes are published as
   // patches; other topics reach clients as coalesced refetch signals.
   notifyChanged(topics: readonly ChangeTopic[]): void;
@@ -348,8 +347,8 @@ async function createApplicationResources(
   const integratedInputs = new WorktreeFileService(database, new UploadService(path.join(options.appDataPath, 'uploads')));
   const integrated = new IntegratedAgentService(database, { opencode: openCodeServer, codex: codexAppServer, claude: claudeStream }, () => notifyWorkbenchChanged(), integratedInputs, hostLauncher);
   integrated.setDebugLog(debugLog);
-  // Holds unprompted input for the assistant while its Focus mode is on.
-  const assistantInbox = new AssistantInbox(database);
+  // Holds unprompted input for a bot while its Focus mode is on.
+  const assistantInbox = new BotInbox(database, (botId) => settings.bots().bots.find((bot) => bot.id === botId)?.focus === true);
   const timers = new TimerService(database, terminal, { persistent: persistentTerminals, integrated, assistantInbox, onChanged: notifyWorkbenchChanged });
   defer(() => timers.dispose());
   const historyDatabase = new HistoryDatabaseService(options.appDataPath, { mode: 'read', busyTimeoutMs: 250 });
@@ -362,8 +361,8 @@ async function createApplicationResources(
   const timeline = new TimelineService(database, (eventId) => searchService.indexTimelineEvent(eventId));
   const presence = new PresenceService();
   const push = new PushService(database, options.appDataPath, pushSubject(options.publicOrigin));
-  // Delivers a notice from one process to another, held while a parent
-  // assistant is in Focus mode.
+  // Delivers a notice from one process to another, held while a parent bot
+  // is in Focus mode.
   const messageProcess = async (processId: string, text: string, fromProcessId: string) => {
     if (assistantInbox.holdNotice(processId, text, fromProcessId)) return;
     await sendAgentInput(database, terminal, { process_id: processId, kind: 'text', text, submit: true }, integrated);
@@ -390,14 +389,14 @@ async function createApplicationResources(
   const triage = new NotificationTriage(turnDigests,
     (processId) => timers.list().some((timer) => timer.ownerProcessId === processId && timer.status === 'pending' && timer.kind !== 'delay'),
     () => settings.notificationSettings().quietRoutineTurns);
-  // Created once the launcher exists; earlier activity predates any assistant.
-  let assistant: AssistantService | null = null;
+  // Created once the launcher exists; earlier activity predates any bot.
+  let relay: BotRelay | null = null;
   // Started after the listener below, which must see a compaction's turn end
   // before the service clears its state.
   const idleCompaction = new IdleCompactionService(database, integrated,
     (harness) => settings.idleCompactionSettings()[harness as keyof IdleCompactionSettings] === true,
     (event, data) => debugLog.write('idle-compaction', event, data), Date.now,
-    (processId) => !assistant || assistant.voiceActive(processId));
+    (processId) => !relay || relay.voiceActive(processId));
   const snoozes = new SnoozeActions(database, timeline, notifyWorkbenchChanged, raiseNotification);
   // An automatic compaction is not a message, so it never wakes an agent.
   defer(integrated.onActivityChange(({ processId, previous, activity }) => {
@@ -408,7 +407,7 @@ async function createApplicationResources(
     notifications: notificationService,
     raise: raiseNotification,
     closeRequests: () => closeRequests,
-    isAssistant: (processId) => assistant?.isAssistantProcess(processId) === true,
+    isAssistant: (processId) => Boolean(database.connection.prepare(`select 1 from sessions where process_id = ? and session_role = 'assistant'`).get(processId)),
     wokeFromSnooze: (processId) => snoozes.announcedWake(processId),
     compacting: (processId) => idleCompaction.compacting(processId),
     triage: (processId) => triage.decide(processId),
@@ -605,12 +604,7 @@ async function createApplicationResources(
     debugLog,
     presetSettings: settings
   });
-  // Restarts stop the assistant like any other agent; actions are created below.
-  assistant = new AssistantService(database, options.appDataPath, harnessLauncher, codexAppServer, integrated, settings, assistantInbox,
-    { stop: (processId) => actions.stopProcess.execute(processId), transferTimers: (from, to) => timers.transferOwner(from, to) },
-    { log: (event, data) => debugLog.write('assistant', event, data), compacting: (processId) => idleCompaction.compacting(processId) });
-  const assistantService = assistant;
-  defer(() => assistantService.dispose());
+  // Restarts stop a bot like any other agent; actions are created below.
   const bots = new BotService(database, options.appDataPath, harnessLauncher, settings, workbench,
     {
       stop: (processId) => actions.stopProcess.execute(processId),
@@ -620,11 +614,18 @@ async function createApplicationResources(
     },
     {
       log: (event, data) => debugLog.write('bots', event, data),
-      conversationSaved: (harness, cwd, resumeId) => harness !== 'claude' || claudeConversationSaved({ cwd, sessionId: resumeId, env: process.env })
+      conversationSaved: (harness, cwd, resumeId) => harness !== 'claude' || claudeConversationSaved({ cwd, sessionId: resumeId, env: process.env }),
+      memory: assistantMemory,
+      launched: (botId) => botRelay.launched(botId),
+      stopping: (botId, processId) => botRelay.stopping(botId, processId)
     });
   botService = bots;
-  assistantService.start();
-  events.on('notifications:changed', (change: NotificationChange) => assistantService.handleNotification(change));
+  const botRelay = new BotRelay(database, bots, codexAppServer, integrated, settings, assistantInbox,
+    { log: (event, data) => debugLog.write('bots', event, data), compacting: (processId) => idleCompaction.compacting(processId) });
+  relay = botRelay;
+  defer(() => botRelay.dispose());
+  botRelay.start();
+  events.on('notifications:changed', (change: NotificationChange) => botRelay.handleNotification(change));
   const processLauncher = new ProcessLauncher({
     fence: launchFence,
     database,
@@ -765,7 +766,7 @@ async function createApplicationResources(
     closeRequests,
     projectSnoozes,
     snoozes,
-    assistant: assistantService,
+    assistant: botRelay,
     bots,
     assistantInbox,
     routines,
@@ -778,9 +779,8 @@ async function createApplicationResources(
   registerBrowserTools(mcp, browserActions);
   registerSecretTools(mcp, secretActions);
   registerMcpServerTools(mcp, mcpServers);
-  registerAssistantTools(mcp, assistantService, settings);
   registerIdleCompactionTools(mcp, settings);
-  registerBotTools(mcp, bots, settings, (event, data) => debugLog.write('bots', event, data));
+  registerBotTools(mcp, bots, botRelay, settings, (event, data) => debugLog.write('bots', event, data));
   const releaseInstall = detectReleaseInstall(options.appRoot);
   const updateMode = options.runtime === 'node' ? 'server' : 'desktop';
   const updates = new UpdateService({
@@ -942,7 +942,7 @@ async function createApplicationResources(
       events.on('notifications:desktop', handler);
       return () => { events.off('notifications:desktop', handler); };
     },
-    onAssistantEvent: (handler) => assistantService.onEvent(handler),
+    onAssistantEvent: (handler) => botRelay.onEvent(handler),
     subscribeConversation: (processId: string, listener: (event: IntegratedConversationEvent) => void) => remote.subscribeConversation(processId, listener),
     mcpSignInCallback: (url: string) => mcpOAuth.callbackPage(url),
     dispose,

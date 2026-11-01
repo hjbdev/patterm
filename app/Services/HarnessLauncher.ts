@@ -1,3 +1,4 @@
+import { ASSISTANT_BOT_ID } from '../Bots/BotIdentity';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -49,8 +50,9 @@ export const launchHarnessInput = z.object({
   if (!value.harness && !value.preset) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['harness'], message: 'harness or preset is required' });
   }
-  if ((value.session_role === 'bot') !== Boolean(value.bot_id)) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ['bot_id'], message: 'bot sessions, and only they, need a bot_id' });
+  // The assistant is the built-in bot; other roles never run a bot.
+  if (value.session_role === 'bot' ? !value.bot_id : value.session_role !== 'assistant' && value.bot_id) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['bot_id'], message: 'bot sessions, and only they and the assistant, have a bot_id' });
   }
 });
 
@@ -102,7 +104,8 @@ export interface HarnessLauncherDeps {
   openCodeServer?: Pick<OpenCodeServerService, 'prepare'> & Partial<Pick<OpenCodeServerService, 'prompt'>>;
   integrated?: Pick<IntegratedAgentService, 'prepare' | 'prompt' | 'stop' | 'cleanupLaunch' | 'observe'>;
   settings?: Pick<SettingsService, 'agentInterface' | 'figuresEnabled'>;
-  // A bot session's system context: its SMS-style brief and purview.
+  // A bot session's system context: its SMS-style brief and purview, or the
+  // assistant's brief.
   botContext?: (botId: string) => string;
   // Preset lookup for defaulting the model/reasoning at launch. Defaults to the
   // application settings table.
@@ -206,7 +209,7 @@ export class HarnessLauncher {
     const mcpServers = harness === 'rawpty' ? [] : this.deps.mcpServers?.forHarness(harness) ?? [];
     const contextService = new AgentContextService();
     const agentContext = harness === 'rawpty' ? ''
-      : input.session_role === 'assistant' ? contextService.buildAssistant(this.deps.assistantMemory?.snapshot()).trim()
+      : input.session_role === 'assistant' ? (this.deps.botContext?.(input.bot_id ?? ASSISTANT_BOT_ID) || contextService.buildAssistant(this.deps.assistantMemory?.snapshot())).trim()
       : input.session_role === 'routine' ? contextService.buildRoutine().trim()
       : input.session_role === 'bot' ? (this.deps.botContext?.(input.bot_id!) ?? '').trim()
       : contextService.build(input.project_id, { figures: interfaceMode === 'integrated' && this.deps.settings?.figuresEnabled() !== false }).trim();

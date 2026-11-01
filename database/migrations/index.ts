@@ -60,6 +60,7 @@ import recordMcpHelperCutover from './2026_10_07_000045_record_mcp_helper_cutove
 import addSessionModel from './2026_09_10_000021_add_session_model';
 import addAssistantMemory from './2026_10_09_000046_add_assistant_memory';
 import addAutoTitles from './2026_10_12_000047_add_auto_titles';
+import addAssistantBot from './2026_11_01_000060_add_assistant_bot';
 
 export const migrations: Migration[] = [
   createInitialSchema,
@@ -122,5 +123,6 @@ export const migrations: Migration[] = [
   clearPartialSummaryStatus,
   addSessionBot,
   addSessionSecrets,
-  addBotMemory
+  addBotMemory,
+  addAssistantBot
 ];

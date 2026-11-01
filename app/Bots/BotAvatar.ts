@@ -1,10 +1,10 @@
 import type { ProfileLook } from '../Harness/ProfileLook';
 
-// What stands for a bot: its face, or an emoji or a small picture instead.
-// The face is kept while another kind is chosen, so switching back restores
-// it. No zod here: the renderer imports these, and the schema lives with the
-// bot settings.
-export const BOT_AVATAR_KINDS = ['face', 'emoji', 'picture'] as const;
+// What stands for a bot: its face, or an emoji, a small picture, or
+// Patterm's sparkle mark instead. The face is kept while another kind is
+// chosen, so switching back restores it. No zod here: the renderer imports
+// these, and the schema lives with the bot settings.
+export const BOT_AVATAR_KINDS = ['face', 'emoji', 'picture', 'mark'] as const;
 export type BotAvatarKind = (typeof BOT_AVATAR_KINDS)[number];
 
 export interface BotAvatar {

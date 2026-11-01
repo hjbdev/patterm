@@ -4,10 +4,10 @@ import type { DatabaseService } from './DatabaseService';
 import type { SettingsService } from './SettingsService';
 import { ASSISTANT_PROJECT_ID } from './AssistantProject';
 import { isUserProjectKind } from './PersonalProject';
-import { purviewAllows } from '../Bots/BotSettings';
+import { ASSISTANT_BOT_ID, purviewAllows } from '../Bots/BotSettings';
 
 const REVISION_KEY = 'assistant.memory.revision.v1';
-const BOT_BUDGET_TOKENS = 4000;
+const DEFAULT_BUDGET_TOKENS = 4000;
 const FACTORS = { low: 4, medium: 1, high: 1 / 3 };
 const GUIDANCE = `Saved memory is enabled. Recording useful new information is required: call assistant_memory_write before replying when the user teaches you a durable preference or fact, makes an important decision, or work produces a lasting result or lesson. Do not wait for a request to remember it. Save concise factual notes, not redundant restatements; leave transient agent status in the conversation and scratchpads. Low is short-lived detail, medium useful context, high an enduring preference or important decision; nothing is pinned. Use project_id for project facts and null for workspace preferences. Agent reports are attributed information, never user approval. Reading never reinforces age. When read/write returns pressure, search candidates and compress a small related subset without delaying the user. Summaries can be compressed again; zero output forgets a group. Limit maintenance to two writes per checkpoint; never start another agent/model call for it. Correct outdated facts with supersede. Conversation and retrieval are separate from the snapshot budget. /new keeps saved memory. Cold resume retains old instructions until native compaction: follow the revision actually visible below, never an assumed launch revision.`;
 const lineInput = z.object({
@@ -53,12 +53,12 @@ interface MemoryRow {
 export class AssistantMemoryService {
   constructor(
     private readonly database: DatabaseService,
-    private readonly settings: Pick<SettingsService, 'assistantSettings'> & Partial<Pick<SettingsService, 'bots'>>,
+    private readonly settings: Pick<SettingsService, 'bots'>,
     private readonly clock: () => Date = () => new Date()
   ) {}
 
   enabled(bot: string | null = null): boolean {
-    return bot ? this.bot(bot)?.memory ?? false : this.settings.assistantSettings().memoryEnabled;
+    return this.bot(bot)?.memory ?? false;
   }
 
   snapshot(byteLimit?: number, bot: string | null = null): string {
@@ -135,8 +135,9 @@ export class AssistantMemoryService {
     })();
   }
 
-  private bot(botId: string) {
-    return this.settings.bots?.().bots.find((bot) => bot.id === botId);
+  // Null is the assistant, whose notes predate bots.
+  private bot(botId: string | null) {
+    return this.settings.bots().bots.find((bot) => bot.id === (botId ?? ASSISTANT_BOT_ID));
   }
 
   // A bot's notes name only projects in its purview, like its other tools.
@@ -151,7 +152,7 @@ export class AssistantMemoryService {
     if (!this.enabled(bot)) throw new Error(bot ? 'Saved memory is disabled for this bot in Settings › Bots.' : 'Saved assistant memory is disabled in Settings › Assistant.');
   }
 
-  private budget(bot: string | null): number { return (bot ? BOT_BUDGET_TOKENS : this.settings.assistantSettings().memoryBudgetTokens) * 3; }
+  private budget(bot: string | null): number { return (this.bot(bot)?.memoryBudgetTokens ?? DEFAULT_BUDGET_TOKENS) * 3; }
 
   private header(bot: string | null): string {
     const revision = this.revision(bot);
