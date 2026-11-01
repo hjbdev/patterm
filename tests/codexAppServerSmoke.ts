@@ -304,6 +304,10 @@ function serve(socket) {
             notify('item/completed', {threadId:'thread_test', turnId:'turn_test', item:{type:'commandExecution', id:'command_stream', command:'echo test', aggregatedOutput:'output line\\n', status:'completed', exitCode:0, durationMs:5}, completedAtMs: 5});
             items.push({turnId:'turn_test',item:{type:'reasoning',id:'reasoning_stream',summary:['Thinking'],content:[]}});
             items.push({turnId:'turn_test',item:{type:'commandExecution',id:'command_stream',command:'echo test',aggregatedOutput:'output line\\n',status:'completed',exitCode:0,durationMs:5}});
+            notify('item/commandExecution/outputDelta', {threadId:'thread_test', turnId:'turn_test', itemId:'command_early', delta:'early output\\n'});
+            notify('item/started', {threadId:'thread_test', turnId:'turn_test', item:{type:'commandExecution', id:'command_early', command:'bun test', aggregatedOutput:null, status:'inProgress'}});
+            notify('item/completed', {threadId:'thread_test', turnId:'turn_test', item:{type:'commandExecution', id:'command_early', command:'bun test', aggregatedOutput:'early output\\n', status:'completed', exitCode:0}});
+            items.push({turnId:'turn_test',item:{type:'commandExecution',id:'command_early',command:'bun test',aggregatedOutput:'early output\\n',status:'completed',exitCode:0}});
             notify('item/started', {threadId:'thread_test', turnId:'turn_test', item:{type:'fileChange', id:'patch_stream', changes:[], status:'inProgress'}, startedAtMs: 6});
             notify('item/fileChange/patchUpdated', {threadId:'thread_test', turnId:'turn_test', itemId:'patch_stream', changes:[{path:'src/app.ts', kind:'update', diff:'+added'}]});
             notify('item/completed', {threadId:'thread_test', turnId:'turn_test', item:{type:'fileChange', id:'patch_stream', changes:[{path:'src/app.ts', kind:'update', diff:'+added'}], status:'completed'}, completedAtMs: 7});
@@ -809,6 +813,14 @@ if (socketPath) {
   assert.equal(deltasFor('agent_stream'), 'Streamed reply', 'agent message deltas append in order');
   assert.equal(deltasFor('reasoning_stream'), 'Thinking');
   assert.equal(deltasFor('command_stream'), 'output line\n', 'tool output deltas append in order');
+  // Output that arrives before its command starts is a running tool row, and
+  // the command's start keeps it.
+  const early = streamed.filter((event) => event.message?.id === 'command_early').map((event) => event.message!);
+  assert.deepEqual(early.map((message) => [message.kind, message.tool?.name, message.text]), [
+    ['tool', 'commandExecution', 'early output\n'],
+    ['tool', 'commandExecution', 'early output\n'],
+    ['tool', 'commandExecution', 'early output\n']
+  ], 'early command output is never assistant prose');
   assert.ok(streamed.some((event) => event.kind === 'replace' && event.message?.id === 'agent_stream' && event.message.text === 'Streamed reply'), 'completion replaces the partial text');
   assert.ok(streamed.some((event) => event.kind === 'append' && event.id === 'reasoning_stream' && event.delta === 'Thinking'));
   // Native item times: item/started gives the start, item/completed the

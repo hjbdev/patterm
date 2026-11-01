@@ -261,7 +261,11 @@ export function projectCodexItem(value: unknown, images?: TranscriptImageStore |
     const kind = text(item.kind) || 'activity';
     return {
       id, role: 'assistant', kind: 'tool', title: `Agent ${kind}`, text: '',
-      tool: { name: 'subAgentActivity', input: { path: item.agentPath, agentThreadId: item.agentThreadId, kind }, state: kind === 'interrupted' ? 'failed' : 'completed' }
+      tool: {
+        name: 'subAgentActivity',
+        input: { path: item.agentPath, description: `${subagentLabel(item.agentPath)} ${kind}`, agentThreadId: item.agentThreadId, kind },
+        state: kind === 'interrupted' ? 'failed' : 'completed'
+      }
     };
   }
   if (type === 'webSearch') {
@@ -285,6 +289,12 @@ export function projectCodexItem(value: unknown, images?: TranscriptImageStore |
   return null;
 }
 
+// "/root/file_summary" names the subagent "file summary".
+export function subagentLabel(path: unknown): string {
+  const name = typeof path === 'string' ? path.split('/').filter(Boolean).at(-1) : '';
+  return name ? name.replace(/[_-]+/g, ' ') : 'Subagent';
+}
+
 const COLLAB_TITLES: Record<string, string> = {
   spawnAgent: 'Spawn agent', sendInput: 'Message agent', sendMessage: 'Message agent', resumeAgent: 'Resume agent',
   wait: 'Wait for agents', closeAgent: 'Close agent', followupTask: 'Follow-up task', interruptAgent: 'Interrupt agent', listAgents: 'List agents'
@@ -292,7 +302,7 @@ const COLLAB_TITLES: Record<string, string> = {
 
 // Native delta methods map to an existing projected message id. Absent
 // `item/started` frames are handled by the caller as partial upserts.
-export function projectCodexDelta(method: string, value: unknown): { id: string; delta: string } | null {
+export function projectCodexDelta(method: string, value: unknown): { id: string; delta: string; tool?: 'commandExecution' | 'fileChange' } | null {
   const params = record(value);
   const id = typeof params.itemId === 'string' ? params.itemId : null;
   const delta = typeof params.delta === 'string' ? params.delta : null;
@@ -300,8 +310,18 @@ export function projectCodexDelta(method: string, value: unknown): { id: string;
   if (method === 'item/agentMessage/delta' || method === 'item/reasoning/summaryTextDelta' || method === 'item/reasoning/textDelta' || method === 'item/plan/delta') {
     return { id, delta };
   }
-  if (method === 'item/commandExecution/outputDelta' || method === 'item/fileChange/outputDelta') return { id, delta };
+  if (method === 'item/commandExecution/outputDelta') return { id, delta, tool: 'commandExecution' };
+  if (method === 'item/fileChange/outputDelta') return { id, delta, tool: 'fileChange' };
   return null;
+}
+
+// Tool output that arrives before its item has started is a running tool,
+// never assistant prose. The item's own start or completion replaces it.
+export function codexOutputPlaceholder(id: string, tool: 'commandExecution' | 'fileChange', delta: string): CodexProjectedMessage {
+  return {
+    id, role: 'assistant', kind: 'tool', title: tool === 'fileChange' ? 'File changes' : 'Command', text: delta,
+    tool: { name: tool, input: {}, state: 'inProgress' }, createdAt: new Date().toISOString()
+  };
 }
 
 // `item/fileChange/patchUpdated` replaces the whole change set for one item.
