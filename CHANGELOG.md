@@ -41,6 +41,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A child's report wakes its parent once. When the report satisfies one of
+  the parent's report timers, the timer's callback arrives in the same
+  message, instead of a second turn that repeated the report. A message that
+  answers one of the assistant's report timers carries its callback the same
+  way.
+- A report timer counts reports made since the owner spawned or last
+  messaged the agent, so a fast child that reports before its parent sets the
+  timer no longer leaves the timer waiting. Such a timer returns
+  `already_satisfied` with its callback text, and nothing fires later.
+- Idle and report timers must watch at least one process. Saved watchers
+  with nothing to watch and no deadline, which could never fire, are dropped.
+- A child agent whose open failure changes tells its parent again, instead of
+  only updating the notification the parent never sees.
 - In an Integrated Codex conversation, command output that streams in before
   Codex announces the command shows in a command row, not as the agent's
   reply. Subagent activity is summarised as "Task" instead of
