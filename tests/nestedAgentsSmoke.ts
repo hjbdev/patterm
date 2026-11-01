@@ -93,6 +93,18 @@ async function main(): Promise<void> {
     assert.match(report!.text, /^\[report from grandchild: completed\]\nTests pass\.\n\n\[Patterm timer timer_\w+: condition met\]\n- grandchild "grandchild": reported completed at \S+: Tests pass\.\nRead full results with get_conversation_output\.\ngrandchild done$/);
     await new Promise((resolve) => setTimeout(resolve, 700));
     assert.equal(inputs.filter((input) => input.process_id === 'child').length, 1, 'no second callback repeats the report');
+    // A follow-up answered before the sub-agent watches for it: the timer
+    // returns the answer at once and nothing fires later.
+    await registry.call('send_message', { target_process_id: 'grandchild', message: 'Also check the docs.' }, as('child'));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await registry.call('report_to_parent', { status: 'completed', body: 'Docs fine.' }, as('grandchild'));
+    const answered = await registry.call('timer_fire_when_reported_any', { watched: ['grandchild'], body: 'docs done' }, as('child')) as { status: string; callback?: string };
+    assert.equal(answered.status, 'already_satisfied');
+    assert.match(answered.callback ?? '', /- grandchild "grandchild": reported completed at \S+: Docs fine\.\n.*\ndocs done$/);
+    const childInputs = inputs.filter((input) => input.process_id === 'child').length;
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    assert.equal(inputs.filter((input) => input.process_id === 'child').length, childInputs, 'an answered timer never fires');
+    await assert.rejects(registry.call('timer_fire_when_reported_all', { watched: [], body: 'x' }, as('child')), /at least one process/);
     await registry.call('send_message', { target_process_id: 'parent', message: 'question' }, as('grandchild'));
     assert.equal(inputs.at(-1)?.process_id, 'child', 'parent alias resolves to the direct parent');
 

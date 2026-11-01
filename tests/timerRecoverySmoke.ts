@@ -129,16 +129,86 @@ test('a report takes only the report timers it satisfies for its parent', (t) =>
   const paused = timers.setReport({ kind: 'report_any', watched: ['child'], ownerProcessId: 'owner', body: 'paused' });
   timers.pause(paused.id);
   const other = timers.setReport({ kind: 'report_any', watched: ['child'], ownerProcessId: 'child_2', body: 'other owner' });
-  assert.deepEqual(timers.takeReportCallbacks('owner'), [], 'nothing is taken before a report');
+  assert.deepEqual(timers.takeReportCallbacks('owner').texts, [], 'nothing is taken before a report');
   t.mock.timers.tick(1);
   fixture.report('child');
-  const taken = timers.takeReportCallbacks('owner');
+  const taken = timers.takeReportCallbacks('owner').texts;
   assert.equal(taken.length, 1);
   assert.match(taken[0]!, /^\[Patterm timer timer_\w+: condition met\]\n- child "child": reported completed at \S+\nRead full results with get_conversation_output\.\nany$/);
   assert.deepEqual(timers.listMcp().map((timer) => timer.timer_id).sort(), [all.id, paused.id, other.id].sort(), 'unsatisfied, paused, and other owners\' timers stay');
   assert.ok(!timers.listMcp().some((timer) => timer.timer_id === any.id));
   t.mock.timers.tick(500);
   assert.deepEqual(fixture.delivery.calls.map((call) => call.text.split('\n').at(-1)), ['other owner'], 'a taken timer never fires again');
+});
+
+test('a report made before its parent set the timer answers it at once', (t) => {
+  const fixture = setup(t);
+  const timers = fixture.create();
+  timers.activate();
+  t.mock.timers.tick(1_000);
+  // Spawned by the owner in this runtime, it reports before the owner watches it.
+  fixture.database.connection.prepare(`update processes set parent_process_id = 'owner', created_at = ? where id = 'child'`).run(new Date().toISOString());
+  t.mock.timers.tick(1_000);
+  fixture.report('child');
+  t.mock.timers.tick(1_000);
+  const answered = timers.setReport({ kind: 'report_any', watched: ['child'], ownerProcessId: 'owner', body: 'done' });
+  assert.match(answered.callback ?? '', /^\[Patterm timer timer_\w+: condition met\]\n- child "child": reported completed at \S+\nRead full results with get_conversation_output\.\ndone$/);
+  assert.deepEqual(timers.listMcp(), [], 'an answered timer is not registered');
+  t.mock.timers.tick(1_000);
+  assert.equal(fixture.delivery.calls.length, 0, 'nothing fires later');
+
+  // A follow-up moves the cutoff: the earlier report no longer counts, the next one does.
+  timers.noteInstruction('owner', 'child');
+  t.mock.timers.tick(1_000);
+  const followUp = timers.setReport({ kind: 'report_any', watched: ['child'], ownerProcessId: 'owner', body: 'follow-up' });
+  assert.equal(followUp.callback, undefined);
+  timers.cancel(followUp.id);
+  fixture.database.connection.prepare(`delete from timeline_events`).run();
+  fixture.report('child');
+  t.mock.timers.tick(1_000);
+  assert.ok(timers.setReport({ kind: 'report_any', watched: ['child'], ownerProcessId: 'owner', body: 'follow-up' }).callback, 'a report after the follow-up answers a later timer');
+});
+
+test('reports from before this runtime count from the timer without a noted follow-up', (t) => {
+  const fixture = setup(t);
+  // Spawned before the service started, so follow-ups may have gone unseen.
+  fixture.database.connection.prepare(`update processes set parent_process_id = 'owner' where id = 'child'`).run();
+  t.mock.timers.tick(1_000);
+  fixture.report('child');
+  t.mock.timers.tick(1_000);
+  const timers = fixture.create();
+  timers.activate();
+  const pending = timers.setReport({ kind: 'report_any', watched: ['child'], ownerProcessId: 'owner', body: 'wait' });
+  assert.equal(pending.callback, undefined);
+  assert.deepEqual(timers.listMcp().map((timer) => timer.timer_id), [pending.id]);
+  // Another owner's timers are unaffected by the child's parent.
+  assert.equal(timers.setReport({ kind: 'report_any', watched: ['child'], ownerProcessId: 'child_2', body: 'x' }).callback, undefined);
+});
+
+test('a message taken for its callbacks puts them back when delivery fails', (t) => {
+  const fixture = setup(t);
+  const timers = fixture.create();
+  timers.activate();
+  const timer = timers.setReport({ kind: 'report_any', watched: ['child'], ownerProcessId: 'owner', body: 'answered' });
+  const taken = timers.takeReportCallbacks('owner', { fromProcessId: 'child', body: 'Here is the answer' });
+  assert.equal(taken.texts.length, 1);
+  assert.match(taken.texts[0]!, /^\[Patterm timer timer_\w+: condition met\]\n- child "child": sent you a message at \S+: Here is the answer\nanswered$/);
+  assert.deepEqual(timers.listMcp(), []);
+  taken.restore();
+  assert.deepEqual(timers.listMcp().map((entry) => entry.timer_id), [timer.id]);
+  t.mock.timers.tick(1_000);
+  assert.equal(fixture.delivery.calls.length, 0, 'a restored timer waits for a real answer');
+  assert.deepEqual(timers.takeReportCallbacks('owner', { fromProcessId: 'child_2', body: 'unrelated' }).texts, [], 'a message from an unwatched process takes nothing');
+});
+
+test('watchers saved with nothing to watch and no deadline are dropped on load', (t) => {
+  const fixture = setup(t);
+  const record = { id: 'timer_stuck', kind: 'report_all', status: 'pending', ownerProcessId: 'owner', watched: [], body: '', label: null, firesAtUnixMs: null, pausedRemainingMs: null, createdAtUnixMs: 0, seenNonIdleProcessIds: [] };
+  fixture.database.connection.prepare('insert into runtime_timers (id, record) values (?, ?)').run(record.id, JSON.stringify(record));
+  const rescue = { ...record, id: 'timer_rescue', firesAtUnixMs: Date.now() + 60_000 };
+  fixture.database.connection.prepare('insert into runtime_timers (id, record) values (?, ?)').run(rescue.id, JSON.stringify(rescue));
+  assert.deepEqual(fixture.create().listMcp().map((timer) => timer.timer_id), ['timer_rescue'], 'a watcher with a deadline still fires at it');
+  assert.equal((fixture.database.connection.prepare('select count(*) as count from runtime_timers').get() as { count: number }).count, 1);
 });
 
 test('explicit cancellation removes durable timers and failed sends are not replayed', async (t) => {

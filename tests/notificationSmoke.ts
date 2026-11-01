@@ -94,6 +94,18 @@ async function main(): Promise<void> {
     const nextEpisode = await service.raise({ processId: 'child', source: 'terminal', kind: 'attention', body: 'Claude needs your permission to use Bash' });
     assert.equal(nextEpisode.status, 'raised');
     assert.equal(messages.length, 3);
+    // A child's open failure repeats silently, but a changed failure reaches
+    // the parent, which would otherwise act on the first one.
+    await service.raise({ processId: 'child', source: 'runtime', kind: 'failure', body: 'Exited with code 1' });
+    assert.equal(messages.length, 4);
+    assert.match(messages.at(-1)!.text, /^\[Failure reported by child \(child\)\]/);
+    await service.raise({ processId: 'child', source: 'runtime', kind: 'failure', body: 'Exited with code 1' });
+    assert.equal(messages.length, 4, 'an unchanged failure does not message the parent again');
+    const changedFailure = await service.raise({ processId: 'child', source: 'runtime', kind: 'failure', body: 'Exited with code 2' });
+    assert.equal(changedFailure.status, 'updated');
+    assert.equal(messages.length, 5);
+    assert.match(messages.at(-1)!.text, /^\[Failure reported by child \(child\)\]\nchild\nExited with code 2$/);
+    service.resolve({ process_id: 'child', kinds: ['failure'] });
 
     // A child whose parent has exited asks the user directly and says so.
     addProcess('gone', 'agent');

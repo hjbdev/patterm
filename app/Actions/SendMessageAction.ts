@@ -3,6 +3,7 @@ import type { DatabaseService } from '../Services/DatabaseService';
 import type { IntegratedAgentService } from '../Services/IntegratedAgentService';
 import type { TerminalService } from '../Services/TerminalService';
 import type { TimelineService } from '../Services/TimelineService';
+import type { TimerService } from '../Services/TimerService';
 import type { NotificationActions } from './NotificationActions';
 import { sendAgentInput } from '../Services/AgentInputService';
 
@@ -38,6 +39,7 @@ export class SendMessageAction {
       integrated?: Pick<IntegratedAgentService, 'prompt'> | undefined;
       assistant?: Pick<AssistantService, 'deliverAgentMessage'> | undefined;
       notifications?: Pick<NotificationActions, 'userInput'> | undefined;
+      timers?: Pick<TimerService, 'noteInstruction' | 'takeReportCallbacks'> | undefined;
     } = {}
   ) {}
 
@@ -58,7 +60,7 @@ export class SendMessageAction {
 
     if (targetId === assistantId) {
       if (senderIsAssistant) throw new Error('send_message: the assistant cannot message itself');
-      return this.toAssistant(sender, message);
+      return this.toAssistant(sender, message, assistantId);
     }
 
     const hint = senderIsAssistant ? REPLY_HINT : '';
@@ -73,6 +75,8 @@ export class SendMessageAction {
     // A held message is stored durably and counts as sent; the agent reads it
     // when its current turn, such as a compaction, ends.
     const queued = queuedDetail(result);
+    // Reports the target makes from now on answer the sender's report timers.
+    if (sender?.process_id) this.options.timers?.noteInstruction(sender.process_id, targetId);
     // A parent's reply ends its child's blocked episode, so the next request
     // reaches the parent again. Other senders leave the target's requests open.
     if (!sender || this.parentOf(targetId) === sender.process_id) this.options.notifications?.userInput(targetId);
@@ -80,7 +84,7 @@ export class SendMessageAction {
     return senderIsAssistant && sender ? { ok: true, event_id: this.record(sender, targetId, message) } : 'ok';
   }
 
-  private async toAssistant(sender: MessageSender | null, message: string): Promise<{ ok: true; event_id: string } | QueuedResult | { ok: false; delivery: 'uncertain'; event_id: string; detail: string }> {
+  private async toAssistant(sender: MessageSender | null, message: string, assistantId: string): Promise<{ ok: true; event_id: string } | QueuedResult | { ok: false; delivery: 'uncertain'; event_id: string; detail: string }> {
     if (!this.options.assistant) throw new Error('send_message: the assistant is unavailable');
     if (!sender?.process_id) throw new Error('send_message: only agents can message the assistant');
     if (Buffer.byteLength(message, 'utf8') > ASSISTANT_MESSAGE_MAX_BYTES) throw new Error('send_message: messages to the assistant are limited to 8 KB; put details in a scratchpad and link it');
@@ -90,10 +94,14 @@ export class SendMessageAction {
     const recent = (this.recent.get(sender.process_id) ?? []).filter((entry) => now - entry.at < ASSISTANT_MESSAGE_WINDOW_MS);
     if (recent.length >= ASSISTANT_MESSAGES_PER_WINDOW) throw new Error('send_message: too many messages to the assistant; wait a minute');
     this.recent.set(sender.process_id, [...recent, { at: now, slot }]);
+    // Report timers this message answers ride along, so the assistant wakes
+    // once. They are put back if the message may not have arrived.
+    const taken = this.options.timers?.takeReportCallbacks(assistantId, { fromProcessId: sender.process_id, body: message });
     let delivered: { process_id: string; delivery: 'delivered' | 'uncertain' | 'queued'; detail?: string };
     try {
-      delivered = await this.options.assistant.deliverAgentMessage(sender.process_id, message);
+      delivered = await this.options.assistant.deliverAgentMessage(sender.process_id, [message, ...taken?.texts ?? []].join('\n\n'));
     } catch (error) {
+      taken?.restore();
       // An undelivered message does not count against the sender.
       this.recent.set(sender.process_id, (this.recent.get(sender.process_id) ?? []).filter((entry) => entry.slot !== slot));
       throw error;
@@ -101,6 +109,7 @@ export class SendMessageAction {
     // An uncertain delivery keeps its slot and is recorded as uncertain, so
     // report timers do not treat it as a reply.
     if (delivered.delivery === 'uncertain') {
+      taken?.restore();
       return { ok: false, delivery: 'uncertain', event_id: this.record(sender, delivered.process_id, message, 'uncertain'),
         detail: 'The assistant may or may not have received this message. Do not resend it unless the assistant asks.' };
     }
