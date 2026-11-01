@@ -1,4 +1,5 @@
 import type { BotAvatar } from '../../../app/Bots/BotAvatar';
+import { ASSISTANT_BOT_ID } from '../../../app/Bots/BotIdentity';
 import { isBackgroundMessage } from './assistantFocus';
 import { buildAgentTabFamilies } from './agentTabs';
 import { activityLookup, type RowActivity } from './rowActivity';
@@ -7,26 +8,47 @@ import type { ProjectWorkbench, SessionRecord } from '../types';
 
 // Bots: persistent, single-instance agents with a face, set up in Settings ›
 // Bots. These shapes mirror app/Bots/BotSettings, which the renderer can't
-// import without its zod and Node dependencies.
+// import without its zod and Node dependencies. The assistant is the
+// built-in bot, ASSISTANT_BOT_ID; it lists first and can't be deleted.
 
 export type { BotAvatar };
+export { ASSISTANT_BOT_ID };
 export type BotPurview = { kind: 'none' } | { kind: 'all' } | { kind: 'projects'; projectIds: string[] };
+export type BotVoiceProfile = 'codex' | 'patterm';
+export type BotVoiceAcknowledgements = 'default' | 'on' | 'off';
+
+export interface BotVoice {
+  enabled: boolean;
+  voice: string | null;
+  profile: BotVoiceProfile;
+  acknowledgements: BotVoiceAcknowledgements;
+}
 
 export interface Bot {
   id: string;
   name: string;
-  presetId: string;
+  // Null runs Codex with its own configuration.
+  presetId: string | null;
   avatar: BotAvatar;
   purview: BotPurview;
   instructions: string;
+  enabled: boolean;
   memory: boolean;
+  memoryBudgetTokens: 2000 | 4000 | 8000;
+  voice: BotVoice;
+  digests: boolean;
+  focus: boolean;
 }
 
-export interface BotSettings { bots: Bot[] }
+export interface BotSettings { bots: Bot[]; userName: string | null }
 export interface BotState { bot_id: string; process_id: string | null; session_id: string | null }
 
-export function readBots(): Promise<BotSettings & { states: BotState[] }> {
-  return topicRead('settings', ['bots'], async () => await window.patterm.call('settings_bots_get', {}) as BotSettings & { states: BotState[] });
+export function readBots(): Promise<BotSettings & { states: BotState[]; voices?: string[] }> {
+  return topicRead('settings', ['bots'], async () => await window.patterm.call('settings_bots_get', {}) as BotSettings & { states: BotState[]; voices?: string[] });
+}
+
+export function isAssistantBot(bot: Pick<Bot, 'id'> | null | undefined): boolean {
+  return bot?.id === ASSISTANT_BOT_ID;
 }
 
 export async function saveBots(settings: BotSettings): Promise<BotSettings> {
@@ -97,10 +119,11 @@ export interface BotRow {
   line: string | null;
 }
 
+// The assistant has its own row and dock, and turned-off bots don't list.
 export function botRows(settings: BotSettings, projects: readonly ProjectWorkbench[], botProjects: readonly ProjectWorkbench[]): BotRow[] {
   const own = botProjects.flatMap((project) => project.projectSessions);
   const all = [...own, ...projects.flatMap((project) => project.projectSessions)];
-  return settings.bots.map((bot) => {
+  return settings.bots.filter((bot) => bot.enabled && !isAssistantBot(bot)).map((bot) => {
     const sessions = own.filter((session) => session.botId === bot.id);
     const session = sessions.find((candidate) => !candidate.exitedAt) ?? latest(sessions);
     if (!session) return { bot, session: null, activity: null, waitingHelper: null, waitingHelperProjectId: null, line: null };

@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { isSingleEmoji } from '../app/Bots/BotAvatar';
-import { botSettingsInput, purviewAllows, readBotSettings, type Bot } from '../app/Bots/BotSettings';
+import { ASSISTANT_BOT_ID, botInput, botSettingsInput, purviewAllows, readBotSettings, type Bot } from '../app/Bots/BotSettings';
+import { ASSISTANT_PROJECT_ID } from '../app/Services/AssistantProject';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import { AgentContextService } from '../app/Services/AgentContextService';
 import { BotService, botProjectId } from '../app/Services/BotService';
@@ -21,7 +22,7 @@ import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
 import { removeTree } from './fixtures/TempTree';
 
 const look = randomLook(1);
-const bot = (id: string, name: string, extra: Partial<Bot> = {}): Bot => ({
+const bot = (id: string, name: string, extra: Partial<Bot> = {}): Bot => botInput.parse({
   id, name, presetId: 'preset_default_claude', avatar: { kind: 'face', look, emoji: null, picture: null }, purview: { kind: 'none' }, instructions: '', memory: true, ...extra
 });
 
@@ -41,8 +42,29 @@ async function main(): Promise<void> {
   assert.throws(() => botSettingsInput.parse({ bots: [bot('b1', 'Fable'), bot('b2', 'fable')] }), /already exists/);
   assert.throws(() => botSettingsInput.parse({ bots: [bot('b1', 'Fable', { purview: { kind: 'projects', projectIds: [] } })] }));
   // A bot this version can't read is left out, not every bot.
-  assert.deepEqual(readBotSettings({ bots: [bot('b1', 'Fable'), { ...bot('b2', 'Odd'), avatar: { kind: 'hologram' } }] }).bots.map((item) => item.id), ['b1']);
-  assert.deepEqual(readBotSettings('nonsense').bots, []);
+  assert.deepEqual(readBotSettings({ bots: [bot('b1', 'Fable'), { ...bot('b2', 'Odd'), avatar: { kind: 'hologram' } }] }).bots.map((item) => item.id), [ASSISTANT_BOT_ID, 'b1']);
+  // The assistant is always there and leads the list.
+  assert.deepEqual(readBotSettings('nonsense').bots.map((item) => item.id), [ASSISTANT_BOT_ID]);
+  const seeded = readBotSettings({}).bots[0]!;
+  assert.equal(seeded.name, 'Assistant');
+  assert.equal(seeded.avatar.kind, 'mark');
+  assert.deepEqual(seeded.purview, { kind: 'all' });
+  assert.equal(seeded.voice.enabled, true);
+  assert.equal(seeded.digests, true);
+  assert.equal(seeded.focus, true);
+  // Its settings from before it was a bot carry over.
+  const legacySettings = { enabled: false, voice: 'cove', presetId: 'preset_codex_fast', forwardNotifications: false, voiceProfile: 'patterm', voiceAcknowledgements: 'off', userName: 'Sam', memoryEnabled: true, memoryBudgetTokens: 8000 };
+  const legacy = readBotSettings({}, legacySettings);
+  assert.equal(legacy.userName, 'Sam');
+  assert.deepEqual({ ...legacy.bots[0]!, avatar: undefined }, { ...seeded, avatar: undefined, enabled: false, presetId: 'preset_codex_fast', memory: true, memoryBudgetTokens: 8000, digests: false, voice: { enabled: true, voice: 'cove', profile: 'patterm', acknowledgements: 'off' } });
+  // Saved bots win over the legacy settings, and the assistant always sees every project.
+  const saved = readBotSettings({ bots: [bot('b1', 'Fable'), { ...seeded, name: 'Jarvis', purview: { kind: 'none' } }], userName: null }, legacySettings);
+  assert.deepEqual(saved.bots.map((item) => item.name), ['Jarvis', 'Fable']);
+  assert.deepEqual(saved.bots[0]!.purview, { kind: 'all' });
+  assert.equal(saved.userName, null);
+  // Bots saved before these options read with them off.
+  const older = readBotSettings({ bots: [{ id: 'b1', name: 'Fable', presetId: 'preset_default_claude', avatar: { kind: 'face', look, emoji: null, picture: null }, purview: { kind: 'none' }, instructions: '', memory: true }] }).bots[1]!;
+  assert.deepEqual([older.enabled, older.voice.enabled, older.digests, older.focus, older.memoryBudgetTokens], [true, false, false, false, 4000]);
 
   // Purview: none, chosen projects, or all.
   assert.equal(purviewAllows({ kind: 'none' }, 'p'), false);
@@ -81,8 +103,15 @@ async function main(): Promise<void> {
     const workbench = new WorkbenchRepository(database, settings);
     const timeline = new TimelineService(database);
 
+    // Leaving the assistant out keeps it: it can't be deleted.
     settings.updateBots({ bots: [bot('fable', 'Fable', { purview: { kind: 'projects', projectIds: ['p'] } }), bot('pal', 'Pal')] });
-    assert.deepEqual(settings.bots().bots.map((item) => item.id), ['fable', 'pal']);
+    assert.deepEqual(settings.bots().bots.map((item) => item.id), [ASSISTANT_BOT_ID, 'fable', 'pal']);
+    // Its purview stays every project, whatever is saved.
+    settings.updateBots({ bots: [{ ...settings.bots().bots[0]!, purview: { kind: 'none' } }, ...settings.bots().bots.slice(1)] });
+    assert.deepEqual(settings.bots().bots[0]!.purview, { kind: 'all' });
+    // The assistant is off here until its own checks below.
+    settings.updateBots({ bots: [{ ...settings.bots().bots[0]!, enabled: false }, ...settings.bots().bots.slice(1)] });
+    assert.equal(settings.bots().bots[0]!.enabled, false);
 
     // A fake launcher registers rows the way HarnessLauncher does.
     const launches: Array<{ input: LaunchHarnessInput; resume: HarnessResume | null }> = [];
@@ -171,7 +200,7 @@ async function main(): Promise<void> {
     assert.equal(launches.at(-1)!.resume, null);
     assert.equal(stopped.at(-1), 'proc-bot-5');
     // Removing a bot stops its session.
-    settings.updateBots({ bots: [settings.bots().bots[0]!] });
+    settings.updateBots({ bots: [settings.bots().bots[1]!] });
     await bots.reconcile();
     assert.ok(stopped.includes('proc-bot-2'));
     assert.equal(bots.state('pal').process_id, null);
@@ -179,7 +208,7 @@ async function main(): Promise<void> {
     settings.updateBots({ bots: [...settings.bots().bots, bot('lost', 'Lost', { presetId: 'preset_gone' })] });
     await assert.rejects(bots.ensure('lost'), /profile no longer exists/);
     await assert.rejects(bots.ensure('nobody'), /unknown bot/);
-    settings.updateBots({ bots: [settings.bots().bots[0]!] });
+    settings.updateBots({ bots: [settings.bots().bots[1]!] });
 
     const running = (botId: string) => (db.prepare(`select count(*) as count from sessions join processes on processes.id = sessions.process_id
       where sessions.bot_id = ? and sessions.exited_at is null and processes.status = 'running'`).get(botId) as { count: number }).count;
@@ -201,7 +230,7 @@ async function main(): Promise<void> {
     const starting = bots.ensure('late');
     // Let the launch begin before the bot is removed.
     while (!launches.some((launch) => launch.input.bot_id === 'late') && !gateReached) await new Promise((resolve) => setImmediate(resolve));
-    settings.updateBots({ bots: [settings.bots().bots[0]!] });
+    settings.updateBots({ bots: [settings.bots().bots[1]!] });
     const reconciled = bots.reconcile();
     release();
     gate = Promise.resolve();
@@ -267,7 +296,7 @@ async function main(): Promise<void> {
     assert.equal('open_notifications' in overview, false);
     await registry.callPublic('todo_list', {}, fable);
     // Even with every project, a bot can't reach the assistant or another bot.
-    settings.updateBots({ bots: [{ ...settings.bots().bots[0]!, purview: { kind: 'all' } }] });
+    settings.updateBots({ bots: [{ ...settings.bots().bots[1]!, purview: { kind: 'all' } }] });
     db.prepare(`insert into projects(id,name,path,kind,created_at,updated_at) values('project_assistant','Assistant',?, 'assistant',?,?), (?, 'Other', ?, 'bots', ?, ?)`).run(dir, now, now, botProjectId('other'), dir, now, now);
     db.prepare(`insert into processes(id,project_id,kind,name,status,created_at,updated_at) values('proc-assistant','project_assistant','agent','Assistant','running',?,?), ('proc-other-bot',?,'agent','Other','running',?,?)`).run(now, now, botProjectId('other'), now, now);
     await registry.callPublic('get_process_status', { process_id: 'proc-q' }, fable);
@@ -275,6 +304,32 @@ async function main(): Promise<void> {
     await assert.rejects(registry.callPublic('get_process_status', { process_id: 'proc-other-bot' }, fable), /outside the current caller scope/);
     await assert.rejects(registry.callPublic('list_processes', { project_id: botProjectId('other') }, fable), /outside this bot's projects/);
     await assert.rejects(registry.callPublic('todo_list', { project_id: 'project_assistant' }, fable), /outside this bot's projects/);
+
+    // The assistant runs like any bot: turned off it doesn't start, and on
+    // it keeps its own role, project and folder, so its thread resumes.
+    const launchesBefore = launches.length;
+    await bots.ensureAll();
+    assert.equal(launches.slice(launchesBefore).some((launch) => launch.input.bot_id === ASSISTANT_BOT_ID), false);
+    await assert.rejects(bots.ensure(ASSISTANT_BOT_ID), /turned off/);
+    settings.updateBots({ bots: [{ ...settings.bots().bots[0]!, enabled: true, presetId: null }, ...settings.bots().bots.slice(1)] });
+    // Until its first conversation it starts only when opened, not with Patterm.
+    await bots.ensureAll();
+    assert.equal(bots.currentProcess(ASSISTANT_BOT_ID), null);
+    assert.equal(bots.harness(ASSISTANT_BOT_ID), 'codex', 'no profile runs Codex with its own configuration');
+    await bots.ensure(ASSISTANT_BOT_ID);
+    const assistantLaunch = launches.at(-1)!.input;
+    assert.deepEqual([assistantLaunch.bot_id, assistantLaunch.session_role, assistantLaunch.project_id, assistantLaunch.harness, 'preset' in assistantLaunch], [ASSISTANT_BOT_ID, 'assistant', ASSISTANT_PROJECT_ID, 'codex', false]);
+    assert.equal(path.basename(assistantLaunch.cwd!), 'assistant');
+    assert.equal((db.prepare('select kind from projects where id = ?').get(ASSISTANT_PROJECT_ID) as { kind: string }).kind, 'assistant');
+    assert.match(bots.context(ASSISTANT_BOT_ID), /You are the user's Patterm assistant/);
+    const assistantProcess = bots.currentProcess(ASSISTANT_BOT_ID)!;
+    assert.equal(bots.botFor(assistantProcess), ASSISTANT_BOT_ID);
+    // Restarting resumes its thread; turning it off stops it.
+    await bots.restartProcess(assistantProcess);
+    assert.equal(launches.at(-1)!.resume?.resume_id, `thread-${launches.length - 1}`);
+    settings.updateBots({ bots: [{ ...settings.bots().bots[0]!, enabled: false }, ...settings.bots().bots.slice(1)] });
+    await bots.reconcile();
+    assert.equal(bots.currentProcess(ASSISTANT_BOT_ID), null);
   } finally {
     database.dispose();
     removeTree(dir);
@@ -301,14 +356,14 @@ async function main(): Promise<void> {
   assert.deepEqual([...hidden.sessions].sort(), ['bot', 'deep', 'helper']);
   assert.ok(hidden.processes.has('proc-server'), 'a helper\'s server stays out of view too');
   assert.equal(botHidden(projects, []).sessions.size, 0);
-  const [row] = botRows({ bots: [bot('fable', 'Fable')] }, projects, [botsProject]);
+  const [row] = botRows({ bots: [bot('fable', 'Fable')], userName: null }, projects, [botsProject]);
   assert.equal(row!.session?.id, 'bot');
   assert.equal(row!.activity?.subagents.working, 1);
   assert.equal(row!.waitingHelper?.id, 'deep');
   assert.equal(row!.waitingHelperProjectId, 'p');
   assert.equal(row!.line, 'A helper is waiting: Deploy to production?');
-  assert.equal(botRows({ bots: [bot('fable', 'Fable')] }, [], [botsProject])[0]!.line, 'Watching the deploy');
-  assert.equal(botRows({ bots: [bot('new', 'New')] }, projects, [botsProject])[0]!.session, null);
+  assert.equal(botRows({ bots: [bot('fable', 'Fable')], userName: null }, [], [botsProject])[0]!.line, 'Watching the deploy');
+  assert.equal(botRows({ bots: [bot('new', 'New')], userName: null }, projects, [botsProject])[0]!.session, null);
   // Global bots list in every project; a bot with chosen projects only in those.
   const scoped = bot('scoped', 'Scoped', { purview: { kind: 'projects', projectIds: ['q'] } });
   assert.equal(botShownIn(bot('generic', 'Generic'), 'p'), true);
@@ -344,12 +399,14 @@ async function main(): Promise<void> {
   assert.deepEqual(assistantRow(assistantProject, null), { session: null, activity: null, line: null }, 'not started yet, not exited');
   assert.equal(assistantRow(assistantProject, 'proc-routine').session, null, 'never a routine run');
   assert.deepEqual(assistantRow(null, null), { session: null, activity: null, line: null });
+  // The assistant and turned-off bots don't list as bot rows: the assistant has its own.
+  assert.deepEqual(botRows({ bots: [readBotSettings({}).bots[0]!, bot('off', 'Off', { enabled: false }), bot('on', 'On')], userName: null }, projects, [botsProject]).map((item) => item.bot.id), ['on']);
   const idle = { voiceActive: false, focus: false, focusPending: 0, processId: null };
   assert.equal(assistantLine(idle, assistantRow(null, null)), 'Starts when you open it');
   assert.equal(assistantLine({ ...idle, processId: 'proc-assistant' }, live), 'Which project?');
   assert.equal(assistantLine({ ...idle, processId: 'proc-assistant', voiceActive: true }, live), 'On a voice call');
   assert.equal(assistantLine({ ...idle, processId: 'proc-assistant', focus: true, focusPending: 2 }, assistantRow(null, null)), 'Focus · 2 held');
-  assert.equal(botLine(botRows({ bots: [bot('new', 'New')] }, projects, [botsProject])[0]!), 'Starting…');
+  assert.equal(botLine(botRows({ bots: [bot('new', 'New')], userName: null }, projects, [botsProject])[0]!), 'Starting…');
   assert.equal(botLine(row!), 'A helper is waiting: Deploy to production?');
   // Helpers' reports and Patterm's notes stay out of a bot's conversation.
   for (const text of ['[report from process_7: completed]\nDone', '[message from process_7]\nhi', '[Patterm timer t1: condition met]', '[Attention needed by process_7]', '[Close requested by process_7]\nall done']) {

@@ -30,8 +30,8 @@
       </div>
     </div>
 
-    <div class="min-h-0 flex-1 overflow-y-auto border-t border-border/60 px-4 py-3" :class="wide && 'md:w-[24rem] md:flex-none md:border-l md:border-t-0'" aria-label="Assistant activity">
-      <p v-if="!actions.length" class="py-6 text-center text-xs text-muted-foreground">Actions the assistant takes appear here.</p>
+    <div class="min-h-0 flex-1 overflow-y-auto border-t border-border/60 px-4 py-3" :class="wide && 'md:w-[24rem] md:flex-none md:border-l md:border-t-0'" :aria-label="`${botName} activity`">
+      <p v-if="!actions.length" class="py-6 text-center text-xs text-muted-foreground">Actions {{ botName === 'Assistant' ? 'the assistant' : botName }} takes appear here.</p>
       <ol v-else class="space-y-0.5">
         <li v-for="action in actions" :key="action.id" class="text-xs">
           <!-- Work on an agent or process opens it; the row is the target,
@@ -87,7 +87,9 @@ import AgentIcon from '../AgentIcon.vue';
 import { Button } from '../ui/button';
 import { toolActivityLabel, type TranscriptMessage } from '../../lib/integratedConversation';
 import { AssistantVoiceSession, type VoiceStatus } from '../../lib/assistantVoice';
-import { message, onAssistantRealtime } from '../../lib/assistant';
+import { message } from '../../lib/assistant';
+import { onBotRealtime } from '../../lib/botRelay';
+import { ASSISTANT_BOT_ID } from '../../../../app/Bots/BotIdentity';
 import { toolProcessCall } from '../../lib/assistantFocus';
 import { findProcess } from '../../lib/agentMentions';
 import { agentLabel } from '../../lib/agentTabs';
@@ -95,8 +97,9 @@ import { useWorkbench } from '../../Composables/useWorkbench';
 import { SettledValue } from '../../lib/settledValue';
 import { VOICE_PHASE_HINTS, VOICE_PHASE_LABELS, type VoicePhase } from '../../lib/assistantVoicePhase';
 
-// `wide` lays the orb and the activity log side by side on the assistant page.
-const props = defineProps<{ transcript: TranscriptMessage[]; streamStatus: string; wide?: boolean }>();
+// `wide` lays the orb and the activity log side by side on a page. `botId`
+// and `botName` name the bot the call is with; the assistant by default.
+const props = withDefaults(defineProps<{ transcript: TranscriptMessage[]; streamStatus: string; wide?: boolean; botId?: string; botName?: string }>(), { botId: ASSISTANT_BOT_ID, botName: 'Assistant' });
 const emit = defineEmits<{ end: [] }>();
 
 const ACTION_LIMIT = 12;
@@ -193,7 +196,7 @@ watch(current, (value) => toolSettler.set(value));
 
 // A session is single use, so trying again starts a fresh one.
 function createSession(): AssistantVoiceSession {
-  return new AssistantVoiceSession((next, detail) => {
+  return new AssistantVoiceSession({ id: props.botId, name: props.botName }, (next, detail) => {
     status.value = next;
     if (detail) failure.value = detail;
   }, {
@@ -237,7 +240,7 @@ function firstLine(text: string): string {
 }
 
 onMounted(async () => {
-  releaseRealtime = onAssistantRealtime(({ method, params }) => {
+  releaseRealtime = onBotRealtime(props.botId, ({ method, params }) => {
     if (method === 'thread/realtime/transcript/done' && typeof params.text === 'string') caption.value = params.text.trim();
     else if (method === 'thread/realtime/error' && typeof params.message === 'string') failure.value = params.message;
     else if (method === 'thread/realtime/closed' && Date.now() - startedAt > 1_000) status.value = 'ended';

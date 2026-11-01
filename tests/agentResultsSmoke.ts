@@ -135,7 +135,7 @@ async function main(): Promise<void> {
     let assistantRunning = true;
     let deliveryDelay = 0;
     const assistant = {
-      deliverAgentMessage: async (from: string, message: string) => {
+      deliverAgentMessage: async (_botId: string, from: string, message: string) => {
         if (!assistantRunning) throw new Error('send_message: the assistant is not running');
         if (deliveryDelay) await wait(deliveryDelay);
         delivered.push({ from, message });

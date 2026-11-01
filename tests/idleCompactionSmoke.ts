@@ -37,7 +37,7 @@ async function main() {
   // An uncertain failure whose compaction the agent did receive.
   let uncertainStarted = false;
   const lastActivities: Record<string, number | null> = {};
-  const models: Record<string, string | null> = { codex: 'gpt-6-astra', assistant: 'gpt-6.1-sol', old: 'gpt-5.5', openai: 'openai/gpt-5.6', go: 'opencode-go/deepseek-v4.1-flash' };
+  const models: Record<string, string | null> = { codex: 'gpt-6-astra', assistant: 'gpt-6.1-sol', bot: 'gpt-6.1-sol', old: 'gpt-5.5', openai: 'openai/gpt-5.6', go: 'opencode-go/deepseek-v4.1-flash' };
   let modelGate: Promise<void> | null = null;
   const source: IdleCompactionSource = {
     onActivityChange(listener) { activityListener = listener; return () => { activityListener = undefined; }; },
@@ -87,8 +87,9 @@ async function main() {
   const count = (id: string) => compacted.filter((item) => item === id).length;
   try {
     db.exec("insert into projects(id,name,path,created_at,updated_at) values('project','Test','/tmp','now','now')");
-    for (const [id, harness] of [['claude', 'claude'], ['codex', 'codex'], ['old', 'codex'], ['openai', 'opencode'], ['go', 'opencode'], ['assistant', 'codex'], ['second', 'claude']]) add(id!, harness!);
+    for (const [id, harness] of [['claude', 'claude'], ['codex', 'codex'], ['old', 'codex'], ['openai', 'opencode'], ['go', 'opencode'], ['assistant', 'codex'], ['bot', 'codex'], ['second', 'claude']]) add(id!, harness!);
     db.prepare("update sessions set session_role = 'assistant' where process_id = 'assistant'").run();
+    db.prepare("update sessions set session_role = 'bot', bot_id = 'fable' where process_id = 'bot'").run();
     service.start();
 
     // Only GPT-5.6 and later have OpenAI's documented 30-minute cache.
@@ -279,6 +280,14 @@ async function main() {
     native('assistant');
     await wait(SETTLE);
     assert.equal(count('assistant'), 1, 'compaction does not re-arm itself');
+
+    // Any bot's voice call holds its compaction back too.
+    assistantVoiceActive = true;
+    turn('bot');
+    await wait(SETTLE);
+    assert.equal(count('bot'), 0);
+    assert.deepEqual(state('bot'), cleared);
+    assistantVoiceActive = false;
 
     // Voice can start during the model lookup; check it again before admission.
     const voiceGate = deferred<void>();

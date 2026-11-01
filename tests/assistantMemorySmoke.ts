@@ -1,3 +1,4 @@
+import { ASSISTANT_BOT_ID, type Bot } from '../app/Bots/BotSettings';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -25,12 +26,14 @@ async function main(): Promise<void> {
     const now = time.toISOString();
     db.prepare('insert into projects(id,name,path,created_at,updated_at) values(?,?,?,?,?)').run('p', 'Project', dir, now, now);
     const settings = new SettingsService(database);
+    // The assistant's settings live on its built-in bot.
+    const setAssistant = (change: Partial<Bot>) => settings.updateBots({ ...settings.bots(), bots: settings.bots().bots.map((bot) => bot.id === ASSISTANT_BOT_ID ? { ...bot, ...change } : bot) });
     const memory = new AssistantMemoryService(database, settings, () => time);
     assert.equal(memory.snapshot(), '');
     assert.equal(memory.read({}).enabled, false, 'a disabled store can be checked without loading notes');
     assert.match(new AgentContextService().buildAssistant(), /assistant_memory_read/, 'an assistant launched with memory off knows how to activate it later');
     assert.throws(() => memory.write({ lines: [{ text: 'disabled', importance: 'high' }] }), /disabled/);
-    settings.updateAssistantSettings({ ...settings.assistantSettings(), memoryEnabled: true, memoryBudgetTokens: 2000 });
+    setAssistant({ memory: true, memoryBudgetTokens: 2000 });
     const write = (text: string, importance: 'low' | 'medium' | 'high' = 'high', project_id: string | null = null) => memory.write({ lines: [{ text, importance, project_id }] }).ids[0]!;
     const row = (id: string) => database.connection.prepare('select * from assistant_memory where id = ?').get(id) as { text: string; fact_at: string; importance: 'low' | 'medium' | 'high'; project_id: string | null; status: string; replaced_by: string | null };
     const a = write('Prefers short answers.');
@@ -94,8 +97,8 @@ async function main(): Promise<void> {
       memory.write({ lines: Array.from({ length: 20 }, (_, i) => ({ text: `${batch}/${i} ${scripts[i % scripts.length]!.repeat(14)}`, importance: 'high' })) });
     }
     assert.equal(memory.read({ since_revision: beforeBulk }).requiresRefresh, true, 'oversized delta explicitly requests refresh');
-    for (const budget of [2000, 4000, 8000]) {
-      settings.updateAssistantSettings({ ...settings.assistantSettings(), memoryBudgetTokens: budget });
+    for (const budget of [2000, 4000, 8000] as const) {
+      setAssistant({ memoryBudgetTokens: budget });
       const snapshot = memory.snapshot();
       assert.ok(Buffer.byteLength(snapshot) <= budget * 3, 'whole rendered snapshot obeys byte cap, including escaping and Unicode');
       assert.match(snapshot, /not loaded/);
@@ -126,7 +129,7 @@ async function main(): Promise<void> {
     const releaseWorker = launchingIdentities.reserve('mcp-starting-worker', 'codex', 'orchestrator');
     const releaseAssistant = launchingIdentities.reserve('mcp-starting-assistant', 'codex', 'assistant');
     for (const memoryEnabled of [false, true]) {
-      settings.updateAssistantSettings({ ...settings.assistantSettings(), memoryEnabled });
+      setAssistant({ memory: memoryEnabled });
       const ordinaryCatalog = registry.publicTools({ identity: 'mcp-starting-worker' });
       assert.ok(ordinaryCatalog.length > 0, 'pre-registration catalogue discovery remains available');
       assert.ok(!ordinaryCatalog.some((item) => item.name === tool));
@@ -140,7 +143,7 @@ async function main(): Promise<void> {
 
     // Reproduce omitted candidates, then compress using only public operations.
     // A fresh/compacted assistant has no direct database access to these facts.
-    settings.updateAssistantSettings({ ...settings.assistantSettings(), memoryBudgetTokens: 2000 });
+    setAssistant({ memoryBudgetTokens: 2000 });
     time = new Date('2026-08-01T12:00:00Z');
     memory.write({ lines: Array.from({ length: 20 }, (_, i) => ({ text: `Old related candidate ${i} ${'x'.repeat(270)}`, importance: 'high' })) });
     time = new Date('2026-10-01T12:00:00Z');
@@ -176,7 +179,7 @@ async function main(): Promise<void> {
     }
     await assert.rejects(registry.callPublic(tool, {}, { identity: 'expired' }), /Only the assistant|identity/);
     await assert.rejects(registry.call(tool, {}, { remote: { host_id: 'remote', host_name: 'remote', project_id: 'p' } }), /Only the assistant/);
-    settings.updateAssistantSettings({ ...settings.assistantSettings(), memoryEnabled: false });
+    setAssistant({ memory: false });
     assert.equal(memory.snapshot(), '');
     const disabledCatalogue = registry.publicTools({ identity: 'mcp-assistant' }).filter((item) => item.name.startsWith('assistant_memory_'));
     assert.equal(disabledCatalogue.length, 3, 'native discovery does not depend on the memory switch');
@@ -185,7 +188,7 @@ async function main(): Promise<void> {
     assert.doesNotMatch(disabled.text, /memory_/, 'disabled reads do not disclose saved notes');
     await assert.rejects(registry.callPublic('assistant_memory_write', { lines: [{ text: 'disabled', importance: 'high' }] }, assistantCaller), /disabled/);
     await assert.rejects(registry.callPublic('assistant_memory_search', { query: 'Project' }, assistantCaller), /disabled/);
-    settings.updateAssistantSettings({ ...settings.assistantSettings(), memoryEnabled: true });
+    setAssistant({ memory: true });
     assert.deepEqual(registry.publicTools({ identity: 'mcp-assistant' }).filter((item) => item.name.startsWith('assistant_memory_')), disabledCatalogue);
     const enabled = await registry.callPublic(tool, {}, assistantCaller) as ReturnType<AssistantMemoryService['read']>;
     assert.equal(enabled.enabled, true);
@@ -196,7 +199,7 @@ async function main(): Promise<void> {
     const latest = remove.revision;
     database.dispose();
     database.initialize();
-    settings.updateAssistantSettings({ ...settings.assistantSettings(), memoryEnabled: true });
+    setAssistant({ memory: true });
     assert.ok(memory.read({}).revision > latest, 'revision and facts survive restart');
     assert.equal(row(corrected).status, 'forgotten');
 

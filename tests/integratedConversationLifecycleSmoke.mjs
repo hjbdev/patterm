@@ -1351,7 +1351,12 @@ test('/new during an assistant restart surfaces an error instead of succeeding',
   let finish;
   const calls = [];
   const window = { patterm: { integratedCall: tool => { calls.push(tool); return new Promise(resolve => { finish = resolve; }); } } };
-  new Function('require', 'exports', 'window', outputText)(require, client.exports, window);
+  // The assistant's live state comes from the bot relay, stubbed here.
+  const stubs = {
+    '../../../app/Bots/BotIdentity': { ASSISTANT_BOT_ID: 'assistant' },
+    './botRelay': { onBotRealtime: () => () => {}, onBotState: () => () => {}, refreshBotState: async () => null, setBotFocus: async () => {}, startBotEvents: () => {} }
+  };
+  new Function('require', 'exports', 'window', outputText)((id) => stubs[id] ?? require(id), client.exports, window);
   const restarting = client.exports.restartAssistant('assistant_busy');
   const harness = createHarness({ processId: 'assistant_busy', onNewSession: client.exports.newAssistantSession });
   await mountSettled(harness);
@@ -1361,8 +1366,8 @@ test('/new during an assistant restart surfaces an error instead of succeeding',
   await harness.pane.sendRequest({ ...prepared.payload, hash: prepared.hash });
   await flush();
   assert.match(harness.pane.state().error, /already restarting/);
-  assert.deepEqual(calls, ['assistant_restart']);
-  finish({ process_id: 'assistant_resumed', voice: { active: false } });
+  assert.deepEqual(calls, ['bot_restart']);
+  finish({ bot_id: 'assistant', process_id: 'assistant_resumed', session_id: null });
   await restarting;
   harness.scope.stop();
 });

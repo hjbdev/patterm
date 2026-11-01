@@ -1,4 +1,6 @@
-import type { AssistantService } from '../Services/AssistantService';
+import type { BotRelay } from '../Services/BotRelay';
+import type { BotInbox } from '../Services/BotInbox';
+import { ASSISTANT_BOT_ID } from '../Bots/BotIdentity';
 import type { DatabaseService } from '../Services/DatabaseService';
 import type { IntegratedAgentService } from '../Services/IntegratedAgentService';
 import type { TerminalService } from '../Services/TerminalService';
@@ -22,6 +24,7 @@ const ASSISTANT_MESSAGE_MAX_BYTES = 8 * 1024;
 const ASSISTANT_MESSAGE_WINDOW_MS = 60_000;
 const ASSISTANT_MESSAGES_PER_WINDOW = 6;
 export const ASSISTANT_FOCUS_DETAIL = 'The assistant is in Focus mode. Your message is held and reaches it when focus ends; do not resend it.';
+const BOT_FOCUS_DETAIL = 'That bot is in Focus mode. Your message is held and reaches it when focus ends; do not resend it.';
 const REPLY_HINT = '\n\n(Reply with send_message target_process_id "assistant".)';
 
 // Delivers send_message. Targets resolve first, aliases included, so every
@@ -37,7 +40,9 @@ export class SendMessageAction {
     private readonly timeline: TimelineService,
     private readonly options: {
       integrated?: Pick<IntegratedAgentService, 'prompt'> | undefined;
-      assistant?: Pick<AssistantService, 'deliverAgentMessage'> | undefined;
+      assistant?: Pick<BotRelay, 'deliverAgentMessage'> | undefined;
+      // Holds messages for a bot in Focus mode, such as a helper's reply.
+      inbox?: Pick<BotInbox, 'hold'> | undefined;
       notifications?: Pick<NotificationActions, 'userInput'> | undefined;
       timers?: Pick<TimerService, 'noteInstruction' | 'takeReportCallbacks'> | undefined;
     } = {}
@@ -68,6 +73,9 @@ export class SendMessageAction {
     // Noted before dispatch: a fast reply may land before the acknowledgement,
     // and an uncertain delivery may still have started new work.
     if (sender?.process_id) this.options.timers?.noteInstruction(sender.process_id, targetId);
+    if (sender && this.options.inbox?.hold(targetId, { kind: 'agent_message', sourceProcessId: sender.process_id, title: `Message from ${sender.process_id ?? 'unknown'}`, body: message })) {
+      return { ok: true, delivery: 'queued', event_id: this.record(sender, targetId, message), detail: BOT_FOCUS_DETAIL };
+    }
     const result = await sendAgentInput(this.database, this.terminal, { process_id: targetId, kind: 'text', text: `[message from ${sender?.process_id ?? 'unknown'}]\n${message}${hint}`, submit: true }, this.options.integrated);
     // An Integrated agent may or may not have received an ambiguous
     // submission. It is reported as uncertain, never resent, and does not
@@ -101,7 +109,7 @@ export class SendMessageAction {
     const taken = this.options.timers?.takeReportCallbacks(assistantId, { fromProcessId: sender.process_id, body: message });
     let delivered: { process_id: string; delivery: 'delivered' | 'uncertain' | 'queued'; detail?: string };
     try {
-      delivered = await this.options.assistant.deliverAgentMessage(sender.process_id, [message, ...taken?.texts ?? []].join('\n\n'));
+      delivered = await this.options.assistant.deliverAgentMessage(ASSISTANT_BOT_ID, sender.process_id, [message, ...taken?.texts ?? []].join('\n\n'));
     } catch (error) {
       taken?.restore();
       // An undelivered message does not count against the sender.

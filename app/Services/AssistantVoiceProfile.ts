@@ -1,5 +1,3 @@
-import type { AssistantSettings } from './SettingsService';
-
 // Optional thread/realtime/start parameters a voice profile sets. Omitted keys
 // keep Codex's defaults.
 export interface RealtimeVoiceOptions {
@@ -9,22 +7,31 @@ export interface RealtimeVoiceOptions {
   realtimeStartInstructions?: string;
 }
 
-export const ASSISTANT_VOICE_PROFILES = ['codex', 'patterm'] as const;
-export type AssistantVoiceProfile = (typeof ASSISTANT_VOICE_PROFILES)[number];
-export const ASSISTANT_VOICE_ACKNOWLEDGEMENTS = ['default', 'on', 'off'] as const;
-export type AssistantVoiceAcknowledgements = (typeof ASSISTANT_VOICE_ACKNOWLEDGEMENTS)[number];
+export const BOT_VOICE_PROFILES = ['codex', 'patterm'] as const;
+export type BotVoiceProfile = (typeof BOT_VOICE_PROFILES)[number];
+export const BOT_VOICE_ACKNOWLEDGEMENTS = ['default', 'on', 'off'] as const;
+export type BotVoiceAcknowledgements = (typeof BOT_VOICE_ACKNOWLEDGEMENTS)[number];
+
+export interface VoiceSettings {
+  profile: BotVoiceProfile;
+  acknowledgements: BotVoiceAcknowledgements;
+  // The bot the voice speaks for, and what it calls the user.
+  botName: string;
+  assistant: boolean;
+  userName: string | null;
+}
 
 // The Codex profile sends nothing beyond an explicit acknowledgement choice, so
 // it starts exactly the session Codex would. The Patterm profile replaces
 // Codex's voice instructions, which describe realtime v2 prefixes and a
 // completion signal that v3 never sends, and gives the backend voice-only
 // rules that keep its turns short by handing longer work to agents.
-export function assistantVoiceOptions(settings: Pick<AssistantSettings, 'voiceProfile' | 'voiceAcknowledgements' | 'userName'>): RealtimeVoiceOptions {
-  const acknowledgements = settings.voiceAcknowledgements;
+export function botVoiceOptions(settings: VoiceSettings): RealtimeVoiceOptions {
+  const acknowledgements = settings.acknowledgements;
   const ackFiller = acknowledgements === 'default' ? {} : { delegationAckFiller: acknowledgements === 'on' };
-  if (settings.voiceProfile === 'codex') return ackFiller;
+  if (settings.profile === 'codex') return ackFiller;
   return {
-    prompt: voicePrompt(acknowledgements, settings.userName),
+    prompt: voicePrompt(acknowledgements, settings, settings.userName),
     ...ackFiller,
     // Reasoning summaries reach the voice model as quiet status, so it can say
     // what is happening instead of only that something is.
@@ -33,21 +40,26 @@ export function assistantVoiceOptions(settings: Pick<AssistantSettings, 'voicePr
   };
 }
 
-function voicePrompt(acknowledgements: AssistantVoiceAcknowledgements, userName: string | null): string {
+function voicePrompt(acknowledgements: BotVoiceAcknowledgements, bot: Pick<VoiceSettings, 'botName' | 'assistant'>, userName: string | null): string {
   const acknowledge = acknowledgements === 'off'
     ? '- When you hand a request over, do not add filler such as "let me check". Carry on the conversation, or stay quiet until there is news.'
     : '- When you hand a request over, a short acknowledgement is welcome reassurance. Vary it, and do not repeat it while the work continues.';
   const name = userName ? `\n\nThe user's name is ${userName}. Use it sparingly, for emphasis, a confirmation, or a smooth transition.` : '';
-  return `${VOICE_PROMPT_IDENTITY}${name}\n\n${VOICE_PROMPT_HEAD}\n${acknowledge}\n${VOICE_PROMPT_TAIL}`;
+  return `${voiceIdentity(bot)}${name}\n\n${VOICE_PROMPT_HEAD}\n${acknowledge}\n${VOICE_PROMPT_TAIL}`;
 }
 
-const VOICE_PROMPT_IDENTITY = `## Identity and tone
+function voiceIdentity(bot: Pick<VoiceSettings, 'botName' | 'assistant'>): string {
+  const who = bot.assistant
+    ? `the user's Patterm assistant${bot.botName === 'Assistant' ? '' : `, ${bot.botName}`}: one long-running manager that oversees coding agents across all of their projects`
+    : `${bot.botName}, one of the user's Patterm bots: a long-running companion that looks after coding agents in the user's projects`;
+  return `## Identity and tone
 
-You are the voice of the user's Patterm assistant: one long-running manager that oversees coding agents across all of their projects. Be concise, clear, warm, and natural. Keep replies short; this is a spoken conversation, often while the user is away from a screen.`;
+You are the voice of ${who}. Be concise, clear, warm, and natural. Keep replies short; this is a spoken conversation, often while the user is away from a screen.`;
+}
 
 const VOICE_PROMPT_HEAD = `## How work gets done
 
-You hand requests to the assistant's agent, which uses Patterm's tools, starts agents, and reports back. Present the work as your own, but you may say that an agent is working on something. Treat what the agent tells you as authoritative, and never claim an action has started, finished, or been cancelled until it says so.
+You hand requests to the bot's agent, which uses Patterm's tools, starts agents, and reports back. Present the work as your own, but you may say that an agent is working on something. Treat what the agent tells you as authoritative, and never claim an action has started, finished, or been cancelled until it says so.
 
 ## When to hand a request over
 

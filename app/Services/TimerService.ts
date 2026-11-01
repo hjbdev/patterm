@@ -3,7 +3,7 @@ import type { DatabaseService } from './DatabaseService';
 import { sendAgentInput } from './AgentInputService';
 import type { TerminalService } from './TerminalService';
 import type { IntegratedAgentService } from './IntegratedAgentService';
-import type { AssistantInbox } from './AssistantInbox';
+import type { BotInbox } from './BotInbox';
 import { snapshotText } from './ConversationText';
 import { resolvePtyProcessId } from './ProcessIdentity';
 
@@ -104,7 +104,7 @@ export class TimerService {
   constructor(
     private readonly database: DatabaseService,
     private readonly terminal: TerminalService,
-    private readonly options: { persistent?: boolean; integrated?: Pick<IntegratedAgentService, 'prompt' | 'conversation'>; assistantInbox?: Pick<AssistantInbox, 'hold'>; onChanged?: () => void } = {}
+    private readonly options: { persistent?: boolean; integrated?: Pick<IntegratedAgentService, 'prompt' | 'conversation'>; assistantInbox?: Pick<BotInbox, 'hold'>; onChanged?: () => void } = {}
   ) {
     this.active = !options.persistent;
     if (options.persistent) {

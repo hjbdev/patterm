@@ -2,10 +2,11 @@ import { z } from 'zod';
 import type { DatabaseService } from './DatabaseService';
 import { autoSummarySettingsInput, type AutoSummarySettings } from './AutoSummarySettings';
 import { notificationSettingsInput, type NotificationSettings } from './NotificationSettings';
-import { botSettingsInput, readBotSettings, type BotSettings } from '../Bots/BotSettings';
+import { ASSISTANT_BOT_ID, defaultAssistantBot, parseBotSettings, readBotSettings, type BotSettings, type LegacyAssistantSettings } from '../Bots/BotSettings';
 import { emptyHarnessPresetSettings, harnessPresetSettingsInput, presetHarnessInput, seededHarnessPresetSettings, type HarnessPresetSettings } from '../Harness/HarnessPresets';
 import { emptyHarnessModelCatalog, harnessModelCatalogInput, type HarnessModelCatalog } from '../Harness/ModelCatalog';
-import { ASSISTANT_VOICE_ACKNOWLEDGEMENTS, ASSISTANT_VOICE_PROFILES } from './AssistantVoiceProfile';
+import { BOT_VOICE_ACKNOWLEDGEMENTS, BOT_VOICE_PROFILES } from './AssistantVoiceProfile';
+import { BOT_VOICES } from '../Bots/BotIdentity';
 
 export const sidebarStateInput = z.object({
   projects: z.array(z.string()).default([]),
@@ -69,28 +70,19 @@ const NOTIFICATION_SETTINGS_KEY = 'notifications.v1';
 
 export const agentInterfaceInput = z.enum(['tui', 'integrated']);
 export type AgentInterface = z.infer<typeof agentInterfaceInput>;
-// GPT-Live (realtime v3) voices, as listed by thread/realtime/listVoices.
-export const ASSISTANT_VOICES = ['cove', 'juniper', 'maple', 'spruce', 'ember', 'vale', 'breeze', 'arbor', 'sol'] as const;
-export const assistantSettingsInput = z.object({
-  // Off stops the assistant and hides it everywhere until turned back on.
+// The assistant's settings from before it became a bot. They seed its bot
+// entry the first time bots are read; nothing writes them any more.
+const legacyAssistantSettingsInput = z.object({
   enabled: z.boolean().default(true),
-  // Null keeps Codex's default voice.
-  voice: z.enum(ASSISTANT_VOICES).nullable(),
-  // A Codex harness preset ID for the assistant's model; null uses the Codex default.
-  presetId: z.string().trim().min(1).max(160).nullable(),
-  // Notifications raised for the user are summarised to the assistant.
-  forwardNotifications: z.boolean(),
-  // How a voice session starts; see AssistantVoiceProfile. Defaults keep
-  // Codex's own behaviour, so clients that predate them save unchanged.
-  voiceProfile: z.enum(ASSISTANT_VOICE_PROFILES).default('codex'),
-  voiceAcknowledgements: z.enum(ASSISTANT_VOICE_ACKNOWLEDGEMENTS).default('default'),
-  // What the Patterm voice profile calls the user; blank leaves the name out.
-  userName: z.string().trim().max(60).transform((name) => name || null).nullable().default(null),
+  voice: z.enum(BOT_VOICES).nullable().catch(null).default(null),
+  presetId: z.string().trim().min(1).max(160).nullable().catch(null).default(null),
+  forwardNotifications: z.boolean().default(true),
+  voiceProfile: z.enum(BOT_VOICE_PROFILES).catch('codex').default('codex'),
+  voiceAcknowledgements: z.enum(BOT_VOICE_ACKNOWLEDGEMENTS).catch('default').default('default'),
+  userName: z.string().trim().max(60).transform((name) => name || null).nullable().catch(null).default(null),
   memoryEnabled: z.boolean().default(false),
-  memoryBudgetTokens: z.union([z.literal(2000), z.literal(4000), z.literal(8000)]).default(4000)
-}).strict();
-export type AssistantSettings = z.infer<typeof assistantSettingsInput>;
-export const DEFAULT_ASSISTANT_SETTINGS: AssistantSettings = { enabled: true, voice: null, presetId: null, forwardNotifications: true, voiceProfile: 'codex', voiceAcknowledgements: 'default', userName: null, memoryEnabled: false, memoryBudgetTokens: 4000 };
+  memoryBudgetTokens: z.union([z.literal(2000), z.literal(4000), z.literal(8000)]).catch(4000).default(4000)
+});
 // Harnesses whose idle agents are compacted before their prompt cache expires.
 export const idleCompactionSettingsInput = z.object({ claude: z.boolean(), codex: z.boolean(), opencode: z.boolean() }).strict();
 export type IdleCompactionSettings = z.infer<typeof idleCompactionSettingsInput>;
@@ -254,21 +246,6 @@ export class SettingsService {
     return enabled;
   }
 
-  assistantSettings(): AssistantSettings {
-    const row = this.database.connection.prepare('select value from settings where key = ?').get(ASSISTANT_SETTINGS_KEY) as { value: string } | undefined;
-    try {
-      return assistantSettingsInput.parse({ ...DEFAULT_ASSISTANT_SETTINGS, ...JSON.parse(row?.value ?? '{}') });
-    } catch {
-      return DEFAULT_ASSISTANT_SETTINGS;
-    }
-  }
-
-  updateAssistantSettings(input: unknown): AssistantSettings {
-    const settings = assistantSettingsInput.parse(input);
-    this.write(ASSISTANT_SETTINGS_KEY, JSON.stringify(settings));
-    return settings;
-  }
-
   idleCompactionSettings(): IdleCompactionSettings {
     const row = this.database.connection.prepare('select value from settings where key = ?').get(IDLE_COMPACTION_SETTINGS_KEY) as { value: string } | undefined;
     try {
@@ -314,14 +291,34 @@ export class SettingsService {
 
   bots(): BotSettings {
     const row = this.database.connection.prepare('select value from settings where key = ?').get(BOT_SETTINGS_KEY) as { value: string } | undefined;
-    try { return readBotSettings(row ? JSON.parse(row.value) : {}); }
-    catch { return { bots: [] }; }
+    let saved: unknown = {};
+    try { saved = row ? JSON.parse(row.value) : {}; } catch { /* unreadable settings read as none */ }
+    // The legacy settings matter only until the assistant's entry is saved.
+    const record = typeof saved === 'object' && saved !== null ? saved as { bots?: unknown; userName?: unknown } : {};
+    const migrated = 'userName' in record && Array.isArray(record.bots) && record.bots.some((bot) => (bot as { id?: unknown } | null)?.id === ASSISTANT_BOT_ID);
+    return readBotSettings(saved, migrated ? null : this.legacyAssistantSettings());
   }
 
   updateBots(input: unknown): BotSettings {
-    const settings = botSettingsInput.parse(input);
+    const current = this.bots().bots.find((bot) => bot.id === ASSISTANT_BOT_ID) ?? defaultAssistantBot();
+    const settings = parseBotSettings(input, current);
     this.write(BOT_SETTINGS_KEY, JSON.stringify(settings));
     return settings;
+  }
+
+  // The assistant's settings from before it was a bot, with its Codex model
+  // turned into the Codex default profile when it used none.
+  private legacyAssistantSettings(): LegacyAssistantSettings | null {
+    const row = this.database.connection.prepare('select value from settings where key = ?').get(ASSISTANT_SETTINGS_KEY) as { value: string } | undefined;
+    let saved: unknown = {};
+    try { saved = row ? JSON.parse(row.value) : {}; } catch { /* unreadable settings read as defaults */ }
+    const parsed = legacyAssistantSettingsInput.safeParse(saved);
+    const legacy = parsed.success ? parsed.data : legacyAssistantSettingsInput.parse({});
+    const presets = this.harnessPresets();
+    const codex = presets.presets.filter((preset) => preset.harness === 'codex');
+    const presetId = codex.some((preset) => preset.id === legacy.presetId) ? legacy.presetId
+      : presets.defaultPresetIdByHarness.codex ?? codex[0]?.id ?? null;
+    return { ...legacy, presetId };
   }
 
   harnessPresets(): HarnessPresetSettings {

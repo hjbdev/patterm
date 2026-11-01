@@ -76,7 +76,7 @@ async function main(): Promise<void> {
   desktop.handle('patterm:workbench:snapshot', () => 'snapshot');
   assert.deepEqual(desktopRoutes.get('patterm:mcp:call')!(null, { tool: 'project_list', arguments: {} }), { tool: 'project_list', arguments: {} });
   assert.throws(() => desktopRoutes.get('patterm:mcp:call')!(null, { tool: 'spawn_agent', arguments: {} }), /not available in the Patterm window/, 'agent-only tools are refused');
-  assert.deepEqual(desktopRoutes.get('patterm:mcp:call')!(null, { tool: 'assistant_restart', arguments: { process_id: 'a' } }), { tool: 'assistant_restart', arguments: { process_id: 'a' } }, 'socket-only control tools work in the window');
+  assert.deepEqual(desktopRoutes.get('patterm:mcp:call')!(null, { tool: 'bot_restart', arguments: { process_id: 'a' } }), { tool: 'bot_restart', arguments: { process_id: 'a' } }, 'socket-only control tools work in the window');
   assert.equal(desktopRoutes.get('patterm:workbench:snapshot')!(null), 'snapshot', 'other channels are unchanged');
   // An oversized socket reply must not close the socket, or the browser
   // reconnects and asks for it again forever.
@@ -471,10 +471,10 @@ async function main(): Promise<void> {
     await assert.rejects(b.request('input', { process_id: firstId, text: 'not-owner\n' }), /Take control/);
     // Restarting the assistant needs control of it, like sending it a message,
     // so plain HTTP calls cannot reach it.
-    await assert.rejects(b.call('patterm:integrated:call', { tool: 'assistant_restart', arguments: { process_id: firstId } }), /Take control/);
-    await assert.rejects(b.call('patterm:integrated:call', { tool: 'assistant_new', arguments: { process_id: firstId } }), /Take control/);
-    assert.match((await (await rpc('patterm:mcp:call', { tool: 'assistant_new', arguments: { process_id: firstId } })).json() as { error: string }).error, /not available through the browser/);
-    assert.match((await (await rpc('patterm:mcp:call', { tool: 'assistant_restart', arguments: { process_id: firstId } })).json() as { error: string }).error, /not available through the browser/);
+    await assert.rejects(b.call('patterm:integrated:call', { tool: 'bot_restart', arguments: { process_id: firstId } }), /Take control/);
+    await assert.rejects(b.call('patterm:integrated:call', { tool: 'bot_restart', arguments: { process_id: firstId, fresh: true } }), /Take control/);
+    assert.match((await (await rpc('patterm:mcp:call', { tool: 'bot_restart', arguments: { process_id: firstId, fresh: true } })).json() as { error: string }).error, /not available through the browser/);
+    assert.match((await (await rpc('patterm:mcp:call', { tool: 'bot_restart', arguments: { process_id: firstId } })).json() as { error: string }).error, /not available through the browser/);
     await assert.rejects(a.request('resize', { process_id: firstId, cols: 1e9, rows: 20 }), /1000/);
     await a.request('resize', { process_id: firstId, cols: 90, rows: 30, resize_seq: 50 });
     await b.request('take-control', { process_id: firstId });

@@ -1,5 +1,5 @@
 <template>
-  <SettingsPanel title="Bots" description="Bots are persistent companions you text with. Each one runs one of your profiles, keeps one conversation that carries on after a restart, and works in the projects you give it. The helpers it starts stay out of view.">
+  <SettingsPanel title="Bots" description="Bots are persistent companions you text with. Each one runs one of your profiles, keeps one conversation that carries on after a restart, and works in the projects you give it. The helpers it starts stay out of view. The assistant is the built-in bot: it oversees every project and opens from its own panel.">
     <template #actions>
       <Button type="button" size="sm" variant="outline" :disabled="!presetOptions.length" @click="addBot">Add bot</Button>
     </template>
@@ -14,17 +14,23 @@
         <template #meta>{{ profileLabel(bot.presetId) }} · {{ purviewLabel(bot.purview) }} · {{ statusLabel(bot.id) }}</template>
         <template #actions>
           <Button type="button" size="sm" variant="ghost" class="h-7 px-2" @click="editBot(bot)">Edit</Button>
-          <Button type="button" size="sm" variant="ghost" class="h-7 px-2 text-destructive hover:text-destructive" @click="removeBot(bot)">Delete</Button>
+          <Button v-if="!isAssistantBot(bot)" type="button" size="sm" variant="ghost" class="h-7 px-2 text-destructive hover:text-destructive" @click="removeBot(bot)">Delete</Button>
         </template>
       </SettingsItem>
       <p v-if="!bots.length" class="px-3.5 py-3 text-xs text-muted-foreground">{{ presetOptions.length ? 'No bots yet.' : 'Add a profile in Settings › Harnesses first.' }}</p>
+    </SettingsSection>
+
+    <SettingsSection title="Voice" scope="bots.voice">
+      <SettingsRow label="Your name" description="What voices call you with the Patterm voice profile. Leave blank to leave it out. Codex default uses your system account name." html-for="bots-user-name" save-key="bots.userName">
+        <Input id="bots-user-name" :model-value="userName" class="h-8 w-full text-xs [@container(min-width:26rem)]:w-56" placeholder="Not set" autocomplete="off" maxlength="60" @update:model-value="typeName(String($event))" @blur="flushName" />
+      </SettingsRow>
     </SettingsSection>
 
     <Dialog v-model:open="editorOpen">
       <DialogContent class="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{{ editor?.isNew ? 'Add bot' : `Edit ${editorTitle}` }}</DialogTitle>
-          <DialogDescription>Changes to a running bot apply when it restarts.</DialogDescription>
+          <DialogDescription>Changes to a running bot apply when it restarts. Changing its profile to another harness starts a new conversation.</DialogDescription>
         </DialogHeader>
         <form v-if="editor" class="space-y-4" @submit.prevent="applyEditor">
           <div class="grid gap-4 sm:grid-cols-[208px_minmax(0,1fr)]">
@@ -44,10 +50,11 @@
               <label class="text-xs text-muted-foreground" for="bot-name">Name</label>
               <Input id="bot-name" v-model="editor.name" class="h-8 text-xs" placeholder="Fable" autocomplete="off" maxlength="40" />
               <label class="text-xs text-muted-foreground" for="bot-profile">Profile</label>
-              <SettingsChoice id="bot-profile" v-model="editor.presetId" :options="presetOptions" aria-label="Profile" />
+              <SettingsChoice id="bot-profile" v-model="editor.presetId" :options="editorPresetOptions" aria-label="Profile" />
               <span class="text-xs text-muted-foreground">Projects</span>
-              <SettingsChoice v-model="editor.purviewKind" :options="PURVIEW_KINDS" aria-label="Projects" segmented />
-              <template v-if="editor.purviewKind === 'projects'">
+              <p v-if="editorIsAssistant" class="text-xs text-muted-foreground">All projects. The assistant also adds and renames projects.</p>
+              <SettingsChoice v-else v-model="editor.purviewKind" :options="PURVIEW_KINDS" aria-label="Projects" segmented />
+              <template v-if="!editorIsAssistant && editor.purviewKind === 'projects'">
                 <span />
                 <div class="flex max-h-36 flex-col gap-1.5 overflow-y-auto rounded-md border border-border px-2.5 py-2">
                   <label v-for="project in userProjects" :key="project.id" class="flex items-center gap-2 text-xs">
@@ -57,13 +64,51 @@
                   <span v-if="!userProjects.length" class="text-xs text-muted-foreground">No projects yet.</span>
                 </div>
               </template>
-              <span />
-              <p class="-mt-1 text-xs text-muted-foreground">{{ editor.purviewKind === 'projects' ? 'Lists in these projects only.' : 'Lists in every project.' }}</p>
+              <template v-if="!editorIsAssistant">
+                <span />
+                <p class="-mt-1 text-xs text-muted-foreground">{{ editor.purviewKind === 'projects' ? 'Lists in these projects only.' : 'Lists in every project.' }}</p>
+              </template>
+              <template v-if="!editor.isNew">
+                <label class="text-xs text-muted-foreground" for="bot-enabled">On</label>
+                <div class="flex items-center gap-2">
+                  <Switch id="bot-enabled" v-model="editor.enabled" />
+                  <span class="text-xs text-muted-foreground">Off stops it and hides it until you turn it back on. Its conversation resumes then.</span>
+                </div>
+              </template>
               <label class="text-xs text-muted-foreground" for="bot-memory">Memory</label>
               <div class="flex items-center gap-2">
                 <Switch id="bot-memory" v-model="editor.memory" />
                 <span class="text-xs text-muted-foreground">Keeps useful facts across conversations.</span>
               </div>
+              <template v-if="editor.memory">
+                <label class="text-xs text-muted-foreground" for="bot-memory-budget">Budget</label>
+                <SettingsChoice id="bot-memory-budget" v-model="editor.memoryBudgetTokens" :options="MEMORY_BUDGETS" aria-label="Memory context budget" />
+              </template>
+              <label class="text-xs text-muted-foreground" for="bot-digests">Digests</label>
+              <div class="flex items-center gap-2">
+                <Switch id="bot-digests" v-model="editor.digests" />
+                <span class="text-xs text-muted-foreground">Sends it a short summary when agents in its projects need you or finish.</span>
+              </div>
+              <label class="text-xs text-muted-foreground" for="bot-focus">Focus mode</label>
+              <div class="flex items-center gap-2">
+                <Switch id="bot-focus" v-model="editor.focus" />
+                <span class="text-xs text-muted-foreground">Lets it hold notifications, messages and reports until you're done focusing.</span>
+              </div>
+              <label class="text-xs text-muted-foreground" for="bot-voice">Voice</label>
+              <div class="flex items-center gap-2">
+                <Switch id="bot-voice" v-model="editor.voice.enabled" />
+                <span class="text-xs text-muted-foreground">{{ editorHarness === 'codex' ? 'Talk to it in a GPT-Live voice call.' : 'Voice calls need a Codex profile.' }}</span>
+              </div>
+              <template v-if="editor.voice.enabled">
+                <label class="text-xs text-muted-foreground" for="bot-voice-name">Speaks as</label>
+                <SettingsChoice id="bot-voice-name" v-model="editor.voice.voice" :options="voiceOptions" aria-label="Voice" />
+                <span class="text-xs text-muted-foreground">Voice profile</span>
+                <SettingsChoice v-model="editor.voice.profile" :options="VOICE_PROFILES" aria-label="Voice profile" segmented />
+                <span class="text-xs text-muted-foreground">Acknowledge</span>
+                <SettingsChoice v-model="editor.voice.acknowledgements" :options="ACKNOWLEDGEMENTS" aria-label="Acknowledgements" segmented />
+                <span />
+                <p class="-mt-1 text-xs text-muted-foreground">Patterm answers status questions itself and hands longer jobs to agents. Acknowledgements are short spoken reassurances, such as "Let me check".</p>
+              </template>
               <template v-if="editor.avatar.kind === 'emoji'">
                 <label class="text-xs text-muted-foreground" for="bot-emoji">Emoji</label>
                 <div class="flex flex-wrap items-center gap-1">
@@ -90,7 +135,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { Dices } from 'lucide-vue-next';
 import { cn } from '@/lib/utils';
@@ -98,7 +143,8 @@ import { isSingleEmoji } from '../../../app/Bots/BotAvatar';
 import { useBots } from '../Composables/useBots';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { botPicture } from '../lib/botPicture';
-import { saveBots, type Bot, type BotAvatar as Avatar, type BotPurview } from '../lib/bots';
+import { isAssistantBot, saveBots, type Bot, type BotAvatar as Avatar, type BotPurview, type BotVoice } from '../lib/bots';
+import { autosave } from '../Composables/useSettingsAutosave';
 import { facePalette, randomLook } from '../lib/faces';
 import { harnessLabel } from '../lib/harnesses';
 import { profileName, type ProfileSettings } from '../lib/profiles';
@@ -109,6 +155,7 @@ import BotAvatar from './BotAvatar.vue';
 import FaceMaker from './FaceMaker.vue';
 import SettingsChoice from './settings/SettingsChoice.vue';
 import SettingsItem from './settings/SettingsItem.vue';
+import SettingsRow from './settings/SettingsRow.vue';
 import SettingsPanel from './settings/SettingsPanel.vue';
 import SettingsSection from './settings/SettingsSection.vue';
 import { Button } from './ui/button';
@@ -122,18 +169,38 @@ interface EditorState {
   id: string;
   isNew: boolean;
   name: string;
-  presetId: string;
+  presetId: string | null;
   avatar: Avatar;
   purviewKind: BotPurview['kind'];
   projectIds: string[];
   instructions: string;
+  enabled: boolean;
   memory: boolean;
+  memoryBudgetTokens: Bot['memoryBudgetTokens'];
+  voice: BotVoice;
+  digests: boolean;
+  focus: boolean;
 }
 
 const AVATAR_KINDS = [
   { value: 'face' as const, label: 'Face' },
   { value: 'emoji' as const, label: 'Emoji' },
-  { value: 'picture' as const, label: 'Picture' }
+  { value: 'picture' as const, label: 'Picture' },
+  { value: 'mark' as const, label: 'Mark' }
+];
+const MEMORY_BUDGETS = [
+  { value: 2000 as const, label: '≈ 2,000 tokens' },
+  { value: 4000 as const, label: '≈ 4,000 tokens' },
+  { value: 8000 as const, label: '≈ 8,000 tokens' }
+];
+const VOICE_PROFILES = [
+  { value: 'codex' as const, label: 'Codex default' },
+  { value: 'patterm' as const, label: 'Patterm' }
+];
+const ACKNOWLEDGEMENTS = [
+  { value: 'default' as const, label: 'Default' },
+  { value: 'on' as const, label: 'On' },
+  { value: 'off' as const, label: 'Off' }
 ];
 const PURVIEW_KINDS = [
   { value: 'none' as const, label: 'None' },
@@ -143,12 +210,43 @@ const PURVIEW_KINDS = [
 const EMOJI = ['🦊', '🐙', '🦉', '🐢', '🤖', '🌱', '⚡', '🧠', '🎩', '🍄'];
 
 const route = useRoute();
-const { settings, rows } = useBots();
+const { settings, rows, voices } = useBots();
 const { projects } = useWorkbench();
 const bots = computed(() => settings.value.bots);
 const presets = ref<ProfileSettings>({ presets: [], defaultPresetIdByHarness: { claude: null, codex: null, opencode: null } });
 const userProjects = computed(() => projects.value.map((item) => item.project).filter((project) => project.kind === 'workspace' || project.kind === 'personal' || !project.kind));
-const presetOptions = computed(() => presets.value.presets.map((preset) => ({ value: preset.id, label: `${profileName(preset)} · ${harnessLabel(preset.harness)}` })));
+const presetOptions = computed(() => presets.value.presets.map((preset) => ({ value: preset.id as string | null, label: `${profileName(preset)} · ${harnessLabel(preset.harness)}` })));
+// A bot saved without a profile runs Codex with its own configuration.
+const editorPresetOptions = computed(() => editor.value?.presetId === null ? [{ value: null, label: 'Codex default' }, ...presetOptions.value] : presetOptions.value);
+const editorIsAssistant = computed(() => editor.value ? isAssistantBot(editor.value) : false);
+const editorHarness = computed(() => harnessOf(editor.value?.presetId ?? null));
+const voiceOptions = computed(() => [
+  { value: null as string | null, label: 'Default' },
+  ...voices.value.map((voice) => ({ value: voice as string | null, label: voice[0]!.toUpperCase() + voice.slice(1) }))
+]);
+
+function harnessOf(presetId: string | null): string | null {
+  if (!presetId) return 'codex';
+  return presets.value.presets.find((preset) => preset.id === presetId)?.harness ?? null;
+}
+
+// The name saves once typing pauses, or when the field loses focus.
+const userName = ref('');
+let nameTimer: ReturnType<typeof setTimeout> | undefined;
+watch(() => settings.value.userName, (value) => { if (nameTimer === undefined) userName.value = value ?? ''; }, { immediate: true });
+function typeName(value: string): void {
+  userName.value = value;
+  clearTimeout(nameTimer);
+  nameTimer = setTimeout(flushName, 600);
+}
+function flushName(): void {
+  if (nameTimer === undefined) return;
+  clearTimeout(nameTimer);
+  nameTimer = undefined;
+  const next = userName.value.trim() || null;
+  void autosave('bots.userName', async () => { await persist(bots.value, next); });
+}
+onBeforeUnmount(flushName);
 const editor = ref<EditorState | null>(null);
 const editorOpen = ref(false);
 const editorTitle = ref('');
@@ -172,7 +270,8 @@ function rowFor(botId: string) {
   return rows.value.find((row) => row.bot.id === botId) ?? null;
 }
 
-function profileLabel(presetId: string): string {
+function profileLabel(presetId: string | null): string {
+  if (!presetId) return 'Codex default';
   const preset = presets.value.presets.find((candidate) => candidate.id === presetId);
   return preset ? profileName(preset) : 'Missing profile';
 }
@@ -184,6 +283,9 @@ function purviewLabel(purview: BotPurview): string {
 }
 
 function statusLabel(botId: string): string {
+  const bot = bots.value.find((candidate) => candidate.id === botId);
+  if (bot && !bot.enabled) return 'Off';
+  if (bot && isAssistantBot(bot)) return 'Built in';
   const session = rowFor(botId)?.session;
   if (!session) return 'Starting';
   return session.exitedAt ? 'Stopped' : 'Running';
@@ -196,7 +298,10 @@ function newFace(): Avatar['look'] {
 function addBot(): void {
   editorError.value = '';
   const fallback = presets.value.defaultPresetIdByHarness.claude ?? presets.value.presets[0]?.id ?? '';
-  editor.value = { id: `bot_${randomId()}`, isNew: true, name: '', presetId: fallback, avatar: { kind: 'face', look: newFace(), emoji: null, picture: null }, purviewKind: 'none', projectIds: [], instructions: '', memory: true };
+  editor.value = {
+    id: `bot_${randomId()}`, isNew: true, name: '', presetId: fallback, avatar: { kind: 'face', look: newFace(), emoji: null, picture: null }, purviewKind: 'none', projectIds: [], instructions: '',
+    enabled: true, memory: true, memoryBudgetTokens: 4000, voice: { enabled: false, voice: null, profile: 'codex', acknowledgements: 'default' }, digests: false, focus: false
+  };
   editorOpen.value = true;
 }
 
@@ -207,7 +312,8 @@ function editBot(bot: Bot): void {
     id: bot.id, isNew: false, name: bot.name, presetId: bot.presetId,
     avatar: { ...bot.avatar, look: { ...bot.avatar.look } },
     purviewKind: bot.purview.kind, projectIds: bot.purview.kind === 'projects' ? [...bot.purview.projectIds] : [],
-    instructions: bot.instructions, memory: bot.memory
+    instructions: bot.instructions, enabled: bot.enabled, memory: bot.memory, memoryBudgetTokens: bot.memoryBudgetTokens,
+    voice: { ...bot.voice }, digests: bot.digests, focus: bot.focus
   };
   editorOpen.value = true;
 }
@@ -238,13 +344,13 @@ async function choosePicture(event: Event): Promise<void> {
 // Electron IPC can't clone Vue's reactive proxies, so every bot is copied out
 // as plain data.
 function plain(bot: Bot): Bot {
-  return { ...bot, avatar: { ...bot.avatar, look: { ...bot.avatar.look } }, purview: bot.purview.kind === 'projects' ? { kind: 'projects', projectIds: [...bot.purview.projectIds] } : { kind: bot.purview.kind } };
+  return { ...bot, avatar: { ...bot.avatar, look: { ...bot.avatar.look } }, voice: { ...bot.voice }, purview: bot.purview.kind === 'projects' ? { kind: 'projects', projectIds: [...bot.purview.projectIds] } : { kind: bot.purview.kind } };
 }
 
-async function persist(next: Bot[]): Promise<boolean> {
+async function persist(next: Bot[], name = settings.value.userName): Promise<boolean> {
   saving.value = true;
   try {
-    const saved = await saveBots({ bots: next.map(plain) });
+    const saved = await saveBots({ bots: next.map(plain), userName: name });
     settings.value = saved;
     error.value = '';
     return true;
@@ -262,12 +368,15 @@ async function applyEditor(): Promise<void> {
   const name = current.name.trim();
   if (!name) { editorError.value = 'Give the bot a name.'; return; }
   if (bots.value.some((bot) => bot.id !== current.id && bot.name.toLowerCase() === name.toLowerCase())) { editorError.value = `A bot named '${name}' already exists.`; return; }
-  if (!current.presetId) { editorError.value = 'Choose a profile.'; return; }
+  if (!current.presetId && !editorPresetOptions.value.some((option) => option.value === null)) { editorError.value = 'Choose a profile.'; return; }
   if (current.avatar.kind === 'emoji' && !(current.avatar.emoji && isSingleEmoji(current.avatar.emoji))) { editorError.value = 'Choose one emoji.'; return; }
   if (current.avatar.kind === 'picture' && !current.avatar.picture) { editorError.value = 'Choose a picture.'; return; }
   if (current.purviewKind === 'projects' && !current.projectIds.length) { editorError.value = 'Choose at least one project, or None.'; return; }
-  const purview: BotPurview = current.purviewKind === 'projects' ? { kind: 'projects', projectIds: current.projectIds } : { kind: current.purviewKind };
-  const bot: Bot = { id: current.id, name, presetId: current.presetId, avatar: current.avatar, purview, instructions: current.instructions.trim(), memory: current.memory };
+  const purview: BotPurview = editorIsAssistant.value ? { kind: 'all' } : current.purviewKind === 'projects' ? { kind: 'projects', projectIds: current.projectIds } : { kind: current.purviewKind };
+  const bot: Bot = {
+    id: current.id, name, presetId: current.presetId, avatar: current.avatar, purview, instructions: current.instructions.trim(),
+    enabled: current.enabled, memory: current.memory, memoryBudgetTokens: current.memoryBudgetTokens, voice: { ...current.voice }, digests: current.digests, focus: current.focus
+  };
   const next = current.isNew ? [...bots.value, bot] : bots.value.map((candidate) => candidate.id === bot.id ? bot : candidate);
   if (await persist(next)) editorOpen.value = false;
 }

@@ -3,8 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
-import { AssistantInbox } from '../app/Services/AssistantInbox';
-import { AssistantService, type AssistantEvent } from '../app/Services/AssistantService';
+import type { BotRelayEvent } from '../app/Services/BotRelay';
+import { ASSISTANT_BOT_ID } from '../app/Bots/BotIdentity';
 import type { CodexRealtimeEvent } from '../app/Services/CodexAppServerService';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import type { LaunchHarnessInput, HarnessResume } from '../app/Services/HarnessLauncher';
@@ -15,7 +15,8 @@ import { TimelineService } from '../app/Services/TimelineService';
 import { TimerService } from '../app/Services/TimerService';
 import { AgentContextService } from '../app/Services/AgentContextService';
 import { McpToolRegistry } from '../app/MCP/ToolRegistry';
-import { registerAssistantTools } from '../app/MCP/registerAssistantTools';
+import { registerBotTools } from '../app/MCP/registerBotTools';
+import { assistantBot } from './fixtures/AssistantBotFixture';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
 import { removeTree } from './fixtures/TempTree';
 
@@ -39,8 +40,8 @@ async function main(): Promise<void> {
       sequence += 1;
       const processId = `proc-assistant-${sequence}`;
       db.prepare(`insert into processes(id,project_id,kind,name,status,created_at,updated_at) values(?,?,'agent','Assistant','running',?,?)`).run(processId, input.project_id, now, now);
-      db.prepare(`insert into sessions(id,project_id,process_id,harness,interface_mode,session_role,started_at,cwd,mcp_identity,resume_id) values(?,?,?,?,?,?,?,?,?,?)`)
-        .run(`session-assistant-${sequence}`, input.project_id, processId, 'codex', 'integrated', 'assistant', new Date(Date.now() + sequence).toISOString(), dir, `mcp-assistant-${sequence}`, resume?.resume_id ?? `thread-${sequence}`);
+      db.prepare(`insert into sessions(id,project_id,process_id,harness,interface_mode,session_role,bot_id,started_at,cwd,mcp_identity,resume_id) values(?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(`session-assistant-${sequence}`, input.project_id, processId, 'codex', 'integrated', 'assistant', input.bot_id ?? null, new Date(Date.now() + sequence).toISOString(), dir, `mcp-assistant-${sequence}`, resume?.resume_id ?? `thread-${sequence}`);
       return { session_id: `session-assistant-${sequence}`, process_id: processId, pty_process_id: null, interface_mode: 'integrated' as const, harness: 'codex', name: 'Assistant' };
     };
     const launcher = { launch: async (input: LaunchHarnessInput) => register(input, null), resume: async (input: LaunchHarnessInput, resume: HarnessResume) => register(input, resume) };
@@ -67,14 +68,9 @@ async function main(): Promise<void> {
       onRealtime: (_processId: string, listener: (event: CodexRealtimeEvent) => void) => { realtime.add(listener); return () => realtime.delete(listener); }
     };
     const terminal = { request: async () => ({}) } as unknown as TerminalService;
-    const build = () => {
-      const inbox = new AssistantInbox(database);
-      const assistant = new AssistantService(database, dir, launcher, codex, integrated, settings, inbox, { stop: async () => undefined, transferTimers: () => undefined }, { digestDelayMs: DIGEST_MS });
-      assistant.start();
-      return { inbox, assistant };
-    };
-    let { inbox, assistant } = build();
-    const events: AssistantEvent[] = [];
+    const build = () => assistantBot(database, dir, launcher, codex, integrated, settings, { stop: async () => undefined, transferTimers: () => undefined }, { digestDelayMs: DIGEST_MS });
+    let { inbox, assistant, relay, bots } = build();
+    const events: BotRelayEvent[] = [];
     assistant.onEvent((event) => events.push(event));
     const assistantId = (await assistant.ensure()).process_id!;
     const toAssistant = () => prompts.filter((prompt) => prompt.processId === assistantId);
@@ -89,11 +85,11 @@ async function main(): Promise<void> {
     agent('other', null);
 
     const timers = new TimerService(database, terminal, { integrated, assistantInbox: inbox });
-    const registry = createTestMcpRegistry({ tempDir: dir, database, timeline, terminal, workbench, integrated: integrated as never, assistant, assistantInbox: inbox, timers });
+    const registry = createTestMcpRegistry({ tempDir: dir, database, timeline, terminal, workbench, integrated: integrated as never, assistant: relay, assistantInbox: inbox, timers });
     const asAssistant = { identity: `mcp-assistant-${sequence}` };
     const asWorker = { identity: 'mcp-worker' };
     const ui = new McpToolRegistry();
-    registerAssistantTools(ui, assistant, settings);
+    registerBotTools(ui, bots, relay, settings, () => undefined);
     const notification = (id: string, overrides: Partial<NotificationRecord> = {}): NotificationRecord => ({
       id, project_id: 'p', process_id: 'proc-other', session_id: null, source: 'integrated', kind: 'turn_finished', urgency: 'normal', delivery: 'all', held: false, audience: 'user',
       routed_to_process_id: null, title: 'other', body: 'Finished its turn', occurrences: 1, created_at: now, updated_at: now,
@@ -101,7 +97,7 @@ async function main(): Promise<void> {
     });
 
     // Focus is off by default, and an unfocused assistant hears notifications as before.
-    assert.deepEqual(assistant.state().focus, { enabled: false, since: null, pending: 0 });
+    assert.deepEqual(assistant.state().focus, { enabled: false, since: null, pending: 0, allowed: true });
     assistant.handleNotification({ type: 'raised', notification: notification('n0') });
     await wait(DIGEST_MS * 4);
     assert.equal(toAssistant().length, 1);
@@ -116,7 +112,7 @@ async function main(): Promise<void> {
     assert.equal(focused.enabled, true);
     assert.ok(focused.since);
     assert.ok(events.some((event) => event.type === 'state' && event.state.focus.enabled), 'clients hear focus changes');
-    assert.equal((await ui.call('assistant_set_focus_mode', { enabled: true }) as { focus: { enabled: boolean } }).focus.enabled, true, 'setting it again is harmless');
+    assert.equal((await ui.call('bot_set_focus_mode', { bot_id: ASSISTANT_BOT_ID, enabled: true }) as { focus: { enabled: boolean } }).focus.enabled, true, 'setting it again is harmless');
 
     // While focused, nothing unprompted reaches the thread.
     // 1. Notification digests, with repeats from one source coalesced.
@@ -168,17 +164,17 @@ async function main(): Promise<void> {
     // A restart keeps focus and every held item.
     assistant.dispose();
     timers.dispose();
-    ({ inbox, assistant } = build());
-    const pendingBefore = inbox.focus().pending;
-    assert.equal(inbox.focus().enabled, true);
+    ({ inbox, assistant, relay, bots } = build());
+    const pendingBefore = inbox.focus(ASSISTANT_BOT_ID).pending;
+    assert.equal(inbox.focus(ASSISTANT_BOT_ID).enabled, true);
     assert.equal(pendingBefore, held.total + 1);
     // A crash mid-flush leaves a claimed digest; recovery delivers it again rather than losing it.
-    assert.ok(inbox.claim());
+    assert.ok(inbox.claim(ASSISTANT_BOT_ID));
     assistant.handleNotification({ type: 'raised', notification: notification('n5', { body: 'Third finish' }) });
     assistant.dispose();
-    ({ inbox, assistant } = build());
-    assert.equal(inbox.focus().pending, pendingBefore, 'a claimed repeat folds into its newer pending copy');
-    assert.equal(inbox.list({ limit: 100, offset: 0 }).items.find((item) => item.kind === 'notification')!.occurrences, 3);
+    ({ inbox, assistant, relay, bots } = build());
+    assert.equal(inbox.focus(ASSISTANT_BOT_ID).pending, pendingBefore, 'a claimed repeat folds into its newer pending copy');
+    assert.equal(inbox.list(ASSISTANT_BOT_ID, { limit: 100, offset: 0 }).items.find((item) => item.kind === 'notification')!.occurrences, 3);
 
     // Turning focus off delivers one bounded digest, oldest first.
     prompts.length = 0;
@@ -285,6 +281,35 @@ async function main(): Promise<void> {
     await wait(20);
     assert.ok(prompts.some((prompt) => prompt.processId === resumed && /While you were away/.test(prompt.text)));
     assert.equal(assistant.state().focus.pending, 0);
+
+    // Any bot with Focus mode turned on gets the same: its helpers' messages
+    // and reports wait, and arrive as one digest. A bot without it can't focus.
+    const look = { color: 'graphite', shape: 'circle', finish: 'soft', marking: 'none', eyes: 'dots', mouth: 'smile', cheeks: false, hat: 'none', accent: 'violet', idle: 'still' };
+    const bot = (id: string, focus: boolean) => ({ id, name: id, presetId: 'preset_default_claude', avatar: { kind: 'face', look }, purview: { kind: 'projects', projectIds: ['p'] }, focus });
+    settings.updateBots({ ...settings.bots(), bots: [...settings.bots().bots, bot('fable', true), bot('pal', false)] });
+    for (const id of ['fable', 'pal']) {
+      db.prepare(`insert into projects(id,name,path,kind,created_at,updated_at) values(?,?,?,'bots',?,?)`).run(`project_bot_${id}`, id, dir, now, now);
+      db.prepare(`insert into processes(id,project_id,kind,name,status,created_at,updated_at) values(?,?,'agent',?,'running',?,?)`).run(`proc-${id}`, `project_bot_${id}`, id, now, now);
+      db.prepare(`insert into sessions(id,project_id,process_id,harness,interface_mode,session_role,bot_id,started_at,cwd,mcp_identity) values(?,?,?,?,?,?,?,?,?,?)`)
+        .run(id, `project_bot_${id}`, `proc-${id}`, 'claude', 'integrated', 'bot', id, now, dir, `mcp-${id}`);
+    }
+    agent('fable-helper', 'proc-fable');
+    await assert.rejects(registry.callPublic('assistant_focus_set', { enabled: true }, { identity: 'mcp-pal' }), /doesn't use Focus mode/);
+    assert.equal((await registry.callPublic('assistant_focus_set', { enabled: true }, { identity: 'mcp-fable' }) as { enabled: boolean }).enabled, true);
+    assert.equal(inbox.focus(ASSISTANT_BOT_ID).enabled, false, 'each bot has its own focus');
+    prompts.length = 0;
+    const toFable = () => prompts.filter((prompt) => prompt.processId === 'proc-fable');
+    assert.equal((await registry.callPublic('send_message', { target_process_id: 'parent', message: 'Halfway there.' }, { identity: 'mcp-fable-helper' }) as { delivery?: string }).delivery, 'queued');
+    assert.equal((await registry.callPublic('report_to_parent', { status: 'completed', body: 'All done.' }, { identity: 'mcp-fable-helper' }) as { delivery?: string }).delivery, 'queued');
+    assert.deepEqual(toFable(), []);
+    const fableHeld = await registry.callPublic('assistant_focus', {}, { identity: 'mcp-fable' }) as { items: Array<{ kind: string }> };
+    assert.deepEqual(fableHeld.items.map((item) => item.kind), ['agent_message', 'report']);
+    assert.equal(relay.focusItems(ASSISTANT_BOT_ID, { limit: 20, offset: 0 }).total, 0, 'the assistant holds only its own items');
+    // The registry was built with the first relay; the live one delivers.
+    relay.setFocus('fable', false);
+    await wait(20);
+    assert.equal(toFable().length, 1);
+    assert.match(toFable()[0]!.text, /Halfway there[\s\S]*All done/);
 
     // The assistant is told how to use focus.
     assert.match(new AgentContextService().buildAssistant(), /let's go focus mode on this/);

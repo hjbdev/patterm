@@ -20,6 +20,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The assistant is now the built-in bot. Its settings moved from Settings ›
+  Assistant to Settings › Bots, where it leads the list and can't be deleted.
+  You can rename it, give it a face, emoji or picture, add notes to its
+  instructions, and run it on any profile, not only Codex. Switching to a
+  profile of another harness starts a new conversation, and voice calls need
+  a Codex profile. Once you have opened it, it comes back with Patterm and
+  resumes its conversation like other bots, and turning it back on starts it
+  again. Its existing
+  conversation, saved memory, Focus mode and held items carry over.
+- Voice calls, notification digests and Focus mode are now options for every
+  bot, not only the assistant. Turn them on in a bot's editor; a bot with
+  voice shows a call button on its page, and one with Focus mode has it in
+  the page's menu. Bots get digests only for the projects they work in. A
+  bot can also be turned off without deleting it.
 - The model picker in an Integrated OpenCode conversation shows each model's
   provider beside its name, so models with the same name from different
   providers can be told apart. OpenCode's own plans show as "Zen" and "Go".
