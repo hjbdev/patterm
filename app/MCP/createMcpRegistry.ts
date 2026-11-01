@@ -269,7 +269,7 @@ const reportToParentInput = z.object({
 const timerIdInput = z.object({ timer_id: z.string().min(1) });
 const timerSetInput = z.object({ seconds: z.number().nonnegative(), body: z.string().optional(), label: z.string().optional(), owner_process_id: z.string().optional() });
 const timerIdleInput = z.object({
-  watched: z.array(z.string()).default([]),
+  watched: z.array(z.string()).min(1, 'watched must name at least one process; use timer_set for an elapsed-time reminder'),
   body: z.string().default(''),
   label: z.string().optional(),
   max_wait_seconds: z.number().nonnegative().optional(),
@@ -390,7 +390,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     ...(services.integrated ? { liveSettings: (processId: string) => services.integrated!.liveSettings(processId) } : {})
   });
   const sendMessage = new SendMessageAction(services.database, services.terminal, services.timeline,
-    { integrated: services.integrated, assistant: services.assistant, notifications: services.notifications });
+    { integrated: services.integrated, assistant: services.assistant, notifications: services.notifications, timers: timerService });
   const conversationOutput = new ConversationOutputService(services.database, services.integrated ?? null, services.historyReadService ?? null);
 
   // A host:process address, for callers that may reach other hosts.
@@ -965,6 +965,9 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       const ptyId = ptyFor(processId);
       await services.terminal.request('terminal.process.input', { process_id: ptyId, kind, text, submit: input.submit });
     } else {
+      // Noted before dispatch, as send_message does.
+      const sender = caller(context)?.process_id;
+      if (sender) timerService.noteInstruction(sender, processId);
       await sendAgentInput(services.database, services.terminal, { process_id: processId, kind, text, submit: input.submit }, services.integrated);
     }
     // Input answers whatever the process was waiting on, as typing does.
@@ -1104,10 +1107,12 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     if (services.assistantInbox?.hold(sender.parent_process_id, { kind: 'report', sourceProcessId: sender.process_id, title: `Report from ${sender.process_id}: ${input.status}${input.title?.trim() ? ` — ${input.title.trim()}` : ''}`, body: input.body, dedupeKey: `report:${eventId}` })) {
       return { ok: true, event_id: eventId, delivery: 'queued', detail: 'Your parent assistant is in Focus mode. The report is saved and reaches it when focus ends; do not resend it.' };
     }
+    // Report timers this report satisfies ride along, so the parent wakes once.
+    const callbacks = timerService.takeReportCallbacks(sender.parent_process_id).texts;
     const delivered = await sendAgentInput(services.database, services.terminal, {
       process_id: sender.parent_process_id,
       kind: 'text',
-      text: `${heading}\n${input.body}`,
+      text: [`${heading}\n${input.body}`, ...callbacks].join('\n\n'),
       submit: true
     }, services.integrated);
     const queued = queuedDetail(delivered);
@@ -1302,7 +1307,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     const owner = input.owner_process_id ? processFor(context, input.owner_process_id) : caller(context)?.process_id;
     const watched = input.watched.map((processId) => watchedFor(context, processId, 'idle'));
     const timer = timerService.setIdle({ kind: 'idle_any', watched, ownerProcessId: owner, body: input.body, maxWaitSeconds: input.max_wait_seconds, label: input.label });
-    return { timer_id: timer.id, status: watched.length === 0 ? 'already_satisfied' : 'pending', waiting_on: watched };
+    return { timer_id: timer.id, status: 'pending', waiting_on: watched };
   });
   registry.register({
     name: 'timer_fire_when_idle_all',
@@ -1331,7 +1336,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     const owner = input.owner_process_id ? processFor(context, input.owner_process_id) : caller(context)?.process_id;
     const watched = input.watched.map((processId) => watchedFor(context, processId, 'idle'));
     const timer = timerService.setIdle({ kind: 'idle_all', watched, ownerProcessId: owner, body: input.body, maxWaitSeconds: input.max_wait_seconds, label: input.label });
-    return { timer_id: timer.id, status: watched.length === 0 ? 'already_satisfied' : 'pending', waiting_on: watched };
+    return { timer_id: timer.id, status: 'pending', waiting_on: watched };
   });
   registry.register({
     name: 'timer_fire_when_reported_any',
@@ -1351,6 +1356,8 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     usageNotes: [
       'Use after spawning delegated agents when work can continue after the first child calls report_to_parent.',
       'A watched process that exits or stops without reporting also wakes the timer. For the assistant\'s timers, a watched agent\'s send_message to the assistant does too. The callback says which.',
+      'When a report satisfies the timer, the callback arrives in the same message as the report, not separately.',
+      'Reports made since you spawned or last messaged a watched agent count, even before the timer is set. If they already satisfy it, the result has status already_satisfied and the callback text, and nothing fires later.',
       'LLM-heavy reviews and investigations can be quiet for 20+ minutes. max_wait_seconds is a rescue timeout, not a polling interval; omit it or use a true rescue value such as 1200+ seconds.',
       'After setting the timer, wait for its callback. Do not nudge watched children for status or ask them to wrap up.'
     ]
@@ -1359,7 +1366,9 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     const owner = input.owner_process_id ? processFor(context, input.owner_process_id) : caller(context)?.process_id;
     const watched = input.watched.map((processId) => watchedFor(context, processId, 'report'));
     const timer = timerService.setReport({ kind: 'report_any', watched, ownerProcessId: owner, body: input.body, maxWaitSeconds: input.max_wait_seconds, label: input.label });
-    return { timer_id: timer.id, status: watched.length === 0 ? 'already_satisfied' : 'pending', waiting_on: watched };
+    // Answered before it was set: the result comes back now, with no callback.
+    if (timer.callback) return { timer_id: timer.id, status: 'already_satisfied', waiting_on: watched, callback: timer.callback };
+    return { timer_id: timer.id, status: 'pending', waiting_on: watched };
   });
   registry.register({
     name: 'timer_fire_when_reported_all',
@@ -1379,6 +1388,8 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     usageNotes: [
       'Use after delegating work to sub-agents when work should resume only after every child calls report_to_parent.',
       'A watched process that exits or stops without reporting also wakes the timer. For the assistant\'s timers, a watched agent\'s send_message to the assistant does too. The callback says which.',
+      'When a report satisfies the timer, the callback arrives in the same message as the report, not separately.',
+      'Reports made since you spawned or last messaged a watched agent count, even before the timer is set. If they already satisfy it, the result has status already_satisfied and the callback text, and nothing fires later.',
       'LLM-heavy reviews and investigations can be quiet for 20+ minutes. max_wait_seconds is a rescue timeout, not a polling interval; omit it or use a true rescue value such as 1200+ seconds.',
       'After setting the timer, wait for its callback. An early report does not justify nudging the remaining children or asking them to wrap up.'
     ]
@@ -1387,7 +1398,9 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     const owner = input.owner_process_id ? processFor(context, input.owner_process_id) : caller(context)?.process_id;
     const watched = input.watched.map((processId) => watchedFor(context, processId, 'report'));
     const timer = timerService.setReport({ kind: 'report_all', watched, ownerProcessId: owner, body: input.body, maxWaitSeconds: input.max_wait_seconds, label: input.label });
-    return { timer_id: timer.id, status: watched.length === 0 ? 'already_satisfied' : 'pending', waiting_on: watched };
+    // Answered before it was set: the result comes back now, with no callback.
+    if (timer.callback) return { timer_id: timer.id, status: 'already_satisfied', waiting_on: watched, callback: timer.callback };
+    return { timer_id: timer.id, status: 'pending', waiting_on: watched };
   });
   registry.register({ name: 'timer_cancel', namespace: 'cli.timer', description: 'Cancel a timer.', inputSchema: { type: 'object', required: ['timer_id'] } }, (args) => timerService.cancel(timerIdInput.parse(args).timer_id));
   registry.register({ name: 'timer_pause', namespace: 'cli.timer', description: 'Pause a timer.', inputSchema: { type: 'object', required: ['timer_id'] } }, (args) => timerService.pause(timerIdInput.parse(args).timer_id));

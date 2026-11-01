@@ -51,6 +51,8 @@ interface TimerEntry {
   firesAtUnixMs: number | null;
   remainingMs: number | null;
   createdAtUnixMs: number;
+  // Report timers: per watched process, when reports start to count.
+  reportSince?: Record<string, number>;
   timeout: NodeJS.Timeout | null;
   interval: NodeJS.Timeout | null;
   checking?: boolean;
@@ -78,6 +80,15 @@ export type OutputWatchState =
 
 interface SavedTimer extends TimerRecord {
   seenNonIdleProcessIds: string[];
+  reportSince?: Record<string, number>;
+}
+
+// Report timers that a fresh report or message satisfies, taken so their
+// callbacks can travel with that delivery.
+export interface TakenReportCallbacks {
+  texts: string[];
+  // Puts the timers back when the delivery they rode on failed.
+  restore(): void;
 }
 
 export class TimerService {
@@ -85,6 +96,10 @@ export class TimerService {
   private active: boolean;
 
   private resolveRemote: ((address: string) => { host_id: string; process_id: string; name: string } | null) | null = null;
+  // When each agent last gave another work, by `from>to`. Kept in memory: a
+  // timer saves the cutoffs it computes from them.
+  private readonly instructions = new Map<string, number>();
+  private readonly startedAtUnixMs = Date.now();
 
   constructor(
     private readonly database: DatabaseService,
@@ -96,6 +111,11 @@ export class TimerService {
       const rows = database.connection.prepare('select record from runtime_timers').all() as Array<{ record: string }>;
       for (const row of rows) {
         const saved = JSON.parse(row.record) as SavedTimer;
+        // Watchers saved with nothing to watch and no deadline never fire.
+        if (saved.kind !== 'delay' && saved.watched.length === 0 && saved.firesAtUnixMs === null && saved.pausedRemainingMs === null) {
+          database.connection.prepare('delete from runtime_timers where id = ?').run(saved.id);
+          continue;
+        }
         this.timers.set(saved.id, {
           ...saved,
           seenNonIdleProcessIds: new Set(saved.seenNonIdleProcessIds),
@@ -179,25 +199,55 @@ export class TimerService {
     body: string;
     maxWaitSeconds?: number | undefined;
     label?: string | null | undefined;
-  }): TimerRecord {
+  }): TimerRecord & { callback?: string } {
     const id = randomTimerId();
+    const createdAtUnixMs = Date.now();
+    const ownerProcessId = input.ownerProcessId ?? null;
     const entry: TimerEntry = {
       id,
       kind: input.kind,
       status: 'pending',
-      ownerProcessId: input.ownerProcessId ?? null,
+      ownerProcessId,
       watched: input.watched,
       seenNonIdleProcessIds: new Set(),
       body: input.body,
       label: input.label?.trim() || null,
-      firesAtUnixMs: input.maxWaitSeconds && input.maxWaitSeconds > 0 ? Date.now() + input.maxWaitSeconds * 1000 : null,
+      firesAtUnixMs: input.maxWaitSeconds && input.maxWaitSeconds > 0 ? createdAtUnixMs + input.maxWaitSeconds * 1000 : null,
       remainingMs: null,
-      createdAtUnixMs: Date.now(),
+      createdAtUnixMs,
+      reportSince: Object.fromEntries(input.watched.filter((watched) => !watched.includes(':')).map((watched) => [watched, this.reportCutoff(ownerProcessId, watched, createdAtUnixMs)])),
       timeout: null,
       interval: null
     };
+    // Already answered, such as by a fast child that reported before its
+    // parent set the timer: the caller reads the result now, not in a later
+    // wake that repeats a report it was already sent.
+    if (this.active && entry.watched.length > 0) {
+      const states = entry.watched.map((watched) => this.processReportState(entry, watched));
+      if (reportSatisfied(entry, states)) return { ...this.toRecord(entry), callback: this.callbackText(entry, 'condition', states) };
+    }
     this.register(entry);
     return this.toRecord(entry);
+  }
+
+  // Records that one agent gave another work, such as a follow-up message.
+  // Reports the recipient makes from then on answer the sender's report
+  // timers, even a timer set after the report.
+  noteInstruction(fromProcessId: string, toProcessId: string): void {
+    this.instructions.set(`${fromProcessId}>${toProcessId}`, Date.now());
+  }
+
+  // Reports count from when the owner last gave the process work: its spawn
+  // or a message. A child spawned before this runtime may have had follow-ups
+  // it never saw, so without a noted message it counts from the timer itself.
+  private reportCutoff(ownerProcessId: string | null, processId: string, createdAtUnixMs: number): number {
+    if (!ownerProcessId) return createdAtUnixMs;
+    const noted = this.instructions.get(`${ownerProcessId}>${processId}`) ?? -Infinity;
+    const row = this.database.connection.prepare(`select created_at from processes where (id = ? or pty_process_id = ?) and parent_process_id = ? order by status = 'running' desc limit 1`)
+      .get(processId, processId, ownerProcessId) as { created_at: string } | undefined;
+    const spawned = row ? Date.parse(row.created_at) : NaN;
+    const known = Math.max(noted, spawned >= this.startedAtUnixMs ? spawned : -Infinity);
+    return Number.isFinite(known) && known < createdAtUnixMs ? known : createdAtUnixMs;
   }
 
   // Waits for literal text in a process's output, or for it to end without
@@ -355,7 +405,7 @@ export class TimerService {
 
   private persist(entry: TimerEntry): void {
     if (!this.options.persistent) return;
-    const record: SavedTimer = { ...this.toRecord(entry), seenNonIdleProcessIds: [...entry.seenNonIdleProcessIds] };
+    const record: SavedTimer = { ...this.toRecord(entry), seenNonIdleProcessIds: [...entry.seenNonIdleProcessIds], ...(entry.reportSince ? { reportSince: entry.reportSince } : {}) };
     this.database.connection.prepare('insert into runtime_timers (id, record) values (?, ?) on conflict(id) do update set record = excluded.record')
       .run(entry.id, JSON.stringify(record));
   }
@@ -453,10 +503,35 @@ export class TimerService {
       return;
     }
     const states = entry.watched.map((id) => this.processReportState(entry, id));
-    const satisfied = entry.kind === 'report_any' ? states.some((state) => state.satisfied) : states.every((state) => state.satisfied);
-    if (satisfied) {
+    if (reportSatisfied(entry, states)) {
       await this.fire(entry, 'condition', states);
     }
+  }
+
+  // A report just recorded, or a message about to be sent, may satisfy the
+  // recipient's report timers. Takes those timers and returns their callback
+  // text, so the recipient is woken once, by that delivery, instead of again
+  // by a callback repeating it. `message` counts a message from that process
+  // to the owner as already sent.
+  takeReportCallbacks(ownerProcessId: string, message?: { fromProcessId: string; body: string }): TakenReportCallbacks {
+    const taken: TimerEntry[] = [];
+    const texts: string[] = [];
+    if (this.active) {
+      for (const entry of [...this.timers.values()]) {
+        if (entry.ownerProcessId !== ownerProcessId || entry.status !== 'pending' || (entry.kind !== 'report_any' && entry.kind !== 'report_all') || entry.watched.length === 0) continue;
+        const states = entry.watched.map((id) => this.processReportState(entry, id, message));
+        if (!reportSatisfied(entry, states)) continue;
+        texts.push(this.callbackText(entry, 'condition', states));
+        this.cancel(entry.id);
+        taken.push(entry);
+      }
+    }
+    return {
+      texts,
+      restore: () => {
+        for (const entry of taken) if (!this.timers.has(entry.id)) this.register(entry);
+      }
+    };
   }
 
   // Resolves `host:process` addresses of agents on paired hosts.
@@ -484,36 +559,39 @@ export class TimerService {
     return { process_id: label, satisfied: true, reason: 'messaged', name: label, excerpt: excerptOf(typeof metadata.body === 'string' ? metadata.body : ''), at: event.created_at };
   }
 
-  private processReportState(entry: TimerEntry, processId: string): WatchedState {
+  private processReportState(entry: TimerEntry, processId: string, message?: { fromProcessId: string; body: string }): WatchedState {
     if (processId.includes(':')) return this.remoteReportState(entry, processId);
     const row = this.watchedProcess(processId);
     if (!row) {
       return { process_id: processId, satisfied: true, reason: 'missing' };
     }
 
-    // A report, or a message to the timer's owner, made after the timer
-    // started. Messages count so agents outside the owner's tree, which
-    // cannot report to it, can still answer it.
-    const reportedAfter = new Date(entry.createdAtUnixMs).toISOString();
+    // A report since the owner last gave the process work, or a message to
+    // the owner made after the timer started. Messages count so agents
+    // outside the owner's tree, which cannot report to it, can still answer.
+    const reportedAfter = new Date(entry.reportSince?.[processId] ?? entry.createdAtUnixMs).toISOString();
+    const messagedAfter = new Date(entry.createdAtUnixMs).toISOString();
     const event = this.database.connection
       .prepare(
         `select event_type, metadata, created_at
          from timeline_events
          where process_id = ?
-           and created_at >= ?
-           and (event_type = 'agent.reported'
-                or (event_type = 'message.sent' and json_extract(metadata, '$.to_process_id') = ?
+           and ((event_type = 'agent.reported' and created_at >= ?)
+                or (event_type = 'message.sent' and created_at >= ? and json_extract(metadata, '$.to_process_id') = ?
                     and json_extract(metadata, '$.delivery') is null))
          order by created_at asc
          limit 1`
       )
-      .get(row.id, reportedAfter, entry.ownerProcessId ?? '') as { event_type: string; metadata: string; created_at: string } | undefined;
+      .get(row.id, reportedAfter, messagedAfter, entry.ownerProcessId ?? '') as { event_type: string; metadata: string; created_at: string } | undefined;
     if (event) {
       const metadata = parseRecord(event.metadata);
       const excerpt = excerptOf([metadata.title, metadata.body].filter((part) => typeof part === 'string' && part.trim()).join(': '));
       return event.event_type === 'agent.reported'
         ? { process_id: row.id, satisfied: true, reason: 'reported', name: row.name, report_status: typeof metadata.status === 'string' ? metadata.status : 'completed', excerpt, at: event.created_at }
         : { process_id: row.id, satisfied: true, reason: 'messaged', name: row.name, excerpt, at: event.created_at };
+    }
+    if (message?.fromProcessId === row.id) {
+      return { process_id: row.id, satisfied: true, reason: 'messaged', name: row.name, excerpt: excerptOf(message.body), at: new Date().toISOString() };
     }
     if (row.status !== 'running') {
       return { process_id: row.id, satisfied: true, reason: 'exited', status: row.status, name: row.name };
@@ -636,6 +714,10 @@ export class TimerService {
     };
   }
 
+}
+
+function reportSatisfied(entry: TimerEntry, states: WatchedState[]): boolean {
+  return entry.kind === 'report_any' ? states.some((state) => state.satisfied) : states.every((state) => state.satisfied);
 }
 
 function watchedFromOutput(state: Exclude<OutputWatchState, { state: 'waiting' }>): WatchedState {

@@ -45,12 +45,20 @@ async function main(): Promise<void> {
     } as unknown as HarnessLauncher;
 
     const inputs: Array<{ process_id: string; text: string }> = [];
+    // Runs once while the next input awaits its acknowledgement; it may throw.
+    let duringInput: (() => Promise<void>) | null = null;
     const terminal = {
       async request(method: string, params: unknown) {
-        if (method === 'terminal.process.input') inputs.push(params as { process_id: string; text: string });
+        if (method === 'terminal.process.input') {
+          inputs.push(params as { process_id: string; text: string });
+          const hook = duringInput;
+          duringInput = null;
+          if (hook) await hook();
+        }
         return { ok: true };
       }
     } as unknown as TerminalService;
+    const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
     const timeline = new TimelineService(database);
     const registry = createTestMcpRegistry({ tempDir: dir, database, timeline, terminal, workbench: new WorkbenchRepository(database), harnessLauncher });
     const as = (id: string) => ({ identity: `identity_${id}` });
@@ -89,7 +97,44 @@ async function main(): Promise<void> {
     const report = inputs.find((input) => input.text.startsWith('[report from grandchild'));
     assert.equal(report?.process_id, 'child', 'the grandchild reports to its own parent');
     assert.ok(!inputs.some((input) => input.process_id === 'root'), 'nothing skips a level to the root');
-    await waitFor(() => inputs.some((input) => input.process_id === 'child' && input.text.includes('grandchild done')), 'the sub-agent timer fires on its child report');
+    // The report carries the timer's callback, so the sub-agent wakes once.
+    assert.match(report!.text, /^\[report from grandchild: completed\]\nTests pass\.\n\n\[Patterm timer timer_\w+: condition met\]\n- grandchild "grandchild": reported completed at \S+: Tests pass\.\nRead full results with get_conversation_output\.\ngrandchild done$/);
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    assert.equal(inputs.filter((input) => input.process_id === 'child').length, 1, 'no second callback repeats the report');
+    // A follow-up answered before the sub-agent watches for it: the timer
+    // returns the answer at once and nothing fires later.
+    await registry.call('send_message', { target_process_id: 'grandchild', message: 'Also check the docs.' }, as('child'));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await registry.call('report_to_parent', { status: 'completed', body: 'Docs fine.' }, as('grandchild'));
+    const answered = await registry.call('timer_fire_when_reported_any', { watched: ['grandchild'], body: 'docs done' }, as('child')) as { status: string; callback?: string };
+    assert.equal(answered.status, 'already_satisfied');
+    assert.match(answered.callback ?? '', /- grandchild "grandchild": reported completed at \S+: Docs fine\.\n.*\ndocs done$/);
+    const childInputs = inputs.filter((input) => input.process_id === 'child').length;
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    assert.equal(inputs.filter((input) => input.process_id === 'child').length, childInputs, 'an answered timer never fires');
+    await assert.rejects(registry.call('timer_fire_when_reported_all', { watched: [], body: 'x' }, as('child')), /at least one process/);
+    // A reply that lands before the follow-up's acknowledgement still counts,
+    // by send_message or send_input.
+    for (const [tool, args] of [['send_message', { target_process_id: 'grandchild', message: 'And the changelog.' }], ['send_input', { process_id: 'grandchild', kind: 'text', text: 'And the notices.', submit: true }]] as const) {
+      await pause();
+      duringInput = async () => { await pause(); await registry.call('report_to_parent', { status: 'completed', body: `Fast after ${tool}.` }, as('grandchild')); await pause(); };
+      await registry.call(tool, args, as('child'));
+      const fast = await registry.call('timer_fire_when_reported_any', { watched: ['grandchild'], body: 'fast' }, as('child')) as { status: string; callback?: string };
+      assert.equal(fast.status, 'already_satisfied', `a report during ${tool} delivery answers the timer`);
+      assert.match(fast.callback ?? '', new RegExp(`Fast after ${tool}\\.`));
+    }
+    // A follow-up that may not have arrived still retires the earlier report.
+    await pause();
+    await registry.call('send_message', { target_process_id: 'grandchild', message: 'Round three.' }, as('child'));
+    await pause();
+    await registry.call('report_to_parent', { status: 'completed', body: 'Round three done.' }, as('grandchild'));
+    await pause();
+    duringInput = async () => { throw new Error('Simulated lost acknowledgement'); };
+    await assert.rejects(registry.call('send_message', { target_process_id: 'grandchild', message: 'One more thing.' }, as('child')), /lost acknowledgement/);
+    await pause();
+    const afterUncertain = await registry.call('timer_fire_when_reported_any', { watched: ['grandchild'], body: 'one more' }, as('child')) as { timer_id: string; status: string };
+    assert.equal(afterUncertain.status, 'pending', 'the previous report does not answer an uncertain follow-up');
+    await registry.call('timer_cancel', { timer_id: afterUncertain.timer_id }, as('child'));
     await registry.call('send_message', { target_process_id: 'parent', message: 'question' }, as('grandchild'));
     assert.equal(inputs.at(-1)?.process_id, 'child', 'parent alias resolves to the direct parent');
 
@@ -126,14 +171,6 @@ async function main(): Promise<void> {
     database.dispose();
     fs.rmSync(dir, { recursive: true, force: true });
   }
-}
-
-async function waitFor(check: () => boolean, message: string): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (check()) return;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  assert.fail(message);
 }
 
 main().catch((error: unknown) => {

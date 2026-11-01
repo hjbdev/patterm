@@ -155,7 +155,14 @@ export class NotificationService {
     if (process && dedupeKey) {
       const existing = db.prepare(`select * from notifications where process_id = ? and dedupe_key = ? and resolved_at is null order by created_at desc limit 1`)
         .get(process.id, dedupeKey) as NotificationRow | undefined;
-      if (existing) return { status: 'updated', notification: this.touch(existing.id, title, text, at, 'updated', held) };
+      if (existing) {
+        const notification = this.touch(existing.id, title, text, at, 'updated', held);
+        // A repeat is silent, but a blocked child whose request or failure
+        // changed tells its parent what it says now.
+        const changed = existing.title !== title || existing.body !== text;
+        if (child && isBlocking(input.kind) && changed) await this.messageProcess(process.parent_process_id!, parentMessage(process, input.kind === 'failure' ? 'Failure reported by' : 'Attention needed by', title, body), process.id).catch(() => undefined);
+        return { status: 'updated', notification };
+      }
     }
     if (process && input.source === 'mcp') {
       const since = new Date(this.now() - RATE_WINDOW_MS).toISOString();

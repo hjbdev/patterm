@@ -389,8 +389,9 @@ async function main(): Promise<void> {
     assert.match(String(terminalInputs.at(-1)?.text), /^\[message from proc-assistant\]\nWhat changed\?\n\n\(Reply with send_message target_process_id "assistant"\.\)$/);
     assert.ok(asked.event_id);
 
-    // A reply wakes the assistant's report timer, naming who answered; an
-    // uncertain delivery does not.
+    // A reply answers the assistant's report timer in the same message,
+    // naming who answered, so the assistant wakes once. An uncertain delivery
+    // does not answer it.
     const timer = await registry.callPublic('timer_fire_when_reported_any', { watched: ['proc-other'], body: 'Check the answer.' }, assistantIdentity) as { timer_id: string };
     await wait(20);
     const before = terminalInputs.length;
@@ -398,10 +399,11 @@ async function main(): Promise<void> {
     await wait(700);
     assert.equal(terminalInputs.length, before, 'an uncertain delivery is not a reply');
     await registry.callPublic('send_message', { target_process_id: 'assistant', message: 'The schema changed.' }, { identity: 'mcp-other' });
-    for (let attempt = 0; attempt < 40 && terminalInputs.length === before; attempt += 1) await wait(50);
-    const callback = terminalInputs.at(-1) as { process_id: string; text: string };
-    assert.equal(callback.process_id, 'proc-assistant');
-    assert.match(callback.text, new RegExp(`^\\[Patterm timer ${timer.timer_id}: condition met\\]\\n- proc-other "other": sent you a message at \\S+: The schema changed\\.\\nCheck the answer\\.$`));
+    assert.equal(delivered.at(-1)?.from, 'proc-other');
+    assert.match(delivered.at(-1)!.message, new RegExp(`^The schema changed\\.\\n\\n\\[Patterm timer ${timer.timer_id}: condition met\\]\\n- proc-other "other": sent you a message at \\S+: The schema changed\\.\\nCheck the answer\\.$`));
+    await wait(700);
+    assert.equal(terminalInputs.length, before, 'no separate callback repeats the reply');
+    assert.ok(!(await registry.callPublic('timer_list', {}, assistantIdentity) as Array<{ timer_id: string }>).some((entry) => entry.timer_id === timer.timer_id));
     console.log('agent results smoke passed');
   } finally {
     database.dispose();
