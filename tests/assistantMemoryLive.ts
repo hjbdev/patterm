@@ -1,5 +1,6 @@
 // Opt-in acceptance test: uses the installed Codex CLI and its native login.
 // All Patterm records and MCP calls belong to a temporary database/socket.
+import { ASSISTANT_BOT_ID, type Bot } from '../app/Bots/BotSettings';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -23,6 +24,8 @@ async function main(): Promise<void> {
   const database = new DatabaseService(directory);
   database.initialize();
   const settings = new SettingsService(database);
+  // The assistant's settings live on its built-in bot.
+  const setAssistant = (change: Partial<Bot>) => settings.updateBots({ ...settings.bots(), bots: settings.bots().bots.map((bot) => bot.id === ASSISTANT_BOT_ID ? { ...bot, ...change } : bot) });
   const memory = new AssistantMemoryService(database, settings);
   const identities = new Set<string>();
   const registry = new McpToolRegistry();
@@ -92,7 +95,7 @@ async function main(): Promise<void> {
     await ask(processId, 'Hello. Are you there?');
     assert.equal(count(), 0, 'disabled memory records nothing');
     console.log('live memory: disabled check passed');
-    settings.updateAssistantSettings({ ...settings.assistantSettings(), memoryEnabled: true });
+    setAssistant({ memory: true });
     const name = `Raven${randomUUID().slice(0, 8)}`;
     await ask(processId, `Hi, I go by ${name}. How is it going?`);
     assert.ok(calls.includes('assistant_memory_write'), 'a durable preference is saved without a remember request');
@@ -102,7 +105,7 @@ async function main(): Promise<void> {
     assert.match(await ask(freshProcessId, 'What name should you use for me?'), new RegExp(name), 'a fresh conversation recalls the persisted preference');
     console.log('live memory: fresh conversation recalled the preference');
     const savedCount = count();
-    settings.updateAssistantSettings({ ...settings.assistantSettings(), memoryEnabled: false });
+    setAssistant({ memory: false });
     await ask(freshProcessId, 'I prefer bullet points for status updates. Is that clear?');
     assert.equal(count(), savedCount, 'turning memory off preserves existing notes without adding more');
     assert.ok(!calls.includes('assistant_memory_write') && !calls.includes('assistant_memory_search'));

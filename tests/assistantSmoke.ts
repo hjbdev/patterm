@@ -3,22 +3,24 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { McpToolRegistry } from '../app/MCP/ToolRegistry';
-import { registerAssistantTools } from '../app/MCP/registerAssistantTools';
+import { registerBotTools } from '../app/MCP/registerBotTools';
 import { INTEGRATED_CONTROL_TOOLS } from '../app/Http/BrowserTools';
 import { listedProject, WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
-import { ASSISTANT_PROJECT_ID, AssistantService, type AssistantEvent } from '../app/Services/AssistantService';
-import { AssistantInbox } from '../app/Services/AssistantInbox';
+import { ASSISTANT_PROJECT_ID } from '../app/Services/AssistantProject';
+import type { BotRelayEvent } from '../app/Services/BotRelay';
+import { ASSISTANT_BOT_ID } from '../app/Bots/BotIdentity';
+import { assistantBot, setAssistant } from './fixtures/AssistantBotFixture';
 import type { CodexRealtimeEvent, RealtimeInitialItem } from '../app/Services/CodexAppServerService';
 import type { IntegratedConversationMessage } from '../app/Services/IntegratedConversation';
 import { voiceBrief } from '../app/Services/AssistantVoiceBrief';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import type { LaunchHarnessInput, HarnessResume } from '../app/Services/HarnessLauncher';
 import type { NotificationRecord } from '../app/Services/NotificationService';
-import { DEFAULT_ASSISTANT_SETTINGS, SettingsService } from '../app/Services/SettingsService';
+import { SettingsService } from '../app/Services/SettingsService';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { TimelineService } from '../app/Services/TimelineService';
 import { AgentContextService } from '../app/Services/AgentContextService';
-import { assistantVoiceOptions, type RealtimeVoiceOptions } from '../app/Services/AssistantVoiceProfile';
+import { botVoiceOptions, type RealtimeVoiceOptions, type VoiceSettings } from '../app/Services/AssistantVoiceProfile';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
 import { removeTree } from './fixtures/TempTree';
 import { trySymlink } from './fixtures/SymlinkFixture';
@@ -36,34 +38,33 @@ async function main(): Promise<void> {
     const settings = new SettingsService(database);
     const workbench = new WorkbenchRepository(database, settings);
 
-    // Settings default, merge, and reject unknown voices.
-    assert.deepEqual(settings.assistantSettings(), DEFAULT_ASSISTANT_SETTINGS);
-    // Clients that predate the voice profile settings save Codex's defaults.
-    assert.deepEqual(settings.updateAssistantSettings({ voice: 'maple', presetId: 'preset_fast', forwardNotifications: true }),
-      { ...DEFAULT_ASSISTANT_SETTINGS, voice: 'maple', presetId: 'preset_fast' });
-    assert.throws(() => settings.updateAssistantSettings({ voice: 'robot', presetId: null, forwardNotifications: true }));
-    assert.throws(() => settings.updateAssistantSettings({ voice: null, presetId: null, forwardNotifications: true, voiceProfile: 'chatty' }));
-    assert.throws(() => settings.updateAssistantSettings({ voice: null, presetId: null, forwardNotifications: true, voiceAcknowledgements: 'loud' }));
-    // Names are trimmed, a blank one is cleared, and long ones are rejected.
-    const base = { voice: null, presetId: null, forwardNotifications: true };
-    settings.updateAssistantSettings({ ...base, memoryEnabled: true, memoryBudgetTokens: 8000 });
-    assert.equal(settings.assistantSettings().memoryEnabled, true);
-    assert.equal(settings.assistantSettings().memoryBudgetTokens, 8000);
-    assert.throws(() => settings.updateAssistantSettings({ ...base, memoryEnabled: 'yes' }));
-    assert.throws(() => settings.updateAssistantSettings({ ...base, memoryBudgetTokens: 0 }));
-    assert.equal(settings.updateAssistantSettings({ ...base, userName: '  Alex ' }).userName, 'Alex');
-    assert.equal(settings.updateAssistantSettings({ ...base, userName: '   ' }).userName, null);
-    assert.throws(() => settings.updateAssistantSettings({ ...base, userName: 'x'.repeat(61) }));
-    settings.updateAssistantSettings({ voice: 'maple', presetId: 'preset_fast', forwardNotifications: true });
+    // The assistant's settings live on its built-in bot: voice, profile,
+    // digests and Focus mode. Unknown voices and profiles are rejected, and
+    // the name voices use is trimmed, cleared when blank, and bounded.
+    const assistantSettings = () => settings.bots().bots.find((bot) => bot.id === ASSISTANT_BOT_ID)!;
+    assert.deepEqual([assistantSettings().voice.enabled, assistantSettings().digests, assistantSettings().focus, assistantSettings().memory], [true, true, true, false]);
+    assert.equal(assistantSettings().presetId, 'preset_default_codex', 'it starts on the Codex default profile');
+    settings.updateHarnessPresets({ ...settings.harnessPresets(), presets: [...settings.harnessPresets().presets, { id: 'preset_fast', harness: 'codex', name: 'Fast', model: null, reasoning: null, serviceTier: null, look: null }] });
+    setAssistant(settings, { voice: { ...assistantSettings().voice, voice: 'maple' }, presetId: 'preset_fast' });
+    assert.equal(assistantSettings().voice.voice, 'maple');
+    assert.throws(() => setAssistant(settings, { voice: { ...assistantSettings().voice, voice: 'robot' } }));
+    assert.throws(() => setAssistant(settings, { voice: { ...assistantSettings().voice, profile: 'chatty' } }));
+    assert.throws(() => setAssistant(settings, { voice: { ...assistantSettings().voice, acknowledgements: 'loud' } }));
+    assert.throws(() => setAssistant(settings, { memoryBudgetTokens: 0 }));
+    const nameTo = (userName: string) => settings.updateBots({ ...settings.bots(), userName }).userName;
+    assert.equal(nameTo('  Alex '), 'Alex');
+    assert.equal(nameTo('   '), null);
+    assert.throws(() => nameTo('x'.repeat(61)));
+    const voiceSettings = (change: Partial<VoiceSettings>): VoiceSettings => ({ profile: 'codex', acknowledgements: 'default', botName: 'Assistant', assistant: true, userName: null, ...change });
 
     // The Codex profile starts exactly the session Codex would; acknowledgements
     // are sent only when chosen explicitly.
-    assert.deepEqual(assistantVoiceOptions({ voiceProfile: 'codex', voiceAcknowledgements: 'default', userName: 'Alex' }), {});
-    assert.deepEqual(assistantVoiceOptions({ voiceProfile: 'codex', voiceAcknowledgements: 'on', userName: null }), { delegationAckFiller: true });
-    assert.deepEqual(assistantVoiceOptions({ voiceProfile: 'codex', voiceAcknowledgements: 'off', userName: null }), { delegationAckFiller: false });
+    assert.deepEqual(botVoiceOptions(voiceSettings({ profile: 'codex', acknowledgements: 'default', userName: 'Alex' })), {});
+    assert.deepEqual(botVoiceOptions(voiceSettings({ profile: 'codex', acknowledgements: 'on', userName: null })), { delegationAckFiller: true });
+    assert.deepEqual(botVoiceOptions(voiceSettings({ profile: 'codex', acknowledgements: 'off', userName: null })), { delegationAckFiller: false });
     // The Patterm profile replaces the voice and backend instructions and keeps
     // the acknowledgement choice in both the parameter and the prompt.
-    const patterm = assistantVoiceOptions({ voiceProfile: 'patterm', voiceAcknowledgements: 'default', userName: null });
+    const patterm = botVoiceOptions(voiceSettings({ profile: 'patterm', acknowledgements: 'default', userName: null }));
     assert.deepEqual(Object.keys(patterm).sort(), ['backendReasoningStatus', 'prompt', 'realtimeStartInstructions']);
     assert.equal(patterm.backendReasoningStatus, true);
     assert.match(patterm.prompt!, /Answer directly, without handing over/);
@@ -72,15 +73,16 @@ async function main(): Promise<void> {
     assert.match(patterm.realtimeStartInstructions!, /spawn_agent/);
     assert.match(patterm.realtimeStartInstructions!, /send_message/);
     assert.doesNotMatch(patterm.prompt!, /The user's name is/, 'no name is set');
-    assert.match(assistantVoiceOptions({ voiceProfile: 'patterm', voiceAcknowledgements: 'default', userName: 'Alex' }).prompt!, /The user's name is Alex\./);
-    const quiet = assistantVoiceOptions({ voiceProfile: 'patterm', voiceAcknowledgements: 'off', userName: null });
+    assert.match(botVoiceOptions(voiceSettings({ profile: 'patterm', acknowledgements: 'default', userName: 'Alex' })).prompt!, /The user's name is Alex\./);
+    const quiet = botVoiceOptions(voiceSettings({ profile: 'patterm', acknowledgements: 'off', userName: null }));
     assert.equal(quiet.delegationAckFiller, false);
     assert.match(quiet.prompt!, /do not add filler/);
-    assert.equal(assistantVoiceOptions({ voiceProfile: 'patterm', voiceAcknowledgements: 'on', userName: null }).delegationAckFiller, true);
+    assert.equal(botVoiceOptions(voiceSettings({ profile: 'patterm', acknowledgements: 'on', userName: null })).delegationAckFiller, true);
     // Codex caps start instructions at 8,192 estimated tokens (about 4 bytes
     // each); stay well inside it.
     for (const text of [patterm.prompt!, patterm.realtimeStartInstructions!]) assert.ok(Buffer.byteLength(text) < 8_000, 'voice instructions stay small');
-    assert.equal(settings.assistantSettings().voice, 'maple');
+    assert.match(botVoiceOptions(voiceSettings({ profile: 'patterm', botName: 'Jarvis' })).prompt!, /the user's Patterm assistant, Jarvis/);
+    assert.match(botVoiceOptions(voiceSettings({ profile: 'patterm', botName: 'Fable', assistant: false })).prompt!, /Fable, one of the user's Patterm bots/);
 
     // The voice brief keeps the user's words and the assistant's replies, drops
     // background messages and tool rows, and trims the oldest lines to fit.
@@ -122,8 +124,8 @@ async function main(): Promise<void> {
       sequence += 1;
       const processId = `proc-assistant-${sequence}`;
       db.prepare(`insert into processes(id,project_id,kind,name,status,created_at,updated_at) values(?,?,'agent','Assistant','running',?,?)`).run(processId, input.project_id, now, now);
-      db.prepare(`insert into sessions(id,project_id,process_id,harness,interface_mode,session_role,started_at,cwd,mcp_identity,resume_id) values(?,?,?,?,?,?,?,?,?,?)`)
-        .run(`session-assistant-${sequence}`, input.project_id, processId, 'codex', 'integrated', input.session_role, new Date(Date.now() + sequence).toISOString(), input.cwd ?? dir, `mcp-assistant-${sequence}`, resume?.resume_id ?? `thread-${sequence}`);
+      db.prepare(`insert into sessions(id,project_id,process_id,harness,interface_mode,session_role,bot_id,started_at,cwd,mcp_identity,resume_id) values(?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(`session-assistant-${sequence}`, input.project_id, processId, 'codex', 'integrated', input.session_role, input.bot_id ?? null, new Date(Date.now() + sequence).toISOString(), input.cwd ?? dir, `mcp-assistant-${sequence}`, resume?.resume_id ?? `thread-${sequence}`);
       return { session_id: `session-assistant-${sequence}`, process_id: processId, pty_process_id: null, interface_mode: 'integrated' as const, harness: 'codex', name: 'Assistant' };
     };
     // A test can hold launches behind a gate, or make them fail.
@@ -165,9 +167,8 @@ async function main(): Promise<void> {
       },
       transferTimers: (from: readonly string[], to: string) => { timerTransfers.push(`${from.join(',')}->${to}`); }
     };
-    const inbox = new AssistantInbox(database);
-    const assistant = new AssistantService(database, dir, launcher, codex, integrated, settings, inbox, processes, { digestDelayMs: 10, compacting: () => compacting });
-    const events: AssistantEvent[] = [];
+    const { inbox, assistant, bots, relay } = assistantBot(database, dir, launcher, codex, integrated, settings, processes, { digestDelayMs: 10, compacting: () => compacting });
+    const events: BotRelayEvent[] = [];
     assistant.onEvent((event) => events.push(event));
 
     // The first ensure launches a Codex Integrated assistant in its hidden project.
@@ -188,7 +189,7 @@ async function main(): Promise<void> {
     const carried = workbench.snapshot().projects.find((project) => project.project.id === ASSISTANT_PROJECT_ID);
     assert.equal(carried?.project.kind, 'assistant');
     assert.equal(listedProject(carried!), false);
-    assert.ok(assistant.isAssistantProcess('proc-assistant-1'));
+    assert.equal(bots.botFor('proc-assistant-1'), ASSISTANT_BOT_ID);
     assert.ok(events.some((event) => event.type === 'state' && event.state.process_id === 'proc-assistant-1'));
 
     // A live assistant is reused; an exited one resumes its Codex thread.
@@ -236,7 +237,7 @@ async function main(): Promise<void> {
 
     // Voice answers the offer with the configured voice and speaks digests.
     compacting = true;
-    await assert.rejects(assistant.startVoice('during-compaction'), /assistant is compacting/);
+    await assert.rejects(assistant.startVoice('during-compaction'), /Assistant is compacting/);
     assert.equal(voiceOffer, null, 'voice never reaches Codex during auto-compaction');
     assert.equal(assistant.voiceActive(assistant.state().process_id!), false);
     compacting = false;
@@ -262,9 +263,10 @@ async function main(): Promise<void> {
     assert.equal(assistant.state().voice.active, false, 'an upstream close ends the voice session');
     assert.equal(realtimeListeners.size, 0);
     // A changed profile applies to the next voice session.
-    settings.updateAssistantSettings({ ...settings.assistantSettings(), voiceProfile: 'patterm', voiceAcknowledgements: 'on', userName: 'Alex' });
+    setAssistant(settings, { voice: { ...assistantSettings().voice, profile: 'patterm', acknowledgements: 'on' } });
+    nameTo('Alex');
     await assistant.startVoice('offer-2');
-    assert.deepEqual((voiceOffer as { options?: RealtimeVoiceOptions } | null)?.options, assistantVoiceOptions({ voiceProfile: 'patterm', voiceAcknowledgements: 'on', userName: 'Alex' }));
+    assert.deepEqual((voiceOffer as { options?: RealtimeVoiceOptions } | null)?.options, botVoiceOptions(voiceSettings({ profile: 'patterm', acknowledgements: 'on', userName: 'Alex' })));
     // A new call is briefed from the thread and the agents the assistant started.
     conversation = [
       { id: 'u1', role: 'user', kind: 'text', text: '<realtime_delegation>\n  <input>Start a PAT-130 agent</input>\n  <transcript_delta>user: Start a PAT-130 agent</transcript_delta>\n</realtime_delegation>' },
@@ -289,7 +291,7 @@ async function main(): Promise<void> {
     assert.equal(assistant.state().voice.active, false);
 
     // Forwarding can be turned off.
-    settings.updateAssistantSettings({ voice: null, presetId: null, forwardNotifications: false });
+    setAssistant(settings, { digests: false });
     assistant.handleNotification({ type: 'raised', notification: notification('n8') });
     await wait(40);
     assert.equal(prompts.length, 1);
@@ -326,7 +328,7 @@ async function main(): Promise<void> {
     let openGate!: () => void;
     launchGate = new Promise((resolve) => { openGate = resolve; });
     const gated = assistant.restart('proc-assistant-4');
-    const freshRejected = assert.rejects(assistant.newSession('proc-assistant-4'), /already restarting/, '/new cannot succeed by joining a resume');
+    const freshRejected = assert.rejects(assistant.newSession('proc-assistant-4'), /already restarted/, '/new cannot succeed by joining a resume');
     await wait(5);
     assert.equal(assistant.state().process_id, null, 'the old process has stopped');
     assert.ok(inbox.hold('proc-assistant-4', { kind: 'report', sourceProcessId: 'proc-helper', title: 'Report from proc-helper: completed', body: 'Done during the restart', dedupeKey: 'report:restart' }));
@@ -336,7 +338,7 @@ async function main(): Promise<void> {
     assert.equal((await gated).process_id, 'proc-assistant-5');
     await freshRejected;
     await wait(20);
-    assert.match(prompts.slice(promptsBefore).join('\n'), /held while Focus mode was on or the assistant was not running[\s\S]*Report from proc-helper/);
+    assert.match(prompts.slice(promptsBefore).join('\n'), /held while Focus mode was on or you were not running[\s\S]*Report from proc-helper/);
 
     // When the new process fails to launch, the next start still adopts the
     // old process's agents and timers.
@@ -352,14 +354,14 @@ async function main(): Promise<void> {
     // /new keeps the assistant role and its dependants, but starts a fresh
     // thread. The previous thread remains available in history.
     const ui = new McpToolRegistry();
-    registerAssistantTools(ui, assistant, settings);
-    assert.equal(ui.help('assistant_new').hidden, true);
-    assert.ok(INTEGRATED_CONTROL_TOOLS.has('assistant_new'));
+    registerBotTools(ui, bots, relay, settings, () => undefined);
+    assert.equal(ui.help('bot_restart').hidden, true);
+    assert.ok(INTEGRATED_CONTROL_TOOLS.has('bot_restart'));
     db.prepare(`update processes set parent_process_id = 'proc-assistant-6', status = 'running' where id = 'proc-helper'`).run();
     await assistant.startVoice('before-new');
-    await assert.rejects(ui.call('assistant_new', { process_id: 'proc-assistant-5' }), /already restarted/);
+    await assert.rejects(ui.call('bot_restart', { process_id: 'proc-assistant-5', fresh: true }), /already restarted/);
     const [fresh, whileNew] = await Promise.all([
-      ui.call('assistant_new', { process_id: 'proc-assistant-6' }) as Promise<{ process_id: string }>,
+      ui.call('bot_restart', { process_id: 'proc-assistant-6', fresh: true }) as Promise<{ process_id: string }>,
       assistant.ensure()
     ]);
     assert.equal(fresh.process_id, 'proc-assistant-7');
@@ -376,50 +378,76 @@ async function main(): Promise<void> {
 
     // Turning the assistant off ends its voice call and stops it, and nothing
     // starts it again until it is back on, when it resumes the same thread.
+    const saveAssistant = async (change: Record<string, unknown>) => {
+      await ui.call('settings_bots_update', { ...settings.bots(), bots: settings.bots().bots.map((bot) => bot.id === ASSISTANT_BOT_ID ? { ...bot, ...change } : bot) });
+      // Starting and stopping bots carries on after the save returns.
+      await wait(20);
+    };
     assert.equal(assistant.state().enabled, true);
     await assistant.startVoice('before-off');
     const live = assistant.state().process_id!;
-    await ui.call('settings_assistant_update', { ...settings.assistantSettings(), enabled: false });
-    assert.equal(settings.assistantSettings().enabled, false);
+    await saveAssistant({ enabled: false });
+    assert.equal(assistantSettings().enabled, false);
     assert.equal(stops.at(-1), live);
     assert.deepEqual({ enabled: assistant.state().enabled, process_id: assistant.state().process_id, voice: assistant.state().voice.active }, { enabled: false, process_id: null, voice: false });
-    const lastState = () => events.filter((event) => event.type === 'state').at(-1)?.state;
+    const lastState = () => events.filter((event): event is Extract<BotRelayEvent, { type: 'state' }> => event.type === 'state' && event.state.bot_id === ASSISTANT_BOT_ID).at(-1)?.state;
     assert.equal(lastState()?.enabled, false, 'clients hear that the assistant is off');
     await assert.rejects(assistant.ensure(), /turned off/);
     await assert.rejects(assistant.startVoice('while-off'), /turned off/);
     await assert.rejects(assistant.restart(live), /turned off/);
     await assert.rejects(assistant.newSession(live), /turned off/);
     assert.equal(launches.length, 8, 'nothing launches while the assistant is off');
-    await ui.call('settings_assistant_update', { ...settings.assistantSettings(), enabled: true });
+    // Like any bot, turning it back on starts it again on the same thread.
+    await saveAssistant({ enabled: true });
     assert.equal(lastState()?.enabled, true);
-    assert.equal(launches.length, 8, 'turning it on does not launch it');
+    assert.equal(launches.length, 9);
+    assert.equal(launches[8]!.resume?.resume_id, 'thread-7', 'turning it back on resumes the thread');
+    assert.ok(assistant.state().process_id);
+    // Voice needs a Codex profile; another harness hides it.
+    assert.equal(assistant.state().voice.available, true);
+    settings.updateHarnessPresets({ ...settings.harnessPresets(), presets: [...settings.harnessPresets().presets, { id: 'preset_claude_bot', harness: 'claude', name: 'Claude', model: null, reasoning: null, serviceTier: null, look: null }] });
+    setAssistant(settings, { presetId: 'preset_claude_bot' });
+    assert.equal(assistant.state().voice.available, false);
+    await assert.rejects(assistant.startVoice('on-claude'), /no voice/);
+    setAssistant(settings, { presetId: 'preset_fast' });
 
     // A launch already under way when it is turned off is stopped without
     // delivering what the inbox holds; the next launch delivers it.
-    inbox.setFocus(true);
-    assert.ok(inbox.holdForAssistant({ kind: 'agent_message', sourceProcessId: 'proc-x', title: 'Held', body: 'Held while off' }));
-    inbox.setFocus(false);
-    assert.equal(inbox.focus().pending, 1);
+    await saveAssistant({ enabled: false });
+    inbox.setFocus(ASSISTANT_BOT_ID, true);
+    assert.ok(inbox.holdFor(ASSISTANT_BOT_ID, { kind: 'agent_message', sourceProcessId: 'proc-x', title: 'Held', body: 'Held while off' }));
+    inbox.setFocus(ASSISTANT_BOT_ID, false);
+    assert.equal(inbox.focus(ASSISTANT_BOT_ID).pending, 1);
+    // On again without starting it, so a start can race turning it off.
+    setAssistant(settings, { enabled: true });
     let releaseLaunch!: () => void;
     launchGate = new Promise((resolve) => { releaseLaunch = resolve; });
     const promptsBeforeOff = prompts.length;
     const racing = assistant.ensure();
-    const turningOff = ui.call('settings_assistant_update', { ...settings.assistantSettings(), enabled: false });
+    await wait(5);
+    const turningOff = saveAssistant({ enabled: false });
     await wait(5);
     releaseLaunch();
     await racing;
     await turningOff;
     await wait(20);
-    assert.equal(launches[8]!.resume?.resume_id, 'thread-7', 'turning it back on resumes the thread');
+    assert.equal(launches[9]!.resume?.resume_id, 'thread-7');
     assert.equal(assistant.state().process_id, null);
     assert.equal(prompts.length, promptsBeforeOff, 'nothing is delivered to a launch that is being stopped');
-    assert.equal(inbox.focus().pending, 1);
-    await ui.call('settings_assistant_update', { ...settings.assistantSettings(), enabled: true });
-    await assistant.ensure();
+    assert.equal(inbox.focus(ASSISTANT_BOT_ID).pending, 1);
+    await saveAssistant({ enabled: true });
     await wait(20);
-    assert.equal(inbox.focus().pending, 0);
+    assert.equal(inbox.focus(ASSISTANT_BOT_ID).pending, 0);
     assert.match(prompts.slice(promptsBeforeOff).join('\n'), /Held while off/);
+    // Turning Focus mode off for the assistant ends a focus it was in.
+    inbox.setFocus(ASSISTANT_BOT_ID, true);
+    await saveAssistant({ focus: false });
+    assert.equal(inbox.focus(ASSISTANT_BOT_ID).enabled, false);
+    assert.throws(() => assistant.setFocus(true), /doesn't use Focus mode/);
+    assert.equal(inbox.holdFor(ASSISTANT_BOT_ID, { kind: 'agent_message', title: 'x', body: 'y' }), false, 'nothing is held for a bot without Focus mode');
+    await saveAssistant({ focus: true });
     assistant.dispose();
+    const liveIdentity = (db.prepare(`select mcp_identity, process_id from sessions where session_role = 'assistant' and exited_at is null order by started_at desc limit 1`).get() as { mcp_identity: string; process_id: string });
 
     // The assistant's context names its cross-project role.
     assert.match(new AgentContextService().buildAssistant(), /assistant_overview/);
@@ -436,7 +464,7 @@ async function main(): Promise<void> {
     agent('worker-q', 'q', 'orchestrator');
     const timeline = new TimelineService(database);
     const registry = createTestMcpRegistry({ tempDir: dir, database, timeline, terminal: { request: async () => ({}) } as unknown as TerminalService, workbench });
-    const assistantIdentity = { identity: 'mcp-assistant-10' };
+    const assistantIdentity = { identity: liveIdentity.mcp_identity };
 
     const overview = await registry.callPublic('assistant_overview', {}, assistantIdentity) as { projects: Array<{ project_id: string; processes: Array<{ process_id: string }> }> };
     assert.deepEqual(overview.projects.map((project) => project.project_id), ['p', 'q']);
@@ -537,7 +565,7 @@ async function main(): Promise<void> {
     await assert.rejects(registry.callPublic('assistant_project_rename', { project_id: ASSISTANT_PROJECT_ID, name: 'Mine' }, assistantIdentity), /unknown project/);
     await assert.rejects(registry.callPublic('assistant_project_rename', { project_id: 'q', name: '   ' }, assistantIdentity), /too_small|at least 1/);
     const created = db.prepare(`select actor_type, actor_id from timeline_events where event_type = 'project.created' and project_id = ?`).get(made.project_id) as { actor_type: string; actor_id: string };
-    assert.deepEqual({ ...created }, { actor_type: 'agent', actor_id: 'proc-assistant-10' }, 'the timeline records the assistant as the actor');
+    assert.deepEqual({ ...created }, { actor_type: 'agent', actor_id: liveIdentity.process_id }, 'the timeline records the assistant as the actor');
     console.log('assistant smoke passed');
   } finally {
     database.dispose();

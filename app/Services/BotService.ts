@@ -160,9 +160,9 @@ export class BotService {
   // bot's session, so a stale request never replaces a newer one.
   restart(botId: string, fresh = false, processId?: string): Promise<BotState> {
     return this.serial(botId, async () => {
+      this.assertEnabled(this.requireBot(botId));
       const current = this.current(botId);
       if (processId && current?.process_id !== processId) throw new Error('This bot has already restarted');
-      this.assertEnabled(this.requireBot(botId));
       // If the launch fails, they resume on the stopped session, as after any stop.
       const held = this.holdTimers(botId);
       try {
