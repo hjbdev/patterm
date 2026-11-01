@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Links can carry a status: open, approved, merged, released, deployed,
+  verified or closed for PRs and issues, and running, kept or stopped for
+  previews. Agents keep it current by attaching the link again, and it shows
+  beside the link and in the servers list. Deployed is what an agent reported;
+  verified means it checked the live change. You can set it from a link's edit
+  form too.
 - The sidebar's view options can sort agents by recent activity. An agent
   moves up when it or one of its subagents changes state, within each group.
   The choice is remembered on this device.

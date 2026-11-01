@@ -5,7 +5,20 @@ import { worktreeName } from '../lib/worktreeDiff';
 import { useWorkbench } from './useWorkbench';
 import { useWorktreeDiffTotals } from './useWorktreeDiff';
 
-export interface LinkChanges { url: string; resource_type: 'generic' | 'issue' | 'pull_request' | 'preview'; identifier: string; title: string }
+export interface LinkChanges { url: string; resource_type: 'generic' | 'issue' | 'pull_request' | 'preview'; identifier: string; title: string; status?: LinkStatus | 'none' }
+
+// Where a link stands, as its agent last reported it. Matches the service's
+// list; deployed is reported, verified was checked.
+export const LINK_STATUSES = {
+  open: 'Open', approved: 'Approved', merged: 'Merged', released: 'Released', deployed: 'Deployed', verified: 'Verified', closed: 'Closed',
+  running: 'Running', kept: 'Kept', stopped: 'Stopped'
+} as const;
+export type LinkStatus = keyof typeof LINK_STATUSES;
+
+// A status this build doesn't know, from a newer paired host, shows as written.
+export function linkStatusLabel(link: Pick<Reference, 'status'>): string | null {
+  return link.status ? LINK_STATUSES[link.status as LinkStatus] ?? link.status : null;
+}
 
 // Matches the service limit on worktrees linked to one session.
 export const MAX_LINKED_WORKTREES = 10;

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { familyServers, linkPort, processPort, serverLabel } from '../resources/js/lib/servers';
 
 const proc = (id: string, name: string, command = '') => ({ id, name, command });
-const link = (id: string, url: string) => ({ id, url });
+const link = (id: string, url: string, status: string | null = null) => ({ id, url, status });
 
 // A process's port comes from its name, then its command line.
 assert.equal(processPort(proc('a', 'stratbase site :8885')), '8885');
@@ -21,13 +21,13 @@ assert.equal(serverLabel(':8885', '8885'), ':8885');
 // none follow, under their own label.
 const servers = familyServers(
   [proc('p1', 'site :8885'), proc('p2', 'worker', 'node worker.js')],
-  [link('r1', 'https://deploy.example.com/'), link('r2', 'http://100.96.33.3:8885/')],
+  [link('r1', 'https://deploy.example.com/'), link('r2', 'http://100.96.33.3:8885/', 'kept')],
   (item) => `link ${item.id}`
 );
-assert.deepEqual(servers.map((server) => [server.key, server.label, server.port, server.url]), [
-  ['p1', 'site', '8885', 'http://100.96.33.3:8885/'],
-  ['p2', 'worker', null, null],
-  ['r1', 'link r1', null, 'https://deploy.example.com/']
+assert.deepEqual(servers.map((server) => [server.key, server.label, server.port, server.url, server.status]), [
+  ['p1', 'site', '8885', 'http://100.96.33.3:8885/', 'kept'],
+  ['p2', 'worker', null, null, null],
+  ['r1', 'link r1', null, 'https://deploy.example.com/', null]
 ]);
 
 console.log('servers smoke passed');

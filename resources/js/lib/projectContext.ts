@@ -2,7 +2,7 @@ import { onBeforeUnmount, ref, watch } from 'vue';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { latestQueryData, queryClient } from './serverQuery';
 
-export interface Reference { id: string; url: string; provider: string; resource_type: string; identifier: string | null; title: string | null; revision: number }
+export interface Reference { id: string; url: string; provider: string; resource_type: string; identifier: string | null; title: string | null; status?: string | null; revision: number }
 export interface Scratchpad { id: string; title: string; body?: string; status: 'active' | 'archived'; revision: number; total_lines?: number; created_at?: string; updated_at?: string }
 export interface Todo { id: string; title: string; notes: string; status: string; priority: string; revision: number; assignments: string[]; blockers: { id: string; title: string; status: string }[]; blocked: boolean; lease: { holder_actor: string; holder_session_id: string | null; expires_at: number } | null; created_at?: string; updated_at?: string; completed_at?: string | null }
 export interface Page<T> { items: T[]; total: number }

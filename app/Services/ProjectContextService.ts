@@ -15,7 +15,7 @@ export interface ScratchpadRow {
   revision: number; created_at: string; updated_at: string;
 }
 export interface ReferenceRow {
-  id: string; project_id: string; url: string; provider: string; resource_type: string;
+  id: string; project_id: string; url: string; provider: string; resource_type: string; status: string | null;
   external_id: string | null; identifier: string | null; title: string | null; revision: number;
 }
 export type ReferenceTarget = { target_type: 'todo' | 'scratchpad' | 'session'; target_id: string };
@@ -258,24 +258,32 @@ export class ProjectContextService {
     return { items, total };
   }
 
-  attachReference(actor: ContextActor, input: ReferenceTarget & { url: string; provider: string; resource_type: string; external_id?: string | undefined; identifier?: string | undefined; title?: string | undefined }) {
+  attachReference(actor: ContextActor, input: ReferenceTarget & { url: string; provider: string; resource_type: string; external_id?: string | undefined; identifier?: string | undefined; title?: string | undefined; status?: string | undefined }) {
     const config = targets[input.target_type]; this.scoped(config.records, input.target_id, actor);
     const canonical = referenceUrl(input.url); const now = new Date(this.now()).toISOString();
-    this.db.prepare(`insert or ignore into external_references(id,project_id,url,provider,resource_type,external_id,identifier,title,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?)`)
-      .run(`reference_${randomUUID()}`, actor.projectId, canonical, input.provider, input.resource_type, input.external_id ?? null, input.identifier ?? null, input.title ?? null, now, now);
-    const reference = this.db.prepare('select * from external_references where project_id=? and url=?').get(actor.projectId, canonical) as ReferenceRow;
+    const status = input.status === undefined ? undefined : referenceStatus(input.status);
+    const inserted = this.db.prepare(`insert or ignore into external_references(id,project_id,url,provider,resource_type,external_id,identifier,title,status,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(`reference_${randomUUID()}`, actor.projectId, canonical, input.provider, input.resource_type, input.external_id ?? null, input.identifier ?? null, input.title ?? null, status ?? null, now, now);
+    let reference = this.db.prepare('select * from external_references where project_id=? and url=?').get(actor.projectId, canonical) as ReferenceRow;
+    // Attaching a link again is how an agent reports a new state for it,
+    // without a revision round trip; its other fields stay as they were.
+    if (!inserted.changes && status !== undefined && status !== reference.status) {
+      this.db.prepare('update external_references set status=?,revision=revision+1,updated_at=? where id=?').run(status, now, reference.id);
+      this.event(actor, 'reference.updated', { reference_id: reference.id });
+      reference = { ...reference, status, revision: reference.revision + 1 };
+    }
     const changed = this.db.prepare(`insert or ignore into ${config.attachments}(${config.column},reference_id) values(?,?)`).run(input.target_id, reference.id);
     if (changed.changes) this.event(actor, 'reference.attached', { target_type: input.target_type, target_id: input.target_id, reference_id: reference.id });
     return reference;
   }
 
   // A reference is shared by everything it is attached to, so edits apply everywhere.
-  updateReference(actor: ContextActor, input: { reference_id: string; revision: number; url?: string | undefined; resource_type?: string | undefined; title?: string | undefined; identifier?: string | undefined; external_id?: string | undefined }) {
+  updateReference(actor: ContextActor, input: { reference_id: string; revision: number; url?: string | undefined; resource_type?: string | undefined; title?: string | undefined; identifier?: string | undefined; external_id?: string | undefined; status?: string | undefined }) {
     const row = this.scoped<ReferenceRow>('external_references', input.reference_id, actor); this.revision(row.revision, input.revision);
     const url = input.url === undefined ? row.url : referenceUrl(input.url);
     if (url !== row.url && this.db.prepare('select 1 from external_references where project_id=? and url=? and id<>?').get(actor.projectId, url, row.id)) throw new Error('Another reference in this project already uses that URL');
-    this.db.prepare('update external_references set url=?,resource_type=?,title=?,identifier=?,external_id=?,revision=revision+1,updated_at=? where id=?')
-      .run(url, input.resource_type ?? row.resource_type, input.title ?? row.title, input.identifier ?? row.identifier, input.external_id ?? row.external_id, new Date(this.now()).toISOString(), row.id);
+    this.db.prepare('update external_references set url=?,resource_type=?,title=?,identifier=?,external_id=?,status=?,revision=revision+1,updated_at=? where id=?')
+      .run(url, input.resource_type ?? row.resource_type, input.title ?? row.title, input.identifier ?? row.identifier, input.external_id ?? row.external_id, input.status === undefined ? row.status : referenceStatus(input.status), new Date(this.now()).toISOString(), row.id);
     this.event(actor, 'reference.updated', { reference_id: row.id }); return this.scoped<ReferenceRow>('external_references', row.id, actor);
   }
 
@@ -329,6 +337,11 @@ export class ProjectContextService {
       references: this.references(actor, { target_type: 'session', target_id: session }, page),
       worktrees: this.sessionWorktrees(session) };
   }
+}
+
+// none clears a link's status.
+function referenceStatus(value: string): string | null {
+  return value === 'none' ? null : value;
 }
 
 // URL canonicalises host casing and default ports; preserve path, query, and fragment.

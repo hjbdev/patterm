@@ -25,7 +25,8 @@ export function registerProjectContextTools(registry: McpToolRegistry, action: P
         'Resolve PR and issue identifiers with your provider MCP or CLI first, then attach the verified URL. Patterm stores references and does not fetch or synchronise external resources.',
         'Session scratchpad and worktree attachments, session references, and session context infer the caller\'s session for agents; owner requests require it.',
         'After opening or finding a PR or issue for your work, attach it to your session, for example reference_attach {target_type:"session", url, provider:"github", resource_type:"pull_request", identifier:"#42"}. Providers are github, linear, and generic; resource types are pull_request, issue, preview, and generic.',
-        'When you start or find a dev server, preview deploy, or other page the user will want to open, attach it with resource_type preview, for example reference_attach {target_type:"session", url:"http://localhost:5173", resource_type:"preview", title:"Vite dev server"}. Local URLs need no provider check.'
+        'When you start or find a dev server, preview deploy, or other page the user will want to open, attach it with resource_type preview, for example reference_attach {target_type:"session", url:"http://localhost:5173", resource_type:"preview", title:"Vite dev server"}. Local URLs need no provider check.',
+        'status records where a link stands, as you last saw it: open, approved (review is green), merged, released, deployed, verified, or closed for PRs and issues; running, kept (left up on purpose after the task), or stopped for previews. deployed means a deploy was reported; verified means you checked the live change works. Attach the same URL again with a new status to update it, or pass none to clear it.'
       ]
     }, (args, context) => action.execute(operation, args, context.identity));
   }

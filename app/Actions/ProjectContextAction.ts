@@ -13,6 +13,9 @@ const priority = z.enum(['low', 'medium', 'high']);
 const target = { target_type: z.enum(['todo', 'scratchpad', 'session']), target_id: id.optional() };
 // preview: a dev server, preview deploy, or other page the user opens to see the work.
 const resourceType = z.enum(['generic', 'issue', 'pull_request', 'preview']);
+// A link's state as its agent last reported it. none clears it.
+const REFERENCE_STATUSES = ['open', 'approved', 'merged', 'released', 'deployed', 'verified', 'closed', 'running', 'kept', 'stopped'] as const;
+const referenceStatus = z.enum([...REFERENCE_STATUSES, 'none']);
 const ttl = z.number().int().min(1).max(86400).default(300);
 const token = z.string().uuid();
 const query = z.string().max(500).optional();
@@ -42,9 +45,9 @@ export const contextSchemas = {
   'scratchpad_detach': input({ scratchpad_id: id, session_id: id.optional() }),
   'worktree_attach': input({ worktree_id: id, session_id: id.optional() }),
   'worktree_detach': input({ worktree_id: id, session_id: id.optional() }),
-  'reference_attach': input({ ...target, url: z.string().url().max(4096), provider: z.enum(['generic', 'linear', 'github']).default('generic'), resource_type: resourceType.default('generic'), external_id: z.string().max(500).optional(), identifier: z.string().max(500).optional(), title: title.optional() }),
+  'reference_attach': input({ ...target, url: z.string().url().max(4096), provider: z.enum(['generic', 'linear', 'github']).default('generic'), resource_type: resourceType.default('generic'), external_id: z.string().max(500).optional(), identifier: z.string().max(500).optional(), title: title.optional(), status: referenceStatus.optional() }),
   'reference_list': input({ ...target, ...page }),
-  'reference_update': input({ reference_id: id, revision, url: z.string().url().max(4096).optional(), resource_type: resourceType.optional(), title: z.string().max(500).optional(), identifier: z.string().max(500).optional(), external_id: z.string().max(500).optional() }),
+  'reference_update': input({ reference_id: id, revision, url: z.string().url().max(4096).optional(), resource_type: resourceType.optional(), title: z.string().max(500).optional(), identifier: z.string().max(500).optional(), external_id: z.string().max(500).optional(), status: referenceStatus.optional() }),
   'reference_detach': input({ ...target, reference_id: id }),
   'session_context': input({ session_id: id.optional(), ...page })
 };

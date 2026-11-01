@@ -66,6 +66,7 @@
               <AppWindow v-else :class="CHIP_ICON" />
               <span class="min-w-0 truncate">{{ server.label }}</span>
               <span v-if="server.port" class="shrink-0 font-mono text-xs text-muted-foreground">:{{ server.port }}</span>
+              <span v-if="server.status" class="shrink-0 rounded-full border border-border px-1.5 text-[11px] leading-4 text-muted-foreground">{{ linkStatusLabel(server) }}</span>
             </button>
             <button v-if="server.process && server.url" type="button" :class="ROW_ACTION" :aria-label="`Show ${server.label}'s terminal`" title="Show terminal" @click="openProcess(server.process)"><SquareTerminal class="h-3.5 w-3.5" /></button>
             <a v-if="server.url" :href="server.url" target="_blank" rel="noopener noreferrer" :class="ROW_ACTION" :aria-label="`Open ${server.label} in the browser`" title="Open in browser"><ExternalLink class="h-3.5 w-3.5" /></a>
@@ -147,7 +148,7 @@ import LinkAttachPopover from './LinkAttachPopover.vue';
 import { CHIP, CHIP_ICON, CHIP_LABEL } from './rowAction';
 import SecretsChip from './SecretsChip.vue';
 import { useMedia } from '../../Composables/useMedia';
-import { linkIcon, linkLabel, MAX_LINKED_WORKTREES, useSessionContext } from '../../Composables/useSessionContext';
+import { linkIcon, linkLabel, linkStatusLabel, MAX_LINKED_WORKTREES, useSessionContext } from '../../Composables/useSessionContext';
 import { agentLabel } from '../../lib/agentTabs';
 import { hasBrowser, useBrowserState } from '../../lib/browser';
 import { relativeTime } from '../../lib/format';

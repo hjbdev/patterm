@@ -7,10 +7,12 @@ export interface ServerEntry {
   label: string;
   port: string | null;
   url: string | null;
+  // The paired preview link's status, such as kept.
+  status: string | null;
   process: Pick<ProcessRecord, 'id' | 'name' | 'command'> | null;
 }
 
-export interface PreviewLink { id: string; url: string }
+export interface PreviewLink { id: string; url: string; status?: string | null }
 
 // A process's port, from its name (`site :8885`) or its command line.
 export function processPort(process: Pick<ProcessRecord, 'name' | 'command'>): string | null {
@@ -45,7 +47,7 @@ export function familyServers<P extends Pick<ProcessRecord, 'id' | 'name' | 'com
     const port = processPort(process);
     const index = port ? unpaired.findIndex((link) => linkPort(link.url) === port) : -1;
     const link = index >= 0 ? unpaired.splice(index, 1)[0]! : null;
-    return { key: process.id, label: serverLabel(process.name, port), port, url: link?.url ?? null, process };
+    return { key: process.id, label: serverLabel(process.name, port), port, url: link?.url ?? null, status: link?.status ?? null, process };
   });
-  return [...paired, ...unpaired.map((link) => ({ key: link.id, label: linkLabel(link), port: linkPort(link.url), url: link.url, process: null }))];
+  return [...paired, ...unpaired.map((link) => ({ key: link.id, label: linkLabel(link), port: linkPort(link.url), url: link.url, status: link.status ?? null, process: null }))];
 }
