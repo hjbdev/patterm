@@ -89,7 +89,10 @@ async function main(): Promise<void> {
     const report = inputs.find((input) => input.text.startsWith('[report from grandchild'));
     assert.equal(report?.process_id, 'child', 'the grandchild reports to its own parent');
     assert.ok(!inputs.some((input) => input.process_id === 'root'), 'nothing skips a level to the root');
-    await waitFor(() => inputs.some((input) => input.process_id === 'child' && input.text.includes('grandchild done')), 'the sub-agent timer fires on its child report');
+    // The report carries the timer's callback, so the sub-agent wakes once.
+    assert.match(report!.text, /^\[report from grandchild: completed\]\nTests pass\.\n\n\[Patterm timer timer_\w+: condition met\]\n- grandchild "grandchild": reported completed at \S+: Tests pass\.\nRead full results with get_conversation_output\.\ngrandchild done$/);
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    assert.equal(inputs.filter((input) => input.process_id === 'child').length, 1, 'no second callback repeats the report');
     await registry.call('send_message', { target_process_id: 'parent', message: 'question' }, as('grandchild'));
     assert.equal(inputs.at(-1)?.process_id, 'child', 'parent alias resolves to the direct parent');
 
@@ -126,14 +129,6 @@ async function main(): Promise<void> {
     database.dispose();
     fs.rmSync(dir, { recursive: true, force: true });
   }
-}
-
-async function waitFor(check: () => boolean, message: string): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (check()) return;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  assert.fail(message);
 }
 
 main().catch((error: unknown) => {

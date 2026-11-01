@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A child's report wakes its parent once. When the report satisfies one of
+  the parent's report timers, the timer's callback arrives in the same
+  message, instead of a second turn that repeated the report.
 - In an Integrated Codex conversation, command output that streams in before
   Codex announces the command shows in a command row, not as the agent's
   reply. Subagent activity is summarised as "Task" instead of

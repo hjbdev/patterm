@@ -459,6 +459,24 @@ export class TimerService {
     }
   }
 
+  // A report just recorded and about to be delivered to its parent may
+  // satisfy the parent's report timers. Takes those timers and returns their
+  // callback text, so the parent is woken once, by the report, instead of
+  // again by a callback repeating it.
+  takeReportCallbacks(ownerProcessId: string): string[] {
+    if (!this.active) return [];
+    const texts: string[] = [];
+    for (const entry of [...this.timers.values()]) {
+      if (entry.ownerProcessId !== ownerProcessId || entry.status !== 'pending' || (entry.kind !== 'report_any' && entry.kind !== 'report_all') || entry.watched.length === 0) continue;
+      const states = entry.watched.map((id) => this.processReportState(entry, id));
+      const satisfied = entry.kind === 'report_any' ? states.some((state) => state.satisfied) : states.every((state) => state.satisfied);
+      if (!satisfied) continue;
+      texts.push(this.callbackText(entry, 'condition', states));
+      this.cancel(entry.id);
+    }
+    return texts;
+  }
+
   // Resolves `host:process` addresses of agents on paired hosts.
   setRemoteResolver(resolve: (address: string) => { host_id: string; process_id: string; name: string } | null): void {
     this.resolveRemote = resolve;

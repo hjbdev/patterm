@@ -120,6 +120,27 @@ test('report watchers retain their original report cutoff after restart', (t) =>
   assert.match(fixture.delivery.calls[0]!.text, /^\[Patterm timer timer_\w+: condition met\]\n- child "child": reported completed at \S+\n- child_2 "child_2": reported completed at \S+\nRead full results with get_conversation_output\.\nreported$/);
 });
 
+test('a report takes only the report timers it satisfies for its parent', (t) => {
+  const fixture = setup(t);
+  const timers = fixture.create();
+  timers.activate();
+  const any = timers.setReport({ kind: 'report_any', watched: ['child'], ownerProcessId: 'owner', body: 'any' });
+  const all = timers.setReport({ kind: 'report_all', watched: ['child', 'child_2'], ownerProcessId: 'owner', body: 'all' });
+  const paused = timers.setReport({ kind: 'report_any', watched: ['child'], ownerProcessId: 'owner', body: 'paused' });
+  timers.pause(paused.id);
+  const other = timers.setReport({ kind: 'report_any', watched: ['child'], ownerProcessId: 'child_2', body: 'other owner' });
+  assert.deepEqual(timers.takeReportCallbacks('owner'), [], 'nothing is taken before a report');
+  t.mock.timers.tick(1);
+  fixture.report('child');
+  const taken = timers.takeReportCallbacks('owner');
+  assert.equal(taken.length, 1);
+  assert.match(taken[0]!, /^\[Patterm timer timer_\w+: condition met\]\n- child "child": reported completed at \S+\nRead full results with get_conversation_output\.\nany$/);
+  assert.deepEqual(timers.listMcp().map((timer) => timer.timer_id).sort(), [all.id, paused.id, other.id].sort(), 'unsatisfied, paused, and other owners\' timers stay');
+  assert.ok(!timers.listMcp().some((timer) => timer.timer_id === any.id));
+  t.mock.timers.tick(500);
+  assert.deepEqual(fixture.delivery.calls.map((call) => call.text.split('\n').at(-1)), ['other owner'], 'a taken timer never fires again');
+});
+
 test('explicit cancellation removes durable timers and failed sends are not replayed', async (t) => {
   const fixture = setup(t);
   let timers = fixture.create();

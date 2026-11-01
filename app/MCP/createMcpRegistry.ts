@@ -1104,10 +1104,12 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     if (services.assistantInbox?.hold(sender.parent_process_id, { kind: 'report', sourceProcessId: sender.process_id, title: `Report from ${sender.process_id}: ${input.status}${input.title?.trim() ? ` — ${input.title.trim()}` : ''}`, body: input.body, dedupeKey: `report:${eventId}` })) {
       return { ok: true, event_id: eventId, delivery: 'queued', detail: 'Your parent assistant is in Focus mode. The report is saved and reaches it when focus ends; do not resend it.' };
     }
+    // Report timers this report satisfies ride along, so the parent wakes once.
+    const callbacks = timerService.takeReportCallbacks(sender.parent_process_id);
     const delivered = await sendAgentInput(services.database, services.terminal, {
       process_id: sender.parent_process_id,
       kind: 'text',
-      text: `${heading}\n${input.body}`,
+      text: [`${heading}\n${input.body}`, ...callbacks].join('\n\n'),
       submit: true
     }, services.integrated);
     const queued = queuedDetail(delivered);
@@ -1351,6 +1353,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     usageNotes: [
       'Use after spawning delegated agents when work can continue after the first child calls report_to_parent.',
       'A watched process that exits or stops without reporting also wakes the timer. For the assistant\'s timers, a watched agent\'s send_message to the assistant does too. The callback says which.',
+      'When a report satisfies the timer, the callback arrives in the same message as the report, not separately.',
       'LLM-heavy reviews and investigations can be quiet for 20+ minutes. max_wait_seconds is a rescue timeout, not a polling interval; omit it or use a true rescue value such as 1200+ seconds.',
       'After setting the timer, wait for its callback. Do not nudge watched children for status or ask them to wrap up.'
     ]
@@ -1379,6 +1382,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     usageNotes: [
       'Use after delegating work to sub-agents when work should resume only after every child calls report_to_parent.',
       'A watched process that exits or stops without reporting also wakes the timer. For the assistant\'s timers, a watched agent\'s send_message to the assistant does too. The callback says which.',
+      'When a report satisfies the timer, the callback arrives in the same message as the report, not separately.',
       'LLM-heavy reviews and investigations can be quiet for 20+ minutes. max_wait_seconds is a rescue timeout, not a polling interval; omit it or use a true rescue value such as 1200+ seconds.',
       'After setting the timer, wait for its callback. An early report does not justify nudging the remaining children or asking them to wrap up.'
     ]
