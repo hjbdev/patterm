@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A nightly memory review. Two new tools, `memory_review_activity` and
+  `memory_review_checkpoint`, let the assistant or a workspace routine read
+  new conversation activity across every project in pages. Each conversation
+  is read only from where the last review stopped, so a long-running session
+  is never reread. Routines gain a third delivery, "tell the assistant": the
+  assistant gets each report and decides what is worth telling you. Failed
+  runs, blocked runs, and runs that end without reporting still notify you
+  directly; a run with nothing to report stays quiet.
+  `docs/assistant-memory.md` has a 07:00 Europe/London routine to copy.
+  Patterm does not create the routine for you.
+
 - The sidebar's view options can sort agents by recent activity. An agent
   moves up when it or one of its subagents changes state, within each group.
   The choice is remembered on this device.
@@ -34,6 +45,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   voice shows a call button on its page, and one with Focus mode has it in
   the page's menu. Bots get digests only for the projects they work in. A
   bot can also be turned off without deleting it.
+- Saved memory is now one shared store. The assistant, bots, routines and
+  task agents in every project and harness read and add to the same notes.
+  Project labels order what loads first; they no longer hide notes. Existing
+  assistant and bot notes are kept, along with who wrote them, and each new
+  note records its author's role, session and harness. Task agents get a
+  short snapshot at launch and search for the rest. Bots keep their own
+  memory switch. The assistant's Memory switch in Settings › Bots covers the
+  assistant, routines and task agents. It is on by default. Upgrade note: if
+  you ever saved assistant settings, that choice is kept, including the old
+  default of off, which Patterm cannot tell apart from turning memory off on
+  purpose. Turn on the assistant's Memory in Settings › Bots to share memory.
+
 - The model picker in an Integrated OpenCode conversation shows each model's
   provider beside its name, so models with the same name from different
   providers can be told apart. OpenCode's own plans show as "Zen" and "Go".

@@ -210,9 +210,12 @@ export class HarnessLauncher {
     const contextService = new AgentContextService();
     const agentContext = harness === 'rawpty' ? ''
       : input.session_role === 'assistant' ? (this.deps.botContext?.(input.bot_id ?? ASSISTANT_BOT_ID) || contextService.buildAssistant(this.deps.assistantMemory?.snapshot())).trim()
-      : input.session_role === 'routine' ? contextService.buildRoutine().trim()
+      : input.session_role === 'routine' ? contextService.buildRoutine((limit) => this.deps.assistantMemory?.snapshot(limit, { role: 'routine' }) ?? '').trim()
       : input.session_role === 'bot' ? (this.deps.botContext?.(input.bot_id!) ?? '').trim()
-      : contextService.build(input.project_id, { figures: interfaceMode === 'integrated' && this.deps.settings?.figuresEnabled() !== false }).trim();
+      : contextService.build(input.project_id, {
+        figures: interfaceMode === 'integrated' && this.deps.settings?.figuresEnabled() !== false,
+        memory: (limit) => this.deps.assistantMemory?.snapshot(limit, { role: 'agent', projectId: input.project_id }) ?? ''
+      }).trim();
     timing.mark('context.built', { context_chars: agentContext.length });
     const project = this.deps.workbench.getProject(input.project_id);
     const worktree = input.worktree_id ? this.worktree(input.worktree_id) : null;

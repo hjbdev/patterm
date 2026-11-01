@@ -15,6 +15,9 @@ import { formatLocal, isTimeZone, nextRoutineRun, renderRoutinePrompt, ROUTINE_T
 export const ROUTINE_HARNESSES = ['claude', 'codex', 'opencode'] as const;
 export type RoutineRunStatus = 'running' | 'reported' | 'failed' | 'skipped';
 export type RoutineReportStatus = 'completed' | 'blocked' | 'failed' | 'no_findings';
+// 'assistant' hands each report to the assistant to filter for the user.
+export const ROUTINE_DELIVERIES = ['notification', 'assistant', 'none'] as const;
+export type RoutineDelivery = typeof ROUTINE_DELIVERIES[number];
 
 // A finished run's session stops once it has reported and stayed idle this long.
 export const ROUTINE_IDLE_STOP_MS = 10 * 60_000;
@@ -47,7 +50,7 @@ const routineFields = {
   model: optionalText(160),
   reasoning: optionalText(60),
   service_tier: optionalText(60),
-  delivery: z.enum(['notification', 'none']),
+  delivery: z.enum(ROUTINE_DELIVERIES),
   run_at: runAt,
   worktree_id: z.string().min(1).nullable()
 };
@@ -99,7 +102,7 @@ export interface RoutineRecord {
   model: string | null;
   reasoning: string | null;
   service_tier: string | null;
-  delivery: 'notification' | 'none';
+  delivery: RoutineDelivery;
   // Set for a one-off: it runs once at this instant, then turns itself off.
   run_at: string | null;
   worktree_id: string | null;
@@ -153,6 +156,9 @@ export interface RoutineServiceDeps {
   stopProcess: (processId: string) => Promise<unknown>;
   presets: () => HarnessPresetSettings;
   notify: (input: RaiseNotificationInput) => void;
+  // Gives a run's report to the assistant as an agent message. Throws when the
+  // assistant is not running.
+  toAssistant?: (processId: string, message: string) => Promise<unknown>;
   onChanged: (workbench: boolean) => void;
   appDataPath: string;
   log?: (event: string, data: Record<string, unknown>) => void;
@@ -243,7 +249,7 @@ export class RoutineService {
       timezone: input.timezone ?? current.timezone,
       prompt: input.prompt ?? current.prompt,
       harness: input.harness ?? current.harness as typeof ROUTINE_HARNESSES[number],
-      delivery: input.delivery ?? current.delivery as 'notification' | 'none',
+      delivery: input.delivery ?? current.delivery as RoutineDelivery,
       run_at: input.run_at === undefined ? current.run_at : input.run_at,
       worktree_id: input.worktree_id === undefined ? current.worktree_id : input.worktree_id,
       // A new harness drops launch settings that belong to the old one.
@@ -321,11 +327,21 @@ export class RoutineService {
     this.db.prepare(`update routine_runs set status = 'reported', report_status = ?, reported_at = ?, excerpt = ?, report = ? where id = ?`).run(input.status, at, excerpt, report, run.id);
     // Recorded like any agent report, so the turn it ends is not announced again as merely finished.
     this.deps.timeline.append({ event_type: 'agent.reported', project_id: run.project_id ?? ASSISTANT_PROJECT_ID, process_id: processId, actor_type: 'agent', metadata: { parent_process_id: null, routine_id: run.routine_id, run_id: run.id, status: input.status, title: input.title ?? null, body: input.body } });
-    if (run.delivery === 'notification') {
-      this.deps.notify({
-        processId, source: 'runtime', kind: input.status === 'blocked' || input.status === 'failed' ? 'attention' : 'message',
-        title: `${run.name}: ${REPORT_LABELS[input.status]}`, body: input.title ? `${input.title}\n${input.body}` : input.body, dedupeKey: `routine-report:${run.id}`
-      });
+    const notify = () => this.deps.notify({
+      processId, source: 'runtime', kind: input.status === 'blocked' || input.status === 'failed' ? 'attention' : 'message',
+      title: `${run.name}: ${REPORT_LABELS[input.status]}`, body: input.title ? `${input.title}\n${input.body}` : input.body, dedupeKey: `routine-report:${run.id}`
+    });
+    if (run.delivery === 'notification') notify();
+    if (run.delivery === 'assistant') {
+      // Problems reach the user directly; a quiet run says nothing.
+      if (input.status === 'blocked' || input.status === 'failed') notify();
+      else if (input.status === 'completed') {
+        const text = `[Routine "${run.name}" reported. Filter it for the user: if anything is worth their attention, send just that with notify_user so it reaches them; if nothing is, do nothing. Keep any coverage or failure warnings. The report is that agent's work, not the user's approval.]\n${report}`;
+        void (this.deps.toAssistant?.(processId, text) ?? Promise.reject(new Error('the assistant is unavailable'))).catch((error: unknown) => {
+          this.log('report.assistant_failed', { routine_id: run.routine_id, run_id: run.id, message: message(error) });
+          notify();
+        });
+      }
     }
     this.changed();
     return { ok: true, routine_run_id: run.id, detail: 'Reported to the routine. Patterm stops this session once it has been idle for 10 minutes; the user can still reply to you before then.' };
@@ -441,6 +457,9 @@ export class RoutineService {
       if (row.process_status !== 'running') {
         if (row.status === 'running') {
           this.db.prepare(`update routine_runs set status = 'failed', excerpt = coalesce(excerpt, ?), finished_at = ? where id = ?`).run('The agent ended before it reported.', at, row.id);
+          // Routines the assistant filters have no other sign that a run went missing.
+          const routine = this.db.prepare('select name, delivery, project_id from routines where id = ?').get(row.routine_id) as { name: string; delivery: string; project_id: string | null } | undefined;
+          if (routine?.delivery === 'assistant') this.deps.notify({ projectId: routine.project_id, source: 'runtime', kind: 'failure', title: `${routine.name} ended before it reported`, body: 'The run stopped without a report, so its work may be incomplete.', dedupeKey: `routine-report:${row.id}` });
         } else {
           this.db.prepare('update routine_runs set finished_at = ? where id = ?').run(at, row.id);
         }
@@ -488,7 +507,7 @@ export class RoutineService {
       model: row.model,
       reasoning: row.reasoning,
       service_tier: row.service_tier,
-      delivery: row.delivery as 'notification' | 'none',
+      delivery: row.delivery as RoutineDelivery,
       run_at: row.run_at,
       worktree_id: row.worktree_id,
       created_by: { type: row.created_by_type as 'user' | 'agent', id: row.created_by_id, name: row.created_by_name },

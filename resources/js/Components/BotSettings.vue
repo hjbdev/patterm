@@ -78,7 +78,7 @@
               <label class="text-xs text-muted-foreground" for="bot-memory">Memory</label>
               <div class="flex items-center gap-2">
                 <Switch id="bot-memory" v-model="editor.memory" />
-                <span class="text-xs text-muted-foreground">Keeps useful facts across conversations.</span>
+                <span class="text-xs text-muted-foreground">{{ editorIsAssistant ? 'Shared memory for the assistant, routines and agents in every project.' : 'Reads and adds to the shared memory.' }}</span>
               </div>
               <template v-if="editor.memory">
                 <label class="text-xs text-muted-foreground" for="bot-memory-budget">Budget</label>

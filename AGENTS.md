@@ -138,7 +138,9 @@ across projects. A bot is scoped to its own hidden project and also reaches the
 user projects its settings name, only when it names one. The assistant is the
 built-in bot (`bots.v1` entry `assistant`): its sessions keep the `assistant`
 role, which grants that reach, and carry `bot_id = 'assistant'`. A caller-supplied
-`project_id` never widens that scope.
+`project_id` never widens that scope. Shared memory is the one deliberate
+exception: every local agent reads and adds to the same notes, whose project
+labels guide retrieval, not visibility.
 Administrative and owner-only tools (settings, MCP servers, assistant) are
 registered `hidden: true`, so agents can neither list nor call them.
 

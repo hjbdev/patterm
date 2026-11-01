@@ -42,7 +42,9 @@ async function main(): Promise<void> {
     // digests and Focus mode. Unknown voices and profiles are rejected, and
     // the name voices use is trimmed, cleared when blank, and bounded.
     const assistantSettings = () => settings.bots().bots.find((bot) => bot.id === ASSISTANT_BOT_ID)!;
-    assert.deepEqual([assistantSettings().voice.enabled, assistantSettings().digests, assistantSettings().focus, assistantSettings().memory], [true, true, true, false]);
+    assert.deepEqual([assistantSettings().voice.enabled, assistantSettings().digests, assistantSettings().focus, assistantSettings().memory], [true, true, true, true], 'shared memory is on by default');
+    // The voice checks below expect an empty brief, so memory is off for them.
+    setAssistant(settings, { memory: false });
     assert.equal(assistantSettings().presetId, 'preset_default_codex', 'it starts on the Codex default profile');
     settings.updateHarnessPresets({ ...settings.harnessPresets(), presets: [...settings.harnessPresets().presets, { id: 'preset_fast', harness: 'codex', name: 'Fast', model: null, reasoning: null, serviceTier: null, look: null }] });
     setAssistant(settings, { voice: { ...assistantSettings().voice, voice: 'maple' }, presetId: 'preset_fast' });

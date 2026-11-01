@@ -45,6 +45,50 @@ test('prompt variables are filled from the run time and previous runs', () => {
   assert.equal(filled, 'Monday 2026-10-05 since 2026-10-05 00:00, last 2026-10-02 16:31, keep {{other}}');
 });
 
+test('assistant delivery hands reports to the assistant, stays quiet on no findings, and notifies problems directly', async (t) => {
+  const handed: Array<{ processId: string; message: string }> = [];
+  let assistantUp = true;
+  const fixture = setup(t, Date.parse('2026-11-02T06:59:00Z'), async (processId, message) => {
+    if (!assistantUp) throw new Error('the assistant is not running');
+    handed.push({ processId, message });
+  });
+  const routine = fixture.routines.create({ name: 'Memory review', days: [0, 1, 2, 3, 4, 5, 6], time: '07:00', timezone: 'Europe/London', prompt: 'Review', delivery: 'assistant' }, { type: 'user', id: null });
+  assert.equal(routine.delivery, 'assistant');
+  assert.equal(routine.next_run_at, '2026-11-02T07:00:00.000Z', '07:00 in London is 07:00 UTC in winter');
+  assert.equal(new Date(nextRoutineRun(routine, Date.parse('2026-06-01T12:00:00Z'))!).toISOString(), '2026-06-02T06:00:00.000Z', 'and 06:00 UTC in summer');
+  const run = async (status: 'completed' | 'no_findings' | 'failed') => {
+    await fixture.routines.runNow(routine.routine_id);
+    await settle();
+    const processId = `process_${fixture.launches.length}`;
+    fixture.routines.report(processId, { status, title: 'Digest', body: 'Two new memories; coverage partial.' });
+    await settle();
+    fixture.setStatus(processId, 'exited');
+    fixture.routines.sweep();
+    return processId;
+  };
+  const first = await run('completed');
+  assert.equal(handed.length, 1);
+  assert.equal(handed[0]!.processId, first);
+  assert.match(handed[0]!.message, /Filter it for the user[\s\S]*Digest\n\nTwo new memories; coverage partial\./);
+  assert.equal(fixture.notifications.length, 0, 'the assistant decides what reaches the user');
+  await run('no_findings');
+  assert.equal(handed.length, 1, 'a quiet run sends nothing');
+  assert.equal(fixture.notifications.length, 0);
+  await run('failed');
+  assert.equal(handed.length, 1);
+  assert.match(fixture.notifications.at(-1)!.title!, /Memory review: failed/, 'failures reach the user directly');
+  assistantUp = false;
+  await run('completed');
+  assert.match(fixture.notifications.at(-1)!.title!, /Memory review: done/, 'the report falls back to a notification when the assistant is unavailable');
+  const count = fixture.notifications.length;
+  await fixture.routines.runNow(routine.routine_id);
+  await settle();
+  fixture.setStatus(`process_${fixture.launches.length}`, 'exited');
+  fixture.routines.sweep();
+  assert.equal(fixture.notifications.length, count + 1);
+  assert.match(fixture.notifications.at(-1)!.title!, /ended before it reported/, 'a run that vanishes is visible');
+});
+
 test('a due routine starts an agent, completes on report, and stops after going idle', async (t) => {
   const fixture = setup(t, Date.parse('2026-10-05T15:29:00Z'));
   const routine = fixture.routines.create({ name: 'Daily roundup', project_id: 'project', days: weekdays, time: '16:30', timezone: 'Europe/London', prompt: 'Roundup for {{date}}', preset: 'Default' }, { type: 'user', id: null });
@@ -313,7 +357,7 @@ test('a one-off missed while Patterm was stopped runs once on catch-up', async (
   assert.equal(fixture.routines.get(routine.routine_id).enabled, false);
 });
 
-function setup(t: TestContext, now: number) {
+function setup(t: TestContext, now: number, toAssistant?: (processId: string, message: string) => Promise<unknown>) {
   t.mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now });
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-routines-'));
   const database = new DatabaseService(directory);
@@ -340,6 +384,7 @@ function setup(t: TestContext, now: number) {
     },
     presets: seededHarnessPresetSettings,
     notify: (input) => { notifications.push(input); },
+    ...(toAssistant ? { toAssistant } : {}),
     onChanged: () => undefined,
     appDataPath: directory,
     defaultTimeZone: 'Europe/London'

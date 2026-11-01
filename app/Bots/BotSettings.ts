@@ -116,7 +116,7 @@ export function defaultAssistantBot(legacy: LegacyAssistantSettings | null = nul
     avatar: { kind: 'mark', look: DEFAULT_ASSISTANT_LOOK },
     purview: { kind: 'all' },
     enabled: legacy?.enabled ?? true,
-    memory: legacy?.memoryEnabled ?? false,
+    memory: legacy?.memoryEnabled ?? true,
     memoryBudgetTokens: legacy?.memoryBudgetTokens ?? 4000,
     voice: {
       enabled: true,

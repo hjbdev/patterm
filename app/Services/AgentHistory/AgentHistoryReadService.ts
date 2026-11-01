@@ -252,6 +252,28 @@ export class AgentHistoryReadService {
     return { conversation, messages: rows.slice(0, limit).reverse().map(mapMessage), has_more: rows.length > limit };
   }
 
+  // User and assistant prose that conversations imported since `importedSince`
+  // gained after their reviewed mark, oldest import first. A conversation with
+  // no mark starts at `firstSince`, so a long session first seen mid-way is not
+  // read from its beginning.
+  newProse(input: { importedSince: string; firstSince: string; marks: ReadonlyMap<string, number>; excludeSessions: ReadonlySet<string>; limit: number }) {
+    if (!this.database || !databaseAvailable(this.database)) return null;
+    const conversations = this.database.connection.prepare(`
+      select id, title, project_id, provider, session_id, imported_at from conversations where imported_at >= ? order by imported_at asc, id asc
+    `).all(input.importedSince) as Array<{ id: string; title: string | null; project_id: string | null; provider: string; session_id: string | null; imported_at: string }>;
+    const prose = this.database.connection.prepare(`
+      select seq, role, text, coalesce(provider_created_at, created_at) as at from conversation_messages
+      where conversation_id = ? and seq > ? and role in ('user', 'assistant') and kind = 'message' and text <> ''
+        and (? or coalesce(provider_created_at, created_at) >= ?)
+      order by seq asc limit ?
+    `);
+    return conversations.filter((row) => !row.session_id || !input.excludeSessions.has(row.session_id)).flatMap((row) => {
+      const mark = input.marks.get(row.id);
+      const messages = prose.all(row.id, mark ?? -1, mark === undefined ? 0 : 1, input.firstSince, input.limit) as Array<{ seq: number; role: string; text: string; at: string }>;
+      return messages.length ? [{ ...row, messages }] : [];
+    });
+  }
+
   search(raw: z.input<typeof conversationHistorySearchInput>) {
     const input = conversationHistorySearchInput.parse(raw);
     if (!this.database) return { query: input.query, results: [] };

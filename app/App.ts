@@ -3,6 +3,7 @@ import { inspect } from 'node:util';
 import { McpHttpProxyService } from './Services/McpHttpProxyService';
 import { BotRelay, type BotRelayEvent } from './Services/BotRelay';
 import { AssistantMemoryService } from './Services/AssistantMemoryService';
+import { ASSISTANT_BOT_ID } from './Bots/BotIdentity';
 import { registerIdleCompactionTools } from './MCP/registerIdleCompactionTools';
 import { registerBotTools } from './MCP/registerBotTools';
 import { BotService } from './Services/BotService';
@@ -728,6 +729,7 @@ async function createApplicationResources(
     stopProcess: (processId) => actions.stopProcess.execute(processId),
     presets: () => settings.harnessPresets(),
     notify: raiseNotification,
+    toAssistant: (processId, message) => botRelay.deliverAgentMessage(ASSISTANT_BOT_ID, processId, message),
     onChanged: (workbench) => notifyChanged(workbench ? ['routines', 'workbench'] : ['routines']),
     appDataPath: options.appDataPath,
     log: (event, data) => debugLog.write('routines', event, data)
