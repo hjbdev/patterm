@@ -882,7 +882,7 @@ const TOOL_FAMILY_BY_NAME: Record<string, TranscriptToolFamily> = {
   write: 'write', writefile: 'write', createfile: 'write', create: 'write', save: 'write',
   patch: 'patch', applypatch: 'patch', filechange: 'patch', diff: 'patch',
   webfetch: 'web', websearch: 'web', fetch: 'web', browse: 'web', readwebpage: 'web',
-  task: 'task', agent: 'task', subagent: 'task', delegate: 'task',
+  task: 'task', agent: 'task', subagent: 'task', delegate: 'task', subagentactivity: 'task',
   todowrite: 'todo', todoread: 'todo', todo: 'todo', updateplan: 'todo', taskcreate: 'todo', taskupdate: 'todo', tasklist: 'todo', taskget: 'todo',
   skill: 'skill', useskill: 'skill',
   mcptoolcall: 'mcp', dynamictoolcall: 'mcp'

@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- In an Integrated Codex conversation, command output that streams in before
+  Codex announces the command shows in a command row, not as the agent's
+  reply. Subagent activity is summarised as "Task" instead of
+  "subAgentActivity".
 - A `timer_set` callback now starts with a `[Patterm timer …]` header, as
   other timer callbacks do. It no longer shows in the transcript, or reads to
   the agent, as a message the user typed.

@@ -18,6 +18,8 @@ import {
   CODEX_MESSAGE_WINDOW,
   mergeCodexSeedEvents,
   projectCodexDelta,
+  codexOutputPlaceholder,
+  subagentLabel,
   projectCodexError,
   projectCodexItem,
   projectCodexNotice,
@@ -666,7 +668,8 @@ export class CodexAppServerService {
     }
     const delta = projectCodexDelta(method, params);
     if (delta) {
-      this.enqueue(channel, { revision: 0, kind: 'append', id: delta.id, delta: delta.delta });
+      if (delta.tool && !hasRow(channel, delta.id)) this.enqueue(channel, { revision: 0, kind: 'replace', message: codexOutputPlaceholder(delta.id, delta.tool, delta.delta) });
+      else this.enqueue(channel, { revision: 0, kind: 'append', id: delta.id, delta: delta.delta });
       return;
     }
     const status = projectCodexStatus(method, params);
@@ -727,11 +730,14 @@ export class CodexAppServerService {
     if (!delta) return;
     // A delta that arrives before its item starts would otherwise create an
     // unnested row in the main transcript.
-    if (channel.childRows.has(delta.id) || channel.state?.messages.some((message) => message.id === delta.id)) {
+    if (channel.childRows.has(delta.id) || hasRow(channel, delta.id)) {
       this.enqueue(channel, { revision: 0, kind: 'append', id: delta.id, delta: delta.delta });
     } else {
       channel.childRows.add(delta.id);
-      this.enqueue(channel, { revision: 0, kind: 'replace', message: { id: delta.id, role: 'assistant', kind: 'text', text: delta.delta, parentId, createdAt: new Date().toISOString() } });
+      const message = delta.tool
+        ? codexOutputPlaceholder(delta.id, delta.tool, delta.delta, parentId)
+        : { id: delta.id, role: 'assistant' as const, kind: 'text' as const, text: delta.delta, parentId, createdAt: new Date().toISOString() };
+      this.enqueue(channel, { revision: 0, kind: 'replace', message });
     }
     if (channel.childRows.size > 2_000) channel.childRows.delete(channel.childRows.values().next().value!);
   }
@@ -786,10 +792,12 @@ export class CodexAppServerService {
       const revision = (this.revisions.get(channel.processId) ?? 0) + 1;
       this.revisions.set(channel.processId, revision);
       const known = event.kind === 'replace' && event.message ? channel.state.messages.find((message) => message.id === event.message!.id) : undefined;
-      // Clients get the row's start time even on the completion replace.
+      // Clients get the row's start time even on the completion replace, and
+      // a tool's start does not wipe output that streamed in before it.
+      const keepOutput = known?.text && event.message?.kind === 'tool' && !event.message.text;
       const delivered: IntegratedConversationEvent = {
         ...event,
-        ...(event.kind === 'replace' && event.message ? { message: keepCodexTimes(known, event.message) } : {}),
+        ...(event.kind === 'replace' && event.message ? { message: keepCodexTimes(known, keepOutput ? { ...event.message, text: known.text } : event.message) } : {}),
         revision,
         processId: channel.processId
       };
@@ -1785,14 +1793,13 @@ function codexTasks(messages: IntegratedConversationMessage[], client: CodexRpcC
   });
 }
 
-function isSubagentStart(message: IntegratedConversationMessage): boolean {
-  return message.tool?.name === 'subAgentActivity' && record(message.tool.input).kind === 'started';
+// A row the channel has, or will have once its queued events flush.
+function hasRow(channel: CodexChannel, id: string): boolean {
+  return Boolean(channel.state?.messages.some((message) => message.id === id) || channel.queue.some((event) => event.message?.id === id));
 }
 
-// "/root/file_summary" names the subagent "file summary".
-function subagentLabel(path: unknown): string {
-  const name = typeof path === 'string' ? path.split('/').filter(Boolean).at(-1) : '';
-  return name ? name.replace(/[_-]+/g, ' ') : 'Subagent';
+function isSubagentStart(message: IntegratedConversationMessage): boolean {
+  return message.tool?.name === 'subAgentActivity' && record(message.tool.input).kind === 'started';
 }
 
 // Codex runs commands through a login shell; show the command itself.

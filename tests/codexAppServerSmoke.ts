@@ -5,7 +5,7 @@ import path from 'node:path';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import net from 'node:net';
 import { CodexAppServerService, CodexRpcClient, effectiveStatus, snapshotStatus } from '../app/Services/CodexAppServerService';
-import { codexThreadStatus, projectCodexItem, projectCodexPlan, restoreCodexWindowGap, trimCodexWindow, CODEX_MESSAGE_WINDOW, CODEX_CHILD_WINDOW, type CodexConversationState } from '../app/Services/CodexTranscript';
+import { codexOutputPlaceholder, codexThreadStatus, mergeCodexSeedEvents, projectCodexItem, projectCodexPlan, restoreCodexWindowGap, trimCodexWindow, CODEX_MESSAGE_WINDOW, CODEX_CHILD_WINDOW, type CodexConversationState } from '../app/Services/CodexTranscript';
 import { elicitationForm } from '../app/Services/McpElicitation';
 import { TranscriptImageStore } from '../app/Services/TranscriptImageStore';
 import { TurnBusyError, UncertainDeliveryError } from '../app/Services/IntegratedDelivery';
@@ -146,6 +146,24 @@ async function main(): Promise<void> {
     const current: CodexConversationState = { revision: 0, status: 'idle', truncated: true, messages: listing.slice(0, 50) };
     restoreCodexWindowGap(current, listing);
     assert.equal(current.messages.length, 50, 'a window that already reaches the listing start gains nothing');
+  }
+  {
+    // Command output that streamed in during the seed read. A command the read
+    // missed becomes a running command row; one it has keeps its own row.
+    const seeded = projectCodexItem({ type: 'commandExecution', id: 'seeded', command: 'ls', aggregatedOutput: 'a\nb\n', status: 'inProgress' })!;
+    const state: CodexConversationState = { revision: 0, status: 'working', truncated: false, messages: [seeded] };
+    // The read already holds both chunks of the seeded command's output, and
+    // the missed command prints the same line twice.
+    mergeCodexSeedEvents(state, [
+      { revision: 0, kind: 'replace', message: codexOutputPlaceholder('missed', 'commandExecution', 'tick\n') },
+      { revision: 0, kind: 'replace', message: codexOutputPlaceholder('seeded', 'commandExecution', 'a\n') },
+      { revision: 0, kind: 'append', id: 'missed', delta: 'tick\n' },
+      { revision: 0, kind: 'append', id: 'seeded', delta: 'b\n' }
+    ]);
+    const missed = state.messages.find((message) => message.id === 'missed');
+    assert.deepEqual([missed?.kind, missed?.tool?.name, missed?.text], ['tool', 'commandExecution', 'tick\ntick\n'], 'early output during the seed read is not prose, and repeated lines are kept');
+    const kept = state.messages.find((message) => message.id === 'seeded');
+    assert.deepEqual([kept?.title, kept?.text, (kept?.tool?.input as { command?: string } | undefined)?.command], ['ls', 'a\nb\n', 'ls'], 'a seeded command keeps its own row without repeating output it already has');
   }
   const titled = elicitationForm({ id: 'e', title: 'Connect Linear?', message: 'Linear needs your workspace', source: 'the linear MCP server', schema: { type: 'object', properties: {} } });
   assert.deepEqual([titled.title, titled.detail], ['Connect Linear?', 'Linear needs your workspace\nRequested by the linear MCP server'], 'a display title heads the form and the message stays visible');
@@ -304,6 +322,10 @@ function serve(socket) {
             notify('item/completed', {threadId:'thread_test', turnId:'turn_test', item:{type:'commandExecution', id:'command_stream', command:'echo test', aggregatedOutput:'output line\\n', status:'completed', exitCode:0, durationMs:5}, completedAtMs: 5});
             items.push({turnId:'turn_test',item:{type:'reasoning',id:'reasoning_stream',summary:['Thinking'],content:[]}});
             items.push({turnId:'turn_test',item:{type:'commandExecution',id:'command_stream',command:'echo test',aggregatedOutput:'output line\\n',status:'completed',exitCode:0,durationMs:5}});
+            notify('item/commandExecution/outputDelta', {threadId:'thread_test', turnId:'turn_test', itemId:'command_early', delta:'early output\\n'});
+            notify('item/started', {threadId:'thread_test', turnId:'turn_test', item:{type:'commandExecution', id:'command_early', command:'bun test', aggregatedOutput:null, status:'inProgress'}});
+            notify('item/completed', {threadId:'thread_test', turnId:'turn_test', item:{type:'commandExecution', id:'command_early', command:'bun test', aggregatedOutput:'early output\\n', status:'completed', exitCode:0}});
+            items.push({turnId:'turn_test',item:{type:'commandExecution',id:'command_early',command:'bun test',aggregatedOutput:'early output\\n',status:'completed',exitCode:0}});
             notify('item/started', {threadId:'thread_test', turnId:'turn_test', item:{type:'fileChange', id:'patch_stream', changes:[], status:'inProgress'}, startedAtMs: 6});
             notify('item/fileChange/patchUpdated', {threadId:'thread_test', turnId:'turn_test', itemId:'patch_stream', changes:[{path:'src/app.ts', kind:'update', diff:'+added'}]});
             notify('item/completed', {threadId:'thread_test', turnId:'turn_test', item:{type:'fileChange', id:'patch_stream', changes:[{path:'src/app.ts', kind:'update', diff:'+added'}], status:'completed'}, completedAtMs: 7});
@@ -809,6 +831,14 @@ if (socketPath) {
   assert.equal(deltasFor('agent_stream'), 'Streamed reply', 'agent message deltas append in order');
   assert.equal(deltasFor('reasoning_stream'), 'Thinking');
   assert.equal(deltasFor('command_stream'), 'output line\n', 'tool output deltas append in order');
+  // Output that arrives before its command starts is a running tool row, and
+  // the command's start keeps it.
+  const early = streamed.filter((event) => event.message?.id === 'command_early').map((event) => event.message!);
+  assert.deepEqual(early.map((message) => [message.kind, message.tool?.name, message.text]), [
+    ['tool', 'commandExecution', 'early output\n'],
+    ['tool', 'commandExecution', 'early output\n'],
+    ['tool', 'commandExecution', 'early output\n']
+  ], 'early command output is never assistant prose');
   assert.ok(streamed.some((event) => event.kind === 'replace' && event.message?.id === 'agent_stream' && event.message.text === 'Streamed reply'), 'completion replaces the partial text');
   assert.ok(streamed.some((event) => event.kind === 'append' && event.id === 'reasoning_stream' && event.delta === 'Thinking'));
   // Native item times: item/started gives the start, item/completed the
