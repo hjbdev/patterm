@@ -205,10 +205,10 @@ async function main() {
   const withAssistant = {
     ...integratedApplication,
     database: { connection: { prepare: () => ({ get: () => ({ activity: assistantActivity }), all: () => [] }) } },
-    mcp: { call: async (name: string) => name === 'assistant_get' ? { process_id: 'assistant_1' } : {} }
+    mcp: { call: async (name: string) => name === 'bot_state' ? { process_id: 'assistant_1' } : {} }
   } as unknown as typeof application;
   const restartRow = () => listCommandPaletteCommands(withAssistant, integratedContext).then(result => result.commands.find(item => item.id === 'assistant:restart'));
-  assert.deepEqual(await restartRow(), { id: 'assistant:restart', label: 'Restart assistant', hint: 'Resume its conversation in a new Codex process', group: 'app', kind: 'renderer', result: { rendererAction: 'restartAssistant', processId: 'assistant_1' } });
+  assert.deepEqual(await restartRow(), { id: 'assistant:restart', label: 'Restart assistant', hint: 'Resume its conversation in a new process', group: 'app', kind: 'renderer', result: { rendererAction: 'restartAssistant', processId: 'assistant_1' } });
   assistantActivity = 'working';
   assert.match((await restartRow())?.confirmation ?? '', /restarting stops it/);
 

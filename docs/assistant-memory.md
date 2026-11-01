@@ -1,7 +1,7 @@
 # Assistant saved memory
 
-Settings › Assistant › Memory controls a SQLite store separate from the native
-conversation. Tools remain discoverable to the assistant while memory is off;
+Each bot's Memory setting in Settings › Bots, the assistant's included,
+controls a SQLite store separate from the native conversation. Tools remain discoverable to the assistant while memory is off;
 only `assistant_memory_read` works in that state, returning `enabled: false`
 without notes or the store's revision. Search and writes reject disabled access.
 Other project agents, workspace routines and paired hosts cannot access it.

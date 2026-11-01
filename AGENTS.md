@@ -135,7 +135,9 @@ MCP calls must validate inputs and route through actions/services, not mutate st
 MCP tools enforce the caller's project scope. A project agent reads and changes
 only its own project's records; only the assistant and workspace routines reach
 across projects. A bot is scoped to its own hidden project and also reaches the
-user projects its settings name, only when it names one. A caller-supplied
+user projects its settings name, only when it names one. The assistant is the
+built-in bot (`bots.v1` entry `assistant`): its sessions keep the `assistant`
+role, which grants that reach, and carry `bot_id = 'assistant'`. A caller-supplied
 `project_id` never widens that scope.
 Administrative and owner-only tools (settings, MCP servers, assistant) are
 registered `hidden: true`, so agents can neither list nor call them.

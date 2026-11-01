@@ -80,6 +80,7 @@ function main(): void {
     assertTaskIdentifierBackfill();
     assertSessionTitleOverrideUpgrade(tempDir);
     assertPartialSummaryStatusCleared();
+    assertAssistantBotMigration();
     assertBranchUpgradePaths();
     assertTaskRemovalMigration();
     assertDatabaseBackups();
@@ -340,6 +341,40 @@ function assertSessionTitleOverrideUpgrade(tempDir: string): void {
     ]);
     db.exec("insert into sessions (id) values ('new')");
     assert.equal((db.prepare("select title_set_by_user from sessions where id = 'new'").get() as { title_set_by_user: number }).title_set_by_user, 0);
+  } finally {
+    db.close();
+  }
+}
+
+// The assistant became the built-in bot: its sessions gain the bot ID, its
+// held items and Focus mode move to its own inbox, and both reverse cleanly.
+function assertAssistantBotMigration(): void {
+  const db = openSqliteConnection(':memory:');
+  try {
+    db.exec(`
+      create table settings (key text primary key, value text not null, updated_at text not null);
+      create table sessions (id text primary key, session_role text not null, bot_id text);
+      create table assistant_inbox (seq integer primary key autoincrement, id text not null unique, dedupe_key text, digest_id text, delivered_at text);
+      create unique index idx_assistant_inbox_pending_dedupe on assistant_inbox (dedupe_key) where dedupe_key is not null and digest_id is null;
+      create index idx_assistant_inbox_pending on assistant_inbox (delivered_at, seq);
+      insert into sessions values ('a', 'assistant', null), ('b', 'bot', 'fable'), ('c', 'orchestrator', null);
+      insert into assistant_inbox (id, dedupe_key) values ('held', 'k');
+      insert into settings values ('assistant.focus.v1', '{"enabled":true,"since":"2026-11-01"}', '2026-11-01');
+    `);
+    const migration = migrations.find((candidate) => candidate.name === '2026_11_01_000060_add_assistant_bot');
+    assert.ok(migration, 'the assistant bot migration is registered');
+    new Migrator(db, [migration]).migrate();
+    assert.deepEqual(db.prepare('select id, bot_id from sessions order by id').all(), [{ id: 'a', bot_id: 'assistant' }, { id: 'b', bot_id: 'fable' }, { id: 'c', bot_id: null }]);
+    assert.deepEqual(db.prepare('select id, bot_id from assistant_inbox').all(), [{ id: 'held', bot_id: 'assistant' }]);
+    // Each bot's pending items coalesce only with its own.
+    db.prepare("insert into assistant_inbox (id, dedupe_key, bot_id) values ('other', 'k', 'fable')").run();
+    assert.throws(() => db.prepare("insert into assistant_inbox (id, dedupe_key, bot_id) values ('again', 'k', 'fable')").run());
+    assert.deepEqual(db.prepare('select key, value from settings').all(), [{ key: 'bot.focus.v1:assistant', value: '{"enabled":true,"since":"2026-11-01"}' }]);
+    db.prepare("delete from assistant_inbox where bot_id = 'fable'").run();
+    new Migrator(db, [migration]).rollback();
+    assert.deepEqual(db.prepare('select id, bot_id from sessions order by id').all(), [{ id: 'a', bot_id: null }, { id: 'b', bot_id: 'fable' }, { id: 'c', bot_id: null }]);
+    assert.deepEqual(db.prepare('select key from settings').all(), [{ key: 'assistant.focus.v1' }]);
+    assert.ok(!(db.prepare('select * from assistant_inbox').get() as Record<string, unknown>).bot_id);
   } finally {
     db.close();
   }
