@@ -5,7 +5,7 @@ import path from 'node:path';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import net from 'node:net';
 import { CodexAppServerService, CodexRpcClient, effectiveStatus, snapshotStatus } from '../app/Services/CodexAppServerService';
-import { codexThreadStatus, projectCodexItem, projectCodexPlan, restoreCodexWindowGap, trimCodexWindow, CODEX_MESSAGE_WINDOW, CODEX_CHILD_WINDOW, type CodexConversationState } from '../app/Services/CodexTranscript';
+import { codexOutputPlaceholder, codexThreadStatus, mergeCodexSeedEvents, projectCodexItem, projectCodexPlan, restoreCodexWindowGap, trimCodexWindow, CODEX_MESSAGE_WINDOW, CODEX_CHILD_WINDOW, type CodexConversationState } from '../app/Services/CodexTranscript';
 import { elicitationForm } from '../app/Services/McpElicitation';
 import { TranscriptImageStore } from '../app/Services/TranscriptImageStore';
 import { TurnBusyError, UncertainDeliveryError } from '../app/Services/IntegratedDelivery';
@@ -146,6 +146,21 @@ async function main(): Promise<void> {
     const current: CodexConversationState = { revision: 0, status: 'idle', truncated: true, messages: listing.slice(0, 50) };
     restoreCodexWindowGap(current, listing);
     assert.equal(current.messages.length, 50, 'a window that already reaches the listing start gains nothing');
+  }
+  {
+    // Command output that streamed in during the seed read. A command the read
+    // missed becomes a running command row; one it has keeps its own row.
+    const seeded = projectCodexItem({ type: 'commandExecution', id: 'seeded', command: 'ls', aggregatedOutput: 'a\n', status: 'inProgress' })!;
+    const state: CodexConversationState = { revision: 0, status: 'working', truncated: false, messages: [seeded] };
+    mergeCodexSeedEvents(state, [
+      { revision: 0, kind: 'replace', message: codexOutputPlaceholder('missed', 'commandExecution', 'early\n') },
+      { revision: 0, kind: 'append', id: 'missed', delta: 'more\n' },
+      { revision: 0, kind: 'replace', message: codexOutputPlaceholder('seeded', 'commandExecution', 'a\nb\n') }
+    ]);
+    const missed = state.messages.find((message) => message.id === 'missed');
+    assert.deepEqual([missed?.kind, missed?.tool?.name, missed?.text], ['tool', 'commandExecution', 'early\nmore\n'], 'early output during the seed read is not prose');
+    const kept = state.messages.find((message) => message.id === 'seeded');
+    assert.deepEqual([kept?.title, kept?.text, (kept?.tool?.input as { command?: string } | undefined)?.command], ['ls', 'a\nb\n', 'ls'], 'a seeded command keeps its own row');
   }
   const titled = elicitationForm({ id: 'e', title: 'Connect Linear?', message: 'Linear needs your workspace', source: 'the linear MCP server', schema: { type: 'object', properties: {} } });
   assert.deepEqual([titled.title, titled.detail], ['Connect Linear?', 'Linear needs your workspace\nRequested by the linear MCP server'], 'a display title heads the form and the message stays visible');

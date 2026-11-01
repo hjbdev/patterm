@@ -142,6 +142,8 @@ export function mergeCodexSeedEvents(state: CodexConversationState, events: Code
       const message = event.message;
       const index = state.messages.findIndex((current) => current.id === message.id);
       if (index < 0) state.messages.push(message);
+      // Output that began before the read: the read's own row is the real one.
+      else if (placeholders.has(message)) state.messages[index] = { ...state.messages[index]!, text: mergeCodexText(state.messages[index]!.text, message.text) };
       else state.messages[index] = { ...keepCodexTimes(state.messages[index], message), text: mergeCodexText(state.messages[index]!.text, message.text) };
       continue;
     }
@@ -317,11 +319,15 @@ export function projectCodexDelta(method: string, value: unknown): { id: string;
 
 // Tool output that arrives before its item has started is a running tool,
 // never assistant prose. The item's own start or completion replaces it.
-export function codexOutputPlaceholder(id: string, tool: 'commandExecution' | 'fileChange', delta: string): CodexProjectedMessage {
-  return {
+const placeholders = new WeakSet<CodexProjectedMessage>();
+
+export function codexOutputPlaceholder(id: string, tool: 'commandExecution' | 'fileChange', delta: string, parentId?: string): CodexProjectedMessage {
+  const message: CodexProjectedMessage = {
     id, role: 'assistant', kind: 'tool', title: tool === 'fileChange' ? 'File changes' : 'Command', text: delta,
-    tool: { name: tool, input: {}, state: 'inProgress' }, createdAt: new Date().toISOString()
+    tool: { name: tool, input: {}, state: 'inProgress' }, ...(parentId ? { parentId } : {}), createdAt: new Date().toISOString()
   };
+  placeholders.add(message);
+  return message;
 }
 
 // `item/fileChange/patchUpdated` replaces the whole change set for one item.

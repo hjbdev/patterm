@@ -668,8 +668,7 @@ export class CodexAppServerService {
     }
     const delta = projectCodexDelta(method, params);
     if (delta) {
-      // Before the seed read lands, its merge step places the output.
-      if (delta.tool && channel.state && !hasRow(channel, delta.id)) this.enqueue(channel, { revision: 0, kind: 'replace', message: codexOutputPlaceholder(delta.id, delta.tool, delta.delta) });
+      if (delta.tool && !hasRow(channel, delta.id)) this.enqueue(channel, { revision: 0, kind: 'replace', message: codexOutputPlaceholder(delta.id, delta.tool, delta.delta) });
       else this.enqueue(channel, { revision: 0, kind: 'append', id: delta.id, delta: delta.delta });
       return;
     }
@@ -735,10 +734,10 @@ export class CodexAppServerService {
       this.enqueue(channel, { revision: 0, kind: 'append', id: delta.id, delta: delta.delta });
     } else {
       channel.childRows.add(delta.id);
-      const message: IntegratedConversationMessage = delta.tool
-        ? codexOutputPlaceholder(delta.id, delta.tool, delta.delta)
-        : { id: delta.id, role: 'assistant', kind: 'text', text: delta.delta, createdAt: new Date().toISOString() };
-      this.enqueue(channel, { revision: 0, kind: 'replace', message: { ...message, parentId } });
+      const message = delta.tool
+        ? codexOutputPlaceholder(delta.id, delta.tool, delta.delta, parentId)
+        : { id: delta.id, role: 'assistant' as const, kind: 'text' as const, text: delta.delta, parentId, createdAt: new Date().toISOString() };
+      this.enqueue(channel, { revision: 0, kind: 'replace', message });
     }
     if (channel.childRows.size > 2_000) channel.childRows.delete(channel.childRows.values().next().value!);
   }
