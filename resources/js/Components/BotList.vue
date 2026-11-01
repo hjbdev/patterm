@@ -18,9 +18,9 @@
       :class="cn(rowClass(assistantLayout.open), phone && 'min-h-14 py-2.5')"
       @click="setAssistantLayout({ open: true })"
     >
-      <AssistantAvatar :size="phone ? 28 : 22" :activity="assistantRow.activity" class="mt-0.5" />
+      <AssistantAvatar :avatar="assistantBot?.avatar ?? null" :size="phone ? 28 : 22" :activity="assistantRow.activity" class="mt-0.5" />
       <span class="min-w-0 flex-1">
-        <span class="block truncate leading-5" :class="assistantLayout.open && 'font-medium'">Assistant</span>
+        <span class="block truncate leading-5" :class="assistantLayout.open && 'font-medium'">{{ assistantBot?.name ?? 'Assistant' }}</span>
         <span class="block truncate text-xs leading-4" :class="assistantRow.session?.asking ? 'text-foreground/75' : 'text-muted-foreground'">{{ assistantLine(assistant, assistantRow) }}</span>
       </span>
     </button>
@@ -72,7 +72,7 @@ import { Button } from './ui/button';
 const props = defineProps<{ phone?: boolean; projectId?: string | null; all?: boolean }>();
 const route = useRoute();
 const router = useRouter();
-const { rows, assistantRow } = useBots();
+const { rows, assistantRow, assistantBot } = useBots();
 const { projects } = useWorkbench();
 const projectIds = computed(() => listedProjects(projects.value).map((project) => project.project.id));
 const activeBotId = computed(() => route.name === 'bot' ? String(route.params.botId) : null);

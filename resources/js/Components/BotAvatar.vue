@@ -1,14 +1,14 @@
 <template>
-  <!-- A bot's face, emoji or picture, carrying the status a row's ring shows
+  <!-- A bot's face, emoji, picture or Patterm's mark, carrying the status a row's ring shows
        for other agents: a comet circling it while the bot works (faint while
        only its hidden helpers work), the `?`, `✕` or `✓` mark when it needs
        you, has an error or asked to close, and dimmed once it has exited. -->
   <span :class="cn('bot-avatar', props.class)" :data-dead="dead ? '' : undefined" :style="{ width: `${px}px`, height: `${px}px` }" :title="description ?? undefined">
     <span v-if="moving" class="bot-avatar-ring" :data-faint="faint ? '' : undefined" :style="{ animationDelay: `${syncDelay()}ms` }" aria-hidden="true" />
     <span class="bot-avatar-body" :style="{ width: `${px}px`, height: `${px}px` }">
-      <!-- The assistant, which has no avatar of its own, passes its mark. -->
       <slot>
-        <img v-if="avatar?.kind === 'picture' && avatar.picture" :src="avatar.picture" alt="" class="size-full rounded-full object-cover" />
+        <span v-if="avatar?.kind === 'mark'" class="flex size-full items-center justify-center rounded-full bg-muted text-foreground/80"><Sparkles class="size-[55%]" aria-hidden="true" /></span>
+        <img v-else-if="avatar?.kind === 'picture' && avatar.picture" :src="avatar.picture" alt="" class="size-full rounded-full object-cover" />
         <span v-else-if="avatar?.kind === 'emoji' && avatar.emoji" class="bot-avatar-emoji" :style="{ fontSize: `${Math.round(px * 0.84)}px` }" aria-hidden="true">{{ avatar.emoji }}</span>
         <ProfileFace v-else-if="avatar" :look="avatar.look" :size="px" :motion="animate" />
       </slot>
@@ -20,6 +20,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { Sparkles } from 'lucide-vue-next';
 import { cn } from '@/lib/utils';
 import type { BotAvatar } from '../../../app/Bots/BotAvatar';
 import { describeActivity, type RowActivity } from '../lib/rowActivity';

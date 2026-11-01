@@ -275,7 +275,7 @@ async function assistantRestartCommand(application: PattermApplication): Promise
   let processId: string | null;
   let row: { activity: string | null } | undefined;
   try {
-    ({ process_id: processId } = await callTool(application, 'assistant_get', {}) as { process_id: string | null });
+    ({ process_id: processId } = await callTool(application, 'bot_state', { bot_id: 'assistant' }) as { process_id: string | null });
     if (!processId) return null;
     row = application.database.connection.prepare('select activity from processes where id = ?').get(processId) as { activity: string | null } | undefined;
   } catch {
@@ -285,7 +285,7 @@ async function assistantRestartCommand(application: PattermApplication): Promise
   return {
     id: 'assistant:restart',
     label: 'Restart assistant',
-    hint: 'Resume its conversation in a new Codex process',
+    hint: 'Resume its conversation in a new process',
     group: 'app',
     kind: 'renderer',
     result: { rendererAction: 'restartAssistant', processId },

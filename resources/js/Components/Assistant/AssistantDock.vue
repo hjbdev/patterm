@@ -22,7 +22,7 @@
       : docked
         ? 'bottom-1.5 right-1.5 top-1.5 z-40 w-[var(--assistant-dock-width)] rounded-xl border-t border-white/5'
         : 'right-2 top-12 z-50 h-[min(40rem,calc(100dvh-3.5rem))] w-[26rem] rounded-xl border border-border shadow-2xl'"
-    aria-label="Assistant"
+    :aria-label="name"
     @keydown.esc="onEscape"
   >
     <header class="flex shrink-0 items-center gap-2 border-b border-border/60" :class="page ? 'h-11 px-3' : docked ? 'h-12 pl-4 pr-2' : 'py-2 pl-4 pr-2'">
@@ -34,8 +34,8 @@
         <span class="text-muted-foreground/60" aria-hidden="true">/</span>
       </template>
       <span class="size-1.5 shrink-0 rounded-full" :class="restarting ? 'animate-pulse bg-muted-foreground' : assistant.voiceActive ? 'bg-emerald-400' : assistant.processId ? 'bg-muted-foreground' : 'bg-muted-foreground/40'" aria-hidden="true" />
-      <h2 class="min-w-0 flex-1 truncate text-sm" :class="page ? 'font-[440]' : 'font-medium'">Assistant</h2>
-      <Tooltip>
+      <h2 class="min-w-0 flex-1 truncate text-sm" :class="page ? 'font-[440]' : 'font-medium'">{{ name }}</h2>
+      <Tooltip v-if="assistant.voiceAvailable || mode === 'voice'">
         <TooltipTrigger as-child>
           <Button variant="ghost" size="icon" class="size-8" :disabled="!assistant.processId || restarting" :aria-pressed="mode === 'voice'" :aria-label="mode === 'voice' ? 'Back to chat' : 'Voice mode'" @click="toggleMode">
             <MessageSquare v-if="mode === 'voice'" class="size-4" />
@@ -51,7 +51,7 @@
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" class="w-64">
-          <DropdownMenuItem role="menuitemcheckbox" :aria-checked="assistant.focus" @select="setAssistantFocus(!assistant.focus)">
+          <DropdownMenuItem v-if="assistant.focusAllowed" role="menuitemcheckbox" :aria-checked="assistant.focus" @select="setAssistantFocus(!assistant.focus)">
             <Focus class="size-4" />
             <span class="flex-1">Focus mode</span>
             <Check v-if="assistant.focus" class="size-4 text-muted-foreground" aria-hidden="true" />
@@ -67,9 +67,14 @@
             <DropdownMenuSeparator />
             <DropdownMenuItem :disabled="restarting" @select="onRestartSelect">
               <RotateCcw class="size-4" />
-              <span>{{ restartArmed ? 'Stop the response and restart' : 'Restart assistant' }}</span>
+              <span>{{ restartArmed ? 'Stop the response and restart' : `Restart ${name === 'Assistant' ? 'assistant' : name}` }}</span>
             </DropdownMenuItem>
           </template>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem @select="openSettings">
+            <Settings class="size-4" />
+            <span>Settings</span>
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       <Tooltip v-if="!page">
@@ -101,7 +106,7 @@
     </header>
 
     <div v-if="restarting || restartError" class="flex shrink-0 items-center gap-2 border-b border-border/60 py-1.5 pl-4 pr-2 text-xs" :class="restartError ? 'text-destructive' : 'text-muted-foreground'" :role="restartError ? 'alert' : 'status'">
-      <span class="min-w-0 flex-1 truncate">{{ restartError ? `Restart failed: ${restartError}` : 'Restarting the assistant…' }}</span>
+      <span class="min-w-0 flex-1 truncate">{{ restartError ? `Restart failed: ${restartError}` : `Restarting ${name === 'Assistant' ? 'the assistant' : name}…` }}</span>
       <Button v-if="restartError" variant="ghost" size="sm" class="h-6 shrink-0 px-2 text-xs" @click="restartError = ''">Dismiss</Button>
     </div>
 
@@ -124,9 +129,9 @@
 
     <div class="relative min-h-0 flex-1">
       <div v-if="!assistant.processId" class="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-        <p class="text-sm text-muted-foreground">{{ starting ? 'Starting the assistant…' : 'The assistant oversees agents across your projects.' }}</p>
+        <p class="text-sm text-muted-foreground">{{ starting ? `Starting ${name === 'Assistant' ? 'the assistant' : name}…` : `${name} oversees agents across your projects.` }}</p>
         <p v-if="assistant.error" role="alert" class="text-xs text-destructive">{{ assistant.error }}</p>
-        <Button v-if="!starting" size="sm" @click="start">Start assistant</Button>
+        <Button v-if="!starting" size="sm" @click="start">Start {{ name === 'Assistant' ? 'assistant' : name }}</Button>
       </div>
       <template v-else>
         <!-- Chat stays mounted in voice mode so the conversation subscription
@@ -134,7 +139,7 @@
         <div v-show="mode === 'chat'" class="h-full">
           <IntegratedConversation :key="assistant.processId" :process-id="assistant.processId" :on-new-session="newAssistantSession" :on-restart-session="restartAssistant" embedded @transcript="onTranscript" />
         </div>
-        <AssistantVoice v-if="mode === 'voice'" :transcript="transcript" :stream-status="streamStatus" :wide="page" @end="mode = 'chat'" />
+        <AssistantVoice v-if="mode === 'voice'" :transcript="transcript" :stream-status="streamStatus" :wide="page" :bot-name="name" @end="mode = 'chat'" />
       </template>
     </div>
   </section>
@@ -146,7 +151,8 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onMounted, ref, shallowRef, watch } from 'vue';
 import { useMediaQuery } from '@vueuse/core';
-import { ArrowLeft, AudioLines, Check, Ellipsis, Focus, Locate, LocateFixed, Maximize2, MessageSquare, Minimize2, Minus, PanelRight, PanelRightClose, RotateCcw } from 'lucide-vue-next';
+import { useRouter } from 'vue-router';
+import { ArrowLeft, AudioLines, Check, Ellipsis, Focus, Locate, LocateFixed, Maximize2, MessageSquare, Minimize2, Minus, PanelRight, PanelRightClose, RotateCcw, Settings } from 'lucide-vue-next';
 import { Button } from '../ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
@@ -155,9 +161,20 @@ import type { TranscriptMessage } from '../../lib/integratedConversation';
 import { assistant, ensureAssistant, message, newAssistantSession, restartAssistant, setAssistantFocus, startAssistantEvents } from '../../lib/assistant';
 import { assistantLayout, setAssistantLayout } from '../../lib/assistantLayout';
 import { useAssistantFollow } from '../../Composables/useAssistantFollow';
+import { useBots } from '../../Composables/useBots';
+import { ASSISTANT_BOT_ID } from '../../lib/bots';
 
 // The conversation and its editor load when the assistant first opens, not with the app.
 const IntegratedConversation = defineAsyncComponent(() => import('../IntegratedConversation.vue'));
+
+const router = useRouter();
+const { settings: botSettings } = useBots();
+// The assistant's name, as set in Settings › Bots.
+const name = computed(() => botSettings.value.bots.find((bot) => bot.id === ASSISTANT_BOT_ID)?.name ?? 'Assistant');
+
+function openSettings(): void {
+  void router.push({ name: 'settings', query: { tab: 'bots', bot: ASSISTANT_BOT_ID } });
+}
 
 const open = computed(() => assistantLayout.open);
 const expanded = computed(() => assistantLayout.expanded);
@@ -274,10 +291,14 @@ onMounted(() => {
 });
 
 // Turning the assistant off closes it, so turning it back on shows only the
-// button. A voice call ends with it, so it comes back in chat.
+// button. A voice call ends with it, so it comes back in chat, as it does
+// when voice is turned off or the profile changes from Codex.
 watch(() => assistant.loaded && !assistant.enabled, (off) => {
   if (!off) return;
   mode.value = 'chat';
   if (assistantLayout.open) setAssistantLayout({ open: false });
+});
+watch(() => assistant.loaded && !assistant.voiceAvailable, (unavailable) => {
+  if (unavailable) mode.value = 'chat';
 });
 </script>

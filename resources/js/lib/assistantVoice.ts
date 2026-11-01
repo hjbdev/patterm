@@ -1,5 +1,5 @@
 // One GPT-Live voice call. The browser owns the microphone and the WebRTC peer;
-// Patterm relays only the offer and answer to the assistant's Codex thread, so
+// Patterm relays only the offer and answer to the bot's Codex thread, so
 // audio flows directly between this client and OpenAI.
 export type VoiceStatus = 'connecting' | 'connected' | 'ended' | 'failed';
 
@@ -14,6 +14,8 @@ export class AssistantVoiceSession {
   private stopped = false;
 
   constructor(
+    // The bot the call is with, and its name for the call controls.
+    private readonly bot: { id: string; name: string },
     private readonly onStatus: (status: VoiceStatus, detail?: string) => void,
     private readonly controls: { hangUp(): void; toggleMute(): void } = { hangUp() {}, toggleMute() {} }
   ) {}
@@ -52,9 +54,9 @@ export class AssistantVoiceSession {
     // OpenAI's WebRTC endpoint expects the client to open its events channel.
     peer.createDataChannel('oai-events');
     await peer.setLocalDescription(await peer.createOffer());
-    const answer = await window.patterm.call('assistant_voice_start', { sdp: peer.localDescription?.sdp ?? '' }) as { sdp?: unknown };
+    const answer = await window.patterm.call('bot_voice_start', { bot_id: this.bot.id, sdp: peer.localDescription?.sdp ?? '' }) as { sdp?: unknown };
     if (this.stopped) return;
-    if (typeof answer?.sdp !== 'string') throw new Error('The assistant did not answer the voice call');
+    if (typeof answer?.sdp !== 'string') throw new Error(`${this.bot.name} did not answer the voice call`);
     await peer.setRemoteDescription({ type: 'answer', sdp: answer.sdp });
   }
 
@@ -73,7 +75,7 @@ export class AssistantVoiceSession {
     this.stopped = true;
     this.release();
     this.onStatus('ended');
-    await window.patterm.call('assistant_voice_stop', {}).catch(() => undefined);
+    await window.patterm.call('bot_voice_stop', {}).catch(() => undefined);
   }
 
   private fail(detail: string): void {
@@ -81,7 +83,7 @@ export class AssistantVoiceSession {
     this.stopped = true;
     this.release();
     this.onStatus('failed', detail);
-    void window.patterm.call('assistant_voice_stop', {}).catch(() => undefined);
+    void window.patterm.call('bot_voice_stop', {}).catch(() => undefined);
   }
 
   private analyser(source: MediaStreamAudioSourceNode): AnalyserNode {
@@ -109,7 +111,7 @@ export class AssistantVoiceSession {
   private claimMediaSession(): void {
     const media = navigator.mediaSession as CallMediaSession | undefined;
     if (!media || typeof MediaMetadata === 'undefined') return;
-    media.metadata = new MediaMetadata({ title: 'Patterm assistant', artist: 'Voice session' });
+    media.metadata = new MediaMetadata({ title: this.bot.name, artist: 'Patterm voice call' });
     media.playbackState = 'playing';
     const handle = (action: string, handler: (() => void) | null) => {
       try { media.setActionHandler(action as MediaSessionAction, handler); } catch { /* unsupported action */ }

@@ -158,10 +158,6 @@
                 <NotificationSettings />
               </TabsContent>
 
-              <TabsContent value="assistant" class="m-0">
-                <AssistantSettings />
-              </TabsContent>
-
               <TabsContent value="compaction" class="m-0">
                 <IdleCompactionSettings />
               </TabsContent>
@@ -203,7 +199,7 @@
 <script setup lang="ts">
 import AssistantButton from '../Components/Assistant/AssistantButton.vue';
 import { computed, onBeforeUnmount, reactive, ref } from 'vue';
-import { ArrowLeft, AudioLines, Bell, Bot, ChartColumn, ChevronDown, Cpu, History, Info, KeyRound, Palette, Plug, Server, Shrink, Sparkles } from 'lucide-vue-next';
+import { ArrowLeft, Bell, Bot, ChartColumn, ChevronDown, Cpu, History, Info, KeyRound, Palette, Plug, Server, Shrink, Sparkles } from 'lucide-vue-next';
 import {
   DIFF_VIEWER_OPTIONS,
   NAVIGATION_OPTIONS,
@@ -229,7 +225,6 @@ import FigureSettings from '../Components/FigureSettings.vue';
 import HarnessPresetSettings from '../Components/HarnessPresetSettings.vue';
 import BotSettings from '../Components/BotSettings.vue';
 import IdleCompactionSettings from '../Components/IdleCompactionSettings.vue';
-import AssistantSettings from '../Components/AssistantSettings.vue';
 import McpServerSettings from '../Components/McpServerSettings.vue';
 import NavigationPreview from '../Components/settings/NavigationPreview.vue';
 import HostSettings from '../Components/HostSettings.vue';
@@ -260,7 +255,6 @@ const NAV = [
   { value: 'history', label: 'Conversation history', icon: History },
   { value: 'summaries', label: 'Auto-summaries', icon: Sparkles },
   { value: 'notifications', label: 'Notifications', icon: Bell },
-  { value: 'assistant', label: 'Assistant', icon: AudioLines },
   { value: 'compaction', label: 'Idle compaction', icon: Shrink },
   { value: 'figures', label: 'Figures', icon: ChartColumn },
   { value: 'harnesses', label: 'Harnesses', icon: Cpu },
@@ -275,7 +269,9 @@ type SettingsTab = typeof NAV[number]['value'];
 const serverAccess = Boolean(window.patterm.serverAccess);
 const navItems = NAV.filter((item) => item.value !== 'access' || serverAccess);
 // Links can open a tab directly, such as /settings?tab=notifications.
-const requestedTab = router.currentRoute.value.query.tab;
+// The assistant's settings moved to Bots, where its editor opens.
+const requestedTab = router.currentRoute.value.query.tab === 'assistant' ? 'bots' : router.currentRoute.value.query.tab;
+if (router.currentRoute.value.query.tab === 'assistant') void router.replace({ query: { ...router.currentRoute.value.query, tab: 'bots', bot: 'assistant' } });
 const tab = ref<SettingsTab>(navItems.find((item) => item.value === requestedTab)?.value ?? 'appearance');
 const navItemClass = 'settings-nav-item group relative flex h-9 w-auto shrink-0 items-center rounded-md px-3 text-[13px] font-normal text-muted-foreground transition-colors hover:bg-white/[0.04] hover:text-foreground data-[state=active]:bg-white/[0.07] data-[state=active]:font-medium data-[state=active]:text-foreground data-[state=active]:shadow-none sm:w-full';
 
