@@ -150,7 +150,7 @@ async function main(): Promise<void> {
   {
     // Command output that streamed in during the seed read. A command the read
     // missed becomes a running command row; one it has keeps its own row.
-    const seeded = projectCodexItem({ type: 'commandExecution', id: 'seeded', command: 'ls', aggregatedOutput: 'a\n', status: 'inProgress' })!;
+    const seeded = projectCodexItem({ type: 'commandExecution', id: 'seeded', command: 'ls', aggregatedOutput: 'a\nb\n', status: 'inProgress' })!;
     const state: CodexConversationState = { revision: 0, status: 'working', truncated: false, messages: [seeded] };
     // The read already holds both chunks of the seeded command's output, and
     // the missed command prints the same line twice.
