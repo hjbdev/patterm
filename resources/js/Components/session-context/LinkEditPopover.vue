@@ -16,13 +16,16 @@
         <Input ref="urlInput" v-model="url" type="url" required aria-label="Link URL" placeholder="https://…" class="h-8 text-[13px]" />
         <Input v-model="identifier" aria-label="Link identifier" placeholder="Identifier, such as PAT-1" class="h-8 text-[13px]" />
         <Input v-model="title" aria-label="Link title" placeholder="Title" class="h-8 text-[13px]" />
-        <Select v-model="status">
-          <SelectTrigger aria-label="Link status" class="h-8 w-full text-[13px]"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="none">No status</SelectItem>
-            <SelectItem v-for="(label, value) in LINK_STATUSES" :key="value" :value="value">{{ label }}</SelectItem>
-          </SelectContent>
-        </Select>
+        <!-- Chips rather than a dropdown: a list hanging past the popover
+             closes over the terminal, which takes focus and dismisses it. -->
+        <div class="flex flex-wrap gap-1" role="radiogroup" aria-label="Link status">
+          <button v-for="option in STATUS_OPTIONS" :key="option.value" type="button" role="radio" :aria-checked="status === option.value"
+            class="h-6 rounded-full border px-2 text-xs outline-none transition-colors focus-visible:ring-1 focus-visible:ring-ring"
+            :class="status === option.value ? 'border-foreground/30 bg-muted text-foreground' : 'border-border text-muted-foreground hover:text-foreground'"
+            @click="status = option.value">
+            {{ option.label }}
+          </button>
+        </div>
         <div class="flex items-center justify-end gap-1 pt-1">
           <Button type="button" variant="ghost" size="sm" class="h-7 px-2.5 text-xs" @click="open = false">Cancel</Button>
           <Button type="submit" size="sm" class="h-7 px-2.5 text-xs" :disabled="busy || !url.trim()">Save</Button>
@@ -41,7 +44,6 @@ import type { Reference } from '../../lib/projectContext';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 
 const KINDS = [
   { value: 'generic', label: 'Link', icon: Link2 },
@@ -49,6 +51,8 @@ const KINDS = [
   { value: 'pull_request', label: 'PR', icon: GitPullRequest },
   { value: 'preview', label: 'Preview', icon: AppWindow }
 ] as const;
+
+const STATUS_OPTIONS = [{ value: 'none', label: 'None' }, ...Object.entries(LINK_STATUSES).map(([value, label]) => ({ value, label }))] as { value: NonNullable<LinkChanges['status']>; label: string }[];
 
 const props = withDefaults(defineProps<{ link: Reference; busy?: boolean | undefined }>(), { busy: false });
 const emit = defineEmits<{ save: [changes: LinkChanges, done: (saved: boolean) => void] }>();

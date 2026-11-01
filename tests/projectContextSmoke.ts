@@ -170,6 +170,8 @@ async function main(): Promise<void> {
     assert.equal(preview.status, null, 'Links start without a status');
     const running = call<ReferenceRow>('reference_attach', { target_type: 'session', url: preview.url, status: 'running', title: 'Ignored' }, 'bob');
     assert.deepEqual([running.id, running.status, running.title, running.revision], [preview.id, 'running', 'Vite dev server', preview.revision + 1], 'Attaching again reports a new status and leaves other fields alone');
+    const listed = call<Page<ReferenceRow & { updated_at: string }>>('reference_list', { target_type: 'session' }, 'bob').items.find((item) => item.id === preview.id)!;
+    assert.deepEqual(running, listed, 'The re-attach reply matches the stored row, updated_at included');
     assert.equal(call<ReferenceRow>('reference_attach', { target_type: 'session', url: preview.url, status: 'running' }, 'bob').revision, running.revision, 'An unchanged status is not an edit');
     assert.equal(call<ReferenceRow>('reference_attach', { target_type: 'session', url: preview.url }, 'bob').status, 'running', 'Attaching without a status keeps it');
     assert.throws(() => call('reference_attach', { target_type: 'session', url: preview.url, status: 'shipped' }, 'bob'));

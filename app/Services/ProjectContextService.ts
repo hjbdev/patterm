@@ -264,13 +264,14 @@ export class ProjectContextService {
     const status = input.status === undefined ? undefined : referenceStatus(input.status);
     const inserted = this.db.prepare(`insert or ignore into external_references(id,project_id,url,provider,resource_type,external_id,identifier,title,status,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?)`)
       .run(`reference_${randomUUID()}`, actor.projectId, canonical, input.provider, input.resource_type, input.external_id ?? null, input.identifier ?? null, input.title ?? null, status ?? null, now, now);
-    let reference = this.db.prepare('select * from external_references where project_id=? and url=?').get(actor.projectId, canonical) as ReferenceRow;
+    const select = this.db.prepare('select * from external_references where project_id=? and url=?');
+    let reference = select.get(actor.projectId, canonical) as ReferenceRow;
     // Attaching a link again is how an agent reports a new state for it,
     // without a revision round trip; its other fields stay as they were.
     if (!inserted.changes && status !== undefined && status !== reference.status) {
       this.db.prepare('update external_references set status=?,revision=revision+1,updated_at=? where id=?').run(status, now, reference.id);
       this.event(actor, 'reference.updated', { reference_id: reference.id });
-      reference = { ...reference, status, revision: reference.revision + 1 };
+      reference = select.get(actor.projectId, canonical) as ReferenceRow;
     }
     const changed = this.db.prepare(`insert or ignore into ${config.attachments}(${config.column},reference_id) values(?,?)`).run(input.target_id, reference.id);
     if (changed.changes) this.event(actor, 'reference.attached', { target_type: input.target_type, target_id: input.target_id, reference_id: reference.id });
