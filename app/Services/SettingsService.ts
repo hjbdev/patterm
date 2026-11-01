@@ -293,7 +293,10 @@ export class SettingsService {
     const row = this.database.connection.prepare('select value from settings where key = ?').get(BOT_SETTINGS_KEY) as { value: string } | undefined;
     let saved: unknown = {};
     try { saved = row ? JSON.parse(row.value) : {}; } catch { /* unreadable settings read as none */ }
-    return readBotSettings(saved, this.legacyAssistantSettings());
+    // The legacy settings matter only until the assistant's entry is saved.
+    const record = typeof saved === 'object' && saved !== null ? saved as { bots?: unknown; userName?: unknown } : {};
+    const migrated = 'userName' in record && Array.isArray(record.bots) && record.bots.some((bot) => (bot as { id?: unknown } | null)?.id === ASSISTANT_BOT_ID);
+    return readBotSettings(saved, migrated ? null : this.legacyAssistantSettings());
   }
 
   updateBots(input: unknown): BotSettings {

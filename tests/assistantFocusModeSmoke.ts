@@ -282,6 +282,35 @@ async function main(): Promise<void> {
     assert.ok(prompts.some((prompt) => prompt.processId === resumed && /While you were away/.test(prompt.text)));
     assert.equal(assistant.state().focus.pending, 0);
 
+    // Any bot with Focus mode turned on gets the same: its helpers' messages
+    // and reports wait, and arrive as one digest. A bot without it can't focus.
+    const look = { color: 'graphite', shape: 'circle', finish: 'soft', marking: 'none', eyes: 'dots', mouth: 'smile', cheeks: false, hat: 'none', accent: 'violet', idle: 'still' };
+    const bot = (id: string, focus: boolean) => ({ id, name: id, presetId: 'preset_default_claude', avatar: { kind: 'face', look }, purview: { kind: 'projects', projectIds: ['p'] }, focus });
+    settings.updateBots({ ...settings.bots(), bots: [...settings.bots().bots, bot('fable', true), bot('pal', false)] });
+    for (const id of ['fable', 'pal']) {
+      db.prepare(`insert into projects(id,name,path,kind,created_at,updated_at) values(?,?,?,'bots',?,?)`).run(`project_bot_${id}`, id, dir, now, now);
+      db.prepare(`insert into processes(id,project_id,kind,name,status,created_at,updated_at) values(?,?,'agent',?,'running',?,?)`).run(`proc-${id}`, `project_bot_${id}`, id, now, now);
+      db.prepare(`insert into sessions(id,project_id,process_id,harness,interface_mode,session_role,bot_id,started_at,cwd,mcp_identity) values(?,?,?,?,?,?,?,?,?,?)`)
+        .run(id, `project_bot_${id}`, `proc-${id}`, 'claude', 'integrated', 'bot', id, now, dir, `mcp-${id}`);
+    }
+    agent('fable-helper', 'proc-fable');
+    await assert.rejects(registry.callPublic('assistant_focus_set', { enabled: true }, { identity: 'mcp-pal' }), /doesn't use Focus mode/);
+    assert.equal((await registry.callPublic('assistant_focus_set', { enabled: true }, { identity: 'mcp-fable' }) as { enabled: boolean }).enabled, true);
+    assert.equal(inbox.focus(ASSISTANT_BOT_ID).enabled, false, 'each bot has its own focus');
+    prompts.length = 0;
+    const toFable = () => prompts.filter((prompt) => prompt.processId === 'proc-fable');
+    assert.equal((await registry.callPublic('send_message', { target_process_id: 'parent', message: 'Halfway there.' }, { identity: 'mcp-fable-helper' }) as { delivery?: string }).delivery, 'queued');
+    assert.equal((await registry.callPublic('report_to_parent', { status: 'completed', body: 'All done.' }, { identity: 'mcp-fable-helper' }) as { delivery?: string }).delivery, 'queued');
+    assert.deepEqual(toFable(), []);
+    const fableHeld = await registry.callPublic('assistant_focus', {}, { identity: 'mcp-fable' }) as { items: Array<{ kind: string }> };
+    assert.deepEqual(fableHeld.items.map((item) => item.kind), ['agent_message', 'report']);
+    assert.equal(relay.focusItems(ASSISTANT_BOT_ID, { limit: 20, offset: 0 }).total, 0, 'the assistant holds only its own items');
+    // The registry was built with the first relay; the live one delivers.
+    relay.setFocus('fable', false);
+    await wait(20);
+    assert.equal(toFable().length, 1);
+    assert.match(toFable()[0]!.text, /Halfway there[\s\S]*All done/);
+
     // The assistant is told how to use focus.
     assert.match(new AgentContextService().buildAssistant(), /let's go focus mode on this/);
     assistant.dispose();

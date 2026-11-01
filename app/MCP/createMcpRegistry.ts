@@ -392,7 +392,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     ...(services.integrated ? { liveSettings: (processId: string) => services.integrated!.liveSettings(processId) } : {})
   });
   const sendMessage = new SendMessageAction(services.database, services.terminal, services.timeline,
-    { integrated: services.integrated, assistant: services.assistant, notifications: services.notifications });
+    { integrated: services.integrated, assistant: services.assistant, inbox: services.assistantInbox, notifications: services.notifications });
   const conversationOutput = new ConversationOutputService(services.database, services.integrated ?? null, services.historyReadService ?? null);
 
   // A host:process address, for callers that may reach other hosts.
