@@ -64,6 +64,10 @@ export class SendMessageAction {
     }
 
     const hint = senderIsAssistant ? REPLY_HINT : '';
+    // Reports the target makes from now on answer the sender's report timers.
+    // Noted before dispatch: a fast reply may land before the acknowledgement,
+    // and an uncertain delivery may still have started new work.
+    if (sender?.process_id) this.options.timers?.noteInstruction(sender.process_id, targetId);
     const result = await sendAgentInput(this.database, this.terminal, { process_id: targetId, kind: 'text', text: `[message from ${sender?.process_id ?? 'unknown'}]\n${message}${hint}`, submit: true }, this.options.integrated);
     // An Integrated agent may or may not have received an ambiguous
     // submission. It is reported as uncertain, never resent, and does not
@@ -75,8 +79,6 @@ export class SendMessageAction {
     // A held message is stored durably and counts as sent; the agent reads it
     // when its current turn, such as a compaction, ends.
     const queued = queuedDetail(result);
-    // Reports the target makes from now on answer the sender's report timers.
-    if (sender?.process_id) this.options.timers?.noteInstruction(sender.process_id, targetId);
     // A parent's reply ends its child's blocked episode, so the next request
     // reaches the parent again. Other senders leave the target's requests open.
     if (!sender || this.parentOf(targetId) === sender.process_id) this.options.notifications?.userInput(targetId);

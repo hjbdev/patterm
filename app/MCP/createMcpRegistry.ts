@@ -965,9 +965,10 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       const ptyId = ptyFor(processId);
       await services.terminal.request('terminal.process.input', { process_id: ptyId, kind, text, submit: input.submit });
     } else {
-      await sendAgentInput(services.database, services.terminal, { process_id: processId, kind, text, submit: input.submit }, services.integrated);
+      // Noted before dispatch, as send_message does.
       const sender = caller(context)?.process_id;
       if (sender) timerService.noteInstruction(sender, processId);
+      await sendAgentInput(services.database, services.terminal, { process_id: processId, kind, text, submit: input.submit }, services.integrated);
     }
     // Input answers whatever the process was waiting on, as typing does.
     services.notifications?.userInput(processId);
