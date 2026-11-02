@@ -110,7 +110,8 @@ export class AgentHistoryImportService {
               continue;
             }
             const recovering = previousFile ? !completedImportFileStatus(previousFile.status) : false;
-            const parsed = adapter.parseFile(filePath);
+            const upgrade = this.parserUpgradeOptions(adapter, previousFile);
+            const parsed = upgrade ? adapter.parseFile(filePath, upgrade) : adapter.parseFile(filePath);
             const afterFingerprint = this.fingerprintFile(adapter, filePath);
             const changedDuringImport = beforeFingerprint.digest !== afterFingerprint.digest;
             const parserChanged = previousFile?.parser_version !== parsed.parserVersion;
@@ -231,6 +232,7 @@ export class AgentHistoryImportService {
               const providerConversationIds = adapter.changedProviderConversationIds(storedFingerprintMetadata(previousFile), beforeFingerprint.metadata);
               if (providerConversationIds !== null && providerConversationIds !== undefined) parseOptions = { providerConversationIds };
             }
+            if (!parseOptions) parseOptions = this.parserUpgradeOptions(adapter, previousFile);
             const parsed = await parseFile(parseOptions ? { candidate, filePath, parserVersion: adapter.parserVersion, options: parseOptions } : { candidate, filePath, parserVersion: adapter.parserVersion });
             const parserChanged = previousFile?.parser_version !== parsed.parserVersion;
             const importFileId = this.upsertImportFile(candidate, batchId, filePath, parsed.parserVersion, beforeFingerprint, parsed.warnings, null, false, 'importing');
@@ -398,6 +400,16 @@ export class AgentHistoryImportService {
 
   private importFileState(provider: AgentHistoryProvider, filePath: string): ImportFileState | undefined {
     return this.database.connection.prepare(`select id, source_id, size_bytes, mtime_ms, content_hash, parser_version, status, metadata from conversation_import_files where provider = ? and path = ?`).get(provider, filePath) as ImportFileState | undefined;
+  }
+
+  // A new parser re-reads everything already imported from the file, including
+  // conversations the adapter would now skip, so none keeps the old parse. A
+  // failed or interrupted import has already recorded the new version, so it
+  // re-reads them too.
+  private parserUpgradeOptions(adapter: ProviderHistoryAdapter, row: ImportFileState | undefined): ParseHistoryFileOptions | undefined {
+    if (!row || (row.parser_version === adapter.parserVersion && completedImportFileStatus(row.status))) return undefined;
+    const ids = (this.database.connection.prepare(`select provider_conversation_id as id from conversations where source_file_id = ? and provider_conversation_id is not null`).all(row.id) as Array<{ id: string }>).map((entry) => entry.id);
+    return ids.length ? { importedProviderConversationIds: ids } : undefined;
   }
 
   private isUnchanged(row: ImportFileState | undefined, parserVersion: string, fingerprint: HistoryFileFingerprint): boolean {
@@ -675,10 +687,10 @@ export class AgentHistoryImportService {
     // Compare every stored field: a reclassified cache write or a corrected
     // model changes cost without changing counts or totals.
     const stored = db.prepare(`
-      select model, occurred_at, input_tokens, cache_read_tokens, cache_write_tokens, cache_write_1h_tokens, output_tokens, reasoning_tokens, cost_usd, subagent
+      select model, occurred_at, input_tokens, cache_read_tokens, cache_write_tokens, cache_write_1h_tokens, output_tokens, reasoning_tokens, cost_usd, subagent, claude_session_id
       from conversation_usage where conversation_id = ? order by id
     `).all(row.id) as Array<Record<string, unknown>>;
-    const parsed = usage.map((entry) => [entry.model, entry.occurredAt, entry.inputTokens, entry.cacheReadTokens, entry.cacheWriteTokens, entry.cacheWrite1hTokens, entry.outputTokens, entry.reasoningTokens, entry.costUsd, entry.subagent ? 1 : 0]);
+    const parsed = usage.map((entry) => [entry.model, entry.occurredAt, entry.inputTokens, entry.cacheReadTokens, entry.cacheWriteTokens, entry.cacheWrite1hTokens, entry.outputTokens, entry.reasoningTokens, entry.costUsd, entry.subagent ? 1 : 0, entry.claudeSessionId ?? null]);
     const unchanged = stableJson(stored.map((item) => Object.values(item))) === stableJson(parsed);
     const skills = conversation.skills ?? [];
     const storedSkills = db.prepare(`select skill, invoked_by, occurred_at, subagent from conversation_skill_uses where conversation_id = ? order by id`).all(row.id) as Array<Record<string, unknown>>;
@@ -688,11 +700,11 @@ export class AgentHistoryImportService {
       if (!unchanged) {
         db.prepare(`delete from conversation_usage where conversation_id = ?`).run(row.id);
         const insert = db.prepare(`
-          insert into conversation_usage (conversation_id, provider, model, occurred_at, input_tokens, cache_read_tokens, cache_write_tokens, cache_write_1h_tokens, output_tokens, reasoning_tokens, cost_usd, subagent)
-          values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          insert into conversation_usage (conversation_id, provider, model, occurred_at, input_tokens, cache_read_tokens, cache_write_tokens, cache_write_1h_tokens, output_tokens, reasoning_tokens, cost_usd, subagent, claude_session_id)
+          values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
         for (const entry of usage) {
-          insert.run(row.id, conversation.provider, entry.model, entry.occurredAt, entry.inputTokens, entry.cacheReadTokens, entry.cacheWriteTokens, entry.cacheWrite1hTokens, entry.outputTokens, entry.reasoningTokens, entry.costUsd, entry.subagent ? 1 : 0);
+          insert.run(row.id, conversation.provider, entry.model, entry.occurredAt, entry.inputTokens, entry.cacheReadTokens, entry.cacheWriteTokens, entry.cacheWrite1hTokens, entry.outputTokens, entry.reasoningTokens, entry.costUsd, entry.subagent ? 1 : 0, entry.claudeSessionId ?? null);
         }
       }
       if (!skillsUnchanged) {

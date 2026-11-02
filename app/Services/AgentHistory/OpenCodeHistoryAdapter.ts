@@ -37,7 +37,7 @@ interface OpenCodePartRow {
 
 export class OpenCodeHistoryAdapter implements ProviderHistoryAdapter {
   readonly provider = 'opencode' as const;
-  readonly parserVersion = 'opencode-sqlite-v9';
+  readonly parserVersion = 'opencode-sqlite-v10';
 
   defaultSources(homeDir: string): HistorySourceCandidate[] {
     const db = path.join(homeDir, '.local', 'share', 'opencode', 'opencode.db');
@@ -102,7 +102,9 @@ export class OpenCodeHistoryAdapter implements ProviderHistoryAdapter {
         ? selectedIds.length
           ? db.prepare(`select id, directory, title, version, time_created, time_updated, parent_id, agent, model, metadata from ${table} where time_archived is null and id in (${selectedIds.map((_, index) => `?${index + 1}`).join(', ')}) order by time_updated desc`).all(...selectedIds) as unknown as OpenCodeSessionRow[]
           : []
-        : db.prepare(`select id, directory, title, version, time_created, time_updated, parent_id, agent, model, metadata from ${table} where time_archived is null order by time_updated desc`).all() as unknown as OpenCodeSessionRow[];
+        // Archived sessions are not imported, but ones already imported are
+        // re-read when the parser changes so their stored rows follow it.
+        : db.prepare(`select id, directory, title, version, time_created, time_updated, parent_id, agent, model, metadata from ${table} where time_archived is null or id in (select value from json_each(?)) order by time_updated desc`).all(JSON.stringify(options.importedProviderConversationIds ?? [])) as unknown as OpenCodeSessionRow[];
       const seen = new Set<string>();
       let count = 0;
       for (const table of [...(v2 ? ['session_v2' as const] : []), ...(legacy ? ['session' as const] : [])]) {
@@ -211,6 +213,19 @@ function completedProse(part: Record<string, unknown>, parent: Record<string, un
     typeof value === 'number' && Number.isFinite(value) && value > 0);
 }
 
+// The Claude Code session behind a claude-agent reply, which its content
+// parts name as native.sessionID.
+function claudeAgentSessionId(data: Record<string, unknown> | undefined): string | null {
+  if (data?.role !== 'assistant' || !data.model || typeof data.model !== 'object') return null;
+  if ((data.model as Record<string, unknown>).providerID !== 'claude-agent' || !Array.isArray(data.content)) return null;
+  for (const part of data.content) {
+    const native = part && typeof part === 'object' ? (part as Record<string, unknown>).native : null;
+    const id = native && typeof native === 'object' ? stringValue((native as Record<string, unknown>).sessionID) : null;
+    if (id) return id;
+  }
+  return null;
+}
+
 // Assistant messages carry their own tokens and cost. OpenCode reports
 // reasoning apart from output.
 function openCodeUsage(row: OpenCodeMessageRow, data: Record<string, unknown> | undefined, subagent: boolean): ParsedUsage[] {
@@ -229,7 +244,8 @@ function openCodeUsage(row: OpenCodeMessageRow, data: Record<string, unknown> | 
     outputTokens: nonNegative(tokens.output) + nonNegative(tokens.reasoning),
     reasoningTokens: nonNegative(tokens.reasoning),
     costUsd: typeof data.cost === 'number' && Number.isFinite(data.cost) ? data.cost : null,
-    subagent
+    subagent,
+    claudeSessionId: claudeAgentSessionId(data)
   };
   return usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens + usage.outputTokens > 0 ? [usage] : [];
 }

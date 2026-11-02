@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
 import { AgentHistoryImportService } from '../app/Services/AgentHistory/AgentHistoryImportService';
 import { ClaudeHistoryAdapter } from '../app/Services/AgentHistory/ClaudeHistoryAdapter';
@@ -266,6 +267,64 @@ function main(): void {
     }
     const plateau = usage.summary(1, now).limits.find((limit) => limit.label === 'Weekly Opus');
     assert.equal(plateau?.projectedPercent, 40, 'a late observation sets the start of a plateau');
+
+    // OpenCode's claude-agent runs the Claude session imported above: its turns
+    // count once, from Claude's transcript, as OpenCode usage in its project.
+    appDatabase.connection.prepare('insert into projects (id, name, path, created_at, updated_at) values (?, ?, ?, ?, ?)').run('opencode_project', 'OpenCode project', path.join(directory, 'other'), stamp, stamp);
+    const openCodePath = path.join(directory, 'opencode.db');
+    const openCode = new DatabaseSync(openCodePath);
+    openCode.exec(`
+      create table session_v2 (id text primary key, directory text, title text, version text, time_created integer, time_updated integer, time_archived integer, parent_id text, agent text, model text, metadata text);
+      create table session_message (id text primary key, session_id text, type text, seq integer, time_created integer, time_updated integer, data text);
+    `);
+    const created = Date.parse(at(30));
+    openCode.prepare('insert into session_v2 values (?, ?, ?, ?, ?, ?, null, null, null, null, null)').run('ses_claude_agent', projectPath, 'Claude through OpenCode', '2', created, created);
+    const reply = (model: Record<string, unknown>, content: unknown[], tokens: Record<string, unknown>) => JSON.stringify({ time: { created, completed: created }, model, content, tokens, cost: 0 });
+    const insertMessage = openCode.prepare('insert into session_message values (?, ?, ?, ?, ?, ?, ?)');
+    insertMessage.run('msg_claude', 'ses_claude_agent', 'assistant', 1, created, created, reply({ id: 'opus', providerID: 'claude-agent' },
+      [{ type: 'text', text: 'reply a2', native: { sessionID: 'claude_usage', messageID: 'a2' }, time: { created, completed: created } }], { input: 10, output: 50, reasoning: 0, cache: { read: 1000, write: 100 } }));
+    insertMessage.run('msg_openai', 'ses_claude_agent', 'assistant', 2, created, created, reply({ id: 'gpt-6-sol', providerID: 'openai' },
+      [{ type: 'text', text: 'other reply', time: { created, completed: created } }], { input: 3, output: 2, reasoning: 0, cache: { read: 0, write: 0 } }));
+    // A Claude session whose transcript was never imported keeps OpenCode's usage.
+    insertMessage.run('msg_unmatched', 'ses_claude_agent', 'assistant', 3, created, created, reply({ id: 'opus', providerID: 'claude-agent' },
+      [{ type: 'text', text: 'unmatched', native: { sessionID: 'claude_missing', messageID: 'm1' }, time: { created, completed: created } }], { input: 4, output: 6, reasoning: 0, cache: { read: 0, write: 0 } }));
+    // So does a newer reply in the imported session that Claude has not written yet.
+    const later = Date.parse(at(5));
+    insertMessage.run('msg_newer', 'ses_claude_agent', 'assistant', 4, later, later, JSON.stringify({ time: { created: later, completed: later }, model: { id: 'opus', providerID: 'claude-agent' },
+      content: [{ type: 'text', text: 'newer', native: { sessionID: 'claude_usage', messageID: 'a9' }, time: { created: later, completed: later } }], tokens: { input: 2, output: 1, reasoning: 0, cache: { read: 0, write: 0 } }, cost: 0 }));
+    openCode.close();
+    imports.import({ provider: 'opencode', path: openCodePath, project_id: 'opencode_project', trigger: 'manual' });
+    const checkThroughOpenCode = (label: string) => {
+      const summary = usage.summary(7, now);
+      assert.equal(summary.totals.responses, combined.totals.responses + 3, `${label}: the matched claude-agent reply is not counted again`);
+      assert.deepEqual(summary.models.filter((row) => row.provider === 'opencode').map((row) => [row.model, row.responses]).sort(), [
+        ['claude-haiku-4-5', 1],
+        ['claude-opus-5-5', 1],
+        ['gpt-6-sol', 1],
+        ['opus', 2]
+      ], `${label}: Claude transcript usage counts as OpenCode, and replies it lacks keep their own`);
+      assert.ok(!summary.models.some((row) => row.provider === 'claude' && row.model === 'claude-opus-5-5'), `${label}: no Claude copy remains`);
+      assert.equal(summary.projects.find((row) => row.projectId === 'opencode_project')?.inputTokens, 10 + 7 + 3 + 4 + 2, `${label}: it counts in the OpenCode conversation's project`);
+      assert.ok(Math.abs(summary.totals.costUsd - combined.totals.costUsd - (3 * 2 + 2 * 10) / 1_000_000) < 1e-12, `${label}: Claude pricing is kept`);
+    };
+    checkThroughOpenCode('imported');
+    // An archived session imported by an older parser is re-read by a new one.
+    historyDatabase.connection.prepare(`update conversation_import_files set parser_version = 'opencode-sqlite-old' where provider = 'opencode'`).run();
+    historyDatabase.connection.prepare(`update conversation_usage set claude_session_id = null where provider = 'opencode'`).run();
+    const archive = new DatabaseSync(openCodePath);
+    archive.prepare('update session_v2 set time_archived = ?').run(created);
+    archive.close();
+    imports.import({ provider: 'opencode', path: openCodePath, project_id: 'opencode_project', trigger: 'manual' });
+    checkThroughOpenCode('archived');
+    // A failed upgrade has already recorded the new parser; its retry re-reads them too.
+    historyDatabase.connection.prepare(`update conversation_import_files set status = 'error' where provider = 'opencode'`).run();
+    historyDatabase.connection.prepare(`update conversation_usage set claude_session_id = null where provider = 'opencode'`).run();
+    imports.import({ provider: 'opencode', path: openCodePath, project_id: 'opencode_project', trigger: 'manual' });
+    checkThroughOpenCode('retried');
+    // A newer subagent response does not cover the parent's missing reply.
+    fs.appendFileSync(subagentFile, `${JSON.stringify({ type: 'assistant', uuid: 's_late', sessionId: 'claude_usage', cwd: projectPath, timestamp: at(1), isSidechain: true, message: { id: 'msg_sub_late', role: 'assistant', model: 'claude-haiku-4-5', content: [], usage: { input_tokens: 4, output_tokens: 2 } } })}\n`);
+    imports.import({ provider: 'claude', trigger: 'manual' });
+    assert.equal(usage.summary(7, now).models.find((row) => row.provider === 'opencode' && row.model === 'opus')?.responses, 2, 'subagent activity does not hide the parent\'s newer reply');
     paceSmoke();
     console.log('usage smoke ok');
   } finally {
