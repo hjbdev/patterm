@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- An agent's @ menu offers the running bots that work in its project, the
+  assistant included. A mentioned bot is sent as its process ID, and agents
+  in a bot's projects can now `send_message` it, under the same 8 KB and
+  rate limits as messages to the assistant. Other bots stay out of reach,
+  and messaging a bot does not open its conversation to the agent.
+
 - Status labels: an agent can pin a short status on itself, such as
   "Waiting for review" or "Waiting on CI", with the new `status_set` tool.
   It shows as a coloured pill beside the agent on the projects page, in its
@@ -60,6 +66,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opening list until you type, and a preset you launched shows under Recent.
 
 ### Changed
+
+- A bot's finished-turn notification shows its reply, as plain text cut to
+  280 characters, instead of "Finished its turn". Only the bot's final
+  top-level message is used, never tool output, reasoning or subagent rows;
+  other agents and turns without a reply keep the old text. A bot's push
+  notification no longer repeats its name above the message.
 
 - The assistant and bots no longer call `assistant_memory_read` before every
   message. Patterm keeps their saved memory current in the conversation
@@ -121,6 +133,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- Worktree file search in an agent's @ menu. Attach files with the paperclip,
+  paste, or drop instead. Typed `@path` text is sent as written, and file
+  references saved in earlier drafts are still sent.
+
 - The assistant's panel: its button in the top bar, the floating, docked and
   full-page layouts, and Follow the conversation.
 
@@ -129,6 +145,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Agents menu's "Open the agent I'm in" option.
 
 ### Fixed
+
+- OpenCode agents keep Patterm's tools and your MCP servers after an idle
+  hour. OpenCode drops a directory's services when it has been idle for an
+  hour and boots them again from your own config, without Patterm's bridge
+  and servers. Each prompt and native command now checks first and restores
+  them, or fails with a clear error instead of running without its tools.
 
 - A bot's chat has an Attach files button beside send, like an agent's
   composer. Files could already be dropped or pasted there.

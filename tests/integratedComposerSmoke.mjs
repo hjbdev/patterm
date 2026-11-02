@@ -34,14 +34,14 @@ function file(name, type, body = 'data') {
   return new File([body], name, { type });
 }
 
-function createHarness({ processId = 'composer_test', provider = 'codex', agents, processes, launchers } = {}) {
+function createHarness({ processId = 'composer_test', provider = 'codex', agents, bots, processes, launchers } = {}) {
   const lifecycle = { mounted: [], beforeUnmount: [] };
   const emitted = [];
   const calls = [];
   const uploads = [];
   const timers = new Map();
   let timerId = 0;
-  const props = reactive({ processId, provider, controls: { selectors: [], commands: [{ name: 'compact', description: 'Compact' }] }, controlling: true, sending: false, pending: false, ended: false, agents, processes, launchers });
+  const props = reactive({ processId, provider, controls: { selectors: [], commands: [{ name: 'compact', description: 'Compact' }] }, controlling: true, sending: false, pending: false, ended: false, agents, bots, processes, launchers });
   const windowMock = {
     patterm: {
       runtime: 'browser',
@@ -88,9 +88,9 @@ function createHarness({ processId = 'composer_test', provider = 'codex', agents
   };
   const setup = new Function(...Object.keys(bindings), `${outputText}
 return {
-  editor, picker, mode, menuIndex, files, searchError, searching, menuOpen, canSend, agentMatches, processMatches, launcherMatches, menuItems, placeholder,
+  editor, picker, mode, menuIndex, menuOpen, canSend, agentMatches, botMatches, processMatches, launcherMatches, menuItems, placeholder,
   getDraft: () => draft.value,
-  evaluate, onKeydown, submit, chooseFile, chooseAgent, chooseProcess, chooseLauncher, chooseCommand, onPaste, onDrop, onPick
+  evaluate, onKeydown, submit, chooseAgent, chooseBot, chooseProcess, chooseLauncher, chooseCommand, onPaste, onDrop, onPick
 };`);
   const scope = effectScope();
   const pane = scope.run(() => setup(...Object.keys(bindings).map(key => bindings[key])));
@@ -190,56 +190,29 @@ test('each agent gets its own focused editor, except ended sessions', async () =
   touch = false;
 });
 
-test('mention search is bounded, debounced, and keyboard selectable', async () => {
+test('@ never searches worktree files, and is plain text with nothing to mention', async () => {
   composer.clearDrafts();
-  const harness = createHarness({ processId: 'composer_mention' });
+  const bare = createHarness({ processId: 'composer_no_files' });
+  assert.doesNotMatch(bare.pane.placeholder.value, /@/, 'the placeholder offers no @ without anything to mention');
+  bare.setEditor('see @src/ap');
+  bare.pane.evaluate();
+  runTimers(bare);
+  await flush();
+  assert.equal(bare.pane.menuOpen.value, false);
+  assert.deepEqual(bare.calls, [], 'no file search is made');
+  bare.pane.submit();
+  assert.equal(bare.emitted[0].payload.text, 'see @src/ap', 'typed @text is sent as written');
+  assert.deepEqual(bare.emitted[0].payload.references, []);
+  bare.scope.stop();
+
+  const harness = createHarness({ processId: 'composer_no_file_rows', agents: [mentionAgent('process_2', 'App review')] });
   harness.setEditor('@ap');
   harness.pane.evaluate();
-  assert.equal(harness.calls.length, 0, 'search waits for the debounce');
-  assert.equal([...harness.timers.values()][0]?.delay, 120);
   runTimers(harness);
   await flush();
-  assert.equal(harness.calls[0]?.tool, 'integrated_files_search');
-  assert.deepEqual(harness.calls[0]?.args, { process_id: 'composer_mention', query: 'ap', limit: 20 });
-  harness.calls[0].resolve([
-    { path: 'src/app.ts', name: 'app.ts' },
-    { path: 'src/app.test.ts', name: 'app.test.ts' }
-  ]);
-  await flush();
-  assert.equal(harness.pane.menuOpen.value, true);
-  assert.equal(harness.pane.files.value.length, 2);
-  harness.pane.onKeydown({ key: 'ArrowDown', preventDefault() {} });
-  assert.equal(harness.pane.menuIndex.value, 1);
-  harness.pane.onKeydown({ key: 'ArrowUp', preventDefault() {} });
-  assert.equal(harness.pane.menuIndex.value, 0);
-  harness.pane.onKeydown({ key: 'ArrowDown', preventDefault() {} });
-  harness.pane.onKeydown({ key: 'Enter', preventDefault() {} });
-  await flush();
-  assert.equal(harness.pane.getDraft().text, '@src/app.test.ts ');
-  assert.deepEqual(harness.pane.getDraft().references, [{ path: 'src/app.test.ts', name: 'app.test.ts' }]);
-  assert.equal(harness.pane.menuOpen.value, false);
-  harness.scope.stop();
-});
-
-test('a stale mention search cannot replace newer results', async () => {
-  composer.clearDrafts();
-  const harness = createHarness({ processId: 'composer_stale_search' });
-  harness.setEditor('@a');
-  harness.pane.evaluate();
-  runTimers(harness);
-  await flush();
-  harness.setEditor('@ab');
-  harness.pane.evaluate();
-  runTimers(harness);
-  await flush();
-  assert.equal(harness.calls.length, 2);
-  harness.calls[1].resolve([{ path: 'src/ab.ts', name: 'ab.ts' }]);
-  await flush();
-  harness.calls[0].resolve([{ path: 'src/a.ts', name: 'a.ts' }]);
-  await flush();
-  assert.deepEqual(harness.pane.files.value.map(entry => entry.path), ['src/ab.ts']);
-  harness.pane.onKeydown({ key: 'Escape', preventDefault() {} });
-  assert.equal(harness.pane.menuOpen.value, false);
+  assert.deepEqual(harness.calls, [], 'agents match without a file search');
+  assert.deepEqual(harness.pane.menuItems.value.map(item => item.kind), ['agent']);
+  assert.doesNotMatch(page, /integrated_files_search|Worktree files/, 'the menu has no file rows');
   harness.scope.stop();
 });
 
@@ -404,41 +377,11 @@ test('a resolved or rejected upload notifies reactive readers without another in
   harness.scope.stop();
 });
 
-test('a search reply from a previous process cannot land during a new debounce', async () => {
-  composer.clearDrafts();
-  const harness = createHarness({ processId: 'search-A' });
-  harness.setEditor('@first');
-  harness.pane.evaluate();
-  runTimers(harness);
-  await flush();
-  assert.equal(harness.calls.length, 1);
-  harness.props.processId = 'search-B';
-  await nextTick();
-  assert.deepEqual(harness.pane.files.value, [], 'process change clears old results');
-  harness.setEditor('@second');
-  harness.pane.evaluate();
-  // The old reply resolves while the new query is still debouncing.
-  harness.calls[0].resolve([{ path: 'private-file-from-A.ts', name: 'private-file-from-A.ts' }]);
-  await flush();
-  assert.deepEqual(harness.pane.files.value, [], 'the stale reply is dropped before any new request starts');
-  runTimers(harness);
-  await flush();
-  assert.equal(harness.calls[1]?.args.process_id, 'search-B');
-  assert.equal(harness.calls[1]?.args.query, 'second');
-  harness.calls[1].resolve([{ path: 'b.ts', name: 'b.ts' }]);
-  await flush();
-  assert.deepEqual(harness.pane.files.value.map(entry => entry.path), ['b.ts']);
-  harness.scope.stop();
-});
-
 test('Shift+Enter keeps a newline even while the mention menu is open', async () => {
   composer.clearDrafts();
-  const harness = createHarness({ processId: 'composer_shift' });
+  const harness = createHarness({ processId: 'composer_shift', agents: [mentionAgent('process_2', 'App review')] });
   harness.setEditor('@ap');
   harness.pane.evaluate();
-  runTimers(harness);
-  await flush();
-  harness.calls[0].resolve([{ path: 'src/app.ts', name: 'app.ts' }]);
   await flush();
   assert.equal(harness.pane.menuOpen.value, true);
   const prevented = [];
@@ -487,137 +430,30 @@ test('composer helpers insert and remove references without touching other text'
   assert.equal(composer.attachmentMime({ name: 'archive.zip', type: 'application/zip' }), null);
 });
 
-test('Enter or Tab before results arrive picks the first result for the current query', async () => {
+test('moving the caret inside an unchanged mention keeps the highlighted row', async () => {
   composer.clearDrafts();
-  const harness = createHarness({ processId: 'composer_accept_pending' });
-  harness.setEditor('see @a');
-  harness.pane.evaluate();
-  runTimers(harness);
-  await flush();
-  harness.calls[0].resolve([{ path: 'src/a.ts', name: 'a.ts' }]);
-  await flush();
-  harness.setEditor('see @ab');
-  harness.pane.evaluate();
-  assert.equal(harness.pane.searching.value, true);
-  const prevented = [];
-  harness.pane.onKeydown({ key: 'Enter', shiftKey: false, keyCode: 13, preventDefault: () => prevented.push('prevented') });
-  await flush();
-  assert.equal(prevented.length, 1);
-  assert.equal(harness.emitted.length, 0, 'Enter during a search never submits');
-  assert.equal(harness.calls.length, 2, 'the debounced search runs immediately');
-  assert.equal(harness.pane.getDraft().text, 'see @ab', 'the stale row is not chosen');
-  harness.calls[1].resolve([{ path: 'src/ab.ts', name: 'ab.ts', matches: [4, 5] }]);
-  await flush();
-  assert.equal(harness.pane.getDraft().text, 'see @src/ab.ts ');
-  assert.equal(harness.pane.menuOpen.value, false);
-
-  harness.setEditor('see @src/ab.ts @b');
-  harness.pane.evaluate();
-  runTimers(harness);
-  await flush();
-  harness.calls[2].resolve([{ path: 'b.ts', name: 'b.ts' }, { path: 'lib/b.ts', name: 'b.ts' }]);
-  await flush();
-  harness.pane.onKeydown({ key: 'ArrowDown', preventDefault() {} });
-  harness.pane.onKeydown({ key: 'Tab', preventDefault() {} });
-  await flush();
-  assert.equal(harness.pane.getDraft().text, 'see @src/ab.ts @lib/b.ts ', 'Tab accepts the selected row');
-  harness.scope.stop();
-});
-
-test('moving the caret inside an unchanged mention keeps the results without searching again', async () => {
-  composer.clearDrafts();
-  const harness = createHarness({ processId: 'composer_caret' });
+  const harness = createHarness({ processId: 'composer_caret', agents: [mentionAgent('process_2', 'App one'), mentionAgent('process_3', 'App two')] });
   const editor = harness.setEditor('@app');
   harness.pane.evaluate();
-  runTimers(harness);
-  await flush();
-  harness.calls[0].resolve([{ path: 'app.ts', name: 'app.ts' }]);
-  await flush();
+  harness.pane.onKeydown({ key: 'ArrowDown', preventDefault() {} });
   harness.pane.evaluate();
-  assert.equal(harness.timers.size, 0, 'the same mention does not schedule another search');
-  assert.equal(harness.pane.files.value.length, 1);
+  assert.equal(harness.pane.menuIndex.value, 1, 'the same mention keeps the highlight');
   editor.setCaret(0);
   assert.equal(harness.pane.menuOpen.value, false, 'leaving the mention closes the menu');
   harness.scope.stop();
 });
 
-test('deleting a picked token removes its reference from the payload', async () => {
+test('a file reference saved in an earlier draft is still sent, and dropped with its token', async () => {
   composer.clearDrafts();
   const harness = createHarness({ processId: 'composer_token_delete' });
-  harness.setEditor('@ap');
-  harness.pane.evaluate();
-  runTimers(harness);
-  await flush();
-  harness.calls[0].resolve([{ path: 'src/app.ts', name: 'app.ts' }]);
-  await flush();
-  harness.pane.chooseFile(harness.pane.files.value[0]);
-  await flush();
+  composer.addReference('composer_token_delete', 'src/app.ts', 'app.ts');
+  harness.pane.getDraft().text = 'see @src/app.ts';
+  harness.pane.submit();
+  assert.deepEqual(harness.emitted[0].payload.references, [{ path: 'src/app.ts', name: 'app.ts' }]);
   harness.pane.getDraft().text = 'no file after all';
   harness.pane.submit();
-  assert.deepEqual(harness.emitted[0].payload.references, []);
-  assert.equal(harness.emitted[0].payload.text, 'no file after all');
-  harness.scope.stop();
-});
-
-test('Tab completes into a directory and Enter references it', async () => {
-  composer.clearDrafts();
-  const harness = createHarness({ processId: 'composer_directory' });
-  harness.setEditor('see @comp');
-  harness.pane.evaluate();
-  runTimers(harness);
-  await flush();
-  harness.calls[0].resolve([{ path: 'src/components/', name: 'components/' }]);
-  await flush();
-  harness.pane.onKeydown({ key: 'Tab', preventDefault() {} });
-  await flush();
-  assert.equal(harness.pane.getDraft().text, 'see @src/components/', 'Tab completes the path without ending the mention');
-  assert.equal(harness.pane.menuOpen.value, true, 'the menu stays open on the directory');
-  runTimers(harness);
-  await flush();
-  assert.equal(harness.calls[1]?.args.query, 'src/components/');
-  harness.calls[1].resolve([{ path: 'src/components/button.ts', name: 'button.ts' }]);
-  await flush();
-  harness.pane.onKeydown({ key: 'Enter', preventDefault() {} });
-  await flush();
-  assert.equal(harness.pane.getDraft().text, 'see @src/components/button.ts ');
-  harness.pane.submit();
-  assert.deepEqual(harness.emitted[0].payload.references.map(reference => reference.path), ['src/components/button.ts'], 'the completed-through directory is not sent');
-
-  harness.setEditor('and @comp');
-  harness.pane.evaluate();
-  runTimers(harness);
-  await flush();
-  harness.calls[2].resolve([{ path: 'src/components/', name: 'components/' }]);
-  await flush();
-  harness.pane.onKeydown({ key: 'Enter', preventDefault() {} });
-  await flush();
-  assert.equal(harness.pane.getDraft().text, 'and @src/components/ ', 'Enter references the directory');
-  assert.equal(harness.pane.menuOpen.value, false);
-  harness.scope.stop();
-});
-
-test('fresh results reset a selection made on the previous rows', async () => {
-  composer.clearDrafts();
-  const harness = createHarness({ processId: 'composer_index_reset' });
-  harness.setEditor('@a');
-  harness.pane.evaluate();
-  runTimers(harness);
-  await flush();
-  harness.calls[0].resolve([{ path: 'a.ts', name: 'a.ts' }, { path: 'ab.ts', name: 'ab.ts' }, { path: 'abc.ts', name: 'abc.ts' }]);
-  await flush();
-  harness.setEditor('@abc');
-  harness.pane.evaluate();
-  harness.pane.onKeydown({ key: 'ArrowDown', preventDefault() {} });
-  harness.pane.onKeydown({ key: 'ArrowDown', preventDefault() {} });
-  assert.equal(harness.pane.menuIndex.value, 2);
-  runTimers(harness);
-  await flush();
-  harness.calls[1].resolve([{ path: 'abc.ts', name: 'abc.ts' }]);
-  await flush();
-  assert.equal(harness.pane.menuIndex.value, 0);
-  harness.pane.onKeydown({ key: 'Enter', preventDefault() {} });
-  await flush();
-  assert.equal(harness.pane.getDraft().text, '@abc.ts ');
+  assert.deepEqual(harness.emitted[1].payload.references, []);
+  assert.equal(harness.emitted[1].payload.text, 'no file after all');
   harness.scope.stop();
 });
 
@@ -626,7 +462,7 @@ test('agents lead the @ menu, match by title, and glow only while highlighted', 
   composer.mentionPreview.value = null;
   const agents = [mentionAgent('process_2', 'Review: PR #16'), mentionAgent('process_3', 'Fix login bug'), mentionAgent('process_4', 'Claude Code')];
   const harness = createHarness({ processId: 'composer_agents', agents });
-  assert.match(harness.pane.placeholder.value, /type @ for agents and files/);
+  assert.match(harness.pane.placeholder.value, /type @ for agents, \/ for commands/);
   harness.setEditor('@');
   harness.pane.evaluate();
   await flush();
@@ -639,15 +475,6 @@ test('agents lead the @ menu, match by title, and glow only while highlighted', 
   harness.setEditor('@LOG');
   harness.pane.evaluate();
   assert.deepEqual(harness.pane.agentMatches.value.map(agent => agent.processId), ['process_3'], 'titles match case-insensitively at word boundaries');
-  runTimers(harness);
-  await flush();
-  harness.calls[0].resolve([{ path: 'src/login.ts', name: 'login.ts' }, { path: 'src/logout.ts', name: 'logout.ts' }]);
-  await flush();
-  assert.equal(harness.pane.menuIndex.value, 0, 'file results keep the highlighted agent');
-  harness.pane.onKeydown({ key: 'ArrowDown', preventDefault() {} });
-  await flush();
-  assert.equal(composer.mentionPreview.value, null, 'a file row has no glow');
-  harness.pane.onKeydown({ key: 'ArrowUp', preventDefault() {} });
   await flush();
   assert.equal(composer.mentionPreview.value, 'session_process_3');
   harness.pane.onKeydown({ key: 'Escape', preventDefault() {} });
@@ -663,30 +490,28 @@ test('agents lead the @ menu, match by title, and glow only while highlighted', 
   harness.scope.stop();
 });
 
-test('fresh file results move a stale file selection to the first file, past the agents', async () => {
+test('bots follow the agents and are sent as their process IDs', async () => {
   composer.clearDrafts();
-  const harness = createHarness({ processId: 'composer_agent_files', agents: [mentionAgent('process_5', 'Settings page')] });
-  harness.setEditor('@s');
+  composer.mentionPreview.value = null;
+  const bots = [{ botId: 'assistant', processId: 'process_20', name: 'Assistant', harness: 'codex' }, { botId: 'bot_ops', processId: 'process_21', name: 'Ops bot', harness: 'claude' }];
+  const harness = createHarness({ processId: 'composer_bots', agents: [mentionAgent('process_7', 'Ops review')], bots, processes: [] });
+  const editor = harness.setEditor('ask @ops');
   harness.pane.evaluate();
-  runTimers(harness);
-  await flush();
-  harness.calls[0].resolve([{ path: 'src/a.ts', name: 'a.ts' }, { path: 'src/b.ts', name: 'b.ts' }]);
-  await flush();
+  assert.deepEqual(harness.pane.menuItems.value.map(item => item.kind), ['agent', 'bot'], 'bots sit after the agents');
   harness.pane.onKeydown({ key: 'ArrowDown', preventDefault() {} });
-  harness.pane.onKeydown({ key: 'ArrowDown', preventDefault() {} });
-  assert.equal(harness.pane.menuIndex.value, 2);
-  harness.setEditor('@se');
-  harness.pane.evaluate();
-  assert.equal(harness.pane.menuIndex.value, 0, 'a new query highlights the first agent');
-  harness.pane.onKeydown({ key: 'ArrowDown', preventDefault() {} });
-  runTimers(harness);
   await flush();
-  harness.calls[1].resolve([{ path: 'src/settings.ts', name: 'settings.ts' }]);
-  await flush();
-  assert.equal(harness.pane.menuIndex.value, 1, 'the first fresh file replaces the stale one');
+  assert.equal(composer.mentionPreview.value, null, 'a bot row has no sidebar glow');
   harness.pane.onKeydown({ key: 'Enter', preventDefault() {} });
   await flush();
-  assert.equal(harness.pane.getDraft().text, '@src/settings.ts ');
+  assert.deepEqual(harness.pane.getDraft().chips, [{ kind: 'agent', token: 'process_21', name: 'Ops bot', harness: 'claude' }]);
+  editor.replace(6, 6, 'and @assist');
+  harness.pane.chooseBot(harness.pane.botMatches.value[0]);
+  harness.pane.submit();
+  assert.equal(harness.emitted[0].payload.text, 'ask process_21 and process_20');
+
+  const onlyBots = createHarness({ processId: 'composer_only_bots', bots });
+  assert.match(onlyBots.pane.placeholder.value, /type @ for agents/, 'bots alone make @ worth offering');
+  onlyBots.scope.stop();
   harness.scope.stop();
 });
 
@@ -695,13 +520,11 @@ test('a picked agent becomes a chip and is sent as its process ID', async () => 
   const harness = createHarness({ processId: 'composer_agent_send', agents: [mentionAgent('process_7', 'Fix login bug')] });
   const editor = harness.setEditor('ask @fix');
   harness.pane.evaluate();
-  assert.equal(harness.pane.searching.value, true);
   harness.pane.onKeydown({ key: 'Enter', preventDefault() {} });
   await flush();
-  assert.equal(harness.pane.getDraft().text, `ask ${CHIP} `, 'Enter swaps the mention for a chip without waiting for files');
+  assert.equal(harness.pane.getDraft().text, `ask ${CHIP} `, 'Enter swaps the mention for a chip');
   assert.deepEqual(harness.pane.getDraft().chips, [{ kind: 'agent', token: 'process_7', name: 'Fix login bug', harness: 'claude' }]);
   assert.equal(harness.pane.menuOpen.value, false);
-  assert.equal(harness.timers.size, 0, 'the pending file search is dropped');
   assert.deepEqual(harness.pane.getDraft().references, [], 'an agent is not a file reference');
   assert.equal(editor.getSelection().start, 6, 'the caret follows the chip and its space');
 
@@ -756,15 +579,14 @@ test('presets and harnesses follow the agents and are sent as launch tokens', as
     { kind: 'harness', name: 'Codex', harness: 'codex', token: '[patterm_harness:codex]' }
   ];
   const harness = createHarness({ processId: 'composer_launch', agents: [mentionAgent('process_7', 'Smart search')], launchers });
-  assert.match(harness.pane.placeholder.value, /type @ for agents and files/);
+  assert.match(harness.pane.placeholder.value, /type @ for agents/);
   const editor = harness.setEditor('ask @smart');
   harness.pane.evaluate();
   assert.deepEqual(harness.pane.launcherMatches.value.map(launcher => launcher.name), ['Smartypants'], 'launchers match the mention by name');
   harness.pane.onKeydown({ key: 'ArrowDown', preventDefault() {} });
   harness.pane.onKeydown({ key: 'Enter', preventDefault() {} });
   await flush();
-  assert.deepEqual(harness.pane.getDraft().chips, [{ kind: 'preset', token: '[patterm_preset:Smartypants]', name: 'Smartypants', harness: 'claude' }], 'Enter on a launcher swaps the mention for its chip without waiting for files');
-  assert.equal(harness.timers.size, 0, 'the pending file search is dropped');
+  assert.deepEqual(harness.pane.getDraft().chips, [{ kind: 'preset', token: '[patterm_preset:Smartypants]', name: 'Smartypants', harness: 'claude' }], 'Enter on a launcher swaps the mention for its chip');
   editor.replace(6, 6, 'to review this, and @co');
   assert.deepEqual(harness.pane.launcherMatches.value.map(launcher => launcher.name), ['Codex']);
   harness.pane.chooseLauncher(launchers[1]);

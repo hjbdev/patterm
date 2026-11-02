@@ -49,6 +49,28 @@ assert.equal(digests.get('agent')?.finalMessage, 'On it.');
 digests.observe('agent', { processId: 'agent', revision: ++revision, kind: 'error', id: 'connection_error' });
 assert.equal(digests.get('agent'), null);
 
+// A bot's reply belongs to the turn that just ended, even when the next turn
+// starts without a user row, such as a background wake.
+const replies = new TurnDigests();
+replies.observe('bot', event(user('r1', 'Triage my inbox')));
+replies.activity('bot', 'idle', 'working');
+replies.observe('bot', event(say('r2', 'First task result')));
+replies.activity('bot', 'working', 'permission');
+replies.activity('bot', 'permission', 'working');
+assert.equal(replies.reply('bot'), 'First task result', 'an approval pauses the same turn');
+replies.activity('bot', 'working', 'idle');
+assert.equal(replies.reply('bot'), 'First task result');
+replies.activity('bot', 'idle', 'working');
+replies.observe('bot', event(tool('r3', 'Bash')));
+replies.activity('bot', 'working', 'idle');
+assert.equal(replies.reply('bot'), null, 'a tool-only turn has no reply');
+assert.equal(replies.get('bot')?.finalMessage, 'First task result', 'triage still sees the whole conversation turn');
+replies.activity('bot', 'idle', 'thinking');
+replies.observe('bot', event(say('r4', 'Second result')));
+assert.equal(replies.reply('bot'), 'Second result');
+replies.observe('bot', { processId: 'bot', revision: ++revision, kind: 'reconnecting' });
+assert.equal(replies.reply('bot'), null, 'a lost turn has no reply');
+
 // Codex's generic tool rows map back to the native names the model learned.
 const codex = new TurnDigests();
 codex.observe('codex', event(user('c1', 'Open the PR')));

@@ -18,6 +18,7 @@ import { McpToolRegistry } from '../app/MCP/ToolRegistry';
 import { registerBotTools } from '../app/MCP/registerBotTools';
 import { assistantBot } from './fixtures/AssistantBotFixture';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
+import { purviewAllows } from '../app/Bots/BotSettings';
 import { removeTree } from './fixtures/TempTree';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -85,7 +86,8 @@ async function main(): Promise<void> {
     agent('other', null);
 
     const timers = new TimerService(database, terminal, { integrated, assistantInbox: inbox });
-    const registry = createTestMcpRegistry({ tempDir: dir, database, timeline, terminal, workbench, integrated: integrated as never, assistant: relay, assistantInbox: inbox, timers });
+    const registry = createTestMcpRegistry({ tempDir: dir, database, timeline, terminal, workbench, integrated: integrated as never, assistant: relay, assistantInbox: inbox, timers,
+      bots: { allows: (botId, projectId) => settings.bots().bots.some((bot) => bot.id === botId && purviewAllows(bot.purview, projectId)) } });
     const asAssistant = { identity: `mcp-assistant-${sequence}` };
     const asWorker = { identity: 'mcp-worker' };
     const ui = new McpToolRegistry();
