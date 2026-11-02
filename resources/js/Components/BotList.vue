@@ -58,23 +58,24 @@ const router = useRouter();
 const { rows } = useBots();
 const { projects } = useWorkbench();
 const projectIds = computed(() => listedProjects(projects.value).map((project) => project.project.id));
-const activeBotId = computed(() => route.name === 'bot' ? String(route.params.botId) : null);
+const activeBotId = computed(() => route.name === 'bot' || route.name === 'standaloneBot' ? String(route.params.botId) : null);
 const shownRows = computed(() => {
   if (props.all) return rows.value;
   const projectId = props.projectId;
   if (projectId) return rows.value.filter((row) => botShownIn(row.bot, projectId));
-  // A bot's page opens beside a project, so with none no bot lists.
-  return projectIds.value.length ? rows.value.filter((row) => isGlobalBot(row.bot)) : [];
+  // Without a project, as on the projects page, only global bots list.
+  return rows.value.filter((row) => isGlobalBot(row.bot));
 });
 
 function rowClass(active: boolean): string {
   return cn('flex w-full min-w-0 select-none items-start gap-2.5 rounded-tab px-2 py-1.5 text-left text-[13px] transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring', active ? 'bg-primary/10 text-foreground' : 'text-foreground/85');
 }
 
-// A bot opens beside the project you're in, or else one it lists in.
+// A bot opens beside the project you're in, or else one it lists in, or
+// on its own when there are no projects.
 function open(botId: string): void {
   const projectId = props.projectId || botHomeProjectId(rows.value.find((row) => row.bot.id === botId)?.bot, projectIds.value);
-  if (projectId) void router.push({ name: 'bot', params: { projectId, botId } });
+  void router.push(projectId ? { name: 'bot', params: { projectId, botId } } : { name: 'standaloneBot', params: { botId } });
 }
 
 // A helper waiting on you opens in its own project, like any agent.

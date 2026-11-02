@@ -178,10 +178,11 @@ const purviewLabel = computed(() => {
 
 // A bot that has never run starts when it's opened: the assistant waits for
 // that on a fresh install, while other bots start as soon as they're added.
-// Once per bot, so a failed start shows its error rather than retrying.
+// Once per bot, so a failed start shows its error rather than retrying. One
+// waits while another bot's start or restart is still under way.
 const opened = new Set<string>();
-watch(row, (current) => {
-  if (!current || current.session || opened.has(current.bot.id)) return;
+watch([row, busy], ([current]) => {
+  if (!current || current.session || busy.value || opened.has(current.bot.id)) return;
   opened.add(current.bot.id);
   void restart(false);
 }, { immediate: true });

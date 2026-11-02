@@ -16,6 +16,7 @@ const UsagePage = () => import('./Pages/UsagePage.vue');
 const RoutinesPage = () => import('./Pages/RoutinesPage.vue');
 const RoutineLogPage = () => import('./Pages/RoutineLogPage.vue');
 const BotPage = () => import('./Pages/BotPage.vue');
+const StandaloneBotPage = () => import('./Pages/StandaloneBotPage.vue');
 import { rememberProjectLocation } from './lib/projectLocations';
 
 export function createWorkbenchRouter(history: RouterHistory) {
@@ -29,6 +30,8 @@ export function createWorkbenchRouter(history: RouterHistory) {
       { path: '/routines', name: 'routines', component: RoutinesPage },
       { path: '/routines/log', name: 'routineLog', component: RoutineLogPage },
       { path: '/projects', name: 'projects', component: ProjectsPage },
+      // With no projects to open beside, a bot opens on its own.
+      { path: '/bots/:botId', name: 'standaloneBot', component: StandaloneBotPage },
       { path: '/projects/:projectId', name: 'project', component: ProjectPage },
       { path: '/projects/:projectId/launches/:launchId', name: 'launch', component: HarnessLaunchPage },
       { path: '/projects/:projectId/agents/:sessionId', name: 'agent', component: TerminalPage },
