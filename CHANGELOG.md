@@ -49,6 +49,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The assistant and bots no longer call `assistant_memory_read` before every
+  message. Patterm keeps their saved memory current in the conversation
+  itself: the whole memory arrives with the first message, then only what
+  changed, including the Memory switch being turned on or off, and the whole
+  memory again after compaction. It travels in each CLI's hidden context (an
+  OpenCode instruction entry, a Codex developer message, a Claude prompt
+  hook), so it costs no tool call and never shows in the transcript. Claude
+  bots on Windows keep the old per-message check. Memory checks that found
+  nothing new no longer show as tool rows.
+
 - Bots keep their own harness, model, reasoning and Codex speed, set up in
   Settings › Bots the same way as a harness profile. "Copy from" fills them
   in from a profile once; later changes to that profile don't reach the

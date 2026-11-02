@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { inspect } from 'node:util';
 import { McpHttpProxyService } from './Services/McpHttpProxyService';
 import { BotRelay, type BotRelayEvent } from './Services/BotRelay';
+import { MemoryPushService } from './Services/MemoryPushService';
 import { AssistantMemoryService } from './Services/AssistantMemoryService';
 import { ASSISTANT_BOT_ID } from './Bots/BotIdentity';
 import { registerIdleCompactionTools } from './MCP/registerIdleCompactionTools';
@@ -352,6 +353,7 @@ async function createApplicationResources(
   const integratedInputs = new WorktreeFileService(database, new UploadService(path.join(options.appDataPath, 'uploads')));
   const integrated = new IntegratedAgentService(database, { opencode: openCodeServer, codex: codexAppServer, claude: claudeStream }, () => notifyWorkbenchChanged(), integratedInputs, hostLauncher);
   integrated.setDebugLog(debugLog);
+  integrated.setMemoryPush(new MemoryPushService(database, assistantMemory, (event, data) => debugLog.write('memory', event, data)));
   // Holds unprompted input for a bot while its Focus mode is on.
   const assistantInbox = new BotInbox(database, (botId) => settings.bots().bots.find((bot) => bot.id === botId)?.focus === true);
   const timers = new TimerService(database, terminal, { persistent: persistentTerminals, integrated, assistantInbox, onChanged: notifyWorkbenchChanged });
