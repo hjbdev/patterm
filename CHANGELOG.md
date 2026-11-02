@@ -60,6 +60,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Bots now close their helpers once the work is truly finished, instead of
+  leaving them running after they report. A helper whose PR is ready to merge
+  or waiting for review, or one the bot will send follow-ups, stays open.
+
 - The assistant and bots no longer call `assistant_memory_read` before every
   message. Patterm keeps their saved memory current in the conversation
   itself: the whole memory arrives with the first message, then only what
