@@ -10,10 +10,9 @@
         <slot name="leading" />
         <SidebarItemMenu :session="session" :tab="menuTab">
           <h1 class="min-w-0 flex-1 select-none truncate font-medium [-webkit-touch-callout:none]" :class="phoneLayout ? 'text-[15px]' : 'text-[14.5px]'">
-            {{ agentLabel(session) }}<HostBadge v-if="session.host" :host="session.host" class="ml-1.5" />
+            {{ agentLabel(session) }}<HostBadge v-if="session.host" :host="session.host" class="ml-1.5" /><StatusLabelPill v-if="session.statusLabel" :label="session.statusLabel" class="ml-2 align-[1px]" />
           </h1>
         </SidebarItemMenu>
-        <StatusLabelPill v-if="session.statusLabel" :label="session.statusLabel" class="ml-1" />
         <slot name="trailing" />
       </div>
       <div v-if="summary && goal && !folded && !phoneLayout" class="mt-1 text-[12.5px] leading-5 text-muted-foreground">

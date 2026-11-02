@@ -31,9 +31,18 @@ export class StatusLabelActions {
     return this.store.statusLabels();
   }
 
-  // Agents keep the id of a deleted label; it reads as none.
+  // Deleting a label unpins it from every agent, so a later label that reuses
+  // its id never revives the old pin.
   updateSettings(raw: unknown): StatusLabelSettings {
-    const settings = this.store.updateStatusLabels(raw);
+    const db = this.database.connection;
+    const settings = db.transaction(() => {
+      const before = this.store.statusLabels().labels.map((label) => label.id);
+      const saved = this.store.updateStatusLabels(raw);
+      const kept = new Set(saved.labels.map((label) => label.id));
+      const unpin = db.prepare('update processes set status_label_id = null, status_label_set_at = null, status_label_set_by = null where status_label_id = ?');
+      for (const id of before) if (!kept.has(id)) unpin.run(id);
+      return saved;
+    })();
     this.onChanged();
     return settings;
   }

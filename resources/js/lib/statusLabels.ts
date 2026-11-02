@@ -21,7 +21,12 @@ export interface StatusLabelSettings { labels: StatusLabel[] }
 export const STATUS_LABEL_LIMIT = 30;
 
 export function readStatusLabels(): Promise<StatusLabelSettings> {
-  return topicRead('settings', ['status_labels'], async () => await window.patterm.call('settings_status_labels_get', {}) as StatusLabelSettings);
+  return topicRead('settings', ['status_labels'], fetchStatusLabels);
+}
+
+// The saved list now, past any cache, for an edit to apply to.
+export async function fetchStatusLabels(): Promise<StatusLabelSettings> {
+  return await window.patterm.call('settings_status_labels_get', {}) as StatusLabelSettings;
 }
 
 export async function saveStatusLabels(settings: StatusLabelSettings): Promise<StatusLabelSettings> {

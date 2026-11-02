@@ -85,6 +85,10 @@ async function main(): Promise<void> {
     await registry.call('settings_status_labels_update', { labels: renamed.filter((label) => label.id !== 'blocked') }, {});
     assert.equal(pinned(bob), null);
     assert.equal(await listed('alice', bob), undefined);
+    // A new label that takes the deleted one's id doesn't revive the pin.
+    await registry.call('settings_status_labels_update', { labels: [...renamed.filter((label) => label.id !== 'blocked'), { id: 'blocked', name: 'Blocked!', color: 'blue' }] }, {});
+    assert.equal(pinned(bob), null);
+    assert.equal((db.prepare('select status_label_id from processes where id = ?').get(bob) as { status_label_id: string | null }).status_label_id, null);
 
     // An agent creates a label only when asked; a second with the same name
     // returns the first. The new label is marked as an agent's.
