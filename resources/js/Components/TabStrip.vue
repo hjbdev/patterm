@@ -45,7 +45,8 @@
                     <RowStatus :activity="activityFor(tab.family.root.session)" :count="familyMenuCount(tab.family)" :count-label="familyMemberLabel(tab.family)" />
                     <ProjectLogo v-if="tabProject(tab)" :project="tabProject(tab)!" :size="14" :title="tabProject(tab)!.name" />
                     <span class="truncate">{{ agentLabel(tab.family.root.session) }}</span>
-                    <StatusLabelPill v-if="tab.family.root.session.statusLabel" :label="tab.family.root.session.statusLabel" dot />
+                    <!-- The tab's menu names the label in full, so the dot's tooltip waits while it's open. -->
+                    <StatusLabelPill v-if="tab.family.root.session.statusLabel" :label="tab.family.root.session.statusLabel" dot :no-tooltip="openRootId === tab.family.rootId" />
                     <BotOwnerPill v-if="ownerBotOf(tab.family.root.session)" :bot="ownerBotOf(tab.family.root.session)!" />
                     <HostBadge v-if="tab.family.root.session.host" :host="tab.family.root.session.host" />
                     <UnreadDot :urgency="unreadUrgency(tab.family.root.session.processId)" />

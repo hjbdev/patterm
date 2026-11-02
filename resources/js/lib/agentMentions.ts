@@ -103,10 +103,12 @@ export function mentionableAgents(sessions: readonly SessionRecord[], selfProces
 // Running bots whose purview includes the project, the assistant's included:
 // send_message reaches only those, so the menu offers no others. The bots
 // are this host's, so an agent on a paired host, whose process ID names its
-// host, is offered none.
+// host, is offered none, and a paired host's bots, which its agents can't
+// message, are offered to no one.
 export function mentionableBots(rows: readonly BotRow[], projectId: string, selfProcessId: string): MentionBot[] {
   if (selfProcessId.includes(':')) return [];
   return rows.flatMap(({ bot, session }) => {
+    if (bot.host) return [];
     const reaches = bot.purview.kind === 'all' || (bot.purview.kind === 'projects' && bot.purview.projectIds.includes(projectId));
     if (!reaches || !session?.processId || session.exitedAt || session.processId === selfProcessId) return [];
     return [{ botId: bot.id, processId: session.processId, name: bot.name, harness: bot.harness }];

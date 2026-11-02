@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Paired hosts' bots, the assistant included, list in the sidebar's Bots
+  section after this host's, with the host's name beside them. A bot shows in
+  the projects linked with the ones it works in, and you can open its
+  conversation, message it, and start or restart it. Its settings stay on its
+  own host, and its instructions never leave it. Both hosts need this version;
+  an older host shares no bots.
+
 - An agent's @ menu offers the running bots that work in its project, the
   assistant included. A mentioned bot is sent as its process ID, and agents
   in a bot's projects can now `send_message` it, under the same 8 KB and
@@ -18,8 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Status labels: an agent can pin a short status on itself, such as
   "Waiting for review" or "Waiting on CI", with the new `status_set` tool.
   It shows as a coloured pill beside the agent on the projects page, in its
-  tab's menu, on the canvas and in the conversation header, as a dot on its
-  tab and sidebar row, and in `list_processes`. Idle detection still shows
+  tab's menu and sidebar card, on the canvas and in the conversation header,
+  as a dot on its tab and sidebar row that names it in a tooltip, and in
+  `list_processes`. Idle detection still shows
   whether the agent is working. Labels are configured in Settings › Status
   labels, each with a colour from the face palette and a note on when to use
   it. You can pin or clear one from an agent's menu. An agent's own label
@@ -149,6 +157,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bot conversations, the assistant's included, show notification and focus
+  digests again as compact receipts. Helpers' messages and reports, timer
+  callbacks, and close requests stay hidden.
 - OpenCode agents keep Patterm's tools and your MCP servers after an idle
   hour. OpenCode drops a directory's services when it has been idle for an
   hour and boots them again from your own config, without Patterm's bridge

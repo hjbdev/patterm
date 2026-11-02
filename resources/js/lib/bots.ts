@@ -43,13 +43,17 @@ export interface Bot {
   voice: BotVoice;
   digests: boolean;
   focus: boolean;
+  // A paired host's bot: its ID is qualified with the host's name, such as
+  // `workstation:assistant`, and it is set up on that host.
+  host?: string;
 }
 
 export interface BotSettings { bots: Bot[]; userName: string | null }
 export interface BotState { bot_id: string; process_id: string | null; session_id: string | null }
 
-export function readBots(): Promise<BotSettings & { states: BotState[]; voices?: string[] }> {
-  return topicRead('settings', ['bots'], async () => await window.patterm.call('settings_bots_get', {}) as BotSettings & { states: BotState[]; voices?: string[] });
+// `remote` holds paired hosts' bots, which list here but are saved there.
+export function readBots(): Promise<BotSettings & { states: BotState[]; voices?: string[]; remote?: Bot[] }> {
+  return topicRead('settings', ['bots'], async () => await window.patterm.call('settings_bots_get', {}) as BotSettings & { states: BotState[]; voices?: string[]; remote?: Bot[] });
 }
 
 export function isAssistantBot(bot: Pick<Bot, 'id'> | null | undefined): boolean {
@@ -109,10 +113,13 @@ export async function restartBotFromSettings(processId: string, fresh = false): 
 }
 
 // What a bot's conversation leaves out: its helpers' reports and messages and
-// Patterm's own notes to it. The bot relays what matters.
+// Patterm's own notes to it. The bot relays what matters. Notification and
+// focus digests stay, as receipts of what the user was told about.
 const CLOSE_REQUEST = /^\[Close requested by /;
+const RECEIPT = /^\[Patterm (?:notifications|focus digest)\b/;
 export function hiddenFromBot(text: string): boolean {
-  return isBackgroundMessage(text) || CLOSE_REQUEST.test(text.trimStart());
+  const start = text.trimStart();
+  return !RECEIPT.test(start) && (isBackgroundMessage(start) || CLOSE_REQUEST.test(start));
 }
 
 // Bot sessions and every helper below them, across projects: the agent lists

@@ -16,6 +16,9 @@
           <span v-for="(part, index) in meta" :key="index" class="whitespace-nowrap before:inline-block before:w-3 before:text-center before:content-['·'_/_'']">{{ part }}</span>
         </span>
       </p>
+      <div v-if="digest.session.statusLabel" class="ml-[26px] mt-1.5 flex">
+        <StatusLabelPill :label="digest.session.statusLabel" />
+      </div>
 
       <!-- What it needs from you, in its own words where it gave any; otherwise what it's doing. -->
       <div v-if="digest.ask" class="mt-3 flex items-start gap-2.5">
@@ -107,6 +110,7 @@ import AgentIcon from '../AgentIcon.vue';
 import DiffStat from '../DiffStat.vue';
 import ShimmerText from '../ShimmerText.vue';
 import StatusIcon from '../StatusIcon.vue';
+import StatusLabelPill from '../StatusLabelPill.vue';
 import UnreadDot from '../UnreadDot.vue';
 import AgentCardMember from './AgentCardMember.vue';
 import { useSidebar } from './sidebarContext';
