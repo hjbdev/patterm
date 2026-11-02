@@ -13,6 +13,7 @@ import type { IntegratedControls, IntegratedFormAction, IntegratedLaunchInput, I
 import { OPENCODE_VERSION_MISMATCH } from './OpenCodeServiceErrors';
 import { UncertainDeliveryError, type IntegratedDeliveryState } from './IntegratedDelivery';
 import type { ResolvedIntegratedPrompt } from './IntegratedInput';
+import type { MemoryUpdate } from './MemoryPushService';
 import { messagesTaskOutput, textTaskOutput, type IntegratedConversationEvent, type IntegratedConversationListener, type IntegratedDeliveryStatus, type IntegratedTaskOutput } from './IntegratedConversation';
 import type { TranscriptImageRef, TranscriptImageStore } from './TranscriptImageStore';
 
@@ -27,6 +28,8 @@ const MAX_ARGUMENT_BYTES = 131_072;
 // capture bound must cover realistic uploads (10 MiB raw -> ~13.4 MiB base64).
 const MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
 const OPENCODE_RECONNECT_ATTEMPTS = 8;
+// Memory changes beyond this replace the baseline instead of growing.
+const MEMORY_CHANGES_BYTES = 2048;
 // The daemon writes a heartbeat every 15 s, so a stream silent for three of
 // them is a dead connection, for example a half-open one after sleep.
 const OPENCODE_STREAM_IDLE_MS = 45_000;
@@ -135,6 +138,8 @@ export class OpenCodeServerService {
   private readonly selections = new Map<string, { agent?: string; model?: string; variant?: string }>();
   private readonly installedMcp = new Map<string, string>();
   private readonly preparing = new Map<string, Promise<IntegratedLaunchResult>>();
+  // Memory changes since each process's baseline entry.
+  private readonly memoryChanges = new Map<string, string>();
   // Server replacements run one at a time, so a launch never restarts a
   // server another launch has just replaced.
   private replacing: Promise<unknown> = Promise.resolve();
@@ -246,6 +251,26 @@ export class OpenCodeServerService {
     const output = record(record(await this.api(runtime.executable, runtime.cwd, 'GET', `/api/shell/${encodeURIComponent(shellId)}/output?${location}&cursor=${start}&limit=${OPENCODE_SHELL_BYTES}`)).data);
     const exit = typeof shell.exit === 'number' && shell.status !== 'running' ? `\n[exited with code ${shell.exit}]\n` : '';
     return textTaskOutput(`${String(output.output ?? '')}${exit}`, start > 0, since);
+  }
+
+  // Memory lives in two instruction entries: the whole memory as a baseline,
+  // and the changes since it. OpenCode announces an entry to the model only
+  // when its value changes, at the next step, and re-bases entries after
+  // compaction, so nothing is re-sent while memory stays the same. Changes
+  // stay small: past MEMORY_CHANGES_BYTES the baseline is replaced instead.
+  async updateMemory(processId: string, update: MemoryUpdate): Promise<void> {
+    if (!update.changes) return;
+    const runtime = this.runtime(processId);
+    const entry = (key: string) => `/api/experimental/session/${encodeURIComponent(runtime.resumeId)}/instructions/entries/${key}`;
+    const changes = update.full ? '' : [this.memoryChanges.get(processId), update.changes].filter(Boolean).join('\n\n');
+    if (update.full || Buffer.byteLength(changes) > MEMORY_CHANGES_BYTES) {
+      this.memoryChanges.delete(processId);
+      await this.api(runtime.executable, runtime.cwd, 'PUT', entry('patterm-memory'), { value: update.full ? update.changes : update.snapshot() });
+      await this.api(runtime.executable, runtime.cwd, 'DELETE', entry('patterm-memory-changes'));
+      return;
+    }
+    await this.api(runtime.executable, runtime.cwd, 'PUT', entry('patterm-memory-changes'), { value: changes });
+    this.memoryChanges.set(processId, changes);
   }
 
   async prompt(processId: string, input: ResolvedIntegratedPrompt): Promise<{ id: string }> {

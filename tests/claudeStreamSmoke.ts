@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -498,6 +499,7 @@ process.stdin.on('data', (chunk) => {
     assert.deepEqual(spawnedArgv.slice(spawnedArgv.indexOf('--permission-mode'), spawnedArgv.indexOf('--permission-mode') + 2), ['--permission-mode', 'auto'], 'integrated sessions start in auto mode');
     assert.deepEqual(spawnedArgv.slice(spawnedArgv.indexOf('--effort'), spawnedArgv.indexOf('--effort') + 2), ['--effort', 'high']);
     assert.ok(!spawnedArgv.includes('--strict-mcp-config'), 'user and project MCP servers load alongside Patterm, as in terminal mode');
+    assert.ok(!spawnedArgv.includes('--settings'), 'task agents get no memory hook');
     assert.equal(streamedRows.find((message) => message.id === 'msg_partial_0')?.text, 'Still partial', 'partial text is readable without a completion frame');
     assert.equal(streamedRows.filter((message) => message.id === 'msg_stream_0').length, 1, 'the completed assistant row replaces the streamed row');
     assert.equal(streamedRows.find((message) => message.id === 'msg_stream_0')?.text, 'Partial prose');
@@ -754,6 +756,40 @@ process.stdin.on('data', (chunk) => {
     await new Promise((resolve) => setTimeout(resolve, 300));
     assert.equal(await delayedService.reconcile('process_delayed', delayedId), 'accepted');
     await delayedService.stop('process_delayed');
+
+    // The assistant and bots get memory through a prompt hook. The host leaves
+    // updates for it in order, and the whole memory again after compaction.
+    const memoryArgvPath = path.join(directory, 'claude-memory-argv.json');
+    const memoryService = new ClaudeStreamService(database, runtimeDirectory, process.execPath, { ...process.env, ARGV_FILE: memoryArgvPath, NOTICES: '1', STREAM_FRAMES: '' }, undefined, hosts);
+    const memoryPrepared = await memoryService.prepare({
+      executable, cwd: directory, name: 'Claude bot', context: 'Bot context',
+      mcp: { command: process.execPath, args: ['shim.js'], env: { PATTERM_MCP_SOCKET: '/tmp/mcp.sock', PATTERM_MCP_IDENTITY: 'identity_memory' } },
+      resumeId: null, memoryPush: true
+    });
+    database.connection.prepare(`insert into processes (id,project_id,kind,name,status,cwd,argv,created_at,updated_at) values ('process_memory','project_test','agent','Claude bot','running',?,?,?,?)`)
+      .run(directory, JSON.stringify(memoryPrepared.argv), now, now);
+    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,started_at,session_role,bot_id,resume_status,created_by_actor) values ('session_memory','project_test','process_memory','claude','integrated','identity_memory',?,?, 'bot','fable','found','user')`)
+      .run(memoryPrepared.resumeId, now);
+    await waitFor(() => fs.existsSync(memoryArgvPath));
+    const memoryArgv = JSON.parse(fs.readFileSync(memoryArgvPath, 'utf8')) as string[];
+    const settingsPath = memoryArgv[memoryArgv.indexOf('--settings') + 1]!;
+    const hookCommand = (JSON.parse(fs.readFileSync(settingsPath, 'utf8')) as { hooks: { UserPromptSubmit: Array<{ hooks: Array<{ command: string }> }> } }).hooks.UserPromptSubmit[0]!.hooks[0]!.command;
+    const hookPath = settingsPath.replace(/-settings\.json$/, '-memory.json');
+    assert.ok(hookCommand.includes(hookPath), 'the hook takes the file the host leaves');
+    const left = () => fs.existsSync(hookPath) ? String((JSON.parse(fs.readFileSync(hookPath, 'utf8')) as { hookSpecificOutput: { additionalContext: string } }).hookSpecificOutput.additionalContext) : null;
+    assert.equal(left(), null);
+    await memoryService.updateMemory('process_memory', { changes: 'whole memory', full: true, snapshot: () => 'unused' });
+    await memoryService.updateMemory('process_memory', { changes: 'a change', full: false, snapshot: () => 'whole memory with the change' });
+    assert.equal(left(), 'whole memory\n\na change', 'updates the hook has not taken yet are kept in order');
+    await memoryService.updateMemory('process_memory', { changes: null, full: false, snapshot: () => 'unchanged' });
+    assert.equal(left(), 'whole memory\n\na change', 'no changes leave nothing new');
+    assert.match(execFileSync('sh', ['-c', hookCommand], { input: '{}', encoding: 'utf8' }), /a change/);
+    assert.equal(left(), null, 'the hook takes what it prints');
+    await memoryService.prompt('process_memory', { text: 'compact please', references: [], attachments: [] });
+    await waitFor(() => left() !== null);
+    assert.equal(left(), 'whole memory with the change', 'after compaction the whole memory is left again');
+    await memoryService.stop('process_memory');
+    await waitFor(() => !fs.existsSync(settingsPath) && !fs.existsSync(hookPath));
 
     // Only answerable control requests become prompts. Elicitations become
     // forms, unknown dialogs are cancelled, unhandled subtypes get a protocol

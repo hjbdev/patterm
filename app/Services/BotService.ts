@@ -3,6 +3,7 @@ import path from 'node:path';
 import { ASSISTANT_BOT_ID, purviewAllows, type Bot, type BotPurview } from '../Bots/BotSettings';
 import { ASSISTANT_PROJECT_ID } from './AssistantProject';
 import type { AssistantMemoryService } from './AssistantMemoryService';
+import { memoryPushSupported } from './MemoryPushService';
 import { storedPath } from '../Platform/PathIdentity';
 import { AgentContextService, BOT_CONTEXT_BYTES } from './AgentContextService';
 import type { DatabaseService } from './DatabaseService';
@@ -107,16 +108,18 @@ export class BotService {
   context(botId: string): string {
     const bot = this.bot(botId);
     if (!bot) return '';
+    // Where Patterm keeps memory current, launch instructions carry none.
+    const memoryPush = memoryPushSupported(bot.harness);
     if (bot.id === ASSISTANT_BOT_ID) {
       // OpenCode caps launch instructions; the assistant reads its memory with a tool anyway.
-      const limit = this.harness(bot.id) === 'opencode' ? { limitBytes: BOT_CONTEXT_BYTES } : {};
-      return new AgentContextService().buildAssistant(this.options.memory?.snapshot() ?? '', bot, limit);
+      const limit = bot.harness === 'opencode' ? { limitBytes: BOT_CONTEXT_BYTES } : {};
+      return new AgentContextService().buildAssistant(memoryPush ? '' : this.options.memory?.snapshot() ?? '', bot, { ...limit, memoryPush });
     }
     const purview = bot.purview;
     const projects = purview.kind === 'projects'
       ? this.workbench.listProjects().filter((project) => purview.projectIds.includes(project.id)).map((project) => ({ id: project.id, name: project.name }))
       : purview.kind;
-    return new AgentContextService().buildBot(bot, projects);
+    return new AgentContextService().buildBot(bot, projects, { memoryPush });
   }
 
   // Starts a bot that isn't running: on its latest conversation, or a new

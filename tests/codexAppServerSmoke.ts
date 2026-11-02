@@ -245,6 +245,10 @@ function serve(socket) {
           notify('mcpServer/startupStatus/updated', {threadId:'thread_early_child', name:'child-only', status:'failed', error:'x', failureReason:null});
         }
       }
+      else if (request.method === 'thread/inject_items') {
+        items.push({turnId:'turn_test',item:{type:'agentMessage',id:'injected_' + request.id,text:JSON.stringify(request.params)}});
+        send({jsonrpc:'2.0', id:request.id, result:{}});
+      }
       else if (request.method === 'turn/start' && process.env.MCP_FAILURE) {
         send({jsonrpc:'2.0', id:request.id, result:{turn:{id:'turn_test'}}});
         // Codex retries failed servers on later turns.
@@ -668,6 +672,19 @@ if (socketPath) {
     { type: 'text', text: `Look source.ts "src dir/source file.ts" ${documentFile}`, text_elements: [] },
     { type: 'localImage', path: imageFile }
   ], 'filesystem references become native path text and images stay localImage items');
+  // Memory rides in hidden developer messages. The turn above compacted, so
+  // the first update is the whole memory; later ones only what changed.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const injected = async () => (JSON.parse(JSON.stringify(await service.conversation('process_test'))) as { messages: { data: Array<{ id: string; text: string }> } })
+    .messages.data.filter((message) => message.id.startsWith('injected_')).map((message) => JSON.parse(message.text) as { threadId: string; items: Array<{ role: string; content: Array<{ text: string }> }> });
+  await service.updateMemory('process_test', { changes: 'a change', full: false, snapshot: () => 'whole memory' });
+  await service.updateMemory('process_test', { changes: 'another change', full: false, snapshot: () => 'unused' });
+  await service.updateMemory('process_test', { changes: null, full: false, snapshot: () => 'unused' });
+  const memoryItems = await injected();
+  assert.deepEqual(memoryItems.map((item) => [item.threadId, item.items[0]!.role, item.items[0]!.content[0]!.text]), [
+    ['thread_test', 'developer', 'whole memory'],
+    ['thread_test', 'developer', 'another change']
+  ], 'after compaction the whole memory, then only changes, and nothing while nothing changed');
   const presetRestoredService = new CodexAppServerService(database, runtimeDirectory);
   await presetRestoredService.prompt('process_test', { text: 'After service restart', references: [], attachments: [] });
   const restoredConversation = JSON.parse(JSON.stringify(await presetRestoredService.conversation('process_test'))) as { messages: { data: Array<{ id: string; text: string }> } };

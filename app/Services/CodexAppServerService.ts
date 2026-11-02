@@ -9,6 +9,7 @@ import type { IntegratedControls, IntegratedFormAction, IntegratedLaunchInput, I
 import { elicitationContent, elicitationForm, type ElicitationForm } from './McpElicitation';
 import { TurnBusyError, UncertainDeliveryError, type IntegratedDeliveryState } from './IntegratedDelivery';
 import type { ResolvedIntegratedPrompt } from './IntegratedInput';
+import type { MemoryUpdate } from './MemoryPushService';
 import { containsPlainPath, quotedPath, replaceReferenceToken } from './PromptReferences';
 import { messagesTaskOutput, textTaskOutput, type IntegratedConversationEvent, type IntegratedConversationMessage, type IntegratedTaskOutput } from './IntegratedConversation';
 import {
@@ -316,6 +317,23 @@ export class CodexAppServerService {
     }));
     const newest = Array.isArray(response.data) ? response.data : [];
     return { messages: { data: [...newest].reverse().flatMap(this.projectEntry) }, cursor: nativeCursor(response) };
+  }
+
+  // Memory rides in hidden developer messages, which Codex keeps in the
+  // thread and Patterm's transcripts never show. Compaction may drop them, so
+  // the first update after one is the whole memory.
+  async updateMemory(processId: string, update: MemoryUpdate): Promise<void> {
+    const runtime = this.runtime(processId);
+    const client = await this.client(runtime);
+    const compacted = client.takeCompaction(runtime.threadId);
+    const text = compacted ? update.snapshot() : update.changes;
+    if (!text) return;
+    try {
+      await client.request('thread/inject_items', { threadId: runtime.threadId, items: [{ type: 'message', role: 'developer', content: [{ type: 'input_text', text }] }] });
+    } catch (error) {
+      if (compacted) client.markCompaction(runtime.threadId);
+      throw error;
+    }
   }
 
   async prompt(processId: string, input: ResolvedIntegratedPrompt): Promise<{ turnId: string }> {
@@ -1459,6 +1477,8 @@ export class CodexRpcClient {
   // Latest status per thread from its notifications, its turns, and native
   // reads. Running subagent threads keep their agent working.
   private readonly threadStatuses = new Map<string, CodexDeliveryStatus>();
+  // Threads that compacted, which may have dropped memory Patterm injected.
+  private readonly compactedThreads = new Set<string>();
 
   // Null when this connection has not learned the thread's status.
   threadStatus(threadId: string): CodexDeliveryStatus | null { return this.threadStatuses.get(threadId) ?? null; }
@@ -1553,6 +1573,10 @@ export class CodexRpcClient {
 
   pending(id: string): PendingServerRequest | undefined { return this.serverRequests.get(id); }
 
+  // Whether the thread compacted since the last call.
+  takeCompaction(threadId: string): boolean { return this.compactedThreads.delete(threadId); }
+  markCompaction(threadId: string): void { this.compactedThreads.add(threadId); }
+
   // Each Integrated agent owns its app-server, so every pending request belongs
   // to its thread or to a subagent thread that it spawned. Filtering by the
   // parent thread hid subagent approvals while the parent turn waited on them.
@@ -1629,6 +1653,8 @@ export class CodexRpcClient {
           }
           this.endedTurns.set(threadId, typeof record(params.turn).status === 'string' ? String(record(params.turn).status) : 'completed');
           if (this.endedTurns.size > 500) this.endedTurns.delete(this.endedTurns.keys().next().value!);
+        } else if ((method === 'thread/compacted' || (method === 'item/completed' && record(params.item).type === 'contextCompaction')) && threadId) {
+          this.compactedThreads.add(threadId);
         } else if (method === 'thread/tokenUsage/updated' && threadId) {
           this.tokenUsage.set(threadId, record(params.tokenUsage));
           // Codex reports usage after each model response in the thread.

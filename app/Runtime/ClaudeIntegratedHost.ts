@@ -23,6 +23,9 @@ interface HostConfig {
   reasoning?: string | null;
   // Absent for hosts launched before transcript images existed.
   imageDirectory?: string;
+  // The assistant and bots: memory the prompt hook in `settingsPath` takes.
+  memoryHookPath?: string;
+  settingsPath?: string;
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -132,6 +135,9 @@ function countUnhandled(type: string): void {
 }
 let compactNotice: string | null = null;
 let noticeSequence = 0;
+// The whole saved memory as of the last update, left for the hook again after
+// compaction, which may summarise earlier updates away.
+let memorySnapshot = '';
 const TITLE_TIMEOUT_MS = 8_000;
 const INITIALIZE_REQUEST_ID = 'patterm_initialize';
 const SETTINGS_REQUEST_ID = 'patterm_settings';
@@ -284,6 +290,12 @@ async function handle(socket: net.Socket, request: JsonRecord): Promise<void> {
     respond(socket, id, { id: messageId });
     return;
   }
+  if (request.method === 'memory') {
+    memorySnapshot = String(params.snapshot ?? '');
+    leaveMemory(String(params.changes ?? ''), false);
+    respond(socket, id, {});
+    return;
+  }
   if (request.method === 'interrupt') {
     interrupted = turnActive || prompts.size > 0;
     writeClaude({ type: 'control_request', request_id: randomUUID(), request: { subtype: 'interrupt' } });
@@ -371,6 +383,21 @@ async function handle(socket: net.Socket, request: JsonRecord): Promise<void> {
   throw new Error(`Unknown Claude host method: ${String(request.method)}`);
 }
 
+// Leaves memory for the next prompt's hook, after any the hook has not taken
+// yet. A hook that takes the file mid-update can see an update twice, which
+// is harmless; it never misses one.
+function leaveMemory(text: string, replace: boolean): void {
+  if (!config.memoryHookPath || !text) return;
+  let earlier = '';
+  if (!replace) {
+    try { earlier = String(record(record(JSON.parse(fs.readFileSync(config.memoryHookPath, 'utf8'))).hookSpecificOutput).additionalContext ?? ''); } catch { /* none waiting */ }
+  }
+  const additionalContext = earlier ? `${earlier}\n\n${text}` : text;
+  const staging = `${config.memoryHookPath}.${process.pid}`;
+  fs.writeFileSync(staging, JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext } }), { mode: 0o600 });
+  fs.renameSync(staging, config.memoryHookPath);
+}
+
 function contextArgs(): string[] {
   if (process.platform !== 'win32') return ['--append-system-prompt', config.context];
   fs.writeFileSync(contextPath, config.context, { mode: 0o600 });
@@ -386,6 +413,7 @@ function startClaude(forceResume = false): void {
     // ExitPlanMode only when a permission prompt tool is named, as the SDK does.
     '--permission-prompt-tool', 'stdio',
     ...contextArgs(),
+    ...(config.settingsPath ? ['--settings', config.settingsPath] : []),
     '--permission-mode', mode,
     ...(model !== 'default' ? ['--model', model] : []),
     ...(effort ? ['--effort', effort] : []),
@@ -990,6 +1018,7 @@ function receiveSystem(event: JsonRecord): void {
     else delete usage.contextTokens;
     upsertMessage({ id: compactNotice ?? `compact_${++noticeSequence}`, role: 'assistant', kind: 'notice', level: 'info', text: `Conversation compacted${metadata.trigger === 'auto' ? ' automatically' : ''}${before}${after}` }, true, true);
     compactNotice = null;
+    leaveMemory(memorySnapshot, true);
     // Subscribers re-read the snapshot for the new usage; auto-compaction
     // continues the turn, so no idle event follows.
     publish({ kind: 'pending' });
@@ -1363,7 +1392,8 @@ function record(value: unknown): JsonRecord {
 }
 
 function cleanup(): void {
-  for (const filename of [config.socketPath, config.mcpConfigPath, contextPath, process.argv[2]!]) {
+  for (const filename of [config.socketPath, config.mcpConfigPath, contextPath, process.argv[2]!, config.memoryHookPath, config.settingsPath]) {
+    if (!filename) continue;
     try { fs.unlinkSync(filename); } catch {}
   }
 }

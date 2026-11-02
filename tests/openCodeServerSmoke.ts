@@ -323,6 +323,25 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
       'a restart reads the variant from the native session, not the launch value');
     database.connection.prepare(`update sessions set interface_mode = 'tui' where id = 'session_1'`).run();
     assert.deepEqual(await service.prompt('process_0', { text: 'hello', references: [], attachments: [] }), { id: 'msg_test' });
+    // Memory lives in two instruction entries: the whole memory, and the
+    // changes since it, until they grow too big and replace the whole.
+    const memoryStart = fs.readFileSync(record, 'utf8').trim().split('\n').length;
+    await service.updateMemory('process_0', { changes: 'whole memory', full: true, snapshot: () => 'unused' });
+    await service.updateMemory('process_0', { changes: 'first change', full: false, snapshot: () => 'unused' });
+    await service.updateMemory('process_0', { changes: 'second change', full: false, snapshot: () => 'unused' });
+    await service.updateMemory('process_0', { changes: null, full: false, snapshot: () => 'unused' });
+    await service.updateMemory('process_0', { changes: 'x'.repeat(3000), full: false, snapshot: () => 'whole memory, rebased' });
+    const memoryRequests = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line)).slice(memoryStart)
+      .filter((request) => String(request.route).includes('/instructions/entries/patterm-memory'))
+      .map((request) => [request.method, String(request.route).split('/').at(-1), request.body?.value ?? null]);
+    assert.deepEqual(memoryRequests, [
+      ['PUT', 'patterm-memory', 'whole memory'],
+      ['DELETE', 'patterm-memory-changes', null],
+      ['PUT', 'patterm-memory-changes', 'first change'],
+      ['PUT', 'patterm-memory-changes', 'first change\n\nsecond change'],
+      ['PUT', 'patterm-memory', 'whole memory, rebased'],
+      ['DELETE', 'patterm-memory-changes', null]
+    ]);
     const controls = await service.controls('process_0');
     assert.deepEqual(controls.selectors.map((selector) => selector.id), ['model', 'variant', 'agent']);
     assert.deepEqual(controls.selectors[1]?.options.map((option) => option.value), ['default', 'low', 'high']);
