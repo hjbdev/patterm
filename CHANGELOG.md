@@ -18,8 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Status labels: an agent can pin a short status on itself, such as
   "Waiting for review" or "Waiting on CI", with the new `status_set` tool.
   It shows as a coloured pill beside the agent on the projects page, in its
-  tab's menu, on the canvas and in the conversation header, as a dot on its
-  tab and sidebar row, and in `list_processes`. Idle detection still shows
+  tab's menu and sidebar card, on the canvas and in the conversation header,
+  as a dot on its tab and sidebar row that names it in a tooltip, and in
+  `list_processes`. Idle detection still shows
   whether the agent is working. Labels are configured in Settings › Status
   labels, each with a colour from the face palette and a note on when to use
   it. You can pin or clear one from an agent's menu. An agent's own label
