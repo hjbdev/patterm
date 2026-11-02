@@ -81,6 +81,18 @@ async function main(): Promise<void> {
     await service.prompt('process_test', 'Again');
     assert.deepEqual(changes, ['changed', 'changed', 'changed']);
 
+    // Memory reaches the agent before the prompt it should inform, through
+    // the provider. A failed update never holds the prompt back.
+    const order: string[] = [];
+    const remembering = new IntegratedAgentService(database, { codex: {
+      ...provider,
+      prompt: async () => { order.push('prompt'); return { id: 'message_test' }; },
+      updateMemory: async (_processId, update) => { order.push(`memory:${update.changes}`); }
+    } });
+    remembering.setMemoryPush({ deliver: async (processId, send) => { order.push(`deliver:${processId}`); await send({ changes: 'notes', full: true, snapshot: () => 'notes' }); } });
+    await remembering.prompt('session_test', 'Remember this');
+    assert.deepEqual(order, ['deliver:process_test', 'memory:notes', 'prompt'], 'memory is updated, per process, before the prompt');
+
     // Accepted prompts refresh the native title in the background.
     const titled: IntegratedProviderService = { ...provider, title: async (_processId, prompt) => `Native: ${prompt}` };
     const titleChanges: string[] = [];

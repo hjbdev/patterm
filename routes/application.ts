@@ -102,6 +102,35 @@ export function browserToolsOnly(inner: RouteRegistrar): RouteRegistrar {
   };
 }
 
+// Counts each IPC channel's use for opt-in telemetry. Wrap a registrar once,
+// where its routes enter, so every channel is counted exactly once. Tool
+// calls are counted by tool instead, and debug logging is not a feature.
+export function observedRoutes<T extends RouteRegistrar>(inner: T, telemetry: PattermApplication['telemetry']): T {
+  const observe = (channel: string, handler: (event: unknown, raw?: unknown) => unknown) => {
+    telemetry.channels.add(channel);
+    if (channel === 'patterm:mcp:call' || channel === 'patterm:debug:log') return handler;
+    return (event: unknown, raw?: unknown) => {
+      if (!telemetry.enabled) return handler(event, raw);
+      const started = performance.now();
+      const done = (ok: boolean) => telemetry.count('channel_called', { channel }, { ok, ms: performance.now() - started });
+      try {
+        const result = handler(event, raw);
+        if (result instanceof Promise) return result.then((value) => { done(true); return value; }, (error: unknown) => { done(false); throw error; });
+        done(true);
+        return result;
+      } catch (error) {
+        done(false);
+        throw error;
+      }
+    };
+  };
+  // Keeps the registrar's other methods, such as Electron's IpcMain's.
+  return Object.create(inner, {
+    handle: { value: (channel: string, handler: (event: unknown, raw?: unknown) => unknown) => inner.handle(channel, observe(channel, handler)) },
+    on: { value: (channel: string, handler: (event: unknown, raw?: unknown) => unknown) => inner.on(channel, observe(channel, handler)) }
+  }) as T;
+}
+
 export function registerApplicationRoutes(ipcMain: RouteRegistrar, application: PattermApplication): void {
   ipcMain.handle('patterm:bootstrap', () => application.bootstrap());
 

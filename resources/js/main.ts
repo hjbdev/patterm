@@ -8,6 +8,7 @@ import { createWorkbenchRouter, prefetchPages, reloadOnStaleBuild } from './rout
 import { animatePhoneNavigation } from './lib/phoneTransitions';
 import { warmHighlightWorker } from './lib/markdownHighlightWorker';
 import { syncLoaders } from './lib/loaderSync';
+import { installTelemetry } from './lib/telemetry';
 import './assets/fonts/fonts.css';
 import './styles.css';
 
@@ -30,6 +31,7 @@ function mountWorkbench(): void {
   if (window.patterm.runtime !== 'desktop') reloadOnStaleBuild(router);
   animatePhoneNavigation(router);
   const app = createApp(App).use(router);
+  installTelemetry(app, router);
   // The manifest's launch_handler reuses the open window instead of starting
   // another, so a launch that names a page (a shortcut) navigates here. A plain
   // relaunch names the start URL and only focuses the window.

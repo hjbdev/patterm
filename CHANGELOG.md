@@ -13,12 +13,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "Waiting for review" or "Waiting on CI", with the new `status_set` tool.
   It shows as a coloured pill beside the agent on the projects page, in its
   tab's menu, on the canvas and in the conversation header, as a dot on its
-  tab and sidebar row, and in `list_processes`. Idle detection still shows whether the agent is
-  working. Labels are configured in Settings › Status labels, each with a
-  colour from the face palette and a note on when to use it. You can pin or
-  clear one from an agent's menu. An agent's own label clears when you
-  message it. Agents list labels with `status_label_list` and add one with
-  `status_label_create` only when you ask them to.
+  tab and sidebar row, and in `list_processes`. Idle detection still shows
+  whether the agent is working. Labels are configured in Settings › Status
+  labels, each with a colour from the face palette and a note on when to use
+  it. You can pin or clear one from an agent's menu. An agent's own label
+  clears when you message it. Agents list labels with `status_label_list`
+  and add one with `status_label_create` only when you ask them to.
+
+- Opt-in usage telemetry, under Settings › Usage telemetry, to find the
+  features you never use. It is off until you turn it on with your own
+  PostHog project key. It then counts every tool call, IPC channel, command,
+  page, and component control you use, and lists every tool, channel,
+  component, changed setting, and table row count, so the unused ones stand
+  out. It sends identifiers only, never prompts, text, paths, or names. A
+  like or dislike, with a note, can be sent from the same page. See
+  [docs/usage-telemetry.md](docs/usage-telemetry.md).
 
 - Push notifications from a bot read like a text from it: the bot's name is
   the sender, its face, emoji or picture is the notification's picture, and
@@ -50,6 +59,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opening list until you type, and a preset you launched shows under Recent.
 
 ### Changed
+
+- The assistant and bots no longer call `assistant_memory_read` before every
+  message. Patterm keeps their saved memory current in the conversation
+  itself: the whole memory arrives with the first message, then only what
+  changed, including the Memory switch being turned on or off, and the whole
+  memory again after compaction. It travels in each CLI's hidden context (an
+  OpenCode instruction entry, a Codex developer message, a Claude prompt
+  hook), so it costs no tool call and never shows in the transcript. Claude
+  bots on Windows keep the old per-message check. Memory checks that found
+  nothing new no longer show as tool rows.
 
 - Bots keep their own harness, model, reasoning and Codex speed, set up in
   Settings › Bots the same way as a harness profile. "Copy from" fills them
@@ -109,6 +128,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Agents menu's "Open the agent I'm in" option.
 
 ### Fixed
+
+- A bot's chat has an Attach files button beside send, like an agent's
+  composer. Files could already be dropped or pasted there.
 
 - A child's report wakes its parent once. When the report satisfies one of
   the parent's report timers, the timer's callback arrives in the same

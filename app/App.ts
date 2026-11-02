@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { inspect } from 'node:util';
 import { McpHttpProxyService } from './Services/McpHttpProxyService';
 import { BotRelay, type BotRelayEvent } from './Services/BotRelay';
+import { MemoryPushService } from './Services/MemoryPushService';
 import { AssistantMemoryService } from './Services/AssistantMemoryService';
 import { ASSISTANT_BOT_ID } from './Bots/BotIdentity';
 import { registerIdleCompactionTools } from './MCP/registerIdleCompactionTools';
@@ -127,6 +128,9 @@ import { registerUpdateTools } from './MCP/registerUpdateTools';
 import { detectReleaseInstall, UpdateService } from './Services/UpdateService';
 import { UpdateInstaller } from './Services/UpdateInstaller';
 import { quitConfirmation } from './Commands/CommandPalette';
+import { TelemetryService } from './Services/Telemetry/TelemetryService';
+import { registerTelemetryTools } from './MCP/registerTelemetryTools';
+import type { McpCallObserver } from './MCP/ToolRegistry';
 
 export interface AppOptions {
   appDataPath: string;
@@ -172,6 +176,7 @@ export interface PattermApplication {
   terminal: TerminalService;
   timers: TimerService;
   settings: SettingsService;
+  telemetry: TelemetryService;
   updates: UpdateService;
   harnessPresets: HarnessPresetService;
   modelCatalog: HarnessModelCatalogService;
@@ -349,6 +354,7 @@ async function createApplicationResources(
   const integratedInputs = new WorktreeFileService(database, new UploadService(path.join(options.appDataPath, 'uploads')));
   const integrated = new IntegratedAgentService(database, { opencode: openCodeServer, codex: codexAppServer, claude: claudeStream }, () => notifyWorkbenchChanged(), integratedInputs, hostLauncher);
   integrated.setDebugLog(debugLog);
+  integrated.setMemoryPush(new MemoryPushService(database, assistantMemory, (event, data) => debugLog.write('memory', event, data)));
   // Holds unprompted input for a bot while its Focus mode is on.
   const assistantInbox = new BotInbox(database, (botId) => settings.bots().bots.find((bot) => bot.id === botId)?.focus === true);
   const timers = new TimerService(database, terminal, { persistent: persistentTerminals, integrated, assistantInbox, onChanged: notifyWorkbenchChanged });
@@ -820,6 +826,16 @@ async function createApplicationResources(
       timers, links: projectLinks, unlink: projectLinkActions, history: historyImportQueue
     })
   });
+  const telemetry = new TelemetryService({
+    settings,
+    context: { app_version: releaseInstall?.version ?? 'source', runtime: updateMode, os: process.platform },
+    inventory: () => ({ tools: mcp.toolNames(), channels: [...telemetry.channels], settings: settings.changedSettings(), records: recordCounts(database) }),
+    log: (event, data) => debugLog.write('telemetry', event, data)
+  });
+  registerTelemetryTools(mcp, telemetry);
+  mcp.setObserver(toolTelemetry(telemetry, database));
+  telemetry.start();
+  defer(() => telemetry.dispose());
   // Remote watches are stored as host ID and process ID.
   timers.setRemoteResolver((address) => {
     const separator = address.indexOf(':');
@@ -921,6 +937,7 @@ async function createApplicationResources(
     terminal,
     timers,
     settings,
+    telemetry,
     harnessPresets,
     modelCatalog,
     timeline,
@@ -961,6 +978,33 @@ async function createApplicationResources(
     isShuttingDown: () => shuttingDown
   };
   return application;
+}
+
+// Counts each tool call by name, caller, and, for agents, harness and role.
+function toolTelemetry(telemetry: TelemetryService, database: DatabaseService): McpCallObserver {
+  const agents = new Map<string, { harness: string | null; role: string | null }>();
+  const agent = (identity: string | null | undefined) => {
+    if (!identity) return { harness: null, role: null };
+    let found = agents.get(identity);
+    if (!found) {
+      const row = database.connection.prepare('select harness, session_role from sessions where mcp_identity = ?').get(identity) as { harness: string; session_role: string | null } | undefined;
+      found = { harness: row?.harness ?? null, role: row?.session_role ?? null };
+      if (agents.size > 1000) agents.clear();
+      agents.set(identity, found);
+    }
+    return found;
+  };
+  return ({ tool, namespace, caller, context, ok, ms }) => {
+    if (!telemetry.enabled || namespace === 'telemetry') return;
+    const { harness, role } = caller === 'agent' ? agent(context.identity) : { harness: null, role: null };
+    telemetry.count('tool_called', { tool, namespace, caller, harness, role }, { ok, ms });
+  };
+}
+
+// Row counts for each app table, which show the features that hold data.
+function recordCounts(database: DatabaseService): Record<string, number> {
+  const tables = database.connection.prepare("select name from sqlite_master where type = 'table' and name not like 'sqlite_%' and name not in ('migrations', 'settings')").all() as Array<{ name: string }>;
+  return Object.fromEntries(tables.filter(({ name }) => /^[a-z0-9_]+$/.test(name)).map(({ name }) => [name, (database.connection.prepare(`select count(*) as count from "${name}"`).get() as { count: number }).count]));
 }
 
 // Whether a history job imported or deleted conversations. Clients cache
