@@ -31,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The assistant now shows like every other bot: it lists first in the
+  sidebar's Bots section and opens on its own bot page, with the same header,
+  menu, voice call, Focus mode and session context. It still starts the first
+  time you open it.
+
 - The assistant is now the built-in bot. Its settings moved from Settings ›
   Assistant to Settings › Bots, where it leads the list and can't be deleted.
   You can rename it, give it a face, emoji or picture, add notes to its
@@ -67,6 +72,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per project.
 
 ### Removed
+
+- The assistant's panel: its button in the top bar, the floating, docked and
+  full-page layouts, and Follow the conversation.
 
 - The Agents menu's "Show subtitles" option. Agent rows no longer show their
   status line; what an agent is waiting on and snooze reminders still show.

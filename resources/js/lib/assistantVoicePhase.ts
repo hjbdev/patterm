@@ -1,4 +1,4 @@
-// What the assistant's voice session is doing, as the orb and its label show it.
+// What a bot's voice session is doing, as the orb and its label show it.
 export type VoicePhase = 'connecting' | 'listening' | 'speaking' | 'working' | 'muted' | 'ended' | 'failed';
 
 export const VOICE_PHASE_LABELS: Record<VoicePhase, string> = {
