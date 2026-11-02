@@ -299,16 +299,14 @@ export class OpenCodeServerService {
     const runtime = this.runtime(processId);
     const files = this.promptFiles(input);
     await this.ensureMcp(runtime);
-    let id: string;
     try {
       const body = {
         text: input.text.trim(),
         ...(files.length ? { files } : {}),
         ...(input.messageId ? { id: `msg_${input.messageId}` } : {}),
-        // Admitted without starting; `start` steers it in once the tools are
-        // checked. Like OpenCode's own clients, a steered prompt sent mid-turn
-        // joins the turn at its next model step.
-        delivery: 'queue', resume: false
+        // Like OpenCode's own clients, a prompt sent mid-turn joins the turn
+        // at its next model step instead of waiting for it to end.
+        delivery: 'steer', resume: true
       };
       const route = `/api/session/${encodeURIComponent(runtime.resumeId)}/prompt`;
       const response = (input.attachments.length
@@ -317,7 +315,8 @@ export class OpenCodeServerService {
       if (typeof response.data?.id !== 'string') {
         throw new Error('OpenCode did not acknowledge the message');
       }
-      id = response.data.id;
+      this.admitted(runtime.resumeId);
+      return { id: response.data.id };
     } catch (error) {
       // 4xx responses and pre-execution failures are definitive rejections.
       // Anything else may have been admitted before the reply was lost, so
@@ -325,15 +324,15 @@ export class OpenCodeServerService {
       const status = error instanceof ProviderCommandError ? error.status : undefined;
       if (status && status >= 400 && status < 500) throw error;
       if (error instanceof ProviderCommandError && error.definitive) throw error;
-      const state = input.messageId
-        ? await this.reconcile(processId, input.messageId).catch((): IntegratedDeliveryState => 'unknown')
-        : 'unknown';
-      if (state !== 'accepted') throw new UncertainDeliveryError(error instanceof Error ? error.message : String(error), input.messageId);
-      id = `msg_${input.messageId}`;
+      if (input.messageId) {
+        const state = await this.reconcile(processId, input.messageId).catch((): IntegratedDeliveryState => 'unknown');
+        if (state === 'accepted') {
+          this.admitted(runtime.resumeId);
+          return { id: `msg_${input.messageId}` };
+        }
+      }
+      throw new UncertainDeliveryError(error instanceof Error ? error.message : String(error), input.messageId);
     }
-    await this.start(runtime, id, input.messageId);
-    this.admitted(runtime.resumeId);
-    return { id };
   }
 
   // Project references remain file URLs. OpenCode reads a file and lists a
@@ -356,12 +355,8 @@ export class OpenCodeServerService {
   // the absence of it.
   async reconcile(processId: string, messageId: string): Promise<IntegratedDeliveryState> {
     const runtime = this.runtime(processId);
-    const id = `msg_${messageId}`;
-    // A prompt admitted but not yet started waits in the inbox.
-    const inbox = dataRows(await this.api(runtime.executable, runtime.cwd, 'GET', `/api/session/${encodeURIComponent(runtime.resumeId)}/inbox`).catch(() => null));
-    if (inbox.some((row) => row.id === id)) return 'accepted';
     const { rows } = await this.messageRows(runtime);
-    return rows.some((row) => record(row).id === id) ? 'accepted' : 'unknown';
+    return rows.some((row) => record(row).id === `msg_${messageId}`) ? 'accepted' : 'unknown';
   }
 
   // Installed OpenCode exposes one global event stream. Patterm discovers the
@@ -1425,8 +1420,6 @@ export class OpenCodeServerService {
     // A native command starts a turn. Built-ins other than compact do not:
     // /shell runs outside one.
     const native = async (): Promise<unknown> => {
-      // Commands run at once, with no admission to hold, so they are only
-      // checked first.
       await this.ensureMcp(runtime);
       const result = await this.api(runtime.executable, runtime.cwd, 'POST', `${session}/command`, { name, text, delivery: 'queue' });
       this.admitted(runtime.resumeId);
@@ -1718,9 +1711,11 @@ export class OpenCodeServerService {
 
   // OpenCode drops a directory's services after an idle hour and boots them
   // again from the user's own config, without Patterm's bridge and servers.
-  // Turns start only once they are back; otherwise this fails before anything
-  // runs. It waits behind any launch or restore in the directory, so it never
-  // sees a half-finished installation.
+  // A prompt restores them first, or fails before sending. The check waits
+  // behind any launch or restore in the directory, so it never sees a
+  // half-finished installation. OpenCode could still drop the directory in
+  // the moment between this check and the send; its sweep runs once a
+  // minute, so that is left to the next prompt.
   private async ensureMcp(runtime: { executable: string; cwd: string }): Promise<void> {
     const source = this.mcpSource;
     try {
@@ -1752,32 +1747,6 @@ export class OpenCodeServerService {
     const statuses = new Map((listed.data ?? []).map((server) => [server.name, server.status.status]));
     return statuses.get(bridgeName) === 'connected'
       && servers.every((server) => statuses.has(server.name) && statuses.get(server.name) !== 'disabled');
-  }
-
-  // A prompt is admitted without starting, so the directory can be dropped
-  // between the check and admission without a turn running tool-less. The
-  // check runs again, then steering the prompt starts the turn. If the tools
-  // cannot be restored, the prompt is withdrawn before it runs.
-  private async start(runtime: { executable: string; cwd: string; resumeId: string }, id: string, messageId: string | undefined): Promise<void> {
-    const route = `/api/session/${encodeURIComponent(runtime.resumeId)}/inbox/${encodeURIComponent(id)}`;
-    try {
-      await this.ensureMcp(runtime);
-    } catch (error) {
-      // Cancelling succeeds even when a turn took the prompt meanwhile, so
-      // the transcript says whether it was withdrawn.
-      const withdrawn = await this.api(runtime.executable, runtime.cwd, 'DELETE', route)
-        .then(async () => !(await this.messageRows(runtime)).rows.some((row) => record(row).id === id))
-        .catch(() => false);
-      if (!withdrawn) throw new UncertainDeliveryError(`${error instanceof Error ? error.message : String(error)}; the message may still run`, messageId);
-      throw error;
-    }
-    try {
-      await this.api(runtime.executable, runtime.cwd, 'PATCH', route, { delivery: 'steer' });
-    } catch (error) {
-      // A turn that ended meanwhile already took it from the queue.
-      if (error instanceof ProviderCommandError && error.status === 409) return;
-      throw new UncertainDeliveryError('OpenCode admitted the message but did not confirm it started', messageId);
-    }
   }
 
   private async prepareInDirectory(input: IntegratedLaunchInput): Promise<IntegratedLaunchResult> {

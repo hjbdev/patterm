@@ -133,9 +133,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hour. OpenCode drops a directory's services when it has been idle for an
   hour and boots them again from your own config, without Patterm's bridge
   and servers. Each prompt and native command now checks first and restores
-  them, or fails with a clear error instead of running without its tools. A
-  prompt starts only once the check passes, so a directory dropped just as it
-  arrives is restored first too.
+  them, or fails with a clear error instead of running without its tools.
 
 - A bot's chat has an Attach files button beside send, like an agent's
   composer. Files could already be dropped or pasted there.
