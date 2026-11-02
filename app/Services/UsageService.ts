@@ -131,14 +131,15 @@ export class UsageService {
     // Days follow the server's local calendar, like the rest of the app.
     // OpenCode's claude-agent responses are also in Claude Code's transcript,
     // which has the real model and cache detail. That session's imported usage
-    // replaces OpenCode's rows up to its newest response, and counts as
+    // replaces OpenCode's rows up to its newest response in the session's own
+    // transcript (subagent files are read separately), and counts as
     // OpenCode usage in the OpenCode conversation's project. OpenCode stamps a
     // response when it starts and Claude when it is written, so a response
     // Claude has not recorded yet is newer than everything it has.
     const rows = db ? db.prepare(`
       with replaced as (
         select claude.id as conversationId, linked.claudeId, linked.projectId,
-          (select max(occurred_at) from conversation_usage where conversation_usage.conversation_id = claude.id) as coveredUntil
+          (select max(occurred_at) from conversation_usage where conversation_usage.conversation_id = claude.id and subagent = 0) as coveredUntil
         from (
           select claude_session_id as claudeId, min(conversations.project_id) as projectId
           from conversation_usage join conversations on conversations.id = conversation_usage.conversation_id

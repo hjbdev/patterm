@@ -321,6 +321,10 @@ function main(): void {
     historyDatabase.connection.prepare(`update conversation_usage set claude_session_id = null where provider = 'opencode'`).run();
     imports.import({ provider: 'opencode', path: openCodePath, project_id: 'opencode_project', trigger: 'manual' });
     checkThroughOpenCode('retried');
+    // A newer subagent response does not cover the parent's missing reply.
+    fs.appendFileSync(subagentFile, `${JSON.stringify({ type: 'assistant', uuid: 's_late', sessionId: 'claude_usage', cwd: projectPath, timestamp: at(1), isSidechain: true, message: { id: 'msg_sub_late', role: 'assistant', model: 'claude-haiku-4-5', content: [], usage: { input_tokens: 4, output_tokens: 2 } } })}\n`);
+    imports.import({ provider: 'claude', trigger: 'manual' });
+    assert.equal(usage.summary(7, now).models.find((row) => row.provider === 'opencode' && row.model === 'opus')?.responses, 2, 'subagent activity does not hide the parent\'s newer reply');
     paceSmoke();
     console.log('usage smoke ok');
   } finally {
