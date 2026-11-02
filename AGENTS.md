@@ -183,10 +183,15 @@ changes Patterm's records; never delete its directory or branch.
 
 ## Validation
 
-Use pnpm commands:
+Run affected tests and checks locally for fast feedback. CI runs the full builds and `check:ci`; inspect its coverage and run any relevant checks locally that CI does not cover. If CI is unavailable, run the checks needed to validate the change locally and report any remaining gaps. Use the commands below as needed rather than running the entire list for every change:
 
 ```sh
 pnpm install
+```
+
+Available pnpm commands:
+
+```sh
 pnpm run typecheck
 pnpm run check
 pnpm run build
