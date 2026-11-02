@@ -91,6 +91,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Codex announces the command shows in a command row, not as the agent's
   reply. Subagent activity is summarised as "Task" instead of
   "subAgentActivity".
+- Typing a period in an agent's or bot's browser now inserts `.` instead of
+  being interpreted as Delete.
 - A `timer_set` callback now starts with a `[Patterm timer …]` header, as
   other timer callbacks do. It no longer shows in the transcript, or reads to
   the agent, as a message the user typed.
