@@ -7,6 +7,7 @@ import { emptyHarnessPresetSettings, harnessPresetSettingsInput, presetHarnessIn
 import { emptyHarnessModelCatalog, harnessModelCatalogInput, type HarnessModelCatalog } from '../Harness/ModelCatalog';
 import { BOT_VOICE_ACKNOWLEDGEMENTS, BOT_VOICE_PROFILES } from './AssistantVoiceProfile';
 import { BOT_VOICES } from '../Bots/BotIdentity';
+import { telemetrySettingsInput, type TelemetrySettings } from './Telemetry/TelemetrySettings';
 
 export const sidebarStateInput = z.object({
   projects: z.array(z.string()).default([]),
@@ -110,6 +111,7 @@ export const semanticSearchSettingsInput = z.object({
 export type SemanticSearchSettings = z.infer<typeof semanticSearchSettingsInput>;
 const SEMANTIC_SEARCH_SETTINGS_KEY = 'semantic_search.v1';
 const UPDATE_RECORD_KEY = 'updates.record.v1';
+const TELEMETRY_SETTINGS_KEY = 'telemetry.v1';
 
 const ASSISTANT_SETTINGS_KEY = 'assistant.settings.v1';
 const HARNESS_PRESETS_KEY = 'harness.presets.v1';
@@ -281,6 +283,33 @@ export class SettingsService {
     return settings;
   }
 
+  telemetrySettings(): TelemetrySettings {
+    return this.readParsed(TELEMETRY_SETTINGS_KEY, telemetrySettingsInput);
+  }
+
+  saveTelemetrySettings(input: TelemetrySettings): TelemetrySettings {
+    const settings = telemetrySettingsInput.parse(input);
+    this.write(TELEMETRY_SETTINGS_KEY, JSON.stringify(settings));
+    return settings;
+  }
+
+  // Dotted paths of settings that differ from their defaults, without
+  // values, so telemetry can tell which options are ever chosen.
+  changedSettings(): string[] {
+    const sections: Array<[string, unknown, unknown]> = [
+      ['appearance', this.appearanceSettings(), DEFAULT_APPEARANCE_SETTINGS],
+      ['workspace_layout', this.workspaceLayout(), DEFAULT_WORKSPACE_LAYOUT],
+      ['agent_interface', this.agentInterface(), 'integrated'],
+      ['figures', this.figuresEnabled(), true],
+      ['auto_summaries', this.autoSummarySettings(), autoSummarySettingsInput.parse({})],
+      ['notifications', this.notificationSettings(), notificationSettingsInput.parse({})],
+      ['idle_compaction', this.idleCompactionSettings(), DEFAULT_IDLE_COMPACTION_SETTINGS],
+      ['updates', this.updateSettings(), updateSettingsInput.parse({})],
+      ['semantic_search', this.semanticSearchSettings(), semanticSearchSettingsInput.parse({})]
+    ];
+    return sections.flatMap(([name, value, fallback]) => changedPaths(name, value, fallback));
+  }
+
   updateRecord(): UpdateRecord {
     return this.readParsed(UPDATE_RECORD_KEY, updateRecordInput);
   }
@@ -389,4 +418,12 @@ export class SettingsService {
       )
       .run(key, value, now);
   }
+}
+
+function changedPaths(path: string, value: unknown, fallback: unknown): string[] {
+  if (value && fallback && typeof value === 'object' && typeof fallback === 'object' && !Array.isArray(value)) {
+    const keys = new Set([...Object.keys(value), ...Object.keys(fallback)]);
+    return [...keys].flatMap((key) => changedPaths(`${path}.${key}`, (value as Record<string, unknown>)[key], (fallback as Record<string, unknown>)[key]));
+  }
+  return JSON.stringify(value) === JSON.stringify(fallback) ? [] : [path];
 }

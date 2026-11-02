@@ -184,6 +184,10 @@
                 <ServerAccessSettings />
               </TabsContent>
 
+              <TabsContent value="telemetry" class="m-0">
+                <TelemetrySettings />
+              </TabsContent>
+
               <TabsContent value="about" class="m-0">
                 <AboutSettings />
               </TabsContent>
@@ -197,7 +201,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref } from 'vue';
-import { ArrowLeft, Bell, Bot, ChartColumn, ChevronDown, Cpu, History, Info, KeyRound, Palette, Plug, Server, Shrink, Sparkles } from 'lucide-vue-next';
+import { Activity, ArrowLeft, Bell, Bot, ChartColumn, ChevronDown, Cpu, History, Info, KeyRound, Palette, Plug, Server, Shrink, Sparkles } from 'lucide-vue-next';
 import {
   DIFF_VIEWER_OPTIONS,
   NAVIGATION_OPTIONS,
@@ -219,6 +223,7 @@ import AboutSettings from '../Components/AboutSettings.vue';
 import AgentIcon from '../Components/AgentIcon.vue';
 import AutoSummarySettings from '../Components/AutoSummarySettings.vue';
 import SemanticSearchSettings from '../Components/SemanticSearchSettings.vue';
+import TelemetrySettings from '../Components/TelemetrySettings.vue';
 import FigureSettings from '../Components/FigureSettings.vue';
 import HarnessPresetSettings from '../Components/HarnessPresetSettings.vue';
 import BotSettings from '../Components/BotSettings.vue';
@@ -260,6 +265,7 @@ const NAV = [
   { value: 'mcp', label: 'MCP servers', icon: Plug },
   { value: 'hosts', label: 'Hosts', icon: Server },
   { value: 'access', label: 'Remote access', icon: KeyRound },
+  { value: 'telemetry', label: 'Usage telemetry', icon: Activity },
   { value: 'about', label: 'About', icon: Info }
 ] as const;
 type SettingsTab = typeof NAV[number]['value'];

@@ -102,7 +102,36 @@ export function browserToolsOnly(inner: RouteRegistrar): RouteRegistrar {
   };
 }
 
-export function registerApplicationRoutes(ipcMain: RouteRegistrar, application: PattermApplication): void {
+// Counts each IPC channel's use for opt-in telemetry. Tool calls are counted
+// by tool instead, and debug logging is not a feature.
+function observedRoutes(inner: RouteRegistrar, telemetry: PattermApplication['telemetry'] | undefined): RouteRegistrar {
+  if (!telemetry) return inner;
+  const observe = (channel: string, handler: (event: unknown, raw?: unknown) => unknown) => {
+    telemetry.channels.add(channel);
+    if (channel === 'patterm:mcp:call' || channel === 'patterm:debug:log') return handler;
+    return (event: unknown, raw?: unknown) => {
+      if (!telemetry.enabled) return handler(event, raw);
+      const started = performance.now();
+      const done = (ok: boolean) => telemetry.count('channel_called', { channel }, { ok, ms: performance.now() - started });
+      try {
+        const result = handler(event, raw);
+        if (result instanceof Promise) return result.then((value) => { done(true); return value; }, (error: unknown) => { done(false); throw error; });
+        done(true);
+        return result;
+      } catch (error) {
+        done(false);
+        throw error;
+      }
+    };
+  };
+  return {
+    handle: (channel, handler) => inner.handle(channel, observe(channel, handler)),
+    on: (channel, handler) => inner.on(channel, observe(channel, handler))
+  };
+}
+
+export function registerApplicationRoutes(registrar: RouteRegistrar, application: PattermApplication): void {
+  const ipcMain = observedRoutes(registrar, application.telemetry);
   ipcMain.handle('patterm:bootstrap', () => application.bootstrap());
 
   ipcMain.on('patterm:debug:log', (_event, raw) => {

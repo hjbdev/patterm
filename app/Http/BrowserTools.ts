@@ -3,6 +3,7 @@ import { MCP_SERVER_TOOLS } from '../MCP/registerMcpServerTools';
 import { HOST_TOOLS } from '../MCP/registerHostTools';
 import { UPDATE_TOOLS } from '../MCP/registerUpdateTools';
 import { SEMANTIC_SEARCH_TOOLS } from '../Actions/SemanticSearchActions';
+import { TELEMETRY_TOOLS } from '../MCP/registerTelemetryTools';
 import { BROWSER_CONTROL_TOOLS, BROWSER_VIEW_TOOLS } from '../Actions/BrowserActions';
 import { SECRET_CONTROL_TOOLS, SECRET_VIEW_TOOLS } from '../Actions/SecretActions';
 
@@ -24,6 +25,7 @@ export const BROWSER_TOOLS = new Set([
   ...HOST_TOOLS,
   ...UPDATE_TOOLS,
   ...SEMANTIC_SEARCH_TOOLS,
+  ...TELEMETRY_TOOLS,
   ...BROWSER_VIEW_TOOLS,
   ...SECRET_VIEW_TOOLS,
   'process_create', 'process_restart', 'stop_process', 'close_process', 'close_request_answer', 'rename_process',
