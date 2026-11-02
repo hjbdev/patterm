@@ -7,7 +7,6 @@ import { IntegratedAgentService } from '../app/Services/IntegratedAgentService';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { ClaudeStreamService } from '../app/Services/ClaudeStreamService';
 import { ipcPath } from '../app/Platform/Ipc';
-import { applyConversationStreamEvent, normaliseMessages } from '../resources/js/lib/integratedConversation';
 import type { IntegratedConversationEvent } from '../app/Services/IntegratedConversation';
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -157,6 +156,8 @@ async function main(): Promise<void> {
   // recovery alive until the host returns.
   const returning = await fixture();
   try {
+    const previousBoundary = returning.events.find((event) => event.kind === 'pending')?.revision;
+    assert.ok(previousBoundary, 'the initial subscription has a boundary');
     returning.drop();
     await returning.stopListening();
     await delay(500); // The first retry reaches an unavailable socket.
@@ -164,7 +165,7 @@ async function main(): Promise<void> {
     await delay(1_200);
     assert.ok(returning.connections() >= 2, `expected a reconnect after the first retry failed, saw ${returning.connections()}`);
     assert.ok(returning.events.some((event) => event.kind === 'reconnecting'), 'the drop is announced');
-    assert.ok(returning.events.some((event) => event.kind === 'pending' && event.revision > 0), 'the reconnected host hands back a fresh boundary');
+    assert.ok(returning.events.some((event) => event.kind === 'pending' && event.revision > previousBoundary), 'the reconnected host hands back a fresh boundary');
     // Releasing the subscription cancels any further recovery.
     const before = returning.connections();
     returning.release();
@@ -186,11 +187,8 @@ async function main(): Promise<void> {
     await delay(30);
     const snapshot = await boundary.service.conversation('process_test') as { revision: number; messages: { data: Array<Record<string, unknown>> } };
     const delta = boundary.events.filter((event) => event.kind === 'append').at(-1)!;
-    let rows = normaliseMessages(snapshot.messages.data);
-    if (delta.revision > snapshot.revision) rows = applyConversationStreamEvent(rows, delta);
     assert.equal(snapshot.messages.data[0]?.text, 'Hello B', 'the snapshot contains the append');
     assert.equal(delta.revision, snapshot.revision, 'the forwarded append shares the snapshot revision');
-    assert.equal(rows[0]?.text, 'Hello B', 'the buffered append is not replayed onto a snapshot that already contains it');
   } finally {
     await boundary.close();
   }

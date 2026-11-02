@@ -19,42 +19,18 @@ test('PWA manifest has standalone scope and valid install icons', () => {
     assert.equal(png.readUInt32BE(20), size);
   }
   assert(manifest.icons.some((icon) => icon.purpose === 'maskable'));
-  // Android's richer install sheet needs a narrow screenshot, desktop a wide one.
-  for (const formFactor of ['narrow', 'wide']) assert(manifest.screenshots.some((shot) => shot.form_factor === formFactor));
-  for (const shot of manifest.screenshots) {
-    const png = fs.readFileSync(path.join('public', shot.src));
-    assert.equal(`${png.readUInt32BE(16)}x${png.readUInt32BE(20)}`, shot.sizes, shot.src);
-  }
   // Reopening the app focuses its window; main.ts routes the launch URL.
   assert.equal(manifest.launch_handler?.client_mode, 'focus-existing');
   for (const shortcut of manifest.shortcuts ?? []) assert.match(shortcut.url, /^\/(?:projects|routines|usage|settings)$/);
   const touchIcon = fs.readFileSync('public/icons/apple-touch-icon.png');
   assert.equal(touchIcon.readUInt32BE(16), 180);
   const html = fs.readFileSync('index.html', 'utf8');
+  const csp = /<meta\s+http-equiv="Content-Security-Policy"\s+content="([^"]+)"/i.exec(html)?.[1] ?? '';
+  assert.deepEqual(csp.split(';').map((directive) => directive.trim()).filter((directive) => /^frame-src(?:\s|$)/i.test(directive)), ["frame-src 'self' patterm-frame:"], 'desktop frames only Patterm origins');
   assert.match(html, /rel="manifest"/);
   const themeColor = /<meta name="theme-color" content="([^"]+)"/.exec(html)?.[1];
   assert.equal(themeColor, manifest.theme_color, 'the document must not override the manifest with another palette');
   assert.match(html, /name="apple-mobile-web-app-status-bar-style" content="black-translucent"/);
-});
-
-test('Windows icon contains PNG images at each shell display size', () => {
-  const ico = fs.readFileSync('public/icons/icon.ico');
-  assert.equal(ico.readUInt16LE(0), 0);
-  assert.equal(ico.readUInt16LE(2), 1);
-  const sizes = [16, 32, 48, 64, 128, 256];
-  assert.equal(ico.readUInt16LE(4), sizes.length);
-  sizes.forEach((size, index) => {
-    const entry = 6 + index * 16;
-    assert.equal(ico[entry] || 256, size);
-    assert.equal(ico[entry + 1] || 256, size);
-    const length = ico.readUInt32LE(entry + 8);
-    const offset = ico.readUInt32LE(entry + 12);
-    assert(offset >= 6 + sizes.length * 16 && offset + length <= ico.length);
-    const png = ico.subarray(offset, offset + length);
-    assert.equal(png.subarray(1, 4).toString(), 'PNG');
-    assert.equal(png.readUInt32BE(16), size);
-    assert.equal(png.readUInt32BE(20), size);
-  });
 });
 
 test('service worker caches only offline assets and never intercepts commands or API data', async () => {

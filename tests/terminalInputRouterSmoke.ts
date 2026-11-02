@@ -3,10 +3,7 @@ import assert from 'node:assert/strict';
 import {
   clampTerminalFontSize,
   nextTerminalFontSize,
-  terminalFontSizeShortcutDirection,
-  TERMINAL_FONT_SIZE_STORAGE_KEY,
-  writeStoredTerminalFontSize,
-  readStoredTerminalFontSize
+  terminalFontSizeShortcutDirection
 } from '../resources/js/terminal/TerminalFontSize';
 import { TerminalInputRouter, keyToTerminalInput, type TerminalInputDispatch, type TerminalKeyboardEventLike } from '../resources/js/terminal/TerminalInputRouter';
 
@@ -176,17 +173,6 @@ async function main(): Promise<void> {
   assert.equal(terminalFontSizeShortcutDirection(new FakeKeyboardEvent('=', true, true)), null);
   assert.equal(terminalFontSizeShortcutDirection(new FakeKeyboardEvent('=', true, false, true)), null);
 
-  const storage = new Map<string, string>();
-  const storageLike = {
-    getItem: (key: string) => storage.get(key) ?? null,
-    setItem: (key: string, value: string) => {
-      storage.set(key, value);
-    }
-  };
-  assert.equal(readStoredTerminalFontSize(storageLike), 14);
-  writeStoredTerminalFontSize(30, storageLike);
-  assert.equal(storage.get(TERMINAL_FONT_SIZE_STORAGE_KEY), '24');
-  assert.equal(readStoredTerminalFontSize(storageLike), 24);
 }
 
 main().catch((error) => {

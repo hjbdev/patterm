@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { FinishedSubagentsAction } from '../app/Actions/FinishedSubagentsAction';
+import type { NotificationActions } from '../app/Actions/NotificationActions';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import type { HarnessLauncher, LaunchHarnessInput } from '../app/Services/HarnessLauncher';
@@ -45,6 +46,7 @@ async function main(): Promise<void> {
     } as unknown as HarnessLauncher;
 
     const inputs: Array<{ process_id: string; text: string }> = [];
+    const lifecycle: string[] = [];
     // Runs once while the next input awaits its acknowledgement; it may throw.
     let duringInput: (() => Promise<void>) | null = null;
     const terminal = {
@@ -54,13 +56,22 @@ async function main(): Promise<void> {
           const hook = duringInput;
           duringInput = null;
           if (hook) await hook();
+        } else if (method === 'terminal.process.stop' || method === 'terminal.process.close') {
+          const id = (params as { process_id: string }).process_id;
+          if (method === 'terminal.process.close') {
+            assert.equal((db.prepare('select status from processes where id = ?').get(id) as { status: string }).status, 'closed', 'persist closure before releasing terminal state');
+          }
+          lifecycle.push(`${method}:${id}`);
         }
         return { ok: true };
       }
     } as unknown as TerminalService;
     const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
     const timeline = new TimelineService(database);
-    const registry = createTestMcpRegistry({ tempDir: dir, database, timeline, terminal, workbench: new WorkbenchRepository(database), harnessLauncher });
+    const handled: string[] = [];
+    const reported: string[] = [];
+    const notifications = { userInput: (id: string) => { handled.push(id); }, reported: (id: string) => { reported.push(id); } } as unknown as NotificationActions;
+    const registry = createTestMcpRegistry({ tempDir: dir, database, timeline, terminal, workbench: new WorkbenchRepository(database), harnessLauncher, notifications });
     const as = (id: string) => ({ identity: `identity_${id}` });
 
     const childWho = await registry.callPublic('whoami', { include_tools: true }, as('root')) as { available_tools: string[] };
@@ -138,6 +149,24 @@ async function main(): Promise<void> {
     await registry.call('send_message', { target_process_id: 'parent', message: 'question' }, as('grandchild'));
     assert.equal(inputs.at(-1)?.process_id, 'child', 'parent alias resolves to the direct parent');
 
+    const inputStart = handled.length;
+    const reportStart = reported.length;
+    const timelineCount = () => (db.prepare('select count(*) as n from timeline_events').get() as { n: number }).n;
+    const beforeMessages = timelineCount();
+    const longMessage = 'x'.repeat(2_232);
+    await registry.call('send_message', { target_process_id: 'child', message: longMessage }, as('root'));
+    assert.deepEqual(inputs.at(-1), { process_id: 'child', kind: 'paste', text: `[message from root]\n${longMessage}`, submit: true });
+    await registry.call('send_message', { target_process_id: 'parent', message: 'child reporting in' }, as('child'));
+    assert.deepEqual(inputs.at(-1), { process_id: 'root', kind: 'paste', text: '[message from child]\nchild reporting in', submit: true });
+    assert.deepEqual(handled.slice(inputStart), ['child'], 'only the parent message clears the child\'s blocked episode');
+    assert.equal(timelineCount(), beforeMessages, 'messages remain ephemeral');
+    const noFindings = await registry.call('report_to_parent', { status: 'no_findings', title: 'Review complete', body: 'No findings.' }, as('child')) as { ok: boolean; event_id: string };
+    assert.equal(noFindings.ok, true);
+    assert.deepEqual(reported.slice(reportStart), ['child'], 'a report clears the reporter\'s turn-ended notice');
+    assert.deepEqual(inputs.at(-1), { process_id: 'root', kind: 'paste', text: '[report from child: no_findings]\nReview complete\nNo findings.', submit: true });
+    const reportEvent = db.prepare('select event_type, process_id, session_id, metadata from timeline_events where id = ?').get(noFindings.event_id) as { event_type: string; process_id: string; session_id: string; metadata: string };
+    assert.deepEqual([reportEvent.event_type, reportEvent.process_id, reportEvent.session_id, JSON.parse(reportEvent.metadata).parent_process_id], ['agent.reported', 'child', 'session_child', 'root']);
+
     // A reported, idle sub-agent with a running child is not offered for closing.
     await registry.call('report_to_parent', { status: 'completed', body: 'Done.' }, as('child'));
     db.prepare(`update processes set status = 'exited' where id = 'grandchild'`).run();
@@ -161,11 +190,19 @@ async function main(): Promise<void> {
     assert.deepEqual([launches.at(-1)?.parent_process_id, launches.at(-1)?.project_id], ['helper', 'p']);
     await assert.rejects(registry.call('spawn_agent', { agent: 'codex', project_id: 'other' }, as('helper')), /outside the current caller scope/, 'only the assistant itself chooses projects');
 
-    // Closing the root closes every level below it.
+    // Closing the root closes every level, including exited children, but keeps resume IDs.
+    db.prepare("update sessions set resume_id = 'native-close-resume' where process_id = 'root'").run();
+    db.prepare(`insert into processes (id, project_id, parent_process_id, kind, name, status, created_at, updated_at)
+      values ('old_child', 'p', 'root', 'agent', 'previous runtime', 'exited', ?, ?)`).run(now, now);
     const closed = await registry.call('close_process', { process_id: 'root' }) as { closed: string[] };
-    assert.deepEqual(closed.closed, ['root', 'child', 'grandchild', 'great_grandchild']);
-    const statuses = db.prepare(`select id, status from processes where id in ('root','child','grandchild','great_grandchild') order by id`).all() as Array<{ id: string; status: string }>;
+    assert.deepEqual(closed.closed, ['root', 'child', 'old_child', 'grandchild', 'great_grandchild']);
+    const statuses = db.prepare(`select id, status from processes where id in ('root','child','old_child','grandchild','great_grandchild') order by id`).all() as Array<{ id: string; status: string }>;
     assert.ok(statuses.every((row) => row.status === 'closed'), 'every descendant is closed');
+    assert.equal((db.prepare("select count(*) as count from sessions where process_id in ('root','child','grandchild','great_grandchild') and exited_at is not null").get() as { count: number }).count, 4);
+    assert.equal((db.prepare("select resume_id from sessions where process_id = 'root'").get() as { resume_id: string }).resume_id, 'native-close-resume');
+    assert.deepEqual(lifecycle, ['stop', 'close'].flatMap(action => ['root', 'child', 'grandchild', 'great_grandchild'].map(id => `terminal.process.${action}:${id}`)), 'live processes stop before terminal state is released');
+    await registry.call('close_process', { process_id: 'root' });
+    assert.equal(lifecycle.length, 8, 'repeated close does not stop or release runtimes again');
     console.log('nested agents smoke ok');
   } finally {
     database.dispose();

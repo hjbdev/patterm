@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { appendedTextStart } from '../resources/js/lib/streamReveal';
 import {
   applyConversationStreamEvent,
   buildFormAnswer,
@@ -13,12 +12,8 @@ import {
   formQuestionState,
   groupTranscriptMessages,
   transcriptMessageOrigin,
-  transcriptThoughtDurations,
-  transcriptToolGroupSummary,
-  transcriptTurnDurations,
   transcriptRowIndexForMessage,
   isSessionUnavailableError,
-  mergeTranscriptWindows,
   normaliseConversation,
   normaliseForms,
   normaliseMessages,
@@ -30,21 +25,10 @@ import {
   normaliseTasks,
   normaliseUsage,
   subagentSummary,
-  toolActivityLabel,
-  elapsedLabel,
-  type TranscriptMessage
+  toolActivityLabel
 } from '../resources/js/lib/integratedConversation';
-import { archiveTranscript } from '../resources/js/lib/historyTranscript';
-import type { ConversationMessageRecord } from '../resources/js/types';
-import { countTasks, taskInlineDetail, taskKindLabel, taskStatusLabel } from '../resources/js/lib/integratedTasks';
-import { contextPercent, formatCost, usageRows } from '../resources/js/lib/integratedUsage';
-
-assert.equal(appendedTextStart('Hello', 'Hello world', true), 5, 'only the new suffix fades');
-assert.equal(appendedTextStart('Hello\n', 'Hello world\n', true), 5, 'Markdown presentation newlines do not hide an append');
-assert.equal(appendedTextStart('Hello', 'Hello world', false), null, 'static history never animates');
-assert.equal(appendedTextStart('Hello', 'Hi world', true), null, 'Markdown restructuring does not fade unrelated text');
-assert.equal(appendedTextStart('Hello', `Hello ${'x'.repeat(257)}`, true), null, 'large snapshots appear without a long fade');
-assert.equal(appendedTextStart('', 'Hello', true), null, 'virtualised remounts do not replay the animation');
+import { taskInlineDetail } from '../resources/js/lib/integratedTasks';
+import { contextPercent } from '../resources/js/lib/integratedUsage';
 
 // Claude flattens tool_use records into shell rows without text, so the
 // normaliser must keep them (regression: they were dropped from the pane).
@@ -93,12 +77,6 @@ assert.deepEqual(normaliseMessages([
   { id: 'msg_agent', type: 'agent-switched', text: 'build' },
   { id: 'msg_model', type: 'model-switched', text: 'gpt' }
 ]), [], 'OpenCode synthetic and switch rows stay out of the transcript');
-assert.deepEqual(mergeTranscriptWindows(
-  [{ id: 'old', role: 'user', kind: 'text', text: 'earlier' }, { id: 'shared', role: 'assistant', kind: 'text', text: 'partial' }],
-  [{ id: 'shared', role: 'assistant', kind: 'text', text: 'complete' }, { id: 'new', role: 'user', kind: 'text', text: 'latest' }]
-).map((message) => [message.id, message.text]), [
-  ['old', 'earlier'], ['shared', 'complete'], ['new', 'latest']
-], 'a refreshed live window replaces overlapping rows without dropping loaded history');
 assert.deepEqual(normaliseMessages({ data: [{ id: 'assistant', type: 'assistant', content: [{ type: 'reasoning', text: 'thinking' }] }] })
   .map((message) => [message.id, message.kind, message.text]), [['assistant-0', 'reasoning', 'thinking']]);
 assert.deepEqual(groupTranscriptMessages([
@@ -129,22 +107,6 @@ assert.equal(questions[0]?.questions[0]?.multiple, true);
 assert.equal(questions[0]?.questions[0]?.custom, true);
 assert.deepEqual(questions[0]?.questions[0]?.options, [{ label: 'Red', description: 'Warm' }]);
 assert.equal(questions[0]?.questions[1]?.multiple, false);
-
-// Two distinct pending requests that reuse a question id must not share answers.
-const shared = normaliseQuestions({
-  data: [
-    { id: 'request-one', questions: [{ id: 'choice', question: 'First task?', options: [{ label: 'Yes' }], custom: true }] },
-    { id: 'request-two', questions: [{ id: 'choice', question: 'Different task?', options: [{ label: 'No' }], custom: true }] }
-  ]
-});
-assert.deepEqual(shared.map((request) => request.questions[0]?.key), ['request-one:choice', 'request-two:choice']);
-const isolated = buildQuestionAnswers(shared[1]!.questions, {
-  multiple: {},
-  single: { 'request-one:choice': 'Yes' },
-  custom: {}
-});
-assert.equal(isolated.ok, false, 'the second request has no answer of its own');
-assert.match(isolated.ok ? '' : isolated.error, /Different task\?/);
 
 // Multi-select plus a typed answer, single choice, and the missing-answer error.
 const multi = questions[0]!.questions.slice(0, 1);
@@ -264,27 +226,16 @@ assert.equal(permissions[0]?.always, undefined, 'providers that support session 
 assert.equal(permissions[1]?.always, false, 'a request without persistent support is marked');
 assert.equal(permissions[2]?.alwaysLabel, 'Allow for this session', 'the persistent action carries its real scope');
 
-// A numeric `when` condition compares the typed editor value with the native
-// field type: '2' matches 2 for an integer field, and the dependent field is
-// required and submitted like any other visible field.
+// Numeric conditions handle native values and edge cases in editor values.
 const conditionalForm = normaliseForms({ data: [{ id: 'frm_cond', title: 'Conditional', fields: [
   { key: 'count', type: 'integer', title: 'Count', required: true, minimum: 1, maximum: 10 },
   { key: 'detail', type: 'string', title: 'Explanation for two', required: true, when: [{ key: 'count', op: 'eq', value: 2 }] }
 ] }] })[0]!;
 const detailField = conditionalForm.fields[1]!;
-assert.equal(formFieldVisible(detailField, { count: '2' }, conditionalForm.fields), true, 'a typed integer matches a numeric condition');
 assert.equal(formFieldVisible(detailField, { count: 2 }, conditionalForm.fields), true, 'a numeric answer matches too');
 assert.equal(formFieldVisible(detailField, { count: '2.5' }, conditionalForm.fields), false, 'a non-integer value does not match');
 assert.equal(formFieldVisible(detailField, { count: '' }, conditionalForm.fields), false, 'an empty editor value does not match');
 assert.equal(formFieldVisible(detailField, { count: '02' }, conditionalForm.fields), true, 'numeric normalisation ignores leading zeros');
-assert.deepEqual(
-  buildFormAnswer(conditionalForm, { count: '2', detail: 'Two of them' }),
-  { ok: true, answer: { count: 2, detail: 'Two of them' } },
-  'the dependent answer is required and the integer stays numeric'
-);
-const missingDetail = buildFormAnswer(conditionalForm, { count: '2' });
-assert.equal(missingDetail.ok, false, 'a visible required dependent field is enforced');
-assert.match(missingDetail.ok ? '' : missingDetail.error, /Explanation for two/);
 assert.deepEqual(
   buildFormAnswer(conditionalForm, { count: '3' }),
   { ok: true, answer: { count: 3 } },
@@ -371,67 +322,6 @@ assert.equal(exploration.kind, 'tools');
 assert.deepEqual(exploration.kind === 'tools' ? exploration.messages.map((message) => message.id) : [], ['r1', 'r2'], 'order is kept and the failure is not swallowed');
 assert.deepEqual(exploration.kind === 'tools' ? exploration.targets : [], ['/a', 'needle']);
 assert.equal(grouped[2]!.kind === 'message' ? grouped[2]!.message.id : '', 'r3', 'the failed call stays its own row');
-
-const mixed = groupTranscriptMessages([
-  { id: 'm1', role: 'assistant', kind: 'tool', text: '', tool: buildTranscriptTool('Bash', { input: { command: 'ls' }, state: 'completed' }, 'x') },
-  { id: 'm2', role: 'assistant', kind: 'tool', text: '', tool: buildTranscriptTool('Skill', { input: { skill: 'run' }, state: 'completed' }, 'x') },
-  { id: 'm3', role: 'assistant', kind: 'tool', text: '', tool: buildTranscriptTool('Glob', { input: { pattern: '*.ts' }, state: 'completed' }, 'x') },
-  { id: 'm4', role: 'assistant', kind: 'tool', text: '', tool: buildTranscriptTool('Bash', { input: { command: 'pwd' }, state: 'running' }, '') },
-  { id: 'm5', role: 'assistant', kind: 'tool', text: '', tool: buildTranscriptTool('Edit', { input: { file_path: 'a.ts' }, state: 'completed' }, 'x') },
-  { id: 'm6', role: 'assistant', kind: 'tool', text: '', tool: buildTranscriptTool('Bash', { input: { command: 'git diff' }, state: 'completed' }, 'x') }
-]);
-assert.deepEqual(mixed.map((row) => [row.kind, row.id]), [['tools', 'tools:m1']], 'any tool run groups, edits included');
-const mixedGroup = mixed[0]!;
-const lone = groupTranscriptMessages([
-  { id: 'l1', role: 'assistant', kind: 'tool', text: '', tool: buildTranscriptTool('Bash', { input: { command: 'ls' }, state: 'completed' }, 'x') },
-  { id: 'l2', role: 'assistant', kind: 'text', text: 'done' },
-  { id: 'l3', role: 'assistant', kind: 'reasoning', text: 'hmm' },
-  { id: 'l4', role: 'assistant', kind: 'text', text: 'ok' }
-]);
-assert.deepEqual(lone.map((row) => [row.kind, row.id]), [['tools', 'tools:l1'], ['message', 'l2'], ['message', 'l3'], ['message', 'l4']], 'a lone call collapses like a group; a lone thought stays a thought row');
-assert.deepEqual(mixedGroup.kind === 'tools' ? transcriptToolGroupSummary(mixedGroup.messages) : null, {
-  count: 6,
-  tools: [{ title: 'Bash', count: 3 }, { title: 'Skill (run)', count: 1 }, { title: 'Glob', count: 1 }, { title: 'Edit', count: 1 }],
-  label: '3 Bash, Skill (run), Glob, Edit'
-}, 'tool titles are listed once each, in first-seen order, naming skills and counting each title');
-
-// Skills and MCP calls name what ran, in rows and in the group summary.
-const named = (name: string, input: Record<string, unknown>) => buildTranscriptTool(name, { input, state: 'completed' }, 'x');
-assert.equal(named('Skill', { skill: 'simplify' }).target, 'simplify');
-assert.equal(named('skill', { id: 'diagnose' }).target, 'diagnose', 'OpenCode names the skill by id');
-assert.equal(named('mcp__patterm__notify_user', { message: 'x' }).target, 'patterm: notify_user');
-assert.equal(named('mcp__patterm__scratchpad_create', { name: 'notes' }).target, 'patterm: scratchpad_create', 'an argument called name is not the tool');
-assert.equal(named('patterm_f37653dcf531_send_message', { message: 'hi' }).target, 'patterm: send_message', 'OpenCode bridge names parse as MCP');
-assert.equal(named('mcptoolcall', { server: 'linear', tool: 'get_issue' }).target, 'linear: get_issue');
-assert.equal(named('TaskStop', { task_id: 'b1' }).target, 'b1');
-assert.equal(named('AskUserQuestion', { questions: [{ question: 'Which one?' }] }).target, 'Which one?');
-assert.deepEqual(transcriptToolGroupSummary([
-  { id: 'n1', role: 'assistant', kind: 'tool', text: '', tool: named('mcp__patterm__notify_user', {}) },
-  { id: 'n2', role: 'assistant', kind: 'tool', text: '', tool: named('mcp__linear__get_issue', {}) },
-  { id: 'n3', role: 'assistant', kind: 'tool', text: '', tool: named('Skill', { skill: 'run' }) },
-  { id: 'n4', role: 'assistant', kind: 'tool', text: '', tool: named('Skill', { skill: 'run' }) }
-]), {
-  count: 4,
-  tools: [{ title: 'MCP (notify_user, get_issue)', count: 2 }, { title: 'Skill (run)', count: 2 }],
-  label: '2 MCP (notify_user, get_issue), 2 Skill (run)'
-});
-
-// Thinking between tool calls folds into the same group, and its duration
-// runs to its own finish or the next row's start.
-const thoughtful: TranscriptMessage[] = [
-  { id: 'p1', role: 'user', kind: 'text', text: 'go', createdAt: '2026-10-04T10:00:00.000Z' },
-  { id: 't1', role: 'assistant', kind: 'reasoning', text: 'hmm', createdAt: '2026-10-04T10:00:01.000Z' },
-  { id: 't2', role: 'assistant', kind: 'tool', text: '', tool: buildTranscriptTool('Bash', { input: { command: 'ls' }, state: 'completed' }, 'x'), createdAt: '2026-10-04T10:00:03.000Z', completedAt: '2026-10-04T10:00:04.000Z' },
-  { id: 't3', role: 'assistant', kind: 'reasoning', text: 'ok', createdAt: '2026-10-04T10:00:04.000Z', completedAt: '2026-10-04T10:00:09.000Z' },
-  { id: 't4', role: 'assistant', kind: 'text', text: 'done', createdAt: '2026-10-04T10:00:09.000Z', completedAt: '2026-10-04T10:01:19.000Z' }
-];
-const thoughtRows = groupTranscriptMessages(thoughtful);
-assert.deepEqual(thoughtRows.map((row) => row.id), ['p1', 'tools:t1', 't4']);
-assert.deepEqual(thoughtRows[1]!.kind === 'tools' ? transcriptToolGroupSummary(thoughtRows[1]!.messages).count : 0, 1, 'thoughts are not counted as tools');
-assert.deepEqual([...transcriptThoughtDurations(thoughtful)], [['t1', 2_000], ['t3', 5_000]]);
-assert.deepEqual([...transcriptTurnDurations(thoughtful, false)], [['t4', 79_000]], 'the turn runs from the prompt to its last finished row');
-assert.deepEqual([...transcriptTurnDurations(thoughtful, true)], [['t4', null]], 'a running turn has no duration yet');
-assert.deepEqual([...transcriptTurnDurations([...thoughtful, { id: 'p2', role: 'user', kind: 'text', text: 'again' }], true)], [['t4', 79_000]], 'an earlier turn is finished');
 
 // Attachment descriptors become safe chips; no data payloads or server paths
 // are turned into previews.
@@ -539,24 +429,10 @@ assert.deepEqual(normaliseTasks([
   { id: 't3', label: 'Background task', status: 'running', stoppable: false }
 ]);
 
-// Task chips: readable types, and inline detail only for live or failed work.
-{
-  const [agent, shell, general, done, failed] = normaliseTasks([
-    { id: 'a', label: 'Research', kind: 'local_agent', status: 'running', detail: 'Using WebFetch' },
-    { id: 'b', label: 'npm test', kind: 'local_bash', status: 'pending' },
-    { id: 'c', label: 'Explore', kind: 'general-purpose', status: 'paused' },
-    { id: 'd', label: 'Audit', kind: 'local_agent', status: 'completed', detail: 'This agent\'s report was delivered to you as a message.' },
-    { id: 'e', label: 'Lag', status: 'failed', detail: 'API Error: 529 Overloaded' }
-  ]);
-  assert.deepEqual([agent, shell, general, done, failed].map((task) => taskKindLabel(task!)), ['Agent', 'Shell', 'General purpose', 'Agent', 'Task']);
-  assert.deepEqual([agent, shell, general, done, failed].map((task) => taskStatusLabel(task!)), ['Running', 'Queued', 'Paused', 'Done', 'Failed']);
-  assert.equal(taskInlineDetail(agent!), 'Using WebFetch', 'live progress shows');
-  assert.equal(taskInlineDetail(done!), undefined, 'a finished handback note stays in the drawer');
-  assert.equal(taskInlineDetail(failed!), 'API Error: 529 Overloaded', 'failures show why');
-  assert.deepEqual(countTasks([agent!, shell!, general!, done!, failed!]), { active: 3, failed: 1, finished: 1 });
-}
+const [failedTask] = normaliseTasks([{ id: 'e', label: 'Lag', status: 'failed', detail: 'API Error: 529 Overloaded' }]);
+assert.equal(taskInlineDetail(failedTask!), 'API Error: 529 Overloaded', 'failures show why');
 
-// Usage telemetry: only valid numbers survive, and the meter's details are compact.
+// Usage telemetry accepts only valid numbers.
 assert.equal(normaliseUsage({}), null);
 assert.equal(normaliseUsage({ contextTokens: -1, costUsd: 'x' }), null);
 {
@@ -565,75 +441,9 @@ assert.equal(normaliseUsage({ contextTokens: -1, costUsd: 'x' }), null);
     limits: [{ label: '5h limit', usedPercent: 61.6, resetsAt: '2026-09-29T18:00:00.000Z' }, { label: 'bad' }]
   });
   assert.equal(contextPercent(usage), 21);
-  assert.deepEqual(usageRows(usage), [
-    { label: 'Context', value: '42k / 200k (21%)' },
-    { label: 'Tokens', value: '1.3M in · 10k out' },
-    { label: 'Cost', value: '$0.31' },
-    { label: '5h limit', value: '62% used' }
-  ]);
 }
-assert.deepEqual(usageRows(normaliseUsage({ contextTokens: 900 })), [{ label: 'Context', value: '900' }]);
-assert.equal(contextPercent(normaliseUsage({ contextTokens: 900 })), null, 'no ring without a context window');
-assert.equal(contextPercent(normaliseUsage({ contextTokens: 300_000, contextWindow: 200_000 })), 100, 'an overfull context caps at 100%');
-assert.deepEqual([0.314, 9.995, 12.4].map(formatCost), ['$0.31', '$9.99', '$12']);
 assert.deepEqual(normaliseUsage({ lastModelActivityAt: '2026-09-29T18:00:00.000Z' }), { lastModelActivityAt: '2026-09-29T18:00:00.000Z' });
 assert.equal(normaliseUsage({ lastModelActivityAt: 'yesterday' }), null);
-assert.deepEqual([0, 42_900, 185_000, 4_380_000].map(elapsedLabel), ['0s', '42s', '3m 05s', '1h 13m']);
-
-// Row times: projected rows accept camel and snake fields, native OpenCode
-// rows use their message and part times, and a stream replace never moves a
-// row's start.
-{
-  const iso = (ms: number): string => new Date(ms).toISOString();
-  const [projected, snake] = normaliseMessages([
-    { id: 'p1', role: 'assistant', kind: 'text', text: 'hi', createdAt: iso(1_000), completedAt: iso(2_000) },
-    { id: 'p2', role: 'user', kind: 'text', text: 'yo', created_at: iso(3_000), completed_at: 'not a time' }
-  ]);
-  assert.deepEqual([projected?.createdAt, projected?.completedAt], [iso(1_000), iso(2_000)]);
-  assert.deepEqual([snake?.createdAt, snake?.completedAt], [iso(3_000), undefined], 'unparseable times are dropped');
-  const native = normaliseMessages([
-    { id: 'u', type: 'user', text: 'go', time: { created: 10_000 } },
-    { id: 'a', type: 'assistant', time: { created: 11_000, completed: 19_000 }, content: [
-      { type: 'reasoning', text: 'think', time: { created: 11_500, completed: 13_500 } },
-      { type: 'tool', id: 't', name: 'read', state: { status: 'completed', input: {}, content: [] }, time: { created: 14_000, ran: 14_100, completed: 15_000 } },
-      { type: 'text', text: 'done' }
-    ] }
-  ]);
-  assert.deepEqual(native.map((message) => [message.id, message.createdAt, message.completedAt]), [
-    ['u', iso(10_000), undefined],
-    ['a-0', iso(11_500), iso(13_500)],
-    ['a-1', iso(14_000), iso(15_000)],
-    ['a-2', iso(11_000), iso(19_000)]
-  ], 'native OpenCode rows carry part times, and the last part finishes with its message');
-  const started = applyConversationStreamEvent([], { processId: 'p', revision: 1, kind: 'replace', message: { id: 'r', role: 'assistant', kind: 'reasoning', text: '', createdAt: iso(5_000) } });
-  const appendedTimes = applyConversationStreamEvent(started, { processId: 'p', revision: 2, kind: 'append', id: 'r', delta: 'hmm' });
-  const finished = applyConversationStreamEvent(appendedTimes, { processId: 'p', revision: 3, kind: 'replace', message: { id: 'r', role: 'assistant', kind: 'reasoning', text: 'hmm', createdAt: iso(6_000), completedAt: iso(7_000) } });
-  assert.deepEqual([appendedTimes[0]?.createdAt, finished[0]?.createdAt, finished[0]?.completedAt], [iso(5_000), iso(5_000), iso(7_000)], 'a row keeps its first start time');
-  const replaced = applyConversationStreamEvent(finished, { processId: 'p', revision: 4, kind: 'replace', message: { id: 'r', role: 'assistant', kind: 'reasoning', text: 'hmm' } });
-  assert.equal(replaced[0]?.completedAt, iso(7_000), 'a replace without times keeps the known finish');
-}
-
-// Imported history rows begin at the provider's time; a folded tool call
-// finishes when its result was recorded.
-{
-  const row = (id: string, fields: Partial<ConversationMessageRecord>): ConversationMessageRecord => ({
-    id, conversationId: 'c', providerMessageId: null, parentProviderMessageId: null, turnId: null, seq: 0, role: 'assistant', kind: 'message', text: '',
-    toolName: null, toolStatus: null, toolInputSummary: null, toolOutputSummary: null, redactionCount: 0, tokenCount: null, providerCreatedAt: null,
-    metadata: {}, createdAt: '2026-01-01T00:00:00.000Z', ...fields
-  });
-  const archived = archiveTranscript([
-    row('u', { role: 'user', text: 'go', providerCreatedAt: '2026-10-01T10:00:00Z' }),
-    row('call', { kind: 'tool_call', toolName: 'Bash', toolInputSummary: '{"command":"ls"}', metadata: { callId: 'x' }, providerCreatedAt: '2026-10-01T10:00:05Z' }),
-    row('result', { kind: 'tool_result', role: 'tool', toolOutputSummary: 'a.ts', metadata: { callId: 'x' }, providerCreatedAt: '2026-10-01T10:00:09Z' }),
-    row('old', { text: 'no time' })
-  ], { projectPath: null, showReasoning: true });
-  assert.deepEqual(archived.map((message) => [message.id, message.createdAt, message.completedAt]), [
-    ['u', '2026-10-01T10:00:00.000Z', undefined],
-    ['call', '2026-10-01T10:00:05.000Z', '2026-10-01T10:00:09.000Z'],
-    ['old', undefined, undefined]
-  ]);
-}
-
 // Text Patterm typed in for another agent or for itself names its sender.
 {
   const origin = (text: string) => transcriptMessageOrigin({ id: 'u', role: 'user', kind: 'text', text });

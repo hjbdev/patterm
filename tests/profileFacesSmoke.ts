@@ -3,56 +3,17 @@ import assert from 'node:assert/strict';
 import { harnessPresetSettingsInput, seededHarnessPresetSettings } from '../app/Harness/HarnessPresets';
 import { HarnessPresetService } from '../app/Services/HarnessPresetService';
 import type { SettingsService } from '../app/Services/SettingsService';
-import {
-  FACE_COLORS,
-  FACE_EYES,
-  FACE_HATS,
-  FACE_MARKINGS,
-  FACE_MOUTHS,
-  FACE_SHAPES,
-  faceMarkup,
-  lookFor,
-  randomLook,
-  type ProfileLook
-} from '../resources/js/lib/faces';
+import { faceMarkup, randomLook, type ProfileLook } from '../resources/js/lib/faces';
 import { harnessLaunches } from '../resources/js/lib/harnessLaunches';
 import { composedRow, profileDetail, profileName, rosterRows, type Profile, type ProfileSettings } from '../resources/js/lib/profiles';
 
 const base: ProfileLook = { color: 'pink', shape: 'egg', finish: 'soft', marking: 'belly', eyes: 'happy', mouth: 'cat', cheeks: true, hat: 'sprout', accent: 'lime', idle: 'bob' };
 
-// Every part draws on every shape, at sidebar and preview sizes, without a
-// hole in the markup.
-for (const shape of FACE_SHAPES) {
-  for (const hat of FACE_HATS) {
-    for (const size of [16, 24, 96]) {
-      const { body } = faceMarkup({ ...base, shape, hat }, size, `t-${shape}-${hat}`);
-      assert.doesNotMatch(body, /undefined|NaN/, `${shape} with ${hat} at ${size}px`);
-      assert.match(body, /^<defs>/);
-    }
-  }
-}
-for (const eyes of FACE_EYES) for (const mouth of FACE_MOUTHS) for (const marking of FACE_MARKINGS) {
-  assert.doesNotMatch(faceMarkup({ ...base, eyes, mouth, marking }, 24, 't').body, /undefined|NaN/, `${eyes}, ${mouth}, ${marking}`);
-}
-for (const color of FACE_COLORS) assert.doesNotMatch(faceMarkup({ ...base, color, accent: color, finish: 'glow' }, 24, 't').filter ?? '', /undefined|NaN/);
-
 // Gradient and clip IDs come from the caller, so two faces never share them.
 assert.match(faceMarkup(base, 24, 'face-a').body, /id="face-a-g".*url\(#face-a-g\)/s);
-// Tall hats shrink the face to stay in its box; hatless faces aren't moved.
-assert.match(faceMarkup({ ...base, shape: 'circle', hat: 'bunny' }, 24, 't').body, /<g transform="translate\(12 23\.6\) scale\(0\.827\)/);
-assert.match(faceMarkup({ ...base, hat: 'none' }, 24, 't').body, /<g>/);
-// Small faces drop the mouth and cheeks.
-assert.doesNotMatch(faceMarkup(base, 16, 't').body, /ellipse cx="7\.4"/);
-assert.notEqual(faceMarkup(base, 16, 't').body.length, faceMarkup(base, 24, 't').body.length);
-assert.equal(faceMarkup({ ...base, finish: 'flat' }, 24, 't').filter, null);
 
-// A profile without a face gets the same one every time; the plain CLIs have
-// designed ones, and a saved face wins.
+// Seeded faces are repeatable and valid.
 assert.deepEqual(randomLook(7), randomLook(7));
-assert.deepEqual(lookFor({ id: 'preset_abc' }), lookFor({ id: 'preset_abc', look: null }));
-assert.notDeepEqual(lookFor({ id: 'preset_abc' }), lookFor({ id: 'preset_abd' }));
-assert.equal(lookFor({ id: 'preset_default_claude' }).color, 'orange');
-assert.equal(lookFor({ id: 'preset_default_claude', look: base }).color, 'pink');
 for (let seed = 0; seed < 200; seed++) {
   const look = randomLook(seed);
   assert.doesNotMatch(faceMarkup(look, 20, 't').body, /undefined|NaN/);

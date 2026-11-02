@@ -27,7 +27,6 @@ export function createTestMcpRegistry(input: {
   workbench: WorkbenchRepository;
   harnessDiscovery?: HarnessDiscoveryService;
   harnessLauncher?: HarnessLauncher;
-  processLauncher?: ProcessLauncher;
   worktreeService?: WorktreeService;
   diffService?: DiffService;
   searchService?: SearchService;
@@ -60,7 +59,7 @@ export function createTestMcpRegistry(input: {
       socketPath: '/tmp/mcp.sock',
       runtimeDir: path.join(input.tempDir, 'harness')
     });
-  const processLauncher = input.processLauncher ?? new ProcessLauncher({ database: input.database, timeline: input.timeline, terminal: input.terminal, workbench: input.workbench });
+  const processLauncher = new ProcessLauncher({ database: input.database, timeline: input.timeline, terminal: input.terminal, workbench: input.workbench });
   const worktreeService = input.worktreeService ?? new WorktreeService({ database: input.database, timeline: input.timeline, workbench: input.workbench });
   const diffService = input.diffService ?? new DiffService({ worktrees: worktreeService });
   const searchService = input.searchService ?? new SearchService(input.database);

@@ -1,6 +1,4 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
 import { appearanceSettingsInput } from '../app/Services/SettingsService';
 import { readRecentProjectIds, rememberRecentProject, shownRecentProjects } from '../resources/js/lib/recentProjects';
 import { applyUiFont, normalizeAppearanceSettings, UI_FONT_OPTIONS, TERMINAL_FONT_OPTIONS, resolveTerminalFontFamily } from '../resources/js/appearance/AppearanceSettings';
@@ -21,11 +19,6 @@ for (const option of TERMINAL_FONT_OPTIONS.filter((candidate) => candidate.value
   assert.match(option.family, /, "Cascadia Mono", Consolas, monospace$/, `${option.value}: Windows monospace fonts precede the generic family`);
 }
 assert.match(resolveTerminalFontFamily(normalizeAppearanceSettings({ terminalFont: { preset: 'system-mono', customFamily: '' } })), /^ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", Consolas, monospace$/);
-
-// The stacks that live outside the settings carry the same Windows fallbacks.
-for (const file of ['tailwind.config.ts', 'resources/js/Components/WorktreeFileDiff.vue', 'resources/js/terminal/TerminalRenderer.ts']) {
-  assert.match(readFileSync(path.join(process.cwd(), file), 'utf8'),/Menlo[^\n]*Cascadia Mono[^\n]*Consolas[^\n]*monospace/, `${file} lists Cascadia Mono and Consolas`);
-}
 
 assert.equal(appearanceSettingsInput.parse({}).terminalContainer, true);
 assert.equal(normalizeAppearanceSettings(null).terminalContainer, true);

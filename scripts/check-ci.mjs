@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Run the same checks as `pnpm check`, preparing each build once and using
-// Node's process-isolated test runner for the independent smoke test files.
+// Run checks or a composed suite, preparing each build once and using Node's
+// process-isolated test runner for the independent smoke test files.
 import { execSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 
@@ -29,10 +29,12 @@ function collect(command) {
   }
 }
 
-collect(scripts.check);
-if (!files.size) throw new Error('No smoke test files found in pnpm check');
+const selected = process.argv[2] ?? 'check:all';
+if (!scripts[selected]) throw new Error(`Missing check script: ${selected}`);
+collect(scripts[selected]);
+if (!files.size) throw new Error(`No smoke test files found in ${selected}`);
 try {
-  execSync([...preparation].join(' && '), { stdio: 'inherit' });
+  if (preparation.size) execSync([...preparation].join(' && '), { stdio: 'inherit' });
 } catch (error) {
   process.exit(error.status ?? 1);
 }

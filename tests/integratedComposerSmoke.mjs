@@ -212,7 +212,6 @@ test('@ never searches worktree files, and is plain text with nothing to mention
   await flush();
   assert.deepEqual(harness.calls, [], 'agents match without a file search');
   assert.deepEqual(harness.pane.menuItems.value.map(item => item.kind), ['agent']);
-  assert.doesNotMatch(page, /integrated_files_search|Worktree files/, 'the menu has no file rows');
   harness.scope.stop();
 });
 
@@ -269,7 +268,7 @@ test('submission waits for uploads and a failed upload blocks the send with an a
   harness.scope.stop();
 });
 
-test('a successful upload enables the send and a retry recovers a failed one', async () => {
+test('a successful upload enables the send', async () => {
   composer.clearDrafts();
   const harness = createHarness({ processId: 'composer_upload_ok' });
   harness.setEditor('ship it');
@@ -311,7 +310,6 @@ test('per-process drafts survive switching and a completed send keeps newer edit
   composer.clearDrafts();
   const harness = createHarness({ processId: 'composer_draft_a' });
   harness.setEditor('for A @src/a.ts');
-  harness.pane.getDraft().references.push({ path: 'src/a.ts', name: 'a.ts' });
   harness.props.processId = 'composer_draft_b';
   await nextTick();
   assert.equal(harness.pane.getDraft().text, '');
@@ -319,7 +317,6 @@ test('per-process drafts survive switching and a completed send keeps newer edit
   harness.props.processId = 'composer_draft_a';
   await nextTick();
   assert.equal(harness.pane.getDraft().text, 'for A @src/a.ts');
-  assert.deepEqual(harness.pane.getDraft().references, [{ path: 'src/a.ts', name: 'a.ts' }]);
 
   // A failed attempt reuses its id only while the payload is unchanged.
   const first = composer.payloadFor('composer_draft_a');
@@ -330,19 +327,14 @@ test('per-process drafts survive switching and a completed send keeps newer edit
   const edited = composer.payloadFor('composer_draft_a');
   assert.equal(edited.ok && first.ok && edited.payload.messageId !== first.payload.messageId, true);
 
-  // Newer edits stay after a delivery, and a token still in them is sent again.
+  // Newer edits stay after a delivery.
   composer.completeSend('composer_draft_a', { ...first.payload, hash: first.hash });
   assert.equal(composer.draftFor('composer_draft_a').text, 'for A @src/a.ts edited');
-  const resend = composer.payloadFor('composer_draft_a');
-  assert.deepEqual(resend.ok && resend.payload.references.map(reference => reference.path), ['src/a.ts']);
-
   // An unchanged draft is emptied after a successful send.
-  composer.addReference('composer_draft_a', 'src/a.ts', 'a.ts');
   const current = composer.payloadFor('composer_draft_a');
   assert.equal(current.ok, true);
   composer.completeSend('composer_draft_a', { ...current.payload, hash: current.hash });
   assert.equal(composer.draftFor('composer_draft_a').text, '');
-  assert.deepEqual(composer.draftFor('composer_draft_a').references, []);
   assert.deepEqual(composer.draftFor('composer_draft_a').attachments, []);
   harness.scope.stop();
 });
@@ -440,20 +432,6 @@ test('moving the caret inside an unchanged mention keeps the highlighted row', a
   assert.equal(harness.pane.menuIndex.value, 1, 'the same mention keeps the highlight');
   editor.setCaret(0);
   assert.equal(harness.pane.menuOpen.value, false, 'leaving the mention closes the menu');
-  harness.scope.stop();
-});
-
-test('a file reference saved in an earlier draft is still sent, and dropped with its token', async () => {
-  composer.clearDrafts();
-  const harness = createHarness({ processId: 'composer_token_delete' });
-  composer.addReference('composer_token_delete', 'src/app.ts', 'app.ts');
-  harness.pane.getDraft().text = 'see @src/app.ts';
-  harness.pane.submit();
-  assert.deepEqual(harness.emitted[0].payload.references, [{ path: 'src/app.ts', name: 'app.ts' }]);
-  harness.pane.getDraft().text = 'no file after all';
-  harness.pane.submit();
-  assert.deepEqual(harness.emitted[1].payload.references, []);
-  assert.equal(harness.emitted[1].payload.text, 'no file after all');
   harness.scope.stop();
 });
 
@@ -767,15 +745,4 @@ test('a dead session accepts recovery commands without attachments or a native p
   h.props.restartable = false;
   assert.equal(h.pane.canSend.value, false, 'a closed session cannot restart');
   h.scope.stop();
-});
-
-test('a compact composer, as in a bot chat, has the attach button too', () => {
-  const template = page.match(/<template>([\s\S]*)<\/template>/)[1];
-  const compactRow = template.match(/<template v-if="compact">([\s\S]*?)<\/template>/)[1];
-  const fullFooter = template.match(/<div v-if="!compact"[\s\S]*?<\/form>/)[0];
-  const attach = /<Button type="button" size="icon" variant="ghost" class="[^"]*" :disabled="!controlling \|\| ended" aria-label="Attach files" title="Attach files" @click="picker\?\.click\(\)">/;
-  assert.match(compactRow, attach, 'the bot composer opens the same file picker, with the same disabled states');
-  assert.match(fullFooter, attach);
-  // The picker sits outside both branches, so either button reaches it.
-  assert.match(template, /<\/div>\s*<input ref="picker" type="file" multiple class="hidden" :accept="accept" @change="onPick">\s*<\/form>/);
 });

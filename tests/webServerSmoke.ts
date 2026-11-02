@@ -129,6 +129,7 @@ async function main(): Promise<void> {
       assert.match(html, /<meta name="patterm-session" content="\{&quot;password_set&quot;:false,&quot;signed_in&quot;:true,&quot;tailnet&quot;:false\}" \/><\/head>/, 'pages carry the sign-in state');
       assert.doesNotMatch(html, /<base\b/);
       assert.match(page.headers.get('content-security-policy') ?? '', /base-uri 'none'/);
+      assert.deepEqual((page.headers.get('content-security-policy') ?? '').split(';').map((directive) => directive.trim()).filter((directive) => /^frame-src(?:\s|$)/i.test(directive)), ["frame-src 'self'"], 'pages frame only Patterm origins');
       assert.equal((await fetch(`${base}${route}`, { method: 'HEAD' })).status, 200);
     }
     for (const missing of ['/assets/missing.js', '/api/missing', '/missing.css', '/projects/example/unknown']) {

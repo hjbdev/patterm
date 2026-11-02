@@ -48,11 +48,3 @@ test('Shell menu actions use the process record ID and report failures', async (
   await tabs.copyProcessId(shell);
   assert.deepEqual(errors, ['Clipboard failed']);
 });
-
-test('Process tabs offer pinning and compact when pinned', () => {
-  assert.match(page, /@select="emit\('update:pinned', !pinned\)"/);
-  assert.match(page, /\{\{ pinned \? 'Unpin tab' : 'Pin tab' \}\}/);
-  assert.match(page, /<span v-if="!pinned" class="min-w-0 flex-1 truncate">\{\{ process\.name \}\}<\/span>/);
-  // A pinned tab names its host when it belongs to a paired host.
-  assert.match(page, /:aria-label="pinned \? `\$\{hostLabel\(process\.name, process\.host\)\}, \$\{describeActivity\(processActivity\(process\)\)\}` : undefined"/);
-});

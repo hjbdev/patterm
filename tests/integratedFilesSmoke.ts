@@ -152,7 +152,7 @@ async function main(): Promise<void> {
       const native = await files.resolve('process_test', { text: 'x', references: [{ path: 'src\\components\\button.ts' }, { path: path.join(worktree, 'src', 'app.ts') }, { path: 'src\\components\\' }] });
       assert.deepEqual(native.references.map((reference) => reference.relativePath), ['src/components/button.ts', 'src/app.ts', 'src/components/']);
       assert.equal(native.references[2]?.directory, true);
-      assert.equal((await files.search('process_test', 'src\\components\\')).every((file) => file.path.startsWith('src/components/')), true, 'a typed backslash scopes like a slash');
+      assert.deepEqual((await files.search('process_test', 'src\\components\\')).map((file) => file.path), ['src/components/button.ts'], 'a typed backslash scopes like a slash');
     }
     await assert.rejects(files.resolve('process_test', { text: 'x', references: [{ path: 'src/components' }] }), /must end with \//);
     await assert.rejects(files.resolve('process_test', { text: 'x', references: [{ path: 'src/app.ts/' }] }), /not a directory|not found/);

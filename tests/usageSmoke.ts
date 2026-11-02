@@ -185,7 +185,12 @@ function main(): void {
     assert.deepEqual(summary.limits.filter((limit) => limit.harness === 'claude').map((limit) => [limit.label, limit.usedPercent]), [['5h limit', 63]], 'an older reading and an undated one are ignored');
     assert.equal(summary.totals.inputTokens, 10 + 7 + 100 + 100);
     assert.equal(summary.totals.outputTokens, 50 + 3 + 40 + 60);
-    assert.deepEqual(summary.daily.map((row) => row.provider).sort(), ['claude', 'codex']);
+    const expectedDays = [
+      `${localDay(new Date(at(30)))}:claude`,
+      `${localDay(new Date(at(18)))}:codex`,
+      `${localDay(new Date(at(16)))}:codex`
+    ];
+    assert.deepEqual(summary.daily.map((row) => `${row.day}:${row.provider}`), [...new Set(expectedDays)].sort(), 'daily rows group each provider by its local day');
     assert.equal(summary.models[0]?.model, 'gpt-6-sol', 'models are ordered by processed tokens');
     // Opus 5.5: 10 in, 50 out, 1,000 cache reads, 100 one-hour writes; Haiku: 7 in, 3 out; GPT-6-Sol: 200 in, 700 cached, 100 out.
     const expected = (10 * 4 + 50 * 20 + 1000 * 0.2 + 100 * 8 + 7 * 1 + 3 * 5 + 200 * 2 + 700 * 0.2 + 100 * 10) / 1_000_000;

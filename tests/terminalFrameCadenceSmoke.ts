@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 
 import {
-  BACKGROUND_VISIBLE_TERMINAL_FRAME_INTERVAL_MS,
   clampForegroundFrameInterval,
   shouldSubscribeTerminalFrames,
   terminalFrameIntervalForMode,
@@ -19,7 +18,7 @@ function main(): void {
   assert.equal(shouldSubscribeTerminalFrames(backgroundVisible), true);
   assert.equal(
     terminalFrameIntervalForMode(backgroundVisible, 8.4),
-    BACKGROUND_VISIBLE_TERMINAL_FRAME_INTERVAL_MS,
+    100,
     'visible unfocused terminals use the low-fps cadence'
   );
 

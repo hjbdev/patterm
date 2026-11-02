@@ -148,11 +148,6 @@ function toolChecks(): void {
     assert.ok(!BROWSER_TOOLS.has(tool), `${tool} is socket-only in browsers`);
   }
   assert.ok(patchrightPath(), 'patchright-core ships with Patterm');
-  // The browser replaced framed previews, so the app frames no other sites.
-  for (const file of ['app/Http/WebServer.ts', 'index.html']) {
-    const frameSources = /frame-src ([^;]*);/.exec(fs.readFileSync(file, 'utf8'))?.[1] ?? '';
-    assert.doesNotMatch(frameSources, /https?:/, `${file} frames only Patterm's own pages`);
-  }
 }
 
 async function actionChecks(): Promise<void> {

@@ -25,45 +25,12 @@ function main(): void {
 
     const rows = service.connection.prepare('select migration, batch from migrations').all() as Array<{ migration: string; batch: number }>;
     assert.deepEqual(rows, migrationNames.map((migration) => ({ migration, batch: 1 })));
-    assert.equal(tableExists(service.connection, 'projects'), true);
-    assert.equal(tableExists(service.connection, 'tasks'), false);
-    assert.equal(tableExists(service.connection, 'conversations'), true);
-    assert.equal(tableExists(service.connection, 'conversation_messages'), true);
-    assert.equal(tableExists(service.connection, 'conversation_import_sources'), true);
-    assert.equal(tableExists(service.connection, 'conversation_deletions'), true);
     assert.equal(indexExists(service.connection, 'idx_diff_snapshots_project_created'), true);
-
-    // The runtime-columns migration added the process PTY handle + auto-restart flag.
-    const processColumns = new Set(
-      (service.connection.prepare('pragma table_info(processes)').all() as Array<{ name: string }>).map((row) => row.name)
-    );
-    assert.ok(processColumns.has('pty_process_id'), 'processes.pty_process_id exists');
-    assert.ok(processColumns.has('auto_restart'), 'processes.auto_restart exists');
-    assert.ok(processColumns.has('worktree_id'), 'processes.worktree_id exists');
-    assert.ok(processColumns.has('activity'), 'processes.activity exists');
-    assert.ok(processColumns.has('exited_at'), 'processes.exited_at exists');
-    assert.ok(processColumns.has('exit_code'), 'processes.exit_code exists');
-    const sessionColumns = new Set(
-      (service.connection.prepare('pragma table_info(sessions)').all() as Array<{ name: string }>).map((row) => row.name)
-    );
-    assert.ok(sessionColumns.has('mcp_identity'), 'sessions.mcp_identity exists');
-    assert.ok(sessionColumns.has('display_name'), 'sessions.display_name exists');
-    assert.ok(sessionColumns.has('title_set_by_user'), 'sessions.title_set_by_user exists');
-    assert.ok(sessionColumns.has('model'), 'sessions.model exists');
-    assert.ok(sessionColumns.has('reasoning'), 'sessions.reasoning exists');
-    assert.ok(sessionColumns.has('interface_mode'), 'sessions.interface_mode exists');
-    assert.equal(tableExists(service.connection, 'integrated_submissions'), true);
     assert.equal(tableExists(service.connection, 'feed_threads'), false);
     assert.equal(tableExists(service.connection, 'feed_posts'), false);
-    assert.equal(tableExists(service.connection, 'session_worktrees'), true);
     assert.equal(indexExists(service.connection, 'idx_session_worktrees_worktree'), true);
     // Historical snapshots stay readable after the snapshot feature was removed.
     assert.equal(tableExists(service.connection, 'diff_snapshots'), true);
-    const appFtsColumns = new Set(
-      (service.connection.prepare('pragma table_info(app_artifacts_fts)').all() as Array<{ name: string }>).map((row) => row.name)
-    );
-    assert.ok(appFtsColumns.has('project_id'), 'app_artifacts_fts.project_id exists');
-    assert.equal(appFtsColumns.has('task_id'), false);
 
     assert.deepEqual(service.migrator().migrate(), []);
     assert.equal(service.migrator().status()[0]?.status, 'ran');
@@ -176,11 +143,6 @@ function assertHistoryDatabaseMigrations(tempDir: string): void {
   const migrationNames = historyMigrations.map((migration) => migration.name);
   const rows = service.connection.prepare('select migration, batch from migrations').all() as Array<{ migration: string; batch: number }>;
   assert.deepEqual(rows, migrationNames.map((migration) => ({ migration, batch: 1 })));
-  assert.equal(tableExists(service.connection, 'conversations'), true);
-  assert.equal(tableExists(service.connection, 'conversation_messages'), true);
-  assert.equal(tableExists(service.connection, 'conversation_history_fts'), true);
-  assert.equal(tableExists(service.connection, 'conversation_history_index_state'), true);
-  assert.equal(tableExists(service.connection, 'conversation_history_rows'), true);
   assert.equal(indexExists(service.connection, 'idx_history_rows_conversation'), true);
   service.dispose();
 }

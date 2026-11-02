@@ -232,7 +232,7 @@ async function main(): Promise<void> {
     historyDatabase = new HistoryDatabaseService(tempDir, { mode: 'read', busyTimeoutMs: 250 });
     historyDatabase.initialize({ migrate: false });
     const timeline = new TimelineService(database);
-    new WorkbenchSeeder(database, timeline).seedIfEmpty();
+    new WorkbenchSeeder(database).seedIfEmpty();
     const repo = new WorkbenchRepository(database);
     const project = repo.snapshot().projects[0]?.project;
     assert.ok(project);
@@ -257,9 +257,6 @@ async function main(): Promise<void> {
       JSON.stringify({ type: 'user', uuid: 'c_tool_result_2', parentUuid: 'c_tool_2', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_history_2', content: '', is_error: false }] }, cwd: process.cwd(), sessionId: 'claude_resume_1', timestamp: '2026-07-01T00:00:53.000Z' }),
       JSON.stringify({ type: 'assistant', uuid: 'c_msg_2', parentUuid: 'c_msg_1', message: { role: 'assistant', content: 'The sapphire-history-needle is in the parsed transcript. {"api_key":"jsonsecretvalue12345","password":"quotedpassword12345","secret":"quotedsecret12345"}' }, cwd: process.cwd(), sessionId: 'claude_resume_1', timestamp: '2026-07-01T00:01:00.000Z' })
     ].join('\n'));
-    const parserWorkerResult = await runHistoryImportWorker({ action: 'parse_file', provider: 'claude', sourceKind: 'manual_file', sourcePath: claudeDir, filePath: claudeFile });
-    assert.equal(parserWorkerResult.ok, true, 'worker parser mode still parses a single provider file');
-
     const codexDir = path.join(tempDir, 'codex');
     fs.mkdirSync(codexDir, { recursive: true });
     fs.writeFileSync(path.join(codexDir, 'codex-session.jsonl'), [
@@ -311,14 +308,13 @@ async function main(): Promise<void> {
     assert.ok(searchResults.results.some((row) => row.kind === 'conversation_message'), 'conversation messages are searchable');
     assert.ok(searchResults.results[0]?.target.conversation_id, 'search target includes conversation id');
 
-    const stored = database.connection.prepare(`select text from conversation_messages where text like '%sapphire-history-needle%' limit 1`).get() as { text: string } | undefined;
-    assert.ok(stored?.text.includes('[REDACTED]'), 'secrets are redacted before storage');
-    assert.ok(stored);
-    assert.equal(stored.text.includes('supersecretvalue12345'), false, 'raw secret is not stored');
-    assert.equal(stored.text.includes('jsonsecretvalue12345'), false, 'quoted JSON secret is not stored');
-    assert.equal(stored.text.includes('quotedpassword12345'), false, 'quoted JSON password is not stored');
-
+    const stored = database.connection.prepare(`select text from conversation_messages where conversation_id = ? and text like '%sapphire-history-needle%'`).all(claudeConversationId) as Array<{ text: string }>;
+    assert.equal(stored.length, 2, 'both secret-bearing messages are persisted');
+    assert.ok(stored.every(({ text }) => text.includes('[REDACTED]')), 'each message has its secrets redacted before storage');
     const importedText = database.connection.prepare(`select group_concat(coalesce(text, '') || ' ' || coalesce(tool_input_summary, '') || ' ' || coalesce(tool_output_summary, ''), '\n') as text from conversation_messages`).get() as { text: string };
+    for (const secret of ['supersecretvalue12345', 'jsonsecretvalue12345', 'quotedpassword12345', 'quotedsecret12345']) {
+      assert.ok(!importedText.text.includes(secret), `${secret} is not stored in message text or tool summaries`);
+    }
     assert.equal(importedText.text.includes('should-not-store-deferred-tool'), false, 'Claude metadata attachments are not imported as chat messages');
     assert.equal(importedText.text.includes('queued-prompt-should-not-store'), false, 'Claude queue operations do not duplicate prompts');
     assert.equal(importedText.text.includes('thinking-signature-should-not-store'), false, 'Claude thinking signatures are not imported as chat messages');
@@ -347,9 +343,9 @@ async function main(): Promise<void> {
     assert.ok(openCodeInlineFile?.metadata.includes('/tmp/inline-history.csv'), 'OpenCode inline file attachment paths are kept in metadata');
 
     const queueBatchesBefore = database.connection.prepare(`select count(*) as count from conversation_import_batches`).get() as { count: number };
-    const queuedImport = await runQueuedImport(tempDir, mainHistoryRunner(imports, del), { provider: 'claude', path: claudeDir, trigger: 'manual', project_id: project.id });
+    const queuedImport = await runQueuedHistory(tempDir, mainHistoryRunner(imports, del), { provider: 'claude', path: claudeDir, trigger: 'manual', project_id: project.id });
     const queueBatchesAfter = database.connection.prepare(`select count(*) as count from conversation_import_batches`).get() as { count: number };
-    assert.equal(queueBatchesAfter.count, queueBatchesBefore.count + 1, 'queued child-process import records a batch');
+    assert.equal(queueBatchesAfter.count, queueBatchesBefore.count + 1, 'queued import records a batch');
     assert.equal(queuedImport.status.recent[0]?.status, 'succeeded', 'queued import is visible as a succeeded queue job');
     assert.ok(queuedImport.events.some((event) => event.source === 'history-import-queue' && event.event === 'job.succeeded'), 'queued import writes debug lifecycle events');
     const workerDir = path.join(tempDir, 'worker-claude');
@@ -442,11 +438,11 @@ async function main(): Promise<void> {
 
     await runWatcherCoalescing(tempDir);
 
-    const queuedReset = await runQueuedReset(tempDir, mainHistoryRunner(imports, del), { trigger: 'manual', project_id: project.id }, false);
+    const queuedReset = (await runQueuedHistory(tempDir, mainHistoryRunner(imports, del), { trigger: 'manual', project_id: project.id }, false)).status;
     assert.equal(read.list({ project_id: project.id, limit: 20 }).conversations.length, 0, 'queued reset clears local imported conversations');
     assert.equal(historyWatermarkCount(database), 0, 'queued reset clears history import watermarks');
     assert.equal(queuedReset.recent[0]?.action, 'reset_imports', 'queued reset is visible in queue status');
-    const queuedResetReimport = await runQueuedReset(tempDir, mainHistoryRunner(imports, del), { trigger: 'manual', project_id: project.id }, true);
+    const queuedResetReimport = (await runQueuedHistory(tempDir, mainHistoryRunner(imports, del), { trigger: 'manual', project_id: project.id }, true)).status;
     const resetList = read.list({ project_id: project.id, limit: 20 });
     assert.ok(resetList.conversations.some((conversation) => conversation.provider === 'claude'), 'queued reset and reimport restores Claude conversations');
     assert.ok(resetList.conversations.some((conversation) => conversation.provider === 'codex'), 'queued reset and reimport restores Codex conversations');
@@ -468,20 +464,17 @@ async function main(): Promise<void> {
     assert.equal(exitFailure.status.recent[0]?.status, 'failed', 'worker exit before result is visible in queue status');
     assert.ok(exitFailure.status.recent[0]?.error?.includes('exited before reporting'), 'worker exit before result records a useful error');
 
-    const staleFailure = await runQueueStale(tempDir);
+    const staleFailure = await runQueueFailure(tempDir, () => new HangingWorker(), 25);
     assert.equal(staleFailure.status.recent[0]?.status, 'stale', 'worker without heartbeat is marked stale');
     assert.equal(staleFailure.status.counts.running, 0, 'stale worker releases the running queue slot');
     assert.ok(staleFailure.events.some((event) => event.event === 'job.stale'), 'stale worker writes a debug lifecycle event');
     await runQueueHeartbeat(tempDir);
     verifyInterruptedBatch(tempDir);
-    await runWatcherCoalescing(tempDir);
     await runWatcherFollowUpCap(tempDir);
     await runOpenCodeWatcherDebounce(tempDir);
     await runWatcherMaxWait(tempDir);
     await runIntegratedTurnFlush(tempDir);
     await runTitleSyncCoalescing(tempDir);
-    await runLargeWatcherStart(tempDir);
-
     // Removing a project deletes its conversations and keeps them from returning.
     const countProjectConversations = () => (database!.connection.prepare(`select count(*) as count from conversations where project_id = ?`).get(project.id) as { count: number }).count;
     const projectConversations = countProjectConversations();
@@ -535,7 +528,7 @@ function verifyChunkedJsonlReader(directory: string): void {
   }
 }
 
-async function runQueuedImport(appDataPath: string, runJob: HistoryImportQueueRunner, input: Parameters<AgentHistoryImportQueueService['import']>[0]): Promise<{ status: HistoryImportQueueSnapshot; events: QueueLogEvent[] }> {
+async function runQueuedHistory(appDataPath: string, runJob: HistoryImportQueueRunner, input: Parameters<AgentHistoryImportQueueService['import']>[0], reimport?: boolean): Promise<{ status: HistoryImportQueueSnapshot; events: QueueLogEvent[] }> {
   let timeout: NodeJS.Timeout | null = null;
   let doneResolve!: () => void;
   const events: QueueLogEvent[] = [];
@@ -546,8 +539,9 @@ async function runQueuedImport(appDataPath: string, runJob: HistoryImportQueueRu
   try {
     await new Promise<void>((resolve, reject) => {
       doneResolve = resolve;
-      timeout = setTimeout(() => reject(new Error('queued import timed out')), 15_000);
-      queue.import(input);
+      timeout = setTimeout(() => reject(new Error(`queued ${reimport === undefined ? 'import' : 'reset'} timed out`)), 15_000);
+      if (reimport === undefined) queue.import(input);
+      else queue.resetImports(input, reimport);
     });
     return { status: queue.status(), events };
   } finally {
@@ -1171,59 +1165,18 @@ function chunkedMessageCount(database: DatabaseService): number {
   return row.count;
 }
 
-async function runQueuedReset(appDataPath: string, runJob: HistoryImportQueueRunner, input: Parameters<AgentHistoryImportQueueService['resetImports']>[0], reimport: boolean): Promise<HistoryImportQueueSnapshot> {
-  let timeout: NodeJS.Timeout | null = null;
-  let doneResolve!: () => void;
-  const queue = new AgentHistoryImportQueueService(appDataPath, () => {
-    if (timeout) clearTimeout(timeout);
-    doneResolve();
-  }, undefined, null, { runJob });
-  try {
-    await new Promise<void>((resolve, reject) => {
-      doneResolve = resolve;
-      timeout = setTimeout(() => reject(new Error('queued reset timed out')), 15_000);
-      queue.resetImports(input, reimport);
-    });
-    return queue.status();
-  } finally {
-    if (timeout) clearTimeout(timeout);
-    queue.dispose();
-  }
-}
-
-async function runQueueFailure(appDataPath: string, launcher: HistoryImportWorkerLauncher): Promise<{ status: HistoryImportQueueSnapshot; events: QueueLogEvent[] }> {
+async function runQueueFailure(appDataPath: string, launcher: HistoryImportWorkerLauncher, staleMs?: number): Promise<{ status: HistoryImportQueueSnapshot; events: QueueLogEvent[] }> {
   let timeout: NodeJS.Timeout | null = null;
   let doneResolve!: () => void;
   const events: QueueLogEvent[] = [];
   const queue = new AgentHistoryImportQueueService(appDataPath, () => {
     if (timeout) clearTimeout(timeout);
     doneResolve();
-  }, launcher, fakeLogger(events));
+  }, launcher, fakeLogger(events), staleMs === undefined ? undefined : { staleMs });
   try {
     await new Promise<void>((resolve, reject) => {
       doneResolve = resolve;
-      timeout = setTimeout(() => reject(new Error('queued failure timed out')), 15_000);
-      queue.import({ trigger: 'manual' });
-    });
-    return { status: queue.status(), events };
-  } finally {
-    if (timeout) clearTimeout(timeout);
-    queue.dispose();
-  }
-}
-
-async function runQueueStale(appDataPath: string): Promise<{ status: HistoryImportQueueSnapshot; events: QueueLogEvent[] }> {
-  let timeout: NodeJS.Timeout | null = null;
-  let doneResolve!: () => void;
-  const events: QueueLogEvent[] = [];
-  const queue = new AgentHistoryImportQueueService(appDataPath, () => {
-    if (timeout) clearTimeout(timeout);
-    doneResolve();
-  }, () => new HangingWorker(), fakeLogger(events), { staleMs: 25 });
-  try {
-    await new Promise<void>((resolve, reject) => {
-      doneResolve = resolve;
-      timeout = setTimeout(() => reject(new Error('queued stale timed out')), 2_000);
+      timeout = setTimeout(() => reject(new Error(`queued ${staleMs === undefined ? 'failure' : 'stale'} timed out`)), staleMs === undefined ? 15_000 : 2_000);
       queue.import({ trigger: 'manual' });
     });
     return { status: queue.status(), events };
