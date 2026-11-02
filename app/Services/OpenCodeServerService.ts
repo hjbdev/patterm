@@ -299,14 +299,16 @@ export class OpenCodeServerService {
     const runtime = this.runtime(processId);
     const files = this.promptFiles(input);
     await this.ensureMcp(runtime);
+    let id: string;
     try {
       const body = {
         text: input.text.trim(),
         ...(files.length ? { files } : {}),
         ...(input.messageId ? { id: `msg_${input.messageId}` } : {}),
-        // Like OpenCode's own clients, a prompt sent mid-turn joins the turn
-        // at its next model step instead of waiting for it to end.
-        delivery: 'steer', resume: true
+        // Admitted without starting; `start` steers it in once the tools are
+        // checked. Like OpenCode's own clients, a steered prompt sent mid-turn
+        // joins the turn at its next model step.
+        delivery: 'queue', resume: false
       };
       const route = `/api/session/${encodeURIComponent(runtime.resumeId)}/prompt`;
       const response = (input.attachments.length
@@ -315,9 +317,7 @@ export class OpenCodeServerService {
       if (typeof response.data?.id !== 'string') {
         throw new Error('OpenCode did not acknowledge the message');
       }
-      this.admitted(runtime.resumeId);
-      await this.recheckMcp(runtime);
-      return { id: response.data.id };
+      id = response.data.id;
     } catch (error) {
       // 4xx responses and pre-execution failures are definitive rejections.
       // Anything else may have been admitted before the reply was lost, so
@@ -325,16 +325,15 @@ export class OpenCodeServerService {
       const status = error instanceof ProviderCommandError ? error.status : undefined;
       if (status && status >= 400 && status < 500) throw error;
       if (error instanceof ProviderCommandError && error.definitive) throw error;
-      if (input.messageId) {
-        const state = await this.reconcile(processId, input.messageId).catch((): IntegratedDeliveryState => 'unknown');
-        if (state === 'accepted') {
-          this.admitted(runtime.resumeId);
-          await this.recheckMcp(runtime);
-          return { id: `msg_${input.messageId}` };
-        }
-      }
-      throw new UncertainDeliveryError(error instanceof Error ? error.message : String(error), input.messageId);
+      const state = input.messageId
+        ? await this.reconcile(processId, input.messageId).catch((): IntegratedDeliveryState => 'unknown')
+        : 'unknown';
+      if (state !== 'accepted') throw new UncertainDeliveryError(error instanceof Error ? error.message : String(error), input.messageId);
+      id = `msg_${input.messageId}`;
     }
+    await this.start(runtime, id, input.messageId);
+    this.admitted(runtime.resumeId);
+    return { id };
   }
 
   // Project references remain file URLs. OpenCode reads a file and lists a
@@ -357,8 +356,12 @@ export class OpenCodeServerService {
   // the absence of it.
   async reconcile(processId: string, messageId: string): Promise<IntegratedDeliveryState> {
     const runtime = this.runtime(processId);
+    const id = `msg_${messageId}`;
+    // A prompt admitted but not yet started waits in the inbox.
+    const inbox = dataRows(await this.api(runtime.executable, runtime.cwd, 'GET', `/api/session/${encodeURIComponent(runtime.resumeId)}/inbox`).catch(() => null));
+    if (inbox.some((row) => row.id === id)) return 'accepted';
     const { rows } = await this.messageRows(runtime);
-    return rows.some((row) => record(row).id === `msg_${messageId}`) ? 'accepted' : 'unknown';
+    return rows.some((row) => record(row).id === id) ? 'accepted' : 'unknown';
   }
 
   // Installed OpenCode exposes one global event stream. Patterm discovers the
@@ -1422,10 +1425,11 @@ export class OpenCodeServerService {
     // A native command starts a turn. Built-ins other than compact do not:
     // /shell runs outside one.
     const native = async (): Promise<unknown> => {
+      // Commands run at once, with no admission to hold, so they are only
+      // checked first.
       await this.ensureMcp(runtime);
       const result = await this.api(runtime.executable, runtime.cwd, 'POST', `${session}/command`, { name, text, delivery: 'queue' });
       this.admitted(runtime.resumeId);
-      await this.recheckMcp(runtime);
       return result;
     };
     if (custom) return native();
@@ -1651,8 +1655,10 @@ export class OpenCodeServerService {
   // PUT waits for the handshake under that lock. Stage all configs disabled,
   // then connect through the per-server endpoint concurrently; resources,
   // prompts, authentication and tool discovery remain owned by OpenCode.
-  private async installGlobalMcpServers(executable: string, cwd: string, location: URLSearchParams, configs: Record<string, Record<string, unknown>>, daemonRestarted: boolean, reconnect: boolean): Promise<void> {
+  // Resolves the names of servers that could not be staged or connected.
+  private async installGlobalMcpServers(executable: string, cwd: string, location: URLSearchParams, configs: Record<string, Record<string, unknown>>, daemonRestarted: boolean, reconnect: boolean): Promise<string[]> {
     const pending: Array<{ name: string; key: string; body: string; route: string }> = [];
+    const failed: string[] = [];
     await Promise.all(Object.entries(configs).map(async ([name, config]) => {
       const key = `${cwd}\0${name}`;
       const body = createHash('sha256').update(JSON.stringify(config)).digest('hex');
@@ -1665,9 +1671,10 @@ export class OpenCodeServerService {
         if (changed || reconnect) pending.push({ name, key, body, route });
       } catch {
         this.installedMcp.delete(key);
+        failed.push(name);
       }
     }));
-    if (!pending.length) return;
+    if (!pending.length) return failed;
     const listed = await this.api(executable, cwd, 'GET', `/api/mcp?${location}`) as {
       data?: Array<{ name: string; status: { status: string } }>;
     };
@@ -1682,8 +1689,10 @@ export class OpenCodeServerService {
         this.installedMcp.set(key, body);
       } catch {
         this.installedMcp.delete(key);
+        failed.push(name);
       }
     }));
+    return failed;
   }
 
   async prepare(input: IntegratedLaunchInput): Promise<IntegratedLaunchResult> {
@@ -1709,46 +1718,65 @@ export class OpenCodeServerService {
 
   // OpenCode drops a directory's services after an idle hour and boots them
   // again from the user's own config, without Patterm's bridge and servers.
-  // A prompt restores them first, or fails before sending, rather than
-  // running a turn without its tools.
+  // Turns start only once they are back; otherwise this fails before anything
+  // runs. It waits behind any launch or restore in the directory, so it never
+  // sees a half-finished installation.
   private async ensureMcp(runtime: { executable: string; cwd: string }): Promise<void> {
-    const bridgeName = this.mcpSource ? openCodeBridgeName(this.mcpSource.spec()) : this.preparedBridge;
-    if (!bridgeName) throw new ProviderCommandError(OPENCODE_MCP_UNAVAILABLE, undefined, true);
-    if (await this.bridgeConnected(runtime, bridgeName)) return;
-    await this.inDirectory(runtime.cwd, async () => {
-      // Another prompt or launch may have restored it while this one waited.
-      if (await this.bridgeConnected(runtime, bridgeName)) return;
-      if (!this.mcpSource) throw new ProviderCommandError(OPENCODE_MCP_UNAVAILABLE, undefined, true);
-      try {
-        await this.installMcp(runtime.executable, runtime.cwd, this.mcpSource.spec(), this.mcpSource.servers(), false);
-      } catch (error) {
-        throw new ProviderCommandError(`${OPENCODE_MCP_UNAVAILABLE} (${error instanceof Error ? error.message : String(error)})`, undefined, true);
-      }
-    });
+    const source = this.mcpSource;
+    try {
+      await this.inDirectory(runtime.cwd, async () => {
+        const bridgeName = source ? openCodeBridgeName(source.spec()) : this.preparedBridge;
+        if (!bridgeName) throw new Error('Patterm has no MCP installation to restore');
+        const servers = source?.servers() ?? [];
+        if (await this.mcpReady(runtime, bridgeName, servers)) return;
+        if (!source) throw new Error('Patterm has no MCP installation to restore');
+        // What was installed before is gone, whatever the cache says.
+        for (const key of this.installedMcp.keys()) if (key.startsWith(`${runtime.cwd}\0`)) this.installedMcp.delete(key);
+        const failed = await this.installMcp(runtime.executable, runtime.cwd, source.spec(), servers, false);
+        if (failed.length) throw new Error(`${failed.join(', ')} did not reconnect; fix or turn ${failed.length === 1 ? 'it' : 'them'} off in Patterm's MCP settings`);
+      });
+    } catch (error) {
+      if (error instanceof ProviderCommandError && error.definitive) throw error;
+      throw new ProviderCommandError(`${OPENCODE_MCP_UNAVAILABLE} (${error instanceof Error ? error.message : String(error)})`, undefined, true);
+    }
   }
 
-  private async bridgeConnected(runtime: { executable: string; cwd: string }, bridgeName: string): Promise<boolean> {
+  // The bridge is connected and every server Patterm installs is there and
+  // was connected. A server OpenCode itself reports as failed is left as at
+  // launch; a disabled one is Patterm's staged config that never connected.
+  private async mcpReady(runtime: { executable: string; cwd: string }, bridgeName: string, servers: McpLaunchServer[]): Promise<boolean> {
     const location = new URLSearchParams({ 'location[directory]': runtime.cwd });
     const listed = await this.api(runtime.executable, runtime.cwd, 'GET', `/api/mcp?${location}`) as {
       data?: Array<{ name: string; status: { status: string } }>;
     };
-    return listed.data?.find((server) => server.name === bridgeName)?.status.status === 'connected';
+    const statuses = new Map((listed.data ?? []).map((server) => [server.name, server.status.status]));
+    return statuses.get(bridgeName) === 'connected'
+      && servers.every((server) => statuses.has(server.name) && statuses.get(server.name) !== 'disabled');
   }
 
-  // The directory can be dropped in the moment between the check and the
-  // prompt. Once admitted, the turn keeps it alive and OpenCode reads tools
-  // at every step, so a restore now still reaches the turn's next step.
-  private async recheckMcp(runtime: { executable: string; cwd: string; resumeId: string }): Promise<void> {
+  // A prompt is admitted without starting, so the directory can be dropped
+  // between the check and admission without a turn running tool-less. The
+  // check runs again, then steering the prompt starts the turn. If the tools
+  // cannot be restored, the prompt is withdrawn before it runs.
+  private async start(runtime: { executable: string; cwd: string; resumeId: string }, id: string, messageId: string | undefined): Promise<void> {
+    const route = `/api/session/${encodeURIComponent(runtime.resumeId)}/inbox/${encodeURIComponent(id)}`;
     try {
       await this.ensureMcp(runtime);
     } catch (error) {
-      const state = this.activity.get(runtime.resumeId);
-      if (!state) return;
-      const at = new Date().toISOString();
-      this.broadcast(state, { kind: 'replace', message: {
-        id: `mcp_${randomUUID()}`, role: 'assistant', kind: 'notice', level: 'warning',
-        text: error instanceof Error ? error.message : String(error), createdAt: at, completedAt: at
-      } });
+      // Cancelling succeeds even when a turn took the prompt meanwhile, so
+      // the transcript says whether it was withdrawn.
+      const withdrawn = await this.api(runtime.executable, runtime.cwd, 'DELETE', route)
+        .then(async () => !(await this.messageRows(runtime)).rows.some((row) => record(row).id === id))
+        .catch(() => false);
+      if (!withdrawn) throw new UncertainDeliveryError(`${error instanceof Error ? error.message : String(error)}; the message may still run`, messageId);
+      throw error;
+    }
+    try {
+      await this.api(runtime.executable, runtime.cwd, 'PATCH', route, { delivery: 'steer' });
+    } catch (error) {
+      // A turn that ended meanwhile already took it from the queue.
+      if (error instanceof ProviderCommandError && error.status === 409) return;
+      throw new UncertainDeliveryError('OpenCode admitted the message but did not confirm it started', messageId);
     }
   }
 
@@ -1788,7 +1816,8 @@ export class OpenCodeServerService {
 
   // Installs Patterm's bridge and the user's MCP servers in a directory, and
   // connects them. Runs inside the directory's queue.
-  private async installMcp(executable: string, cwd: string, mcp: McpServerSpec, servers: McpLaunchServer[], reconnect: boolean): Promise<void> {
+  // Resolves the user's servers that did not install; the bridge must.
+  private async installMcp(executable: string, cwd: string, mcp: McpServerSpec, servers: McpLaunchServer[], reconnect: boolean): Promise<string[]> {
     const bridgeName = openCodeBridgeName(mcp);
     this.preparedBridge = bridgeName;
     const location = new URLSearchParams({ 'location[directory]': cwd });
@@ -1824,7 +1853,7 @@ export class OpenCodeServerService {
     // token rather than this agent's identity.
     const { PATTERM_MCP_IDENTITY: _identity, ...shared } = mcp.env;
     const helpers = { ...mcp, env: { ...shared, PATTERM_OPENCODE_BRIDGE: this.token } };
-    await this.installGlobalMcpServers(executable, cwd, location, openCodeMcpConfigs(servers, helpers), daemonRestarted, reconnect);
+    return this.installGlobalMcpServers(executable, cwd, location, openCodeMcpConfigs(servers, helpers), daemonRestarted, reconnect);
   }
 
   private async versions(executable: string, cwd: string): Promise<{ matched: boolean; cli: string | null; server: string | null }> {

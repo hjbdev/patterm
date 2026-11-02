@@ -63,6 +63,8 @@ const rows = fs.existsSync(process.env.RECORD) ? fs.readFileSync(process.env.REC
 if (process.env.REJECT_PROMPT && method === 'POST' && route.endsWith('/prompt')) { console.log('HTTP 400 Bad Request'); process.exit(1); }
 if (process.env.REJECT_COMPACT && method === 'POST' && route.endsWith('/compact')) { console.log('HTTP ' + process.env.REJECT_COMPACT); process.exit(1); }
 if (process.env.FAIL_BRIDGE && method === 'PUT' && route.startsWith('/api/experimental/mcp/patterm_')) { console.log('HTTP 500 Internal Server Error'); process.exit(1); }
+if (process.env.FAIL_BRIDGE_AFTER_PROMPT && method === 'PUT' && route.startsWith('/api/experimental/mcp/patterm_') && rows.some(x => x.route.endsWith('/prompt'))) { console.log('HTTP 500 Internal Server Error'); process.exit(1); }
+if (process.env.FAIL_MCP_LIST && method === 'GET' && route.startsWith('/api/mcp?')) { console.log('HTTP 500 Internal Server Error'); process.exit(1); }
 // A prompt that lands just after OpenCode dropped the directory's services.
 if (process.env.EVICT_ON_PROMPT && method === 'POST' && route.endsWith('/prompt') && !fs.existsSync(process.env.MCP_EVICTED)) fs.writeFileSync(process.env.MCP_EVICTED, String(rows.length));
 const failMcpConnect = process.env.FAIL_MCP_CONNECT && method === 'POST' && route.split('?')[0] === '/api/experimental/mcp/helped/connect' && !fs.existsSync(process.env.FAIL_MCP_CONNECT);
@@ -107,7 +109,7 @@ else if (method === 'GET' && route.startsWith('/api/mcp?')) {
   console.log(JSON.stringify({data:{}}));
 }
 else if (method === 'POST' && route.endsWith('/prompt')) {
-  if (body.delivery !== 'steer' || typeof body.text !== 'string' || body.prompt) { console.log('HTTP 400 Bad Request'); process.exit(1); }
+  if (body.delivery !== 'queue' || body.resume !== false || typeof body.text !== 'string' || body.prompt) { console.log('HTTP 400 Bad Request'); process.exit(1); }
   if (process.env.LOST_PROMPT_RESPONSE) { console.error('prompt response lost'); process.exit(1); }
   console.log(JSON.stringify({data:{id:body.id ?? 'msg_test',sessionID:'ses_test',timeCreated:1,type:'user',payload:{text:body.text,files:body.files},delivery:body.delivery}}));
 }
@@ -149,6 +151,8 @@ else if (method === 'GET' && route.includes('/message?')) {
   if (process.env.COMPACTED) messages.push({id:'msg_compacted',type:'compaction',status:'completed',reason:'manual',model:{providerID:'openai',id:'gpt-test'},tokens:{input:3000,output:500,reasoning:0,cache:{read:17000,write:0}},summary:'Summary',time:{created:3}});
   for (const item of rows) {
     if (item.method !== 'POST' || !item.route.endsWith('/prompt') || typeof item.body?.id !== 'string') continue;
+    // A prompt cancelled from the inbox never reaches the transcript.
+    if (rows.some(x => x.method === 'DELETE' && x.route.endsWith('/inbox/' + item.body.id))) continue;
     messages.push({id:item.body.id,type:'user',text:String(item.body.text ?? ''),time:{created:2}});
   }
   if (process.env.MANY_MESSAGES) {
@@ -412,7 +416,10 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const promptRequests = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line)).filter((request) => request.route.endsWith('/prompt'));
     const structured = promptRequests.at(-1)!.body as { text: string; files: Array<{ uri: string; name?: string }>; id?: string; delivery?: string };
     assert.equal(structured.text, 'review these');
-    assert.equal(structured.delivery, 'steer', 'a prompt joins a running turn at its next step, as in OpenCode');
+    assert.equal(structured.delivery, 'queue', 'a prompt is admitted without starting');
+    const started = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line)).at(-1);
+    assert.deepEqual([started.method, started.route.endsWith(`/inbox/msg_${messageId}`), started.body], ['PATCH', true, { delivery: 'steer' }],
+      'once its tools are checked, steering starts it and joins a running turn at its next step, as in OpenCode');
     assert.equal(structured.id, `msg_${messageId}`);
     assert.deepEqual(structured.files, [
       { uri: pathToFileURL(sourceFile).href, name: 'source.ts' },
@@ -685,7 +692,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
       daemonState.auth = String(request.headers.authorization ?? '');
       if (request.method === 'GET' && request.url?.startsWith('/api/mcp?')) {
         response.writeHead(200, { 'content-type': 'application/json' });
-        response.end(JSON.stringify({ data: [{ name: openCodeBridgeName(mcp), status: { status: 'connected' } }] }));
+        response.end(JSON.stringify({ data: [openCodeBridgeName(mcp), helped.name].map((name) => ({ name, status: { status: 'connected' } })) }));
         return;
       }
       if (request.url === '/api/info') {
@@ -733,6 +740,11 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
         response.end(JSON.stringify({ _tag: 'InvalidRequestError', message: 'Unknown agent' }));
         return;
       }
+      if ((request.method === 'PATCH' || request.method === 'DELETE') && request.url?.startsWith(`/api/session/${first}/inbox/`)) {
+        response.writeHead(204);
+        response.end();
+        return;
+      }
       if (request.url === '/api/event') {
         daemonState.connections += 1;
         daemonResponses.add(response);
@@ -765,7 +777,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const streamService = openCode(database, { ...env, XDG_STATE_HOME: directory, STREAM_SEED: '2' });
     const imageBytes = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(150_000)]);
     await streamService.prompt('process_0', { text: 'inspect', references: [], attachments: [{ path: path.join(directory, 'uploads', 'pixel.png'), name: 'pixel.png', mime: 'image/png', size: imageBytes.length, data: imageBytes.toString('base64') }] });
-    assert.deepEqual(daemonState.prompts, [{ text: 'inspect', files: [{ uri: `data:image/png;base64,${imageBytes.toString('base64')}`, name: 'pixel.png' }], delivery: 'steer', resume: true }], 'uploads use inline data, and prompts steer as in OpenCode');
+    assert.deepEqual(daemonState.prompts, [{ text: 'inspect', files: [{ uri: `data:image/png;base64,${imageBytes.toString('base64')}`, name: 'pixel.png' }], delivery: 'queue', resume: false }], 'uploads use inline data, and prompts wait for their tools before starting');
     assert.equal(daemonState.auth, `Basic ${Buffer.from('opencode:test-password').toString('base64')}`, 'inline uploads use the authenticated daemon');
     const streamed: IntegratedConversationEvent[] = [];
     const releaseStream = await streamService.subscribe('process_0', (event) => streamed.push(event));
@@ -1442,7 +1454,7 @@ async function checkMcpRestore(input: { database: DatabaseService; env: NodeJS.P
   const { database, env, directory, helped } = input;
   let records = 0;
   const fresh = (): string => path.join(directory, `restore-${++records}.jsonl`);
-  const read = (file: string): Array<{ method: string; route: string; body?: { config?: Record<string, unknown> } }> =>
+  const read = (file: string): Array<{ method: string; route: string; body?: { config?: Record<string, unknown>; resume?: boolean } }> =>
     fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : [];
   const calls = (file: string): string[] => read(file).map((request) => `${request.method} ${request.route.split('?')[0]}`)
     .filter((call) => !call.startsWith('GET /api/mcp'));
@@ -1471,20 +1483,24 @@ async function checkMcpRestore(input: { database: DatabaseService; env: NodeJS.P
   // Steady state: one check, nothing reinstalled.
   const steadyStart = calls(restored).length;
   await restoring.prompt('process_0', prompt);
-  assert.deepEqual(calls(restored).slice(steadyStart).map((call) => call.replace(/ses_[^/]+/, 'ses')), ['POST /api/session/ses/prompt'],
-    'a prompt in a directory that kept its servers only sends the prompt');
+  assert.deepEqual(calls(restored).slice(steadyStart).map((call) => call.replace(/ses_[^/]+/, 'ses')), ['POST /api/session/ses/prompt', 'PATCH /api/session/ses/inbox/msg_test'],
+    'a prompt in a directory that kept its servers is only admitted and started');
 
-  // Overlapping prompts restore once.
+  // Overlapping prompts restore once, and neither is sent before the whole
+  // installation, helpers included, has finished.
   const overlapping = fresh();
   const concurrent = openCode(database, { ...env, RECORD: overlapping });
   await Promise.all([concurrent.prompt('process_0', prompt), concurrent.prompt('process_0', prompt)]);
   assert.equal(bridgePuts(overlapping), 1, 'overlapping prompts share one restore');
-  assert.equal(calls(overlapping).filter((call) => call.endsWith('/prompt')).length, 2);
+  const overlapOrder = calls(overlapping);
+  const helperReady = overlapOrder.indexOf(`POST /api/experimental/mcp/${helped.name}/connect`);
+  assert.equal(overlapOrder.filter((call) => call.endsWith('/prompt')).length, 2);
+  assert.ok(overlapOrder.every((call, index) => !call.endsWith('/prompt') || index > helperReady), 'no prompt is sent while a helper is still connecting');
 
   // Without a source there is nothing to restore from: fail before sending.
   const sourceless = fresh();
   await assert.rejects(new OpenCodeServerService(database, { ...env, RECORD: sourceless }).prompt('process_0', prompt),
-    (error: unknown) => error instanceof ProviderCommandError && error.definitive === true && error.message === OPENCODE_MCP_UNAVAILABLE,
+    (error: unknown) => error instanceof ProviderCommandError && error.definitive === true && error.message.startsWith(OPENCODE_MCP_UNAVAILABLE),
     'a prompt without its tools or a way to restore them is rejected');
   assert.equal(calls(sourceless).filter((call) => call.endsWith('/prompt')).length, 0, 'nothing is sent without the tools');
 
@@ -1494,22 +1510,43 @@ async function checkMcpRestore(input: { database: DatabaseService; env: NodeJS.P
     (error: unknown) => error instanceof ProviderCommandError && error.definitive === true && error.message.startsWith(OPENCODE_MCP_UNAVAILABLE));
   assert.equal(calls(brokenBridge).filter((call) => call.endsWith('/prompt')).length, 0, 'a failed bridge restore sends nothing');
 
-  // A helper that fails shows as failed in OpenCode, as at launch, and the
-  // next restore retries it.
+  // A server that cannot be restored fails the prompt too, and the next
+  // prompt retries it rather than trusting the connected bridge.
   const brokenHelper = fresh();
-  await openCode(database, { ...env, RECORD: brokenHelper, FAIL_MCP_CONNECT: path.join(directory, 'restore-failed-connect') }).prompt('process_0', prompt);
-  assert.equal(calls(brokenHelper).filter((call) => call.endsWith('/prompt')).length, 1, 'a failed helper does not hold back the prompt');
-  assert.equal(bridgePuts(brokenHelper), 1);
+  const helperService = openCode(database, { ...env, RECORD: brokenHelper, FAIL_MCP_CONNECT: path.join(directory, 'restore-failed-connect') });
+  await assert.rejects(helperService.prompt('process_0', prompt),
+    (error: unknown) => error instanceof ProviderCommandError && error.definitive === true && error.message.includes(helped.name));
+  assert.equal(calls(brokenHelper).filter((call) => call.endsWith('/prompt')).length, 0, 'a helper that did not reconnect holds back the prompt');
+  await helperService.prompt('process_0', prompt);
+  assert.equal(calls(brokenHelper).filter((call) => call === `POST /api/experimental/mcp/${helped.name}/connect`).length, 2, 'the next prompt retries the helper');
+  assert.equal(calls(brokenHelper).filter((call) => call.endsWith('/prompt')).length, 1);
 
-  // Dropped between the check and the prompt: the admitted turn keeps the
-  // directory alive and reads tools at each step, so they are restored after.
+  // A failed status read sends nothing and says so definitively.
+  const unreadable = fresh();
+  await assert.rejects(openCode(database, { ...env, RECORD: unreadable, FAIL_MCP_LIST: '1' }).prompt('process_0', prompt),
+    (error: unknown) => error instanceof ProviderCommandError && error.definitive === true && error.message.startsWith(OPENCODE_MCP_UNAVAILABLE));
+  assert.equal(calls(unreadable).filter((call) => call.endsWith('/prompt')).length, 0);
+
+  // Dropped between the check and admission: the prompt waits unstarted
+  // while the tools are restored, then steering starts it.
   const raced = fresh();
   const racing = openCode(database, { ...env, RECORD: raced, MCP_EVICTED: `${raced}.evicted`, EVICT_ON_PROMPT: '1' });
   await racing.prompt('process_0', prompt);
   const racedOrder = calls(raced);
   const racedPrompt = racedOrder.findIndex((call) => call.endsWith('/prompt'));
-  assert.equal(bridgePuts(raced), 2, 'the bridge is installed before the prompt and again after the race');
-  assert.ok(racedOrder.slice(racedPrompt).some((call) => call.startsWith('PUT /api/experimental/mcp/patterm_')), 'the race is repaired after admission');
+  const racedStart = racedOrder.findIndex((call) => call.startsWith('PATCH ') && call.includes('/inbox/'));
+  const racedRestore = racedOrder.findIndex((call, index) => index > racedPrompt && call.startsWith('PUT /api/experimental/mcp/patterm_'));
+  assert.ok(racedPrompt < racedRestore && racedRestore < racedStart, 'the tools are back before the admitted prompt starts');
+  assert.equal(read(raced)[read(raced).findIndex((request) => request.route.endsWith('/prompt'))]?.body?.resume, false);
+
+  // If they cannot be restored then, the prompt is withdrawn unstarted.
+  const lost = fresh();
+  await assert.rejects(openCode(database, { ...env, RECORD: lost, MCP_EVICTED: `${lost}.evicted`, EVICT_ON_PROMPT: '1', FAIL_BRIDGE_AFTER_PROMPT: '1' })
+    .prompt('process_0', { ...prompt, messageId: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee' }),
+    (error: unknown) => error instanceof ProviderCommandError && error.definitive === true);
+  const lostOrder = calls(lost);
+  assert.ok(lostOrder.some((call) => call.startsWith('DELETE ') && call.includes('/inbox/')), 'the unstarted prompt is withdrawn');
+  assert.ok(!lostOrder.some((call) => call.startsWith('PATCH ')), 'a prompt without its tools never starts');
 
   // Native commands start turns too.
   const commanded = fresh();
