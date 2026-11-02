@@ -17,9 +17,10 @@
       <span class="flex h-4 w-4 shrink-0 items-center justify-center">
         <RowStatus :activity="member.activity" />
       </span>
-      <span class="min-w-0 flex-1 truncate text-[13px]" :class="active ? 'text-foreground' : 'text-foreground/85'">{{ member.name }}</span>
+      <span class="min-w-0 truncate text-[13px]" :class="active ? 'text-foreground' : 'text-foreground/85'">{{ member.name }}</span>
+      <StatusLabelPill v-if="member.session?.statusLabel" :label="member.session.statusLabel" dot />
       <HostBadge v-if="host && host !== parentHost" :host="host" />
-      <span class="shrink-0 text-[11px]" :class="member.state === 'attention' ? 'text-foreground/80' : 'text-muted-foreground'">{{ word }}</span>
+      <span class="ml-auto shrink-0 pl-1 text-[11px]" :class="member.state === 'attention' ? 'text-foreground/80' : 'text-muted-foreground'">{{ word }}</span>
     </button>
   </SidebarItemMenu>
 </template>
@@ -33,6 +34,7 @@ import { hostLabel } from '../../lib/hosts';
 import { MAX_INDENT_DEPTH } from '../../lib/sidebarTree';
 import HostBadge from '../HostBadge.vue';
 import RowStatus from '../RowStatus.vue';
+import StatusLabelPill from '../StatusLabelPill.vue';
 import TabWash from '../TabWash.vue';
 import SidebarItemMenu from './SidebarItemMenu.vue';
 import { useSidebar } from './sidebarContext';
