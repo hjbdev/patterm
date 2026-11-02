@@ -1,3 +1,4 @@
+import { awaitingUser } from './Activity';
 import type { IntegratedConversationEvent, IntegratedConversationMessage, IntegratedConversationTool } from './IntegratedConversation';
 import { TRIAGE_WEIGHTS as WEIGHTS } from './NotificationTriageWeights';
 
@@ -8,6 +9,8 @@ export const QUIET_THRESHOLD = 0.75;
 const MESSAGE_LIMIT = 3000;
 const TOOL_LIMIT = 3;
 const TURN_LIMIT = 200;
+
+const BUSY = new Set(['working', 'thinking']);
 
 export type TurnStarter = 'user' | 'agent' | 'timer' | 'system' | 'unknown';
 
@@ -22,6 +25,9 @@ export interface TurnDigest {
 
 interface TurnState extends TurnDigest {
   startId: string | null;
+  // The last assistant message since the agent last started working. Turns
+  // that start without a user row, such as background wakes, still clear it.
+  reply: string;
   toolIds: Set<string>;
   // The stream dropped mid-turn, so rows may be missing until the next turn.
   lost: boolean;
@@ -57,6 +63,20 @@ export class TurnDigests {
     else if (message.role === 'assistant' && message.kind === 'tool' && message.tool?.name) this.tool(processId, message);
   }
 
+  // An agent that starts working from rest starts a turn, so earlier replies
+  // belong to an earlier one. Approvals and questions pause the same turn.
+  activity(processId: string, previous: string, activity: string): void {
+    const busy = (value: string) => BUSY.has(value);
+    const turn = this.turns.get(processId);
+    if (turn && busy(activity) && !busy(previous) && !awaitingUser(previous)) turn.reply = '';
+  }
+
+  // The reply of the turn that just ended, or null without one.
+  reply(processId: string): string | null {
+    const turn = this.turns.get(processId);
+    return turn?.reply && !turn.lost ? turn.reply : null;
+  }
+
   get(processId: string): TurnDigest | null {
     const turn = this.turns.get(processId);
     return turn?.finalMessage && !turn.lost ? { startedBy: turn.startedBy, finalMessage: turn.finalMessage, tools: turn.tools, toolCount: turn.toolCount } : null;
@@ -67,14 +87,14 @@ export class TurnDigests {
     this.turns.delete(processId);
     // Oldest first, so agents that have gone quiet fall out.
     if (this.turns.size >= TURN_LIMIT) this.turns.delete(this.turns.keys().next().value!);
-    this.turns.set(processId, { startedBy: turnStarter(message.text), finalMessage: '', tools: [], toolCount: 0, startId: message.id, toolIds: new Set(), lost: false });
+    this.turns.set(processId, { startedBy: turnStarter(message.text), finalMessage: '', tools: [], toolCount: 0, startId: message.id, reply: '', toolIds: new Set(), lost: false });
   }
 
   private current(processId: string): TurnState {
     let turn = this.turns.get(processId);
     if (!turn) {
       // A turn already running when Patterm started; its starter is unknown.
-      turn = { startedBy: 'unknown', finalMessage: '', tools: [], toolCount: 0, startId: null, toolIds: new Set(), lost: false };
+      turn = { startedBy: 'unknown', finalMessage: '', tools: [], toolCount: 0, startId: null, reply: '', toolIds: new Set(), lost: false };
       this.turns.set(processId, turn);
     }
     return turn;
@@ -83,6 +103,7 @@ export class TurnDigests {
   private say(processId: string, message: IntegratedConversationMessage): void {
     const turn = this.current(processId);
     turn.finalMessage = message.text.slice(0, MESSAGE_LIMIT);
+    turn.reply = turn.finalMessage;
   }
 
   private tool(processId: string, message: IntegratedConversationMessage): void {

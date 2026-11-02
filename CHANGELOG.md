@@ -60,6 +60,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A bot's finished-turn notification shows its reply, as plain text cut to
+  280 characters, instead of "Finished its turn". Only the bot's final
+  top-level message is used, never tool output, reasoning or subagent rows;
+  other agents and turns without a reply keep the old text. A bot's push
+  notification no longer repeats its name above the message.
+
 - The assistant and bots no longer call `assistant_memory_read` before every
   message. Patterm keeps their saved memory current in the conversation
   itself: the whole memory arrives with the first message, then only what
