@@ -205,7 +205,7 @@ let threadSettings = {};
 function serve(socket) {
   const notify = (method, params) => socket.send(JSON.stringify({jsonrpc:'2.0', method, params}));
   let initialized = false;
-  socket.on('message', (chunk) => {
+  socket.on('message', async (chunk) => {
       const request = JSON.parse(chunk.toString());
       const send = (value) => socket.send(JSON.stringify(value));
       // Client responses to server requests are recorded as transcript rows
@@ -318,6 +318,8 @@ function serve(socket) {
             notify('turn/started', {threadId:'thread_test', turn:{id:'turn_test', status:'inProgress', items:[]}});
             notify('item/started', {threadId:'thread_test', turnId:'turn_test', item:{type:'agentMessage', id:'agent_stream', text:''}, startedAtMs: 1});
             notify('item/agentMessage/delta', {threadId:'thread_test', turnId:'turn_test', itemId:'agent_stream', delta:'Streamed '});
+            // Exercise reads while the first delta is present but the reply is not complete.
+            if (process.env.UNSUPPORTED_ITEMS) await new Promise(resolve => setTimeout(resolve, 250));
             notify('item/agentMessage/delta', {threadId:'thread_test', turnId:'turn_test', itemId:'agent_stream', delta:'reply'});
             notify('item/started', {threadId:'thread_test', turnId:'turn_test', item:{type:'reasoning', id:'reasoning_stream', summary:[]}, startedAtMs: 2});
             notify('item/reasoning/summaryTextDelta', {threadId:'thread_test', turnId:'turn_test', itemId:'reasoning_stream', summaryIndex:0, delta:'Thinking'});
@@ -1007,6 +1009,7 @@ if (socketPath) {
   assert.equal(initialUnsupported.status, 'idle');
   await unsupported.service.prompt(unsupported.processId, { text: 'live despite unavailable history', references: [], attachments: [] });
   await waitFor(() => unsupportedEvents.some((event) => event.kind === 'append' && event.id === 'agent_stream'));
+  await waitFor(() => unsupportedEvents.some((event) => event.kind === 'replace' && event.message?.id === 'agent_stream' && event.message.completedAt !== undefined));
   const liveUnsupported = await unsupported.service.conversation(unsupported.processId) as { messages: { data: Array<{ id: string; text: string }> } };
   assert.equal(liveUnsupported.messages.data.find((message) => message.id === 'agent_stream')?.text, 'Streamed reply');
   releaseUnsupported();
