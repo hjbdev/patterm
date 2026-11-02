@@ -27,8 +27,12 @@ export interface BotVoice {
 export interface Bot {
   id: string;
   name: string;
-  // Null runs Codex with its own configuration.
-  presetId: string | null;
+  // The CLI it runs and its model settings, its own copy of a profile's.
+  // Null keeps the CLI's own configuration.
+  harness: 'claude' | 'codex' | 'opencode';
+  model: string | null;
+  reasoning: string | null;
+  serviceTier: string | null;
   avatar: BotAvatar;
   purview: BotPurview;
   instructions: string;
@@ -60,6 +64,21 @@ export async function saveBots(settings: BotSettings): Promise<BotSettings> {
 // Starts a bot that isn't running, on a new conversation when `fresh`.
 export async function startBot(botId: string, fresh = false): Promise<void> {
   await window.patterm.call('bot_start', { bot_id: botId, fresh });
+}
+
+// The bot's running process, if it is running.
+export async function botProcess(botId: string): Promise<string | null> {
+  const state = await window.patterm.call('bot_state', { bot_id: botId }) as { process_id?: string | null };
+  return state.process_id ?? null;
+}
+
+// What a running bot needs a restart for after its settings change: a new
+// harness starts over in that CLI, while new model settings or instructions
+// apply to its conversation once it resumes.
+export function restartNeed(before: Bot, after: Bot): 'harness' | 'settings' | null {
+  if (before.harness !== after.harness) return 'harness';
+  const changed = before.model !== after.model || before.reasoning !== after.reasoning || before.serviceTier !== after.serviceTier || before.instructions !== after.instructions;
+  return changed ? 'settings' : null;
 }
 
 // Restarts a running bot. Like sending it a message, this needs control of

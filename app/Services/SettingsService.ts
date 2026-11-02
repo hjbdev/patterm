@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { DatabaseService } from './DatabaseService';
 import { autoSummarySettingsInput, type AutoSummarySettings } from './AutoSummarySettings';
 import { notificationSettingsInput, type NotificationSettings } from './NotificationSettings';
-import { ASSISTANT_BOT_ID, defaultAssistantBot, parseBotSettings, readBotSettings, type BotSettings, type LegacyAssistantSettings } from '../Bots/BotSettings';
+import { ASSISTANT_BOT_ID, defaultAssistantBot, namesProfile, parseBotSettings, readBotSettings, type BotSettings, type LegacyAssistantSettings } from '../Bots/BotSettings';
 import { emptyHarnessPresetSettings, harnessPresetSettingsInput, presetHarnessInput, seededHarnessPresetSettings, type HarnessPresetSettings } from '../Harness/HarnessPresets';
 import { emptyHarnessModelCatalog, harnessModelCatalogInput, type HarnessModelCatalog } from '../Harness/ModelCatalog';
 import { BOT_VOICE_ACKNOWLEDGEMENTS, BOT_VOICE_PROFILES } from './AssistantVoiceProfile';
@@ -296,12 +296,17 @@ export class SettingsService {
     // The legacy settings matter only until the assistant's entry is saved.
     const record = typeof saved === 'object' && saved !== null ? saved as { bots?: unknown; userName?: unknown } : {};
     const migrated = 'userName' in record && Array.isArray(record.bots) && record.bots.some((bot) => (bot as { id?: unknown } | null)?.id === ASSISTANT_BOT_ID);
-    return readBotSettings(saved, migrated ? null : this.legacyAssistantSettings());
+    const settings = readBotSettings(saved, migrated ? null : this.legacyAssistantSettings(), this.harnessPresets().presets);
+    // Bots that named a profile, and an assistant drawn from its legacy
+    // settings, keep the copy of the profile's settings they were first read
+    // with, so editing that profile later leaves them as they are.
+    if (!migrated || (Array.isArray(record.bots) && record.bots.some(namesProfile))) this.write(BOT_SETTINGS_KEY, JSON.stringify(settings));
+    return settings;
   }
 
   updateBots(input: unknown): BotSettings {
     const current = this.bots().bots.find((bot) => bot.id === ASSISTANT_BOT_ID) ?? defaultAssistantBot();
-    const settings = parseBotSettings(input, current);
+    const settings = parseBotSettings(input, current, this.harnessPresets().presets);
     this.write(BOT_SETTINGS_KEY, JSON.stringify(settings));
     return settings;
   }

@@ -35,7 +35,7 @@
           <Badge v-if="defaults[harness] === preset.id" variant="secondary" class="h-4 px-1.5 text-[10px] font-medium">Default</Badge>
         </template>
         <template #meta>
-          <span :title="`${preset.model ?? 'Harness default'}${preset.reasoning ? ` · ${preset.reasoning}` : ''}${preset.serviceTier ? ` · ${preset.serviceTier}` : ''}`">{{ modelLabel(harness, preset.model) }}{{ preset.reasoning ? ` · ${preset.reasoning}` : '' }}{{ preset.serviceTier ? ` · ${speedLabel(harness, preset.serviceTier)}` : '' }}</span>
+          <span :title="`${preset.model ?? 'Harness default'}${preset.reasoning ? ` · ${preset.reasoning}` : ''}${preset.serviceTier ? ` · ${preset.serviceTier}` : ''}`">{{ settingsSummary(catalog, harness, preset) }}</span>
         </template>
         <template #actions>
           <Button type="button" size="sm" variant="ghost" class="h-7 px-2" @click="editPreset(harness, preset)">Edit</Button>
@@ -55,18 +55,7 @@
           <div class="grid items-center gap-3 sm:grid-cols-[90px_minmax(0,1fr)]">
               <label class="text-xs text-muted-foreground" for="preset-name">Name</label>
               <Input id="preset-name" v-model="editor.name" class="h-8 text-xs" placeholder="smartypants" autocomplete="off" />
-              <label class="text-xs text-muted-foreground" for="preset-model">Model</label>
-              <SettingsChoice id="preset-model" :model-value="editor.model" :options="modelChoices" aria-label="Model" @update:model-value="(value) => { editor!.model = value; onModelChange(); }" />
-              <template v-if="editor.model === CUSTOM_MODEL">
-                <label class="text-xs text-muted-foreground" for="preset-custom">Custom ID</label>
-                <Input id="preset-custom" v-model="editor.customModel" class="h-8 text-xs" placeholder="claude-opus-4-8" autocomplete="off" />
-              </template>
-              <label class="text-xs text-muted-foreground" for="preset-reasoning">Reasoning</label>
-              <SettingsChoice id="preset-reasoning" :model-value="editor.reasoning" :options="reasoningChoices" aria-label="Reasoning" :disabled="editor.model === DEFAULT_MODEL" @update:model-value="(value) => { editor!.reasoning = value; }" />
-              <template v-if="editor.harness === 'codex'">
-                <label class="text-xs text-muted-foreground" for="preset-speed">Speed</label>
-                <SettingsChoice id="preset-speed" :model-value="editor.serviceTier" :options="speedChoices" aria-label="Speed" @update:model-value="(value) => { editor!.serviceTier = value; }" />
-              </template>
+              <HarnessProfileFields v-model:fields="editor.fields" :catalog="catalog" id-prefix="preset" />
           </div>
           <label class="flex items-center gap-2 text-xs">
             <Checkbox v-model="editor.isDefault" />
@@ -85,14 +74,14 @@
 
 <script setup lang="ts">
 import { randomId } from '../lib/randomId';
-import { computed, onMounted, reactive, ref } from 'vue';
+import { onMounted, reactive, ref } from 'vue';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Checkbox } from './ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { Input } from './ui/input';
 import AgentIcon from './AgentIcon.vue';
-import SettingsChoice from './settings/SettingsChoice.vue';
+import HarnessProfileFields from './HarnessProfileFields.vue';
 import SettingsItem from './settings/SettingsItem.vue';
 import SettingsPanel from './settings/SettingsPanel.vue';
 import SettingsSection from './settings/SettingsSection.vue';
@@ -101,8 +90,9 @@ import { useWorkbench } from '../Composables/useWorkbench';
 import { harnessLabel } from '../lib/harnesses';
 import { harnessModels, topicChanged } from '../lib/serverQuery';
 import type { ProfileLook } from '../lib/faces';
+import { DEFAULT_MODEL, PROFILE_HARNESSES, emptyModelCatalog, fieldsFrom, modelsFor, settingsFrom, settingsSummary, type ModelCatalog, type ProfileFieldsState, type ProfileHarness } from '../lib/profileFields';
 
-type PresetHarness = 'claude' | 'codex' | 'opencode';
+type PresetHarness = ProfileHarness;
 type Harness = PresetHarness | 'rawpty';
 
 interface HarnessPreset {
@@ -120,45 +110,20 @@ interface PresetSettings {
   defaultPresetIdByHarness: Record<PresetHarness, string | null>;
 }
 
-interface CatalogModel {
-  id: string;
-  label: string;
-  reasoning: string[];
-  defaultReasoning: string | null;
-  serviceTiers?: Array<{ id: string; label: string }>;
-}
-
-interface ProviderCatalog {
-  harness: PresetHarness;
-  source: string;
-  refreshedAt: string | null;
-  error: string | null;
-  models: CatalogModel[];
-}
-
-interface ModelCatalog {
-  providers: Record<PresetHarness, ProviderCatalog | null>;
-}
-
 interface EditorState {
   id: string | null;
   harness: PresetHarness;
   name: string;
-  model: string;
-  customModel: string;
-  reasoning: string;
-  serviceTier: string;
+  fields: ProfileFieldsState;
   isDefault: boolean;
 }
 
-const PRESET_HARNESSES: PresetHarness[] = ['claude', 'codex', 'opencode'];
-const CUSTOM_MODEL = '__custom__';
-const DEFAULT_MODEL = '__default__';
+const PRESET_HARNESSES = PROFILE_HARNESSES;
 
 const { harnesses } = useWorkbench();
 const presets = ref<HarnessPreset[]>([]);
 const defaults = reactive<Record<PresetHarness, string | null>>({ claude: null, codex: null, opencode: null });
-const catalog = ref<ModelCatalog>({ providers: { claude: null, codex: null, opencode: null } });
+const catalog = ref<ModelCatalog>(emptyModelCatalog());
 const editor = ref<EditorState | null>(null);
 const editorOpen = ref(false);
 const editorTitle = ref('');
@@ -166,39 +131,6 @@ const editorError = ref('');
 const error = ref('');
 const refreshBusy = ref(false);
 const loaded = ref(false);
-
-const modelChoices = computed(() => {
-  const current = editor.value;
-  if (!current) return [];
-  return [
-    { value: DEFAULT_MODEL, label: 'Harness default (no override)' },
-    ...modelsFor(current.harness).map((model) => ({ value: model.id, label: model.label })),
-    { value: CUSTOM_MODEL, label: 'Custom model ID…' }
-  ];
-});
-
-const reasoningChoices = computed(() => {
-  const current = editor.value;
-  if (!current) return [];
-  const levels = reasoningFor(current.harness, current.model);
-  return [
-    { value: '', label: 'Model default' },
-    ...levels.map((level) => ({ value: level, label: level })),
-    ...(current.reasoning && !levels.includes(current.reasoning) ? [{ value: current.reasoning, label: current.reasoning }] : [])
-  ];
-});
-
-const speedChoices = computed(() => {
-  const current = editor.value;
-  if (!current) return [];
-  const tiers = tiersFor(current.harness, current.model);
-  return [
-    { value: '', label: 'Harness default' },
-    { value: 'default', label: 'Standard' },
-    ...tiers.map((tier) => ({ value: tier.id, label: tier.label })),
-    ...(current.serviceTier && current.serviceTier !== 'default' && !tiers.some((tier) => tier.id === current.serviceTier) ? [{ value: current.serviceTier, label: current.serviceTier }] : [])
-  ];
-});
 
 onMounted(() => {
   void load();
@@ -278,22 +210,18 @@ function setDefault(harness: PresetHarness, presetId: string): void {
 function addPreset(harness: PresetHarness): void {
   editorError.value = '';
   editorTitle.value = '';
-  editor.value = { id: null, harness, name: '', model: modelsFor(harness)[0]?.id ?? DEFAULT_MODEL, customModel: '', reasoning: '', serviceTier: '', isDefault: presetsFor(harness).length === 0 };
+  editor.value = { id: null, harness, name: '', fields: { harness, model: modelsFor(catalog.value, harness)[0]?.id ?? DEFAULT_MODEL, customModel: '', reasoning: '', serviceTier: '' }, isDefault: presetsFor(harness).length === 0 };
   editorOpen.value = true;
 }
 
 function editPreset(harness: PresetHarness, preset: HarnessPreset): void {
   editorError.value = '';
   editorTitle.value = preset.name;
-  const known = preset.model !== null && modelsFor(harness).some((model) => model.id === preset.model);
   editor.value = {
     id: preset.id,
     harness,
     name: preset.name,
-    model: preset.model === null ? DEFAULT_MODEL : known ? preset.model : CUSTOM_MODEL,
-    customModel: preset.model !== null && !known ? preset.model : '',
-    reasoning: preset.reasoning ?? '',
-    serviceTier: preset.serviceTier ?? '',
+    fields: fieldsFrom(catalog.value, harness, preset),
     isDefault: defaults[harness] === preset.id
   };
   editorOpen.value = true;
@@ -303,13 +231,13 @@ function applyEditor(): void {
   const current = editor.value;
   if (!current) return;
   const name = current.name.trim();
-  const model = current.model === DEFAULT_MODEL ? null : current.model === CUSTOM_MODEL ? current.customModel.trim() : current.model;
   if (!name) {
     editorError.value = 'Give the profile a name.';
     return;
   }
-  if (current.model === CUSTOM_MODEL && !model) {
-    editorError.value = 'Enter a custom model ID.';
+  const settings = settingsFrom(current.fields);
+  if ('error' in settings) {
+    editorError.value = settings.error;
     return;
   }
   const duplicate = presets.value.some((preset) => preset.harness === current.harness && preset.id !== current.id && preset.name.toLowerCase() === name.toLowerCase());
@@ -321,9 +249,7 @@ function applyEditor(): void {
     id: current.id ?? `preset_${randomId()}`,
     harness: current.harness,
     name,
-    model,
-    reasoning: model === null ? null : current.reasoning.trim() || null,
-    serviceTier: current.harness === 'codex' ? current.serviceTier || null : null,
+    ...settings,
     // A face saved earlier is kept for bots.
     look: presets.value.find((candidate) => candidate.id === current.id)?.look ?? null
   };
@@ -348,54 +274,6 @@ function removePreset(harness: PresetHarness, preset: HarnessPreset): void {
     defaults[harness] = presetsFor(harness)[0]?.id ?? null;
   }
   persist(`harnesses.${harness}`);
-}
-
-function onModelChange(): void {
-  const current = editor.value;
-  if (!current) return;
-  const levels = reasoningFor(current.harness, current.model);
-  if (current.reasoning && !levels.includes(current.reasoning)) {
-    current.reasoning = '';
-  }
-}
-
-function modelsFor(harness: PresetHarness): CatalogModel[] {
-  return catalog.value.providers[harness]?.models ?? [];
-}
-
-function reasoningFor(harness: PresetHarness, modelId: string): string[] {
-  if (modelId === DEFAULT_MODEL) return [];
-  if (modelId === CUSTOM_MODEL) {
-    const editorState = editor.value;
-    const custom = editorState?.customModel.trim();
-    const match = custom ? modelsFor(harness).find((model) => model.id === custom) : undefined;
-    return match?.reasoning ?? builtinReasoning(harness);
-  }
-  return modelsFor(harness).find((model) => model.id === modelId)?.reasoning ?? builtinReasoning(harness);
-}
-
-// Without a chosen model, offer every tier any listed model supports.
-function tiersFor(harness: PresetHarness, modelId: string): Array<{ id: string; label: string }> {
-  const custom = editor.value?.customModel.trim();
-  const id = modelId === CUSTOM_MODEL ? custom : modelId;
-  const models = id === DEFAULT_MODEL ? modelsFor(harness) : modelsFor(harness).filter((model) => model.id === id);
-  const tiers = new Map<string, string>();
-  for (const model of models) for (const tier of model.serviceTiers ?? []) tiers.set(tier.id, tier.label);
-  return [...tiers].map(([tierId, label]) => ({ id: tierId, label }));
-}
-
-function speedLabel(harness: PresetHarness, tier: string): string {
-  if (tier === 'default') return 'Standard';
-  return tiersFor(harness, DEFAULT_MODEL).find((candidate) => candidate.id === tier)?.label ?? tier;
-}
-
-function builtinReasoning(harness: PresetHarness): string[] {
-  return harness === 'claude' ? ['low', 'medium', 'high', 'xhigh', 'max'] : [];
-}
-
-function modelLabel(harness: PresetHarness, modelId: string | null): string {
-  if (modelId === null) return 'Harness default';
-  return modelsFor(harness).find((model) => model.id === modelId)?.label ?? modelId;
 }
 
 function catalogError(harness: PresetHarness): string | null {

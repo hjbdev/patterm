@@ -45,7 +45,7 @@ export class BotService {
     private readonly database: DatabaseService,
     private readonly appDataPath: string,
     private readonly launcher: Pick<HarnessLauncher, 'launch' | 'resume'>,
-    private readonly settings: Pick<SettingsService, 'bots' | 'harnessPresets'>,
+    private readonly settings: Pick<SettingsService, 'bots'>,
     private readonly workbench: Pick<WorkbenchRepository, 'listProjects'>,
     // holdTimers pauses a process's pending timers and returns them, so none
     // fires into the gap while a bot's session is replaced.
@@ -73,12 +73,9 @@ export class BotService {
     return this.current(botId)?.process_id ?? null;
   }
 
-  // The CLI the bot's profile runs. A profile left empty runs Codex.
+  // The CLI the bot runs.
   harness(botId: string): string | null {
-    const bot = this.bot(botId);
-    if (!bot) return null;
-    if (!bot.presetId) return 'codex';
-    return this.settings.harnessPresets().presets.find((preset) => preset.id === bot.presetId)?.harness ?? null;
+    return this.bot(botId)?.harness ?? null;
   }
 
   // The bot whose session, live or stopped, ran in this process.
@@ -232,12 +229,13 @@ export class BotService {
   private async launch(bot: Bot, fresh: boolean): Promise<BotState> {
     const cwd = this.ensureProject(bot);
     // A conversation resumes only in the CLI it was started with.
-    const harness = this.harness(bot.id) as 'claude' | 'codex' | 'opencode' | null;
-    if (!harness) throw new Error(`${bot.name}'s profile no longer exists. Choose another in Settings › Bots.`);
+    const harness = bot.harness;
     const previous = fresh ? null : this.previous(bot.id, harness);
     const input = {
       harness,
-      ...(bot.presetId ? { preset: bot.presetId } : {}),
+      model: bot.model,
+      reasoning: bot.reasoning,
+      service_tier: bot.serviceTier,
       project_id: botProjectId(bot.id),
       cwd,
       session_role: botRole(bot.id),
