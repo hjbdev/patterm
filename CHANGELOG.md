@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Paired hosts' bots, the assistant included, list in the sidebar's Bots
+  section after this host's, with the host's name beside them. A bot shows in
+  the projects linked with the ones it works in, and you can open its
+  conversation, message it, and start or restart it. Its settings stay on its
+  own host, and its instructions never leave it. Both hosts need this version;
+  an older host shares no bots.
+
 - Status labels: an agent can pin a short status on itself, such as
   "Waiting for review" or "Waiting on CI", with the new `status_set` tool.
   It shows as a coloured pill beside the agent on the projects page, in its

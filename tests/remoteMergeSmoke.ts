@@ -6,6 +6,7 @@ import type { HostService, PeerHost } from '../app/Services/HostService';
 import type { PeerLinkService } from '../app/Services/PeerLinkService';
 import type { ProjectLinkService } from '../app/Services/ProjectLinkService';
 import { RemoteClientService } from '../app/Services/RemoteClientService';
+import { defaultAssistantBot } from '../app/Bots/BotSettings';
 
 // Another host's Personal project never links, so it shows on its own, with
 // the Personal projects ahead of repositories.
@@ -82,8 +83,92 @@ async function sharedTopics(): Promise<void> {
   linked.dispose();
 }
 
+// Each host lists the other's bots, with their sessions and the projects
+// they work in as this host knows them. Their settings stay on their host.
+async function sharedBots(): Promise<void> {
+  const handlers = new Map<string, (...args: unknown[]) => unknown>();
+  let onConnected: (hostId: string) => void = () => {};
+  let olderHost = false;
+  const requests: Array<{ method: string; params: unknown }> = [];
+  const helper = { ...defaultAssistantBot(), id: 'helper', name: 'Helper', instructions: 'Private notes', purview: { kind: 'projects' as const, projectIds: ['project_linked', 'project_other'] } };
+  const botsProject: ProjectWorkbenchDto = {
+    ...project('project_bots', 'workspace'),
+    project: { ...project('project_bots', 'workspace').project, kind: 'bots' },
+    projectSessions: [{ id: 'session_helper', parentId: null, processId: 'process_helper', ptyProcessId: null, worktreeId: null, botId: 'helper', ownerBotId: null } as unknown as ProjectWorkbenchDto['projectSessions'][number]]
+  };
+  const botPeers = {
+    handle: (name: string, handler: (...args: unknown[]) => unknown) => handlers.set(name, handler),
+    onConnected: (listener: typeof onConnected) => { onConnected = listener; },
+    onDisconnected() {},
+    onEvent() {},
+    emit() {},
+    request: async (_host: string, method: string, params: unknown) => {
+      requests.push({ method, params });
+      if (method === 'workbench.read') return [project('project_linked', 'workspace'), ...(olderHost ? [] : [botsProject])];
+      if (method === 'bots.read') {
+        if (olderHost) throw new Error('Unknown peer method: bots.read');
+        return [helper, { ...helper, id: 'broken', avatar: null }];
+      }
+      return { bot_id: 'helper', process_id: 'process_helper' };
+    },
+    connected: () => true
+  } as unknown as PeerLinkService;
+  let botsChanged = 0;
+  const service = new RemoteClientService(hosts, botPeers, {
+    localProjectFor: (_host: string, id: string) => id === 'project_linked' ? 'project_here' : null,
+    links: () => []
+  } as unknown as ProjectLinkService, {
+    localWorkbench: () => ({ projects: [project('project_here', 'workspace'), botsProject] }),
+    localBots: () => [helper, { ...helper, id: 'off', enabled: false }],
+    botsChanged: () => { botsChanged++; },
+    terminal: { onFrame() {} },
+    invalidate() {},
+    notifyRemoteTopics() {}
+  } as unknown as ConstructorParameters<typeof RemoteClientService>[3]);
+
+  const plain = await handlers.get('workbench.read')!() as ProjectWorkbenchDto[];
+  assert.deepEqual(plain.map((item) => item.project.id), ['project_here'], 'an older host, which asks without bots, never sees the bots\' projects');
+  const withBots = await handlers.get('workbench.read')!({ bots: true }) as ProjectWorkbenchDto[];
+  assert.deepEqual(withBots.map((item) => item.project.id), ['project_here', 'project_bots']);
+  const served = await handlers.get('bots.read')!() as Array<{ id: string; instructions: string }>;
+  assert.deepEqual(served.map((bot) => [bot.id, bot.instructions]), [['helper', '']], 'turned-off bots and instructions stay here');
+
+  onConnected(peer.host_id);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(requests.find((item) => item.method === 'workbench.read')?.params, { bots: true });
+  const [listed, ...rest] = service.remoteBots();
+  assert.equal(rest.length, 0, 'a malformed bot is dropped');
+  assert.equal(listed!.id, 'workstation:helper');
+  assert.equal(listed!.host, 'workstation');
+  assert.deepEqual(listed!.purview, { kind: 'projects', projectIds: ['project_here', 'workstation:project_other'] }, 'a linked project is named as this host\'s');
+  assert.equal(botsChanged, 1, 'clients read the bots again');
+
+  const here = { projects: [project('project_here', 'workspace')], harnesses: [], sidebarState: {} } as unknown as Parameters<RemoteClientService['merge']>[0];
+  const merged = service.merge(here).projects.find((item) => item.project.id === 'workstation:project_bots');
+  assert.equal(merged?.project.kind, 'bots');
+  assert.equal(merged?.projectSessions[0]?.botId, 'workstation:helper', 'its sessions name the bot as remoteBots lists it');
+
+  assert.equal(service.target({ tool: 'bot_start', arguments: { bot_id: 'workstation:helper' } })?.name, 'workstation', 'starting its bot goes to its host');
+  assert.equal(service.target({ tool: 'bot_start', arguments: { bot_id: 'assistant' } }), null, 'this host\'s bots stay here');
+  const relayed = await service.relay(peer, 'patterm:mcp:call', { tool: 'bot_state', arguments: { bot_id: 'workstation:helper' } }) as { bot_id: string; process_id: string };
+  assert.deepEqual(requests.at(-1)?.params, { channel: 'patterm:mcp:call', args: { tool: 'bot_state', arguments: { bot_id: 'helper' } } });
+  assert.deepEqual(relayed, { bot_id: 'workstation:helper', process_id: 'workstation:process_helper' });
+
+  peer.show_agents = false;
+  assert.deepEqual(service.remoteBots(), [], 'a host whose agents are hidden lists no bots');
+  peer.show_agents = true;
+
+  olderHost = true;
+  onConnected(peer.host_id);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(service.remoteBots(), [], 'an older host shares no bots');
+  assert.equal(botsChanged, 2);
+  assert.ok(service.merge(here).projects.some((item) => item.project.id === 'project_here' && item.project.remotes?.length), 'its projects still show');
+  service.dispose();
+}
+
 function workbenchesOf(service: RemoteClientService): Map<string, ProjectWorkbenchDto[]> {
   return (service as unknown as { workbenches: Map<string, ProjectWorkbenchDto[]> }).workbenches;
 }
 
-void sharedTopics().then(() => console.log('remote merge smoke passed'), (error: unknown) => { console.error(error); process.exitCode = 1; });
+void sharedTopics().then(sharedBots).then(() => console.log('remote merge smoke passed'), (error: unknown) => { console.error(error); process.exitCode = 1; });

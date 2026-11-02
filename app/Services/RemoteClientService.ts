@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { botInput, type Bot } from '../Bots/BotSettings';
 import { listedProject, type ProjectWorkbenchDto, type WorkbenchSnapshotDto } from '../Repositories/WorkbenchRepository';
 import type { HostService, PeerHost } from './HostService';
 import type { PeerIdentity, PeerLinkService } from './PeerLinkService';
@@ -20,7 +21,9 @@ const ID_KEYS = new Set([
   'sha256',
   // Project context records, assignees and attachment targets, timers, and
   // imported conversations.
-  'todo_id', 'scratchpad_id', 'reference_id', 'target_id', 'assignee_id', 'blocker_id', 'timer_id', 'conversation_id'
+  'todo_id', 'scratchpad_id', 'reference_id', 'target_id', 'assignee_id', 'blocker_id', 'timer_id', 'conversation_id',
+  // A paired host's bot, which its UI starts and reads.
+  'bot_id'
 ]);
 // A generic `id` field is qualified only when it names a Patterm record, so
 // unrelated IDs, such as an Integrated control's, pass through unchanged.
@@ -62,6 +65,10 @@ const conversationRequest = z.object({ process_id: z.string().min(1).max(200), s
 const frameEvent = z.object({ process_id: z.string().min(1).max(200), payload: z.string(), frame_kind: z.enum(['snapshot', 'damage']).nullable(), frame_seq: z.number().nullable(), resize_seq: z.number().nullable() });
 
 export type RouteHandler = (raw: unknown) => unknown;
+
+// A paired host's bot as this host lists it: its ID qualified with the
+// host's name, and the projects it works in as this host knows them.
+export type RemoteBot = Bot & { host: string };
 type ConversationListener = (event: IntegratedConversationEvent) => void;
 
 export interface RemoteClientOptions {
@@ -82,6 +89,10 @@ export interface RemoteClientOptions {
   notifyRemoteTopics: (topics: SharedTopic[]) => void;
   // Integrated and MCP tools a paired host may call as the owner.
   allowedTools: ReadonlySet<string>;
+  // This host's turned-on bots, which paired hosts list beside their own.
+  localBots?: () => Bot[];
+  // A paired host's bots changed; clients here read them again.
+  botsChanged?: () => void;
 }
 
 // Shows paired hosts' records in this host's workbench and relays the UI's
@@ -90,6 +101,7 @@ export interface RemoteClientOptions {
 // routes, which only the UI calls.
 export class RemoteClientService {
   private readonly workbenches = new Map<string, ProjectWorkbenchDto[]>();
+  private readonly bots = new Map<string, Bot[]>();
   private readonly fetching = new Map<string, Promise<void>>();
   private readonly peerTerminals = new Map<string, Set<string>>();
   // Processes of this host that a paired host controls, by PTY or Integrated
@@ -115,10 +127,16 @@ export class RemoteClientService {
   ) {
     // The flag tells a paired host it may cache this host's history reads:
     // its changes are announced. Older hosts send no flag. The bots' and the
-    // assistant's projects stay on this host.
-    peers.handle('workbench.read', () => this.options.localWorkbench().projects
-      .filter(listedProject)
-      .map((project) => ({ ...project, project: { ...project.project, sharesHistory: true } })));
+    // assistant's projects go only to a host that asks for them, which lists
+    // this host's bots; an older host would mistake them for its own.
+    peers.handle('workbench.read', (raw) => {
+      const withBots = (raw as { bots?: unknown } | null | undefined)?.bots === true;
+      return this.options.localWorkbench().projects
+        .filter((project) => withBots || listedProject(project))
+        .map((project) => ({ ...project, project: { ...project.project, sharesHistory: true } }));
+    });
+    // Who the bots are and where they work. Their instructions stay here.
+    peers.handle('bots.read', () => (this.options.localBots?.() ?? []).filter((bot) => bot.enabled).map((bot) => ({ ...bot, instructions: '' })));
     peers.handle('client.rpc', (raw, peer) => this.serveRequest(raw, peer));
     peers.handle('client.conversation', (raw, peer) => this.serveConversation(raw, peer));
     peers.handle('client.upload', (raw) => {
@@ -230,6 +248,22 @@ export class RemoteClientService {
     return { ...snapshot, projects };
   }
 
+  // Connected paired hosts' turned-on bots, for the hosts whose agents show.
+  remoteBots(): RemoteBot[] {
+    const listed: RemoteBot[] = [];
+    for (const peer of this.hosts.peers()) {
+      const bots = this.bots.get(peer.host_id);
+      if (!bots || !peer.show_agents || !this.peers.connected(peer.host_id)) continue;
+      for (const bot of bots) {
+        const purview = bot.purview.kind === 'projects'
+          ? { kind: 'projects' as const, projectIds: bot.purview.projectIds.map((id) => this.links.localProjectFor(peer.host_id, id) ?? `${peer.name}:${id}`) }
+          : bot.purview;
+        listed.push({ ...bot, id: `${peer.name}:${bot.id}`, purview, host: peer.name });
+      }
+    }
+    return listed;
+  }
+
   // The paired host a request names, if any.
   target(raw: unknown): PeerHost | null {
     const names = new Set<string>();
@@ -282,8 +316,16 @@ export class RemoteClientService {
     if (running) return running;
     const task = (async () => {
       try {
-        const projects = await this.peers.request(hostId, 'workbench.read') as ProjectWorkbenchDto[];
+        const [projects, bots] = await Promise.all([
+          this.peers.request(hostId, 'workbench.read', { bots: true }) as Promise<ProjectWorkbenchDto[]>,
+          // An older host has no bots to share.
+          this.peers.request(hostId, 'bots.read').catch(() => [])
+        ]);
         if (Array.isArray(projects)) this.workbenches.set(hostId, projects);
+        this.setBots(hostId, Array.isArray(bots) ? bots.flatMap((bot) => {
+          const parsed = botInput.safeParse(bot);
+          return parsed.success ? [parsed.data] : [];
+        }) : []);
       } catch {
         // The next change or reconnect fetches again.
       } finally {
@@ -295,8 +337,16 @@ export class RemoteClientService {
     return task;
   }
 
+  private setBots(hostId: string, bots: Bot[]): void {
+    const previous = this.bots.get(hostId);
+    if (bots.length) this.bots.set(hostId, bots);
+    else this.bots.delete(hostId);
+    if (JSON.stringify(previous ?? []) !== JSON.stringify(bots)) this.options.botsChanged?.();
+  }
+
   private dropHost(hostId: string): void {
     this.workbenches.delete(hostId);
+    this.setBots(hostId, []);
     this.options.invalidate();
     const subscriber = `peer:${hostId}`;
     void this.options.terminalSubscriptions.release(subscriber);
@@ -487,7 +537,10 @@ export class RemoteClientService {
       project: { ...remote.project, id: `${peer.name}:${remote.project.id}`, host: peer.name },
       projectSessions: remote.projectSessions.map((session) => ({
         ...session, id: q(session.id)!, parentId: q(session.parentId), processId: q(session.processId),
-        ptyProcessId: q(session.ptyProcessId), worktreeId: q(session.worktreeId), host: peer.name
+        ptyProcessId: q(session.ptyProcessId), worktreeId: q(session.worktreeId), host: peer.name,
+        // Bot IDs name the host's bots, as remoteBots lists them.
+        ...(session.botId ? { botId: `${peer.name}:${session.botId}` } : {}),
+        ...(session.ownerBotId ? { ownerBotId: `${peer.name}:${session.ownerBotId}` } : {})
       })),
       processes: remote.processes.map((process) => ({
         ...process, id: q(process.id)!, parentProcessId: q(process.parentProcessId), ptyProcessId: q(process.ptyProcessId),

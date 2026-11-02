@@ -27,11 +27,13 @@ export function registerBotTools(
   bots: Pick<BotService, 'list' | 'reconcile' | 'ensure' | 'restartProcess'>,
   relay: Pick<BotRelay, 'list' | 'state' | 'settingsChanged' | 'startVoice' | 'hangUp' | 'setFocus'>,
   settings: Pick<SettingsService, 'bots' | 'updateBots'>,
-  log: (event: string, data: Record<string, unknown>) => void
+  log: (event: string, data: Record<string, unknown>) => void,
+  // Paired hosts' bots, listed beside this host's but saved only there.
+  remoteBots: () => unknown[] = () => []
 ) {
   registry.register(
     { name: 'settings_bots_get', namespace: 'settings', description: 'Read the bots, which of them are running, and the available voices.', hidden: true, changes: [], inputSchema: { type: 'object' } },
-    () => ({ ...settings.bots(), states: bots.list(), voices: [...BOT_VOICES] })
+    () => ({ ...settings.bots(), states: bots.list(), voices: [...BOT_VOICES], remote: remoteBots() })
   );
   registry.register(
     { name: 'settings_bots_update', namespace: 'settings', description: 'Save the bots. New and turned-on bots start; removed and turned-off ones stop.', hidden: true, changes: ['settings'], inputSchema: { type: 'object', required: ['bots'] } },

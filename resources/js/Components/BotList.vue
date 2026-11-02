@@ -20,7 +20,7 @@
       >
         <BotAvatar :avatar="row.bot.avatar" :size="phone ? 28 : 22" :activity="row.activity" class="mt-0.5" />
         <span class="min-w-0 flex-1">
-          <span class="block truncate leading-5" :class="activeBotId === row.bot.id && 'font-medium'">{{ row.bot.name }}</span>
+          <span class="block truncate leading-5" :class="activeBotId === row.bot.id && 'font-medium'">{{ row.bot.name }}<span v-if="row.bot.host" class="ml-1.5 font-normal text-muted-foreground">{{ row.bot.host }}</span></span>
           <span class="block truncate text-xs leading-4" :class="row.session?.asking || row.waitingHelper ? 'text-foreground/75' : 'text-muted-foreground'">{{ botLine(row) }}</span>
         </span>
       </button>

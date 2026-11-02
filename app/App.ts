@@ -323,6 +323,8 @@ async function createApplicationResources(
         workbenchSync?.invalidate();
         remoteClient?.localChanged();
       }
+      // Paired hosts list this host's bots, so they read them again.
+      if (topic === 'settings' && !fromPeer) remoteClient?.localChanged();
       if (topic === 'workbench' && !fromPeer) reapSessions?.();
       if (topic !== 'workbench') changedTopics.add(topic);
     }
@@ -720,8 +722,10 @@ async function createApplicationResources(
       // The command palette pauses, resumes, and cancels timers.
       'timer_cancel', 'timer_pause', 'timer_resume',
       // Socket-only for browsers; the peer route checks control itself.
-      'integrated_restart'
-    ])
+      'integrated_restart', 'bot_restart'
+    ]),
+    localBots: () => settings.bots().bots,
+    botsChanged: () => notifyChanged(['settings'], true)
   });
   const remote = remoteClient;
   defer(() => remote.dispose());
@@ -797,7 +801,7 @@ async function createApplicationResources(
   registerSecretTools(mcp, secretActions);
   registerMcpServerTools(mcp, mcpServers);
   registerIdleCompactionTools(mcp, settings);
-  registerBotTools(mcp, bots, botRelay, settings, (event, data) => debugLog.write('bots', event, data));
+  registerBotTools(mcp, bots, botRelay, settings, (event, data) => debugLog.write('bots', event, data), () => remote.remoteBots());
   const releaseInstall = detectReleaseInstall(options.appRoot);
   const updateMode = options.runtime === 'node' ? 'server' : 'desktop';
   const updates = new UpdateService({

@@ -5,7 +5,7 @@
       <header class="flex h-12 shrink-0 items-center gap-3 border-b border-white/[0.06] px-4">
         <BotAvatar :avatar="row.bot.avatar" :size="28" :activity="row.activity" motion />
         <div class="min-w-0 flex-1">
-          <div class="truncate text-sm font-medium">{{ row.bot.name }}</div>
+          <div class="truncate text-sm font-medium">{{ row.bot.name }}<span v-if="row.bot.host" class="ml-1.5 font-normal text-muted-foreground">{{ row.bot.host }}</span></div>
           <div class="truncate text-xs text-muted-foreground">{{ purviewLabel }}</div>
         </div>
         <button v-if="browser?.running" type="button" :class="CHIP" @click="peek = { kind: 'browser' }"><Globe :class="CHIP_ICON" /><span :class="CHIP_LABEL">Browser</span><span v-if="browser.help" class="h-1.5 w-1.5 rounded-full bg-foreground" aria-label="needs you" /></button>
@@ -31,7 +31,8 @@
             <DropdownMenuItem :disabled="busy" @select="restart(true)">New conversation</DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem :disabled="!projectId" @select="peek = { kind: 'context' }">Session context</DropdownMenuItem>
-            <DropdownMenuItem @select="openSettings">Bot settings</DropdownMenuItem>
+            <!-- A paired host's bot is set up on that host. -->
+            <DropdownMenuItem v-if="!row.bot.host" @select="openSettings">Bot settings</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </header>
@@ -113,7 +114,7 @@ import { hasSecrets } from '../lib/secrets';
 const route = useRoute();
 const router = useRouter();
 const { rows } = useBots();
-const { projects, botProjects, assistantProject } = useWorkbench();
+const { projects, botProjects, assistantProject, remoteAssistantProjects } = useWorkbench();
 const row = computed(() => rows.value.find((candidate) => candidate.bot.id === route.params.botId) ?? null);
 const live = computed(() => Boolean(row.value?.session && !row.value.session.exitedAt));
 const busy = ref(false);
@@ -144,7 +145,7 @@ async function toggleFocus(enabled: boolean): Promise<void> {
 // The bot's own hidden project, where its session context lives.
 const projectId = computed(() => {
   const sessionId = row.value?.session?.id;
-  const own = assistantProject.value ? [assistantProject.value, ...botProjects.value] : botProjects.value;
+  const own = [...(assistantProject.value ? [assistantProject.value] : []), ...botProjects.value, ...remoteAssistantProjects.value];
   return sessionId ? own.find((project) => project.projectSessions.some((session) => session.id === sessionId))?.project.id ?? null : null;
 });
 
