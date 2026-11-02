@@ -13,7 +13,7 @@
         :id="listboxId"
         ref="menu"
         role="listbox"
-        :aria-label="mode === 'mention' ? (agents.length || processes.length || launchers.length ? 'Agents, processes, and worktree files' : 'Worktree files') : 'Slash commands'"
+        :aria-label="mode === 'mention' ? 'Agents, bots, and processes' : 'Slash commands'"
         class="absolute inset-x-2 bottom-full z-40 mb-2 max-h-80 overflow-y-auto rounded-xl border border-border bg-popover p-1 shadow-lg"
       >
         <template v-if="mode === 'mention'">
@@ -37,19 +37,40 @@
               <span v-if="agent.parent" class="min-w-0 flex-1 truncate text-right text-xs text-muted-foreground">{{ agent.parent }}</span>
             </button>
           </div>
-          <div v-if="agentMatches.length && processMatches.length" aria-hidden="true" class="mx-2 my-1 border-t border-border/60" />
+          <div v-if="agentMatches.length && botMatches.length" aria-hidden="true" class="mx-2 my-1 border-t border-border/60" />
+          <!-- Bots that work in this project; the agent messages them with send_message. -->
+          <div v-if="botMatches.length" role="group" aria-label="Bots">
+            <button
+              v-for="(bot, index) in botMatches"
+              :id="optionId(botOffset + index)"
+              :key="bot.botId"
+              type="button"
+              role="option"
+              tabindex="-1"
+              :aria-selected="botOffset + index === menuIndex"
+              class="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-sm"
+              :class="botOffset + index === menuIndex && 'bg-muted'"
+              @mouseenter="menuIndex = botOffset + index"
+              @mousedown.prevent="chooseBot(bot)"
+            >
+              <AgentIcon :harness="bot.harness" class="h-3.5 w-3.5" />
+              <span class="min-w-0 truncate"><span v-for="(run, runIndex) in mentionRuns(bot)" :key="runIndex" :class="run.match && 'font-semibold text-primary'">{{ run.text }}</span></span>
+              <span class="min-w-0 flex-1 truncate text-right text-xs text-muted-foreground">Bot</span>
+            </button>
+          </div>
+          <div v-if="(agentMatches.length || botMatches.length) && processMatches.length" aria-hidden="true" class="mx-2 my-1 border-t border-border/60" />
           <div v-if="processMatches.length" role="group" aria-label="Processes">
             <button
               v-for="(process, index) in processMatches"
-              :id="optionId(agentMatches.length + index)"
+              :id="optionId(processOffset + index)"
               :key="process.processId"
               type="button"
               role="option"
               tabindex="-1"
-              :aria-selected="agentMatches.length + index === menuIndex"
+              :aria-selected="processOffset + index === menuIndex"
               class="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-sm"
-              :class="agentMatches.length + index === menuIndex && 'bg-muted'"
-              @mouseenter="menuIndex = agentMatches.length + index"
+              :class="processOffset + index === menuIndex && 'bg-muted'"
+              @mouseenter="menuIndex = processOffset + index"
               @mousedown.prevent="chooseProcess(process)"
             >
               <TabActivity :spec="processStatusIcon(process.process)"><TerminalSquare class="h-3.5 w-3.5" aria-hidden="true" /></TabActivity>
@@ -58,7 +79,7 @@
               <span v-if="process.owner" class="min-w-0 flex-1 truncate text-right text-xs text-muted-foreground">{{ process.owner }}</span>
             </button>
           </div>
-          <div v-if="(agentMatches.length || processMatches.length) && launcherMatches.length" aria-hidden="true" class="mx-2 my-1 border-t border-border/60" />
+          <div v-if="launcherOffset && launcherMatches.length" aria-hidden="true" class="mx-2 my-1 border-t border-border/60" />
           <!-- Presets and harnesses ask the agent to launch a new one. -->
           <div v-if="launcherMatches.length" role="group" aria-label="New agents">
             <button
@@ -79,27 +100,7 @@
               <span class="min-w-0 flex-1 truncate text-right text-xs text-muted-foreground">{{ launcher.kind === 'preset' ? `${harnessLabel(launcher.harness)} preset` : 'New agent' }}</span>
             </button>
           </div>
-          <div v-if="namedCount && (files.length || searchError)" aria-hidden="true" class="mx-2 my-1 border-t border-border/60" />
-          <div role="group" aria-label="Worktree files">
-            <button
-              v-for="(file, index) in files"
-              :id="optionId(namedCount + index)"
-              :key="file.path"
-              type="button"
-              role="option"
-              tabindex="-1"
-              :aria-selected="namedCount + index === menuIndex"
-              class="flex w-full items-baseline gap-2 rounded-md px-2 py-1 text-left text-sm"
-              :class="[namedCount + index === menuIndex && 'bg-muted', searching && 'opacity-60']"
-              @mouseenter="menuIndex = namedCount + index"
-              @mousedown.prevent="chooseFile(file)"
-            >
-              <span class="shrink-0"><span v-for="(run, runIndex) in nameRuns(file)" :key="runIndex" :class="run.match && 'font-semibold text-primary'">{{ run.text }}</span></span>
-              <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground" dir="rtl"><bdi><span v-for="(run, runIndex) in directoryRuns(file)" :key="runIndex" :class="run.match && 'font-semibold text-foreground'">{{ run.text }}</span></bdi></span>
-            </button>
-          </div>
-          <p v-if="searchError" class="px-2 py-1.5 text-xs text-destructive">{{ searchError }}</p>
-          <p v-else-if="!files.length && !namedCount" class="px-2 py-1.5 text-xs text-muted-foreground" role="status">{{ searching ? 'Searching…' : agents.length || processes.length || launchers.length ? 'No matching agents, processes, or files' : 'No matching worktree files' }}</p>
+          <p v-if="!menuItems.length" class="px-2 py-1.5 text-xs text-muted-foreground" role="status">No matching agents, bots, or processes</p>
         </template>
         <template v-else>
           <button
@@ -205,7 +206,6 @@ import HostBadge from './HostBadge.vue';
 import TabActivity from './TabActivity.vue';
 import {
   addFiles,
-  addReference,
   draftFor,
   formatBytes,
   highlightRuns,
@@ -213,13 +213,12 @@ import {
   mentionQuery,
   payloadFor,
   rankCommands,
-  referenceToken,
   removeAttachment,
   retryUpload,
   slashQuery,
   type ComposerSendPayload
 } from '../lib/integratedComposer';
-import type { MentionAgent, MentionLauncher, MentionProcess } from '../lib/agentMentions';
+import type { MentionAgent, MentionBot, MentionLauncher, MentionProcess } from '../lib/agentMentions';
 import { harnessLabel } from '../lib/harnesses';
 import type { ComposerChip } from '../lib/composerDocument';
 import { createComposerEditor, type ComposerEditor } from '../lib/composerEditor';
@@ -229,7 +228,6 @@ import { touchScreen } from '../lib/touch';
 
 interface Selector { id: string; label: string; value: string; options: Array<{ value: string; label: string; description?: string }> }
 interface NativeCommand { name: string; description?: string; source?: 'patterm' }
-interface WorktreeFile { path: string; name: string; matches?: number[] }
 
 const props = defineProps<{
   processId: string;
@@ -244,6 +242,8 @@ const props = defineProps<{
   working?: boolean;
   // Other agents the @ menu offers.
   agents?: MentionAgent[] | undefined;
+  // Running bots that work in the project, which the agent can message.
+  bots?: MentionBot[] | undefined;
   // Live processes, such as shells and dev servers, the @ menu offers.
   processes?: MentionProcess[] | undefined;
   // Presets and harnesses the @ menu offers for launching a new agent.
@@ -270,30 +270,31 @@ const picker = ref<HTMLInputElement>();
 const dragging = ref(false);
 const mode = ref<'mention' | 'slash' | null>(null);
 const menuIndex = ref(0);
-const files = ref<WorktreeFile[]>([]);
-const searchError = ref('');
-const searching = ref(false);
 const accept = 'image/png,image/jpeg,image/gif,image/webp,.pdf,.md,.markdown,.txt,.json,.yaml,.yml,.toml,.ts,.tsx,.js,.jsx,.mjs,.cjs,.py,.rb,.go,.rs,.java,.c,.h,.cpp,.hpp,.sh,.zsh,.css,.scss,.html,.sql,.csv,.xml,.log,.ini,.conf,.env';
 
 const agents = computed(() => props.agents ?? []);
+const bots = computed(() => props.bots ?? []);
 const processes = computed(() => props.processes ?? []);
 const launchers = computed(() => props.launchers ?? []);
-// The current mention's text. Agents, processes, and launchers match it at once; files
-// arrive from a debounced search.
+// The menu offers no files: attach them instead. Without anything to
+// mention, @ is plain text.
+const mentionable = computed(() => Boolean(agents.value.length || bots.value.length || processes.value.length || launchers.value.length));
+// The current mention's text, which every row matches at once.
 const agentQuery = ref('');
 const agentMatches = computed(() => mode.value === 'mention' ? rankCommands(agents.value, agentQuery.value) : []);
+const botMatches = computed(() => mode.value === 'mention' ? rankCommands(bots.value, agentQuery.value) : []);
 const processMatches = computed(() => mode.value === 'mention' ? rankCommands(processes.value, agentQuery.value) : []);
 const launcherMatches = computed(() => mode.value === 'mention' ? rankCommands(launchers.value, agentQuery.value) : []);
-const launcherOffset = computed(() => agentMatches.value.length + processMatches.value.length);
-// The rows above the files, which match without a search.
-const namedCount = computed(() => launcherOffset.value + launcherMatches.value.length);
+const botOffset = computed(() => agentMatches.value.length);
+const processOffset = computed(() => botOffset.value + botMatches.value.length);
+const launcherOffset = computed(() => processOffset.value + processMatches.value.length);
 const commandMatches = computed(() => rankCommands(props.controls.commands, slashQuery(draft.value.text)?.query ?? ''));
 const menuItems = computed(() => mode.value === 'mention'
   ? [
       ...agentMatches.value.map((agent) => ({ kind: 'agent' as const, agent })),
+      ...botMatches.value.map((bot) => ({ kind: 'bot' as const, bot })),
       ...processMatches.value.map((process) => ({ kind: 'process' as const, process })),
-      ...launcherMatches.value.map((launcher) => ({ kind: 'launcher' as const, launcher })),
-      ...files.value.map((file) => ({ kind: 'file' as const, file }))
+      ...launcherMatches.value.map((launcher) => ({ kind: 'launcher' as const, launcher }))
     ]
   : commandMatches.value.map((command) => ({ kind: 'command' as const, command })));
 const menuOpen = computed(() => mode.value === 'mention' || mode.value === 'slash');
@@ -304,8 +305,8 @@ const previewSessionId = computed(() => {
 const placeholder = computed(() => {
   if (props.ended) return props.restartable ? 'Type /restart to resume this conversation' : 'This session has ended';
   if (props.compact) return `Message ${props.addressee ?? 'agent'}`;
-  const mentions = agents.value.length || processes.value.length || launchers.value.length ? 'type @ for agents and files' : 'type @ for files';
-  return props.controls.commands.length ? `Message agent, ${mentions}, / for commands` : `Message agent, ${mentions}`;
+  const parts = ['Message agent', ...mentionable.value ? ['type @ for agents'] : [], ...props.controls.commands.length ? ['/ for commands'] : []];
+  return parts.join(', ');
 });
 // The editable element is the combobox that owns the menus.
 const editorAttributes = computed<Record<string, string>>(() => ({
@@ -338,26 +339,10 @@ const sendTitle = computed(() => {
   return 'Send message';
 });
 
-let searchTimer: ReturnType<typeof setTimeout> | undefined;
-let pendingSearch: (() => void) | null = null;
-let searchToken = 0;
-let searchQuery = '';
 let mentionRange = { start: 0, caret: 0 };
-// Enter or Tab pressed before the current query's results arrived. The first
-// result is accepted with that key when they land, rather than a stale row
-// from the last query.
-let acceptWhenReady: 'Enter' | 'Tab' | null = null;
 
 function optionId(index: number): string {
   return `${listboxId}-option-${index}`;
-}
-
-function nameRuns(file: WorktreeFile) {
-  return highlightRuns(file.name, file.matches, file.path.length - file.name.length);
-}
-
-function directoryRuns(file: WorktreeFile) {
-  return highlightRuns(file.path.slice(0, file.path.length - file.name.length).replace(/\/$/, ''), file.matches);
 }
 
 function mentionRuns(item: { name: string }) {
@@ -366,122 +351,45 @@ function mentionRuns(item: { name: string }) {
   return highlightRuns(item.name, start < 0 ? [] : Array.from({ length: query.length }, (_, offset) => start + offset));
 }
 
-// Fresh file results replace the rows the old index pointed at. A highlighted
-// agent or launcher stays highlighted.
-function resetFileSelection(): void {
-  if (menuIndex.value >= namedCount.value) menuIndex.value = files.value.length ? namedCount.value : 0;
-}
-
-function invalidateSearch(clearResults = false): void {
-  searchToken++;
-  clearTimeout(searchTimer);
-  pendingSearch = null;
-  searching.value = false;
-  acceptWhenReady = null;
-  if (clearResults) files.value = [];
-}
-
 function closeMenus(): void {
   mode.value = null;
   menuIndex.value = 0;
-  searchError.value = '';
-  invalidateSearch(true);
 }
 
 function evaluate(): void {
   const current = editor.value;
   if (!current) return;
   const caret = current.getSelection().start;
-  const mention = mentionQuery(draft.value.text, caret);
+  const mention = mentionable.value ? mentionQuery(draft.value.text, caret) : null;
   if (mention) {
-    // Moving the caret within an unchanged mention keeps the current results.
-    const unchanged = mode.value === 'mention' && mention.start === mentionRange.start && mention.query === searchQuery;
+    // Moving the caret within an unchanged mention keeps the highlighted row.
+    const unchanged = mode.value === 'mention' && mention.start === mentionRange.start && mention.query === agentQuery.value;
     mentionRange = { start: mention.start, caret };
     if (unchanged) return;
     mode.value = 'mention';
     agentQuery.value = mention.query;
     menuIndex.value = 0;
-    scheduleSearch(mention.query);
     return;
   }
   // Agents without native commands send `/text` as a prompt.
   if (props.controls.commands.length && slashQuery(draft.value.text)) {
     mode.value = 'slash';
     menuIndex.value = 0;
-    invalidateSearch(true);
     return;
   }
   closeMenus();
 }
 
-function scheduleSearch(query: string): void {
-  // Invalidate any in-flight or debounced reply immediately so a result from an
-  // earlier process or query cannot land in this one.
-  const token = ++searchToken;
-  clearTimeout(searchTimer);
-  searchQuery = query;
-  searching.value = true;
-  acceptWhenReady = null;
-  const run = (): void => {
-    pendingSearch = null;
-    void searchFiles(query, token);
-  };
-  pendingSearch = run;
-  searchTimer = setTimeout(run, 120);
-}
-
-async function searchFiles(query: string, token: number): Promise<void> {
-  const processId = props.processId;
-  try {
-    const result = await window.patterm.call('integrated_files_search', { process_id: processId, query, limit: 20 }) as WorktreeFile[];
-    if (!searchCurrent(token, processId, query)) return;
-    files.value = Array.isArray(result) ? result.filter((file) => file && typeof file.path === 'string' && typeof file.name === 'string') : [];
-    resetFileSelection();
-    searchError.value = '';
-    searching.value = false;
-    const accept = acceptWhenReady;
-    acceptWhenReady = null;
-    const first = files.value[0];
-    if (accept && first) acceptFile(first, accept);
-  } catch (cause) {
-    if (!searchCurrent(token, processId, query)) return;
-    files.value = [];
-    resetFileSelection();
-    searchError.value = cause instanceof Error ? cause.message : String(cause);
-    searching.value = false;
-    acceptWhenReady = null;
-  }
-}
-
-function searchCurrent(token: number, processId: string, query: string): boolean {
-  return token === searchToken && mode.value === 'mention' && processId === props.processId && query === searchQuery;
-}
-
-// Tab on a directory completes into it, as shell completion does, and keeps
-// the menu open on its contents. Enter or a click references the directory.
-// Quoted paths cannot be extended, so they are always referenced.
-function acceptFile(file: WorktreeFile, key: 'Enter' | 'Tab'): void {
-  if (key === 'Tab' && file.path.endsWith('/') && !/\s/.test(file.path)) enterDirectory(file);
-  else chooseFile(file);
-}
-
-// The directory stays a reference if the user ends the mention there. The
-// edit reopens the menu on the directory's contents.
-function enterDirectory(file: WorktreeFile): void {
-  addReference(props.processId, file.path, file.name);
-  editor.value?.replace(mentionRange.start, mentionRange.caret, `@${file.path}`);
-  focusEditor();
-}
-
-function chooseFile(file: WorktreeFile): void {
-  addReference(props.processId, file.path, file.name);
-  editor.value?.replace(mentionRange.start, mentionRange.caret, `${referenceToken(file.path)} `);
+function chooseAgent(agent: MentionAgent): void {
+  editor.value?.replace(mentionRange.start, mentionRange.caret, { kind: 'agent', token: agent.processId, name: agent.name, harness: agent.session.harness, ...(agent.session.host ? { host: agent.session.host } : {}) });
   closeMenus();
   focusEditor();
 }
 
-function chooseAgent(agent: MentionAgent): void {
-  editor.value?.replace(mentionRange.start, mentionRange.caret, { kind: 'agent', token: agent.processId, name: agent.name, harness: agent.session.harness, ...(agent.session.host ? { host: agent.session.host } : {}) });
+// A bot is sent as its process ID, which send_message accepts while the
+// bot's purview includes the agent's project.
+function chooseBot(bot: MentionBot): void {
+  editor.value?.replace(mentionRange.start, mentionRange.caret, { kind: 'agent', token: bot.processId, name: bot.name, harness: bot.harness });
   closeMenus();
   focusEditor();
 }
@@ -518,11 +426,14 @@ function onKeydown(event: KeyboardEvent): void {
   if (event.key === 'Enter' && event.shiftKey) return;
   const accepting = event.key === 'Enter' || event.key === 'Tab';
   const highlighted = menuOpen.value ? menuItems.value[menuIndex.value] : undefined;
-  // Agents, processes, and launchers match without a search, so a highlighted
-  // one is never stale.
   if (accepting && highlighted?.kind === 'agent') {
     event.preventDefault();
     chooseAgent(highlighted.agent);
+    return;
+  }
+  if (accepting && highlighted?.kind === 'bot') {
+    event.preventDefault();
+    chooseBot(highlighted.bot);
     return;
   }
   if (accepting && highlighted?.kind === 'process') {
@@ -533,15 +444,6 @@ function onKeydown(event: KeyboardEvent): void {
   if (accepting && highlighted?.kind === 'launcher') {
     event.preventDefault();
     chooseLauncher(highlighted.launcher);
-    return;
-  }
-  if (mode.value === 'mention' && searching.value && accepting) {
-    event.preventDefault();
-    acceptWhenReady = event.key as 'Enter' | 'Tab';
-    if (pendingSearch) {
-      clearTimeout(searchTimer);
-      pendingSearch();
-    }
     return;
   }
   if (menuOpen.value && menuItems.value.length) {
@@ -557,8 +459,7 @@ function onKeydown(event: KeyboardEvent): void {
     }
     if (accepting) {
       event.preventDefault();
-      if (highlighted?.kind === 'file') acceptFile(highlighted.file, event.key as 'Enter' | 'Tab');
-      else if (highlighted?.kind === 'command') chooseCommand(highlighted.command);
+      if (highlighted?.kind === 'command') chooseCommand(highlighted.command);
       return;
     }
   }
@@ -685,7 +586,6 @@ watch(previewSessionId, (sessionId) => { mentionPreview.value = sessionId; });
 mountEditor();
 onMounted(() => void nextTick(focusOnArrival));
 onBeforeUnmount(() => {
-  invalidateSearch();
   mentionPreview.value = null;
   editor.value?.destroy();
 });

@@ -400,6 +400,8 @@ async function createApplicationResources(
   };
   const turnDigests = new TurnDigests();
   defer(integrated.onConversationEvent((processId, event) => turnDigests.observe(processId, event)));
+  // A bot's turn notification shows only a reply from that turn.
+  defer(integrated.onActivityChange(({ processId, previous, activity }) => turnDigests.activity(processId, previous, activity)));
   const triage = new NotificationTriage(turnDigests,
     (processId) => timers.list().some((timer) => timer.ownerProcessId === processId && timer.status === 'pending' && timer.kind !== 'delay'),
     () => settings.notificationSettings().quietRoutineTurns);
@@ -426,6 +428,7 @@ async function createApplicationResources(
     wokeFromSnooze: (processId) => snoozes.announcedWake(processId),
     compacting: (processId) => idleCompaction.compacting(processId),
     triage: (processId) => triage.decide(processId),
+    botReply: (processId) => assistantInbox.botFor(processId) ? turnDigests.reply(processId) : null,
     log: (event, data) => debugLog.write('notifications', event, data)
   })));
 
