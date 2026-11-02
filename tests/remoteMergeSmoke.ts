@@ -7,6 +7,8 @@ import type { PeerLinkService } from '../app/Services/PeerLinkService';
 import type { ProjectLinkService } from '../app/Services/ProjectLinkService';
 import { RemoteClientService } from '../app/Services/RemoteClientService';
 import { defaultAssistantBot } from '../app/Bots/BotSettings';
+import { botHidden, botRows } from '../resources/js/lib/bots';
+import type { ProjectWorkbench } from '../resources/js/types';
 
 // Another host's Personal project never links, so it shows on its own, with
 // the Personal projects ahead of repositories.
@@ -96,6 +98,11 @@ async function sharedBots(): Promise<void> {
     project: { ...project('project_bots', 'workspace').project, kind: 'bots' },
     projectSessions: [{ id: 'session_helper', parentId: null, processId: 'process_helper', ptyProcessId: null, worktreeId: null, botId: 'helper', ownerBotId: null } as unknown as ProjectWorkbenchDto['projectSessions'][number]]
   };
+  // The bot's helper, waiting on the user in a linked project.
+  const linkedProject: ProjectWorkbenchDto = {
+    ...project('project_linked', 'workspace'),
+    projectSessions: [{ id: 'session_worker', parentId: null, parentProcessId: 'process_helper', processId: 'process_worker', ptyProcessId: null, worktreeId: null, activity: 'question', asking: 'Which branch?', startedAt: '2026-11-02T00:00:00Z' } as unknown as ProjectWorkbenchDto['projectSessions'][number]]
+  };
   const botPeers = {
     handle: (name: string, handler: (...args: unknown[]) => unknown) => handlers.set(name, handler),
     onConnected: (listener: typeof onConnected) => { onConnected = listener; },
@@ -104,7 +111,7 @@ async function sharedBots(): Promise<void> {
     emit() {},
     request: async (_host: string, method: string, params: unknown) => {
       requests.push({ method, params });
-      if (method === 'workbench.read') return [project('project_linked', 'workspace'), ...(olderHost ? [] : [botsProject])];
+      if (method === 'workbench.read') return [linkedProject, ...(olderHost ? [] : [botsProject])];
       if (method === 'bots.read') {
         if (olderHost) throw new Error('Unknown peer method: bots.read');
         return [helper, { ...helper, id: 'broken', avatar: null }];
@@ -147,6 +154,18 @@ async function sharedBots(): Promise<void> {
   const merged = service.merge(here).projects.find((item) => item.project.id === 'workstation:project_bots');
   assert.equal(merged?.project.kind, 'bots');
   assert.equal(merged?.projectSessions[0]?.botId, 'workstation:helper', 'its sessions name the bot as remoteBots lists it');
+
+  // A local bot whose process ID is the same as the paired host's bot's.
+  const localBots = { ...project('project_local_bots', 'workspace'), project: { ...project('project_local_bots', 'workspace').project, kind: 'bots' as const },
+    projectSessions: [{ id: 'session_mine', parentId: null, processId: 'process_helper', botId: 'mine', startedAt: '2026-11-02T00:00:00Z' }] } as unknown as ProjectWorkbenchDto;
+  const all = service.merge({ ...here, projects: [project('project_here', 'workspace'), localBots] }).projects as unknown as ProjectWorkbench[];
+  const userProjects = all.filter((item) => item.project.kind !== 'bots');
+  const ownProjects = all.filter((item) => item.project.kind === 'bots');
+  assert.equal(all.find((item) => item.project.id === 'project_here')?.projectSessions[0]?.parentProcessId, 'workstation:process_helper', 'a helper names its parent on its own host');
+  assert.ok(botHidden(userProjects, ownProjects).sessions.has('workstation:session_worker'), 'the paired bot\'s helper stays out of agent lists');
+  const rows = botRows({ bots: [{ ...helper, id: 'mine' }, listed!], userName: null }, userProjects, ownProjects);
+  assert.equal(rows.find((row) => row.bot.id === 'workstation:helper')?.waitingHelper?.id, 'workstation:session_worker', 'its waiting helper surfaces on it');
+  assert.equal(rows.find((row) => row.bot.id === 'mine')?.waitingHelper, null, 'and not on a local bot with the same process ID');
 
   assert.equal(service.target({ tool: 'bot_start', arguments: { bot_id: 'workstation:helper' } })?.name, 'workstation', 'starting its bot goes to its host');
   assert.equal(service.target({ tool: 'bot_start', arguments: { bot_id: 'assistant' } }), null, 'this host\'s bots stay here');

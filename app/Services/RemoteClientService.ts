@@ -538,6 +538,8 @@ export class RemoteClientService {
       projectSessions: remote.projectSessions.map((session) => ({
         ...session, id: q(session.id)!, parentId: q(session.parentId), processId: q(session.processId),
         ptyProcessId: q(session.ptyProcessId), worktreeId: q(session.worktreeId), host: peer.name,
+        // Bots find their helpers through it, and process IDs collide across hosts.
+        ...(session.parentProcessId ? { parentProcessId: q(session.parentProcessId) } : {}),
         // Bot IDs name the host's bots, as remoteBots lists them.
         ...(session.botId ? { botId: `${peer.name}:${session.botId}` } : {}),
         ...(session.ownerBotId ? { ownerBotId: `${peer.name}:${session.ownerBotId}` } : {})
