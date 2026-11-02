@@ -1293,13 +1293,16 @@ export class OpenCodeServerService {
   async controls(processId: string): Promise<IntegratedControls> {
     const runtime = this.runtime(processId);
     const location = `?${new URLSearchParams({ 'location[directory]': runtime.cwd })}`;
-    const [modelResult, agentResult, commandResult, defaultResult, providerResult] = await Promise.all([
+    const [modelResult, agentResult, commandResult, defaultResult, providerResult, live] = await Promise.all([
       this.api(runtime.executable, runtime.cwd, 'GET', `/api/model${location}`),
       this.api(runtime.executable, runtime.cwd, 'GET', `/api/agent${location}`),
       this.api(runtime.executable, runtime.cwd, 'GET', `/api/command${location}`),
       this.api(runtime.executable, runtime.cwd, 'GET', `/api/model/default${location}`),
       // Provider names only label the model list, so the picker survives without them.
-      this.api(runtime.executable, runtime.cwd, 'GET', `/api/provider${location}`).catch(() => null)
+      this.api(runtime.executable, runtime.cwd, 'GET', `/api/provider${location}`).catch(() => null),
+      // The native session is authoritative: a Patterm restart forgets picks,
+      // and another client can change them. Without it, fall back to them.
+      this.nativeSettings(processId).catch((): LiveSettings => ({}))
     ]);
     const providerNames = new Map(dataRows(providerResult).flatMap((item) => {
       const id = stringValue(item.id);
@@ -1323,7 +1326,11 @@ export class OpenCodeServerService {
       ? `${String(defaults.providerID)}/${String(defaults.id ?? defaults.modelID)}`
       : models[0]?.value ?? '';
     const selected = this.selections.get(processId) ?? {};
-    const activeModel = selected.model ?? runtime.model ?? defaultModel;
+    const activeModel = live.model ?? selected.model ?? runtime.model ?? defaultModel;
+    // A live model without a variant runs on the default thinking level.
+    const activeVariant = live.model
+      ? live.reasoning ?? 'default'
+      : selected.variant ?? (selected.model ? null : runtime.reasoning) ?? 'default';
     const metadata = dataRows(modelResult).find((item) => `${stringValue(item.providerID)}/${stringValue(item.id ?? item.modelID)}` === activeModel);
     const variants = (Array.isArray(metadata?.variants) ? metadata.variants : []).map(record)
       .flatMap((variant) => {
@@ -1333,8 +1340,7 @@ export class OpenCodeServerService {
     return {
       selectors: [
         ...(models.length ? [{ id: 'model', label: 'Model', value: activeModel, options: models }] : []),
-        ...(variants.length ? [{ id: 'variant', label: 'Thinking', value: selected.variant
-          ?? (selected.model ? null : runtime.reasoning) ?? 'default', options: [{ value: 'default', label: 'Default' }, ...variants] }] : []),
+        ...(variants.length ? [{ id: 'variant', label: 'Thinking', value: activeVariant, options: [{ value: 'default', label: 'Default' }, ...variants] }] : []),
         ...(agents.length ? [{ id: 'agent', label: 'Agent', value: selected.agent ?? agents[0]!.value, options: agents }] : [])
       ],
       commands: [
