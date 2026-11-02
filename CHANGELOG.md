@@ -163,6 +163,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An Integrated OpenCode session's Model and Thinking pickers show what the
+  session actually uses, read from OpenCode, instead of the launch choice or
+  the current default after a Patterm restart. Changing Thinking no longer
+  switches such a session to the default model.
+
 - Usage no longer counts OpenCode's Claude (claude-agent) turns twice. Once
   Claude Code's own transcript of the session is imported, its usage, with the
   real model and its price, replaces OpenCode's and counts as OpenCode usage in

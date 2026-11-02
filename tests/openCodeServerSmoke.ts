@@ -340,7 +340,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     database.connection.prepare(`update processes set argv = ?, cwd = ? where id = 'process_1'`).run(JSON.stringify([executable]), directory);
     const presetControls = await service.controls('process_1');
     assert.equal(presetControls.selectors.find((selector) => selector.id === 'model')?.value, 'openai/gpt-test', 'the composer shows the native session model, not the global default');
-    assert.equal(presetControls.selectors.find((selector) => selector.id === 'variant')?.value, 'high', 'the composer shows the native session variant');
+    assert.equal(presetControls.selectors.find((selector) => selector.id === 'variant')?.value, 'low', 'the composer shows the native session variant, not the launch value');
     assert.deepEqual(await service.nativeSettings('process_1'), { model: 'openai/gpt-test', reasoning: 'low' },
       'a restart reads the variant from the native session, not the launch value');
     database.connection.prepare(`update sessions set interface_mode = 'tui' where id = 'session_1'`).run();
@@ -384,6 +384,14 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     assert.deepEqual(controls.selectors[1]?.options.map((option) => option.value), ['default', 'low', 'high']);
     assert.deepEqual(controls.selectors[0]?.options.map((option) => option.description), ['OpenAI', 'OpenAI', 'Zen', 'Go'], 'each model names the provider that serves it, without OpenCode\'s own prefix');
     assert.deepEqual(controls.commands.at(-1), { name: 'review', description: 'Review changes' }, 'custom commands follow the TUI built-ins');
+    assert.equal(controls.selectors[0]?.value, 'openai/gpt-test', 'a session launched without a model shows its native model, not the current default');
+    // After a restart Patterm has no picks of its own; changing Thinking keeps
+    // the native model instead of switching to the default.
+    const thinkingStart = fs.readFileSync(record, 'utf8').trim().split('\n').length;
+    await openCode(database, env, { persistent: true }).configure('process_0', 'variant', 'high');
+    const thinkingModels = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line)).slice(thinkingStart)
+      .filter((request) => request.method === 'POST' && request.route.endsWith('/model')).map((request) => request.body.model);
+    assert.deepEqual(thinkingModels, [{ providerID: 'openai', id: 'gpt-test', variant: 'high' }], 'changing Thinking never resets the native model');
     await service.configure('process_0', 'agent', 'plan');
     await service.configure('process_0', 'model', 'openai/gpt-test');
     await service.configure('process_0', 'variant', 'high');
