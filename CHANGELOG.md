@@ -67,6 +67,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Bots now close their helpers once the work is truly finished, instead of
+  leaving them running after they report. A helper whose PR is ready to merge
+  or waiting for review, or one the bot will send follow-ups, stays open.
+
 - A bot's finished-turn notification shows its reply, as plain text cut to
   280 characters, instead of "Finished its turn". Only the bot's final
   top-level message is used, never tool output, reasoning or subagent rows;
