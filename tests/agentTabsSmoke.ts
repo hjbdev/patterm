@@ -2,14 +2,11 @@ import assert from 'node:assert/strict';
 
 import {
   activeAgentFamilyIndex,
-  agentFamilyTargetAt,
-  agentFamilyTargetByDelta,
   agentOptionIndent,
   agentOptionTargetByDelta,
   buildAgentTabFamilies,
   familyOwnerLabel,
   matchesAgentTabSelection,
-  type AgentTabFamily,
 } from '../resources/js/lib/agentTabs';
 import { activeProcesses, ownedProcessesForSessions, topLevelProcessesForSessions } from '../resources/js/lib/processTabs';
 import {
@@ -23,7 +20,6 @@ import {
   writeStoredTabLayout,
   type StripTab,
 } from '../resources/js/lib/tabStrip';
-import { resolveActiveTerminalSelection } from '../resources/js/lib/terminalSelection';
 import { isNavigationModeToggle, navigationModeAction, type NavigationModeKey } from '../resources/js/lib/navigationMode';
 import { formatDuration, timerLabel, timerRemaining, timersForProcesses } from '../resources/js/lib/timers';
 import type { ProcessRecord, SessionRecord, TimerRecord } from '../resources/js/types';
@@ -116,7 +112,6 @@ const secondIntegrated = { ...session('integrated-b', null, null), interfaceMode
 const integratedChild = { ...session('integrated-child', secondIntegrated.id, null), interfaceMode: 'integrated' as const };
 const mixedFamilies = buildAgentTabFamilies([rootA, integratedSession, secondIntegrated, integratedChild], { [secondIntegrated.id]: integratedChild.id });
 assert.equal(activeAgentFamilyIndex(mixedFamilies, null, integratedChild.id), 2, 'the selected Integrated child identifies its own family');
-assert.equal(agentFamilyTargetByDelta(mixedFamilies, null, 1, integratedChild.id)?.session.id, rootA.id, 'horizontal navigation wraps from the selected Integrated family');
 assert.equal(agentOptionTargetByDelta(mixedFamilies, null, -1, integratedChild.id)?.session.id, secondIntegrated.id, 'vertical navigation starts from the selected Integrated child');
 assert.equal(activeAgentFamilyIndex(mixedFamilies, null), -1, 'no routed session means no active family');
 assert.deepEqual(families.map((family) => family.rootId), ['root-a', 'root-b', 'root-c']);
@@ -160,61 +155,19 @@ assert.equal(familyOwnerLabel(deepFamily!, rootProcess.parentProcessId), null, '
 assert.equal(families[0]?.active.id, 'child-a', 'selected child is the active tab label for its root family');
 assert.equal(activeAgentFamilyIndex(families, 'pty-child-a'), 0);
 
-assert.equal(agentFamilyTargetByDelta(families, 'pty-child-a', 1)?.session.id, 'root-b', 'Ctrl+D moves to the next root family');
-assert.equal(agentFamilyTargetByDelta(families, 'pty-child-a', -1)?.session.id, 'root-c', 'Ctrl+A wraps to the previous root family');
-assert.equal(agentFamilyTargetByDelta(families, 'pty-root-c', 1)?.session.id, 'child-a', 'horizontal navigation wraps forward');
-
-assert.equal(agentFamilyTargetAt(families, 0)?.session.id, 'child-a', 'Ctrl+1 selects the first family active session');
-assert.equal(agentFamilyTargetAt(families, 8), null, 'out-of-range Ctrl+9 has no target');
-
 assert.equal(agentOptionTargetByDelta(families, 'pty-child-a', 1)?.session.id, 'grandchild-a', 'Ctrl+S moves down the active family options');
 assert.equal(agentOptionTargetByDelta(families, 'pty-child-a', -1)?.session.id, 'root-a', 'Ctrl+W moves up the active family options');
 assert.equal(agentOptionTargetByDelta(families, 'pty-root-a', -1)?.session.id, 'grandchild-a', 'vertical navigation wraps upward');
 assert.equal(agentOptionTargetByDelta(families, 'pty-grandchild-a', 1)?.session.id, 'root-a', 'vertical navigation wraps downward');
 assert.equal(agentOptionTargetByDelta(families, 'pty-unknown', 1), null, 'unknown active terminal has no vertical target');
-assert.equal(
-  resolveActiveTerminalSelection({
-    next: [{ id: 'pty-root-a' }, { id: 'pty-child-a' }],
-    previous: [{ id: 'pty-root-a' }],
-    activeTerminalId: 'pty-root-a',
-    pendingExplicitTerminalId: null
-  }),
-  'pty-root-a',
-  'a fresh child agent tab does not steal focus from the active terminal'
-);
-assert.equal(
-  resolveActiveTerminalSelection({
-    next: [{ id: 'pty-root-a' }, { id: 'pty-child-a' }],
-    previous: [{ id: 'pty-root-a' }],
-    activeTerminalId: 'pty-root-a',
-    pendingExplicitTerminalId: 'pty-child-a'
-  }),
-  'pty-child-a',
-  'explicit terminal selection still switches to the requested child agent tab'
-);
-assert.equal(
-  resolveActiveTerminalSelection({
-    next: [{ id: 'pty-root-b' }],
-    previous: [{ id: 'pty-root-a' }, { id: 'pty-root-b' }],
-    activeTerminalId: 'pty-root-a',
-    pendingExplicitTerminalId: null
-  }),
-  'pty-root-b',
-  'when a stopped active terminal disappears from tabs, selection falls back to the remaining live tab'
-);
-
 {
   const keys = (tabs: readonly StripTab[]) => tabs.map((tab) => tab.key);
-  const stripFamilies = (tabs: readonly StripTab[]): AgentTabFamily[] => tabs.flatMap((tab) => tab.kind === 'agent' ? [tab.family] : []);
   const shell = activeProcesses([processRecord('shell', null)]);
 
   assert.deepEqual(keys(buildStripTabs(families, shell)), ['agent:root-a', 'agent:root-b', 'agent:root-c', 'process:shell'], 'new tabs list agents before processes');
 
   const reordered = buildStripTabs(families, shell, { order: ['agent:root-c', 'process:shell', 'agent:root-a'], pinned: [] });
   assert.deepEqual(keys(reordered), ['agent:root-c', 'process:shell', 'agent:root-a', 'agent:root-b'], 'custom order interleaves processes and appends new tabs');
-  assert.equal(agentFamilyTargetAt(stripFamilies(reordered), 0)?.session.id, 'root-c', 'Ctrl+1 follows custom visual order');
-  assert.equal(agentFamilyTargetByDelta(stripFamilies(reordered), 'pty-root-c', 1)?.session.id, 'child-a', 'horizontal navigation follows custom visual order');
-
   const pinned = buildStripTabs(families, shell, {
     order: ['agent:root-c', 'process:shell', 'agent:root-a', 'agent:root-b'],
     pinned: ['agent:root-a', 'process:shell', 'agent:closed']

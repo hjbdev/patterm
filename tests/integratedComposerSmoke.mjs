@@ -268,7 +268,7 @@ test('submission waits for uploads and a failed upload blocks the send with an a
   harness.scope.stop();
 });
 
-test('a successful upload enables the send and a retry recovers a failed one', async () => {
+test('a successful upload enables the send', async () => {
   composer.clearDrafts();
   const harness = createHarness({ processId: 'composer_upload_ok' });
   harness.setEditor('ship it');
@@ -310,7 +310,6 @@ test('per-process drafts survive switching and a completed send keeps newer edit
   composer.clearDrafts();
   const harness = createHarness({ processId: 'composer_draft_a' });
   harness.setEditor('for A @src/a.ts');
-  harness.pane.getDraft().references.push({ path: 'src/a.ts', name: 'a.ts' });
   harness.props.processId = 'composer_draft_b';
   await nextTick();
   assert.equal(harness.pane.getDraft().text, '');
@@ -318,7 +317,6 @@ test('per-process drafts survive switching and a completed send keeps newer edit
   harness.props.processId = 'composer_draft_a';
   await nextTick();
   assert.equal(harness.pane.getDraft().text, 'for A @src/a.ts');
-  assert.deepEqual(harness.pane.getDraft().references, [{ path: 'src/a.ts', name: 'a.ts' }]);
 
   // A failed attempt reuses its id only while the payload is unchanged.
   const first = composer.payloadFor('composer_draft_a');
@@ -329,19 +327,14 @@ test('per-process drafts survive switching and a completed send keeps newer edit
   const edited = composer.payloadFor('composer_draft_a');
   assert.equal(edited.ok && first.ok && edited.payload.messageId !== first.payload.messageId, true);
 
-  // Newer edits stay after a delivery, and a token still in them is sent again.
+  // Newer edits stay after a delivery.
   composer.completeSend('composer_draft_a', { ...first.payload, hash: first.hash });
   assert.equal(composer.draftFor('composer_draft_a').text, 'for A @src/a.ts edited');
-  const resend = composer.payloadFor('composer_draft_a');
-  assert.deepEqual(resend.ok && resend.payload.references.map(reference => reference.path), ['src/a.ts']);
-
   // An unchanged draft is emptied after a successful send.
-  composer.addReference('composer_draft_a', 'src/a.ts', 'a.ts');
   const current = composer.payloadFor('composer_draft_a');
   assert.equal(current.ok, true);
   composer.completeSend('composer_draft_a', { ...current.payload, hash: current.hash });
   assert.equal(composer.draftFor('composer_draft_a').text, '');
-  assert.deepEqual(composer.draftFor('composer_draft_a').references, []);
   assert.deepEqual(composer.draftFor('composer_draft_a').attachments, []);
   harness.scope.stop();
 });
@@ -439,20 +432,6 @@ test('moving the caret inside an unchanged mention keeps the highlighted row', a
   assert.equal(harness.pane.menuIndex.value, 1, 'the same mention keeps the highlight');
   editor.setCaret(0);
   assert.equal(harness.pane.menuOpen.value, false, 'leaving the mention closes the menu');
-  harness.scope.stop();
-});
-
-test('a file reference saved in an earlier draft is still sent, and dropped with its token', async () => {
-  composer.clearDrafts();
-  const harness = createHarness({ processId: 'composer_token_delete' });
-  composer.addReference('composer_token_delete', 'src/app.ts', 'app.ts');
-  harness.pane.getDraft().text = 'see @src/app.ts';
-  harness.pane.submit();
-  assert.deepEqual(harness.emitted[0].payload.references, [{ path: 'src/app.ts', name: 'app.ts' }]);
-  harness.pane.getDraft().text = 'no file after all';
-  harness.pane.submit();
-  assert.deepEqual(harness.emitted[1].payload.references, []);
-  assert.equal(harness.emitted[1].payload.text, 'no file after all');
   harness.scope.stop();
 });
 

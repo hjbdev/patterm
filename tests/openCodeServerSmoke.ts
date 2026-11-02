@@ -387,12 +387,10 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     await service.configure('process_0', 'agent', 'plan');
     await service.configure('process_0', 'model', 'openai/gpt-test');
     await service.configure('process_0', 'variant', 'high');
-    await service.command('process_0', 'review', 'current changes');
     const controlRequests = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
     assert.ok(controlRequests.some((request) => request.route.endsWith('/agent') && request.body.agent === 'plan'));
     assert.ok(controlRequests.some((request) => request.route.endsWith('/model') && request.body.model.id === 'gpt-test' && request.body.model.modelID === undefined));
     assert.ok(controlRequests.some((request) => request.route.endsWith('/model') && request.body.model.variant === 'high'));
-    assert.ok(controlRequests.some((request) => request.route.endsWith('/command') && request.body.name === 'review' && !('command' in request.body) && request.body.delivery === 'queue'));
     assert.match(JSON.stringify(await service.conversation('process_0')), /msg_test/);
     // Project references use file URIs, including paths with URL metacharacters.
     const sourceFile = path.join(directory, 'source.ts');

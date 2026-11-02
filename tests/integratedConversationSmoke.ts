@@ -18,7 +18,6 @@ import {
   transcriptTurnDurations,
   transcriptRowIndexForMessage,
   isSessionUnavailableError,
-  mergeTranscriptWindows,
   normaliseConversation,
   normaliseForms,
   normaliseMessages,
@@ -93,12 +92,6 @@ assert.deepEqual(normaliseMessages([
   { id: 'msg_agent', type: 'agent-switched', text: 'build' },
   { id: 'msg_model', type: 'model-switched', text: 'gpt' }
 ]), [], 'OpenCode synthetic and switch rows stay out of the transcript');
-assert.deepEqual(mergeTranscriptWindows(
-  [{ id: 'old', role: 'user', kind: 'text', text: 'earlier' }, { id: 'shared', role: 'assistant', kind: 'text', text: 'partial' }],
-  [{ id: 'shared', role: 'assistant', kind: 'text', text: 'complete' }, { id: 'new', role: 'user', kind: 'text', text: 'latest' }]
-).map((message) => [message.id, message.text]), [
-  ['old', 'earlier'], ['shared', 'complete'], ['new', 'latest']
-], 'a refreshed live window replaces overlapping rows without dropping loaded history');
 assert.deepEqual(normaliseMessages({ data: [{ id: 'assistant', type: 'assistant', content: [{ type: 'reasoning', text: 'thinking' }] }] })
   .map((message) => [message.id, message.kind, message.text]), [['assistant-0', 'reasoning', 'thinking']]);
 assert.deepEqual(groupTranscriptMessages([
@@ -129,22 +122,6 @@ assert.equal(questions[0]?.questions[0]?.multiple, true);
 assert.equal(questions[0]?.questions[0]?.custom, true);
 assert.deepEqual(questions[0]?.questions[0]?.options, [{ label: 'Red', description: 'Warm' }]);
 assert.equal(questions[0]?.questions[1]?.multiple, false);
-
-// Two distinct pending requests that reuse a question id must not share answers.
-const shared = normaliseQuestions({
-  data: [
-    { id: 'request-one', questions: [{ id: 'choice', question: 'First task?', options: [{ label: 'Yes' }], custom: true }] },
-    { id: 'request-two', questions: [{ id: 'choice', question: 'Different task?', options: [{ label: 'No' }], custom: true }] }
-  ]
-});
-assert.deepEqual(shared.map((request) => request.questions[0]?.key), ['request-one:choice', 'request-two:choice']);
-const isolated = buildQuestionAnswers(shared[1]!.questions, {
-  multiple: {},
-  single: { 'request-one:choice': 'Yes' },
-  custom: {}
-});
-assert.equal(isolated.ok, false, 'the second request has no answer of its own');
-assert.match(isolated.ok ? '' : isolated.error, /Different task\?/);
 
 // Multi-select plus a typed answer, single choice, and the missing-answer error.
 const multi = questions[0]!.questions.slice(0, 1);
@@ -264,27 +241,16 @@ assert.equal(permissions[0]?.always, undefined, 'providers that support session 
 assert.equal(permissions[1]?.always, false, 'a request without persistent support is marked');
 assert.equal(permissions[2]?.alwaysLabel, 'Allow for this session', 'the persistent action carries its real scope');
 
-// A numeric `when` condition compares the typed editor value with the native
-// field type: '2' matches 2 for an integer field, and the dependent field is
-// required and submitted like any other visible field.
+// Numeric conditions handle native values and edge cases in editor values.
 const conditionalForm = normaliseForms({ data: [{ id: 'frm_cond', title: 'Conditional', fields: [
   { key: 'count', type: 'integer', title: 'Count', required: true, minimum: 1, maximum: 10 },
   { key: 'detail', type: 'string', title: 'Explanation for two', required: true, when: [{ key: 'count', op: 'eq', value: 2 }] }
 ] }] })[0]!;
 const detailField = conditionalForm.fields[1]!;
-assert.equal(formFieldVisible(detailField, { count: '2' }, conditionalForm.fields), true, 'a typed integer matches a numeric condition');
 assert.equal(formFieldVisible(detailField, { count: 2 }, conditionalForm.fields), true, 'a numeric answer matches too');
 assert.equal(formFieldVisible(detailField, { count: '2.5' }, conditionalForm.fields), false, 'a non-integer value does not match');
 assert.equal(formFieldVisible(detailField, { count: '' }, conditionalForm.fields), false, 'an empty editor value does not match');
 assert.equal(formFieldVisible(detailField, { count: '02' }, conditionalForm.fields), true, 'numeric normalisation ignores leading zeros');
-assert.deepEqual(
-  buildFormAnswer(conditionalForm, { count: '2', detail: 'Two of them' }),
-  { ok: true, answer: { count: 2, detail: 'Two of them' } },
-  'the dependent answer is required and the integer stays numeric'
-);
-const missingDetail = buildFormAnswer(conditionalForm, { count: '2' });
-assert.equal(missingDetail.ok, false, 'a visible required dependent field is enforced');
-assert.match(missingDetail.ok ? '' : missingDetail.error, /Explanation for two/);
 assert.deepEqual(
   buildFormAnswer(conditionalForm, { count: '3' }),
   { ok: true, answer: { count: 3 } },

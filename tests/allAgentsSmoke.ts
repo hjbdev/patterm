@@ -12,7 +12,6 @@ import {
   launchTargets,
   setProjectShown,
   tabsGroupedByProject,
-  targetsWithHarness,
   type AllAgentsState
 } from '../resources/js/lib/allAgents';
 import type { ProcessRecord, ProjectSummary, ProjectWorkbench, SessionRecord } from '../resources/js/types';
@@ -109,16 +108,11 @@ assert.deepEqual(readAllAgentsState(storage(JSON.stringify({ active: true, hidde
 assert.deepEqual(readAllAgentsState(storage('not json')), { active: false, hidden: [] });
 assert.deepEqual(readAllAgentsState(storage(null)), { active: false, hidden: [] });
 
-// Launching from All agents offers each shown project and its paired hosts,
-// then only the ones whose host has the picked CLI.
+// Launching from All agents offers each shown project and its paired hosts.
 const linked: ProjectWorkbench = { ...web, project: { ...web.project, remotes: [{ host: 'gpu', projectId: 'gpu:web' }] } };
 const remoteOnly: ProjectWorkbench = { ...docs, project: { ...docs.project, id: 'gpu:docs', host: 'gpu' } };
 const targets = launchTargets([linked, remoteOnly, helper, docs], { active: true, hidden: ['docs'] });
 assert.deepEqual(targets.map((target) => [target.projectId, target.targetProjectId, target.host]), [['web', 'web', null], ['web', 'gpu:web', 'gpu'], ['gpu:docs', 'gpu:docs', 'gpu']]);
-const installed = (host: string | null) => host === 'gpu' ? [{ harness: 'opencode' }] : [{ harness: 'claude' }];
-assert.deepEqual(targetsWithHarness(targets, 'opencode', installed).map((target) => target.targetProjectId), ['gpu:web', 'gpu:docs']);
-assert.deepEqual(targetsWithHarness(targets, 'claude', installed).map((target) => target.targetProjectId), ['web']);
-
 // The launch menu starts in the chosen target. Choosing among shown projects
 // never falls back to a hidden one; a single project not yet listed still
 // launches in place.

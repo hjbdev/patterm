@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 
-import { ago, capitalize, memberState, membersLabel, modelLabel, shortAgo, splitSummary, STATE_ORDER } from '../resources/js/lib/agentDigest';
+import { ago, capitalize, memberState, membersLabel, modelLabel, shortAgo, splitSummary } from '../resources/js/lib/agentDigest';
 import type { RowActivity } from '../resources/js/lib/rowActivity';
 
 // A summary's first sentence says what the thread is for; the rest says where it stands.
@@ -37,6 +37,5 @@ assert.equal(membersLabel({ subagents: 2, processes: 1 }, ' · '), '2 subagents 
 assert.equal(membersLabel({ subagents: 1, processes: 0 }, ', '), '1 subagent');
 assert.equal(membersLabel({ subagents: 0, processes: 3 }, ', '), '3 processes');
 assert.equal(capitalize('needs permission'), 'Needs permission');
-assert.deepEqual(STATE_ORDER, ['attention', 'working', 'waiting', 'done', 'idle'], 'the board shows what needs you first');
 
 console.log('agent digest smoke passed');

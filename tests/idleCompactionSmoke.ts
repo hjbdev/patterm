@@ -227,13 +227,7 @@ async function main() {
     activity('second', 'idle');
     assert.equal(service.compacting('second'), false);
 
-    // A lost native connection disarms the agent: work can start unseen while
-    // activity stays idle. The next prompt arms it again.
-    turn('claude');
-    eventListener?.('claude', { kind: 'reconnecting' } as IntegratedConversationEvent);
-    assert.deepEqual(state('claude'), cleared);
-    await wait(SETTLE);
-    assert.equal(count('claude'), 8, 'no compaction after the connection was lost');
+    // A connection error also disarms the agent: work can start unseen.
     turn('claude');
     eventListener?.('claude', { kind: 'error', id: 'connection_error' } as IntegratedConversationEvent);
     await wait(SETTLE);

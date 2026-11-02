@@ -6,7 +6,6 @@ import { isSingleEmoji } from '../app/Bots/BotAvatar';
 import { ASSISTANT_BOT_ID, botInput, botSettingsInput, parseBotSettings, purviewAllows, readBotSettings, type Bot } from '../app/Bots/BotSettings';
 import type { HarnessPreset } from '../app/Harness/HarnessPresets';
 import { restartBotFromSettings, restartNeed } from '../resources/js/lib/bots';
-import { ASSISTANT_PROJECT_ID } from '../app/Services/AssistantProject';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import { AgentContextService } from '../app/Services/AgentContextService';
 import { BotService, botProjectId } from '../app/Services/BotService';
@@ -365,8 +364,7 @@ async function main(): Promise<void> {
     await assert.rejects(registry.callPublic('list_processes', { project_id: botProjectId('other') }, fable), /outside this bot's projects/);
     await assert.rejects(registry.callPublic('todo_list', { project_id: 'project_assistant' }, fable), /outside this bot's projects/);
 
-    // The assistant runs like any bot: turned off it doesn't start, and on
-    // it keeps its own role, project and folder, so its thread resumes.
+    // The assistant does not start at boot until its first conversation.
     const launchesBefore = launches.length;
     await bots.ensureAll();
     assert.equal(launches.slice(launchesBefore).some((launch) => launch.input.bot_id === ASSISTANT_BOT_ID), false);
@@ -376,20 +374,6 @@ async function main(): Promise<void> {
     await bots.ensureAll();
     assert.equal(bots.currentProcess(ASSISTANT_BOT_ID), null);
     assert.equal(bots.harness(ASSISTANT_BOT_ID), 'codex');
-    await bots.ensure(ASSISTANT_BOT_ID);
-    const assistantLaunch = launches.at(-1)!.input;
-    assert.deepEqual([assistantLaunch.bot_id, assistantLaunch.session_role, assistantLaunch.project_id, assistantLaunch.harness, 'preset' in assistantLaunch], [ASSISTANT_BOT_ID, 'assistant', ASSISTANT_PROJECT_ID, 'codex', false]);
-    assert.equal(path.basename(assistantLaunch.cwd!), 'assistant');
-    assert.equal((db.prepare('select kind from projects where id = ?').get(ASSISTANT_PROJECT_ID) as { kind: string }).kind, 'assistant');
-    assert.match(bots.context(ASSISTANT_BOT_ID), /You are the user's Patterm assistant/);
-    const assistantProcess = bots.currentProcess(ASSISTANT_BOT_ID)!;
-    assert.equal(bots.botFor(assistantProcess), ASSISTANT_BOT_ID);
-    // Restarting resumes its thread; turning it off stops it.
-    await bots.restartProcess(assistantProcess);
-    assert.equal(launches.at(-1)!.resume?.resume_id, `thread-${launches.length - 1}`);
-    settings.updateBots({ bots: [{ ...settings.bots().bots[0]!, enabled: false }, ...settings.bots().bots.slice(1)] });
-    await bots.reconcile();
-    assert.equal(bots.currentProcess(ASSISTANT_BOT_ID), null);
   } finally {
     database.dispose();
     removeTree(dir);

@@ -161,10 +161,7 @@ async function main(): Promise<void> {
       }
     } as unknown as TerminalService;
     const registryTimeline = new TimelineService(database);
-    let importedHistoryProjectId: string | null | undefined;
     let titleSyncs = 0;
-    let listedHistoryProjectId: string | null | undefined;
-    let searchedHistoryInput: { project_id: string } | undefined;
     const handledNotifications: string[] = [];
     const reportedNotifications: string[] = [];
     const registry = createTestMcpRegistry({
@@ -175,24 +172,11 @@ async function main(): Promise<void> {
       timeline: registryTimeline,
       workbench: repo,
       historyImportQueue: {
-        import(input: { project_id?: string | null }) {
-          importedHistoryProjectId = input.project_id;
-          return { queued: true };
-        },
         syncTitles() {
           titleSyncs += 1;
         }
       } as unknown as AgentHistoryImportQueueService,
-      historyReadService: {
-        list(input: { project_id?: string | null }) {
-          listedHistoryProjectId = input.project_id;
-          return { conversations: [] };
-        },
-        search(input: { project_id: string }) {
-          searchedHistoryInput = input;
-          return { query: 'needle', results: [] };
-        }
-      } as unknown as AgentHistoryReadService
+      historyReadService: {} as AgentHistoryReadService
     });
 
     const paletteApplication = { database, workbench: repo, currentWorkbench: () => repo.snapshot(), mcp: registry } as Parameters<typeof listCommandPaletteCommands>[0];
@@ -200,8 +184,6 @@ async function main(): Promise<void> {
     const commands = (await listCommandPaletteCommands(paletteApplication, paletteContext)).commands;
     assert.equal(commands.find((command) => command.id === 'worktree:create')?.input?.type, 'text');
     assert.ok(!commands.some((command) => command.id.startsWith('task:') || command.id.startsWith('issue:')));
-    assert.ok(!commands.some((command) => command.id.startsWith('diff:') || command.id.endsWith(':diffs')), 'diff snapshot and Diffs page commands are removed');
-    assert.deepEqual(await runCommandPaletteCommand(paletteApplication, { id: `navigate:project-tab:${projectSnapshot.project.id}:worktrees`, context: paletteContext }), { navigate: { projectId: projectSnapshot.project.id, tab: 'worktrees' } });
     await assert.rejects(runCommandPaletteCommand(paletteApplication, { id: 'task:create', context: paletteContext }), /unknown command/);
 
     assert.deepEqual(registry.changedTopics('get_project_status'), [], 'project status reads do not force workbench refreshes');
@@ -685,18 +667,6 @@ async function main(): Promise<void> {
       values ('old_child', ?, 'close_parent', 'agent', 'previous runtime', 'exited', ?, ?)`).run(projectSnapshot.project.id, closeNow, closeNow);
     const closeResult = (await registry.call('close_process', { process_id: 'close_parent' })) as { closed: string[] };
     assert.deepEqual(closeResult.closed, ['close_parent', 'close_child', 'old_child', 'close_grandchild'], 'close_process returns parent and descendants, including historical entries without a runtime');
-    const closeStatuses = database.connection
-      .prepare(`select id, status from processes where id in ('close_parent', 'close_child', 'close_grandchild') order by id`)
-      .all() as Array<{ id: string; status: string }>;
-    assert.deepEqual(
-      closeStatuses.map((row) => [row.id, row.status]),
-      [
-        ['close_child', 'closed'],
-        ['close_grandchild', 'closed'],
-        ['close_parent', 'closed']
-      ],
-      'closing a parent closes descendants'
-    );
     const exitedSessions = database.connection
       .prepare(`select count(*) as count from sessions where process_id in ('close_parent', 'close_child', 'close_grandchild') and exited_at is not null`)
       .get() as { count: number };

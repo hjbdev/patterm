@@ -215,6 +215,20 @@ test('older pages survive live refreshes and stale page replies cannot cross ses
   await nextTick();
   assert.deepEqual(harness.pane.messages.value, []);
   assert.equal(harness.pane.historyCursor.value, null);
+  await mountSettled(harness, {
+    ...emptyConversation(), provider: 'opencode', history_truncated: true,
+    history_cursor: { next: 'B-older' }, messages: { data: [{ id: 'B-live', type: 'assistant', text: 'B' }] }
+  });
+  void harness.pane.loadOlder();
+  await flush();
+  const stale = pending(harness, 'integrated_history').at(-1);
+  assert.deepEqual(stale.args, { process_id: 'B', cursor: 'B-older' });
+  harness.props.processId = 'C';
+  await nextTick();
+  await mountSettled(harness, replyConversation('C'));
+  stale.resolve({ messages: { data: [{ id: 'B-old', type: 'user', text: 'stale B' }] }, cursor: null });
+  await flush();
+  assert.deepEqual(harness.pane.messages.value.map(message => message.text), ['C'], 'a late page cannot enter the next session');
   harness.scope.stop();
 });
 

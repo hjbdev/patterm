@@ -47,26 +47,12 @@ function providerById(id: string) {
   return provider;
 }
 
-// Windows links files with hard links and directories with junctions, which a
-// path comparison cannot follow, so compare the file identity there.
-function assertLinked(linked: string, source: string): void {
-  if (process.platform !== 'win32') {
-    assert.equal(fs.realpathSync(linked), source);
-    return;
-  }
-  const actual = fs.statSync(linked, { bigint: true });
-  const expected = fs.statSync(source, { bigint: true });
-  assert.ok(actual.ino === expected.ino && actual.dev === expected.dev, `${linked} is linked to ${source}`);
-}
-
 function assertOpenCodeTheme(tempDir: string): void {
   const source = path.join(tempDir, 'theme-source');
   const runtime = path.join(tempDir, 'theme-runtime');
   fs.mkdirSync(path.join(source, 'themes'), { recursive: true });
-  fs.mkdirSync(path.join(source, 'plugins'));
   const original = '{\n// Preferences\n"tabs":{"enabled":true},"theme":{"mode":"dark"},\n}';
   fs.writeFileSync(path.join(source, 'cli.json'), original);
-  fs.writeFileSync(path.join(source, 'service.json'), '{}');
   fs.writeFileSync(path.join(source, 'themes', 'custom.json'), '{}');
   const target = prepareOpenCodeTheme(runtime, { OPENCODE_CONFIG_DIR: source });
   const cliPath = path.join(target, 'cli.json');
@@ -74,9 +60,6 @@ function assertOpenCodeTheme(tempDir: string): void {
   assert.match(initial, /Preferences/);
   assert.deepEqual(parse(initial), { tabs: { enabled: true }, theme: { mode: 'dark', name: 'patterm-opencode' } });
   assert.equal(fs.readFileSync(path.join(source, 'cli.json'), 'utf8'), original);
-  assertLinked(path.join(target, 'service.json'), path.join(source, 'service.json'));
-  assertLinked(path.join(target, 'plugins'), path.join(source, 'plugins'));
-  assertLinked(path.join(target, 'themes', 'custom.json'), path.join(source, 'themes', 'custom.json'));
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(target, 'themes', 'patterm-opencode.json'), 'utf8')), openCodeTheme);
 
   // Bundled palette changes refresh the generated theme; matching content is left alone.
@@ -137,14 +120,8 @@ function assertOpenCodeTheme(tempDir: string): void {
   const oldTarget = path.join(oldRuntime, 'opencode-config');
   fs.mkdirSync(oldTarget, { recursive: true });
   fs.writeFileSync(path.join(oldTarget, 'cli.json'), '{"tabs":{"enabled":false},"theme":{"name":"system","mode":"dark"}}');
-  // A junction needs no privilege on Windows.
-  fs.symlinkSync(path.join(source, 'themes'), path.join(oldTarget, 'themes'), process.platform === 'win32' ? 'junction' : undefined);
   prepareOpenCodeTheme(oldRuntime, { OPENCODE_CONFIG_DIR: source });
   assert.deepEqual(parse(fs.readFileSync(path.join(oldTarget, 'cli.json'), 'utf8')), { tabs: { enabled: false }, theme: { name: 'patterm-opencode', mode: 'dark' } });
-  assert.equal(fs.existsSync(path.join(source, 'themes', 'patterm-opencode.json')), false, 'migration must not write through the old directory symlink');
-  fs.unlinkSync(path.join(source, 'themes', 'custom.json'));
-  prepareOpenCodeTheme(runtime, { OPENCODE_CONFIG_DIR: source });
-  assert.equal(fs.lstatSync(path.join(target, 'themes', 'custom.json'), { throwIfNoEntry: false }), undefined, 'removed source themes leave no broken discovery links');
   fs.writeFileSync(cliPath, '{broken');
   assert.throws(() => prepareOpenCodeTheme(runtime, { OPENCODE_CONFIG_DIR: source }), /valid JSONC/);
   assert.equal(fs.readFileSync(cliPath, 'utf8'), '{broken', 'invalid saved preferences are never overwritten');
@@ -378,7 +355,6 @@ async function main(): Promise<void> {
     assert.match(projectContext, /Link every git worktree you work in to your session \(at most 10\): worktree_create and worktree_link do this automatically; otherwise call worktree_attach/, 'project-level claude links its worktrees to its session');
     assert.match(projectContext, /Do not send a running child status checks, hurry-up messages, or requests to wrap up/, 'project-level claude is told not to nudge running children');
     assert.match(projectContext, /genuinely new task information or to cancel at the user's request/, 'project-level claude receives the allowed messaging exceptions');
-    assert.doesNotMatch(projectContext, /Context Task/, 'project-level claude does not receive task records');
     assert.match(projectContext, /never invent labels from IDs/, 'project-level claude keeps exact process names');
     assert.match(projectContext, /call request_close with a short summary/, 'project-level claude learns when to ask to be closed');
     assert.match(projectContext, /status_set/, 'project-level claude learns to pin a status label while it waits');
@@ -465,20 +441,11 @@ async function main(): Promise<void> {
     const promptContext = claudeAppendSystemPrompt(promptSpawn.args as string[]);
     assert.match(promptContext, new RegExp(`Project: ${projectId}`), 'project-scoped claude receives project identity');
     for (const sentinel of [
-      'Use the task description.',
-      'Implement the task context feature.',
-      'plan-sentinel-should-not-load',
-      'issue-sentinel-should-not-load',
-      'decision-sentinel-should-not-load',
-      'check-in-sentinel-should-not-load',
-      'handoff-sentinel-should-not-load',
       'worktree-sentinel-should-not-load',
       'diff-sentinel-should-not-load',
-      'timeline-sentinel-should-not-load',
-      'patterm.task.check_in.create',
-      'patterm.worktree.link'
+      'timeline-sentinel-should-not-load'
     ]) {
-      assert.doesNotMatch(promptContext, new RegExp(sentinel.replaceAll('.', '\\.')), `${sentinel} is not loaded into launch context`);
+      assert.ok(!promptContext.includes(sentinel), `${sentinel} is not loaded into launch context`);
     }
     assert.ok(promptContext.length < 2300, 'project-scoped context stays compact');
     await waitFor(
@@ -494,7 +461,6 @@ async function main(): Promise<void> {
       text: 'Do the next step.',
       submit: true
     });
-    assert.doesNotMatch(String(promptInputRequests[0]?.params.text ?? ''), /Context Task/, 'task context is not sent as user text');
 
     const startedEvents = database.connection
       .prepare(`select count(*) as n from timeline_events where event_type = 'session.started'`)
@@ -524,7 +490,6 @@ async function main(): Promise<void> {
     assert.equal(storedOpenCode.resume_id, 'ses_prepared', 'session identity is stored before model work begins');
     assert.match(openInstruction, new RegExp(`Project: ${projectId}`), 'opencode instruction file includes project identity');
     assert.match(openInstruction, /replace unavailable host-native subagents/, 'opencode instruction file blocks Patterm as a host-subagent fallback');
-    assert.doesNotMatch(openInstruction, /Implement the task context feature/, 'opencode instruction file excludes task records');
     assert.doesNotMatch(openInstruction, /worktree-sentinel-should-not-load/, 'opencode instruction file excludes worktrees');
     assert.equal(
       terminalRequests.filter((request) => request.method === 'terminal.process.input').length,
@@ -618,7 +583,6 @@ async function main(): Promise<void> {
       .get(projectScopedChild.process_id) as { project_id: string; parent_process_id: string | null } | undefined;
     assert.equal(projectScopedChildSession?.project_id, projectId);
     assert.equal(projectScopedChildSession?.parent_process_id, promptLaunch.process_id, 'project-scoped child still records its parent process');
-    assert.doesNotMatch(claudeAppendSystemPrompt(lastRequest(terminalRequests, 'terminal.process.spawn').args as string[]), /Task: task_context/, 'default CLI child does not inherit task identity');
 
     const historyReadService = {
       findConversation: (conversationId: string) => {

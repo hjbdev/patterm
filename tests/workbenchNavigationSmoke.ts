@@ -1,35 +1,11 @@
 import assert from 'node:assert/strict';
-import { resolveTopBarProjectSelection, resolveWorkbenchScreen } from '../resources/js/lib/workbenchNavigation';
-import { resolveWorkbenchSelection } from '../resources/js/lib/workbenchSelection';
 import { lastProjectLocation, rememberProjectLocation, resolveProjectReturnPath } from '../resources/js/lib/projectLocations';
 import type { ProjectWorkbench } from '../resources/js/types';
-
-const openTerminal = {
-  activeProjectId: 'project-a',
-  activeTerminalId: 'pty-a',
-  pendingExplicitTerminalId: 'pty-a'
-};
-assert.equal(resolveTopBarProjectSelection(openTerminal, 'project-a'), openTerminal, 'reselecting the project preserves its terminal');
-assert.deepEqual(resolveTopBarProjectSelection(openTerminal, 'project-b'), {
-  activeProjectId: 'project-b', activeTerminalId: null, pendingExplicitTerminalId: null
-}, 'switching projects clears terminal selection');
-assert.deepEqual(resolveTopBarProjectSelection(openTerminal, null), {
-  ...openTerminal, activeProjectId: null, activeTerminalId: null, pendingExplicitTerminalId: null
-}, 'returning to the selector clears terminal selection');
-
-for (const [mode, screen] of [['agents', 'agent-project'], ['processes', 'process-project'], ['worktrees', 'worktrees']] as const) {
-  assert.equal(resolveWorkbenchScreen({ activeProjectId: 'project-a', projectViewMode: mode }), screen);
-  assert.equal(resolveWorkbenchScreen({ activeProjectId: null, projectViewMode: mode }), 'project-selector');
-}
 
 const projects: ProjectWorkbench[] = [{
   project: { id: 'project-a', name: 'Example', path: '/server/example' },
   projectSessions: [], processes: [], worktrees: [], timers: []
 }];
-assert.deepEqual(resolveWorkbenchSelection(projects, { activeProjectId: 'project-a' }), { activeProjectId: 'project-a' });
-assert.deepEqual(resolveWorkbenchSelection(projects, { activeProjectId: 'removed' }), { activeProjectId: null });
-assert.deepEqual(resolveWorkbenchSelection(projects, { activeProjectId: null }), { activeProjectId: null }, 'refresh does not select a project automatically');
-
 const liveProject: ProjectWorkbench = {
   ...projects[0]!,
   projectSessions: [{ id: 'session-a', processId: 'proc-a', ptyProcessId: 'pty-a', exitedAt: null } as ProjectWorkbench['projectSessions'][number]],

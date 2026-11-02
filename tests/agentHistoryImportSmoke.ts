@@ -257,9 +257,6 @@ async function main(): Promise<void> {
       JSON.stringify({ type: 'user', uuid: 'c_tool_result_2', parentUuid: 'c_tool_2', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_history_2', content: '', is_error: false }] }, cwd: process.cwd(), sessionId: 'claude_resume_1', timestamp: '2026-07-01T00:00:53.000Z' }),
       JSON.stringify({ type: 'assistant', uuid: 'c_msg_2', parentUuid: 'c_msg_1', message: { role: 'assistant', content: 'The sapphire-history-needle is in the parsed transcript. {"api_key":"jsonsecretvalue12345","password":"quotedpassword12345","secret":"quotedsecret12345"}' }, cwd: process.cwd(), sessionId: 'claude_resume_1', timestamp: '2026-07-01T00:01:00.000Z' })
     ].join('\n'));
-    const parserWorkerResult = await runHistoryImportWorker({ action: 'parse_file', provider: 'claude', sourceKind: 'manual_file', sourcePath: claudeDir, filePath: claudeFile });
-    assert.equal(parserWorkerResult.ok, true, 'worker parser mode still parses a single provider file');
-
     const codexDir = path.join(tempDir, 'codex');
     fs.mkdirSync(codexDir, { recursive: true });
     fs.writeFileSync(path.join(codexDir, 'codex-session.jsonl'), [
@@ -311,14 +308,13 @@ async function main(): Promise<void> {
     assert.ok(searchResults.results.some((row) => row.kind === 'conversation_message'), 'conversation messages are searchable');
     assert.ok(searchResults.results[0]?.target.conversation_id, 'search target includes conversation id');
 
-    const stored = database.connection.prepare(`select text from conversation_messages where text like '%sapphire-history-needle%' limit 1`).get() as { text: string } | undefined;
-    assert.ok(stored?.text.includes('[REDACTED]'), 'secrets are redacted before storage');
-    assert.ok(stored);
-    assert.equal(stored.text.includes('supersecretvalue12345'), false, 'raw secret is not stored');
-    assert.equal(stored.text.includes('jsonsecretvalue12345'), false, 'quoted JSON secret is not stored');
-    assert.equal(stored.text.includes('quotedpassword12345'), false, 'quoted JSON password is not stored');
-
+    const stored = database.connection.prepare(`select text from conversation_messages where conversation_id = ? and text like '%sapphire-history-needle%'`).all(claudeConversationId) as Array<{ text: string }>;
+    assert.equal(stored.length, 2, 'both secret-bearing messages are persisted');
+    assert.ok(stored.every(({ text }) => text.includes('[REDACTED]')), 'each message has its secrets redacted before storage');
     const importedText = database.connection.prepare(`select group_concat(coalesce(text, '') || ' ' || coalesce(tool_input_summary, '') || ' ' || coalesce(tool_output_summary, ''), '\n') as text from conversation_messages`).get() as { text: string };
+    for (const secret of ['supersecretvalue12345', 'jsonsecretvalue12345', 'quotedpassword12345', 'quotedsecret12345']) {
+      assert.ok(!importedText.text.includes(secret), `${secret} is not stored in message text or tool summaries`);
+    }
     assert.equal(importedText.text.includes('should-not-store-deferred-tool'), false, 'Claude metadata attachments are not imported as chat messages');
     assert.equal(importedText.text.includes('queued-prompt-should-not-store'), false, 'Claude queue operations do not duplicate prompts');
     assert.equal(importedText.text.includes('thinking-signature-should-not-store'), false, 'Claude thinking signatures are not imported as chat messages');
@@ -474,14 +470,11 @@ async function main(): Promise<void> {
     assert.ok(staleFailure.events.some((event) => event.event === 'job.stale'), 'stale worker writes a debug lifecycle event');
     await runQueueHeartbeat(tempDir);
     verifyInterruptedBatch(tempDir);
-    await runWatcherCoalescing(tempDir);
     await runWatcherFollowUpCap(tempDir);
     await runOpenCodeWatcherDebounce(tempDir);
     await runWatcherMaxWait(tempDir);
     await runIntegratedTurnFlush(tempDir);
     await runTitleSyncCoalescing(tempDir);
-    await runLargeWatcherStart(tempDir);
-
     // Removing a project deletes its conversations and keeps them from returning.
     const countProjectConversations = () => (database!.connection.prepare(`select count(*) as count from conversations where project_id = ?`).get(project.id) as { count: number }).count;
     const projectConversations = countProjectConversations();

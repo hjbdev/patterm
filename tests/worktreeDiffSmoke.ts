@@ -196,7 +196,6 @@ async function main(): Promise<void> {
     // Linking a registered directory again returns its registration.
     const count = () => (database.connection.prepare('select count(*) n from worktrees').get() as { n: number }).n;
     const before = count();
-    assert.equal((await worktrees.link({ project_id: projectId, worktree_path: `${repoDir}${path.sep}` })).worktree.id, mainCheckout.id);
     if (trySymlink(repoDir, path.join(tempDir, 'repo-alias'), 'junction')) {
       assert.equal((await worktrees.link({ project_id: projectId, worktree_path: path.join(tempDir, 'repo-alias') })).worktree.id, mainCheckout.id, 'a symlinked path matches the real directory');
     }

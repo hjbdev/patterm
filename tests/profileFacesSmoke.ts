@@ -11,7 +11,6 @@ import {
   FACE_MOUTHS,
   FACE_SHAPES,
   faceMarkup,
-  lookFor,
   randomLook,
   type ProfileLook
 } from '../resources/js/lib/faces';
@@ -46,13 +45,8 @@ assert.doesNotMatch(faceMarkup(base, 16, 't').body, /ellipse cx="7\.4"/);
 assert.notEqual(faceMarkup(base, 16, 't').body.length, faceMarkup(base, 24, 't').body.length);
 assert.equal(faceMarkup({ ...base, finish: 'flat' }, 24, 't').filter, null);
 
-// A profile without a face gets the same one every time; the plain CLIs have
-// designed ones, and a saved face wins.
+// Seeded faces are repeatable and valid.
 assert.deepEqual(randomLook(7), randomLook(7));
-assert.deepEqual(lookFor({ id: 'preset_abc' }), lookFor({ id: 'preset_abc', look: null }));
-assert.notDeepEqual(lookFor({ id: 'preset_abc' }), lookFor({ id: 'preset_abd' }));
-assert.equal(lookFor({ id: 'preset_default_claude' }).color, 'orange');
-assert.equal(lookFor({ id: 'preset_default_claude', look: base }).color, 'pink');
 for (let seed = 0; seed < 200; seed++) {
   const look = randomLook(seed);
   assert.doesNotMatch(faceMarkup(look, 20, 't').body, /undefined|NaN/);

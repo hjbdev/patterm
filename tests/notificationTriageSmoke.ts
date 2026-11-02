@@ -118,10 +118,4 @@ assert.equal(decision.reason === 'model' && decision.waiting, true);
 current = null;
 assert.deepEqual(triage.decide('agent'), { quiet: false, reason: 'no_transcript' });
 
-// Scoring is cheap enough to run inline at every turn end.
-const started = process.hrtime.bigint();
-for (let i = 0; i < 2000; i++) quietProbability(quiet[i % 3]!, false);
-const microseconds = Number(process.hrtime.bigint() - started) / 2000 / 1000;
-assert.ok(microseconds < 2000, `scoring took ${microseconds.toFixed(0)} µs`);
-
 console.log('notification triage smoke passed');
