@@ -81,6 +81,9 @@ export interface SessionRecord {
   sessionRole: SessionRole;
   // The bot this session runs, for role 'bot'.
   botId?: string | null;
+  // The bot whose session started this one, such as a detached agent it
+  // opened.
+  ownerBotId?: string | null;
   resumeStatus: ResumeStatus;
   activity: ActivityState;
   // Background tasks still running, such as a shell the agent waits on. Older
