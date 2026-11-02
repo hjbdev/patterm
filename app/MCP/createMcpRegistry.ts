@@ -428,7 +428,9 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     ...(services.integrated ? { liveSettings: (processId: string) => services.integrated!.liveSettings(processId) } : {})
   });
   const sendMessage = new SendMessageAction(services.database, services.terminal, services.timeline,
-    { integrated: services.integrated, assistant: services.assistant, inbox: services.assistantInbox, notifications: services.notifications, timers: timerService });
+    { integrated: services.integrated, assistant: services.assistant, inbox: services.assistantInbox, notifications: services.notifications, timers: timerService,
+      // Purview only ever names user projects, never a bot's own.
+      botAllows: (botId, projectId) => isUserProject(services.database, projectId) && (services.bots?.allows(botId, projectId) ?? false) });
   const conversationOutput = new ConversationOutputService(services.database, services.integrated ?? null, services.historyReadService ?? null);
 
   // A host:process address, for callers that may reach other hosts.
@@ -1143,7 +1145,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
   registry.register({
     name: 'send_message',
     namespace: 'cli.coordination',
-    description: 'Send a terminal message to another visible process, or to the global assistant.',
+    description: 'Send a terminal message to another visible process, to the global assistant, or to a bot that works in your project.',
     changes: [],
     inputSchema: { type: 'object', required: ['target_process_id', 'message'] },
     usageNotes: [
@@ -1151,6 +1153,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       'Agents on a paired host are addressed as host:process, such as workstation:process_7, as list_processes shows them. A message to another host waits while that host is offline, and is delivered when it reconnects. status says delivered, queued, uncertain, or bounced; a bounce also reaches you as a message.',
       'Child agents may pass target_process_id "parent" to message their parent agent.',
       'Any agent may pass target_process_id "assistant" to message the user\'s global assistant, for example to answer a question it sent you. Messages to the assistant are limited to 8 KB and a few per minute.',
+      'A bot whose projects include yours, such as one the user mentions, is messaged by its process ID under the same limits.',
       'Do not message a running child to check its status, hurry it, or ask it to wrap up. Wait for its report instead.',
       'Message a running child only with genuinely new task information or to cancel at the user\'s request.',
       'After a child reports, it stays available. Send follow-ups, fixes to re-check, or re-review requests to that same child rather than spawning a new agent, then wait with timer_fire_when_reported_any. Only reports made after the timer was created count.'

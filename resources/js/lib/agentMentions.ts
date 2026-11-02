@@ -1,5 +1,6 @@
 // Agent mentions. The Integrated composer offers the project's other live
-// agents and processes in its @ menu, shows a picked one as a chip, and sends
+// agents and processes, and the running bots that work in the project, in its
+// @ menu, shows a picked one as a chip, and sends
 // it as its process ID, which agents pass to send_message or
 // get_process_output. The menu also offers
 // presets and harnesses, sent as launch tokens such as
@@ -10,6 +11,7 @@ import { agentLabel, buildAgentTabFamilies } from './agentTabs';
 import { activeProcesses, type LiveProcessRecord } from './processTabs';
 import { HARNESS_LABELS, harnessLabel, launchableHarnesses } from './harnessLabels';
 import { FIGURE_ID } from '../../../app/Services/TranscriptProjection';
+import type { BotRow } from './bots';
 import type { HarnessInstallationRecord, ProcessRecord, ProjectWorkbench, SessionRecord } from '../types';
 
 export interface MentionAgent {
@@ -17,8 +19,16 @@ export interface MentionAgent {
   processId: string;
   // The agent's title, which the menu searches.
   name: string;
-  // The parent agent's title, for subagents.
+  // The parent agent's title, for subagents. A bot's menu adds the project.
   parent: string | null;
+}
+
+export interface MentionBot {
+  botId: string;
+  processId: string;
+  // The bot's name, which the menu searches.
+  name: string;
+  harness: string;
 }
 
 export interface MentionProcess {
@@ -26,7 +36,7 @@ export interface MentionProcess {
   processId: string;
   // The process's name, which the menu searches.
   name: string;
-  // The title of the agent that started it.
+  // The title of the agent that started it. A bot's menu adds the project.
   owner: string | null;
 }
 
@@ -90,6 +100,19 @@ export function mentionableAgents(sessions: readonly SessionRecord[], selfProces
   });
 }
 
+// Running bots whose purview includes the project, the assistant's included:
+// send_message reaches only those, so the menu offers no others. The bots
+// are this host's, so an agent on a paired host, whose process ID names its
+// host, is offered none.
+export function mentionableBots(rows: readonly BotRow[], projectId: string, selfProcessId: string): MentionBot[] {
+  if (selfProcessId.includes(':')) return [];
+  return rows.flatMap(({ bot, session }) => {
+    const reaches = bot.purview.kind === 'all' || (bot.purview.kind === 'projects' && bot.purview.projectIds.includes(projectId));
+    if (!reaches || !session?.processId || session.exitedAt || session.processId === selfProcessId) return [];
+    return [{ botId: bot.id, processId: session.processId, name: bot.name, harness: bot.harness }];
+  });
+}
+
 // Live processes, such as shells and dev servers, each naming the agent that
 // started it.
 export function mentionableProcesses(processes: readonly ProcessRecord[], sessions: readonly SessionRecord[]): MentionProcess[] {
@@ -97,6 +120,26 @@ export function mentionableProcesses(processes: readonly ProcessRecord[], sessio
     const owner = process.parentProcessId ? sessionForProcess(sessions, process.parentProcessId) : null;
     return { process, processId: process.id, name: process.name, owner: owner ? agentLabel(owner) : null };
   });
+}
+
+// What a bot's @ menu offers: its own helpers first, then the live agents and
+// processes of the user projects its purview reaches, each labelled with its
+// project. Paired hosts' records stay out, since purview names only this
+// host's projects.
+type Purview = { kind: 'none' } | { kind: 'all' } | { kind: 'projects'; projectIds: readonly string[] };
+
+export function botMentionables(own: ProjectWorkbench | null, projects: readonly ProjectWorkbench[], purview: Purview, selfProcessId: string): { agents: MentionAgent[]; processes: MentionProcess[] } {
+  const reached = projects.filter((item) => !item.project.host && (purview.kind === 'all' || (purview.kind === 'projects' && purview.projectIds.includes(item.project.id))));
+  const label = (base: string | null, project: string): string => base ? `${base} · ${project}` : project;
+  const agents: MentionAgent[] = [];
+  const processes: MentionProcess[] = [];
+  for (const item of own ? [own, ...reached] : reached) {
+    const sessions = item.projectSessions.filter((session) => !session.host);
+    const named = item !== own;
+    agents.push(...mentionableAgents(sessions, selfProcessId).map((agent) => named ? { ...agent, parent: label(agent.parent, item.project.name) } : agent));
+    processes.push(...mentionableProcesses(item.processes.filter((process) => !process.host), sessions).map((process) => named ? { ...process, owner: label(process.owner, item.project.name) } : process));
+  }
+  return { agents, processes };
 }
 
 // Splits text into plain runs, process IDs, and launch tokens.

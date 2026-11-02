@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- An agent's @ menu offers the running bots that work in its project, the
+  assistant included. A mentioned bot is sent as its process ID, and agents
+  in a bot's projects can now `send_message` it, under the same 8 KB and
+  rate limits as messages to the assistant. Other bots stay out of reach,
+  and messaging a bot does not open its conversation to the agent.
+
 - Status labels: an agent can pin a short status on itself, such as
   "Waiting for review" or "Waiting on CI", with the new `status_set` tool.
   It shows as a coloured pill beside the agent on the projects page, in its
@@ -126,6 +132,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- Worktree file search in an agent's @ menu. Attach files with the paperclip,
+  paste, or drop instead. Typed `@path` text is sent as written, and file
+  references saved in earlier drafts are still sent.
+
 - The assistant's panel: its button in the top bar, the floating, docked and
   full-page layouts, and Follow the conversation.
 
@@ -146,6 +156,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A bot's chat has an Attach files button beside send, like an agent's
   composer. Files could already be dropped or pasted there.
+
+- A bot's composer offers agents, processes, presets, and harnesses in its @
+  menu, as an agent's does. It lists the bot's own helpers and the live agents
+  and processes in the projects its purview reaches, each labelled with its
+  project.
 
 - A child's report wakes its parent once. When the report satisfies one of
   the parent's report timers, the timer's callback arrives in the same
