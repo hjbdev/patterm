@@ -99,6 +99,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A bot's chat has an Attach files button beside send, like an agent's
+  composer. Files could already be dropped or pasted there.
+
 - A child's report wakes its parent once. When the report satisfies one of
   the parent's report timers, the timer's callback arrives in the same
   message, instead of a second turn that repeated the report. A message that
