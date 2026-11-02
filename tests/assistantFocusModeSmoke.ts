@@ -285,7 +285,7 @@ async function main(): Promise<void> {
     // Any bot with Focus mode turned on gets the same: its helpers' messages
     // and reports wait, and arrive as one digest. A bot without it can't focus.
     const look = { color: 'graphite', shape: 'circle', finish: 'soft', marking: 'none', eyes: 'dots', mouth: 'smile', cheeks: false, hat: 'none', accent: 'violet', idle: 'still' };
-    const bot = (id: string, focus: boolean) => ({ id, name: id, presetId: 'preset_default_claude', avatar: { kind: 'face', look }, purview: { kind: 'projects', projectIds: ['p'] }, focus });
+    const bot = (id: string, focus: boolean) => ({ id, name: id, harness: 'claude', avatar: { kind: 'face', look }, purview: { kind: 'projects', projectIds: ['p'] }, focus });
     settings.updateBots({ ...settings.bots(), bots: [...settings.bots().bots, bot('fable', true), bot('pal', false)] });
     for (const id of ['fable', 'pal']) {
       db.prepare(`insert into projects(id,name,path,kind,created_at,updated_at) values(?,?,?,'bots',?,?)`).run(`project_bot_${id}`, id, dir, now, now);

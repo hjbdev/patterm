@@ -154,9 +154,10 @@ export class HarnessLauncher {
 
   // Fresh launches fall back to the harness default preset. Resuming a stored
   // conversation keeps its provider-side settings, overriding only those the
-  // caller gives, such as a restart's live effort on a default model.
+  // caller gives, such as a restart's live effort on a default model. Bots
+  // keep their own settings, so a profile never fills in what a bot left out.
   private resolveSelection(input: ParsedLaunchHarnessInput, resuming: boolean): HarnessLaunchSelection {
-    if (resuming && !input.preset) {
+    if ((resuming || input.bot_id) && !input.preset) {
       return {
         harness: input.harness!,
         model: input.model?.trim() || null,
