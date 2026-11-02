@@ -10,7 +10,7 @@
         <slot name="leading" />
         <SidebarItemMenu :session="session" :tab="menuTab">
           <h1 class="min-w-0 flex-1 select-none truncate font-medium [-webkit-touch-callout:none]" :class="phoneLayout ? 'text-[15px]' : 'text-[14.5px]'">
-            {{ agentLabel(session) }}<HostBadge v-if="session.host" :host="session.host" class="ml-1.5" />
+            {{ agentLabel(session) }}<HostBadge v-if="session.host" :host="session.host" class="ml-1.5" /><StatusLabelPill v-if="session.statusLabel" :label="session.statusLabel" class="ml-2 align-[1px]" />
           </h1>
         </SidebarItemMenu>
         <slot name="trailing" />
@@ -137,6 +137,7 @@ import ResponsivePopover from '../ResponsivePopover.vue';
 import RowStatus from '../RowStatus.vue';
 import MediaThumb from '../peek/MediaThumb.vue';
 import SidebarItemMenu from '../Sidebar/SidebarItemMenu.vue';
+import StatusLabelPill from '../StatusLabelPill.vue';
 import { familyTabOf, useSidebar } from '../Sidebar/sidebarContext';
 import ContextLinkRow from './ContextLinkRow.vue';
 import ContextPicker from './ContextPicker.vue';

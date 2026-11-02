@@ -22,7 +22,7 @@ export function registerAssistantMemoryTools(registry: McpToolRegistry, memory: 
   };
   registry.register({
     name: 'assistant_memory_read', namespace: 'assistant.memory', changes: [], unavailable,
-    description: 'Shared memory for the assistant, bots, routines and agents in every project. Returns enabled:false without notes when off; otherwise a bounded snapshot or complete changes since a revision. The assistant and bots call it before each new request. Follow the returned recording instructions. Never advance the revision if requiresRefresh is true.',
+    description: 'Shared memory for the assistant, bots, routines and agents in every project. Returns enabled:false without notes when off; otherwise a bounded snapshot or complete changes since a revision. Call it when your instructions say to check memory, or when you think you missed an update Patterm keeps current for you. Follow the returned recording instructions. Never advance the revision if requiresRefresh is true.',
     inputSchema: jsonSchema(memoryReadInput, { $refStrategy: 'none' })
   }, (args, context) => memory.read(args ?? {}, check(context)));
   registry.register({

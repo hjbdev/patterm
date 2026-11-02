@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Status labels: an agent can pin a short status on itself, such as
+  "Waiting for review" or "Waiting on CI", with the new `status_set` tool.
+  It shows as a coloured pill beside the agent on the projects page, in its
+  tab's menu, on the canvas and in the conversation header, as a dot on its
+  tab and sidebar row, and in `list_processes`. Idle detection still shows
+  whether the agent is working. Labels are configured in Settings › Status
+  labels, each with a colour from the face palette and a note on when to use
+  it. You can pin or clear one from an agent's menu. An agent's own label
+  clears when you message it. Agents list labels with `status_label_list`
+  and add one with `status_label_create` only when you ask them to.
+
+- Opt-in usage telemetry, under Settings › Usage telemetry, to find the
+  features you never use. It is off until you turn it on with your own
+  PostHog project key. It then counts every tool call, IPC channel, command,
+  page, and component control you use, and lists every tool, channel,
+  component, changed setting, and table row count, so the unused ones stand
+  out. It sends identifiers only, never prompts, text, paths, or names. A
+  like or dislike, with a note, can be sent from the same page. See
+  [docs/usage-telemetry.md](docs/usage-telemetry.md).
+
+- Push notifications from a bot read like a text from it: the bot's name is
+  the sender, its face, emoji or picture is the notification's picture, and
+  each bot keeps one thread that buzzes for every new message. Each device
+  draws the pictures when the installed app opens or bots change.
+
+- Agents started by a bot, such as a detached agent it opened, show the
+  bot's face in a small pill beside their name, in the top bar's tabs and in
+  the sidebar. The pill is tinted with a muted version of the face's colour.
+
 - A nightly memory review. Two new tools, `memory_review_activity` and
   `memory_review_checkpoint`, let the assistant or a workspace routine read
   new conversation activity across every project in pages. Each conversation
@@ -30,6 +59,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opening list until you type, and a preset you launched shows under Recent.
 
 ### Changed
+
+- The assistant and bots no longer call `assistant_memory_read` before every
+  message. Patterm keeps their saved memory current in the conversation
+  itself: the whole memory arrives with the first message, then only what
+  changed, including the Memory switch being turned on or off, and the whole
+  memory again after compaction. It travels in each CLI's hidden context (an
+  OpenCode instruction entry, a Codex developer message, a Claude prompt
+  hook), so it costs no tool call and never shows in the transcript. Claude
+  bots on Windows keep the old per-message check. Memory checks that found
+  nothing new no longer show as tool rows.
+
+- Bots keep their own harness, model, reasoning and Codex speed, set up in
+  Settings › Bots the same way as a harness profile. "Copy from" fills them
+  in from a profile once; later changes to that profile don't reach the
+  bot. Bots that ran a profile get a copy of its settings the first time
+  this version reads them. When you change a running bot's harness, model
+  settings or About text, Patterm offers to restart it, and to resume its
+  conversation unless the harness changed.
 
 - The assistant now shows like every other bot: it lists first in the
   sidebar's Bots section and opens on its own bot page, with the same header,
@@ -82,10 +129,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- OpenCode agents keep Patterm's tools and your MCP servers after an idle
+  hour. OpenCode drops a directory's services when it has been idle for an
+  hour and boots them again from your own config, without Patterm's bridge
+  and servers. Each prompt and native command now checks first and restores
+  them, or fails with a clear error instead of running without its tools.
+
+- A bot's chat has an Attach files button beside send, like an agent's
+  composer. Files could already be dropped or pasted there.
+
 - A bot's composer offers agents, processes, presets, and harnesses in its @
   menu, as an agent's does. It lists the bot's own helpers and the live agents
   and processes in the projects its purview reaches, each labelled with its
   project.
+
 - A child's report wakes its parent once. When the report satisfies one of
   the parent's report timers, the timer's callback arrives in the same
   message, instead of a second turn that repeated the report. A message that

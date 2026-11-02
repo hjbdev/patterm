@@ -36,6 +36,11 @@ interface SubscriptionRow extends PushSubscriptionSummary {
   auth: string;
 }
 
+export interface PushSender {
+  id: string;
+  name: string;
+}
+
 type Sender = (subscription: webpush.PushSubscription, payload: string, options: webpush.RequestOptions) => Promise<unknown>;
 
 // Browsers only hand out endpoints on their vendor's push service. Accepting
@@ -88,24 +93,28 @@ export class PushService {
       from push_subscriptions order by created_at`).all() as unknown as PushSubscriptionSummary[];
   }
 
-  async deliver(notification: NotificationRecord): Promise<void> {
+  // A bot's notification reads like a text from it: its name as the sender,
+  // its face as the picture, one thread per bot.
+  async deliver(notification: NotificationRecord, bot: PushSender | null = null): Promise<void> {
     const rows = this.database.connection.prepare('select * from push_subscriptions').all() as unknown as SubscriptionRow[];
     if (!rows.length) return;
     const keys = this.vapid();
+    const tag = bot ? `bot:${bot.id}` : notification.process_id ?? notification.id;
     const payload = JSON.stringify({
       id: notification.id,
-      title: notification.title,
-      body: notification.body,
+      title: bot ? bot.name : notification.title,
+      body: bot ? [notification.title, notification.body].filter(Boolean).join('\n') : notification.body,
       url: notification.url,
-      tag: notification.process_id ?? notification.id,
-      urgency: notification.urgency
+      tag,
+      urgency: notification.urgency,
+      ...(bot ? { bot_id: bot.id } : {})
     });
     const options: webpush.RequestOptions = {
       vapidDetails: { subject: this.subject, publicKey: keys.publicKey, privateKey: keys.privateKey },
       TTL: TTL_SECONDS[notification.urgency],
       urgency: notification.urgency,
-      // A newer notification for the same process replaces an undelivered one.
-      topic: topic(notification.process_id ?? notification.id),
+      // A newer notification for the same thread replaces an undelivered one.
+      topic: topic(tag),
       timeout: SEND_TIMEOUT_MS
     };
     await Promise.all(rows.map(async (row) => {

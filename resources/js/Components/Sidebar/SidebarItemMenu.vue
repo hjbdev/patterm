@@ -10,6 +10,7 @@
       <component :is="parts.Item" @select="rename">
         <Pencil class="h-4 w-4" /><span>Rename</span>
       </component>
+      <StatusLabelMenu v-if="session" :session="session" :dropdown="Boolean(dropdown)" />
       <component :is="parts.Item" v-if="tab" @select="sidebar.setPinned(tab, !tab.pinned)">
         <PinOff v-if="tab.pinned" class="h-4 w-4" /><Pin v-else class="h-4 w-4" />
         <span>{{ tab.pinned ? 'Unpin' : 'Pin to top' }}</span>
@@ -53,6 +54,7 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator,
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { closeProcess, closeSession, copyId, openRename, openTimer } from './sidebarActions';
 import { useSidebar } from './sidebarContext';
+import StatusLabelMenu from '../StatusLabelMenu.vue';
 
 const props = defineProps<{ session?: SessionRecord | undefined; process?: ProcessRecord | undefined; tab?: StripTab | undefined; dropdown?: boolean }>();
 const sidebar = useSidebar();

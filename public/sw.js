@@ -36,20 +36,39 @@ self.addEventListener('push', (event) => {
   const title = typeof data.title === 'string' && data.title ? data.title : 'Patterm';
   const url = sameOriginPath(data.url);
   const tag = typeof data.tag === 'string' && data.tag ? data.tag : undefined;
+  const bot = typeof data.bot_id === 'string' && data.bot_id ? data.bot_id : null;
   // Every push must show a notification: browsers revoke subscriptions that
   // receive silent pushes. The server already skips pushes while a client is
   // focused.
-  event.waitUntil(self.registration.showNotification(title, {
+  event.waitUntil((async () => self.registration.showNotification(title, {
     body: typeof data.body === 'string' ? data.body : '',
-    icon: '/icons/icon-192.png',
+    icon: (bot && await botAvatar(bot)) || '/icons/icon-192.png',
     badge: '/icons/badge-96.png',
     tag,
-    // Browsers reject renotify without a tag.
-    renotify: Boolean(tag) && data.urgency === 'high',
+    // Browsers reject renotify without a tag. Each message from a bot buzzes,
+    // like a text.
+    renotify: Boolean(tag) && (data.urgency === 'high' || Boolean(bot)),
     requireInteraction: data.urgency === 'high',
     data: { url, id: data.id }
-  }));
+  }))());
 });
+
+// The app draws each bot's face into this cache (resources/js/lib/pushAvatars).
+// Notification icons can't be read through the worker, so it is passed inline.
+const AVATARS = 'patterm-push-avatars';
+
+async function botAvatar(botId) {
+  try {
+    const cached = await (await caches.open(AVATARS)).match(`/push-avatars/${encodeURIComponent(botId)}.png`);
+    if (!cached) return null;
+    const bytes = new Uint8Array(await cached.arrayBuffer());
+    let binary = '';
+    for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+    return `data:image/png;base64,${btoa(binary)}`;
+  } catch {
+    return null;
+  }
+}
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();

@@ -142,10 +142,13 @@
       </div>
 
       <!-- Tiptap's editable element takes its role, classes and ARIA state from editorAttributes. -->
-      <!-- A compact composer, as in a bot's chat, is one row: the text and send. -->
+      <!-- A compact composer, as in a bot's chat, is one row: the text, attach and send. -->
       <div :class="compact ? 'flex items-end gap-1 p-1.5' : ''">
         <EditorContent v-if="editor" :editor="editor.tiptap" :class="cn('composer-editor', compact && 'min-w-0 flex-1')" />
         <template v-if="compact">
+          <Button type="button" size="icon" variant="ghost" class="h-8 w-8 shrink-0 text-muted-foreground" :disabled="!controlling || ended" aria-label="Attach files" title="Attach files" @click="picker?.click()">
+            <Paperclip class="h-4 w-4" />
+          </Button>
           <Button v-if="!controlling && (!ended || restartable)" type="button" size="sm" @click="emit('takeControl')">Take control</Button>
           <Button v-else-if="stoppable" type="button" size="icon" class="h-8 w-8 shrink-0" aria-label="Stop response" title="Stop response" @click="emit('interrupt')">
             <Square class="h-3.5 w-3.5 fill-current" />
@@ -245,7 +248,7 @@ const props = defineProps<{
   processes?: MentionProcess[] | undefined;
   // Presets and harnesses the @ menu offers for launching a new agent.
   launchers?: MentionLauncher[] | undefined;
-  // One row without pickers, usage or attachments, for a bot's chat; the
+  // One row without pickers or usage, for a bot's chat; the
   // placeholder names who you're messaging.
   compact?: boolean;
   addressee?: string | undefined;

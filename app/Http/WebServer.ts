@@ -9,7 +9,7 @@ import zlib from 'node:zlib';
 import { WebSocket, WebSocketServer } from 'ws';
 import { z } from 'zod';
 import type { PattermApplication } from '../App';
-import { registerApplicationRoutes, type RouteRegistrar } from '../../routes/application';
+import { observedRoutes, registerApplicationRoutes, type RouteRegistrar } from '../../routes/application';
 import { callIntegrated, readIntegrated, relayingRegistrar } from '../../routes/remote';
 import { registerCommandRoutes } from '../../routes/commands';
 import { BrowserTerminalSessions, type BrowserTerminalClient } from './BrowserTerminalSessions';
@@ -111,7 +111,7 @@ export class WebServer {
     const register = (channel: string, handler: (event: unknown, raw?: unknown) => unknown) => {
       this.routes.set(channel, (raw) => handler(undefined, raw));
     };
-    const registrar: RouteRegistrar = { handle: register, on: register };
+    const registrar = observedRoutes<RouteRegistrar>({ handle: register, on: register }, application.telemetry);
     registerApplicationRoutes(relayingRegistrar(registrar, application), application);
     registerCommandRoutes(registrar, application);
     this.servers = [null, ...(options.listen ?? [])].map(() => this.createServer());

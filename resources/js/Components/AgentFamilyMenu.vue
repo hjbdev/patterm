@@ -1,6 +1,9 @@
 <template>
   <!-- An agent family's hover menu: its summary, subagents, processes, and timers. -->
   <p v-if="showLabel" class="max-w-80 truncate px-2 pb-1 pt-1.5 text-[13px] font-medium">{{ hostLabel(agentLabel(family.root.session), family.root.session.host) }}</p>
+  <div v-if="family.root.session.statusLabel" class="flex px-2 pb-1 pt-1.5">
+    <StatusLabelPill :label="family.root.session.statusLabel" />
+  </div>
   <AutoSummaryPreview v-if="family.root.session.summary" :summary="family.root.session.summary" />
   <ContextMenu
     v-for="option in family.options.slice(1)"
@@ -21,6 +24,7 @@
         <TabWash :activity="activity(option.session)" />
         <RowStatus :activity="activity(option.session)" />
         <span class="min-w-0 flex-1 truncate">{{ agentLabel(option.session) }}</span>
+        <StatusLabelPill v-if="option.session.statusLabel" :label="option.session.statusLabel" />
         <HostBadge v-if="option.session.host" :host="option.session.host" />
         <UnreadDot :urgency="unreadUrgency(option.session.processId)" />
       </button>
@@ -30,6 +34,7 @@
         <Pencil class="h-4 w-4" />
         <span>Rename</span>
       </ContextMenuItem>
+      <StatusLabelMenu :session="option.session" />
       <ContextMenuItem :disabled="!option.session.processId" @select="emit('setTimer', option.session)">
         <Clock class="h-4 w-4" />
         <span>Set timer</span>
@@ -94,6 +99,8 @@ import { unreadUrgency } from '../Composables/useNotifications';
 import AutoSummaryPreview from './AutoSummaryPreview.vue';
 import HostBadge from './HostBadge.vue';
 import RowStatus from './RowStatus.vue';
+import StatusLabelMenu from './StatusLabelMenu.vue';
+import StatusLabelPill from './StatusLabelPill.vue';
 import TabWash from './TabWash.vue';
 import UnreadDot from './UnreadDot.vue';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from './ui/context-menu';

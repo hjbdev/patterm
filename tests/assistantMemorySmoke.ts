@@ -217,7 +217,7 @@ async function main(): Promise<void> {
     // Bots, task agents and the assistant share one store and revision. A bot
     // follows its own switch; notes record who wrote them.
     database.connection.prepare('insert into projects(id,name,path,created_at,updated_at) values(?,?,?,?,?)').run('q', 'Other', dir, now, now);
-    const botSettings = (id: string, memoryOn: boolean) => ({ id, name: id, presetId: 'preset_default_claude', avatar: { kind: 'face', look: randomLook(1), emoji: null, picture: null }, purview: { kind: 'projects', projectIds: ['p'] }, instructions: '', memory: memoryOn });
+    const botSettings = (id: string, memoryOn: boolean) => ({ id, name: id, harness: 'claude', avatar: { kind: 'face', look: randomLook(1), emoji: null, picture: null }, purview: { kind: 'projects', projectIds: ['p'] }, instructions: '', memory: memoryOn });
     settings.updateBots({ bots: [botSettings('fable', true), botSettings('pal', false)] });
     for (const id of ['fable', 'pal']) {
       database.connection.prepare("insert into processes(id,project_id,kind,name,status,created_at,updated_at) values(?,?,'agent',?,'running',?,?)").run(`proc-${id}`, 'p', id, now, now);

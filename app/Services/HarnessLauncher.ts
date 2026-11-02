@@ -21,7 +21,7 @@ import type { TimelineService } from './TimelineService';
 import type { DebugLogService } from './DebugLogService';
 import type { IntegratedAgentService, IntegratedLaunchInput, IntegratedLaunchResult } from './IntegratedAgentService';
 import { SettingsService, type AgentInterface } from './SettingsService';
-import type { OpenCodeServerService } from './OpenCodeServerService';
+import type { OpenCodeMcpSource, OpenCodeServerService } from './OpenCodeServerService';
 import { prepareOpenCodeTheme } from './OpenCodeThemeService';
 import type { McpServerRegistry } from './McpServerRegistry';
 import { CLAUDE_CONTEXT_FILE, CLAUDE_MCP_CONFIG } from '../Harness/providers';
@@ -126,6 +126,22 @@ export class HarnessLauncher {
   private readonly attachingNativeSession = new Set<string>();
   constructor(private readonly deps: HarnessLauncherDeps) {}
 
+  // Patterm's MCP shim; shared OpenCode clients run it without an identity.
+  private mcpSpec(identity: string | null): McpServerSpec {
+    return {
+      ...(this.deps.mcpHttpProxyUrl ? { httpProxyUrl: this.deps.mcpHttpProxyUrl } : {}),
+      command: this.deps.nodePath,
+      args: [this.deps.shimPath],
+      env: { ELECTRON_RUN_AS_NODE: '1', PATTERM_MCP_SOCKET: this.deps.socketPath, ...(identity ? { PATTERM_MCP_IDENTITY: identity } : {}) }
+    };
+  }
+
+  // What OpenCode needs to restore a directory's MCP servers after it drops
+  // them, read fresh at each restore.
+  openCodeMcpSource(): OpenCodeMcpSource {
+    return { spec: () => this.mcpSpec(null), servers: () => this.deps.mcpServers?.forHarness('opencode') ?? [] };
+  }
+
   async launch(raw: LaunchHarnessInput): Promise<LaunchHarnessResult> {
     return this.start(raw, null);
   }
@@ -154,9 +170,10 @@ export class HarnessLauncher {
 
   // Fresh launches fall back to the harness default preset. Resuming a stored
   // conversation keeps its provider-side settings, overriding only those the
-  // caller gives, such as a restart's live effort on a default model.
+  // caller gives, such as a restart's live effort on a default model. Bots
+  // keep their own settings, so a profile never fills in what a bot left out.
   private resolveSelection(input: ParsedLaunchHarnessInput, resuming: boolean): HarnessLaunchSelection {
-    if (resuming && !input.preset) {
+    if ((resuming || input.bot_id) && !input.preset) {
       return {
         harness: input.harness!,
         model: input.model?.trim() || null,
@@ -200,12 +217,7 @@ export class HarnessLauncher {
     }
     timing.mark('install.resolved');
 
-    const mcp: McpServerSpec = {
-      ...(this.deps.mcpHttpProxyUrl ? { httpProxyUrl: this.deps.mcpHttpProxyUrl } : {}),
-      command: this.deps.nodePath,
-      args: [this.deps.shimPath],
-      env: { ELECTRON_RUN_AS_NODE: '1', PATTERM_MCP_SOCKET: this.deps.socketPath, PATTERM_MCP_IDENTITY: identity }
-    };
+    const mcp = this.mcpSpec(identity);
     const mcpServers = harness === 'rawpty' ? [] : this.deps.mcpServers?.forHarness(harness) ?? [];
     const contextService = new AgentContextService();
     const agentContext = harness === 'rawpty' ? ''
@@ -229,7 +241,8 @@ export class HarnessLauncher {
       const launchInput = {
         executable: install.executablePath, cwd, name: input.name?.trim() || null, context: agentContext, mcp, mcpServers, resumeId: providerSessionId,
         model: selection.model, reasoning: selection.reasoning, serviceTier: selection.serviceTier,
-        reconnectMcp: resume?.reconnect_mcp === true
+        reconnectMcp: resume?.reconnect_mcp === true,
+        memoryPush: input.session_role === 'assistant' || input.session_role === 'bot'
       };
       const prepared = await this.deps.integrated.prepare(harness as 'claude' | 'codex' | 'opencode', launchInput);
       integratedLaunch = { input: launchInput, result: prepared };

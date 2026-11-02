@@ -9,6 +9,7 @@ import type { IntegratedControls, IntegratedFormAction, IntegratedLaunchInput, I
 import { elicitationContent, elicitationForm, type ElicitationForm } from './McpElicitation';
 import { TurnBusyError, UncertainDeliveryError, type IntegratedDeliveryState } from './IntegratedDelivery';
 import type { ResolvedIntegratedPrompt } from './IntegratedInput';
+import type { MemoryUpdate } from './MemoryPushService';
 import { containsPlainPath, quotedPath, replaceReferenceToken } from './PromptReferences';
 import { messagesTaskOutput, textTaskOutput, type IntegratedConversationEvent, type IntegratedConversationMessage, type IntegratedTaskOutput } from './IntegratedConversation';
 import {
@@ -113,6 +114,13 @@ const REALTIME_ANSWER_MS = 20_000;
 const CODEX_TASK_ITEMS = 100;
 
 export class CodexAppServerService {
+  // Threads that compacted, and app-servers reconnected after a drop, since
+  // memory last reached them: either may have lost memory Patterm injected,
+  // so their next update is the whole memory. Kept here, not on the
+  // connection, so a reconnect cannot forget them.
+  private readonly compactedThreads = new Set<string>();
+  private readonly reconnectedSockets = new Set<string>();
+  private readonly connectedSockets = new Set<string>();
   private readonly clients = new Map<string, CodexRpcClient>();
   private readonly models = new Map<string, string>();
   private readonly efforts = new Map<string, string>();
@@ -316,6 +324,27 @@ export class CodexAppServerService {
     }));
     const newest = Array.isArray(response.data) ? response.data : [];
     return { messages: { data: [...newest].reverse().flatMap(this.projectEntry) }, cursor: nativeCursor(response) };
+  }
+
+  // Memory rides in hidden developer messages, which Codex keeps in the
+  // thread and Patterm's transcripts never show. Compaction may drop them, so
+  // the first update after one is the whole memory.
+  async updateMemory(processId: string, update: MemoryUpdate): Promise<void> {
+    const runtime = this.runtime(processId);
+    const client = await this.client(runtime);
+    // A reconnect may have missed a compaction, so it refreshes too. The
+    // markers are taken before the request, so a compaction reported while it
+    // runs still refreshes the next update; a failed request puts them back.
+    const compacted = this.compactedThreads.delete(runtime.threadId);
+    const reconnected = this.reconnectedSockets.delete(runtime.socketPath);
+    const text = compacted || reconnected ? update.snapshot() : update.changes;
+    if (!text) return;
+    try {
+      await client.request('thread/inject_items', { threadId: runtime.threadId, items: [{ type: 'message', role: 'developer', content: [{ type: 'input_text', text }] }] });
+    } catch (error) {
+      if (compacted || reconnected) this.compactedThreads.add(runtime.threadId);
+      throw error;
+    }
   }
 
   async prompt(processId: string, input: ResolvedIntegratedPrompt): Promise<{ turnId: string }> {
@@ -1295,7 +1324,13 @@ export class CodexAppServerService {
       this.onClientClosed(socketPath);
     }, this.options.requestTimeoutMs ?? 15_000);
     this.clients.set(socketPath, client);
-    client.onNotification((notification) => this.dispatchRealtime(notification));
+    if (this.connectedSockets.has(socketPath)) this.reconnectedSockets.add(socketPath);
+    this.connectedSockets.add(socketPath);
+    client.onNotification((notification) => {
+      const threadId = notification.params.threadId;
+      if (typeof threadId === 'string' && (notification.method === 'thread/compacted' || (notification.method === 'item/completed' && record(notification.params.item).type === 'contextCompaction'))) this.compactedThreads.add(threadId);
+      this.dispatchRealtime(notification);
+    });
     await client.request('initialize', {
       clientInfo: { name: 'patterm-desktop', title: 'Patterm', version: '1' },
       capabilities: { experimentalApi: true, requestAttestation: false }

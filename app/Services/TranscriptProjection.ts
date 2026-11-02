@@ -1253,6 +1253,7 @@ export function groupTranscriptMessages(input: TranscriptMessage[]): TranscriptR
     // next content block. Keep it in the stream state, but not as a blank row.
     if (message.role === 'assistant' && message.kind !== 'tool' && !message.text.trim()) continue;
     const tool = message.tool;
+    if (message.kind === 'tool' && isQuietMemoryRead(tool)) continue;
     // A subagent row keeps its own row so its nested transcript stays visible.
     // An html_render call is a step like any other, rejected or not: its page
     // appears only where the reply places it.
@@ -1273,6 +1274,14 @@ export function groupTranscriptMessages(input: TranscriptMessage[]): TranscriptR
 // "html_render"; all reach the target "patterm: html_render" or similar.
 export function isFigureTool(tool: TranscriptTool | undefined): boolean {
   return Boolean(tool && tool.family === 'mcp' && /^patterm[\w-]*:\s*html[._]render$/i.test(tool.target ?? ''));
+}
+
+// A memory check that found nothing new: memory off, or no changes since the
+// revision the agent had. Nothing happened, so it isn't shown.
+export function isQuietMemoryRead(tool: TranscriptTool | undefined): boolean {
+  if (!tool || tool.family !== 'mcp' || tool.status !== 'completed' || !/^patterm[\w-]*:\s*assistant[._]memory[._]read$/i.test(tool.target ?? '')) return false;
+  const output = tool.output ?? '';
+  return /"enabled"\s*:\s*false/.test(output) || /\[Memory changes (\d+) → \1\./.test(output);
 }
 
 // The page an agent sent. Codex nests MCP arguments, sometimes as JSON text.

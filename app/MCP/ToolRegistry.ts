@@ -29,6 +29,11 @@ export interface McpCallContext {
 // to run it here.
 export type McpCallRouter = (toolName: string, args: unknown, context: McpCallContext) => Promise<unknown> | null;
 
+// Agents call through the socket; Patterm's UI, routines, and internals call
+// directly; paired hosts call for their agents.
+export type McpCaller = 'agent' | 'app' | 'remote';
+export type McpCallObserver = (call: { tool: string; namespace: string; caller: McpCaller; context: McpCallContext; ok: boolean; ms: number }) => void;
+
 export type McpToolHandler = (args: unknown, context: McpCallContext) => Promise<unknown> | unknown;
 
 const READ_ONLY_TOOL_NAMES = new Set([
@@ -73,6 +78,7 @@ export class McpToolRegistry {
   private readonly tools = new Map<string, RegisteredTool>();
   private router: McpCallRouter | null = null;
   private checkCaller: ((context: McpCallContext) => void) | null = null;
+  private observer: McpCallObserver | null = null;
 
   setRouter(router: McpCallRouter): void {
     this.router = router;
@@ -118,12 +124,17 @@ export class McpToolRegistry {
     return descriptor;
   }
 
+  // Hears every completed call, for usage telemetry. It sees names only.
+  setObserver(observer: McpCallObserver): void {
+    this.observer = observer;
+  }
+
   async callPublic(toolName: string, args: unknown, context: McpCallContext = {}): Promise<unknown> {
     const tool = this.publicTool(toolName);
     const reason = tool.descriptor.unavailable?.(context);
     if (reason) throw new Error(reason);
     this.checkCaller?.(context);
-    return this.router?.(tool.descriptor.name, args, context) ?? tool.handler(args, context);
+    return await this.observed(tool.descriptor, 'agent', context, () => this.router?.(tool.descriptor.name, args, context) ?? tool.handler(args, context));
   }
 
   async call(toolName: string, args: unknown, context: McpCallContext = {}) {
@@ -132,7 +143,25 @@ export class McpToolRegistry {
       throw new Error(`unknown MCP tool ${toolName}`);
     }
 
-    return tool.handler(args, context);
+    return await this.observed(tool.descriptor, context.remote ? 'remote' : 'app', context, () => tool.handler(args, context));
+  }
+
+  toolNames(): string[] {
+    return [...this.tools.keys()];
+  }
+
+  private async observed(descriptor: McpToolDescriptor, caller: McpCaller, context: McpCallContext, run: () => unknown): Promise<unknown> {
+    if (!this.observer) return await run();
+    const started = performance.now();
+    let ok = false;
+    try {
+      const result = await run();
+      ok = true;
+      return result;
+    } finally {
+      try { this.observer({ tool: descriptor.name, namespace: descriptor.namespace, caller, context, ok, ms: performance.now() - started }); }
+      catch { /* Telemetry never fails a call. */ }
+    }
   }
 
   // The topics clients must update after a successful call. Calls ignore their

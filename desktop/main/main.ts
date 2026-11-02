@@ -5,6 +5,7 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Noti
 import { createApplication, type PattermApplication } from '../../app/App';
 import { registerCommandRoutes } from '../../routes/commands';
 import { registerIpcRoutes } from '../../routes/ipc';
+import { observedRoutes } from '../../routes/application';
 import { servePeerRoutes } from '../../routes/remote';
 import { resolveLaunchIdentity } from './launchIdentity';
 import { isInstalledLaunch, resolveMcpShimPath, resolveSidecarPath } from './sidecar';
@@ -94,9 +95,11 @@ async function createWindow(): Promise<void> {
     // dist/main/desktop/main/ sits four levels below the install directory.
     appRoot: path.resolve(__dirname, '../../../..')
   });
-  registerIpcRoutes(ipcMain, patterm, path.join(app.getPath('userData'), 'uploads'));
+  // Every window channel is counted once, for opt-in telemetry.
+  const routes = observedRoutes(ipcMain, patterm.telemetry);
+  registerIpcRoutes(routes, patterm, path.join(app.getPath('userData'), 'uploads'));
   servePeerRoutes(patterm);
-  registerCommandRoutes(ipcMain, patterm);
+  registerCommandRoutes(routes, patterm);
 
   // Workbench changes arrive as versioned patches; other topics are refetch signals.
   const unsubscribeWorkbenchPatches = patterm.onWorkbenchPatch((patch) => {

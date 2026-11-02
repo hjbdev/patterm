@@ -1,7 +1,7 @@
 <template>
-  <SettingsPanel title="Bots" description="Bots are persistent companions you text with. Each one runs one of your profiles, keeps one conversation that carries on after a restart, and works in the projects you give it. The helpers it starts stay out of view. The assistant is the built-in bot: it oversees every project and lists first.">
+  <SettingsPanel title="Bots" description="Bots are persistent companions you text with. Each one runs an agent CLI with its own model settings, which you can copy from a profile. It keeps one conversation that carries on after a restart, and works in the projects you give it. The helpers it starts stay out of view. The assistant is the built-in bot: it oversees every project and lists first.">
     <template #actions>
-      <Button type="button" size="sm" variant="outline" :disabled="!presetOptions.length" @click="addBot">Add bot</Button>
+      <Button type="button" size="sm" variant="outline" @click="addBot">Add bot</Button>
     </template>
     <p v-if="error" role="alert" class="text-xs text-destructive">{{ error }}</p>
 
@@ -11,13 +11,13 @@
           <BotAvatar :avatar="bot.avatar" :size="20" />
           <span class="truncate">{{ bot.name }}</span>
         </template>
-        <template #meta>{{ profileLabel(bot.presetId) }} · {{ purviewLabel(bot.purview) }} · {{ statusLabel(bot.id) }}</template>
+        <template #meta>{{ harnessLabel(bot.harness) }} · {{ settingsSummary(catalog, bot.harness, bot) }} · {{ purviewLabel(bot.purview) }} · {{ statusLabel(bot.id) }}</template>
         <template #actions>
           <Button type="button" size="sm" variant="ghost" class="h-7 px-2" @click="editBot(bot)">Edit</Button>
           <Button v-if="!isAssistantBot(bot)" type="button" size="sm" variant="ghost" class="h-7 px-2 text-destructive hover:text-destructive" @click="removeBot(bot)">Delete</Button>
         </template>
       </SettingsItem>
-      <p v-if="!bots.length" class="px-3.5 py-3 text-xs text-muted-foreground">{{ presetOptions.length ? 'No bots yet.' : 'Add a profile in Settings › Harnesses first.' }}</p>
+      <p v-if="!bots.length" class="px-3.5 py-3 text-xs text-muted-foreground">No bots yet.</p>
     </SettingsSection>
 
     <SettingsSection title="Voice" scope="bots.voice">
@@ -30,7 +30,7 @@
       <DialogContent class="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{{ editor?.isNew ? 'Add bot' : `Edit ${editorTitle}` }}</DialogTitle>
-          <DialogDescription>Changes to a running bot apply when it restarts. Changing its profile to another harness starts a new conversation.</DialogDescription>
+          <DialogDescription>Changes to a running bot apply when it restarts. Changing its harness starts a new conversation.</DialogDescription>
         </DialogHeader>
         <form v-if="editor" class="space-y-4" @submit.prevent="applyEditor">
           <div class="grid gap-4 sm:grid-cols-[208px_minmax(0,1fr)]">
@@ -49,8 +49,13 @@
             <div class="grid content-start items-center gap-3 sm:grid-cols-[90px_minmax(0,1fr)]">
               <label class="text-xs text-muted-foreground" for="bot-name">Name</label>
               <Input id="bot-name" v-model="editor.name" class="h-8 text-xs" placeholder="Fable" autocomplete="off" maxlength="40" />
-              <label class="text-xs text-muted-foreground" for="bot-profile">Profile</label>
-              <SettingsChoice id="bot-profile" v-model="editor.presetId" :options="editorPresetOptions" aria-label="Profile" />
+              <span class="text-xs text-muted-foreground">Harness</span>
+              <SettingsChoice :model-value="editor.fields.harness" :options="HARNESS_CHOICES" aria-label="Harness" segmented @update:model-value="chooseHarness" />
+              <template v-if="presetOptions.length">
+                <label class="text-xs text-muted-foreground" for="bot-copy-profile">Copy from</label>
+                <SettingsChoice id="bot-copy-profile" :model-value="null" :options="presetOptions" placeholder="A profile's settings…" aria-label="Copy a profile's settings" @update:model-value="copyProfile" />
+              </template>
+              <HarnessProfileFields v-model:fields="editor.fields" :catalog="catalog" id-prefix="bot" />
               <span class="text-xs text-muted-foreground">Projects</span>
               <p v-if="editorIsAssistant" class="text-xs text-muted-foreground">All projects. The assistant also adds and renames projects.</p>
               <SettingsChoice v-else v-model="editor.purviewKind" :options="PURVIEW_KINDS" aria-label="Projects" segmented />
@@ -131,6 +136,24 @@
         </form>
       </DialogContent>
     </Dialog>
+
+    <Dialog :open="restart !== null" @update:open="(open) => { if (!open) restart = null; }">
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Restart {{ restart?.name }}?</DialogTitle>
+          <DialogDescription>{{ restart?.need === 'harness' ? `It moves to ${harnessLabel(restart.harness)} when it restarts, on a new conversation or the last one it had there.` : 'Its new settings apply when it restarts. It can carry on its conversation or start a new one.' }}</DialogDescription>
+        </DialogHeader>
+        <p v-if="restartError" role="alert" class="text-xs text-destructive">{{ restartError }}</p>
+        <DialogFooter>
+          <Button type="button" variant="outline" size="sm" :disabled="restarting" @click="restart = null">Later</Button>
+          <Button v-if="restart?.need === 'harness'" type="button" size="sm" :disabled="restarting" @click="restartNow(false)">Restart</Button>
+          <template v-else>
+            <Button type="button" variant="outline" size="sm" :disabled="restarting" @click="restartNow(true)">New conversation</Button>
+            <Button type="button" size="sm" :disabled="restarting" @click="restartNow(false)">Resume conversation</Button>
+          </template>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </SettingsPanel>
 </template>
 
@@ -143,16 +166,18 @@ import { isSingleEmoji } from '../../../app/Bots/BotAvatar';
 import { useBots } from '../Composables/useBots';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { botPicture } from '../lib/botPicture';
-import { isAssistantBot, saveBots, type Bot, type BotAvatar as Avatar, type BotPurview, type BotVoice } from '../lib/bots';
+import { botProcess, isAssistantBot, restartBotFromSettings, restartNeed, saveBots, type Bot, type BotAvatar as Avatar, type BotPurview, type BotVoice } from '../lib/bots';
 import { autosave } from '../Composables/useSettingsAutosave';
 import { facePalette, randomLook } from '../lib/faces';
 import { harnessLabel } from '../lib/harnesses';
+import { DEFAULT_MODEL, PROFILE_HARNESSES, emptyModelCatalog, fieldsFrom, settingsFrom, settingsSummary, type ModelCatalog, type ProfileFieldsState, type ProfileHarness } from '../lib/profileFields';
 import { profileName, type ProfileSettings } from '../lib/profiles';
 import { readFileAsDataUrl } from '../lib/projectLogo';
 import { randomId } from '../lib/randomId';
-import { harnessPresets } from '../lib/serverQuery';
+import { harnessModels, harnessPresets } from '../lib/serverQuery';
 import BotAvatar from './BotAvatar.vue';
 import FaceMaker from './FaceMaker.vue';
+import HarnessProfileFields from './HarnessProfileFields.vue';
 import SettingsChoice from './settings/SettingsChoice.vue';
 import SettingsItem from './settings/SettingsItem.vue';
 import SettingsRow from './settings/SettingsRow.vue';
@@ -169,7 +194,7 @@ interface EditorState {
   id: string;
   isNew: boolean;
   name: string;
-  presetId: string | null;
+  fields: ProfileFieldsState;
   avatar: Avatar;
   purviewKind: BotPurview['kind'];
   projectIds: string[];
@@ -207,6 +232,7 @@ const PURVIEW_KINDS = [
   { value: 'projects' as const, label: 'Chosen' },
   { value: 'all' as const, label: 'All' }
 ];
+const HARNESS_CHOICES = PROFILE_HARNESSES.map((harness) => ({ value: harness, label: harnessLabel(harness) }));
 const EMOJI = ['🦊', '🐙', '🦉', '🐢', '🤖', '🌱', '⚡', '🧠', '🎩', '🍄'];
 
 const route = useRoute();
@@ -215,20 +241,14 @@ const { projects } = useWorkbench();
 const bots = computed(() => settings.value.bots);
 const presets = ref<ProfileSettings>({ presets: [], defaultPresetIdByHarness: { claude: null, codex: null, opencode: null } });
 const userProjects = computed(() => projects.value.map((item) => item.project).filter((project) => project.kind === 'workspace' || project.kind === 'personal' || !project.kind));
+const catalog = ref<ModelCatalog>(emptyModelCatalog());
 const presetOptions = computed(() => presets.value.presets.map((preset) => ({ value: preset.id as string | null, label: `${profileName(preset)} · ${harnessLabel(preset.harness)}` })));
-// A bot saved without a profile runs Codex with its own configuration.
-const editorPresetOptions = computed(() => editor.value?.presetId === null ? [{ value: null, label: 'Codex default' }, ...presetOptions.value] : presetOptions.value);
 const editorIsAssistant = computed(() => editor.value ? isAssistantBot(editor.value) : false);
-const editorHarness = computed(() => harnessOf(editor.value?.presetId ?? null));
+const editorHarness = computed(() => editor.value?.fields.harness ?? null);
 const voiceOptions = computed(() => [
   { value: null as string | null, label: 'Default' },
   ...voices.value.map((voice) => ({ value: voice as string | null, label: voice[0]!.toUpperCase() + voice.slice(1) }))
 ]);
-
-function harnessOf(presetId: string | null): string | null {
-  if (!presetId) return 'codex';
-  return presets.value.presets.find((preset) => preset.id === presetId)?.harness ?? null;
-}
 
 // The name saves once typing pauses, or when the field loses focus.
 const userName = ref('');
@@ -254,10 +274,17 @@ const editorError = ref('');
 const error = ref('');
 const saving = ref(false);
 const pictureInput = ref<HTMLInputElement | null>(null);
+// A running bot whose saved changes apply once it restarts.
+const restart = ref<{ processId: string; name: string; harness: Bot['harness']; need: 'harness' | 'settings' } | null>(null);
+const restartError = ref('');
+const restarting = ref(false);
 
 onMounted(async () => {
   try {
-    presets.value = await harnessPresets<ProfileSettings>() ?? presets.value;
+    [presets.value, catalog.value] = await Promise.all([
+      harnessPresets<ProfileSettings>().then((value) => value ?? presets.value),
+      harnessModels<ModelCatalog>()
+    ]);
   } catch (caught) {
     error.value = caught instanceof Error ? caught.message : String(caught);
   }
@@ -268,12 +295,6 @@ onMounted(async () => {
 
 function rowFor(botId: string) {
   return rows.value.find((row) => row.bot.id === botId) ?? null;
-}
-
-function profileLabel(presetId: string | null): string {
-  if (!presetId) return 'Codex default';
-  const preset = presets.value.presets.find((candidate) => candidate.id === presetId);
-  return preset ? profileName(preset) : 'Missing profile';
 }
 
 function purviewLabel(purview: BotPurview): string {
@@ -295,11 +316,33 @@ function newFace(): Avatar['look'] {
   return randomLook(Math.floor(Math.random() * 2 ** 32));
 }
 
+// The CLI on its own configuration, as a harness with no profile launches.
+function defaultFields(harness: ProfileHarness): ProfileFieldsState {
+  return { harness, model: DEFAULT_MODEL, customModel: '', reasoning: '', serviceTier: '' };
+}
+
+// A new bot starts with the default Claude Code profile's settings.
+function newBotFields(): ProfileFieldsState {
+  const id = presets.value.defaultPresetIdByHarness.claude ?? presets.value.presets[0]?.id;
+  const preset = presets.value.presets.find((candidate) => candidate.id === id);
+  return preset ? fieldsFrom(catalog.value, preset.harness, preset) : defaultFields('claude');
+}
+
+function chooseHarness(harness: ProfileHarness): void {
+  if (editor.value) editor.value.fields = defaultFields(harness);
+}
+
+// Copies a profile's settings into the bot once. The bot keeps its copy when
+// the profile changes later.
+function copyProfile(presetId: string | null): void {
+  const preset = presets.value.presets.find((candidate) => candidate.id === presetId);
+  if (editor.value && preset) editor.value.fields = fieldsFrom(catalog.value, preset.harness, preset);
+}
+
 function addBot(): void {
   editorError.value = '';
-  const fallback = presets.value.defaultPresetIdByHarness.claude ?? presets.value.presets[0]?.id ?? '';
   editor.value = {
-    id: `bot_${randomId()}`, isNew: true, name: '', presetId: fallback, avatar: { kind: 'face', look: newFace(), emoji: null, picture: null }, purviewKind: 'none', projectIds: [], instructions: '',
+    id: `bot_${randomId()}`, isNew: true, name: '', fields: newBotFields(), avatar: { kind: 'face', look: newFace(), emoji: null, picture: null }, purviewKind: 'none', projectIds: [], instructions: '',
     enabled: true, memory: true, memoryBudgetTokens: 4000, voice: { enabled: false, voice: null, profile: 'codex', acknowledgements: 'default' }, digests: false, focus: false
   };
   editorOpen.value = true;
@@ -309,7 +352,7 @@ function editBot(bot: Bot): void {
   editorError.value = '';
   editorTitle.value = bot.name;
   editor.value = {
-    id: bot.id, isNew: false, name: bot.name, presetId: bot.presetId,
+    id: bot.id, isNew: false, name: bot.name, fields: fieldsFrom(catalog.value, bot.harness, bot),
     avatar: { ...bot.avatar, look: { ...bot.avatar.look } },
     purviewKind: bot.purview.kind, projectIds: bot.purview.kind === 'projects' ? [...bot.purview.projectIds] : [],
     instructions: bot.instructions, enabled: bot.enabled, memory: bot.memory, memoryBudgetTokens: bot.memoryBudgetTokens,
@@ -368,17 +411,40 @@ async function applyEditor(): Promise<void> {
   const name = current.name.trim();
   if (!name) { editorError.value = 'Give the bot a name.'; return; }
   if (bots.value.some((bot) => bot.id !== current.id && bot.name.toLowerCase() === name.toLowerCase())) { editorError.value = `A bot named '${name}' already exists.`; return; }
-  if (!current.presetId && !editorPresetOptions.value.some((option) => option.value === null)) { editorError.value = 'Choose a profile.'; return; }
+  const profile = settingsFrom(current.fields);
+  if ('error' in profile) { editorError.value = profile.error; return; }
   if (current.avatar.kind === 'emoji' && !(current.avatar.emoji && isSingleEmoji(current.avatar.emoji))) { editorError.value = 'Choose one emoji.'; return; }
   if (current.avatar.kind === 'picture' && !current.avatar.picture) { editorError.value = 'Choose a picture.'; return; }
   if (current.purviewKind === 'projects' && !current.projectIds.length) { editorError.value = 'Choose at least one project, or None.'; return; }
   const purview: BotPurview = editorIsAssistant.value ? { kind: 'all' } : current.purviewKind === 'projects' ? { kind: 'projects', projectIds: current.projectIds } : { kind: current.purviewKind };
   const bot: Bot = {
-    id: current.id, name, presetId: current.presetId, avatar: current.avatar, purview, instructions: current.instructions.trim(),
+    id: current.id, name, harness: current.fields.harness, ...profile, avatar: current.avatar, purview, instructions: current.instructions.trim(),
     enabled: current.enabled, memory: current.memory, memoryBudgetTokens: current.memoryBudgetTokens, voice: { ...current.voice }, digests: current.digests, focus: current.focus
   };
+  const before = bots.value.find((candidate) => candidate.id === bot.id);
   const next = current.isNew ? [...bots.value, bot] : bots.value.map((candidate) => candidate.id === bot.id ? bot : candidate);
-  if (await persist(next)) editorOpen.value = false;
+  if (!await persist(next)) return;
+  editorOpen.value = false;
+  const need = before && bot.enabled ? restartNeed(before, bot) : null;
+  const processId = need ? await botProcess(bot.id).catch(() => null) : null;
+  if (need && processId) {
+    restartError.value = '';
+    restart.value = { processId, name, harness: bot.harness, need };
+  }
+}
+
+async function restartNow(fresh: boolean): Promise<void> {
+  const target = restart.value;
+  if (!target) return;
+  restarting.value = true;
+  try {
+    await restartBotFromSettings(target.processId, fresh);
+    restart.value = null;
+  } catch (caught) {
+    restartError.value = caught instanceof Error ? caught.message : String(caught);
+  } finally {
+    restarting.value = false;
+  }
 }
 
 async function removeBot(bot: Bot): Promise<void> {

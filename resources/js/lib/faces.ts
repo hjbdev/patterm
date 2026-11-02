@@ -32,6 +32,15 @@ export function facePalette(color: FaceColor): Palette {
   return { top: `oklch(.91 .1 ${h})`, bot: `oklch(.7 .17 ${h})`, flat: `oklch(.8 .15 ${h})`, dark: `oklch(.6 .17 ${h})`, eye: `oklch(.24 .05 ${h})`, acc: `oklch(.76 .17 ${h})`, acc2: `oklch(.93 .07 ${h})`, glow: `oklch(.75 .18 ${h} / .6)`, halo: `oklch(.6 .16 ${h} / .2)` };
 }
 
+// A quiet wash of a face's colour, for a pill that carries the face beside
+// other text without outshining it.
+export function faceWash(color: FaceColor): { background: string; border: string } {
+  if (color === 'white') return { background: 'oklch(.9 0 0 / .1)', border: 'oklch(.9 0 0 / .18)' };
+  if (color === 'graphite') return { background: 'oklch(.5 0 0 / .18)', border: 'oklch(.6 0 0 / .24)' };
+  const h = HUE_ANGLES[color];
+  return { background: `oklch(.6 .08 ${h} / .16)`, border: `oklch(.7 .09 ${h} / .26)` };
+}
+
 interface Shape { top: number; eye: number; dx: number; mouth?: number; d: (fill: string) => string }
 
 const SHAPES: Record<FaceShape, Shape> = {

@@ -45,9 +45,8 @@ async function main(): Promise<void> {
     assert.deepEqual([assistantSettings().voice.enabled, assistantSettings().digests, assistantSettings().focus, assistantSettings().memory], [true, true, true, true], 'shared memory is on by default');
     // The voice checks below expect an empty brief, so memory is off for them.
     setAssistant(settings, { memory: false });
-    assert.equal(assistantSettings().presetId, 'preset_default_codex', 'it starts on the Codex default profile');
-    settings.updateHarnessPresets({ ...settings.harnessPresets(), presets: [...settings.harnessPresets().presets, { id: 'preset_fast', harness: 'codex', name: 'Fast', model: null, reasoning: null, serviceTier: null, look: null }] });
-    setAssistant(settings, { voice: { ...assistantSettings().voice, voice: 'maple' }, presetId: 'preset_fast' });
+    assert.deepEqual([assistantSettings().harness, assistantSettings().model], ['codex', null], 'it starts with the Codex default profile\'s settings');
+    setAssistant(settings, { voice: { ...assistantSettings().voice, voice: 'maple' }, model: 'gpt-fast' });
     assert.equal(assistantSettings().voice.voice, 'maple');
     assert.throws(() => setAssistant(settings, { voice: { ...assistantSettings().voice, voice: 'robot' } }));
     assert.throws(() => setAssistant(settings, { voice: { ...assistantSettings().voice, profile: 'chatty' } }));
@@ -182,7 +181,7 @@ async function main(): Promise<void> {
     assert.equal(launches[0]!.input.harness, 'codex');
     assert.equal(launches[0]!.input.session_role, 'assistant');
     assert.equal(launches[0]!.input.interface_mode, 'integrated');
-    assert.equal(launches[0]!.input.preset, 'preset_fast');
+    assert.equal(launches[0]!.input.model, 'gpt-fast');
     assert.equal(launches[0]!.input.project_id, ASSISTANT_PROJECT_ID);
     assert.ok(fs.existsSync(path.join(dir, 'assistant')));
     assert.deepEqual(workbench.listProjects().map((project) => project.id), ['p', 'q'], 'the assistant project is not listed');
@@ -445,11 +444,10 @@ async function main(): Promise<void> {
     assert.ok(assistant.state().process_id);
     // Voice needs a Codex profile; another harness hides it.
     assert.equal(assistant.state().voice.available, true);
-    settings.updateHarnessPresets({ ...settings.harnessPresets(), presets: [...settings.harnessPresets().presets, { id: 'preset_claude_bot', harness: 'claude', name: 'Claude', model: null, reasoning: null, serviceTier: null, look: null }] });
-    setAssistant(settings, { presetId: 'preset_claude_bot' });
+    setAssistant(settings, { harness: 'claude', model: null });
     assert.equal(assistant.state().voice.available, false);
     await assert.rejects(assistant.startVoice('on-claude'), /no voice/);
-    setAssistant(settings, { presetId: 'preset_fast' });
+    setAssistant(settings, { harness: 'codex', model: 'gpt-fast' });
 
     // A launch already under way when it is turned off is stopped without
     // delivering what the inbox holds; the next launch delivers it.
