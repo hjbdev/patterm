@@ -3,7 +3,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { isSingleEmoji } from '../app/Bots/BotAvatar';
-import { ASSISTANT_BOT_ID, botInput, botSettingsInput, purviewAllows, readBotSettings, type Bot } from '../app/Bots/BotSettings';
+import { ASSISTANT_BOT_ID, botInput, botSettingsInput, parseBotSettings, purviewAllows, readBotSettings, type Bot } from '../app/Bots/BotSettings';
+import type { HarnessPreset } from '../app/Harness/HarnessPresets';
+import { restartBotFromSettings, restartNeed } from '../resources/js/lib/bots';
 import { ASSISTANT_PROJECT_ID } from '../app/Services/AssistantProject';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import { AgentContextService } from '../app/Services/AgentContextService';
@@ -23,7 +25,7 @@ import { removeTree } from './fixtures/TempTree';
 
 const look = randomLook(1);
 const bot = (id: string, name: string, extra: Partial<Bot> = {}): Bot => botInput.parse({
-  id, name, presetId: 'preset_default_claude', avatar: { kind: 'face', look, emoji: null, picture: null }, purview: { kind: 'none' }, instructions: '', memory: true, ...extra
+  id, name, harness: 'claude', avatar: { kind: 'face', look, emoji: null, picture: null }, purview: { kind: 'none' }, instructions: '', memory: true, ...extra
 });
 
 async function main(): Promise<void> {
@@ -56,12 +58,54 @@ async function main(): Promise<void> {
   const legacySettings = { enabled: false, voice: 'cove', presetId: 'preset_codex_fast', forwardNotifications: false, voiceProfile: 'patterm', voiceAcknowledgements: 'off', userName: 'Sam', memoryEnabled: true, memoryBudgetTokens: 8000 };
   const legacy = readBotSettings({}, legacySettings);
   assert.equal(legacy.userName, 'Sam');
-  assert.deepEqual({ ...legacy.bots[0]!, avatar: undefined }, { ...seeded, avatar: undefined, enabled: false, presetId: 'preset_codex_fast', memory: true, memoryBudgetTokens: 8000, digests: false, voice: { enabled: true, voice: 'cove', profile: 'patterm', acknowledgements: 'off' } });
+  assert.deepEqual({ ...legacy.bots[0]!, avatar: undefined }, { ...seeded, avatar: undefined, enabled: false, memory: true, memoryBudgetTokens: 8000, digests: false, voice: { enabled: true, voice: 'cove', profile: 'patterm', acknowledgements: 'off' } });
   // Saved bots win over the legacy settings, and the assistant always sees every project.
   const saved = readBotSettings({ bots: [bot('b1', 'Fable'), { ...seeded, name: 'Jarvis', purview: { kind: 'none' } }], userName: null }, legacySettings);
   assert.deepEqual(saved.bots.map((item) => item.name), ['Jarvis', 'Fable']);
   assert.deepEqual(saved.bots[0]!.purview, { kind: 'all' });
   assert.equal(saved.userName, null);
+  // Bots that named a profile read with a copy of its settings, and one
+  // whose profile is gone, or that had none, runs Codex on its own configuration.
+  const presets: HarnessPreset[] = [
+    { id: 'preset_default_claude', harness: 'claude', name: 'Default', model: null, reasoning: null, serviceTier: null, look: null },
+    { id: 'preset_smart', harness: 'claude', name: 'Smart', model: 'opus', reasoning: 'high', serviceTier: null, look: null },
+    { id: 'preset_codex_fast', harness: 'codex', name: 'Fast', model: 'gpt-5', reasoning: 'low', serviceTier: 'priority', look: null }
+  ];
+  const profileOf = (item: Bot) => [item.harness, item.model, item.reasoning, item.serviceTier];
+  const named = (id: string, presetId: string | null) => ({ id, name: id, presetId, avatar: { kind: 'face', look }, purview: { kind: 'none' } });
+  const copied = readBotSettings({ bots: [named('smart', 'preset_smart'), named('gone', 'preset_gone'), named('none', null)] }, null, presets).bots.slice(1);
+  assert.deepEqual(copied.map(profileOf), [['claude', 'opus', 'high', null], ['codex', null, null, null], ['codex', null, null, null]]);
+  assert.equal('presetId' in copied[0]!, false);
+  assert.deepEqual(profileOf(readBotSettings({}, legacySettings, presets).bots[0]!), ['codex', 'gpt-5', 'low', 'priority'], 'the legacy assistant copies its profile');
+  // A client that still saves a profile gets the same copy.
+  assert.deepEqual(profileOf(parseBotSettings({ bots: [named('smart', 'preset_smart')] }, seeded, presets).bots[1]!), ['claude', 'opus', 'high', null]);
+  // Settings a profile wouldn't allow are rejected.
+  assert.throws(() => botInput.parse({ ...bot('b1', 'Fable'), reasoning: 'high' }), /reasoning requires a model/);
+  assert.throws(() => botInput.parse({ ...bot('b1', 'Fable'), model: 'opus', serviceTier: 'priority' }), /only Codex bots/);
+  // A running bot restarts for a new harness, model settings or instructions, not a new face.
+  const fable = bot('b1', 'Fable');
+  assert.equal(restartNeed(fable, { ...fable, harness: 'codex' }), 'harness');
+  assert.equal(restartNeed(fable, { ...fable, model: 'opus' }), 'settings');
+  assert.equal(restartNeed(fable, { ...fable, instructions: 'Be terse.' }), 'settings');
+  assert.equal(restartNeed(fable, { ...fable, avatar: { ...fable.avatar, look: randomLook(2) } }), null);
+  // From Settings, a browser takes control of the bot's session before it
+  // restarts it, and lets go afterwards; the desktop restarts directly.
+  const calls: string[] = [];
+  const globals = globalThis as unknown as { window?: unknown };
+  globals.window = { patterm: {
+    runtime: 'browser',
+    terminalSubscribe: async (args: { subscribed: boolean }) => { calls.push(args.subscribed ? 'subscribe' : 'unsubscribe'); return { ok: true, controlling: false }; },
+    terminalTakeControl: async () => { calls.push('take-control'); return { ok: true }; },
+    integratedCall: async (tool: string, args: { fresh: boolean }) => { calls.push(`${tool} ${args.fresh}`); },
+    call: async () => { throw new Error('a browser restarts over its socket'); }
+  } };
+  await restartBotFromSettings('proc-1', true);
+  assert.deepEqual(calls, ['subscribe', 'take-control', 'bot_restart true', 'unsubscribe']);
+  calls.length = 0;
+  globals.window = { patterm: { call: async (tool: string) => { calls.push(tool); } } };
+  await restartBotFromSettings('proc-1');
+  assert.deepEqual(calls, ['bot_restart']);
+  delete globals.window;
   // Bots saved before these options read with them off.
   const older = readBotSettings({ bots: [{ id: 'b1', name: 'Fable', presetId: 'preset_default_claude', avatar: { kind: 'face', look, emoji: null, picture: null }, purview: { kind: 'none' }, instructions: '', memory: true }] }).bots[1]!;
   assert.deepEqual([older.enabled, older.voice.enabled, older.digests, older.focus, older.memoryBudgetTokens], [true, false, false, false, 4000]);
@@ -204,11 +248,14 @@ async function main(): Promise<void> {
     await bots.reconcile();
     assert.ok(stopped.includes('proc-bot-2'));
     assert.equal(bots.state('pal').process_id, null);
-    // A bot whose profile is gone doesn't start, and an unknown one rejects.
-    settings.updateBots({ bots: [...settings.bots().bots, bot('lost', 'Lost', { presetId: 'preset_gone' })] });
-    await assert.rejects(bots.ensure('lost'), /profile no longer exists/);
+    // A bot launches with its own model settings, never a profile's.
+    settings.updateBots({ bots: [...settings.bots().bots, bot('tuned', 'Tuned', { model: 'opus', reasoning: 'high' })] });
+    await bots.ensure('tuned');
+    const tuned = launches.at(-1)!.input;
+    assert.deepEqual([tuned.harness, tuned.model, tuned.reasoning, tuned.service_tier, 'preset' in tuned], ['claude', 'opus', 'high', null, false]);
     await assert.rejects(bots.ensure('nobody'), /unknown bot/);
     settings.updateBots({ bots: [settings.bots().bots[1]!] });
+    await bots.reconcile();
 
     const running = (botId: string) => (db.prepare(`select count(*) as count from sessions join processes on processes.id = sessions.process_id
       where sessions.bot_id = ? and sessions.exited_at is null and processes.status = 'running'`).get(botId) as { count: number }).count;
@@ -311,11 +358,11 @@ async function main(): Promise<void> {
     await bots.ensureAll();
     assert.equal(launches.slice(launchesBefore).some((launch) => launch.input.bot_id === ASSISTANT_BOT_ID), false);
     await assert.rejects(bots.ensure(ASSISTANT_BOT_ID), /turned off/);
-    settings.updateBots({ bots: [{ ...settings.bots().bots[0]!, enabled: true, presetId: null }, ...settings.bots().bots.slice(1)] });
+    settings.updateBots({ bots: [{ ...settings.bots().bots[0]!, enabled: true, harness: 'codex', model: null, reasoning: null, serviceTier: null }, ...settings.bots().bots.slice(1)] });
     // Until its first conversation it starts only when opened, not with Patterm.
     await bots.ensureAll();
     assert.equal(bots.currentProcess(ASSISTANT_BOT_ID), null);
-    assert.equal(bots.harness(ASSISTANT_BOT_ID), 'codex', 'no profile runs Codex with its own configuration');
+    assert.equal(bots.harness(ASSISTANT_BOT_ID), 'codex');
     await bots.ensure(ASSISTANT_BOT_ID);
     const assistantLaunch = launches.at(-1)!.input;
     assert.deepEqual([assistantLaunch.bot_id, assistantLaunch.session_role, assistantLaunch.project_id, assistantLaunch.harness, 'preset' in assistantLaunch], [ASSISTANT_BOT_ID, 'assistant', ASSISTANT_PROJECT_ID, 'codex', false]);

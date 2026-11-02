@@ -31,6 +31,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Bots keep their own harness, model, reasoning and Codex speed, set up in
+  Settings › Bots the same way as a harness profile. "Copy from" fills them
+  in from a profile once; later changes to that profile don't reach the
+  bot. Bots that ran a profile get a copy of its settings the first time
+  this version reads them. When you change a running bot's harness, model
+  settings or About text, Patterm offers to restart it, and to resume its
+  conversation unless the harness changed.
+
 - The assistant now shows like every other bot: it lists first in the
   sidebar's Bots section and opens on its own bot page, with the same header,
   menu, voice call, Focus mode and session context. It still starts the first
