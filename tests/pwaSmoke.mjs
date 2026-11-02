@@ -32,7 +32,7 @@ test('PWA manifest has standalone scope and valid install icons', () => {
   assert.equal(touchIcon.readUInt32BE(16), 180);
   const html = fs.readFileSync('index.html', 'utf8');
   const csp = /<meta\s+http-equiv="Content-Security-Policy"\s+content="([^"]+)"/i.exec(html)?.[1] ?? '';
-  assert.deepEqual(csp.split(';').map((directive) => directive.trim()).filter((directive) => /^frame-src(?:\s|$)/.test(directive)), ["frame-src 'self' patterm-frame:"], 'desktop frames only Patterm origins');
+  assert.deepEqual(csp.split(';').map((directive) => directive.trim()).filter((directive) => /^frame-src(?:\s|$)/i.test(directive)), ["frame-src 'self' patterm-frame:"], 'desktop frames only Patterm origins');
   assert.match(html, /rel="manifest"/);
   const themeColor = /<meta name="theme-color" content="([^"]+)"/.exec(html)?.[1];
   assert.equal(themeColor, manifest.theme_color, 'the document must not override the manifest with another palette');

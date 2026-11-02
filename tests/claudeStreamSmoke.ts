@@ -587,8 +587,8 @@ process.stdin.on('data', (chunk) => {
     assert.equal(late[0]?.kind, 'pending', 'a reconnected subscription gets a fresh boundary');
     const boundary = (await service.conversation('process_test') as { revision: number }).revision;
     await service.prompt('process_test', { text: 'late events', references: [], attachments: [] });
-    await waitFor(() => late.some((event) => event.revision > boundary && (event.kind === 'append' || event.kind === 'replace')));
-    assert.ok(late.some((event) => event.revision > boundary && (event.kind === 'append' || event.kind === 'replace')), 'late events stay newer than the snapshot boundary');
+    await waitFor(() => late.some((event) => event.revision > boundary && event.kind === 'replace'
+      && event.message?.id.startsWith('prompt_echo') && event.message.text.includes('late events')));
     releaseLate();
     const pending = await waitForConversation(service, 'process_test', /"id":"question_test"/);
     assert.equal(pending.status, 'permission', 'a question beside a pending approval still reads as permission');
