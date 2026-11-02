@@ -220,6 +220,7 @@
         :restartable="canRestart"
         :working="streamStatus === 'working' && !ended"
         :agents="mentionAgents"
+        :bots="mentionBots"
         :processes="mentionProcesses"
         :launchers="mentionLaunchers"
         @send="sendRequest"
@@ -290,7 +291,7 @@ import NextWaitingPill from './NextWaitingPill.vue';
 import ShimmerText from './ShimmerText.vue';
 import Markdown from './Markdown.vue';
 import ResumeConversationDialog from './ResumeConversationDialog.vue';
-import type { MentionAgent, MentionLauncher, MentionProcess } from '../lib/agentMentions';
+import type { MentionAgent, MentionBot, MentionLauncher, MentionProcess } from '../lib/agentMentions';
 import { archiveTranscript } from '../lib/historyTranscript';
 import type { CloseRequestRecord, ConversationMessageRecord, SnoozeRecord } from '../types';
 import {
@@ -336,7 +337,7 @@ import { onWorkspaceRequest, type WorkspaceRequest } from '../lib/workspaceReque
 // hideBackground: a bot's conversation, where its helpers' reports and
 // Patterm's messages stay out of view; the bot relays what matters.
 // compactComposer and addressee: a bot's one-row composer, named for the bot.
-const props = defineProps<{ processId: string; hideBackground?: boolean; compactComposer?: boolean; addressee?: string; projectId?: string | null; projectPath?: string | null; exited?: boolean; restartable?: boolean; mentionAgents?: MentionAgent[]; mentionProcesses?: MentionProcess[]; mentionLaunchers?: MentionLauncher[]; embedded?: boolean; closeRequest?: CloseRequestRecord | null | undefined; snooze?: SnoozeRecord | null | undefined; closeSubagents?: number | undefined; onLaunched?: (sessionId: string) => void; onNewSession?: (processId: string) => Promise<void>; onRestartSession?: (processId: string) => Promise<void> }>();
+const props = defineProps<{ processId: string; hideBackground?: boolean; compactComposer?: boolean; addressee?: string; projectId?: string | null; projectPath?: string | null; exited?: boolean; restartable?: boolean; mentionAgents?: MentionAgent[]; mentionBots?: MentionBot[]; mentionProcesses?: MentionProcess[]; mentionLaunchers?: MentionLauncher[]; embedded?: boolean; closeRequest?: CloseRequestRecord | null | undefined; snooze?: SnoozeRecord | null | undefined; closeSubagents?: number | undefined; onLaunched?: (sessionId: string) => void; onNewSession?: (processId: string) => Promise<void>; onRestartSession?: (processId: string) => Promise<void> }>();
 const emit = defineEmits<{ transcript: [messages: TranscriptMessage[], status: string, loaded: boolean] }>();
 // Conversation state is replaced, never mutated in place (stream events and
 // snapshots produce new arrays), so shallow refs skip deep proxying of every

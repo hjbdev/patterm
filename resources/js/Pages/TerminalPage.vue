@@ -15,7 +15,7 @@
         <div class="relative min-h-0 flex-1" :class="!phoneLayout && selectedAgent && activeTerminalId && !integratedAgent && 'mt-3'">
         <!-- The transcript fades in under the header rather than meeting it at a hard edge. -->
         <div v-if="integratedAgent && selectedAgent" class="pointer-events-none absolute inset-x-0 top-0 z-10 h-8 bg-gradient-to-b from-background to-transparent" aria-hidden="true" />
-        <IntegratedConversation v-if="integratedAgent" :process-id="integratedAgent.processId" :project-id="activeProject?.project.id ?? null" :project-path="activeProject?.project.path ?? null" :exited="integratedAgent.exited" :restartable="selectedAgent?.sessionRole === 'orchestrator' && selectedAgent?.processStatus !== 'closed'" :mention-agents="mentionAgents" :mention-processes="mentionProcesses" :mention-launchers="mentionLaunchers" :close-request="selectedAgent?.closeRequest" :snooze="selectedAgent?.snooze" :close-subagents="closeSubagents" class="h-full" @launched="selectLaunchedAgent" />
+        <IntegratedConversation v-if="integratedAgent" :process-id="integratedAgent.processId" :project-id="activeProject?.project.id ?? null" :project-path="activeProject?.project.path ?? null" :exited="integratedAgent.exited" :restartable="selectedAgent?.sessionRole === 'orchestrator' && selectedAgent?.processStatus !== 'closed'" :mention-agents="mentionAgents" :mention-bots="mentionBots" :mention-processes="mentionProcesses" :mention-launchers="mentionLaunchers" :close-request="selectedAgent?.closeRequest" :snooze="selectedAgent?.snooze" :close-subagents="closeSubagents" class="h-full" @launched="selectLaunchedAgent" />
         <!-- Hidden rather than unmounted so switching back skips renderer setup. A null ID detaches the PTY. -->
         <TerminalPane v-show="!integratedAgent" ref="terminalPane" title="Terminal" :process-id="integratedAgent ? null : activeTerminalId" :capture-enabled="!!activeProject" @capture-selection="capture" />
         </div>
@@ -82,10 +82,11 @@ import WorktreeDiffDeck from '../Components/WorktreeDiffDeck.vue';
 import WorktreeDiffDrawer from '../Components/WorktreeDiffDrawer.vue';
 import { Sheet, SheetContent, SheetTitle } from '../Components/ui/sheet';
 import { APPEARANCE_SETTINGS_CHANGED_EVENT, lastKnownAppearanceSettings, loadAppearanceSettings, normalizeAppearanceSettings, type AppearanceSettings } from '../appearance/AppearanceSettings';
-import { mentionableAgents, mentionableProcesses, mentionLaunchers as buildMentionLaunchers } from '../lib/agentMentions';
+import { mentionableAgents, mentionableBots, mentionableProcesses, mentionLaunchers as buildMentionLaunchers } from '../lib/agentMentions';
 import type { HarnessPreset } from '../lib/paletteSources';
 import { contextCall, type Scratchpad, type SessionWorktree } from '../lib/projectContext';
 import { useWorkbench } from '../Composables/useWorkbench';
+import { useBots } from '../Composables/useBots';
 import { useTerminalPageNavigation } from '../Composables/useTerminalPageNavigation';
 import { touchScreen } from '../lib/touch';
 import { phoneLayout } from '../lib/phoneLayout';
@@ -95,6 +96,7 @@ import { harnessPresets } from '../lib/serverQuery';
 import { peekedProcessId, takePeek, type Peek } from '../lib/peek';
 import { useBrowserState } from '../lib/browser';
 const { harnesses } = useWorkbench();
+const { rows: botRows } = useBots();
 const { route, router, activeProject, selectedAgent, selectedProcess, activeTerminalId, selectLaunchedAgent } = useTerminalPageNavigation();
 const terminalPane = ref<InstanceType<typeof TerminalPane> | null>(null);
 const keyboardOpen = useSoftKeyboard();
@@ -122,10 +124,13 @@ const closeSubagents = computed(() => {
   }
   return count;
 });
-// The project's other live agents and its live processes, offered in the
-// composer's @ menu.
+// The project's other live agents, the bots that work in it, and its live
+// processes, offered in the composer's @ menu.
 const mentionAgents = computed(() => integratedAgent.value && activeProject.value
   ? mentionableAgents(activeProject.value.projectSessions, integratedAgent.value.processId)
+  : []);
+const mentionBots = computed(() => integratedAgent.value && activeProject.value
+  ? mentionableBots(botRows.value, activeProject.value.project.id, integratedAgent.value.processId)
   : []);
 const mentionProcesses = computed(() => integratedAgent.value && activeProject.value
   ? mentionableProcesses(activeProject.value.processes, activeProject.value.projectSessions)
