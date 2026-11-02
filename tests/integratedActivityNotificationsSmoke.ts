@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { CloseProcessAction } from '../app/Actions/CloseProcessAction';
 import { CloseRequestActions } from '../app/Actions/CloseRequestActions';
-import { integratedActivityNotifications } from '../app/Listeners/IntegratedActivityNotifications';
+import { integratedActivityNotifications, REPLY_PREVIEW_LIMIT } from '../app/Listeners/IntegratedActivityNotifications';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { IDLE_COMPACTION_AFTER_MS, IdleCompactionService, type IdleCompactionSource } from '../app/Services/IdleCompactionService';
 import type { CompactionSignal, IntegratedActivityChange } from '../app/Services/IntegratedAgentService';
@@ -56,6 +56,7 @@ async function main(): Promise<void> {
     const compaction = new IdleCompactionService(database, source, () => true);
     idleCompaction = compaction;
     const raised: string[] = [];
+    let botReply: string | null = null;
     listeners.push(integratedActivityNotifications({
       notifications,
       raise: (input) => { raised.push(input.kind); void notifications.raise(input); },
@@ -64,6 +65,7 @@ async function main(): Promise<void> {
       wokeFromSnooze: () => false,
       compacting: (processId) => compaction.compacting(processId),
       triage: () => ({ quiet: false, reason: 'disabled' }),
+      botReply: () => botReply,
       log: () => {}
     }));
     compaction.start();
@@ -99,6 +101,34 @@ async function main(): Promise<void> {
     activity('idle');
     await wait(5);
     assert.deepEqual(open(), ['turn_finished:agent']);
+    const finished = () => notifications.list({ process_id: 'agent' }).items.find((item) => item.kind === 'turn_finished');
+    assert.equal(finished()?.body, 'Finished its turn', 'without a reply the turn is announced as before');
+
+    // A bot's turn shows its reply as plain text, previewed when long.
+    botReply = '  **Inbox** is clear: [2 replies](https://example.com) sent.  ';
+    activity('working');
+    activity('idle');
+    await wait(5);
+    assert.equal(finished()?.body, 'Inbox is clear: 2 replies sent.');
+    botReply = 'word '.repeat(200);
+    activity('working');
+    activity('idle');
+    await wait(5);
+    const preview = finished()?.body ?? '';
+    assert.equal(preview.length, REPLY_PREVIEW_LIMIT);
+    assert.ok(preview.endsWith('…'));
+    botReply = '   ';
+    activity('working');
+    activity('idle');
+    await wait(5);
+    assert.equal(finished()?.body, 'Finished its turn', 'a blank reply falls back');
+    botReply = '![](https://example.com/image.png)';
+    activity('working');
+    activity('idle');
+    await wait(5);
+    assert.equal(finished()?.body, 'Finished its turn', 'a reply with no plain text falls back');
+    assert.deepEqual(open(), ['turn_finished:agent'], 'previews keep one turn notification');
+    botReply = null;
 
     // A failed automatic compaction does not report an error.
     await wait(SETTLE);

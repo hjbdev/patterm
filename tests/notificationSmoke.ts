@@ -280,6 +280,10 @@ async function main(): Promise<void> {
     assert.equal(new Set(topics).size, 1);
     await push.deliver({ ...record, id: 'other', process_id: 'process_other' }, { id: 'bot_fox', name: 'Fox' });
     assert.equal(new Set(topics).size, 1, 'a bot keeps one push topic across processes');
+    // A title that only repeats the bot's name is not shown twice.
+    payloads.length = 0;
+    await push.deliver({ ...record, title: 'Fox', body: 'Inbox is clear.' }, { id: 'bot_fox', name: 'Fox' });
+    assert.equal(payloads[0]?.body, 'Inbox is clear.');
     assert.equal(push.unsubscribe({ endpoint: 'https://fcm.googleapis.com/fcm/send/flaky' }).removed, true);
     assert.equal(new PushService(database, directory, 'mailto:x@y').publicKey(), push.publicKey(), 'keys persist across restarts');
 
