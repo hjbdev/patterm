@@ -58,7 +58,7 @@
     "test:markdown": "tsc -p tsconfig.tests.json && node dist/tests/tests/markdownSmoke.js && node tests/markdownRenderingSmoke.mjs && node --test tests/shikiAllowlistSmoke.mjs",
     "test:router": "node --test tests/routerSmoke.mjs tests/harnessLaunchUiSmoke.mjs tests/phoneTransitionsSmoke.mjs",
     "test:integrated": "tsc -p tsconfig.tests.json && node dist/tests/tests/integratedConversationSmoke.js && node dist/tests/tests/integratedFilesSmoke.js && node dist/tests/tests/integratedAgentSmoke.js && node dist/tests/tests/retiredIntegratedHostsSmoke.js && node dist/tests/tests/idleCompactionSmoke.js && node dist/tests/tests/clientConversationSubscriptionsSmoke.js && node --test tests/integratedConversationLifecycleSmoke.mjs tests/integratedComposerSmoke.mjs tests/agentMentionsSmoke.mjs tests/resumeConversationDialogSmoke.mjs tests/diffPatchRouteSmoke.mjs tests/conversationTranscriptVirtualSmoke.mjs tests/messageScrollerFollowSmoke.mjs tests/htmlFigureSmoke.mjs tests/markdownFigureStreamingSmoke.mjs",
-    "test:browser": "tsc -p tsconfig.tests.json && node dist/tests/tests/browserSmoke.js",
+    "test:browser": "tsc -p tsconfig.tests.json && node dist/tests/tests/browserSmoke.js && node --test tests/browserKeyboardSmoke.mjs",
     "test:secrets": "tsc -p tsconfig.tests.json && node dist/tests/tests/secretsSmoke.js",
     "test:summaries": "tsc -p tsconfig.tests.json && node dist/tests/tests/autoSummarySmoke.js && node --test tests/autoSummarySettingsSmoke.mjs tests/codexSummaryIsolationSmoke.mjs",
     "test:terminal:core": "node scripts/cargo.mjs test --manifest-path native/terminal-core/Cargo.toml",
