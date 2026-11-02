@@ -2,6 +2,8 @@
 // Nullable DB columns are modelled as `T | null` (not `?: T`) to play nicely
 // with `exactOptionalPropertyTypes`. Timestamps are ISO strings (stored as text).
 
+import type { StatusLabelColor } from './lib/statusLabels';
+
 export type ActorType = 'human' | 'agent' | 'system';
 export interface AutoSummaryRecord { coverage?: string | null; text: string; status?: string | null; generatedAt: string; provider: string; model: string; }
 
@@ -81,6 +83,9 @@ export interface SessionRecord {
   sessionRole: SessionRole;
   // The bot this session runs, for role 'bot'.
   botId?: string | null;
+  // The bot whose session started this one, such as a detached agent it
+  // opened.
+  ownerBotId?: string | null;
   resumeStatus: ResumeStatus;
   activity: ActivityState;
   // Background tasks still running, such as a shell the agent waits on. Older
@@ -92,6 +97,9 @@ export interface SessionRecord {
   // What an Integrated agent waiting on you asks, in one line. Older paired
   // hosts omit it.
   asking?: string | null;
+  // A status label pinned on the agent, such as "Waiting for review". Older
+  // paired hosts omit it.
+  statusLabel?: StatusLabelRecord | null;
   lastTitle: string | null;
   displayName: string | null;
   // Chosen, then generated, then native name. Older paired hosts omit it.
@@ -101,6 +109,8 @@ export interface SessionRecord {
   startedAt: string;
   exitedAt: string | null;
 }
+
+export interface StatusLabelRecord { id: string; name: string; color: StatusLabelColor; setBy: 'agent' | 'user'; setAt: string; }
 
 export type ProcessStatus = 'running' | 'stopped' | 'exited' | 'failed';
 

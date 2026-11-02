@@ -1,13 +1,13 @@
 import { z } from 'zod';
-import { profileLookInput } from '../Harness/HarnessPresets';
+import { presetHarnessInput, profileLookInput, type HarnessPreset } from '../Harness/HarnessPresets';
 import { BOT_AVATAR_KINDS, BOT_PICTURE_DATA_URL, MAX_BOT_PICTURE_BYTES, isSingleEmoji } from './BotAvatar';
 import { ASSISTANT_BOT_ID, BOT_VOICES } from './BotIdentity';
 import { BOT_VOICE_ACKNOWLEDGEMENTS, BOT_VOICE_PROFILES } from '../Services/AssistantVoiceProfile';
 
 export { ASSISTANT_BOT_ID, BOT_VOICES } from './BotIdentity';
 
-// Bots: persistent, single-instance agents with a face. Each one runs one of
-// the user's harness profiles, keeps one conversation that is resumed after
+// Bots: persistent, single-instance agents with a face. Each one runs an
+// agent CLI with its own model settings, keeps one conversation that is resumed after
 // a restart, and works in the projects its purview names. The assistant is
 // the built-in bot: it is always there, reaches every project, and manages
 // projects as well.
@@ -48,9 +48,14 @@ export type BotVoice = z.infer<typeof botVoiceInput>;
 export const botInput = z.object({
   id: z.string().trim().min(1).max(80),
   name: z.string().trim().min(1).max(40),
-  // The harness profile (preset) the bot runs, by ID. Null runs Codex with
-  // its own configuration, as the assistant did before it had a profile.
-  presetId: z.string().trim().min(1).max(160).nullable(),
+  // The CLI the bot runs and its model settings, set up like a harness
+  // profile's. They belong to the bot: copying a profile in fills them once,
+  // and later changes to that profile don't reach the bot. Null keeps the
+  // CLI's own configuration.
+  harness: presetHarnessInput.default('codex'),
+  model: z.string().trim().min(1).max(160).nullable().default(null),
+  reasoning: z.string().trim().min(1).max(60).nullable().default(null),
+  serviceTier: z.string().trim().min(1).max(60).nullable().default(null),
   avatar: botAvatarInput,
   purview: botPurviewInput.default({ kind: 'none' }),
   // Added to the bot's system context, such as what it looks after.
@@ -66,6 +71,9 @@ export const botInput = z.object({
   // The bot may turn on Focus mode, which holds notifications, agent
   // messages, reports and timer callbacks until it ends.
   focus: z.boolean().default(false)
+}).superRefine((value, context) => {
+  if (value.model === null && value.reasoning !== null) context.addIssue({ code: z.ZodIssueCode.custom, path: ['reasoning'], message: 'reasoning requires a model' });
+  if (value.harness !== 'codex' && value.serviceTier !== null) context.addIssue({ code: z.ZodIssueCode.custom, path: ['serviceTier'], message: 'only Codex bots select a service tier' });
 });
 
 export type Bot = z.infer<typeof botInput>;
@@ -88,6 +96,28 @@ export const botSettingsInput = z.object({
 
 export type BotSettings = z.infer<typeof botSettingsInput>;
 
+export type BotProfile = Pick<Bot, 'harness' | 'model' | 'reasoning' | 'serviceTier'>;
+
+// A profile's settings, copied into a bot. Bots saved before they kept their
+// own settings named a profile instead; one that's gone, or none, runs Codex
+// with its own configuration, as a bot without a profile did.
+export function botProfileFrom(presetId: unknown, presets: readonly HarnessPreset[]): BotProfile {
+  const preset = presets.find((candidate) => candidate.id === presetId);
+  return preset
+    ? { harness: preset.harness, model: preset.model, reasoning: preset.reasoning, serviceTier: preset.serviceTier }
+    : { harness: 'codex', model: null, reasoning: null, serviceTier: null };
+}
+
+// Whether a saved bot still names a profile instead of keeping its own settings.
+export function namesProfile(saved: unknown): boolean {
+  return typeof saved === 'object' && saved !== null && !('harness' in saved);
+}
+
+// A bot that still names a profile, with a copy of that profile's settings.
+function withOwnProfile(bot: unknown, presets: readonly HarnessPreset[]): unknown {
+  return namesProfile(bot) ? { ...bot as object, ...botProfileFrom((bot as { presetId?: unknown }).presetId, presets) } : bot;
+}
+
 export function purviewAllows(purview: BotPurview, projectId: string): boolean {
   return purview.kind === 'all' || (purview.kind === 'projects' && purview.projectIds.includes(projectId));
 }
@@ -108,11 +138,11 @@ export interface LegacyAssistantSettings {
 
 export const DEFAULT_ASSISTANT_LOOK = { color: 'graphite', shape: 'circle', finish: 'soft', marking: 'none', eyes: 'sparkle', mouth: 'smile', cheeks: false, hat: 'none', accent: 'violet', idle: 'blink' } as const;
 
-export function defaultAssistantBot(legacy: LegacyAssistantSettings | null = null): Bot {
+export function defaultAssistantBot(legacy: LegacyAssistantSettings | null = null, presets: readonly HarnessPreset[] = []): Bot {
   return botInput.parse({
     id: ASSISTANT_BOT_ID,
     name: 'Assistant',
-    presetId: legacy?.presetId ?? null,
+    ...botProfileFrom(legacy?.presetId, presets),
     avatar: { kind: 'mark', look: DEFAULT_ASSISTANT_LOOK },
     purview: { kind: 'all' },
     enabled: legacy?.enabled ?? true,
@@ -138,23 +168,27 @@ function withAssistant(settings: BotSettings, current: Bot): BotSettings {
 }
 
 // Validates bots the owner saves. `current` is the assistant as saved now.
-export function parseBotSettings(input: unknown, current: Bot): BotSettings {
-  return withAssistant(botSettingsInput.parse(input), current);
+// A client from before bots kept their own settings still sends a profile.
+export function parseBotSettings(input: unknown, current: Bot, presets: readonly HarnessPreset[] = []): BotSettings {
+  const record = typeof input === 'object' && input !== null ? input as { bots?: unknown } : {};
+  const bots = Array.isArray(record.bots) ? record.bots.map((bot: unknown) => withOwnProfile(bot, presets)) : record.bots;
+  return withAssistant(botSettingsInput.parse({ ...record, bots }), current);
 }
 
 // Reads saved bots one at a time, so a bot this version can't read is left
 // out instead of hiding every bot. Saved bots from before profiles could be
-// empty fall back to the assistant's legacy settings for its entry.
-export function readBotSettings(saved: unknown, legacy: LegacyAssistantSettings | null = null): BotSettings {
+// empty fall back to the assistant's legacy settings for its entry. A bot
+// that still names a profile gets a copy of that profile's settings.
+export function readBotSettings(saved: unknown, legacy: LegacyAssistantSettings | null = null, presets: readonly HarnessPreset[] = []): BotSettings {
   const record = typeof saved === 'object' && saved !== null ? saved as { bots?: unknown; userName?: unknown } : {};
   const bots = Array.isArray(record.bots) ? record.bots : [];
   const readable = bots.flatMap((bot) => {
-    const parsed = botInput.safeParse(bot);
+    const parsed = botInput.safeParse(withOwnProfile(bot, presets));
     return parsed.success ? [parsed.data] : [];
   });
   const userName = record.userName === undefined ? legacy?.userName ?? null : record.userName;
   const settings = botSettingsInput.safeParse({ bots: readable, userName });
-  const fallback = defaultAssistantBot(legacy);
+  const fallback = defaultAssistantBot(legacy, presets);
   return withAssistant(settings.success ? settings.data : { bots: [], userName: null }, fallback);
 }
 

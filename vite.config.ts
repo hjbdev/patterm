@@ -1,4 +1,5 @@
-import { cpSync, readFileSync } from 'node:fs';
+import { cpSync, readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
 import vue from '@vitejs/plugin-vue';
 import { defineConfig, type Plugin } from 'vite-plus';
@@ -23,12 +24,30 @@ function figureFonts(): Plugin {
   };
 }
 
+// Every app component's name, for the telemetry inventory that lists the
+// components nobody opens. shadcn-vue primitives are left out.
+function componentInventory(): Plugin {
+  const id = 'virtual:patterm-components';
+  const root = fileURLToPath(new URL('./resources/js', import.meta.url));
+  return {
+    name: 'patterm-component-inventory',
+    resolveId: (source) => source === id ? `\0${id}` : null,
+    load(resolved) {
+      if (resolved !== `\0${id}`) return null;
+      const names = readdirSync(root, { recursive: true, encoding: 'utf8' })
+        .filter((file) => file.endsWith('.vue') && !file.split(/[\\/]/).includes('ui'))
+        .map((file) => path.basename(file, '.vue'));
+      return `export default ${JSON.stringify([...new Set(names)].sort())};`;
+    }
+  };
+}
+
 export default defineConfig({
   base: './',
   define: {
     __PATTERM_VERSION__: JSON.stringify(version)
   },
-  plugins: [vue(), figureFonts()],
+  plugins: [vue(), figureFonts(), componentInventory()],
   resolve: {
     alias: [
       { find: '@', replacement: fileURLToPath(new URL('./resources/js', import.meta.url)) },

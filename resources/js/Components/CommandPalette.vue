@@ -91,6 +91,7 @@ import { useWorkbench } from '../Composables/useWorkbench';
 import ProjectLogo from './ProjectLogo.vue';
 import AgentIcon from './AgentIcon.vue';
 import TabActivity from './TabActivity.vue';
+import { countCommand } from '../lib/telemetry';
 import type { ProcessRecord, ProjectSummary, SessionRecord } from '../types';
 
 interface CommandContext {
@@ -624,6 +625,7 @@ async function execute(command: CommandDescriptor, input: Record<string, unknown
       ?? localCommands.value.find(item => item.id === command.id)?.result
       ?? (command.id.startsWith('timer:set:') ? await setTimer(command.id.slice('timer:set:'.length), input) : null)
       ?? await window.patterm.commandsRun({ id: command.id, context: props.context, input }) as CommandRunResult;
+    countCommand(command.id);
     if (recordsRecent(command)) recentIds.value = rememberRecent(recentIds.value, command.id, storage());
     if (command.id.startsWith('spawn:agent:')) sources.rememberHarness(command.id.slice('spawn:agent:'.length));
     else if (command.id.startsWith('spawn:preset:') && command.harness) sources.rememberHarness(command.harness);

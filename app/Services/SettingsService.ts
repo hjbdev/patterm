@@ -2,11 +2,13 @@ import { z } from 'zod';
 import type { DatabaseService } from './DatabaseService';
 import { autoSummarySettingsInput, type AutoSummarySettings } from './AutoSummarySettings';
 import { notificationSettingsInput, type NotificationSettings } from './NotificationSettings';
-import { ASSISTANT_BOT_ID, defaultAssistantBot, parseBotSettings, readBotSettings, type BotSettings, type LegacyAssistantSettings } from '../Bots/BotSettings';
+import { ASSISTANT_BOT_ID, defaultAssistantBot, namesProfile, parseBotSettings, readBotSettings, type BotSettings, type LegacyAssistantSettings } from '../Bots/BotSettings';
 import { emptyHarnessPresetSettings, harnessPresetSettingsInput, presetHarnessInput, seededHarnessPresetSettings, type HarnessPresetSettings } from '../Harness/HarnessPresets';
 import { emptyHarnessModelCatalog, harnessModelCatalogInput, type HarnessModelCatalog } from '../Harness/ModelCatalog';
 import { BOT_VOICE_ACKNOWLEDGEMENTS, BOT_VOICE_PROFILES } from './AssistantVoiceProfile';
 import { BOT_VOICES } from '../Bots/BotIdentity';
+import { DEFAULT_STATUS_LABELS, statusLabelSettingsInput, type StatusLabelSettings } from './StatusLabels';
+import { telemetrySettingsInput, type TelemetrySettings } from './Telemetry/TelemetrySettings';
 
 export const sidebarStateInput = z.object({
   projects: z.array(z.string()).default([]),
@@ -110,11 +112,13 @@ export const semanticSearchSettingsInput = z.object({
 export type SemanticSearchSettings = z.infer<typeof semanticSearchSettingsInput>;
 const SEMANTIC_SEARCH_SETTINGS_KEY = 'semantic_search.v1';
 const UPDATE_RECORD_KEY = 'updates.record.v1';
+const TELEMETRY_SETTINGS_KEY = 'telemetry.v1';
 
 const ASSISTANT_SETTINGS_KEY = 'assistant.settings.v1';
 const HARNESS_PRESETS_KEY = 'harness.presets.v1';
 const BOT_SETTINGS_KEY = 'bots.v1';
 const HARNESS_MODEL_CATALOG_KEY = 'harness.models.v1';
+const STATUS_LABELS_KEY = 'status_labels.v1';
 
 export const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
   uiFont: { preset: 'inter', customFamily: '' },
@@ -281,6 +285,33 @@ export class SettingsService {
     return settings;
   }
 
+  telemetrySettings(): TelemetrySettings {
+    return this.readParsed(TELEMETRY_SETTINGS_KEY, telemetrySettingsInput);
+  }
+
+  saveTelemetrySettings(input: TelemetrySettings): TelemetrySettings {
+    const settings = telemetrySettingsInput.parse(input);
+    this.write(TELEMETRY_SETTINGS_KEY, JSON.stringify(settings));
+    return settings;
+  }
+
+  // Dotted paths of settings that differ from their defaults, without
+  // values, so telemetry can tell which options are ever chosen.
+  changedSettings(): string[] {
+    const sections: Array<[string, unknown, unknown]> = [
+      ['appearance', this.appearanceSettings(), DEFAULT_APPEARANCE_SETTINGS],
+      ['workspace_layout', this.workspaceLayout(), DEFAULT_WORKSPACE_LAYOUT],
+      ['agent_interface', this.agentInterface(), 'integrated'],
+      ['figures', this.figuresEnabled(), true],
+      ['auto_summaries', this.autoSummarySettings(), autoSummarySettingsInput.parse({})],
+      ['notifications', this.notificationSettings(), notificationSettingsInput.parse({})],
+      ['idle_compaction', this.idleCompactionSettings(), DEFAULT_IDLE_COMPACTION_SETTINGS],
+      ['updates', this.updateSettings(), updateSettingsInput.parse({})],
+      ['semantic_search', this.semanticSearchSettings(), semanticSearchSettingsInput.parse({})]
+    ];
+    return sections.flatMap(([name, value, fallback]) => changedPaths(name, value, fallback));
+  }
+
   updateRecord(): UpdateRecord {
     return this.readParsed(UPDATE_RECORD_KEY, updateRecordInput);
   }
@@ -296,12 +327,17 @@ export class SettingsService {
     // The legacy settings matter only until the assistant's entry is saved.
     const record = typeof saved === 'object' && saved !== null ? saved as { bots?: unknown; userName?: unknown } : {};
     const migrated = 'userName' in record && Array.isArray(record.bots) && record.bots.some((bot) => (bot as { id?: unknown } | null)?.id === ASSISTANT_BOT_ID);
-    return readBotSettings(saved, migrated ? null : this.legacyAssistantSettings());
+    const settings = readBotSettings(saved, migrated ? null : this.legacyAssistantSettings(), this.harnessPresets().presets);
+    // Bots that named a profile, and an assistant drawn from its legacy
+    // settings, keep the copy of the profile's settings they were first read
+    // with, so editing that profile later leaves them as they are.
+    if (!migrated || (Array.isArray(record.bots) && record.bots.some(namesProfile))) this.write(BOT_SETTINGS_KEY, JSON.stringify(settings));
+    return settings;
   }
 
   updateBots(input: unknown): BotSettings {
     const current = this.bots().bots.find((bot) => bot.id === ASSISTANT_BOT_ID) ?? defaultAssistantBot();
-    const settings = parseBotSettings(input, current);
+    const settings = parseBotSettings(input, current, this.harnessPresets().presets);
     this.write(BOT_SETTINGS_KEY, JSON.stringify(settings));
     return settings;
   }
@@ -367,6 +403,20 @@ export class SettingsService {
     return catalog;
   }
 
+  // Fresh installs start with a few labels; an unreadable list reads as none.
+  statusLabels(): StatusLabelSettings {
+    const row = this.database.connection.prepare('select value from settings where key = ?').get(STATUS_LABELS_KEY) as { value: string } | undefined;
+    if (!row) return DEFAULT_STATUS_LABELS;
+    try { return statusLabelSettingsInput.parse(JSON.parse(row.value)); }
+    catch { return { labels: [] }; }
+  }
+
+  updateStatusLabels(raw: unknown): StatusLabelSettings {
+    const settings = statusLabelSettingsInput.parse(raw);
+    this.write(STATUS_LABELS_KEY, JSON.stringify(settings));
+    return settings;
+  }
+
   // A missing or unreadable row reads as the schema's defaults.
   private readParsed<T>(key: string, schema: z.ZodType<T, z.ZodTypeDef, unknown>): T {
     const row = this.database.connection.prepare('select value from settings where key = ?').get(key) as { value: string } | undefined;
@@ -384,4 +434,12 @@ export class SettingsService {
       )
       .run(key, value, now);
   }
+}
+
+function changedPaths(path: string, value: unknown, fallback: unknown): string[] {
+  if (value && fallback && typeof value === 'object' && typeof fallback === 'object' && !Array.isArray(value)) {
+    const keys = new Set([...Object.keys(value), ...Object.keys(fallback)]);
+    return [...keys].flatMap((key) => changedPaths(`${path}.${key}`, (value as Record<string, unknown>)[key], (fallback as Record<string, unknown>)[key]));
+  }
+  return JSON.stringify(value) === JSON.stringify(fallback) ? [] : [path];
 }

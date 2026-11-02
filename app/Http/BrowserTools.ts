@@ -3,6 +3,7 @@ import { MCP_SERVER_TOOLS } from '../MCP/registerMcpServerTools';
 import { HOST_TOOLS } from '../MCP/registerHostTools';
 import { UPDATE_TOOLS } from '../MCP/registerUpdateTools';
 import { SEMANTIC_SEARCH_TOOLS } from '../Actions/SemanticSearchActions';
+import { TELEMETRY_TOOLS } from '../MCP/registerTelemetryTools';
 import { BROWSER_CONTROL_TOOLS, BROWSER_VIEW_TOOLS } from '../Actions/BrowserActions';
 import { SECRET_CONTROL_TOOLS, SECRET_VIEW_TOOLS } from '../Actions/SecretActions';
 
@@ -19,11 +20,13 @@ export const BROWSER_TOOLS = new Set([
   'routine_list', 'routine_get', 'routine_create', 'routine_update', 'routine_delete', 'routine_run_now', 'routine_run', 'routine_runs', 'routine_log',
   'usage_summary', 'auto_summary_control',
   'settings_idle_compaction_get', 'settings_idle_compaction_update',
+  'settings_status_labels_get', 'settings_status_label_save', 'settings_status_label_delete', 'process_status_set',
   'settings_bots_get', 'settings_bots_update', 'bot_start', 'bot_state', 'bot_voice_start', 'bot_voice_stop', 'bot_set_focus_mode',
   ...MCP_SERVER_TOOLS,
   ...HOST_TOOLS,
   ...UPDATE_TOOLS,
   ...SEMANTIC_SEARCH_TOOLS,
+  ...TELEMETRY_TOOLS,
   ...BROWSER_VIEW_TOOLS,
   ...SECRET_VIEW_TOOLS,
   'process_create', 'process_restart', 'stop_process', 'close_process', 'close_request_answer', 'rename_process',

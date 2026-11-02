@@ -45,6 +45,7 @@
               <span class="truncate text-[13px]">{{ agentLabel(agent.session) }}</span>
               <HostBadge v-if="agent.session.host && agent.session.host !== overview.project.host" :host="agent.session.host" />
             </span>
+            <StatusLabelPill v-if="agent.session.statusLabel" :label="agent.session.statusLabel" />
             <span class="hidden min-w-0 flex-1 truncate text-xs text-muted-foreground sm:block">{{ agentStatusText(agent) }}</span>
             <span v-if="agent.subagents.length" class="shrink-0 text-[11px] tabular-nums text-muted-foreground" :title="agent.subagents.map(agentLabel).join(', ')">+{{ agent.subagents.length }}</span>
             <UnreadDot :urgency="unreadUrgency(agent.session.processId)" />
@@ -65,6 +66,7 @@
 
 <script setup lang="ts">
 import HostBadge from './HostBadge.vue';
+import StatusLabelPill from './StatusLabelPill.vue';
 import { computed, ref } from 'vue';
 import { FolderPlus, Link2 } from 'lucide-vue-next';
 import AgentIcon from './AgentIcon.vue';
