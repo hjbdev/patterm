@@ -145,7 +145,9 @@ interface OpenCodeCatalogModel {
 }
 
 // `GET /api/model` returns `{ data: [...] }`; each entry is a provider/model
-// pair with optional reasoning-effort variants.
+// pair with optional reasoning-effort variants. `id` is OpenCode's own model
+// key; speed variants such as Fast share the upstream `modelID`, so it is only
+// a fallback for responses without `id`.
 export function parseOpenCodeCatalog(value: unknown): HarnessModel[] {
   const data = asRecord(value)?.data;
   if (!Array.isArray(data)) throw new Error('OpenCode model catalog is not valid JSON');
@@ -154,7 +156,7 @@ export function parseOpenCodeCatalog(value: unknown): HarnessModel[] {
     const record = asRecord(entry);
     if (!record) continue;
     const providerID = typeof record.providerID === 'string' ? record.providerID.trim() : '';
-    const modelID = typeof record.modelID === 'string' ? record.modelID.trim() : typeof record.id === 'string' ? record.id.trim() : '';
+    const modelID = typeof record.id === 'string' && record.id.trim() ? record.id.trim() : typeof record.modelID === 'string' ? record.modelID.trim() : '';
     if (!providerID || !modelID || record.enabled === false) continue;
     const name = typeof record.name === 'string' && record.name.trim() ? record.name.trim() : modelID;
     const reasoning = Array.isArray(record.variants)

@@ -163,6 +163,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- OpenCode's speed variants, such as GPT-6.1 Terra and Terra Fast, are
+  separate model options again. Picking Fast no longer checks the standard
+  model too, and saves and launches the Fast variant instead of the standard
+  one. The catalog refreshes when Patterm starts; presets and settings saved
+  with the standard model keep it, so choose Fast again where you meant it.
+
 - An Integrated OpenCode session's Model and Thinking pickers show what the
   session actually uses, read from OpenCode, instead of the launch choice or
   the current default after a Patterm restart. Changing Thinking no longer

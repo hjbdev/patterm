@@ -6,6 +6,7 @@ import path from 'node:path';
 import { builtinClaudeCatalog, parseClaudeCatalog, parseCodexCatalog, parseOpenCodeCatalog } from '../app/Harness/ModelCatalog';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { HarnessModelCatalogService } from '../app/Services/HarnessModelCatalogService';
+import { openCodeModelRef } from '../app/Services/OpenCodeServerService';
 import { SettingsService } from '../app/Services/SettingsService';
 
 const CODEX_CATALOG = {
@@ -43,13 +44,24 @@ async function main(): Promise<void> {
     data: [
       { id: 'gpt-x', modelID: 'gpt-x', providerID: 'openai', name: 'GPT X', enabled: true, variants: [{ id: 'low' }, { id: 'max' }] },
       { id: 'disabled', providerID: 'openai', enabled: false },
-      { modelID: 'bare', providerID: 'opencode-go', enabled: true }
+      { modelID: 'bare', providerID: 'opencode-go', enabled: true },
+      // Speed variants share the upstream modelID; OpenCode's id tells them apart.
+      { id: 'sol', modelID: 'sol', providerID: 'openai', name: 'Sol', enabled: true },
+      { id: 'sol-fast', modelID: 'sol', providerID: 'openai', name: 'Sol Fast', enabled: true },
+      { id: 'sol-ultrafast', modelID: 'sol', providerID: 'openai', name: 'Sol Ultrafast', enabled: true },
+      { id: ' ', modelID: 'blank-id', providerID: 'openai', enabled: true }
     ]
   });
   assert.deepEqual(openCodeModels, [
+    { id: 'openai/blank-id', label: 'blank-id', reasoning: [], defaultReasoning: null },
     { id: 'openai/gpt-x', label: 'GPT X', reasoning: ['low', 'max'], defaultReasoning: null },
+    { id: 'openai/sol', label: 'Sol', reasoning: [], defaultReasoning: null },
+    { id: 'openai/sol-fast', label: 'Sol Fast', reasoning: [], defaultReasoning: null },
+    { id: 'openai/sol-ultrafast', label: 'Sol Ultrafast', reasoning: [], defaultReasoning: null },
     { id: 'opencode-go/bare', label: 'bare', reasoning: [], defaultReasoning: null }
   ]);
+  // The chosen option launches that exact variant, not its shared upstream model.
+  assert.deepEqual(openCodeModelRef('openai/sol-fast', null), { providerID: 'openai', id: 'sol-fast' });
   assert.throws(() => parseOpenCodeCatalog({}), /valid JSON/);
 
   // Claude's `initialize` reply keeps versioned names and drops the implicit default.
@@ -110,19 +122,28 @@ async function main(): Promise<void> {
     openCodeServer: {
       listModels: async () => {
         openCodeCalls += 1;
-        return { data: [{ id: 'luna', providerID: 'openai', name: 'Luna', enabled: true, variants: [{ id: 'high' }] }] };
+        return { data: [
+          { id: 'luna', modelID: 'luna', providerID: 'openai', name: 'Luna', enabled: true, variants: [{ id: 'high' }] },
+          { id: 'luna-fast', modelID: 'luna', providerID: 'openai', name: 'Luna Fast', enabled: true, variants: [{ id: 'high' }] }
+        ] };
       }
     }
   });
 
   try {
+    // A catalog cached before the fix lists the Fast variant under the shared
+    // upstream ID; the next refresh replaces it.
+    settings.updateHarnessModelCatalog({ providers: { claude: null, codex: null, opencode: {
+      harness: 'opencode', source: 'api', refreshedAt: now, error: null,
+      models: [{ id: 'openai/luna', label: 'Luna', reasoning: [], defaultReasoning: null }, { id: 'openai/luna', label: 'Luna Fast', reasoning: [], defaultReasoning: null }]
+    } } });
     const catalog = await service.refresh();
     assert.equal(openCodeCalls, 1, 'opencode discovery uses the shared-server service');
     assert.deepEqual(catalog.providers.claude?.models.map((model) => model.id), ['opus', 'claude-fable-5-1', 'haiku']);
     assert.equal(catalog.providers.claude?.source, 'cli');
     assert.deepEqual(catalog.providers.codex?.models.map((model) => model.id), ['gpt-visible']);
     assert.deepEqual(catalog.providers.codex?.models[0]?.reasoning, ['low', 'high']);
-    assert.deepEqual(catalog.providers.opencode?.models.map((model) => model.id), ['openai/luna']);
+    assert.deepEqual(catalog.providers.opencode?.models.map((model) => model.id), ['openai/luna', 'openai/luna-fast']);
     assert.equal(catalog.providers.opencode?.source, 'api');
     assert.equal(catalog.providers.codex?.error, null);
     assert.deepEqual(settings.harnessModelCatalog(), catalog, 'catalog is cached in settings');
