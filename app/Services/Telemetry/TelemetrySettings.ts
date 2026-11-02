@@ -27,15 +27,18 @@ export const telemetrySettingsUpdate = z.object({
 export const telemetryIdentifier = z.string().regex(/^[A-Za-z0-9_.:/+-]{1,120}$/);
 
 export const telemetryRecordInput = z.object({
+  epoch: z.string().uuid(),
   app_version: z.string().regex(/^[0-9A-Za-z.+-]{1,40}$/).optional(),
   // Counted interactions since the last report, keyed by identifier.
   clicks: z.record(telemetryIdentifier, z.number().int().positive().max(100_000)).default({}),
+  // Command palette commands run, by kind, with record IDs removed.
+  commands: z.record(telemetryIdentifier, z.number().int().positive().max(100_000)).default({}),
   views: z.record(telemetryIdentifier, z.number().int().positive().max(100_000)).default({}),
   // Seconds spent on each page since the last report.
   seconds: z.record(telemetryIdentifier, z.number().nonnegative().max(86_400)).default({}),
   // Every component the build ships, so unused ones can be listed.
   components: z.array(telemetryIdentifier).max(2000).optional()
-}).strict().refine((input) => Object.keys(input.clicks).length + Object.keys(input.views).length + Object.keys(input.seconds).length <= 2000, 'Too many entries');
+}).strict().refine((input) => Object.keys(input.clicks).length + Object.keys(input.commands).length + Object.keys(input.views).length + Object.keys(input.seconds).length <= 2000, 'Too many entries');
 
 export const telemetryFeedbackInput = z.object({
   sentiment: z.enum(['like', 'dislike']),

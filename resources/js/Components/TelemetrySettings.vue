@@ -4,7 +4,7 @@
     <p v-if="error" role="alert" class="text-xs text-destructive">{{ error }}</p>
     <SettingsSection title="PostHog" scope="telemetry">
       <SettingsRow label="Project API key" description="Your PostHog project's key, which starts with phc_. Turning telemetry on needs one." html-for="telemetry-key" save-key="telemetry.key">
-        <Input id="telemetry-key" :model-value="draft.apiKey" class="h-8 font-mono text-xs sm:max-w-sm" placeholder="phc_…" autocomplete="off" spellcheck="false" :disabled="!loaded" @update:model-value="(value) => { draft.apiKey = String(value).trim(); }" @blur="save('telemetry.key')" />
+        <Input id="telemetry-key" :model-value="draft.apiKey" class="h-8 font-mono text-xs sm:max-w-sm" placeholder="phc_…" autocomplete="off" spellcheck="false" :disabled="!loaded" @update:model-value="(value) => { draft.apiKey = String(value).trim(); edited(); }" @blur="save('telemetry.key')" />
       </SettingsRow>
       <SettingsRow label="Region" html-for="telemetry-host" save-key="telemetry.host">
         <SettingsChoice id="telemetry-host" :model-value="draft.host" :options="HOST_OPTIONS" aria-label="PostHog region" segmented :disabled="!loaded" @update:model-value="(value) => { draft.host = value; void save('telemetry.host'); }" />
@@ -51,22 +51,34 @@ const note = ref('');
 const sending = ref(false);
 const feedbackStatus = ref('');
 
-// Saves run one at a time and each sends the latest draft.
+// Saves run one at a time. Each reads the draft when it runs, and a response
+// updates the draft only when no later change is waiting, so a change made
+// during a save, such as turning telemetry off again, is never lost.
+let revision = 0;
 let saving: Promise<unknown> = Promise.resolve();
 
+// Typing changes the draft before it is saved; a save in flight must not undo it.
+function edited(): void {
+  revision += 1;
+}
+
 function save(key: string): Promise<unknown> {
-  if (!loaded.value || (draft.enabled === saved.enabled && draft.apiKey === saved.apiKey && draft.host === saved.host)) return saving;
+  if (!loaded.value) return saving;
+  const current = ++revision;
   error.value = '';
-  saving = saving.then(() => autosave(key, async () => {
-    try {
-      Object.assign(saved, await saveTelemetrySettings({ ...draft }));
-    } catch (caught) {
-      error.value = errorMessage(caught);
-      throw caught;
-    } finally {
-      Object.assign(draft, saved);
-    }
-  }));
+  saving = saving.then(() => {
+    if (draft.enabled === saved.enabled && draft.apiKey === saved.apiKey && draft.host === saved.host) return;
+    return autosave(key, async () => {
+      try {
+        Object.assign(saved, await saveTelemetrySettings({ enabled: draft.enabled, apiKey: draft.apiKey, host: draft.host }));
+      } catch (caught) {
+        error.value = errorMessage(caught);
+        throw caught;
+      } finally {
+        if (current === revision) Object.assign(draft, { enabled: saved.enabled, apiKey: saved.apiKey, host: saved.host });
+      }
+    });
+  });
   return saving;
 }
 
@@ -85,9 +97,9 @@ async function sendFeedback(sentiment: 'like' | 'dislike'): Promise<void> {
 
 onMounted(async () => {
   try {
-    const settings = await loadTelemetrySettings();
-    Object.assign(draft, settings);
-    Object.assign(saved, settings);
+    const { enabled, apiKey, host } = await loadTelemetrySettings();
+    Object.assign(draft, { enabled, apiKey, host });
+    Object.assign(saved, { enabled, apiKey, host });
     loaded.value = true;
   } catch (caught) {
     error.value = errorMessage(caught);

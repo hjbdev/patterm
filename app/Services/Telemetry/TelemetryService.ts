@@ -42,6 +42,8 @@ export class TelemetryService {
   private inventoryTimer: NodeJS.Timeout | null = null;
   private current: TelemetrySettings;
   private flushing: Promise<void> | null = null;
+  // The first inventory waits for the first send, once every route is registered.
+  private inventoryPending = false;
 
   constructor(private readonly options: TelemetryOptions) {
     this.current = options.settings.telemetrySettings();
@@ -56,11 +58,13 @@ export class TelemetryService {
     this.flushTimer.unref?.();
     this.inventoryTimer = setInterval(() => this.captureInventory(), this.options.inventoryIntervalMs ?? 24 * 60 * 60_000);
     this.inventoryTimer.unref?.();
-    this.captureInventory();
+    this.inventoryPending = true;
   }
 
-  settings(): { enabled: boolean; apiKey: string; host: 'us' | 'eu' } {
-    return { enabled: this.current.enabled, apiKey: this.current.apiKey, host: this.current.host };
+  // epoch names this opt-in. Clients send it with their counts, so counts
+  // made under an earlier opt-in, or while it was off, are refused.
+  settings(): { enabled: boolean; apiKey: string; host: 'us' | 'eu'; epoch: string | null } {
+    return { enabled: this.current.enabled, apiKey: this.current.apiKey, host: this.current.host, epoch: this.enabled ? this.current.installId : null };
   }
 
   update(raw: unknown): ReturnType<TelemetryService['settings']> {
@@ -72,7 +76,7 @@ export class TelemetryService {
     this.current = this.options.settings.saveTelemetrySettings({ ...input, enabled, installId });
     if (enabled && turningOn) {
       this.capture('telemetry_enabled', {});
-      this.captureInventory();
+      this.inventoryPending = true;
     }
     return this.settings();
   }
@@ -95,10 +99,11 @@ export class TelemetryService {
 
   // What a client counted: clicks, page views, and time on each page.
   record(raw: unknown): { accepted: boolean } {
-    if (!this.enabled) return { accepted: false };
     const input = telemetryRecordInput.parse(raw);
+    if (!this.enabled || input.epoch !== this.current.installId) return { accepted: false };
     const client = input.app_version ? { client_version: input.app_version } : {};
     for (const [feature, count] of Object.entries(input.clicks)) this.add('ui_clicked', { feature, ...client }, count);
+    for (const [command, count] of Object.entries(input.commands)) this.add('command_run', { command, ...client }, count);
     for (const [page, count] of Object.entries(input.views)) this.add('page_viewed', { page, ...client }, count);
     for (const [page, seconds] of Object.entries(input.seconds)) this.add('page_time', { page, ...client }, 0, seconds);
     if (input.components) this.capture('ui_inventory', { components: [...new Set(input.components)].sort(), ...client });
@@ -122,6 +127,8 @@ export class TelemetryService {
     if (this.flushTimer) clearInterval(this.flushTimer);
     if (this.inventoryTimer) clearInterval(this.inventoryTimer);
     this.flushTimer = this.inventoryTimer = null;
+    // A send already under way holds only what was counted before it began.
+    await this.flushing;
     await this.flush();
   }
 
@@ -165,6 +172,10 @@ export class TelemetryService {
 
   private async send(): Promise<void> {
     if (!this.enabled) { this.discard(); return; }
+    if (this.inventoryPending) {
+      this.inventoryPending = false;
+      this.captureInventory();
+    }
     const now = new Date().toISOString();
     for (const tally of this.tallies.values()) {
       const timing = tally.event === 'page_time' ? { seconds: Math.round(tally.ms / 1000) }

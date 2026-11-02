@@ -6,7 +6,7 @@ import { DatabaseService } from '../app/Services/DatabaseService';
 import { SettingsService } from '../app/Services/SettingsService';
 import { TelemetryService } from '../app/Services/Telemetry/TelemetryService';
 import { McpToolRegistry } from '../app/MCP/ToolRegistry';
-import { commandKind } from '../routes/commands';
+import { commandKind } from '../resources/js/lib/commandKind';
 
 async function main(): Promise<void> {
 const directory = mkdtempSync(path.join(os.tmpdir(), 'patterm-telemetry-'));
@@ -27,11 +27,11 @@ try {
   });
 
   // Off by default: nothing is counted or sent.
-  assert.deepEqual(telemetry.settings(), { enabled: false, apiKey: '', host: 'us' });
+  assert.deepEqual(telemetry.settings(), { enabled: false, apiKey: '', host: 'us', epoch: null });
   assert.equal(telemetry.enabled, false);
   telemetry.count('tool_called', { tool: 'todo_list' });
   telemetry.capture('feedback', {});
-  assert.deepEqual(telemetry.record({ clicks: { 'App:button': 1 } }), { accepted: false });
+  assert.deepEqual(telemetry.record({ epoch: '00000000-0000-4000-8000-000000000000', clicks: { 'App:button': 1 } }), { accepted: false });
   await telemetry.flush();
   assert.equal(requests.length, 0, 'telemetry that is off sends nothing');
 
@@ -42,12 +42,14 @@ try {
   assert.equal(telemetry.enabled, true);
   const firstId = settings.telemetrySettings().installId;
   assert.match(firstId ?? '', /^[0-9a-f-]{36}$/);
+  assert.equal(telemetry.settings().epoch, firstId, 'clients learn the epoch of this opt-in');
+  assert.deepEqual(telemetry.record({ epoch: '00000000-0000-4000-8000-000000000000', clicks: { 'App:button': 1 } }), { accepted: false }, 'counts from another opt-in are refused');
 
   // Repeated calls are sent as one counted event.
   telemetry.count('tool_called', { tool: 'todo_list', caller: 'agent' }, { ok: true, ms: 10 });
   telemetry.count('tool_called', { tool: 'todo_list', caller: 'agent' }, { ok: false, ms: 30 });
-  telemetry.record({ clicks: { 'DiffDrawer:button': 2, 'key:ctrl+k': 1 }, views: { settings: 1 }, seconds: { settings: 12.4 }, components: ['DiffDrawer', 'AboutSettings'] });
-  assert.throws(() => telemetry.record({ clicks: { 'My project name': 1 } }), 'clients report identifiers, not text');
+  telemetry.record({ epoch: firstId, clicks: { 'DiffDrawer:button': 2, 'key:ctrl+k': 1 }, commands: { 'navigate:agent': 3 }, views: { settings: 1 }, seconds: { settings: 12.4 }, components: ['DiffDrawer', 'AboutSettings'] });
+  assert.throws(() => telemetry.record({ epoch: firstId, clicks: { 'My project name': 1 } }), 'clients report identifiers, not text');
   telemetry.feedback({ sentiment: 'dislike', note: 'Too many tabs' });
   await telemetry.flush();
   assert.equal(requests.length, 1);
@@ -66,6 +68,8 @@ try {
   assert.equal(toolCall.mean_ms, 20);
   assert.deepEqual(byEvent('ui_clicked').map((event) => [event.properties.feature, event.properties.count]).sort(), [['DiffDrawer:button', 2], ['key:ctrl+k', 1]]);
   assert.equal(byEvent('page_time')[0]?.properties.seconds, 12);
+  assert.equal(byEvent('command_run')[0]?.properties.command, 'navigate:agent');
+  assert.equal(byEvent('command_run')[0]?.properties.count, 3);
   assert.deepEqual(byEvent('ui_inventory')[0]?.properties.components, ['AboutSettings', 'DiffDrawer']);
   assert.equal(byEvent('feedback')[0]?.properties.note, 'Too many tabs');
 
@@ -106,6 +110,29 @@ try {
   assert.equal(commandKind('spawn:agent:claude'), 'spawn:agent:claude');
   assert.equal(commandKind('spawn:preset:my_preset'), 'spawn:preset');
   assert.equal(commandKind('renderer:settings'), 'renderer:settings');
+
+  // Quitting during a send still sends what was counted after it began.
+  const sent: string[][] = [];
+  let release: () => void = () => undefined;
+  const slow = new TelemetryService({
+    settings,
+    context: {},
+    inventory: () => ({ tools: [], channels: [], settings: [], records: {} }),
+    fetch: (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { batch: Array<{ event: string; properties: { tool?: string } }> };
+      sent.push(body.batch.filter((event) => event.event === 'tool_called').map((event) => event.properties.tool ?? ''));
+      if (sent.length === 1) await new Promise<void>((resolve) => { release = resolve; });
+      return new Response('{}', { status: 200 });
+    }) as typeof fetch
+  });
+  slow.count('tool_called', { tool: 'first' });
+  const pending = slow.flush();
+  slow.count('tool_called', { tool: 'second' });
+  const disposed = slow.dispose();
+  release();
+  await pending;
+  await disposed;
+  assert.deepEqual(sent, [['first'], ['second']]);
 
   await telemetry.dispose();
   database.dispose();

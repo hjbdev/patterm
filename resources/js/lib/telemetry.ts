@@ -1,25 +1,31 @@
-import type { App } from 'vue';
+import type { App, ComponentInternalInstance, ComponentPublicInstance } from 'vue';
 import type { Router } from 'vue-router';
 import components from 'virtual:patterm-components';
+import { commandKind } from './commandKind';
 
 // Opt-in usage telemetry from this window: which pages are opened and for
 // how long, and which components' controls are clicked. It reports only
 // route names, component names, data-feature attributes, and key
 // combinations, never text, and counts nothing while telemetry is off.
 
-export interface TelemetrySettings { enabled: boolean; apiKey: string; host: 'us' | 'eu' }
+export interface TelemetrySettings { enabled: boolean; apiKey: string; host: 'us' | 'eu'; epoch?: string | null }
 
 const APP_COMPONENTS = new Set(components);
 const CONTROLS = 'button, a[href], summary, select, textarea, input, [role="button"], [role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"], [role="tab"], [role="switch"], [role="checkbox"], [role="radio"], [role="option"], [role="link"], [data-feature]';
 const NAMED_KEYS = new Set(['Enter', 'Escape', 'Tab', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown', 'Space']);
 const REPORT_MS = 30_000;
 
-// The app component that rendered each root element. Vue records this only
-// in development builds, so a mixin records it here.
+// The nearest app component above each component's root element. Vue
+// records the owner only in development builds, so a mixin records it here.
+// Walking components rather than the DOM reaches dialogs and menus that
+// render elsewhere in the page.
 const owners = new WeakMap<Element, string>();
 
-let enabled = false;
+// The opt-in this window counts for, or null while telemetry is off. The
+// server refuses counts sent with any other epoch.
+let epoch: string | null = null;
 let clicks: Record<string, number> = {};
+let commands: Record<string, number> = {};
 let views: Record<string, number> = {};
 let seconds: Record<string, number> = {};
 // The page on screen, and since when; since is null while the window is hidden.
@@ -29,13 +35,16 @@ let inventorySent = false;
 
 export function installTelemetry(app: App, router: Router): void {
   app.mixin({
-    mounted(this: { $: { type: { __name?: string; name?: string } }; $el: unknown }) {
-      const name = this.$.type.__name ?? this.$.type.name;
-      if (name && APP_COMPONENTS.has(name) && this.$el instanceof Element) owners.set(this.$el, name);
+    // Children mount first, so a root element shared with a parent keeps the
+    // child's more specific owner.
+    mounted(this: ComponentPublicInstance) {
+      if (!(this.$el instanceof Element) || owners.has(this.$el)) return;
+      const owner = appOwner(this.$);
+      if (owner) owners.set(this.$el, owner);
     }
   });
-  router.afterEach((to) => {
-    if (!enabled) return;
+  router.afterEach((to, _from, failure) => {
+    if (!epoch || failure) return;
     const name = typeof to.name === 'string' ? to.name : 'unnamed';
     closePage();
     page = { name, since: document.visibilityState === 'hidden' ? null : performance.now() };
@@ -47,8 +56,31 @@ export function installTelemetry(app: App, router: Router): void {
     closePage();
     if (document.visibilityState === 'hidden') void report();
   });
-  window.addEventListener('patterm:telemetry-changed', (event) => setEnabled((event as CustomEvent<TelemetrySettings>).detail.enabled, router));
-  void loadTelemetrySettings().then((settings) => setEnabled(settings.enabled, router)).catch(() => undefined);
+  // Consent can change in another window, so every settings change and
+  // reconnection rereads it.
+  refresh = () => { void loadTelemetrySettings().then((settings) => apply(settings, router)).catch(() => undefined); };
+  window.addEventListener('patterm:telemetry-changed', (event) => apply((event as CustomEvent<TelemetrySettings>).detail, router));
+  window.patterm.onDataChanged?.((topics) => { if (topics.includes('settings')) refresh(); });
+  window.patterm.onConnectionChanged?.((state) => { if (state === 'connected') refresh(); });
+  refresh();
+}
+
+let refresh = (): void => undefined;
+
+// Counts a command palette command by kind.
+export function countCommand(id: string): void {
+  if (!epoch) return;
+  const kind = commandKind(id);
+  commands[kind] = (commands[kind] ?? 0) + 1;
+}
+
+function appOwner(instance: ComponentInternalInstance): string | null {
+  for (let current: ComponentInternalInstance | null = instance; current; current = current.parent) {
+    const type = current.type as { __name?: string; name?: string };
+    const name = type.__name ?? type.name;
+    if (name && APP_COMPONENTS.has(name)) return name;
+  }
+  return null;
 }
 
 export async function loadTelemetrySettings(): Promise<TelemetrySettings> {
@@ -80,28 +112,32 @@ export function featureFor(target: Element): string | null {
 }
 
 function onClick(event: MouseEvent): void {
-  if (!enabled || !(event.target instanceof Element)) return;
+  if (!epoch || !(event.target instanceof Element)) return;
   const feature = featureFor(event.target);
   if (feature) clicks[feature] = (clicks[feature] ?? 0) + 1;
 }
 
 // Shortcuts only: a key pressed with Ctrl, Alt, or Meta.
 function onKey(event: KeyboardEvent): void {
-  if (!enabled || !(event.ctrlKey || event.altKey || event.metaKey) || ['Control', 'Alt', 'Meta', 'Shift'].includes(event.key)) return;
+  if (!epoch || !(event.ctrlKey || event.altKey || event.metaKey) || ['Control', 'Alt', 'Meta', 'Shift'].includes(event.key)) return;
   const key = event.key === ' ' ? 'Space' : event.key.length === 1 && /[a-z0-9]/i.test(event.key) ? event.key.toLowerCase() : NAMED_KEYS.has(event.key) ? event.key : null;
   if (!key) return;
   const combo = `key:${[event.ctrlKey && 'ctrl', event.altKey && 'alt', event.metaKey && 'meta', event.shiftKey && 'shift', key].filter(Boolean).join('+')}`;
   clicks[combo] = (clicks[combo] ?? 0) + 1;
 }
 
-function setEnabled(next: boolean, router: Router): void {
-  if (next === enabled) return;
-  enabled = next;
-  clicks = {}; views = {}; seconds = {};
+// Starts counting afresh for a new opt-in, or stops while telemetry is off.
+// Nothing counted under one epoch is sent under another.
+function apply(settings: TelemetrySettings, router: Router): void {
+  const next = settings.enabled ? settings.epoch ?? null : null;
+  if (next === epoch) return;
+  epoch = next;
+  clicks = {}; commands = {}; views = {}; seconds = {};
   page = null;
+  inventorySent = false;
   if (timer) clearInterval(timer);
   timer = null;
-  if (!enabled) return;
+  if (!epoch) return;
   const name = router.currentRoute.value.name;
   page = { name: typeof name === 'string' ? name : 'unnamed', since: document.visibilityState === 'hidden' ? null : performance.now() };
   views[page.name] = 1;
@@ -118,19 +154,23 @@ function closePage(): void {
 }
 
 async function report(): Promise<void> {
-  if (!enabled) return;
+  if (!epoch) return;
   const payload = {
+    epoch,
     app_version: __PATTERM_VERSION__,
     clicks,
+    commands,
     views,
     seconds: Object.fromEntries(Object.entries(seconds).map(([name, value]) => [name, Math.min(86_400, Math.round(value))]).filter(([, value]) => Number(value) > 0)),
     ...(inventorySent ? {} : { components })
   };
-  clicks = {}; views = {}; seconds = {};
-  if (!Object.keys(payload.clicks).length && !Object.keys(payload.views).length && !Object.keys(payload.seconds).length && inventorySent) return;
+  clicks = {}; commands = {}; views = {}; seconds = {};
+  if (!Object.keys(payload.clicks).length && !Object.keys(payload.commands).length && !Object.keys(payload.views).length && !Object.keys(payload.seconds).length && inventorySent) return;
   try {
-    await window.patterm.call('telemetry_record', payload);
-    inventorySent = true;
+    const result = await window.patterm.call('telemetry_record', payload) as { accepted: boolean };
+    // Refused: telemetry was turned off or on again elsewhere.
+    if (!result.accepted) refresh();
+    else inventorySent = true;
   } catch {
     // Dropped: telemetry is best effort and never retried.
   }
