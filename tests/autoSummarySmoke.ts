@@ -513,6 +513,7 @@ async function main() {
     assert.equal((db.prepare('select count(*) as count from auto_summary_usage').get() as { count: number }).count, beforeCancelUsage + 1);
 
     const unicode = summarySnapshot('🙂'.repeat(20_000));
+    assert.ok(unicode.length > 0);
     assert.ok(Buffer.byteLength(unicode) <= 12 * 1024);
     assert.equal(unicode.includes('\ufffd'), false);
     assert.equal(Array.from(unicode).every((point) => point === '🙂'), true);

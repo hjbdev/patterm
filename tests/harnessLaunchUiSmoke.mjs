@@ -214,5 +214,4 @@ test('menu and empty-state handlers submit every launch with click-time argument
   emptyLaunch('opencode'); emptyLaunch('claude');
   assert.equal(calls.length, 6);
   assert.equal(calls[5].projectId, 'p2');
-  assert.doesNotMatch(menu + empty, /:disabled="launching"/);
 });

@@ -9,10 +9,6 @@ import { elapsedLabel, groupTranscriptMessages, toggleTranscriptRow, transcriptR
 const page = fs.readFileSync(new URL('../resources/js/Components/ConversationTranscript.vue', import.meta.url), 'utf8');
 const source = page.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)?.[1];
 assert.ok(source);
-const thought = fs.readFileSync(new URL('../resources/js/Components/ConversationThoughtRow.vue', import.meta.url), 'utf8');
-assert.match(thought, /v-if="open"[^\n]*v-html="renderPlainMarkdown\(message\.text\)"/, 'thinking content mounts only when expanded');
-assert.match(thought, /:aria-expanded="open"/, 'the thinking toggle exposes its state');
-assert.match(page, /:aria-expanded="rowOpen\(row\.id\)"/, 'the tool group toggle exposes its state');
 const parsed = ts.createSourceFile('transcript.ts', source, ts.ScriptTarget.Latest, true);
 const executable = parsed.statements.filter((statement) => !ts.isImportDeclaration(statement))
   .map((statement) => statement.getFullText(parsed)).join('\n');

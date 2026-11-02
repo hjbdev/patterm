@@ -87,14 +87,6 @@ test('summary settings save and test send plain, deeply cloneable payloads', asy
   }
 });
 
-test('checkboxes bind reka-ui modelValue, not the removed checked prop', () => {
-  const files = fs.readdirSync(path.resolve('resources/js'), { recursive: true }).filter((file) => file.endsWith('.vue'));
-  for (const file of files) {
-    const source = fs.readFileSync(path.resolve('resources/js', file), 'utf8');
-    assert.doesNotMatch(source, /<Checkbox[^>]*(v-model:checked|:checked=|@update:checked)/, file);
-  }
-});
-
 test('coverage controls allow restarting a stale rebuild and disable duplicate active rebuilds', async () => {
   const filename = path.resolve('resources/js/Components/AutoSummaryControls.vue');
   const { descriptor } = parse(fs.readFileSync(filename, 'utf8'), { filename });
@@ -131,6 +123,5 @@ test('coverage controls allow restarting a stale rebuild and disable duplicate a
     reply = { ...reply, coverage: 'catching_up' };
     await state.control('rebuild'); assert.equal(state.canRebuild, false, 'a valid active rebuild cannot be duplicated');
     assert.deepEqual(operations, ['inspect', 'rebuild']);
-    assert.match(descriptor.template.content, /:disabled="busy \|\| !canRebuild"/);
   } finally { app.unmount(); delete globalThis.window; fs.unlinkSync(output); }
 });

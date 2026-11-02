@@ -7,8 +7,6 @@ import { groupTranscriptMessages } from '../dist/tests/resources/js/lib/integrat
 import { archiveTranscript, isReasoningMessage, toolCallKey } from '../dist/tests/resources/js/lib/historyTranscript.js';
 
 const page = fs.readFileSync(new URL('../resources/js/Components/ConversationHistoryView.vue', import.meta.url), 'utf8');
-assert.match(page, /<ConversationTranscript[\s\S]*:messages="transcriptMessages"/, 'history uses the shared transcript');
-assert.doesNotMatch(page, /HistoryToolContent|<ScrollArea ref="messageScrollRef"/, 'history has no second message renderer');
 const source = page.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)?.[1];
 assert.ok(source);
 const parsed = ts.createSourceFile('history.ts', source, ts.ScriptTarget.Latest, true);

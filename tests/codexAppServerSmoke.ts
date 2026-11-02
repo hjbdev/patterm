@@ -860,7 +860,10 @@ if (socketPath) {
   const streamed: IntegratedConversationEvent[] = [];
   const unsubscribe = await streaming.service.subscribe(streaming.processId, (event) => streamed.push(event));
   await streaming.service.prompt(streaming.processId, { text: 'stream me', references: [], attachments: [] });
-  await new Promise((resolve) => setTimeout(resolve, 150));
+  await waitFor(() => {
+    const compact = streamed.findIndex((event) => event.kind === 'replace' && event.message?.id === 'compact_stream');
+    return compact >= 0 && streamed.slice(compact + 1).some((event) => event.kind === 'pending');
+  });
   const revisions = streamed.map((event) => event.revision);
   assert.deepEqual(revisions, [...revisions].sort((left, right) => left - right), 'stream revisions are ordered');
   assert.ok(streamed.some((event) => event.kind === 'replace' && event.message?.id === 'agent_stream'), 'item/started projects a replace');

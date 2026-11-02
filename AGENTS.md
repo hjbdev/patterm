@@ -185,6 +185,15 @@ changes Patterm's records; never delete its directory or branch.
 
 ## Validation
 
+- New test files are opt-in. Do not create unit, integration, end-to-end, or spec
+  files, or new test-only helpers/fixtures, unless the user explicitly requests
+  their creation or approves it first. A request to implement, fix, test, or verify
+  something does not by itself authorize new test files. Assume no by default;
+  ask only when creating them has a concrete benefit, not as a routine step.
+- Prefer running existing tests and direct browser/runtime checks without adding
+  test files. Where test changes are in scope, exercise observable behavior rather
+  than asserting source-code strings, implementation shapes, or that tests exist.
+
 Run affected tests and checks locally for fast feedback. CI runs the full builds and `check:ci`; inspect its coverage and run any relevant checks locally that CI does not cover. If CI is unavailable, run the checks needed to validate the change locally and report any remaining gaps. Use the commands below as needed rather than running the entire list for every change:
 
 ```sh

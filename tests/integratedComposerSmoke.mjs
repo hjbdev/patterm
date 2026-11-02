@@ -212,7 +212,6 @@ test('@ never searches worktree files, and is plain text with nothing to mention
   await flush();
   assert.deepEqual(harness.calls, [], 'agents match without a file search');
   assert.deepEqual(harness.pane.menuItems.value.map(item => item.kind), ['agent']);
-  assert.doesNotMatch(page, /integrated_files_search|Worktree files/, 'the menu has no file rows');
   harness.scope.stop();
 });
 
@@ -767,15 +766,4 @@ test('a dead session accepts recovery commands without attachments or a native p
   h.props.restartable = false;
   assert.equal(h.pane.canSend.value, false, 'a closed session cannot restart');
   h.scope.stop();
-});
-
-test('a compact composer, as in a bot chat, has the attach button too', () => {
-  const template = page.match(/<template>([\s\S]*)<\/template>/)[1];
-  const compactRow = template.match(/<template v-if="compact">([\s\S]*?)<\/template>/)[1];
-  const fullFooter = template.match(/<div v-if="!compact"[\s\S]*?<\/form>/)[0];
-  const attach = /<Button type="button" size="icon" variant="ghost" class="[^"]*" :disabled="!controlling \|\| ended" aria-label="Attach files" title="Attach files" @click="picker\?\.click\(\)">/;
-  assert.match(compactRow, attach, 'the bot composer opens the same file picker, with the same disabled states');
-  assert.match(fullFooter, attach);
-  // The picker sits outside both branches, so either button reaches it.
-  assert.match(template, /<\/div>\s*<input ref="picker" type="file" multiple class="hidden" :accept="accept" @change="onPick">\s*<\/form>/);
 });

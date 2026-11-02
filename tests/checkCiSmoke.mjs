@@ -8,15 +8,15 @@ import { fileURLToPath } from 'node:url';
 
 const runner = fileURLToPath(new URL('../scripts/check-ci.mjs', import.meta.url));
 
-function fixture(t, check, suite, files) {
+function fixture(t, check, suite, files, selected) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-ci-smoke-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, 'tests'));
-  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ scripts: { check, 'test:fixture': suite } }));
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ scripts: { 'check:all': check, 'test:fixture': suite } }));
   for (const [name, content] of Object.entries(files)) fs.writeFileSync(path.join(root, name), content);
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
-  const result = spawnSync(process.execPath, [runner], { cwd: root, env, encoding: 'utf8' });
+  const result = spawnSync(process.execPath, [runner, ...(selected ? [selected] : [])], { cwd: root, env, encoding: 'utf8' });
   return { root, result };
 }
 
@@ -31,6 +31,15 @@ test('CI expands suites, prepares once and runs duplicate test files once', t =>
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.equal(fs.readFileSync(path.join(root, 'passed'), 'utf8'), '1');
   assert.equal(fs.readFileSync(path.join(root, 'other'), 'utf8'), '1');
+});
+
+test('a selected suite runs without unrelated checks', t => {
+  const { root, result } = fixture(t, 'node unrelated.mjs', 'node tests/pass.mjs', {
+    'unrelated.mjs': 'process.exit(17);',
+    'tests/pass.mjs': "import fs from 'node:fs'; fs.writeFileSync('passed', '1');"
+  }, 'test:fixture');
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(fs.readFileSync(path.join(root, 'passed'), 'utf8'), '1');
 });
 
 test('a failing smoke file fails CI', t => {
