@@ -27,17 +27,25 @@ export function pushAvatarPath(botId: string): string {
   return `/push-avatars/${encodeURIComponent(botId)}.png`;
 }
 
-async function syncPushAvatars(bots: Bot[]): Promise<void> {
+// One bot's unreadable picture leaves that bot on the app icon; the others
+// still get theirs, and removed bots are still dropped.
+export async function syncPushAvatars(bots: Bot[], draw: (bot: Bot) => Promise<Blob | null> = drawAvatar): Promise<void> {
   const cache = await caches.open(CACHE);
   const wanted = new Set<string>();
   for (const bot of bots) {
     if (bot.avatar.kind === 'mark') continue;
     const path = pushAvatarPath(bot.id);
     wanted.add(new URL(path, location.origin).href);
-    const look = JSON.stringify(bot.avatar);
-    if ((await cache.match(path))?.headers.get(LOOK_HEADER) === lookKey(look)) continue;
-    const png = await drawAvatar(bot);
-    if (png) await cache.put(path, new Response(png, { headers: { 'content-type': 'image/png', [LOOK_HEADER]: lookKey(look) } }));
+    const look = lookKey(JSON.stringify(bot.avatar));
+    try {
+      if ((await cache.match(path))?.headers.get(LOOK_HEADER) === look) continue;
+      const png = await draw(bot);
+      if (png) await cache.put(path, new Response(png, { headers: { 'content-type': 'image/png', [LOOK_HEADER]: look } }));
+      else await cache.delete(path);
+    } catch (error) {
+      await cache.delete(path).catch(() => false);
+      console.warn(`The notification picture for ${bot.name} was not drawn`, error);
+    }
   }
   for (const request of await cache.keys()) if (!wanted.has(request.url)) await cache.delete(request);
 }

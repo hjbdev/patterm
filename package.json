@@ -51,7 +51,7 @@
     "test:opencode": "tsc -p tsconfig.tests.json && pnpm run build:mcp && node dist/tests/tests/openCodeServerSmoke.js",
     "test:codex": "tsc -p tsconfig.tests.json && node dist/tests/tests/codexAppServerSmoke.js",
     "test:claude": "tsc -p tsconfig.tests.json && node dist/tests/tests/claudeStreamSmoke.js && node dist/tests/tests/claudeReconnectSmoke.js",
-    "test:pwa": "node --test tests/pwaSmoke.mjs",
+    "test:pwa": "node --test tests/pwaSmoke.mjs tests/pushAvatarsSmoke.mjs",
     "test:notifications": "tsc -p tsconfig.tests.json && node dist/tests/tests/notificationSmoke.js && node dist/tests/tests/notificationTriageSmoke.js && node dist/tests/tests/closeRequestSmoke.js && node dist/tests/tests/snoozeSmoke.js && node dist/tests/tests/projectSnoozeSmoke.js && node dist/tests/tests/integratedActivityNotificationsSmoke.js && node --test tests/notificationToastSmoke.mjs",
     "test:assistant": "tsc -p tsconfig.tests.json && node dist/tests/tests/assistantSmoke.js && node dist/tests/tests/botsSmoke.js && node dist/tests/tests/assistantMemorySmoke.js && node dist/tests/tests/memoryReviewSmoke.js && node dist/tests/tests/assistantFocusSmoke.js && node dist/tests/tests/assistantFocusModeSmoke.js && node dist/tests/tests/agentResultsSmoke.js && node --test tests/settledValueSmoke.mjs",
     "test:assistant:memory:live": "tsc -p tsconfig.tests.json && pnpm run build:mcp && node dist/tests/tests/assistantMemoryLive.js",
