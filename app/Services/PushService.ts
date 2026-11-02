@@ -4,7 +4,7 @@ import path from 'node:path';
 import webpush from 'web-push';
 import { z } from 'zod';
 import type { DatabaseService } from './DatabaseService';
-import type { NotificationRecord } from './NotificationService';
+import { displayName, type NotificationRecord } from './NotificationService';
 
 export const pushSubscriptionInput = z.object({
   endpoint: z.string().url().max(2048),
@@ -103,7 +103,8 @@ export class PushService {
     const payload = JSON.stringify({
       id: notification.id,
       title: bot ? bot.name : notification.title,
-      body: bot ? [notification.title, notification.body].filter(Boolean).join('\n') : notification.body,
+      // A title that only repeats the bot's name is left out.
+      body: bot ? [notification.title === displayName(bot.name) ? '' : notification.title, notification.body].filter(Boolean).join('\n') : notification.body,
       url: notification.url,
       tag,
       urgency: notification.urgency,
