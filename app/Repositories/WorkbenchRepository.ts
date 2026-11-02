@@ -63,6 +63,9 @@ export interface SessionDto {
   sessionRole: string;
   // The bot this session runs. Older paired hosts omit it.
   botId?: string | null;
+  // The bot whose session started this one, such as a detached agent a bot
+  // opened. Older paired hosts omit it.
+  ownerBotId?: string | null;
   resumeStatus: string;
   activity: string;
   // Background tasks still running, such as a shell the agent waits on. Older
@@ -160,6 +163,7 @@ interface SessionRow {
   interface_mode: 'tui' | 'integrated';
   session_role: string;
   bot_id?: string | null;
+  owner_bot_id?: string | null;
   resume_status: string;
   last_title: string | null;
   display_name: string | null;
@@ -281,10 +285,10 @@ export class WorkbenchRepository {
       .prepare(`select * from processes where project_id = ? order by created_at asc`)
       .all(input.project_id) as ProcessRow[];
     const sessionRow = input.session_id
-      ? this.db.prepare(`select sessions.*, processes.pty_process_id from sessions left join processes on processes.id = sessions.process_id where sessions.project_id = ? and sessions.id = ?`)
+      ? this.db.prepare(`select ${SESSION_COLUMNS} from sessions left join processes on processes.id = sessions.process_id ${SESSION_OWNER_JOIN} where sessions.project_id = ? and sessions.id = ?`)
         .get(input.project_id, input.session_id) as SessionRow | undefined
       : input.process_id
-        ? this.db.prepare(`select sessions.*, processes.pty_process_id from sessions join processes on processes.id = sessions.process_id
+        ? this.db.prepare(`select ${SESSION_COLUMNS} from sessions join processes on processes.id = sessions.process_id ${SESSION_OWNER_JOIN}
             where sessions.project_id = ? and sessions.process_id = ? and processes.kind = 'agent' order by sessions.started_at desc limit 1`)
           .get(input.project_id, input.process_id) as SessionRow | undefined
         : undefined;
@@ -306,7 +310,7 @@ export class WorkbenchRepository {
           select p.parent_process_id from processes p join ancestors a on a.id = p.id
             where p.project_id = ? and p.parent_process_id is not null
         )
-        select sessions.*, processes.pty_process_id from sessions left join processes on processes.id = sessions.process_id
+        select ${SESSION_COLUMNS} from sessions left join processes on processes.id = sessions.process_id ${SESSION_OWNER_JOIN}
         where sessions.project_id = ? and (sessions.exited_at is null or julianday(sessions.exited_at) >= julianday(?)
           or sessions.process_id in (select id from ancestors)
           or exists (select 1 from todo_assignments where todo_assignments.session_id = sessions.id))
@@ -330,6 +334,11 @@ export class WorkbenchRepository {
   }
 
 }
+
+// A session started by a bot's own session, such as a detached agent it
+// opened, names that bot. The owner may sit in the bot's hidden project.
+const SESSION_COLUMNS = 'sessions.*, processes.pty_process_id, owner.bot_id as owner_bot_id';
+const SESSION_OWNER_JOIN = 'left join sessions owner on owner.id = sessions.created_by_actor';
 
 // The snapshot also carries the bots' and the assistant's hidden projects;
 // lists of the user's projects, agents and processes leave them out.
@@ -383,6 +392,7 @@ function mapSessions(sessions: SessionRow[], processes: ProcessRow[]): SessionDt
       interfaceMode: session.interface_mode,
       sessionRole: session.session_role,
       botId: session.bot_id ?? null,
+      ownerBotId: session.owner_bot_id ?? null,
       resumeStatus: session.resume_status,
       activity: session.process_id ? activityByProcessId.get(session.process_id) ?? 'idle' : 'idle',
       backgroundTasks: session.process_id ? backgroundTasks.get(session.process_id) ?? 0 : 0,
