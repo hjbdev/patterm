@@ -848,6 +848,38 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     assert.deepEqual([lastFor('msg_inbox_1')?.createdAt, lastFor('msg_inbox_1')?.completedAt], [iso(8_000), iso(8_000)], 'a user admission uses its event time');
     assert.equal(messageReads(), readsBeforeV2, 'native V2 streaming does not re-read the message snapshot');
 
+    // OpenCode stores streamed text only when its part ends, so a snapshot
+    // read mid-stream carries what has streamed up to its revision. Deltas
+    // after that revision are applied on top exactly once, and stored text
+    // wins once it exists.
+    const liveMessage = (reasoning: string, text: string, completed?: number) => ({ id: 'msg_live', type: 'assistant', content: [{ type: 'reasoning', text: reasoning }, { type: 'text', text }], time: { created: 9, ...(completed ? { completed } : {}) } });
+    const liveView = async (): Promise<{ revision: number; texts: string[] | undefined }> => {
+      const snapshot = await streamService.conversation('process_0') as { revision: number; messages: { data: Array<{ id: string; content?: Array<{ text: string }> }> } };
+      return { revision: snapshot.revision, texts: snapshot.messages.data.find((message) => message.id === 'msg_live')?.content?.map((part) => part.text) };
+    };
+    daemonState.rows = [liveMessage('', '')];
+    daemonState.emit('session.reasoning.started', { sessionID: first, assistantMessageID: 'msg_live', ordinal: 0 });
+    daemonState.emit('session.reasoning.delta', { sessionID: first, assistantMessageID: 'msg_live', ordinal: 0, delta: 'Plan' });
+    daemonState.emit('session.text.started', { sessionID: first, assistantMessageID: 'msg_live', ordinal: 0 });
+    daemonState.emit('session.text.delta', { sessionID: first, assistantMessageID: 'msg_live', ordinal: 0, delta: 'Hello' });
+    await waitFor(() => streamed.some((event) => event.kind === 'append' && event.id === 'msg_live-1'));
+    const midStream = await liveView();
+    assert.deepEqual(midStream.texts, ['Plan', 'Hello'], 'a mid-stream snapshot keeps the streamed reasoning and text the daemon has not stored');
+    assert.equal(midStream.revision, Math.max(...streamed.map((event) => event.revision)), 'the snapshot boundary covers every delta it carries');
+    daemonState.emit('session.text.delta', { sessionID: first, assistantMessageID: 'msg_live', ordinal: 0, delta: ' world' });
+    await waitFor(() => streamed.some((event) => event.kind === 'append' && event.id === 'msg_live-1' && event.delta === ' world'));
+    const newer = streamed.filter((event) => event.kind === 'append' && event.id === 'msg_live-1' && event.revision > midStream.revision).map((event) => event.delta).join('');
+    assert.equal(`${midStream.texts?.[1]}${newer}`, 'Hello world', 'deltas newer than the snapshot complete it without duplication');
+    assert.deepEqual((await liveView()).texts, ['Plan', 'Hello world']);
+    daemonState.rows = [liveMessage('', 'Hello world!')];
+    daemonState.emit('session.text.ended', { sessionID: first, assistantMessageID: 'msg_live', ordinal: 0, text: 'Hello world!' });
+    await waitFor(() => streamed.some((event) => event.kind === 'replace' && event.message?.id === 'msg_live-1' && event.message.text === 'Hello world!'));
+    assert.deepEqual((await liveView()).texts, ['Plan', 'Hello world!'], 'an ended part shows its final text');
+    // An interrupted turn never ends its open parts; the stored message does.
+    daemonState.rows = [liveMessage('P', 'Hello world!', 10)];
+    assert.deepEqual((await liveView()).texts, ['P', 'Hello world!'], 'a finished native message is never overwritten by stream text');
+    daemonState.rows = null;
+
     // A subagent's live content nests under its tool row; its idle status is
     // its own and does not settle this session.
     const beforeChild = streamed.length;
@@ -1179,19 +1211,24 @@ async function checkStreamedActivity(input: {
     daemonState.emit('session.tool.called', { sessionID: first, assistantMessageID: 'msg_sh', id: 'call_dev', name: 'shell', input: { command: 'npm run dev', background: true } });
     daemonState.emit('session.tool.success', { sessionID: first, assistantMessageID: 'msg_sh', id: 'call_dev', content: [{ type: 'text', text: 'Command moved to the background' }], metadata: { shellID: 'sh_dev', sessionID: first } });
     const shellMark = events.length;
-    daemonState.emit('shell.created', { id: 'sh_dev', metadata: { sessionID: first } });
+    daemonState.emit('shell.created', { info: { id: 'sh_dev', status: 'running', metadata: { sessionID: first, background: true } } });
     await waitFor(() => events.slice(shellMark).some((event) => event.kind === 'pending'));
     daemonState.emit('session.execution.succeeded', { sessionID: first });
     await waitFor(() => statuses(mark).includes('idle'));
     assert.equal((await read()).status, 'idle', 'a running background shell is not work in progress');
     const { tasks } = await read() as { tasks?: Array<{ id: string; status: string }> };
     assert.deepEqual(tasks?.map((task) => [task.id, task.status]), [['sh_dev', 'running']], 'but it is a running task');
-    // A shell's start and end re-read the tasks; another session's shell does not.
+    // A shell's start and end re-read the tasks. Only shell.created names the
+    // session; later events name just the shell. Another session's shell, or
+    // one no session owns, does not.
     mark = events.length;
-    daemonState.emit('shell.exited', { id: 'sh_other', metadata: { sessionID: 'ses_other' } });
+    daemonState.emit('shell.created', { info: { id: 'sh_other', status: 'running', metadata: { sessionID: 'ses_other' } } });
+    daemonState.emit('shell.exited', { id: 'sh_other', exit: 0, status: 'exited' });
+    daemonState.emit('shell.deleted', { id: 'sh_other' });
+    daemonState.emit('shell.exited', { id: 'sh_unknown', exit: 0, status: 'exited' });
     await settle();
     assert.ok(!events.slice(mark).some((event) => event.kind === 'pending'), 'another session\'s shell is ignored');
-    daemonState.emit('shell.exited', { id: 'sh_dev', metadata: { sessionID: first } });
+    daemonState.emit('shell.exited', { id: 'sh_dev', exit: 0, status: 'exited' });
     await waitFor(() => events.slice(mark).some((event) => event.kind === 'pending'));
     daemonState.rows = null;
     daemonState.shells = [];
