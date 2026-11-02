@@ -166,7 +166,7 @@ import { isSingleEmoji } from '../../../app/Bots/BotAvatar';
 import { useBots } from '../Composables/useBots';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { botPicture } from '../lib/botPicture';
-import { botProcess, isAssistantBot, restartBot, restartNeed, saveBots, type Bot, type BotAvatar as Avatar, type BotPurview, type BotVoice } from '../lib/bots';
+import { botProcess, isAssistantBot, restartBotFromSettings, restartNeed, saveBots, type Bot, type BotAvatar as Avatar, type BotPurview, type BotVoice } from '../lib/bots';
 import { autosave } from '../Composables/useSettingsAutosave';
 import { facePalette, randomLook } from '../lib/faces';
 import { harnessLabel } from '../lib/harnesses';
@@ -438,7 +438,7 @@ async function restartNow(fresh: boolean): Promise<void> {
   if (!target) return;
   restarting.value = true;
   try {
-    await restartBot(target.processId, fresh);
+    await restartBotFromSettings(target.processId, fresh);
     restart.value = null;
   } catch (caught) {
     restartError.value = caught instanceof Error ? caught.message : String(caught);

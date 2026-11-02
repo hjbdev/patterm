@@ -5,7 +5,7 @@ import path from 'node:path';
 import { isSingleEmoji } from '../app/Bots/BotAvatar';
 import { ASSISTANT_BOT_ID, botInput, botSettingsInput, parseBotSettings, purviewAllows, readBotSettings, type Bot } from '../app/Bots/BotSettings';
 import type { HarnessPreset } from '../app/Harness/HarnessPresets';
-import { restartNeed } from '../resources/js/lib/bots';
+import { restartBotFromSettings, restartNeed } from '../resources/js/lib/bots';
 import { ASSISTANT_PROJECT_ID } from '../app/Services/AssistantProject';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import { AgentContextService } from '../app/Services/AgentContextService';
@@ -88,6 +88,24 @@ async function main(): Promise<void> {
   assert.equal(restartNeed(fable, { ...fable, model: 'opus' }), 'settings');
   assert.equal(restartNeed(fable, { ...fable, instructions: 'Be terse.' }), 'settings');
   assert.equal(restartNeed(fable, { ...fable, avatar: { ...fable.avatar, look: randomLook(2) } }), null);
+  // From Settings, a browser takes control of the bot's session before it
+  // restarts it, and lets go afterwards; the desktop restarts directly.
+  const calls: string[] = [];
+  const globals = globalThis as unknown as { window?: unknown };
+  globals.window = { patterm: {
+    runtime: 'browser',
+    terminalSubscribe: async (args: { subscribed: boolean }) => { calls.push(args.subscribed ? 'subscribe' : 'unsubscribe'); return { ok: true, controlling: false }; },
+    terminalTakeControl: async () => { calls.push('take-control'); return { ok: true }; },
+    integratedCall: async (tool: string, args: { fresh: boolean }) => { calls.push(`${tool} ${args.fresh}`); },
+    call: async () => { throw new Error('a browser restarts over its socket'); }
+  } };
+  await restartBotFromSettings('proc-1', true);
+  assert.deepEqual(calls, ['subscribe', 'take-control', 'bot_restart true', 'unsubscribe']);
+  calls.length = 0;
+  globals.window = { patterm: { call: async (tool: string) => { calls.push(tool); } } };
+  await restartBotFromSettings('proc-1');
+  assert.deepEqual(calls, ['bot_restart']);
+  delete globals.window;
   // Bots saved before these options read with them off.
   const older = readBotSettings({ bots: [{ id: 'b1', name: 'Fable', presetId: 'preset_default_claude', avatar: { kind: 'face', look, emoji: null, picture: null }, purview: { kind: 'none' }, instructions: '', memory: true }] }).bots[1]!;
   assert.deepEqual([older.enabled, older.voice.enabled, older.digests, older.focus, older.memoryBudgetTokens], [true, false, false, false, 4000]);
