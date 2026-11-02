@@ -231,30 +231,32 @@ Object.defineProperty(globalThis, 'localStorage', {
 }
 
 void (async () => {
+  // A project's options from before they were shared carry over.
+  store.set('patterm.sidebar.expansion.one', JSON.stringify({ subtitles: true, followActive: true, sortByActivity: true, members: 'yes' }));
   const expansion = useSidebarExpansion(() => 'one');
-  assert.equal(expansion.isOpen('root', true), false, 'families start closed');
+  assert.equal(expansion.isOpen('root'), false, 'families start closed');
   assert.equal(expansion.isNodeOpen('child'), true, 'nested agents start open');
-  expansion.state.value.followActive = true;
-  assert.equal(expansion.isOpen('root', true), true, 'the opt-in opens the family you’re in');
-  expansion.setOpen('root', false);
-  assert.equal(expansion.isOpen('root', true), false, 'closing a family overrides the opt-in');
-  assert.equal(expansion.state.value.subtitles, true, 'subtitles start on');
-  expansion.state.value.subtitles = false;
+  assert.deepEqual(expansion.view.value, { groupByStatus: false, sortByActivity: true, groupByProject: true, members: true }, 'old options carry over, bad values fall back');
+  assert.equal(JSON.parse(store.get('patterm.sidebar.view') ?? '{}').sortByActivity, true, 'carried-over options are saved before the old entry is rewritten');
+  expansion.setOpen('root', true);
   expansion.setOpen('child', false);
+  expansion.view.value.groupByStatus = true;
   await nextTick();
-  const saved = JSON.parse(store.get('patterm.sidebar.expansion.one') ?? '{}') as { subtitles?: boolean; overrides?: Record<string, boolean> };
-  assert.equal(saved.subtitles, false);
-  assert.deepEqual(saved.overrides, { root: false, child: false });
+  const saved = JSON.parse(store.get('patterm.sidebar.expansion.one') ?? '{}') as Record<string, unknown>;
+  assert.deepEqual(saved, { overrides: { root: true, child: false }, processes: false, hiddenMembers: [] }, 'a project keeps only what is open');
+  assert.equal(JSON.parse(store.get('patterm.sidebar.view') ?? '{}').groupByStatus, true, 'view options are saved once');
   assert.equal(useSidebarExpansion(() => 'one').isNodeOpen('child'), false, 'choices are read back');
-  assert.equal(useSidebarExpansion(() => 'two').isOpen('root', false), false, 'each project keeps its own choices');
+  const two = useSidebarExpansion(() => 'two');
+  assert.equal(two.isOpen('root'), false, 'each project keeps its own open families');
+  assert.equal(two.view.value.groupByStatus, true, 'every project shares the view options');
   const linked = useSidebarExpansion(() => 'workstation:project_1');
   linked.setOpen('workstation:lead', true);
   linked.setOpen('workstation:helper', false);
   await nextTick();
   const reread = useSidebarExpansion(() => 'workstation:project_1');
-  assert.equal(reread.isOpen('workstation:lead', false), true, 'a remote family keeps its open state');
+  assert.equal(reread.isOpen('workstation:lead'), true, 'a remote family keeps its open state');
   assert.equal(reread.isNodeOpen('workstation:helper'), false, 'a remote subagent keeps its folded state');
-  assert.equal(reread.isOpen('lead', false), false, 'a qualified ID never matches the bare one');
+  assert.equal(reread.isOpen('lead'), false, 'a qualified ID never matches the bare one');
   Reflect.deleteProperty(globalThis, 'localStorage');
 
   // Settled statuses ignore blips, show lasting changes after their delay,

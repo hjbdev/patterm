@@ -7,7 +7,9 @@
       </Button>
     </DropdownMenuTrigger>
     <DropdownMenuContent align="end" class="w-56">
-      <DropdownMenuCheckboxItem v-model="expansion.state.value.groupByProject" class="text-[13px]" @select.prevent>Group by project</DropdownMenuCheckboxItem>
+      <DropdownMenuCheckboxItem v-model="expansion.view.value.groupByProject" class="gap-2 text-[13px]" @select.prevent>
+        <Folders class="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />Group by project
+      </DropdownMenuCheckboxItem>
       <DropdownMenuSeparator />
       <AllAgentsProjectsMenu />
     </DropdownMenuContent>
@@ -15,7 +17,7 @@
 </template>
 
 <script setup lang="ts">
-import { SlidersHorizontal } from 'lucide-vue-next';
+import { Folders, SlidersHorizontal } from 'lucide-vue-next';
 import { useSidebarExpansion } from '../Composables/useSidebarExpansion';
 import { ALL_AGENTS_SCOPE } from '../lib/allAgents';
 import AllAgentsProjectsMenu from './AllAgentsProjectsMenu.vue';

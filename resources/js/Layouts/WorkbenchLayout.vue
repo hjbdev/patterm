@@ -377,7 +377,7 @@ const currentStripTabs = computed(() => buildStripTabs(
 // Grouped by project, the top bar's tabs keep each project's together; the
 // sidebar groups its own list.
 const allAgentsOptions = useSidebarExpansion(() => ALL_AGENTS_SCOPE);
-const groupedByProject = computed(() => showingAll.value && allAgentsOptions.state.value.groupByProject);
+const groupedByProject = computed(() => showingAll.value && allAgentsOptions.view.value.groupByProject);
 // Snoozed tabs wait at the end, or stay out of sight unless you show them.
 const shownStripTabs = computed(() => {
   const tabs = snoozedLast(groupedByProject.value ? tabsGroupedByProject(currentStripTabs.value, listedSummaries.value, stripTabProject) : currentStripTabs.value);
