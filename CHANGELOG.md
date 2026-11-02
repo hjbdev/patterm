@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Push notifications from a bot read like a text from it: the bot's name is
+  the sender, its face, emoji or picture is the notification's picture, and
+  each bot keeps one thread that buzzes for every new message. Each device
+  draws the pictures when the installed app opens or bots change.
+
 - A nightly memory review. Two new tools, `memory_review_activity` and
   `memory_review_checkpoint`, let the assistant or a workspace routine read
   new conversation activity across every project in pages. Each conversation

@@ -373,7 +373,11 @@ async function createApplicationResources(
   const notifications = new NotificationActions(notificationService, settings, presence, push);
   const delivery = new NotificationDelivery(presence, {
     current: (id) => notificationService.get(id),
-    push: (notification) => push.deliver(notification),
+    push: (notification) => {
+      const botId = notification.process_id ? assistantInbox.botFor(notification.process_id) : null;
+      const bot = botId ? settings.bots().bots.find((candidate) => candidate.id === botId) : undefined;
+      return push.deliver(notification, bot ? { id: bot.id, name: bot.name } : null);
+    },
     desktop: (notification) => events.emit('notifications:desktop', notification),
     log: (event, data) => debugLog.write('notifications', event, data)
   });

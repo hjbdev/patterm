@@ -244,8 +244,12 @@ async function main(): Promise<void> {
 
     // Push delivery prunes gone subscriptions and keeps VAPID keys private.
     const sent: string[] = [];
-    const push = new PushService(database, directory, 'mailto:patterm@localhost', async (subscription) => {
+    const payloads: Array<Record<string, unknown>> = [];
+    const topics: Array<string | undefined> = [];
+    const push = new PushService(database, directory, 'mailto:patterm@localhost', async (subscription, payload, options) => {
       sent.push(subscription.endpoint);
+      payloads.push(JSON.parse(payload) as Record<string, unknown>);
+      topics.push(options.topic);
       if (subscription.endpoint.endsWith('/gone')) throw Object.assign(new Error('gone'), { statusCode: 410 });
       if (subscription.endpoint.endsWith('/flaky')) throw Object.assign(new Error('busy'), { statusCode: 503 });
     });
@@ -263,6 +267,19 @@ async function main(): Promise<void> {
     assert.deepEqual(remaining.map((row) => row.endpoint.split('/').pop()).sort(), ['flaky', 'ok']);
     assert.ok(remaining.find((row) => row.endpoint.endsWith('/ok'))?.last_success_at);
     assert.equal(remaining.find((row) => row.endpoint.endsWith('/flaky'))?.failure_count, 1);
+    assert.equal(payloads[0]?.title, record.title);
+    assert.equal(payloads[0]?.bot_id, undefined);
+    // A bot's notification reads like a text from it, one thread per bot.
+    payloads.length = 0;
+    topics.length = 0;
+    await push.deliver(record, { id: 'bot_fox', name: 'Fox' });
+    assert.equal(payloads[0]?.title, 'Fox');
+    assert.equal(payloads[0]?.body, [record.title, record.body].filter(Boolean).join('\n'));
+    assert.equal(payloads[0]?.tag, 'bot:bot_fox');
+    assert.equal(payloads[0]?.bot_id, 'bot_fox');
+    assert.equal(new Set(topics).size, 1);
+    await push.deliver({ ...record, id: 'other', process_id: 'process_other' }, { id: 'bot_fox', name: 'Fox' });
+    assert.equal(new Set(topics).size, 1, 'a bot keeps one push topic across processes');
     assert.equal(push.unsubscribe({ endpoint: 'https://fcm.googleapis.com/fcm/send/flaky' }).removed, true);
     assert.equal(new PushService(database, directory, 'mailto:x@y').publicKey(), push.publicKey(), 'keys persist across restarts');
 
