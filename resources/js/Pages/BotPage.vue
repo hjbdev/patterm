@@ -159,7 +159,8 @@ const projectId = computed(() => ownProject.value?.project.id ?? null);
 // The @ menu offers the bot's helpers and the agents and processes in its
 // purview, which are what its tools can reach, and presets and harnesses for
 // launching a helper. A paired host's bot reaches only that host's records,
-// whose IDs it knows unqualified, so it is offered none.
+// whose IDs it knows unqualified, and launches with that host's presets and
+// harnesses, so it is offered none of this host's.
 const mentions = computed(() => {
   const processId = row.value?.session?.processId;
   return row.value && processId && !row.value.bot.host
@@ -167,7 +168,7 @@ const mentions = computed(() => {
     : { agents: [], processes: [] };
 });
 const presets = ref<HarnessPreset[]>([]);
-const mentionLaunchers = computed(() => buildMentionLaunchers(harnesses.value, presets.value));
+const mentionLaunchers = computed(() => row.value?.bot.host ? [] : buildMentionLaunchers(harnesses.value, presets.value));
 watch(() => row.value?.session?.processId, (processId) => {
   if (!processId) return;
   void harnessPresets<{ presets?: HarnessPreset[] }>()
