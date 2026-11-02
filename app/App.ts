@@ -620,6 +620,7 @@ async function createApplicationResources(
     debugLog,
     presetSettings: settings
   });
+  openCodeServer.setMcpSource(harnessLauncher.openCodeMcpSource());
   // Restarts stop a bot like any other agent; actions are created below.
   const bots = new BotService(database, options.appDataPath, harnessLauncher, settings, workbench,
     {
