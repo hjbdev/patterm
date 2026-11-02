@@ -182,8 +182,8 @@ const props = defineProps<{
   allAgents?: boolean;
   allAgentsCount?: number;
 }>();
-// A bot's helpers never count as the project's agents.
-const { hidden: botHidden } = useBots();
+// A bot's own sessions never count as the project's agents; its helpers do.
+const { uncounted: botHidden } = useBots();
 
 const emit = defineEmits<{
   selectProject: [projectId: string | null];

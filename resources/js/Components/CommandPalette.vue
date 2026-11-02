@@ -73,6 +73,7 @@ import { toast } from 'vue-sonner';
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
 import { ArrowRight, ArrowUpRight, Brain, Check, ChevronLeft, ChevronRight, CircleStop, Clock, Copy, Ellipsis, Folder, GitBranch, GitCompare, History, Link, ListTodo, LogOut, MessageSquarePlus, MessagesSquare, NotebookPen, PanelRight, Pause, Pencil, Play, Rocket, RotateCcw, Search, Settings, ShieldCheck, SlidersHorizontal, Sparkles, Square, Terminal, TerminalSquare, Unlink, X, Zap } from 'lucide-vue-next';
 import { setShowSnoozed, showSnoozed } from '../Composables/useSnooze';
+import { setShowBotAgents, showBotAgents } from '../Composables/useBots';
 import { canSnoozeProject, openProjectSnooze, wakeProject } from '../Composables/useProjectSnooze';
 import { projectSnoozed } from '../lib/projectSnooze';
 import { actionCluster, createPaletteDocument, rankedCommands, readRecentIds, recordsRecent, rememberRecent, rendererCommands, SECTION_TITLES, withIntegratedSelectors, type CommandDescriptor, type CommandRunResult, type PaletteRow, type PaletteSection } from '../lib/commandPalette';
@@ -185,7 +186,7 @@ const processesById = computed(() => new Map(projects.value.flatMap(project => p
 
 const localCommands = computed(() => {
   const project = activeProject.value?.project;
-  return rendererCommands(props.context.active_project_id, project?.kind !== 'personal', showSnoozed.value, project && canSnoozeProject(project) ? projectSnoozed(project) : null);
+  return rendererCommands(props.context.active_project_id, project?.kind !== 'personal', showSnoozed.value, project && canSnoozeProject(project) ? projectSnoozed(project) : null, showBotAgents.value);
 });
 // Launching, resuming, and timers each open a page of their own.
 const sourceCommands = computed<CommandDescriptor[]>(() => {
@@ -675,6 +676,7 @@ async function handleResult(result: CommandRunResult): Promise<void> {
   if (result.navigate) emit('navigate', result.navigate);
   if (result.rendererAction === 'settings') emit('settings');
   if (result.rendererAction === 'toggleSnoozed') setShowSnoozed(!showSnoozed.value);
+  if (result.rendererAction === 'toggleBotAgents') setShowBotAgents(!showBotAgents.value);
   if (result.rendererAction === 'snoozeProject') {
     const project = activeProject.value?.project;
     if (project && projectSnoozed(project)) wakeProject(project.id);

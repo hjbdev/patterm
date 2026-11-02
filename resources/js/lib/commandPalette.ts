@@ -9,7 +9,7 @@ export interface CommandRunResult {
   navigate?: { projectId?: string | undefined; tab?: string | undefined; terminalProcessId?: string | undefined; sessionId?: string | undefined; processId?: string | undefined; recordId?: string | undefined };
   refresh?: boolean;
   message?: string;
-  rendererAction?: 'settings' | 'usage' | 'toggleSnoozed' | 'snoozeProject' | 'routines' | 'workspaceSearch' | 'terminalSearch' | 'pickProjectDirectory' | 'quit' | 'createTodo' | 'createScratchpad'
+  rendererAction?: 'settings' | 'usage' | 'toggleSnoozed' | 'toggleBotAgents' | 'snoozeProject' | 'routines' | 'workspaceSearch' | 'terminalSearch' | 'pickProjectDirectory' | 'quit' | 'createTodo' | 'createScratchpad'
     | 'copy' | 'integrated' | 'sessionContext' | 'reviewChanges' | 'openTarget' | 'launchSet' | 'restartAssistant';
   integrated?: 'interrupt' | 'new' | 'restart' | 'configure';
   processId?: string;
@@ -83,8 +83,9 @@ export interface PaletteRow {
 // the backend is loading, disconnected, or running an older command catalogue.
 // The Personal project is not a repository, so it has no Worktrees page.
 // `projectSnoozed` is whether the open project is snoozed, or null when it
-// can't be, such as a paired host's.
-export function rendererCommands(projectId: string | null, repository = true, snoozedShown = false, projectSnoozed: boolean | null = null) {
+// can't be, such as a paired host's. `botAgentsShown` is whether agents
+// started by bots list.
+export function rendererCommands(projectId: string | null, repository = true, snoozedShown = false, projectSnoozed: boolean | null = null, botAgentsShown = true) {
   return [
     ...(projectId ? ['Agents', 'Todos', 'Scratchpads', ...(repository ? ['Worktrees'] : []), 'History', 'Media'].map(label => ({
       id: `navigate:project-tab:${encodeURIComponent(projectId)}:${label.toLowerCase()}`,
@@ -99,6 +100,7 @@ export function rendererCommands(projectId: string | null, repository = true, sn
     { id: 'renderer:settings', label: 'Settings', group: 'navigation', kind: 'renderer', result: { rendererAction: 'settings' as const } },
     ...(projectId && projectSnoozed !== null ? [{ id: 'renderer:project-snooze', label: projectSnoozed ? 'Wake project' : 'Snooze project…', aliases: ['snooze', 'mute project', 'quiet project'], group: 'navigation', kind: 'renderer', result: { rendererAction: 'snoozeProject' as const } }] : []),
     { id: 'renderer:toggle-snoozed', label: snoozedShown ? 'Hide snoozed agents' : 'Show snoozed agents', aliases: ['snoozed', 'snooze'], group: 'navigation', kind: 'renderer', result: { rendererAction: 'toggleSnoozed' as const } },
+    { id: 'renderer:toggle-bot-agents', label: botAgentsShown ? 'Hide agents started by bots' : 'Show agents started by bots', aliases: ['bot agents', 'bot helpers', 'helpers'], group: 'navigation', kind: 'renderer', result: { rendererAction: 'toggleBotAgents' as const } },
     { id: 'renderer:usage', label: 'Usage', aliases: ['tokens', 'limits', 'quota', 'rate limits'], group: 'navigation', kind: 'renderer', result: { rendererAction: 'usage' as const } },
     { id: 'renderer:routines', label: 'Scheduled', aliases: ['routines', 'schedule', 'once', 'later', 'cron', 'recurring'], group: 'navigation', kind: 'renderer', result: { rendererAction: 'routines' as const } },
     { id: 'renderer:workspace-search', label: 'Search workspace content…', hint: 'Agents, conversations, and history', group: 'navigation', kind: 'renderer', result: { rendererAction: 'workspaceSearch' as const } }

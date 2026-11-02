@@ -26,6 +26,29 @@ async function load(): Promise<void> {
   }
 }
 
+const SHOW_BOT_AGENTS_KEY = 'patterm.showBotAgents.v1';
+
+// Whether agents a bot started list in their project's sidebar and tabs,
+// remembered on this device. Shown by default.
+export const showBotAgents = ref(readShowBotAgents());
+
+export function setShowBotAgents(value: boolean): void {
+  showBotAgents.value = value;
+  try {
+    localStorage.setItem(SHOW_BOT_AGENTS_KEY, String(value));
+  } catch {
+    // Kept for this session only.
+  }
+}
+
+function readShowBotAgents(): boolean {
+  try {
+    return localStorage.getItem(SHOW_BOT_AGENTS_KEY) !== 'false';
+  } catch {
+    return true;
+  }
+}
+
 const allBots = computed(() => [...settings.value.bots, ...remote.value]);
 const botsById = computed(() => new Map(allBots.value.map((bot) => [bot.id, bot])));
 
@@ -51,9 +74,13 @@ export function useBots() {
     rows: computed(() => botRows({ ...settings.value, bots: allBots.value }, projects.value, [
       ...(assistantProject.value ? [assistantProject.value] : []), ...botProjects.value, ...remoteAssistantProjects.value
     ])),
-    // Bot sessions and their helpers, which agent lists leave out. The
-    // assistant's agents list with everyone else's.
-    hidden: computed(() => botHidden(projects.value, botProjects.value)),
+    // What agent lists leave out: bot sessions, and their helpers too while
+    // you hide agents started by bots. The assistant's agents list with
+    // everyone else's.
+    hidden: computed(() => botHidden(projects.value, botProjects.value, { helpers: !showBotAgents.value })),
+    // What agent counts leave out: only the bots' own sessions. Helpers count
+    // as their project's agents even while hidden.
+    uncounted: computed(() => botHidden(projects.value, botProjects.value, { helpers: false })),
     reload: load
   };
 }

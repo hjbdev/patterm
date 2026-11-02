@@ -400,6 +400,10 @@ async function main(): Promise<void> {
   assert.deepEqual([...hidden.sessions].sort(), ['bot', 'deep', 'helper']);
   assert.ok(hidden.processes.has('proc-server'), 'a helper\'s server stays out of view too');
   assert.equal(botHidden(projects, []).sessions.size, 0);
+  // Shown, helpers list in their projects; only the bot's own sessions stay out.
+  const shown = botHidden(projects, [botsProject], { helpers: false });
+  assert.deepEqual([...shown.sessions], ['bot']);
+  assert.ok(!shown.processes.has('proc-server'), 'a helper\'s server lists with it');
   const [row] = botRows({ bots: [bot('fable', 'Fable')], userName: null }, projects, [botsProject]);
   assert.equal(row!.session?.id, 'bot');
   assert.equal(row!.activity?.subagents.working, 1);

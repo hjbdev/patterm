@@ -28,6 +28,10 @@
       <DropdownMenuCheckboxItem :model-value="showSnoozed" class="gap-2 text-[13px]" @update:model-value="setShowSnoozed(Boolean($event))" @select.prevent>
         <Moon class="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />Show snoozed
       </DropdownMenuCheckboxItem>
+      <!-- Shared with the tab strip too; bots' own conversations never list here. -->
+      <DropdownMenuCheckboxItem :model-value="showBotAgents" class="gap-2 text-[13px]" @update:model-value="setShowBotAgents(Boolean($event))" @select.prevent>
+        <Bot class="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />Show agents started by bots
+      </DropdownMenuCheckboxItem>
       <template v-if="sidebar.allAgents.value">
         <DropdownMenuSeparator />
         <AllAgentsProjectsMenu />
@@ -38,7 +42,8 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { ArrowDownWideNarrow, ChevronDown, CircleDot, Folders, ListTree, Moon, SlidersHorizontal } from 'lucide-vue-next';
+import { ArrowDownWideNarrow, Bot, ChevronDown, CircleDot, Folders, ListTree, Moon, SlidersHorizontal } from 'lucide-vue-next';
+import { setShowBotAgents, showBotAgents } from '../../Composables/useBots';
 import { useSidebarExpansion } from '../../Composables/useSidebarExpansion';
 import { setShowSnoozed, showSnoozed } from '../../Composables/useSnooze';
 import AllAgentsProjectsMenu from '../AllAgentsProjectsMenu.vue';

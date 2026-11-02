@@ -66,8 +66,8 @@ const now = ref(Date.now());
 const clock = setInterval(() => { now.value = Date.now(); }, 30_000);
 onBeforeUnmount(() => clearInterval(clock));
 
-// A bot's helpers never count as the project's agents.
-const { hidden: botHidden } = useBots();
+// A bot's own sessions never count as the project's agents; its helpers do.
+const { uncounted: botHidden } = useBots();
 const overviews = computed(() => projectOverviews(projects.value, botHidden.value.sessions));
 const subtitle = computed(() => {
   if (!loaded.value) return 'Loading…';

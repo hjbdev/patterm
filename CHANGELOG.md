@@ -74,6 +74,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Agents a bot starts in a project now list in that project's sidebar and
+  tabs like any other agent, with the bot's face beside their name, and count
+  towards its agent badges. Turn off "Show agents started by bots" in the
+  Agents menu, or from the command palette, to hide them again. Bots' own
+  conversations still stay out of the agent lists.
+
 - Bots now close their helpers once the work is truly finished, instead of
   leaving them running after they report. A helper whose PR is ready to merge
   or waiting for review, or one the bot will send follow-ups, stays open.
