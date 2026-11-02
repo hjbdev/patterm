@@ -116,13 +116,16 @@ async function main(): Promise<void> {
   assert.equal(purviewAllows({ kind: 'projects', projectIds: ['p'] }, 'p'), true);
   assert.equal(purviewAllows({ kind: 'projects', projectIds: ['p'] }, 'q'), false);
 
-  // Bots are told to text briefly, where they work, and that the user can't see their helpers.
+  // Bots are told to text briefly, where they work, that the user doesn't
+  // read their helpers' reports, and to close helpers once truly finished.
   const context = new AgentContextService();
   const brief = context.buildBot({ name: 'Fable', instructions: 'Looks after the website.' }, [{ id: 'p', name: 'Website' }]);
   assert.match(brief, /You are Fable/);
   assert.match(brief, /text message: one to three short sentences/);
   assert.match(brief, /Website \(p\)/);
-  assert.match(brief, /doesn't see your helpers/);
+  assert.match(brief, /doesn't read your helpers' reports/);
+  assert.match(brief, /Close a helper with close_process once its work is truly finished/);
+  assert.match(brief, /ready to merge or waiting for review is not finished/);
   assert.match(brief, /About you, from the user:\nLooks after the website\./);
   assert.match(context.buildBot({ name: 'Pal', instructions: '' }, 'none'), /no projects to work in/);
   assert.match(context.buildBot({ name: 'Pal', instructions: '' }, 'all'), /any of the user's workspace projects/);
@@ -467,6 +470,10 @@ async function main(): Promise<void> {
     assert.equal(hiddenFromBot(text), true, text);
   }
   assert.equal(hiddenFromBot('Can you check the deploy?'), false);
+  // Notification and focus digests show as receipts.
+  for (const text of ['[Patterm notifications]\n- Build failed', '[Patterm focus digest digest_1: 2 items held while Focus mode was on or you were not running.]\n- one']) {
+    assert.equal(hiddenFromBot(text), false, text);
+  }
 
   console.log('botsSmoke: ok');
 }
