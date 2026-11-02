@@ -1228,6 +1228,16 @@ async function checkStreamedActivity(input: {
     daemonState.emit('shell.exited', { id: 'sh_unknown', exit: 0, status: 'exited' });
     await settle();
     assert.ok(!events.slice(mark).some((event) => event.kind === 'pending'), 'another session\'s shell is ignored');
+    // A shell started before Patterm watched has no known owner. If it ends
+    // while a snapshot that still lists it is being read, its owner re-reads.
+    daemonState.emit('shell.exited', { id: 'sh_old', exit: 0, status: 'exited' });
+    await settle();
+    assert.ok(!events.slice(mark).some((event) => event.kind === 'pending'), 'an unowned shell end alone refreshes nothing');
+    daemonState.shells = [...daemonState.shells, { id: 'sh_old', status: 'running', metadata: { sessionID: first } }];
+    await read();
+    await waitFor(() => events.slice(mark).some((event) => event.kind === 'pending'));
+    daemonState.shells = daemonState.shells.filter((shell) => (shell as { id?: string }).id !== 'sh_old');
+    mark = events.length;
     daemonState.emit('shell.exited', { id: 'sh_dev', exit: 0, status: 'exited' });
     await waitFor(() => events.slice(mark).some((event) => event.kind === 'pending'));
     daemonState.rows = null;

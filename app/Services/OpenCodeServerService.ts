@@ -190,6 +190,9 @@ export class OpenCodeServerService {
   // Background shell -> the session that started it. Only shell.created
   // names the session; shell.exited and shell.deleted carry just the id.
   private readonly shellOwners = new Map<string, string>();
+  // Shells that ended before their owner was known, such as a shell started
+  // before Patterm was watching that ends during the first snapshot's reads.
+  private readonly unownedShellEnds = new Map<string, true>();
   // Event types each session's stream does not project, for the debug log.
   private readonly unhandled = new Map<string, Record<string, number>>();
   // Model context windows by providerID/id, read once per service.
@@ -530,6 +533,7 @@ export class OpenCodeServerService {
       if (shellId && typeof named === 'string') bounded(this.shellOwners, shellId, named);
       const owner = typeof named === 'string' ? named : this.shellOwners.get(shellId);
       if (owner === sessionId) emit({ kind: 'pending' });
+      else if (owner === undefined && shellId && type !== 'shell.created') bounded(this.unownedShellEnds, shellId, true);
       return;
     }
     if (eventSession !== sessionId) return;
@@ -881,6 +885,19 @@ export class OpenCodeServerService {
       } catch { return []; }
     }));
     return pages.flat();
+  }
+
+  // A listed shell whose end arrived before its owner was known left that
+  // owner's snapshot showing it running; the owner re-reads it.
+  private learnShellOwners(listing: unknown): void {
+    for (const shell of dataRows(listing)) {
+      const owner = record(shell.metadata).sessionID;
+      if (typeof shell.id !== 'string' || typeof owner !== 'string') continue;
+      bounded(this.shellOwners, shell.id, owner);
+      if (!this.unownedShellEnds.delete(shell.id)) continue;
+      const state = this.activity.get(owner);
+      if (state) this.broadcast(state, { kind: 'pending' });
+    }
   }
 
   // Streamed text and reasoning not yet ended, for this session and the
@@ -1516,14 +1533,14 @@ export class OpenCodeServerService {
       // Older daemons without the inbox route simply show no queue.
       this.api(runtime.executable, runtime.cwd, 'GET', `/api/session/${encodeURIComponent(runtime.resumeId)}/inbox`).catch(() => null),
       // Running shells; older daemons without the route show none as running.
-      this.api(runtime.executable, runtime.cwd, 'GET', `/api/shell?${new URLSearchParams({ 'location[directory]': runtime.cwd })}`).catch(() => null)
+      // Owners are learned as soon as the listing lands, so later shell ends
+      // route to their session.
+      this.api(runtime.executable, runtime.cwd, 'GET', `/api/shell?${new URLSearchParams({ 'location[directory]': runtime.cwd })}`)
+        .then((listing) => { this.learnShellOwners(listing); return listing; })
+        .catch(() => null)
     ]);
     const [nestedRows, usage] = await Promise.all([this.childMessages(runtime, rows), this.usage(runtime, rows)]);
     const tasks = subagentTasks(rows, runtime.resumeId, active, new Set(dataRows(shells).map((shell) => String(shell.id))));
-    for (const shell of dataRows(shells)) {
-      const owner = record(shell.metadata).sessionID;
-      if (typeof shell.id === 'string' && typeof owner === 'string') bounded(this.shellOwners, shell.id, owner);
-    }
     const permissions = [...dataRows(ownPermissions), ...childRequests.permissions];
     const forms = [...dataRows(ownForms), ...childRequests.forms];
     // Rows from this session's own routes belong to it; subagent rows name
