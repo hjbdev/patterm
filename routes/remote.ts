@@ -1,6 +1,6 @@
 import type { PattermApplication } from '../app/App';
 import { controlledProcess, RELAY_CHANNELS, type RouteHandler } from '../app/Services/RemoteClientService';
-import { registerApplicationRoutes, type RouteRegistrar } from './application';
+import { observedRoutes, registerApplicationRoutes, type RouteRegistrar } from './application';
 
 // Wraps a registrar so that a request naming a paired host's record, such
 // as `workstation:process_7`, runs on that host instead of here.
@@ -58,7 +58,7 @@ export function servePeerRoutes(application: PattermApplication): void {
   const register = (channel: string, handler: (event: unknown, raw?: unknown) => unknown) => {
     routes.set(channel, (raw) => handler(undefined, raw));
   };
-  registerApplicationRoutes({ handle: register, on: register }, application);
+  registerApplicationRoutes(observedRoutes<RouteRegistrar>({ handle: register, on: register }, application.telemetry), application);
   application.remote.serve(routes);
 }
 

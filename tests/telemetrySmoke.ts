@@ -7,6 +7,7 @@ import { SettingsService } from '../app/Services/SettingsService';
 import { TelemetryService } from '../app/Services/Telemetry/TelemetryService';
 import { McpToolRegistry } from '../app/MCP/ToolRegistry';
 import { commandKind } from '../resources/js/lib/commandKind';
+import { observedRoutes, type RouteRegistrar } from '../routes/application';
 
 async function main(): Promise<void> {
 const directory = mkdtempSync(path.join(os.tmpdir(), 'patterm-telemetry-'));
@@ -103,6 +104,26 @@ try {
   assert.deepEqual(calls, [{ tool: 'ok_tool', caller: 'app', ok: true }, { tool: 'ok_tool', caller: 'agent', ok: true }, { tool: 'bad_tool', caller: 'remote', ok: false }]);
   registry.setObserver(() => { throw new Error('observer failed'); });
   assert.equal(await registry.call('ok_tool', {}), 'done', 'a failing observer never fails the call');
+
+  // Wrapped routes keep their results and errors, list every channel, and
+  // count each use, except tool calls and debug logging.
+  const handlers = new Map<string, (event: unknown, raw?: unknown) => unknown>();
+  const base = { handle: (channel: string, handler: (event: unknown, raw?: unknown) => unknown) => { handlers.set(channel, handler); }, on: (channel: string, handler: (event: unknown, raw?: unknown) => unknown) => { handlers.set(channel, handler); }, extra: () => 'kept' };
+  const routes = observedRoutes<RouteRegistrar & { extra(): string }>(base, telemetry);
+  assert.equal(routes.extra(), 'kept', "the registrar's other methods still work");
+  routes.handle('patterm:sync', () => 1);
+  routes.handle('patterm:async', async () => 2);
+  routes.handle('patterm:fails', () => { throw new Error('bad'); });
+  routes.on('patterm:mcp:call', () => 3);
+  assert.equal(handlers.get('patterm:sync')!(undefined), 1);
+  assert.equal(await handlers.get('patterm:async')!(undefined), 2);
+  assert.throws(() => handlers.get('patterm:fails')!(undefined), /bad/);
+  assert.equal(handlers.get('patterm:mcp:call')!(undefined), 3);
+  assert.deepEqual([...telemetry.channels].sort(), ['patterm:async', 'patterm:fails', 'patterm:mcp:call', 'patterm:sync']);
+  requests.length = 0;
+  await telemetry.flush();
+  const channelEvents = requests.flatMap((request) => request.body.batch).filter((event) => event.event === 'channel_called');
+  assert.deepEqual(channelEvents.map((event) => [event.properties.channel, event.properties.count, event.properties.errors]).sort(), [['patterm:async', 1, 0], ['patterm:fails', 1, 1], ['patterm:sync', 1, 0]]);
 
   // Command palette IDs lose the record IDs they carry.
   assert.equal(commandKind('navigate:agent:project_1:session_2'), 'navigate:agent');

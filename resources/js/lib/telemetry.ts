@@ -58,14 +58,22 @@ export function installTelemetry(app: App, router: Router): void {
   });
   // Consent can change in another window, so every settings change and
   // reconnection rereads it.
-  refresh = () => { void loadTelemetrySettings().then((settings) => apply(settings, router)).catch(() => undefined); };
-  window.addEventListener('patterm:telemetry-changed', (event) => apply((event as CustomEvent<TelemetrySettings>).detail, router));
+  // Reads can finish out of order, so only the newest read or local save applies.
+  refresh = () => {
+    const read = ++generation;
+    void loadTelemetrySettings().then((settings) => { if (read === generation) apply(settings, router); }).catch(() => undefined);
+  };
+  window.addEventListener('patterm:telemetry-changed', (event) => {
+    generation += 1;
+    apply((event as CustomEvent<TelemetrySettings>).detail, router);
+  });
   window.patterm.onDataChanged?.((topics) => { if (topics.includes('settings')) refresh(); });
   window.patterm.onConnectionChanged?.((state) => { if (state === 'connected') refresh(); });
   refresh();
 }
 
 let refresh = (): void => undefined;
+let generation = 0;
 
 // Counts a command palette command by kind.
 export function countCommand(id: string): void {
@@ -168,9 +176,11 @@ async function report(): Promise<void> {
   if (!Object.keys(payload.clicks).length && !Object.keys(payload.commands).length && !Object.keys(payload.views).length && !Object.keys(payload.seconds).length && inventorySent) return;
   try {
     const result = await window.patterm.call('telemetry_record', payload) as { accepted: boolean };
+    // A report from an earlier epoch says nothing about this one.
+    if (payload.epoch !== epoch) return;
     // Refused: telemetry was turned off or on again elsewhere.
     if (!result.accepted) refresh();
-    else inventorySent = true;
+    else if ('components' in payload) inventorySent = true;
   } catch {
     // Dropped: telemetry is best effort and never retried.
   }

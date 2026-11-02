@@ -102,10 +102,10 @@ export function browserToolsOnly(inner: RouteRegistrar): RouteRegistrar {
   };
 }
 
-// Counts each IPC channel's use for opt-in telemetry. Tool calls are counted
-// by tool instead, and debug logging is not a feature.
-function observedRoutes(inner: RouteRegistrar, telemetry: PattermApplication['telemetry'] | undefined): RouteRegistrar {
-  if (!telemetry) return inner;
+// Counts each IPC channel's use for opt-in telemetry. Wrap a registrar once,
+// where its routes enter, so every channel is counted exactly once. Tool
+// calls are counted by tool instead, and debug logging is not a feature.
+export function observedRoutes<T extends RouteRegistrar>(inner: T, telemetry: PattermApplication['telemetry']): T {
   const observe = (channel: string, handler: (event: unknown, raw?: unknown) => unknown) => {
     telemetry.channels.add(channel);
     if (channel === 'patterm:mcp:call' || channel === 'patterm:debug:log') return handler;
@@ -124,14 +124,14 @@ function observedRoutes(inner: RouteRegistrar, telemetry: PattermApplication['te
       }
     };
   };
-  return {
-    handle: (channel, handler) => inner.handle(channel, observe(channel, handler)),
-    on: (channel, handler) => inner.on(channel, observe(channel, handler))
-  };
+  // Keeps the registrar's other methods, such as Electron's IpcMain's.
+  return Object.create(inner, {
+    handle: { value: (channel: string, handler: (event: unknown, raw?: unknown) => unknown) => inner.handle(channel, observe(channel, handler)) },
+    on: { value: (channel: string, handler: (event: unknown, raw?: unknown) => unknown) => inner.on(channel, observe(channel, handler)) }
+  }) as T;
 }
 
-export function registerApplicationRoutes(registrar: RouteRegistrar, application: PattermApplication): void {
-  const ipcMain = observedRoutes(registrar, application.telemetry);
+export function registerApplicationRoutes(ipcMain: RouteRegistrar, application: PattermApplication): void {
   ipcMain.handle('patterm:bootstrap', () => application.bootstrap());
 
   ipcMain.on('patterm:debug:log', (_event, raw) => {
