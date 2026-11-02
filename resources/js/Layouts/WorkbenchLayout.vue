@@ -31,7 +31,7 @@
         :sidecar-available="sidecarAvailable"
         :show-recent-projects="showRecentProjects"
         :all-agents="showingAll"
-        :all-agents-count="activeAgentModeSessions.length"
+        :all-agents-count="countedAgentSessions.length"
         @select-project="pickProject"
         @select-all-agents="allAgents.active = true"
         @command-palette="paletteOpen = true"
@@ -133,7 +133,7 @@ import { provideSidebarContext } from '../Components/Sidebar/sidebarContext';
 import { TooltipProvider } from '../Components/ui/tooltip';
 import { APPEARANCE_SETTINGS_CHANGED_EVENT, applyUiFont, lastKnownAppearanceSettings, loadAppearanceSettings, navigationLayoutHint, normalizeAppearanceSettings, type AppearanceSettings, type NavigationLayout } from '../appearance/AppearanceSettings';
 import { useWorkbench } from '../Composables/useWorkbench';
-import { useBots } from '../Composables/useBots';
+import { showBotAgents, useBots } from '../Composables/useBots';
 import { botLinkTarget } from '../lib/bots';
 import { useHarnessLaunchCleanup, useHarnessLaunchesFor } from '../Composables/useHarnessLaunch';
 import { useWorkbenchNavigation } from '../Composables/useWorkbenchNavigation';
@@ -157,7 +157,7 @@ import { startPrefetch } from '../lib/prefetch';
 const { projects, botProjects, sidecarStatus, sidecarAvailable, loaded, refresh } = useWorkbench();
 // Bots list in their own sidebar section and stay out of the agent lists. Their
 // helpers list in their projects unless you hide agents started by bots.
-const { hidden: botHidden, all: allBots, loaded: botsLoaded } = useBots();
+const { hidden: botHidden, uncounted: botUncounted, all: allBots, loaded: botsLoaded } = useBots();
 const { router, route, activeProjectId, activeProject, selectedAgent, selectedProcess, activeTerminalId, projectViewMode,
   activeWorkspacePage, selectProject, pickProject, selectTerminal } = useWorkbenchNavigation();
 // Links into a bot's own project, such as its notification, open the bot
@@ -315,11 +315,11 @@ const tabLayoutScope = computed(() => showingAll.value ? ALL_AGENTS_SCOPE : acti
 function updateCurrentTabLayout(change: TabLayout): void {
   const scope = tabLayoutScope.value;
   if (!scope) return;
-  // Tabs that don't show, from hidden projects or snoozed, keep their places.
-  const hidden = (key: string) => (showingAll.value && hiddenTabKeys.value.has(key)) || hiddenSnoozedKeys.value.has(key);
+  // Tabs that don't show, from hidden projects, snoozed or started by bots, keep their places.
+  const hidden = (key: string) => (showingAll.value && hiddenTabKeys.value.has(key)) || hiddenSnoozedKeys.value.has(key) || hiddenBotKeys.value.has(key);
   // Hidden tabs the saved layout hasn't recorded yet keep their places too.
   const previous = withLiveTabs(currentTabLayout.value ?? EMPTY_TAB_LAYOUT, everyStripTabs.value.map((tab) => tab.key));
-  const layout = showingAll.value || hiddenSnoozedKeys.value.size ? keepHiddenTabs(previous, change, hidden) : change;
+  const layout = showingAll.value || hiddenSnoozedKeys.value.size || hiddenBotKeys.value.size ? keepHiddenTabs(previous, change, hidden) : change;
   tabLayoutByProject.value = { ...tabLayoutByProject.value, [scope]: layout };
   writeStoredTabLayout(scope, layout);
 }
@@ -361,6 +361,9 @@ function ownerProjectId(id: string): string | null {
 const agentModeSessions = computed<SessionRecord[]>(() => (showingAll.value ? allAgentsView.value.sessions : activeProject.value?.projectSessions ?? [])
   .filter((session) => !botHidden.value.sessions.has(session.id)));
 const activeAgentModeSessions = computed<SessionRecord[]>(() => activeAgentSessions(agentModeSessions.value));
+// The agents All agents counts: helpers count even while hidden.
+const countedAgentSessions = computed<SessionRecord[]>(() => activeAgentSessions((showingAll.value ? allAgentsView.value.sessions : activeProject.value?.projectSessions ?? [])
+  .filter((session) => !botUncounted.value.sessions.has(session.id))));
 const activeProjectProcesses = computed<ProcessRecord[]>(() => activeProcesses(scopeProcesses.value));
 const topLevelProcesses = computed(() => topLevelProcessesForSessions(activeAgentModeSessions.value, activeProjectProcesses.value));
 const currentStripTabs = computed(() => buildStripTabs(
@@ -377,6 +380,8 @@ const shownStripTabs = computed(() => {
   const tabs = snoozedLast(groupedByProject.value ? tabsGroupedByProject(currentStripTabs.value, listedSummaries.value, stripTabProject) : currentStripTabs.value);
   return showSnoozed.value ? tabs : tabs.filter((tab) => !tabSnoozed(tab));
 });
+// Tabs of agents started by bots while you hide them.
+const hiddenBotKeys = computed(() => new Set(showBotAgents.value ? [] : [...[...botHidden.value.sessions].map(agentTabKey), ...[...botHidden.value.processes].map(processTabKey)]));
 const hiddenSnoozedKeys = computed(() => new Set(showSnoozed.value ? [] : currentStripTabs.value.filter(tabSnoozed).map((tab) => tab.key)));
 function stripTabProject(tab: StripTab): ProjectSummary | null {
   return projectOf(tab.kind === 'agent' ? tab.family.rootId : tab.process.id);
