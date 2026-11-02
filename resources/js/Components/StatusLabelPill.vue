@@ -3,7 +3,7 @@
        dot where a row has no room for the name. Either names the label, and
        who set it, in a tooltip. The empty title keeps a row's own native
        title from showing over it. -->
-  <Tooltip :disabled="noTooltip === true">
+  <Tooltip :open="open" @update:open="open = $event && !noTooltip">
     <TooltipTrigger as-child>
       <span
         v-if="dot"
@@ -26,7 +26,7 @@
         <span v-if="label.setBy === 'user'" class="sr-only">, set by you</span>
       </span>
     </TooltipTrigger>
-    <TooltipContent v-if="!noTooltip" class="max-w-64 bg-popover text-popover-foreground">
+    <TooltipContent class="max-w-64 bg-popover text-popover-foreground">
       <p class="break-words">{{ label.name }}</p>
       <p v-if="label.setBy === 'user'" class="text-muted-foreground">Set by you</p>
     </TooltipContent>
@@ -34,7 +34,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { statusLabelDot, statusLabelStyle, type StatusLabelColor } from '../lib/statusLabels';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 
@@ -48,6 +48,12 @@ const props = defineProps<{
   dot?: boolean;
   noTooltip?: boolean;
 }>();
+
+// Held, it refuses to open and closes if it was open, so it can't come back
+// when the hold lifts. Its pointer listeners stay on, unlike `disabled`, so
+// the next hover still opens it.
+const open = ref(false);
+watch(() => props.noTooltip, (held) => { if (held) open.value = false; });
 
 const description = computed(() => props.label.setBy === 'user' ? `${props.label.name}, set by you` : props.label.name);
 </script>

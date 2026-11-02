@@ -7,7 +7,7 @@ const read = path => fs.readFileSync(new URL(`../resources/js/Components/${path}
 test('Status labels name themselves in an app tooltip, not a native title', () => {
   const pill = read('StatusLabelPill.vue');
   const template = pill.match(/<template>([\s\S]*)<\/template>/)[1];
-  assert.match(template, /<Tooltip :disabled="noTooltip === true">\s*<TooltipTrigger as-child>/);
+  assert.match(template, /<Tooltip :open="open" @update:open="open = \$event && !noTooltip">\s*<TooltipTrigger as-child>/);
   // Callers' classes, such as the conversation header's spacing, land on the pill itself.
   assert.match(pill, /defineOptions\(\{ inheritAttrs: false \}\)/);
   assert.equal(template.match(/v-bind="\$attrs"/g)?.length, 2);
@@ -19,7 +19,9 @@ test('Status labels name themselves in an app tooltip, not a native title', () =
   assert.doesNotMatch(template, /tabindex/);
   assert.match(pill, /`\$\{props\.label\.name\}, set by you`/);
   assert.match(template, /<p v-if="label\.setBy === 'user'" class="text-muted-foreground">Set by you<\/p>/);
-  assert.match(template, /<TooltipContent v-if="!noTooltip" class="[^"]*bg-popover text-popover-foreground"/);
+  assert.match(template, /<TooltipContent class="[^"]*bg-popover text-popover-foreground"/);
+  // Holding the tooltip closes one already open, so it can't reappear when the hold lifts.
+  assert.match(pill, /watch\(\(\) => props\.noTooltip, \(held\) => \{ if \(held\) open\.value = false; \}\);/);
 });
 
 test('Tab dots hold their tooltip while the tab menu shows the label', () => {
