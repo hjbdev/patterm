@@ -7,7 +7,10 @@ const read = path => fs.readFileSync(new URL(`../resources/js/Components/${path}
 test('Status labels name themselves in an app tooltip, not a native title', () => {
   const pill = read('StatusLabelPill.vue');
   const template = pill.match(/<template>([\s\S]*)<\/template>/)[1];
-  assert.match(template, /<Tooltip>\s*<TooltipTrigger as-child>/);
+  assert.match(template, /<Tooltip :disabled="noTooltip === true">\s*<TooltipTrigger as-child>/);
+  // Callers' classes, such as the conversation header's spacing, land on the pill itself.
+  assert.match(pill, /defineOptions\(\{ inheritAttrs: false \}\)/);
+  assert.equal(template.match(/v-bind="\$attrs"/g)?.length, 2);
   assert.doesNotMatch(template, /:title=/, 'Neither the dot nor the pill falls back to a native title');
   // An empty title keeps a row's own title, such as a member row's name, from showing over the tooltip.
   assert.equal(template.match(/\stitle=""/g)?.length, 2);
@@ -16,11 +19,14 @@ test('Status labels name themselves in an app tooltip, not a native title', () =
   assert.doesNotMatch(template, /tabindex/);
   assert.match(pill, /`\$\{props\.label\.name\}, set by you`/);
   assert.match(template, /<p v-if="label\.setBy === 'user'" class="text-muted-foreground">Set by you<\/p>/);
-  assert.match(template, /<TooltipContent :side="side \?\? 'top'" class="[^"]*bg-popover text-popover-foreground"/);
+  assert.match(template, /<TooltipContent v-if="!noTooltip" class="[^"]*bg-popover text-popover-foreground"/);
 });
 
-test('Tab dots keep their tooltip clear of the menu below the tab', () => {
-  assert.match(read('TabStrip.vue'), /:label="tab\.family\.root\.session\.statusLabel" dot side="right" \/>/);
+test('Tab dots hold their tooltip while the tab menu shows the label', () => {
+  const strip = read('TabStrip.vue');
+  assert.match(strip, /:label="tab\.family\.root\.session\.statusLabel" dot :no-tooltip="openRootId === tab\.family\.rootId" \/>/);
+  // A label always gives the tab a menu, so hovering the dot opens the menu instead.
+  assert.match(strip, /\|\| Boolean\(tab\.family\.root\.session\.statusLabel\)/);
 });
 
 test('The sidebar agent card shows the full status badge, and dots for its members', () => {
