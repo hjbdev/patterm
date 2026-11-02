@@ -245,6 +245,12 @@ function serve(socket) {
           notify('mcpServer/startupStatus/updated', {threadId:'thread_early_child', name:'child-only', status:'failed', error:'x', failureReason:null});
         }
       }
+      else if (request.method === 'thread/inject_items') {
+        items.push({turnId:'turn_test',item:{type:'agentMessage',id:'injected_' + request.id,text:JSON.stringify(request.params)}});
+        send({jsonrpc:'2.0', id:request.id, result:{}});
+        // A compaction reported right behind the injection's reply.
+        if (JSON.stringify(request.params).includes('then compact')) notify('item/completed', {threadId:'thread_test', turnId:'turn_test', item:{type:'contextCompaction', id:'compact_after_inject'}});
+      }
       else if (request.method === 'turn/start' && process.env.MCP_FAILURE) {
         send({jsonrpc:'2.0', id:request.id, result:{turn:{id:'turn_test'}}});
         // Codex retries failed servers on later turns.
@@ -668,6 +674,21 @@ if (socketPath) {
     { type: 'text', text: `Look source.ts "src dir/source file.ts" ${documentFile}`, text_elements: [] },
     { type: 'localImage', path: imageFile }
   ], 'filesystem references become native path text and images stay localImage items');
+  // Memory rides in hidden developer messages. The turn above compacted, so
+  // the first update is the whole memory; later ones only what changed.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const injected = async () => (JSON.parse(JSON.stringify(await service.conversation('process_test'))) as { messages: { data: Array<{ id: string; text: string }> } })
+    .messages.data.filter((message) => message.id.startsWith('injected_')).map((message) => JSON.parse(message.text) as { threadId: string; items: Array<{ role: string; content: Array<{ text: string }> }> });
+  await service.updateMemory('process_test', { changes: 'a change', full: false, snapshot: () => 'whole memory' });
+  await service.updateMemory('process_test', { changes: 'another change', full: false, snapshot: () => 'unused' });
+  await service.updateMemory('process_test', { changes: null, full: false, snapshot: () => 'unused' });
+  const memoryItems = await injected();
+  assert.deepEqual(memoryItems.map((item) => [item.threadId, item.items[0]!.role, item.items[0]!.content[0]!.text]), [
+    ['thread_test', 'developer', 'whole memory'],
+    ['thread_test', 'developer', 'another change']
+  ], 'after compaction the whole memory, then only changes, and nothing while nothing changed');
+  // A dropped connection may have missed a compaction, so the next update
+  // after a reconnect is the whole memory, even with nothing changed.
   const presetRestoredService = new CodexAppServerService(database, runtimeDirectory);
   await presetRestoredService.prompt('process_test', { text: 'After service restart', references: [], attachments: [] });
   const restoredConversation = JSON.parse(JSON.stringify(await presetRestoredService.conversation('process_test'))) as { messages: { data: Array<{ id: string; text: string }> } };
@@ -759,6 +780,22 @@ if (socketPath) {
     launcher.disconnect();
     return { service: new CodexAppServerService(database, runtimeDirectory, mode, process.execPath, undefined, { requestTimeoutMs }), processId };
   };
+
+  // On an agent of their own, so their notifications reach no other test: a
+  // compaction reported while an injection is answered still refreshes the
+  // next update, and so does a reconnect, which may have missed one.
+  const remembering = await launch({ ...process.env });
+  const rememberingInjected = async () => (JSON.parse(JSON.stringify(await remembering.service.conversation(remembering.processId))) as { messages: { data: Array<{ id: string; text: string }> } })
+    .messages.data.filter((message) => message.id.startsWith('injected_')).map((message) => (JSON.parse(message.text) as { items: Array<{ content: Array<{ text: string }> }> }).items[0]!.content[0]!.text);
+  await remembering.service.updateMemory(remembering.processId, { changes: 'a change, then compact', full: false, snapshot: () => 'unused' });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  await remembering.service.updateMemory(remembering.processId, { changes: null, full: false, snapshot: () => 'whole memory after compaction' });
+  remembering.service.disconnect();
+  await remembering.service.updateMemory(remembering.processId, { changes: null, full: false, snapshot: () => 'whole memory again' });
+  await remembering.service.updateMemory(remembering.processId, { changes: null, full: false, snapshot: () => 'unused' });
+  assert.deepEqual(await rememberingInjected(), ['a change, then compact', 'whole memory after compaction', 'whole memory again']);
+  await remembering.service.stop(remembering.processId);
+  remembering.service.disconnect();
 
   const resumed = await launch({ ...process.env }, undefined, 'thread_saved_user_review');
   await resumed.service.stop(resumed.processId);

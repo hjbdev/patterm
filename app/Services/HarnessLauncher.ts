@@ -230,7 +230,8 @@ export class HarnessLauncher {
       const launchInput = {
         executable: install.executablePath, cwd, name: input.name?.trim() || null, context: agentContext, mcp, mcpServers, resumeId: providerSessionId,
         model: selection.model, reasoning: selection.reasoning, serviceTier: selection.serviceTier,
-        reconnectMcp: resume?.reconnect_mcp === true
+        reconnectMcp: resume?.reconnect_mcp === true,
+        memoryPush: input.session_role === 'assistant' || input.session_role === 'bot'
       };
       const prepared = await this.deps.integrated.prepare(harness as 'claude' | 'codex' | 'opencode', launchInput);
       integratedLaunch = { input: launchInput, result: prepared };

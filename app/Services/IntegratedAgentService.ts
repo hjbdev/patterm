@@ -9,6 +9,7 @@ import { pendingAsk } from './IntegratedAsking';
 import type { AgentHistoryReadService } from './AgentHistory/AgentHistoryReadService';
 import type { McpLaunchServer } from './McpServerRegistry';
 import type { UsageService } from './UsageService';
+import type { MemoryPushService, MemoryUpdate } from './MemoryPushService';
 import { callIntegratedHost, detachedHostLauncher, integratedHostListening, type IntegratedHostLauncher } from './IntegratedHostLauncher';
 import { presetHarnessInput } from '../Harness/HarnessPresets';
 
@@ -43,6 +44,8 @@ export interface IntegratedLaunchInput {
   // A restart reconnects MCP servers a shared daemon keeps across sessions,
   // so their tool lists are fetched again.
   reconnectMcp?: boolean;
+  // The assistant and bots: Patterm keeps their saved memory current.
+  memoryPush?: boolean;
 }
 
 // Launch settings a running agent reports. A missing key is one it does not
@@ -128,6 +131,10 @@ export interface IntegratedProviderService {  prepare(input: IntegratedLaunchInp
   // `prompt` is the latest accepted text, for providers that title on request.
   title?(processId: string, prompt: string): Promise<string | null>;
   stop?(processId: string): Promise<void>;
+  // Brings saved memory up to date in the agent's hidden native context,
+  // before a prompt. Providers without it leave the agent to read memory with
+  // tools.
+  updateMemory?(processId: string, update: MemoryUpdate): Promise<void>;
   stopAll?(): Promise<void>;
   cleanupLaunch?(input: IntegratedLaunchInput, result: IntegratedLaunchResult): Promise<void>;
 }
@@ -184,6 +191,7 @@ export class IntegratedAgentService {
   private debugLog: { write(source: string, event: string, data?: unknown): void } | null = null;
   private usage: Pick<UsageService, 'recordLimits'> | null = null;
   private readonly loggedUnhandled = new Map<string, Set<string>>();
+  private memory: Pick<MemoryPushService, 'deliver'> | null = null;
   // Service-owned observation of every live agent, so activity follows the
   // native turn even when no client is viewing the conversation.
   private readonly observers = new Map<string, ActivityObserver>();
@@ -198,6 +206,11 @@ export class IntegratedAgentService {
 
   setHistoryReadService(history: AgentHistoryReadService): void {
     this.history = history;
+  }
+
+  // Keeps the assistant's and bots' saved memory current before each prompt.
+  setMemoryPush(memory: Pick<MemoryPushService, 'deliver'>): void {
+    this.memory = memory;
   }
 
   setDebugLog(debugLog: { write(source: string, event: string, data?: unknown): void }): void {
@@ -426,6 +439,14 @@ export class IntegratedAgentService {
     return promise;
   }
 
+  // Memory goes first, so the agent reads the prompt with it current.
+  private sendPrompt(processId: string, resolved: ResolvedIntegratedPrompt): Promise<unknown> {
+    const provider = this.forProcess(processId);
+    if (!this.memory || !provider.updateMemory) return provider.prompt(processId, resolved);
+    return this.memory.deliver(this.ledgerKey(processId), (update) => provider.updateMemory!(processId, update))
+      .then(() => provider.prompt(processId, resolved));
+  }
+
   // Provider invocation plus submission bookkeeping. The reservation is written
   // before the external call, so a crash between native admission and the
   // acknowledgement leaves an uncertain row rather than an id that looks unused.
@@ -462,7 +483,7 @@ export class IntegratedAgentService {
     const sequence = this.sequence(activityKey);
     let result: unknown;
     try {
-      result = await this.forProcess(processId).prompt(processId, resolved);
+      result = await this.sendPrompt(processId, resolved);
     } catch (error) {
       if (error instanceof UncertainDeliveryError) {
         // An ambiguous submission may already be running natively. Return a
@@ -554,7 +575,7 @@ export class IntegratedAgentService {
       let result: unknown;
       try {
         // The held id lets the transcript confirm an unconfirmed send.
-        result = await this.forProcess(key).prompt(key, { ...resolved, messageId: row.message_id });
+        result = await this.sendPrompt(key, { ...resolved, messageId: row.message_id });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         // It may be running, so it is never sent again. It stays visible as

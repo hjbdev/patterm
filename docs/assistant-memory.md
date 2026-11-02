@@ -26,11 +26,38 @@ on the assistant's Memory in Settings › Bots.
 
 ## Reading and recording
 
-The assistant and bots check memory before each request, as before. Task agents
-and routines get a short snapshot in their launch instructions, with notes about
-their own project first and other projects' notes ranked lower. They search with
-a few words about the task for the rest. Search matches each word, so notes
-matching more words come first.
+Patterm keeps the assistant's and bots' memory current in their conversations,
+so they never spend a tool call checking it. Before each message reaches one of
+them, Patterm compares the memory with what that conversation last received:
+the first message brings the whole memory, later ones only what changed, and a
+message after nothing changed brings nothing. Turning the Memory switch on or
+off reaches the conversation the same way, with the next message. Patterm
+remembers what each running session received only in memory, so after a
+restart the next message brings the whole memory again.
+
+The memory travels in each CLI's hidden context, which Patterm's transcripts
+and history never show:
+
+- OpenCode: two session instruction entries, the whole memory
+  (`patterm-memory`) and the changes since it (`patterm-memory-changes`).
+  OpenCode tells the model about an entry only when it changes, and starts
+  again from the current entries after compaction. When the changes outgrow
+  2 KB, the whole memory replaces them.
+- Codex: hidden developer messages (`thread/inject_items`). After Codex
+  compacts a thread, the next message brings the whole memory.
+- Claude: a `UserPromptSubmit` hook, from a settings file Patterm passes with
+  `--settings`, prints what the host left for it once. After Claude compacts,
+  the host leaves the whole memory for the next message. The hook needs a
+  POSIX shell, so Claude bots on Windows check memory with
+  `assistant_memory_read` before each message instead.
+
+`assistant_memory_read` still works for a conversation that thinks it missed an
+update. Memory checks that found nothing new are left out of the transcript.
+
+Task agents and routines get a short snapshot in their launch instructions, with
+notes about their own project first and other projects' notes ranked lower. They
+search with a few words about the task for the rest. Search matches each word,
+so notes matching more words come first.
 
 Recording durable preferences, facts, decisions and lessons is a native model
 tool call (`assistant_memory_write`), not an application-side extractor. Every
@@ -117,7 +144,9 @@ at a prompt shows as waiting on the Routines page until you answer it.
 
 `pnpm run test:assistant` covers access control, stable tool discovery, the
 shared and per-bot switches, attribution, concurrent replacement, persistence,
-revision deltas, compression, the upgrade migration and the review pages. These
+revision deltas, compression, the upgrade migration, the review pages, and
+what Patterm pushes to the assistant and bots. `test:opencode`, `test:codex`
+and `test:claude` cover each CLI's delivery against fake CLIs. These
 are deterministic service tests; they do not establish model compliance.
 `pnpm run test:runtime` covers assistant delivery and the 07:00 Europe/London
 schedule across daylight saving.

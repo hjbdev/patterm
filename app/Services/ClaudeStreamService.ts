@@ -8,6 +8,7 @@ import type { IntegratedControlSelector, IntegratedControls, IntegratedFormActio
 import { UncertainDeliveryError, type IntegratedDeliveryState } from './IntegratedDelivery';
 import type { IntegratedConversationEvent, IntegratedConversationListener } from './IntegratedConversation';
 import type { ResolvedIntegratedPrompt } from './IntegratedInput';
+import { memoryPushSupported, type MemoryUpdate } from './MemoryPushService';
 import { readClaudeTaskOutput, type ClaudeTaskOutput } from './ClaudeTaskOutput';
 import { containsReferenceToken, referenceToken } from './PromptReferences';
 import type { TranscriptImageStore } from './TranscriptImageStore';
@@ -58,9 +59,16 @@ export class ClaudeStreamService {
     const patterm = { command: input.mcp.command, args: input.mcp.args, env: input.mcp.env };
     const mcpConfig = { mcpServers: { ...claudeMcpServers(input.mcpServers ?? [], input.mcp), patterm } };
     fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2), { mode: 0o600 });
+    // Memory reaches Claude through a prompt hook that takes the file the host
+    // leaves for it. The hook's context is hidden from Patterm's transcripts.
+    const memory = input.memoryPush && memoryPushSupported('claude') ? {
+      memoryHookPath: path.join(directory, `${key}-memory.json`),
+      settingsPath: path.join(directory, `${key}-settings.json`)
+    } : null;
+    if (memory) fs.writeFileSync(memory.settingsPath, JSON.stringify(memoryHookSettings(memory.memoryHookPath), null, 2), { mode: 0o600 });
     fs.writeFileSync(configPath, JSON.stringify({
       socketPath, executable: input.executable, cwd: input.cwd, sessionId,
-      resume: Boolean(input.resumeId), context: input.context, mcpConfigPath,
+      resume: Boolean(input.resumeId), context: input.context, mcpConfigPath, ...memory,
       model: input.model ?? null, reasoning: input.reasoning ?? null,
       ...(this.images ? { imageDirectory: this.images.directory } : {})
     }), { mode: 0o600 });
@@ -238,6 +246,22 @@ export class ClaudeStreamService {
       if (error instanceof Error && /Unknown Claude host method: promptDocuments/.test(error.message)) {
         throw new Error('Restart this agent to attach PDFs and text files; it was started by an older Patterm');
       }
+      throw error;
+    }
+  }
+
+  // The host leaves memory for the next prompt's hook, and keeps the whole
+  // memory to leave again after Claude compacts. Hosts from older Patterm
+  // builds have no hook, and their agents read memory with tools.
+  // Called even without changes, so a refresh the host could not leave after
+  // compaction is retried.
+  async updateMemory(processId: string, update: MemoryUpdate): Promise<void> {
+    try {
+      await callHost(this.runtime(processId).socketPath, 'memory', update.changes
+        ? { changes: update.changes, snapshot: update.full ? update.changes : update.snapshot() }
+        : { changes: '' });
+    } catch (error) {
+      if (error instanceof Error && /Unknown Claude host method: memory/.test(error.message)) return;
       throw error;
     }
   }
@@ -558,4 +582,12 @@ function claudeQuestionRequests(value: unknown): Array<Record<string, unknown>> 
     });
     return [{ id: row.id, questions }];
   });
+}
+
+// A UserPromptSubmit hook that prints the memory the host left, at most once:
+// renaming the file takes it, so a later prompt never repeats it.
+export function memoryHookSettings(hookPath: string): Record<string, unknown> {
+  const quoted = `'${hookPath.replace(/'/g, `'\\''`)}'`;
+  const command = `cat >/dev/null; f=${quoted}; if mv "$f" "$f.$$" 2>/dev/null; then cat "$f.$$"; rm -f "$f.$$"; fi`;
+  return { hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command }] }] } };
 }
