@@ -150,6 +150,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bot conversations, the assistant's included, show notification and focus
+  digests again as compact receipts. Helpers' messages and reports, timer
+  callbacks, and close requests stay hidden.
 - OpenCode agents keep Patterm's tools and your MCP servers after an idle
   hour. OpenCode drops a directory's services when it has been idle for an
   hour and boots them again from your own config, without Patterm's bridge
