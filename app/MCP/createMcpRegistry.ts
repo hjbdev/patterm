@@ -2739,7 +2739,8 @@ function assertConversationAccess(services: RegistryServices, context: McpCallCo
   if (!current) return;
   const conversation = requireHistoryRead(services).get({ conversation_id: conversationId }).conversation;
   if (!conversation) throw new Error(`unknown conversation: ${conversationId}`);
-  if (conversation.projectId && conversation.projectId !== current.project_id && !(isBot(current) && inPurview(conversation.projectId))) {
+  // The assistant and workspace routines read across projects.
+  if (conversation.projectId && conversation.projectId !== current.project_id && !hasWorkspaceScope(current) && !(isBot(current) && inPurview(conversation.projectId))) {
     throw new Error('conversation is outside the caller project scope');
   }
 }

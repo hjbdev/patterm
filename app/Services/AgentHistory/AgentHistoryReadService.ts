@@ -274,15 +274,19 @@ export class AgentHistoryReadService {
       const mark = input.marks.get(row.id);
       const found = rows.all(row.id, mark ?? -1, mark === undefined ? 0 : 1, input.firstSince, input.limit) as Array<ProseMessage & { seq: number; at: string }>;
       const messages: Array<{ seq: number; speaker: string; text: string; at: string }> = [];
+      // The last row read before any boundary, prose or not, so rows that are
+      // all filtered out still move the mark on.
+      let scanned: number | null = null;
+      let boundary = false;
       for (const message of found) {
-        const speaker = proseLabel(message);
-        if (!speaker) continue;
         const metadata = parseJson(message.metadata);
-        if (message.role === 'assistant' && metadata.source === 'opencode-sqlite' && metadata.prose_finalized !== true) break;
-        const text = proseText(message.text);
-        if (text) messages.push({ seq: message.seq, speaker, text, at: message.at });
+        if (message.role === 'assistant' && metadata.source === 'opencode-sqlite' && metadata.prose_finalized !== true) { boundary = true; break; }
+        scanned = message.seq;
+        const speaker = proseLabel(message);
+        const text = speaker ? proseText(message.text) : '';
+        if (speaker && text) messages.push({ seq: message.seq, speaker, text, at: message.at });
       }
-      return messages.length ? [{ ...row, messages, truncated: found.length === input.limit }] : [];
+      return scanned === null ? [] : [{ ...row, messages, scanned, truncated: !boundary && found.length === input.limit }];
     });
   }
 

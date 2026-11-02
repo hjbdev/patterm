@@ -10,6 +10,11 @@ import { HistoryDatabaseService } from '../app/Services/HistoryDatabaseService';
 import { AgentHistoryReadService } from '../app/Services/AgentHistory/AgentHistoryReadService';
 import { MemoryReviewService } from '../app/Services/MemoryReviewService';
 import { removeTree } from './fixtures/TempTree';
+import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
+import { TimelineService } from '../app/Services/TimelineService';
+import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
+import { SettingsService } from '../app/Services/SettingsService';
+import type { TerminalService } from '../app/Services/TerminalService';
 
 // Existing assistant and bot notes move into the shared store intact, with
 // their owner recorded, under one revision above every old counter.
@@ -37,7 +42,7 @@ function assertMigration(): void {
   }
 }
 
-function assertReview(): void {
+async function assertReview(): Promise<void> {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-memory-review-'));
   const app = new DatabaseService(directory);
   const history = new HistoryDatabaseService(directory);
@@ -124,7 +129,7 @@ function assertReview(): void {
     }
     assert.equal(read.length, 3, 'a message larger than the page still moves the review on');
     assert.match(read[0]!, /Decision: keep releases weekly\.$/);
-    assert.match(read[1]!, /\[cut: read the whole message with history_get conversation_id=c_big/);
+    assert.match(read[1]!, /\[cut: read the whole message with history_get conversation_id=c_big offset=1 limit=1\]$/);
     assert.equal(read[2], 'After the long one.');
 
     // Unfinished OpenCode prose is a boundary: it and everything after it wait
@@ -158,6 +163,36 @@ function assertReview(): void {
     assert.deepEqual(review.activity({}, caller).conversations.map((row) => row.conversation_id), ['c_slow']);
     review.checkpoint(caller);
     assert.equal(review.activity({}, caller).conversations.length, 0, 'the overlap does not reread marked messages');
+
+    // Rows with no prose still move the mark on, so prose after more than a
+    // page of reasoning or tool rows is reached.
+    now = new Date('2026-11-09T06:00:00Z');
+    review.checkpoint(caller);
+    conversation('c_think', null, '2026-11-08T13:00:00Z');
+    message('c_think', 'user', 'Pick a database.', '2026-11-08T13:00:00Z');
+    for (let index = 0; index < 210; index += 1) message('c_think', 'assistant', `thinking ${index}`, '2026-11-08T13:00:00Z', 'message', JSON.stringify({ type: 'reasoning' }));
+    message('c_think', 'assistant', 'SQLite.', '2026-11-08T13:01:00Z');
+    const thought: string[] = [];
+    for (let guard = 0; guard < 5; guard += 1) {
+      const next = review.activity({}, caller);
+      thought.push(...next.conversations.flatMap((row) => row.messages.map((item) => item.text)));
+      review.checkpoint(caller);
+      if (next.coverage === 'complete') break;
+    }
+    assert.deepEqual(thought, ['Pick a database.', 'SQLite.']);
+
+    // The assistant and workspace routines can read a cut message in full
+    // from any project, as the cut note says, through the real registry.
+    app.connection.prepare('insert into projects(id,name,path,created_at,updated_at) values(?,?,?,?,?)').run('project_assistant', 'Assistant', directory, at, at);
+    for (const role of ['assistant', 'routine']) {
+      app.connection.prepare("insert into processes(id,project_id,kind,name,status,created_at,updated_at) values(?, 'project_assistant', 'agent', ?, 'running', ?, ?)").run(`proc_${role}_x`, role, at, at);
+      app.connection.prepare("insert into sessions(id,project_id,process_id,harness,session_role,started_at,mcp_identity) values(?, 'project_assistant', ?, 'claude', ?, ?, ?)").run(`s_${role}_x`, `proc_${role}_x`, role, at, `mcp_${role}_x`);
+    }
+    const registry = createTestMcpRegistry({ tempDir: directory, database: app, timeline: new TimelineService(app), terminal: { request: async () => ({}) } as unknown as TerminalService, workbench: new WorkbenchRepository(app, new SettingsService(app)), historyReadService: new AgentHistoryReadService(history) });
+    for (const identity of ['mcp_assistant_x', 'mcp_routine_x']) {
+      const full = await registry.callPublic('history_get', { conversation_id: 'c_big', offset: 1, limit: 1 }, { identity }) as { messages: Array<{ text: string }> };
+      assert.equal(full.messages[0]!.text, '漢'.repeat(2500));
+    }
   } finally {
     history.dispose();
     app.dispose();
@@ -166,5 +201,4 @@ function assertReview(): void {
 }
 
 assertMigration();
-assertReview();
-console.log('memory review smoke passed');
+void assertReview().then(() => console.log('memory review smoke passed'));

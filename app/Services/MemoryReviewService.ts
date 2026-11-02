@@ -54,33 +54,46 @@ export class MemoryReviewService {
     const roles = this.sessionRoles(found.map((row) => row.session_id).filter((id): id is string => Boolean(id)));
     type Message = { seq: number; speaker: string; at: string; text: string };
     const conversations: Array<{ conversation_id: string; title: string | null; project_id: string | null; project_name: string | null; provider: string; session_role: string | null; from_seq: number; through_seq: number; more: boolean; messages: Message[] }> = [];
+    const reviewed: Page['marks'] = [];
     let used = 0;
     let full = false;
+    let remaining = 0;
+    let visited = 0;
     for (const row of found) {
+      visited += 1;
       const messages: Message[] = [];
       for (const message of row.messages) {
         // Messages are whole. Only one larger than a whole page is cut, and it
         // says where to read the rest, so nothing past a mark goes unread.
         let text = message.text;
         if (!used && Buffer.byteLength(text, 'utf8') + MESSAGE_OVERHEAD > input.max_bytes) {
-          text = `${Buffer.from(text, 'utf8').subarray(0, input.max_bytes - MESSAGE_OVERHEAD - 200).toString('utf8').replace(/\uFFFD$/, '')}… [cut: read the whole message with history_get conversation_id=${row.id} anchor at seq ${message.seq}]`;
+          text = `${Buffer.from(text, 'utf8').subarray(0, input.max_bytes - MESSAGE_OVERHEAD - 200).toString('utf8').replace(/\uFFFD$/, '')}… [cut: read the whole message with history_get conversation_id=${row.id} offset=${message.seq} limit=1]`;
         }
         const size = Buffer.byteLength(text, 'utf8') + MESSAGE_OVERHEAD;
         if (used && used + size > input.max_bytes) { full = true; break; }
         messages.push({ seq: message.seq, speaker: message.speaker, at: message.at, text });
         used += size;
       }
-      if (messages.length) {
-        conversations.push({
+      const whole = messages.length === row.messages.length;
+      // A conversation read to the end of its rows is marked there, even past
+      // rows that held no prose.
+      const through = whole ? row.scanned : messages.at(-1)?.seq;
+      if (through === undefined) remaining += 1;
+      else {
+        const more = !whole || row.truncated;
+        if (more) remaining += 1;
+        reviewed.push({ conversation_id: row.id, seq: through });
+        if (messages.length) conversations.push({
           conversation_id: row.id, title: row.title, project_id: row.project_id, project_name: row.project_id ? projects.get(row.project_id) ?? null : null,
           provider: row.provider, session_role: row.session_id ? roles.get(row.session_id) ?? null : null,
-          from_seq: messages[0]!.seq, through_seq: messages.at(-1)!.seq, more: messages.length < row.messages.length || row.truncated, messages
+          from_seq: messages[0]!.seq, through_seq: through, more, messages
         });
       }
       if (full) break;
     }
-    const remaining = found.length - conversations.filter((row) => !row.more).length;
-    this.pending.set(caller.sessionId, { marks: conversations.map((row) => ({ conversation_id: row.conversation_id, seq: row.through_seq })), complete: remaining === 0, started_at: startedAt });
+    // Conversations this page never reached remain too.
+    remaining += found.length - visited;
+    this.pending.set(caller.sessionId, { marks: reviewed, complete: remaining === 0, started_at: startedAt });
     return {
       coverage: remaining === 0 ? 'complete' as const : 'partial' as const,
       conversations,
