@@ -14,7 +14,7 @@ import { DatabaseService } from '../app/Services/DatabaseService';
 import { UncertainDeliveryError } from '../app/Services/IntegratedDelivery';
 import { IntegratedAgentService } from '../app/Services/IntegratedAgentService';
 import { isOpenCodeVersionMismatch } from '../app/Services/OpenCodeServiceErrors';
-import { OpenCodeServerService, ProviderCommandError } from '../app/Services/OpenCodeServerService';
+import { OPENCODE_MCP_UNAVAILABLE, OpenCodeServerService, ProviderCommandError, openCodeBridgeName, type OpenCodeMcpSource } from '../app/Services/OpenCodeServerService';
 import type { IntegratedConversationEvent } from '../app/Services/IntegratedConversation';
 import { McpSocketServer } from '../app/MCP/McpSocketServer';
 import { McpToolRegistry } from '../app/MCP/ToolRegistry';
@@ -25,6 +25,15 @@ import { CloseProcessAction } from '../app/Actions/CloseProcessAction';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { TranscriptImageStore } from '../app/Services/TranscriptImageStore';
 import { normaliseMessages, normaliseTranscriptAttachments } from '../resources/js/lib/integratedConversation';
+
+// Patterm's launcher gives the running app's service its MCP source; every
+// service here gets the fixture's, unless a check replaces it.
+let fixtureMcpSource: OpenCodeMcpSource | null = null;
+function openCode(...args: ConstructorParameters<typeof OpenCodeServerService>): OpenCodeServerService {
+  const service = new OpenCodeServerService(...args);
+  if (fixtureMcpSource) service.setMcpSource(fixtureMcpSource);
+  return service;
+}
 
 async function main(): Promise<void> {
   const waitFor = async (predicate: () => boolean, timeout = 3_000): Promise<void> => {
@@ -53,6 +62,8 @@ const body = json ? JSON.parse(json) : undefined;
 const rows = fs.existsSync(process.env.RECORD) ? fs.readFileSync(process.env.RECORD, 'utf8').trim().split('\\n').filter(Boolean).map(JSON.parse) : [];
 if (process.env.REJECT_PROMPT && method === 'POST' && route.endsWith('/prompt')) { console.log('HTTP 400 Bad Request'); process.exit(1); }
 if (process.env.REJECT_COMPACT && method === 'POST' && route.endsWith('/compact')) { console.log('HTTP ' + process.env.REJECT_COMPACT); process.exit(1); }
+if (process.env.FAIL_BRIDGE && method === 'PUT' && route.startsWith('/api/experimental/mcp/patterm_')) { console.log('HTTP 500 Internal Server Error'); process.exit(1); }
+if (process.env.FAIL_MCP_LIST && method === 'GET' && route.startsWith('/api/mcp?')) { console.log('HTTP 500 Internal Server Error'); process.exit(1); }
 const failMcpConnect = process.env.FAIL_MCP_CONNECT && method === 'POST' && route.split('?')[0] === '/api/experimental/mcp/helped/connect' && !fs.existsSync(process.env.FAIL_MCP_CONNECT);
 fs.appendFileSync(process.env.RECORD, JSON.stringify({method,route,body,...(failMcpConnect ? {failed:true} : {})})+'\\n');
 if (failMcpConnect) {
@@ -82,11 +93,15 @@ else if (method === 'GET' && route.startsWith('/api/provider?')) console.log(JSO
 else if (method === 'GET' && route.startsWith('/api/agent?')) console.log(JSON.stringify({data:[{name:'build',description:'Build'},{name:'plan',description:'Plan'}]}));
 else if (method === 'GET' && route.startsWith('/api/command?')) console.log(JSON.stringify({data:[{name:'review',description:'Review changes'}, ...(process.env.CUSTOM_UNDO ? [{name:'undo',description:'Custom undo'}] : [])]}));
 else if (method === 'GET' && route.startsWith('/api/mcp?')) {
-  const names = new Set(rows.filter(x => x.method === 'PUT' && x.route.startsWith('/api/experimental/mcp/')).map(x => x.route.split('/').at(-1).split('?')[0]));
+  // Dropped services forget every registration made before.
+  const live = process.env.MCP_EVICTED && fs.existsSync(process.env.MCP_EVICTED) ? rows.slice(Number(fs.readFileSync(process.env.MCP_EVICTED, 'utf8'))) : rows;
+  const names = new Set(live.filter(x => x.method === 'PUT' && x.route.startsWith('/api/experimental/mcp/')).map(x => x.route.split('/').at(-1).split('?')[0]));
   console.log(JSON.stringify({data:[...names].map(name => {
-    const last = rows.findLast(x => x.method === 'PUT' && x.route.split('?')[0] === '/api/experimental/mcp/' + name);
-    const connected = rows.some(x => x.method === 'POST' && !x.failed && x.route.split('?')[0] === '/api/experimental/mcp/' + name + '/connect');
-    return {name,status:{status:connected || last.body?.config.disabled !== true ? 'connected' : 'disabled'}};
+    const last = live.findLast(x => x.method === 'PUT' && x.route.split('?')[0] === '/api/experimental/mcp/' + name);
+    const connected = live.some(x => x.method === 'POST' && !x.failed && x.route.split('?')[0] === '/api/experimental/mcp/' + name + '/connect');
+    const status = connected || last.body?.config.disabled !== true ? 'connected' : 'disabled';
+    // OpenCode reports a server that failed to start without failing the connect call.
+    return {name,status:{status:status === 'connected' && process.env.HELPER_FAILS === name ? 'failed' : status}};
   })}));
 } else if (method === 'POST' && route.endsWith('/interrupt')) {
   if (process.env.FAIL_INTERRUPT) { console.log('HTTP 500 Internal Server Error'); process.exit(1); }
@@ -232,8 +247,11 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
   // reach a real OpenCode daemon on the test machine.
   const failMemory = path.join(directory, 'fail-memory');
   const env = { ...process.env, RECORD: record, XDG_STATE_HOME: path.join(directory, 'no-service'), FAIL_MEMORY: failMemory };
-  let service = new OpenCodeServerService(database, env, { persistent: true });
   const socketPath = path.join(directory, 'mcp.sock');
+  const mcp = { command: process.execPath, args: [path.resolve('dist/mcp/patterm-mcp.js')], env: { PATTERM_MCP_SOCKET: socketPath, PATTERM_MCP_IDENTITY: 'must-not-leak' } };
+  const helped = { id: 'mcpsrv_helped', name: 'helped', transport: 'http' as const, url: 'https://example.com/mcp', managedHeaders: true };
+  fixtureMcpSource = { spec: () => ({ ...mcp, env: { PATTERM_MCP_SOCKET: socketPath } }), servers: () => [helped] };
+  let service = openCode(database, env, { persistent: true });
   const registry = new McpToolRegistry();
   registry.register({ name: 'whoami', namespace: 'cli', description: 'Identity test', inputSchema: {} }, (_input, context) => ({ identity: context.identity }));
   const socket = new McpSocketServer(socketPath, registry, undefined, (token, id) => service.resolveIdentity(token, id));
@@ -244,8 +262,6 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
   try {
     checkHistory(directory);
     await socket.start();
-    const mcp = { command: process.execPath, args: [path.resolve('dist/mcp/patterm-mcp.js')], env: { PATTERM_MCP_SOCKET: socketPath, PATTERM_MCP_IDENTITY: 'must-not-leak' } };
-    const helped = { id: 'mcpsrv_helped', name: 'helped', transport: 'http' as const, url: 'https://example.com/mcp', managedHeaders: true };
     const input = { executable, cwd: directory, name: 'Fixture', context: 'Project-specific instructions', mcp, mcpServers: [helped], resumeId: null };
     const first = (await service.prepare(input)).resumeId;
     const second = (await service.prepare({ ...input, name: null, model: 'openai/gpt-test', reasoning: 'high' })).resumeId;
@@ -282,12 +298,12 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     // After a Patterm restart the install cache is empty; the replacement may
     // be a no-op, so a restart still reconnects.
     const coldCount = fs.readFileSync(record, 'utf8').trim().split('\n').length;
-    await new OpenCodeServerService(database, env, { persistent: true }).prepare({ ...input, resumeId: first, reconnectMcp: true });
+    await openCode(database, env, { persistent: true }).prepare({ ...input, resumeId: first, reconnectMcp: true });
     const coldRequests = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line)).slice(coldCount);
     assert.deepEqual(coldRequests.filter((request) => request.route.startsWith('/api/experimental/mcp/helped')).map((request) => `${request.method} ${request.route.split('?')[0]}`),
       ['PUT /api/experimental/mcp/helped', 'POST /api/experimental/mcp/helped/connect'], 'a restart reconnects even when Patterm forgot what it installed');
     const survivingCount = fs.readFileSync(record, 'utf8').trim().split('\n').length;
-    await new OpenCodeServerService(database, env, { persistent: true }).prepare(input);
+    await openCode(database, env, { persistent: true }).prepare(input);
     const survivingRequests = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line)).slice(survivingCount);
     assert.equal(survivingRequests.filter((request) => request.method === 'POST' && request.route.startsWith('/api/experimental/mcp/')).length, 0,
       'a cold Patterm cache must not reconnect surviving native clients on an ordinary launch');
@@ -295,12 +311,12 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     // handshakes. Reject enabled PUTs, and hold connects at a rendezvous.
     const overlap = path.join(directory, 'mcp-overlap.log');
     const servers = ['one', 'two', 'three'].map((name) => ({ ...helped, id: `mcpsrv_${name}`, name: `overlap_${name}` }));
-    await new OpenCodeServerService(database, { ...env, MCP_OVERLAP: overlap, MCP_OVERLAP_COUNT: String(servers.length) }, { persistent: true })
+    await openCode(database, { ...env, MCP_OVERLAP: overlap, MCP_OVERLAP_COUNT: String(servers.length) }, { persistent: true })
       .prepare({ ...input, cwd: fs.mkdtempSync(path.join(directory, 'fresh-')), mcp: { ...mcp, env: { ...mcp.env, PATTERM_MCP_SOCKET: `${socketPath}-fresh` } }, mcpServers: servers });
     assert.deepEqual(fs.readFileSync(overlap, 'utf8').trim().split('\n').slice(0, servers.length), servers.map(() => 'start'),
       'global MCP servers connect concurrently outside native configuration reconciliation');
     const retryRecord = path.join(directory, 'retry.jsonl');
-    const retryService = new OpenCodeServerService(database, { ...env, RECORD: retryRecord, FAIL_MCP_CONNECT: path.join(directory, 'failed-connect') }, { persistent: true });
+    const retryService = openCode(database, { ...env, RECORD: retryRecord, FAIL_MCP_CONNECT: path.join(directory, 'failed-connect') }, { persistent: true });
     await retryService.prepare(input);
     const retryCount = fs.readFileSync(retryRecord, 'utf8').trim().split('\n').length;
     await retryService.prepare(input);
@@ -308,7 +324,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     assert.deepEqual(retries.filter((request) => request.route.startsWith('/api/experimental/mcp/helped')).map((request) => request.method), ['PUT', 'POST'],
       'a failed connection is not cached as installed and is retried on the next launch');
     const concurrentRecord = path.join(directory, 'concurrent.jsonl');
-    const concurrentService = new OpenCodeServerService(database, { ...env, RECORD: concurrentRecord }, { persistent: true });
+    const concurrentService = openCode(database, { ...env, RECORD: concurrentRecord }, { persistent: true });
     const concurrent = await Promise.all([concurrentService.prepare(input), concurrentService.prepare(input)]);
     assert.notEqual(concurrent[0].resumeId, concurrent[1].resumeId, 'overlapping launches still create separate sessions');
     const concurrentRequests = fs.readFileSync(concurrentRecord, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
@@ -329,6 +345,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
       'a restart reads the variant from the native session, not the launch value');
     database.connection.prepare(`update sessions set interface_mode = 'tui' where id = 'session_1'`).run();
     assert.deepEqual(await service.prompt('process_0', { text: 'hello', references: [], attachments: [] }), { id: 'msg_test' });
+    await checkMcpRestore({ database, env, directory, helped });
     // Memory lives in two instruction entries: the whole memory, and the
     // changes since it, until they grow too big and replace the whole.
     const memoryStart = fs.readFileSync(record, 'utf8').trim().split('\n').length;
@@ -429,13 +446,13 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
 
     // Native message listings can exceed the old 2 MiB capture bound; a 3 MiB
     // row must stay readable instead of failing the transcript read.
-    const bigService = new OpenCodeServerService(database, { ...env, BIG_RESPONSE: '1' });
+    const bigService = openCode(database, { ...env, BIG_RESPONSE: '1' });
     const big = await bigService.conversation('process_0') as { messages: { data: Array<{ id: string; text?: string }> } };
     assert.equal(big.messages.data.at(-1)?.id, 'msg_big', 'the newest bounded row survives a response above 2 MiB');
     assert.equal(big.messages.data.at(-1)?.text?.length, 3 * 1024 * 1024);
     // Native user files and tool data URIs become stored image references.
     const imageStore = new TranscriptImageStore(path.join(directory, 'transcript-images'));
-    const imageService = new OpenCodeServerService(database, { ...env, IMAGES: '1' }, { images: imageStore });
+    const imageService = openCode(database, { ...env, IMAGES: '1' }, { images: imageStore });
     const imageConversation = await imageService.conversation('process_0') as { messages: { data: unknown[] } };
     assert.ok(!JSON.stringify(imageConversation).includes('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='), 'OpenCode image bytes never reach the renderer');
     const imageRows = normaliseMessages(imageConversation.messages);
@@ -459,27 +476,27 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const conversationRequests = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
     assert.ok(!conversationRequests.some((request) => request.route.startsWith('/api/session/status')), 'the obsolete session status route is never called');
     assert.ok(conversationRequests.some((request) => request.route === '/api/session/active'), 'conversation reads the server-scoped active snapshot without a location query');
-    await new IntegratedAgentService(database, { opencode: new OpenCodeServerService(database, { ...env, ACTIVE_EMPTY: '1' }) }).conversation('process_0');
+    await new IntegratedAgentService(database, { opencode: openCode(database, { ...env, ACTIVE_EMPTY: '1' }) }).conversation('process_0');
     assert.equal(activityOf(), 'idle', 'sessions absent from the active snapshot are idle');
     database.connection.prepare(`update processes set activity = 'thinking' where id = 'process_0'`).run();
     await assert.rejects(
-      new IntegratedAgentService(database, { opencode: new OpenCodeServerService(database, { ...env, ACTIVE_UNSUPPORTED: '1' }) }).conversation('process_0'),
+      new IntegratedAgentService(database, { opencode: openCode(database, { ...env, ACTIVE_UNSUPPORTED: '1' }) }).conversation('process_0'),
       /OpenCode command failed/
     );
     assert.equal(activityOf(), 'thinking', 'an unsupported API cannot report activity');
     await assert.rejects(
-      new IntegratedAgentService(database, { opencode: new OpenCodeServerService(database, { ...env, ACTIVE_MALFORMED: '1' }) }).conversation('process_0'),
+      new IntegratedAgentService(database, { opencode: openCode(database, { ...env, ACTIVE_MALFORMED: '1' }) }).conversation('process_0'),
       /invalid active-session response/
     );
     await assert.rejects(
-      new IntegratedAgentService(database, { opencode: new OpenCodeServerService(database, { ...env, ACTIVE_FAIL: '1' }) }).conversation('process_0'),
+      new IntegratedAgentService(database, { opencode: openCode(database, { ...env, ACTIVE_FAIL: '1' }) }).conversation('process_0'),
       /OpenCode command failed/
     );
 
     // Accepted-but-response-lost: the transparent reconcile finds the recorded
     // msg_ id and reports success instead of an uncertain state.
     const lostId = '99999999-9999-9999-9999-999999999999';
-    const lostService = new OpenCodeServerService(database, { ...env, LOST_PROMPT_RESPONSE: '1' });
+    const lostService = openCode(database, { ...env, LOST_PROMPT_RESPONSE: '1' });
     assert.deepEqual(
       await lostService.prompt('process_0', { text: 'lost prompt', references: [], attachments: [], messageId: lostId }),
       { id: `msg_${lostId}` },
@@ -488,7 +505,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     // Delayed appearance: the first bounded read is empty, so the prompt stays
     // uncertain until a later read finds it.
     const delayedId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-    const delayedService = new OpenCodeServerService(database, { ...env, LOST_PROMPT_RESPONSE: '1', DELAYED_MESSAGE: '1' });
+    const delayedService = openCode(database, { ...env, LOST_PROMPT_RESPONSE: '1', DELAYED_MESSAGE: '1' });
     await assert.rejects(
       delayedService.prompt('process_0', { text: 'delayed prompt', references: [], attachments: [], messageId: delayedId }),
       UncertainDeliveryError
@@ -496,7 +513,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     assert.equal(await delayedService.reconcile('process_0', delayedId), 'accepted', 'delayed appearance is accepted later');
     // Definitive rejection: a 4xx never recorded the prompt.
     const rejectedId = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
-    const rejectedService = new OpenCodeServerService(database, { ...env, REJECT_PROMPT: '1' });
+    const rejectedService = openCode(database, { ...env, REJECT_PROMPT: '1' });
     await assert.rejects(
       rejectedService.prompt('process_0', { text: 'rejected prompt', references: [], attachments: [], messageId: rejectedId }),
       (error: unknown) => error instanceof Error && !(error instanceof UncertainDeliveryError)
@@ -505,18 +522,18 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     // A restart's idle compaction check reads OpenCode's native row times,
     // and a session with a running execution is active now.
     // The newest is a prompt sent earlier in this test, at native time 2.
-    assert.equal(await new IntegratedAgentService(database, { opencode: new OpenCodeServerService(database, { ...env, ACTIVE_EMPTY: '1' }) }).lastActivity('process_0'), 2);
+    assert.equal(await new IntegratedAgentService(database, { opencode: openCode(database, { ...env, ACTIVE_EMPTY: '1' }) }).lastActivity('process_0'), 2);
     const beforeActive = Date.now();
-    assert.ok((await new IntegratedAgentService(database, { opencode: new OpenCodeServerService(database, env) }).lastActivity('process_0'))! >= beforeActive);
+    assert.ok((await new IntegratedAgentService(database, { opencode: openCode(database, env) }).lastActivity('process_0'))! >= beforeActive);
     // A 4xx rejects a compaction definitively, as it does a prompt; a 5xx may
     // have queued it.
-    await assert.rejects(new OpenCodeServerService(database, { ...env, REJECT_COMPACT: '409 Conflict' }).compact('process_0'),
+    await assert.rejects(openCode(database, { ...env, REJECT_COMPACT: '409 Conflict' }).compact('process_0'),
       (error: unknown) => error instanceof ProviderCommandError && error.status === 409 && error.definitive);
-    await assert.rejects(new OpenCodeServerService(database, { ...env, REJECT_COMPACT: '502 Bad Gateway' }).compact('process_0'),
+    await assert.rejects(openCode(database, { ...env, REJECT_COMPACT: '502 Bad Gateway' }).compact('process_0'),
       (error: unknown) => error instanceof ProviderCommandError && error.status === 502 && !error.definitive);
 
     // A session longer than one bounded page still shows its newest rows.
-    const manyService = new OpenCodeServerService(database, { ...env, MANY_MESSAGES: '1' });
+    const manyService = openCode(database, { ...env, MANY_MESSAGES: '1' });
     const many = await manyService.conversation('process_0') as { messages: { data: Array<{ id: string }> }; history_truncated: boolean; history_cursor: { next: string } };
     assert.equal(many.history_truncated, true, 'a full page is reported as truncated history');
     assert.equal(many.messages.data.at(-1)?.id, 'msg_history_249', 'the newest row is displayed');
@@ -531,7 +548,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
 
     // Installed 2.0.1 typed forms: the list is returned as native field shapes
     // and replies keep each field's own JSON type.
-    const formService = new OpenCodeServerService(database, { ...env, FORMS: '1' });
+    const formService = openCode(database, { ...env, FORMS: '1' });
     const formConversation = await formService.conversation('process_0') as { forms: { data: Array<{ id: string; title: string; fields: Array<{ key: string; type: string; minimum?: number }> }> } };
     const form = formConversation.forms.data[0]!;
     assert.equal(form.id, 'frm_test');
@@ -544,7 +561,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const formReply = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line))
       .find((request) => request.route.endsWith('/form/frm_test/reply'));
     assert.deepEqual(formReply.body, { answer: { name: 'Patterm', count: 3, enabled: true, labels: ['a', 'b'] } }, 'form answers keep native JSON types');
-    const rejectedForm = new OpenCodeServerService(database, { ...env, FORMS: '1', REJECT_FORM: '1' });
+    const rejectedForm = openCode(database, { ...env, FORMS: '1', REJECT_FORM: '1' });
     await assert.rejects(
       rejectedForm.replyForm('process_0', 'frm_test', { count: -1 }),
       /count must be positive/,
@@ -552,7 +569,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     );
 
     // Queued prompts come from the native inbox and can be steered or cancelled.
-    const queueService = new OpenCodeServerService(database, { ...env, QUEUE: '1' });
+    const queueService = openCode(database, { ...env, QUEUE: '1' });
     const queued = await queueService.conversation('process_0') as { queue: unknown };
     assert.deepEqual(queued.queue, [{ id: 'msg_q1', text: 'Then add tests', delivery: 'queue' }], 'only queued user prompts are listed');
     await queueService.updateQueued('process_0', 'msg_q1', 'steer');
@@ -564,7 +581,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     ]);
 
     // TUI built-ins are session API calls; custom commands still run natively.
-    const commandService = new OpenCodeServerService(database, env);
+    const commandService = openCode(database, env);
     const commandRoot = (database.connection.prepare(`select resume_id from sessions where process_id = 'process_0'`).get() as { resume_id: string }).resume_id;
     assert.deepEqual((await commandService.controls('process_0')).commands.map((command) => command.name), ['compact', 'undo', 'redo', 'rename', 'shell', 'review']);
     await commandService.command('process_0', 'compact', '');
@@ -573,7 +590,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     await commandService.command('process_0', 'redo', '');
     await commandService.command('process_0', 'review', 'focus');
     await assert.rejects(commandService.command('process_0', 'undo', ''), /Stop the running turn/, 'undo never reverts a running turn');
-    const idleCommands = new OpenCodeServerService(database, { ...env, ACTIVE_EMPTY: '1' });
+    const idleCommands = openCode(database, { ...env, ACTIVE_EMPTY: '1' });
     await idleCommands.command('process_0', 'undo', '');
     const commandCalls = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as { method: string; route: string; body?: Record<string, unknown> })
       .filter((call) => call.method !== 'GET').slice(-6);
@@ -587,14 +604,14 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
       ['POST', '/api/session/ROOT/command', { name: 'review', text: 'focus', delivery: 'queue' }],
       ['POST', '/api/session/ROOT/revert/stage', { messageID: staged }]
     ], 'built-ins call the session API; undo stages like the TUI and is never committed');
-    const customUndo = new OpenCodeServerService(database, { ...env, CUSTOM_UNDO: '1' });
+    const customUndo = openCode(database, { ...env, CUSTOM_UNDO: '1' });
     await customUndo.command('process_0', 'undo', 'last');
     const customCall = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as { method: string; route: string; body?: unknown }).filter((call) => call.method !== 'GET').at(-1);
     assert.deepEqual([customCall?.route.endsWith('/command'), customCall?.body], [true, { name: 'undo', text: 'last', delivery: 'queue' }], 'a custom command with a built-in name wins');
 
     // Subagent sessions nest under the subagent tool that started them. A shell
     // tool's own sessionID is not a subagent.
-    const nestedService = new OpenCodeServerService(database, { ...env, SUBAGENT_SESSION: '1', SUBAGENT_ROOT: (database.connection.prepare(`select resume_id from sessions where process_id = 'process_0'`).get() as { resume_id: string }).resume_id });
+    const nestedService = openCode(database, { ...env, SUBAGENT_SESSION: '1', SUBAGENT_ROOT: (database.connection.prepare(`select resume_id from sessions where process_id = 'process_0'`).get() as { resume_id: string }).resume_id });
     const nestedView = await nestedService.conversation('process_0') as { usage: unknown; messages: { data: Array<{ id: string; parentId?: string }> } };
     assert.deepEqual((nestedView as unknown as { tasks: unknown }).tasks, [
       { id: 'ses_sub', label: 'Explore', kind: 'subagent', status: 'running', stoppable: true },
@@ -620,7 +637,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     assert.equal((await nestedService.taskOutput('process_0', 'ses_sub', subOutput.version)).format, 'unchanged', 'an unchanged subagent skips its rows');
     await assert.rejects(nestedService.taskOutput('process_0', 'ses_foreign'), /does not belong/, 'another session is never read');
     assert.deepEqual(nestedView.usage, { contextTokens: 20_000, contextWindow: 400_000, inputTokens: 100_000, outputTokens: 5_000, costUsd: 1.25, lastModelActivityAt: new Date(2).toISOString() }, 'session totals, latest context, the model window, and the newest request start are reported');
-    const compactedView = await new OpenCodeServerService(database, { ...env, SUBAGENT_SESSION: '1', COMPACTED: '1', SUBAGENT_ROOT: (database.connection.prepare(`select resume_id from sessions where process_id = 'process_0'`).get() as { resume_id: string }).resume_id }).conversation('process_0') as { usage: Record<string, unknown> };
+    const compactedView = await openCode(database, { ...env, SUBAGENT_SESSION: '1', COMPACTED: '1', SUBAGENT_ROOT: (database.connection.prepare(`select resume_id from sessions where process_id = 'process_0'`).get() as { resume_id: string }).resume_id }).conversation('process_0') as { usage: Record<string, unknown> };
     assert.equal(compactedView.usage.contextTokens, undefined, 'a newer compaction drops the stale context');
     assert.equal(compactedView.usage.contextWindow, 400_000, 'the window still comes from the compaction model');
     assert.deepEqual(nestedView.messages.data.filter((row) => row.parentId).map((row) => [row.id, row.parentId]), [['msg_sub_1', 'msg_task-1'], ['msg_sub_2', 'msg_task-1']]);
@@ -628,7 +645,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     assert.ok(!nestedRoutes.some((request) => request.route.startsWith(`/api/session/${(database.connection.prepare(`select resume_id from sessions where process_id = 'process_0'`).get() as { resume_id: string }).resume_id}/message?limit=40`)), 'a shell tool session is not read as a subagent');
 
     // The newest subagents are the ones kept, and each can be stopped.
-    const manySubagents = new OpenCodeServerService(database, { ...env, MANY_SUBAGENTS: '1' });
+    const manySubagents = openCode(database, { ...env, MANY_SUBAGENTS: '1' });
     const beforeMany = fs.readFileSync(record, 'utf8').trim().split('\n').length;
     await manySubagents.conversation('process_0');
     const childReads = fs.readFileSync(record, 'utf8').trim().split('\n').slice(beforeMany).map((line) => JSON.parse(line) as { route: string })
@@ -640,7 +657,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     // (not unrelated daemon sessions) are shown, labelled, and replied to on
     // the owning session.
     const root = (database.connection.prepare(`select resume_id from sessions where process_id = 'process_0'`).get() as { resume_id: string }).resume_id;
-    const childService = new OpenCodeServerService(database, { ...env, CHILD_ROOT: root });
+    const childService = openCode(database, { ...env, CHILD_ROOT: root });
     const childView = await childService.conversation('process_0') as { permissions: { data: Array<{ id: string; action: string }> }; forms: { data: Array<{ id: string; detail?: string; declinable?: boolean }> } };
     assert.deepEqual(childView.permissions.data.map((item) => [item.id, item.action]), [['per_child', 'Subagent: bash'], ['per_grandchild', 'Subagent: edit']]);
     assert.equal((childView as { status?: string }).status, 'permission', 'a subagent waiting on the user reads as permission');
@@ -667,6 +684,11 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const daemonFrame = (type: string, data: unknown): string => `data: ${JSON.stringify({ id: `evt_${daemonState.connections}`, type, data })}\n\n`;
     const daemon = http.createServer((request, response) => {
       daemonState.auth = String(request.headers.authorization ?? '');
+      if (request.method === 'GET' && request.url?.startsWith('/api/mcp?')) {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ data: [openCodeBridgeName(mcp), helped.name].map((name) => ({ name, status: { status: 'connected' } })) }));
+        return;
+      }
       if (request.url === '/api/info') {
         response.writeHead(200, { 'content-type': 'application/json' });
         response.end(JSON.stringify({ version: '2.0.14', pid: 4242 }));
@@ -741,7 +763,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     fs.writeFileSync(path.join(directory, 'opencode', 'service.json'), JSON.stringify({
       id: 'daemon_test', version: '2.0.14', url: `http://127.0.0.1:${daemonPort}`, pid: 4242, password: 'test-password'
     }));
-    const streamService = new OpenCodeServerService(database, { ...env, XDG_STATE_HOME: directory, STREAM_SEED: '2' });
+    const streamService = openCode(database, { ...env, XDG_STATE_HOME: directory, STREAM_SEED: '2' });
     const imageBytes = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(150_000)]);
     await streamService.prompt('process_0', { text: 'inspect', references: [], attachments: [{ path: path.join(directory, 'uploads', 'pixel.png'), name: 'pixel.png', mime: 'image/png', size: imageBytes.length, data: imageBytes.toString('base64') }] });
     assert.deepEqual(daemonState.prompts, [{ text: 'inspect', files: [{ uri: `data:image/png;base64,${imageBytes.toString('base64')}`, name: 'pixel.png' }], delivery: 'steer', resume: true }], 'uploads use inline data, and prompts steer as in OpenCode');
@@ -892,7 +914,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     assert.match(JSON.stringify(await modernClient.callTool({ name: 'whoami', arguments: {}, _meta: { 'ai.opencode/sessionID': second } })), /identity_1/, 'OpenCode 2 namespaced session metadata resolves the caller');
     assert.equal((await modernClient.callTool({ name: 'whoami', arguments: {} })).isError, true, 'modern requests without session metadata fail closed');
     socket.stop();
-    service = new OpenCodeServerService(database, env, { persistent: true });
+    service = openCode(database, env, { persistent: true });
     await socket.start();
     assert.match(JSON.stringify(await client.callTool({ name: 'whoami', arguments: {}, _meta: { sessionID: first } })), /identity_0/, 'existing bridge clients keep their identity after a backend restart');
     const tokenPath = path.join(directory, 'opencode-bridge-token');
@@ -900,11 +922,11 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     if (process.platform !== 'win32') {
       assert.equal(fs.statSync(tokenPath).mode & 0o777, 0o600, 'the durable bridge credential is owner-only');
       fs.chmodSync(tokenPath, 0o644);
-      assert.throws(() => new OpenCodeServerService(database, env, { persistent: true }), /owner-only/);
+      assert.throws(() => openCode(database, env, { persistent: true }), /owner-only/);
       fs.chmodSync(tokenPath, 0o600);
     } else {
       assert.match(fs.readFileSync(tokenPath, 'utf8'), /^[0-9a-f-]{36}$/, 'the durable bridge credential is saved');
-      assert.doesNotThrow(() => new OpenCodeServerService(database, env, { persistent: true }), 'a saved credential is accepted despite synthesised modes');
+      assert.doesNotThrow(() => openCode(database, env, { persistent: true }), 'a saved credential is accepted despite synthesised modes');
     }
     assert.equal((await client.callTool({ name: 'whoami', arguments: {} })).isError, true, 'missing metadata fails closed');
     assert.equal((await client.callTool({ name: 'whoami', arguments: {}, _meta: { sessionID: 'ses_unmanaged' } })).isError, true);
@@ -931,7 +953,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     database.connection.prepare(`update sessions set exited_at = null where id = 'session_0'`).run();
     const interruptStop = new IntegratedAgentService(database, { opencode: service });
     await interruptStop.stop('process_0');
-    const failingInterrupt = new OpenCodeServerService(database, { ...env, FAIL_INTERRUPT: '1' });
+    const failingInterrupt = openCode(database, { ...env, FAIL_INTERRUPT: '1' });
     const failingStop = new IntegratedAgentService(database, { opencode: failingInterrupt });
     await assert.rejects(failingStop.stop('process_0'), /OpenCode command failed|interrupt/i);
     await assert.rejects(
@@ -940,9 +962,9 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
       'a failed native interrupt surfaces instead of closing the process'
     );
     assert.equal((database.connection.prepare(`select status from processes where id = 'process_0'`).get() as { status: string }).status, 'running', 'a failed native interrupt leaves the process open');
-    const failing = new OpenCodeServerService(database, { ...env, FAIL_API: '1' });
+    const failing = openCode(database, { ...env, FAIL_API: '1' });
     await assert.rejects(failing.prepare(input), (error: Error) => !error.message.includes('PATTERM_OPENCODE_BRIDGE') && !error.message.includes('config'));
-    const mismatched = new OpenCodeServerService(database, { ...env, WRONG_VERSION: '1' });
+    const mismatched = openCode(database, { ...env, WRONG_VERSION: '1' });
     await assert.rejects(mismatched.prepare(input), (error: Error) => isOpenCodeVersionMismatch(error.message) && error.message.includes('CLI 2.0.14, server 2.0.13'));
     // Desktop IPC rejections arrive wrapped in Electron's channel prefix.
     assert.ok(isOpenCodeVersionMismatch("Error invoking remote method 'patterm:mcp:call': Error: OpenCode server version mismatch: CLI 2.0.14, server 2.0.13."));
@@ -950,24 +972,24 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     // leaves it stale reports that instead of letting launches retry blindly.
     await assert.rejects(mismatched.restartService(executable), /still reports 2\.0\.13/);
     const restarted = path.join(directory, 'restarted');
-    const restartable = new OpenCodeServerService(database, { ...env, WRONG_VERSION: '1', RESTARTED: restarted });
+    const restartable = openCode(database, { ...env, WRONG_VERSION: '1', RESTARTED: restarted });
     assert.deepEqual(await restartable.restartService(executable), { version: '2.0.14' });
     assert.ok(fs.existsSync(restarted), 'the CLI restarted the shared server');
     // Like the native TUI, a launch replaces a stale server unasked, but only
     // while no turn is running on it.
     const idleRestarted = path.join(directory, 'idle-restarted');
-    const idleStale = new OpenCodeServerService(database, { ...env, WRONG_VERSION: '1', RESTARTED: idleRestarted, ACTIVE_EMPTY: '1' });
+    const idleStale = openCode(database, { ...env, WRONG_VERSION: '1', RESTARTED: idleRestarted, ACTIVE_EMPTY: '1' });
     assert.ok((await idleStale.prepare(input)).resumeId.startsWith('ses'));
     assert.equal(fs.readFileSync(idleRestarted, 'utf8'), 'r', 'an idle stale server is restarted before the launch');
     // Launches that find the same stale server restart it once: the later
     // launch reads the versions again after the first one's restart.
     const concurrentRestarted = path.join(directory, 'concurrent-restarted');
-    const concurrentStale = new OpenCodeServerService(database, { ...env, WRONG_VERSION: '1', RESTARTED: concurrentRestarted, ACTIVE_EMPTY: '1' });
+    const concurrentStale = openCode(database, { ...env, WRONG_VERSION: '1', RESTARTED: concurrentRestarted, ACTIVE_EMPTY: '1' });
     await Promise.all([concurrentStale.prepare(input), concurrentStale.prepare(input)]);
     assert.equal(fs.readFileSync(concurrentRestarted, 'utf8'), 'r', 'concurrent launches share one restart');
     // An unreadable activity snapshot does not show the server is idle.
     const unknownRestarted = path.join(directory, 'unknown-restarted');
-    const unknownActivity = new OpenCodeServerService(database, { ...env, WRONG_VERSION: '1', RESTARTED: unknownRestarted, ACTIVE_MALFORMED: '1' });
+    const unknownActivity = openCode(database, { ...env, WRONG_VERSION: '1', RESTARTED: unknownRestarted, ACTIVE_MALFORMED: '1' });
     await assert.rejects(unknownActivity.prepare(input), (error: Error) => isOpenCodeVersionMismatch(error.message) && /did not say/.test(error.message));
     assert.ok(!fs.existsSync(unknownRestarted), 'a server with unknown activity is not restarted');
 
@@ -975,7 +997,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     // calls or credentials, and always stops only that temporary service.
     if (process.env.PATTERM_TEST_OPENCODE) {
       const nativeEnv = { ...process.env, XDG_DATA_HOME: path.join(directory, 'data'), XDG_CONFIG_HOME: path.join(directory, 'config'), XDG_CACHE_HOME: path.join(directory, 'cache'), XDG_STATE_HOME: path.join(directory, 'state') };
-      const native = new OpenCodeServerService(database, nativeEnv);
+      const native = openCode(database, nativeEnv);
       try {
         const nativeInput = { ...input, executable: process.env.PATTERM_TEST_OPENCODE };
         execFileSync(nativeInput.executable, ['service', 'set', 'port', String(50_000 + process.pid % 10_000)], { cwd: directory, env: nativeEnv, timeout: 20_000, stdio: 'pipe' });
@@ -1015,7 +1037,7 @@ async function checkStreamedActivity(input: {
   daemonState.burst = false;
   daemonState.active = {};
   // The default hold on an end, 150 ms.
-  const service = new OpenCodeServerService(database, env);
+  const service = openCode(database, env);
   const events: IntegratedConversationEvent[] = [];
   const release = await service.subscribe('process_0', (event) => events.push(event));
   const statuses = (from: number): string[] => events.slice(from).flatMap((event) => event.kind === 'status' && event.status ? [event.status] : []);
@@ -1034,7 +1056,7 @@ async function checkStreamedActivity(input: {
     await waitFor(() => events.slice(mark).some((event) => event.kind === 'replace' && event.message?.id === 'msg_fg_shell-0'));
     await settle();
     assert.equal((await read()).status, 'working', 'a quiet foreground OpenCode shell stays working');
-    assert.equal((await read(new OpenCodeServerService(database, env))).status, 'working', 'a fresh connection sees the running OpenCode execution');
+    assert.equal((await read(openCode(database, env))).status, 'working', 'a fresh connection sees the running OpenCode execution');
     daemonState.emit('session.tool.success', { sessionID: first, assistantMessageID: 'msg_fg_shell', id: 'call_fg_shell', content: [{ type: 'text', text: 'done' }] });
     await waitFor(() => events.slice(mark).some((event) => event.kind === 'replace' && event.message?.text === 'done'));
     await settle();
@@ -1055,7 +1077,7 @@ async function checkStreamedActivity(input: {
     await waitFor(() => statuses(mark).includes('permission'));
     assert.ok(events.slice(mark).some((event) => event.kind === 'pending'), 'a permission request re-reads the snapshot');
     assert.equal((await read()).status, 'permission', 'the snapshot reports a pending permission');
-    assert.equal((await read(new OpenCodeServerService(database, env))).status, 'permission', 'a snapshot without a stream reads the pending permission natively');
+    assert.equal((await read(openCode(database, env))).status, 'permission', 'a snapshot without a stream reads the pending permission natively');
     mark = events.length;
     daemonState.permissions = [];
     daemonState.emit('permission.replied', { sessionID: first, requestID: 'per_live', reply: 'once' });
@@ -1081,7 +1103,7 @@ async function checkStreamedActivity(input: {
 
     // While an end is held back a read agrees with the stream; once shown, a
     // daemon that still lists the session does not bring the work back.
-    const holding = new OpenCodeServerService(database, env, { settleMs: 30_000 });
+    const holding = openCode(database, env, { settleMs: 30_000 });
     const held: IntegratedConversationEvent[] = [];
     const releaseHolding = await holding.subscribe('process_0', (event) => held.push(event));
     try {
@@ -1117,10 +1139,10 @@ async function checkStreamedActivity(input: {
       { id: 'msg_failed', type: 'assistant', content: [], error: { message: 'Rate limited' }, time: { created: 4 } },
       { id: 'msg_prompt', type: 'user', text: 'go', time: { created: 3 } }
     ];
-    const restarted = await read(new OpenCodeServerService(database, env));
+    const restarted = await read(openCode(database, env));
     assert.deepEqual([restarted.status, restarted.status_detail], ['error', 'Rate limited'], 'a failed outcome row is an error until new work starts');
     daemonState.rows = [{ id: 'msg_retry', type: 'user', text: 'again', time: { created: 7 } }, ...daemonState.rows];
-    assert.equal((await read(new OpenCodeServerService(database, env))).status, 'idle', 'a newer prompt leaves the failure behind');
+    assert.equal((await read(openCode(database, env))).status, 'idle', 'a newer prompt leaves the failure behind');
     daemonState.rows = null;
 
     // A background subagent that outlives its parent's turn keeps it working;
@@ -1136,7 +1158,7 @@ async function checkStreamedActivity(input: {
     const backgroundRows = [{ id: 'msg_bg', type: 'assistant', content: [{ type: 'tool', id: 'call_bg_sub', name: 'subagent', state: { status: 'completed', input: { description: 'Explore', background: true }, metadata: { sessionID: 'ses_bg', status: 'running' }, content: [] } }], time: { created: 3 } }];
     daemonState.rows = backgroundRows;
     assert.equal((await read()).status, 'working', 'the snapshot agrees');
-    assert.equal((await read(new OpenCodeServerService(database, env))).status, 'working', 'a running subagent named in the transcript keeps working without the stream');
+    assert.equal((await read(openCode(database, env))).status, 'working', 'a running subagent named in the transcript keeps working without the stream');
     mark = events.length;
     daemonState.active = {};
     daemonState.emit('session.execution.succeeded', { sessionID: 'ses_bg' });
@@ -1198,7 +1220,7 @@ async function checkStreamedActivity(input: {
   // After a reconnect nothing has streamed yet. A read while the turn's end is
   // held back keeps what is shown rather than reporting the end early, so the
   // streamed end still announces the finished turn.
-  const reconnected = new OpenCodeServerService(database, env, { settleMs: 30_000 });
+  const reconnected = openCode(database, env, { settleMs: 30_000 });
   const reconnectedEvents: IntegratedConversationEvent[] = [];
   const releaseReconnected = await reconnected.subscribe('process_0', (event) => reconnectedEvents.push(event));
   try {
@@ -1216,7 +1238,7 @@ async function checkStreamedActivity(input: {
 
   // Integrated activity writes the streamed statuses, permission included.
   daemonState.active = { [first]: { type: 'running' } };
-  const observedProvider = new OpenCodeServerService(database, env, { settleMs: 50 });
+  const observedProvider = openCode(database, env, { settleMs: 50 });
   const integrated = new IntegratedAgentService(database, { opencode: observedProvider });
   const activity = (): string => (database.connection.prepare(`select activity from processes where id = 'process_0'`).get() as { activity: string }).activity;
   try {
@@ -1285,7 +1307,7 @@ async function checkStreamedActivity(input: {
 
   // A stream with no traffic, not even heartbeats, is dropped and reopened,
   // and the dropped connection is released.
-  const quiet = new OpenCodeServerService(database, env, { streamIdleMs: 300 });
+  const quiet = openCode(database, env, { streamIdleMs: 300 });
   const quietEvents: IntegratedConversationEvent[] = [];
   const before = daemonState.connections;
   const releaseQuiet = await quiet.subscribe('process_0', (event) => quietEvents.push(event));
@@ -1309,7 +1331,7 @@ async function checkStreamedActivity(input: {
 // replaced leaves the replacement alone.
 async function checkActivityOrdering(database: DatabaseService, env: NodeJS.ProcessEnv): Promise<void> {
   const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-  const service = new OpenCodeServerService(database, env, { settleMs: 30 });
+  const service = openCode(database, env, { settleMs: 30 });
   type Stream = { emit: (event: unknown) => void; runtime: { executable: string; cwd: string }; serial: Promise<void> };
   const internals = service as unknown as {
     activityState(sessionId: string): { emitters: Set<(event: IntegratedConversationEvent) => void> };
@@ -1413,3 +1435,110 @@ function checkHistory(directory: string): void {
   db.close();
 }
 void main().catch((error) => { console.error(error); process.exitCode = 1; });
+
+// OpenCode drops a directory's services after an idle hour and boots them
+// again without Patterm's bridge and servers. A fresh request record is such a
+// directory: the fake lists only what was registered in it.
+async function checkMcpRestore(input: { database: DatabaseService; env: NodeJS.ProcessEnv; directory: string; helped: { id: string; name: string } }): Promise<void> {
+  const { database, env, directory, helped } = input;
+  let records = 0;
+  const fresh = (): string => path.join(directory, `restore-${++records}.jsonl`);
+  const read = (file: string): Array<{ method: string; route: string; body?: { config?: Record<string, unknown> } }> =>
+    fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : [];
+  const calls = (file: string): string[] => read(file).map((request) => `${request.method} ${request.route.split('?')[0]}`)
+    .filter((call) => !call.startsWith('GET /api/mcp'));
+  const bridgePuts = (file: string): number => calls(file).filter((call) => /^PUT \/api\/experimental\/mcp\/patterm_/.test(call)).length;
+  const prompt = { text: 'after a quiet hour', references: [], attachments: [] };
+  const secret = { id: 'mcpsrv_local', name: 'local', transport: 'stdio' as const, command: 'local-mcp', args: [], env: { API_TOKEN: 'secret-token' } };
+
+  // Restored before the prompt, from the source as it is now.
+  const restored = fresh();
+  const restoring = openCode(database, { ...env, RECORD: restored });
+  const source = (restoring as unknown as { mcpSource: OpenCodeMcpSource }).mcpSource;
+  restoring.setMcpSource({ spec: source.spec, servers: () => [...source.servers(), secret] });
+  await restoring.prompt('process_0', prompt);
+  const order = calls(restored);
+  const sent = order.findIndex((call) => call.endsWith('/prompt'));
+  assert.ok(sent > 0, 'the prompt is sent');
+  for (const call of ['PUT /api/experimental/mcp/patterm_', `PUT /api/experimental/mcp/${helped.name}`, 'PUT /api/experimental/mcp/local', `POST /api/experimental/mcp/${helped.name}/connect`]) {
+    const at = order.findIndex((entry) => entry.startsWith(call));
+    assert.ok(at >= 0 && at < sent, `${call} is restored before the prompt`);
+  }
+  const helperEnv = read(restored).find((request) => request.route.startsWith(`/api/experimental/mcp/${helped.name}`))?.body?.config?.environment as Record<string, string>;
+  assert.equal(helperEnv.PATTERM_MCP_IDENTITY, undefined, 'a restored helper never carries an agent identity');
+  const cached = [...(restoring as unknown as { installedMcp: Map<string, string> }).installedMcp.values()];
+  assert.ok(cached.length > 0 && cached.every((value) => !value.includes('secret-token') && /^[0-9a-f]{64}$/.test(value)), 'the install cache keeps digests, not server credentials');
+
+  // Steady state: one check, nothing reinstalled.
+  const steadyStart = calls(restored).length;
+  await restoring.prompt('process_0', prompt);
+  assert.deepEqual(calls(restored).slice(steadyStart).map((call) => call.replace(/ses_[^/]+/, 'ses')), ['POST /api/session/ses/prompt'],
+    'a prompt in a directory that kept its servers only sends the prompt');
+
+  // Dropped again later: the install cache from the first restore does not
+  // stop a second one.
+  fs.writeFileSync(`${restored}.evicted`, String(read(restored).length));
+  const again = calls(restored).length;
+  const evictedAgain = openCode(database, { ...env, RECORD: restored, MCP_EVICTED: `${restored}.evicted` });
+  (evictedAgain as unknown as { installedMcp: Map<string, string> }).installedMcp = (restoring as unknown as { installedMcp: Map<string, string> }).installedMcp;
+  await evictedAgain.prompt('process_0', prompt);
+  assert.equal(bridgePuts(restored) - calls(restored).slice(0, again).filter((call) => /^PUT \/api\/experimental\/mcp\/patterm_/.test(call)).length, 1, 'a second eviction restores again');
+  assert.ok(calls(restored).slice(again).includes(`PUT /api/experimental/mcp/${helped.name}`), 'helpers are restored despite a stale install cache');
+
+  // Overlapping prompts restore once, and neither is sent before the whole
+  // installation, helpers included, has finished.
+  const overlapping = fresh();
+  const concurrent = openCode(database, { ...env, RECORD: overlapping });
+  await Promise.all([concurrent.prompt('process_0', prompt), concurrent.prompt('process_0', prompt)]);
+  assert.equal(bridgePuts(overlapping), 1, 'overlapping prompts share one restore');
+  const overlapOrder = calls(overlapping);
+  const helperReady = overlapOrder.indexOf(`POST /api/experimental/mcp/${helped.name}/connect`);
+  assert.equal(overlapOrder.filter((call) => call.endsWith('/prompt')).length, 2);
+  assert.ok(overlapOrder.every((call, index) => !call.endsWith('/prompt') || index > helperReady), 'no prompt is sent while a helper is still connecting');
+
+  // Without a source there is nothing to restore from: fail before sending.
+  const sourceless = fresh();
+  await assert.rejects(new OpenCodeServerService(database, { ...env, RECORD: sourceless }).prompt('process_0', prompt),
+    (error: unknown) => error instanceof ProviderCommandError && error.definitive === true && error.message.startsWith(OPENCODE_MCP_UNAVAILABLE),
+    'a prompt without its tools or a way to restore them is rejected');
+  assert.equal(calls(sourceless).filter((call) => call.endsWith('/prompt')).length, 0, 'nothing is sent without the tools');
+
+  // A bridge that cannot be restored also fails before sending.
+  const brokenBridge = fresh();
+  await assert.rejects(openCode(database, { ...env, RECORD: brokenBridge, FAIL_BRIDGE: '1' }).prompt('process_0', prompt),
+    (error: unknown) => error instanceof ProviderCommandError && error.definitive === true && error.message.startsWith(OPENCODE_MCP_UNAVAILABLE));
+  assert.equal(calls(brokenBridge).filter((call) => call.endsWith('/prompt')).length, 0, 'a failed bridge restore sends nothing');
+
+  // A server that cannot be restored fails the prompt too, and the next
+  // prompt retries it rather than trusting the connected bridge.
+  const brokenHelper = fresh();
+  const helperService = openCode(database, { ...env, RECORD: brokenHelper, FAIL_MCP_CONNECT: path.join(directory, 'restore-failed-connect') });
+  await assert.rejects(helperService.prompt('process_0', prompt),
+    (error: unknown) => error instanceof ProviderCommandError && error.definitive === true && error.message.includes(helped.name));
+  assert.equal(calls(brokenHelper).filter((call) => call.endsWith('/prompt')).length, 0, 'a helper that did not reconnect holds back the prompt');
+  await helperService.prompt('process_0', prompt);
+  assert.equal(calls(brokenHelper).filter((call) => call === `POST /api/experimental/mcp/${helped.name}/connect`).length, 2, 'the next prompt retries the helper');
+  assert.equal(calls(brokenHelper).filter((call) => call.endsWith('/prompt')).length, 1);
+
+  // As at launch, a server OpenCode itself reports as failed is left as it
+  // is: the prompt goes ahead and later prompts do not reconnect it.
+  const nativeFailure = fresh();
+  const failingHelper = openCode(database, { ...env, RECORD: nativeFailure, HELPER_FAILS: helped.name });
+  await failingHelper.prompt('process_0', prompt);
+  await failingHelper.prompt('process_0', prompt);
+  assert.equal(calls(nativeFailure).filter((call) => call.endsWith('/prompt')).length, 2);
+  assert.equal(calls(nativeFailure).filter((call) => call === `POST /api/experimental/mcp/${helped.name}/connect`).length, 1, 'a natively failed helper is reported by OpenCode, not retried on every prompt');
+
+  // A failed status read sends nothing and says so definitively.
+  const unreadable = fresh();
+  await assert.rejects(openCode(database, { ...env, RECORD: unreadable, FAIL_MCP_LIST: '1' }).prompt('process_0', prompt),
+    (error: unknown) => error instanceof ProviderCommandError && error.definitive === true && error.message.startsWith(OPENCODE_MCP_UNAVAILABLE));
+  assert.equal(calls(unreadable).filter((call) => call.endsWith('/prompt')).length, 0);
+
+  // Native commands start turns too.
+  const commanded = fresh();
+  await openCode(database, { ...env, RECORD: commanded }).command('process_0', 'review', '');
+  const commandOrder = calls(commanded);
+  const command = commandOrder.findIndex((call) => call.endsWith('/command'));
+  assert.ok(command > 0 && commandOrder.findIndex((call) => call.startsWith('PUT /api/experimental/mcp/patterm_')) < command, 'a native command is restored before it runs');
+}
