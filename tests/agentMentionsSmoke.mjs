@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { botMentionables, mentionLaunchers, mentionableAgents, mentionableProcesses, sessionForProcess, splitProcessMentions } = require('../dist/tests/resources/js/lib/agentMentions.js');
+const { botMentionables, mentionLaunchers, mentionableAgents, mentionableBots, mentionableProcesses, sessionForProcess, splitProcessMentions } = require('../dist/tests/resources/js/lib/agentMentions.js');
 
 function session(id, processId, fields = {}) {
   return {
@@ -28,6 +28,24 @@ test('mentionable agents are the other live agents, subagents after their roots'
   assert.deepEqual(agents.map((agent) => agent.name), ['Orchestrator', 'Review: PR #16', 'My reviewer', 'Terminal agent']);
   assert.deepEqual(agents.map((agent) => agent.parent), [null, 'Orchestrator', 'Me', null], 'subagents name their parent');
   assert.deepEqual(mentionableAgents([session('s_a', 'process_7'), session('s_b', 'process_8', { harness: 'codex' })], 'process_99').map((agent) => agent.name), ['claude', 'codex'], 'untitled agents fall back to their harness');
+});
+
+test('mentionable bots are the running ones whose purview includes the project', () => {
+  const bot = (id, purview, fields = {}) => ({ id, name: `Bot ${id}`, harness: 'codex', purview, ...fields });
+  const rows = [
+    { bot: bot('assistant', { kind: 'all' }), session: session('s_assistant', 'process_20') },
+    { bot: bot('ops', { kind: 'projects', projectIds: ['project_a'] }), session: session('s_ops', 'process_21') },
+    { bot: bot('elsewhere', { kind: 'projects', projectIds: ['project_b'] }), session: session('s_elsewhere', 'process_22') },
+    { bot: bot('nowhere', { kind: 'none' }), session: session('s_nowhere', 'process_23') },
+    { bot: bot('stopped', { kind: 'all' }), session: session('s_stopped', 'process_24', { exitedAt: '2026-10-01T11:00:00.000Z' }) },
+    { bot: bot('unstarted', { kind: 'all' }), session: null },
+    { bot: bot('self', { kind: 'all' }), session: session('s_self', 'process_2') }
+  ];
+  assert.deepEqual(mentionableBots(rows, 'project_a', 'process_2'), [
+    { botId: 'assistant', processId: 'process_20', name: 'Bot assistant', harness: 'codex' },
+    { botId: 'ops', processId: 'process_21', name: 'Bot ops', harness: 'codex' }
+  ], 'bots that cannot be messaged from the project, stopped bots, and the agent itself are left out');
+  assert.deepEqual(mentionableBots(rows, 'project_a', 'beta:process_8'), [], 'an agent on a paired host is offered none of this host\'s bots');
 });
 
 test('mentionable processes are the live ones, naming the agent that started them', () => {

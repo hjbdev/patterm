@@ -1,5 +1,6 @@
 // Agent mentions. The Integrated composer offers the project's other live
-// agents and processes in its @ menu, shows a picked one as a chip, and sends
+// agents and processes, and the running bots that work in the project, in its
+// @ menu, shows a picked one as a chip, and sends
 // it as its process ID, which agents pass to send_message or
 // get_process_output. The menu also offers
 // presets and harnesses, sent as launch tokens such as
@@ -10,6 +11,7 @@ import { agentLabel, buildAgentTabFamilies } from './agentTabs';
 import { activeProcesses, type LiveProcessRecord } from './processTabs';
 import { HARNESS_LABELS, harnessLabel, launchableHarnesses } from './harnessLabels';
 import { FIGURE_ID } from '../../../app/Services/TranscriptProjection';
+import type { BotRow } from './bots';
 import type { HarnessInstallationRecord, ProcessRecord, ProjectWorkbench, SessionRecord } from '../types';
 
 export interface MentionAgent {
@@ -19,6 +21,14 @@ export interface MentionAgent {
   name: string;
   // The parent agent's title, for subagents. A bot's menu adds the project.
   parent: string | null;
+}
+
+export interface MentionBot {
+  botId: string;
+  processId: string;
+  // The bot's name, which the menu searches.
+  name: string;
+  harness: string;
 }
 
 export interface MentionProcess {
@@ -87,6 +97,19 @@ export function mentionableAgents(sessions: readonly SessionRecord[], selfProces
     if (!session.processId || session.processId === selfProcessId) return [];
     const parent = session.parentId ? byId.get(session.parentId) : undefined;
     return [{ session, processId: session.processId, name: agentLabel(session), parent: parent ? agentLabel(parent) : null }];
+  });
+}
+
+// Running bots whose purview includes the project, the assistant's included:
+// send_message reaches only those, so the menu offers no others. The bots
+// are this host's, so an agent on a paired host, whose process ID names its
+// host, is offered none.
+export function mentionableBots(rows: readonly BotRow[], projectId: string, selfProcessId: string): MentionBot[] {
+  if (selfProcessId.includes(':')) return [];
+  return rows.flatMap(({ bot, session }) => {
+    const reaches = bot.purview.kind === 'all' || (bot.purview.kind === 'projects' && bot.purview.projectIds.includes(projectId));
+    if (!reaches || !session?.processId || session.exitedAt || session.processId === selfProcessId) return [];
+    return [{ botId: bot.id, processId: session.processId, name: bot.name, harness: bot.harness }];
   });
 }
 
