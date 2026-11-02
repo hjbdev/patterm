@@ -70,7 +70,9 @@ const VIRTUAL_KEYS: Record<string, number> = {
 // their text; shortcuts with Ctrl or Meta and editing keys go as raw keys.
 export function keyEvents(event: KeyboardEvent): Array<Record<string, unknown>> {
   const modifiers = modifierBits(event);
-  const code = VIRTUAL_KEYS[event.key] ?? (event.key.length === 1 ? event.key.toUpperCase().charCodeAt(0) : undefined);
+  // Character codes match Windows virtual keys only for ASCII letters and
+  // digits. For example, '.' is character 46, but virtual key 46 is Delete.
+  const code = VIRTUAL_KEYS[event.key] ?? (/^[a-z0-9]$/i.test(event.key) ? event.key.toUpperCase().charCodeAt(0) : undefined);
   const base = { key: event.key, code: event.code, modifiers, ...(code !== undefined && code < 256 ? { windowsVirtualKeyCode: code } : {}) };
   const printable = event.key.length === 1 && !event.ctrlKey && !event.metaKey;
   const text = printable ? event.key : event.key === 'Enter' ? '\r' : undefined;
