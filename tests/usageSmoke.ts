@@ -288,19 +288,23 @@ function main(): void {
     // A Claude session whose transcript was never imported keeps OpenCode's usage.
     insertMessage.run('msg_unmatched', 'ses_claude_agent', 'assistant', 3, created, created, reply({ id: 'opus', providerID: 'claude-agent' },
       [{ type: 'text', text: 'unmatched', native: { sessionID: 'claude_missing', messageID: 'm1' }, time: { created, completed: created } }], { input: 4, output: 6, reasoning: 0, cache: { read: 0, write: 0 } }));
+    // So does a newer reply in the imported session that Claude has not written yet.
+    const later = Date.parse(at(5));
+    insertMessage.run('msg_newer', 'ses_claude_agent', 'assistant', 4, later, later, JSON.stringify({ time: { created: later, completed: later }, model: { id: 'opus', providerID: 'claude-agent' },
+      content: [{ type: 'text', text: 'newer', native: { sessionID: 'claude_usage', messageID: 'a9' }, time: { created: later, completed: later } }], tokens: { input: 2, output: 1, reasoning: 0, cache: { read: 0, write: 0 } }, cost: 0 }));
     openCode.close();
     imports.import({ provider: 'opencode', path: openCodePath, project_id: 'opencode_project', trigger: 'manual' });
     const checkThroughOpenCode = (label: string) => {
       const summary = usage.summary(7, now);
-      assert.equal(summary.totals.responses, combined.totals.responses + 2, `${label}: the matched claude-agent reply is not counted again`);
+      assert.equal(summary.totals.responses, combined.totals.responses + 3, `${label}: the matched claude-agent reply is not counted again`);
       assert.deepEqual(summary.models.filter((row) => row.provider === 'opencode').map((row) => [row.model, row.responses]).sort(), [
         ['claude-haiku-4-5', 1],
         ['claude-opus-5-5', 1],
         ['gpt-6-sol', 1],
-        ['opus', 1]
-      ], `${label}: Claude transcript usage counts as OpenCode, and unmatched replies keep their own`);
+        ['opus', 2]
+      ], `${label}: Claude transcript usage counts as OpenCode, and replies it lacks keep their own`);
       assert.ok(!summary.models.some((row) => row.provider === 'claude' && row.model === 'claude-opus-5-5'), `${label}: no Claude copy remains`);
-      assert.equal(summary.projects.find((row) => row.projectId === 'opencode_project')?.inputTokens, 10 + 7 + 3 + 4, `${label}: it counts in the OpenCode conversation's project`);
+      assert.equal(summary.projects.find((row) => row.projectId === 'opencode_project')?.inputTokens, 10 + 7 + 3 + 4 + 2, `${label}: it counts in the OpenCode conversation's project`);
       assert.ok(Math.abs(summary.totals.costUsd - combined.totals.costUsd - (3 * 2 + 2 * 10) / 1_000_000) < 1e-12, `${label}: Claude pricing is kept`);
     };
     checkThroughOpenCode('imported');
@@ -312,6 +316,11 @@ function main(): void {
     archive.close();
     imports.import({ provider: 'opencode', path: openCodePath, project_id: 'opencode_project', trigger: 'manual' });
     checkThroughOpenCode('archived');
+    // A failed upgrade has already recorded the new parser; its retry re-reads them too.
+    historyDatabase.connection.prepare(`update conversation_import_files set status = 'error' where provider = 'opencode'`).run();
+    historyDatabase.connection.prepare(`update conversation_usage set claude_session_id = null where provider = 'opencode'`).run();
+    imports.import({ provider: 'opencode', path: openCodePath, project_id: 'opencode_project', trigger: 'manual' });
+    checkThroughOpenCode('retried');
     paceSmoke();
     console.log('usage smoke ok');
   } finally {

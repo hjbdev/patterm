@@ -403,9 +403,11 @@ export class AgentHistoryImportService {
   }
 
   // A new parser re-reads everything already imported from the file, including
-  // conversations the adapter would now skip, so none keeps the old parse.
+  // conversations the adapter would now skip, so none keeps the old parse. A
+  // failed or interrupted import has already recorded the new version, so it
+  // re-reads them too.
   private parserUpgradeOptions(adapter: ProviderHistoryAdapter, row: ImportFileState | undefined): ParseHistoryFileOptions | undefined {
-    if (!row || row.parser_version === adapter.parserVersion) return undefined;
+    if (!row || (row.parser_version === adapter.parserVersion && completedImportFileStatus(row.status))) return undefined;
     const ids = (this.database.connection.prepare(`select provider_conversation_id as id from conversations where source_file_id = ? and provider_conversation_id is not null`).all(row.id) as Array<{ id: string }>).map((entry) => entry.id);
     return ids.length ? { importedProviderConversationIds: ids } : undefined;
   }

@@ -130,12 +130,15 @@ export class UsageService {
 
     // Days follow the server's local calendar, like the rest of the app.
     // OpenCode's claude-agent responses are also in Claude Code's transcript,
-    // which has the real model and cache detail. Once that session's usage is
-    // imported it replaces OpenCode's rows, and counts as OpenCode usage in the
-    // OpenCode conversation's project.
+    // which has the real model and cache detail. That session's imported usage
+    // replaces OpenCode's rows up to its newest response, and counts as
+    // OpenCode usage in the OpenCode conversation's project. OpenCode stamps a
+    // response when it starts and Claude when it is written, so a response
+    // Claude has not recorded yet is newer than everything it has.
     const rows = db ? db.prepare(`
       with replaced as (
-        select claude.id as conversationId, linked.claudeId, linked.projectId
+        select claude.id as conversationId, linked.claudeId, linked.projectId,
+          (select max(occurred_at) from conversation_usage where conversation_usage.conversation_id = claude.id) as coveredUntil
         from (
           select claude_session_id as claudeId, min(conversations.project_id) as projectId
           from conversation_usage join conversations on conversations.id = conversation_usage.conversation_id
@@ -151,7 +154,7 @@ export class UsageService {
         from conversation_usage join conversations on conversations.id = conversation_usage.conversation_id
         left join replaced on replaced.conversationId = conversation_usage.conversation_id
         where occurred_at >= ?
-          and not (claude_session_id is not null and exists (select 1 from replaced where replaced.claudeId = conversation_usage.claude_session_id))
+          and not (claude_session_id is not null and exists (select 1 from replaced where replaced.claudeId = conversation_usage.claude_session_id and conversation_usage.occurred_at <= replaced.coveredUntil))
       )
       select date(occurred_at, 'localtime') as day, owner as provider, model, projectId,
         sum(input_tokens) as inputTokens, sum(cache_read_tokens) as cacheReadTokens, sum(cache_write_tokens) as cacheWriteTokens,
