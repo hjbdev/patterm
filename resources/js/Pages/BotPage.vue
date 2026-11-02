@@ -55,6 +55,9 @@
               hide-background
               compact-composer
               :addressee="row.bot.name"
+              :mention-agents="mentions.agents"
+              :mention-processes="mentions.processes"
+              :mention-launchers="mentionLaunchers"
               :restartable="true"
               :on-new-session="() => restart(true)"
               :on-restart-session="() => restart(false)"
@@ -106,6 +109,9 @@ import { restartBot, startBot } from '../lib/bots';
 import { botStates, setBotFocus, startBotEvents } from '../lib/botRelay';
 import type { TranscriptMessage } from '../lib/integratedConversation';
 import { useBrowserState } from '../lib/browser';
+import { botMentionables, mentionLaunchers as buildMentionLaunchers } from '../lib/agentMentions';
+import type { HarnessPreset } from '../lib/paletteSources';
+import { harnessPresets } from '../lib/serverQuery';
 import type { Peek } from '../lib/peek';
 import { phoneLayout } from '../lib/phoneLayout';
 import { hasSecrets } from '../lib/secrets';
@@ -113,7 +119,7 @@ import { hasSecrets } from '../lib/secrets';
 const route = useRoute();
 const router = useRouter();
 const { rows } = useBots();
-const { projects, botProjects, assistantProject } = useWorkbench();
+const { projects, botProjects, assistantProject, harnesses } = useWorkbench();
 const row = computed(() => rows.value.find((candidate) => candidate.bot.id === route.params.botId) ?? null);
 const live = computed(() => Boolean(row.value?.session && !row.value.session.exitedAt));
 const busy = ref(false);
@@ -142,11 +148,30 @@ async function toggleFocus(enabled: boolean): Promise<void> {
 }
 
 // The bot's own hidden project, where its session context lives.
-const projectId = computed(() => {
+const ownProject = computed(() => {
   const sessionId = row.value?.session?.id;
   const own = assistantProject.value ? [assistantProject.value, ...botProjects.value] : botProjects.value;
-  return sessionId ? own.find((project) => project.projectSessions.some((session) => session.id === sessionId))?.project.id ?? null : null;
+  return sessionId ? own.find((project) => project.projectSessions.some((session) => session.id === sessionId)) ?? null : null;
 });
+const projectId = computed(() => ownProject.value?.project.id ?? null);
+
+// The @ menu offers the bot's helpers and the agents and processes in its
+// purview, which are what its tools can reach, and presets and harnesses for
+// launching a helper.
+const mentions = computed(() => {
+  const processId = row.value?.session?.processId;
+  return row.value && processId
+    ? botMentionables(ownProject.value, projects.value, row.value.bot.purview, processId)
+    : { agents: [], processes: [] };
+});
+const presets = ref<HarnessPreset[]>([]);
+const mentionLaunchers = computed(() => buildMentionLaunchers(harnesses.value, presets.value));
+watch(() => row.value?.session?.processId, (processId) => {
+  if (!processId) return;
+  void harnessPresets<{ presets?: HarnessPreset[] }>()
+    .then((settings) => { presets.value = settings?.presets ?? []; })
+    .catch(() => { /* Harnesses are still offered. */ });
+}, { immediate: true });
 
 const peek = ref<Peek | null>(null);
 const peekLabel = computed(() => peek.value?.kind === 'browser' ? 'Peek: browser' : 'Session context');

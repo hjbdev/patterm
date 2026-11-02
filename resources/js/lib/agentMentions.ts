@@ -17,7 +17,7 @@ export interface MentionAgent {
   processId: string;
   // The agent's title, which the menu searches.
   name: string;
-  // The parent agent's title, for subagents.
+  // The parent agent's title, for subagents. A bot's menu adds the project.
   parent: string | null;
 }
 
@@ -26,7 +26,7 @@ export interface MentionProcess {
   processId: string;
   // The process's name, which the menu searches.
   name: string;
-  // The title of the agent that started it.
+  // The title of the agent that started it. A bot's menu adds the project.
   owner: string | null;
 }
 
@@ -97,6 +97,26 @@ export function mentionableProcesses(processes: readonly ProcessRecord[], sessio
     const owner = process.parentProcessId ? sessionForProcess(sessions, process.parentProcessId) : null;
     return { process, processId: process.id, name: process.name, owner: owner ? agentLabel(owner) : null };
   });
+}
+
+// What a bot's @ menu offers: its own helpers first, then the live agents and
+// processes of the user projects its purview reaches, each labelled with its
+// project. Paired hosts' records stay out, since purview names only this
+// host's projects.
+type Purview = { kind: 'none' } | { kind: 'all' } | { kind: 'projects'; projectIds: readonly string[] };
+
+export function botMentionables(own: ProjectWorkbench | null, projects: readonly ProjectWorkbench[], purview: Purview, selfProcessId: string): { agents: MentionAgent[]; processes: MentionProcess[] } {
+  const reached = projects.filter((item) => !item.project.host && (purview.kind === 'all' || (purview.kind === 'projects' && purview.projectIds.includes(item.project.id))));
+  const label = (base: string | null, project: string): string => base ? `${base} · ${project}` : project;
+  const agents: MentionAgent[] = [];
+  const processes: MentionProcess[] = [];
+  for (const item of own ? [own, ...reached] : reached) {
+    const sessions = item.projectSessions.filter((session) => !session.host);
+    const named = item !== own;
+    agents.push(...mentionableAgents(sessions, selfProcessId).map((agent) => named ? { ...agent, parent: label(agent.parent, item.project.name) } : agent));
+    processes.push(...mentionableProcesses(item.processes.filter((process) => !process.host), sessions).map((process) => named ? { ...process, owner: label(process.owner, item.project.name) } : process));
+  }
+  return { agents, processes };
 }
 
 // Splits text into plain runs, process IDs, and launch tokens.
