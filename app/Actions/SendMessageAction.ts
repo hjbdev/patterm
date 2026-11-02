@@ -19,18 +19,22 @@ export interface MessageSender {
   session_role: string;
 }
 
-// Any agent may message the assistant, so those messages are bounded.
-const ASSISTANT_MESSAGE_MAX_BYTES = 8 * 1024;
-const ASSISTANT_MESSAGE_WINDOW_MS = 60_000;
-const ASSISTANT_MESSAGES_PER_WINDOW = 6;
+// Any agent may message the assistant, and agents in a bot's purview may
+// message that bot, so those messages are bounded per sender and bot.
+const BOT_MESSAGE_MAX_BYTES = 8 * 1024;
+const BOT_MESSAGE_WINDOW_MS = 60_000;
+const BOT_MESSAGES_PER_WINDOW = 6;
 export const ASSISTANT_FOCUS_DETAIL = 'The assistant is in Focus mode. Your message is held and reaches it when focus ends; do not resend it.';
 const BOT_FOCUS_DETAIL = 'That bot is in Focus mode. Your message is held and reaches it when focus ends; do not resend it.';
 const REPLY_HINT = '\n\n(Reply with send_message target_process_id "assistant".)';
 
 // Delivers send_message. Targets resolve first, aliases included, so every
-// message that reaches the assistant gets the same limits, framing, and
-// record. Messages to and from the assistant cross projects and are kept as
-// timeline events; report timers count a reply to their owner.
+// message that reaches the assistant or another bot gets the same limits,
+// framing, and record. A bot's process sits in its own hidden project, so an
+// agent reaches it only when the bot's purview includes the agent's project;
+// the assistant's covers every project. Messages to bots and from the
+// assistant cross projects and are kept as timeline events; report timers
+// count a reply to their owner.
 export class SendMessageAction {
   private readonly recent = new Map<string, Array<{ at: number; slot: symbol }>>();
 
@@ -44,6 +48,8 @@ export class SendMessageAction {
       // Holds messages for a bot in Focus mode, such as a helper's reply.
       inbox?: Pick<BotInbox, 'hold'> | undefined;
       notifications?: Pick<NotificationActions, 'userInput'> | undefined;
+      // Whether a bot's purview reaches a project, so agents there may message it.
+      botAllows?: ((botId: string, projectId: string) => boolean) | undefined;
       timers?: Pick<TimerService, 'noteInstruction' | 'takeReportCallbacks'> | undefined;
     } = {}
   ) {}
@@ -60,12 +66,15 @@ export class SendMessageAction {
       if (!sender?.parent_process_id) throw new Error('send_message: caller has no parent process');
       targetId = sender.parent_process_id;
     } else {
-      targetId = target === assistantId && !senderIsAssistant ? target : scoped(target);
+      // A bot is named by any of its processes, so a mention survives its restarts.
+      const botId = senderIsAssistant ? null : this.reachableBot(sender, target);
+      if (botId) return this.toBot(sender, message, botId);
+      targetId = scoped(target);
     }
 
     if (targetId === assistantId) {
       if (senderIsAssistant) throw new Error('send_message: the assistant cannot message itself');
-      return this.toAssistant(sender, message, assistantId);
+      return this.toBot(sender, message, ASSISTANT_BOT_ID);
     }
 
     const hint = senderIsAssistant ? REPLY_HINT : '';
@@ -94,26 +103,30 @@ export class SendMessageAction {
     return senderIsAssistant && sender ? { ok: true, event_id: this.record(sender, targetId, message) } : 'ok';
   }
 
-  private async toAssistant(sender: MessageSender | null, message: string, assistantId: string): Promise<{ ok: true; event_id: string } | QueuedResult | { ok: false; delivery: 'uncertain'; event_id: string; detail: string }> {
-    if (!this.options.assistant) throw new Error('send_message: the assistant is unavailable');
-    if (!sender?.process_id) throw new Error('send_message: only agents can message the assistant');
-    if (Buffer.byteLength(message, 'utf8') > ASSISTANT_MESSAGE_MAX_BYTES) throw new Error('send_message: messages to the assistant are limited to 8 KB; put details in a scratchpad and link it');
+  private async toBot(sender: MessageSender | null, message: string, botId: string): Promise<{ ok: true; event_id: string } | QueuedResult | { ok: false; delivery: 'uncertain'; event_id: string; detail: string }> {
+    const assistant = botId === ASSISTANT_BOT_ID;
+    const who = assistant ? 'the assistant' : 'bots';
+    if (!this.options.assistant) throw new Error(`send_message: ${assistant ? 'the assistant is' : 'bots are'} unavailable`);
+    if (!sender?.process_id) throw new Error(`send_message: only agents can message ${who}`);
+    if (Buffer.byteLength(message, 'utf8') > BOT_MESSAGE_MAX_BYTES) throw new Error(`send_message: messages to ${who} are limited to 8 KB; put details in a scratchpad and link it`);
     // Reserve the slot before delivering, so concurrent calls count each other.
     const slot = Symbol('message');
     const now = Date.now();
-    const recent = (this.recent.get(sender.process_id) ?? []).filter((entry) => now - entry.at < ASSISTANT_MESSAGE_WINDOW_MS);
-    if (recent.length >= ASSISTANT_MESSAGES_PER_WINDOW) throw new Error('send_message: too many messages to the assistant; wait a minute');
-    this.recent.set(sender.process_id, [...recent, { at: now, slot }]);
-    // Report timers this message answers ride along, so the assistant wakes
+    const key = `${botId}\0${sender.process_id}`;
+    const recent = (this.recent.get(key) ?? []).filter((entry) => now - entry.at < BOT_MESSAGE_WINDOW_MS);
+    if (recent.length >= BOT_MESSAGES_PER_WINDOW) throw new Error(`send_message: too many messages to ${assistant ? 'the assistant' : 'that bot'}; wait a minute`);
+    this.recent.set(key, [...recent, { at: now, slot }]);
+    // Report timers this message answers ride along, so the bot wakes
     // once. They are put back if the message may not have arrived.
-    const taken = this.options.timers?.takeReportCallbacks(assistantId, { fromProcessId: sender.process_id, body: message });
+    const botProcessId = this.liveBot(botId);
+    const taken = botProcessId ? this.options.timers?.takeReportCallbacks(botProcessId, { fromProcessId: sender.process_id, body: message }) : undefined;
     let delivered: { process_id: string; delivery: 'delivered' | 'uncertain' | 'queued'; detail?: string };
     try {
-      delivered = await this.options.assistant.deliverAgentMessage(ASSISTANT_BOT_ID, sender.process_id, [message, ...taken?.texts ?? []].join('\n\n'));
+      delivered = await this.options.assistant.deliverAgentMessage(botId, sender.process_id, [message, ...taken?.texts ?? []].join('\n\n'));
     } catch (error) {
       taken?.restore();
       // An undelivered message does not count against the sender.
-      this.recent.set(sender.process_id, (this.recent.get(sender.process_id) ?? []).filter((entry) => entry.slot !== slot));
+      this.recent.set(key, (this.recent.get(key) ?? []).filter((entry) => entry.slot !== slot));
       throw error;
     }
     // An uncertain delivery keeps its slot and is recorded as uncertain, so
@@ -121,14 +134,35 @@ export class SendMessageAction {
     if (delivered.delivery === 'uncertain') {
       taken?.restore();
       return { ok: false, delivery: 'uncertain', event_id: this.record(sender, delivered.process_id, message, 'uncertain'),
-        detail: 'The assistant may or may not have received this message. Do not resend it unless the assistant asks.' };
+        detail: `${assistant ? 'The assistant' : 'The bot'} may or may not have received this message. Do not resend it unless ${assistant ? 'the assistant' : 'the bot'} asks.` };
     }
-    // A held message is stored durably, so it counts as sent; the
-    // assistant reads it when Focus mode or its current compaction ends.
+    // A held message is stored durably, so it counts as sent; the bot
+    // reads it when Focus mode or its current compaction ends.
     if (delivered.delivery === 'queued') {
-      return { ok: true, delivery: 'queued', event_id: this.record(sender, delivered.process_id, message), detail: delivered.detail ?? ASSISTANT_FOCUS_DETAIL };
+      return { ok: true, delivery: 'queued', event_id: this.record(sender, delivered.process_id, message), detail: delivered.detail ?? (assistant ? ASSISTANT_FOCUS_DETAIL : BOT_FOCUS_DETAIL) };
     }
     return { ok: true, event_id: this.record(sender, delivered.process_id, message) };
+  }
+
+  // The bot a target process ran, when the sender may message it: any agent
+  // may message the assistant, and agents in a bot's purview may message that
+  // bot. Other bots stay out of reach, as their processes are in their own
+  // projects, and fall through to the ordinary scope check.
+  private reachableBot(sender: MessageSender | null, processId: string): string | null {
+    if (!sender?.process_id) return null;
+    const row = this.database.connection.prepare(`select case when session_role = 'assistant' then ? else bot_id end as bot_id from sessions
+      where process_id = ? and (session_role = 'assistant' or (session_role = 'bot' and bot_id is not null))
+      order by started_at desc limit 1`).get(ASSISTANT_BOT_ID, processId) as { bot_id: string } | undefined;
+    if (!row) return null;
+    if (row.bot_id === ASSISTANT_BOT_ID) return row.bot_id;
+    return this.options.botAllows?.(row.bot_id, sender.project_id) ? row.bot_id : null;
+  }
+
+  private liveBot(botId: string): string | null {
+    if (botId === ASSISTANT_BOT_ID) return this.liveAssistant();
+    return (this.database.connection.prepare(`select sessions.process_id from sessions join processes on processes.id = sessions.process_id
+      where sessions.session_role = 'bot' and sessions.bot_id = ? and sessions.exited_at is null and processes.status = 'running'
+      order by sessions.started_at desc limit 1`).get(botId) as { process_id: string } | undefined)?.process_id ?? null;
   }
 
   private liveAssistant(): string | null {

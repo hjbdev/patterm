@@ -95,11 +95,11 @@ async function main(): Promise<void> {
     const db = database.connection;
     const now = new Date().toISOString();
     for (const id of ['p', 'q']) db.prepare('insert into projects(id,name,path,created_at,updated_at) values(?,?,?,?,?)').run(id, `Project ${id}`, dir, now, now);
-    const agent = (id: string, project: string, options: { mode?: string; role?: string; status?: string; activity?: string; resume?: string; parent?: string } = {}) => {
+    const agent = (id: string, project: string, options: { mode?: string; role?: string; status?: string; activity?: string; resume?: string; parent?: string; bot?: string } = {}) => {
       db.prepare(`insert into processes(id,project_id,parent_process_id,kind,name,status,activity,created_at,updated_at) values(?,?,?,'agent',?,?,?,?,?)`)
         .run(`proc-${id}`, project, options.parent ?? null, id, options.status ?? 'running', options.activity ?? 'idle', now, now);
-      db.prepare(`insert into sessions(id,project_id,process_id,harness,interface_mode,session_role,started_at,cwd,mcp_identity,resume_id) values(?,?,?,?,?,?,?,?,?,?)`)
-        .run(id, project, `proc-${id}`, 'claude', options.mode ?? 'tui', options.role ?? 'orchestrator', now, dir, `mcp-${id}`, options.resume ?? null);
+      db.prepare(`insert into sessions(id,project_id,process_id,harness,interface_mode,session_role,started_at,cwd,mcp_identity,resume_id,bot_id) values(?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(id, project, `proc-${id}`, 'claude', options.mode ?? 'tui', options.role ?? 'orchestrator', now, dir, `mcp-${id}`, options.resume ?? null, options.bot ?? null);
     };
     agent('live', 'p', { mode: 'integrated' });
     agent('tui', 'p', { resume: 'native-tui' });
@@ -109,6 +109,12 @@ async function main(): Promise<void> {
     agent('assistant', 'project_assistant', { role: 'assistant' });
     agent('helper', 'q', { parent: 'proc-assistant', role: 'worker' });
     agent('oc', 'p', { mode: 'integrated' });
+    // A bot that works in project p, and one that works nowhere, each in its own project.
+    db.prepare(`insert into projects(id,name,path,kind,created_at,updated_at) values('project_bots','Bots',?,'bots',?,?)`).run(dir, now, now);
+    agent('ops', 'project_bots', { role: 'bot', bot: 'ops' });
+    agent('ops-old', 'project_bots', { role: 'bot', bot: 'ops', status: 'exited' });
+    agent('idle-bot', 'project_bots', { role: 'bot', bot: 'idle' });
+    const bots = { allows: (botId: string | null, projectId: string) => botId === 'ops' && projectId === 'p' };
 
     let liveSnapshot: Record<string, unknown> = snapshot(liveRows);
     const integrated = {
@@ -131,15 +137,15 @@ async function main(): Promise<void> {
         return { conversation: { importedAt }, messages: before.slice(-limit), has_more: before.length > limit };
       }
     } as unknown as AgentHistoryReadService;
-    const delivered: Array<{ from: string; message: string }> = [];
+    const delivered: Array<{ from: string; message: string; bot?: string }> = [];
     let assistantRunning = true;
     let deliveryDelay = 0;
     const assistant = {
-      deliverAgentMessage: async (_botId: string, from: string, message: string) => {
+      deliverAgentMessage: async (botId: string, from: string, message: string) => {
         if (!assistantRunning) throw new Error('send_message: the assistant is not running');
         if (deliveryDelay) await wait(deliveryDelay);
-        delivered.push({ from, message });
-        return { process_id: 'proc-assistant', delivery: message.startsWith('uncertain') ? 'uncertain' as const : 'delivered' as const };
+        delivered.push({ from, message, ...botId === 'assistant' ? {} : { bot: botId } });
+        return { process_id: botId === 'assistant' ? 'proc-assistant' : `proc-${botId}`, delivery: message.startsWith('uncertain') ? 'uncertain' as const : 'delivered' as const };
       }
     };
     const terminalInputs: Array<Record<string, unknown>> = [];
@@ -154,7 +160,7 @@ async function main(): Promise<void> {
     } } as unknown as TerminalService;
     const timeline = new TimelineService(database);
     const settings = new SettingsService(database);
-    const registry = createTestMcpRegistry({ tempDir: dir, database, timeline, terminal, workbench: new WorkbenchRepository(database, settings), integrated, historyReadService: history, assistant });
+    const registry = createTestMcpRegistry({ tempDir: dir, database, timeline, terminal, workbench: new WorkbenchRepository(database, settings), integrated, historyReadService: history, assistant, bots });
     const worker = { identity: 'mcp-tui' };
     const assistantIdentity = { identity: 'mcp-assistant' };
     type Page = {
@@ -375,6 +381,23 @@ async function main(): Promise<void> {
     assert.deepEqual([uncertain.ok, uncertain.delivery], [false, 'uncertain']);
     const uncertainEvent = db.prepare(`select metadata from timeline_events where id = ?`).get(uncertain.event_id) as { metadata: string };
     assert.equal(JSON.parse(uncertainEvent.metadata).delivery, 'uncertain');
+
+    // Agents reach a bot whose purview includes their project, by any of its
+    // processes, through the relay and under the same limits. Other bots stay
+    // out of reach, and a bot's conversation stays unreadable.
+    const toBot = await registry.callPublic('send_message', { target_process_id: 'proc-ops', message: 'Deploy is ready.' }, worker) as { ok: boolean; event_id: string };
+    assert.deepEqual([toBot.ok, delivered.at(-1)], [true, { from: 'proc-tui', message: 'Deploy is ready.', bot: 'ops' }]);
+    assert.equal(JSON.parse((db.prepare(`select metadata from timeline_events where id = ?`).get(toBot.event_id) as { metadata: string }).metadata).to_process_id, 'proc-ops');
+    await registry.callPublic('send_message', { target_process_id: 'proc-ops-old', message: 'Mentioned before a restart.' }, worker);
+    assert.deepEqual(delivered.at(-1), { from: 'proc-tui', message: 'Mentioned before a restart.', bot: 'ops' });
+    const sentBefore = delivered.length;
+    await assert.rejects(registry.callPublic('send_message', { target_process_id: 'proc-ops', message: 'From elsewhere.' }, { identity: 'mcp-other' }), /outside the current caller scope/, 'a bot is out of reach outside its purview');
+    await assert.rejects(registry.callPublic('send_message', { target_process_id: 'proc-idle-bot', message: 'Hello?' }, worker), /outside the current caller scope/);
+    assert.equal(delivered.length, sentBefore);
+    await assert.rejects(registry.callPublic('get_conversation_output', { process_id: 'proc-ops' }, worker), /outside the current caller scope/, 'messaging a bot does not open its conversation');
+    await assert.rejects(registry.callPublic('send_message', { target_process_id: 'proc-ops', message: 'x'.repeat(8 * 1024 + 1) }, worker), /messages to bots are limited to 8 KB/);
+    for (let index = 0; index < 4; index += 1) await registry.callPublic('send_message', { target_process_id: 'proc-ops', message: `bot burst ${index}` }, worker);
+    await assert.rejects(registry.callPublic('send_message', { target_process_id: 'proc-ops', message: 'one too many' }, worker), /too many messages to that bot/);
 
     // The assistant's own children reach it through "parent" under the same rules.
     const viaParent = await registry.callPublic('send_message', { target_process_id: 'parent', message: 'Child update.' }, { identity: 'mcp-helper' }) as { event_id: string };
