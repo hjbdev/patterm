@@ -71,7 +71,20 @@ async function main(): Promise<void> {
     assert.equal(log.at(-1)?.event, 'memory.push_failed', 'a refused update is logged, not thrown');
     await deliver('proc-fable');
     assert.match(sent.at(-1)!.update.changes!, /Drinks tea/, 'a refused update is sent again with the next prompt');
-    assert.equal(sent.at(-1)!.update.full, false);
+    assert.equal(sent.at(-1)!.update.full, true, 'a refused update may have half-applied, so the next sends the whole state');
+    // A half-applied update is never trusted, either way the switch turns.
+    for (const [on, off] of [[true, false], [false, true]] as const) {
+      setBot('fable', { memory: off });
+      await deliver('proc-fable');
+      setBot('fable', { memory: on });
+      await deliver('proc-fable', true);
+      setBot('fable', { memory: off });
+      await deliver('proc-fable');
+      assert.equal(sent.at(-1)!.update.full, true, `after a failed switch to ${on ? 'on' : 'off'}, turning it back sends the whole state`);
+      assert.match(sent.at(-1)!.update.changes!, off ? /Drinks tea/ : /Saved memory is off/);
+    }
+    setBot('fable', { memory: true });
+    await deliver('proc-fable');
     setBot('fable', { memory: false });
     await deliver('proc-fable');
     assert.match(sent.at(-1)!.update.changes!, /Saved memory is off/, 'turning memory off is pushed once');

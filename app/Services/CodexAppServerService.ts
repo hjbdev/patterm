@@ -332,13 +332,19 @@ export class CodexAppServerService {
   async updateMemory(processId: string, update: MemoryUpdate): Promise<void> {
     const runtime = this.runtime(processId);
     const client = await this.client(runtime);
-    // A reconnect may have missed a compaction, so it refreshes too.
-    const refresh = this.compactedThreads.has(runtime.threadId) || this.reconnectedSockets.has(runtime.socketPath);
-    const text = refresh ? update.snapshot() : update.changes;
+    // A reconnect may have missed a compaction, so it refreshes too. The
+    // markers are taken before the request, so a compaction reported while it
+    // runs still refreshes the next update; a failed request puts them back.
+    const compacted = this.compactedThreads.delete(runtime.threadId);
+    const reconnected = this.reconnectedSockets.delete(runtime.socketPath);
+    const text = compacted || reconnected ? update.snapshot() : update.changes;
     if (!text) return;
-    await client.request('thread/inject_items', { threadId: runtime.threadId, items: [{ type: 'message', role: 'developer', content: [{ type: 'input_text', text }] }] });
-    this.compactedThreads.delete(runtime.threadId);
-    this.reconnectedSockets.delete(runtime.socketPath);
+    try {
+      await client.request('thread/inject_items', { threadId: runtime.threadId, items: [{ type: 'message', role: 'developer', content: [{ type: 'input_text', text }] }] });
+    } catch (error) {
+      if (compacted || reconnected) this.compactedThreads.add(runtime.threadId);
+      throw error;
+    }
   }
 
   async prompt(processId: string, input: ResolvedIntegratedPrompt): Promise<{ turnId: string }> {

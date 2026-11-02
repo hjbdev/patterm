@@ -248,6 +248,8 @@ function serve(socket) {
       else if (request.method === 'thread/inject_items') {
         items.push({turnId:'turn_test',item:{type:'agentMessage',id:'injected_' + request.id,text:JSON.stringify(request.params)}});
         send({jsonrpc:'2.0', id:request.id, result:{}});
+        // A compaction reported right behind the injection's reply.
+        if (JSON.stringify(request.params).includes('then compact')) notify('item/completed', {threadId:'thread_test', turnId:'turn_test', item:{type:'contextCompaction', id:'compact_after_inject'}});
       }
       else if (request.method === 'turn/start' && process.env.MCP_FAILURE) {
         send({jsonrpc:'2.0', id:request.id, result:{turn:{id:'turn_test'}}});
@@ -687,13 +689,20 @@ if (socketPath) {
   ], 'after compaction the whole memory, then only changes, and nothing while nothing changed');
   // A dropped connection may have missed a compaction, so the next update
   // after a reconnect is the whole memory, even with nothing changed.
+  // A compaction reported while an injection is answered still refreshes
+  // the next update.
+  await service.updateMemory('process_test', { changes: 'a change, then compact', full: false, snapshot: () => 'unused' });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  await service.updateMemory('process_test', { changes: null, full: false, snapshot: () => 'whole memory after compaction' });
+  assert.deepEqual((await injected()).slice(memoryItems.length).map((item) => item.items[0]!.content[0]!.text), ['a change, then compact', 'whole memory after compaction']);
+  const compactedCount = (await injected()).length;
   const memoryReconnect = new CodexAppServerService(database, runtimeDirectory);
   await memoryReconnect.updateMemory('process_test', { changes: 'before the drop', full: false, snapshot: () => 'unused' });
   memoryReconnect.disconnect();
   await memoryReconnect.updateMemory('process_test', { changes: null, full: false, snapshot: () => 'whole memory again' });
   await memoryReconnect.updateMemory('process_test', { changes: null, full: false, snapshot: () => 'unused' });
   memoryReconnect.disconnect();
-  assert.deepEqual((await injected()).slice(memoryItems.length).map((item) => item.items[0]!.content[0]!.text), ['before the drop', 'whole memory again']);
+  assert.deepEqual((await injected()).slice(compactedCount).map((item) => item.items[0]!.content[0]!.text), ['before the drop', 'whole memory again']);
   const presetRestoredService = new CodexAppServerService(database, runtimeDirectory);
   await presetRestoredService.prompt('process_test', { text: 'After service restart', references: [], attachments: [] });
   const restoredConversation = JSON.parse(JSON.stringify(await presetRestoredService.conversation('process_test'))) as { messages: { data: Array<{ id: string; text: string }> } };

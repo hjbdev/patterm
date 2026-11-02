@@ -14,7 +14,8 @@ export interface MemoryUpdate {
 // Keeps the assistant's and bots' saved memory current in their own
 // conversations, so they never spend a tool call per message checking it.
 // Before each prompt the provider gets what changed since the conversation's
-// last update, through the harness's native hidden context. What each
+// last update, through the harness's native hidden context. After a failed
+// update it gets the whole current state. What each
 // process received is kept in memory only: after a restart it gets the whole
 // memory once more, which is always safe.
 export class MemoryPushService {
@@ -29,8 +30,8 @@ export class MemoryPushService {
   ) {}
 
   // Brings the process's memory up to date with `send`. Only the assistant and
-  // bots get updates. A failed update is logged and retried with the next
-  // prompt; it never holds the prompt back.
+  // bots get updates. A failed update is logged, and the next prompt sends
+  // the whole current state; it never holds the prompt back.
   deliver(processId: string, send: (update: MemoryUpdate) => Promise<void>): Promise<void> {
     const previous = this.chains.get(processId) ?? Promise.resolve();
     const next = previous.catch(() => undefined).then(() => this.update(processId, send));
@@ -54,6 +55,9 @@ export class MemoryPushService {
       });
       this.delivered.set(processId, { enabled: current.enabled, revision: current.revision });
     } catch (error) {
+      // A failed update may have changed the agent's context partly, so what
+      // it holds is unknown: the next prompt sends the whole current state.
+      this.delivered.delete(processId);
       this.log('memory.push_failed', { process_id: processId, message: error instanceof Error ? error.message : String(error) });
     }
   }
