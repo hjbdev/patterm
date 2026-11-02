@@ -155,8 +155,8 @@ import type { ProcessRecord, ProjectSummary, SessionRecord } from '../types';
 import { startPrefetch } from '../lib/prefetch';
 
 const { projects, botProjects, sidecarStatus, sidecarAvailable, loaded, refresh } = useWorkbench();
-// Bots list in their own sidebar section; they and their helpers stay out of
-// the agent lists.
+// Bots list in their own sidebar section and stay out of the agent lists. Their
+// helpers list in their projects unless you hide agents started by bots.
 const { hidden: botHidden, all: allBots, loaded: botsLoaded } = useBots();
 const { router, route, activeProjectId, activeProject, selectedAgent, selectedProcess, activeTerminalId, projectViewMode,
   activeWorkspacePage, selectProject, pickProject, selectTerminal } = useWorkbenchNavigation();

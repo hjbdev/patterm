@@ -54,8 +54,8 @@ Project: ${projectId}
     return text('', about.join(''));
   }
 
-  // A bot: one persistent conversation the user texts with. Its subagents
-  // stay out of the user's view, so it relays what they find. The whole text
+  // A bot: one persistent conversation the user texts with. The user doesn't
+  // read its subagents' reports, so it relays what they find. The whole text
   // fits OpenCode's 8 KiB of JSON-encoded instructions: long project lists
   // and About notes are cut to fit.
   buildBot(bot: { name: string; instructions: string; digests?: boolean; focus?: boolean }, projects: 'all' | 'none' | Array<{ id: string; name: string }>, { memoryPush = false }: { memoryPush?: boolean } = {}): string {

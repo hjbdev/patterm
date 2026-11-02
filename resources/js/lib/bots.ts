@@ -122,17 +122,18 @@ export function hiddenFromBot(text: string): boolean {
   return !RECEIPT.test(start) && (isBackgroundMessage(start) || CLOSE_REQUEST.test(start));
 }
 
-// Bot sessions and every helper below them, across projects: the agent lists
-// leave all of them out. Helpers run in the bot's projects, so they are
+// What agent lists leave out: everything in the bots' own projects, and with
+// `helpers`, every helper below them across projects too. Helpers run in the
+// bot's projects and list there like any agent unless you hide them; they are
 // found through their parent's process, which sits in the bot's own project.
-export function botHidden(projects: readonly ProjectWorkbench[], botProjects: readonly ProjectWorkbench[]): { sessions: Set<string>; processes: Set<string> } {
+export function botHidden(projects: readonly ProjectWorkbench[], botProjects: readonly ProjectWorkbench[], { helpers = true }: { helpers?: boolean } = {}): { sessions: Set<string>; processes: Set<string> } {
   const sessions = new Set<string>();
   const processes = new Set<string>();
   for (const session of botProjects.flatMap((project) => project.projectSessions)) {
     sessions.add(session.id);
     if (session.processId) processes.add(session.processId);
   }
-  if (!processes.size) return { sessions, processes };
+  if (!helpers || !processes.size) return { sessions, processes };
   const all = projects.flatMap((project) => project.projectSessions);
   const others = projects.flatMap((project) => project.processes);
   for (let grew = true; grew;) {
@@ -157,8 +158,8 @@ export interface BotRow {
   // The bot's live session, or its latest while it starts again.
   session: SessionRecord | null;
   activity: RowActivity | null;
-  // A helper waiting on the user, which surfaces here because helpers
-  // otherwise stay out of sight, and the project it runs in.
+  // A helper waiting on the user, which surfaces here too in case you hide
+  // helpers or are looking at another project, and the project it runs in.
   waitingHelper: SessionRecord | null;
   waitingHelperProjectId: string | null;
   // The second line: what it asks, otherwise its status.

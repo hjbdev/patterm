@@ -1,7 +1,8 @@
 <template>
   <!-- Bots sit above a project's agents, and the global ones above the
        projects: each a conversation row with its face and its last line.
-       Their helpers never list; one waiting on you shows here. The global
+       Their helpers list in their projects like any agent; one waiting on
+       you shows here too. The global
        assistant leads them while it is on. -->
   <div v-if="shownRows.length" class="mb-1 border-b border-white/[0.06] pb-1">
     <div class="flex h-7 items-center gap-2 pl-2 pr-0.5 text-xs text-muted-foreground">
