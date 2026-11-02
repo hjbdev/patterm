@@ -122,6 +122,11 @@ async function main(): Promise<void> {
     activity('idle');
     await wait(5);
     assert.equal(finished()?.body, 'Finished its turn', 'a blank reply falls back');
+    botReply = '![](https://example.com/image.png)';
+    activity('working');
+    activity('idle');
+    await wait(5);
+    assert.equal(finished()?.body, 'Finished its turn', 'a reply with no plain text falls back');
     assert.deepEqual(open(), ['turn_finished:agent'], 'previews keep one turn notification');
     botReply = null;
 

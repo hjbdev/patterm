@@ -1,7 +1,7 @@
 import type { CloseRequestActions } from '../Actions/CloseRequestActions';
 import { awaitingUser } from '../Services/Activity';
 import type { IntegratedActivityChange } from '../Services/IntegratedAgentService';
-import type { NotificationService } from '../Services/NotificationService';
+import { clean, markdownText, type NotificationService } from '../Services/NotificationService';
 import type { TriageDecision } from '../Services/NotificationTriage';
 
 export interface IntegratedActivityNotificationContext {
@@ -63,8 +63,10 @@ export function integratedActivityNotifications(context: IntegratedActivityNotif
         const decision = context.triage(processId);
         if (decision.reason !== 'disabled') context.log('triage', { processId, ...decision });
         // A bot's replies are short, so its notification shows the reply.
-        const reply = context.botReply(processId)?.trim();
-        context.raise({ processId, source: 'integrated', kind: 'turn_finished', body: reply || 'Finished its turn', ...(reply ? { bodyLimit: REPLY_PREVIEW_LIMIT } : {}), dedupeKey: 'integrated:turn_finished', quiet: decision.quiet });
+        // One that shows nothing as plain text, such as an image, falls back.
+        const reply = context.botReply(processId) ?? '';
+        const shown = Boolean(clean(markdownText(reply), REPLY_PREVIEW_LIMIT));
+        context.raise({ processId, source: 'integrated', kind: 'turn_finished', body: shown ? reply : 'Finished its turn', ...(shown ? { bodyLimit: REPLY_PREVIEW_LIMIT } : {}), dedupeKey: 'integrated:turn_finished', quiet: decision.quiet });
       }
     }
   };
