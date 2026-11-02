@@ -237,6 +237,7 @@ void (async () => {
   assert.equal(expansion.isOpen('root'), false, 'families start closed');
   assert.equal(expansion.isNodeOpen('child'), true, 'nested agents start open');
   assert.deepEqual(expansion.view.value, { groupByStatus: false, sortByActivity: true, groupByProject: true, members: true }, 'old options carry over, bad values fall back');
+  assert.equal(JSON.parse(store.get('patterm.sidebar.view') ?? '{}').sortByActivity, true, 'carried-over options are saved before the old entry is rewritten');
   expansion.setOpen('root', true);
   expansion.setOpen('child', false);
   expansion.view.value.groupByStatus = true;

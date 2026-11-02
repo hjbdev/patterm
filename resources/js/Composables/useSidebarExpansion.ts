@@ -70,11 +70,12 @@ function stateFor(projectId: string): Ref<SidebarExpansion> {
 }
 
 // Before the options were shared, each project kept its own; the first
-// project read carries its choices over.
+// project read carries its choices over, saved at once before that project's
+// entry is rewritten without them.
 function viewState(projectId: string): Ref<SidebarView> {
   if (!view) {
     const created = ref<SidebarView>(pickView(parse(VIEW_KEY) ?? parse(KEY_PREFIX + projectId)));
-    scope.run(() => watch(created, (value) => localStorage.setItem(VIEW_KEY, JSON.stringify(value)), { deep: true }));
+    scope.run(() => watch(created, (value) => localStorage.setItem(VIEW_KEY, JSON.stringify(value)), { deep: true, immediate: true }));
     view = created;
   }
   return view;
