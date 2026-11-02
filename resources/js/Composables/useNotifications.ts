@@ -1,6 +1,7 @@
 import { ref, watch } from 'vue';
 import type { Router } from 'vue-router';
 import { toast } from 'vue-sonner';
+import { startPushAvatars } from '../lib/pushAvatars';
 
 export type NotificationUrgency = 'low' | 'normal' | 'high';
 
@@ -193,6 +194,8 @@ export function startNotifications(router: Router): void {
     const data = event.data as { type?: string; url?: string } | null;
     if (data?.type === 'patterm:navigate' && typeof data.url === 'string') void router.push(data.url);
   });
+
+  startPushAvatars();
 
   reportPresence();
   void refresh().then(markViewedRead);
