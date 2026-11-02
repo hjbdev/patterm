@@ -220,6 +220,16 @@ async function main(): Promise<void> {
     // The bots' project never joins the user's project lists, but the snapshot carries it.
     assert.deepEqual(workbench.listProjects().map((project) => project.id), ['p', 'q']);
     assert.equal(workbench.snapshot().projects.find((project) => project.project.id === botProjectId('fable'))?.projectSessions.find((session) => session.processId === 'proc-bot-1')?.botId, 'fable');
+    // A top-level agent the bot opens in a user project names the bot as its owner; one the user opens names none.
+    db.prepare(`insert into processes(id,project_id,kind,name,status,created_at,updated_at) values('proc-opened','p','agent','Opened','running',?,?), ('proc-mine','p','agent','Mine','running',?,?)`).run(now, now, now, now);
+    db.prepare(`insert into sessions(id,project_id,process_id,harness,interface_mode,session_role,started_at,cwd,mcp_identity,created_by_actor) values
+      ('session-opened','p','proc-opened','claude','tui','orchestrator',?,?,'mcp-opened','session-bot-1'), ('session-mine','p','proc-mine','claude','tui','orchestrator',?,?,'mcp-mine','user')`).run(now, dir, now, dir);
+    const owners = new Map(workbench.snapshot().projects.find((project) => project.project.id === 'p')!.projectSessions.map((session) => [session.id, session.ownerBotId]));
+    assert.equal(owners.get('session-opened'), 'fable');
+    assert.equal(owners.get('session-mine'), null);
+    assert.equal(workbench.record({ project_id: 'p', session_id: 'session-opened' }).session?.ownerBotId, 'fable');
+    db.prepare(`delete from sessions where id in ('session-opened', 'session-mine')`).run();
+    db.prepare(`delete from processes where id in ('proc-opened', 'proc-mine')`).run();
 
     // After a restart the bot resumes its conversation, and its helpers follow it.
     db.prepare(`insert into processes(id,project_id,parent_process_id,kind,name,status,created_at,updated_at) values('proc-helper','p','proc-bot-1','agent','Helper','running',?,?)`).run(now, now);
