@@ -264,9 +264,11 @@ export class OpenCodeServerService {
     const entry = (key: string) => `/api/experimental/session/${encodeURIComponent(runtime.resumeId)}/instructions/entries/${key}`;
     const changes = update.full ? '' : [this.memoryChanges.get(processId), update.changes].filter(Boolean).join('\n\n');
     if (update.full || Buffer.byteLength(changes) > MEMORY_CHANGES_BYTES) {
-      this.memoryChanges.delete(processId);
+      // Accepted changes stay until both writes land, so a failed rebase is
+      // retried as a rebase and never drops them.
       await this.api(runtime.executable, runtime.cwd, 'PUT', entry('patterm-memory'), { value: update.full ? update.changes : update.snapshot() });
       await this.api(runtime.executable, runtime.cwd, 'DELETE', entry('patterm-memory-changes'));
+      this.memoryChanges.delete(processId);
       return;
     }
     await this.api(runtime.executable, runtime.cwd, 'PUT', entry('patterm-memory-changes'), { value: changes });

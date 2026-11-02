@@ -253,10 +253,13 @@ export class ClaudeStreamService {
   // The host leaves memory for the next prompt's hook, and keeps the whole
   // memory to leave again after Claude compacts. Hosts from older Patterm
   // builds have no hook, and their agents read memory with tools.
+  // Called even without changes, so a refresh the host could not leave after
+  // compaction is retried.
   async updateMemory(processId: string, update: MemoryUpdate): Promise<void> {
-    if (!update.changes) return;
     try {
-      await callHost(this.runtime(processId).socketPath, 'memory', { changes: update.changes, snapshot: update.full ? update.changes : update.snapshot() });
+      await callHost(this.runtime(processId).socketPath, 'memory', update.changes
+        ? { changes: update.changes, snapshot: update.full ? update.changes : update.snapshot() }
+        : { changes: '' });
     } catch (error) {
       if (error instanceof Error && /Unknown Claude host method: memory/.test(error.message)) return;
       throw error;

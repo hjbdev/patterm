@@ -216,6 +216,11 @@ else if (method === 'GET' && route === '/api/session/active') {
     console.log(JSON.stringify({data:Object.fromEntries(created.map((_, index) => ['ses_' + index, {type:'running'}]))}));
   }
 }
+else if (process.env.FAIL_MEMORY && fs.existsSync(process.env.FAIL_MEMORY) && route.includes('/instructions/entries/patterm-memory') && method === fs.readFileSync(process.env.FAIL_MEMORY, 'utf8')) {
+  // One failed memory write, for the retry checks.
+  fs.unlinkSync(process.env.FAIL_MEMORY);
+  console.log('HTTP 500 Internal Server Error'); process.exit(1);
+}
 else if (method === 'PUT' && route.includes('/instructions/entries/')) {
   if (!route.startsWith('/api/experimental/session/')) { console.log('HTTP 404 Not Found'); process.exit(1); }
   console.log(JSON.stringify({data:{key:'patterm',value:body.value}}));
@@ -225,7 +230,8 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
 `, { mode: 0o700 });
   // No discoverable background service: requests use the fake CLI and never
   // reach a real OpenCode daemon on the test machine.
-  const env = { ...process.env, RECORD: record, XDG_STATE_HOME: path.join(directory, 'no-service') };
+  const failMemory = path.join(directory, 'fail-memory');
+  const env = { ...process.env, RECORD: record, XDG_STATE_HOME: path.join(directory, 'no-service'), FAIL_MEMORY: failMemory };
   let service = new OpenCodeServerService(database, env, { persistent: true });
   const socketPath = path.join(directory, 'mcp.sock');
   const registry = new McpToolRegistry();
@@ -342,6 +348,20 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
       ['PUT', 'patterm-memory', 'whole memory, rebased'],
       ['DELETE', 'patterm-memory-changes', null]
     ]);
+    // A rebase that fails at either write keeps the changes it would have
+    // replaced, so the retry rebases again instead of dropping them.
+    for (const failing of ['PUT', 'DELETE']) {
+      await service.updateMemory('process_0', { changes: 'b'.repeat(1500), full: false, snapshot: () => 'unused' });
+      const retryStart = fs.readFileSync(record, 'utf8').trim().split('\n').length;
+      fs.writeFileSync(failMemory, failing);
+      const rebase = { changes: 'c'.repeat(700), full: false, snapshot: () => `whole memory after ${failing}` };
+      await assert.rejects(service.updateMemory('process_0', rebase));
+      await service.updateMemory('process_0', rebase);
+      const retried = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line)).slice(retryStart)
+        .filter((request) => String(request.route).includes('/instructions/entries/patterm-memory') && request.method === 'PUT')
+        .map((request) => [String(request.route).split('/').at(-1), request.body?.value]);
+      assert.deepEqual(retried.at(-1), ['patterm-memory', `whole memory after ${failing}`], `a rebase whose ${failing} failed is retried as a rebase`);
+    }
     const controls = await service.controls('process_0');
     assert.deepEqual(controls.selectors.map((selector) => selector.id), ['model', 'variant', 'agent']);
     assert.deepEqual(controls.selectors[1]?.options.map((option) => option.value), ['default', 'low', 'high']);

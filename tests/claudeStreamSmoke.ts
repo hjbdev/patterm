@@ -772,24 +772,36 @@ process.stdin.on('data', (chunk) => {
       .run(memoryPrepared.resumeId, now);
     await waitFor(() => fs.existsSync(memoryArgvPath));
     const memoryArgv = JSON.parse(fs.readFileSync(memoryArgvPath, 'utf8')) as string[];
-    const settingsPath = memoryArgv[memoryArgv.indexOf('--settings') + 1]!;
-    const hookCommand = (JSON.parse(fs.readFileSync(settingsPath, 'utf8')) as { hooks: { UserPromptSubmit: Array<{ hooks: Array<{ command: string }> }> } }).hooks.UserPromptSubmit[0]!.hooks[0]!.command;
-    const hookPath = settingsPath.replace(/-settings\.json$/, '-memory.json');
-    assert.ok(hookCommand.includes(hookPath), 'the hook takes the file the host leaves');
-    const left = () => fs.existsSync(hookPath) ? String((JSON.parse(fs.readFileSync(hookPath, 'utf8')) as { hookSpecificOutput: { additionalContext: string } }).hookSpecificOutput.additionalContext) : null;
-    assert.equal(left(), null);
-    await memoryService.updateMemory('process_memory', { changes: 'whole memory', full: true, snapshot: () => 'unused' });
-    await memoryService.updateMemory('process_memory', { changes: 'a change', full: false, snapshot: () => 'whole memory with the change' });
-    assert.equal(left(), 'whole memory\n\na change', 'updates the hook has not taken yet are kept in order');
-    await memoryService.updateMemory('process_memory', { changes: null, full: false, snapshot: () => 'unchanged' });
-    assert.equal(left(), 'whole memory\n\na change', 'no changes leave nothing new');
-    assert.match(execFileSync('sh', ['-c', hookCommand], { input: '{}', encoding: 'utf8' }), /a change/);
-    assert.equal(left(), null, 'the hook takes what it prints');
-    await memoryService.prompt('process_memory', { text: 'compact please', references: [], attachments: [] });
-    await waitFor(() => left() !== null);
-    assert.equal(left(), 'whole memory with the change', 'after compaction the whole memory is left again');
-    await memoryService.stop('process_memory');
-    await waitFor(() => !fs.existsSync(settingsPath) && !fs.existsSync(hookPath));
+    if (process.platform === 'win32') {
+      // The hook needs a POSIX shell; Windows bots read memory with tools.
+      assert.ok(!memoryArgv.includes('--settings'), 'no memory hook without a POSIX shell');
+    } else {
+      const settingsPath = memoryArgv[memoryArgv.indexOf('--settings') + 1]!;
+      const hookCommand = (JSON.parse(fs.readFileSync(settingsPath, 'utf8')) as { hooks: { UserPromptSubmit: Array<{ hooks: Array<{ command: string }> }> } }).hooks.UserPromptSubmit[0]!.hooks[0]!.command;
+      const hookPath = settingsPath.replace(/-settings\.json$/, '-memory.json');
+      assert.ok(hookCommand.includes(hookPath), 'the hook takes the file the host leaves');
+      const left = () => fs.existsSync(hookPath) ? String((JSON.parse(fs.readFileSync(hookPath, 'utf8')) as { hookSpecificOutput: { additionalContext: string } }).hookSpecificOutput.additionalContext) : null;
+      assert.equal(left(), null);
+      await memoryService.updateMemory('process_memory', { changes: 'whole memory', full: true, snapshot: () => 'unused' });
+      await memoryService.updateMemory('process_memory', { changes: 'a change', full: false, snapshot: () => 'whole memory with the change' });
+      assert.equal(left(), 'whole memory\n\na change', 'updates the hook has not taken yet are kept in order');
+      await memoryService.updateMemory('process_memory', { changes: null, full: false, snapshot: () => 'unchanged' });
+      assert.equal(left(), 'whole memory\n\na change', 'no changes leave nothing new');
+      assert.match(execFileSync('sh', ['-c', hookCommand], { input: '{}', encoding: 'utf8' }), /a change/);
+      assert.equal(left(), null, 'the hook takes what it prints');
+      // A refresh that cannot be written after compaction leaves the host
+      // running, and is written with the next update.
+      fs.mkdirSync(hookPath);
+      await memoryService.prompt('process_memory', { text: 'compact please', references: [], attachments: [] });
+      await waitForConversation(memoryService, 'process_memory', /Conversation compacted/);
+      fs.rmdirSync(hookPath);
+      assert.equal(left(), null);
+      await memoryService.updateMemory('process_memory', { changes: null, full: false, snapshot: () => 'unused' });
+      assert.equal(left(), 'whole memory with the change', 'after compaction the whole memory is left again');
+      await memoryService.stop('process_memory');
+      await waitFor(() => !fs.existsSync(settingsPath) && !fs.existsSync(hookPath));
+    }
+    if (process.platform === 'win32') await memoryService.stop('process_memory');
 
     // Only answerable control requests become prompts. Elicitations become
     // forms, unknown dialogs are cancelled, unhandled subtypes get a protocol

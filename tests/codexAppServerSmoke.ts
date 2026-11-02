@@ -685,6 +685,15 @@ if (socketPath) {
     ['thread_test', 'developer', 'whole memory'],
     ['thread_test', 'developer', 'another change']
   ], 'after compaction the whole memory, then only changes, and nothing while nothing changed');
+  // A dropped connection may have missed a compaction, so the next update
+  // after a reconnect is the whole memory, even with nothing changed.
+  const memoryReconnect = new CodexAppServerService(database, runtimeDirectory);
+  await memoryReconnect.updateMemory('process_test', { changes: 'before the drop', full: false, snapshot: () => 'unused' });
+  memoryReconnect.disconnect();
+  await memoryReconnect.updateMemory('process_test', { changes: null, full: false, snapshot: () => 'whole memory again' });
+  await memoryReconnect.updateMemory('process_test', { changes: null, full: false, snapshot: () => 'unused' });
+  memoryReconnect.disconnect();
+  assert.deepEqual((await injected()).slice(memoryItems.length).map((item) => item.items[0]!.content[0]!.text), ['before the drop', 'whole memory again']);
   const presetRestoredService = new CodexAppServerService(database, runtimeDirectory);
   await presetRestoredService.prompt('process_test', { text: 'After service restart', references: [], attachments: [] });
   const restoredConversation = JSON.parse(JSON.stringify(await presetRestoredService.conversation('process_test'))) as { messages: { data: Array<{ id: string; text: string }> } };

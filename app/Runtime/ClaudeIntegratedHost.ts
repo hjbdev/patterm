@@ -136,8 +136,10 @@ function countUnhandled(type: string): void {
 let compactNotice: string | null = null;
 let noticeSequence = 0;
 // The whole saved memory as of the last update, left for the hook again after
-// compaction, which may summarise earlier updates away.
+// compaction, which may summarise earlier updates away. A refresh that could
+// not be left stays due until the next update leaves it.
 let memorySnapshot = '';
+let memoryRefresh = false;
 const TITLE_TIMEOUT_MS = 8_000;
 const INITIALIZE_REQUEST_ID = 'patterm_initialize';
 const SETTINGS_REQUEST_ID = 'patterm_settings';
@@ -291,8 +293,10 @@ async function handle(socket: net.Socket, request: JsonRecord): Promise<void> {
     return;
   }
   if (request.method === 'memory') {
-    memorySnapshot = String(params.snapshot ?? '');
-    leaveMemory(String(params.changes ?? ''), false);
+    if (typeof params.snapshot === 'string') memorySnapshot = params.snapshot;
+    // A due refresh is the whole current memory, changes included.
+    if (memoryRefresh) refreshMemory(true);
+    else leaveMemory(String(params.changes ?? ''), false);
     respond(socket, id, {});
     return;
   }
@@ -396,6 +400,18 @@ function leaveMemory(text: string, replace: boolean): void {
   const staging = `${config.memoryHookPath}.${process.pid}`;
   fs.writeFileSync(staging, JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext } }), { mode: 0o600 });
   fs.renameSync(staging, config.memoryHookPath);
+}
+
+// Leaves the whole memory after compaction. From Claude's output a failure
+// waits for the next update; from an update it fails that update.
+function refreshMemory(fromUpdate = false): void {
+  memoryRefresh = true;
+  try {
+    leaveMemory(memorySnapshot, true);
+    memoryRefresh = false;
+  } catch (error) {
+    if (fromUpdate) throw error;
+  }
 }
 
 function contextArgs(): string[] {
@@ -1018,7 +1034,7 @@ function receiveSystem(event: JsonRecord): void {
     else delete usage.contextTokens;
     upsertMessage({ id: compactNotice ?? `compact_${++noticeSequence}`, role: 'assistant', kind: 'notice', level: 'info', text: `Conversation compacted${metadata.trigger === 'auto' ? ' automatically' : ''}${before}${after}` }, true, true);
     compactNotice = null;
-    leaveMemory(memorySnapshot, true);
+    refreshMemory();
     // Subscribers re-read the snapshot for the new usage; auto-compaction
     // continues the turn, so no idle event follows.
     publish({ kind: 'pending' });

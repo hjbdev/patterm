@@ -114,6 +114,13 @@ const REALTIME_ANSWER_MS = 20_000;
 const CODEX_TASK_ITEMS = 100;
 
 export class CodexAppServerService {
+  // Threads that compacted, and app-servers reconnected after a drop, since
+  // memory last reached them: either may have lost memory Patterm injected,
+  // so their next update is the whole memory. Kept here, not on the
+  // connection, so a reconnect cannot forget them.
+  private readonly compactedThreads = new Set<string>();
+  private readonly reconnectedSockets = new Set<string>();
+  private readonly connectedSockets = new Set<string>();
   private readonly clients = new Map<string, CodexRpcClient>();
   private readonly models = new Map<string, string>();
   private readonly efforts = new Map<string, string>();
@@ -325,15 +332,13 @@ export class CodexAppServerService {
   async updateMemory(processId: string, update: MemoryUpdate): Promise<void> {
     const runtime = this.runtime(processId);
     const client = await this.client(runtime);
-    const compacted = client.takeCompaction(runtime.threadId);
-    const text = compacted ? update.snapshot() : update.changes;
+    // A reconnect may have missed a compaction, so it refreshes too.
+    const refresh = this.compactedThreads.has(runtime.threadId) || this.reconnectedSockets.has(runtime.socketPath);
+    const text = refresh ? update.snapshot() : update.changes;
     if (!text) return;
-    try {
-      await client.request('thread/inject_items', { threadId: runtime.threadId, items: [{ type: 'message', role: 'developer', content: [{ type: 'input_text', text }] }] });
-    } catch (error) {
-      if (compacted) client.markCompaction(runtime.threadId);
-      throw error;
-    }
+    await client.request('thread/inject_items', { threadId: runtime.threadId, items: [{ type: 'message', role: 'developer', content: [{ type: 'input_text', text }] }] });
+    this.compactedThreads.delete(runtime.threadId);
+    this.reconnectedSockets.delete(runtime.socketPath);
   }
 
   async prompt(processId: string, input: ResolvedIntegratedPrompt): Promise<{ turnId: string }> {
@@ -1313,7 +1318,13 @@ export class CodexAppServerService {
       this.onClientClosed(socketPath);
     }, this.options.requestTimeoutMs ?? 15_000);
     this.clients.set(socketPath, client);
-    client.onNotification((notification) => this.dispatchRealtime(notification));
+    if (this.connectedSockets.has(socketPath)) this.reconnectedSockets.add(socketPath);
+    this.connectedSockets.add(socketPath);
+    client.onNotification((notification) => {
+      const threadId = notification.params.threadId;
+      if (typeof threadId === 'string' && (notification.method === 'thread/compacted' || (notification.method === 'item/completed' && record(notification.params.item).type === 'contextCompaction'))) this.compactedThreads.add(threadId);
+      this.dispatchRealtime(notification);
+    });
     await client.request('initialize', {
       clientInfo: { name: 'patterm-desktop', title: 'Patterm', version: '1' },
       capabilities: { experimentalApi: true, requestAttestation: false }
@@ -1477,8 +1488,6 @@ export class CodexRpcClient {
   // Latest status per thread from its notifications, its turns, and native
   // reads. Running subagent threads keep their agent working.
   private readonly threadStatuses = new Map<string, CodexDeliveryStatus>();
-  // Threads that compacted, which may have dropped memory Patterm injected.
-  private readonly compactedThreads = new Set<string>();
 
   // Null when this connection has not learned the thread's status.
   threadStatus(threadId: string): CodexDeliveryStatus | null { return this.threadStatuses.get(threadId) ?? null; }
@@ -1573,10 +1582,6 @@ export class CodexRpcClient {
 
   pending(id: string): PendingServerRequest | undefined { return this.serverRequests.get(id); }
 
-  // Whether the thread compacted since the last call.
-  takeCompaction(threadId: string): boolean { return this.compactedThreads.delete(threadId); }
-  markCompaction(threadId: string): void { this.compactedThreads.add(threadId); }
-
   // Each Integrated agent owns its app-server, so every pending request belongs
   // to its thread or to a subagent thread that it spawned. Filtering by the
   // parent thread hid subagent approvals while the parent turn waited on them.
@@ -1653,8 +1658,6 @@ export class CodexRpcClient {
           }
           this.endedTurns.set(threadId, typeof record(params.turn).status === 'string' ? String(record(params.turn).status) : 'completed');
           if (this.endedTurns.size > 500) this.endedTurns.delete(this.endedTurns.keys().next().value!);
-        } else if ((method === 'thread/compacted' || (method === 'item/completed' && record(params.item).type === 'contextCompaction')) && threadId) {
-          this.compactedThreads.add(threadId);
         } else if (method === 'thread/tokenUsage/updated' && threadId) {
           this.tokenUsage.set(threadId, record(params.tokenUsage));
           // Codex reports usage after each model response in the thread.
