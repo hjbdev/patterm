@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
 import { AgentHistoryImportService } from '../app/Services/AgentHistory/AgentHistoryImportService';
 import { ClaudeHistoryAdapter } from '../app/Services/AgentHistory/ClaudeHistoryAdapter';
@@ -266,6 +267,35 @@ function main(): void {
     }
     const plateau = usage.summary(1, now).limits.find((limit) => limit.label === 'Weekly Opus');
     assert.equal(plateau?.projectedPercent, 40, 'a late observation sets the start of a plateau');
+
+    // OpenCode's claude-agent runs the Claude session imported above: its turns
+    // count once, from Claude's transcript, as OpenCode usage in its project.
+    appDatabase.connection.prepare('insert into projects (id, name, path, created_at, updated_at) values (?, ?, ?, ?, ?)').run('opencode_project', 'OpenCode project', path.join(directory, 'other'), stamp, stamp);
+    const openCodePath = path.join(directory, 'opencode.db');
+    const openCode = new DatabaseSync(openCodePath);
+    openCode.exec(`
+      create table session_v2 (id text primary key, directory text, title text, version text, time_created integer, time_updated integer, time_archived integer, parent_id text, agent text, model text, metadata text);
+      create table session_message (id text primary key, session_id text, type text, seq integer, time_created integer, time_updated integer, data text);
+    `);
+    const created = Date.parse(at(30));
+    openCode.prepare('insert into session_v2 values (?, ?, ?, ?, ?, ?, null, null, null, null, null)').run('ses_claude_agent', projectPath, 'Claude through OpenCode', '2', created, created);
+    const reply = (model: Record<string, unknown>, content: unknown[], tokens: Record<string, unknown>) => JSON.stringify({ time: { created, completed: created }, model, content, tokens, cost: 0 });
+    const insertMessage = openCode.prepare('insert into session_message values (?, ?, ?, ?, ?, ?, ?)');
+    insertMessage.run('msg_claude', 'ses_claude_agent', 'assistant', 1, created, created, reply({ id: 'opus', providerID: 'claude-agent' },
+      [{ type: 'text', text: 'reply a2', native: { sessionID: 'claude_usage', messageID: 'a2' }, time: { created, completed: created } }], { input: 10, output: 50, reasoning: 0, cache: { read: 1000, write: 100 } }));
+    insertMessage.run('msg_openai', 'ses_claude_agent', 'assistant', 2, created, created, reply({ id: 'gpt-6-sol', providerID: 'openai' },
+      [{ type: 'text', text: 'other reply', time: { created, completed: created } }], { input: 3, output: 2, reasoning: 0, cache: { read: 0, write: 0 } }));
+    openCode.close();
+    imports.import({ provider: 'opencode', path: openCodePath, project_id: 'opencode_project', trigger: 'manual' });
+    const throughOpenCode = usage.summary(7, now);
+    assert.equal(throughOpenCode.totals.responses, combined.totals.responses + 1, 'the claude-agent reply is not counted again');
+    assert.deepEqual(throughOpenCode.models.filter((row) => row.model?.startsWith('claude-') && row.provider !== 'claude').map((row) => [row.provider, row.model, row.responses]).sort(), [
+      ['opencode', 'claude-haiku-4-5', 1],
+      ['opencode', 'claude-opus-5-5', 1]
+    ], 'Claude transcript usage counts as OpenCode');
+    assert.ok(!throughOpenCode.models.some((row) => row.provider === 'claude' && row.model === 'claude-opus-5-5'), 'no Claude copy remains');
+    assert.equal(throughOpenCode.projects.find((row) => row.projectId === 'opencode_project')?.inputTokens, 10 + 7 + 3, 'it counts in the OpenCode conversation\'s project');
+    assert.ok(Math.abs(throughOpenCode.totals.costUsd - combined.totals.costUsd - (3 * 2 + 2 * 10) / 1_000_000) < 1e-12, 'Claude pricing is kept');
     paceSmoke();
     console.log('usage smoke ok');
   } finally {
