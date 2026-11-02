@@ -410,6 +410,10 @@ async function main(): Promise<void> {
     assert.equal(hiddenFromBot(text), true, text);
   }
   assert.equal(hiddenFromBot('Can you check the deploy?'), false);
+  // Notification and focus digests show as receipts.
+  for (const text of ['[Patterm notifications]\n- Build failed', '[Patterm focus digest digest_1: 2 items held while Focus mode was on or you were not running.]\n- one']) {
+    assert.equal(hiddenFromBot(text), false, text);
+  }
 
   console.log('botsSmoke: ok');
 }

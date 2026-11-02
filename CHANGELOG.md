@@ -82,6 +82,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bot conversations, the assistant's included, show notification and focus
+  digests again as compact receipts. Helpers' messages and reports, timer
+  callbacks, and close requests stay hidden.
 - A child's report wakes its parent once. When the report satisfies one of
   the parent's report timers, the timer's callback arrives in the same
   message, instead of a second turn that repeated the report. A message that
