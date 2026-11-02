@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { DatabaseService } from '../Services/DatabaseService';
 import type { SettingsService } from '../Services/SettingsService';
 import type { TimelineService } from '../Services/TimelineService';
-import { STATUS_LABEL_LIMIT, createStatusLabelInput, findStatusLabel, statusLabelId, type StatusLabel, type StatusLabelSettings } from '../Services/StatusLabels';
+import { STATUS_LABEL_LIMIT, createStatusLabelInput, deleteStatusLabelInput, findStatusLabel, saveStatusLabelInput, statusLabelId, type StatusLabel, type StatusLabelSettings } from '../Services/StatusLabels';
 
 // label: a label's id or name, or null to clear.
 export const statusSetInput = z.object({ label: z.string().trim().min(1).max(80).nullable() }).strict();
@@ -31,16 +31,32 @@ export class StatusLabelActions {
     return this.store.statusLabels();
   }
 
+  // Settings edits one label at a time, each read and written in one
+  // transaction, so a label an agent adds meanwhile is never overwritten.
+  saveLabel(raw: unknown): StatusLabelSettings {
+    const input = saveStatusLabelInput.parse(raw);
+    const settings = this.database.connection.transaction(() => {
+      const labels = this.labels();
+      if (labels.some((label) => label.id !== input.id && label.name.toLowerCase() === input.name.toLowerCase())) throw new Error(`There is already a label called ${input.name}.`);
+      if (input.id) {
+        if (!labels.some((label) => label.id === input.id)) throw new Error('This label was deleted.');
+        return this.store.updateStatusLabels({ labels: labels.map((label) => label.id === input.id ? { ...label, name: input.name, color: input.color, description: input.description } : label) });
+      }
+      if (labels.length >= STATUS_LABEL_LIMIT) throw new Error(`There are already ${STATUS_LABEL_LIMIT} status labels.`);
+      return this.store.updateStatusLabels({ labels: [...labels, { id: statusLabelId(input.name, labels.map((label) => label.id)), name: input.name, color: input.color, description: input.description, createdBy: 'user' }] });
+    })();
+    this.onChanged();
+    return settings;
+  }
+
   // Deleting a label unpins it from every agent, so a later label that reuses
   // its id never revives the old pin.
-  updateSettings(raw: unknown): StatusLabelSettings {
+  deleteLabel(raw: unknown): StatusLabelSettings {
+    const { id } = deleteStatusLabelInput.parse(raw);
     const db = this.database.connection;
     const settings = db.transaction(() => {
-      const before = this.store.statusLabels().labels.map((label) => label.id);
-      const saved = this.store.updateStatusLabels(raw);
-      const kept = new Set(saved.labels.map((label) => label.id));
-      const unpin = db.prepare('update processes set status_label_id = null, status_label_set_at = null, status_label_set_by = null where status_label_id = ?');
-      for (const id of before) if (!kept.has(id)) unpin.run(id);
+      const saved = this.store.updateStatusLabels({ labels: this.labels().filter((label) => label.id !== id) });
+      db.prepare('update processes set status_label_id = null, status_label_set_at = null, status_label_set_by = null where status_label_id = ?').run(id);
       return saved;
     })();
     this.onChanged();
@@ -68,14 +84,17 @@ export class StatusLabelActions {
   // A label already named so is returned instead of a duplicate.
   create(raw: unknown): { label: StatusLabel; created: boolean } {
     const input = createStatusLabelInput.parse(raw);
-    const settings = this.store.statusLabels();
-    const existing = findStatusLabel(settings.labels, input.name);
-    if (existing) return { label: existing, created: false };
-    if (settings.labels.length >= STATUS_LABEL_LIMIT) throw new Error(`There are already ${STATUS_LABEL_LIMIT} status labels. Ask the user to remove one in Settings › Status labels.`);
-    const label: StatusLabel = { id: statusLabelId(input.name, settings.labels.map((item) => item.id)), name: input.name, color: input.color, description: input.description ?? '', createdBy: 'agent' };
-    this.store.updateStatusLabels({ labels: [...settings.labels, label] });
-    this.onChanged();
-    return { label, created: true };
+    const result = this.database.connection.transaction(() => {
+      const labels = this.labels();
+      const existing = findStatusLabel(labels, input.name);
+      if (existing) return { label: existing, created: false };
+      if (labels.length >= STATUS_LABEL_LIMIT) throw new Error(`There are already ${STATUS_LABEL_LIMIT} status labels. Ask the user to remove one in Settings › Status labels.`);
+      const label: StatusLabel = { id: statusLabelId(input.name, labels.map((item) => item.id)), name: input.name, color: input.color, description: input.description ?? '', createdBy: 'agent' };
+      this.store.updateStatusLabels({ labels: [...labels, label] });
+      return { label, created: true };
+    })();
+    if (result.created) this.onChanged();
+    return result;
   }
 
   // The user typed or sent a message to the agent. Accepts a Patterm or PTY

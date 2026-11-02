@@ -57,6 +57,17 @@ export const createStatusLabelInput = z.object({
   description: descriptionInput.optional()
 }).strict();
 
+// The owner's edit of one label from Settings: an id edits that label,
+// none adds one.
+export const saveStatusLabelInput = z.object({
+  id: z.string().trim().min(1).max(80).nullable().default(null),
+  name: statusLabelNameInput,
+  color: statusLabelColorInput,
+  description: descriptionInput.default('')
+}).strict();
+
+export const deleteStatusLabelInput = z.object({ id: z.string().trim().min(1).max(80) }).strict();
+
 // A label named by id or by name, ignoring case and surrounding spaces.
 export function findStatusLabel(labels: StatusLabel[], wanted: string): StatusLabel | null {
   const key = wanted.trim().toLowerCase();

@@ -122,7 +122,7 @@ interface RegistryServices {
   closeRequests?: Pick<CloseRequestActions, 'request' | 'answer' | 'clear'>;
   projectSnoozes?: Pick<ProjectSnoozeActions, 'snooze' | 'wake'>;
   snoozes?: Pick<SnoozeActions, 'snooze' | 'unsnooze' | 'dismissReminder' | 'userInput'>;
-  statusLabels?: Pick<StatusLabelActions, 'labels' | 'set' | 'create' | 'userInput' | 'settings' | 'updateSettings'>;
+  statusLabels?: Pick<StatusLabelActions, 'labels' | 'set' | 'create' | 'userInput' | 'settings' | 'saveLabel' | 'deleteLabel'>;
   usage?: GetUsageSummaryAction;
   // Delivers to bots besides the user: agent messages and Focus mode.
   assistant?: Pick<BotRelay, 'deliverAgentMessage'> & Partial<Pick<BotRelay, 'setFocus' | 'focusItems'>>;
@@ -1112,8 +1112,12 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     () => ({ ...statusLabelsFor('settings_status_labels_get').settings(), colors: STATUS_LABEL_COLORS })
   );
   registry.register(
-    { name: 'settings_status_labels_update', namespace: 'settings', description: 'Save the status labels.', hidden: true, changes: ['settings', 'workbench'], inputSchema: { type: 'object', required: ['labels'] } },
-    (args) => statusLabelsFor('settings_status_labels_update').updateSettings(args)
+    { name: 'settings_status_label_save', namespace: 'settings', description: 'Add a status label, or edit one by id.', hidden: true, changes: ['settings', 'workbench'], inputSchema: { type: 'object', required: ['name', 'color'] } },
+    (args) => statusLabelsFor('settings_status_label_save').saveLabel(args)
+  );
+  registry.register(
+    { name: 'settings_status_label_delete', namespace: 'settings', description: 'Delete a status label and unpin it from agents.', hidden: true, changes: ['settings', 'workbench'], inputSchema: { type: 'object', required: ['id'] } },
+    (args) => statusLabelsFor('settings_status_label_delete').deleteLabel(args)
   );
   registry.register(
     { name: 'process_status_set', namespace: 'process', description: 'Pin a status label on an agent, or clear it.', hidden: true, inputSchema: { type: 'object', required: ['process_id', 'label'] } },

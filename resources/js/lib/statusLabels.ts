@@ -1,4 +1,4 @@
-import { STATUS_LABEL_COLORS, statusLabelId, type StatusLabelColor } from '../../../app/Services/StatusLabelCommon';
+import { STATUS_LABEL_COLORS, type StatusLabelColor } from '../../../app/Services/StatusLabelCommon';
 import { faceWash, facePalette } from './faces';
 import { topicChanged, topicRead } from './serverQuery';
 
@@ -6,7 +6,7 @@ import { topicChanged, topicRead } from './serverQuery';
 // review", configured in Settings › Status labels. These shapes mirror
 // app/Services/StatusLabels, which the renderer can't import with its zod.
 
-export { STATUS_LABEL_COLORS, statusLabelId, type StatusLabelColor };
+export { STATUS_LABEL_COLORS, type StatusLabelColor };
 
 export interface StatusLabel {
   id: string;
@@ -21,16 +21,19 @@ export interface StatusLabelSettings { labels: StatusLabel[] }
 export const STATUS_LABEL_LIMIT = 30;
 
 export function readStatusLabels(): Promise<StatusLabelSettings> {
-  return topicRead('settings', ['status_labels'], fetchStatusLabels);
+  return topicRead('settings', ['status_labels'], async () => await window.patterm.call('settings_status_labels_get', {}) as StatusLabelSettings);
 }
 
-// The saved list now, past any cache, for an edit to apply to.
-export async function fetchStatusLabels(): Promise<StatusLabelSettings> {
-  return await window.patterm.call('settings_status_labels_get', {}) as StatusLabelSettings;
+// Settings edits one label at a time, so the server applies each edit to the
+// list as it is then, keeping labels agents added meanwhile.
+export async function saveStatusLabel(label: { id: string | null; name: string; color: StatusLabelColor; description: string }): Promise<StatusLabelSettings> {
+  const saved = await window.patterm.call('settings_status_label_save', label) as StatusLabelSettings;
+  topicChanged('settings');
+  return saved;
 }
 
-export async function saveStatusLabels(settings: StatusLabelSettings): Promise<StatusLabelSettings> {
-  const saved = await window.patterm.call('settings_status_labels_update', settings) as StatusLabelSettings;
+export async function deleteStatusLabel(id: string): Promise<StatusLabelSettings> {
+  const saved = await window.patterm.call('settings_status_label_delete', { id }) as StatusLabelSettings;
   topicChanged('settings');
   return saved;
 }

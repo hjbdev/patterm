@@ -70,7 +70,7 @@
 import { onMounted, ref } from 'vue';
 import { cn } from '@/lib/utils';
 import { autosave, settingSaveStatus } from '../Composables/useSettingsAutosave';
-import { STATUS_LABEL_COLORS, STATUS_LABEL_LIMIT, fetchStatusLabels, readStatusLabels, saveStatusLabels, statusLabelDot, statusLabelId, statusLabelStyle, type StatusLabel, type StatusLabelColor } from '../lib/statusLabels';
+import { STATUS_LABEL_COLORS, STATUS_LABEL_LIMIT, deleteStatusLabel, readStatusLabels, saveStatusLabel, statusLabelDot, statusLabelStyle, type StatusLabel, type StatusLabelColor, type StatusLabelSettings } from '../lib/statusLabels';
 import { useTopicRefresh } from '../lib/serverQuery';
 import { errorMessage } from '../lib/utils';
 import SettingsItem from './settings/SettingsItem.vue';
@@ -104,24 +104,20 @@ async function load(): Promise<void> {
   }
 }
 
-// Each edit applies here first, then to the saved list as it is now, so a
-// label an agent added meanwhile survives. Edits save one at a time, and
-// changes from elsewhere reload the list while none is pending.
-type Edit = (labels: StatusLabel[]) => StatusLabel[];
+// Each edit shows here at once and saves as one label on the server, so a
+// label an agent adds meanwhile is never overwritten. Changes from elsewhere
+// reload the list while no save is pending; a failed save reloads it too.
 let pending = 0;
-let saving: Promise<unknown> = Promise.resolve();
 
 useTopicRefresh(['settings'], () => { if (!pending) void load(); });
 
-function persist(key: string, edit: Edit): void {
-  labels.value = edit(labels.value);
+function persist(key: string, local: StatusLabel[], save: () => Promise<StatusLabelSettings>): void {
+  labels.value = local;
   pending++;
-  saving = saving.then(() => autosave(key, async () => {
-    const latest = (await fetchStatusLabels()).labels;
-    // Electron IPC cannot clone Vue's reactive proxies.
-    const saved = await saveStatusLabels({ labels: edit(latest).map((label) => ({ ...label })) });
+  void autosave(key, async () => {
+    const saved = await save();
     if (pending === 1) labels.value = saved.labels;
-  })).then(() => {
+  }).then(() => {
     pending--;
     if (settingSaveStatus(key)?.state === 'error' && !pending) void load();
   });
@@ -141,8 +137,6 @@ function editLabel(label: StatusLabel): void {
   editorOpen.value = true;
 }
 
-const sameName = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
-
 function applyEditor(): void {
   const current = editor.value;
   if (!current) return;
@@ -151,23 +145,20 @@ function applyEditor(): void {
     editorError.value = 'Give the label a name.';
     return;
   }
-  if (labels.value.some((label) => label.id !== current.id && sameName(label.name, name))) {
+  if (labels.value.some((label) => label.id !== current.id && label.name.toLowerCase() === name.toLowerCase())) {
     editorError.value = `There is already a label called ${name}.`;
     return;
   }
-  const description = current.description.trim();
-  const { id, color } = current;
-  if (id) {
-    persist(`status_labels.${id}`, (list) => list.map((label) => label.id === id ? { ...label, name, color, description } : label));
-  } else {
-    persist('status_labels.list', (list) => list.some((label) => sameName(label.name, name)) ? list
-      : [...list, { id: statusLabelId(name, list.map((label) => label.id)), name, color, description, createdBy: 'user' }]);
-  }
+  const edit = { id: current.id, name, color: current.color, description: current.description.trim() };
+  // A new label appears once the server gives it an id.
+  persist(`status_labels.${edit.id ?? 'list'}`,
+    edit.id ? labels.value.map((label) => label.id === edit.id ? { ...label, name, color: edit.color, description: edit.description } : label) : labels.value,
+    () => saveStatusLabel(edit));
   editorOpen.value = false;
 }
 
 // Agents showing a deleted label lose it.
 function removeLabel(label: StatusLabel): void {
-  persist('status_labels.list', (list) => list.filter((item) => item.id !== label.id));
+  persist('status_labels.list', labels.value.filter((item) => item.id !== label.id), () => deleteStatusLabel(label.id));
 }
 </script>

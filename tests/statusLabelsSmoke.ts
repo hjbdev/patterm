@@ -72,23 +72,31 @@ async function main(): Promise<void> {
 
     // A label the user pins stays when they talk to the agent, and the
     // browser tools that set labels are allowed from the UI.
-    assert.ok(BROWSER_TOOLS.has('process_status_set') && BROWSER_TOOLS.has('settings_status_labels_update'));
+    assert.ok(['process_status_set', 'settings_status_labels_get', 'settings_status_label_save', 'settings_status_label_delete'].every((tool) => BROWSER_TOOLS.has(tool)));
     await registry.call('process_status_set', { process_id: bob, label: 'blocked' }, {});
     assert.equal(pinned(bob)?.setBy, 'user');
     labels.userInput(bob);
     assert.equal(pinned(bob)?.name, 'Blocked');
 
     // Renaming a label renames it on the agent; deleting it clears it.
-    const renamed = settings.statusLabels().labels.map((label) => label.id === 'blocked' ? { ...label, name: 'Stuck', color: 'pink' as const } : label);
-    await registry.call('settings_status_labels_update', { labels: renamed }, {});
+    await registry.call('settings_status_label_save', { id: 'blocked', name: 'Stuck', color: 'pink' }, {});
     assert.deepEqual([pinned(bob)?.name, pinned(bob)?.color], ['Stuck', 'pink']);
-    await registry.call('settings_status_labels_update', { labels: renamed.filter((label) => label.id !== 'blocked') }, {});
+    await assert.rejects(registry.call('settings_status_label_save', { id: null, name: 'stuck', color: 'red' }, {}), /already a label called stuck/);
+    await registry.call('settings_status_label_delete', { id: 'blocked' }, {});
     assert.equal(pinned(bob), null);
     assert.equal(await listed('alice', bob), undefined);
+    await assert.rejects(registry.call('settings_status_label_save', { id: 'blocked', name: 'Stuck', color: 'pink' }, {}), /deleted/);
     // A new label that takes the deleted one's id doesn't revive the pin.
-    await registry.call('settings_status_labels_update', { labels: [...renamed.filter((label) => label.id !== 'blocked'), { id: 'blocked', name: 'Blocked!', color: 'blue' }] }, {});
+    const reused = await registry.call('settings_status_label_save', { id: null, name: 'Blocked', color: 'blue' }, {}) as { labels: Array<{ id: string; createdBy: string }> };
+    assert.deepEqual(reused.labels.at(-1), { id: 'blocked', name: 'Blocked', color: 'blue', description: '', createdBy: 'user' });
     assert.equal(pinned(bob), null);
-    assert.equal((db.prepare('select status_label_id from processes where id = ?').get(bob) as { status_label_id: string | null }).status_label_id, null);
+
+    // Each Settings edit applies to the list as it is then, so a label an
+    // agent added since the page loaded survives the owner's next edit.
+    await registry.callPublic('status_label_create', { name: 'Paused', color: 'graphite' }, { identity: 'bob' });
+    await registry.call('settings_status_label_save', { id: 'waiting-on-ci', name: 'Waiting on CI', color: 'cyan' }, {});
+    await registry.call('settings_status_label_delete', { id: 'needs-input' }, {});
+    assert.ok(settings.statusLabels().labels.some((label) => label.id === 'paused'));
 
     // An agent creates a label only when asked; a second with the same name
     // returns the first. The new label is marked as an agent's.
