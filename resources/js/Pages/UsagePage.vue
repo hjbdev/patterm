@@ -8,7 +8,6 @@
         <h1 class="text-sm font-semibold">Usage</h1>
         <p class="truncate text-[11px] text-muted-foreground">Tokens from agent conversations and auto-summaries, plus remaining quota.</p>
       </div>
-      <AssistantButton />
     </header>
 
     <main class="mx-1.5 mb-1.5 min-h-0 flex-1 overflow-hidden rounded-xl border-t border-white/5 bg-background">
@@ -160,7 +159,6 @@
 </template>
 
 <script setup lang="ts">
-import AssistantButton from '../Components/Assistant/AssistantButton.vue';
 import { computed, onBeforeUnmount, ref } from 'vue';
 import { ArrowLeft } from 'lucide-vue-next';
 import { Button } from '../Components/ui/button';

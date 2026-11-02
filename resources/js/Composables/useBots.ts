@@ -1,6 +1,5 @@
 import { computed, ref } from 'vue';
-import { assistant } from '../lib/assistant';
-import { ASSISTANT_BOT_ID, assistantRow, botHidden, botRows, readBots, type BotSettings } from '../lib/bots';
+import { botHidden, botRows, readBots, type BotSettings } from '../lib/bots';
 import { useTopicRefresh } from '../lib/serverQuery';
 import { useWorkbench } from './useWorkbench';
 
@@ -32,12 +31,10 @@ export function useBots() {
     settings,
     voices,
     loaded,
-    rows: computed(() => botRows(settings.value, projects.value, botProjects.value)),
-    // The assistant's bot settings: its name and avatar.
-    assistantBot: computed(() => settings.value.bots.find((bot) => bot.id === ASSISTANT_BOT_ID) ?? null),
-    // The global assistant, which lists with the bots while it is on.
-    assistantRow: computed(() => assistant.enabled ? assistantRow(assistantProject.value, assistant.processId) : null),
-    // Bot sessions and their helpers, which agent lists leave out.
+    // Every bot, the assistant first while it is on.
+    rows: computed(() => botRows(settings.value, projects.value, assistantProject.value ? [assistantProject.value, ...botProjects.value] : botProjects.value)),
+    // Bot sessions and their helpers, which agent lists leave out. The
+    // assistant's agents list with everyone else's.
     hidden: computed(() => botHidden(projects.value, botProjects.value)),
     reload: load
   };

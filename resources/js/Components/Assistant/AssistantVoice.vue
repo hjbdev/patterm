@@ -87,7 +87,7 @@ import AgentIcon from '../AgentIcon.vue';
 import { Button } from '../ui/button';
 import { toolActivityLabel, type TranscriptMessage } from '../../lib/integratedConversation';
 import { AssistantVoiceSession, type VoiceStatus } from '../../lib/assistantVoice';
-import { message } from '../../lib/assistant';
+import { errorMessage } from '../../lib/utils';
 import { onBotRealtime } from '../../lib/botRelay';
 import { ASSISTANT_BOT_ID } from '../../../../app/Bots/BotIdentity';
 import { toolProcessCall } from '../../lib/assistantFocus';
@@ -257,7 +257,7 @@ async function connect(): Promise<void> {
     await current.stop();
     if (current !== session) return;
     status.value = 'failed';
-    failure.value = message(error);
+    failure.value = errorMessage(error);
   }
 }
 

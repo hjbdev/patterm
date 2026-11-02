@@ -14,7 +14,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { autosave } from '../Composables/useSettingsAutosave';
-import { message } from '../lib/assistant';
+import { errorMessage } from '../lib/utils';
 import FigureExamples from './FigureExamples.vue';
 import SettingsPanel from './settings/SettingsPanel.vue';
 import SettingsRow from './settings/SettingsRow.vue';
@@ -41,7 +41,7 @@ onMounted(async () => {
   try {
     enabled.value = (await window.patterm.call('settings_figures_get', {}) as { enabled: boolean }).enabled;
   } catch (caught) {
-    error.value = message(caught);
+    error.value = errorMessage(caught);
   }
 });
 </script>

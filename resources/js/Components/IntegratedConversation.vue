@@ -329,7 +329,7 @@ import { permissionAsk } from '../../../app/Services/IntegratedAsking';
 import { publishIntegratedControls } from '../lib/integratedControlsRegistry';
 import { onWorkspaceRequest, type WorkspaceRequest } from '../lib/workspaceRequests';
 
-// `embedded` conversations live outside the workbench main area, such as the assistant panel.
+// `embedded` conversations live outside the workbench main area, such as a routine run's dialog.
 // `onLaunched` is a prop rather than an emit: /new and /resume close this tab
 // before they answer, which can unmount the pane, and Vue drops emits from an
 // unmounted component.

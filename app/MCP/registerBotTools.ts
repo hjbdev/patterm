@@ -21,8 +21,7 @@ const voiceStartInput = z.object({ bot_id: z.string().min(1), sdp: z.string().mi
 const voiceStopInput = z.object({ call_id: callId }).strict();
 const focusSetInput = z.object({ bot_id: z.string().min(1), enabled: z.boolean() }).strict();
 
-// Owner-only bot controls for Settings › Bots, the bot's page and the
-// assistant's dock.
+// Owner-only bot controls for Settings › Bots and each bot's page.
 export function registerBotTools(
   registry: McpToolRegistry,
   bots: Pick<BotService, 'list' | 'reconcile' | 'ensure' | 'restartProcess'>,

@@ -13,7 +13,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, shallowRef } from 'vue';
 import { autosave } from '../Composables/useSettingsAutosave';
-import { message } from '../lib/assistant';
+import { errorMessage } from '../lib/utils';
 import { loadIdleCompactionSettings, saveIdleCompactionSettings, type IdleCompactionHarness, type IdleCompactionSettings } from '../lib/idleCompaction';
 import SettingsPanel from './settings/SettingsPanel.vue';
 import SettingsRow from './settings/SettingsRow.vue';
@@ -52,7 +52,7 @@ onMounted(async () => {
     settings.value = loaded.settings;
     afterMinutes.value = loaded.afterMinutes;
   } catch (caught) {
-    error.value = message(caught);
+    error.value = errorMessage(caught);
   }
 });
 </script>

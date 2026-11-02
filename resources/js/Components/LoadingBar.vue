@@ -1,6 +1,6 @@
 <template>
   <!-- Pages pad their content, so the bar pins to the main area instead of its
-       parent. Inline bars, such as the assistant panel's, pin to their parent. -->
+       parent. Inline bars, such as a routine run dialog's, pin to their parent. -->
   <Teleport to="#workbench-main" defer :disabled="inline === true">
     <Transition name="loading-bar">
       <div v-if="active" class="loading-bar" role="progressbar" :aria-label="label" aria-busy="true">
