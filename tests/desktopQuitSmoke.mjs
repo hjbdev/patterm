@@ -187,6 +187,7 @@ async function desktop(options = {}) {
     '../../app/App': { createApplication: async () => application },
     '../../routes/commands': { registerCommandRoutes: () => {} },
     '../../routes/ipc': { registerIpcRoutes: () => {} },
+    '../../routes/application': { observedRoutes: (routes) => routes },
     '../../routes/remote': { servePeerRoutes: () => {} },
     './launchIdentity': { resolveLaunchIdentity: () => ({ appName: 'quit-test', appDataPath: '/tmp/patterm-desktop-quit-test', mode: 'production' }) },
     './sidecar': { isInstalledLaunch: () => true, resolveMcpShimPath: () => '', resolveSidecarPath: () => '' },
