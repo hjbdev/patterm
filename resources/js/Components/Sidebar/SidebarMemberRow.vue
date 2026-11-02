@@ -27,7 +27,7 @@
         <ProjectLogo v-if="project" :project="project" :size="14" :title="project.name" />
         <!-- Rows outside the selected thread dim their text until hovered; status stays bright. -->
         <span class="min-w-0 truncate transition-colors duration-200 motion-reduce:transition-none" :class="dimmed && 'text-muted-foreground/80 group-hover/row:text-foreground/85'">{{ label }}</span>
-        <StatusLabelPill v-if="session?.statusLabel" :label="session.statusLabel" />
+        <StatusLabelPill v-if="session?.statusLabel" :label="session.statusLabel" dot />
         <HostBadge v-if="host && host !== parentHost" :host="host" class="-ml-0.5" />
       </button>
     </SidebarItemMenu>
