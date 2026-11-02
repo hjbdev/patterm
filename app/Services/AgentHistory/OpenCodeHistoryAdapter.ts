@@ -37,7 +37,7 @@ interface OpenCodePartRow {
 
 export class OpenCodeHistoryAdapter implements ProviderHistoryAdapter {
   readonly provider = 'opencode' as const;
-  readonly parserVersion = 'opencode-sqlite-v9';
+  readonly parserVersion = 'opencode-sqlite-v10';
 
   defaultSources(homeDir: string): HistorySourceCandidate[] {
     const db = path.join(homeDir, '.local', 'share', 'opencode', 'opencode.db');
@@ -182,6 +182,18 @@ export class OpenCodeHistoryAdapter implements ProviderHistoryAdapter {
       : partRows.map((row) => ({ table: 'part' as const, id: row.id, messageId: row.message_id, created: row.time_created, data: row.data })))
       .flatMap((row) => openCodeImages(row, messageDataById.get(row.messageId)?.role === 'user' ? 'pasted' : 'viewed', firstSeq.get(row.messageId) ?? null));
 
+    // Claude Code records the turns it ran for OpenCode in its own transcript, with
+    // fuller usage. Those turns are left to that import, which UsageService
+    // attributes back to OpenCode through claudeSessionIds.
+    const claudeSessionIds = new Set<string>();
+    const usage = messageRows.flatMap((row) => {
+      const data = messageDataById.get(row.id);
+      const claudeSessionId = claudeAgentSessionId(data);
+      if (!claudeSessionId) return openCodeUsage(row, data, Boolean(session.parent_id));
+      claudeSessionIds.add(claudeSessionId);
+      return [];
+    });
+
     return {
       provider: this.provider,
       providerConversationId: session.id,
@@ -193,10 +205,10 @@ export class OpenCodeHistoryAdapter implements ProviderHistoryAdapter {
       endedAt: null,
       status: 'active',
       sourcePath,
-      metadata: { parentId: session.parent_id, agent: session.agent, model: session.model, providerMetadata: safeJson(session.metadata) },
+      metadata: { parentId: session.parent_id, agent: session.agent, model: session.model, providerMetadata: safeJson(session.metadata), ...(claudeSessionIds.size ? { claudeSessionIds: [...claudeSessionIds].sort() } : {}) },
       messages,
       media,
-      usage: messageRows.flatMap((row) => openCodeUsage(row, messageDataById.get(row.id), Boolean(session.parent_id))),
+      usage,
       skills: skillUsesFromMessages(messages, { subagent: Boolean(session.parent_id), finishedCalls: true })
     };
   }
@@ -209,6 +221,19 @@ function completedProse(part: Record<string, unknown>, parent: Record<string, un
   const parentTime = parent?.time && typeof parent.time === 'object' ? parent.time as Record<string, unknown> : {};
   return [partTime.end, partTime.completed, parentTime.completed].some(value =>
     typeof value === 'number' && Number.isFinite(value) && value > 0);
+}
+
+// The Claude Code session behind a claude-agent reply, which its content
+// parts name as native.sessionID. Replies without one keep OpenCode's usage.
+function claudeAgentSessionId(data: Record<string, unknown> | undefined): string | null {
+  if (data?.role !== 'assistant' || !data.model || typeof data.model !== 'object') return null;
+  if ((data.model as Record<string, unknown>).providerID !== 'claude-agent' || !Array.isArray(data.content)) return null;
+  for (const part of data.content) {
+    const native = part && typeof part === 'object' ? (part as Record<string, unknown>).native : null;
+    const id = native && typeof native === 'object' ? stringValue((native as Record<string, unknown>).sessionID) : null;
+    if (id) return id;
+  }
+  return null;
 }
 
 // Assistant messages carry their own tokens and cost. OpenCode reports

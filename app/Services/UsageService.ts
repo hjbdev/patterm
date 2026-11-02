@@ -129,14 +129,29 @@ export class UsageService {
     const db = this.historyConnection();
 
     // Days follow the server's local calendar, like the rest of the app.
+    // Claude Code sessions that OpenCode's claude-agent ran count as OpenCode
+    // usage in the OpenCode conversation's project; OpenCode's import leaves
+    // those turns out so they are not counted twice.
     const rows = db ? db.prepare(`
-      select date(occurred_at, 'localtime') as day, conversation_usage.provider as provider, model, conversations.project_id as projectId,
+      with opencode_claude as (
+        select link.value as claudeId, min(opencode.project_id) as projectId
+        from conversations opencode, json_each(case when json_valid(opencode.metadata) then opencode.metadata else '{}' end, '$.claudeSessionIds') link
+        where opencode.provider = 'opencode'
+        group by link.value
+      ),
+      attributed as (
+        select conversation_usage.*, case when opencode_claude.claudeId is null then conversation_usage.provider else 'opencode' end as owner,
+          case when opencode_claude.claudeId is null then conversations.project_id else coalesce(opencode_claude.projectId, conversations.project_id) end as projectId
+        from conversation_usage join conversations on conversations.id = conversation_usage.conversation_id
+        left join opencode_claude on conversations.provider = 'claude' and opencode_claude.claudeId = conversations.provider_conversation_id
+        where occurred_at >= ?
+      )
+      select date(occurred_at, 'localtime') as day, owner as provider, model, projectId,
         sum(input_tokens) as inputTokens, sum(cache_read_tokens) as cacheReadTokens, sum(cache_write_tokens) as cacheWriteTokens,
         sum(cache_write_1h_tokens) as cacheWrite1hTokens, sum(output_tokens) as outputTokens, sum(reasoning_tokens) as reasoningTokens,
         count(*) as responses, sum(cost_usd) as reportedCost
-      from conversation_usage join conversations on conversations.id = conversation_usage.conversation_id
-      where occurred_at >= ?
-      group by day, conversation_usage.provider, model, conversations.project_id
+      from attributed
+      group by day, owner, model, projectId
     `).all(since) as unknown as UsageGroup[] : [];
     const summaryRows = this.database.connection.prepare(`
       select date(occurred_at, 'localtime') as day, provider, model, project_id as projectId,

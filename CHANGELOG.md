@@ -163,6 +163,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Usage no longer counts OpenCode's Claude (claude-agent) turns twice. They
+  come from Claude Code's own transcript, which has the real model and its
+  price, and count as OpenCode usage in the OpenCode conversation's project.
+
 - Bot conversations, the assistant's included, show notification and focus
   digests again as compact receipts. Helpers' messages and reports, timer
   callbacks, and close requests stay hidden.
