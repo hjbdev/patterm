@@ -147,7 +147,7 @@ const expansion = useSidebarExpansion(() => sidebar.expansionScope.value);
 
 // Grouped by status, a family moves once its new status has lasted a moment,
 // so output blips don't bounce it between groups. Needing you moves at once.
-const liveStatuses = computed(() => new Map<string, SidebarStatus>(expansion.state.value.groupByStatus
+const liveStatuses = computed(() => new Map<string, SidebarStatus>(expansion.view.value.groupByStatus
   ? sidebar.tabs.value.flatMap((tab) => tab.kind === 'agent' && !tab.pinned && !tabSnoozed(tab) ? [[tab.key, familyStatus(sidebar, tab.family, sidebar.activity(tab.family.root.session))] as const] : [])
   : []));
 const status = useSettledValues(() => liveStatuses.value, {
@@ -162,7 +162,7 @@ const snoozedProjects = computed(() => sidebar.allAgents.value
   : []);
 
 // All agents groups by project unless you'd rather sort them yourself.
-const byProject = computed(() => sidebar.allAgents.value && expansion.state.value.groupByProject);
+const byProject = computed(() => sidebar.allAgents.value && expansion.view.value.groupByProject);
 
 // Pinned rows first, in the order you gave them. The rest are agents, grouped
 // by project or status if you ask; your order, or recent activity, holds
@@ -172,10 +172,10 @@ interface Group { id: string; label: string | null; tabs: StripTab[]; project?: 
 const groups = computed<Group[]>(() => {
   const tabs = sidebar.tabs.value.filter((tab) => !tabSnoozed(tab));
   const agents = tabs.filter((tab) => !tab.pinned && tab.kind === 'agent');
-  const open = expansion.state.value.sortByActivity ? sortByActivity(agents) : agents;
+  const open = expansion.view.value.sortByActivity ? sortByActivity(agents) : agents;
   const rest = byProject.value
     ? groupByProject(open, sidebar.projects.value, sidebar.projectOf).map(({ project, items }) => ({ id: `project:${project.id}`, label: project.name, project, tabs: items }))
-    : expansion.state.value.groupByStatus
+    : expansion.view.value.groupByStatus
     ? SIDEBAR_STATUSES.map(({ id, label }) => ({ id, label, tabs: open.filter((tab) => (status(tab.key) ?? 'idle') === id) }))
     : [{ id: 'open', label: null, tabs: open }];
   const snoozed = { id: 'snoozed', label: 'Snoozed', tabs: sidebar.tabs.value.filter(tabSnoozed) };
@@ -209,7 +209,7 @@ const processTabs = computed(() => sidebar.tabs.value.filter((tab): tab is Extra
 const processesOpen = computed(() => expansion.state.value.processes);
 
 function expanded(tab: AgentTab): boolean {
-  return expansion.isOpen(tab.family.rootId, sidebar.familyActive(tab.family));
+  return expansion.isOpen(tab.family.rootId);
 }
 function setExpanded(rootId: string, open: boolean): void {
   expansion.setOpen(rootId, open);
@@ -238,24 +238,16 @@ function revealed(sessionId: string): boolean {
   return Boolean(mention.value?.ancestors.has(sessionId));
 }
 
-// What a family waits on always shows, then a snooze reminder; its status
-// line shows when subtitles are on. Recaps from before status lines existed
-// show their first line instead.
+// What a family waits on shows under it, then a snooze reminder.
 function subtitle(tab: AgentTab): string | null {
-  const waitingOn = familyWaitingOn(sidebar, tab.family);
-  if (waitingOn) return waitingOn;
-  const reminder = tab.family.root.session.snooze?.reminder;
-  if (reminder) return reminder;
-  const summary = tab.family.root.session.summary;
-  if (!summary || !expansion.state.value.subtitles) return null;
-  return summary.status ?? summary.text;
+  return familyWaitingOn(sidebar, tab.family) ?? tab.family.root.session.snooze?.reminder ?? null;
 }
 
 const { onKeydown } = useSidebarKeys({ toggle: setExpanded, move: sidebar.moveTab });
 const { setElement, draggingKey, dropLine, onPointerDown, consumeClick } = useSidebarReorder(
   // Sorted by recent activity, only pinned and snoozed rows keep an order to drag.
   () => [
-    ...groups.value.filter((group) => !expansion.state.value.sortByActivity || group.id === 'pinned' || group.id === 'snoozed')
+    ...groups.value.filter((group) => !expansion.view.value.sortByActivity || group.id === 'pinned' || group.id === 'snoozed')
       .flatMap((group) => group.tabs.map((tab) => ({ key: tab.key, group: group.id }))),
     ...processTabs.value.map((tab) => ({ key: tab.key, group: 'processes' }))
   ],

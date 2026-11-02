@@ -61,6 +61,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   provider beside its name, so models with the same name from different
   providers can be told apart. OpenCode's own plans show as "Zen" and "Go".
   Searching the picker matches the provider too.
+- The Agents menu's view options now apply to every project and All agents
+  alike, instead of each project keeping its own; your current choices carry
+  over. Each option has an icon. Which agents are open is still remembered
+  per project.
+
+### Removed
+
+- The Agents menu's "Show subtitles" option. Agent rows no longer show their
+  status line; what an agent is waiting on and snooze reminders still show.
+- The Agents menu's "Open the agent I'm in" option.
 
 ### Fixed
 

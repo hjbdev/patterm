@@ -62,7 +62,7 @@ const parts = computed(() => props.dropdown
   ? { Root: DropdownMenu, Trigger: DropdownMenuTrigger, Content: DropdownMenuContent, Item: DropdownMenuItem, Separator: DropdownMenuSeparator }
   : { Root: ContextMenu, Trigger: ContextMenuTrigger, Content: ContextMenuContent, Item: ContextMenuItem, Separator: ContextMenuSeparator });
 // A list row with subagents or servers, while the list shows them at all.
-const familyRoot = computed(() => props.tab?.kind === 'agent' && expansion.state.value.members && sidebar.memberCount(props.tab.family) > 0 ? props.tab.family.rootId : null);
+const familyRoot = computed(() => props.tab?.kind === 'agent' && expansion.view.value.members && sidebar.memberCount(props.tab.family) > 0 ? props.tab.family.rootId : null);
 
 function rename(): void {
   if (props.session) openRename({ session: props.session });
