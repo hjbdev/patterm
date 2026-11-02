@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Status labels: an agent can pin a short status on itself, such as
+  "Waiting for review" or "Waiting on CI", with the new `status_set` tool.
+  It shows as a coloured pill beside the agent on the projects page, in its
+  tab's menu, on the canvas and in the conversation header, as a dot on its
+  tab and sidebar row, and in `list_processes`. Idle detection still shows
+  whether the agent is working. Labels are configured in Settings › Status
+  labels, each with a colour from the face palette and a note on when to use
+  it. You can pin or clear one from an agent's menu. An agent's own label
+  clears when you message it. Agents list labels with `status_label_list`
+  and add one with `status_label_create` only when you ask them to.
+
 - Opt-in usage telemetry, under Settings › Usage telemetry, to find the
   features you never use. It is off until you turn it on with your own
   PostHog project key. It then counts every tool call, IPC channel, command,

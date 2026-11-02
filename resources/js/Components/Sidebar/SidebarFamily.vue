@@ -30,6 +30,7 @@
               <ProjectLogo v-if="project" :project="project" :size="14" :title="project.name" />
               <span class="truncate" :class="sidebar.familyActive(tab.family) && 'font-medium'">{{ label }}</span>
               <BotOwnerPill v-if="ownerBot" :bot="ownerBot" />
+              <StatusLabelPill v-if="root.statusLabel" :label="root.statusLabel" dot />
               <HostBadge v-if="root.host" :host="root.host" />
             </span>
             <Transition :css="false" @enter="expandIn" @leave="collapseOut">
@@ -80,6 +81,7 @@
 <script setup lang="ts">
 import HostBadge from '../HostBadge.vue';
 import BotOwnerPill from '../BotOwnerPill.vue';
+import StatusLabelPill from '../StatusLabelPill.vue';
 import { ownerBotOf } from '../../Composables/useBots';
 import ProjectLogo from '../ProjectLogo.vue';
 import type { ProjectSummary } from '../../types';

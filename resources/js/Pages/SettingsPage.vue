@@ -165,6 +165,10 @@
                 <FigureSettings />
               </TabsContent>
 
+              <TabsContent value="status-labels" class="m-0">
+                <StatusLabelSettings />
+              </TabsContent>
+
               <TabsContent value="harnesses" class="m-0">
                 <HarnessPresetSettings />
               </TabsContent>
@@ -201,7 +205,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref } from 'vue';
-import { Activity, ArrowLeft, Bell, Bot, ChartColumn, ChevronDown, Cpu, History, Info, KeyRound, Palette, Plug, Server, Shrink, Sparkles } from 'lucide-vue-next';
+import { Activity, ArrowLeft, Bell, Bot, ChartColumn, ChevronDown, Cpu, History, Info, KeyRound, Palette, Plug, Server, Shrink, Sparkles, Tag } from 'lucide-vue-next';
 import {
   DIFF_VIEWER_OPTIONS,
   NAVIGATION_OPTIONS,
@@ -225,6 +229,7 @@ import AutoSummarySettings from '../Components/AutoSummarySettings.vue';
 import SemanticSearchSettings from '../Components/SemanticSearchSettings.vue';
 import TelemetrySettings from '../Components/TelemetrySettings.vue';
 import FigureSettings from '../Components/FigureSettings.vue';
+import StatusLabelSettings from '../Components/StatusLabelSettings.vue';
 import HarnessPresetSettings from '../Components/HarnessPresetSettings.vue';
 import BotSettings from '../Components/BotSettings.vue';
 import IdleCompactionSettings from '../Components/IdleCompactionSettings.vue';
@@ -260,6 +265,7 @@ const NAV = [
   { value: 'notifications', label: 'Notifications', icon: Bell },
   { value: 'compaction', label: 'Idle compaction', icon: Shrink },
   { value: 'figures', label: 'Figures', icon: ChartColumn },
+  { value: 'status-labels', label: 'Status labels', icon: Tag },
   { value: 'harnesses', label: 'Harnesses', icon: Cpu },
   { value: 'bots', label: 'Bots', icon: Bot },
   { value: 'mcp', label: 'MCP servers', icon: Plug },
