@@ -45,7 +45,7 @@
                     <RowStatus :activity="activityFor(tab.family.root.session)" :count="familyMenuCount(tab.family)" :count-label="familyMemberLabel(tab.family)" />
                     <ProjectLogo v-if="tabProject(tab)" :project="tabProject(tab)!" :size="14" :title="tabProject(tab)!.name" />
                     <span class="truncate">{{ agentLabel(tab.family.root.session) }}</span>
-                    <BotOwnerPill v-if="ownerBot(tab.family.root.session)" :bot="ownerBot(tab.family.root.session)!" />
+                    <BotOwnerPill v-if="ownerBotOf(tab.family.root.session)" :bot="ownerBotOf(tab.family.root.session)!" />
                     <HostBadge v-if="tab.family.root.session.host" :host="tab.family.root.session.host" />
                     <UnreadDot :urgency="unreadUrgency(tab.family.root.session.processId)" />
                   </span>
@@ -168,8 +168,7 @@
 <script setup lang="ts">
 import HostBadge from './HostBadge.vue';
 import BotOwnerPill from './BotOwnerPill.vue';
-import { useBots } from '../Composables/useBots';
-import type { Bot } from '../lib/bots';
+import { ownerBotOf } from '../Composables/useBots';
 import SnoozedProjectHeader from './SnoozedProjectHeader.vue';
 import { computed, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue';
 import { Clock, Copy, Moon, Pencil, Pin, PinOff, Sun, Timer as TimerIcon, X } from 'lucide-vue-next';
@@ -240,13 +239,6 @@ const props = withDefaults(
 function tabProject(tab: StripTab): ProjectSummary | null {
   return props.projectOf?.(tab.kind === 'agent' ? tab.family.rootId : tab.process.id) ?? null;
 }
-// An agent a bot started, such as a detached one it opened, carries the bot's face.
-const { settings: botSettings } = useBots();
-const botsById = computed(() => new Map(botSettings.value.bots.map((bot) => [bot.id, bot])));
-function ownerBot(session: SessionRecord): Bot | null {
-  return session.ownerBotId ? botsById.value.get(session.ownerBotId) ?? null : null;
-}
-
 // Pinned and snoozed tabs show only their status.
 function compact(tab: StripTab): boolean {
   return tab.pinned || tabSnoozed(tab);
