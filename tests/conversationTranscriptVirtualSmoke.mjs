@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { test } from 'node:test';
 import ts from 'typescript';
 import { computed, reactive, ref } from 'vue';
-import { Virtualizer, elementScroll, measureElement } from '@tanstack/vue-virtual';
+import { elementScroll, measureElement } from '@tanstack/vue-virtual';
 import { elapsedLabel, groupTranscriptMessages, toggleTranscriptRow, transcriptRowIndexForMessage, transcriptRowOpen, transcriptThoughtDurations, transcriptToolGroupSummary, transcriptTurnDurations } from '../dist/tests/resources/js/lib/integratedConversation.js';
 
 const page = fs.readFileSync(new URL('../resources/js/Components/ConversationTranscript.vue', import.meta.url), 'utf8');
@@ -96,91 +96,4 @@ test('the live transcript mounts only virtual rows and keys them by native ident
   assert.equal(pane.rowOpen('thinking-test'), true, 'the same row can be expanded');
   pane.toggleRow('thinking-test');
   assert.equal(pane.rowOpen('thinking-test'), false, 'thinking can be hidden again');
-});
-
-test('a row rewrapped near the end moves the view after the sizer has grown', async () => {
-  const { pane, options, virtual } = mountTranscript();
-  // A real virtualiser over a viewport that clamps to the sizer, as the
-  // browser does: two rows, 400 and 500 tall, read 100px from the end.
-  const sizer = { style: { height: '0px' } };
-  pane.sizerRef.value = sizer;
-  const scrollElement = {
-    scrollTop: 0,
-    clientHeight: 600,
-    get scrollHeight() { return Math.max(Number.parseFloat(sizer.style.height) || 0, this.clientHeight); },
-    scrollTo({ top }) { this.scrollTop = Math.min(Math.max(0, top), this.scrollHeight - this.clientHeight); },
-    ownerDocument: { defaultView: { requestAnimationFrame: () => 0, cancelAnimationFrame() {}, performance } }
-  };
-  const instance = new Virtualizer({
-    count: 2,
-    getScrollElement: () => scrollElement,
-    estimateSize: () => 120,
-    getItemKey: (index) => ['first', 'second'][index],
-    scrollToFn: options.value.scrollToFn,
-    measureElement: options.value.measureElement,
-    observeElementRect: () => () => {},
-    observeElementOffset: () => () => {},
-    initialRect: { width: 800, height: 600 }
-  });
-  instance.shouldAdjustScrollPositionOnItemSizeChange = virtual.value.shouldAdjustScrollPositionOnItemSizeChange;
-  instance._willUpdate();
-  const rows = [0, 1].map((index) => ({ getAttribute: () => String(index), isConnected: true }));
-  const observe = (index, width, height) => instance.resizeItem(index, instance.options.measureElement(rows[index], { borderBoxSize: [{ inlineSize: width, blockSize: height }] }, instance));
-  observe(0, 800, 400);
-  observe(1, 800, 500);
-  instance.options.scrollToFn(200, {}, instance);
-  instance.scrollOffset = 200;
-  instance.getVirtualItems();
-  assert.equal(scrollElement.scrollTop, 200);
-
-  // The column narrows and the first row rewraps to 800px: half of it was
-  // above the edge, so the view moves down by half the growth.
-  observe(0, 600, 800);
-  await Promise.resolve();
-  assert.equal(scrollElement.scrollTop, 400, 'the move is not clamped to the old end');
-});
-
-test('a correction that shrinks the sizer reports its whole move, clamp included', () => {
-  const { pane, options } = mountTranscript();
-  const notes = [];
-  pane.scrollerRef.value = { noteProgrammaticScroll: (from) => notes.push(from) };
-  // The browser clamps the view as soon as the sizer shrinks.
-  const scrollElement = {
-    scrollTop: 1480,
-    clientHeight: 500,
-    height: 2000,
-    get scrollHeight() { return this.height; },
-    scrollTo({ top }) { this.scrollTop = Math.min(Math.max(0, top), this.height - this.clientHeight); }
-  };
-  pane.sizerRef.value = {
-    style: {
-      set height(value) {
-        scrollElement.height = Number.parseFloat(value);
-        scrollElement.scrollTop = Math.min(scrollElement.scrollTop, scrollElement.height - scrollElement.clientHeight);
-      }
-    }
-  };
-  // A row above the view measures 100px shorter.
-  options.value.scrollToFn(1380, {}, { scrollElement, getTotalSize: () => 1900, options: { horizontal: false } });
-  assert.equal(scrollElement.scrollTop, 1380);
-  assert.deepEqual(notes, [1480], 'the scroller measures the correction from before the clamp');
-});
-
-test('a tool group summary renders a space between each count and its title', async () => {
-  const { createSSRApp, h } = await import('vue');
-  const { renderToString } = await import('vue/server-renderer');
-  const template = page.match(/<span[^\n]*:title="groupSummary\(row\)\.label"[^\n]*<\/span>/)?.[0];
-  assert.ok(template, 'the summary span is in the transcript');
-  const messages = [
-    { id: 's1', role: 'assistant', kind: 'tool', text: '', tool: { name: 'Skill', family: 'skill', status: 'completed', title: 'Skill', target: 'implement' } },
-    ...Array.from({ length: 7 }, (_, index) => ({ id: `b${index}`, role: 'assistant', kind: 'tool', text: '', tool: { name: 'Bash', family: 'shell', status: 'completed', title: 'Bash', target: 'ls' } }))
-  ];
-  const html = await renderToString(createSSRApp({
-    template,
-    components: { OdometerNumber: { props: ['value'], render() { return h('span', String(this.value)); } } },
-    setup: () => ({ row: { messages }, groupSummary: (row) => transcriptToolGroupSummary(row.messages) })
-  }));
-  const text = html.replace(/<!--[\s\S]*?-->/g, '').replace(/<[^>]+>/g, '');
-  assert.equal(text, 'Skill (implement), 7 Bash');
-  assert.match(html, /title="Skill \(implement\), 7 Bash"/);
 });

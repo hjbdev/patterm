@@ -225,7 +225,8 @@ test('older pages survive live refreshes and stale page replies cannot cross ses
   assert.deepEqual(stale.args, { process_id: 'B', cursor: 'B-older' });
   harness.props.processId = 'C';
   await nextTick();
-  await mountSettled(harness, replyConversation('C'));
+  await mountSettled(harness, { ...replyConversation('C'), provider: 'opencode', history_truncated: true, history_cursor: { next: 'B-older' } });
+  assert.equal(harness.pane.historyCursor.value, 'B-older', 'the new session can have the same cursor');
   stale.resolve({ messages: { data: [{ id: 'B-old', type: 'user', text: 'stale B' }] }, cursor: null });
   await flush();
   assert.deepEqual(harness.pane.messages.value.map(message => message.text), ['C'], 'a late page cannot enter the next session');

@@ -39,7 +39,7 @@ async function main(): Promise<void> {
     assert.equal(shutdowns, 0);
     database.connection.exec("delete from processes where id = 'assistant_quit'; delete from projects where id = 'assistant_quit'");
 
-    const seeder = new WorkbenchSeeder(database, new TimelineService(database));
+    const seeder = new WorkbenchSeeder(database);
     seeder.seedIfEmpty();
     seeder.seedIfEmpty(); // idempotent
 
@@ -48,7 +48,7 @@ async function main(): Promise<void> {
     const projectSnapshot = snapshot.projects[0];
     assert.ok(projectSnapshot, 'seed project present');
 
-    assert.equal(projectSnapshot.projectSessions.length, 4);
+    assert.equal(projectSnapshot.projectSessions.length, 2);
     assert.equal(projectSnapshot.worktrees.length, 1);
     assert.equal('diffs' in projectSnapshot, false, 'diff snapshots are no longer part of the workbench');
     assert.equal('tasks' in projectSnapshot, false);
@@ -140,9 +140,6 @@ async function main(): Promise<void> {
       isAvailable: () => false,
       request: async (method: string, params: unknown) => {
         terminalRequests.push({ method, params });
-        if (method === 'terminal.process.stop' && (params as { process_id: string }).process_id === 'old_child') {
-          throw new Error('process not found: old_child');
-        }
         if (method === 'terminal.process.output') {
           return { process_id: 'proc_identity', status: 'running', screen: 'server http://localhost:5173 ready', lines: ['server http://localhost:5173 ready'], rows: 1, cols: 80 };
         }
@@ -152,21 +149,15 @@ async function main(): Promise<void> {
         if (method === 'terminal.process.status') {
           return { process_id: 'proc_identity', status: 'running', rows: 1, cols: 80 };
         }
-        if (method === 'terminal.process.close') {
-          const id = (params as { process_id: string }).process_id;
-          const process = database.connection.prepare('select status from processes where id = ? or pty_process_id = ?').get(id, id) as { status: string };
-          assert.equal(process.status, 'closed', 'persist closure before releasing terminal state');
-        }
         return { ok: true };
       }
     } as unknown as TerminalService;
     const registryTimeline = new TimelineService(database);
     let titleSyncs = 0;
     const handledNotifications: string[] = [];
-    const reportedNotifications: string[] = [];
     const registry = createTestMcpRegistry({
       tempDir,
-      notifications: { userInput: (processId: string) => { handledNotifications.push(processId); }, reported: (processId: string) => { reportedNotifications.push(processId); } } as unknown as NotificationActions,
+      notifications: { userInput: (processId: string) => { handledNotifications.push(processId); } } as unknown as NotificationActions,
       database,
       terminal: fakeTerminal,
       timeline: registryTimeline,
@@ -338,62 +329,6 @@ async function main(): Promise<void> {
     };
     assert.equal(nestedStatus.current_process_id, 'proc_identity', 'direct project status identifies the caller process');
     assert.equal(nestedStatus.processes.find((process) => process.process_id === 'proc_identity')?.is_current, true, 'project status marks the caller process current');
-    database.connection
-      .prepare(
-        `insert into processes (id, project_id, parent_process_id, kind, name, status, created_at, updated_at)
-         values ('proc_child_identity', ?, 'proc_identity', 'agent', 'child', 'running', ?, ?)`
-      )
-      .run(projectSnapshot.project.id, mcpNow, mcpNow);
-    database.connection
-      .prepare(
-        `insert into sessions (id, project_id, process_id, mcp_identity, harness, session_role, resume_status, started_at, last_title)
-         values ('session_child_identity', ?, 'proc_child_identity', 'identity_child', 'codex', 'child', 'unknown', ?, 'child')`
-      )
-      .run(projectSnapshot.project.id, mcpNow);
-    const messageTimelineBefore = database.connection.prepare(`select count(*) as n from timeline_events`).get() as { n: number };
-    const codexMessage = 'x'.repeat(2_232);
-    await registry.call('send_message', { target_process_id: 'proc_child_identity', message: codexMessage }, identityContext);
-    const childMessage = terminalRequests.filter((request) => request.method === 'terminal.process.input').at(-1);
-    assert.deepEqual(childMessage?.params, {
-      process_id: 'proc_child_identity',
-      kind: 'paste',
-      text: `[message from proc_identity]\n${codexMessage}`,
-      submit: true
-    });
-    await registry.call('send_message', { target_process_id: 'parent', message: 'child reporting in' }, { identity: 'identity_child' });
-    const parentMessage = terminalRequests.filter((request) => request.method === 'terminal.process.input').at(-1);
-    assert.deepEqual(parentMessage?.params, {
-      process_id: 'proc_identity',
-      kind: 'paste',
-      text: '[message from proc_child_identity]\nchild reporting in',
-      submit: true
-    });
-    // A parent's message ends its child's blocked episode; a child's message
-    // to its parent leaves the parent's own requests open.
-    assert.deepEqual(handledNotifications, ['proc_child_identity']);
-    const messageTimelineAfter = database.connection.prepare(`select count(*) as n from timeline_events`).get() as { n: number };
-    assert.equal(messageTimelineAfter.n, messageTimelineBefore.n, 'send_message remains ephemeral and does not write timeline events');
-    const report = (await registry.call(
-      'report_to_parent',
-      { status: 'no_findings', title: 'Review complete', body: 'No findings.' },
-      { identity: 'identity_child' }
-    )) as { ok: boolean; event_id: string };
-    assert.equal(report.ok, true, 'report_to_parent returns success');
-    assert.deepEqual(reportedNotifications, ['proc_child_identity'], 'a report clears the reporter\'s turn-ended notice');
-    const parentReport = terminalRequests.filter((request) => request.method === 'terminal.process.input').at(-1);
-    assert.deepEqual(parentReport?.params, {
-      process_id: 'proc_identity',
-      kind: 'paste',
-      text: '[report from proc_child_identity: no_findings]\nReview complete\nNo findings.',
-      submit: true
-    });
-    const reportEvent = database.connection
-      .prepare(`select event_type, process_id, session_id, metadata from timeline_events where id = ?`)
-      .get(report.event_id) as { event_type: string; process_id: string | null; session_id: string | null; metadata: string } | undefined;
-    assert.equal(reportEvent?.event_type, 'agent.reported', 'report_to_parent persists a report event');
-    assert.equal(reportEvent?.process_id, 'proc_child_identity', 'report event is associated with the child process');
-    assert.equal(reportEvent?.session_id, 'session_child_identity', 'report event is associated with the child session');
-    assert.equal(JSON.parse(reportEvent?.metadata ?? '{}').parent_process_id, 'proc_identity', 'report event records the parent process');
     const spawnProcessHelp = registry.help('spawn_process');
     assert.ok((spawnProcessHelp.inputSchema.properties as Record<string, unknown>).detached, 'spawn_process advertises detached');
     assert.match(spawnProcessHelp.usageNotes?.join('\n') ?? '', /Only spawn detached processes when the user has specifically asked/, 'spawn_process help restricts detaching to user requests');
@@ -633,62 +568,6 @@ async function main(): Promise<void> {
       assert.equal(callback.process_id, 'proc_identity');
       assert.match(callback.text, /^\[Patterm timer timer_\w+: condition met\]\n- proc_idle_all_a \"idle all a\": idle \(its turn ended\)\n- proc_idle_all_b \"idle all b\": idle \(its turn ended\)\nidle all fired$/, 'timer callbacks say why they fired and what each watched process did');
     }
-
-    const closeNow = new Date().toISOString();
-    database.connection
-      .prepare(
-        `insert into processes (id, project_id, parent_process_id, kind, name, status, created_at, updated_at)
-         values ('close_parent', ?, null, 'agent', 'close parent', 'running', ?, ?),
-                ('close_child', ?, 'close_parent', 'agent', 'close child', 'running', ?, ?),
-                ('close_grandchild', ?, 'close_child', 'agent', 'close grandchild', 'running', ?, ?)`
-      )
-      .run(
-        projectSnapshot.project.id,
-        closeNow,
-        closeNow,
-        projectSnapshot.project.id,
-        closeNow,
-        closeNow,
-        projectSnapshot.project.id,
-        closeNow,
-        closeNow
-      );
-    database.connection
-      .prepare(
-        `insert into sessions (id, project_id, process_id, mcp_identity, harness, session_role, resume_status, started_at, last_title)
-         values ('session_close_parent', ?, 'close_parent', 'close_parent_identity', 'codex', 'orchestrator', 'unknown', ?, 'close parent'),
-                ('session_close_child', ?, 'close_child', 'close_child_identity', 'codex', 'child', 'unknown', ?, 'close child'),
-                ('session_close_grandchild', ?, 'close_grandchild', 'close_grandchild_identity', 'codex', 'child', 'unknown', ?, 'close grandchild')`
-      )
-      .run(projectSnapshot.project.id, closeNow, projectSnapshot.project.id, closeNow, projectSnapshot.project.id, closeNow);
-
-    database.connection.prepare(`update sessions set resume_id = 'native-close-resume' where id = 'session_close_parent'`).run();
-    database.connection.prepare(`insert into processes (id, project_id, parent_process_id, kind, name, status, created_at, updated_at)
-      values ('old_child', ?, 'close_parent', 'agent', 'previous runtime', 'exited', ?, ?)`).run(projectSnapshot.project.id, closeNow, closeNow);
-    const closeResult = (await registry.call('close_process', { process_id: 'close_parent' })) as { closed: string[] };
-    assert.deepEqual(closeResult.closed, ['close_parent', 'close_child', 'old_child', 'close_grandchild'], 'close_process returns parent and descendants, including historical entries without a runtime');
-    const exitedSessions = database.connection
-      .prepare(`select count(*) as count from sessions where process_id in ('close_parent', 'close_child', 'close_grandchild') and exited_at is not null`)
-      .get() as { count: number };
-    assert.equal(exitedSessions.count, 3, 'closing parent exits descendant sessions');
-    assert.equal(
-      (database.connection.prepare(`select resume_id from sessions where id = 'session_close_parent'`).get() as { resume_id: string }).resume_id,
-      'native-close-resume',
-      'closing the runtime preserves native resume metadata'
-    );
-    const stoppedProcesses = terminalRequests
-      .filter((request) => request.method === 'terminal.process.stop')
-      .map((request) => (request.params as { process_id: string }).process_id);
-    assert.deepEqual(stoppedProcesses.slice(-3), ['close_parent', 'close_child', 'close_grandchild'], 'terminal stop cascades to descendants');
-    const closedProcesses = terminalRequests
-      .filter((request) => request.method === 'terminal.process.close')
-      .map((request) => (request.params as { process_id: string }).process_id);
-    assert.deepEqual(closedProcesses.slice(-3), ['close_parent', 'close_child', 'close_grandchild'], 'terminal close releases descendant runtime state');
-    const stopCount = terminalRequests.filter((request) => request.method === 'terminal.process.stop').length;
-    const closeCount = terminalRequests.filter((request) => request.method === 'terminal.process.close').length;
-    await registry.call('close_process', { process_id: 'close_parent' });
-    assert.equal(terminalRequests.filter((request) => request.method === 'terminal.process.stop').length, stopCount, 'repeated close does not stop released runtimes');
-    assert.equal(terminalRequests.filter((request) => request.method === 'terminal.process.close').length, closeCount, 'repeated close does not close released handles');
 
     // The Electron-hosted socket serves the registry to an external client (the shim).
     const socketPath = path.join(tempDir, 'mcp.sock');

@@ -20,7 +20,7 @@ export function assistantBot(
   integrated: Pick<IntegratedAgentService, 'prompt' | 'conversation'>,
   settings: SettingsService,
   processes: { stop(processId: string): Promise<unknown>; transferTimers(from: readonly string[], to: string): void },
-  options: { digestDelayMs?: number; compacting?: (processId: string) => boolean; log?: (event: string, data: Record<string, unknown>) => void } = {}
+  options: { digestDelayMs?: number; compacting?: (processId: string) => boolean } = {}
 ) {
   const inbox = new BotInbox(database, (botId) => settings.bots().bots.find((bot) => bot.id === botId)?.focus === true);
   let relay: BotRelay | null = null;
@@ -30,8 +30,7 @@ export function assistantBot(
     releaseTimers: () => undefined
   }, {
     launched: (botId) => relay?.launched(botId),
-    stopping: async (botId, processId) => { await relay?.stopping(botId, processId); },
-    ...(options.log ? { log: options.log } : {})
+    stopping: async (botId, processId) => { await relay?.stopping(botId, processId); }
   });
   const botRelay = new BotRelay(database, bots, codex, integrated, settings, inbox, options);
   relay = botRelay;
@@ -47,7 +46,6 @@ export function assistantBot(
     startVoice: async (sdp: string) => { await bots.ensure(id); return botRelay.startVoice(id, sdp); },
     stopVoice: async () => { await botRelay.stopVoice(); return state(); },
     setFocus: (enabled: boolean) => botRelay.setFocus(id, enabled),
-    focusItems: (input: { digestId?: string; limit: number; offset: number }) => botRelay.focusItems(id, input),
     deliverAgentMessage: (fromProcessId: string, message: string) => botRelay.deliverAgentMessage(id, fromProcessId, message),
     voiceActive: (processId: string) => botRelay.voiceActive(processId),
     onEvent: botRelay.onEvent.bind(botRelay),

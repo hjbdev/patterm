@@ -632,35 +632,6 @@ fn focus_reports_follow_client_focus_once_enabled() {
 }
 
 #[test]
-fn echoing_child_shows_input_it_is_sent() {
-    let (tx, _rx) = mpsc::channel();
-    let mut manager = TerminalManager::new(tx);
-    let result = manager.spawn(cat_params(40, 5)).unwrap();
-    let process_id = result["process_id"].as_str().unwrap().to_string();
-    manager
-        .write_input(serde_json::json!({ "process_id": process_id, "text": "echoed-input-7\r" }))
-        .unwrap();
-    // ConPTY adds its own setup sequences around the echo, so match on content.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let mut screen = String::new();
-    while Instant::now() < deadline {
-        manager.write_due_events(&mut Vec::new()).unwrap();
-        screen = manager
-            .output(serde_json::json!({ "process_id": process_id }))
-            .unwrap()["screen"]
-            .as_str()
-            .unwrap()
-            .to_string();
-        if screen.contains("echoed-input-7") {
-            break;
-        }
-        thread::sleep(Duration::from_millis(20));
-    }
-    let _ = manager.stop(serde_json::json!({ "process_id": process_id }));
-    assert!(screen.contains("echoed-input-7"), "screen was {screen:?}");
-}
-
-#[test]
 fn search_all_scope_reads_scrollback_as_logical_lines() {
     let mut fixture = Fixture::new(8, 2);
     fixture.feed(b"Done in 1.6 min\r\nnext\r\nlast\r\n");

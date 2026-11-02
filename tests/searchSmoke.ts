@@ -17,7 +17,7 @@ try {
   database.initialize();
   history.initialize();
   const timeline = new TimelineService(database);
-  new WorkbenchSeeder(database, timeline).seedIfEmpty();
+  new WorkbenchSeeder(database).seedIfEmpty();
   const search = new SearchService(database, history);
   search.ensureIndex();
   const session = database.connection.prepare("select id from sessions where last_title = 'scaffold shell'").get() as { id: string };

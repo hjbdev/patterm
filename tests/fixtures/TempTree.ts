@@ -27,15 +27,3 @@ function reportHolders(target: string): void {
     console.error(`could not list processes holding ${target}: ${(error as Error).message}`);
   }
 }
-
-// Creates a symlink, or returns false where the OS refuses (Windows without
-// Developer Mode or elevation raises EPERM), so a test can skip its link cases.
-export function trySymlink(target: string, linkPath: string): boolean {
-  try {
-    fs.symlinkSync(target, linkPath);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EPERM' && process.platform === 'win32') return false;
-    throw error;
-  }
-}

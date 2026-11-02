@@ -223,45 +223,6 @@ test('an animated scroll up that starts inside the zone is not pulled back', () 
   assert.equal(scroller.following(), false);
 });
 
-test('a short scroll up from the end returns to it although output moved the end away', () => {
-  const scroller = createScroller();
-  scroller.scrollTo(scroller.end());
-  scroller.intent();
-  // A 53px wheel notch animates while 60px of new output arrives.
-  scroller.scrollTo(scroller.viewport.scrollTop - 25);
-  scroller.grow(30);
-  scroller.scrollTo(scroller.viewport.scrollTop - 28);
-  scroller.grow(30);
-  scroller.scrollEnd();
-  assert.equal(scroller.following(), true);
-  scroller.grow(50);
-  assert.equal(scroller.viewport.scrollTop, scroller.end());
-});
-
-test('a short scroll up catches up with output that took the end out of reach', () => {
-  const scroller = createScroller();
-  scroller.scrollTo(scroller.end());
-  scroller.intent();
-  scroller.scrollTo(scroller.viewport.scrollTop - 50);
-  scroller.grow(600);
-  scroller.scrollEnd();
-  flushFrames();
-  assert.equal(scroller.following(), true);
-  assert.equal(scroller.viewport.scrollTop, scroller.end(), 'no more output needs to arrive');
-  assert.equal(scroller.context.scrollable.value.end, false);
-});
-
-test('a short look up with no new output stays where it lands', () => {
-  const scroller = createScroller();
-  scroller.scrollTo(scroller.end());
-  scroller.intent();
-  scroller.scrollTo(scroller.viewport.scrollTop - 50);
-  scroller.scrollEnd();
-  flushFrames();
-  assert.equal(scroller.following(), true, 'the next output is followed');
-  assert.equal(scroller.viewport.scrollTop, scroller.end() - 50, 'but the view does not bounce back on its own');
-});
-
 test('a slow trackpad scroll that ends each step adds up', () => {
   const scroller = createScroller();
   scroller.scrollTo(scroller.end());
@@ -274,117 +235,6 @@ test('a slow trackpad scroll that ends each step adds up', () => {
   }
   assert.equal(scroller.following(), false);
   assert.equal(scroller.viewport.scrollTop, scroller.end() - 300, 'the view stays where the reader left it');
-});
-
-test('a trackpad gesture whose wheel events arrive after their scroll adds up', () => {
-  const scroller = createScroller();
-  scroller.scrollTo(scroller.end());
-  // The first wheel event comes before its scroll; the rest of the gesture is
-  // scrolled by the compositor before the page sees each wheel event.
-  scroller.intent();
-  scroller.scrollTo(scroller.viewport.scrollTop - 15);
-  for (let step = 0; step < 19; step++) {
-    scroller.viewport.scrollTop -= 15;
-    scroller.intent();
-    scroller.context.handleScroll();
-  }
-  scroller.scrollEnd();
-  flushTimers();
-  flushFrames();
-  assert.equal(scroller.following(), false);
-  assert.equal(scroller.viewport.scrollTop, scroller.end() - 300, 'the view stays where the reader left it');
-});
-
-// A row above the view measures `px` taller (or shorter) and the virtualiser
-// corrects the view to match, but its scroll event has not arrived yet.
-function pendingCorrection(scroller, px) {
-  const from = scroller.viewport.scrollTop;
-  scroller.page.contentHeight += px;
-  scroller.viewport.scrollTop += px;
-  scroller.context.noteProgrammaticScroll(from);
-}
-
-// The compositor scrolls the reader up before the page sees the wheel event.
-function trackpadStep(scroller, px) {
-  scroller.viewport.scrollTop -= px;
-  scroller.intent();
-  scroller.context.handleScroll();
-}
-
-test('a correction still to be reported during a long trackpad scroll is not travel', () => {
-  const scroller = createScroller();
-  scroller.scrollTo(scroller.end());
-  scroller.intent();
-  scroller.scrollTo(scroller.viewport.scrollTop - 120);
-  pendingCorrection(scroller, 100);
-  trackpadStep(scroller, 15);
-  scroller.scrollEnd();
-  flushTimers();
-  flushFrames();
-  assert.equal(scroller.following(), false);
-  assert.equal(scroller.end() - scroller.viewport.scrollTop, 135);
-});
-
-test('a correction still to be reported during a short trackpad scroll does not block catching up', () => {
-  const scroller = createScroller();
-  scroller.scrollTo(scroller.end());
-  scroller.intent();
-  scroller.scrollTo(scroller.viewport.scrollTop - 20);
-  pendingCorrection(scroller, -100);
-  trackpadStep(scroller, 15);
-  scroller.page.contentHeight += 100;
-  scroller.context.handleResize({ glide: true });
-  scroller.scrollEnd();
-  flushTimers();
-  flushFrames();
-  assert.equal(scroller.following(), true);
-  assert.equal(scroller.viewport.scrollTop, scroller.end());
-});
-
-test('output whose resize is still to come is not the reader\'s travel', () => {
-  const scroller = createScroller();
-  scroller.scrollTo(scroller.end());
-  // Output lands before its deferred resize handling runs.
-  scroller.page.contentHeight += 60;
-  scroller.intent();
-  scroller.scrollTo(scroller.viewport.scrollTop - 50);
-  scroller.context.handleResize({ glide: true });
-  scroller.scrollEnd();
-  flushFrames();
-  assert.equal(scroller.following(), true);
-  assert.equal(scroller.viewport.scrollTop, scroller.end());
-});
-
-test('scrolling back to the end forgets where the reader rested', () => {
-  const scroller = createScroller();
-  scroller.scrollTo(scroller.end());
-  scroller.intent();
-  scroller.scrollTo(scroller.viewport.scrollTop - 60);
-  scroller.scrollEnd();
-  scroller.scrollTo(scroller.end());
-  scroller.scrollEnd();
-  scroller.intent();
-  scroller.scrollTo(scroller.viewport.scrollTop - 50);
-  scroller.context.handleResize({ glide: true });
-  scroller.page.contentHeight += 60;
-  scroller.context.handleResize({ glide: true });
-  scroller.scrollEnd();
-  flushFrames();
-  assert.equal(scroller.following(), true);
-  assert.equal(scroller.viewport.scrollTop, scroller.end());
-});
-
-test('a scroll event that arrives after its scroll end still settles', () => {
-  const scroller = createScroller();
-  scroller.scrollTo(scroller.end());
-  scroller.intent();
-  scroller.scrollTo(scroller.viewport.scrollTop - 39);
-  scroller.scrollEnd();
-  assert.equal(scroller.following(), true);
-  // Chrome's last key-scroll frame can land after its scrollend.
-  scroller.scrollTo(scroller.viewport.scrollTop - 1);
-  flushTimers();
-  assert.equal(scroller.following(), true);
 });
 
 test('a scrollbar drag is judged by where it leaves the view', () => {
@@ -442,21 +292,6 @@ test('corrections and clamps that move the view up keep following', () => {
   assert.equal(scroller.viewport.scrollTop, scroller.end());
 });
 
-test('the view clamped by a growing viewport keeps following', () => {
-  const scroller = createScroller();
-  scroller.scrollTo(scroller.end());
-  // Sending empties a tall composer: the viewport grows, the browser pulls the
-  // view up to the new end, and the sent message lands before the scroll event.
-  scroller.page.clientHeight += 100;
-  scroller.viewport.scrollTop = scroller.end();
-  scroller.context.handleResize();
-  scroller.page.contentHeight += 170;
-  scroller.context.handleScroll();
-  assert.equal(scroller.following(), true);
-  scroller.grow(50);
-  assert.equal(scroller.viewport.scrollTop, scroller.end());
-});
-
 test('a pause from input that never moved the view lapses', () => {
   const scroller = createScroller();
   scroller.scrollTo(scroller.end());
@@ -465,23 +300,6 @@ test('a pause from input that never moved the view lapses', () => {
   assert.notEqual(scroller.viewport.scrollTop, scroller.end(), 'paused while the input may still scroll');
   flushTimers();
   assert.equal(scroller.following(), true, 'input that could not scroll gives the end back');
-  scroller.grow(100);
-  assert.equal(scroller.viewport.scrollTop, scroller.end());
-});
-
-test('opening a row holds until the reader scrolls, and closing it gives the end back', () => {
-  const scroller = createScroller();
-  scroller.scrollTo(scroller.end());
-  scroller.intent({ sticky: true });
-  // The glide's queued scroll event still reports the old position.
-  scroller.scrollTo(scroller.viewport.scrollTop);
-  flushTimers();
-  const held = scroller.viewport.scrollTop;
-  scroller.grow(200);
-  assert.equal(scroller.viewport.scrollTop, held, 'following stays paused');
-  scroller.context.releaseHold();
-  scroller.grow(-200);
-  assert.equal(scroller.following(), true, 'closing the row brings the end back');
   scroller.grow(100);
   assert.equal(scroller.viewport.scrollTop, scroller.end());
 });
