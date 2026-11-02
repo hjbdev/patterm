@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Opt-in usage telemetry, under Settings › Usage telemetry, to find the
+  features you never use. It is off until you turn it on with your own
+  PostHog project key. It then counts every tool call, IPC channel, command,
+  page, and component control you use, and lists every tool, channel,
+  component, changed setting, and table row count, so the unused ones stand
+  out. It sends identifiers only, never prompts, text, paths, or names. A
+  like or dislike, with a note, can be sent from the same page. See
+  [docs/usage-telemetry.md](docs/usage-telemetry.md).
+
 - Push notifications from a bot read like a text from it: the bot's name is
   the sender, its face, emoji or picture is the notification's picture, and
   each bot keeps one thread that buzzes for every new message. Each device
