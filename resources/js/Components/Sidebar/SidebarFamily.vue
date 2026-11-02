@@ -29,6 +29,7 @@
             <span class="flex min-w-0 items-center gap-1.5 leading-5" :style="{ paddingRight: `${reserve}px` }">
               <ProjectLogo v-if="project" :project="project" :size="14" :title="project.name" />
               <span class="truncate" :class="sidebar.familyActive(tab.family) && 'font-medium'">{{ label }}</span>
+              <BotOwnerPill v-if="ownerBot" :bot="ownerBot" />
               <HostBadge v-if="root.host" :host="root.host" />
             </span>
             <Transition :css="false" @enter="expandIn" @leave="collapseOut">
@@ -78,6 +79,8 @@
 
 <script setup lang="ts">
 import HostBadge from '../HostBadge.vue';
+import BotOwnerPill from '../BotOwnerPill.vue';
+import { ownerBotOf } from '../../Composables/useBots';
 import ProjectLogo from '../ProjectLogo.vue';
 import type { ProjectSummary } from '../../types';
 import { computed } from 'vue';
@@ -121,6 +124,7 @@ const sidebar = useSidebar();
 const root = computed(() => props.tab.family.root.session);
 const activity = computed(() => sidebar.activity(root.value));
 const label = computed(() => agentLabel(root.value));
+const ownerBot = computed(() => ownerBotOf(root.value));
 // A closed family holding the selection is highlighted, so you can see where you are.
 const active = computed(() => sidebar.sessionActive(root.value) || (!props.expanded && sidebar.familyActive(props.tab.family)));
 const memberCount = computed(() => sidebar.memberCount(props.tab.family));

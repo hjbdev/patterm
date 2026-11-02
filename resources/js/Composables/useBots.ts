@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue';
-import { botHidden, botRows, readBots, type BotSettings } from '../lib/bots';
+import { botHidden, botRows, readBots, type Bot, type BotSettings } from '../lib/bots';
+import type { SessionRecord } from '../types';
 import { useTopicRefresh } from '../lib/serverQuery';
 import { useWorkbench } from './useWorkbench';
 
@@ -20,6 +21,15 @@ async function load(): Promise<void> {
   } finally {
     loaded.value = true;
   }
+}
+
+const botsById = computed(() => new Map(settings.value.bots.map((bot) => [bot.id, bot])));
+
+// The bot that started an agent, such as a detached agent it opened, for
+// rows that carry its face. Reads the shared list without loading it. A
+// paired host's bots aren't ours, so its agents show none.
+export function ownerBotOf(session: SessionRecord): Bot | null {
+  return session.ownerBotId && !session.host ? botsById.value.get(session.ownerBotId) ?? null : null;
 }
 
 // Call during a component's setup.

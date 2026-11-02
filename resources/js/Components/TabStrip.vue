@@ -45,6 +45,7 @@
                     <RowStatus :activity="activityFor(tab.family.root.session)" :count="familyMenuCount(tab.family)" :count-label="familyMemberLabel(tab.family)" />
                     <ProjectLogo v-if="tabProject(tab)" :project="tabProject(tab)!" :size="14" :title="tabProject(tab)!.name" />
                     <span class="truncate">{{ agentLabel(tab.family.root.session) }}</span>
+                    <BotOwnerPill v-if="ownerBotOf(tab.family.root.session)" :bot="ownerBotOf(tab.family.root.session)!" />
                     <HostBadge v-if="tab.family.root.session.host" :host="tab.family.root.session.host" />
                     <UnreadDot :urgency="unreadUrgency(tab.family.root.session.processId)" />
                   </span>
@@ -166,6 +167,8 @@
 
 <script setup lang="ts">
 import HostBadge from './HostBadge.vue';
+import BotOwnerPill from './BotOwnerPill.vue';
+import { ownerBotOf } from '../Composables/useBots';
 import SnoozedProjectHeader from './SnoozedProjectHeader.vue';
 import { computed, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue';
 import { Clock, Copy, Moon, Pencil, Pin, PinOff, Sun, Timer as TimerIcon, X } from 'lucide-vue-next';

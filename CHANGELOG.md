@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   each bot keeps one thread that buzzes for every new message. Each device
   draws the pictures when the installed app opens or bots change.
 
+- Agents started by a bot, such as a detached agent it opened, show the
+  bot's face in a small pill beside their name, in the top bar's tabs and in
+  the sidebar. The pill is tinted with a muted version of the face's colour.
+
 - A nightly memory review. Two new tools, `memory_review_activity` and
   `memory_review_checkpoint`, let the assistant or a workspace routine read
   new conversation activity across every project in pages. Each conversation
