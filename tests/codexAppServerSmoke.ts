@@ -689,20 +689,6 @@ if (socketPath) {
   ], 'after compaction the whole memory, then only changes, and nothing while nothing changed');
   // A dropped connection may have missed a compaction, so the next update
   // after a reconnect is the whole memory, even with nothing changed.
-  // A compaction reported while an injection is answered still refreshes
-  // the next update.
-  await service.updateMemory('process_test', { changes: 'a change, then compact', full: false, snapshot: () => 'unused' });
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  await service.updateMemory('process_test', { changes: null, full: false, snapshot: () => 'whole memory after compaction' });
-  assert.deepEqual((await injected()).slice(memoryItems.length).map((item) => item.items[0]!.content[0]!.text), ['a change, then compact', 'whole memory after compaction']);
-  const compactedCount = (await injected()).length;
-  const memoryReconnect = new CodexAppServerService(database, runtimeDirectory);
-  await memoryReconnect.updateMemory('process_test', { changes: 'before the drop', full: false, snapshot: () => 'unused' });
-  memoryReconnect.disconnect();
-  await memoryReconnect.updateMemory('process_test', { changes: null, full: false, snapshot: () => 'whole memory again' });
-  await memoryReconnect.updateMemory('process_test', { changes: null, full: false, snapshot: () => 'unused' });
-  memoryReconnect.disconnect();
-  assert.deepEqual((await injected()).slice(compactedCount).map((item) => item.items[0]!.content[0]!.text), ['before the drop', 'whole memory again']);
   const presetRestoredService = new CodexAppServerService(database, runtimeDirectory);
   await presetRestoredService.prompt('process_test', { text: 'After service restart', references: [], attachments: [] });
   const restoredConversation = JSON.parse(JSON.stringify(await presetRestoredService.conversation('process_test'))) as { messages: { data: Array<{ id: string; text: string }> } };
@@ -794,6 +780,22 @@ if (socketPath) {
     launcher.disconnect();
     return { service: new CodexAppServerService(database, runtimeDirectory, mode, process.execPath, undefined, { requestTimeoutMs }), processId };
   };
+
+  // On an agent of their own, so their notifications reach no other test: a
+  // compaction reported while an injection is answered still refreshes the
+  // next update, and so does a reconnect, which may have missed one.
+  const remembering = await launch({ ...process.env });
+  const rememberingInjected = async () => (JSON.parse(JSON.stringify(await remembering.service.conversation(remembering.processId))) as { messages: { data: Array<{ id: string; text: string }> } })
+    .messages.data.filter((message) => message.id.startsWith('injected_')).map((message) => (JSON.parse(message.text) as { items: Array<{ content: Array<{ text: string }> }> }).items[0]!.content[0]!.text);
+  await remembering.service.updateMemory(remembering.processId, { changes: 'a change, then compact', full: false, snapshot: () => 'unused' });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  await remembering.service.updateMemory(remembering.processId, { changes: null, full: false, snapshot: () => 'whole memory after compaction' });
+  remembering.service.disconnect();
+  await remembering.service.updateMemory(remembering.processId, { changes: null, full: false, snapshot: () => 'whole memory again' });
+  await remembering.service.updateMemory(remembering.processId, { changes: null, full: false, snapshot: () => 'unused' });
+  assert.deepEqual(await rememberingInjected(), ['a change, then compact', 'whole memory after compaction', 'whole memory again']);
+  await remembering.service.stop(remembering.processId);
+  remembering.service.disconnect();
 
   const resumed = await launch({ ...process.env }, undefined, 'thread_saved_user_review');
   await resumed.service.stop(resumed.processId);
