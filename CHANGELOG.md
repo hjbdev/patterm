@@ -82,6 +82,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A bot's composer offers agents, processes, presets, and harnesses in its @
+  menu, as an agent's does. It lists the bot's own helpers and the live agents
+  and processes in the projects its purview reaches, each labelled with its
+  project.
 - A child's report wakes its parent once. When the report satisfies one of
   the parent's report timers, the timer's callback arrives in the same
   message, instead of a second turn that repeated the report. A message that

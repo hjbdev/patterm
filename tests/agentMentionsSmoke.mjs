@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { mentionLaunchers, mentionableAgents, mentionableProcesses, sessionForProcess, splitProcessMentions } = require('../dist/tests/resources/js/lib/agentMentions.js');
+const { botMentionables, mentionLaunchers, mentionableAgents, mentionableProcesses, sessionForProcess, splitProcessMentions } = require('../dist/tests/resources/js/lib/agentMentions.js');
 
 function session(id, processId, fields = {}) {
   return {
@@ -44,6 +44,29 @@ test('mentionable processes are the live ones, naming the agent that started the
     ['process_11', 'shell', null],
     ['process_13', 'orphan', null]
   ], 'ended processes are left out');
+});
+
+test('a bot mentions its helpers and what its purview reaches, labelled by project', () => {
+  const process = (id, fields = {}) => ({ id, parentProcessId: null, kind: 'shell', name: id, command: 'bash', cwd: null, argv: [], status: 'running', activity: 'idle', ptyProcessId: `pty_${id}`, worktreeId: null, autoRestart: false, exitedAt: null, exitCode: null, ...fields });
+  const project = (id, name, projectSessions, processes = [], fields = {}) => ({ project: { id, name, ...fields }, projectSessions, processes });
+  const own = project('p_bot', 'Bots', [
+    session('s_bot', 'process_1', { displayName: 'Robin', sessionRole: 'bot' }),
+    session('s_helper', 'process_2', { parentId: 's_bot', displayName: 'Helper' })
+  ]);
+  const projects = [
+    project('p_a', 'Alpha', [session('s_a', 'process_10', { displayName: 'Builder' }), session('s_remote', 'beta:process_7', { displayName: 'Remote', host: 'beta' })], [process('process_11', { name: 'dev server', parentProcessId: 'process_10' }), process('beta:process_8', { host: 'beta' })]),
+    project('p_b', 'Beta', [session('s_b', 'process_20', { displayName: 'Reviewer' })], [process('process_21', { name: 'shell' })]),
+    project('p_remote', 'Paired', [session('s_r', 'beta:process_30', { host: 'beta' })], [], { host: 'beta' })
+  ];
+  const some = botMentionables(own, projects, { kind: 'projects', projectIds: ['p_a'] }, 'process_1');
+  assert.deepEqual(some.agents.map((agent) => [agent.processId, agent.parent]), [['process_2', 'Robin'], ['process_10', 'Alpha']], 'the bot itself, projects outside its purview, and paired hosts are left out');
+  assert.deepEqual(some.processes.map((item) => [item.processId, item.owner]), [['process_11', 'Builder · Alpha']]);
+  const all = botMentionables(own, projects, { kind: 'all' }, 'process_1');
+  assert.deepEqual(all.agents.map((agent) => agent.processId), ['process_2', 'process_10', 'process_20']);
+  assert.deepEqual(all.processes.map((item) => [item.processId, item.owner]), [['process_11', 'Builder · Alpha'], ['process_21', 'Beta']]);
+  const none = botMentionables(own, projects, { kind: 'none' }, 'process_1');
+  assert.deepEqual([none.agents.map((agent) => agent.processId), none.processes], [['process_2'], []], 'a bot without projects still mentions its helpers');
+  assert.deepEqual(botMentionables(null, projects, { kind: 'none' }, 'process_1'), { agents: [], processes: [] });
 });
 
 test('process IDs split out of message text as whole words', () => {
