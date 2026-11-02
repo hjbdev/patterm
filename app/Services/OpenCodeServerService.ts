@@ -89,6 +89,7 @@ interface OpenCodeStream {
 // the message snapshot projection uses.
 interface OpenCodeRow {
   rowId: string;
+  messageID: string;
   index: number;
   kind: 'text' | 'reasoning' | 'tool';
   key: string;
@@ -103,6 +104,12 @@ interface OpenCodeRow {
   // ISO times from the native snapshot or the event that started or ended it.
   createdAt?: string | undefined;
   completedAt?: string | undefined;
+}
+
+interface OpenCodeLivePart {
+  index: number;
+  kind: 'text' | 'reasoning';
+  text: string;
 }
 
 interface OpenCodeProjection {
@@ -180,6 +187,12 @@ export class OpenCodeServerService {
   private readonly requestOwners = new Map<string, string>();
   // Subagent session -> the subagent tool row that started it, for nesting.
   private readonly childRows = new Map<string, string>();
+  // Background shell -> the session that started it. Only shell.created
+  // names the session; shell.exited and shell.deleted carry just the id.
+  private readonly shellOwners = new Map<string, string>();
+  // Shells that ended before their owner was known, such as a shell started
+  // before Patterm was watching that ends during the first snapshot's reads.
+  private readonly unownedShellEnds = new Map<string, true>();
   // Event types each session's stream does not project, for the debug log.
   private readonly unhandled = new Map<string, Record<string, number>>();
   // Model context windows by providerID/id, read once per service.
@@ -509,11 +522,18 @@ export class OpenCodeServerService {
       return;
     }
     // A background shell starting or ending changes the tasks, which only the
-    // snapshot lists. Shell events name their session in metadata; one that
-    // names none may be this session's.
+    // snapshot lists. shell.created names its session in the shell's metadata,
+    // and the later events are routed by the shell id. An end whose owner is
+    // not known yet, such as a shell started before Patterm watched, is held
+    // until a shell listing names the owner.
     if (type === 'shell.created' || type === 'shell.exited' || type === 'shell.deleted') {
-      const owner = eventSession ?? record(data.metadata).sessionID;
-      if (owner === undefined || owner === sessionId) emit({ kind: 'pending' });
+      const info = record(data.info);
+      const shellId = typeof info.id === 'string' ? info.id : typeof data.id === 'string' ? data.id : '';
+      const named = record(info.metadata).sessionID ?? record(data.metadata).sessionID;
+      if (shellId && typeof named === 'string') bounded(this.shellOwners, shellId, named);
+      const owner = typeof named === 'string' ? named : this.shellOwners.get(shellId);
+      if (owner === sessionId) emit({ kind: 'pending' });
+      else if (owner === undefined && shellId && type !== 'shell.created') bounded(this.unownedShellEnds, shellId, true);
       return;
     }
     if (eventSession !== sessionId) return;
@@ -867,6 +887,36 @@ export class OpenCodeServerService {
     return pages.flat();
   }
 
+  // A listed shell whose end arrived before its owner was known left that
+  // owner's snapshot showing it running; the owner re-reads it.
+  private learnShellOwners(listing: unknown): void {
+    for (const shell of dataRows(listing)) {
+      const owner = record(shell.metadata).sessionID;
+      if (typeof shell.id !== 'string' || typeof owner !== 'string') continue;
+      bounded(this.shellOwners, shell.id, owner);
+      if (!this.unownedShellEnds.delete(shell.id)) continue;
+      const state = this.activity.get(owner);
+      if (state) this.broadcast(state, { kind: 'pending' });
+    }
+  }
+
+  // Streamed text and reasoning not yet ended, for this session and the
+  // subagents nested under it, by native message id. Copied, so later deltas
+  // never reach a snapshot taken before them.
+  private liveParts(sessionId: string): Map<string, OpenCodeLivePart[]> {
+    const live = new Map<string, OpenCodeLivePart[]>();
+    const sessions = [sessionId, ...[...this.childRows.keys()].filter((child) => this.sessionParents.get(child) === sessionId)];
+    for (const session of sessions) {
+      for (const row of this.projections.get(session)?.rows.values() ?? []) {
+        if (row.kind === 'tool' || row.completedAt || !row.text) continue;
+        const parts = live.get(row.messageID) ?? [];
+        parts.push({ index: row.index, kind: row.kind, text: row.text });
+        live.set(row.messageID, parts);
+      }
+    }
+    return live;
+  }
+
   // The projection is session-scoped and survives subscription release: a new
   // subscription for another process never clears a live session's identity.
   private projection(sessionId: string): OpenCodeProjection {
@@ -892,6 +942,7 @@ export class OpenCodeServerService {
     const resolved = index ?? projection.nextIndex.get(messageID) ?? 0;
     const row: OpenCodeRow = {
       rowId: `${messageID}-${resolved}`,
+      messageID,
       index: resolved,
       kind,
       key,
@@ -962,7 +1013,8 @@ export class OpenCodeServerService {
             const ordinal = ordinals[type] ?? 0;
             ordinals[type] = ordinal + 1;
             const row = this.row(projection, messageID, `${messageID}:${type}:${ordinal}`, type, ordinal, undefined, index);
-            if (!row.text && typeof block.text === 'string') row.text = block.text;
+            // Persisted text is final; a row left short by a missed end takes it.
+            if (typeof block.text === 'string' && block.text.length > row.text.length) row.text = block.text;
             seedTimes(row);
             continue;
           }
@@ -1463,6 +1515,11 @@ export class OpenCodeServerService {
     // during a read keeps a newer revision, so the renderer re-applies it
     // instead of dropping it with the snapshot.
     const revision = this.revisions.get(processId) ?? 0;
+    // OpenCode persists streamed text and reasoning only when the part ends,
+    // so the native read shows an open part empty. The projection's text is
+    // taken at the same boundary as the revision: deltas after it stay newer
+    // than the snapshot and the renderer appends them exactly once.
+    const live = this.liveParts(runtime.resumeId);
     // Without an open stream the snapshot decides alone.
     const activity = this.activity.get(runtime.resumeId) ?? newActivity();
     const activityVersion = activity.version;
@@ -1476,7 +1533,11 @@ export class OpenCodeServerService {
       // Older daemons without the inbox route simply show no queue.
       this.api(runtime.executable, runtime.cwd, 'GET', `/api/session/${encodeURIComponent(runtime.resumeId)}/inbox`).catch(() => null),
       // Running shells; older daemons without the route show none as running.
-      this.api(runtime.executable, runtime.cwd, 'GET', `/api/shell?${new URLSearchParams({ 'location[directory]': runtime.cwd })}`).catch(() => null)
+      // Owners are learned as soon as the listing lands, so later shell ends
+      // route to their session.
+      this.api(runtime.executable, runtime.cwd, 'GET', `/api/shell?${new URLSearchParams({ 'location[directory]': runtime.cwd })}`)
+        .then((listing) => { this.learnShellOwners(listing); return listing; })
+        .catch(() => null)
     ]);
     const [nestedRows, usage] = await Promise.all([this.childMessages(runtime, rows), this.usage(runtime, rows)]);
     const tasks = subagentTasks(rows, runtime.resumeId, active, new Set(dataRows(shells).map((shell) => String(shell.id))));
@@ -1505,7 +1566,7 @@ export class OpenCodeServerService {
       history_cursor: cursor ?? null,
       revision,
       streaming: true,
-      messages: { data: this.withStoredImages([...[...rows].reverse(), ...nestedRows]) },
+      messages: { data: this.withStoredImages(withLiveParts([...[...rows].reverse(), ...nestedRows], live)) },
       permissions: { data: permissions.map(permissionView) },
       forms: declinableForms(forms),
       usage,
@@ -2344,6 +2405,35 @@ const OPENCODE_BUILTIN_COMMANDS = [
 
 // The daemon is shared and long-lived, so per-session lookups are capped:
 // the oldest entry goes first, and a later miss is looked up again.
+// Fills open text and reasoning parts of unfinished assistant messages with the
+// streamed text. Persisted text is authoritative: a part the native read
+// already completed, or holds at least as much text for, is left alone.
+function withLiveParts(rows: unknown[], live: Map<string, OpenCodeLivePart[]>): unknown[] {
+  if (!live.size) return rows;
+  return rows.map((raw) => {
+    const message = record(raw);
+    const parts = typeof message.id === 'string' ? live.get(message.id) : undefined;
+    if (!parts || message.type !== 'assistant' || record(message.time).completed !== undefined) return raw;
+    const content: unknown[] = Array.isArray(message.content) ? [...message.content] : [];
+    let changed = false;
+    for (const part of [...parts].sort((left, right) => left.index - right.index)) {
+      if (part.index < content.length) {
+        const block = record(content[part.index]);
+        const text = typeof block.text === 'string' ? block.text : '';
+        if (block.type !== part.kind || record(block.time).completed !== undefined || text.length >= part.text.length) continue;
+        content[part.index] = { ...block, text: part.text };
+      } else if (part.index === content.length) {
+        // The native read has not stored the part yet.
+        content.push({ type: part.kind, text: part.text });
+      } else {
+        continue;
+      }
+      changed = true;
+    }
+    return changed ? { ...message, content } : raw;
+  });
+}
+
 function bounded<K, V>(map: Map<K, V>, key: K, value: V, limit = 5_000): void {
   map.delete(key);
   map.set(key, value);

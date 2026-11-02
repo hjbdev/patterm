@@ -163,6 +163,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- OpenCode replies no longer vanish and reappear while they stream. A
+  conversation refresh mid-reply now keeps the text and reasoning streamed so
+  far, which OpenCode stores only when each part ends. Background shell events
+  now refresh only the session that started the shell, not every OpenCode
+  conversation.
+
 - OpenCode's speed variants, such as GPT-6.1 Terra and Terra Fast, are
   separate model options again. Picking Fast no longer checks the standard
   model too, and saves and launches the Fast variant instead of the standard
