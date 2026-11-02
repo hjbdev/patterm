@@ -381,7 +381,9 @@ async function main(): Promise<void> {
     assert.doesNotMatch(projectContext, /Context Task/, 'project-level claude does not receive task records');
     assert.match(projectContext, /never invent labels from IDs/, 'project-level claude keeps exact process names');
     assert.match(projectContext, /call request_close with a short summary/, 'project-level claude learns when to ask to be closed');
-    assert.ok(projectContext.length < 2000, 'project-level context stays compact');
+    assert.match(projectContext, /status_set/, 'project-level claude learns to pin a status label while it waits');
+    // Far under OpenCode's 8 KiB instruction cap, which also holds memory.
+    assert.ok(projectContext.length < 2300, 'project-level context stays compact');
     assert.doesNotMatch(projectContext, /html_render/, 'TUI agents are not offered figures');
     const claudeConfigPath = (spawn.args as string[])[3]!;
     assert.match(path.basename(claudeConfigPath), CLAUDE_MCP_CONFIG, 'claude mcp config is named for its launch');
@@ -478,7 +480,7 @@ async function main(): Promise<void> {
     ]) {
       assert.doesNotMatch(promptContext, new RegExp(sentinel.replaceAll('.', '\\.')), `${sentinel} is not loaded into launch context`);
     }
-    assert.ok(promptContext.length < 2000, 'project-scoped context stays compact');
+    assert.ok(promptContext.length < 2300, 'project-scoped context stays compact');
     await waitFor(
       async () => terminalRequests.filter((request) => request.method === 'terminal.process.input' && (request.params as { process_id?: string }).process_id === promptLaunch.pty_process_id).length >= 1,
       'project-scoped launch receives explicit initial prompt'

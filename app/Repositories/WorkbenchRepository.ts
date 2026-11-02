@@ -4,6 +4,8 @@ import type { DatabaseService } from '../Services/DatabaseService';
 import { USER_PROJECT_KINDS_SQL } from '../Services/PersonalProject';
 import { SettingsService, type SidebarState } from '../Services/SettingsService';
 import type { TimerRecord, TimerService } from '../Services/TimerService';
+import type { StatusLabel } from '../Services/StatusLabels';
+import type { StatusLabelColor } from '../Services/StatusLabelCommon';
 
 // Renderer-facing (camelCase) shapes. These intentionally mirror the interfaces
 // in resources/js/types.ts so the IPC payload drops straight into the UI.
@@ -36,6 +38,10 @@ export interface ProjectSummaryDto {
 }
 
 export interface CloseRequestDto { summary: string; requestedAt: string; }
+
+// A status label pinned on a running agent, resolved from this host's
+// settings, so a paired host's records carry their own name and colour.
+export interface StatusLabelDto { id: string; name: string; color: StatusLabelColor; setBy: 'agent' | 'user'; setAt: string; }
 
 // `snoozedAt` is set while the agent sleeps until its next message; a
 // reminder left for that message stays after it wakes, until dismissed.
@@ -77,6 +83,8 @@ export interface SessionDto {
   // What an Integrated agent waiting on you asks, in one line. Null while
   // nothing is pending; older paired hosts omit it.
   asking?: string | null;
+  // Null when none is pinned; older paired hosts omit it.
+  statusLabel?: StatusLabelDto | null;
   lastTitle: string | null;
   displayName: string | null;
   // The name to show: chosen, then generated, then native. Older paired hosts omit it.
@@ -195,6 +203,9 @@ interface ProcessRow {
   activity: string;
   background_tasks: number;
   asking: string | null;
+  status_label_id: string | null;
+  status_label_set_at: string | null;
+  status_label_set_by: string | null;
   pty_process_id: string | null;
   worktree_id: string | null;
   auto_restart: number;
@@ -270,8 +281,9 @@ export class WorkbenchRepository {
     const hidden = this.db.prepare(`select id, name, path, logo, kind, snoozed_until, context_revision from projects where kind in ('bots', 'assistant')`).all() as ProjectRow[];
     const projectRows = [...this.projectRows(), ...hidden];
     const timers = this.timers?.list() ?? [];
+    const labels = this.settings.statusLabels().labels;
 
-    return { projects: projectRows.map((project) => this.projectWorkbench(project, timers)), harnesses, sidebarState: this.settings.sidebarState(), terminalAvailable: this.terminalAvailable() };
+    return { projects: projectRows.map((project) => this.projectWorkbench(project, timers, labels)), harnesses, sidebarState: this.settings.sidebarState(), terminalAvailable: this.terminalAvailable() };
   }
 
   updateSidebarState(input: SidebarState): SidebarState {
@@ -294,12 +306,12 @@ export class WorkbenchRepository {
         : undefined;
     const processRow = input.process_id ? processRows.find((row) => row.id === input.process_id && row.kind !== 'agent') : undefined;
     return {
-      session: sessionRow ? mapSessions([sessionRow], processRows)[0] ?? null : null,
+      session: sessionRow ? mapSessions([sessionRow], processRows, this.settings.statusLabels().labels)[0] ?? null : null,
       process: processRow ? mapProcess(processRow) : null
     };
   }
 
-  private projectWorkbench(project: ProjectRow, timers: TimerRecord[]): ProjectWorkbenchDto {
+  private projectWorkbench(project: ProjectRow, timers: TimerRecord[], labels: StatusLabel[]): ProjectWorkbenchDto {
     // Keep recent history, assigned sessions, and ancestors of live processes.
     // An old failed parent must not disappear from its surviving family.
     const since = this.now() - WORKBENCH_HISTORY_MS;
@@ -320,7 +332,7 @@ export class WorkbenchRepository {
     const processRows = this.db
       .prepare(`select * from processes where project_id = ? order by created_at asc`)
       .all(project.id) as ProcessRow[];
-    const sessions = mapSessions(sessionRows, processRows);
+    const sessions = mapSessions(sessionRows, processRows, labels);
     const processIds = new Set(processRows.map((row) => row.id));
     const recent = (row: ProcessRow) => row.status === 'running' || !row.exited_at || Date.parse(row.exited_at) >= since;
 
@@ -352,13 +364,15 @@ function projectSummary(row: ProjectRow): ProjectSummaryDto {
 
 // Derive each session's parent session via the backing process tree:
 // session → process → parent_process → the session owning that process.
-function mapSessions(sessions: SessionRow[], processes: ProcessRow[]): SessionDto[] {
+function mapSessions(sessions: SessionRow[], processes: ProcessRow[], labels: StatusLabel[]): SessionDto[] {
   const statuses = new Map(processes.map((process) => [process.id, process.status]));
   const summaries = new Map(processes.map((process) => [process.id, mapAutoSummary(process)]));
   const closeRequests = new Map(processes.map((process) => [process.id, mapCloseRequest(process)]));
   const snoozes = new Map(processes.map((process) => [process.id, mapSnooze(process)]));
   const backgroundTasks = new Map(processes.map((process) => [process.id, process.background_tasks]));
   const asking = new Map(processes.map((process) => [process.id, process.asking]));
+  const labelsById = new Map(labels.map((label) => [label.id, label]));
+  const statusLabels = new Map(processes.map((process) => [process.id, mapStatusLabel(process, labelsById)]));
   const parentProcessByProcessId = new Map<string, string | null>();
   const activityByProcessId = new Map<string, string>();
   const activityAtByProcessId = new Map<string, string>();
@@ -398,6 +412,7 @@ function mapSessions(sessions: SessionRow[], processes: ProcessRow[]): SessionDt
       backgroundTasks: session.process_id ? backgroundTasks.get(session.process_id) ?? 0 : 0,
       activityAt: session.process_id ? activityAtByProcessId.get(session.process_id) ?? null : null,
       asking: session.process_id ? asking.get(session.process_id) ?? null : null,
+      statusLabel: session.process_id ? statusLabels.get(session.process_id) ?? null : null,
       lastTitle: session.last_title,
       displayName: session.display_name,
       title: session.title,
@@ -440,6 +455,12 @@ function mapAutoSummary(row: ProcessRow): AutoSummaryDto | null {
 function mapCloseRequest(row: ProcessRow): CloseRequestDto | null {
   if (!row.close_requested_at || row.status !== 'running' || row.activity === 'working' || row.activity === 'thinking') return null;
   return { summary: row.close_request_summary ?? '', requestedAt: row.close_requested_at };
+}
+
+// Only a running agent shows its label, and a deleted label reads as none.
+function mapStatusLabel(row: ProcessRow, labels: Map<string, StatusLabel>): StatusLabelDto | null {
+  const label = row.status === 'running' && row.status_label_id ? labels.get(row.status_label_id) : undefined;
+  return label && row.status_label_set_at ? { id: label.id, name: label.name, color: label.color, setBy: row.status_label_set_by === 'user' ? 'user' : 'agent', setAt: row.status_label_set_at } : null;
 }
 
 function mapSnooze(row: ProcessRow): SnoozeDto | null {

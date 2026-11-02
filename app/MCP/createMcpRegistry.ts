@@ -40,7 +40,7 @@ import { resolvePtyProcessId, withResolvedPtyProcessId } from '../Services/Proce
 import { type ProcessLauncher, processCreateInput, processUpdateInput } from '../Services/ProcessLauncher';
 import type { SearchService } from '../Services/SearchService';
 import type { IntegratedAgentService } from '../Services/IntegratedAgentService';
-import type { SettingsService } from '../Services/SettingsService';
+import { SettingsService } from '../Services/SettingsService';
 import type { TerminalService } from '../Services/TerminalService';
 import { TimerService } from '../Services/TimerService';
 import { ConversationOutputService, conversationOutputInput } from '../Services/ConversationOutputService';
@@ -67,6 +67,8 @@ import type { BotInbox } from '../Services/BotInbox';
 import { queuedDetail, SendMessageAction } from '../Actions/SendMessageAction';
 import { REMOTE_READ_TOOLS, type CrossHostService } from '../Services/CrossHostService';
 import { isUserProjectKind } from '../Services/PersonalProject';
+import { processStatusSetInput, statusSetInput, type StatusLabelActions } from '../Actions/StatusLabelActions';
+import { STATUS_LABEL_COLORS, createStatusLabelInput, type StatusLabel } from '../Services/StatusLabels';
 
 const CONVERSATION_OUTPUT_HINT = 'Use get_conversation_output for the latest answer, turn state, last report, and older messages.';
 
@@ -120,6 +122,7 @@ interface RegistryServices {
   closeRequests?: Pick<CloseRequestActions, 'request' | 'answer' | 'clear'>;
   projectSnoozes?: Pick<ProjectSnoozeActions, 'snooze' | 'wake'>;
   snoozes?: Pick<SnoozeActions, 'snooze' | 'unsnooze' | 'dismissReminder' | 'userInput'>;
+  statusLabels?: Pick<StatusLabelActions, 'labels' | 'set' | 'create' | 'userInput' | 'settings' | 'saveLabel' | 'deleteLabel'>;
   usage?: GetUsageSummaryAction;
   // Delivers to bots besides the user: agent messages and Focus mode.
   assistant?: Pick<BotRelay, 'deliverAgentMessage'> & Partial<Pick<BotRelay, 'setFocus' | 'focusItems'>>;
@@ -614,6 +617,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       // wakes a snoozed agent.
       services.closeRequests?.clear(processId);
       services.snoozes?.userInput(processId);
+      services.statusLabels?.userInput(processId);
       return requireIntegrated(services).prompt(processId, {
         text: input.text,
         ...(input.references ? { references: input.references } : {}),
@@ -661,6 +665,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
         services.autoSummaries?.userInput(processId);
         services.closeRequests?.clear(processId);
         services.snoozes?.userInput(processId);
+        services.statusLabels?.userInput(processId);
       }
       return requireIntegrated(services).updateQueued(processId, input.message_id, input.action);
     }
@@ -1049,6 +1054,78 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     if (!current) throw new Error('session_rename requires an authenticated agent session');
     return renameProcess.execute(current.session_id, input.name, 'agent');
   });
+
+  // Status labels: a short state pinned on an agent beside its activity.
+  const statusLabelsFor = (tool: string) => {
+    if (!services.statusLabels) throw new Error(`${tool}: status labels are unavailable`);
+    return services.statusLabels;
+  };
+  registry.register({
+    name: 'status_set',
+    namespace: 'session',
+    description: 'Pin a status label on your own agent session, such as "Waiting for review" while a review loop runs, or clear it with label null. Shown beside your name to the user and in list_processes.',
+    inputSchema: { type: 'object', properties: { label: { type: ['string', 'null'], minLength: 1, maxLength: 80, description: 'A configured label\'s name or id (see status_label_list), or null to clear.' } }, required: ['label'], additionalProperties: false },
+    usageNotes: [
+      'Idle detection still reports whether you are working; the label says why you are waiting. Set it when you start waiting on something, and clear it when that is over or the label no longer fits.',
+      'Only configured labels can be set; an unknown name fails and lists them. The user configures labels in Settings; create one with status_label_create only when the user explicitly asks.',
+      'Your label clears when the user sends you a message, and is not shown once you exit.'
+    ]
+  }, (args, context) => {
+    const input = statusSetInput.parse(args);
+    const current = caller(context);
+    if (!current?.process_id || context.remote) throw new Error('status_set requires an authenticated agent session on this host');
+    return statusLabelsFor('status_set').set(current.process_id, input.label, 'agent');
+  });
+  registry.register({
+    name: 'status_label_list',
+    namespace: 'session',
+    description: 'List the status labels the user configured, with when to use each, for status_set.',
+    changes: [],
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false }
+  }, () => ({ labels: statusLabelsFor('status_label_list').labels().map(describeStatusLabel) }));
+  registry.register({
+    name: 'status_label_create',
+    namespace: 'session',
+    description: 'Add a status label to the user\'s settings. Only call this when the user explicitly asks you to create a status label; otherwise pick an existing one with status_label_list.',
+    changes: ['settings', 'workbench'],
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', minLength: 1, maxLength: 40 },
+        color: { type: 'string', enum: [...STATUS_LABEL_COLORS] },
+        description: { type: 'string', maxLength: 200, description: 'When agents should use it.' }
+      },
+      required: ['name', 'color'],
+      additionalProperties: false
+    },
+    usageNotes: ['A label with the same name is returned with created false instead of a duplicate. The user can edit or delete it in Settings.']
+  }, (args, context) => {
+    const input = createStatusLabelInput.parse(args);
+    if (!caller(context) || context.remote) throw new Error('status_label_create requires an authenticated agent session on this host');
+    const result = statusLabelsFor('status_label_create').create(input);
+    return { label: describeStatusLabel(result.label), created: result.created };
+  });
+  // The owner's controls: the label list in Settings, and pinning a label
+  // on any agent from its menu.
+  registry.register(
+    { name: 'settings_status_labels_get', namespace: 'settings', description: 'Read the configured status labels.', hidden: true, changes: [], inputSchema: { type: 'object' } },
+    () => ({ ...statusLabelsFor('settings_status_labels_get').settings(), colors: STATUS_LABEL_COLORS })
+  );
+  registry.register(
+    { name: 'settings_status_label_save', namespace: 'settings', description: 'Add a status label, or edit one by id.', hidden: true, changes: ['settings', 'workbench'], inputSchema: { type: 'object', required: ['name', 'color'] } },
+    (args) => statusLabelsFor('settings_status_label_save').saveLabel(args)
+  );
+  registry.register(
+    { name: 'settings_status_label_delete', namespace: 'settings', description: 'Delete a status label and unpin it from agents.', hidden: true, changes: ['settings', 'workbench'], inputSchema: { type: 'object', required: ['id'] } },
+    (args) => statusLabelsFor('settings_status_label_delete').deleteLabel(args)
+  );
+  registry.register(
+    { name: 'process_status_set', namespace: 'process', description: 'Pin a status label on an agent, or clear it.', hidden: true, inputSchema: { type: 'object', required: ['process_id', 'label'] } },
+    (args, context) => {
+      const input = processStatusSetInput.parse(args);
+      return statusLabelsFor('process_status_set').set(processFor(context, input.process_id), input.label, 'user');
+    }
+  );
 
   registry.register({ name: 'rename_process', namespace: 'cli.process', description: 'Rename a process.', inputSchema: { type: 'object', required: ['process_id', 'name'] } }, (args, context) => {
     const input = renameProcessInput.parse(args);
@@ -2438,16 +2515,17 @@ function assistantOverview(services: RegistryServices, current: CallerRow) {
 function listActiveProcesses(database: DatabaseService, projectId: string) {
   const agents = database.connection.prepare(
     `select sessions.process_id, coalesce(sessions.title, sessions.harness) as name, sessions.harness,
-            sessions.session_role, processes.parent_process_id, processes.activity
+            sessions.session_role, processes.parent_process_id, processes.activity, processes.status_label_id
      from sessions join processes on processes.id = sessions.process_id
      where sessions.project_id = ? and sessions.exited_at is null and processes.status = 'running' and processes.kind = 'agent'
      order by sessions.started_at asc`
-  ).all(projectId) as Array<{ process_id: string; name: string; harness: string; session_role: string; parent_process_id: string | null; activity: string }>;
+  ).all(projectId) as Array<{ process_id: string; name: string; harness: string; session_role: string; parent_process_id: string | null; activity: string; status_label_id: string | null }>;
+  const labels = statusLabelNames(database);
   const processes = database.connection.prepare(
     `select id as process_id, name, kind, parent_process_id from processes where project_id = ? and kind != 'agent' and status = 'running' order by created_at asc`
   ).all(projectId) as Array<{ process_id: string; name: string; kind: string; parent_process_id: string | null }>;
   return [
-    ...agents.map((row) => ({ process_id: row.process_id, name: row.name, kind: 'agent', harness: row.harness, activity: row.activity, ...(row.parent_process_id ? { parent_process_id: row.parent_process_id } : {}) })),
+    ...agents.map((row) => ({ process_id: row.process_id, name: row.name, kind: 'agent', harness: row.harness, activity: row.activity, ...(row.status_label_id && labels.has(row.status_label_id) ? { status_label: labels.get(row.status_label_id) } : {}), ...(row.parent_process_id ? { parent_process_id: row.parent_process_id } : {}) })),
     ...processes.map((row) => ({ process_id: row.process_id, name: row.name, kind: row.kind, ...(row.parent_process_id ? { parent_process_id: row.parent_process_id } : {}) }))
   ];
 }
@@ -2493,12 +2571,17 @@ function scopedNullableWorktreeId(database: DatabaseService, caller: CallerRow |
   return worktreeId ? scopedWorktreeId(database, caller, worktreeId) : null;
 }
 
+// Names of the configured status labels by id. A deleted label reads as none.
+function statusLabelNames(database: DatabaseService): Map<string, string> {
+  return new Map(new SettingsService(database).statusLabels().labels.map((label) => [label.id, label.name]));
+}
+
 function listCliProcesses(database: DatabaseService, kind?: string, projectId?: string | null, currentProcessId?: string | null) {
   const projectFilter = projectId ? ' and sessions.project_id = @project_id' : '';
   const sessions = database.connection
     .prepare(
       `select sessions.process_id, sessions.title, sessions.harness, sessions.session_role, sessions.exited_at, sessions.exit_code,
-              processes.parent_process_id, processes.status as process_status
+              processes.parent_process_id, processes.status as process_status, processes.status_label_id
        from sessions left join processes on processes.id = sessions.process_id
        where sessions.process_id is not null${projectFilter}
        order by sessions.started_at desc`
@@ -2512,7 +2595,9 @@ function listCliProcesses(database: DatabaseService, kind?: string, projectId?: 
       exit_code: number | null;
       parent_process_id: string | null;
       process_status: string | null;
+      status_label_id: string | null;
     }>;
+  const labels = statusLabelNames(database);
   const processFilter = projectId ? ' and project_id = @project_id' : '';
   const processes = database.connection
     .prepare(`select id, parent_process_id, kind, name, status from processes where kind != 'agent'${processFilter} order by created_at desc`)
@@ -2525,6 +2610,7 @@ function listCliProcesses(database: DatabaseService, kind?: string, projectId?: 
       status: row.process_status && row.process_status !== 'running' ? row.process_status : row.exited_at ? 'exited' : 'running',
       ...(row.process_id === currentProcessId ? { is_current: true } : {}),
       ...(row.parent_process_id ? { parent_process_id: row.parent_process_id } : {}),
+      ...(row.status_label_id && row.process_status === 'running' && labels.has(row.status_label_id) ? { status_label: labels.get(row.status_label_id) } : {}),
       ...(row.exit_code === null ? {} : { exit_code: row.exit_code })
     })),
     ...processes.map((row) => ({
@@ -2721,6 +2807,10 @@ function requireHistoryDelete(services: RegistryServices): AgentHistoryDeleteSer
 function requireIntegrated(services: RegistryServices): NonNullable<RegistryServices['integrated']> {
   if (!services.integrated) throw new Error('Integrated conversations are not available');
   return services.integrated;
+}
+
+function describeStatusLabel(label: StatusLabel) {
+  return { id: label.id, name: label.name, color: label.color, ...(label.description ? { description: label.description } : {}) };
 }
 
 function requireSettings(services: RegistryServices): NonNullable<RegistryServices['settings']> {
