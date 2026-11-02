@@ -46,6 +46,8 @@ export interface RaiseNotificationInput {
   urgency?: NotificationUrgency | undefined;
   title?: string | undefined;
   body?: string | undefined;
+  // A shorter plain-text limit for previews; never above BODY_LIMIT.
+  bodyLimit?: number | undefined;
   dedupeKey?: string | null | undefined;
   // Routine: record it in the app at low urgency, with no toast or push.
   quiet?: boolean | undefined;
@@ -138,7 +140,7 @@ export class NotificationService {
     }
 
     // Toasts, the tray, and push show plain text; parents above keep the Markdown.
-    const text = clean(markdownText(source ?? ''), BODY_LIMIT);
+    const text = clean(markdownText(source ?? ''), Math.min(input.bodyLimit ?? BODY_LIMIT, BODY_LIMIT));
     const level = input.source === 'system' ? 'all' : this.level(categoryFor(input, process));
     if (level === 'off') return { status: 'suppressed' };
     const urgency = input.quiet ? 'low' : input.urgency ?? DEFAULT_URGENCY[input.kind];

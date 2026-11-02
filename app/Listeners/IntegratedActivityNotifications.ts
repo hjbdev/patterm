@@ -16,8 +16,15 @@ export interface IntegratedActivityNotificationContext {
   // compaction service's listener, so a compaction's end still reads true.
   compacting(processId: string): boolean;
   triage(processId: string): TriageDecision;
+  // A bot's final reply this turn, or null for other agents and turns
+  // without one. Only top-level assistant text, never tools or reasoning.
+  botReply(processId: string): string | null;
   log(event: string, data: Record<string, unknown>): void;
 }
+
+// Notifications are persisted and shown on lock screens, so a bot's reply is
+// previewed, not copied whole.
+export const REPLY_PREVIEW_LIMIT = 280;
 
 // Notifications and close requests follow an Integrated agent's activity.
 export function integratedActivityNotifications(context: IntegratedActivityNotificationContext): (change: IntegratedActivityChange) => void {
@@ -55,7 +62,9 @@ export function integratedActivityNotifications(context: IntegratedActivityNotif
       else if (!woke && !context.isAssistant(processId) && !reportedThisTurn) {
         const decision = context.triage(processId);
         if (decision.reason !== 'disabled') context.log('triage', { processId, ...decision });
-        context.raise({ processId, source: 'integrated', kind: 'turn_finished', body: 'Finished its turn', dedupeKey: 'integrated:turn_finished', quiet: decision.quiet });
+        // A bot's replies are short, so its notification shows the reply.
+        const reply = context.botReply(processId)?.trim();
+        context.raise({ processId, source: 'integrated', kind: 'turn_finished', body: reply || 'Finished its turn', ...(reply ? { bodyLimit: REPLY_PREVIEW_LIMIT } : {}), dedupeKey: 'integrated:turn_finished', quiet: decision.quiet });
       }
     }
   };

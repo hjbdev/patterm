@@ -424,6 +424,7 @@ async function createApplicationResources(
     wokeFromSnooze: (processId) => snoozes.announcedWake(processId),
     compacting: (processId) => idleCompaction.compacting(processId),
     triage: (processId) => triage.decide(processId),
+    botReply: (processId) => assistantInbox.botFor(processId) ? turnDigests.get(processId)?.finalMessage ?? null : null,
     log: (event, data) => debugLog.write('notifications', event, data)
   })));
 
