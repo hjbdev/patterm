@@ -5,6 +5,7 @@ import { BotRelay, type BotRelayEvent } from './Services/BotRelay';
 import { AssistantMemoryService } from './Services/AssistantMemoryService';
 import { ASSISTANT_BOT_ID } from './Bots/BotIdentity';
 import { registerIdleCompactionTools } from './MCP/registerIdleCompactionTools';
+import { StatusLabelActions } from './Actions/StatusLabelActions';
 import { registerBotTools } from './MCP/registerBotTools';
 import { BotService } from './Services/BotService';
 import { claudeConversationSaved } from './Services/ClaudeTaskOutput';
@@ -403,6 +404,7 @@ async function createApplicationResources(
     (event, data) => debugLog.write('idle-compaction', event, data), Date.now,
     (processId) => !relay || relay.voiceActive(processId));
   const snoozes = new SnoozeActions(database, timeline, notifyWorkbenchChanged, raiseNotification);
+  const statusLabels = new StatusLabelActions(database, settings, timeline, notifyWorkbenchChanged);
   // An automatic compaction is not a message, so it never wakes an agent.
   defer(integrated.onActivityChange(({ processId, previous, activity }) => {
     if (!idleCompaction.compacting(processId)) snoozes.activity(processId, previous, activity);
@@ -659,6 +661,7 @@ async function createApplicationResources(
   const answeredCloseRequests = closeRequests;
   notifications.onUserInput((processId) => answeredCloseRequests.clear(processId));
   notifications.onUserInput((processId) => snoozes.userInput(processId));
+  notifications.onUserInput((processId) => statusLabels.userInput(processId));
 
   // Paired hosts. Only the server can be reached by other hosts, so only it
   // shows pairing codes; any host can pair to a server.
@@ -772,6 +775,7 @@ async function createApplicationResources(
     closeRequests,
     projectSnoozes,
     snoozes,
+    statusLabels,
     assistant: botRelay,
     bots,
     assistantInbox,

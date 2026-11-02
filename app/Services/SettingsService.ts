@@ -7,6 +7,7 @@ import { emptyHarnessPresetSettings, harnessPresetSettingsInput, presetHarnessIn
 import { emptyHarnessModelCatalog, harnessModelCatalogInput, type HarnessModelCatalog } from '../Harness/ModelCatalog';
 import { BOT_VOICE_ACKNOWLEDGEMENTS, BOT_VOICE_PROFILES } from './AssistantVoiceProfile';
 import { BOT_VOICES } from '../Bots/BotIdentity';
+import { DEFAULT_STATUS_LABELS, statusLabelSettingsInput, type StatusLabelSettings } from './StatusLabels';
 
 export const sidebarStateInput = z.object({
   projects: z.array(z.string()).default([]),
@@ -115,6 +116,7 @@ const ASSISTANT_SETTINGS_KEY = 'assistant.settings.v1';
 const HARNESS_PRESETS_KEY = 'harness.presets.v1';
 const BOT_SETTINGS_KEY = 'bots.v1';
 const HARNESS_MODEL_CATALOG_KEY = 'harness.models.v1';
+const STATUS_LABELS_KEY = 'status_labels.v1';
 
 export const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
   uiFont: { preset: 'inter', customFamily: '' },
@@ -370,6 +372,20 @@ export class SettingsService {
     const catalog = harnessModelCatalogInput.parse(raw);
     this.write(HARNESS_MODEL_CATALOG_KEY, JSON.stringify(catalog));
     return catalog;
+  }
+
+  // Fresh installs start with a few labels; an unreadable list reads as none.
+  statusLabels(): StatusLabelSettings {
+    const row = this.database.connection.prepare('select value from settings where key = ?').get(STATUS_LABELS_KEY) as { value: string } | undefined;
+    if (!row) return DEFAULT_STATUS_LABELS;
+    try { return statusLabelSettingsInput.parse(JSON.parse(row.value)); }
+    catch { return { labels: [] }; }
+  }
+
+  updateStatusLabels(raw: unknown): StatusLabelSettings {
+    const settings = statusLabelSettingsInput.parse(raw);
+    this.write(STATUS_LABELS_KEY, JSON.stringify(settings));
+    return settings;
   }
 
   // A missing or unreadable row reads as the schema's defaults.

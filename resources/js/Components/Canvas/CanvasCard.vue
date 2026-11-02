@@ -38,6 +38,7 @@
           <span :class="cn('flex shrink-0 items-center gap-1', STATUS_TONES[status.tone])" :title="describeActivity(activity)">
             <span v-if="status.tone !== 'working'" class="flex h-3 w-3 items-center justify-center"><RowStatus :activity="activity" /></span>{{ status.label }}
           </span>
+          <StatusLabelPill v-if="node.session.statusLabel" :label="node.session.statusLabel" />
           <!-- Outside the title's clamp, so a long title never hides it. -->
           <template v-if="node.session.host"><span aria-hidden="true">·</span><HostBadge :host="node.session.host" /></template>
         </span>
@@ -93,6 +94,7 @@ import HostBadge from '../HostBadge.vue';
 import ProjectLogo from '../ProjectLogo.vue';
 import RowStatus from '../RowStatus.vue';
 import SidebarItemMenu from '../Sidebar/SidebarItemMenu.vue';
+import StatusLabelPill from '../StatusLabelPill.vue';
 import { useSidebar } from '../Sidebar/sidebarContext';
 
 export interface CanvasNode {

@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Status labels: an agent can pin a short status on itself, such as
+  "Waiting for review" or "Waiting on CI", with the new `status_set` tool.
+  It shows as a coloured pill beside the agent in the tab strip's menu, the
+  sidebar, the canvas and the conversation header, as a dot on its tab, and
+  in `list_processes`. Idle detection still shows whether the agent is
+  working. Labels are configured in Settings › Status labels, each with a
+  colour from the face palette and a note on when to use it. You can pin or
+  clear one from an agent's menu. An agent's own label clears when you
+  message it. Agents list labels with `status_label_list` and add one with
+  `status_label_create` only when you ask them to.
+
 - Push notifications from a bot read like a text from it: the bot's name is
   the sender, its face, emoji or picture is the notification's picture, and
   each bot keeps one thread that buzzes for every new message. Each device

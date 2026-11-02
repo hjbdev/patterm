@@ -45,6 +45,7 @@
                     <RowStatus :activity="activityFor(tab.family.root.session)" :count="familyMenuCount(tab.family)" :count-label="familyMemberLabel(tab.family)" />
                     <ProjectLogo v-if="tabProject(tab)" :project="tabProject(tab)!" :size="14" :title="tabProject(tab)!.name" />
                     <span class="truncate">{{ agentLabel(tab.family.root.session) }}</span>
+                    <StatusLabelPill v-if="tab.family.root.session.statusLabel" :label="tab.family.root.session.statusLabel" dot />
                     <BotOwnerPill v-if="ownerBotOf(tab.family.root.session)" :bot="ownerBotOf(tab.family.root.session)!" />
                     <HostBadge v-if="tab.family.root.session.host" :host="tab.family.root.session.host" />
                     <UnreadDot :urgency="unreadUrgency(tab.family.root.session.processId)" />
@@ -67,6 +68,7 @@
                 <Pencil class="h-4 w-4" />
                 <span>Rename</span>
               </ContextMenuItem>
+              <StatusLabelMenu :session="tab.family.root.session" />
               <ContextMenuItem @select="setPinned(tab, !tab.pinned)">
                 <PinOff v-if="tab.pinned" class="h-4 w-4" />
                 <Pin v-else class="h-4 w-4" />
@@ -168,6 +170,8 @@
 <script setup lang="ts">
 import HostBadge from './HostBadge.vue';
 import BotOwnerPill from './BotOwnerPill.vue';
+import StatusLabelMenu from './StatusLabelMenu.vue';
+import StatusLabelPill from './StatusLabelPill.vue';
 import { ownerBotOf } from '../Composables/useBots';
 import SnoozedProjectHeader from './SnoozedProjectHeader.vue';
 import { computed, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue';
@@ -363,6 +367,7 @@ function hasPopover(tab: Extract<StripTab, { kind: 'agent' }>): boolean {
   return compact(tab)
     || familyMenuCount(tab.family) > 0
     || Boolean(tab.family.root.session.summary)
+    || Boolean(tab.family.root.session.statusLabel)
     || familyTimers(tab.family).length > 0;
 }
 

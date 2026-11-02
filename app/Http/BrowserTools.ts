@@ -19,6 +19,7 @@ export const BROWSER_TOOLS = new Set([
   'routine_list', 'routine_get', 'routine_create', 'routine_update', 'routine_delete', 'routine_run_now', 'routine_run', 'routine_runs', 'routine_log',
   'usage_summary', 'auto_summary_control',
   'settings_idle_compaction_get', 'settings_idle_compaction_update',
+  'settings_status_labels_get', 'settings_status_labels_update', 'process_status_set',
   'settings_bots_get', 'settings_bots_update', 'bot_start', 'bot_state', 'bot_voice_start', 'bot_voice_stop', 'bot_set_focus_mode',
   ...MCP_SERVER_TOOLS,
   ...HOST_TOOLS,

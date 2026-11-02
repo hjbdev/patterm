@@ -13,6 +13,7 @@
             {{ agentLabel(session) }}<HostBadge v-if="session.host" :host="session.host" class="ml-1.5" />
           </h1>
         </SidebarItemMenu>
+        <StatusLabelPill v-if="session.statusLabel" :label="session.statusLabel" class="ml-1" />
         <slot name="trailing" />
       </div>
       <div v-if="summary && goal && !folded && !phoneLayout" class="mt-1 text-[12.5px] leading-5 text-muted-foreground">
@@ -137,6 +138,7 @@ import ResponsivePopover from '../ResponsivePopover.vue';
 import RowStatus from '../RowStatus.vue';
 import MediaThumb from '../peek/MediaThumb.vue';
 import SidebarItemMenu from '../Sidebar/SidebarItemMenu.vue';
+import StatusLabelPill from '../StatusLabelPill.vue';
 import { familyTabOf, useSidebar } from '../Sidebar/sidebarContext';
 import ContextLinkRow from './ContextLinkRow.vue';
 import ContextPicker from './ContextPicker.vue';

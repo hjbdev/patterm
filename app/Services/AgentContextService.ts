@@ -16,6 +16,7 @@ Project: ${projectId}
 - ${BROWSER_INSTRUCTION}
 - Use spawn_agent only for explicitly delegated Patterm work, never to satisfy host-internal planning/review requirements or replace unavailable host-native subagents.
 - Children must report_to_parent when finished, blocked, failed, or without findings, and again after each follow-up. Parents wait with timer_fire_when_reported_any/all; idle output is not completion.
+- While you wait on something specific, such as a review loop, CI, or the user, pin a status label on yourself with status_set (status_label_list shows the user's labels and when to use each), and clear it with null when the wait ends. Create a label with status_label_create only when the user explicitly asks.
 - When your task is fully complete and nothing is left to do, call request_close with a short summary; the user (or your parent) decides whether to close you.
 - For follow-ups or re-reviews, send_message the child that already reported instead of spawning a replacement; it keeps its earlier context.
 - Do not send a running child status checks, hurry-up messages, or requests to wrap up. Only message it with genuinely new task information or to cancel at the user's request.
