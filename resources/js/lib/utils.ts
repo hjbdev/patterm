@@ -7,3 +7,7 @@ export const RADIO_CLASS = 'mt-0.5 h-4 w-4 shrink-0 cursor-pointer appearance-no
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
+
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}

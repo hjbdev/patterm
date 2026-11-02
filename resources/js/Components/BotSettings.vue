@@ -1,5 +1,5 @@
 <template>
-  <SettingsPanel title="Bots" description="Bots are persistent companions you text with. Each one runs an agent CLI with its own model settings, which you can copy from a profile. It keeps one conversation that carries on after a restart, and works in the projects you give it. The helpers it starts stay out of view. The assistant is the built-in bot: it oversees every project and opens from its own panel.">
+  <SettingsPanel title="Bots" description="Bots are persistent companions you text with. Each one runs an agent CLI with its own model settings, which you can copy from a profile. It keeps one conversation that carries on after a restart, and works in the projects you give it. The helpers it starts stay out of view. The assistant is the built-in bot: it oversees every project and lists first.">
     <template #actions>
       <Button type="button" size="sm" variant="outline" @click="addBot">Add bot</Button>
     </template>

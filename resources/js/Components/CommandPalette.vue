@@ -77,7 +77,7 @@ import { canSnoozeProject, openProjectSnooze, wakeProject } from '../Composables
 import { projectSnoozed } from '../lib/projectSnooze';
 import { actionCluster, createPaletteDocument, rankedCommands, readRecentIds, recordsRecent, rememberRecent, rendererCommands, SECTION_TITLES, withIntegratedSelectors, type CommandDescriptor, type CommandRunResult, type PaletteRow, type PaletteSection } from '../lib/commandPalette';
 import { agentLabel } from '../lib/agentTabs';
-import { restartAssistant } from '../lib/assistant';
+import { restartBot } from '../lib/bots';
 import { harnessLabel } from '../lib/harnesses';
 import { publishedIntegratedControls } from '../lib/integratedControlsRegistry';
 import { topicGeneration } from '../lib/serverQuery';
@@ -662,7 +662,7 @@ async function handleResult(result: CommandRunResult): Promise<void> {
     if (request.kind === 'integrated') send();
     else afterClose = send;
   }
-  if (result.rendererAction === 'restartAssistant' && result.processId) await restartAssistant(result.processId);
+  if (result.rendererAction === 'restartAssistant' && result.processId) await restartBot(result.processId);
   if (result.message) toast.success(result.message);
   if (result.rendererAction === 'copy' && result.text) {
     await window.patterm.writeClipboardText(result.text);

@@ -9,7 +9,8 @@ import type { ProjectWorkbench, SessionRecord } from '../types';
 // Bots: persistent, single-instance agents with a face, set up in Settings ›
 // Bots. These shapes mirror app/Bots/BotSettings, which the renderer can't
 // import without its zod and Node dependencies. The assistant is the
-// built-in bot, ASSISTANT_BOT_ID; it lists first and can't be deleted.
+// built-in bot, ASSISTANT_BOT_ID; it lists first and can't be deleted, and
+// otherwise shows like any other bot.
 
 export type { BotAvatar };
 export { ASSISTANT_BOT_ID };
@@ -157,11 +158,13 @@ export interface BotRow {
   line: string | null;
 }
 
-// The assistant has its own row and dock, and turned-off bots don't list.
+// Turned-off bots don't list. `botProjects` holds the bots' own projects,
+// the assistant's included; a bot's session is found there by its bot ID, so
+// the routine runs that share the assistant's project never count as it.
 export function botRows(settings: BotSettings, projects: readonly ProjectWorkbench[], botProjects: readonly ProjectWorkbench[]): BotRow[] {
   const own = botProjects.flatMap((project) => project.projectSessions);
   const all = [...own, ...projects.flatMap((project) => project.projectSessions)];
-  return settings.bots.filter((bot) => bot.enabled && !isAssistantBot(bot)).map((bot) => {
+  return settings.bots.filter((bot) => bot.enabled).map((bot) => {
     const sessions = own.filter((session) => session.botId === bot.id);
     const session = sessions.find((candidate) => !candidate.exitedAt) ?? latest(sessions);
     if (!session) return { bot, session: null, activity: null, waitingHelper: null, waitingHelperProjectId: null, line: null };
@@ -187,8 +190,10 @@ export function botShownIn(bot: Bot, projectId: string): boolean {
   return bot.purview.kind !== 'projects' || bot.purview.projectIds.includes(projectId);
 }
 
-// A bot row's second line.
+// A bot row's second line. The assistant first starts when it's opened, so
+// until then it hasn't stopped or started.
 export function botLine(row: BotRow): string {
+  if (!row.session && isAssistantBot(row.bot)) return 'Starts when you open it';
   return row.line ?? (row.session ? (row.session.exitedAt ? 'Starting again…' : 'Ready') : 'Starting…');
 }
 
@@ -210,30 +215,6 @@ export function botLinkTarget(own: ProjectWorkbench, sessionId: unknown, bots: r
   const projectId = botId ? botHomeProjectId(bots?.find((bot) => bot.id === botId), projectIds) : null;
   if (botId && projectId) return { botId, projectId };
   return workbenchLoaded ? 'projects' : 'wait';
-}
-
-export interface AssistantRow {
-  session: SessionRecord | null;
-  activity: RowActivity | null;
-  line: string | null;
-}
-
-// The global assistant's row in the Bots section. Its agents already list
-// with everyone else's, so only its own status shows here. It starts when
-// first opened, so until then it has no status rather than an exited one.
-export function assistantRow(project: ProjectWorkbench | null, processId: string | null): AssistantRow {
-  const session = processId ? project?.projectSessions.find((candidate) => candidate.sessionRole === 'assistant' && candidate.processId === processId) : null;
-  if (!session) return { session: null, activity: null, line: null };
-  const activity = activityLookup(buildAgentTabFamilies([session], {}))(session);
-  return { session, activity, line: session.asking ?? session.summary?.status ?? null };
-}
-
-// The assistant row's second line, from its live state in lib/assistant.
-export function assistantLine(state: { voiceActive: boolean; focus: boolean; focusPending: number; processId: string | null }, row: AssistantRow): string {
-  if (state.voiceActive) return 'On a voice call';
-  if (row.line) return row.line;
-  if (state.focus) return state.focusPending ? `Focus · ${state.focusPending} held` : 'Focus';
-  return state.processId ? 'Ready' : 'Starts when you open it';
 }
 
 function helpersOf(bot: SessionRecord, sessions: readonly SessionRecord[]): SessionRecord[] {

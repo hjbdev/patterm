@@ -5,8 +5,6 @@
 @layer base {
   :root {
     color-scheme: dark;
-    /* The assistant column docked beside the workspace. */
-    --assistant-dock-width: 26rem;
     /* Neutral workspace surfaces against the near-black application frame. */
     --background: 0 0% 8.2%;
     --foreground: 0 0% 98%;
