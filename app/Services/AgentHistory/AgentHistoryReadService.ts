@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { HISTORY_IMPORT_STALE_MS } from './AgentHistoryTypes';
 import type { AgentHistoryDb } from './AgentHistoryDb';
+import { proseLabel, proseText, type ProseMessage } from './SummaryProseIndex';
 
 export const historyListInput = z.object({
   project_id: z.string().min(1).optional(),
@@ -250,6 +251,43 @@ export class AgentHistoryReadService {
       select * from conversation_messages where conversation_id = ? and seq < ? order by seq desc limit ?
     `).all(conversationId, beforeSeq ?? Number.MAX_SAFE_INTEGER, limit + 1) as MessageRow[];
     return { conversation, messages: rows.slice(0, limit).reverse().map(mapMessage), has_more: rows.length > limit };
+  }
+
+  // Retained prose (see proseLabel) that conversations imported since
+  // `importedSince` gained after their reviewed mark, oldest import first. A
+  // conversation with no mark starts at `firstSince`, so a long session first
+  // seen mid-way is not read from its beginning. Unfinished OpenCode prose is a
+  // boundary: nothing from it on is returned until it is final, so a mark can
+  // never pass text that is still changing.
+  newProse(input: { importedSince: string; firstSince: string; marks: ReadonlyMap<string, number>; excludeSessions: ReadonlySet<string>; limit: number }) {
+    if (!this.database || !databaseAvailable(this.database)) return null;
+    const conversations = this.database.connection.prepare(`
+      select id, title, project_id, provider, session_id, imported_at from conversations where imported_at >= ? order by imported_at asc, id asc
+    `).all(input.importedSince) as Array<{ id: string; title: string | null; project_id: string | null; provider: string; session_id: string | null; imported_at: string }>;
+    const rows = this.database.connection.prepare(`
+      select id, seq, role, kind, text, metadata, coalesce(provider_created_at, created_at) as at from conversation_messages
+      where conversation_id = ? and seq > ? and kind = 'message' and role in ('user', 'assistant')
+        and (? or coalesce(provider_created_at, created_at) >= ?)
+      order by seq asc limit ?
+    `);
+    return conversations.filter((row) => !row.session_id || !input.excludeSessions.has(row.session_id)).flatMap((row) => {
+      const mark = input.marks.get(row.id);
+      const found = rows.all(row.id, mark ?? -1, mark === undefined ? 0 : 1, input.firstSince, input.limit) as Array<ProseMessage & { seq: number; at: string }>;
+      const messages: Array<{ seq: number; speaker: string; text: string; at: string }> = [];
+      // The last row read before any boundary, prose or not, so rows that are
+      // all filtered out still move the mark on.
+      let scanned: number | null = null;
+      let boundary = false;
+      for (const message of found) {
+        const metadata = parseJson(message.metadata);
+        if (message.role === 'assistant' && metadata.source === 'opencode-sqlite' && metadata.prose_finalized !== true) { boundary = true; break; }
+        scanned = message.seq;
+        const speaker = proseLabel(message);
+        const text = speaker ? proseText(message.text) : '';
+        if (speaker && text) messages.push({ seq: message.seq, speaker, text, at: message.at });
+      }
+      return scanned === null ? [] : [{ ...row, messages, scanned, truncated: !boundary && found.length === input.limit }];
+    });
   }
 
   search(raw: z.input<typeof conversationHistorySearchInput>) {

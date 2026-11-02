@@ -30,7 +30,7 @@
     <RoutinePromptField :model-value="routine.prompt" field-class="min-h-24 text-foreground" @update:model-value="emit('change', { prompt: $event })" />
     <p>
       When it reports,
-      <InlineChoice :model-value="routine.delivery" :options="DELIVERY_OPTIONS" label="When it reports" @update:model-value="emit('change', { delivery: $event === 'none' ? 'none' : 'notification' })" />
+      <InlineChoice :model-value="routine.delivery" :options="DELIVERY_OPTIONS" label="When it reports" @update:model-value="emit('change', { delivery: $event === 'none' || $event === 'assistant' ? $event : 'notification' })" />
     </p>
   </div>
 </template>

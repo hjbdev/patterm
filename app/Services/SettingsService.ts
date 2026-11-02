@@ -80,7 +80,7 @@ const legacyAssistantSettingsInput = z.object({
   voiceProfile: z.enum(BOT_VOICE_PROFILES).catch('codex').default('codex'),
   voiceAcknowledgements: z.enum(BOT_VOICE_ACKNOWLEDGEMENTS).catch('default').default('default'),
   userName: z.string().trim().max(60).transform((name) => name || null).nullable().catch(null).default(null),
-  memoryEnabled: z.boolean().default(false),
+  memoryEnabled: z.boolean().default(true),
   memoryBudgetTokens: z.union([z.literal(2000), z.literal(4000), z.literal(8000)]).catch(4000).default(4000)
 });
 // Harnesses whose idle agents are compacted before their prompt cache expires.

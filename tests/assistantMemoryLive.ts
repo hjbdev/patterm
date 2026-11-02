@@ -27,10 +27,12 @@ async function main(): Promise<void> {
   // The assistant's settings live on its built-in bot.
   const setAssistant = (change: Partial<Bot>) => settings.updateBots({ ...settings.bots(), bots: settings.bots().bots.map((bot) => bot.id === ASSISTANT_BOT_ID ? { ...bot, ...change } : bot) });
   const memory = new AssistantMemoryService(database, settings);
+  // Start disabled to check that the model refrains from saving while off.
+  setAssistant({ memory: false });
   const identities = new Set<string>();
   const registry = new McpToolRegistry();
   const isAssistant = (context: { identity?: string | null }) => Boolean(context.identity && identities.has(context.identity));
-  registerAssistantMemoryTools(registry, memory, (context) => isAssistant(context) ? null : undefined, isAssistant);
+  registerAssistantMemoryTools(registry, memory, (context) => isAssistant(context) ? { role: 'assistant' } : undefined, isAssistant);
   const calls: string[] = [];
   registry.setRouter((name) => { calls.push(name); return null; });
   const socket = new McpSocketServer(path.join(directory, 'mcp.sock'), registry);

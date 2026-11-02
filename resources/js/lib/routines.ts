@@ -4,7 +4,7 @@ import { topicChanged, topicRead } from './serverQuery';
 
 export type RoutineRunStatus = 'running' | 'reported' | 'failed' | 'skipped';
 export type RoutineReportStatus = 'completed' | 'blocked' | 'failed' | 'no_findings';
-export type RoutineDelivery = 'notification' | 'none';
+export type RoutineDelivery = 'notification' | 'assistant' | 'none';
 
 export interface RoutineRunRecord {
   run_id: string;
@@ -275,6 +275,7 @@ export function describeLaunch(routine: RoutineRecord, models: Record<string, Ro
 
 export const DELIVERY_OPTIONS: RoutineChoiceOption[] = [
   { value: 'notification', label: 'notify me' },
+  { value: 'assistant', label: 'tell the assistant' },
   { value: 'none', label: 'do nothing' }
 ];
 

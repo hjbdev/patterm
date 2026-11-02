@@ -38,7 +38,7 @@ const routineProperties = {
   timezone: { type: 'string', description: 'IANA time zone, such as Europe/London. Defaults to the server\'s zone.' },
   prompt: { type: 'string', maxLength: 20000, description: 'Task for each run. {{date}}, {{weekday}}, {{since}} (the last successful run), and {{last_run_at}} are filled in when it starts.' },
   ...launchProperties,
-  delivery: { type: 'string', enum: ['notification', 'none'], description: 'What happens when a run reports: notify the user, or nothing.' },
+  delivery: { type: 'string', enum: ['notification', 'assistant', 'none'], description: 'What happens when a run reports: notify the user, hand it to the assistant to filter for the user (problems still notify directly; no_findings stays quiet), or nothing.' },
   run_at: { type: ['string', 'null'], description: 'ISO time with an offset. Set it to run once at that time instead of on days; null makes it repeat again.' },
   worktree_id: { type: ['string', 'null'], description: 'A project worktree to start each run in, from worktree_list.' }
 };

@@ -29,6 +29,8 @@ async function main(): Promise<void> {
     // The assistant's settings live on its built-in bot.
     const setAssistant = (change: Partial<Bot>) => settings.updateBots({ ...settings.bots(), bots: settings.bots().bots.map((bot) => bot.id === ASSISTANT_BOT_ID ? { ...bot, ...change } : bot) });
     const memory = new AssistantMemoryService(database, settings, () => time);
+    assert.equal(memory.enabled(), true, 'shared memory is on unless the user turned it off');
+    setAssistant({ memory: false });
     assert.equal(memory.snapshot(), '');
     assert.equal(memory.read({}).enabled, false, 'a disabled store can be checked without loading notes');
     assert.match(new AgentContextService().buildAssistant(), /assistant_memory_read/, 'an assistant launched with memory off knows how to activate it later');
@@ -113,8 +115,15 @@ async function main(): Promise<void> {
     assert.ok(voice.includes(snapshot));
     const context = new AgentContextService();
     assert.ok(context.buildAssistant(snapshot).includes(snapshot));
-    assert.ok(!context.build('p').includes('Saved assistant memory'));
-    assert.ok(!context.buildRoutine().includes('Saved assistant memory'));
+    assert.ok(!context.build('p').includes('Shared memory'));
+    assert.ok(!context.buildRoutine().includes('Shared memory'));
+    // Task agents and routines get a short snapshot within OpenCode's 8 KiB of
+    // JSON-encoded instructions, their own project's notes first.
+    for (const built of [context.build('p', { figures: true, memory: (limit) => memory.snapshot(limit, { role: 'agent', projectId: 'p' }) }), context.buildRoutine((limit) => memory.snapshot(limit, { role: 'routine' }))]) {
+      assert.match(built, /Shared memory, revision/);
+      assert.ok(Buffer.byteLength(JSON.stringify(built)) <= 7900);
+    }
+    assert.match(context.build('p', { memory: (limit) => memory.snapshot(limit, { role: 'agent', projectId: 'p' }) }), /assistant_memory_search with a few words/);
 
     // Real caller resolution: workspace routines, ordinary agents, owners,
     // expired identities and paired-host reads do not gain memory access.
@@ -132,7 +141,7 @@ async function main(): Promise<void> {
       setAssistant({ memory: memoryEnabled });
       const ordinaryCatalog = registry.publicTools({ identity: 'mcp-starting-worker' });
       assert.ok(ordinaryCatalog.length > 0, 'pre-registration catalogue discovery remains available');
-      assert.ok(!ordinaryCatalog.some((item) => item.name === tool));
+      assert.ok(ordinaryCatalog.some((item) => item.name === tool), 'task agents discover shared memory');
       assert.ok(registry.publicTools({ identity: 'mcp-starting-assistant' }).some((item) => item.name === tool), 'launching assistants discover memory tools even while disabled');
       assert.ok(registry.publicTools({ identity: 'unregistered' }).length > 0);
     }
@@ -173,12 +182,14 @@ async function main(): Promise<void> {
     assert.throws(() => memory.search({ ids: ['id'], query: 'also query' }));
     assert.throws(() => memory.search({}));
     assert.ok(registry.publicTools({ identity: 'mcp-assistant' }).some((item) => item.name === tool));
-    for (const identity of ['mcp-routine', 'mcp-orchestrator', null]) {
-      assert.ok(!registry.publicTools({ identity }).some((item) => item.name === tool));
-      await assert.rejects(registry.callPublic(tool, {}, { identity }), /Only the assistant/);
+    for (const identity of ['mcp-routine', 'mcp-orchestrator']) {
+      assert.ok(registry.publicTools({ identity }).some((item) => item.name === tool), 'routines and task agents share memory');
+      assert.equal((await registry.callPublic(tool, {}, { identity }) as ReturnType<AssistantMemoryService['read']>).revision, memory.read({}).revision);
     }
-    await assert.rejects(registry.callPublic(tool, {}, { identity: 'expired' }), /Only the assistant|identity/);
-    await assert.rejects(registry.call(tool, {}, { remote: { host_id: 'remote', host_name: 'remote', project_id: 'p' } }), /Only the assistant/);
+    assert.ok(!registry.publicTools({ identity: null }).some((item) => item.name === tool));
+    await assert.rejects(registry.callPublic(tool, {}, { identity: null }), /Only Patterm agent sessions/);
+    await assert.rejects(registry.callPublic(tool, {}, { identity: 'expired' }), /Only Patterm agent sessions|identity/);
+    await assert.rejects(registry.call(tool, {}, { remote: { host_id: 'remote', host_name: 'remote', project_id: 'p' } }), /Only Patterm agent sessions/);
     setAssistant({ memory: false });
     assert.equal(memory.snapshot(), '');
     const disabledCatalogue = registry.publicTools({ identity: 'mcp-assistant' }).filter((item) => item.name.startsWith('assistant_memory_'));
@@ -203,8 +214,8 @@ async function main(): Promise<void> {
     assert.ok(memory.read({}).revision > latest, 'revision and facts survive restart');
     assert.equal(row(corrected).status, 'forgotten');
 
-    // Bots keep their own notes and revisions, apart from the assistant's and
-    // each other's, and only name projects in their purview.
+    // Bots, task agents and the assistant share one store and revision. A bot
+    // follows its own switch; notes record who wrote them.
     database.connection.prepare('insert into projects(id,name,path,created_at,updated_at) values(?,?,?,?,?)').run('q', 'Other', dir, now, now);
     const botSettings = (id: string, memoryOn: boolean) => ({ id, name: id, presetId: 'preset_default_claude', avatar: { kind: 'face', look: randomLook(1), emoji: null, picture: null }, purview: { kind: 'projects', projectIds: ['p'] }, instructions: '', memory: memoryOn });
     settings.updateBots({ bots: [botSettings('fable', true), botSettings('pal', false)] });
@@ -213,27 +224,30 @@ async function main(): Promise<void> {
       database.connection.prepare('insert into sessions(id,project_id,process_id,harness,session_role,bot_id,started_at,cwd,mcp_identity) values(?,?,?,?,?,?,?,?,?)').run(id, 'p', `proc-${id}`, 'claude', 'bot', id, now, dir, `mcp-${id}`);
     }
     const fable = { identity: 'mcp-fable' };
-    const assistantRevision = memory.read({}).revision;
-    assert.ok(registry.publicTools(fable).some((item) => item.name === tool), 'bots discover memory tools');
+    const before = memory.read({}).revision;
     const fresh = await registry.callPublic(tool, {}, fable) as ReturnType<AssistantMemoryService['read']>;
-    assert.equal(fresh.revision, 0, 'a bot starts with an empty memory of its own');
-    assert.doesNotMatch(fresh.text, /Prefers metric units/, 'a bot never reads the assistant\'s notes');
-    const botNote = await registry.callPublic('assistant_memory_write', { lines: [{ text: 'Likes being called Hal.', importance: 'high', project_id: 'p' }] }, fable) as ReturnType<AssistantMemoryService['write']>;
-    assert.equal(botNote.revision, 1);
-    assert.equal(memory.read({}).revision, assistantRevision, 'bot writes leave the assistant\'s revision alone');
-    assert.doesNotMatch(memory.read({}).text, /Hal/);
-    assert.match(memory.snapshot(undefined, 'fable'), /Likes being called Hal/);
-    assert.match(memory.read({ since_revision: 0 }, 'fable').text, /Hal/);
-    assert.doesNotMatch(memory.search({ query: 'Hal' }).text, /Hal\./, 'assistant search leaves bot notes out');
-    await assert.rejects(registry.callPublic('assistant_memory_write', { mode: 'supersede', replaces: saved.ids, lines: [] }, fable), /stale/, 'a bot can\'t replace the assistant\'s notes');
-    await assert.rejects(registry.callPublic('assistant_memory_write', { lines: [{ text: 'Outside purview.', importance: 'low', project_id: 'q' }] }, fable), /one of your projects/);
-    assert.throws(() => memory.write({ mode: 'supersede', replaces: botNote.ids, lines: [] }), /stale/, 'the assistant can\'t replace a bot\'s notes');
+    assert.equal(fresh.revision, before, 'a bot reads the shared revision');
+    assert.ok(fresh.enabled);
+    assert.match((await registry.callPublic('assistant_memory_search', { query: 'metric units' }, fable) as ReturnType<AssistantMemoryService['search']>).text, /Prefers metric units/, 'a bot reads the assistant\'s notes');
+    const botNote = await registry.callPublic('assistant_memory_write', { lines: [{ text: 'Likes being called Hal.', importance: 'high', project_id: 'q' }], evidence: 'conversation c1' }, fable) as ReturnType<AssistantMemoryService['write']>;
+    assert.equal(botNote.revision, before + 1, 'one revision for everyone');
+    assert.match(memory.read({ since_revision: before }).text, /by bot fable\] "Likes being called Hal/, 'the assistant sees bot notes, attributed');
+    assert.equal((row(botNote.ids[0]!) as unknown as { evidence: string }).evidence, 'conversation c1');
+    const agentNote = await registry.callPublic('assistant_memory_write', { lines: [{ text: 'Tests need Node 24.', importance: 'medium', project_id: 'p' }] }, { identity: 'mcp-orchestrator' }) as ReturnType<AssistantMemoryService['write']>;
+    assert.equal(agentNote.pressure, null, 'task agents leave compression to the assistant');
+    const agentRow = database.connection.prepare('select author_role, author_session_id, author_harness, bot_id from assistant_memory where id = ?').get(agentNote.ids[0]!) as Record<string, unknown>;
+    assert.deepEqual({ ...agentRow }, { author_role: 'agent', author_session_id: 'orchestrator', author_harness: 'codex', bot_id: null });
+    const found = await registry.callPublic('assistant_memory_search', { query: 'node tests version' }, { identity: 'mcp-orchestrator' }) as ReturnType<AssistantMemoryService['search']>;
+    assert.match(found.text, /by agent\] "Tests need Node 24/, 'word search finds notes without the exact phrase');
+    await registry.callPublic('assistant_memory_write', { mode: 'supersede', replaces: saved.ids, lines: [{ text: 'Prefers metric units, except miles.', importance: 'high' }] }, fable);
+    await assert.rejects(registry.callPublic('assistant_memory_write', { mode: 'supersede', replaces: saved.ids, lines: [] }, assistantCaller), /stale/, 'concurrent replacements of one note cannot both win');
     const pal = await registry.callPublic(tool, {}, { identity: 'mcp-pal' }) as ReturnType<AssistantMemoryService['read']>;
     assert.equal(pal.enabled, false, 'a bot with memory off reads nothing');
     await assert.rejects(registry.callPublic('assistant_memory_search', { query: 'Hal' }, { identity: 'mcp-pal' }), /disabled for this bot/);
-    settings.updateBots({ bots: [botSettings('fable', true), botSettings('pal', true)] });
-    assert.doesNotMatch((await registry.callPublic(tool, {}, { identity: 'mcp-pal' }) as ReturnType<AssistantMemoryService['read']>).text, /Hal/, 'bots never read each other\'s notes');
-    assert.match(new AgentContextService().buildBot({ name: 'Fable', instructions: '' }, 'none'), /assistant_memory_read/);
+    setAssistant({ memory: false });
+    assert.equal((await registry.callPublic(tool, {}, { identity: 'mcp-orchestrator' }) as ReturnType<AssistantMemoryService['read']>).enabled, false, 'agents follow the shared switch');
+    assert.equal((await registry.callPublic(tool, {}, fable) as ReturnType<AssistantMemoryService['read']>).enabled, true, 'a bot follows its own switch');
+    assert.match(new AgentContextService().buildBot({ name: 'Fable', instructions: '' }, 'none'), /shared with the assistant/);
   } finally {
     database.dispose();
     removeTree(dir);
