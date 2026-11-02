@@ -102,7 +102,9 @@ export class OpenCodeHistoryAdapter implements ProviderHistoryAdapter {
         ? selectedIds.length
           ? db.prepare(`select id, directory, title, version, time_created, time_updated, parent_id, agent, model, metadata from ${table} where time_archived is null and id in (${selectedIds.map((_, index) => `?${index + 1}`).join(', ')}) order by time_updated desc`).all(...selectedIds) as unknown as OpenCodeSessionRow[]
           : []
-        : db.prepare(`select id, directory, title, version, time_created, time_updated, parent_id, agent, model, metadata from ${table} where time_archived is null order by time_updated desc`).all() as unknown as OpenCodeSessionRow[];
+        // Archived sessions are not imported, but ones already imported are
+        // re-read when the parser changes so their stored rows follow it.
+        : db.prepare(`select id, directory, title, version, time_created, time_updated, parent_id, agent, model, metadata from ${table} where time_archived is null or id in (select value from json_each(?)) order by time_updated desc`).all(JSON.stringify(options.importedProviderConversationIds ?? [])) as unknown as OpenCodeSessionRow[];
       const seen = new Set<string>();
       let count = 0;
       for (const table of [...(v2 ? ['session_v2' as const] : []), ...(legacy ? ['session' as const] : [])]) {
@@ -182,18 +184,6 @@ export class OpenCodeHistoryAdapter implements ProviderHistoryAdapter {
       : partRows.map((row) => ({ table: 'part' as const, id: row.id, messageId: row.message_id, created: row.time_created, data: row.data })))
       .flatMap((row) => openCodeImages(row, messageDataById.get(row.messageId)?.role === 'user' ? 'pasted' : 'viewed', firstSeq.get(row.messageId) ?? null));
 
-    // Claude Code records the turns it ran for OpenCode in its own transcript, with
-    // fuller usage. Those turns are left to that import, which UsageService
-    // attributes back to OpenCode through claudeSessionIds.
-    const claudeSessionIds = new Set<string>();
-    const usage = messageRows.flatMap((row) => {
-      const data = messageDataById.get(row.id);
-      const claudeSessionId = claudeAgentSessionId(data);
-      if (!claudeSessionId) return openCodeUsage(row, data, Boolean(session.parent_id));
-      claudeSessionIds.add(claudeSessionId);
-      return [];
-    });
-
     return {
       provider: this.provider,
       providerConversationId: session.id,
@@ -205,10 +195,10 @@ export class OpenCodeHistoryAdapter implements ProviderHistoryAdapter {
       endedAt: null,
       status: 'active',
       sourcePath,
-      metadata: { parentId: session.parent_id, agent: session.agent, model: session.model, providerMetadata: safeJson(session.metadata), ...(claudeSessionIds.size ? { claudeSessionIds: [...claudeSessionIds].sort() } : {}) },
+      metadata: { parentId: session.parent_id, agent: session.agent, model: session.model, providerMetadata: safeJson(session.metadata) },
       messages,
       media,
-      usage,
+      usage: messageRows.flatMap((row) => openCodeUsage(row, messageDataById.get(row.id), Boolean(session.parent_id))),
       skills: skillUsesFromMessages(messages, { subagent: Boolean(session.parent_id), finishedCalls: true })
     };
   }
@@ -224,7 +214,7 @@ function completedProse(part: Record<string, unknown>, parent: Record<string, un
 }
 
 // The Claude Code session behind a claude-agent reply, which its content
-// parts name as native.sessionID. Replies without one keep OpenCode's usage.
+// parts name as native.sessionID.
 function claudeAgentSessionId(data: Record<string, unknown> | undefined): string | null {
   if (data?.role !== 'assistant' || !data.model || typeof data.model !== 'object') return null;
   if ((data.model as Record<string, unknown>).providerID !== 'claude-agent' || !Array.isArray(data.content)) return null;
@@ -254,7 +244,8 @@ function openCodeUsage(row: OpenCodeMessageRow, data: Record<string, unknown> | 
     outputTokens: nonNegative(tokens.output) + nonNegative(tokens.reasoning),
     reasoningTokens: nonNegative(tokens.reasoning),
     costUsd: typeof data.cost === 'number' && Number.isFinite(data.cost) ? data.cost : null,
-    subagent
+    subagent,
+    claudeSessionId: claudeAgentSessionId(data)
   };
   return usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens + usage.outputTokens > 0 ? [usage] : [];
 }

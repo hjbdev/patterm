@@ -129,22 +129,29 @@ export class UsageService {
     const db = this.historyConnection();
 
     // Days follow the server's local calendar, like the rest of the app.
-    // Claude Code sessions that OpenCode's claude-agent ran count as OpenCode
-    // usage in the OpenCode conversation's project; OpenCode's import leaves
-    // those turns out so they are not counted twice.
+    // OpenCode's claude-agent responses are also in Claude Code's transcript,
+    // which has the real model and cache detail. Once that session's usage is
+    // imported it replaces OpenCode's rows, and counts as OpenCode usage in the
+    // OpenCode conversation's project.
     const rows = db ? db.prepare(`
-      with opencode_claude as (
-        select link.value as claudeId, min(opencode.project_id) as projectId
-        from conversations opencode, json_each(case when json_valid(opencode.metadata) then opencode.metadata else '{}' end, '$.claudeSessionIds') link
-        where opencode.provider = 'opencode'
-        group by link.value
+      with replaced as (
+        select claude.id as conversationId, linked.claudeId, linked.projectId
+        from (
+          select claude_session_id as claudeId, min(conversations.project_id) as projectId
+          from conversation_usage join conversations on conversations.id = conversation_usage.conversation_id
+          where claude_session_id is not null and conversations.provider = 'opencode'
+          group by claude_session_id
+        ) linked
+        join conversations claude on claude.provider = 'claude' and claude.provider_conversation_id = linked.claudeId
+        where exists (select 1 from conversation_usage where conversation_usage.conversation_id = claude.id)
       ),
       attributed as (
-        select conversation_usage.*, case when opencode_claude.claudeId is null then conversation_usage.provider else 'opencode' end as owner,
-          case when opencode_claude.claudeId is null then conversations.project_id else coalesce(opencode_claude.projectId, conversations.project_id) end as projectId
+        select conversation_usage.*, case when replaced.conversationId is null then conversation_usage.provider else 'opencode' end as owner,
+          case when replaced.conversationId is null then conversations.project_id else coalesce(replaced.projectId, conversations.project_id) end as projectId
         from conversation_usage join conversations on conversations.id = conversation_usage.conversation_id
-        left join opencode_claude on conversations.provider = 'claude' and opencode_claude.claudeId = conversations.provider_conversation_id
+        left join replaced on replaced.conversationId = conversation_usage.conversation_id
         where occurred_at >= ?
+          and not (claude_session_id is not null and exists (select 1 from replaced where replaced.claudeId = conversation_usage.claude_session_id))
       )
       select date(occurred_at, 'localtime') as day, owner as provider, model, projectId,
         sum(input_tokens) as inputTokens, sum(cache_read_tokens) as cacheReadTokens, sum(cache_write_tokens) as cacheWriteTokens,
@@ -240,7 +247,8 @@ export class UsageService {
     if (!this.history?.ensureAvailable()) return null;
     const db = this.history.connection;
     const tables = db.prepare(`select count(*) as count from sqlite_master where type = 'table' and name in ('conversation_usage', 'provider_rate_limits', 'conversation_skill_uses')`).get() as { count: number };
-    return tables.count === 3 ? db : null;
+    if (tables.count !== 3) return null;
+    return db.prepare(`select 1 from pragma_table_info('conversation_usage') where name = 'claude_session_id'`).get() ? db : null;
   }
 }
 

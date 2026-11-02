@@ -67,6 +67,9 @@ export interface ParsedUsage {
   reasoningTokens: number;
   costUsd: number | null;
   subagent: boolean;
+  // The Claude Code session that also recorded this response, when OpenCode's
+  // claude-agent ran it. Its fuller Claude record replaces this one once imported.
+  claudeSessionId?: string | null;
 }
 
 export interface ParsedRateLimit {
@@ -119,6 +122,9 @@ export interface ParsedHistoryFile extends ParsedHistoryStream {
 
 export interface ParseHistoryFileOptions {
   providerConversationIds?: string[];
+  // Conversations already imported from the file, read again after a parser
+  // change even where the adapter would now skip them, such as archived ones.
+  importedProviderConversationIds?: string[];
 }
 
 export interface HistoryFileFingerprint {
