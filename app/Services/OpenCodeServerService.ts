@@ -523,9 +523,9 @@ export class OpenCodeServerService {
     }
     // A background shell starting or ending changes the tasks, which only the
     // snapshot lists. shell.created names its session in the shell's metadata,
-    // and the later events are routed by the shell id. Every shell a session
-    // starts names it, so a shell with no known owner belongs to no session
-    // and refreshes nothing.
+    // and the later events are routed by the shell id. An end whose owner is
+    // not known yet, such as a shell started before Patterm watched, is held
+    // until a shell listing names the owner.
     if (type === 'shell.created' || type === 'shell.exited' || type === 'shell.deleted') {
       const info = record(data.info);
       const shellId = typeof info.id === 'string' ? info.id : typeof data.id === 'string' ? data.id : '';
