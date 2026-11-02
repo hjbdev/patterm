@@ -157,7 +157,7 @@ import { startPrefetch } from '../lib/prefetch';
 const { projects, botProjects, sidecarStatus, sidecarAvailable, loaded, refresh } = useWorkbench();
 // Bots list in their own sidebar section; they and their helpers stay out of
 // the agent lists.
-const { hidden: botHidden, settings: botSettings, loaded: botsLoaded } = useBots();
+const { hidden: botHidden, all: allBots, loaded: botsLoaded } = useBots();
 const { router, route, activeProjectId, activeProject, selectedAgent, selectedProcess, activeTerminalId, projectViewMode,
   activeWorkspacePage, selectProject, pickProject, selectTerminal } = useWorkbenchNavigation();
 // Links into a bot's own project, such as its notification, open the bot
@@ -165,7 +165,7 @@ const { router, route, activeProjectId, activeProject, selectedAgent, selectedPr
 watch([() => route.params.projectId, () => route.params.sessionId, botProjects, projects, botsLoaded], () => {
   const own = botProjects.value.find((project) => project.project.id === route.params.projectId);
   if (!own) return;
-  const target = botLinkTarget(own, route.params.sessionId, botsLoaded.value ? botSettings.value.bots : null, listedProjects(projects.value).map((project) => project.project.id), loaded.value);
+  const target = botLinkTarget(own, route.params.sessionId, botsLoaded.value ? allBots.value : null, listedProjects(projects.value).map((project) => project.project.id), loaded.value);
   if (target === 'projects') void router.replace({ name: 'projects' });
   else if (target !== 'wait') void router.replace({ name: 'bot', params: { projectId: target.projectId, botId: target.botId } });
 });

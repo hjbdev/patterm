@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Paired hosts' bots, the assistant included, list in the sidebar's Bots
+  section after this host's, with the host's name beside them. A bot shows in
+  the projects linked with the ones it works in, and you can open its
+  conversation, message it, and start or restart it. Its settings stay on its
+  own host, and its instructions never leave it. Both hosts need this version;
+  an older host shares no bots.
+
 - An agent's @ menu offers the running bots that work in its project, the
   assistant included. A mentioned bot is sent as its process ID, and agents
   in a bot's projects can now `send_message` it, under the same 8 KB and

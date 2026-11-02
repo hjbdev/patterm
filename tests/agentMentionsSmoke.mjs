@@ -39,12 +39,13 @@ test('mentionable bots are the running ones whose purview includes the project',
     { bot: bot('nowhere', { kind: 'none' }), session: session('s_nowhere', 'process_23') },
     { bot: bot('stopped', { kind: 'all' }), session: session('s_stopped', 'process_24', { exitedAt: '2026-10-01T11:00:00.000Z' }) },
     { bot: bot('unstarted', { kind: 'all' }), session: null },
-    { bot: bot('self', { kind: 'all' }), session: session('s_self', 'process_2') }
+    { bot: bot('self', { kind: 'all' }), session: session('s_self', 'process_2') },
+    { bot: bot('beta:assistant', { kind: 'all' }, { host: 'beta' }), session: session('beta:s_assistant', 'beta:process_20') }
   ];
   assert.deepEqual(mentionableBots(rows, 'project_a', 'process_2'), [
     { botId: 'assistant', processId: 'process_20', name: 'Bot assistant', harness: 'codex' },
     { botId: 'ops', processId: 'process_21', name: 'Bot ops', harness: 'codex' }
-  ], 'bots that cannot be messaged from the project, stopped bots, and the agent itself are left out');
+  ], 'bots that cannot be messaged from the project, stopped bots, paired hosts\' bots, and the agent itself are left out');
   assert.deepEqual(mentionableBots(rows, 'project_a', 'beta:process_8'), [], 'an agent on a paired host is offered none of this host\'s bots');
 });
 

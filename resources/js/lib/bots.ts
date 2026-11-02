@@ -43,13 +43,17 @@ export interface Bot {
   voice: BotVoice;
   digests: boolean;
   focus: boolean;
+  // A paired host's bot: its ID is qualified with the host's name, such as
+  // `workstation:assistant`, and it is set up on that host.
+  host?: string;
 }
 
 export interface BotSettings { bots: Bot[]; userName: string | null }
 export interface BotState { bot_id: string; process_id: string | null; session_id: string | null }
 
-export function readBots(): Promise<BotSettings & { states: BotState[]; voices?: string[] }> {
-  return topicRead('settings', ['bots'], async () => await window.patterm.call('settings_bots_get', {}) as BotSettings & { states: BotState[]; voices?: string[] });
+// `remote` holds paired hosts' bots, which list here but are saved there.
+export function readBots(): Promise<BotSettings & { states: BotState[]; voices?: string[]; remote?: Bot[] }> {
+  return topicRead('settings', ['bots'], async () => await window.patterm.call('settings_bots_get', {}) as BotSettings & { states: BotState[]; voices?: string[]; remote?: Bot[] });
 }
 
 export function isAssistantBot(bot: Pick<Bot, 'id'> | null | undefined): boolean {

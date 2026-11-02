@@ -45,12 +45,12 @@ const props = defineProps<{ processId: string }>();
 
 const route = useRoute();
 const router = useRouter();
-const { projects, botProjects, assistantProject, archivedSessions, archivedProcesses, loadArchived } = useWorkbench();
+const { projects, botProjects, assistantProject, remoteAssistantProjects, archivedSessions, archivedProcesses, loadArchived } = useWorkbench();
 const routeProjectId = computed(() => typeof route.params.projectId === 'string' ? route.params.projectId : null);
 const project = computed(() => projects.value.find((item) => item.project.id === routeProjectId.value) ?? null);
 // Bots live in their own projects, after every listed one; their links open
 // the bot beside a project it works in.
-const owner = computed(() => findProcess([...projects.value, ...botProjects.value, ...assistantProject.value ? [assistantProject.value] : []], props.processId, routeProjectId.value));
+const owner = computed(() => findProcess([...projects.value, ...botProjects.value, ...assistantProject.value ? [assistantProject.value] : [], ...remoteAssistantProjects.value], props.processId, routeProjectId.value));
 // Ended processes outside the snapshot are only looked up in the route's project.
 const session = computed(() => owner.value ? owner.value.session : sessionForProcess(archivedSessions.value.values(), props.processId));
 const process = computed(() => owner.value ? owner.value.process : archivedProcesses.value.get(props.processId) ?? null);

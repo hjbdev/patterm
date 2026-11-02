@@ -28,6 +28,8 @@ const projects = ref<ProjectWorkbench[]>([]);
 // lists never show them.
 const botProjects = ref<ProjectWorkbench[]>([]);
 const assistantProject = ref<ProjectWorkbench | null>(null);
+// Paired hosts' assistants' projects, where their sessions live.
+const remoteAssistantProjects = ref<ProjectWorkbench[]>([]);
 const harnesses = ref<HarnessInstallationRecord[]>([]);
 const sidebarState = ref<SidebarState>({
   projects: [],
@@ -121,7 +123,7 @@ export function useWorkbench() {
     sidebarState.value = normalizeSidebarState(saved ?? state);
   };
 
-  return { projects, botProjects, assistantProject, harnesses, sidecarStatus, sidecarAvailable, sidebarState, updateSidebarState, loaded, epoch, refresh, revision, lifecycleRevision, archivedSessions, archivedProcesses, loadArchived };
+  return { projects, botProjects, assistantProject, remoteAssistantProjects, harnesses, sidecarStatus, sidecarAvailable, sidebarState, updateSidebarState, loaded, epoch, refresh, revision, lifecycleRevision, archivedSessions, archivedProcesses, loadArchived };
 }
 
 // Reads one session or process the snapshot no longer lists. Each is read
@@ -184,7 +186,8 @@ function publish(lifecycle: boolean): void {
   if (!current) return;
   projects.value = current.projects.filter((project) => project.project.kind !== 'bots' && project.project.kind !== 'assistant');
   botProjects.value = current.projects.filter((project) => project.project.kind === 'bots');
-  assistantProject.value = current.projects.find((project) => project.project.kind === 'assistant') ?? null;
+  assistantProject.value = current.projects.find((project) => project.project.kind === 'assistant' && !project.project.host) ?? null;
+  remoteAssistantProjects.value = current.projects.filter((project) => project.project.kind === 'assistant' && project.project.host);
   harnesses.value = current.harnesses;
   sidecarAvailable.value = current.terminalAvailable;
   epoch.value = current.epoch;
