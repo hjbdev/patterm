@@ -45,6 +45,7 @@ test('mentionable bots are the running ones whose purview includes the project',
     { botId: 'assistant', processId: 'process_20', name: 'Bot assistant', harness: 'codex' },
     { botId: 'ops', processId: 'process_21', name: 'Bot ops', harness: 'codex' }
   ], 'bots that cannot be messaged from the project, stopped bots, and the agent itself are left out');
+  assert.deepEqual(mentionableBots(rows, 'project_a', 'beta:process_8'), [], 'an agent on a paired host is offered none of this host\'s bots');
 });
 
 test('mentionable processes are the live ones, naming the agent that started them', () => {

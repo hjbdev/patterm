@@ -398,6 +398,17 @@ async function main(): Promise<void> {
     await assert.rejects(registry.callPublic('send_message', { target_process_id: 'proc-ops', message: 'x'.repeat(8 * 1024 + 1) }, worker), /messages to bots are limited to 8 KB/);
     for (let index = 0; index < 4; index += 1) await registry.callPublic('send_message', { target_process_id: 'proc-ops', message: `bot burst ${index}` }, worker);
     await assert.rejects(registry.callPublic('send_message', { target_process_id: 'proc-ops', message: 'one too many' }, worker), /too many messages to that bot/);
+    // A bot's helper reaching it as "parent" gets the same relay, limits, and
+    // purview check, so a helper in a project the bot no longer works in is refused.
+    agent('ops-helper', 'p', { parent: 'proc-ops', role: 'worker' });
+    agent('ops-stray', 'q', { parent: 'proc-ops', role: 'worker' });
+    const relayed = delivered.length;
+    await registry.callPublic('send_message', { target_process_id: 'parent', message: 'Helper done.' }, { identity: 'mcp-ops-helper' });
+    assert.deepEqual(delivered.at(-1), { from: 'proc-ops-helper', message: 'Helper done.', bot: 'ops' }, 'the parent alias goes through the relay');
+    await assert.rejects(registry.callPublic('send_message', { target_process_id: 'parent', message: 'x'.repeat(8 * 1024 + 1) }, { identity: 'mcp-ops-helper' }), /limited to 8 KB/);
+    const typed = terminalInputs.length;
+    await assert.rejects(registry.callPublic('send_message', { target_process_id: 'parent', message: 'Out of purview.' }, { identity: 'mcp-ops-stray' }), /outside the current caller scope/);
+    assert.deepEqual([delivered.length, terminalInputs.length], [relayed + 1, typed], 'a refused message reaches neither the relay nor the terminal');
 
     // The assistant's own children reach it through "parent" under the same rules.
     const viaParent = await registry.callPublic('send_message', { target_process_id: 'parent', message: 'Child update.' }, { identity: 'mcp-helper' }) as { event_id: string };

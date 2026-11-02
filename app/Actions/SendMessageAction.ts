@@ -62,14 +62,18 @@ export class SendMessageAction {
     if (target === 'assistant') {
       if (!assistantId) throw new Error('send_message: the assistant is not running');
       targetId = assistantId;
-    } else if (target === 'parent') {
-      if (!sender?.parent_process_id) throw new Error('send_message: caller has no parent process');
-      targetId = sender.parent_process_id;
     } else {
-      // A bot is named by any of its processes, so a mention survives its restarts.
-      const botId = senderIsAssistant ? null : this.reachableBot(sender, target);
-      if (botId) return this.toBot(sender, message, botId);
-      targetId = scoped(target);
+      if (target === 'parent' && !sender?.parent_process_id) throw new Error('send_message: caller has no parent process');
+      const named = target === 'parent' ? sender!.parent_process_id! : target;
+      // A bot is named by any of its processes, so a mention survives its
+      // restarts. A bot's helper reaching it as "parent" goes through the
+      // same check and relay as any other agent.
+      const bot = senderIsAssistant ? null : this.botOf(named);
+      if (bot) {
+        if (this.reaches(sender!, bot)) return this.toBot(sender, message, bot);
+        if (target === 'parent') throw new Error('send_message: process is outside the current caller scope');
+      }
+      targetId = target === 'parent' ? named : scoped(target);
     }
 
     if (targetId === assistantId) {
@@ -144,18 +148,19 @@ export class SendMessageAction {
     return { ok: true, event_id: this.record(sender, delivered.process_id, message) };
   }
 
-  // The bot a target process ran, when the sender may message it: any agent
-  // may message the assistant, and agents in a bot's purview may message that
-  // bot. Other bots stay out of reach, as their processes are in their own
-  // projects, and fall through to the ordinary scope check.
-  private reachableBot(sender: MessageSender | null, processId: string): string | null {
-    if (!sender?.process_id) return null;
-    const row = this.database.connection.prepare(`select case when session_role = 'assistant' then ? else bot_id end as bot_id from sessions
+  // The bot a process ran, live or not; only agents message bots.
+  private botOf(processId: string): string | null {
+    return (this.database.connection.prepare(`select case when session_role = 'assistant' then ? else bot_id end as bot_id from sessions
       where process_id = ? and (session_role = 'assistant' or (session_role = 'bot' and bot_id is not null))
-      order by started_at desc limit 1`).get(ASSISTANT_BOT_ID, processId) as { bot_id: string } | undefined;
-    if (!row) return null;
-    if (row.bot_id === ASSISTANT_BOT_ID) return row.bot_id;
-    return this.options.botAllows?.(row.bot_id, sender.project_id) ? row.bot_id : null;
+      order by started_at desc limit 1`).get(ASSISTANT_BOT_ID, processId) as { bot_id: string } | undefined)?.bot_id ?? null;
+  }
+
+  // Any agent may message the assistant, and agents in a bot's purview may
+  // message that bot. Other bots stay out of reach, as their processes are
+  // in their own projects, and fall through to the ordinary scope check.
+  private reaches(sender: MessageSender | null, botId: string): boolean {
+    if (!sender?.process_id) return false;
+    return botId === ASSISTANT_BOT_ID || Boolean(this.options.botAllows?.(botId, sender.project_id));
   }
 
   private liveBot(botId: string): string | null {
