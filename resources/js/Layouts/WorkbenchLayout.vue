@@ -17,8 +17,7 @@
       </template>
     </WorkspaceSearchDialog>
 
-    <!-- The docked assistant takes a column on the right; everything else narrows beside it. -->
-    <div class="bg-[#080808]" :class="assistantDocked ? 'pr-[calc(var(--assistant-dock-width)+0.375rem)]' : ''">
+    <div class="bg-[#080808]">
     <RouterView v-if="showStandalonePage" />
 
     <div v-else data-workbench class="flex h-dvh min-h-0 flex-col overflow-hidden bg-[#080808] text-foreground">
@@ -102,7 +101,6 @@
     </div>
     </div>
 
-    <AssistantDock />
     <CloseConfirmDialog />
     <SnoozeDialog />
     <ProjectSnoozeDialog />
@@ -114,7 +112,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue';
 import { RouterView } from 'vue-router';
-import AssistantDock from '../Components/Assistant/AssistantDock.vue';
 import CloseConfirmDialog from '../Components/CloseConfirmDialog.vue';
 import SnoozeDialog from '../Components/SnoozeDialog.vue';
 import ProjectSnoozeDialog from '../Components/ProjectSnoozeDialog.vue';
@@ -148,8 +145,6 @@ import {
   type AgentTabSelectionTarget,
   type SelectedAgentByRoot
 } from '../lib/agentTabs';
-import { assistantLayout } from '../lib/assistantLayout';
-import { assistant } from '../lib/assistant';
 import { openCommandPaletteKey } from '../lib/commandPalette';
 import { isNavigationModeToggle, navigationModeAction } from '../lib/navigationMode';
 import { activeProcesses, topLevelProcessesForSessions } from '../lib/processTabs';
@@ -186,7 +181,6 @@ provide(openCommandPaletteKey, () => { paletteOpen.value = true; });
 const searchOpen = ref(false);
 const searchQuery = ref('');
 const mobile = phoneLayout;
-const assistantDocked = computed(() => assistant.enabled && assistantLayout.open && assistantLayout.docked && !assistantLayout.expanded && !mobile.value);
 const showStandalonePage = computed(() => !activeProjectId.value || route.name === 'settings' || route.name === 'usage' || route.name === 'routines' || route.name === 'routineLog');
 // Pages opened over a phone's list, and where Back goes from each when
 // there's nothing in the project to step back to: up to the Library, or from

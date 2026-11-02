@@ -8,7 +8,6 @@
         <h1 class="text-sm font-semibold">Scheduled</h1>
         <p class="truncate text-[11px] text-muted-foreground">Agents that start later, once or every week.</p>
       </div>
-      <AssistantButton />
       <Button v-if="hasReports" variant="ghost" size="sm" class="h-7 gap-1.5 rounded-tab px-2 text-xs text-muted-foreground" @click="router.push({ name: 'routineLog' })">
         <ScrollText class="h-4 w-4" />Reports
       </Button>
@@ -125,7 +124,6 @@
 </template>
 
 <script setup lang="ts">
-import AssistantButton from '../Components/Assistant/AssistantButton.vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ArrowLeft, Plus, ScrollText } from 'lucide-vue-next';

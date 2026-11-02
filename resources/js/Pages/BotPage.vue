@@ -66,7 +66,7 @@
           <div v-if="!live || !row.session?.processId" class="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
             <BotAvatar :avatar="row.bot.avatar" :size="72" motion />
             <p class="text-sm text-muted-foreground">{{ busy || !row.session ? `Starting ${row.bot.name}…` : `${row.bot.name} has stopped.` }}</p>
-            <Button v-if="row.session && !busy" size="sm" @click="restart(false)">Start again</Button>
+            <Button v-if="(row.session || error) && !busy" size="sm" @click="restart(false)">Start again</Button>
             <p v-if="error" role="alert" class="max-w-sm text-xs text-destructive">{{ error }}</p>
           </div>
         </div>
@@ -113,7 +113,7 @@ import { hasSecrets } from '../lib/secrets';
 const route = useRoute();
 const router = useRouter();
 const { rows } = useBots();
-const { projects, botProjects } = useWorkbench();
+const { projects, botProjects, assistantProject } = useWorkbench();
 const row = computed(() => rows.value.find((candidate) => candidate.bot.id === route.params.botId) ?? null);
 const live = computed(() => Boolean(row.value?.session && !row.value.session.exitedAt));
 const busy = ref(false);
@@ -144,7 +144,8 @@ async function toggleFocus(enabled: boolean): Promise<void> {
 // The bot's own hidden project, where its session context lives.
 const projectId = computed(() => {
   const sessionId = row.value?.session?.id;
-  return sessionId ? botProjects.value.find((project) => project.projectSessions.some((session) => session.id === sessionId))?.project.id ?? null : null;
+  const own = assistantProject.value ? [assistantProject.value, ...botProjects.value] : botProjects.value;
+  return sessionId ? own.find((project) => project.projectSessions.some((session) => session.id === sessionId))?.project.id ?? null : null;
 });
 
 const peek = ref<Peek | null>(null);
@@ -174,6 +175,17 @@ const purviewLabel = computed(() => {
   const names = purview.projectIds.map((id) => projects.value.find((project) => project.project.id === id)?.project.name).filter(Boolean);
   return names.length ? names.join(', ') : 'Its projects are gone';
 });
+
+// A bot that has never run starts when it's opened: the assistant waits for
+// that on a fresh install, while other bots start as soon as they're added.
+// Once per bot, so a failed start shows its error rather than retrying. One
+// waits while another bot's start or restart is still under way.
+const opened = new Set<string>();
+watch([row, busy], ([current]) => {
+  if (!current || current.session || busy.value || opened.has(current.bot.id)) return;
+  opened.add(current.bot.id);
+  void restart(false);
+}, { immediate: true });
 
 async function restart(fresh: boolean): Promise<void> {
   const bot = row.value?.bot;

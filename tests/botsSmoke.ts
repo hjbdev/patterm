@@ -15,7 +15,7 @@ import type { HarnessResume, LaunchHarnessInput } from '../app/Services/HarnessL
 import { SettingsService } from '../app/Services/SettingsService';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { TimelineService } from '../app/Services/TimelineService';
-import { assistantLine, assistantRow, botHidden, botHomeProjectId, botLine, botLinkTarget, botRows, botShownIn, hiddenFromBot, isGlobalBot } from '../resources/js/lib/bots';
+import { botHidden, botHomeProjectId, botLine, botLinkTarget, botRows, botShownIn, hiddenFromBot, isGlobalBot } from '../resources/js/lib/bots';
 import { randomLook } from '../resources/js/lib/faces';
 import type { ProjectWorkbench, SessionRecord } from '../resources/js/types';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
@@ -395,27 +395,24 @@ async function main(): Promise<void> {
   assert.equal(botLinkTarget(scopedProject, 'scoped-bot', [scoped], [], false), 'wait');
   assert.equal(botLinkTarget(scopedProject, 'scoped-bot', [scoped], [], true), 'projects');
   assert.equal(botLinkTarget(workbenchOf(botProjectId('empty'), []), undefined, null, ['p'], true), 'projects');
-  // The assistant's row reads its live session, not the routine runs that
-  // share its project.
+  // The assistant lists like any bot, first. Its row reads its live session,
+  // not the routine runs that share its project.
   const assistantProject = { ...workbenchOf('project_assistant', [
-    session('old-assistant', { sessionRole: 'assistant', exitedAt: '2026-10-29T10:30:00.000Z' }),
-    session('assistant', { sessionRole: 'assistant', activity: 'question', asking: 'Which project?', startedAt: '2026-10-29T11:00:00.000Z' }),
+    session('old-assistant', { sessionRole: 'assistant', botId: 'assistant', exitedAt: '2026-10-29T10:30:00.000Z' }),
+    session('assistant', { sessionRole: 'assistant', botId: 'assistant', activity: 'question', asking: 'Which project?', startedAt: '2026-10-29T11:00:00.000Z' }),
     session('routine', { sessionRole: 'routine', activity: 'working', startedAt: '2026-10-29T12:00:00.000Z' })
   ]), project: { id: 'project_assistant', name: 'Assistant', path: '/tmp', kind: 'assistant' } } as ProjectWorkbench;
-  const live = assistantRow(assistantProject, 'proc-assistant');
+  const assistantBot = readBotSettings({}).bots[0]!;
+  const listed = botRows({ bots: [assistantBot, bot('off', 'Off', { enabled: false }), bot('on', 'On')], userName: null }, projects, [assistantProject, botsProject]);
+  assert.deepEqual(listed.map((item) => item.bot.id), [ASSISTANT_BOT_ID, 'on'], 'turned-off bots don\'t list');
+  const live = listed[0]!;
   assert.equal(live.session?.id, 'assistant');
   assert.equal(live.activity?.self, 'question');
-  assert.equal(live.line, 'Which project?');
-  assert.deepEqual(assistantRow(assistantProject, null), { session: null, activity: null, line: null }, 'not started yet, not exited');
-  assert.equal(assistantRow(assistantProject, 'proc-routine').session, null, 'never a routine run');
-  assert.deepEqual(assistantRow(null, null), { session: null, activity: null, line: null });
-  // The assistant and turned-off bots don't list as bot rows: the assistant has its own.
-  assert.deepEqual(botRows({ bots: [readBotSettings({}).bots[0]!, bot('off', 'Off', { enabled: false }), bot('on', 'On')], userName: null }, projects, [botsProject]).map((item) => item.bot.id), ['on']);
-  const idle = { voiceActive: false, focus: false, focusPending: 0, processId: null };
-  assert.equal(assistantLine(idle, assistantRow(null, null)), 'Starts when you open it');
-  assert.equal(assistantLine({ ...idle, processId: 'proc-assistant' }, live), 'Which project?');
-  assert.equal(assistantLine({ ...idle, processId: 'proc-assistant', voiceActive: true }, live), 'On a voice call');
-  assert.equal(assistantLine({ ...idle, processId: 'proc-assistant', focus: true, focusPending: 2 }, assistantRow(null, null)), 'Focus · 2 held');
+  assert.equal(botLine(live), 'Which project?');
+  // Until it is first opened, the assistant has no session, rather than an exited one.
+  const unstarted = botRows({ bots: [assistantBot], userName: null }, projects, [{ ...assistantProject, projectSessions: assistantProject.projectSessions.filter((item) => item.sessionRole === 'routine') }])[0]!;
+  assert.equal(unstarted.session, null, 'never a routine run');
+  assert.equal(botLine(unstarted), 'Starts when you open it');
   assert.equal(botLine(botRows({ bots: [bot('new', 'New')], userName: null }, projects, [botsProject])[0]!), 'Starting…');
   assert.equal(botLine(row!), 'A helper is waiting: Deploy to production?');
   // Helpers' reports and Patterm's notes stay out of a bot's conversation.

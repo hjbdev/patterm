@@ -1,6 +1,6 @@
 <template>
   <header class="flex h-11 shrink-0 items-center gap-1.5 overflow-hidden bg-transparent px-2 [container-type:inline-size] sm:gap-2">
-    <!-- Only when the bar is wide enough: narrower, as in a small window or beside the docked assistant, the switcher and toolbar already fill it and the icons would push Settings out of view. -->
+    <!-- Only when the bar is wide enough: narrower, as in a small window, the switcher and toolbar already fill it and the icons would push Settings out of view. -->
     <div v-if="showRecentProjects && recentProjects.length" class="hidden shrink-0 items-center [@container(min-width:46rem)]:flex">
       <Tooltip v-for="projectGroup in [...recentProjects].reverse()" :key="projectGroup.project.id">
         <TooltipTrigger as-child>
@@ -107,7 +107,6 @@
     <div class="ml-auto flex shrink-0 items-center gap-1.5">
       <!-- The app's own pages wait behind ⋯. A phone's Library has them and
            the notifications instead. -->
-      <AssistantButton />
       <Button variant="ghost" size="sm" class="h-7 gap-2 rounded-tab px-2 text-xs text-muted-foreground" aria-label="Search or jump to" @click="emit('commandPalette')">
         <Search class="h-4 w-4" /><span class="hidden sm:inline">Search or jump to…</span><kbd class="hidden rounded border border-border/70 px-1 text-[10px] sm:inline">Ctrl K</kbd>
       </Button>
@@ -148,7 +147,6 @@
 
 <script setup lang="ts">
 import HostBadge from './HostBadge.vue';
-import AssistantButton from './Assistant/AssistantButton.vue';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { CalendarClock, ChevronDown, Ellipsis, Gauge, Layers, LayoutGrid, Plus, Search, Settings } from 'lucide-vue-next';
 import NewProjectDialog from './NewProjectDialog.vue';
