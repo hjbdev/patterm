@@ -1,6 +1,3 @@
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { withEnv } from '../../app/Platform/Environment';
 import { stopHostProcess, type IntegratedHostLauncher } from '../../app/Services/IntegratedHostLauncher';
@@ -11,13 +8,11 @@ export class IntegratedTestHosts implements IntegratedHostLauncher {
   private readonly hosts = new Map<ChildProcess, Promise<void>>();
 
   async launch(input: Parameters<IntegratedHostLauncher['launch']>[0]): Promise<number | null> {
-    // TEMP diagnostic: keep each host's stderr by its key.
-    const log = fs.openSync(path.join(os.tmpdir(), `patterm-test-host-${input.key}.log`), 'w');
     const child = spawn(input.nodePath, [input.script, input.configPath], {
       cwd: input.cwd,
       env: withEnv(input.env, { ELECTRON_RUN_AS_NODE: '1' }),
       detached: true,
-      stdio: ['ignore', 'ignore', log],
+      stdio: 'ignore',
       windowsHide: true
     });
     this.hosts.set(child, new Promise<void>((resolve) => child.once('close', resolve)));

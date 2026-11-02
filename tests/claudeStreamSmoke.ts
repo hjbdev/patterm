@@ -791,18 +791,13 @@ process.stdin.on('data', (chunk) => {
       assert.equal(left(), null, 'the hook takes what it prints');
       // A refresh that cannot be written after compaction leaves the host
       // running, and is written with the next update.
-      (globalThis as { memoryStep?: string }).memoryStep = 'mkdir';
       fs.mkdirSync(hookPath);
-      (globalThis as { memoryStep?: string }).memoryStep = 'compact-prompt';
       await memoryService.prompt('process_memory', { text: 'compact please', references: [], attachments: [] });
-      (globalThis as { memoryStep?: string }).memoryStep = 'wait-compacted';
       await waitForConversation(memoryService, 'process_memory', /Conversation compacted/);
       fs.rmdirSync(hookPath);
       assert.equal(left(), null);
-      (globalThis as { memoryStep?: string }).memoryStep = 'refresh-update';
       await memoryService.updateMemory('process_memory', { changes: null, full: false, snapshot: () => 'unused' });
       assert.equal(left(), 'whole memory with the change', 'after compaction the whole memory is left again');
-      (globalThis as { memoryStep?: string }).memoryStep = 'stop';
       await memoryService.stop('process_memory');
       await waitFor(() => !fs.existsSync(settingsPath) && !fs.existsSync(hookPath));
     }
@@ -1345,13 +1340,7 @@ process.stdin.on('data', (chunk) => {
   }
 }
 
-void main().then(() => console.log('claude stream smoke ok'), (error: unknown) => {
-  // TEMP diagnostic: print the host's stderr for a host that went away.
-  const key = /([0-9a-f-]{36})\.sock/.exec(String((error as { cause?: unknown })?.cause ?? error))?.[1];
-  if (key) { try { console.error(`host ${key} stderr:\n${fs.readFileSync(path.join(os.tmpdir(), `patterm-test-host-${key}.log`), 'utf8')}`); } catch (readError) { console.error('no host log', readError); } }
-  console.error('step', (globalThis as { memoryStep?: string }).memoryStep);
-  throw error;
-});
+void main().then(() => console.log('claude stream smoke ok'));
 
 async function waitFor(predicate: () => boolean, timeout = 2_000): Promise<void> {
   const deadline = Date.now() + timeout;
