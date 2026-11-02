@@ -100,7 +100,7 @@ test('service worker caches only offline assets and never intercepts commands or
   ]) assert.equal(request(url, method, mode), undefined, `${method} ${url} must bypass the worker`);
 });
 
-function loadWorker() {
+function loadWorker(avatars = new Map()) {
   const handlers = new Map();
   const shown = [];
   const opened = [];
@@ -112,7 +112,8 @@ function loadWorker() {
       clients: { claim: async () => {}, matchAll: async () => windows, openWindow: async (url) => { opened.push(url); } },
       addEventListener: (event, handler) => handlers.set(event, handler)
     },
-    caches: {}, URL, fetch: async () => new Response('')
+    caches: { open: async (name) => ({ match: async (path) => name === 'patterm-push-avatars' && avatars.has(path) ? new Response(avatars.get(path)) : undefined }) },
+    URL, btoa, fetch: async () => new Response('')
   });
   const dispatch = async (event, payload) => {
     let work;
@@ -139,6 +140,20 @@ test('service worker shows every push and never leaves the origin', async () => 
   assert.equal(worker.shown[2].title, 'Patterm', 'malformed payloads still show a notification');
   const badge = fs.readFileSync('public/icons/badge-96.png');
   assert.equal(badge.readUInt32BE(16), 96);
+});
+
+test('bot pushes show the bot avatar the app cached and buzz each time', async () => {
+  const worker = loadWorker(new Map([['/push-avatars/bot_fox.png', new Uint8Array([137, 80, 78, 71])]]));
+  const push = (data) => worker.dispatch('push', { data: { json: () => data } });
+  await push({ title: 'Fox', body: 'Build is green', tag: 'bot:bot_fox', urgency: 'normal', bot_id: 'bot_fox' });
+  assert.equal(worker.shown[0].title, 'Fox');
+  assert.equal(worker.shown[0].options.icon, 'data:image/png;base64,iVBORw==');
+  assert.equal(worker.shown[0].options.renotify, true);
+  assert.equal(worker.shown[0].options.requireInteraction, false);
+  await push({ title: 'Owl', tag: 'bot:bot_owl', urgency: 'normal', bot_id: 'bot_owl' });
+  assert.equal(worker.shown[1].options.icon, '/icons/icon-192.png', 'bots without a cached picture use the app icon');
+  await push({ title: 'Claude', tag: 'process_1', urgency: 'normal' });
+  assert.equal(worker.shown[2].options.renotify, false, 'other normal pushes stay quiet');
 });
 
 test('notification clicks focus an open window or open the target', async () => {
