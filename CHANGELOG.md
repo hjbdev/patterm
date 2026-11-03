@@ -150,6 +150,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The sidebar's New bot button. Bots are set up in Settings › Bots.
+
 - Worktree file search in an agent's @ menu. Attach files with the paperclip,
   paste, or drop instead. Typed `@path` text is sent as written, and file
   references saved in earlier drafts are still sent.

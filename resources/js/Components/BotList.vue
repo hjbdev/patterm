@@ -7,9 +7,6 @@
   <div v-if="shownRows.length" class="mb-1 border-b border-white/[0.06] pb-1">
     <div class="flex h-7 items-center gap-2 pl-2 pr-0.5 text-xs text-muted-foreground">
       <span class="flex-1">Bots</span>
-      <Button variant="ghost" size="icon" class="h-5 w-5 rounded-tab text-muted-foreground [&_svg]:h-3.5 [&_svg]:w-3.5" title="New bot" aria-label="New bot" @click="openSettings">
-        <Plus />
-      </Button>
     </div>
     <div v-for="row in shownRows" :key="row.bot.id" class="group/bot relative">
       <button
@@ -41,7 +38,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { Plus } from 'lucide-vue-next';
 import { cn } from '@/lib/utils';
 import { useBots } from '../Composables/useBots';
 import { useWorkbench } from '../Composables/useWorkbench';
@@ -82,9 +78,5 @@ function open(botId: string): void {
 // A helper waiting on you opens in its own project, like any agent.
 function openHelper(projectId: string, sessionId: string): void {
   void router.push({ name: 'agent', params: { projectId, sessionId } });
-}
-
-function openSettings(): void {
-  void router.push({ name: 'settings', query: { tab: 'bots' } });
 }
 </script>
