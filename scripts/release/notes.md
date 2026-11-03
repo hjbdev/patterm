@@ -1,22 +1,22 @@
-## Patterm 0.3.0
+## Patterm 0.4.0
 
-- Bots are persistent companions with their own conversations, project access
-  and saved memory.
-- Agents can use a session browser, show it beside their conversation and ask
-  for help with sign-ins or CAPTCHAs.
-- Session secrets support browser sign-ins, commands and a proxy that adds
-  credentials without exposing them to the agent's processes.
-- A new agent header brings worktrees, links, servers and other context into
-  chips, with a peek pane for browsers, images and changed files.
-- Phones and tablets get an agent list, page transitions, context sheets and
-  controls for moving between agents waiting for an answer.
-- Agent and project snoozing, a canvas of agent families, a simpler launch menu
-  and optional local semantic conversation-history search.
-- Faster OpenCode startup and fixes for queued messages, subagent prompts,
-  conversation history, browser rendering and service survival under memory
-  pressure.
+- The assistant joins the other bots in the sidebar. Bots can use voice, Focus
+  mode and notification digests, and keep their own harness and model settings.
+- Agents and bots share saved memory across projects, with an optional nightly
+  review of new conversation activity.
+- Bots and their helpers are easier to find and message, including bots on
+  paired hosts. Bot notifications show their reply and their picture.
+- Agents can pin a configurable status label, such as "Waiting for review".
+- Optional usage telemetry helps you find features you use and those you don't.
+  It is off until you enable it with your own PostHog project key.
+- The command palette can launch presets, and the sidebar can sort agents by
+  recent activity.
+- OpenCode fixes keep tools available after idle eviction, preserve streamed
+  replies, and keep the model and speed pickers in sync. Codex conversation
+  history and model selection are more reliable too.
 
-See CHANGELOG.md for the full list of changes since 0.2.9.
+See CHANGELOG.md for the full list of changes since 0.3.0, including upgrade
+notes for shared memory and OpenCode speed variants.
 
 ## Platform support
 
