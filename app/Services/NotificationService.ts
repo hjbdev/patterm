@@ -75,6 +75,7 @@ interface ProcessContext {
   project_id: string;
   parent_process_id: string | null;
   parent_running: number;
+  parent_is_bot: number;
   kind: string;
   name: string;
   session_id: string | null;
@@ -124,10 +125,13 @@ export class NotificationService {
     if (raw.processId && !process) return { status: 'suppressed' };
     // Terminal notifications from plain processes are messages, not requests.
     const input = raw.source === 'terminal' && raw.kind === 'attention' && process?.kind !== 'agent' ? { ...raw, kind: 'message' as const } : raw;
-    const child = Boolean(process?.parent_process_id && process.parent_running);
+    // Bot ownership survives a restart; its inbox can hold a notice until
+    // the next session. Detached agents have no parent relationship.
+    const botChild = Boolean(process?.parent_process_id && process.kind === 'agent' && process.parent_is_bot);
+    const child = Boolean(process?.parent_process_id && (process.parent_running || botChild));
     const title = clean(input.title, TITLE_LIMIT) || (process ? displayName(process.name) : 'Patterm');
     // A child whose parent has gone asks the user directly, and says so.
-    const orphaned = Boolean(process?.parent_process_id && !process.parent_running && input.source === 'mcp');
+    const orphaned = Boolean(process?.parent_process_id && !child && input.source === 'mcp');
     const source = orphaned ? [`From ${displayName(process!.name)}, a child agent whose parent is no longer running.`, input.body].filter(Boolean).join('\n') : input.body;
     const body = clean(source, BODY_LIMIT);
 
@@ -142,7 +146,7 @@ export class NotificationService {
     // Toasts, the tray, and push show plain text; parents above keep the Markdown.
     const text = clean(markdownText(source ?? ''), Math.min(input.bodyLimit ?? BODY_LIMIT, BODY_LIMIT));
     const level = input.source === 'system' ? 'all' : this.level(categoryFor(input, process));
-    if (level === 'off') return { status: 'suppressed' };
+    if (level === 'off' && !botChild) return { status: 'suppressed' };
     const urgency = input.quiet ? 'low' : input.urgency ?? DEFAULT_URGENCY[input.kind];
     const minimum = this.settings.notificationSettings().minimumUrgency;
     const projectId = process?.project_id ?? input.projectId ?? null;
@@ -159,10 +163,10 @@ export class NotificationService {
         .get(process.id, dedupeKey) as NotificationRow | undefined;
       if (existing) {
         const notification = this.touch(existing.id, title, text, at, 'updated', held);
-        // A repeat is silent, but a blocked child whose request or failure
-        // changed tells its parent what it says now.
+        // Repeated events in one episode stay silent. A retry ends the old
+        // failure episode when the agent resumes work.
         const changed = existing.title !== title || existing.body !== text;
-        if (child && isBlocking(input.kind) && changed) await this.messageProcess(process.parent_process_id!, parentMessage(process, input.kind === 'failure' ? 'Failure reported by' : 'Attention needed by', title, body), process.id).catch(() => undefined);
+        if (child && (botChild || isBlocking(input.kind)) && changed) await this.messageProcess(process.parent_process_id!, parentMessage(process, parentHeading(input.kind), title, body), process.id);
         return { status: 'updated', notification };
       }
     }
@@ -174,7 +178,7 @@ export class NotificationService {
     }
 
     const id = `notification_${randomUUID()}`;
-    const routedTo = child && isBlocking(input.kind) ? process!.parent_process_id : null;
+    const routedTo = child && (isBlocking(input.kind) || botChild) ? process!.parent_process_id : null;
     db.prepare(`insert into notifications
       (id, project_id, process_id, session_id, source, kind, urgency, delivery, held, audience, routed_to_process_id, title, body, dedupe_key, created_at, updated_at)
       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -182,9 +186,8 @@ export class NotificationService {
     this.timeline.append({ event_type: 'notification.raised', project_id: projectId, process_id: process?.id ?? null, session_id: process?.session_id ?? null, actor_type: input.source === 'mcp' ? 'agent' : 'system', metadata: { notification_id: id, source: input.source, kind: input.kind, urgency, title } });
     const notification = this.get(id)!;
     this.onChange({ type: 'raised', notification });
-    // A blocked child tells its parent once per episode; repeats update the
-    // same record above and send nothing.
-    if (routedTo) await this.messageProcess(routedTo, parentMessage(process!, input.kind === 'failure' ? 'Failure reported by' : 'Attention needed by', title, body), process!.id).catch(() => undefined);
+    // Bots hear all child notices; other parents hear blocking ones.
+    if (routedTo) await this.messageProcess(routedTo, parentMessage(process!, parentHeading(input.kind), title, body), process!.id);
     return { status: 'raised', notification };
   }
 
@@ -347,7 +350,9 @@ export class NotificationService {
   private processContext(processId: string): ProcessContext | null {
     return (this.database.connection.prepare(`select processes.id, processes.project_id, processes.parent_process_id, processes.kind,
         coalesce(sessions.title, processes.name) as name, sessions.id as session_id,
-        exists(select 1 from processes parent where parent.id = processes.parent_process_id and parent.status = 'running') as parent_running
+        exists(select 1 from processes parent where parent.id = processes.parent_process_id and parent.status = 'running') as parent_running,
+        exists(select 1 from sessions parent_session where parent_session.process_id = processes.parent_process_id
+          and parent_session.session_role in ('bot', 'assistant') and parent_session.bot_id is not null) as parent_is_bot
       from processes
       left join sessions on sessions.process_id = processes.id
       where processes.id = ? or processes.pty_process_id = ?
@@ -371,6 +376,12 @@ function isBlocking(kind: NotificationKind): boolean {
 function defaultDedupeKey(kind: NotificationKind, title: string, body: string): string {
   if (kind === 'bell' || kind === 'failure') return kind;
   return `${kind}:${createHash('sha256').update(`${title}\n${body}`).digest('hex').slice(0, 16)}`;
+}
+
+function parentHeading(kind: NotificationKind): string {
+  if (kind === 'failure') return 'Failure reported by';
+  if (kind === 'attention' || kind === 'permission') return 'Attention needed by';
+  return 'Notification from';
 }
 
 function parentMessage(process: ProcessContext, heading: string, title: string, body: string): string {

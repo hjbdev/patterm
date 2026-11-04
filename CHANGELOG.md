@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bots receive their own agents’ notifications regardless of user notification settings. Retried failures reach the parent again without duplicate-event storms, and rejected deliveries wait in the bot’s inbox.
+
 - A bot's page has a Back button on a phone, as an agent's does, and slides
   in over the list and away again like one. Its header lines up with its
   conversation like an agent's header. The page also loads ahead of time

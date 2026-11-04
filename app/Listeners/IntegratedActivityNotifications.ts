@@ -33,6 +33,11 @@ export function integratedActivityNotifications(context: IntegratedActivityNotif
     // An automatic compaction is not work for the user: it leaves their open
     // requests alone, and its end or failure is not announced.
     const compacting = context.compacting(processId);
+    // Real work after a failure starts a new episode. Reconnect snapshots
+    // and automatic compactions must not make the same failure fire again.
+    if (!snapshot && !compacting && (activity === 'working' || activity === 'thinking')) {
+      context.notifications.resolve({ process_id: processId, kinds: ['failure'], dedupe_key: 'failure' });
+    }
     if (awaitingUser(activity)) {
       void context.notifications.waiting(processId, previous, activity).catch((error: unknown) => {
         context.log('raise.failed', { source: 'integrated', kind: 'permission', message: error instanceof Error ? error.message : String(error) });

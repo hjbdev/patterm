@@ -20,6 +20,9 @@ import { assistantBot } from './fixtures/AssistantBotFixture';
 import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
 import { purviewAllows } from '../app/Bots/BotSettings';
 import { removeTree } from './fixtures/TempTree';
+import { sendAgentInput } from '../app/Services/AgentInputService';
+import { BotInbox } from '../app/Services/BotInbox';
+import { IntegratedAgentService, type IntegratedProviderService } from '../app/Services/IntegratedAgentService';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const DIGEST_MS = 10;
@@ -134,7 +137,9 @@ async function main(): Promise<void> {
     timers.setDelay({ seconds: 0.01, ownerProcessId: assistantId, body: '[system] timer check-in fired' });
     // 5. A child's notify_user, routed to its parent.
     const notices = new NotificationService(database, settings, timeline,
-      async (processId, text, from) => { if (!inbox.holdNotice(processId, text, from)) prompts.push({ processId, text }); }, () => undefined);
+      (processId, text, from) => inbox.deliverNotice(processId, text, from,
+        () => sendAgentInput(database, terminal, { process_id: processId, kind: 'text', text, submit: true }, integrated)),
+      (change) => relay.handleNotification(change));
     assert.equal((await notices.raise({ processId: 'proc-worker', source: 'mcp', kind: 'attention', title: 'Need a decision', body: 'Which database?' })).status, 'routed_to_parent');
     await wait(1_200);
     assert.deepEqual(toAssistant(), [], 'focus holds every unprompted path');
@@ -312,6 +317,108 @@ async function main(): Promise<void> {
     await wait(20);
     assert.equal(toFable().length, 1);
     assert.match(toFable()[0]!.text, /Halfway there[\s\S]*All done/);
+
+    // Automatic notices take the same App delivery path, independently of
+    // notification settings and digest subscriptions. Focus retains them.
+    assert.equal(settings.bots().bots.find((item) => item.id === 'fable')?.digests, false);
+    settings.updateNotificationSettings({ sources: { agent_failures: 'off', integrated_permission: 'off', integrated_turn_finished: 'off' } });
+    relay.setFocus('fable', true);
+    prompts.length = 0;
+    for (const kind of ['failure', 'permission', 'turn_finished'] as const) {
+      await notices.raise({ processId: 'proc-fable-helper', source: 'integrated', kind, body: `child ${kind}` });
+      await notices.raise({ processId: 'proc-fable-helper', source: 'integrated', kind, body: `child ${kind}` });
+    }
+    assert.deepEqual(toFable(), []);
+    assert.equal(inbox.focus('fable').pending, 3, 'one retained item per episode, not per duplicate');
+    notices.resolve({ process_id: 'proc-fable-helper', kinds: ['failure'] });
+    await notices.raise({ processId: 'proc-fable-helper', source: 'integrated', kind: 'failure', body: 'child failure' });
+    assert.equal(inbox.focus('fable').pending, 3, 'an unseen retry coalesces without losing its occurrence');
+    assert.equal(inbox.list('fable', { limit: 10, offset: 0 }).items.find((item) => item.body.endsWith('\nchild failure'))?.occurrences, 2);
+    relay.setFocus('fable', false);
+    await wait(20);
+    assert.equal(toFable().length, 1, 'focus flush delivers one digest');
+    assert.match(toFable()[0]!.text, /child failure[\s\S]*child permission[\s\S]*child turn_finished/);
+    assert.equal(inbox.focus('fable').pending, 0);
+
+    // A bot without Focus still retains a definitively rejected notice.
+    agent('pal-helper', 'proc-pal');
+    prompts.length = 0;
+    promptResult = new Error('parent temporarily unavailable');
+    await notices.raise({ processId: 'proc-pal-helper', source: 'integrated', kind: 'failure', body: 'Retry failed' });
+    await wait(20);
+    assert.equal(inbox.focus('pal').pending, 1, 'a failed direct send is durable');
+    await notices.raise({ processId: 'proc-pal-helper', source: 'integrated', kind: 'permission', body: 'Behind the failure' });
+    await wait(20);
+    assert.equal(inbox.focus('pal').pending, 2, 'later notices wait behind the rejected notice without Focus enabled');
+    promptResult = {};
+    relay.launched('pal');
+    await wait(20);
+    assert.equal(inbox.focus('pal').pending, 0);
+    assert.equal(prompts.filter((item) => item.processId === 'proc-pal').length, 1);
+    assert.match(prompts.at(-1)!.text, /Retry failed/);
+    assert.match(prompts.at(-1)!.text, /Retry failed[\s\S]*Behind the failure/);
+
+    // An Integrated prompt queued during compaction is already accepted.
+    promptResult = { delivery: 'queued' };
+    await notices.raise({ processId: 'proc-pal-helper', source: 'integrated', kind: 'permission', body: 'Queued approval' });
+    assert.equal(inbox.focus('pal').pending, 0, 'queued delivery is not enqueued a second time');
+    promptResult = Object.assign(new Error('lost acknowledgement'), { definitive: false });
+    await notices.raise({ processId: 'proc-pal-helper', source: 'integrated', kind: 'failure', body: 'Ambiguous delivery' });
+    assert.equal(inbox.focus('pal').pending, 0, 'uncertain delivery is never replayed');
+    promptResult = {};
+
+    // A stopped bot still owns its children; a disabled category must not
+    // discard notices arriving between sessions.
+    db.prepare(`update processes set status = 'exited' where id = 'proc-fable'`).run();
+    db.prepare(`update sessions set exited_at = ? where process_id = 'proc-fable'`).run(now);
+    await notices.raise({ processId: 'proc-fable-helper', source: 'integrated', kind: 'failure', body: 'Failed while parent stopped' });
+    assert.equal(inbox.focus('fable').pending, 1);
+    db.prepare(`update processes set status = 'running' where id = 'proc-fable'`).run();
+    db.prepare(`update sessions set exited_at = null where process_id = 'proc-fable'`).run();
+    prompts.length = 0;
+    relay.launched('fable');
+    await wait(20);
+    assert.equal(inbox.focus('fable').pending, 0);
+    assert.equal(toFable().length, 1);
+    assert.match(toFable()[0]!.text, /Failed while parent stopped/);
+
+    agent('assistant-auto', resumed);
+    prompts.length = 0;
+    await notices.raise({ processId: 'proc-assistant-auto', source: 'integrated', kind: 'failure', body: 'Assistant child failed' });
+    assert.equal(prompts.filter((item) => item.processId === resumed).length, 1, 'the built-in assistant also receives automatic child notices');
+    assert.match(prompts.at(-1)!.text, /Assistant child failed/);
+
+    // Overlapping callbacks must not submit B ahead of rejected A. Use the
+    // actual Integrated dispatch queue and retain both before flushing.
+    const orderedInbox = new BotInbox(database, () => false);
+    let rejectFirst!: (error: Error) => void;
+    const firstAdmission = new Promise((_, reject) => { rejectFirst = reject; });
+    const submitted: string[] = [];
+    const provider: IntegratedProviderService = {
+      prepare: async () => ({ resumeId: 'ordered', argv: [] }),
+      conversation: async () => ({ status: 'idle' }),
+      prompt: async (_id, input) => { submitted.push(input.text); return submitted.length === 1 ? await firstAdmission : {}; },
+      command: async () => ({}), interrupt: async () => {}, replyPermission: async () => {}, replyQuestion: async () => {}
+    };
+    const runtime = new IntegratedAgentService(database, { claude: provider });
+    const orderedNotices = new NotificationService(database, settings, timeline,
+      (target, text, from) => orderedInbox.deliverNotice(target, text, from,
+        () => sendAgentInput(database, terminal, { process_id: target, text }, runtime)), () => {});
+    try {
+      const first = orderedNotices.raise({ processId: 'proc-pal-helper', source: 'integrated', kind: 'failure', body: 'Overlapping A' });
+      for (let i = 0; i < 5; i += 1) await new Promise<void>((resolve) => setImmediate(resolve));
+      const second = orderedNotices.raise({ processId: 'proc-pal-helper', source: 'integrated', kind: 'permission', body: 'Overlapping B' });
+      rejectFirst(new Error('A definitively rejected'));
+      await Promise.all([first, second]);
+      assert.equal(submitted.length, 1, 'B is held behind A before entering native dispatch');
+      assert.equal(orderedInbox.focus('pal').pending, 2);
+      relay.launched('pal');
+      await wait(20);
+      assert.equal(orderedInbox.focus('pal').pending, 0);
+      assert.match(prompts.at(-1)!.text, /Overlapping A[\s\S]*Overlapping B/);
+    } finally {
+      runtime.dispose();
+    }
 
     // The assistant is told how to use focus.
     assert.match(new AgentContextService().buildAssistant(), /let's go focus mode on this/);

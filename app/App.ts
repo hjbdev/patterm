@@ -374,11 +374,14 @@ async function createApplicationResources(
   // Delivers a notice from one process to another, held while a parent bot
   // is in Focus mode.
   const messageProcess = async (processId: string, text: string, fromProcessId: string) => {
-    if (assistantInbox.holdNotice(processId, text, fromProcessId)) return;
-    await sendAgentInput(database, terminal, { process_id: processId, kind: 'text', text, submit: true }, integrated);
+    return assistantInbox.deliverNotice(processId, text, fromProcessId,
+      () => sendAgentInput(database, terminal, { process_id: processId, kind: 'text', text, submit: true }, integrated));
   };
   const notificationService = new NotificationService(database, settings, timeline, messageProcess,
     (change) => events.emit('notifications:changed', change));
+  defer(integrated.onPromptDispatch((processId) => {
+    notificationService.resolve({ process_id: processId, kinds: ['failure'], dedupe_key: 'failure' });
+  }));
   const notifications = new NotificationActions(notificationService, settings, presence, push);
   const delivery = new NotificationDelivery(presence, {
     current: (id) => notificationService.get(id),

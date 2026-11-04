@@ -45,8 +45,8 @@ export interface BotInboxChange {
   flush: boolean;
 }
 
-// The one gate between incoming work and a bot's thread, for bots with
-// Focus mode. Each path that would interrupt the bot unprompted
+// The gate between incoming work and a bot's thread. Each path that would
+// interrupt the bot unprompted
 // (notification digests, agent messages, reports, timer callbacks, routed
 // child notices) asks hold() first. While the bot's Focus mode is on, or
 // while earlier held items are still undelivered, the item is stored here
@@ -55,10 +55,12 @@ export interface BotInboxChange {
 // this gate.
 export class BotInbox {
   private readonly listeners = new Set<(change: BotInboxChange) => void>();
+  private readonly noticeDeliveries = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly database: DatabaseService,
-    // Whether a bot may use Focus mode. Bots without it never hold anything.
+    // Whether a bot may use Focus mode. Rejected deliveries can still wait
+    // in its inbox, with later items kept behind them.
     private readonly focusAllowed: (botId: string) => boolean = () => true,
     private readonly now: () => number = Date.now
   ) {}
@@ -86,7 +88,7 @@ export class BotInbox {
   // when the caller should deliver as usual.
   hold(targetProcessId: string, input: BotInboxInput): boolean {
     const botId = this.botFor(targetProcessId);
-    if (!botId || !this.focusAllowed(botId)) return false;
+    if (!botId || (!this.focusAllowed(botId) && !this.pendingCount(botId))) return false;
     if (targetProcessId === this.liveSession(botId)) return this.holdFor(botId, input);
     this.enqueue(botId, input);
     this.changed(botId, true);
@@ -95,7 +97,7 @@ export class BotInbox {
 
   // As hold(), for callers that already know the target bot.
   holdFor(botId: string, input: BotInboxInput): boolean {
-    if (!this.focusAllowed(botId)) return false;
+    if (!this.focusAllowed(botId) && !this.pendingCount(botId)) return false;
     // A backlog keeps later items behind earlier ones, even after focus ends.
     if (!this.storedFocus(botId).enabled && !this.pendingCount(botId)) return false;
     this.enqueue(botId, input);
@@ -108,6 +110,36 @@ export class BotInbox {
   holdNotice(targetProcessId: string, text: string, fromProcessId: string): boolean {
     const [heading = '', ...rest] = text.split('\n');
     return this.hold(targetProcessId, { kind: 'agent_notice', sourceProcessId: fromProcessId, title: heading.replace(/^\[|\]$/g, ''), body: rest.join('\n'), dedupeKey: `notice:${fromProcessId}:${text}` });
+  }
+
+  // Focus holds notices before submission. A definitive rejection also
+  // retains a bot's notice, even for bots without Focus mode. Ambiguous
+  // acknowledgements must never cause a second submission.
+  async deliverNotice(targetProcessId: string, text: string, fromProcessId: string, send: () => Promise<unknown>): Promise<unknown> {
+    const botId = this.botFor(targetProcessId);
+    if (!botId) return this.sendNotice(targetProcessId, text, fromProcessId, send);
+    // A later notice must see any backlog an earlier in-flight rejection
+    // creates before it can enter the native agent's own dispatch queue.
+    const previous = this.noticeDeliveries.get(botId) ?? Promise.resolve();
+    const delivery = previous.catch(() => {}).then(() => this.sendNotice(targetProcessId, text, fromProcessId, send));
+    this.noticeDeliveries.set(botId, delivery);
+    try { return await delivery; }
+    finally { if (this.noticeDeliveries.get(botId) === delivery) this.noticeDeliveries.delete(botId); }
+  }
+
+  private async sendNotice(targetProcessId: string, text: string, fromProcessId: string, send: () => Promise<unknown>): Promise<unknown> {
+    if (this.holdNotice(targetProcessId, text, fromProcessId)) return { delivery: 'queued' };
+    try {
+      return await send();
+    } catch (error) {
+      if ((error as { definitive?: unknown } | null)?.definitive === false) return { delivery: 'uncertain' };
+      const botId = this.botFor(targetProcessId);
+      if (!botId) throw error;
+      const [heading = '', ...rest] = text.split('\n');
+      this.enqueue(botId, { kind: 'agent_notice', sourceProcessId: fromProcessId, title: heading.replace(/^\[|\]$/g, ''), body: rest.join('\n'), dedupeKey: `notice:${fromProcessId}:${text}` });
+      this.changed(botId, true);
+      return { delivery: 'queued' };
+    }
   }
 
   // Claims every unclaimed pending item for one digest, oldest first.
