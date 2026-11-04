@@ -61,6 +61,27 @@
   }
 }
 
+/* An installed desktop app draws its top bar in the title bar, beside the
+   browser's window controls. Chrome stops matching this query when the
+   overlay is collapsed, so the bar returns to its normal place. */
+@media (display-mode: window-controls-overlay) {
+  [data-titlebar] {
+    -webkit-app-region: drag;
+    app-region: drag;
+    height: env(titlebar-area-height, 2.75rem);
+    margin-left: env(titlebar-area-x, 0);
+    width: env(titlebar-area-width, 100%);
+  }
+  /* Tooltip triggers carry data-state. The tab strip covers its gaps, so the
+     wheel scrolls it there; the space after it stays draggable. */
+  [data-titlebar] :is(a, button, input, select, textarea, label, [role], [tabindex], [data-state], [data-no-drag]),
+  [data-reka-popper-content-wrapper],
+  [role="dialog"] {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+}
+
 /* A phone's home screen is the sidebar's list, with rows grown to a
    fingertip and their controls moved down to stay on the first line. */
 @media (max-width: 639px) {

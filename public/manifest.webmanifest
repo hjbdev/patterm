@@ -5,6 +5,7 @@
   "description": "Your remote agent workbench",
   "start_url": "/",
   "scope": "/",
+  "display_override": ["window-controls-overlay"],
   "display": "standalone",
   "launch_handler": { "client_mode": "focus-existing" },
   "background_color": "#080808",

@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The installed desktop app draws its top bar in the window's title bar,
+  beside the browser's window controls, instead of under a separate browser
+  title bar. Collapsing the overlay with Chrome's chevron restores the usual
+  layout. The window title now reads "Patterm (7)" rather than
+  "Patterm - (7) Patterm".
 - Stopping an OpenCode agent goes on with messages that were steering the stopped turn, as OpenCode's own clients do, instead of leaving them waiting until the next send. Stopping or closing the process still stops outright.
 - A queued message's Cancel is now Edit: it takes the message back from the agent's queue and puts its text in the composer, after any draft there. OpenCode messages joining the running turn are labelled Steering rather than Queued.
 - All bots, including the built-in assistant, strongly prefer task agents for
