@@ -262,7 +262,7 @@ async function main(): Promise<void> {
       workbench: new WorkbenchRepository(database),
       harnessLauncher: launcher,
       harnessPresets: new HarnessPresetService(settings),
-      modelCatalog: new HarnessModelCatalogService({ database, settings, env: process.env, openCodeServer: { listModels: async () => ({ data: [] }) } })
+      modelCatalog: new HarnessModelCatalogService({ database, settings, env: process.env, openCodeServer: { listModels: async () => ({ data: [] }), listProviders: async () => ({ data: [] }) } })
     });
     interface PresetList { presets: Array<{ id: string; harness: string; name: string; default: boolean }> }
     const listed = await registry.call('harness_presets', {}) as PresetList;
