@@ -51,8 +51,8 @@
         </fieldset>
         <div v-if="entered" class="space-y-1.5" role="radiogroup" aria-label="How long it lasts">
           <span :class="LABEL">Lasts</span>
-          <div class="flex gap-1">
-            <button v-for="option in LIFETIMES" :key="option.days" type="button" role="radio" :aria-checked="lifetimeDays === option.days"
+          <div class="flex gap-1" @keydown="stepLifetime">
+            <button v-for="option in LIFETIMES" :key="option.days" type="button" role="radio" :aria-checked="lifetimeDays === option.days" :tabindex="lifetimeDays === option.days ? 0 : -1"
               class="h-6 flex-1 whitespace-nowrap rounded-full border px-1 text-xs outline-none transition-colors focus-visible:ring-1 focus-visible:ring-ring"
               :class="lifetimeDays === option.days ? 'border-transparent bg-foreground text-background' : 'border-border text-muted-foreground hover:text-foreground'"
               @click="lifetimeDays = option.days">{{ option.label }}</button>
@@ -144,6 +144,17 @@ function setKind(next: SecretKind) {
   kind.value = next;
   uses.value = uses.value.filter((use) => availableUses.value.includes(use));
   if (!uses.value.length) uses.value = [next === 'login' ? 'browser' : 'proxy'];
+}
+
+// Arrow keys move the choice, as in a native radio group; Tab leaves it.
+function stepLifetime(event: KeyboardEvent) {
+  const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+  if (!step) return;
+  event.preventDefault();
+  const index = LIFETIMES.findIndex((option) => option.days === lifetimeDays.value);
+  lifetimeDays.value = LIFETIMES[(index + step + LIFETIMES.length) % LIFETIMES.length]!.days;
+  const group = event.currentTarget as HTMLElement;
+  void nextTick(() => group.querySelector<HTMLElement>('[aria-checked="true"]')?.focus());
 }
 
 function toggle(use: SecretUse, on: boolean) {
