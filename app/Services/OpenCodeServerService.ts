@@ -289,12 +289,22 @@ export class OpenCodeServerService {
   // that never arrived. A prompt absent from both reads may have been promoted
   // between them, so it is checked by id before it counts as dropped.
   private async settlePending(runtime: { executable: string; cwd: string; resumeId: string }, rows: unknown[], inbox: Array<Record<string, unknown>> | null): Promise<IntegratedQueuedMessage[]> {
-    const tracked = this.database.connection.prepare(`select message_id, text, files, state, created_at from opencode_pending_prompts where session_id = ? and state != 'uncertain' order by created_at`)
-      .all(runtime.resumeId) as Array<{ message_id: string; text: string; files: number; state: 'pending' | 'dropped'; created_at: string }>;
+    const tracked = this.database.connection.prepare(`select message_id, text, files, state, created_at from opencode_pending_prompts where session_id = ? order by created_at`)
+      .all(runtime.resumeId) as Array<{ message_id: string; text: string; files: number; state: 'uncertain' | 'pending' | 'dropped'; created_at: string }>;
     if (!tracked.length) return [];
     const arrived = new Set(rows.map((row) => record(row).id));
     const waiting = new Set(inbox?.map((item) => item.id));
     for (const row of tracked) {
+      // An uncertain send counts only on positive evidence; its absence
+      // proves nothing, as its request may still be running.
+      if (row.state === 'uncertain') {
+        if (arrived.has(row.message_id)) this.forgetPending(runtime.resumeId, row.message_id);
+        else if (waiting.has(row.message_id)) {
+          this.database.connection.prepare(`update opencode_pending_prompts set state = 'pending' where session_id = ? and message_id = ? and state = 'uncertain'`)
+            .run(runtime.resumeId, row.message_id);
+        }
+        continue;
+      }
       if (row.state !== 'pending') continue;
       if (arrived.has(row.message_id)) {
         this.forgetPending(runtime.resumeId, row.message_id);

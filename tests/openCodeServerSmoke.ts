@@ -655,6 +655,13 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     assert.equal(await openCode(database, { ...env, PENDING_PROMPTS: late }).reconcile('process_0', lateId), 'accepted', 'a send waiting in the inbox was accepted');
     assert.deepEqual((await openCode(database, { ...env, DROP_PROMPTS: late }).conversation('process_0') as Queued).queue.map((item) => [item.id, item.delivery]), [[late, 'undelivered']], 'once accepted, its loss is flagged');
     await openCode(database, env).updateQueued('process_0', late, 'cancel');
+    // A snapshot that shows an uncertain send waiting proves it accepted too.
+    const seenId = '78787878-7878-7878-7878-787878787878';
+    const seen = `msg_${seenId}`;
+    await assert.rejects(openCode(database, { ...env, LOST_PROMPT_RESPONSE: '1', DROP_PROMPTS: seen }).prompt('process_0', { text: 'seen', references: [], attachments: [], messageId: seenId }), UncertainDeliveryError);
+    assert.deepEqual((await openCode(database, { ...env, PENDING_PROMPTS: seen }).conversation('process_0') as Queued).queue.map((item) => [item.id, item.delivery]), [[seen, 'steer']]);
+    assert.deepEqual((await openCode(database, { ...env, DROP_PROMPTS: seen }).conversation('process_0') as Queued).queue.map((item) => [item.id, item.delivery]), [[seen, 'undelivered']], 'its later loss is flagged');
+    await openCode(database, env).updateQueued('process_0', seen, 'cancel');
 
     // TUI built-ins are session API calls; custom commands still run natively.
     const commandService = openCode(database, env);
