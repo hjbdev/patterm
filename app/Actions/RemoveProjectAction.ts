@@ -35,6 +35,7 @@ export interface RemoveProjectDeps {
 const UNLINKED_ROWS = [
   'delete from integrated_submissions where process_id in (select id from processes where project_id = ?)',
   'delete from integrated_held_prompts where process_id in (select id from processes where project_id = ?)',
+  'delete from opencode_pending_prompts where process_id in (select id from processes where project_id = ?)',
   'delete from assistant_inbox where source_process_id in (select id from processes where project_id = ?)',
   'delete from routine_runs where project_id = ?',
   'delete from peer_messages where project_id = ?',

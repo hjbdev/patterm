@@ -16,7 +16,7 @@ import { UncertainDeliveryError, type IntegratedDeliveryState } from './Integrat
 import type { ResolvedIntegratedPrompt } from './IntegratedInput';
 import type { MemoryUpdate } from './MemoryPushService';
 import type { McpLaunchServer } from './McpServerRegistry';
-import { messagesTaskOutput, textTaskOutput, type IntegratedConversationEvent, type IntegratedConversationListener, type IntegratedDeliveryStatus, type IntegratedTaskOutput } from './IntegratedConversation';
+import { messagesTaskOutput, textTaskOutput, type IntegratedConversationEvent, type IntegratedConversationListener, type IntegratedDeliveryStatus, type IntegratedQueuedMessage, type IntegratedTaskOutput } from './IntegratedConversation';
 import type { TranscriptImageRef, TranscriptImageStore } from './TranscriptImageStore';
 
 // `opencode api` sends the JSON body as one argv entry: the kernel rejects any
@@ -32,6 +32,8 @@ const MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
 const OPENCODE_RECONNECT_ATTEMPTS = 8;
 // Memory changes beyond this replace the baseline instead of growing.
 const MEMORY_CHANGES_BYTES = 2048;
+// Accepted prompts tracked per native session until the transcript shows them.
+const PENDING_PROMPT_LIMIT = 50;
 // The daemon writes a heartbeat every 15 s, so a stream silent for three of
 // them is a dead connection, for example a half-open one after sleep.
 const OPENCODE_STREAM_IDLE_MS = 45_000;
@@ -203,6 +205,8 @@ export class OpenCodeServerService {
   private discovery: Promise<OpenCodeDaemon> | null = null;
   // Stream-derived activity by native session.
   private readonly activity = new Map<string, OpenCodeActivity>();
+  // Inbox prompts Patterm is cancelling, by native session and message id.
+  private readonly cancelling = new Set<string>();
 
   private readonly images: TranscriptImageStore | null;
   private readonly streamIdleMs: number;
@@ -219,7 +223,9 @@ export class OpenCodeServerService {
     this.settleMs = options.settleMs ?? OPENCODE_SETTLE_MS;
   }
 
-  async interrupt(processId: string): Promise<void> {
+  // With resume, OpenCode goes on with steering input the stopped turn had
+  // not taken yet; queued prompts stay parked.
+  async interrupt(processId: string, options: { resume?: boolean } = {}): Promise<void> {
     const row = this.database.connection.prepare(`
       select sessions.resume_id, processes.cwd, processes.argv from sessions
       join processes on processes.id = sessions.process_id
@@ -229,16 +235,113 @@ export class OpenCodeServerService {
     if (!row) return;
     const argv: unknown = JSON.parse(row.argv);
     if (!Array.isArray(argv) || typeof argv[0] !== 'string' || !row.cwd) throw new Error('OpenCode session has no executable or directory');
-    await this.api(argv[0], row.cwd, 'POST', `/api/session/${encodeURIComponent(row.resume_id)}/interrupt`);
+    await this.api(argv[0], row.cwd, 'POST', `/api/session/${encodeURIComponent(row.resume_id)}/interrupt${options.resume ? '?resume=true' : ''}`);
   }
 
   // Queued prompts live in the native inbox: steering joins the running turn,
   // cancelling removes the prompt before it runs.
+  // A dropped prompt is no longer in the inbox: cancelling it dismisses it.
   async updateQueued(processId: string, messageId: string, action: 'steer' | 'cancel'): Promise<void> {
     const runtime = this.runtime(processId);
+    const tracked = this.database.connection.prepare(`select state from opencode_pending_prompts where session_id = ? and message_id = ?`)
+      .get(runtime.resumeId, messageId) as { state: string } | undefined;
+    if (tracked?.state === 'dropped') {
+      if (action === 'steer') throw new Error('This message never reached the agent; send it again.');
+      this.forgetPending(runtime.resumeId, messageId);
+      return;
+    }
     const route = `/api/session/${encodeURIComponent(runtime.resumeId)}/inbox/${encodeURIComponent(messageId)}`;
-    if (action === 'cancel') await this.api(runtime.executable, runtime.cwd, 'DELETE', route);
-    else await this.api(runtime.executable, runtime.cwd, 'PATCH', route, { delivery: 'steer' });
+    if (action === 'steer') {
+      await this.api(runtime.executable, runtime.cwd, 'PATCH', route, { delivery: 'steer' });
+      return;
+    }
+    // The cancellation event can trigger a snapshot before this call returns;
+    // that snapshot must not mistake the user's own cancel for a drop.
+    const key = `${runtime.resumeId}\0${messageId}`;
+    this.cancelling.add(key);
+    try {
+      await this.api(runtime.executable, runtime.cwd, 'DELETE', route);
+      this.forgetPending(runtime.resumeId, messageId);
+    } finally {
+      this.cancelling.delete(key);
+    }
+  }
+
+  // Patterm shows an accepted prompt as sent, but OpenCode holds it in its
+  // inbox until the next step boundary. It is tracked until the transcript
+  // shows it, so one that leaves the inbox without arriving is flagged rather
+  // than left looking delivered.
+  private trackPending(processId: string, sessionId: string, messageId: string, input: ResolvedIntegratedPrompt, state: 'pending' | 'uncertain' = 'pending'): void {
+    try {
+      this.database.connection.prepare(`insert into opencode_pending_prompts (session_id, message_id, process_id, text, files, state, created_at)
+        values (?, ?, ?, ?, ?, ?, ?) on conflict (session_id, message_id) do update set state = 'pending'
+        where excluded.state = 'pending' and opencode_pending_prompts.state = 'uncertain'`)
+        .run(sessionId, messageId, processId, input.text.trim(), input.references.length + input.attachments.length, state, new Date().toISOString());
+      this.database.connection.prepare(`delete from opencode_pending_prompts where session_id = ? and message_id not in (
+        select message_id from opencode_pending_prompts where session_id = ? order by created_at desc limit ?)`)
+        .run(sessionId, sessionId, PENDING_PROMPT_LIMIT);
+    } catch { /* tracking is best effort; the prompt was admitted */ }
+  }
+
+  private forgetPending(sessionId: string, messageId: string): void {
+    this.database.connection.prepare(`delete from opencode_pending_prompts where session_id = ? and message_id = ?`).run(sessionId, messageId);
+  }
+
+  // Settles tracked prompts against one snapshot's reads and returns those
+  // that never arrived. A prompt absent from both reads may have been promoted
+  // between them, so it is checked by id before it counts as dropped.
+  private async settlePending(runtime: { executable: string; cwd: string; resumeId: string }, rows: unknown[], inbox: Array<Record<string, unknown>> | null): Promise<IntegratedQueuedMessage[]> {
+    const tracked = this.database.connection.prepare(`select message_id, text, files, state, created_at from opencode_pending_prompts where session_id = ? order by created_at`)
+      .all(runtime.resumeId) as Array<{ message_id: string; text: string; files: number; state: 'uncertain' | 'pending' | 'dropped'; created_at: string }>;
+    if (!tracked.length) return [];
+    const arrived = new Set(rows.map((row) => record(row).id));
+    const waiting = new Set(inbox?.map((item) => item.id));
+    for (const row of tracked) {
+      // An uncertain send counts only on positive evidence; its absence
+      // proves nothing, as its request may still be running.
+      if (row.state === 'uncertain') {
+        if (arrived.has(row.message_id)) this.forgetPending(runtime.resumeId, row.message_id);
+        else if (waiting.has(row.message_id)) {
+          this.database.connection.prepare(`update opencode_pending_prompts set state = 'pending' where session_id = ? and message_id = ? and state = 'uncertain'`)
+            .run(runtime.resumeId, row.message_id);
+        }
+        continue;
+      }
+      if (row.state !== 'pending') continue;
+      if (arrived.has(row.message_id)) {
+        this.forgetPending(runtime.resumeId, row.message_id);
+        continue;
+      }
+      // An older daemon without the inbox route cannot show a prompt waiting.
+      if (!inbox || waiting.has(row.message_id) || this.cancelling.has(`${runtime.resumeId}\0${row.message_id}`)) continue;
+      const state = await this.nativePrompt(runtime, row.message_id).catch(() => 'unknown' as const);
+      if (state === 'message') this.forgetPending(runtime.resumeId, row.message_id);
+      else if (state === 'absent' && !this.cancelling.has(`${runtime.resumeId}\0${row.message_id}`)) {
+        // A cancel that finished during the check already removed the row.
+        const marked = this.database.connection.prepare(`update opencode_pending_prompts set state = 'dropped' where session_id = ? and message_id = ? and state = 'pending'`)
+          .run(runtime.resumeId, row.message_id).changes;
+        if (marked) row.state = 'dropped';
+      }
+    }
+    return tracked.flatMap((row) => row.state === 'dropped'
+      ? [{ id: row.message_id, text: row.text, delivery: 'undelivered' as const, createdAt: row.created_at, ...(row.files ? { files: row.files } : {}) }]
+      : []);
+  }
+
+  // Where an accepted prompt is now. The inbox is read first: promotion moves
+  // a prompt from the inbox to the transcript in one transaction, so one
+  // missing from the inbox and then from the transcript left without arriving.
+  private async nativePrompt(runtime: { executable: string; cwd: string; resumeId: string }, messageId: string): Promise<'message' | 'inbox' | 'absent' | 'unknown'> {
+    const session = encodeURIComponent(runtime.resumeId);
+    const inbox = await this.api(runtime.executable, runtime.cwd, 'GET', `/api/session/${session}/inbox`).catch(() => null);
+    if (inbox && dataRows(inbox).some((item) => item.id === messageId)) return 'inbox';
+    try {
+      await this.api(runtime.executable, runtime.cwd, 'GET', `/api/session/${session}/message/${encodeURIComponent(messageId)}`);
+      return 'message';
+    } catch (error) {
+      // Only OpenCode's own answer proves absence, never a missing route.
+      return inbox && error instanceof ProviderCommandError && /^Message not found/.test(error.message) ? 'absent' : 'unknown';
+    }
   }
 
   // Subagent sessions are the background tasks here; stopping one interrupts
@@ -330,6 +433,7 @@ export class OpenCodeServerService {
         throw new Error('OpenCode did not acknowledge the message');
       }
       this.admitted(runtime.resumeId);
+      this.trackPending(processId, runtime.resumeId, response.data.id, input);
       return { id: response.data.id };
     } catch (error) {
       // 4xx responses and pre-execution failures are definitive rejections.
@@ -342,9 +446,11 @@ export class OpenCodeServerService {
         const state = await this.reconcile(processId, input.messageId).catch((): IntegratedDeliveryState => 'unknown');
         if (state === 'accepted') {
           this.admitted(runtime.resumeId);
+          this.trackPending(processId, runtime.resumeId, `msg_${input.messageId}`, input);
           return { id: `msg_${input.messageId}` };
         }
       }
+      if (input.messageId) this.trackPending(processId, runtime.resumeId, `msg_${input.messageId}`, input, 'uncertain');
       throw new UncertainDeliveryError(error instanceof Error ? error.message : String(error), input.messageId);
     }
   }
@@ -367,10 +473,17 @@ export class OpenCodeServerService {
 
   // Native evidence: a bounded newest-first read can prove admission but never
   // the absence of it.
+  // A prompt waiting in the inbox was admitted too. Absence stays unknown: a
+  // request whose reply was lost may still be running.
   async reconcile(processId: string, messageId: string): Promise<IntegratedDeliveryState> {
     const runtime = this.runtime(processId);
-    const { rows } = await this.messageRows(runtime);
-    return rows.some((row) => record(row).id === `msg_${messageId}`) ? 'accepted' : 'unknown';
+    const id = `msg_${messageId}`;
+    const state = await this.nativePrompt(runtime, id);
+    // An uncertain send found waiting is tracked from now on.
+    if (state === 'inbox') {
+      this.database.connection.prepare(`update opencode_pending_prompts set state = 'pending' where session_id = ? and message_id = ? and state = 'uncertain'`).run(runtime.resumeId, id);
+    } else if (state === 'message') this.forgetPending(runtime.resumeId, id);
+    return state === 'message' || state === 'inbox' ? 'accepted' : 'unknown';
   }
 
   // Installed OpenCode exposes one global event stream. Patterm discovers the
@@ -1548,7 +1661,10 @@ export class OpenCodeServerService {
         .then((listing) => { this.learnShellOwners(listing); return listing; })
         .catch(() => null)
     ]);
-    const [nestedRows, usage] = await Promise.all([this.childMessages(runtime, rows), this.usage(runtime, rows)]);
+    const [nestedRows, usage, undelivered] = await Promise.all([
+      this.childMessages(runtime, rows), this.usage(runtime, rows),
+      this.settlePending(runtime, rows, inbox === null ? null : dataRows(inbox)).catch((): IntegratedQueuedMessage[] => [])
+    ]);
     const tasks = subagentTasks(rows, runtime.resumeId, active, new Set(dataRows(shells).map((shell) => String(shell.id))));
     const permissions = [...dataRows(ownPermissions), ...childRequests.permissions];
     const forms = [...dataRows(ownForms), ...childRequests.forms];
@@ -1581,9 +1697,12 @@ export class OpenCodeServerService {
       usage,
       tasks,
       diagnostics: { unhandled: this.unhandled.get(runtime.resumeId) ?? {} },
-      queue: dataRows(inbox).flatMap((item) => item.type === 'user' && typeof item.id === 'string'
-        ? [{ id: item.id, text: String(record(item.payload).text ?? ''), delivery: item.delivery === 'steer' ? 'steer' : 'queue' }]
-        : []),
+      queue: [
+        ...dataRows(inbox).flatMap((item) => item.type === 'user' && typeof item.id === 'string'
+          ? [{ id: item.id, text: String(record(item.payload).text ?? ''), delivery: item.delivery === 'steer' ? 'steer' : 'queue' }]
+          : []),
+        ...undelivered
+      ],
       questions: { data: [] }
     };
   }

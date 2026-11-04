@@ -96,7 +96,7 @@ export interface IntegratedProviderService {  prepare(input: IntegratedLaunchInp
   conversation(processId: string): Promise<unknown>;
   olderMessages?(processId: string, cursor: string): Promise<unknown>;
   prompt(processId: string, input: ResolvedIntegratedPrompt): Promise<unknown>;
-  interrupt(processId: string): Promise<void>;
+  interrupt(processId: string, options?: { resume?: boolean }): Promise<void>;
   // Stops one background task from the snapshot's `tasks`.
   stopTask?(processId: string, taskId: string): Promise<void>;
   // Reads one background task's output: a subagent transcript or shell text.
@@ -838,8 +838,10 @@ export class IntegratedAgentService {
     return this.inputs.search(processId, query, limit);
   }
 
+  // The user's Stop. OpenCode then takes up messages still steering the
+  // stopped turn, as its own clients do; other stops never resume.
   interrupt(processId: string): Promise<void> {
-    return this.forProcess(processId).interrupt(processId);
+    return this.forProcess(processId).interrupt(processId, { resume: true });
   }
 
   replyPermission(processId: string, requestId: string, reply: 'once' | 'always' | 'reject', message?: string): Promise<void> {
@@ -849,6 +851,8 @@ export class IntegratedAgentService {
   async updateQueued(processId: string, messageId: string, action: 'steer' | 'cancel'): Promise<void> {
     const key = this.ledgerKey(processId);
     if (this.dispatching.get(key)?.message_id === messageId) throw new Error('This message is already being sent');
+    // Recorded so a prompt that later looks lost can be told from a cancel.
+    this.debugLog?.write('integrated', 'prompt.queue_update', { processId: key, messageId, action });
     const held = this.heldPrompt(key, messageId);
     if (held) {
       // A held prompt cannot jump the turn it waits for; sending now retries.

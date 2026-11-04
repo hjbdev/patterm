@@ -60,7 +60,9 @@ export interface TranscriptMessage {
   id: string;
   clientMessageId?: string;
   // `queued`: the harness holds it until the running turn takes it.
-  delivery?: { state: 'sending' | 'queued' | 'accepted' | 'uncertain' | 'failed'; messageId: string; error?: string };
+  // `undelivered`: the harness accepted it, but it never reached the agent.
+  // A `steering` queued message joins the running turn at its next step.
+  delivery?: { state: 'sending' | 'queued' | 'accepted' | 'uncertain' | 'failed' | 'undelivered'; messageId: string; error?: string; steering?: boolean };
   role: 'user' | 'assistant';
   kind: 'text' | 'tool' | 'reasoning' | 'notice';
   // Notice severity: retries and compaction are info, warnings are warning.
@@ -210,13 +212,17 @@ export interface IntegratedTask {
 // them as `queue`; `delivery: 'steer'` joins the running turn at its next step.
 // `held` prompts are Patterm's: the agent could not take them during a turn of
 // kind `reason` (for example `compact`), and they are sent when it ends.
-// `error` is why the last attempt to send one failed.
+// `error` is why the last attempt to send one failed. `undelivered` prompts
+// were accepted but left the native queue without reaching the transcript;
+// `files` counts the references and attachments they carried.
 export interface IntegratedQueuedMessage {
   id: string;
   text: string;
-  delivery: 'queue' | 'steer' | 'held' | 'unconfirmed';
+  delivery: 'queue' | 'steer' | 'held' | 'unconfirmed' | 'undelivered';
   reason?: string | undefined;
   error?: string | undefined;
+  createdAt?: string | undefined;
+  files?: number | undefined;
 }
 
 // A `pending` event Patterm emits when its held queue changes. It sits outside
@@ -299,10 +305,12 @@ export function normaliseConversation(value: unknown): ConversationProjection {
       const row = record(raw);
       const id = stringField(row.id);
       if (!id) return [];
-      const delivery = row.delivery === 'steer' || row.delivery === 'held' || row.delivery === 'unconfirmed' ? row.delivery : 'queue' as const;
+      const delivery = row.delivery === 'steer' || row.delivery === 'held' || row.delivery === 'unconfirmed' || row.delivery === 'undelivered' ? row.delivery : 'queue' as const;
       const reason = stringField(row.reason);
       const error = stringField(row.error);
-      return [{ id, text: String(row.text ?? ''), delivery, ...(reason ? { reason } : {}), ...(error ? { error } : {}) }];
+      const createdAt = stringField(row.createdAt);
+      const files = typeof row.files === 'number' && row.files > 0 ? row.files : 0;
+      return [{ id, text: String(row.text ?? ''), delivery, ...(reason ? { reason } : {}), ...(error ? { error } : {}), ...(createdAt ? { createdAt } : {}), ...(files ? { files } : {}) }];
     })
   };
 }
@@ -367,6 +375,25 @@ export function elapsedLabel(milliseconds: number): string {
 export function mergeTranscriptWindows(older: TranscriptMessage[], newer: TranscriptMessage[]): TranscriptMessage[] {
   const byId = new Map(newer.map((message) => [message.id, message]));
   return [...older.filter((message) => !byId.has(message.id)), ...newer];
+}
+
+// A fresh live window replaces the shown rows from its first row on. Rows
+// shown after that point that the window no longer has, such as a streamed
+// prompt that left the native queue, are dropped rather than kept as sent.
+export function replaceLiveWindow(shown: TranscriptMessage[], live: TranscriptMessage[]): TranscriptMessage[] {
+  const ids = new Set(live.map((message) => message.id));
+  const start = shown.findIndex((message) => ids.has(message.id));
+  if (start === -1) return mergeTranscriptWindows(shown, live);
+  // Subagent rows follow every parent row, so those of a task the live
+  // window no longer holds stay with it.
+  const kept = shown.slice(0, start);
+  const keptIds = new Set(kept.map((message) => message.id));
+  for (const message of shown.slice(start)) {
+    if (ids.has(message.id) || !message.parentId || !keptIds.has(message.parentId)) continue;
+    kept.push(message);
+    keptIds.add(message.id);
+  }
+  return mergeTranscriptWindows(kept, live);
 }
 
 export function normaliseMessages(value: unknown): TranscriptMessage[] {
@@ -1345,7 +1372,7 @@ export function figureAnswerText(id: string, answers: Array<{ item?: string | un
 export function figureAnswers(messages: Array<{ role: string; text: string; delivery?: { state: string } | undefined }>): Map<string, string> {
   const answers = new Map<string, string>();
   for (const message of messages) {
-    if (message.role !== 'user' || message.delivery?.state === 'failed') continue;
+    if (message.role !== 'user' || message.delivery?.state === 'failed' || message.delivery?.state === 'undelivered') continue;
     const match = ANSWER.exec(message.text.trimStart());
     if (match) answers.set(match[1]!, message.text.trim());
   }

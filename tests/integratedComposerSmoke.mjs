@@ -8,6 +8,7 @@ import { computed, effectScope, nextTick, reactive, ref, shallowRef, useId, watc
 const require = createRequire(import.meta.url);
 const composer = require('../dist/tests/resources/js/lib/integratedComposer.js');
 const composerDocument = require('../dist/tests/resources/js/lib/composerDocument.js');
+const conversation = require('../dist/tests/resources/js/lib/integratedConversation.js');
 const { CHIP } = composerDocument;
 
 // Stub browser-only object URL handling before any draft creates previews.
@@ -687,6 +688,51 @@ test('a queued message keeps its native attachments once the local copy is relea
   const [row] = composer.outgoingTranscript('opencode', [native], [{ id: 'msg_1', text: '', delivery: 'queue' }]);
   assert.deepEqual(row.attachments, native.attachments);
   assert.equal(row.delivery.state, 'queued');
+});
+
+test('a steer that never reached the agent is flagged in place, not shown as sent', () => {
+  composer.clearDrafts();
+  const reply = { id: 'reply', role: 'assistant', kind: 'text', text: 'working', createdAt: '2026-11-04T10:03:00.000Z' };
+  composer.draftFor('opencode').text = 'use staging';
+  const prepared = composer.payloadFor('opencode');
+  composer.beginOutgoingMessage('opencode', { ...prepared.payload, hash: prepared.hash }, [reply], 'opencode');
+  composer.completeSend('opencode', { ...prepared.payload, hash: prepared.hash }, { preserveDraft: true });
+  const id = `msg_${prepared.payload.messageId}`;
+  const later = { id: 'later', role: 'assistant', kind: 'text', text: 'still working', createdAt: '2026-11-04T10:04:00.000Z' };
+  const dropped = [{ id, text: 'use staging', delivery: 'undelivered', createdAt: '2026-11-04T10:03:07.000Z' }];
+  composer.reconcileOutgoingMessages('opencode', [reply, later], dropped);
+  const rows = composer.outgoingTranscript('opencode', [reply, later], dropped);
+  assert.deepEqual(rows.map((row) => [row.id, row.delivery?.state]), [['reply', undefined], [id, 'undelivered'], ['later', undefined]], 'it keeps its place, flagged once');
+  // A streamed row for it is flagged where it already shows.
+  const streamed = { id, role: 'user', kind: 'text', text: 'use staging' };
+  assert.deepEqual(composer.outgoingTranscript('opencode', [reply, streamed, later], dropped).map((row) => [row.id, row.delivery?.state]), [['reply', undefined], [id, 'undelivered'], ['later', undefined]]);
+  const withFiles = composer.outgoingTranscript('opencode', [reply], [{ ...dropped[0], files: 1 }]);
+  assert.match(withFiles.at(-1).delivery.error, /text only/, 'sending again says it leaves files behind');
+  composer.discardOutgoingMessage('opencode', prepared.payload.messageId);
+  assert.deepEqual(composer.outgoingTranscript('opencode', [reply, later], []).map((row) => row.id), ['reply', 'later'], 'a dismissed one leaves no sent-looking copy');
+});
+
+test('steering and queued messages are told apart, and an edited one returns to the draft', () => {
+  composer.clearDrafts();
+  const rows = composer.outgoingTranscript('opencode', [], [{ id: 'msg_s', text: 'steer', delivery: 'steer' }, { id: 'msg_q', text: 'later', delivery: 'queue' }]);
+  assert.deepEqual(rows.map((row) => [row.delivery.state, row.delivery.steering ?? false]), [['queued', true], ['queued', false]]);
+  composer.restoreToDraft('opencode', 'steer');
+  assert.equal(composer.draftFor('opencode').text, 'steer', 'an empty draft takes the text');
+  composer.restoreToDraft('opencode', 'again');
+  assert.equal(composer.draftFor('opencode').text, 'steer\n\nagain', 'a draft keeps its text, followed by the edited one');
+});
+
+test('a fresh live window drops rows it no longer has', () => {
+  const row = (id) => ({ id, role: 'assistant', kind: 'text', text: id });
+  const older = [row('old_1'), row('old_2')];
+  const phantom = { id: 'msg_gone', role: 'user', kind: 'text', text: 'streamed, then cancelled' };
+  assert.deepEqual(conversation.replaceLiveWindow([...older, row('live_1'), phantom, row('live_2')], [row('live_1'), row('live_2'), row('live_3')]).map((message) => message.id),
+    ['old_1', 'old_2', 'live_1', 'live_2', 'live_3'], 'older history stays; a row the live window lost goes');
+  assert.deepEqual(conversation.replaceLiveWindow(older, [row('live_1')]).map((message) => message.id), ['old_1', 'old_2', 'live_1'], 'without overlap every shown row stays');
+  const child = { ...row('child_output'), parentId: 'old_2' };
+  const grandchild = { ...row('grandchild_output'), parentId: 'child_output' };
+  assert.deepEqual(conversation.replaceLiveWindow([...older, row('live_1'), row('live_2'), child, grandchild], [row('live_1'), row('live_2'), row('live_3')]).map((message) => message.id),
+    ['old_1', 'old_2', 'child_output', 'grandchild_output', 'live_1', 'live_2', 'live_3'], 'subagent rows of a task outside the live window stay');
 });
 
 test('a message Patterm holds during compaction shows only in the queue', () => {

@@ -8,7 +8,7 @@
         <!-- Runs on under the composer's top padding when nothing sits
              between them, so text fades out at the card's edge. -->
         <div class="min-h-0 flex-1" :class="composerAdjoins && '-mb-4'">
-          <ConversationTranscript ref="transcriptRef" :key="processId" :messages="transcriptMessages" :truncated="historyTruncated" :history-unavailable="historyUnavailable" :has-older="Boolean(historyCursor)" :loading-older="loadingOlder" :history-error="historyError" :process-id="processId" :live="streaming" :working="streamStatus === 'working' && !ended" :settling="loadingTranscript" :can-retry="canReply && !submission" :can-cancel="canReply" auto-load-older @load-older="loadOlder" @retry-message="retryMessage" @cancel-message="cancelQueued" />
+          <ConversationTranscript ref="transcriptRef" :key="processId" :messages="transcriptMessages" :truncated="historyTruncated" :history-unavailable="historyUnavailable" :has-older="Boolean(historyCursor)" :loading-older="loadingOlder" :history-error="historyError" :process-id="processId" :live="streaming" :working="streamStatus === 'working' && !ended" :settling="loadingTranscript" :can-retry="canReply && !submission" :can-cancel="canReply" auto-load-older @load-older="loadOlder" @retry-message="retryMessage" @resend-message="resendMessage" @edit-message="editQueued" @cancel-message="cancelQueued" />
         </div>
         <p v-if="displayError" role="alert" class="mx-auto w-full max-w-[50rem] shrink-0 break-words px-4 pb-4 text-sm text-destructive 2xl:max-w-[1000px]">{{ displayError }}</p>
       </div>
@@ -308,6 +308,7 @@ import {
   HELD_QUEUE_EVENT_ID,
   isSessionUnavailableError,
   mergeTranscriptWindows,
+  replaceLiveWindow,
   normaliseConversation,
   normaliseMessages,
   rememberConversation,
@@ -323,7 +324,7 @@ import {
   type IntegratedQuestionRequest,
   type TranscriptMessage
 } from '../lib/integratedConversation';
-import { completeSend, discardOutgoingMessage, beginSubmission, beginOutgoingMessage, outgoingFor, outgoingTranscript, reconcileOutgoingMessages, failOutgoingMessage, markSubmissionUncertain, clearSubmission, isAmbiguousTransportError, submissionFor, payloadHash, type ComposerSendPayload } from '../lib/integratedComposer';
+import { completeSend, discardOutgoingMessage, restoreToDraft, beginSubmission, beginOutgoingMessage, outgoingFor, outgoingTranscript, reconcileOutgoingMessages, failOutgoingMessage, markSubmissionUncertain, clearSubmission, isAmbiguousTransportError, submissionFor, payloadHash, type ComposerSendPayload } from '../lib/integratedComposer';
 import { figureAnswerKey } from '../lib/htmlFigure';
 import { phoneLayout } from '../lib/phoneLayout';
 import { permissionAsk } from '../../../app/Services/IntegratedAsking';
@@ -447,7 +448,7 @@ const canReply = computed(() => controlling.value && !ended.value);
 provide(figureAnswerKey, {
   canSend: computed(() => canReply.value && !submissionFor(props.processId)),
   send: (text: string) => sendRequest({ text, references: [], attachments: [], messageId: randomId(), hash: payloadHash(text, [], []) }),
-  queued: computed(() => figureAnswers(queue.value.map((item) => ({ role: 'user', text: item.text }))))
+  queued: computed(() => figureAnswers(queue.value.filter((item) => item.delivery !== 'undelivered').map((item) => ({ role: 'user', text: item.text }))))
 });
 
 let timer: ReturnType<typeof setTimeout> | undefined;
@@ -753,7 +754,7 @@ async function applySnapshot(load: () => Promise<Record<string, unknown>>, reque
       const rows = Array.isArray(result.archived_messages)
         ? archiveTranscript(result.archived_messages as ConversationMessageRecord[], { projectPath: props.projectPath ?? null, showReasoning: true })
         : projection.messages;
-      messages.value = historyLoaded ? mergeTranscriptWindows(messages.value, rows) : rows;
+      messages.value = historyLoaded ? replaceLiveWindow(messages.value, rows) : rows;
       permissions.value = projection.permissions;
       applyQuestions(projection.questions);
       applyForms(projection.forms);
@@ -921,6 +922,18 @@ function queueLabel(item: IntegratedQueuedMessage): string {
   return item.reason === 'compact' ? 'After compaction' : item.reason === 'review' ? 'After review' : 'Waiting';
 }
 
+// A message that never reached the agent goes again under a new id, so the
+// agent cannot get it twice. The flagged copy is dismissed first; a failed
+// send then shows on the new message with its own retry.
+async function resendMessage(messageId: string): Promise<void> {
+  const processId = props.processId;
+  const token = generation;
+  const item = queue.value.find((queued) => queued.id === messageId && queued.delivery === 'undelivered');
+  if (!item || !canReply.value || submissionFor(processId) || isResponding(`queue:${item.id}`)) return;
+  if (!await updateQueued(item, 'cancel') || token !== generation || props.processId !== processId) return;
+  void sendRequest({ text: item.text, references: [], attachments: [], messageId: randomId(), hash: payloadHash(item.text, [], []) });
+}
+
 function retryMessage(messageId: string): void {
   const entry = outgoingFor(props.processId).find((item) => item.payload.messageId === messageId);
   if (entry?.row.delivery?.state === 'failed' && canReply.value) void sendRequest(entry.payload);
@@ -1042,13 +1055,39 @@ async function configure(selectorId: string, value: string): Promise<void> {
   }
 }
 
-async function updateQueued(item: IntegratedQueuedMessage, action: 'steer' | 'cancel'): Promise<void> {
+// Resolves whether the update succeeded. It stays with the agent it was made
+// for, even if the pane switches agents meanwhile.
+async function updateQueued(item: IntegratedQueuedMessage, action: 'steer' | 'cancel'): Promise<boolean> {
+  const processId = props.processId;
+  const token = generation;
+  let updated = false;
   await respond(`queue:${item.id}`, async () => {
-    await runMutation('integrated_queue_update', { process_id: props.processId, message_id: item.id, action });
-    // A cancelled held message never reaches the agent, so no native row will
-    // replace its local copy.
-    if (action === 'cancel' && (item.delivery === 'held' || item.delivery === 'unconfirmed') && !error.value) discardOutgoingMessage(props.processId, item.id);
+    error.value = '';
+    try {
+      await mutate('integrated_queue_update', { process_id: processId, message_id: item.id, action });
+    } catch (cause) {
+      if (token === generation) error.value = cause instanceof Error ? cause.message : String(cause);
+      return;
+    }
+    updated = true;
+    // A cancelled message never reaches the agent, so no native row will
+    // replace its local copy. OpenCode lists a prompt as `msg_` and its id.
+    if (action === 'cancel') {
+      discardOutgoingMessage(processId, item.id);
+      discardOutgoingMessage(processId, item.id.replace(/^msg_/, ''));
+    }
+    if (token === generation) await refresh();
   });
+  return updated;
+}
+
+// Taking a queued message back cancels it natively, then puts its text in the
+// composer. Text only: its files stay with the cancelled message.
+async function editQueued(messageId: string): Promise<void> {
+  const processId = props.processId;
+  const item = queue.value.find((queued) => queued.id === messageId);
+  if (!item || isResponding(`queue:${item.id}`)) return;
+  if (await updateQueued(item, 'cancel')) restoreToDraft(processId, item.text);
 }
 
 function cancelQueued(messageId: string): void {

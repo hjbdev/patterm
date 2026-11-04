@@ -104,7 +104,7 @@ else if (method === 'GET' && route.startsWith('/api/mcp?')) {
     // OpenCode reports a server that failed to start without failing the connect call.
     return {name,status:{status:status === 'connected' && process.env.HELPER_FAILS === name ? 'failed' : status}};
   })}));
-} else if (method === 'POST' && route.endsWith('/interrupt')) {
+} else if (method === 'POST' && route.split('?')[0].endsWith('/interrupt')) {
   if (process.env.FAIL_INTERRUPT) { console.log('HTTP 500 Internal Server Error'); process.exit(1); }
   console.log(JSON.stringify({data:{}}));
 }
@@ -137,6 +137,18 @@ else if (method === 'GET' && route.startsWith('/api/session/ses_sub/message?')) 
 else if (method === 'GET' && process.env.SUBAGENT_ROOT && route === '/api/session/' + process.env.SUBAGENT_ROOT) {
   console.log(JSON.stringify({data:{id:process.env.SUBAGENT_ROOT,cost:1.25,tokens:{input:90000,output:4000,reasoning:1000,cache:{read:10000,write:0}}}}));
 }
+else if (method === 'GET' && /^\\/api\\/session\\/[^/]+\\/message\\/[^/?]+$/.test(route)) {
+  // One message by id: prompts arrive unless they are pending or dropped.
+  const id = decodeURIComponent(route.split('/').at(-1));
+  const held = [process.env.PENDING_PROMPTS, process.env.DROP_PROMPTS].join(',').split(',');
+  let found = !held.includes(id) && rows.some(x => x.method === 'POST' && x.route.endsWith('/prompt') && x.body?.id === id);
+  if (process.env.DELAYED_MESSAGE) {
+    const marker = process.env.RECORD + '.delayed';
+    if (!fs.existsSync(marker)) { fs.writeFileSync(marker, '1'); found = false; }
+  }
+  if (found) console.log(JSON.stringify({data:{id,type:'user',text:'',time:{created:2}}}));
+  else { console.log(JSON.stringify({_tag:'MessageNotFoundError',message:'Message not found: ' + id})); console.log('HTTP 404 Not Found'); process.exit(1); }
+}
 else if (method === 'GET' && route.includes('/message?')) {
   const messages = [{id:'msg_test',type:'user',text:'hello',time:{created:1}}];
   if (process.env.MANY_SUBAGENTS) {
@@ -149,8 +161,9 @@ else if (method === 'GET' && route.includes('/message?')) {
     {type:'tool',id:'call_done',name:'shell',state:{status:'completed',input:{command:'sleep 1',background:true},metadata:{shellID:'sh_done',status:'running'},content:[]}}
   ],model:{providerID:'openai',id:'gpt-test'},tokens:{input:3000,output:200,reasoning:0,cache:{read:17000,write:0}},time:{created:2}});
   if (process.env.COMPACTED) messages.push({id:'msg_compacted',type:'compaction',status:'completed',reason:'manual',model:{providerID:'openai',id:'gpt-test'},tokens:{input:3000,output:500,reasoning:0,cache:{read:17000,write:0}},summary:'Summary',time:{created:3}});
+  const held = [process.env.PENDING_PROMPTS, process.env.DROP_PROMPTS].join(',').split(',');
   for (const item of rows) {
-    if (item.method !== 'POST' || !item.route.endsWith('/prompt') || typeof item.body?.id !== 'string') continue;
+    if (item.method !== 'POST' || !item.route.endsWith('/prompt') || typeof item.body?.id !== 'string' || held.includes(item.body.id)) continue;
     messages.push({id:item.body.id,type:'user',text:String(item.body.text ?? ''),time:{created:2}});
   }
   if (process.env.MANY_MESSAGES) {
@@ -194,10 +207,12 @@ else if (method === 'GET' && ['/api/session/ses_child', '/api/session/ses_grandc
   console.log(JSON.stringify({data:{id, parentID: parents[id] ?? undefined}}));
 }
 else if (method === 'GET' && route.endsWith('/inbox')) {
+  // Pending prompts wait as steers until the next step boundary.
+  const pending = (process.env.PENDING_PROMPTS ?? '').split(',').filter(Boolean).map((id) => ({id,sessionID:'ses_x',type:'user',time:{created:3},payload:{text:'pending'},delivery:'steer'}));
   console.log(JSON.stringify({data:process.env.QUEUE ? [
     {id:'msg_q1',sessionID:'ses_x',type:'user',time:{created:1},payload:{text:'Then add tests'},delivery:'queue'},
     {id:'msg_c1',sessionID:'ses_x',type:'compaction',time:{created:2},payload:{},delivery:'queue'}
-  ] : []}));
+  ] : pending}));
 }
 else if (method === 'GET' && route.endsWith('/permission')) console.log(JSON.stringify({data:[]}));
 else if (method === 'GET' && route.endsWith('/form')) {
@@ -586,6 +601,67 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
       ['PATCH', 'inbox/msg_q1', { delivery: 'steer' }],
       ['DELETE', 'inbox/msg_q1', undefined]
     ]);
+
+    // An accepted steer is tracked until the transcript shows it. One that
+    // leaves the inbox without arriving is flagged, never passed off as
+    // delivered; dismissing it needs no native call.
+    const steerId = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+    const steer = `msg_${steerId}`;
+    type Queued = { queue: Array<{ id: string; text: string; delivery: string; createdAt?: string; files?: number }> };
+    const pendingService = openCode(database, { ...env, PENDING_PROMPTS: steer });
+    await pendingService.prompt('process_0', { text: 'use the staging DB', references: [], attachments: [], messageId: steerId });
+    assert.deepEqual((await pendingService.conversation('process_0') as Queued).queue.map((item) => [item.id, item.delivery]), [[steer, 'steer']], 'a waiting steer is listed as queued');
+    const droppedService = openCode(database, { ...env, DROP_PROMPTS: steer });
+    const dropped = (await droppedService.conversation('process_0') as Queued).queue;
+    assert.deepEqual(dropped.map((item) => [item.id, item.text, item.delivery]), [[steer, 'use the staging DB', 'undelivered']], 'a steer that left the inbox without arriving is flagged');
+    assert.ok(dropped[0]?.createdAt, 'a flagged steer keeps its send time for placement');
+    assert.deepEqual((await droppedService.conversation('process_0') as Queued).queue.map((item) => item.id), [steer], 'the flag survives later snapshots');
+    await assert.rejects(droppedService.updateQueued('process_0', steer, 'steer'), /never reached the agent/);
+    const beforeDismiss = fs.readFileSync(record, 'utf8').trim().split('\n').length;
+    await droppedService.updateQueued('process_0', steer, 'cancel');
+    const dismissCalls = fs.readFileSync(record, 'utf8').trim().split('\n').slice(beforeDismiss).map((line) => JSON.parse(line) as { method: string });
+    assert.ok(!dismissCalls.some((call) => call.method === 'DELETE'), 'dismissing a dropped steer calls nothing natively');
+    assert.deepEqual((await droppedService.conversation('process_0') as Queued).queue, [], 'a dismissed steer is forgotten');
+    // Delivered steers are forgotten; the user's own cancel is not a drop.
+    const deliveredId = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+    await openCode(database, env).prompt('process_0', { text: 'delivered', references: [], attachments: [], messageId: deliveredId });
+    assert.deepEqual((await openCode(database, env).conversation('process_0') as Queued).queue, [], 'a delivered steer is not flagged');
+    const cancelledId = '12121212-1212-1212-1212-121212121212';
+    const cancelled = `msg_${cancelledId}`;
+    await openCode(database, { ...env, PENDING_PROMPTS: cancelled }).prompt('process_0', { text: 'never mind', references: [], attachments: [], messageId: cancelledId });
+    await openCode(database, { ...env, DROP_PROMPTS: cancelled }).updateQueued('process_0', cancelled, 'cancel');
+    assert.deepEqual((await openCode(database, { ...env, DROP_PROMPTS: cancelled }).conversation('process_0') as Queued).queue, [], "the user's own cancel is not flagged");
+    // A cancel that finishes while a snapshot checks the same prompt is not a drop.
+    const racedId = '34343434-3434-3434-3434-343434343434';
+    const raced = `msg_${racedId}`;
+    await openCode(database, { ...env, PENDING_PROMPTS: raced }).prompt('process_0', { text: 'raced', references: [], attachments: [], messageId: racedId });
+    const racing = openCode(database, { ...env, DROP_PROMPTS: raced });
+    let release!: () => void;
+    const checked = new Promise<void>((resolve) => { release = resolve; });
+    let checking!: () => void;
+    const started = new Promise<void>((resolve) => { checking = resolve; });
+    (racing as unknown as { nativePrompt: () => Promise<string> }).nativePrompt = async () => { checking(); await checked; return 'absent'; };
+    const racedSnapshot = racing.conversation('process_0') as Promise<Queued>;
+    await started;
+    await openCode(database, { ...env, DROP_PROMPTS: raced }).updateQueued('process_0', raced, 'cancel');
+    release();
+    assert.deepEqual((await racedSnapshot).queue, [], 'a cancel during the check is not flagged');
+    assert.equal((database.connection.prepare(`select count(*) as count from opencode_pending_prompts`).get() as { count: number }).count, 0, 'settled prompts leave no tracking rows');
+    // An uncertain send found waiting later is tracked from then on.
+    const lateId = '56565656-5656-5656-5656-565656565656';
+    const late = `msg_${lateId}`;
+    await assert.rejects(openCode(database, { ...env, LOST_PROMPT_RESPONSE: '1', DROP_PROMPTS: late }).prompt('process_0', { text: 'late', references: [], attachments: [], messageId: lateId }), UncertainDeliveryError);
+    assert.deepEqual((await openCode(database, { ...env, DROP_PROMPTS: late }).conversation('process_0') as Queued).queue, [], 'an uncertain send is never flagged');
+    assert.equal(await openCode(database, { ...env, PENDING_PROMPTS: late }).reconcile('process_0', lateId), 'accepted', 'a send waiting in the inbox was accepted');
+    assert.deepEqual((await openCode(database, { ...env, DROP_PROMPTS: late }).conversation('process_0') as Queued).queue.map((item) => [item.id, item.delivery]), [[late, 'undelivered']], 'once accepted, its loss is flagged');
+    await openCode(database, env).updateQueued('process_0', late, 'cancel');
+    // A snapshot that shows an uncertain send waiting proves it accepted too.
+    const seenId = '78787878-7878-7878-7878-787878787878';
+    const seen = `msg_${seenId}`;
+    await assert.rejects(openCode(database, { ...env, LOST_PROMPT_RESPONSE: '1', DROP_PROMPTS: seen }).prompt('process_0', { text: 'seen', references: [], attachments: [], messageId: seenId }), UncertainDeliveryError);
+    assert.deepEqual((await openCode(database, { ...env, PENDING_PROMPTS: seen }).conversation('process_0') as Queued).queue.map((item) => [item.id, item.delivery]), [[seen, 'steer']]);
+    assert.deepEqual((await openCode(database, { ...env, DROP_PROMPTS: seen }).conversation('process_0') as Queued).queue.map((item) => [item.id, item.delivery]), [[seen, 'undelivered']], 'its later loss is flagged');
+    await openCode(database, env).updateQueued('process_0', seen, 'cancel');
 
     // TUI built-ins are session API calls; custom commands still run natively.
     const commandService = openCode(database, env);
@@ -1024,7 +1100,14 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     database.connection.prepare(`update processes set status = 'running', exited_at = null where id = 'process_0'`).run();
     database.connection.prepare(`update sessions set exited_at = null where id = 'session_0'`).run();
     const interruptStop = new IntegratedAgentService(database, { opencode: service });
+    // The user's Stop goes on with steering input, as OpenCode's own clients
+    // do; stopping the process does not.
+    const beforeStops = fs.readFileSync(record, 'utf8').trim().split('\n').length;
+    await interruptStop.interrupt('process_0');
     await interruptStop.stop('process_0');
+    const stopRoutes = fs.readFileSync(record, 'utf8').trim().split('\n').slice(beforeStops).map((line) => JSON.parse(line) as { route: string })
+      .filter((call) => call.route.includes('/interrupt')).map((call) => call.route.split('/interrupt')[1]);
+    assert.deepEqual(stopRoutes, ['?resume=true', ''], 'only the user stop resumes steering');
     const failingInterrupt = openCode(database, { ...env, FAIL_INTERRUPT: '1' });
     const failingStop = new IntegratedAgentService(database, { opencode: failingInterrupt });
     await assert.rejects(failingStop.stop('process_0'), /OpenCode command failed|interrupt/i);
