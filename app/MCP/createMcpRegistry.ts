@@ -97,7 +97,7 @@ interface RegistryServices {
   workbench: WorkbenchRepository;
   harnessDiscovery: HarnessDiscoveryService;
   harnessLauncher: HarnessLauncher;
-  integrated?: Pick<IntegratedAgentService, 'conversation' | 'peekConversation' | 'olderMessages' | 'prompt' | 'files' | 'delivery' | 'interrupt' | 'stopTask' | 'taskOutput' | 'updateQueued' | 'replyPermission' | 'replyQuestion' | 'replyForm' | 'controls' | 'configure' | 'command' | 'isEmpty' | 'liveSettings'>;
+  integrated?: Pick<IntegratedAgentService, 'conversation' | 'peekConversation' | 'olderMessages' | 'prompt' | 'files' | 'delivery' | 'interrupt' | 'stopTask' | 'taskOutput' | 'updateQueued' | 'replyPermission' | 'replyQuestion' | 'replyForm' | 'controls' | 'configure' | 'command' | 'isEmpty' | 'liveSettings' | 'sessionDirectory'>;
   transcriptImages?: Pick<TranscriptImageStore, 'read' | 'fromFile'>;
   figureVideos?: Pick<FigureVideoStore, 'fromFile'>;
   // Draws pages off screen for html_preview; only the desktop app has one.
@@ -427,7 +427,10 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     holdTimers: (processId) => timerService.holdOwner(processId),
     releaseTimers: (timerIds) => { for (const id of timerIds) timerService.resume(id); },
     transferTimers: (from, to) => timerService.transferOwner(from, to),
-    ...(services.integrated ? { liveSettings: (processId: string) => services.integrated!.liveSettings(processId) } : {})
+    ...(services.integrated ? {
+      liveSettings: (processId: string) => services.integrated!.liveSettings(processId),
+      sessionDirectory: (processId: string) => services.integrated!.sessionDirectory(processId)
+    } : {})
   });
   const sendMessage = new SendMessageAction(services.database, services.terminal, services.timeline,
     { integrated: services.integrated, assistant: services.assistant, inbox: services.assistantInbox, notifications: services.notifications, timers: timerService,

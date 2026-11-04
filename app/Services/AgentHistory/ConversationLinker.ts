@@ -1,4 +1,5 @@
 import { nativePath, pathColumn, pathContains, pathParam } from '../../Platform/PathIdentity';
+import { worktreeForDirectory } from '../ProjectDirectories';
 import type { AgentHistoryDb } from './AgentHistoryDb';
 import type { ParsedConversation } from './AgentHistoryTypes';
 
@@ -16,7 +17,7 @@ export class ConversationLinker {
 
   link(conversation: ParsedConversation, scope: { project_id?: string | null } = {}): ConversationLink {
     const byResume = this.byResumeId(conversation.providerConversationId);
-    if (byResume) return byResume;
+    if (byResume) return this.inDirectory(byResume, conversation.cwd);
 
     const byCwd = conversation.cwd ? this.byCwd(conversation, scope) : null;
     if (byCwd) return byCwd;
@@ -26,6 +27,14 @@ export class ConversationLinker {
     }
 
     return { project_id: null, session_id: null, process_id: null, worktree_id: null, link_confidence: 0, link_reason: 'unlinked' };
+  }
+
+  // The session's worktree holds only while the conversation's directory is in
+  // it: a native session can move after launch (OpenCode's session_move).
+  private inDirectory(link: ConversationLink, cwd: string | null): ConversationLink {
+    if (!cwd || !link.project_id) return link;
+    const worktree = worktreeForDirectory(this.database.connection, link.project_id, link.worktree_id, nativePath(cwd), false);
+    return { ...link, worktree_id: worktree?.id ?? null };
   }
 
   private byResumeId(resumeId: string): ConversationLink | null {

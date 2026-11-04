@@ -25,7 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   title bar. Collapsing the overlay with Chrome's chevron restores the usual
   layout. The window title now reads "Patterm (7)" rather than
   "Patterm - (7) Patterm".
-
+- Stopping an OpenCode agent goes on with messages that were steering the stopped turn, as OpenCode's own clients do, instead of leaving them waiting until the next send. Stopping or closing the process still stops outright.
+- A queued message's Cancel is now Edit: it takes the message back from the agent's queue and puts its text in the composer, after any draft there. OpenCode messages joining the running turn are labelled Steering rather than Queued.
 - All bots, including the built-in assistant, strongly prefer task agents for
   substantial implementation, investigation, and review. Simple questions and
   coordination stay with the bot; explicit user instructions and per-bot guidance
@@ -48,6 +49,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The sidebar's New bot button. Bots are set up in Settings › Bots.
 
 ### Fixed
+
+- Restarting an OpenCode agent whose session moved to another directory
+  (`session_move`) resumes it where it is now, linked to the registered
+  worktree there. If that directory is gone or outside the project, the restart
+  is refused and the agent keeps running, rather than stopping first and then
+  failing. Resuming from history, and imported history, link a conversation to
+  the worktree its directory is in, not the one it started in. The previous
+  worktree stays linked to the resumed session.
+- An OpenCode message sent while the agent is working no longer looks delivered when it never reaches the agent. If OpenCode accepts it but it leaves the queue without reaching the transcript, and Patterm did not cancel it, the message is marked "Not delivered" with Send again and Dismiss. Sending again uses a new message, so the agent cannot get it twice. A cancelled queued message no longer lingers as a sent bubble after older history is loaded, and checking an uncertain delivery now also finds a message still waiting in OpenCode's queue.
 
 - An OpenCode subagent's streaming reasoning and text stay nested under its Task row when the transcript refreshes mid-run, instead of appearing as the parent's prose.
 

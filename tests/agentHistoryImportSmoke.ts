@@ -23,6 +23,7 @@ import { ResumeIdCaptureService } from '../app/Services/AgentHistory/ResumeIdCap
 import { SecretRedactor } from '../app/Services/AgentHistory/SecretRedactor';
 import { HISTORY_IMPORT_STALE_MS, type ParsedHistoryFile, type ParsedMessage } from '../app/Services/AgentHistory/AgentHistoryTypes';
 import { DatabaseService } from '../app/Services/DatabaseService';
+import { RegisterSessionAction, registerSessionInput } from '../app/Actions/RegisterSessionAction';
 import { HistoryDatabaseService } from '../app/Services/HistoryDatabaseService';
 import { SearchService } from '../app/Services/SearchService';
 import { TimelineService } from '../app/Services/TimelineService';
@@ -192,6 +193,23 @@ function verifyScopedScanLinking(): void {
     const links = Object.fromEntries((database.connection.prepare(`select provider_conversation_id, project_id from conversations`).all() as Array<{ provider_conversation_id: string; project_id: string | null }>)
       .map((row) => [row.provider_conversation_id, row.project_id]));
     assert.deepEqual(links, { scope_mine: 'scope_asking', scope_theirs: 'scope_other', scope_elsewhere: null }, 'a scoped scan links conversations by path only');
+
+    // A session that moved after launch (OpenCode's session_move) links its
+    // conversation to the worktree it is in now, not the one it started in.
+    const insertWorktree = database.connection.prepare(`insert into worktrees (id, project_id, repo_path, worktree_path, branch, created_by, created_at) values (?, 'scope_asking', ?, ?, ?, 'user', ?)`);
+    insertWorktree.run('wt_started', path.join(directory, 'asking'), path.join(directory, 'asking', '.worktrees', 'started'), 'patterm/started', now);
+    insertWorktree.run('wt_moved', path.join(directory, 'asking'), path.join(directory, 'asking', '.worktrees', 'moved'), 'patterm/moved', now);
+    const timeline = new TimelineService(database);
+    for (const id of ['scope_moved', 'scope_moved_root', 'scope_stayed']) {
+      new RegisterSessionAction(database, timeline).execute(registerSessionInput.parse({ project_id: 'scope_asking', harness: 'claude', resume_id: id, resume_status: 'found', worktree_id: 'wt_started' }));
+    }
+    write('scope_moved', path.join(directory, 'asking', '.worktrees', 'moved', 'src'));
+    write('scope_moved_root', path.join(directory, 'asking'));
+    write('scope_stayed', path.join(directory, 'asking', '.worktrees', 'started'));
+    imports.import({ provider: 'claude', trigger: 'manual' });
+    const worktrees = Object.fromEntries((database.connection.prepare(`select provider_conversation_id, worktree_id from conversations where provider_conversation_id in ('scope_moved', 'scope_moved_root', 'scope_stayed')`).all() as Array<{ provider_conversation_id: string; worktree_id: string | null }>)
+      .map((row) => [row.provider_conversation_id, row.worktree_id]));
+    assert.deepEqual(worktrees, { scope_moved: 'wt_moved', scope_moved_root: null, scope_stayed: 'wt_started' }, 'a conversation links the registered worktree its directory is in');
 
     if (process.platform === 'win32') {
       // One directory reaches history as `c:/users/x`, `C:\Users\x`, or Git Bash's `/c/Users/x`.
