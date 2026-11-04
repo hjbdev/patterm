@@ -22,7 +22,7 @@ export interface HarnessModelCatalogOptions {
   database: DatabaseService;
   settings: SettingsService;
   env: NodeJS.ProcessEnv;
-  openCodeServer?: Pick<OpenCodeServerService, 'listModels'>;
+  openCodeServer?: Pick<OpenCodeServerService, 'listModels' | 'listProviders'>;
   debugLog?: Pick<DebugLogService, 'write'>;
   now?: () => string;
   codexTimeoutMs?: number;
@@ -140,15 +140,23 @@ export class HarnessModelCatalogService {
         models: parseCodexCatalog(JSON.parse(output))
       };
     }
-    const response = this.deps.openCodeServer
-      ? await this.deps.openCodeServer.listModels(executable)
-      : JSON.parse(await this.run(executable, ['api', 'GET', '/api/model'], this.openCodeTimeoutMs));
+    const server = this.deps.openCodeServer;
+    const [response, providers] = await Promise.all([
+      server
+        ? server.listModels(executable)
+        : this.run(executable, ['api', 'GET', '/api/model'], this.openCodeTimeoutMs).then((output) => JSON.parse(output) as unknown),
+      // Provider names only label the models, so the catalog survives without them.
+      (server
+        ? server.listProviders(executable)
+        : this.run(executable, ['api', 'GET', '/api/provider'], this.openCodeTimeoutMs).then((output) => JSON.parse(output) as unknown)
+      ).catch(() => null)
+    ]);
     return {
       harness,
       source: 'api',
       refreshedAt: this.now(),
       error: null,
-      models: parseOpenCodeCatalog(response)
+      models: parseOpenCodeCatalog(response, providers)
     };
   }
 

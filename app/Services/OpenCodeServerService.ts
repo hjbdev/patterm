@@ -9,6 +9,7 @@ import { awaitingActivity } from './Activity';
 import type { DatabaseService } from './DatabaseService';
 import { firstSemver, type McpServerSpec } from '../Harness/HarnessProvider';
 import { openCodeMcpConfigs } from '../Harness/McpDelivery';
+import { openCodeProviderNames } from '../Harness/ModelCatalog';
 import type { IntegratedControls, IntegratedFormAction, IntegratedLaunchInput, IntegratedLaunchResult, LiveSettings } from './IntegratedAgentService';
 import { OPENCODE_VERSION_MISMATCH } from './OpenCodeServiceErrors';
 import { UncertainDeliveryError, type IntegratedDeliveryState } from './IntegratedDelivery';
@@ -1356,10 +1357,7 @@ export class OpenCodeServerService {
       // and another client can change them. Without it, fall back to them.
       this.nativeSettings(processId).catch((): LiveSettings => ({}))
     ]);
-    const providerNames = new Map(dataRows(providerResult).flatMap((item) => {
-      const id = stringValue(item.id);
-      return id ? [[id, providerLabel(stringValue(item.name) ?? id)] as [string, string]] : [];
-    }));
+    const providerNames = openCodeProviderNames(providerResult);
     const models = dataRows(modelResult).flatMap((item) => {
       const providerID = stringValue(item.providerID);
       const id = stringValue(item.id ?? item.modelID);
@@ -1970,6 +1968,10 @@ export class OpenCodeServerService {
     return this.api(executable, os.homedir(), 'GET', '/api/model');
   }
 
+  async listProviders(executable: string): Promise<unknown> {
+    return this.api(executable, os.homedir(), 'GET', '/api/provider');
+  }
+
   // The verified background service is called over HTTP exactly as
   // `opencode api` does (same route, Basic credential, and JSON body) without
   // starting a CLI process per request. The CLI remains the transport when
@@ -2169,12 +2171,6 @@ function dataRows(value: unknown): Array<Record<string, unknown>> {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value ? value : undefined;
-}
-
-// Every model runs in OpenCode, so its own plans drop the prefix: "OpenCode Go"
-// shows as "Go", and plain "OpenCode", its Zen plan, as "Zen".
-function providerLabel(name: string): string {
-  return name.replace(/^opencode\b\s*/i, '') || 'Zen';
 }
 
 // OpenCode reports idle sessions by omitting them from the server-scoped active
