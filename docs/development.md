@@ -274,7 +274,9 @@ This is model guidance, not a transport-level guarantee of silence: Patterm does
 not filter acknowledgements from transcripts or notifications. All three adapters
 settle turns from native lifecycle events rather than requiring a text reply
 (Codex `turn/completed`, Claude `result`, OpenCode execution success/idle). A
-model may still emit an acknowledgement despite the instruction.
+model may still emit an acknowledgement despite the instruction. Active voice
+calls use separate voice-intermediary instructions and spoken message summaries;
+this native text-guidance change does not establish quiet voice behaviour.
 
 On 4 November 2026, an isolated no-tool probe on Codex CLI 0.166.0 completed with
 an empty `agent_message` and `turn.completed`. OpenCode 2.2.5's default provider
