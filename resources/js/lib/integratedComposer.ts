@@ -228,7 +228,26 @@ export function outgoingTranscript(processId: string, messages: TranscriptMessag
   const entries = outgoingFor(processId);
   if (!entries.length && !queue.length) return messages;
   const queued = new Set(queue.map((item) => item.id));
-  const visible = queue.length ? messages.filter((message) => !queued.has(message.id)) : messages;
+  // A prompt that never reached the agent keeps its place, flagged, so it
+  // cannot pass for a delivered one.
+  const dropped = new Map(queue.filter((item) => item.delivery === 'undelivered').map((item) => [item.id, item]));
+  const undelivered = (item: IntegratedQueuedMessage, row: TranscriptMessage | undefined): TranscriptMessage => ({
+    ...(row ?? { id: item.id, role: 'user', kind: 'text', text: item.text, ...(item.createdAt ? { createdAt: item.createdAt } : {}) }),
+    delivery: { state: 'undelivered', messageId: item.id, ...(item.files ? { error: 'Sending again sends the text only; attach its files again.' } : {}) }
+  });
+  const visible = queue.length
+    ? messages.flatMap((message) => {
+      const item = dropped.get(message.id);
+      if (item) return [undelivered(item, message)];
+      return queued.has(message.id) ? [] : [message];
+    })
+    : messages;
+  for (const item of dropped.values()) {
+    if (messages.some((message) => message.id === item.id)) continue;
+    const row = undelivered(item, entries.find((entry) => entry.row.id === item.id || entry.payload.messageId === item.id)?.row);
+    const at = item.createdAt ? visible.findIndex((message) => message.createdAt !== undefined && message.createdAt > item.createdAt!) : -1;
+    visible.splice(at === -1 ? visible.length : at, 0, row);
+  }
   const pending = entries.filter((entry) => !isQueued(entry, queued) && !messages.some((message) => matchesOutgoing(entry, message)));
   // Prompts the harness queued natively follow the running turn as greyed
   // messages, as a send does on the other harnesses. Patterm's held queue

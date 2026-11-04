@@ -43,6 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An OpenCode message sent while the agent is working no longer looks delivered when it never reaches the agent. If OpenCode accepts it but it leaves the queue without reaching the transcript, and Patterm did not cancel it, the message is marked "Not delivered" with Send again and Dismiss. Sending again uses a new message, so the agent cannot get it twice. A cancelled queued message no longer lingers as a sent bubble after older history is loaded, and checking an uncertain delivery now also finds a message still waiting in OpenCode's queue.
+
 - An OpenCode subagent's streaming reasoning and text stay nested under its Task row when the transcript refreshes mid-run, instead of appearing as the parent's prose.
 
 - Bots receive their own agents’ notifications regardless of user notification settings. Retried failures reach the parent again without duplicate-event storms, and rejected deliveries wait in the bot’s inbox.

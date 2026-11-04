@@ -849,6 +849,8 @@ export class IntegratedAgentService {
   async updateQueued(processId: string, messageId: string, action: 'steer' | 'cancel'): Promise<void> {
     const key = this.ledgerKey(processId);
     if (this.dispatching.get(key)?.message_id === messageId) throw new Error('This message is already being sent');
+    // Recorded so a prompt that later looks lost can be told from a cancel.
+    this.debugLog?.write('integrated', 'prompt.queue_update', { processId: key, messageId, action });
     const held = this.heldPrompt(key, messageId);
     if (held) {
       // A held prompt cannot jump the turn it waits for; sending now retries.

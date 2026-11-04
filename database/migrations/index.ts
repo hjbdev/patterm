@@ -12,6 +12,7 @@ import addSessionSecrets from './2026_10_30_000058_add_session_secrets';
 import addBotMemory from './2026_10_30_000059_add_bot_memory';
 import shareMemory from './2026_11_02_000061_share_memory';
 import addProcessStatusLabel from './2026_11_02_000062_add_process_status_label';
+import addOpenCodePendingPrompts from './2026_11_04_000063_add_opencode_pending_prompts';
 import createInitialSchema from './2026_06_03_000001_create_initial_schema';
 import addProcessRuntimeColumns from './2026_06_03_000002_add_process_runtime_columns';
 import addProcessWorktreeId from './2026_06_03_000003_add_process_worktree_id';
@@ -128,5 +129,6 @@ export const migrations: Migration[] = [
   addBotMemory,
   addAssistantBot,
   shareMemory,
-  addProcessStatusLabel
+  addProcessStatusLabel,
+  addOpenCodePendingPrompts
 ];
