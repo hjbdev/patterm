@@ -85,6 +85,7 @@ import type { IdleCompactionSettings } from './Services/SettingsService';
 import { IntegratedAgentService } from './Services/IntegratedAgentService';
 import type { IntegratedConversationEvent } from './Services/IntegratedConversation';
 import type { PagePreviewer } from './Actions/PreviewHtmlFigureAction';
+import { FigureVideoStore } from './Services/FigureVideoStore';
 import { TranscriptImageStore } from './Services/TranscriptImageStore';
 import { WorktreeFileService } from './Services/WorktreeFileService';
 import { HistoryDatabaseService } from './Services/HistoryDatabaseService';
@@ -190,6 +191,8 @@ export interface PattermApplication {
   peers: PeerLinkService;
   terminalSubscriptions: TerminalSubscriptions;
   remote: RemoteClientService;
+  // Local videos agents show in HTML figures, served to clients as bytes.
+  figureVideos: Pick<FigureVideoStore, 'locate' | 'read'>;
   bootstrap(): BootstrapPayload;
   // Notification records changed. Clients update badges and show toasts.
   onNotificationsChanged(handler: (change: NotificationChange) => void): () => void;
@@ -343,6 +346,7 @@ async function createApplicationResources(
   // change settles.
   let reapSessions: (() => void) | null = null;
   const transcriptImages = new TranscriptImageStore(path.join(options.appDataPath, 'transcript-images'));
+  const figureVideos = new FigureVideoStore(path.join(options.appDataPath, 'figure-videos'));
   const openCodeServer = new OpenCodeServerService(database, resolvedEnv, { persistent, images: transcriptImages });
   const harnessRuntimeDir = path.join(options.appDataPath, 'harness');
   // Installed services run Integrated hosts in their own systemd units so a
@@ -773,6 +777,7 @@ async function createApplicationResources(
     harnessLauncher,
     integrated,
     transcriptImages,
+    figureVideos,
     ...(options.pagePreviewer ? { pagePreviewer: options.pagePreviewer } : {}),
     settings,
     harnessPresets,
@@ -959,6 +964,7 @@ async function createApplicationResources(
     peers,
     terminalSubscriptions,
     remote,
+    figureVideos,
     bootstrap: () => ({
       appName: 'patterm-desktop',
       sidecarAvailable: terminal.isAvailable()

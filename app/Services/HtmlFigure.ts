@@ -155,7 +155,9 @@ export function figureFontStyle(settings: FontSettings, source: (file: string) =
 
 /* ---------- frame ---------- */
 
-// The page runs in this frame's document, written in once the host sends it.
+// The page runs in this frame's document, written in once the host sends it,
+// with any videos it plays as Blobs; blob: URLs belong to the origin that
+// made them, so the frame makes its own.
 // Its own policy lets the page run inline and CDN scripts; the sandbox gives
 // it an opaque origin, so it cannot reach Patterm's API, storage or window.
 // It shares Patterm's dark scheme: a frame in another scheme gets an opaque
@@ -164,8 +166,13 @@ export const FIGURE_FRAME_HTML = `<!doctype html><html><head><meta charset="utf-
 addEventListener('message', function render(event) {
   if (event.source !== parent || !event.data || event.data.source !== 'patterm-host' || event.data.type !== 'render') return;
   removeEventListener('message', render);
+  var html = String(event.data.html);
+  var media = event.data.media || {};
+  for (var placeholder in media) {
+    if (media[placeholder] instanceof Blob) html = html.split(placeholder).join(URL.createObjectURL(media[placeholder]));
+  }
   document.open();
-  document.write(event.data.html);
+  document.write(html);
   document.close();
 });
 parent.postMessage({ source: 'patterm-figure', type: 'ready' }, '*');
@@ -261,10 +268,12 @@ export function prepareFigureHtml(page: string, fontCss = ''): string {
   return doctype ? `${doctype[0]}<head>${head}</head>${page.slice(doctype[0].length)}` : `<!doctype html><head>${head}</head>${page}`;
 }
 
-/* ---------- local images ---------- */
+/* ---------- local images and videos ---------- */
 
 const IMG_SRC = /(<img\b[^>]*?\bsrc\s*=\s*)(["'])([^"']+)\2/gi;
+const VIDEO_POSTER = /(<video\b[^>]*?\bposter\s*=\s*)(["'])([^"']+)\2/gi;
 const CSS_URL = /(url\(\s*)(["']?)([^"')\s]+)\2(\s*\))/gi;
+const VIDEO_SRC = /(<(?:video|source)\b[^>]*?\bsrc\s*=\s*)(["'])([^"']+)\2/gi;
 
 // A path, not a URL. A Windows drive (C:\ or C:/) looks like a URL scheme.
 function isLocalPath(value: string): boolean {
@@ -272,25 +281,49 @@ function isLocalPath(value: string): boolean {
   return !/^[a-z][a-z0-9+.-]*:/i.test(value) && !value.startsWith('//') && !value.startsWith('#');
 }
 
-// Local files a page shows through <img src> or CSS url().
-export function figureImagePaths(page: string): string[] {
+function localPaths(page: string, patterns: RegExp[]): string[] {
   const paths = new Set<string>();
-  for (const pattern of [IMG_SRC, CSS_URL]) {
+  for (const pattern of patterns) {
     for (const match of page.matchAll(pattern)) if (isLocalPath(match[3]!)) paths.add(match[3]!);
   }
   return [...paths];
 }
 
-// Swaps each stored local path for its data URL; the frame cannot read files.
-export function replaceFigureImages(page: string, urls: ReadonlyMap<string, string>): string {
-  if (!urls.size) return page;
-  const swap = (match: string, before: string, quote: string, value: string, after = '') => {
+// Local files a page shows through <img src>, a video's poster or CSS url().
+export function figureImagePaths(page: string): string[] {
+  return localPaths(page, [IMG_SRC, VIDEO_POSTER, CSS_URL]);
+}
+
+// Local files a page plays through <video src> or <source src>.
+export function figureVideoPaths(page: string): string[] {
+  return localPaths(page, [VIDEO_SRC]);
+}
+
+function swapper(urls: ReadonlyMap<string, string>) {
+  return (match: string, before: string, quote: string, value: string, after = '') => {
     const url = urls.get(value);
     return url ? `${before}${quote || '"'}${url}${quote || '"'}${after}` : match;
   };
+}
+
+// Swaps each stored local path for its data URL; the frame cannot read files.
+export function replaceFigureImages(page: string, urls: ReadonlyMap<string, string>): string {
+  if (!urls.size) return page;
+  const swap = swapper(urls);
   return page
     .replace(IMG_SRC, (match, before: string, quote: string, value: string) => swap(match, before, quote, value))
+    .replace(VIDEO_POSTER, (match, before: string, quote: string, value: string) => swap(match, before, quote, value))
     .replace(CSS_URL, (match, before: string, quote: string, value: string, after: string) => swap(match, before, quote, value, after));
+}
+
+// Swaps each stored video path for a placeholder. Videos are too large to
+// travel inside the page, so the host posts each one to the frame as a Blob
+// beside the page, and the frame puts its own blob: URL where the
+// placeholder is (see FIGURE_FRAME_HTML).
+export function replaceFigureVideos(page: string, placeholders: ReadonlyMap<string, string>): string {
+  if (!placeholders.size) return page;
+  const swap = swapper(placeholders);
+  return page.replace(VIDEO_SRC, (match, before: string, quote: string, value: string) => swap(match, before, quote, value));
 }
 
 /* ---------- transcript rows ---------- */
@@ -303,34 +336,44 @@ export function figurePage(input: unknown): { title: string; html: string; heigh
   return parsed.success ? parsed.data : null;
 }
 
-// The tool's reply maps each image path to its stored copy. Harnesses keep the
-// reply as structured content, a content array, or plain text; Codex keeps the
-// whole content wrapper as JSON text, so the reply is escaped one level down.
+// The tool's reply maps each image or video path to its stored copy.
+// Harnesses keep the reply as structured content, a content array, or plain
+// text; Codex keeps the whole content wrapper as JSON text, so the reply is
+// escaped one level down.
 export function figureImages(tool: TranscriptTool): Record<string, string> {
+  return figureMedia(tool, 'images');
+}
+
+export function figureVideos(tool: TranscriptTool): Record<string, string> {
+  return figureMedia(tool, 'videos');
+}
+
+function figureMedia(tool: TranscriptTool, key: 'images' | 'videos'): Record<string, string> {
   for (const candidate of [tool.result, tool.output, tool.state]) {
-    const images = findImages(candidate, 0);
-    if (images) return images;
+    const found = findMedia(candidate, key, 0);
+    if (found) return found;
   }
   return {};
 }
 
-function findImages(value: unknown, depth: number): Record<string, string> | null {
+function findMedia(value: unknown, key: 'images' | 'videos', depth: number): Record<string, string> | null {
   if (depth > 8 || value === null || value === undefined) return null;
   if (typeof value === 'string') {
-    if (!value.includes('images')) return null;
-    try { return findImages(JSON.parse(value), depth + 1); } catch { return null; }
+    if (!value.includes(key)) return null;
+    try { return findMedia(JSON.parse(value), key, depth + 1); } catch { return null; }
   }
   if (Array.isArray(value)) {
-    for (const item of value) { const found = findImages(item, depth + 1); if (found) return found; }
+    for (const item of value) { const found = findMedia(item, key, depth + 1); if (found) return found; }
     return null;
   }
   if (typeof value !== 'object') return null;
   const record = value as Record<string, unknown>;
-  if (record.images && typeof record.images === 'object' && !Array.isArray(record.images)) {
-    return Object.fromEntries(Object.entries(record.images).filter((entry): entry is [string, string] => typeof entry[1] === 'string' && /^[0-9a-f]{64}$/.test(entry[1])));
+  const media = record[key];
+  if (media && typeof media === 'object' && !Array.isArray(media)) {
+    return Object.fromEntries(Object.entries(media).filter((entry): entry is [string, string] => typeof entry[1] === 'string' && /^[0-9a-f]{64}$/.test(entry[1])));
   }
-  for (const key of ['structuredContent', 'content', 'text', 'result', 'output']) {
-    const found = findImages(record[key], depth + 1);
+  for (const nested of ['structuredContent', 'content', 'text', 'result', 'output']) {
+    const found = findMedia(record[nested], key, depth + 1);
     if (found) return found;
   }
   return null;

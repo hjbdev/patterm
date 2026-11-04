@@ -38,9 +38,10 @@ import { figureAnswerKey, figureAnsweredKey, figureFrameUrl, guardFigureFocus } 
 // the user confirms them.
 // measureKey names the page for the height cache; the prepared html carries
 // inline fonts, too large to keep as keys. Without one, nothing is cached.
+// media holds the videos the page plays, by the placeholder it carries.
 // fill stretches a short page to its container, as in the full-screen view,
 // and keeps the link bar in sight below it.
-const props = defineProps<{ html: string; measureKey?: string; title: string; initialHeight: number; fill?: boolean }>();
+const props = defineProps<{ html: string; media?: Map<string, Blob>; measureKey?: string; title: string; initialHeight: number; fill?: boolean }>();
 const channel = inject(figureAnswerKey, null);
 const answered = inject(figureAnsweredKey, null);
 const frame = ref<HTMLIFrameElement | null>(null);
@@ -94,7 +95,7 @@ function onMessage(event: MessageEvent): void {
   const data = event.data as Record<string, unknown> | null;
   if (!data || typeof data !== 'object' || data.source !== 'patterm-figure') return;
   if (data.type === 'ready') {
-    post({ type: 'render', html: props.html });
+    post({ type: 'render', html: props.html, ...(props.media?.size ? { media: Object.fromEntries(props.media) } : {}) });
     pushState();
   } else if (data.type === 'size' && typeof data.height === 'number' && Number.isFinite(data.height)) {
     const next = Math.min(FIGURE_HEIGHT.max, Math.max(16, Math.ceil(data.height)));

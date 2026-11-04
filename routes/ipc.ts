@@ -7,6 +7,7 @@ import { browserToolsOnly, registerApplicationRoutes } from './application';
 import { readIntegrated, relayingRegistrar } from './remote';
 
 const clipboardWritePayload = z.object({ text: z.string() });
+const figureVideoPayload = z.object({ sha256: z.string().regex(/^[0-9a-f]{64}$/) });
 const shellShowItemPayload = z.object({ path: z.string().min(1) });
 const uploadPayload = z.object({
   name: z.string().min(1).max(255),
@@ -95,6 +96,15 @@ export function registerIpcRoutes(ipcMain: IpcMain, application: PattermApplicat
       hasImage: !image.isEmpty(),
       formats: clipboard.availableFormats()
     };
+  });
+
+  // A figure's local video, as bytes for the renderer to hand to the
+  // figure's frame; see HtmlFigure.
+  ipcMain.handle('patterm:figure:video', async (_event, raw) => {
+    const { sha256 } = figureVideoPayload.parse(raw);
+    const video = await application.figureVideos.read(sha256);
+    if (!video) throw new Error('This video is no longer stored');
+    return { mime: video.mime, bytes: new Uint8Array(video.bytes.buffer, video.bytes.byteOffset, video.bytes.byteLength) };
   });
 
   // Attachments are always persisted through managed upload storage; the

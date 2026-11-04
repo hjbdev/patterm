@@ -2,7 +2,8 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathContains } from '../Platform/PathIdentity';
-import { figureImagePaths, figureToken, formatInputErrors, htmlRenderInput } from '../Services/HtmlFigure';
+import { MAX_FIGURE_VIDEO_BYTES, type FigureVideoStore } from '../Services/FigureVideoStore';
+import { figureImagePaths, figureToken, figureVideoPaths, formatInputErrors, htmlRenderInput } from '../Services/HtmlFigure';
 import type { TranscriptImageStore } from '../Services/TranscriptImageStore';
 
 export interface FigureCaller {
@@ -10,21 +11,28 @@ export interface FigureCaller {
   project_path: string | null;
 }
 
-// Checks an agent's page and stores the local images it shows. The page
+export type FigureVideos = Pick<FigureVideoStore, 'fromFile'>;
+
+// Checks an agent's page and stores the local images and videos it shows. The page
 // itself stays in the harness's own transcript as the tool call's input; the
 // reply carries the stored copies so the renderer never reads agent paths.
 export class RenderHtmlFigureAction {
-  constructor(private readonly images: Pick<TranscriptImageStore, 'fromFile'> | undefined) {}
+  constructor(
+    private readonly images: Pick<TranscriptImageStore, 'fromFile'> | undefined,
+    private readonly videos?: FigureVideos | undefined
+  ) {}
 
-  execute(raw: unknown, caller: FigureCaller): { ok: true; ref: string; shown: string; images?: Record<string, string> } {
+  async execute(raw: unknown, caller: FigureCaller): Promise<{ ok: true; ref: string; shown: string; images?: Record<string, string>; videos?: Record<string, string> }> {
     const parsed = htmlRenderInput.safeParse(raw);
     if (!parsed.success) throw rejected(formatInputErrors(parsed.error));
     const { images, errors } = storeImages(this.images, parsed.data.html, caller);
+    const stored = await storeVideos(this.videos, parsed.data.html, caller);
+    errors.push(...stored.errors);
     if (errors.length) throw rejected(errors);
     // Pages appear only where the reply places this token. Agents otherwise
     // restate what they drew in prose.
     const ref = figureToken(parsed.data.id ?? `fig_${randomBytes(3).toString('hex')}`);
-    return { ok: true, ref, shown: `Not shown yet. Put ${ref} on its own line in your reply where it belongs and write around it; do not describe what the page already shows.`, ...(Object.keys(images).length ? { images } : {}) };
+    return { ok: true, ref, shown: `Not shown yet. Put ${ref} on its own line in your reply where it belongs and write around it; do not describe what the page already shows.`, ...(Object.keys(images).length ? { images } : {}), ...(Object.keys(stored.videos).length ? { videos: stored.videos } : {}) };
   }
 }
 
@@ -40,6 +48,20 @@ export function storeImages(store: Pick<TranscriptImageStore, 'fromFile'> | unde
     images[requested] = stored.sha256;
   }
   return { images, errors };
+}
+
+export async function storeVideos(store: FigureVideos | undefined, page: string, caller: FigureCaller): Promise<{ videos: Record<string, string>; errors: string[] }> {
+  const videos: Record<string, string> = {};
+  const errors: string[] = [];
+  for (const requested of figureVideoPaths(page)) {
+    if (!store) { errors.push(`"${requested}": local videos are unavailable here`); continue; }
+    const file = callerFile(requested, caller);
+    if (!file) { errors.push(`"${requested}" must be an existing file inside your working directory or the project`); continue; }
+    const stored = await store.fromFile(file);
+    if (!stored) { errors.push(`"${requested}" is not an MP4 or WebM video under ${MAX_FIGURE_VIDEO_BYTES / 1024 / 1024} MB`); continue; }
+    videos[requested] = stored.sha256;
+  }
+  return { videos, errors };
 }
 
 function callerFile(requested: string, caller: FigureCaller): string | null {
