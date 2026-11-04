@@ -252,7 +252,7 @@ test('videos are copied by content into their own store and read back as bytes',
   assert.equal(await store.fromFile(path.join(work, 'copy.mp4'), () => false), null);
   let linked = true;
   try { fs.symlinkSync(path.join(root, 'private.mp4'), path.join(work, 'swapped.mp4')); } catch (error) { if (error.code !== 'EPERM' || process.platform !== 'win32') throw error; linked = false; }
-  if (linked) assert.equal(await store.fromFile(path.join(work, 'swapped.mp4'), (real) => real.startsWith(fs.realpathSync(work) + path.sep)), null, 'a link out of the project is refused when opened');
+  if (linked) assert.equal(await store.fromFile(path.join(work, 'swapped.mp4'), (real) => real.startsWith(fs.realpathSync.native(work) + path.sep)), null, 'a link out of the project is refused when opened');
   // An expired copy is not served, even before a prune.
   const webm = path.join(root, 'videos', `${result.videos['clip.webm']}.webm`);
   const old = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);

@@ -81,14 +81,18 @@ function callerRoots(caller: FigureCaller): string[] {
   return [caller.cwd, caller.project_path].filter((root): root is string => Boolean(root));
 }
 
+// Opened videos are resolved natively (see FigureVideoStore), so their roots
+// are too: on Windows the two resolvers disagree about short 8.3 names.
 function realRoots(caller: FigureCaller): string[] {
   return callerRoots(caller).flatMap((root) => {
-    try { return [fs.realpathSync(root)]; } catch { return []; }
+    try { return [fs.realpathSync.native(root)]; } catch { return []; }
   });
 }
 
 function insideCaller(real: string, caller: FigureCaller): boolean {
-  return realRoots(caller).some((root) => pathContains(root, real));
+  return callerRoots(caller).some((root) => {
+    try { return pathContains(fs.realpathSync(root), real); } catch { return false; }
+  });
 }
 
 function rejected(errors: string[]): Error {
