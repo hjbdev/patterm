@@ -1,5 +1,6 @@
 import { formatLocal, nextRoutineRun } from '../../../app/Services/RoutineSchedule';
 import { useWorkbench } from '../Composables/useWorkbench';
+import { modelDisplayName } from './profileFields';
 import { topicChanged, topicRead } from './serverQuery';
 
 export type RoutineRunStatus = 'running' | 'reported' | 'failed' | 'skipped';
@@ -62,6 +63,7 @@ export interface RoutineModelOption {
   id: string;
   label: string;
   reasoning: string[];
+  provider?: string;
   serviceTiers?: Array<{ id: string; label: string }>;
 }
 
@@ -73,6 +75,8 @@ export interface RoutinePresetOption {
 export interface RoutineChoiceOption {
   value: string | null;
   label: string;
+  // Secondary text, such as the provider that serves a model.
+  description?: string;
   group?: string;
 }
 
@@ -230,7 +234,7 @@ export function launchChoiceOptions(harness: string, presets: readonly RoutinePr
   return [
     { value: 'preset:', label: 'default preset', group: 'Presets' },
     ...presets.filter((preset) => preset.harness === harness).map((preset) => ({ value: `preset:${preset.name}`, label: preset.name, group: 'Presets' })),
-    ...(models[harness] ?? []).map((model) => ({ value: `model:${model.id}`, label: model.label, group: 'Models' }))
+    ...(models[harness] ?? []).map((model) => ({ value: `model:${model.id}`, label: model.label, ...(model.provider ? { description: model.provider } : {}), group: 'Models' }))
   ];
 }
 
@@ -270,7 +274,7 @@ export function describeLaunch(routine: RoutineRecord, models: Record<string, Ro
   if (!routine.model) return routine.preset ?? 'default preset';
   const model = modelFor(routine.harness, routine.model, models);
   const tier = model?.serviceTiers?.find((entry) => entry.id === routine.service_tier)?.label ?? (routine.service_tier === 'default' ? 'Standard' : null);
-  return `${[model?.label ?? routine.model, routine.reasoning].filter(Boolean).join(' ')}${tier ? `, ${tier}` : ''}`;
+  return `${[model ? modelDisplayName(model) : routine.model, routine.reasoning].filter(Boolean).join(' ')}${tier ? `, ${tier}` : ''}`;
 }
 
 export const DELIVERY_OPTIONS: RoutineChoiceOption[] = [

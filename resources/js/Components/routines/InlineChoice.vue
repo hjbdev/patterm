@@ -6,14 +6,17 @@
         type="button"
         :aria-label="label"
         class="inline-flex items-center gap-0.5 rounded px-1 text-foreground underline decoration-white/20 underline-offset-4 hover:decoration-white/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-      >{{ current?.label ?? 'choose' }}<ChevronDown class="h-3 w-3 opacity-60" /></button>
+      >{{ current?.label ?? 'choose' }}<span v-if="current?.description" class="ml-1 text-muted-foreground">({{ current.description }})</span><ChevronDown class="h-3 w-3 opacity-60" /></button>
     </DropdownMenuTrigger>
     <DropdownMenuContent align="start" class="max-h-80 overflow-y-auto">
       <DropdownMenuRadioGroup :model-value="keyOf(modelValue)" @update:model-value="choose">
         <template v-for="(group, index) in groups" :key="group.name">
           <DropdownMenuSeparator v-if="index > 0" />
           <DropdownMenuLabel v-if="group.name" class="text-[11px] font-normal text-muted-foreground">{{ group.name }}</DropdownMenuLabel>
-          <DropdownMenuRadioItem v-for="option in group.options" :key="keyOf(option.value)" :value="keyOf(option.value)">{{ option.label }}</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem v-for="option in group.options" :key="keyOf(option.value)" :value="keyOf(option.value)">
+            <span class="min-w-0 flex-1 truncate">{{ option.label }}</span>
+            <span v-if="option.description" class="ml-3 shrink-0 text-xs text-muted-foreground">{{ option.description }}</span>
+          </DropdownMenuRadioItem>
         </template>
       </DropdownMenuRadioGroup>
     </DropdownMenuContent>
