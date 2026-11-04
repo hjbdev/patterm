@@ -167,6 +167,34 @@ and `build:sidecar:release`:
 node scripts/release/package-windows.mjs --version 0.1.0-local.1 --sidecar native/terminal-core/target/release/patterm-terminal-core.exe --out release
 ```
 
+## Bot guidance
+
+`AgentContextService` supplies a shared delegation default to every bot,
+including the built-in assistant: delegate substantial implementation,
+investigation, and review to Patterm task agents; handle simple questions, quick
+lookups, trivial actions, and coordination directly. Bots reuse the agent already
+doing a job for follow-ups and stay responsible for communicating results.
+Delegation stays within the bot's project purview and available tools. Explicit
+user instructions and per-bot guidance can specify a different approach.
+
+This belongs in runtime context rather than copied defaults in Settings › Bots:
+existing and newly created bots receive the same guidance without changing their
+saved `instructions` in `bots.v1`. Those notes still appear under “About you,
+from the user”. The existing OpenCode context size limit still applies; long
+project lists and notes may be trimmed in the delivered context, without changing
+the saved settings.
+
+`BotService.context` builds the context and `HarnessLauncher` passes it through
+the same Integrated launch/resume path for all supported bot harnesses: Codex
+developer instructions, Claude's appended system prompt, and OpenCode's Patterm
+session instruction entry. No harness configuration or memory setting is changed.
+
+After updating Patterm, restart each running bot, including the assistant, to
+pick up changed runtime guidance. Resume its existing conversation when restarting;
+a fresh conversation is not required. A browser refresh or reconnect to an
+already running native host does not replace its launch context. Newly started
+bots receive the guidance immediately.
+
 ## OpenCode
 
 Install `opencode` on the service account's `PATH`. Patterm launches the native

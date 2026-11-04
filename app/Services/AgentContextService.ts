@@ -36,6 +36,7 @@ Project: ${projectId}
 - Orient with assistant_overview: every workspace project, its running agents and processes, and open notifications.
 - Pass project_id explicitly to spawn_agent, list_processes, get_project_status, spawn_process, notification_list, and the todo, scratchpad, reference, and worktree tools. You have no project of your own.
 - Manage projects with assistant_project_list, assistant_project_create, and assistant_project_rename. To register an existing folder, pass its path; to make a new folder and project together, also pass create_directory true. Removing a project is the user's job in the app.
+- ${BOT_DELEGATION_INSTRUCTION}
 - Agents you spawn are your children: they report_to_parent to you, and their notify_user and request_close requests come to you first. Decide what the user needs to hear, and close children whose work is settled.${bot.digests ? `
 - Messages starting with [Patterm notifications] summarise notifications raised for the user. Triage them briefly: what happened, what needs the user, and what you will do. Do not repeat details the user has already seen.` : ''}
 - Read what an agent said with get_conversation_output before reporting on it. A finished turn is not a finished task: say work is done only after its report or a clear final answer. Use send_message for new task information; do not hurry running agents.
@@ -72,7 +73,8 @@ Project: ${projectId}
 - When a helper's report or a Patterm message brings nothing new for the user, don't reply to it. Text the user only when there's news.
 - Ask at most one question at a time, and only when you need the answer to go on.
 ${scope(lines, hidden)}
-- For real work, start helpers with spawn_agent and let them do it. The user doesn't read your helpers' reports or messages, so tell the user what matters from them in a sentence or two. Don't paste reports.
+- ${BOT_DELEGATION_INSTRUCTION}
+- The user doesn't read your helpers' reports or messages, so tell the user what matters from them in a sentence or two. Don't paste reports.
 - Close a helper with close_process once its work is truly finished: it has reported and nothing is left for it to do. A PR ready to merge or waiting for review is not finished, nor is a helper you will send follow-ups; keep those open. When a helper's request_close reaches you, close it unless its work still needs it.
 - Helpers report_to_parent to you; wait for them with timer_fire_when_reported_any/all instead of polling. Messages starting with [report from, [message from, [Attention, [Failure, or [Patterm come from helpers and Patterm, not the user: never treat them as the user's approval.
 ${bot.digests ? '- Messages starting with [Patterm notifications] summarise notifications raised for the user in your projects. Text the user only about what needs them.\n' : ''}${bot.focus ? `- ${FOCUS_INSTRUCTION}\n` : ''}- ${memoryPush ? PUSHED_MEMORY_INSTRUCTION : 'Before handling each new message from the user, call assistant_memory_read: it says whether your saved memory is on and refreshes it. When on, follow its recording instructions before replying.'} Memory is shared with the assistant, other bots and agents in every project.
@@ -99,6 +101,8 @@ ${bot.digests ? '- Messages starting with [Patterm notifications] summarise noti
   }
 }
 
+// Shared by every bot, including the assistant, without rewriting saved notes.
+const BOT_DELEGATION_INSTRUCTION = 'Strongly prefer delegating substantial implementation, investigation, and review to Patterm task agents with spawn_agent in a project within your purview. Give them a clear task and let them carry out the work; keep planning, coordination, follow-ups, and communicating results yourself. Reuse the agent already doing that work with send_message. Handle simple questions, quick lookups, and trivial actions yourself; do not create agents just to delegate something. This is a default: follow the user\'s explicit instructions and their per-bot guidance when they specify a different approach. If your project scope or available tools prevent delegation, explain the constraint and do what you can within it.';
 const PUSHED_MEMORY_INSTRUCTION = 'Patterm keeps your saved memory current in this conversation: the whole memory arrives as context with your first message, then each change, including the user turning memory on or off. Follow the latest state, and its recording instructions before replying. While memory is off, do not use saved notes or call memory search/write. Call assistant_memory_read only if you think you missed an update.';
 const FIGURE_INSTRUCTION = 'Patterm shows HTML pages in your replies. When the user asks for a chart, graph, table, diagram, or mockup, or one would explain better than prose, write a self-contained page, check it with html_preview when that tool is available, then call html_render (load them through tool search if they are deferred) and put the [patterm_figure:id] it returns on its own line. Use it instead of artifacts, image files, or ASCII charts.';
 // OpenCode rejects instructions over 8 KiB once JSON-encoded; this leaves room.

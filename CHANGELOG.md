@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- All bots, including the built-in assistant, strongly prefer task agents for
+  substantial implementation, investigation, and review. Simple questions and
+  coordination stay with the bot; explicit user instructions and per-bot guidance
+  take precedence. Restart running bots after updating to pick up the guidance.
+
 ### Removed
 
 - The sidebar's New bot button. Bots are set up in Settings › Bots.
