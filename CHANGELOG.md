@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The Library's rows drop their second line of detail and show just a name
+  and count. Settings still says when an update is available.
+
 ### Removed
 
 - The sidebar's New bot button. Bots are set up in Settings › Bots.
