@@ -50,12 +50,11 @@ export class FigureVideoStore {
     try {
       const stat = await source.stat();
       if (!stat.isFile() || !stat.size || stat.size > MAX_FIGURE_VIDEO_BYTES) return null;
-      const real = await fs.realpath(filename);
-      const named = await fs.stat(real);
-      if (!allowed(real) || named.dev !== stat.dev || named.ino !== stat.ino) return null;
+      const real = await openedPath(source, filename);
+      if (!real || !allowed(real)) return null;
       const key = `${real}\0${stat.dev}\0${stat.ino}\0${stat.size}\0${stat.mtimeMs}`;
       const cached = this.files.get(key);
-      if (cached && await this.touch(cached)) return cached;
+      if (cached && await this.exclusive(() => this.touch(cached))) return cached;
       const header = Buffer.alloc(HEADER_BYTES);
       const { bytesRead } = await source.read(header, 0, HEADER_BYTES, 0);
       const mime = sniffVideo(header.subarray(0, bytesRead));
@@ -78,7 +77,8 @@ export class FigureVideoStore {
         await target.close();
       }
       const video = { sha256: hash.digest('hex'), mime, size };
-      if (!await this.touch(video)) await fs.rename(temporary, this.filename(video.sha256, mime));
+      const published = temporary;
+      await this.exclusive(async () => { if (!await this.touch(video)) await fs.rename(published, this.filename(video.sha256, mime)); });
       this.files.set(key, video);
       if (this.files.size > 200) this.files.delete(this.files.keys().next().value!);
       // Each new copy keeps the store within its budget.
@@ -121,7 +121,13 @@ export class FigureVideoStore {
     return bytes && sniffVideo(bytes.subarray(0, HEADER_BYTES)) === video.mime ? { mime: video.mime, bytes } : null;
   }
 
-  async prune(now = Date.now()): Promise<void> {
+  // Pruning holds the store, so a copy renewed or published meanwhile is
+  // never removed on a stale reading.
+  prune(now = Date.now()): Promise<void> {
+    return this.exclusive(() => this.sweep(now));
+  }
+
+  private async sweep(now: number): Promise<void> {
     let names: string[];
     try { names = await fs.readdir(this.directory); } catch { return; }
     const entries: Array<{ filename: string; size: number; mtime: number }> = [];
@@ -153,8 +159,34 @@ export class FigureVideoStore {
   }
 
   // A repeat keeps the existing copy fresh for retention.
+  private queue: Promise<unknown> = Promise.resolve();
+  private exclusive<T>(work: () => Promise<T>): Promise<T> {
+    const result = this.queue.then(work);
+    this.queue = result.catch(() => {});
+    return result;
+  }
+
   private async touch(video: FigureVideoRef): Promise<boolean> {
     try { const now = new Date(); await fs.utimes(this.filename(video.sha256, video.mime), now, now); return true; }
     catch { return false; }
+  }
+}
+
+// The real path of the file a descriptor holds. Linux names it in /proc, so
+// nothing done to the path after opening can change the answer. Elsewhere the
+// path is resolved twice around a check that it still names the opened file.
+async function openedPath(source: FileHandle, filename: string): Promise<string | null> {
+  try {
+    if (process.platform === 'linux') {
+      const real = await fs.readlink(`/proc/self/fd/${source.fd}`);
+      return path.isAbsolute(real) && !real.endsWith(' (deleted)') ? real : null;
+    }
+    // Windows file IDs are 64-bit, beyond a Number's precision.
+    const opened = await source.stat({ bigint: true });
+    const real = await fs.realpath(filename);
+    const named = await fs.stat(real, { bigint: true });
+    return named.dev === opened.dev && named.ino === opened.ino && await fs.realpath(filename) === real ? real : null;
+  } catch {
+    return null;
   }
 }

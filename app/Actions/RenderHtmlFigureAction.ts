@@ -53,11 +53,13 @@ export function storeImages(store: Pick<TranscriptImageStore, 'fromFile'> | unde
 export async function storeVideos(store: FigureVideos | undefined, page: string, caller: FigureCaller): Promise<{ videos: Record<string, string>; errors: string[] }> {
   const videos: Record<string, string> = {};
   const errors: string[] = [];
+  // The roots are resolved once, before any video is opened.
+  const roots = realRoots(caller);
   for (const requested of figureVideoPaths(page)) {
     if (!store) { errors.push(`"${requested}": local videos are unavailable here`); continue; }
     const file = callerFile(requested, caller);
     if (!file) { errors.push(`"${requested}" must be an existing file inside your working directory or the project`); continue; }
-    const stored = await store.fromFile(file, (real) => insideCaller(real, caller));
+    const stored = await store.fromFile(file, (real) => roots.some((root) => pathContains(root, real)));
     if (!stored) { errors.push(`"${requested}" is not an MP4 or WebM video under ${MAX_FIGURE_VIDEO_BYTES / 1024 / 1024} MB`); continue; }
     videos[requested] = stored.sha256;
   }
@@ -79,10 +81,14 @@ function callerRoots(caller: FigureCaller): string[] {
   return [caller.cwd, caller.project_path].filter((root): root is string => Boolean(root));
 }
 
-function insideCaller(real: string, caller: FigureCaller): boolean {
-  return callerRoots(caller).some((root) => {
-    try { return pathContains(fs.realpathSync(root), real); } catch { return false; }
+function realRoots(caller: FigureCaller): string[] {
+  return callerRoots(caller).flatMap((root) => {
+    try { return [fs.realpathSync(root)]; } catch { return []; }
   });
+}
+
+function insideCaller(real: string, caller: FigureCaller): boolean {
+  return realRoots(caller).some((root) => pathContains(root, real));
 }
 
 function rejected(errors: string[]): Error {
