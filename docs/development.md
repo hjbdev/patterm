@@ -278,10 +278,19 @@ model may still emit an acknowledgement despite the instruction. Active voice
 calls use separate voice-intermediary instructions and spoken message summaries;
 this native text-guidance change does not establish quiet voice behaviour.
 
-On 4 November 2026, an isolated no-tool probe on Codex CLI 0.166.0 completed with
-an empty `agent_message` and `turn.completed`. OpenCode 2.2.5's default provider
-returned a regional access error before a model response. Live Claude 2.1.312 and
-alternative-provider OpenCode probes were blocked by the development environment's
-automatic approval review of external guidance transmission; their actual model
-compliance remains unverified. Existing adapter smoke suites check native
-lifecycle handling without model calls.
+On 4 November 2026, isolated no-tool probes using the shared rule and a synthetic
+routine notice produced no visible acknowledgement on all three native CLIs:
+
+- Codex CLI 0.166.0 completed with an empty `agent_message` and `turn.completed`.
+- Claude Code 2.1.312 (`claude-opus-5-5`) completed successfully with a single
+  zero-width space (U+200B). This was not a byte-empty reply; a UI may still show
+  a blank message row. Patterm does not strip this content.
+- OpenCode 2.2.5 (`openai/gpt-6.1-terra`) emitted a `step_finish` with reason
+  `stop` and no text parts. Its default provider had returned a regional access
+  error, so that provider's compliance remains unverified.
+
+A separate synthetic important-failure notice requiring a user decision produced
+an explicit failure summary and decision question on all three. These samples
+establish capability for the tested models, not guaranteed compliance on every
+turn or model. Existing adapter smoke suites check native lifecycle handling
+without model calls. The probes did not restart Patterm or change its live data.
