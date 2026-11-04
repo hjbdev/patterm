@@ -112,6 +112,7 @@ import { useHarnessLaunch } from '../Composables/useHarnessLaunch';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { harnessLabel, launchableHarnesses as filterLaunchableHarnesses } from '../lib/harnesses';
 import { phoneLayout } from '../lib/phoneLayout';
+import { modelDisplayName } from '../lib/profileFields';
 import { composedRow, rosterRows, type ModelLabel, type ProfileSettings, type RosterRow } from '../lib/profiles';
 import { harnessModels, harnessPresets } from '../lib/serverQuery';
 import { allAgents, allAgentsHiding, chosenLaunchTarget, launchTargets, type LaunchTarget } from '../lib/allAgents';
@@ -127,7 +128,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Textarea } from './ui/textarea';
 import type { AgentInterface, HarnessInstallationRecord } from '../types';
 
-interface ModelCatalog { providers: Record<string, { models: Array<{ id: string; label: string }> } | null> }
+interface ModelCatalog { providers: Record<string, { models: Array<{ id: string; label: string; provider?: string }> } | null> }
 
 // `chooseProject` picks the project from the footer, among the shown ones,
 // instead of using `projectId`.
@@ -185,7 +186,10 @@ watch([() => launchTarget.value?.host, menuOpen], async ([host, open]) => {
 const presets = ref<ProfileSettings>({ presets: [], defaultPresetIdByHarness: { claude: null, codex: null, opencode: null } });
 // Model names as Settings shows them, such as Fable 5.1 for `fable`.
 const catalog = ref<ModelCatalog | null>(null);
-const modelLabel: ModelLabel = (harness, model) => catalog.value?.providers[harness]?.models.find((entry) => entry.id === model)?.label ?? null;
+const modelLabel: ModelLabel = (harness, model) => {
+  const entry = catalog.value?.providers[harness]?.models.find((candidate) => candidate.id === model);
+  return entry ? modelDisplayName(entry) : null;
+};
 const rows = computed(() => {
   if (!launchTarget.value) return [];
   const host = launchTarget.value.host;
