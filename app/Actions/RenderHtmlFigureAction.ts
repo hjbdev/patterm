@@ -57,7 +57,7 @@ export async function storeVideos(store: FigureVideos | undefined, page: string,
     if (!store) { errors.push(`"${requested}": local videos are unavailable here`); continue; }
     const file = callerFile(requested, caller);
     if (!file) { errors.push(`"${requested}" must be an existing file inside your working directory or the project`); continue; }
-    const stored = await store.fromFile(file);
+    const stored = await store.fromFile(file, (real) => insideCaller(real, caller));
     if (!stored) { errors.push(`"${requested}" is not an MP4 or WebM video under ${MAX_FIGURE_VIDEO_BYTES / 1024 / 1024} MB`); continue; }
     videos[requested] = stored.sha256;
   }
@@ -65,15 +65,24 @@ export async function storeVideos(store: FigureVideos | undefined, page: string,
 }
 
 function callerFile(requested: string, caller: FigureCaller): string | null {
-  const roots = [caller.cwd, caller.project_path].filter((root): root is string => Boolean(root));
+  const roots = callerRoots(caller);
   if (!roots.length) return null;
-  const file = path.resolve(caller.cwd ?? roots[0]!, requested);
   try {
-    const real = fs.realpathSync(file);
-    return roots.some((root) => pathContains(fs.realpathSync(root), real)) ? real : null;
+    const real = fs.realpathSync(path.resolve(caller.cwd ?? roots[0]!, requested));
+    return insideCaller(real, caller) ? real : null;
   } catch {
     return null;
   }
+}
+
+function callerRoots(caller: FigureCaller): string[] {
+  return [caller.cwd, caller.project_path].filter((root): root is string => Boolean(root));
+}
+
+function insideCaller(real: string, caller: FigureCaller): boolean {
+  return callerRoots(caller).some((root) => {
+    try { return pathContains(fs.realpathSync(root), real); } catch { return false; }
+  });
 }
 
 function rejected(errors: string[]): Error {

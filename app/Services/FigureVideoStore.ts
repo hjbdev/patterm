@@ -35,12 +35,14 @@ export function sniffVideo(header: Buffer): string | null {
 // own directory and budget, are copied and hashed as streams instead of read
 // whole, and are served as bytes rather than base64.
 export class FigureVideoStore {
-  private stored = 0;
   private readonly files = new Map<string, FigureVideoRef>();
 
   constructor(readonly directory: string) {}
 
-  async fromFile(filename: string): Promise<FigureVideoRef | null> {
+  // allowed decides whether a real path may be shown. It is checked against
+  // the file actually opened, so a path swapped for a link after the caller
+  // resolved it cannot bring in a file from elsewhere.
+  async fromFile(filename: string, allowed: (real: string) => boolean): Promise<FigureVideoRef | null> {
     if (!filename || filename.includes('\0')) return null;
     let source: FileHandle;
     try { source = await fs.open(filename, 'r'); } catch { return null; }
@@ -48,7 +50,10 @@ export class FigureVideoStore {
     try {
       const stat = await source.stat();
       if (!stat.isFile() || !stat.size || stat.size > MAX_FIGURE_VIDEO_BYTES) return null;
-      const key = `${filename}\0${stat.size}\0${stat.mtimeMs}`;
+      const real = await fs.realpath(filename);
+      const named = await fs.stat(real);
+      if (!allowed(real) || named.dev !== stat.dev || named.ino !== stat.ino) return null;
+      const key = `${real}\0${stat.dev}\0${stat.ino}\0${stat.size}\0${stat.mtimeMs}`;
       const cached = this.files.get(key);
       if (cached && await this.touch(cached)) return cached;
       const header = Buffer.alloc(HEADER_BYTES);
@@ -67,7 +72,7 @@ export class FigureVideoStore {
           size += chunk.length;
           if (size > MAX_FIGURE_VIDEO_BYTES) return null;
           hash.update(chunk);
-          await target.write(chunk);
+          for (let offset = 0; offset < chunk.length;) offset += (await target.write(chunk, offset, chunk.length - offset)).bytesWritten;
         }
       } finally {
         await target.close();
@@ -76,7 +81,8 @@ export class FigureVideoStore {
       if (!await this.touch(video)) await fs.rename(temporary, this.filename(video.sha256, mime));
       this.files.set(key, video);
       if (this.files.size > 200) this.files.delete(this.files.keys().next().value!);
-      if (this.stored++ % 20 === 0) await this.prune();
+      // Each new copy keeps the store within its budget.
+      await this.prune();
       return video;
     } catch {
       return null;
@@ -98,6 +104,8 @@ export class FigureVideoStore {
         const stat = await handle.stat();
         const header = Buffer.alloc(HEADER_BYTES);
         const { bytesRead } = await handle.read(header, 0, HEADER_BYTES, 0);
+        // An expired copy is gone even before the next prune removes it.
+        if (Date.now() - stat.mtimeMs > RETENTION_MS) return null;
         return stat.isFile() && stat.size <= MAX_FIGURE_VIDEO_BYTES && sniffVideo(header.subarray(0, bytesRead)) === mime ? { filename, mime, size: stat.size } : null;
       } finally {
         await handle.close();

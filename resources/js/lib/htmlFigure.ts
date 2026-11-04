@@ -79,7 +79,8 @@ function figureVideo(sha256: string): Promise<Blob> {
     entry.size = blob.size;
     let total = [...videos.values()].reduce((sum, item) => sum + item.size, 0);
     for (const [key, item] of videos) {
-      if (total <= VIDEO_CACHE_BYTES || item === entry) break;
+      if (total <= VIDEO_CACHE_BYTES) break;
+      if (item === entry) continue;
       videos.delete(key);
       total -= item.size;
     }

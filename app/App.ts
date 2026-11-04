@@ -347,6 +347,8 @@ async function createApplicationResources(
   let reapSessions: (() => void) | null = null;
   const transcriptImages = new TranscriptImageStore(path.join(options.appDataPath, 'transcript-images'));
   const figureVideos = new FigureVideoStore(path.join(options.appDataPath, 'figure-videos'));
+  // Copies that expired while Patterm was quiet are removed at start.
+  void figureVideos.prune();
   const openCodeServer = new OpenCodeServerService(database, resolvedEnv, { persistent, images: transcriptImages });
   const harnessRuntimeDir = path.join(options.appDataPath, 'harness');
   // Installed services run Integrated hosts in their own systemd units so a
