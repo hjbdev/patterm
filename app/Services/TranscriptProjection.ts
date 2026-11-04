@@ -382,7 +382,17 @@ export function mergeTranscriptWindows(older: TranscriptMessage[], newer: Transc
 export function replaceLiveWindow(shown: TranscriptMessage[], live: TranscriptMessage[]): TranscriptMessage[] {
   const ids = new Set(live.map((message) => message.id));
   const start = shown.findIndex((message) => ids.has(message.id));
-  return mergeTranscriptWindows(start === -1 ? shown : shown.slice(0, start), live);
+  if (start === -1) return mergeTranscriptWindows(shown, live);
+  // Subagent rows follow every parent row, so those of a task the live
+  // window no longer holds stay with it.
+  const kept = shown.slice(0, start);
+  const keptIds = new Set(kept.map((message) => message.id));
+  for (const message of shown.slice(start)) {
+    if (ids.has(message.id) || !message.parentId || !keptIds.has(message.parentId)) continue;
+    kept.push(message);
+    keptIds.add(message.id);
+  }
+  return mergeTranscriptWindows(kept, live);
 }
 
 export function normaliseMessages(value: unknown): TranscriptMessage[] {

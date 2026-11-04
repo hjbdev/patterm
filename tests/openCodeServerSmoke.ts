@@ -631,7 +631,30 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     await openCode(database, { ...env, PENDING_PROMPTS: cancelled }).prompt('process_0', { text: 'never mind', references: [], attachments: [], messageId: cancelledId });
     await openCode(database, { ...env, DROP_PROMPTS: cancelled }).updateQueued('process_0', cancelled, 'cancel');
     assert.deepEqual((await openCode(database, { ...env, DROP_PROMPTS: cancelled }).conversation('process_0') as Queued).queue, [], "the user's own cancel is not flagged");
+    // A cancel that finishes while a snapshot checks the same prompt is not a drop.
+    const racedId = '34343434-3434-3434-3434-343434343434';
+    const raced = `msg_${racedId}`;
+    await openCode(database, { ...env, PENDING_PROMPTS: raced }).prompt('process_0', { text: 'raced', references: [], attachments: [], messageId: racedId });
+    const racing = openCode(database, { ...env, DROP_PROMPTS: raced });
+    let release!: () => void;
+    const checked = new Promise<void>((resolve) => { release = resolve; });
+    let checking!: () => void;
+    const started = new Promise<void>((resolve) => { checking = resolve; });
+    (racing as unknown as { nativePrompt: () => Promise<string> }).nativePrompt = async () => { checking(); await checked; return 'absent'; };
+    const racedSnapshot = racing.conversation('process_0') as Promise<Queued>;
+    await started;
+    await openCode(database, { ...env, DROP_PROMPTS: raced }).updateQueued('process_0', raced, 'cancel');
+    release();
+    assert.deepEqual((await racedSnapshot).queue, [], 'a cancel during the check is not flagged');
     assert.equal((database.connection.prepare(`select count(*) as count from opencode_pending_prompts`).get() as { count: number }).count, 0, 'settled prompts leave no tracking rows');
+    // An uncertain send found waiting later is tracked from then on.
+    const lateId = '56565656-5656-5656-5656-565656565656';
+    const late = `msg_${lateId}`;
+    await assert.rejects(openCode(database, { ...env, LOST_PROMPT_RESPONSE: '1', DROP_PROMPTS: late }).prompt('process_0', { text: 'late', references: [], attachments: [], messageId: lateId }), UncertainDeliveryError);
+    assert.deepEqual((await openCode(database, { ...env, DROP_PROMPTS: late }).conversation('process_0') as Queued).queue, [], 'an uncertain send is never flagged');
+    assert.equal(await openCode(database, { ...env, PENDING_PROMPTS: late }).reconcile('process_0', lateId), 'accepted', 'a send waiting in the inbox was accepted');
+    assert.deepEqual((await openCode(database, { ...env, DROP_PROMPTS: late }).conversation('process_0') as Queued).queue.map((item) => [item.id, item.delivery]), [[late, 'undelivered']], 'once accepted, its loss is flagged');
+    await openCode(database, env).updateQueued('process_0', late, 'cancel');
 
     // TUI built-ins are session API calls; custom commands still run natively.
     const commandService = openCode(database, env);

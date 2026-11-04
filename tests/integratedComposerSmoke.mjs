@@ -719,6 +719,10 @@ test('a fresh live window drops rows it no longer has', () => {
   assert.deepEqual(conversation.replaceLiveWindow([...older, row('live_1'), phantom, row('live_2')], [row('live_1'), row('live_2'), row('live_3')]).map((message) => message.id),
     ['old_1', 'old_2', 'live_1', 'live_2', 'live_3'], 'older history stays; a row the live window lost goes');
   assert.deepEqual(conversation.replaceLiveWindow(older, [row('live_1')]).map((message) => message.id), ['old_1', 'old_2', 'live_1'], 'without overlap every shown row stays');
+  const child = { ...row('child_output'), parentId: 'old_2' };
+  const grandchild = { ...row('grandchild_output'), parentId: 'child_output' };
+  assert.deepEqual(conversation.replaceLiveWindow([...older, row('live_1'), row('live_2'), child, grandchild], [row('live_1'), row('live_2'), row('live_3')]).map((message) => message.id),
+    ['old_1', 'old_2', 'child_output', 'grandchild_output', 'live_1', 'live_2', 'live_3'], 'subagent rows of a task outside the live window stay');
 });
 
 test('a message Patterm holds during compaction shows only in the queue', () => {

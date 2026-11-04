@@ -926,10 +926,11 @@ function queueLabel(item: IntegratedQueuedMessage): string {
 // agent cannot get it twice. The flagged copy is dismissed first; a failed
 // send then shows on the new message with its own retry.
 async function resendMessage(messageId: string): Promise<void> {
+  const processId = props.processId;
+  const token = generation;
   const item = queue.value.find((queued) => queued.id === messageId && queued.delivery === 'undelivered');
-  if (!item || !canReply.value || submissionFor(props.processId) || isResponding(`queue:${item.id}`)) return;
-  await updateQueued(item, 'cancel');
-  if (error.value) return;
+  if (!item || !canReply.value || submissionFor(processId) || isResponding(`queue:${item.id}`)) return;
+  if (!await updateQueued(item, 'cancel') || token !== generation || props.processId !== processId) return;
   void sendRequest({ text: item.text, references: [], attachments: [], messageId: randomId(), hash: payloadHash(item.text, [], []) });
 }
 
@@ -1054,15 +1055,30 @@ async function configure(selectorId: string, value: string): Promise<void> {
   }
 }
 
-async function updateQueued(item: IntegratedQueuedMessage, action: 'steer' | 'cancel'): Promise<void> {
+// Resolves whether the update succeeded. It stays with the agent it was made
+// for, even if the pane switches agents meanwhile.
+async function updateQueued(item: IntegratedQueuedMessage, action: 'steer' | 'cancel'): Promise<boolean> {
+  const processId = props.processId;
+  const token = generation;
+  let updated = false;
   await respond(`queue:${item.id}`, async () => {
-    await runMutation('integrated_queue_update', { process_id: props.processId, message_id: item.id, action });
-    // A cancelled held message never reaches the agent, so no native row will
-    // replace its local copy.
-    if (action === 'cancel' && (item.delivery === 'held' || item.delivery === 'unconfirmed') && !error.value) discardOutgoingMessage(props.processId, item.id);
-    // OpenCode lists a prompt under its native id, `msg_` and the message id.
-    if (action === 'cancel' && item.delivery === 'undelivered' && !error.value) discardOutgoingMessage(props.processId, item.id.replace(/^msg_/, ''));
+    error.value = '';
+    try {
+      await mutate('integrated_queue_update', { process_id: processId, message_id: item.id, action });
+    } catch (cause) {
+      if (token === generation) error.value = cause instanceof Error ? cause.message : String(cause);
+      return;
+    }
+    updated = true;
+    // A cancelled message never reaches the agent, so no native row will
+    // replace its local copy. OpenCode lists a prompt as `msg_` and its id.
+    if (action === 'cancel') {
+      discardOutgoingMessage(processId, item.id);
+      discardOutgoingMessage(processId, item.id.replace(/^msg_/, ''));
+    }
+    if (token === generation) await refresh();
   });
+  return updated;
 }
 
 function cancelQueued(messageId: string): void {

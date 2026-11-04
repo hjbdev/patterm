@@ -269,11 +269,12 @@ export class OpenCodeServerService {
   // inbox until the next step boundary. It is tracked until the transcript
   // shows it, so one that leaves the inbox without arriving is flagged rather
   // than left looking delivered.
-  private trackPending(processId: string, sessionId: string, messageId: string, input: ResolvedIntegratedPrompt): void {
+  private trackPending(processId: string, sessionId: string, messageId: string, input: ResolvedIntegratedPrompt, state: 'pending' | 'uncertain' = 'pending'): void {
     try {
       this.database.connection.prepare(`insert into opencode_pending_prompts (session_id, message_id, process_id, text, files, state, created_at)
-        values (?, ?, ?, ?, ?, 'pending', ?) on conflict (session_id, message_id) do nothing`)
-        .run(sessionId, messageId, processId, input.text.trim(), input.references.length + input.attachments.length, new Date().toISOString());
+        values (?, ?, ?, ?, ?, ?, ?) on conflict (session_id, message_id) do update set state = 'pending'
+        where excluded.state = 'pending' and opencode_pending_prompts.state = 'uncertain'`)
+        .run(sessionId, messageId, processId, input.text.trim(), input.references.length + input.attachments.length, state, new Date().toISOString());
       this.database.connection.prepare(`delete from opencode_pending_prompts where session_id = ? and message_id not in (
         select message_id from opencode_pending_prompts where session_id = ? order by created_at desc limit ?)`)
         .run(sessionId, sessionId, PENDING_PROMPT_LIMIT);
@@ -288,7 +289,7 @@ export class OpenCodeServerService {
   // that never arrived. A prompt absent from both reads may have been promoted
   // between them, so it is checked by id before it counts as dropped.
   private async settlePending(runtime: { executable: string; cwd: string; resumeId: string }, rows: unknown[], inbox: Array<Record<string, unknown>> | null): Promise<IntegratedQueuedMessage[]> {
-    const tracked = this.database.connection.prepare(`select message_id, text, files, state, created_at from opencode_pending_prompts where session_id = ? order by created_at`)
+    const tracked = this.database.connection.prepare(`select message_id, text, files, state, created_at from opencode_pending_prompts where session_id = ? and state != 'uncertain' order by created_at`)
       .all(runtime.resumeId) as Array<{ message_id: string; text: string; files: number; state: 'pending' | 'dropped'; created_at: string }>;
     if (!tracked.length) return [];
     const arrived = new Set(rows.map((row) => record(row).id));
@@ -304,9 +305,10 @@ export class OpenCodeServerService {
       const state = await this.nativePrompt(runtime, row.message_id).catch(() => 'unknown' as const);
       if (state === 'message') this.forgetPending(runtime.resumeId, row.message_id);
       else if (state === 'absent' && !this.cancelling.has(`${runtime.resumeId}\0${row.message_id}`)) {
-        this.database.connection.prepare(`update opencode_pending_prompts set state = 'dropped' where session_id = ? and message_id = ? and state = 'pending'`)
-          .run(runtime.resumeId, row.message_id);
-        row.state = 'dropped';
+        // A cancel that finished during the check already removed the row.
+        const marked = this.database.connection.prepare(`update opencode_pending_prompts set state = 'dropped' where session_id = ? and message_id = ? and state = 'pending'`)
+          .run(runtime.resumeId, row.message_id).changes;
+        if (marked) row.state = 'dropped';
       }
     }
     return tracked.flatMap((row) => row.state === 'dropped'
@@ -436,6 +438,7 @@ export class OpenCodeServerService {
           return { id: `msg_${input.messageId}` };
         }
       }
+      if (input.messageId) this.trackPending(processId, runtime.resumeId, `msg_${input.messageId}`, input, 'uncertain');
       throw new UncertainDeliveryError(error instanceof Error ? error.message : String(error), input.messageId);
     }
   }
@@ -461,7 +464,13 @@ export class OpenCodeServerService {
   // A prompt waiting in the inbox was admitted too. Absence stays unknown: a
   // request whose reply was lost may still be running.
   async reconcile(processId: string, messageId: string): Promise<IntegratedDeliveryState> {
-    const state = await this.nativePrompt(this.runtime(processId), `msg_${messageId}`);
+    const runtime = this.runtime(processId);
+    const id = `msg_${messageId}`;
+    const state = await this.nativePrompt(runtime, id);
+    // An uncertain send found waiting is tracked from now on.
+    if (state === 'inbox') {
+      this.database.connection.prepare(`update opencode_pending_prompts set state = 'pending' where session_id = ? and message_id = ? and state = 'uncertain'`).run(runtime.resumeId, id);
+    } else if (state === 'message') this.forgetPending(runtime.resumeId, id);
     return state === 'message' || state === 'inbox' ? 'accepted' : 'unknown';
   }
 

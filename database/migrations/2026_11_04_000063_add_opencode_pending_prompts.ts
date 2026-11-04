@@ -7,6 +7,7 @@ export default {
     // shown yet, keyed by native session so a resumed process sees them. A
     // pending prompt that leaves the inbox without becoming a message, and
     // that Patterm did not cancel, is marked dropped and offered for resending.
+    // An uncertain send waits, untracked, until a check finds it accepted.
     // Rows go once the transcript shows the prompt or the user dismisses it.
     schema.sql(`create table opencode_pending_prompts (
       session_id text not null,
@@ -14,7 +15,7 @@ export default {
       process_id text not null,
       text text not null,
       files integer not null default 0,
-      state text not null default 'pending' check (state in ('pending', 'dropped')),
+      state text not null default 'pending' check (state in ('uncertain', 'pending', 'dropped')),
       created_at text not null,
       primary key (session_id, message_id)
     )`);
