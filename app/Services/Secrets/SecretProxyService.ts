@@ -131,7 +131,15 @@ export class SecretProxyService {
       return fail(502, 'Patterm could not build the upstream request; check the secret\'s header settings');
     }
     upstream.once('error', (error) => fail(502, `Patterm could not reach ${host}: ${error.message}`));
-    response.once('close', () => upstream.destroy());
+    // Node sends the headers, credential included, with the first body chunk,
+    // so a request still uploading when the secret expires must not finish.
+    const expiry = setTimeout(() => {
+      if (upstream.writableFinished) return;
+      upstream.destroy();
+      fail(403, 'This secret expired');
+    }, Math.max(0, Date.parse(credential.secret.expires_at!) - Date.now()));
+    expiry.unref();
+    response.once('close', () => { clearTimeout(expiry); upstream.destroy(); });
     request.pipe(upstream);
   }
 }

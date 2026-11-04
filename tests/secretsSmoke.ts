@@ -263,6 +263,20 @@ async function serviceChecks(): Promise<void> {
     }
     assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }), 'A  logs/.gitignore\n', 'git ignores the written files');
 
+    // A request still uploading when the secret expires never reaches the API.
+    const before = seen.length;
+    const deadline = (secrets.get(id).expires_at)!;
+    db.prepare('update session_secrets set expires_at = ? where id = ?').run(new Date(Date.now() + 300).toISOString(), id);
+    const parked = await new Promise<number>((resolve, reject) => {
+      const held = http.request(`${target}parked`, { method: 'POST' }, (reply) => { reply.resume(); resolve(reply.statusCode!); });
+      held.once('error', reject);
+      held.flushHeaders();
+      setTimeout(() => held.end('late body'), 600);
+    });
+    assert.equal(parked, 403);
+    assert.equal(seen.length, before, 'the credential never left after expiry');
+    db.prepare('update session_secrets set expires_at = ? where id = ?').run(deadline, id);
+
     // An exited session's URLs stop working.
     db.prepare('update sessions set exited_at = ? where id = ?').run(now, 'session_a');
     assert.equal((await fetch(target)).status, 403);
@@ -308,6 +322,10 @@ async function serviceChecks(): Promise<void> {
   await secrets.expire();
   assert.deepEqual(secrets.list('session_b').map((secret) => secret.name), ['odd_key'], 'the sweep deletes expired secrets');
   assert.match(messages.at(-1)!, /"github_login" expired/);
+  // Values from before expiry was recorded expire too.
+  db.prepare("update session_secrets set expires_at = null where name = 'odd_key'").run();
+  assert.throws(() => secrets.commandValue('session_b', 'odd_key'), /has expired/);
+  db.prepare("update session_secrets set expires_at = ? where name = 'odd_key'").run(new Date(Date.now() + SECRET_TTL_MS).toISOString());
   assert.doesNotMatch(messages.at(-1)!, /pa55word/);
   // Asking again after expiry starts a fresh request.
   const again = actions.request({ name: 'odd_key', purpose: 'again' }, { identity: 'identity_b' }) as { secret: { status: string } };
@@ -315,6 +333,8 @@ async function serviceChecks(): Promise<void> {
   db.prepare("update session_secrets set expires_at = ? where name = 'odd_key'").run(lapsed);
   const renewed = actions.request({ name: 'odd_key', purpose: 'again' }, { identity: 'identity_b' }) as { secret: { status: string } };
   assert.equal(renewed.secret.status, 'requested');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(messages.some((text) => /"odd_key" expired/.test(text)), 'expiring on request still tells the agent');
 }
 
 function allowlistChecks(): void {

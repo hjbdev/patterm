@@ -157,8 +157,9 @@ export class SecretService {
 
   request(session: LiveSession, input: SecretRequestInput): { secret: SecretRecord; created: boolean } {
     const db = this.database.connection;
-    // An expired secret goes before it is asked for again.
-    this.deleteExpired();
+    // An expired secret goes before it is asked for again. Deleting happens
+    // before expire()'s first await; only the agents' messages wait.
+    void this.expire().catch(() => undefined);
     const existing = db.prepare('select * from session_secrets where session_id = ? and name = ?').get(session.id, input.name) as SecretRow | undefined;
     if (existing?.status === 'ready') return { secret: toRecord(existing), created: false };
     const at = new Date().toISOString();
@@ -244,11 +245,18 @@ export class SecretService {
   // Deletes secrets past their expiry and tells their agents. `reveal`
   // refuses an expired value before the sweep reaches it.
   async expire(): Promise<void> {
-    const gone = this.deleteExpired();
+    const db = this.database.connection;
+    const now = new Date().toISOString();
+    // Ready secrets without an expiry predate it, so they count as expired.
+    const gone = db.prepare(`select session_id, name from session_secrets where status = 'ready' and (expires_at is null or expires_at <= ?)`).all(now) as Array<{ session_id: string; name: string }>;
+    if (!gone.length) return;
+    db.prepare(`delete from session_secrets where status = 'ready' and (expires_at is null or expires_at <= ?)`).run(now);
+    this.known = null;
+    this.hooks.changed();
     for (const row of gone) {
-      const live = this.database.connection.prepare('select process_id from sessions where id = ? and exited_at is null').get(row.session_id) as { process_id: string | null } | undefined;
+      const live = db.prepare('select process_id from sessions where id = ? and exited_at is null').get(row.session_id) as { process_id: string | null } | undefined;
       if (live?.process_id) {
-        await this.hooks.messageAgent(live.process_id, `[secrets] The secret "${row.name}" expired 24 hours after the user entered it and no longer works. Ask for it again with secret_request if you still need it.`).catch(() => undefined);
+        await this.hooks.messageAgent(live.process_id, `[secrets] The secret "${row.name}" expired and no longer works; secrets last 24 hours. Ask for it again with secret_request if you still need it.`).catch(() => undefined);
       }
     }
   }
@@ -332,18 +340,6 @@ export class SecretService {
       lines.push(`Fill it into a page on ${secret.allowed_hosts.join(', ')} with browser_fill_secret.`);
     }
     return lines;
-  }
-
-  // Secrets without an expiry predate it, so they count as expired too.
-  private deleteExpired(): Array<{ session_id: string; name: string }> {
-    const db = this.database.connection;
-    const now = new Date().toISOString();
-    const rows = db.prepare(`select session_id, name from session_secrets where status = 'ready' and (expires_at is null or expires_at <= ?)`).all(now) as Array<{ session_id: string; name: string }>;
-    if (!rows.length) return rows;
-    db.prepare(`delete from session_secrets where status = 'ready' and (expires_at is null or expires_at <= ?)`).run(now);
-    this.known = null;
-    this.hooks.changed();
-    return rows;
   }
 
   private row(id: string): SecretRow {
