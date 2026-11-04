@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   substantial implementation, investigation, and review. Simple questions and
   coordination stay with the bot; explicit user instructions and per-bot guidance
   take precedence. Restart running bots after updating to pick up the guidance.
+- All bots, including the assistant, may handle routine notifications without
+  a visible acknowledgement. They still process events and report important
+  failures, user decisions and useful updates. Restart a running bot with
+  resume after updating Patterm to load the guidance.
 
 - Every OpenCode model choice names the provider that serves the model, as
   the chat's model picker does: the harness preset and bot model menus, the

@@ -251,3 +251,35 @@ PATTERM_ENABLE_WAYLAND=1 PATTERM_DISABLE_GPU=1 pnpm run dev
 
 The selected launch mode is written to `debug.log` as `startup` / `launch.windowing`.
 
+
+## Bot notification replies
+
+`AgentContextService` supplies the same notification rule to every bot, including
+the assistant, independently of digest subscriptions. Process notifications,
+reports, messages and timer callbacks and perform any required internal work;
+only send user-facing text when there is a useful update or user action. Important
+failures, user decisions and substantive progress or results still warrant a
+reply. Silence must never be implemented by muting, dropping or suppressing
+operational notifications.
+
+`BotService.context` builds this application guidance on launch and resume for
+existing and new bots. Codex receives developer instructions on thread start or
+resume, Claude receives an appended system prompt, and OpenCode receives the
+`patterm` session instruction entry. No saved bot settings or shared memory need
+changing. After updating the application, restart already-running bots (including
+the assistant) with **resume** to load it; a fresh conversation is unnecessary.
+This change does not restart bots or the live service automatically.
+
+This is model guidance, not a transport-level guarantee of silence: Patterm does
+not filter acknowledgements from transcripts or notifications. All three adapters
+settle turns from native lifecycle events rather than requiring a text reply
+(Codex `turn/completed`, Claude `result`, OpenCode execution success/idle). A
+model may still emit an acknowledgement despite the instruction.
+
+On 4 November 2026, an isolated no-tool probe on Codex CLI 0.166.0 completed with
+an empty `agent_message` and `turn.completed`. OpenCode 2.2.5's default provider
+returned a regional access error before a model response. Live Claude 2.1.312 and
+alternative-provider OpenCode probes were blocked by the development environment's
+automatic approval review of external guidance transmission; their actual model
+compliance remains unverified. Existing adapter smoke suites check native
+lifecycle handling without model calls.
