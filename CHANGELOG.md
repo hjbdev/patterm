@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A bot's page has a Back button on a phone, as an agent's does, and slides
+  in over the list and away again like one. Its header lines up with its
+  conversation like an agent's header. The page also loads ahead of time
+  with the others, so opening a bot no longer waits for its code.
+
 - A phone's Library no longer leaves a gap between Media and Scheduled.
 
 ## [0.4.0] - 2026-11-02
