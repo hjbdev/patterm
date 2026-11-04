@@ -7,7 +7,8 @@ import { CloseRequestActions } from '../app/Actions/CloseRequestActions';
 import { integratedActivityNotifications, REPLY_PREVIEW_LIMIT } from '../app/Listeners/IntegratedActivityNotifications';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { IDLE_COMPACTION_AFTER_MS, IdleCompactionService, type IdleCompactionSource } from '../app/Services/IdleCompactionService';
-import type { CompactionSignal, IntegratedActivityChange } from '../app/Services/IntegratedAgentService';
+import { IntegratedAgentService, type CompactionSignal, type IntegratedActivityChange, type IntegratedProviderService } from '../app/Services/IntegratedAgentService';
+import type { IntegratedConversationListener } from '../app/Services/IntegratedConversation';
 import { NotificationService } from '../app/Services/NotificationService';
 import { SettingsService } from '../app/Services/SettingsService';
 import type { TerminalService } from '../app/Services/TerminalService';
@@ -142,6 +143,107 @@ async function main(): Promise<void> {
     activity('working');
     activity('error');
     assert.equal(raised.at(-1), 'failure', 'a failed turn still reports its error');
+
+    // Reproduce the bot's failed retry through the real activity listener,
+    // not two unrelated calls to raise(). User notification settings are off.
+    compaction.dispose();
+    db.prepare(`insert into processes (id, project_id, kind, name, status, created_at, updated_at)
+      values ('bot-parent', 'project_a', 'agent', 'bot', 'running', ?, ?)`).run(at, at);
+    db.prepare(`insert into sessions (id, project_id, process_id, harness, session_role, bot_id, started_at)
+      values ('session_parent', 'project_a', 'bot-parent', 'claude', 'bot', 'test-bot', ?)`).run(at);
+    db.prepare(`update processes set parent_process_id = 'bot-parent' where id = 'agent'`).run();
+    const settings = new SettingsService(database);
+    settings.updateNotificationSettings({ sources: { agent_failures: 'off', integrated_turn_finished: 'off', integrated_permission: 'off' } });
+    const parentMessages: string[] = [];
+    const notices = new NotificationService(database, settings, { append: () => 'event' },
+      async (target, text) => { assert.equal(target, 'bot-parent'); parentMessages.push(text); }, () => {});
+    let automaticCompaction = false;
+    const pending: Array<Promise<unknown>> = [];
+    const notify = integratedActivityNotifications({
+      notifications: notices,
+      raise: (input) => { pending.push(notices.raise(input)); },
+      closeRequests: () => null,
+      isAssistant: () => false,
+      wokeFromSnooze: () => false,
+      compacting: () => automaticCompaction,
+      triage: () => ({ quiet: true, reason: 'model', probability: 0.99, waiting: false }),
+      botReply: () => null,
+      log: () => {}
+    });
+    const event = async (previous: string, next: string, snapshot = false) => {
+      notify({ processId: 'agent', previous, activity: next, snapshot });
+      await Promise.all(pending.splice(0));
+    };
+    notices.resolve({ process_id: 'agent' });
+    await event('idle', 'working');
+    await event('working', 'error');
+    assert.equal(parentMessages.length, 1);
+    for (let i = 0; i < 20; i += 1) await event('error', 'error', true);
+    assert.equal(parentMessages.length, 1, 'reconnect error snapshots do not spam the parent');
+    await event('error', 'working', true);
+    await event('working', 'error', true);
+    assert.equal(parentMessages.length, 1, 'reconnect work does not create a failure episode');
+    automaticCompaction = true;
+    await event('error', 'working');
+    await event('working', 'idle');
+    automaticCompaction = false;
+    await event('idle', 'error', true);
+    assert.equal(parentMessages.length, 1, 'automatic compaction does not reset the failure');
+    await event('error', 'working');
+    await event('working', 'error');
+    assert.equal(parentMessages.length, 2, 'an identical failure after a real retry reaches the bot');
+    assert.equal(parentMessages[0], parentMessages[1]);
+    await event('error', 'thinking');
+    await event('thinking', 'error');
+    assert.equal(parentMessages.length, 3, 'a retry can begin with thinking');
+    await event('error', 'working');
+    await event('working', 'idle');
+    assert.equal(parentMessages.length, 4, 'a successful retry reaches the bot even when triage quiets it');
+    assert.match(parentMessages.at(-1)!, /Notification from agent/);
+    const failures = notices.list({ process_id: 'agent', include_resolved: true }).items.filter((item) => item.kind === 'failure');
+    assert.equal(failures.filter((item) => !item.resolved_at).length, 0, 'resumed work closes stale failures');
+    assert.ok(failures.length >= 3, 'retry failures remain in history');
+
+    // Exercise the upstream service too: provider stream -> persisted
+    // activity -> notification listener -> parent, with a real prompt retry.
+    let stream: IntegratedConversationListener | undefined;
+    let nativeStatus = 'idle';
+    const provider: IntegratedProviderService = {
+      prepare: async () => ({ resumeId: 'test-thread', argv: [] }),
+      conversation: async () => ({ status: nativeStatus }),
+      prompt: async () => ({}),
+      command: async () => ({}),
+      interrupt: async () => {},
+      replyPermission: async () => {},
+      replyQuestion: async () => {},
+      subscribe: async (_id, listener) => { stream = listener; return () => { stream = undefined; }; }
+    };
+    const runtime = new IntegratedAgentService(database, { claude: provider });
+    runtime.onActivityChange(notify);
+    const settle = async () => {
+      for (let i = 0; i < 5; i += 1) await new Promise<void>((resolve) => setImmediate(resolve));
+      await Promise.all(pending.splice(0));
+    };
+    const beforeRuntime = parentMessages.length;
+    try {
+      runtime.observe('agent');
+      await settle();
+      assert.ok(stream, 'the runtime subscribes to the native provider');
+      await runtime.prompt('agent', 'Try the job');
+      nativeStatus = 'error';
+      stream!({ processId: 'agent', revision: 1, kind: 'status', status: 'error' });
+      await settle();
+      assert.equal(parentMessages.length, beforeRuntime + 1);
+      await runtime.conversation('agent');
+      await settle();
+      assert.equal(parentMessages.length, beforeRuntime + 1, 'an error snapshot is silent');
+      await runtime.prompt('agent', 'Retry the same job');
+      stream!({ processId: 'agent', revision: 2, kind: 'status', status: 'error' });
+      await settle();
+      assert.equal(parentMessages.length, beforeRuntime + 2, 'a real prompt retry delivers the second identical failure');
+    } finally {
+      runtime.dispose();
+    }
   } finally {
     idleCompaction?.dispose();
     database.dispose();

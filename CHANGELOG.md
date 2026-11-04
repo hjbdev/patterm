@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Bots receive their own agents’ notifications regardless of user notification settings. Retried failures reach the parent again without duplicate-event storms, and rejected deliveries wait in the bot’s inbox.
+
 ### Removed
 
 - The sidebar's New bot button. Bots are set up in Settings › Bots.

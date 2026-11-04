@@ -107,6 +107,69 @@ async function main(): Promise<void> {
     assert.match(messages.at(-1)!.text, /^\[Failure reported by child \(child\)\]\nchild\nExited with code 2$/);
     service.resolve({ process_id: 'child', kinds: ['failure'] });
 
+    // A bot must hear from its own child even when user notifications are off.
+    addProcess('bot', 'agent');
+    addProcess('bot-child', 'agent', 'bot');
+    addProcess('detached', 'agent');
+    addProcess('bot-command', 'command', 'bot');
+    db.prepare(`insert into sessions (id, project_id, process_id, harness, session_role, bot_id, started_at)
+      values ('session_bot', 'project_a', 'bot', 'claude', 'bot', 'test-bot', ?)`).run(at);
+    settings.updateNotificationSettings({ sources: { agent_failures: 'off', integrated_turn_finished: 'off' } });
+    const beforeBot = messages.length;
+    const botFailure = await service.raise({ processId: 'bot-child', source: 'integrated', kind: 'failure', body: 'The agent reported an error' });
+    assert.equal(botFailure.status, 'raised');
+    assert.equal(messages.length, beforeBot + 1);
+    assert.equal(messages.at(-1)?.processId, 'bot');
+    const botRecord = (botFailure as { notification: NotificationRecord }).notification;
+    assert.equal(botRecord.audience, 'parent');
+    assert.equal(botRecord.delivery, 'in_app');
+    assert.equal(botRecord.routed_to_process_id, 'bot');
+    await service.raise({ processId: 'bot-child', source: 'integrated', kind: 'failure', body: 'The agent reported an error' });
+    assert.equal(messages.length, beforeBot + 1, 'duplicate failure events do not interrupt the bot again');
+    await service.raise({ processId: 'bot-child', source: 'integrated', kind: 'turn_finished', body: 'Finished its turn' });
+    assert.equal(messages.length, beforeBot + 2, 'a bot receives child turn updates');
+    assert.match(messages.at(-1)!.text, /Notification from bot-child/);
+    assert.equal((await service.raise({ processId: 'detached', source: 'integrated', kind: 'failure', body: 'error' })).status, 'suppressed');
+    assert.equal(messages.length, beforeBot + 2, 'a detached agent has no parent to notify');
+    // Every category bypasses user settings only for the bot's own agents.
+    const saved = settings.notificationSettings();
+    settings.updateNotificationSettings({ minimumUrgency: 'high', sources: Object.fromEntries(Object.keys(saved.sources).map((key) => [key, 'off'])) });
+    db.prepare(`update projects set snoozed_until = ? where id = 'project_a'`).run(new Date(now + 60_000).toISOString());
+    for (const input of [
+      { source: 'terminal', kind: 'bell' },
+      { source: 'terminal', kind: 'attention' },
+      { source: 'terminal', kind: 'message' },
+      { source: 'integrated', kind: 'permission' },
+      { source: 'runtime', kind: 'failure' }
+    ] as const) {
+      const before: number = messages.length;
+      const result = await service.raise({ processId: 'pty_bot-child', ...input, body: `test ${input.kind}`, urgency: 'low', quiet: true });
+      assert.equal(messages.length, before + 1, `${input.source}/${input.kind} reaches the owner despite settings and snooze`);
+      const notice = (result as { notification: NotificationRecord }).notification;
+      assert.equal(notice.delivery, 'in_app');
+      assert.equal(notice.audience, 'parent');
+      assert.equal(notice.held, true);
+      for (let index = 0; index < 20; index += 1) await service.raise({ processId: 'bot-child', ...input, body: `test ${input.kind}`, urgency: 'low', quiet: true });
+      assert.equal(messages.length, before + 1, 'identical event bursts remain silent');
+      assert.equal((await service.raise({ processId: 'root', ...input, body: 'muted root' })).status, 'suppressed');
+      assert.equal((await service.raise({ processId: 'detached', ...input, body: 'muted detached' })).status, 'suppressed');
+      assert.equal((await service.raise({ processId: 'bot-command', ...input, body: 'muted command' })).status, 'suppressed', 'the override is for spawned agents');
+    }
+    const beforeRequest = messages.length;
+    assert.equal((await service.raise({ processId: 'bot-child', source: 'mcp', kind: 'attention', body: 'Need **help**' })).status, 'routed_to_parent');
+    assert.equal(messages.length, beforeRequest + 1);
+    assert.match(messages.at(-1)!.text, /Need \*\*help\*\*/);
+    db.prepare(`update projects set snoozed_until = null where id = 'project_a'`).run();
+    settings.updateNotificationSettings(saved);
+    settings.updateNotificationSettings({ sources: { agent_failures: 'all', integrated_turn_finished: 'all' } });
+    const beforeDetached = messages.length;
+    const detachedFailure = await service.raise({ processId: 'detached', source: 'runtime', kind: 'failure', body: 'Detached failure' });
+    const detachedRecord = (detachedFailure as { notification: NotificationRecord }).notification;
+    assert.equal(detachedRecord.audience, 'user');
+    assert.equal(detachedRecord.delivery, 'all');
+    assert.equal(detachedRecord.routed_to_process_id, null);
+    assert.equal(messages.length, beforeDetached, 'enabled detached notices follow ordinary user delivery');
+
     // A child whose parent has exited asks the user directly and says so.
     addProcess('gone', 'agent');
     addProcess('orphan', 'agent', 'gone', 'Reviewer');
