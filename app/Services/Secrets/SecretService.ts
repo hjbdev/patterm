@@ -9,6 +9,8 @@ export type SecretField = 'value' | 'username' | 'password';
 
 export const SECRET_USES: readonly SecretUse[] = ['env', 'proxy', 'browser'];
 export const SECRET_NAME = /^[a-z][a-z0-9_]{0,63}$/;
+// A value lasts at most this long from when the user entered it.
+export const SECRET_TTL_MS = 24 * 60 * 60 * 1000;
 
 // Where the proxy puts the credential on a request it forwards.
 export interface SecretInjection {
@@ -31,6 +33,8 @@ export interface SecretRecord {
   allowed_hosts: string[];
   uses: SecretUse[];
   injection: SecretInjection | null;
+  // When the value stops working and the secret is deleted; null until filled.
+  expires_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -49,6 +53,7 @@ interface SecretRow {
   uses: string;
   injection: string | null;
   ciphertext: Uint8Array | null;
+  expires_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -152,6 +157,8 @@ export class SecretService {
 
   request(session: LiveSession, input: SecretRequestInput): { secret: SecretRecord; created: boolean } {
     const db = this.database.connection;
+    // An expired secret goes before it is asked for again.
+    this.deleteExpired();
     const existing = db.prepare('select * from session_secrets where session_id = ? and name = ?').get(session.id, input.name) as SecretRow | undefined;
     if (existing?.status === 'ready') return { secret: toRecord(existing), created: false };
     const at = new Date().toISOString();
@@ -186,9 +193,14 @@ export class SecretService {
     if (previous && previous.session_id !== session.id) throw new Error('That secret belongs to another session');
     const secretId = previous?.id ?? `secret_${randomUUID()}`;
     let ciphertext = previous?.ciphertext ?? null;
-    if (input.values) ciphertext = this.vault.seal(secretId, JSON.stringify(checkValues(input.kind, input.values)));
-    else if (!ciphertext || previous?.kind !== input.kind) throw new Error('Enter the secret');
-    const at = new Date().toISOString();
+    const now = Date.now();
+    // Editing how a secret is used keeps its expiry; only a new value restarts it.
+    let expiresAt = previous?.expires_at ?? null;
+    if (input.values) {
+      ciphertext = this.vault.seal(secretId, JSON.stringify(checkValues(input.kind, input.values)));
+      expiresAt = new Date(now + SECRET_TTL_MS).toISOString();
+    } else if (!ciphertext || previous?.kind !== input.kind || expired(expiresAt, now)) throw new Error('Enter the secret');
+    const at = new Date(now).toISOString();
     const chosen = input.injection ?? DEFAULT_INJECTION;
     if (uses.includes('proxy') && chosen.in === 'header') {
       const values = JSON.parse(this.vault.open(secretId, ciphertext)) as { value?: string };
@@ -196,12 +208,12 @@ export class SecretService {
     }
     const injection = uses.includes('proxy') ? JSON.stringify(chosen) : null;
     if (previous) {
-      db.prepare(`update session_secrets set name = ?, kind = ?, status = 'ready', allowed_hosts = ?, uses = ?, injection = ?, ciphertext = ?, updated_at = ? where id = ?`)
-        .run(input.name, input.kind, JSON.stringify(hosts), JSON.stringify(uses), injection, ciphertext, at, secretId);
+      db.prepare(`update session_secrets set name = ?, kind = ?, status = 'ready', allowed_hosts = ?, uses = ?, injection = ?, ciphertext = ?, expires_at = ?, updated_at = ? where id = ?`)
+        .run(input.name, input.kind, JSON.stringify(hosts), JSON.stringify(uses), injection, ciphertext, expiresAt, at, secretId);
     } else {
-      db.prepare(`insert into session_secrets (id, project_id, session_id, name, kind, purpose, status, allowed_hosts, uses, injection, ciphertext, created_at, updated_at)
-        values (?, ?, ?, ?, ?, '', 'ready', ?, ?, ?, ?, ?, ?)`)
-        .run(secretId, session.project_id, session.id, input.name, input.kind, JSON.stringify(hosts), JSON.stringify(uses), injection, ciphertext, at, at);
+      db.prepare(`insert into session_secrets (id, project_id, session_id, name, kind, purpose, status, allowed_hosts, uses, injection, ciphertext, expires_at, created_at, updated_at)
+        values (?, ?, ?, ?, ?, '', 'ready', ?, ?, ?, ?, ?, ?, ?)`)
+        .run(secretId, session.project_id, session.id, input.name, input.kind, JSON.stringify(hosts), JSON.stringify(uses), injection, ciphertext, expiresAt, at, at);
     }
     this.known = null;
     const secret = this.get(secretId);
@@ -229,12 +241,25 @@ export class SecretService {
     this.hooks.changed();
   }
 
+  // Deletes secrets past their expiry and tells their agents. `reveal`
+  // refuses an expired value before the sweep reaches it.
+  async expire(): Promise<void> {
+    const gone = this.deleteExpired();
+    for (const row of gone) {
+      const live = this.database.connection.prepare('select process_id from sessions where id = ? and exited_at is null').get(row.session_id) as { process_id: string | null } | undefined;
+      if (live?.process_id) {
+        await this.hooks.messageAgent(live.process_id, `[secrets] The secret "${row.name}" expired 24 hours after the user entered it and no longer works. Ask for it again with secret_request if you still need it.`).catch(() => undefined);
+      }
+    }
+  }
+
   // One field of a ready secret, for a use the user allowed.
   reveal(sessionId: string, name: string, use: SecretUse, field?: SecretField): { secret: SecretRecord; value: string } {
     const row = this.database.connection.prepare('select * from session_secrets where session_id = ? and name = ?').get(sessionId, name) as SecretRow | undefined;
     if (!row) throw new Error(`No secret named "${name}" in this session. Ask for it with secret_request.`);
     const secret = toRecord(row);
     if (secret.status !== 'ready' || !row.ciphertext) throw new Error(`The secret "${name}" is waiting for the user`);
+    if (expired(row.expires_at)) throw new Error(`The secret "${name}" has expired. Ask for it again with secret_request.`);
     if (!secret.uses.includes(use)) throw new Error(`The user did not allow "${name}" ${USE_LABEL[use]}`);
     const fields = fieldsOf(secret.kind);
     const chosen = field ?? fields[fields.length - 1]!;
@@ -291,6 +316,7 @@ export class SecretService {
   usage(secret: SecretRecord): string[] {
     if (secret.status !== 'ready') return ['The user has not filled it in yet; you will get a message when they do.'];
     const lines: string[] = [];
+    if (secret.expires_at) lines.push(`It works until ${secret.expires_at}, then expires.`);
     const env = secret.name.toUpperCase();
     if (secret.uses.includes('proxy')) {
       const [host] = secret.allowed_hosts;
@@ -306,6 +332,18 @@ export class SecretService {
       lines.push(`Fill it into a page on ${secret.allowed_hosts.join(', ')} with browser_fill_secret.`);
     }
     return lines;
+  }
+
+  // Secrets without an expiry predate it, so they count as expired too.
+  private deleteExpired(): Array<{ session_id: string; name: string }> {
+    const db = this.database.connection;
+    const now = new Date().toISOString();
+    const rows = db.prepare(`select session_id, name from session_secrets where status = 'ready' and (expires_at is null or expires_at <= ?)`).all(now) as Array<{ session_id: string; name: string }>;
+    if (!rows.length) return rows;
+    db.prepare(`delete from session_secrets where status = 'ready' and (expires_at is null or expires_at <= ?)`).run(now);
+    this.known = null;
+    this.hooks.changed();
+    return rows;
   }
 
   private row(id: string): SecretRow {
@@ -346,6 +384,10 @@ function checkValues(kind: SecretKind, values: SecretValues): SecretValues {
   return { value: values.value };
 }
 
+function expired(expiresAt: string | null, now = Date.now()): boolean {
+  return !expiresAt || Date.parse(expiresAt) <= now;
+}
+
 function toRecord(row: SecretRow): SecretRecord {
   return {
     id: row.id,
@@ -358,6 +400,7 @@ function toRecord(row: SecretRow): SecretRecord {
     allowed_hosts: JSON.parse(row.allowed_hosts) as string[],
     uses: JSON.parse(row.uses) as SecretUse[],
     injection: row.injection ? JSON.parse(row.injection) as SecretInjection : null,
+    expires_at: row.expires_at,
     created_at: row.created_at,
     updated_at: row.updated_at
   };

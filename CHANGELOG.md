@@ -72,6 +72,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A phone's Library no longer leaves a gap between Media and Scheduled.
 
+### Security
+
+- Secrets given to agents expire 24 hours after the user enters them. Patterm
+  deletes an expired secret and tells its agent, which can ask again; editing
+  how a secret is used doesn't extend it. Secrets entered before this release
+  count from their last save.
+
 ## [0.4.0] - 2026-11-02
 
 ### Added

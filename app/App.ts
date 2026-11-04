@@ -550,6 +550,13 @@ async function createApplicationResources(
   const secretRunner = new SecretRunner(() => resolvedEnv);
   defer(() => secretRunner.stop());
   const secretActions = new SecretActions(secretService, browsers, secretRunner);
+  const expireSecrets = () => void secretService.expire().catch((error: unknown) => {
+    debugLog.write('secrets', 'expire.failed', { message: error instanceof Error ? error.message : String(error) });
+  });
+  expireSecrets();
+  const secretExpiry = setInterval(expireSecrets, 60_000);
+  secretExpiry.unref();
+  defer(() => clearInterval(secretExpiry));
   let reaping: NodeJS.Timeout | null = null;
   reapSessions = () => {
     reaping ??= setTimeout(() => {

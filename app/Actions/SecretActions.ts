@@ -159,7 +159,7 @@ export class SecretActions {
   private view(secret: ReturnType<SecretService['get']>) {
     return {
       name: secret.name, kind: secret.kind, status: secret.status, purpose: secret.purpose,
-      allowed_hosts: secret.allowed_hosts, uses: secret.uses, usage: this.secrets.usage(secret)
+      allowed_hosts: secret.allowed_hosts, uses: secret.uses, expires_at: secret.expires_at, usage: this.secrets.usage(secret)
     };
   }
 
@@ -180,7 +180,7 @@ export function registerSecretTools(registry: McpToolRegistry, actions: SecretAc
   registry.register(
     {
       name: 'secret_request', namespace: 'secrets', changes: ['secrets'],
-      description: 'Ask the user for a password, API key or token. They enter it in Patterm, never in the conversation, and decide how you may use it. Returns at once; a message arrives when it is ready.',
+      description: 'Ask the user for a password, API key or token. They enter it in Patterm, never in the conversation, and decide how you may use it. It lasts 24 hours. Returns at once; a message arrives when it is ready.',
       usageNotes: SECRET_INSTRUCTIONS,
       inputSchema: {
         type: 'object', additionalProperties: false, required: ['name', 'purpose'],

@@ -11,7 +11,7 @@ import type { BrowserService } from '../app/Services/Browser/BrowserService';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { SessionContextService } from '../app/Services/SessionContextService';
 import { SecretProxyService } from '../app/Services/Secrets/SecretProxyService';
-import { hostAllowed, normaliseHost, SecretService, type SecretRecord } from '../app/Services/Secrets/SecretService';
+import { hostAllowed, normaliseHost, SECRET_TTL_MS, SecretService, type SecretRecord } from '../app/Services/Secrets/SecretService';
 import { SecretVault } from '../app/Services/Secrets/SecretVault';
 import type { TimelineService } from '../app/Services/TimelineService';
 import { endRun, Masker, maskSet, SecretRunner } from '../app/Services/Secrets/SecretRunner';
@@ -295,6 +295,26 @@ async function serviceChecks(): Promise<void> {
   await actions.remove({ process_id: 'process_b', secret_id: secrets.list('session_b')[0]!.id });
   assert.equal(secrets.list('session_b').length, 2);
   assert.match(messages.at(-1)!, /removed the secret/);
+
+  // A value lasts a day from when it was entered; editing its uses doesn't
+  // extend it.
+  const login = secrets.list('session_b').find((secret) => secret.name === 'github_login')!;
+  const lifetime = Date.parse(login.expires_at!) - Date.parse(login.updated_at);
+  assert.ok(Math.abs(lifetime - SECRET_TTL_MS) < 1000, 'a new value expires in 24 hours');
+  const lapsed = new Date(Date.now() - 1000).toISOString();
+  db.prepare('update session_secrets set expires_at = ? where id = ?').run(lapsed, login.id);
+  await assert.rejects(actions.save({ process_id: 'process_b', secret_id: login.id, name: 'github_login', kind: 'login', values: null, allowed_hosts: ['github.com'], uses: ['browser'] }), /Enter the secret/, 'an expired value cannot be kept');
+  await assert.rejects(actions.fill({ secret: 'github_login', selector: '#password' }, { identity: 'identity_b' }), /has expired/);
+  await secrets.expire();
+  assert.deepEqual(secrets.list('session_b').map((secret) => secret.name), ['odd_key'], 'the sweep deletes expired secrets');
+  assert.match(messages.at(-1)!, /"github_login" expired/);
+  assert.doesNotMatch(messages.at(-1)!, /pa55word/);
+  // Asking again after expiry starts a fresh request.
+  const again = actions.request({ name: 'odd_key', purpose: 'again' }, { identity: 'identity_b' }) as { secret: { status: string } };
+  assert.equal(again.secret.status, 'ready', 'a live secret is not asked for again');
+  db.prepare("update session_secrets set expires_at = ? where name = 'odd_key'").run(lapsed);
+  const renewed = actions.request({ name: 'odd_key', purpose: 'again' }, { identity: 'identity_b' }) as { secret: { status: string } };
+  assert.equal(renewed.secret.status, 'requested');
 }
 
 function allowlistChecks(): void {

@@ -52,7 +52,13 @@ const openId = ref<string | null>(null);
 
 function detail(secret: SessionSecret): string {
   if (secret.status === 'requested') return `Needs you${secret.purpose ? ` · ${secret.purpose}` : ''}`;
-  return [secret.uses.map((use) => USE_LABELS[use]).join(', '), secret.allowed_hosts.join(', ')].filter(Boolean).join(' · ');
+  return [secret.uses.map((use) => USE_LABELS[use]).join(', '), secret.allowed_hosts.join(', '), expiresIn(secret.expires_at)].filter(Boolean).join(' · ');
+}
+
+// Values last a day. An absolute time stays right without redrawing.
+function expiresIn(at: string | null): string {
+  if (!at) return '';
+  return `until ${new Date(at).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' })}`;
 }
 
 async function run(action: () => Promise<unknown>, done: (ok: boolean, message?: string) => void) {
