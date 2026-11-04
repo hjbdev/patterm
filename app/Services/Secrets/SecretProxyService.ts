@@ -12,6 +12,8 @@ export interface SecretProxyCredentials {
 // the upstream connection.
 const HOP_HEADERS = new Set(['host', 'connection', 'keep-alive', 'proxy-authorization', 'proxy-connection', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'origin', 'referer']);
 const LOOPBACK = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
+// The longest delay setTimeout honours.
+const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
 // A reverse proxy that adds a secret's credential to requests bound for the
 // hosts the user allowed. The value never enters the agent's processes, so
@@ -133,12 +135,21 @@ export class SecretProxyService {
     upstream.once('error', (error) => fail(502, `Patterm could not reach ${host}: ${error.message}`));
     // Node sends the headers, credential included, with the first body chunk,
     // so a request still uploading when the secret expires must not finish.
-    const expiry = setTimeout(() => {
-      if (upstream.writableFinished) return;
-      upstream.destroy();
-      fail(403, 'This secret expired');
-    }, Math.max(0, Date.parse(credential.secret.expires_at!) - Date.now()));
-    expiry.unref();
+    // A timer fires at once past about 24.8 days, so a longer-lived secret
+    // waits in steps.
+    const deadline = Date.parse(credential.secret.expires_at!);
+    let expiry: NodeJS.Timeout;
+    const arm = () => {
+      const left = deadline - Date.now();
+      expiry = setTimeout(() => {
+        if (upstream.writableFinished) return;
+        if (Date.now() < deadline) return arm();
+        upstream.destroy();
+        fail(403, 'This secret expired');
+      }, Math.min(Math.max(0, left), MAX_TIMEOUT_MS));
+      expiry.unref();
+    };
+    arm();
     response.once('close', () => { clearTimeout(expiry); upstream.destroy(); });
     request.pipe(upstream);
   }

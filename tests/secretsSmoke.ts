@@ -275,6 +275,15 @@ async function serviceChecks(): Promise<void> {
     });
     assert.equal(parked, 403);
     assert.equal(seen.length, before, 'the credential never left after expiry');
+    // One that lasts past setTimeout's limit still uploads.
+    db.prepare('update session_secrets set expires_at = ? where id = ?').run(new Date(Date.now() + 90 * DAY_MS).toISOString(), id);
+    const lasting = await new Promise<number>((resolve, reject) => {
+      const held = http.request(`${target}slow`, { method: 'POST' }, (reply) => { reply.resume(); resolve(reply.statusCode!); });
+      held.once('error', reject);
+      held.flushHeaders();
+      setTimeout(() => held.end('late body'), 50);
+    });
+    assert.equal(lasting, 201, 'a long-lived secret is not cut off early');
     db.prepare('update session_secrets set expires_at = ? where id = ?').run(deadline, id);
 
     // An exited session's URLs stop working.
