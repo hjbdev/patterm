@@ -11,7 +11,7 @@ import type { BrowserService } from '../app/Services/Browser/BrowserService';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { SessionContextService } from '../app/Services/SessionContextService';
 import { SecretProxyService } from '../app/Services/Secrets/SecretProxyService';
-import { hostAllowed, normaliseHost, SECRET_TTL_MS, SecretService, type SecretRecord } from '../app/Services/Secrets/SecretService';
+import { hostAllowed, normaliseHost, DAY_MS, SecretService, type SecretRecord } from '../app/Services/Secrets/SecretService';
 import { SecretVault } from '../app/Services/Secrets/SecretVault';
 import type { TimelineService } from '../app/Services/TimelineService';
 import { endRun, Masker, maskSet, SecretRunner } from '../app/Services/Secrets/SecretRunner';
@@ -314,7 +314,15 @@ async function serviceChecks(): Promise<void> {
   // extend it.
   const login = secrets.list('session_b').find((secret) => secret.name === 'github_login')!;
   const lifetime = Date.parse(login.expires_at!) - Date.parse(login.updated_at);
-  assert.ok(Math.abs(lifetime - SECRET_TTL_MS) < 1000, 'a new value expires in 24 hours');
+  assert.ok(Math.abs(lifetime - DAY_MS) < 1000, 'a new value expires in 24 hours');
+  // The user can give a value longer, such as a bot's token, but only from
+  // the offered lifetimes, and editing its uses keeps that expiry.
+  await assert.rejects(actions.save({ process_id: 'process_b', secret_id: null, name: 'bot_token', kind: 'api_key', values: { value: 'bot-token-1234' }, lifetime_days: 3650, allowed_hosts: [], uses: ['env'] }), /A secret lasts/);
+  const bot = (await actions.save({ process_id: 'process_b', secret_id: null, name: 'bot_token', kind: 'api_key', values: { value: 'bot-token-1234' }, lifetime_days: 90, allowed_hosts: [], uses: ['env'] })).secret;
+  assert.ok(Math.abs(Date.parse(bot.expires_at!) - Date.parse(bot.updated_at) - 90 * DAY_MS) < 1000, 'a chosen lifetime sets the expiry');
+  const edited = (await actions.save({ process_id: 'process_b', secret_id: bot.id, name: 'bot_token', kind: 'api_key', values: null, lifetime_days: 365, allowed_hosts: ['example.com'], uses: ['env', 'proxy'] })).secret;
+  assert.equal(edited.expires_at, bot.expires_at, 'a lifetime applies only with a new value');
+  await actions.remove({ process_id: 'process_b', secret_id: bot.id });
   // A fill started in time reads the value only when typing, so a page that
   // stalls it past expiry gets nothing.
   await actions.fill({ secret: 'github_login', selector: '#password' }, { identity: 'identity_b' });
@@ -329,7 +337,7 @@ async function serviceChecks(): Promise<void> {
   // Values from before expiry was recorded expire too.
   db.prepare("update session_secrets set expires_at = null where name = 'odd_key'").run();
   assert.throws(() => secrets.commandValue('session_b', 'odd_key'), /has expired/);
-  db.prepare("update session_secrets set expires_at = ? where name = 'odd_key'").run(new Date(Date.now() + SECRET_TTL_MS).toISOString());
+  db.prepare("update session_secrets set expires_at = ? where name = 'odd_key'").run(new Date(Date.now() + DAY_MS).toISOString());
   assert.doesNotMatch(messages.at(-1)!, /pa55word/);
   // Asking again after expiry starts a fresh request.
   const again = actions.request({ name: 'odd_key', purpose: 'again' }, { identity: 'identity_b' }) as { secret: { status: string } };

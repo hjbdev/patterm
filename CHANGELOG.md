@@ -74,7 +74,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- Secrets given to agents expire 24 hours after the user enters them. Patterm
+- Secrets given to agents expire 24 hours after the user enters them, unless
+  the user chooses a longer lifetime of 7, 30 or 90 days or a year when
+  entering the value, such as for a bot's long-running token. Patterm
   deletes an expired secret and tells its agent, which can ask again; editing
   how a secret is used doesn't extend it. Secrets entered before this release
   expire on upgrade, as Patterm never recorded when they were entered.

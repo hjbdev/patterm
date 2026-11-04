@@ -55,10 +55,13 @@ function detail(secret: SessionSecret): string {
   return [secret.uses.map((use) => USE_LABELS[use]).join(', '), secret.allowed_hosts.join(', '), expiresIn(secret.expires_at)].filter(Boolean).join(' · ');
 }
 
-// Values last a day. An absolute time stays right without redrawing.
+// An absolute time stays right without redrawing. Within a week the
+// weekday is enough; further out it needs the date.
 function expiresIn(at: string | null): string {
   if (!at) return '';
-  return `until ${new Date(at).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' })}`;
+  const when = new Date(at);
+  const soon = when.getTime() - Date.now() < 6 * 24 * 60 * 60 * 1000;
+  return `until ${when.toLocaleString(undefined, soon ? { weekday: 'short', hour: '2-digit', minute: '2-digit' } : { day: 'numeric', month: 'short', ...(when.getFullYear() === new Date().getFullYear() ? {} : { year: 'numeric' }) })}`;
 }
 
 async function run(action: () => Promise<unknown>, done: (ok: boolean, message?: string) => void) {

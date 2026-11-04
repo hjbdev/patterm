@@ -25,10 +25,17 @@ export interface SecretDraft {
   name: string;
   kind: SecretKind;
   values: { value: string } | { username: string; password: string } | null;
+  // How long new values last; ignored without them.
+  lifetime_days: number;
   allowed_hosts: string[];
   uses: SecretUse[];
   injection: SecretInjection | null;
 }
+
+// Mirrors SECRET_LIFETIME_DAYS in app/Services/Secrets/SecretService.ts.
+export const SECRET_LIFETIMES = [
+  { days: 1, label: '1 day' }, { days: 7, label: '7 days' }, { days: 30, label: '30 days' }, { days: 90, label: '90 days' }, { days: 365, label: '1 year' }
+] as const;
 
 export const USE_LABELS: Record<SecretUse, string> = { proxy: 'Proxy', env: 'Commands', browser: 'Browser' };
 

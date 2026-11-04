@@ -9,8 +9,11 @@ export type SecretField = 'value' | 'username' | 'password';
 
 export const SECRET_USES: readonly SecretUse[] = ['env', 'proxy', 'browser'];
 export const SECRET_NAME = /^[a-z][a-z0-9_]{0,63}$/;
-// A value lasts at most this long from when the user entered it.
-export const SECRET_TTL_MS = 24 * 60 * 60 * 1000;
+// How long a value lasts from when the user entered it, in days. They
+// choose when entering it; a day unless they pick longer, such as for a bot.
+export const SECRET_LIFETIME_DAYS = [1, 7, 30, 90, 365] as const;
+export type SecretLifetimeDays = typeof SECRET_LIFETIME_DAYS[number];
+export const DAY_MS = 24 * 60 * 60 * 1000;
 
 // Where the proxy puts the credential on a request it forwards.
 export interface SecretInjection {
@@ -71,6 +74,8 @@ export interface SecretSaveInput {
   name: string;
   kind: SecretKind;
   values: SecretValues | null;
+  // Applies only with new values.
+  lifetime_days?: SecretLifetimeDays;
   allowed_hosts: string[];
   uses: SecretUse[];
   injection: SecretInjection | null;
@@ -199,7 +204,9 @@ export class SecretService {
     let expiresAt = previous?.expires_at ?? null;
     if (input.values) {
       ciphertext = this.vault.seal(secretId, JSON.stringify(checkValues(input.kind, input.values)));
-      expiresAt = new Date(now + SECRET_TTL_MS).toISOString();
+      const days = input.lifetime_days ?? 1;
+      if (!SECRET_LIFETIME_DAYS.includes(days)) throw new Error(`A secret lasts ${SECRET_LIFETIME_DAYS.join(', ')} days`);
+      expiresAt = new Date(now + days * DAY_MS).toISOString();
     } else if (!ciphertext || previous?.kind !== input.kind || expired(expiresAt, now)) throw new Error('Enter the secret');
     const at = new Date(now).toISOString();
     const chosen = input.injection ?? DEFAULT_INJECTION;
@@ -256,7 +263,7 @@ export class SecretService {
     for (const row of gone) {
       const live = db.prepare('select process_id from sessions where id = ? and exited_at is null').get(row.session_id) as { process_id: string | null } | undefined;
       if (live?.process_id) {
-        await this.hooks.messageAgent(live.process_id, `[secrets] The secret "${row.name}" expired and no longer works; secrets last 24 hours. Ask for it again with secret_request if you still need it.`).catch(() => undefined);
+        await this.hooks.messageAgent(live.process_id, `[secrets] The secret "${row.name}" expired and no longer works. Ask for it again with secret_request if you still need it.`).catch(() => undefined);
       }
     }
   }

@@ -18,6 +18,11 @@
           <Input v-model="password" type="password" aria-label="Password" :placeholder="keeping ? 'Password (unchanged)' : 'Password'" autocomplete="off" data-1p-ignore data-lpignore="true" class="h-8 text-[13px]" />
         </template>
         <Input v-else v-model="value" type="password" aria-label="Secret value" :placeholder="keeping ? 'Value (unchanged)' : 'Value'" autocomplete="off" data-1p-ignore data-lpignore="true" class="h-8 font-mono text-[13px]" />
+        <label v-if="entered" class="flex items-center gap-2 text-xs text-muted-foreground">Lasts
+          <select v-model.number="lifetimeDays" aria-label="How long it lasts" class="h-7 rounded-md border border-input bg-transparent px-1.5 text-xs text-foreground">
+            <option v-for="option in LIFETIMES" :key="option.days" :value="option.days">{{ option.label }}</option>
+          </select>
+        </label>
         <Input v-model="hosts" aria-label="Allowed hosts" :placeholder="kind === 'login' ? 'Sites, such as github.com' : 'Hosts, such as api.stripe.com'" class="h-8 text-[13px]" />
         <fieldset class="flex flex-wrap gap-x-4 gap-y-1.5 pt-0.5">
           <legend class="sr-only">How the agent may use it</legend>
@@ -48,12 +53,13 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
-import { USE_LABELS, type SecretDraft, type SecretKind, type SecretUse, type SessionSecret } from '../../lib/secrets';
+import { SECRET_LIFETIMES, USE_LABELS, type SecretDraft, type SecretKind, type SecretUse, type SessionSecret } from '../../lib/secrets';
 import { Button } from '../ui/button';
 import { Checkbox } from '../ui/checkbox';
 import { Input } from '../ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
+const LIFETIMES = SECRET_LIFETIMES;
 const KINDS = [{ value: 'api_key', label: 'API key' }, { value: 'login', label: 'Login' }] as const;
 const USE_HINTS: Record<SecretUse, string> = {
   proxy: 'Patterm adds the key to the agent\'s requests to these hosts. The agent never sees it.',
@@ -68,6 +74,8 @@ const emit = defineEmits<{ save: [draft: SecretDraft, done: Done]; remove: [done
 const open = defineModel<boolean>('open', { default: false });
 const kind = ref<SecretKind>('api_key'), name = ref(''), value = ref(''), username = ref(''), password = ref(''), hosts = ref('');
 const uses = ref<SecretUse[]>([]);
+// A new value lasts a day unless the user picks longer.
+const lifetimeDays = ref(1);
 const injectionIn = ref<'header' | 'query'>('header'), injectionName = ref('Authorization'), injectionPrefix = ref('Bearer ');
 const error = ref('');
 const form = ref<HTMLFormElement | null>(null);
@@ -95,6 +103,7 @@ const hint = computed(() => {
 // Typed values never outlive the popover.
 watch(open, (value) => {
   clearValues();
+  lifetimeDays.value = 1;
   if (!value) return;
   const secret = props.secret;
   error.value = '';
@@ -129,6 +138,7 @@ function save() {
     name: name.value.trim(),
     kind: kind.value,
     values: !entered.value ? null : kind.value === 'login' ? { username: username.value, password: password.value } : { value: value.value },
+    lifetime_days: lifetimeDays.value,
     allowed_hosts: hosts.value.split(/[\s,]+/).filter(Boolean),
     uses: uses.value,
     injection: uses.value.includes('proxy') ? { in: injectionIn.value, name: injectionName.value.trim() || 'Authorization', prefix: injectionPrefix.value } : null
