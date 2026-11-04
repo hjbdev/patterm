@@ -9,6 +9,9 @@ export interface CatalogModel {
   label: string;
   reasoning: string[];
   defaultReasoning: string | null;
+  // The provider that serves the model, such as OpenCode's "Zen". Older
+  // cached catalogs lack it.
+  provider?: string;
   serviceTiers?: Array<{ id: string; label: string }>;
 }
 
@@ -93,10 +96,10 @@ export function tiersFor(catalog: ModelCatalog, harness: ProfileHarness, modelId
   return [...tiers].map(([id, label]) => ({ id, label }));
 }
 
-export function modelChoices(catalog: ModelCatalog, harness: ProfileHarness): Array<{ value: string; label: string }> {
+export function modelChoices(catalog: ModelCatalog, harness: ProfileHarness): Array<{ value: string; label: string; description?: string }> {
   return [
     { value: DEFAULT_MODEL, label: 'Harness default (no override)' },
-    ...modelsFor(catalog, harness).map((model) => ({ value: model.id, label: model.label })),
+    ...modelsFor(catalog, harness).map((model) => ({ value: model.id, label: model.label, ...(model.provider ? { description: model.provider } : {}) })),
     { value: CUSTOM_MODEL, label: 'Custom model ID…' }
   ];
 }
@@ -133,7 +136,13 @@ export function speedLabel(catalog: ModelCatalog, harness: ProfileHarness, tier:
 
 export function modelLabel(catalog: ModelCatalog, harness: ProfileHarness, modelId: string | null): string {
   if (modelId === null) return 'Harness default';
-  return modelsFor(catalog, harness).find((model) => model.id === modelId)?.label ?? modelId;
+  const model = modelsFor(catalog, harness).find((entry) => entry.id === modelId);
+  return model ? modelDisplayName(model) : modelId;
+}
+
+// One line names the provider too, since several can serve the same model.
+export function modelDisplayName(model: Pick<CatalogModel, 'label' | 'provider'>): string {
+  return model.provider ? `${model.label} (${model.provider})` : model.label;
 }
 
 // The settings in one line, as a profile list shows them.

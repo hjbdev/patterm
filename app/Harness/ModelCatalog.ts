@@ -13,6 +13,8 @@ export const harnessModelInput = z.object({
   label: z.string().trim().min(1).max(200),
   reasoning: z.array(z.string().trim().min(1).max(60)).max(16).default([]),
   defaultReasoning: z.string().trim().min(1).max(60).nullable().default(null),
+  // The provider that serves the model, such as OpenCode's "Zen" or "OpenAI".
+  provider: z.string().trim().min(1).max(200).optional(),
   // Codex service tiers beyond Standard, such as `priority` labelled Fast.
   serviceTiers: z.array(z.object({ id: z.string().trim().min(1).max(60), label: z.string().trim().min(1).max(60) })).max(16).optional()
 });
@@ -147,10 +149,12 @@ interface OpenCodeCatalogModel {
 // `GET /api/model` returns `{ data: [...] }`; each entry is a provider/model
 // pair with optional reasoning-effort variants. `id` is OpenCode's own model
 // key; speed variants such as Fast share the upstream `modelID`, so it is only
-// a fallback for responses without `id`.
-export function parseOpenCodeCatalog(value: unknown): HarnessModel[] {
+// a fallback for responses without `id`. `providers` is `GET /api/provider`,
+// which names each provider; without it the provider ID labels the model.
+export function parseOpenCodeCatalog(value: unknown, providers?: unknown): HarnessModel[] {
   const data = asRecord(value)?.data;
   if (!Array.isArray(data)) throw new Error('OpenCode model catalog is not valid JSON');
+  const names = openCodeProviderNames(providers);
   const parsed: HarnessModel[] = [];
   for (const entry of data as OpenCodeCatalogModel[]) {
     const record = asRecord(entry);
@@ -164,10 +168,31 @@ export function parseOpenCodeCatalog(value: unknown): HarnessModel[] {
           .map((variant) => asRecord(variant)?.id)
           .filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
       : [];
-    parsed.push({ id: `${providerID}/${modelID}`, label: name, reasoning, defaultReasoning: null });
+    parsed.push({ id: `${providerID}/${modelID}`, label: name, reasoning, defaultReasoning: null, provider: names.get(providerID) ?? providerID });
   }
   if (!parsed.length) throw new Error('OpenCode model catalog has no models');
   return parsed.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+// Provider names keyed by provider ID, from `GET /api/provider`'s `{ data: [...] }`.
+export function openCodeProviderNames(value: unknown): Map<string, string> {
+  const data = Array.isArray(value) ? value : asRecord(value)?.data;
+  const names = new Map<string, string>();
+  if (!Array.isArray(data)) return names;
+  for (const entry of data) {
+    const record = asRecord(entry);
+    const id = typeof record?.id === 'string' ? record.id.trim() : '';
+    if (!id) continue;
+    const name = typeof record?.name === 'string' && record.name.trim() ? record.name.trim() : id;
+    names.set(id, openCodeProviderLabel(name));
+  }
+  return names;
+}
+
+// Every model runs in OpenCode, so its own plans drop the prefix: "OpenCode Go"
+// shows as "Go", and plain "OpenCode", its Zen plan, as "Zen".
+export function openCodeProviderLabel(name: string): string {
+  return name.replace(/^opencode\b\s*/i, '') || 'Zen';
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

@@ -53,12 +53,25 @@ async function main(): Promise<void> {
     ]
   });
   assert.deepEqual(openCodeModels, [
-    { id: 'openai/blank-id', label: 'blank-id', reasoning: [], defaultReasoning: null },
-    { id: 'openai/gpt-x', label: 'GPT X', reasoning: ['low', 'max'], defaultReasoning: null },
-    { id: 'openai/sol', label: 'Sol', reasoning: [], defaultReasoning: null },
-    { id: 'openai/sol-fast', label: 'Sol Fast', reasoning: [], defaultReasoning: null },
-    { id: 'openai/sol-ultrafast', label: 'Sol Ultrafast', reasoning: [], defaultReasoning: null },
-    { id: 'opencode-go/bare', label: 'bare', reasoning: [], defaultReasoning: null }
+    { id: 'openai/blank-id', label: 'blank-id', reasoning: [], defaultReasoning: null, provider: 'openai' },
+    { id: 'openai/gpt-x', label: 'GPT X', reasoning: ['low', 'max'], defaultReasoning: null, provider: 'openai' },
+    { id: 'openai/sol', label: 'Sol', reasoning: [], defaultReasoning: null, provider: 'openai' },
+    { id: 'openai/sol-fast', label: 'Sol Fast', reasoning: [], defaultReasoning: null, provider: 'openai' },
+    { id: 'openai/sol-ultrafast', label: 'Sol Ultrafast', reasoning: [], defaultReasoning: null, provider: 'openai' },
+    { id: 'opencode-go/bare', label: 'bare', reasoning: [], defaultReasoning: null, provider: 'opencode-go' }
+  ], 'without provider names, the provider ID labels each model');
+  // The same model from several providers stays distinct, each named as the live picker names it.
+  const named = parseOpenCodeCatalog({ data: [
+    { id: 'kimi', providerID: 'opencode', name: 'Kimi', enabled: true },
+    { id: 'kimi', providerID: 'opencode-go', name: 'Kimi', enabled: true },
+    { id: 'kimi', providerID: 'moonshot', name: 'Kimi', enabled: true },
+    { id: 'kimi', providerID: 'local', name: 'Kimi', enabled: true }
+  ] }, { data: [{ id: 'opencode', name: 'OpenCode' }, { id: 'opencode-go', name: 'OpenCode Go' }, { id: 'moonshot', name: 'Moonshot AI' }, { id: 'local' }] });
+  assert.deepEqual(named.map((model) => [model.id, model.label, model.provider]), [
+    ['local/kimi', 'Kimi', 'local'],
+    ['moonshot/kimi', 'Kimi', 'Moonshot AI'],
+    ['opencode-go/kimi', 'Kimi', 'Go'],
+    ['opencode/kimi', 'Kimi', 'Zen']
   ]);
   // The chosen option launches that exact variant, not its shared upstream model.
   assert.deepEqual(openCodeModelRef('openai/sol-fast', null), { providerID: 'openai', id: 'sol-fast' });
@@ -115,6 +128,7 @@ async function main(): Promise<void> {
   const settings = new SettingsService(database);
 
   let openCodeCalls = 0;
+  let providersFail = false;
   const service = new HarnessModelCatalogService({
     database,
     settings,
@@ -126,6 +140,10 @@ async function main(): Promise<void> {
           { id: 'luna', modelID: 'luna', providerID: 'openai', name: 'Luna', enabled: true, variants: [{ id: 'high' }] },
           { id: 'luna-fast', modelID: 'luna', providerID: 'openai', name: 'Luna Fast', enabled: true, variants: [{ id: 'high' }] }
         ] };
+      },
+      listProviders: async () => {
+        if (providersFail) throw new Error('provider route unavailable');
+        return { data: [{ id: 'openai', name: 'OpenAI' }] };
       }
     }
   });
@@ -145,8 +163,16 @@ async function main(): Promise<void> {
     assert.deepEqual(catalog.providers.codex?.models[0]?.reasoning, ['low', 'high']);
     assert.deepEqual(catalog.providers.opencode?.models.map((model) => model.id), ['openai/luna', 'openai/luna-fast']);
     assert.equal(catalog.providers.opencode?.source, 'api');
+    assert.deepEqual(catalog.providers.opencode?.models.map((model) => model.provider), ['OpenAI', 'OpenAI'], 'cached models name their provider');
     assert.equal(catalog.providers.codex?.error, null);
     assert.deepEqual(settings.harnessModelCatalog(), catalog, 'catalog is cached in settings');
+
+    // Without provider names the models still refresh, labelled by provider ID.
+    providersFail = true;
+    const unnamed = await service.refresh();
+    assert.deepEqual(unnamed.providers.opencode?.models.map((model) => [model.id, model.provider]), [['openai/luna', 'openai'], ['openai/luna-fast', 'openai']]);
+    assert.equal(unnamed.providers.opencode?.error, null, 'a missing provider list is not a catalog error');
+    providersFail = false;
 
     // A failing provider keeps the previous models and records the error.
     if (process.platform === 'win32') fs.writeFileSync(path.join(binDir, 'codex.cjs'), 'process.exit(1);\n');
