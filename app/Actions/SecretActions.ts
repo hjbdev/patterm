@@ -3,7 +3,7 @@ import type { McpCallContext, McpToolRegistry } from '../MCP/ToolRegistry';
 import path from 'node:path';
 import type { BrowserService } from '../Services/Browser/BrowserService';
 import { DEFAULT_RUN_SECONDS, MAX_RUN_SECONDS, type SecretRunner } from '../Services/Secrets/SecretRunner';
-import { hostAllowed, SECRET_NAME, SECRET_USES, type SecretService } from '../Services/Secrets/SecretService';
+import { hostAllowed, SECRET_LIFETIME_DAYS, SECRET_NAME, SECRET_USES, type SecretLifetimeDays, type SecretService } from '../Services/Secrets/SecretService';
 
 // What the UI reads, and the calls that answer an agent. Answering messages
 // the agent, so a browser client sends those over its socket as its controller.
@@ -59,6 +59,7 @@ const saveInput = z.object({
   name,
   kind,
   values: values.nullable().default(null),
+  lifetime_days: z.number().int().refine((days): days is SecretLifetimeDays => (SECRET_LIFETIME_DAYS as readonly number[]).includes(days), `A secret lasts ${SECRET_LIFETIME_DAYS.join(', ')} days`).default(1),
   allowed_hosts: z.array(host).max(20).default([]),
   uses,
   injection: injection.nullable().default(null)
@@ -144,7 +145,7 @@ export class SecretActions {
     const input = saveInput.parse(raw);
     const session = this.secrets.sessionForProcess(input.process_id);
     const secret = await this.secrets.save(session, input.secret_id, {
-      name: input.name, kind: input.kind, values: input.values,
+      name: input.name, kind: input.kind, values: input.values, lifetime_days: input.lifetime_days,
       allowed_hosts: input.allowed_hosts, uses: input.uses, injection: input.injection
     });
     return { ok: true, secret };
@@ -182,7 +183,7 @@ export function registerSecretTools(registry: McpToolRegistry, actions: SecretAc
   registry.register(
     {
       name: 'secret_request', namespace: 'secrets', changes: ['secrets'],
-      description: 'Ask the user for a password, API key or token. They enter it in Patterm, never in the conversation, and decide how you may use it. It lasts 24 hours. Returns at once; a message arrives when it is ready.',
+      description: 'Ask the user for a password, API key or token. They enter it in Patterm, never in the conversation, and decide how you may use it. It lasts 24 hours unless they choose longer. Returns at once; a message arrives when it is ready.',
       usageNotes: SECRET_INSTRUCTIONS,
       inputSchema: {
         type: 'object', additionalProperties: false, required: ['name', 'purpose'],
