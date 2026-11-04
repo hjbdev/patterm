@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A bot's page has a Back button on a phone, as an agent's does, and slides
+  in over the list and away again like one. Its header lines up with its
+  conversation like an agent's header. The page also loads ahead of time
+  with the others, so opening a bot no longer waits for its code.
+
 ### Removed
 
 - The sidebar's New bot button. Bots are set up in Settings › Bots.

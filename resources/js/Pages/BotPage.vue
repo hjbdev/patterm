@@ -1,52 +1,59 @@
 <template>
   <div ref="root" class="flex h-full min-h-0 flex-col">
     <div v-if="!row" class="p-5 text-sm text-muted-foreground">This bot no longer exists. Manage bots in Settings › Bots.</div>
-    <template v-else>
-      <header class="flex h-12 shrink-0 items-center gap-3 border-b border-white/[0.06] px-4">
-        <BotAvatar :avatar="row.bot.avatar" :size="28" :activity="row.activity" motion />
-        <div class="min-w-0 flex-1">
-          <div class="truncate text-sm font-medium">{{ row.bot.name }}<span v-if="row.bot.host" class="ml-1.5 font-normal text-muted-foreground">{{ row.bot.host }}</span></div>
-          <div class="truncate text-xs text-muted-foreground">{{ purviewLabel }}</div>
+    <div v-else class="flex min-h-0 flex-1">
+      <div class="flex min-h-0 min-w-0 flex-1 flex-col">
+        <!-- Laid out like an agent's header, lined up with the conversation,
+             with a way back to the list on a phone. -->
+        <header class="relative z-10 shrink-0 bg-background" :class="phoneLayout ? 'pb-1' : 'pb-3 pt-4'">
+          <div class="mx-auto flex w-full items-center" :class="phoneLayout ? 'h-12 gap-1.5 pl-1 pr-1.5' : 'max-w-[50rem] gap-3 px-4 2xl:max-w-[1000px]'">
+            <PhoneBackButton v-if="phoneLayout && route.name === 'bot'" :waiting="waiting" @back="back" />
+            <BotAvatar :avatar="row.bot.avatar" :size="28" :activity="row.activity" motion />
+            <div class="min-w-0 flex-1">
+              <div class="truncate text-sm font-medium">{{ row.bot.name }}<span v-if="row.bot.host" class="ml-1.5 font-normal text-muted-foreground">{{ row.bot.host }}</span></div>
+              <div class="truncate text-xs text-muted-foreground">{{ purviewLabel }}</div>
+            </div>
+            <button v-if="browser?.running" type="button" :class="CHIP" @click="peek = { kind: 'browser' }"><Globe :class="CHIP_ICON" /><span :class="CHIP_LABEL">Browser</span><span v-if="browser.help" class="h-1.5 w-1.5 rounded-full bg-foreground" aria-label="needs you" /></button>
+            <SecretsChip v-if="row.session && hasSecrets(row.session.processId)" :process-id="row.session.processId" />
+            <Button v-if="row.waitingHelper && row.waitingHelperProjectId" variant="ghost" size="sm" class="h-7 text-xs text-warning hover:text-warning" @click="openHelper">Open waiting helper</Button>
+            <Button v-if="relay?.voice.available || mode === 'voice'" variant="ghost" size="icon" class="h-8 w-8 rounded-tab" :disabled="!live" :aria-pressed="mode === 'voice'" :aria-label="mode === 'voice' ? 'Back to chat' : 'Voice call'" :title="mode === 'voice' ? 'Back to chat' : 'Voice call'" @click="mode = mode === 'voice' ? 'chat' : 'voice'">
+              <MessageSquare v-if="mode === 'voice'" class="h-4 w-4" />
+              <AudioLines v-else class="h-4 w-4" />
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger as-child>
+                <Button variant="ghost" size="icon" class="h-8 w-8 rounded-tab text-muted-foreground" aria-label="Bot actions"><MoreHorizontal class="h-4 w-4" /></Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" class="w-48">
+                <template v-if="relay?.focus.allowed">
+                  <DropdownMenuItem role="menuitemcheckbox" :aria-checked="relay.focus.enabled" @select="toggleFocus(!relay.focus.enabled)">
+                    <span class="flex-1">Focus mode</span>
+                    <Check v-if="relay.focus.enabled" class="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </template>
+                <DropdownMenuItem :disabled="busy" @select="restart(false)">Restart</DropdownMenuItem>
+                <DropdownMenuItem :disabled="busy" @select="restart(true)">New conversation</DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem :disabled="!projectId" @select="peek = { kind: 'context' }">Session context</DropdownMenuItem>
+                <!-- A paired host's bot is set up on that host. -->
+                <DropdownMenuItem v-if="!row.bot.host" @select="openSettings">Bot settings</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </header>
+        <!-- Held items show while focused, and after a delivery that failed. -->
+        <div v-if="relay && (relay.focus.enabled || relay.focus.pending)" class="flex shrink-0 items-center gap-2 border-b border-white/[0.06] py-1.5 pl-4 pr-2 text-xs text-muted-foreground" role="status">
+          <span class="min-w-0 flex-1 truncate">
+            <span class="text-foreground">{{ relay.focus.enabled ? 'Focus' : 'Not delivered' }}</span>
+            · {{ relay.focus.pending ? `${relay.focus.pending} held` : 'Nothing held yet' }}
+          </span>
+          <Button variant="ghost" size="sm" class="h-6 shrink-0 px-2 text-xs" @click="toggleFocus(false)">{{ relay.focus.enabled ? 'End focus' : 'Deliver' }}</Button>
         </div>
-        <button v-if="browser?.running" type="button" :class="CHIP" @click="peek = { kind: 'browser' }"><Globe :class="CHIP_ICON" /><span :class="CHIP_LABEL">Browser</span><span v-if="browser.help" class="h-1.5 w-1.5 rounded-full bg-foreground" aria-label="needs you" /></button>
-        <SecretsChip v-if="row.session && hasSecrets(row.session.processId)" :process-id="row.session.processId" />
-        <Button v-if="row.waitingHelper && row.waitingHelperProjectId" variant="ghost" size="sm" class="h-7 text-xs text-warning hover:text-warning" @click="openHelper">Open waiting helper</Button>
-        <Button v-if="relay?.voice.available || mode === 'voice'" variant="ghost" size="icon" class="h-8 w-8 rounded-tab" :disabled="!live" :aria-pressed="mode === 'voice'" :aria-label="mode === 'voice' ? 'Back to chat' : 'Voice call'" :title="mode === 'voice' ? 'Back to chat' : 'Voice call'" @click="mode = mode === 'voice' ? 'chat' : 'voice'">
-          <MessageSquare v-if="mode === 'voice'" class="h-4 w-4" />
-          <AudioLines v-else class="h-4 w-4" />
-        </Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger as-child>
-            <Button variant="ghost" size="icon" class="h-8 w-8 rounded-tab text-muted-foreground" aria-label="Bot actions"><MoreHorizontal class="h-4 w-4" /></Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" class="w-48">
-            <template v-if="relay?.focus.allowed">
-              <DropdownMenuItem role="menuitemcheckbox" :aria-checked="relay.focus.enabled" @select="toggleFocus(!relay.focus.enabled)">
-                <span class="flex-1">Focus mode</span>
-                <Check v-if="relay.focus.enabled" class="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-            </template>
-            <DropdownMenuItem :disabled="busy" @select="restart(false)">Restart</DropdownMenuItem>
-            <DropdownMenuItem :disabled="busy" @select="restart(true)">New conversation</DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem :disabled="!projectId" @select="peek = { kind: 'context' }">Session context</DropdownMenuItem>
-            <!-- A paired host's bot is set up on that host. -->
-            <DropdownMenuItem v-if="!row.bot.host" @select="openSettings">Bot settings</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </header>
-      <!-- Held items show while focused, and after a delivery that failed. -->
-      <div v-if="relay && (relay.focus.enabled || relay.focus.pending)" class="flex shrink-0 items-center gap-2 border-b border-white/[0.06] py-1.5 pl-4 pr-2 text-xs text-muted-foreground" role="status">
-        <span class="min-w-0 flex-1 truncate">
-          <span class="text-foreground">{{ relay.focus.enabled ? 'Focus' : 'Not delivered' }}</span>
-          · {{ relay.focus.pending ? `${relay.focus.pending} held` : 'Nothing held yet' }}
-        </span>
-        <Button variant="ghost" size="sm" class="h-6 shrink-0 px-2 text-xs" @click="toggleFocus(false)">{{ relay.focus.enabled ? 'End focus' : 'Deliver' }}</Button>
-      </div>
-      <p v-if="error && live" role="alert" class="shrink-0 border-b border-white/[0.06] px-4 py-1.5 text-xs text-destructive">{{ error }}</p>
-      <div class="flex min-h-0 flex-1">
+        <p v-if="error && live" role="alert" class="shrink-0 border-b border-white/[0.06] px-4 py-1.5 text-xs text-destructive">{{ error }}</p>
         <div class="relative min-h-0 min-w-0 flex-1">
+          <!-- The transcript fades in under the header, as on an agent's page. -->
+          <div v-if="live" class="pointer-events-none absolute inset-x-0 top-0 z-10 h-8 bg-gradient-to-b from-background to-transparent" aria-hidden="true" />
           <!-- Helpers' reports and Patterm's notes to the bot stay out of view.
                The chat stays mounted during a voice call, so its draft survives. -->
           <div v-if="live && row.session?.processId" v-show="mode === 'chat'" class="h-full">
@@ -74,19 +81,19 @@
             <p v-if="error" role="alert" class="max-w-sm text-xs text-destructive">{{ error }}</p>
           </div>
         </div>
-        <!-- The bot's browser or session context, beside its conversation while
-             there's room and a sheet otherwise, as on an agent's page. -->
-        <aside v-if="docked && peek && projectId && row.session" role="complementary" :aria-label="peekLabel" class="flex shrink-0 flex-col border-l border-border/30 bg-background" :style="{ width: `${paneWidth}px`, maxWidth: '100%' }" @keydown.esc.stop.prevent="peek = null">
-          <PeekPane v-model:peek="peek" :project-id="projectId" :session-id="row.session.id" :process-id="row.session.processId" :summary="row.session.summary" @close="peek = null" />
-        </aside>
       </div>
+      <!-- The bot's browser or session context, beside its conversation while
+           there's room and a sheet otherwise, as on an agent's page. -->
+      <aside v-if="docked && peek && projectId && row.session" role="complementary" :aria-label="peekLabel" class="flex shrink-0 flex-col border-l border-border/30 bg-background" :style="{ width: `${paneWidth}px`, maxWidth: '100%' }" @keydown.esc.stop.prevent="peek = null">
+        <PeekPane v-model:peek="peek" :project-id="projectId" :session-id="row.session.id" :process-id="row.session.processId" :summary="row.session.summary" @close="peek = null" />
+      </aside>
       <Sheet :open="Boolean(peek && projectId && !docked)" @update:open="open => { if (!open) peek = null }">
         <SheetContent side="right" hide-close aria-describedby="" class="flex w-[85vw] flex-col gap-0 border-border/30 p-0 pt-[env(safe-area-inset-top)] max-sm:w-full max-sm:max-w-none" :class="peek?.kind === 'browser' ? 'max-w-4xl' : 'max-w-sm'">
           <SheetTitle class="sr-only">{{ peekLabel }}</SheetTitle>
           <PeekPane v-if="peek && projectId && row.session" v-model:peek="peek" :project-id="projectId" :session-id="row.session.id" :process-id="row.session.processId" :summary="row.session.summary" @close="peek = null" />
         </SheetContent>
       </Sheet>
-    </template>
+    </div>
   </div>
 </template>
 
@@ -99,6 +106,8 @@ import AssistantVoice from '../Components/Assistant/AssistantVoice.vue';
 import BotAvatar from '../Components/BotAvatar.vue';
 import IntegratedConversation from '../Components/IntegratedConversation.vue';
 import PeekPane from '../Components/peek/PeekPane.vue';
+import PhoneBackButton from '../Components/Phone/PhoneBackButton.vue';
+import { useSidebar } from '../Components/Sidebar/sidebarContext';
 import { CHIP, CHIP_ICON, CHIP_LABEL } from '../Components/session-context/rowAction';
 import SecretsChip from '../Components/session-context/SecretsChip.vue';
 import { Button } from '../Components/ui/button';
@@ -116,6 +125,7 @@ import { harnessPresets } from '../lib/serverQuery';
 import type { Peek } from '../lib/peek';
 import { phoneLayout } from '../lib/phoneLayout';
 import { hasSecrets } from '../lib/secrets';
+import { nextWaiting } from '../lib/sidebarTree';
 
 const route = useRoute();
 const router = useRouter();
@@ -234,6 +244,17 @@ async function restart(fresh: boolean): Promise<void> {
 function openHelper(): void {
   const current = row.value;
   if (current?.waitingHelper && current.waitingHelperProjectId) void router.push({ name: 'agent', params: { projectId: current.waitingHelperProjectId, sessionId: current.waitingHelper.id } });
+}
+
+// A phone opens the bot over its list, as it does an agent: Back returns to
+// the list it came from, or to the list in its place, showing the next agent
+// waiting on you.
+const sidebar = useSidebar();
+const waiting = computed(() => nextWaiting(sidebar.tabs.value, null));
+function back(): void {
+  const list = router.resolve({ name: 'project', params: { projectId: route.params.projectId } });
+  if (router.options.history.state.back === list.fullPath) router.back();
+  else void router.replace(list);
 }
 
 function openSettings(): void {
