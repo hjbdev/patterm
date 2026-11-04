@@ -817,6 +817,10 @@ export interface ConversationStreamEvent {
   message?: ConversationStreamMessage | undefined;
   id?: string | undefined;
   delta?: string | undefined;
+  // An append for a row the renderer does not have yet, such as one a
+  // snapshot taken mid-stream left out, creates it with this kind and parent.
+  messageKind?: 'text' | 'reasoning' | undefined;
+  parentId?: string | undefined;
   status?: IntegratedDeliveryStatus | undefined;
   detail?: string | undefined;
 }
@@ -838,7 +842,12 @@ export function applyConversationStreamEvent(messages: TranscriptMessage[], even
   if ((event.kind === 'append' || event.kind === 'error') && event.id) {
     const delta = stripAnsi(event.delta ?? '');
     const index = messages.findIndex((message) => message.id === event.id);
-    if (index < 0) return [...messages, { id: event.id, role: 'assistant', kind: 'text', text: delta }];
+    if (index < 0) {
+      return [...messages, {
+        id: event.id, role: 'assistant', kind: event.kind === 'append' ? event.messageKind ?? 'text' : 'text', text: delta,
+        ...(event.kind === 'append' && event.parentId ? { parentId: event.parentId } : {})
+      }];
+    }
     const copy = [...messages];
     const current = copy[index]!;
     const text = `${current.text}${delta}`;

@@ -24,6 +24,7 @@ import { StopProcessAction } from '../app/Actions/StopProcessAction';
 import { CloseProcessAction } from '../app/Actions/CloseProcessAction';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { TranscriptImageStore } from '../app/Services/TranscriptImageStore';
+import { applyConversationStreamEvent, type TranscriptMessage } from '../app/Services/TranscriptProjection';
 import { normaliseMessages, normaliseTranscriptAttachments } from '../resources/js/lib/integratedConversation';
 
 // Patterm's launcher gives the running app's service its MCP source; every
@@ -720,6 +721,11 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
         ], cursor: {} }));
         return;
       }
+      if (request.method === 'GET' && request.url?.startsWith('/api/session/ses_live_child/message?')) {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ data: daemonState.childRows ?? [], cursor: {} }));
+        return;
+      }
       if (request.method === 'GET' && (request.url === `/api/session/${first}/permission` || request.url === `/api/session/${first}/form`)) {
         response.writeHead(200, { 'content-type': 'application/json' });
         response.end(JSON.stringify({ data: request.url.endsWith('/permission') ? daemonState.permissions : [] }));
@@ -901,6 +907,34 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const childText = [...childEvents].reverse().find((event) => event.kind === 'replace' && event.message?.text === 'child text')?.message;
     assert.ok(childText?.createdAt && childText.completedAt, 'without an envelope time the host clock stamps live rows');
     assert.ok(!childEvents.some((event) => event.kind === 'status'), 'a subagent going idle does not settle the parent');
+
+    // A snapshot read while the subagent runs keeps its rows under the tool
+    // row, though the stored running state does not name the child session.
+    // Child deltas after it carry their parent and kind, so a renderer that
+    // never saw the row's start nests them instead of showing parent prose.
+    assert.equal(subRow, 'msg_v2-3');
+    daemonState.rows = [
+      { id: 'msg_v2', type: 'assistant', content: [{ type: 'reasoning', text: 'Think more' }, { type: 'text', text: 'Hi there' }, { type: 'tool', id: 'call_1', name: 'shell', state: { status: 'completed', input: { command: 'ls' }, content: [] } }, { type: 'tool', id: 'call_sub', name: 'subagent', state: { status: 'running', input: { description: 'Explore' }, metadata: {}, content: [] } }], time: { created: 2 } },
+      { id: 'msg_seed', type: 'assistant', content: [{ type: 'text', text: 'Hello' }], time: { created: 1 } }
+    ];
+    daemonState.childRows = [{ id: 'msg_child', type: 'assistant', content: [{ type: 'text', text: 'child text' }], time: { created: 3 } }];
+    const running = await streamService.conversation('process_0') as { messages: { data: Array<{ id: string; parentId?: string }> } };
+    assert.deepEqual(running.messages.data.filter((row) => row.parentId).map((row) => [row.id, row.parentId]), [['msg_child', subRow]], 'a running subagent known from the stream keeps its rows in the snapshot');
+    const afterRunning = streamed.length;
+    daemonState.emit('session.reasoning.started', { sessionID: 'ses_live_child', assistantMessageID: 'msg_child2', ordinal: 0 });
+    daemonState.emit('session.reasoning.delta', { sessionID: 'ses_live_child', assistantMessageID: 'msg_child2', ordinal: 0, delta: 'Child thinks' });
+    daemonState.emit('session.text.delta', { sessionID: 'ses_live_child', assistantMessageID: 'msg_child2', ordinal: 0, delta: 'Child says' });
+    await waitFor(() => streamed.slice(afterRunning).some((event) => event.kind === 'append' && event.delta === 'Child says'));
+    const childDeltas = streamed.slice(afterRunning).filter((event) => event.kind === 'append');
+    assert.deepEqual(childDeltas.map((event) => [event.id, event.messageKind, event.parentId]), [['msg_child2-0', 'reasoning', subRow], ['msg_child2-1', 'text', subRow]], 'child deltas name their parent row and kind');
+    let missedStart: TranscriptMessage[] = [{ id: subRow, role: 'assistant', kind: 'tool', text: '' }];
+    for (const event of childDeltas) missedStart = applyConversationStreamEvent(missedStart, event);
+    assert.deepEqual(missedStart.slice(1).map((row) => [row.id, row.kind, row.parentId, row.text]), [['msg_child2-0', 'reasoning', subRow, 'Child thinks'], ['msg_child2-1', 'text', subRow, 'Child says']], 'deltas for unseen child rows never become top-level prose');
+    daemonState.emit('session.reasoning.ended', { sessionID: 'ses_live_child', assistantMessageID: 'msg_child2', ordinal: 0, text: 'Child thinks' });
+    daemonState.emit('session.text.ended', { sessionID: 'ses_live_child', assistantMessageID: 'msg_child2', ordinal: 0, text: 'Child says' });
+    await waitFor(() => streamed.slice(afterRunning).some((event) => event.kind === 'replace' && event.message?.id === 'msg_child2-1'));
+    daemonState.rows = null;
+    daemonState.childRows = null;
 
     // Dropping the daemon connection reconnects on its own and hands the
     // renderer a fresh snapshot boundary.
@@ -1456,6 +1490,8 @@ interface FakeDaemonState {
   emit: (type: string, data: unknown, created?: number) => void; write: (raw: string) => void;
   // Each connection opens with a fixed burst of events unless turned off.
   burst: boolean; active: Record<string, unknown>; rows: unknown[] | null; permissions: unknown[]; shells: unknown[];
+  // Stored rows of the live subagent session.
+  childRows?: unknown[] | null;
 }
 
 function checkHistory(directory: string): void {

@@ -109,6 +109,9 @@ export interface IntegratedConversationEvent {
   message?: IntegratedConversationMessage | undefined;
   id?: string | undefined;
   delta?: string | undefined;
+  // Mirrors ConversationStreamEvent: an append that may create its row.
+  messageKind?: 'text' | 'reasoning' | undefined;
+  parentId?: string | undefined;
   status?: IntegratedDeliveryStatus | undefined;
   detail?: string | undefined;
 }
