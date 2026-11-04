@@ -3,44 +3,64 @@
     <PopoverTrigger as-child>
       <slot />
     </PopoverTrigger>
-    <PopoverContent align="end" class="w-80 max-w-[calc(100vw-2rem)] p-3">
-      <form ref="form" class="space-y-2" autocomplete="off" @submit.prevent="save">
-        <p v-if="secret?.purpose" class="text-xs leading-5 text-muted-foreground">{{ secret.purpose }}</p>
-        <div class="flex gap-0.5 rounded-md bg-muted/50 p-0.5" role="radiogroup" aria-label="Secret type">
-          <button v-for="option in KINDS" :key="option.value" type="button" role="radio" :aria-checked="kind === option.value"
-            class="flex h-6 flex-1 items-center justify-center rounded text-xs outline-none transition-colors focus-visible:ring-1 focus-visible:ring-ring"
-            :class="kind === option.value ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'"
-            @click="setKind(option.value)">{{ option.label }}</button>
+    <PopoverContent align="end" class="max-h-[var(--reka-popover-content-available-height)] w-[22rem] max-w-[calc(100vw-2rem)] overflow-y-auto p-3.5">
+      <form ref="form" class="space-y-3" autocomplete="off" @submit.prevent="save">
+        <div v-if="secret" class="flex items-center gap-2">
+          <span class="min-w-0 truncate font-mono text-[13px] font-semibold">{{ secret.name }}</span>
+          <span v-if="secret.status === 'requested'" class="shrink-0 rounded-full bg-warning/15 px-1.5 text-[10.5px] leading-4 text-warning">Needs you</span>
         </div>
+        <p v-if="secret?.purpose" class="rounded-md border border-warning/20 bg-warning/[0.06] px-2.5 py-2 text-xs leading-5">{{ secret.purpose }}</p>
         <Input v-if="!secret" v-model="name" aria-label="Name" placeholder="Name, such as stripe_test" pattern="[a-z][a-z0-9_]{0,63}" required class="h-8 font-mono text-[13px]" />
-        <template v-if="kind === 'login'">
-          <Input v-model="username" aria-label="Username" :placeholder="keeping ? 'Username (unchanged)' : 'Username'" autocomplete="off" class="h-8 text-[13px]" />
-          <Input v-model="password" type="password" aria-label="Password" :placeholder="keeping ? 'Password (unchanged)' : 'Password'" autocomplete="off" data-1p-ignore data-lpignore="true" class="h-8 text-[13px]" />
-        </template>
-        <Input v-else v-model="value" type="password" aria-label="Secret value" :placeholder="keeping ? 'Value (unchanged)' : 'Value'" autocomplete="off" data-1p-ignore data-lpignore="true" class="h-8 font-mono text-[13px]" />
-        <label v-if="entered" class="flex items-center gap-2 text-xs text-muted-foreground">Lasts
-          <select v-model.number="lifetimeDays" aria-label="How long it lasts" class="h-7 rounded-md border border-input bg-transparent px-1.5 text-xs text-foreground">
-            <option v-for="option in LIFETIMES" :key="option.days" :value="option.days">{{ option.label }}</option>
-          </select>
-        </label>
-        <Input v-model="hosts" aria-label="Allowed hosts" :placeholder="kind === 'login' ? 'Sites, such as github.com' : 'Hosts, such as api.stripe.com'" class="h-8 text-[13px]" />
-        <fieldset class="flex flex-wrap gap-x-4 gap-y-1.5 pt-0.5">
-          <legend class="sr-only">How the agent may use it</legend>
-          <label v-for="use in availableUses" :key="use" class="flex items-center gap-1.5 text-xs" :title="USE_HINTS[use]">
-            <Checkbox :model-value="uses.includes(use)" @update:model-value="toggle(use, Boolean($event))" />{{ USE_LABELS[use] }}
-          </label>
-        </fieldset>
-        <div v-if="uses.includes('proxy')" class="flex gap-1.5">
-          <select v-model="injectionIn" aria-label="Send the key in" class="h-8 rounded-md border border-input bg-transparent px-1.5 text-xs">
-            <option value="header">Header</option>
-            <option value="query">Query</option>
-          </select>
-          <Input v-model="injectionName" aria-label="Header or parameter name" placeholder="Authorization" class="h-8 min-w-0 flex-1 text-[13px]" />
-          <Input v-model="injectionPrefix" aria-label="Value prefix" placeholder="Prefix" class="h-8 w-20 text-[13px]" />
+        <div class="flex gap-1.5">
+          <div class="flex h-8 w-[8.5rem] shrink-0 gap-0.5 rounded-md bg-muted/50 p-0.5" role="radiogroup" aria-label="Secret type">
+            <button v-for="option in KINDS" :key="option.value" type="button" role="radio" :aria-checked="kind === option.value"
+              class="flex flex-1 items-center justify-center rounded text-xs outline-none transition-colors focus-visible:ring-1 focus-visible:ring-ring"
+              :class="kind === option.value ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'"
+              @click="setKind(option.value)">{{ option.label }}</button>
+          </div>
+          <Input v-if="kind === 'api_key'" v-model="value" type="password" aria-label="Secret value" :placeholder="keeping ? 'Unchanged' : 'Paste the key'" autocomplete="off" data-1p-ignore data-lpignore="true" class="h-8 min-w-0 flex-1 font-mono text-[13px]" />
+          <Input v-else v-model="username" aria-label="Username" :placeholder="keeping ? 'Username (unchanged)' : 'Username'" autocomplete="off" class="h-8 min-w-0 flex-1 text-[13px]" />
         </div>
-        <p class="text-[11px] leading-4 text-muted-foreground/70">{{ hint }}</p>
+        <Input v-if="kind === 'login'" v-model="password" type="password" aria-label="Password" :placeholder="keeping ? 'Password (unchanged)' : 'Password'" autocomplete="off" data-1p-ignore data-lpignore="true" class="h-8 text-[13px]" />
+        <label class="block space-y-1.5">
+          <span :class="LABEL">{{ kind === 'login' ? 'Sites' : 'Hosts' }}</span>
+          <Input v-model="hosts" :placeholder="kind === 'login' ? 'such as github.com' : 'such as api.stripe.com'" class="h-8 text-[13px]" />
+        </label>
+        <fieldset class="space-y-1.5">
+          <legend :class="[LABEL, 'mb-1.5']">The agent can use it</legend>
+          <div v-for="use in availableUses" :key="use" class="rounded-md border transition-colors"
+            :class="uses.includes(use) ? 'border-white/25 bg-muted/50' : 'border-border hover:bg-muted/30'">
+            <label class="flex cursor-pointer items-start gap-2.5 px-2.5 py-2">
+              <Checkbox class="mt-0.5" :model-value="uses.includes(use)" @update:model-value="toggle(use, Boolean($event))" />
+              <span class="min-w-0 flex-1">
+                <span class="flex items-center gap-2 text-[12.5px] font-medium">{{ USES[use].title }}
+                  <span class="ml-auto rounded-full px-1.5 text-[10.5px] font-normal leading-4" :class="USES[use].safe ? 'bg-success/15 text-success' : 'bg-warning/15 text-warning'">{{ USES[use].tag }}</span>
+                </span>
+                <span class="mt-0.5 block text-[11.5px] leading-4 text-muted-foreground">{{ USES[use].detail }}</span>
+              </span>
+            </label>
+            <div v-if="use === 'proxy' && uses.includes('proxy')" class="flex gap-1.5 px-2.5 pb-2.5">
+              <select v-model="injectionIn" aria-label="Send the key in" class="h-8 rounded-md border border-input bg-transparent px-1.5 text-xs">
+                <option value="header">Header</option>
+                <option value="query">Query</option>
+              </select>
+              <Input v-model="injectionName" aria-label="Header or parameter name" placeholder="Authorization" class="h-8 min-w-0 flex-1 text-[13px]" />
+              <Input v-model="injectionPrefix" aria-label="Value prefix" placeholder="Prefix" class="h-8 w-20 text-[13px]" />
+            </div>
+          </div>
+        </fieldset>
+        <div v-if="entered" class="space-y-1.5" role="radiogroup" aria-label="How long it lasts">
+          <span :class="LABEL">Lasts</span>
+          <div class="flex gap-1">
+            <button v-for="option in LIFETIMES" :key="option.days" type="button" role="radio" :aria-checked="lifetimeDays === option.days"
+              class="h-6 flex-1 whitespace-nowrap rounded-full border px-1 text-xs outline-none transition-colors focus-visible:ring-1 focus-visible:ring-ring"
+              :class="lifetimeDays === option.days ? 'border-transparent bg-foreground text-background' : 'border-border text-muted-foreground hover:text-foreground'"
+              @click="lifetimeDays = option.days">{{ option.label }}</button>
+          </div>
+        </div>
+        <p v-if="hint" class="text-[11px] leading-4 text-muted-foreground/70">{{ hint }}</p>
         <p v-if="error" role="alert" class="text-xs text-destructive">{{ error }}</p>
-        <div class="flex items-center gap-1 pt-1">
+        <div class="flex items-center gap-1 pt-0.5">
           <Button v-if="secret" type="button" variant="ghost" size="sm" class="h-7 px-2.5 text-xs text-muted-foreground" :disabled="busy" @click="remove">{{ secret.status === 'requested' ? 'Decline' : 'Forget' }}</Button>
           <span class="flex-1" />
           <Button type="button" variant="ghost" size="sm" class="h-7 px-2.5 text-xs" @click="open = false">Cancel</Button>
@@ -53,7 +73,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
-import { SECRET_LIFETIMES, USE_LABELS, type SecretDraft, type SecretKind, type SecretUse, type SessionSecret } from '../../lib/secrets';
+import { SECRET_LIFETIMES, type SecretDraft, type SecretKind, type SecretUse, type SessionSecret } from '../../lib/secrets';
 import { Button } from '../ui/button';
 import { Checkbox } from '../ui/checkbox';
 import { Input } from '../ui/input';
@@ -61,10 +81,12 @@ import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
 const LIFETIMES = SECRET_LIFETIMES;
 const KINDS = [{ value: 'api_key', label: 'API key' }, { value: 'login', label: 'Login' }] as const;
-const USE_HINTS: Record<SecretUse, string> = {
-  proxy: 'Patterm adds the key to the agent\'s requests to these hosts. The agent never sees it.',
-  env: 'The agent can pass it to commands it runs with secret_run, so it can read it.',
-  browser: 'Patterm types it into pages on these sites in the agent\'s browser.'
+const LABEL = 'block text-[11.5px] font-medium text-muted-foreground';
+// What each use risks matters most here, so each says it outright.
+const USES: Record<SecretUse, { title: string; tag: string; safe: boolean; detail: string }> = {
+  proxy: { title: 'Through the proxy', tag: 'Hidden', safe: true, detail: 'Patterm adds it to requests to these hosts.' },
+  env: { title: 'In commands', tag: 'Readable', safe: false, detail: 'Commands get it, so the agent can read it.' },
+  browser: { title: 'In the browser', tag: 'Page-visible', safe: false, detail: 'Typed into these sites; pages can read it.' }
 };
 
 const props = withDefaults(defineProps<{ secret?: SessionSecret | null | undefined; busy?: boolean | undefined; keyringProtected?: boolean | undefined }>(), { secret: null, busy: false, keyringProtected: true });
@@ -91,14 +113,10 @@ const keeping = computed(() => props.secret?.status === 'ready' && props.secret.
 const availableUses = computed<SecretUse[]>(() => kind.value === 'login' ? ['browser', 'env'] : ['proxy', 'env', 'browser']);
 const entered = computed(() => kind.value === 'login' ? Boolean(password.value) : Boolean(value.value));
 const canSave = computed(() => Boolean(name.value.trim()) && uses.value.length > 0 && (entered.value || keeping.value));
-const hint = computed(() => {
-  const parts = !uses.value.length ? ['Choose at least one use.']
-    : uses.value.includes('env') ? ['Commands can read the value, so the agent could see it.']
-    : uses.value.includes('browser') ? ['Once filled, the page and the agent\'s browser scripts can read it.']
-    : ['The agent never sees the value.'];
-  if (!props.keyringProtected) parts.push('Stored encrypted with a key file on this machine, not a keyring.');
-  return parts.join(' ');
-});
+const hint = computed(() => [
+  ...(!uses.value.length ? ['Choose at least one use.'] : []),
+  ...(!props.keyringProtected ? ['Stored encrypted with a key file on this machine, not a keyring.'] : [])
+].join(' '));
 
 // Typed values never outlive the popover.
 watch(open, (value) => {

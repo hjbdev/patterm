@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The secret form is clearer. Each way the agent can use a secret is a card
+  that says whether the agent can see the value, and the proxy's header
+  settings sit inside the proxy card. Fields have labels, a request shows
+  its name and purpose at the top, and the form scrolls instead of running
+  off a short window.
 - The installed desktop app draws its top bar in the window's title bar,
   beside the browser's window controls, instead of under a separate browser
   title bar. Collapsing the overlay with Chrome's chevron restores the usual
