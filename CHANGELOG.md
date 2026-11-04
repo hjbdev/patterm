@@ -43,6 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An OpenCode subagent's streaming reasoning and text stay nested under its Task row when the transcript refreshes mid-run, instead of appearing as the parent's prose.
+
 - Bots receive their own agents’ notifications regardless of user notification settings. Retried failures reach the parent again without duplicate-event storms, and rejected deliveries wait in the bot’s inbox.
 
 - A bot's page has a Back button on a phone, as an agent's does, and slides

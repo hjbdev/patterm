@@ -802,8 +802,12 @@ export class OpenCodeServerService {
     emit: (event: Omit<IntegratedConversationEvent, 'processId' | 'revision'>) => void,
     at: string
   ): void {
+    // Appends carry the parent too: a snapshot taken mid-run may not hold the
+    // row yet, and the renderer must not create it as top-level prose.
     const nested = (event: Omit<IntegratedConversationEvent, 'processId' | 'revision'>): void => {
-      emit(event.kind === 'replace' && event.message ? { ...event, message: { ...event.message, parentId } } : event);
+      if (event.kind === 'replace' && event.message) emit({ ...event, message: { ...event.message, parentId } });
+      else if (event.kind === 'append') emit({ ...event, parentId });
+      else emit(event);
     };
     const projection = this.projection(childSession);
     if (type.startsWith('session.text.') || type.startsWith('session.reasoning.')) this.applyFamilyEvent(projection, data, type, nested, at);
@@ -864,6 +868,12 @@ export class OpenCodeServerService {
   // window, tagged with that tool's row so nesting survives a reload.
   private async childMessages(runtime: { executable: string; cwd: string; resumeId: string }, rows: unknown[]): Promise<unknown[]> {
     const children = new Map<string, string>();
+    // A running subagent tool's stored state can lack the session it started,
+    // which only its live progress named. Those children stay under their row.
+    const known = new Map<string, string>();
+    for (const [child, parentId] of this.childRows) {
+      if (this.sessionParents.get(child) === runtime.resumeId) known.set(parentId, child);
+    }
     // Rows arrive newest first; walk them oldest first so the newest
     // subagents are the ones kept.
     for (const raw of [...rows].reverse()) {
@@ -872,8 +882,9 @@ export class OpenCodeServerService {
       for (const [index, part] of message.content.entries()) {
         const block = record(part);
         if (block.type !== 'tool') continue;
-        const child = subagentSession(block.name, record(block.state).metadata, runtime.resumeId);
-        if (child) children.set(child, `${message.id}-${index}`);
+        const rowId = `${message.id}-${index}`;
+        const child = subagentSession(block.name, record(block.state).metadata, runtime.resumeId) ?? known.get(rowId);
+        if (child) children.set(child, rowId);
       }
     }
     const recent = [...children].slice(-OPENCODE_CHILD_SESSIONS);
@@ -1057,7 +1068,7 @@ export class OpenCodeServerService {
       const delta = typeof data.delta === 'string' ? data.delta : '';
       if (!delta) return;
       row.text += delta;
-      emit({ kind: 'append', id: row.rowId, delta });
+      emit({ kind: 'append', id: row.rowId, delta, messageKind: family });
       return;
     }
     if (type.endsWith('.ended')) {
@@ -1188,7 +1199,7 @@ export class OpenCodeServerService {
     }
     if (field !== 'text') return;
     row.text += delta;
-    emit({ kind: 'append', id: row.rowId, delta });
+    emit({ kind: 'append', id: row.rowId, delta, messageKind: row.kind });
   }
 
   private legacyRow(
