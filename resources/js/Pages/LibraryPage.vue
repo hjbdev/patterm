@@ -8,21 +8,14 @@
       <LibraryRows />
       <!-- On a desktop these sit behind the bar's ⋯. -->
       <template v-if="phoneLayout">
-        <div class="h-5" aria-hidden="true" />
         <RouterLink :to="{ name: 'routines' }" :class="ROW">
           <CalendarClock :class="ICON" />
-          <span class="min-w-0 flex-1">
-            <span class="block truncate">Scheduled</span>
-            <span v-if="nextRoutine" :class="DETAIL">{{ nextRoutine }}</span>
-          </span>
+          <span class="min-w-0 flex-1 truncate">Scheduled</span>
           <span v-if="routineCount" :class="COUNT">{{ routineCount }}</span>
         </RouterLink>
         <RouterLink :to="{ name: 'usage' }" :class="ROW">
           <Gauge :class="ICON" />
-          <span class="min-w-0 flex-1">
-            <span class="block truncate">Usage</span>
-            <span :class="DETAIL">Limits and spend by harness</span>
-          </span>
+          <span class="min-w-0 flex-1 truncate">Usage</span>
         </RouterLink>
         <!-- A phone's bar has no bell or ⋯, so its notifications live here. -->
         <button type="button" :class="ROW" @click="notificationsOpen = true">
@@ -54,7 +47,7 @@ import NotificationTray from '../Components/NotificationTray.vue';
 import SidebarViewOptions from '../Components/Sidebar/SidebarViewOptions.vue';
 import { totalUnread } from '../Composables/useNotifications';
 import { phoneLayout } from '../lib/phoneLayout';
-import { listRoutines, nextRunLabel, type RoutineRecord } from '../lib/routines';
+import { listRoutines, type RoutineRecord } from '../lib/routines';
 import { useUpdates } from '../lib/updates';
 
 const ROW = 'flex min-h-12 w-full items-center gap-3 rounded-lg px-3 py-1.5 text-left text-[15px] transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring';
@@ -62,15 +55,10 @@ const ICON = 'h-[18px] w-[18px] shrink-0 text-muted-foreground';
 const DETAIL = 'block truncate text-[13px] text-muted-foreground';
 const COUNT = 'shrink-0 text-sm tabular-nums text-muted-foreground';
 
-// The next routine to run, of those switched on.
+// How many routines are switched on.
 const routines = ref<RoutineRecord[]>([]);
 listRoutines().then((list) => { routines.value = list; }, () => undefined);
 const routineCount = computed(() => routines.value.filter((routine) => routine.enabled).length);
-const nextRoutine = computed(() => {
-  const next = routines.value.filter((routine) => routine.enabled && routine.next_run_at)
-    .sort((a, b) => Date.parse(a.next_run_at!) - Date.parse(b.next_run_at!))[0];
-  return next ? `${next.name} · ${nextRunLabel(next, Date.now())}` : null;
-});
 
 const notificationsOpen = ref(false);
 const unread = computed(() => totalUnread());
