@@ -1,5 +1,5 @@
 <template>
-  <div ref="strip" :class="cn('flex min-w-max items-center', props.class)">
+  <div ref="strip" data-no-drag :class="cn('flex min-w-max items-center', props.class)">
     <TransitionGroup name="strip-tab" tag="div" class="flex min-w-max items-center gap-1">
       <div
         v-for="(tab, index) in tabs"

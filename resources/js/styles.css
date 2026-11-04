@@ -72,7 +72,9 @@
     margin-left: env(titlebar-area-x, 0);
     width: env(titlebar-area-width, 100%);
   }
-  [data-titlebar] :is(a, button, input, select, textarea, label, [role], [tabindex], .strip-tab),
+  /* Tooltip triggers carry data-state. The tab strip covers its gaps, so the
+     wheel scrolls it there; the space after it stays draggable. */
+  [data-titlebar] :is(a, button, input, select, textarea, label, [role], [tabindex], [data-state], [data-no-drag]),
   [data-reka-popper-content-wrapper],
   [role="dialog"] {
     -webkit-app-region: no-drag;
