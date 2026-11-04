@@ -50,6 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Sorted by recent activity, sidebar agents slide to their new places, as
+  they do when dragged, instead of jumping there.
 - Restarting an OpenCode agent whose session moved to another directory
   (`session_move`) resumes it where it is now, linked to the registered
   worktree there. If that directory is gone or outside the project, the restart

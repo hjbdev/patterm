@@ -196,11 +196,20 @@ const entries = computed<Entry[]>(() => groups.value.flatMap((group, groupIndex)
 // except over pinned rows.
 const rowProject = (tab: StripTab) => sidebar.allAgents.value && (!byProject.value || tab.pinned) ? sidebar.projectOf(tab) : null;
 
-// When rows change group (a status settling, or pinning), measure them before
-// the list redraws and slide them from there. Reordering within a group
-// animates itself.
+// Sorted by recent activity, only pinned and snoozed rows keep an order you
+// can drag.
+const draggable = (group: Group) => !expansion.view.value.sortByActivity || group.id === 'pinned' || group.id === 'snoozed';
+
+// When rows change group (a status settling, or pinning), or recent activity
+// reorders them, measure them before the list redraws and slide them from
+// there. Drag and Alt+arrow moves slide themselves from where the row was let
+// go, so their order is left out here. The sort mode is part of the key, so
+// switching it slides rows even when both orders happen to give the same key.
 const list = ref<HTMLElement | null>(null);
-watch(() => groups.value.flatMap((group) => group.tabs.map((tab) => `${tab.key}:${group.id}`)).sort().join(), () => {
+watch(() => `${expansion.view.value.sortByActivity}|${groups.value.flatMap((group) => {
+  const keys = group.tabs.map((tab) => `${tab.key}:${group.id}`);
+  return draggable(group) ? keys.sort() : keys;
+}).join()}`, () => {
   if (!list.value) return;
   const before = rowTops(list.value.querySelectorAll<HTMLElement>('[data-sidebar-slide]'));
   void nextTick(() => slideFrom(before));
@@ -245,9 +254,8 @@ function subtitle(tab: AgentTab): string | null {
 
 const { onKeydown } = useSidebarKeys({ toggle: setExpanded, move: sidebar.moveTab });
 const { setElement, draggingKey, dropLine, onPointerDown, consumeClick } = useSidebarReorder(
-  // Sorted by recent activity, only pinned and snoozed rows keep an order to drag.
   () => [
-    ...groups.value.filter((group) => !expansion.view.value.sortByActivity || group.id === 'pinned' || group.id === 'snoozed')
+    ...groups.value.filter(draggable)
       .flatMap((group) => group.tabs.map((tab) => ({ key: tab.key, group: group.id }))),
     ...processTabs.value.map((tab) => ({ key: tab.key, group: 'processes' }))
   ],
