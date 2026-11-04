@@ -1589,6 +1589,22 @@ export class OpenCodeServerService {
     return providerID && id ? { model: `${providerID}/${id}`, reasoning: stringValue(model.variant) ?? null } : {};
   }
 
+  // The directory the native session records. session_move changes it, so it
+  // can differ from the directory Patterm launched in. Read for ended agents
+  // too, which restart from here.
+  async sessionDirectory(processId: string): Promise<string | null> {
+    const row = this.database.connection.prepare(`
+      select sessions.resume_id, processes.cwd, processes.argv from sessions
+      join processes on processes.id = sessions.process_id
+      where sessions.process_id = ? and sessions.harness = 'opencode' and sessions.resume_id is not null
+      order by sessions.started_at desc limit 1
+    `).get(processId) as { resume_id: string; cwd: string | null; argv: string | null } | undefined;
+    const argv: unknown = row?.argv ? JSON.parse(row.argv) : null;
+    if (!row?.cwd || !Array.isArray(argv) || typeof argv[0] !== 'string') return null;
+    const session = record(await this.api(argv[0], row.cwd, 'GET', `/api/session/${encodeURIComponent(row.resume_id)}`));
+    return stringValue(record(record(session.data).location).directory) ?? null;
+  }
+
   // The TUI's built-in commands are session API calls, not native commands.
   // Everything else is a custom command the daemon runs.
   async command(processId: string, name: string, text: string): Promise<unknown> {

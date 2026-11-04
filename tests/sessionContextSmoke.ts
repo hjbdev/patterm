@@ -57,6 +57,12 @@ async function main(): Promise<void> {
       project_id: 'p', harness: 'codex', resume_id: 'own-check', resume_status: 'imported', worktree_id: 'wt_a'
     })).session_id;
     assert.deepEqual(db.prepare('select worktree_id from session_worktrees where session_id = ?').all(ownResumed), [{ worktree_id: 'wt_b' }], 'a resumed session does not link its own worktree');
+    // A conversation that moved worktrees keeps the one it worked in before as a link.
+    const movedResumed = new RegisterSessionAction(database, timeline).execute(registerSessionInput.parse({
+      project_id: 'p', harness: 'codex', resume_id: 'own-check', resume_status: 'imported', worktree_id: 'wt_b'
+    })).session_id;
+    assert.deepEqual(db.prepare('select worktree_id from session_worktrees where session_id = ? order by created_at, rowid').all(movedResumed), [{ worktree_id: 'wt_a' }],
+      'the previous own worktree becomes a link, and the new own worktree is not one');
     const imported = register('p', 'claude', 'unknown', true);
     assert.deepEqual(db.prepare('select resumed_from_session_id from sessions where id = ?').get(imported), { resumed_from_session_id: null });
     assert.throws(() => new RegisterSessionAction(database, timeline).execute(registerSessionInput.parse({

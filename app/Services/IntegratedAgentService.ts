@@ -123,6 +123,8 @@ export interface IntegratedProviderService {  prepare(input: IntegratedLaunchInp
   lastActivity?(processId: string): Promise<number | null>;
   // The native session's model and reasoning, read together for the same reason.
   nativeSettings?(processId: string): Promise<LiveSettings>;
+  // The directory the native session records now, where it can move itself.
+  sessionDirectory?(processId: string): Promise<string | null>;
   // Native evidence that a previously ambiguous prompt was admitted.
   reconcile?(processId: string, messageId: string): Promise<IntegratedDeliveryState>;
   // Event-driven conversation updates. Returned function releases the listener.
@@ -1022,6 +1024,12 @@ export class IntegratedAgentService {
       ...(reasoning ? { reasoning: reasoning.value } : {}),
       ...(tier ? { service_tier: tier.value } : {})
     };
+  }
+
+  // Null when the harness keeps no directory of its own, so the launch one holds.
+  async sessionDirectory(processId: string): Promise<string | null> {
+    const provider = this.forProcess(processId);
+    return provider.sessionDirectory ? provider.sessionDirectory(processId) : null;
   }
 
   private signal(key: string, signal: CompactionSignal): void {
