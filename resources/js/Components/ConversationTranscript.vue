@@ -69,8 +69,8 @@
                     </div>
                     </div>
                     <div v-if="row.message.delivery?.state === 'queued'" class="flex max-w-[min(82%,64ch)] items-center justify-end gap-2 text-xs text-muted-foreground">
-                      <span role="status">Queued</span>
-                      <button type="button" class="rounded-sm font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50" :disabled="!canCancel" @click="emit('cancel-message', row.message.delivery.messageId)">Cancel</button>
+                      <span role="status" :title="row.message.delivery.steering ? 'Joins the running turn at its next step.' : 'Sent when the running turn ends.'">{{ row.message.delivery.steering ? 'Steering' : 'Queued' }}</span>
+                      <button type="button" class="rounded-sm font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50" title="Take it back to the composer to edit" :disabled="!canCancel" @click="emit('edit-message', row.message.delivery.messageId)">Edit</button>
                     </div>
                     <div v-else-if="row.message.delivery?.state === 'undelivered'" class="flex max-w-[min(82%,64ch)] flex-wrap items-center justify-end gap-x-2 gap-y-1 text-xs text-destructive">
                       <span role="status" class="inline-flex items-center gap-1.5" title="The agent accepted this message, but it left the queue without reaching the agent.">
@@ -215,7 +215,7 @@ import {
 } from '../lib/integratedConversation';
 
 const props = withDefaults(defineProps<{ messages: TranscriptMessage[]; truncated?: boolean; historyUnavailable?: boolean; hasOlder?: boolean; loadingOlder?: boolean; historyError?: string; processId: string; live?: boolean; working?: boolean; autoLoadOlder?: boolean; activeMessageId?: string | null; settling?: boolean; canRetry?: boolean; canCancel?: boolean }>(), { truncated: false, historyUnavailable: false, hasOlder: false, loadingOlder: false, historyError: '', live: false, working: false, autoLoadOlder: false, activeMessageId: null, settling: false, canRetry: false, canCancel: false });
-const emit = defineEmits<{ 'load-older': []; 'retry-message': [messageId: string]; 'resend-message': [messageId: string]; 'cancel-message': [messageId: string] }>();
+const emit = defineEmits<{ 'load-older': []; 'retry-message': [messageId: string]; 'resend-message': [messageId: string]; 'edit-message': [messageId: string]; 'cancel-message': [messageId: string] }>();
 
 // Pages by id, drawn where a reply places [patterm_figure:<id>].
 const figures = computed(() => {

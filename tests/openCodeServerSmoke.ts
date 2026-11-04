@@ -104,7 +104,7 @@ else if (method === 'GET' && route.startsWith('/api/mcp?')) {
     // OpenCode reports a server that failed to start without failing the connect call.
     return {name,status:{status:status === 'connected' && process.env.HELPER_FAILS === name ? 'failed' : status}};
   })}));
-} else if (method === 'POST' && route.endsWith('/interrupt')) {
+} else if (method === 'POST' && route.split('?')[0].endsWith('/interrupt')) {
   if (process.env.FAIL_INTERRUPT) { console.log('HTTP 500 Internal Server Error'); process.exit(1); }
   console.log(JSON.stringify({data:{}}));
 }
@@ -1100,7 +1100,14 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     database.connection.prepare(`update processes set status = 'running', exited_at = null where id = 'process_0'`).run();
     database.connection.prepare(`update sessions set exited_at = null where id = 'session_0'`).run();
     const interruptStop = new IntegratedAgentService(database, { opencode: service });
+    // The user's Stop goes on with steering input, as OpenCode's own clients
+    // do; stopping the process does not.
+    const beforeStops = fs.readFileSync(record, 'utf8').trim().split('\n').length;
+    await interruptStop.interrupt('process_0');
     await interruptStop.stop('process_0');
+    const stopRoutes = fs.readFileSync(record, 'utf8').trim().split('\n').slice(beforeStops).map((line) => JSON.parse(line) as { route: string })
+      .filter((call) => call.route.includes('/interrupt')).map((call) => call.route.split('/interrupt')[1]);
+    assert.deepEqual(stopRoutes, ['?resume=true', ''], 'only the user stop resumes steering');
     const failingInterrupt = openCode(database, { ...env, FAIL_INTERRUPT: '1' });
     const failingStop = new IntegratedAgentService(database, { opencode: failingInterrupt });
     await assert.rejects(failingStop.stop('process_0'), /OpenCode command failed|interrupt/i);

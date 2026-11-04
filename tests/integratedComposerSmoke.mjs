@@ -712,6 +712,16 @@ test('a steer that never reached the agent is flagged in place, not shown as sen
   assert.deepEqual(composer.outgoingTranscript('opencode', [reply, later], []).map((row) => row.id), ['reply', 'later'], 'a dismissed one leaves no sent-looking copy');
 });
 
+test('steering and queued messages are told apart, and an edited one returns to the draft', () => {
+  composer.clearDrafts();
+  const rows = composer.outgoingTranscript('opencode', [], [{ id: 'msg_s', text: 'steer', delivery: 'steer' }, { id: 'msg_q', text: 'later', delivery: 'queue' }]);
+  assert.deepEqual(rows.map((row) => [row.delivery.state, row.delivery.steering ?? false]), [['queued', true], ['queued', false]]);
+  composer.restoreToDraft('opencode', 'steer');
+  assert.equal(composer.draftFor('opencode').text, 'steer', 'an empty draft takes the text');
+  composer.restoreToDraft('opencode', 'again');
+  assert.equal(composer.draftFor('opencode').text, 'steer\n\nagain', 'a draft keeps its text, followed by the edited one');
+});
+
 test('a fresh live window drops rows it no longer has', () => {
   const row = (id) => ({ id, role: 'assistant', kind: 'text', text: id });
   const older = [row('old_1'), row('old_2')];

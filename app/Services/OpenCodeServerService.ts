@@ -223,7 +223,9 @@ export class OpenCodeServerService {
     this.settleMs = options.settleMs ?? OPENCODE_SETTLE_MS;
   }
 
-  async interrupt(processId: string): Promise<void> {
+  // With resume, OpenCode goes on with steering input the stopped turn had
+  // not taken yet; queued prompts stay parked.
+  async interrupt(processId: string, options: { resume?: boolean } = {}): Promise<void> {
     const row = this.database.connection.prepare(`
       select sessions.resume_id, processes.cwd, processes.argv from sessions
       join processes on processes.id = sessions.process_id
@@ -233,7 +235,7 @@ export class OpenCodeServerService {
     if (!row) return;
     const argv: unknown = JSON.parse(row.argv);
     if (!Array.isArray(argv) || typeof argv[0] !== 'string' || !row.cwd) throw new Error('OpenCode session has no executable or directory');
-    await this.api(argv[0], row.cwd, 'POST', `/api/session/${encodeURIComponent(row.resume_id)}/interrupt`);
+    await this.api(argv[0], row.cwd, 'POST', `/api/session/${encodeURIComponent(row.resume_id)}/interrupt${options.resume ? '?resume=true' : ''}`);
   }
 
   // Queued prompts live in the native inbox: steering joins the running turn,

@@ -259,7 +259,7 @@ export function outgoingTranscript(processId: string, messages: TranscriptMessag
       ?? entries.find((entry) => entry.row.id === item.id || entry.payload.messageId === item.id)?.row;
     return {
       ...(row ?? { id: item.id, role: 'user', kind: 'text', text: item.text }),
-      delivery: { state: 'queued', messageId: item.id }
+      delivery: { state: 'queued', messageId: item.id, ...(item.delivery === 'steer' ? { steering: true } : {}) }
     };
   });
   if (!pending.length) return waiting.length ? [...visible, ...waiting] : visible;
@@ -302,6 +302,14 @@ export function discardOutgoingMessage(processId: string, messageId: string): vo
   for (const entry of entries) if (entry.payload.messageId === messageId) for (const url of entry.previewUrls) URL.revokeObjectURL(url);
   if (remaining.length) outgoing.set(processId, remaining);
   else outgoing.delete(processId);
+}
+
+// A queued message taken back to edit returns to the composer, after any
+// draft already there, as OpenCode's own clients do.
+export function restoreToDraft(processId: string, text: string): void {
+  const draft = draftFor(processId);
+  draft.text = draft.text.trim() ? `${draft.text}${draft.text.endsWith('\n') ? '\n' : '\n\n'}${text}` : text;
+  draft.lastAttempt = undefined;
 }
 
 export function failOutgoingMessage(processId: string, messageId: string, error: string): void {

@@ -8,7 +8,7 @@
         <!-- Runs on under the composer's top padding when nothing sits
              between them, so text fades out at the card's edge. -->
         <div class="min-h-0 flex-1" :class="composerAdjoins && '-mb-4'">
-          <ConversationTranscript ref="transcriptRef" :key="processId" :messages="transcriptMessages" :truncated="historyTruncated" :history-unavailable="historyUnavailable" :has-older="Boolean(historyCursor)" :loading-older="loadingOlder" :history-error="historyError" :process-id="processId" :live="streaming" :working="streamStatus === 'working' && !ended" :settling="loadingTranscript" :can-retry="canReply && !submission" :can-cancel="canReply" auto-load-older @load-older="loadOlder" @retry-message="retryMessage" @resend-message="resendMessage" @cancel-message="cancelQueued" />
+          <ConversationTranscript ref="transcriptRef" :key="processId" :messages="transcriptMessages" :truncated="historyTruncated" :history-unavailable="historyUnavailable" :has-older="Boolean(historyCursor)" :loading-older="loadingOlder" :history-error="historyError" :process-id="processId" :live="streaming" :working="streamStatus === 'working' && !ended" :settling="loadingTranscript" :can-retry="canReply && !submission" :can-cancel="canReply" auto-load-older @load-older="loadOlder" @retry-message="retryMessage" @resend-message="resendMessage" @edit-message="editQueued" @cancel-message="cancelQueued" />
         </div>
         <p v-if="displayError" role="alert" class="mx-auto w-full max-w-[50rem] shrink-0 break-words px-4 pb-4 text-sm text-destructive 2xl:max-w-[1000px]">{{ displayError }}</p>
       </div>
@@ -324,7 +324,7 @@ import {
   type IntegratedQuestionRequest,
   type TranscriptMessage
 } from '../lib/integratedConversation';
-import { completeSend, discardOutgoingMessage, beginSubmission, beginOutgoingMessage, outgoingFor, outgoingTranscript, reconcileOutgoingMessages, failOutgoingMessage, markSubmissionUncertain, clearSubmission, isAmbiguousTransportError, submissionFor, payloadHash, type ComposerSendPayload } from '../lib/integratedComposer';
+import { completeSend, discardOutgoingMessage, restoreToDraft, beginSubmission, beginOutgoingMessage, outgoingFor, outgoingTranscript, reconcileOutgoingMessages, failOutgoingMessage, markSubmissionUncertain, clearSubmission, isAmbiguousTransportError, submissionFor, payloadHash, type ComposerSendPayload } from '../lib/integratedComposer';
 import { figureAnswerKey } from '../lib/htmlFigure';
 import { phoneLayout } from '../lib/phoneLayout';
 import { permissionAsk } from '../../../app/Services/IntegratedAsking';
@@ -1079,6 +1079,15 @@ async function updateQueued(item: IntegratedQueuedMessage, action: 'steer' | 'ca
     if (token === generation) await refresh();
   });
   return updated;
+}
+
+// Taking a queued message back cancels it natively, then puts its text in the
+// composer. Text only: its files stay with the cancelled message.
+async function editQueued(messageId: string): Promise<void> {
+  const processId = props.processId;
+  const item = queue.value.find((queued) => queued.id === messageId);
+  if (!item || isResponding(`queue:${item.id}`)) return;
+  if (await updateQueued(item, 'cancel')) restoreToDraft(processId, item.text);
 }
 
 function cancelQueued(messageId: string): void {

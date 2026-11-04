@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Stopping an OpenCode agent goes on with messages that were steering the stopped turn, as OpenCode's own clients do, instead of leaving them waiting until the next send. Stopping or closing the process still stops outright.
+- A queued message's Cancel is now Edit: it takes the message back from the agent's queue and puts its text in the composer, after any draft there. OpenCode messages joining the running turn are labelled Steering rather than Queued.
 - All bots, including the built-in assistant, strongly prefer task agents for
   substantial implementation, investigation, and review. Simple questions and
   coordination stay with the bot; explicit user instructions and per-bot guidance

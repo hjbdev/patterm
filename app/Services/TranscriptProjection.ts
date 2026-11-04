@@ -61,7 +61,8 @@ export interface TranscriptMessage {
   clientMessageId?: string;
   // `queued`: the harness holds it until the running turn takes it.
   // `undelivered`: the harness accepted it, but it never reached the agent.
-  delivery?: { state: 'sending' | 'queued' | 'accepted' | 'uncertain' | 'failed' | 'undelivered'; messageId: string; error?: string };
+  // A `steering` queued message joins the running turn at its next step.
+  delivery?: { state: 'sending' | 'queued' | 'accepted' | 'uncertain' | 'failed' | 'undelivered'; messageId: string; error?: string; steering?: boolean };
   role: 'user' | 'assistant';
   kind: 'text' | 'tool' | 'reasoning' | 'notice';
   // Notice severity: retries and compaction are info, warnings are warning.
