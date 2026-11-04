@@ -11,7 +11,7 @@ import type { BrowserService } from '../app/Services/Browser/BrowserService';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { SessionContextService } from '../app/Services/SessionContextService';
 import { SecretProxyService } from '../app/Services/Secrets/SecretProxyService';
-import { hostAllowed, normaliseHost, SecretService, type SecretRecord } from '../app/Services/Secrets/SecretService';
+import { hostAllowed, normaliseHost, SECRET_TTL_MS, SecretService, type SecretRecord } from '../app/Services/Secrets/SecretService';
 import { SecretVault } from '../app/Services/Secrets/SecretVault';
 import type { TimelineService } from '../app/Services/TimelineService';
 import { endRun, Masker, maskSet, SecretRunner } from '../app/Services/Secrets/SecretRunner';
@@ -94,7 +94,7 @@ async function serviceChecks(): Promise<void> {
     proxyUrl: (secret, host) => proxy!.url(secret, host),
     changed: () => events.push('changed')
   });
-  let filled: { selector: string; value: string; allowed: (host: string) => boolean } | null = null;
+  let filled: { selector: string; value: () => string; allowed: (host: string) => boolean } | null = null;
   const browsers = { fillSecret: async (_session: string, input: typeof filled & object) => { filled = input; return { target_id: 't', host: 'github.com' }; } } as unknown as BrowserService;
   const runner = new SecretRunner(() => ({ ...process.env, PATTERM_TERMINAL_IDENTITY: 'leak' }));
   const actions = new SecretActions(secrets, browsers, runner);
@@ -263,6 +263,20 @@ async function serviceChecks(): Promise<void> {
     }
     assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }), 'A  logs/.gitignore\n', 'git ignores the written files');
 
+    // A request still uploading when the secret expires never reaches the API.
+    const before = seen.length;
+    const deadline = (secrets.get(id).expires_at)!;
+    db.prepare('update session_secrets set expires_at = ? where id = ?').run(new Date(Date.now() + 300).toISOString(), id);
+    const parked = await new Promise<number>((resolve, reject) => {
+      const held = http.request(`${target}parked`, { method: 'POST' }, (reply) => { reply.resume(); resolve(reply.statusCode!); });
+      held.once('error', reject);
+      held.flushHeaders();
+      setTimeout(() => held.end('late body'), 600);
+    });
+    assert.equal(parked, 403);
+    assert.equal(seen.length, before, 'the credential never left after expiry');
+    db.prepare('update session_secrets set expires_at = ? where id = ?').run(deadline, id);
+
     // An exited session's URLs stop working.
     db.prepare('update sessions set exited_at = ? where id = ?').run(now, 'session_a');
     assert.equal((await fetch(target)).status, 403);
@@ -275,10 +289,10 @@ async function serviceChecks(): Promise<void> {
   // Logins fill the browser only on allowed sites.
   await actions.save({ process_id: 'process_a', secret_id: null, name: 'github_login', kind: 'login', values: { username: 'me', password: 'pa55word!' }, allowed_hosts: ['github.com'], uses: ['browser'] });
   await actions.fill({ secret: 'github_login', selector: '#password' }, agent);
-  assert.equal(filled!.value, 'pa55word!');
+  assert.equal(filled!.value(), 'pa55word!');
   assert.ok(filled!.allowed('github.com') && !filled!.allowed('github.com.evil.io'));
   await actions.fill({ secret: 'github_login', field: 'username', selector: '#login' }, agent);
-  assert.equal(filled!.value, 'me');
+  assert.equal(filled!.value(), 'me');
   await assert.rejects(actions.fill({ secret: 'stripe_test', selector: '#x' }, agent), /did not allow/);
 
   // A resumed conversation keeps its secrets.
@@ -295,6 +309,36 @@ async function serviceChecks(): Promise<void> {
   await actions.remove({ process_id: 'process_b', secret_id: secrets.list('session_b')[0]!.id });
   assert.equal(secrets.list('session_b').length, 2);
   assert.match(messages.at(-1)!, /removed the secret/);
+
+  // A value lasts a day from when it was entered; editing its uses doesn't
+  // extend it.
+  const login = secrets.list('session_b').find((secret) => secret.name === 'github_login')!;
+  const lifetime = Date.parse(login.expires_at!) - Date.parse(login.updated_at);
+  assert.ok(Math.abs(lifetime - SECRET_TTL_MS) < 1000, 'a new value expires in 24 hours');
+  // A fill started in time reads the value only when typing, so a page that
+  // stalls it past expiry gets nothing.
+  await actions.fill({ secret: 'github_login', selector: '#password' }, { identity: 'identity_b' });
+  const lapsed = new Date(Date.now() - 1000).toISOString();
+  db.prepare('update session_secrets set expires_at = ? where id = ?').run(lapsed, login.id);
+  assert.throws(() => filled!.value(), /has expired/);
+  await assert.rejects(actions.save({ process_id: 'process_b', secret_id: login.id, name: 'github_login', kind: 'login', values: null, allowed_hosts: ['github.com'], uses: ['browser'] }), /Enter the secret/, 'an expired value cannot be kept');
+  await assert.rejects(actions.fill({ secret: 'github_login', selector: '#password' }, { identity: 'identity_b' }), /has expired/);
+  await secrets.expire();
+  assert.deepEqual(secrets.list('session_b').map((secret) => secret.name), ['odd_key'], 'the sweep deletes expired secrets');
+  assert.match(messages.at(-1)!, /"github_login" expired/);
+  // Values from before expiry was recorded expire too.
+  db.prepare("update session_secrets set expires_at = null where name = 'odd_key'").run();
+  assert.throws(() => secrets.commandValue('session_b', 'odd_key'), /has expired/);
+  db.prepare("update session_secrets set expires_at = ? where name = 'odd_key'").run(new Date(Date.now() + SECRET_TTL_MS).toISOString());
+  assert.doesNotMatch(messages.at(-1)!, /pa55word/);
+  // Asking again after expiry starts a fresh request.
+  const again = actions.request({ name: 'odd_key', purpose: 'again' }, { identity: 'identity_b' }) as { secret: { status: string } };
+  assert.equal(again.secret.status, 'ready', 'a live secret is not asked for again');
+  db.prepare("update session_secrets set expires_at = ? where name = 'odd_key'").run(lapsed);
+  const renewed = actions.request({ name: 'odd_key', purpose: 'again' }, { identity: 'identity_b' }) as { secret: { status: string } };
+  assert.equal(renewed.secret.status, 'requested');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(messages.some((text) => /"odd_key" expired/.test(text)), 'expiring on request still tells the agent');
 }
 
 function allowlistChecks(): void {

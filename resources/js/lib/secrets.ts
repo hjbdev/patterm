@@ -16,6 +16,7 @@ export interface SessionSecret {
   allowed_hosts: string[];
   uses: SecretUse[];
   injection: SecretInjection | null;
+  expires_at: string | null;
   created_at: string;
 }
 export interface SessionSecrets { secrets: SessionSecret[]; keyring_protected: boolean }

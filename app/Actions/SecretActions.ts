@@ -125,9 +125,11 @@ export class SecretActions {
   async fill(raw: unknown, context: McpCallContext) {
     const input = fillInput.parse(raw);
     const session = this.secrets.liveSession(this.identity(context));
-    const { secret, value } = this.secrets.reveal(session.id, input.secret, 'browser', input.field);
+    // Checked now so a bad call fails fast, and again when the value is typed.
+    const { secret } = this.secrets.reveal(session.id, input.secret, 'browser', input.field);
     const filled = await this.browsers.fillSecret(session.id, {
-      targetId: input.target_id, selector: input.selector, value,
+      targetId: input.target_id, selector: input.selector,
+      value: () => this.secrets.reveal(session.id, input.secret, 'browser', input.field).value,
       allowed: (pageHost) => hostAllowed(secret.allowed_hosts, pageHost)
     });
     return { ok: true, ...filled, message: `Filled ${input.field ?? (secret.kind === 'login' ? 'password' : 'value')} of "${secret.name}" into ${input.selector}.` };
@@ -159,7 +161,7 @@ export class SecretActions {
   private view(secret: ReturnType<SecretService['get']>) {
     return {
       name: secret.name, kind: secret.kind, status: secret.status, purpose: secret.purpose,
-      allowed_hosts: secret.allowed_hosts, uses: secret.uses, usage: this.secrets.usage(secret)
+      allowed_hosts: secret.allowed_hosts, uses: secret.uses, expires_at: secret.expires_at, usage: this.secrets.usage(secret)
     };
   }
 
@@ -180,7 +182,7 @@ export function registerSecretTools(registry: McpToolRegistry, actions: SecretAc
   registry.register(
     {
       name: 'secret_request', namespace: 'secrets', changes: ['secrets'],
-      description: 'Ask the user for a password, API key or token. They enter it in Patterm, never in the conversation, and decide how you may use it. Returns at once; a message arrives when it is ready.',
+      description: 'Ask the user for a password, API key or token. They enter it in Patterm, never in the conversation, and decide how you may use it. It lasts 24 hours. Returns at once; a message arrives when it is ready.',
       usageNotes: SECRET_INSTRUCTIONS,
       inputSchema: {
         type: 'object', additionalProperties: false, required: ['name', 'purpose'],

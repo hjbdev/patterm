@@ -192,7 +192,7 @@ export class BrowserService {
   // Types a secret into a field, as keystrokes, so it never passes through
   // the agent. The page must be on a site the user allowed for the secret,
   // checked in the page itself, not from the tab list.
-  async fillSecret(sessionId: string, input: { targetId?: string | undefined; selector: string; value: string; allowed: (host: string) => boolean }): Promise<{ target_id: string; host: string }> {
+  async fillSecret(sessionId: string, input: { targetId?: string | undefined; selector: string; value: () => string; allowed: (host: string) => boolean }): Promise<{ target_id: string; host: string }> {
     const browser = this.browsers.get(sessionId);
     if (!browser) throw new Error('Your browser is not running. Call browser_open and load the sign-in page first.');
     const targetId = input.targetId ?? browser.activeTargetId ?? [...browser.tabs.keys()].at(-1);
@@ -216,13 +216,16 @@ export class BrowserService {
       if (!input.allowed(page.host)) throw new Error(`The user allowed this secret only on other sites, not ${page.host || 'this page'}`);
       if (!page.secure) throw new Error('Secrets are filled only on https pages');
       if (!page.found) throw new Error(`No text field matches ${input.selector}`);
-      await browser.cdp.send('Input.insertText', { text: input.value }, attached);
+      // Read only now: the page's own scripts can stall the checks above past
+      // the secret's expiry.
+      const value = input.value();
+      await browser.cdp.send('Input.insertText', { text: value }, attached);
       // Compares lengths, so the value never comes back out of the page.
       const typed = await browser.cdp.send<{ result: { value?: number } }>('Runtime.evaluate', {
         expression: `(() => { const element = document.activeElement; return element && 'value' in element ? String(element.value).length : (element?.textContent ?? '').length; })()`,
         returnByValue: true
       }, attached);
-      if (typed.result.value !== input.value.length) throw new Error('The field did not take the secret. Click it in the page first, or ask the user with browser_request_help.');
+      if (typed.result.value !== value.length) throw new Error('The field did not take the secret. Click it in the page first, or ask the user with browser_request_help.');
       return { target_id: targetId, host: page.host };
     } finally {
       await browser.cdp.send('Target.detachFromTarget', { sessionId: attached }).catch(() => {});
