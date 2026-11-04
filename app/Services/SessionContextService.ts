@@ -43,8 +43,9 @@ export class SessionContextService {
     db.prepare(`insert into session_worktrees (session_id, worktree_id, created_at)
       select ?, p.worktree_id, p.started_at from sessions p join worktrees w on w.id = p.worktree_id
       where p.id = ? and w.project_id = ? and p.worktree_id is not (select worktree_id from sessions where id = ?)
-        and (select count(*) from session_worktrees where session_id = p.id) < ?`)
-      .run(sessionId, predecessor.id, projectId, sessionId, SESSION_WORKTREE_LIMIT);
+        and (select count(*) from session_worktrees a where a.session_id = p.id
+          and a.worktree_id is not (select worktree_id from sessions where id = ?)) < ?`)
+      .run(sessionId, predecessor.id, projectId, sessionId, sessionId, SESSION_WORKTREE_LIMIT);
     db.prepare(`insert into session_worktrees (session_id, worktree_id, created_at)
       select ?, a.worktree_id, a.created_at from session_worktrees a join worktrees w on w.id = a.worktree_id
       where a.session_id = ? and w.project_id = ? and a.worktree_id is not (select worktree_id from sessions where id = ?)

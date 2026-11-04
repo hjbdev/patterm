@@ -17,9 +17,14 @@ export interface ProjectWorktree {
 // directory is gone; history keeps them.
 export function projectWorktreeAt(connection: SqliteConnection, projectId: string, directory: string, live = true): ProjectWorktree | null {
   const rows = connection.prepare('select id, worktree_path from worktrees where project_id = ?').all(projectId) as unknown as ProjectWorktree[];
+  const target = realDirectory(directory);
   return rows
-    .filter((row) => pathContains(row.worktree_path, directory) && (!live || isDirectory(row.worktree_path)))
-    .sort((a, b) => b.worktree_path.length - a.worktree_path.length)[0] ?? null;
+    .flatMap((row) => {
+      if (live && !isDirectory(row.worktree_path)) return [];
+      const root = containingRoot(row.worktree_path, directory, target);
+      return root === null ? [] : [{ row, depth: root.length }];
+    })
+    .sort((a, b) => b.depth - a.depth)[0]?.row ?? null;
 }
 
 // The recorded worktree when the directory still lies in it, otherwise the
@@ -28,7 +33,7 @@ export function worktreeForDirectory(connection: SqliteConnection, projectId: st
   const recorded = worktreeId
     ? connection.prepare('select id, worktree_path from worktrees where id = ? and project_id = ?').get(worktreeId, projectId) as ProjectWorktree | undefined
     : undefined;
-  if (recorded && pathContains(recorded.worktree_path, directory) && (!live || isDirectory(recorded.worktree_path))) return recorded;
+  if (recorded && (!live || isDirectory(recorded.worktree_path)) && containingRoot(recorded.worktree_path, directory, realDirectory(directory)) !== null) return recorded;
   return projectWorktreeAt(connection, projectId, directory, live);
 }
 
@@ -43,6 +48,14 @@ export function withinProject(connection: SqliteConnection, projectId: string, d
     const real = root ? realDirectory(root) : null;
     return real !== null && pathContains(real, target);
   });
+}
+
+// The root as compared when it contains the directory, or null. Symlinks
+// resolve when both exist; history of removed directories compares as written.
+function containingRoot(root: string, directory: string, realTarget: string | null): string | null {
+  const realRoot = realTarget ? realDirectory(root) : null;
+  if (realRoot && realTarget) return pathContains(realRoot, realTarget) ? realRoot : null;
+  return pathContains(root, directory) ? root : null;
 }
 
 export function isDirectory(candidate: string): boolean {

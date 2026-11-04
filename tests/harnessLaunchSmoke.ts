@@ -884,6 +884,12 @@ async function main(): Promise<void> {
     located = async () => path.join(tempDir, 'moved', 'nested');
     await assert.rejects(restartMoved(), /did not restart/);
     assert.deepEqual(movedResumes.at(-1), { cwd: path.join(tempDir, 'moved', 'nested'), worktree_id: 'worktree_moved' }, 'a moved session resumes where it is, in the worktree there');
+    // A symlink inside one worktree into another is in the one it leads to.
+    fs.symlinkSync(path.join(tempDir, 'moved'), path.join(tempDir, 'worktree', 'moved-link'));
+    located = async () => path.join(tempDir, 'worktree', 'moved-link');
+    await assert.rejects(restartMoved(), /did not restart/);
+    assert.deepEqual(movedResumes.at(-1), { cwd: path.join(tempDir, 'worktree', 'moved-link'), worktree_id: 'worktree_moved' }, 'the worktree is chosen by resolved path; the cwd stays as OpenCode wrote it');
+    fs.rmSync(path.join(tempDir, 'worktree', 'moved-link'));
     located = async () => projectPath;
     await assert.rejects(restartMoved(), /did not restart/);
     assert.deepEqual(movedResumes.at(-1), { cwd: projectPath, worktree_id: null }, 'a move out of every registered worktree drops the worktree');

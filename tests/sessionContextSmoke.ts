@@ -63,6 +63,16 @@ async function main(): Promise<void> {
     })).session_id;
     assert.deepEqual(db.prepare('select worktree_id from session_worktrees where session_id = ? order by created_at, rowid').all(movedResumed), [{ worktree_id: 'wt_a' }],
       'the previous own worktree becomes a link, and the new own worktree is not one');
+    // The limit counts the links that carry over, not the new own worktree.
+    const full = ['wt_0', 'wt_1', 'wt_2', 'wt_3', 'wt_4', 'wt_5', 'wt_6', 'wt_7', 'wt_8', 'wt_9', 'wt_10'];
+    for (const id of full) db.prepare(`insert into worktrees(id,project_id,repo_path,worktree_path,branch,created_by,created_at) values(?,'p',?,?,?,'user',?)`).run(id, dir, path.join(dir, id), id, now);
+    const fullSource = new RegisterSessionAction(database, timeline).execute(registerSessionInput.parse({ project_id: 'p', harness: 'codex', resume_id: 'full', worktree_id: 'wt_0' })).session_id;
+    for (const id of full.slice(1)) db.prepare('insert into session_worktrees values(?,?,?)').run(fullSource, id, now);
+    const fullResumed = new RegisterSessionAction(database, timeline).execute(registerSessionInput.parse({
+      project_id: 'p', harness: 'codex', resume_id: 'full', resume_status: 'imported', worktree_id: 'wt_1'
+    })).session_id;
+    assert.deepEqual((db.prepare('select worktree_id from session_worktrees where session_id = ? order by worktree_id').all(fullResumed) as Array<{ worktree_id: string }>).map((row) => row.worktree_id),
+      ['wt_0', ...full.slice(2)].sort(), 'a full predecessor still carries its own worktree into the slot the new own worktree frees');
     const imported = register('p', 'claude', 'unknown', true);
     assert.deepEqual(db.prepare('select resumed_from_session_id from sessions where id = ?').get(imported), { resumed_from_session_id: null });
     assert.throws(() => new RegisterSessionAction(database, timeline).execute(registerSessionInput.parse({
