@@ -125,7 +125,9 @@ export function startNotifications(router: Router): void {
     if (!state?.unread) return;
     unread.value = state.unread;
     const total = state.unread.reduce((sum, row) => sum + row.count, 0);
-    document.title = total ? `(${total}) ${baseTitle}` : baseTitle;
+    // Chrome prefixes an installed app's title with its name unless the title
+    // starts with it, so the count goes after: "Patterm (7)".
+    document.title = total ? `${baseTitle} (${total})` : baseTitle;
     const badge = navigator as Navigator & { setAppBadge?(count?: number): Promise<void>; clearAppBadge?(): Promise<void> };
     void (total ? badge.setAppBadge?.(total) : badge.clearAppBadge?.())?.catch(() => {});
   }

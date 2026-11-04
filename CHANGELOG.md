@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The installed desktop app draws its top bar in the window's title bar,
+  beside the browser's window controls, instead of under a separate browser
+  title bar. Collapsing the overlay with Chrome's chevron restores the usual
+  layout. The window title now reads "Patterm (7)" rather than
+  "Patterm - (7) Patterm".
+
 - All bots, including the built-in assistant, strongly prefer task agents for
   substantial implementation, investigation, and review. Simple questions and
   coordination stay with the bot; explicit user instructions and per-bot guidance

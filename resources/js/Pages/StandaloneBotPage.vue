@@ -2,7 +2,7 @@
   <!-- A bot's page without a project beside it, so the assistant can still be
        opened, for example to add the first project. -->
   <div class="flex h-dvh min-h-0 flex-col overflow-hidden bg-[#080808] text-foreground">
-    <header class="flex h-11 shrink-0 items-center gap-3 px-3">
+    <header data-titlebar class="flex h-11 shrink-0 items-center gap-3 px-3">
       <Button variant="ghost" size="icon" class="h-8 w-8 rounded-tab text-muted-foreground" aria-label="Back to projects" as-child>
         <RouterLink :to="{ name: 'projects' }"><ArrowLeft class="h-4 w-4" /></RouterLink>
       </Button>

@@ -1,7 +1,7 @@
 <template>
   <div v-if="route.name === 'not-found'" class="p-5 text-sm">Page not found. <RouterLink class="underline" to="/projects">View projects</RouterLink></div>
   <div v-else class="flex h-dvh min-h-0 flex-col overflow-hidden bg-[#080808] text-foreground">
-    <header class="flex h-11 shrink-0 items-center gap-3 px-3">
+    <header data-titlebar class="flex h-11 shrink-0 items-center gap-3 px-3">
       <div class="min-w-0 pl-1">
         <h1 class="text-sm font-semibold">Patterm</h1>
         <p class="truncate text-[11px] text-muted-foreground">{{ subtitle }}</p>
