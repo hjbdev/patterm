@@ -359,6 +359,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     assert.equal(presetControls.selectors.find((selector) => selector.id === 'variant')?.value, 'low', 'the composer shows the native session variant, not the launch value');
     assert.deepEqual(await service.nativeSettings('process_1'), { model: 'openai/gpt-test', reasoning: 'low' },
       'a restart reads the variant from the native session, not the launch value');
+    assert.equal(await service.sessionDirectory('process_1'), fs.realpathSync(directory), 'a restart reads the directory the native session is in now');
     database.connection.prepare(`update sessions set interface_mode = 'tui' where id = 'session_1'`).run();
     assert.deepEqual(await service.prompt('process_0', { text: 'hello', references: [], attachments: [] }), { id: 'msg_test' });
     await checkMcpRestore({ database, env, directory, helped });

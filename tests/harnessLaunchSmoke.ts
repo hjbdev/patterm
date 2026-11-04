@@ -235,6 +235,13 @@ async function main(): Promise<void> {
          values ('worktree_context', ?, ?, ?, 'worktree-sentinel-should-not-load', 'user', ?)`
       )
       .run(projectId, projectPath, path.join(tempDir, 'worktree'), now);
+    fs.mkdirSync(path.join(tempDir, 'moved', 'nested'), { recursive: true });
+    database.connection
+      .prepare(
+        `insert into worktrees (id, project_id, repo_path, worktree_path, branch, created_by, created_at)
+         values ('worktree_moved', ?, ?, ?, 'patterm/moved', 'user', ?)`
+      )
+      .run(projectId, projectPath, path.join(tempDir, 'moved'), now);
     database.connection
       .prepare(
         `insert into diff_snapshots (id, project_id, patch, metadata, created_at) values ('diff_context', 'project_test', ?, '{}', ?)`
@@ -602,7 +609,12 @@ async function main(): Promise<void> {
           return conversationRecord({ id: conversationId, projectId, providerConversationId: 'claude_resume_concurrent', cwd: projectPath });
         }
         if (conversationId === 'conversation_resume') {
-          return conversationRecord({ id: conversationId, projectId, worktreeId: 'worktree_context', cwd: projectPath });
+          return conversationRecord({ id: conversationId, projectId, worktreeId: 'worktree_context', cwd: path.join(tempDir, 'worktree') });
+        }
+        // The session moved out of its recorded worktree after it was linked.
+        if (conversationId === 'conversation_moved_root' || conversationId === 'conversation_moved_worktree') {
+          return conversationRecord({ id: conversationId, projectId, providerConversationId: `claude_${conversationId}`, worktreeId: 'worktree_context',
+            cwd: conversationId === 'conversation_moved_root' ? projectPath : path.join(tempDir, 'moved', 'nested') });
         }
         if (conversationId === 'conversation_user' || conversationId === 'conversation_replace' || conversationId === 'conversation_keep') {
           return conversationRecord({ id: conversationId, projectId, providerConversationId: `claude_${conversationId}`, cwd: projectPath });
@@ -651,7 +663,7 @@ async function main(): Promise<void> {
     }, { identity: parentIdentity.mcp_identity })) as { process_id: string; name: string };
     assert.equal(resumedAgent.name, 'Prior Claude conversation', 'resume uses the imported conversation title');
     const resumeSpawn = lastRequest(terminalRequests, 'terminal.process.spawn');
-    assert.equal(resumeSpawn.cwd, projectPath, 'resume uses the recorded conversation cwd');
+    assert.equal(resumeSpawn.cwd, path.join(tempDir, 'worktree'), 'resume uses the recorded conversation cwd');
     assert.deepEqual((resumeSpawn.args as string[]).slice(-2), ['--resume', 'claude_resume_existing'], 'resume launches the exact provider conversation');
     const resumedSession = database.connection.prepare(`
       select sessions.resume_id, sessions.resume_status, sessions.worktree_id, sessions.session_role,
@@ -717,6 +729,15 @@ async function main(): Promise<void> {
     const replaced = await replacingResume.execute({ conversation_id: 'conversation_replace', project_id: projectId, interface_mode: 'integrated', replace_process_id: emptyTab.process_id });
     assert.equal(replaced.replaced_process_id, emptyTab.process_id, 'an empty tab is replaced');
     assert.deepEqual(closed, [emptyTab.process_id]);
+
+    // A conversation resumes linked to the worktree it is in now, never to a
+    // recorded one it has moved out of.
+    const movedRoot = await replacingResume.execute({ conversation_id: 'conversation_moved_root', project_id: projectId, interface_mode: 'tui' });
+    assert.equal((database.connection.prepare('select worktree_id from sessions where id = ?').get(movedRoot.session_id) as { worktree_id: string | null }).worktree_id, null,
+      'a conversation that moved to an unregistered directory has no worktree');
+    const movedWorktree = await replacingResume.execute({ conversation_id: 'conversation_moved_worktree', project_id: projectId, interface_mode: 'tui' });
+    assert.equal((database.connection.prepare('select worktree_id from sessions where id = ?').get(movedWorktree.session_id) as { worktree_id: string | null }).worktree_id, 'worktree_moved',
+      'a conversation that moved into a registered worktree is linked to it');
 
     // `/new` relaunches the same harness and model, replacing only an idle tab.
     const newClosed: string[] = [];
@@ -830,6 +851,58 @@ async function main(): Promise<void> {
     await assert.rejects(failing.execute({ process_id: failTab.process_id, project_id: projectId }), /did not restart: resume refused/);
     assert.deepEqual(restartSteps, ['release:timer_failed']);
     database.connection.prepare(`update processes set activity = 'working' where id = ?`).run(failTab.process_id);
+
+    // An OpenCode session that moved (session_move) restarts where it is now,
+    // if that is in the project. A known bad directory is refused before the
+    // agent stops.
+    const movedSteps: string[] = [];
+    const movedResumes: Array<{ cwd: string | undefined; worktree_id: string | null | undefined }> = [];
+    let located: () => Promise<string | null> = async () => null;
+    const moving = new RestartAgentSessionAction(database, {
+      resume: async (input) => { movedResumes.push({ cwd: input.cwd, worktree_id: input.worktree_id }); throw new Error('resume refused'); }
+    }, {
+      stop: async (processId: string) => { movedSteps.push(`stop:${processId}`); }, close: async () => undefined,
+      holdTimers: () => ['timer_moved'], releaseTimers: (timerIds) => { movedSteps.push(`release:${timerIds.join(',')}`); }, transferTimers: () => undefined,
+      sessionDirectory: () => located()
+    });
+    const movedTab = await launcher.launch({ harness: 'claude', project_id: projectId, worktree_id: 'worktree_context', interface_mode: 'integrated' });
+    database.connection.prepare(`update sessions set harness = 'opencode' where id = ?`).run(movedTab.session_id);
+    database.connection.prepare(`update processes set activity = 'idle' where id = ?`).run(movedTab.process_id);
+    const restartMoved = () => moving.execute({ process_id: movedTab.process_id, project_id: projectId });
+    fs.mkdirSync(path.join(tempDir, 'outside'), { recursive: true });
+    for (const [directory, refusal] of [[path.join(tempDir, 'outside'), /moved to .*outside this project, so it was not restarted\. It is still running/], [path.join(tempDir, 'gone'), /which no longer exists/]] as const) {
+      located = async () => directory;
+      movedSteps.length = 0;
+      await assert.rejects(restartMoved(), refusal);
+      assert.deepEqual(movedSteps, ['release:timer_moved'], 'a restart that cannot work leaves the agent running');
+    }
+    fs.symlinkSync(path.join(tempDir, 'outside'), path.join(projectPath, 'outside-link'));
+    located = async () => path.join(projectPath, 'outside-link');
+    await assert.rejects(restartMoved(), /outside this project/, 'a symlink out of the project is outside it');
+    fs.rmSync(path.join(projectPath, 'outside-link'));
+    assert.equal(movedResumes.length, 0);
+    located = async () => path.join(tempDir, 'moved', 'nested');
+    await assert.rejects(restartMoved(), /did not restart/);
+    assert.deepEqual(movedResumes.at(-1), { cwd: path.join(tempDir, 'moved', 'nested'), worktree_id: 'worktree_moved' }, 'a moved session resumes where it is, in the worktree there');
+    // A symlink inside one worktree into another is in the one it leads to.
+    fs.symlinkSync(path.join(tempDir, 'moved'), path.join(tempDir, 'worktree', 'moved-link'));
+    located = async () => path.join(tempDir, 'worktree', 'moved-link');
+    await assert.rejects(restartMoved(), /did not restart/);
+    assert.deepEqual(movedResumes.at(-1), { cwd: path.join(tempDir, 'worktree', 'moved-link'), worktree_id: 'worktree_moved' }, 'the worktree is chosen by resolved path; the cwd stays as OpenCode wrote it');
+    fs.rmSync(path.join(tempDir, 'worktree', 'moved-link'));
+    located = async () => projectPath;
+    await assert.rejects(restartMoved(), /did not restart/);
+    assert.deepEqual(movedResumes.at(-1), { cwd: projectPath, worktree_id: null }, 'a move out of every registered worktree drops the worktree');
+    located = async () => { throw new Error('daemon unavailable'); };
+    await assert.rejects(restartMoved(), /did not restart/);
+    assert.deepEqual(movedResumes.at(-1), { cwd: path.join(tempDir, 'worktree'), worktree_id: 'worktree_context' }, 'an unreadable location keeps the launch directory');
+    // A session already in a directory outside its recorded worktree, as after
+    // a resume from history before this fix, restarts linked to where it is.
+    database.connection.prepare(`update sessions set worktree_id = 'worktree_moved' where id = ?`).run(movedTab.session_id);
+    located = async () => path.join(tempDir, 'worktree');
+    await assert.rejects(restartMoved(), /did not restart/);
+    assert.deepEqual(movedResumes.at(-1), { cwd: path.join(tempDir, 'worktree'), worktree_id: 'worktree_context' }, 'a stale worktree link is not carried into the restart');
+    database.connection.prepare(`update processes set activity = 'working' where id = ?`).run(movedTab.process_id);
 
     // The timer service pauses only an owner's pending timers.
     const holdingTimers = new TimerService(database, terminal as never);

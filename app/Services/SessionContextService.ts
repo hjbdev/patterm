@@ -1,4 +1,5 @@
 import type { DatabaseService } from './DatabaseService';
+import { SESSION_WORKTREE_LIMIT } from './ProjectContextService';
 import type { TimelineService } from './TimelineService';
 
 export class SessionContextService {
@@ -36,7 +37,15 @@ export class SessionContextService {
     // session already holds.
     db.prepare(`update session_secrets set session_id = ? where session_id = ?
       and name not in (select name from session_secrets where session_id = ?)`).run(sessionId, predecessor.id, sessionId);
-    // Keep link order. The new session's own worktree is never a link.
+    // Keep link order. The new session's own worktree is never a link. A
+    // conversation that moved worktrees keeps the one it worked in before,
+    // within the link limit.
+    db.prepare(`insert into session_worktrees (session_id, worktree_id, created_at)
+      select ?, p.worktree_id, p.started_at from sessions p join worktrees w on w.id = p.worktree_id
+      where p.id = ? and w.project_id = ? and p.worktree_id is not (select worktree_id from sessions where id = ?)
+        and (select count(*) from session_worktrees a where a.session_id = p.id
+          and a.worktree_id is not (select worktree_id from sessions where id = ?)) < ?`)
+      .run(sessionId, predecessor.id, projectId, sessionId, sessionId, SESSION_WORKTREE_LIMIT);
     db.prepare(`insert into session_worktrees (session_id, worktree_id, created_at)
       select ?, a.worktree_id, a.created_at from session_worktrees a join worktrees w on w.id = a.worktree_id
       where a.session_id = ? and w.project_id = ? and a.worktree_id is not (select worktree_id from sessions where id = ?)

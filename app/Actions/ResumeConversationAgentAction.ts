@@ -1,10 +1,10 @@
-import fs from 'node:fs';
 import { z } from 'zod';
 import { nativePath, storedPath } from '../Platform/PathIdentity';
 import type { DatabaseService } from '../Services/DatabaseService';
 import type { AgentHistoryReadService } from '../Services/AgentHistory/AgentHistoryReadService';
 import type { HarnessLauncher, LaunchHarnessResult } from '../Services/HarnessLauncher';
 import type { IntegratedAgentService } from '../Services/IntegratedAgentService';
+import { isDirectory, worktreeForDirectory } from '../Services/ProjectDirectories';
 import type { CloseProcessAction } from './CloseProcessAction';
 
 // Agents resume as children of their orchestrator. Users resume top-level
@@ -62,8 +62,11 @@ export class ResumeConversationAgentAction {
 
     // Decide before launching: the new session must not count as the old tab's content.
     const replace = input.replace_process_id && await this.replaceable(input.replace_process_id, input.project_id) ? input.replace_process_id : null;
-    const worktree = this.liveWorktree(conversation.worktreeId, input.project_id);
-    const cwd = this.resolveCwd(conversation.cwd, worktree?.worktree_path ?? null, input.project_id);
+    const recorded = this.liveWorktree(conversation.worktreeId, input.project_id);
+    const cwd = this.resolveCwd(conversation.cwd, recorded?.worktree_path ?? null, input.project_id);
+    // A session that moved after it was linked (OpenCode's session_move) is
+    // linked to the registered worktree it is in now, or to none.
+    const worktree = worktreeForDirectory(this.database.connection, input.project_id, conversation.worktreeId, cwd);
     const launch = this.launcher.resume(
       {
         harness: conversation.provider,
@@ -150,14 +153,6 @@ export class ResumeConversationAgentAction {
 
 function isResumableProvider(provider: string): provider is 'claude' | 'codex' | 'opencode' {
   return provider === 'claude' || provider === 'codex' || provider === 'opencode';
-}
-
-function isDirectory(candidate: string): boolean {
-  try {
-    return fs.statSync(candidate).isDirectory();
-  } catch {
-    return false;
-  }
 }
 
 function duplicateResumeError(processId: string): Error {

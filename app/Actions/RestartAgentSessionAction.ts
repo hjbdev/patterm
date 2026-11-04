@@ -1,8 +1,9 @@
-import fs from 'node:fs';
 import { z } from 'zod';
+import { nativePath, pathsMatch, storedPath } from '../Platform/PathIdentity';
 import type { DatabaseService } from '../Services/DatabaseService';
 import type { HarnessLauncher, LaunchHarnessResult } from '../Services/HarnessLauncher';
 import type { LiveSettings } from '../Services/IntegratedAgentService';
+import { isDirectory, projectWorktreeAt, withinProject, worktreeForDirectory } from '../Services/ProjectDirectories';
 
 // `/restart` stops a top-level Integrated agent (or recovers an ended one)
 // and resumes its conversation
@@ -11,7 +12,9 @@ import type { LiveSettings } from '../Services/IntegratedAgentService';
 // on now, including changes made since launch. The new session inherits the
 // old one's worktrees, todos, scratchpads, and links; its subagents and timers
 // move across. A turn in progress needs `force`, because stopping the process
-// ends it.
+// ends it. An OpenCode session the agent moved (session_move) restarts where
+// it now is, if that is still in the project; otherwise the agent keeps
+// running and the restart is refused.
 export const restartAgentSessionInput = z.object({
   process_id: z.string().min(1),
   project_id: z.string().min(1),
@@ -35,6 +38,8 @@ export interface RestartProcesses {
   close(processId: string): Promise<unknown>;
   transferTimers(fromProcessIds: readonly string[], toProcessId: string): void;
   liveSettings?(processId: string): Promise<LiveSettings>;
+  // The directory the native session records now, or null when it reports none.
+  sessionDirectory?(processId: string): Promise<string | null>;
 }
 
 interface SourceSession {
@@ -114,13 +119,24 @@ export class RestartAgentSessionAction {
       let launched: LaunchHarnessResult;
       // Read before the stop, while the agent can still report them. The
       // launch settings stand in for any it cannot.
-      const live: LiveSettings = source.status === 'running'
-        ? await this.processes.liveSettings?.(processId).catch(() => ({})) ?? {} : {};
+      const [live, located] = await Promise.all([
+        source.status === 'running' ? this.processes.liveSettings?.(processId).catch(() => ({})) ?? {} : {},
+        // An unreadable location leaves the launch's own directory check to decide.
+        source.harness === 'opencode' ? this.processes.sessionDirectory?.(processId).catch(() => null) ?? null : null
+      ]);
       // A prompt can start a turn during the read.
       const current = this.restartableSource(processId, projectId);
       if (!current || (!force && isWorking(current))) {
         this.processes.releaseTimers(held);
         throw new Error(current ? WORKING : 'This agent was closed while restarting');
+      }
+      // Checked before the stop: a resume that cannot work must not end the agent.
+      let target: { cwd?: string; worktree_id: string | null };
+      try {
+        target = this.launchTarget(source, located);
+      } catch (error) {
+        this.processes.releaseTimers(held);
+        throw error;
       }
       try {
         // The native conversation can only be open in one process, so the
@@ -133,8 +149,7 @@ export class RestartAgentSessionAction {
           service_tier: source.service_tier,
           ...live,
           project_id: source.project_id,
-          worktree_id: this.liveWorktree(source.worktree_id, source.project_id),
-          ...(source.cwd && isDirectory(source.cwd) ? { cwd: source.cwd } : {}),
+          ...target,
           actor_id: 'user',
           // Only a chosen name is passed on; an unnamed agent keeps its generated or native title.
           name: source.display_name ?? undefined,
@@ -169,6 +184,28 @@ export class RestartAgentSessionAction {
       order by sessions.started_at desc limit 1`).get(processId, projectId) as SourceSession | undefined;
   }
 
+  // Where the resume launches, linked to the registered worktree that
+  // directory is in, if any. A session that moved resumes in its new
+  // directory. One that is gone or outside the project is refused while the
+  // agent still runs.
+  private launchTarget(source: SourceSession, located: string | null): { cwd?: string; worktree_id: string | null } {
+    const unchanged = source.cwd && isDirectory(source.cwd)
+      ? { cwd: source.cwd, worktree_id: worktreeForDirectory(this.database.connection, source.project_id, source.worktree_id, source.cwd)?.id ?? null }
+      : { worktree_id: this.liveWorktree(source.worktree_id, source.project_id) };
+    if (!located) return unchanged;
+    const directory = storedPath(nativePath(located));
+    const moved = !source.cwd || !pathsMatch(directory, source.cwd);
+    const kept = source.status === 'running' ? ' It is still running.' : '';
+    if (!isDirectory(directory)) {
+      throw new Error(`This agent's OpenCode session is in ${located}, which no longer exists, so it was not restarted.${kept}`);
+    }
+    if (!moved) return unchanged;
+    if (!withinProject(this.database.connection, source.project_id, directory)) {
+      throw new Error(`This agent's OpenCode session moved to ${located}, outside this project, so it was not restarted.${kept}`);
+    }
+    return { cwd: directory, worktree_id: projectWorktreeAt(this.database.connection, source.project_id, directory)?.id ?? null };
+  }
+
   private liveWorktree(worktreeId: string | null, projectId: string): string | null {
     if (!worktreeId) return null;
     const row = this.database.connection.prepare('select worktree_path from worktrees where id = ? and project_id = ?').get(worktreeId, projectId) as
@@ -194,12 +231,4 @@ function isWorking(source: SourceSession): boolean {
 
 function isIntegratedHarness(harness: string): boolean {
   return harness === 'claude' || harness === 'codex' || harness === 'opencode';
-}
-
-function isDirectory(candidate: string): boolean {
-  try {
-    return fs.statSync(candidate).isDirectory();
-  } catch {
-    return false;
-  }
 }
