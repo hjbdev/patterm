@@ -94,7 +94,7 @@ async function serviceChecks(): Promise<void> {
     proxyUrl: (secret, host) => proxy!.url(secret, host),
     changed: () => events.push('changed')
   });
-  let filled: { selector: string; value: string; allowed: (host: string) => boolean } | null = null;
+  let filled: { selector: string; value: () => string; allowed: (host: string) => boolean } | null = null;
   const browsers = { fillSecret: async (_session: string, input: typeof filled & object) => { filled = input; return { target_id: 't', host: 'github.com' }; } } as unknown as BrowserService;
   const runner = new SecretRunner(() => ({ ...process.env, PATTERM_TERMINAL_IDENTITY: 'leak' }));
   const actions = new SecretActions(secrets, browsers, runner);
@@ -289,10 +289,10 @@ async function serviceChecks(): Promise<void> {
   // Logins fill the browser only on allowed sites.
   await actions.save({ process_id: 'process_a', secret_id: null, name: 'github_login', kind: 'login', values: { username: 'me', password: 'pa55word!' }, allowed_hosts: ['github.com'], uses: ['browser'] });
   await actions.fill({ secret: 'github_login', selector: '#password' }, agent);
-  assert.equal(filled!.value, 'pa55word!');
+  assert.equal(filled!.value(), 'pa55word!');
   assert.ok(filled!.allowed('github.com') && !filled!.allowed('github.com.evil.io'));
   await actions.fill({ secret: 'github_login', field: 'username', selector: '#login' }, agent);
-  assert.equal(filled!.value, 'me');
+  assert.equal(filled!.value(), 'me');
   await assert.rejects(actions.fill({ secret: 'stripe_test', selector: '#x' }, agent), /did not allow/);
 
   // A resumed conversation keeps its secrets.
@@ -315,8 +315,12 @@ async function serviceChecks(): Promise<void> {
   const login = secrets.list('session_b').find((secret) => secret.name === 'github_login')!;
   const lifetime = Date.parse(login.expires_at!) - Date.parse(login.updated_at);
   assert.ok(Math.abs(lifetime - SECRET_TTL_MS) < 1000, 'a new value expires in 24 hours');
+  // A fill started in time reads the value only when typing, so a page that
+  // stalls it past expiry gets nothing.
+  await actions.fill({ secret: 'github_login', selector: '#password' }, { identity: 'identity_b' });
   const lapsed = new Date(Date.now() - 1000).toISOString();
   db.prepare('update session_secrets set expires_at = ? where id = ?').run(lapsed, login.id);
+  assert.throws(() => filled!.value(), /has expired/);
   await assert.rejects(actions.save({ process_id: 'process_b', secret_id: login.id, name: 'github_login', kind: 'login', values: null, allowed_hosts: ['github.com'], uses: ['browser'] }), /Enter the secret/, 'an expired value cannot be kept');
   await assert.rejects(actions.fill({ secret: 'github_login', selector: '#password' }, { identity: 'identity_b' }), /has expired/);
   await secrets.expire();

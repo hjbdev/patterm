@@ -125,9 +125,11 @@ export class SecretActions {
   async fill(raw: unknown, context: McpCallContext) {
     const input = fillInput.parse(raw);
     const session = this.secrets.liveSession(this.identity(context));
-    const { secret, value } = this.secrets.reveal(session.id, input.secret, 'browser', input.field);
+    // Checked now so a bad call fails fast, and again when the value is typed.
+    const { secret } = this.secrets.reveal(session.id, input.secret, 'browser', input.field);
     const filled = await this.browsers.fillSecret(session.id, {
-      targetId: input.target_id, selector: input.selector, value,
+      targetId: input.target_id, selector: input.selector,
+      value: () => this.secrets.reveal(session.id, input.secret, 'browser', input.field).value,
       allowed: (pageHost) => hostAllowed(secret.allowed_hosts, pageHost)
     });
     return { ok: true, ...filled, message: `Filled ${input.field ?? (secret.kind === 'login' ? 'password' : 'value')} of "${secret.name}" into ${input.selector}.` };
