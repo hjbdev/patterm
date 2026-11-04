@@ -8,7 +8,6 @@
       <LibraryRows />
       <!-- On a desktop these sit behind the bar's ⋯. -->
       <template v-if="phoneLayout">
-        <div class="h-5" aria-hidden="true" />
         <RouterLink :to="{ name: 'routines' }" :class="ROW">
           <CalendarClock :class="ICON" />
           <span class="min-w-0 flex-1">

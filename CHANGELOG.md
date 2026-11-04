@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The sidebar's New bot button. Bots are set up in Settings › Bots.
 
+### Fixed
+
+- A phone's Library no longer leaves a gap between Media and Scheduled.
+
 ## [0.4.0] - 2026-11-02
 
 ### Added
