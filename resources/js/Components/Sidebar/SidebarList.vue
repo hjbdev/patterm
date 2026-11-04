@@ -203,12 +203,13 @@ const draggable = (group: Group) => !expansion.view.value.sortByActivity || grou
 // When rows change group (a status settling, or pinning), or recent activity
 // reorders them, measure them before the list redraws and slide them from
 // there. Drag and Alt+arrow moves slide themselves from where the row was let
-// go, so their order is left out here.
+// go, so their order is left out here. The sort mode is part of the key, so
+// switching it slides rows even when both orders happen to give the same key.
 const list = ref<HTMLElement | null>(null);
-watch(() => groups.value.flatMap((group) => {
+watch(() => `${expansion.view.value.sortByActivity}|${groups.value.flatMap((group) => {
   const keys = group.tabs.map((tab) => `${tab.key}:${group.id}`);
   return draggable(group) ? keys.sort() : keys;
-}).join(), () => {
+}).join()}`, () => {
   if (!list.value) return;
   const before = rowTops(list.value.querySelectorAll<HTMLElement>('[data-sidebar-slide]'));
   void nextTick(() => slideFrom(before));
