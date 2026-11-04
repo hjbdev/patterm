@@ -22,21 +22,28 @@
   </RadioGroupRoot>
   <Select v-else :model-value="keyOf(modelValue)" :disabled="disabled === true" @update:model-value="choose">
     <SelectTrigger :id="id" :aria-label="ariaLabel" :class="cn('w-full [@container(min-width:26rem)]:w-56', props.class)">
-      <SelectValue :placeholder="placeholder ?? ''" />
+      <SelectValue :placeholder="placeholder ?? ''">
+        <template v-if="selected" #default>
+          {{ selected.label }}<span v-if="selected.description" class="ml-1.5 text-muted-foreground">{{ selected.description }}</span>
+        </template>
+      </SelectValue>
     </SelectTrigger>
     <SelectContent>
-      <SelectItem v-for="option in options" :key="keyOf(option.value)" :value="keyOf(option.value)">{{ option.label }}</SelectItem>
+      <SelectItem v-for="option in options" :key="keyOf(option.value)" :value="keyOf(option.value)">
+        {{ option.label }}<span v-if="option.description" class="ml-1.5 text-muted-foreground">{{ option.description }}</span>
+      </SelectItem>
     </SelectContent>
   </Select>
 </template>
 
 <script setup lang="ts" generic="T extends string | number | null">
-import type { HTMLAttributes } from 'vue';
+import { computed, type HTMLAttributes } from 'vue';
 import { RadioGroupItem, RadioGroupRoot } from 'reka-ui';
 import { cn } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 
-export interface SettingsChoiceOption<V> { value: V; label: string; short?: string }
+// `description` is muted secondary text, such as the provider that serves a model.
+export interface SettingsChoiceOption<V> { value: V; label: string; short?: string; description?: string }
 
 // `segmented` shows the options side by side; keep it for short sets.
 const props = defineProps<{
@@ -50,6 +57,8 @@ const props = defineProps<{
   class?: HTMLAttributes['class'];
 }>();
 const emit = defineEmits<{ 'update:modelValue': [value: T] }>();
+
+const selected = computed(() => props.options.find((option) => keyOf(option.value) === keyOf(props.modelValue)) ?? null);
 
 // Menu items need non-empty string values, and some settings use null or numbers.
 function keyOf(value: T | null | undefined): string {

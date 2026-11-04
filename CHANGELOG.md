@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Every OpenCode model choice names the provider that serves the model, as
+  the chat's model picker does: the harness preset and bot model menus, the
+  routine model menu, and the one-line summaries in preset, bot, routine and
+  launch lists. The model list reads the names on its next refresh.
+
 ### Fixed
 
 - A bot's page has a Back button on a phone, as an agent's does, and slides
