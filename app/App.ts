@@ -379,6 +379,9 @@ async function createApplicationResources(
   };
   const notificationService = new NotificationService(database, settings, timeline, messageProcess,
     (change) => events.emit('notifications:changed', change));
+  defer(integrated.onPromptDispatch((processId) => {
+    notificationService.resolve({ process_id: processId, kinds: ['failure'], dedupe_key: 'failure' });
+  }));
   const notifications = new NotificationActions(notificationService, settings, presence, push);
   const delivery = new NotificationDelivery(presence, {
     current: (id) => notificationService.get(id),

@@ -55,6 +55,7 @@ export interface BotInboxChange {
 // this gate.
 export class BotInbox {
   private readonly listeners = new Set<(change: BotInboxChange) => void>();
+  private readonly noticeDeliveries = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly database: DatabaseService,
@@ -115,6 +116,18 @@ export class BotInbox {
   // retains a bot's notice, even for bots without Focus mode. Ambiguous
   // acknowledgements must never cause a second submission.
   async deliverNotice(targetProcessId: string, text: string, fromProcessId: string, send: () => Promise<unknown>): Promise<unknown> {
+    const botId = this.botFor(targetProcessId);
+    if (!botId) return this.sendNotice(targetProcessId, text, fromProcessId, send);
+    // A later notice must see any backlog an earlier in-flight rejection
+    // creates before it can enter the native agent's own dispatch queue.
+    const previous = this.noticeDeliveries.get(botId) ?? Promise.resolve();
+    const delivery = previous.catch(() => {}).then(() => this.sendNotice(targetProcessId, text, fromProcessId, send));
+    this.noticeDeliveries.set(botId, delivery);
+    try { return await delivery; }
+    finally { if (this.noticeDeliveries.get(botId) === delivery) this.noticeDeliveries.delete(botId); }
+  }
+
+  private async sendNotice(targetProcessId: string, text: string, fromProcessId: string, send: () => Promise<unknown>): Promise<unknown> {
     if (this.holdNotice(targetProcessId, text, fromProcessId)) return { delivery: 'queued' };
     try {
       return await send();

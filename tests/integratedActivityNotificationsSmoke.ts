@@ -208,10 +208,11 @@ async function main(): Promise<void> {
     // activity -> notification listener -> parent, with a real prompt retry.
     let stream: IntegratedConversationListener | undefined;
     let nativeStatus = 'idle';
+    let admission: Promise<unknown> | null = null;
     const provider: IntegratedProviderService = {
       prepare: async () => ({ resumeId: 'test-thread', argv: [] }),
       conversation: async () => ({ status: nativeStatus }),
-      prompt: async () => ({}),
+      prompt: async () => admission ? await admission : {},
       command: async () => ({}),
       interrupt: async () => {},
       replyPermission: async () => {},
@@ -220,6 +221,7 @@ async function main(): Promise<void> {
     };
     const runtime = new IntegratedAgentService(database, { claude: provider });
     runtime.onActivityChange(notify);
+    runtime.onPromptDispatch((processId) => notices.resolve({ process_id: processId, kinds: ['failure'], dedupe_key: 'failure' }));
     const settle = async () => {
       for (let i = 0; i < 5; i += 1) await new Promise<void>((resolve) => setImmediate(resolve));
       await Promise.all(pending.splice(0));
@@ -241,6 +243,31 @@ async function main(): Promise<void> {
       stream!({ processId: 'agent', revision: 2, kind: 'status', status: 'error' });
       await settle();
       assert.equal(parentMessages.length, beforeRuntime + 2, 'a real prompt retry delivers the second identical failure');
+      let acknowledge!: () => void;
+      admission = new Promise<void>((resolve) => { acknowledge = resolve; });
+      const retry = runtime.prompt('agent', 'Retry while the snapshot catches up');
+      await settle();
+      nativeStatus = 'working';
+      await runtime.conversation('agent');
+      stream!({ processId: 'agent', revision: 3, kind: 'status', status: 'working' });
+      acknowledge();
+      await retry;
+      nativeStatus = 'error';
+      stream!({ processId: 'agent', revision: 4, kind: 'status', status: 'error' });
+      await settle();
+      assert.equal(parentMessages.length, beforeRuntime + 3, 'snapshot-before-live-working cannot hide a requested retry');
+      admission = new Promise<void>((resolve) => { acknowledge = resolve; });
+      const fastFailure = runtime.prompt('agent', 'Fail before acknowledging admission');
+      await settle();
+      nativeStatus = 'working';
+      await runtime.conversation('agent');
+      nativeStatus = 'error';
+      stream!({ processId: 'agent', revision: 5, kind: 'status', status: 'error' });
+      await settle();
+      assert.equal(parentMessages.length, beforeRuntime + 4, 'a failure before prompt acknowledgement also reaches the parent');
+      acknowledge();
+      await fastFailure;
+      assert.equal(notices.list({ process_id: 'agent' }).items.filter((item) => item.kind === 'failure').length, 1, 'a late acknowledgement cannot resolve the new failure');
     } finally {
       runtime.dispose();
     }

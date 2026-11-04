@@ -21,6 +21,8 @@ import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
 import { purviewAllows } from '../app/Bots/BotSettings';
 import { removeTree } from './fixtures/TempTree';
 import { sendAgentInput } from '../app/Services/AgentInputService';
+import { BotInbox } from '../app/Services/BotInbox';
+import { IntegratedAgentService, type IntegratedProviderService } from '../app/Services/IntegratedAgentService';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const DIGEST_MS = 10;
@@ -385,6 +387,38 @@ async function main(): Promise<void> {
     await notices.raise({ processId: 'proc-assistant-auto', source: 'integrated', kind: 'failure', body: 'Assistant child failed' });
     assert.equal(prompts.filter((item) => item.processId === resumed).length, 1, 'the built-in assistant also receives automatic child notices');
     assert.match(prompts.at(-1)!.text, /Assistant child failed/);
+
+    // Overlapping callbacks must not submit B ahead of rejected A. Use the
+    // actual Integrated dispatch queue and retain both before flushing.
+    const orderedInbox = new BotInbox(database, () => false);
+    let rejectFirst!: (error: Error) => void;
+    const firstAdmission = new Promise((_, reject) => { rejectFirst = reject; });
+    const submitted: string[] = [];
+    const provider: IntegratedProviderService = {
+      prepare: async () => ({ resumeId: 'ordered', argv: [] }),
+      conversation: async () => ({ status: 'idle' }),
+      prompt: async (_id, input) => { submitted.push(input.text); return submitted.length === 1 ? await firstAdmission : {}; },
+      command: async () => ({}), interrupt: async () => {}, replyPermission: async () => {}, replyQuestion: async () => {}
+    };
+    const runtime = new IntegratedAgentService(database, { claude: provider });
+    const orderedNotices = new NotificationService(database, settings, timeline,
+      (target, text, from) => orderedInbox.deliverNotice(target, text, from,
+        () => sendAgentInput(database, terminal, { process_id: target, text }, runtime)), () => {});
+    try {
+      const first = orderedNotices.raise({ processId: 'proc-pal-helper', source: 'integrated', kind: 'failure', body: 'Overlapping A' });
+      for (let i = 0; i < 5; i += 1) await new Promise<void>((resolve) => setImmediate(resolve));
+      const second = orderedNotices.raise({ processId: 'proc-pal-helper', source: 'integrated', kind: 'permission', body: 'Overlapping B' });
+      rejectFirst(new Error('A definitively rejected'));
+      await Promise.all([first, second]);
+      assert.equal(submitted.length, 1, 'B is held behind A before entering native dispatch');
+      assert.equal(orderedInbox.focus('pal').pending, 2);
+      relay.launched('pal');
+      await wait(20);
+      assert.equal(orderedInbox.focus('pal').pending, 0);
+      assert.match(prompts.at(-1)!.text, /Overlapping A[\s\S]*Overlapping B/);
+    } finally {
+      runtime.dispose();
+    }
 
     // The assistant is told how to use focus.
     assert.match(new AgentContextService().buildAssistant(), /let's go focus mode on this/);

@@ -199,6 +199,7 @@ export class IntegratedAgentService {
   private readonly observeAttempts = new Map<string, number>();
   private readonly eventListeners = new Set<(processId: string, event: IntegratedConversationEvent) => void>();
   private readonly activityListeners = new Set<(change: IntegratedActivityChange) => void>();
+  private readonly promptDispatchListeners = new Set<(processId: string) => void>();
   private readonly compactionListeners = new Set<(processId: string, signal: CompactionSignal) => void>();
   // Stream events and synthetic marks bump the sequence. Snapshot reads and
   // post-admission marks write only when no newer write landed meanwhile.
@@ -227,6 +228,13 @@ export class IntegratedAgentService {
   onActivityChange(listener: (change: IntegratedActivityChange) => void): () => void {
     this.activityListeners.add(listener);
     return () => { this.activityListeners.delete(listener); };
+  }
+
+  // A new native submission, after deduplication and queue admission, before
+  // its acknowledgement. Unlike activity, a snapshot cannot hide this retry.
+  onPromptDispatch(listener: (processId: string) => void): () => void {
+    this.promptDispatchListeners.add(listener);
+    return () => { this.promptDispatchListeners.delete(listener); };
   }
 
   // What idle compaction needs beyond activity, keyed by the canonical process
@@ -442,9 +450,15 @@ export class IntegratedAgentService {
   // Memory goes first, so the agent reads the prompt with it current.
   private sendPrompt(processId: string, resolved: ResolvedIntegratedPrompt): Promise<unknown> {
     const provider = this.forProcess(processId);
-    if (!this.memory || !provider.updateMemory) return provider.prompt(processId, resolved);
+    const send = () => {
+      for (const listener of this.promptDispatchListeners) {
+        try { listener(this.ledgerKey(processId)); } catch { /* listeners own their failures */ }
+      }
+      return provider.prompt(processId, resolved);
+    };
+    if (!this.memory || !provider.updateMemory) return send();
     return this.memory.deliver(this.ledgerKey(processId), (update) => provider.updateMemory!(processId, update))
-      .then(() => provider.prompt(processId, resolved));
+      .then(send);
   }
 
   // Provider invocation plus submission bookkeeping. The reservation is written
