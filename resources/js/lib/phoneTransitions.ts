@@ -2,12 +2,12 @@ import { nextTick } from 'vue';
 import { START_LOCATION, type RouteLocationNormalized, type Router } from 'vue-router';
 import { phoneLayout } from './phoneLayout';
 
-// How deep each page sits on a phone: the list is home, an agent or the
-// Library opens over it, and the Library's pages over that. A record opened
-// from its page sits one deeper.
+// How deep each page sits on a phone: the list is home, an agent, a bot or
+// the Library opens over it, and the Library's pages over that. A record
+// opened from its page sits one deeper.
 const DEPTH: Partial<Record<string, number>> = {
   projects: 0, project: 0,
-  agent: 1, process: 1, launch: 1, library: 1,
+  agent: 1, process: 1, bot: 1, standaloneBot: 1, launch: 1, library: 1,
   worktrees: 2, history: 2, todos: 2, scratchpads: 2, media: 2, routines: 2, usage: 2, settings: 2,
   routineLog: 3
 };

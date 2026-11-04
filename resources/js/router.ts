@@ -55,7 +55,7 @@ export function createWorkbenchRouter(history: RouterHistory) {
 }
 
 export function prefetchPages(): void {
-  for (const page of [TerminalPage, HarnessLaunchPage, ProjectPage, ProjectsPage, HistoryPage, TodosPage, ScratchpadsPage, MediaPage, LibraryPage, ResourcesPage, SettingsPage, UsagePage, RoutinesPage, RoutineLogPage]) void page().catch(() => {
+  for (const page of [TerminalPage, BotPage, HarnessLaunchPage, ProjectPage, ProjectsPage, HistoryPage, TodosPage, ScratchpadsPage, MediaPage, LibraryPage, ResourcesPage, SettingsPage, UsagePage, RoutinesPage, RoutineLogPage]) void page().catch(() => {
     // The page reports a failed load when it is opened.
   });
 }
