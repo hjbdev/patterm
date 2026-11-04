@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   routine model menu, and the one-line summaries in preset, bot, routine and
   launch lists. The model list reads the names on its next refresh.
 
+- The Library's rows drop their second line of detail and show just a name
+  and count. Settings still says when an update is available.
+
+### Removed
+
+- The sidebar's New bot button. Bots are set up in Settings › Bots.
+
 ### Fixed
 
 - A bot's page has a Back button on a phone, as an agent's does, and slides
@@ -26,9 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   conversation like an agent's header. The page also loads ahead of time
   with the others, so opening a bot no longer waits for its code.
 
-### Removed
-
-- The sidebar's New bot button. Bots are set up in Settings › Bots.
+- A phone's Library no longer leaves a gap between Media and Scheduled.
 
 ## [0.4.0] - 2026-11-02
 
