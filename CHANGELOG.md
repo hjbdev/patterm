@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- HTML figures play local videos. An agent can show an MP4 (H.264, with AAC
+  audio) or WebM (VP8, VP9 or AV1) file from its working directory or project
+  in `<video src>` or `<source src>`, up to 100 MB each. Patterm keeps copies
+  for seven days in their own 1 GB store, separate from images, and hands each
+  one to the page's sandboxed frame as bytes rather than inside the page.
+  Videos play only where they were stored: pages from a paired host's agents
+  show that the video is not available. `html_preview` does not draw videos;
+  a `poster` image shows in their place.
+
 ### Changed
 
 - All bots, including the built-in assistant, strongly prefer task agents for

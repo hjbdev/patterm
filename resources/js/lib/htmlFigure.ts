@@ -64,6 +64,53 @@ export async function figureImageUrls(images: Record<string, string>): Promise<M
   return urls;
 }
 
+// A page's stored local videos as Blobs, under fresh placeholders the page
+// carries in their place; the frame turns each into its own blob: URL. Recent
+// videos stay cached up to a budget, so a page shown again does not fetch
+// them again; the newest is always kept.
+const VIDEO_CACHE_BYTES = 256 * 1024 * 1024;
+const videos = new Map<string, { loading: Promise<Blob>; size: number }>();
+function figureVideo(sha256: string): Promise<Blob> {
+  const cached = videos.get(sha256);
+  if (cached) { videos.delete(sha256); videos.set(sha256, cached); return cached.loading; }
+  const entry = { loading: window.patterm.figureVideo?.(sha256) ?? Promise.reject(new Error('Videos are unavailable in this client')), size: 0 };
+  videos.set(sha256, entry);
+  entry.loading.then((blob) => {
+    entry.size = blob.size;
+    let total = [...videos.values()].reduce((sum, item) => sum + item.size, 0);
+    for (const [key, item] of videos) {
+      if (total <= VIDEO_CACHE_BYTES) break;
+      if (item === entry) continue;
+      videos.delete(key);
+      total -= item.size;
+    }
+  }, () => { if (videos.get(sha256) === entry) videos.delete(sha256); });
+  return entry.loading;
+}
+
+// Unguessable, and available outside secure contexts, unlike randomUUID.
+function placeholder(): string {
+  return `patterm-video:${Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+}
+
+export async function figureVideoBlobs(stored: Record<string, string>): Promise<{ placeholders: Map<string, string>; media: Map<string, Blob>; missing: number }> {
+  const placeholders = new Map<string, string>();
+  const media = new Map<string, Blob>();
+  let missing = 0;
+  await Promise.all(Object.entries(stored).map(async ([requested, sha256]) => {
+    try {
+      const blob = await figureVideo(sha256);
+      const token = placeholder();
+      placeholders.set(requested, token);
+      media.set(token, blob);
+    } catch {
+      // A pruned video, or one stored on another host, stays unplayable.
+      missing++;
+    }
+  }));
+  return { placeholders, media, missing };
+}
+
 // The fonts style for pages in the user's current typefaces. Changing them in
 // Settings bumps the version, so shown pages redraw in the new ones.
 export const figureFontVersion = ref(0);

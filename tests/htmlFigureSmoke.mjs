@@ -16,6 +16,7 @@ await build({
     contents: `
       export * from './app/Services/HtmlFigure';
       export { RenderHtmlFigureAction } from './app/Actions/RenderHtmlFigureAction';
+      export { FigureVideoStore, MAX_FIGURE_VIDEO_BYTES, sniffVideo } from './app/Services/FigureVideoStore';
       export { PreviewHtmlFigureAction } from './app/Actions/PreviewHtmlFigureAction';
       export { McpToolRegistry } from './app/MCP/ToolRegistry';
       export { FIGURE_EXAMPLES } from './resources/js/lib/figureExamples';
@@ -156,7 +157,7 @@ test('the setting takes html_render out of the catalog and rejects calls', async
   await assert.rejects(registry.callPublic('html_render', {}), /turned off/);
 });
 
-test('images must live in the caller\'s directories', () => {
+test('images must live in the caller\'s directories', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'html-figure-'));
   const work = path.join(root, 'work');
   fs.mkdirSync(work);
@@ -174,20 +175,93 @@ test('images must live in the caller\'s directories', () => {
   const action = new ui.RenderHtmlFigureAction({ fromFile: (file) => { stored.push(file); return { type: 'image', sha256: 'c'.repeat(64), mime: 'image/png', size: 3 }; } });
   const caller = { cwd: work, project_path: null };
   const page = (src) => ({ title: 'Shot', html: `<img src="${src}">` });
-  const result = action.execute(page('shot.png'), caller);
+  const result = await action.execute(page('shot.png'), caller);
   assert.match(result.ref, /^\[patterm_figure:fig_[0-9a-f]{6}\]$/);
   assert.deepEqual(result.images, { 'shot.png': 'c'.repeat(64) });
   assert.match(result.shown, /^Not shown yet\. Put \[patterm_figure:fig_[0-9a-f]{6}\] on its own line in your reply/);
   for (const outside of ['../secret.png', ...(linked ? ['link.png'] : []), path.join(root, 'secret.png'), 'missing.png']) {
-    assert.throws(() => action.execute(page(outside), caller), /must be an existing file inside your working directory/);
+    await assert.rejects(action.execute(page(outside), caller), /must be an existing file inside your working directory/);
   }
-  assert.throws(() => action.execute(page('shot.png'), { cwd: null, project_path: null }), /inside your working directory/);
+  await assert.rejects(action.execute(page('shot.png'), { cwd: null, project_path: null }), /inside your working directory/);
   assert.deepEqual(stored, [path.join(fs.realpathSync(work), 'shot.png')]);
-  assert.equal(action.execute({ id: 'shot', ...page('shot.png') }, caller).ref, '[patterm_figure:shot]');
-  assert.equal(action.execute({ title: 'Remote', html: '<p>ok</p>' }, caller).images, undefined);
-  assert.throws(() => action.execute({ title: 'x' }, caller), /nothing was rendered[\s\S]*html: /);
-  assert.throws(() => action.execute({ title: 'x', html: 'x', extra: 1 }, caller), /nothing was rendered/);
-  assert.throws(() => action.execute({ id: 'bad id', title: 'x', html: 'x' }, caller), /id: use letters/);
+  assert.equal((await action.execute({ id: 'shot', ...page('shot.png') }, caller)).ref, '[patterm_figure:shot]');
+  assert.equal((await action.execute({ title: 'Remote', html: '<p>ok</p>' }, caller)).images, undefined);
+  await assert.rejects(action.execute({ title: 'x' }, caller), /nothing was rendered[\s\S]*html: /);
+  await assert.rejects(action.execute({ title: 'x', html: 'x', extra: 1 }, caller), /nothing was rendered/);
+  await assert.rejects(action.execute({ id: 'bad id', title: 'x', html: 'x' }, caller), /id: use letters/);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+
+// The first bytes of real MP4 (ISO base media) and WebM files.
+const MP4_HEADER = Buffer.from('000000206674797069736f6d0000020069736f6d69736f32617663316d703431', 'hex');
+const WEBM_HEADER = Buffer.from('1a45dfa39f4286810142f7810142f2810442f381084282847765626d42878102', 'hex');
+
+test('local videos are found, and swapped for placeholders the frame fills with its own blob: URLs', () => {
+  const page = `<video controls src="clip.mp4" poster="still.png"></video><video controls><source src='/abs/b.webm' type="video/webm"><source src="https://cdn.example/c.mp4"></video><img src="shot.png">`;
+  assert.deepEqual(ui.figureVideoPaths(page), ['clip.mp4', '/abs/b.webm']);
+  assert.deepEqual(ui.figureImagePaths(page), ['shot.png', 'still.png'], 'a poster is an image');
+  const swapped = ui.replaceFigureVideos(page, new Map([['clip.mp4', 'patterm-video:one']]));
+  assert.match(swapped, /<video controls src="patterm-video:one" poster="still\.png">/);
+  assert.match(swapped, /<source src='\/abs\/b\.webm'/, 'a video that was not stored stays as it was');
+  assert.match(ui.FIGURE_FRAME_HTML, /instanceof Blob\) html = html\.split\(placeholder\)\.join\(URL\.createObjectURL/);
+  assert.deepEqual(ui.figureVideos({ ...claude, output: JSON.stringify({ ok: true, images: { 'still.png': 'b'.repeat(64) }, videos: { 'clip.mp4': 'a'.repeat(64), bad: 'x' } }) }), { 'clip.mp4': 'a'.repeat(64) });
+  assert.deepEqual(ui.figureImages({ ...claude, output: JSON.stringify({ ok: true, videos: { 'clip.mp4': 'a'.repeat(64) } }) }), {});
+});
+
+test('only MP4 and WebM containers are videos', () => {
+  assert.equal(ui.sniffVideo(MP4_HEADER), 'video/mp4');
+  assert.equal(ui.sniffVideo(WEBM_HEADER), 'video/webm');
+  const still = Buffer.from(MP4_HEADER);
+  still.write('heic', 8, 'ascii');
+  assert.equal(ui.sniffVideo(still), null, 'HEIF stills share the MP4 container');
+  const matroska = Buffer.from(WEBM_HEADER.toString('hex').replace('7765626d', '6d6b7631'), 'hex');
+  assert.equal(ui.sniffVideo(matroska), null, 'other Matroska files are not WebM');
+  for (const other of [Buffer.from('<html><video>'), Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex'), Buffer.alloc(0)]) assert.equal(ui.sniffVideo(other), null);
+});
+
+test('videos are copied by content into their own store and read back as bytes', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'figure-video-'));
+  const work = path.join(root, 'work');
+  fs.mkdirSync(work);
+  const body = Buffer.concat([MP4_HEADER, Buffer.alloc(3 * 1024 * 1024, 7)]);
+  fs.writeFileSync(path.join(work, 'clip.mp4'), body);
+  fs.writeFileSync(path.join(work, 'copy.mp4'), body);
+  fs.writeFileSync(path.join(work, 'clip.webm'), Buffer.concat([WEBM_HEADER, Buffer.from('frames')]));
+  fs.writeFileSync(path.join(work, 'fake.mp4'), '<script>alert(1)</script>');
+  const store = new ui.FigureVideoStore(path.join(root, 'videos'));
+  const action = new ui.RenderHtmlFigureAction(undefined, store);
+  const caller = { cwd: work, project_path: null };
+  const result = await action.execute({ title: 'Clip', html: '<video controls src="clip.mp4"></video><video><source src="copy.mp4"><source src="clip.webm"></video>' }, caller);
+  assert.equal(result.videos['clip.mp4'], result.videos['copy.mp4'], 'the same bytes are stored once');
+  assert.notEqual(result.videos['clip.mp4'], result.videos['clip.webm']);
+  assert.deepEqual(fs.readdirSync(path.join(root, 'videos')).sort(), [`${result.videos['clip.mp4']}.mp4`, `${result.videos['clip.webm']}.webm`].sort(), 'no partial copies are left');
+  const read = await store.read(result.videos['clip.mp4']);
+  assert.equal(read.mime, 'video/mp4');
+  assert.ok(read.bytes.equals(body));
+  assert.equal((await store.locate(result.videos['clip.webm'])).mime, 'video/webm');
+  assert.equal(await store.read('../../etc/passwd'), null);
+  await assert.rejects(action.execute({ title: 'Fake', html: '<video src="fake.mp4"></video>' }, caller), /"fake\.mp4" is not an MP4 or WebM video under 100 MB/);
+  await assert.rejects(action.execute({ title: 'Out', html: '<video src="../outside.mp4"></video>' }, caller), /must be an existing file inside your working directory/);
+  await assert.rejects(new ui.RenderHtmlFigureAction(undefined).execute({ title: 'None', html: '<video src="clip.mp4"></video>' }, caller), /local videos are unavailable here/);
+  // A stored file replaced by something else is not served as a video.
+  fs.writeFileSync(path.join(root, 'videos', `${result.videos['clip.mp4']}.mp4`), '<html>');
+  assert.equal(await store.read(result.videos['clip.mp4']), null);
+  // Containment is decided on the file actually opened, not a path checked earlier.
+  fs.writeFileSync(path.join(root, 'private.mp4'), body);
+  assert.equal(await store.fromFile(path.join(work, 'copy.mp4'), () => false), null);
+  let linked = true;
+  try { fs.symlinkSync(path.join(root, 'private.mp4'), path.join(work, 'swapped.mp4')); } catch (error) { if (error.code !== 'EPERM' || process.platform !== 'win32') throw error; linked = false; }
+  if (linked) assert.equal(await store.fromFile(path.join(work, 'swapped.mp4'), (real) => real.startsWith(fs.realpathSync.native(work) + path.sep)), null, 'a link out of the project is refused when opened');
+  // An expired copy is not served, even before a prune.
+  const webm = path.join(root, 'videos', `${result.videos['clip.webm']}.webm`);
+  const old = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+  fs.utimesSync(webm, old, old);
+  assert.equal(await store.read(result.videos['clip.webm']), null);
+  await store.prune();
+  assert.equal(fs.existsSync(webm), false);
+  fs.writeFileSync(path.join(work, 'big.webm'), Buffer.concat([WEBM_HEADER, Buffer.alloc(ui.MAX_FIGURE_VIDEO_BYTES)]));
+  await assert.rejects(action.execute({ title: 'Big', html: '<video src="big.webm"></video>' }, caller), /not an MP4 or WebM video under 100 MB/);
   fs.rmSync(root, { recursive: true, force: true });
 });
 

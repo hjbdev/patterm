@@ -50,6 +50,7 @@ import type { WorkbenchRepository } from '../Repositories/WorkbenchRepository';
 import type { HarnessPresetService } from '../Services/HarnessPresetService';
 import type { HarnessModelCatalogService } from '../Services/HarnessModelCatalogService';
 import type { AutoSummaryService } from '../Services/AutoSummaryService';
+import { MAX_FIGURE_VIDEO_BYTES, type FigureVideoStore } from '../Services/FigureVideoStore';
 import type { TranscriptImageStore } from '../Services/TranscriptImageStore';
 import { McpToolRegistry, type McpCallContext } from './ToolRegistry';
 import { RenderHtmlFigureAction } from '../Actions/RenderHtmlFigureAction';
@@ -98,6 +99,7 @@ interface RegistryServices {
   harnessLauncher: HarnessLauncher;
   integrated?: Pick<IntegratedAgentService, 'conversation' | 'peekConversation' | 'olderMessages' | 'prompt' | 'files' | 'delivery' | 'interrupt' | 'stopTask' | 'taskOutput' | 'updateQueued' | 'replyPermission' | 'replyQuestion' | 'replyForm' | 'controls' | 'configure' | 'command' | 'isEmpty' | 'liveSettings'>;
   transcriptImages?: Pick<TranscriptImageStore, 'read' | 'fromFile'>;
+  figureVideos?: Pick<FigureVideoStore, 'fromFile'>;
   // Draws pages off screen for html_preview; only the desktop app has one.
   pagePreviewer?: PagePreviewer;
   settings?: Pick<SettingsService, 'agentInterface' | 'updateAgentInterface' | 'figuresEnabled' | 'updateFiguresEnabled'>;
@@ -1258,7 +1260,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     const result = await services.notifications.notifyUser(current.process_id, args);
     return 'notification' in result ? { status: result.status, notification_id: result.notification.id } : result;
   });
-  const renderFigure = new RenderHtmlFigureAction(services.transcriptImages);
+  const renderFigure = new RenderHtmlFigureAction(services.transcriptImages, services.figureVideos);
   const figureUnavailable = (tool: string) => (context: McpCallContext): string | null => {
     if (services.settings?.figuresEnabled() === false) return `${tool} is turned off in Patterm settings. Answer in text instead.`;
     // Only Integrated transcripts draw pages. OpenCode's shared helpers
@@ -1266,7 +1268,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     const session = context.identity ? services.database.connection.prepare('select interface_mode from sessions where mcp_identity = ? and exited_at is null').get(context.identity) as { interface_mode: string | null } | undefined : undefined;
     return session && session.interface_mode !== 'integrated' ? `${tool} works only in Integrated mode. Answer in text instead.` : null;
   };
-  const html = { type: 'string', description: `A complete, self-contained HTML document, up to ${MAX_FIGURE_HTML_CHARS} characters. Inline <style> and <script>; CDN scripts load. Local images in <img src> or CSS url() must be in your working directory.` };
+  const html = { type: 'string', description: `A complete, self-contained HTML document, up to ${MAX_FIGURE_HTML_CHARS} characters. Inline <style> and <script>; CDN scripts load. Local images in <img src> or CSS url(), and local MP4 (H.264) or WebM videos in <video src> or <source src> (up to ${MAX_FIGURE_VIDEO_BYTES / 1024 / 1024} MB each; add controls), must be in your working directory.` };
   registry.register({
     name: HTML_RENDER_TOOL,
     namespace: 'cli.ui',
@@ -1286,13 +1288,13 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     unavailable: figureUnavailable(HTML_RENDER_TOOL),
     usageNotes: [FIGURE_LAYOUT_GUIDE, FIGURE_THEME_GUIDE, FIGURE_BRIDGE_GUIDE, 'Do not describe or restate what the page shows.']
   }, (args, context) => {
-    // Images are read on the caller's own host, never across hosts.
+    // Images and videos are read on the caller's own host, never across hosts.
     const current = context.remote ? null : caller(context);
     return renderFigure.execute(args, { cwd: current?.cwd ?? null, project_path: current?.project_path ?? null });
   });
   // Only the desktop app can draw a page off screen, so the server never lists it.
   if (services.pagePreviewer) {
-    const previewFigure = new PreviewHtmlFigureAction(services.pagePreviewer, services.transcriptImages);
+    const previewFigure = new PreviewHtmlFigureAction(services.pagePreviewer, services.transcriptImages, services.figureVideos);
     registry.register({
       name: HTML_PREVIEW_TOOL,
       namespace: 'cli.ui',

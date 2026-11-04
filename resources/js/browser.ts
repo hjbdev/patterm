@@ -268,6 +268,11 @@ function createBrowserApi(): Window['patterm'] {
       if (!response.ok) throw new Error(result.error ?? 'Upload failed');
       return result.path;
     },
+    figureVideo: async (sha256) => {
+      const response = await fetch(`/api/figure-video/${encodeURIComponent(sha256)}`);
+      if (!response.ok) throw new Error('This video is no longer stored');
+      return response.blob();
+    },
     // The sidebar layout belongs to this browser, so the server's copy is
     // replaced in snapshots and dropped from patches.
     workbench: async (since) => {

@@ -20,6 +20,10 @@ const api = {
     const bytes = await file.arrayBuffer();
     return ipcRenderer.invoke('patterm:upload:file', { name: file.name, bytes, ...(processId ? { process_id: processId } : {}) });
   },
+  figureVideo: async (sha256: string) => {
+    const video = await ipcRenderer.invoke('patterm:figure:video', { sha256 }) as { mime: string; bytes: Uint8Array };
+    return new Blob([video.bytes as Uint8Array<ArrayBuffer>], { type: video.mime });
+  },
   workbench: (since?: unknown) => ipcRenderer.invoke('patterm:workbench:snapshot', since),
   workbenchRecord: (args: unknown) => ipcRenderer.invoke('patterm:workbench:record', args),
   sidebarStateUpdate: (state: unknown) => ipcRenderer.invoke('patterm:workbench:sidebar-state:update', state),

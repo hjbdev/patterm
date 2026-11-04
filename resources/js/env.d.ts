@@ -35,6 +35,8 @@ declare global {
       integratedCall?(tool: string, args: { process_id: string } & Record<string, unknown>): Promise<unknown>;
       // A file for one agent is stored on the host that runs it.
       uploadFile?(file: File, processId?: string): Promise<string>;
+      // A figure's stored local video, by hash.
+      figureVideo?(sha256: string): Promise<Blob>;
       bootstrap(): Promise<unknown>;
       debugLog(event: unknown): void;
       help(tool: string): Promise<unknown>;

@@ -1,6 +1,7 @@
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { FIGURE_FRAME_HTML, FIGURE_FRAME_PATH, figureFrameCsp } from '../Services/HtmlFigure';
-import { readFileSync } from 'node:fs';
+import { createReadStream, readFileSync } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
 import type { Socket } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -320,6 +321,19 @@ export class WebServer {
       const host = this.application.remote.target({ process_id: url.searchParams.get('process_id') ?? '' });
       const filename = host ? await this.application.remote.upload(host, name, bytes) : await this.uploads.save(name, bytes);
       await this.json(request, response, 200, { path: filename });
+      return;
+    }
+    // A figure's local video, as bytes for the app to hand to the figure's
+    // frame. The frame itself never asks: its opaque origin carries no
+    // sign-in.
+    const video = /^\/api\/figure-video\/([0-9a-f]{64})$/.exec(url.pathname);
+    if (video && (request.method === 'GET' || request.method === 'HEAD')) {
+      const stored = await this.application.figureVideos.locate(video[1]!);
+      if (!stored) { await this.json(request, response, 404, { error: 'This video is no longer stored' }); return; }
+      response.writeHead(200, { 'Content-Type': stored.mime, 'Content-Length': stored.size, 'Cache-Control': 'private, no-store', 'Content-Security-Policy': "default-src 'none'; sandbox" });
+      if (request.method === 'HEAD') { response.end(); return; }
+      // A browser that stops reading, or leaves, ends the copy.
+      await pipeline(createReadStream(stored.filename), response).catch(() => response.destroy());
       return;
     }
     // Agent pages run in this frame under their own policy; see HtmlFigure.
