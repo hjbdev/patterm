@@ -251,3 +251,46 @@ PATTERM_ENABLE_WAYLAND=1 PATTERM_DISABLE_GPU=1 pnpm run dev
 
 The selected launch mode is written to `debug.log` as `startup` / `launch.windowing`.
 
+
+## Bot notification replies
+
+`AgentContextService` supplies the same notification rule to every bot, including
+the assistant, independently of digest subscriptions. Process notifications,
+reports, messages and timer callbacks and perform any required internal work;
+only send user-facing text when there is a useful update or user action. Important
+failures, user decisions and substantive progress or results still warrant a
+reply. Silence must never be implemented by muting, dropping or suppressing
+operational notifications.
+
+`BotService.context` builds this application guidance on launch and resume for
+existing and new bots. Codex receives developer instructions on thread start or
+resume, Claude receives an appended system prompt, and OpenCode receives the
+`patterm` session instruction entry. No saved bot settings or shared memory need
+changing. After updating the application, restart already-running bots (including
+the assistant) with **resume** to load it; a fresh conversation is unnecessary.
+This change does not restart bots or the live service automatically.
+
+This is model guidance, not a transport-level guarantee of silence: Patterm does
+not filter acknowledgements from transcripts or notifications. All three adapters
+settle turns from native lifecycle events rather than requiring a text reply
+(Codex `turn/completed`, Claude `result`, OpenCode execution success/idle). A
+model may still emit an acknowledgement despite the instruction. Active voice
+calls use separate voice-intermediary instructions and spoken message summaries;
+this native text-guidance change does not establish quiet voice behaviour.
+
+On 4 November 2026, isolated no-tool probes using the shared rule and a synthetic
+routine notice produced no visible acknowledgement on all three native CLIs:
+
+- Codex CLI 0.166.0 completed with an empty `agent_message` and `turn.completed`.
+- Claude Code 2.1.312 (`claude-opus-5-5`) completed successfully with a single
+  zero-width space (U+200B). This was not a byte-empty reply; a UI may still show
+  a blank message row. Patterm does not strip this content.
+- OpenCode 2.2.5 (`openai/gpt-6.1-terra`) emitted a `step_finish` with reason
+  `stop` and no text parts. Its default provider had returned a regional access
+  error, so that provider's compliance remains unverified.
+
+A separate synthetic important-failure notice requiring a user decision produced
+an explicit failure summary and decision question on all three. These samples
+establish capability for the tested models, not guaranteed compliance on every
+turn or model. Existing adapter smoke suites check native lifecycle handling
+without model calls. The probes did not restart Patterm or change its live data.
