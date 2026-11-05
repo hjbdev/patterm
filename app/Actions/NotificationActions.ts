@@ -108,7 +108,9 @@ export class NotificationActions {
   }
 
   updateSettings(raw: unknown): NotificationSettings {
-    return this.settings.updateNotificationSettings(raw);
+    const settings = this.settings.updateNotificationSettings(raw);
+    if (!settings.subagentNotifications) this.notifications.markSubagentsRead();
+    return settings;
   }
 
   test() {

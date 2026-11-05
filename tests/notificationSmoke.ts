@@ -431,6 +431,16 @@ async function main(): Promise<void> {
     await assert.rejects(async () => actions.notifyUser('root', { title: '' }));
     await assert.rejects(async () => actions.notifyUser('root', { title: 'x', extra: true }));
     assert.equal(actions.readSettings().sources.integrated_turn_finished, 'all');
+    await service.raise({ processId: 'child', source: 'integrated', kind: 'turn_finished', body: 'Existing child dot' });
+    await service.raise({ processId: 'orphan', source: 'runtime', kind: 'failure', body: 'Existing orphan dot' });
+    assert.ok(service.unread().some((row) => row.process_id === 'child'));
+    const beforeMute = changes.length;
+    const rootCount = service.unread().find((row) => row.process_id === 'root')?.count;
+    actions.updateSettings({ subagentNotifications: false });
+    assert.equal(service.unread().some((row) => row.process_id === 'child' || row.process_id === 'orphan'), false);
+    assert.equal(service.unread().find((row) => row.process_id === 'root')?.count, rootCount);
+    assert.ok(changes.slice(beforeMute).some((change) => change.type === 'read'), 'connected clients refresh dots immediately');
+    actions.updateSettings({ subagentNotifications: true });
     assert.equal((await actions.test()).status, 'raised');
 
     // Closing a process resolves its records through the service, so clients

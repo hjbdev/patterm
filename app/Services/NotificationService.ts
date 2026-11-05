@@ -250,6 +250,15 @@ export class NotificationService {
     return rows.map((row) => ({ process_id: row.process_id, project_id: row.project_id, count: row.count, urgency: row.rank === 2 ? 'high' : row.rank === 1 ? 'normal' : 'low' }));
   }
 
+  // Muting subagents also clears their existing dots across connected clients.
+  markSubagentsRead(): number {
+    const rows = this.database.connection.prepare(`select notifications.id from notifications
+      join processes on processes.id = notifications.process_id
+      where processes.kind = 'agent' and processes.parent_process_id is not null
+        and notifications.read_at is null and notifications.resolved_at is null`).all() as Array<{ id: string }>;
+    return this.markRead({ ids: rows.map((row) => row.id) });
+  }
+
   markRead(input: { ids?: string[] | undefined; process_id?: string | undefined; session_id?: string | undefined; all?: boolean | undefined }): number {
     const at = new Date(this.now()).toISOString();
     return this.update('read', 'read_at', at, input);
