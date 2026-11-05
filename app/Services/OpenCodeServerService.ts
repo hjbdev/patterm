@@ -1955,9 +1955,16 @@ export class OpenCodeServerService {
   // half-finished installation. OpenCode could still drop the directory in
   // the moment between this check and the send; its sweep runs once a
   // minute, so that is left to the next prompt.
-  private async ensureMcp(runtime: { executable: string; cwd: string }): Promise<void> {
+  // session_move serves the session from another directory, which never had
+  // them, so the check runs where the session is now. A session that cannot
+  // be read is checked where it was launched, as before.
+  private async ensureMcp(launched: { executable: string; cwd: string; resumeId: string }): Promise<void> {
     const source = this.mcpSource;
     try {
+      const session = record(await this.api(launched.executable, launched.cwd, 'GET', `/api/session/${encodeURIComponent(launched.resumeId)}`).catch(() => null));
+      const located = stringValue(record(record(session.data).location).directory);
+      const moved = located && !pathsMatch(located, launched.cwd) && fs.existsSync(located);
+      const runtime = { executable: launched.executable, cwd: moved ? located : launched.cwd };
       await this.inDirectory(runtime.cwd, async () => {
         const bridgeName = source ? openCodeBridgeName(source.spec()) : this.preparedBridge;
         if (!bridgeName) throw new Error('Patterm has no MCP installation to restore');

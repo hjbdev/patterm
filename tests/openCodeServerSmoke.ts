@@ -95,7 +95,10 @@ else if (method === 'GET' && route.startsWith('/api/agent?')) console.log(JSON.s
 else if (method === 'GET' && route.startsWith('/api/command?')) console.log(JSON.stringify({data:[{name:'review',description:'Review changes'}, ...(process.env.CUSTOM_UNDO ? [{name:'undo',description:'Custom undo'}] : [])]}));
 else if (method === 'GET' && route.startsWith('/api/mcp?')) {
   // Dropped services forget every registration made before.
-  const live = process.env.MCP_EVICTED && fs.existsSync(process.env.MCP_EVICTED) ? rows.slice(Number(fs.readFileSync(process.env.MCP_EVICTED, 'utf8'))) : rows;
+  const evicted = process.env.MCP_EVICTED && fs.existsSync(process.env.MCP_EVICTED) ? rows.slice(Number(fs.readFileSync(process.env.MCP_EVICTED, 'utf8'))) : rows;
+  // Each directory has its own servers.
+  const located = (x) => new URLSearchParams(x.route.split('?')[1] ?? '').get('location[directory]');
+  const live = process.env.MCP_BY_LOCATION ? evicted.filter(x => located(x) === new URLSearchParams(route.split('?')[1]).get('location[directory]')) : evicted;
   const names = new Set(live.filter(x => x.method === 'PUT' && x.route.startsWith('/api/experimental/mcp/')).map(x => x.route.split('/').at(-1).split('?')[0]));
   console.log(JSON.stringify({data:[...names].map(name => {
     const last = live.findLast(x => x.method === 'PUT' && x.route.split('?')[0] === '/api/experimental/mcp/' + name);
@@ -257,7 +260,7 @@ else if (method === 'PUT' && route.includes('/instructions/entries/')) {
   console.log(JSON.stringify({data:{key:'patterm',value:body.value}}));
 }
 else if (method === 'POST') console.log(JSON.stringify({data:{id:'ses_'+rows.filter(x=>x.method==='POST' && x.route==='/api/session').length}}));
-else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory:process.cwd()},model:{providerID:'openai',id:'gpt-test',variant:'low'}}}));
+else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory:process.env.MOVED_TO ?? process.cwd()},model:{providerID:'openai',id:'gpt-test',variant:'low'}}}));
 `, { mode: 0o700 });
   // No discoverable background service: requests use the fake CLI and never
   // reach a real OpenCode daemon on the test machine.
@@ -1645,8 +1648,23 @@ async function checkMcpRestore(input: { database: DatabaseService; env: NodeJS.P
   // Steady state: one check, nothing reinstalled.
   const steadyStart = calls(restored).length;
   await restoring.prompt('process_0', prompt);
-  assert.deepEqual(calls(restored).slice(steadyStart).map((call) => call.replace(/ses_[^/]+/, 'ses')), ['POST /api/session/ses/prompt'],
-    'a prompt in a directory that kept its servers only sends the prompt');
+  assert.deepEqual(calls(restored).slice(steadyStart).map((call) => call.replace(/ses_[^/]+/, 'ses')), ['GET /api/session/ses', 'POST /api/session/ses/prompt'],
+    'a prompt in a directory that kept its servers only finds the session and sends the prompt');
+
+  // session_move: the session's new directory never had the tools, though the
+  // launch directory still does. They are installed there before the prompt.
+  const moved = fresh();
+  const elsewhere = fs.realpathSync(fs.mkdtempSync(path.join(directory, 'moved-')));
+  const at = (request: { route: string }): string | null => new URLSearchParams(request.route.split('?')[1] ?? '').get('location[directory]');
+  await openCode(database, { ...env, RECORD: moved, MCP_BY_LOCATION: '1' }).prompt('process_0', prompt);
+  const before = read(moved).length;
+  await openCode(database, { ...env, RECORD: moved, MCP_BY_LOCATION: '1', MOVED_TO: elsewhere }).prompt('process_0', prompt);
+  const afterMove = read(moved).slice(before);
+  const movedPrompt = afterMove.findIndex((request) => request.route.endsWith('/prompt'));
+  const movedBridge = afterMove.findIndex((request) => request.method === 'PUT' && request.route.startsWith('/api/experimental/mcp/patterm_') && at(request) === elsewhere);
+  assert.ok(movedBridge >= 0 && movedBridge < movedPrompt, 'a moved session gets the bridge in its new directory before the prompt');
+  assert.ok(afterMove.slice(0, movedPrompt).some((request) => request.route.startsWith(`/api/experimental/mcp/${helped.name}`) && at(request) === elsewhere), 'and its servers');
+  assert.ok(afterMove.every((request) => !request.route.startsWith('/api/experimental/mcp/') || at(request) === elsewhere), 'the launch directory is left alone');
 
   // Dropped again later: the install cache from the first restore does not
   // stop a second one.

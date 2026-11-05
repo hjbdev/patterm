@@ -64,6 +64,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An OpenCode agent that moves its session to another directory with
+  `session_move` keeps Patterm's tools. Before each message, Patterm installs
+  its bridge and MCP servers where the session is now; they were left behind
+  in the launch directory until the agent restarted.
 - Sorted by recent activity, sidebar agents slide to their new places, as
   they do when dragged, instead of jumping there.
 - Restarting an OpenCode agent whose session moved to another directory
