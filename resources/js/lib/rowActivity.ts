@@ -51,6 +51,12 @@ export function shownActivity(record: Pick<SessionRecord, 'activity' | 'backgrou
   return idle && !record.exitedAt && (record.backgroundTasks ?? 0) > 0 ? 'working' : record.activity;
 }
 
+// Whether the agent or anything below it is working. A row shows one spinner
+// for this, however the work is split; its tooltip says who.
+export function isWorking(activity: RowActivity): boolean {
+  return activity.self === 'working' || ((activity.self === 'idle' || activity.self === 'unknown') && activity.subagents.working > 0);
+}
+
 // The most urgent state among the subagents, or null while they are all idle.
 export function subagentPulse(activity: RowActivity): BusyPulse | null {
   if (activity.subagents.permission) return 'permission';
@@ -59,8 +65,7 @@ export function subagentPulse(activity: RowActivity): BusyPulse | null {
   return activity.subagents.working ? 'working' : null;
 }
 
-// Text colour for a subagent count: muted while idle or working (working adds
-// a shimmer, see WorkingShimmer), amber or red
+// Text colour for a subagent count: muted while idle or working, amber or red
 // while one needs permission, has a question, or has an error.
 export function subagentCountClass(activity: RowActivity): string {
   switch (subagentPulse(activity)) {

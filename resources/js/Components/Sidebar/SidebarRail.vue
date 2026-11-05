@@ -38,7 +38,7 @@
                 <RowStatus :activity="activityOf(tab)" :count="tab.kind === 'agent' ? sidebar.memberCount(tab.family) : 0" :count-label="tab.kind === 'agent' ? memberLabel(tab.family.options.length - 1, sidebar.ownedProcesses(tab.family).length) : undefined" />
                 <UnreadDot class="absolute right-1 top-1" :urgency="tabUnread(tab)" />
                 <span v-if="tab.kind === 'agent' && sidebar.memberCount(tab.family) && !countInRing(activityOf(tab))" :class="cn('absolute -bottom-0.5 right-0 rounded-sm bg-[#080808] px-0.5 text-[9px] font-medium leading-3 tabular-nums', subagentCountClass(activityOf(tab)))">
-                  <WorkingShimmer :active="subagentPulse(activityOf(tab)) === 'working'">{{ sidebar.memberCount(tab.family) }}</WorkingShimmer>
+                  {{ sidebar.memberCount(tab.family) }}
                 </span>
                 <span v-if="tabActive(tab)" class="absolute -left-2 top-1.5 h-5 w-0.5 rounded-full bg-foreground" aria-hidden="true" />
               </button>
@@ -97,8 +97,7 @@ import { PanelLeftOpen } from 'lucide-vue-next';
 import { agentLabel } from '../../lib/agentTabs';
 import { hostLabel } from '../../lib/hosts';
 import { cn } from '@/lib/utils';
-import { countInRing, describeActivity, memberLabel, processActivity, subagentCountClass, subagentPulse, type RowActivity } from '../../lib/rowActivity';
-import WorkingShimmer from '../WorkingShimmer.vue';
+import { countInRing, describeActivity, memberLabel, processActivity, subagentCountClass, type RowActivity } from '../../lib/rowActivity';
 import type { StripTab } from '../../lib/tabStrip';
 import type { ProcessRecord, SessionRecord } from '../../types';
 import { unreadUrgency, type NotificationUrgency } from '../../Composables/useNotifications';

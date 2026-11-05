@@ -1,4 +1,4 @@
-// Every loader (status rings, comets, count shimmers) runs on the document's
+// Every loader (status rings, comets) runs on the document's
 // clock, so loaders with the same period move in step across tabs, rows and
 // projects. A CSS animation starts when its element mounts, so matching
 // durations isn't enough: each one is pinned to the clock as it starts.

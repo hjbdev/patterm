@@ -57,7 +57,7 @@
           @pointerdown.stop
           @click.stop="emit('toggle')"
         >
-          <MemberCount :count="memberCount" :open="expanded" :shimmer="subagentPulse(activity) === 'working'" :bare="countInRing(activity)" />
+          <MemberCount :count="memberCount" :open="expanded" :bare="countInRing(activity)" />
         </button>
         <span class="relative flex h-5 w-5 items-center justify-center">
           <UnreadDot class="transition-opacity group-hover/row:opacity-0" :urgency="familyUrgency(sidebar, tab.family, expanded)" />
@@ -90,7 +90,7 @@ import { Timer as TimerIcon } from 'lucide-vue-next';
 import MemberCount from '../MemberCount.vue';
 import { cn } from '@/lib/utils';
 import { agentLabel, familyOwnerLabel } from '../../lib/agentTabs';
-import { countInRing, subagentCountClass, subagentPulse } from '../../lib/rowActivity';
+import { countInRing, subagentCountClass } from '../../lib/rowActivity';
 import RowStatus from '../RowStatus.vue';
 import TabWash from '../TabWash.vue';
 import UnreadDot from '../UnreadDot.vue';

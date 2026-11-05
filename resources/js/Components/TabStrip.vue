@@ -62,7 +62,7 @@
                       <TimerIcon class="h-[13px] w-[13px] -translate-y-[0.5px]" :stroke-width="2.3" />
                     </span>
                     <span v-if="familyMenuCount(tab.family) > 0 && !countInRing(activityFor(tab.family.root.session))" :class="cn('flex shrink-0', subagentCountClass(activityFor(tab.family.root.session)))" :aria-label="`${familyMenuCount(tab.family)} subagents and processes`">
-                      <MemberCount :count="familyMenuCount(tab.family)" :shimmer="subagentPulse(activityFor(tab.family.root.session)) === 'working'" />
+                      <MemberCount :count="familyMenuCount(tab.family)" />
                     </span>
                   </span>
                 </template>
@@ -195,7 +195,7 @@ import {
 } from '../lib/agentTabs';
 import { mentionPreview } from '../lib/integratedComposer';
 import { ownedProcessesForSessions } from '../lib/processTabs';
-import { activityLookup, countInRing, describeActivity, memberLabel, subagentCountClass, subagentPulse } from '../lib/rowActivity';
+import { activityLookup, countInRing, describeActivity, memberLabel, subagentCountClass } from '../lib/rowActivity';
 import MemberCount from './MemberCount.vue';
 import type { StripTab, TabLayout } from '../lib/tabStrip';
 import { timersForProcesses } from '../lib/timers';
