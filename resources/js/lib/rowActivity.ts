@@ -54,7 +54,7 @@ export function shownActivity(record: Pick<SessionRecord, 'activity' | 'backgrou
 // Whether the agent or anything below it is working. A row shows one spinner
 // for this, however the work is split; its tooltip says who.
 export function isWorking(activity: RowActivity): boolean {
-  return activity.self === 'working' || ((activity.self === 'idle' || activity.self === 'unknown') && activity.subagents.working > 0);
+  return activity.self === 'working' || activity.subagents.working > 0;
 }
 
 // The most urgent state among the subagents, or null while they are all idle.
