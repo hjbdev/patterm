@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Settings › Notifications has a switch to disable user-facing subagent
+  notifications and clear their unread dots. Parent agents still receive
+  child alerts and reports.
+
 - Integrated agents on Codex, OpenCode and Claude Code take native goals from
   the composer. The target button switches the composer to goal mode, where
   sending describes when the work is done; Esc goes back to messages. While a

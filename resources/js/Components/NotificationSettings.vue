@@ -18,6 +18,9 @@
       <SettingsRow label="Show toasts in the app" description="Unread dots on tabs and projects stay on either way." html-for="notify-toasts" save-key="notifications.delivery.toasts" toggle>
         <Switch id="notify-toasts" :model-value="draft.toasts" :disabled="loading" @update:model-value="(value) => { draft.toasts = value; save('notifications.delivery.toasts'); }" />
       </SettingsRow>
+      <SettingsRow label="Subagent notifications" description="Show alerts and unread dots from agents spawned by another agent. Parent agents still receive their alerts and reports when this is off." html-for="notify-subagents" save-key="notifications.delivery.subagents" toggle>
+        <Switch id="notify-subagents" :model-value="draft.subagentNotifications" :disabled="loading" @update:model-value="(value) => { draft.subagentNotifications = value; save('notifications.delivery.subagents'); }" />
+      </SettingsRow>
       <SettingsRow label="Quiet routine turns" description="When an Integrated agent is only waiting on other agents or reporting progress, its finished turn stays in the app without a toast or push. Questions, decisions and results still reach you." html-for="notify-quiet" save-key="notifications.delivery.quiet" toggle>
         <Switch id="notify-quiet" :model-value="draft.quietRoutineTurns" :disabled="loading" @update:model-value="(value) => { draft.quietRoutineTurns = value; save('notifications.delivery.quiet'); }" />
       </SettingsRow>
