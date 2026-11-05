@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Reuse successful syntax highlighting for unchanged code blocks as replies
+  stream, avoiding repeated worker computation. The in-memory cache is bounded
+  to 64 blocks and an estimated 4 MiB of strings per worker or fallback realm.
+
 - Tabs and sidebar rows show work one way: the status ring spins at full
   strength while the agent or any subagent below it works. The half-strength
   ring, the shimmering subagent counts and the "waiting" label are gone; the
