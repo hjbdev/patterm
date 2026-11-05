@@ -18,6 +18,7 @@ import type { MemoryUpdate } from './MemoryPushService';
 import type { McpLaunchServer } from './McpServerRegistry';
 import { messagesTaskOutput, textTaskOutput, type IntegratedConversationEvent, type IntegratedConversationListener, type IntegratedDeliveryStatus, type IntegratedQueuedMessage, type IntegratedTaskOutput } from './IntegratedConversation';
 import type { TranscriptImageRef, TranscriptImageStore } from './TranscriptImageStore';
+import { GoalLog, snapshotWithGoal, type IntegratedGoal, type IntegratedGoalAction } from './IntegratedGoal';
 
 // `opencode api` sends the JSON body as one argv entry: the kernel rejects any
 // single argument at or above 128 KiB (E2BIG) before the CLI starts. Managed
@@ -198,6 +199,8 @@ export class OpenCodeServerService {
   private readonly unownedShellEnds = new Map<string, true>();
   // Event types each session's stream does not project, for the debug log.
   private readonly unhandled = new Map<string, Record<string, number>>();
+  // Goal state per native session from the goal plugin's change events.
+  private readonly goals = new GoalLog();
   // Model context windows by providerID/id, read once per service.
   private contextWindows: Promise<Map<string, number>> | null = null;
   // Verified daemon discovery, shared by every request until a connection or
@@ -615,6 +618,12 @@ export class OpenCodeServerService {
       const created = typeof data.sessionID === 'string' ? data.sessionID : typeof info.id === 'string' ? info.id : null;
       const parent = typeof data.parentID === 'string' ? data.parentID : typeof info.parentID === 'string' ? info.parentID : null;
       if (created && parent) bounded(this.sessionParents, created, parent);
+    }
+    // The built-in goal plugin publishes its state as an RPC event; only a
+    // snapshot carries the goal and its markers.
+    if (type === 'rpc.opencode.goal.changed') {
+      if (eventSession === sessionId && this.goals.observe(sessionId, openCodeGoal(data.goal), at)) emit({ kind: 'pending' });
+      return;
     }
     if (eventSession && eventSession !== sessionId) {
       // A subagent's request pauses this session, and a background subagent
@@ -1517,6 +1526,8 @@ export class OpenCodeServerService {
         ...(variants.length ? [{ id: 'variant', label: 'Thinking', value: activeVariant, options: [{ value: 'default', label: 'Default' }, ...variants] }] : []),
         ...(agents.length ? [{ id: 'agent', label: 'Agent', value: selected.agent ?? agents[0]!.value, options: agents }] : [])
       ],
+      // The built-in goal plugin adds /goal; older daemons have neither.
+      ...(dataRows(commandResult).some((item) => item.name === 'goal') ? { goals: { canPause: true, canResume: true, canEdit: true, canBudget: false } } : {}),
       commands: [
         ...OPENCODE_BUILTIN_COMMANDS,
         ...dataRows(commandResult).flatMap((item) => stringValue(item.name) && !OPENCODE_BUILTIN_COMMANDS.some((command) => command.name === item.name)
@@ -1677,9 +1688,10 @@ export class OpenCodeServerService {
         .then((listing) => { this.learnShellOwners(listing); return listing; })
         .catch(() => null)
     ]);
-    const [nestedRows, usage, undelivered] = await Promise.all([
+    const [nestedRows, usage, undelivered, goal] = await Promise.all([
       this.childMessages(runtime, rows), this.usage(runtime, rows),
-      this.settlePending(runtime, rows, inbox === null ? null : dataRows(inbox)).catch((): IntegratedQueuedMessage[] => [])
+      this.settlePending(runtime, rows, inbox === null ? null : dataRows(inbox)).catch((): IntegratedQueuedMessage[] => []),
+      this.sessionGoal(runtime)
     ]);
     const tasks = subagentTasks(rows, runtime.resumeId, active, new Set(dataRows(shells).map((shell) => String(shell.id))));
     const permissions = [...dataRows(ownPermissions), ...childRequests.permissions];
@@ -1698,7 +1710,7 @@ export class OpenCodeServerService {
       requests: [...permissions, ...forms].map(record),
       forms: new Set(forms.flatMap((form) => typeof record(form).id === 'string' ? [record(form).id as string] : []))
     });
-    return {
+    return snapshotWithGoal({
       process_id: processId, session_id: runtime.sessionId, provider_session_id: runtime.resumeId, provider: 'opencode',
       status,
       ...(status === 'error' && detail ? { status_detail: detail } : {}),
@@ -1720,7 +1732,23 @@ export class OpenCodeServerService {
         ...undelivered
       ],
       questions: { data: [] }
-    };
+    }, goal, this.goals.list(runtime.resumeId));
+  }
+
+  // The plugin's own state wins; change events between snapshots leave the
+  // markers. A read that fails, as on daemons without the goal plugin, keeps
+  // what the events said, as does one that a change event overtook.
+  private async sessionGoal(runtime: { executable: string; cwd: string; resumeId: string }): Promise<IntegratedGoal | null> {
+    const revision = this.goals.revision(runtime.resumeId);
+    const response = await this.api(runtime.executable, runtime.cwd, 'POST', '/api/rpc/opencode.goal/get', { input: { sessionID: runtime.resumeId } }).catch(() => undefined);
+    if (response !== undefined && this.goals.revision(runtime.resumeId) === revision) this.goals.observe(runtime.resumeId, openCodeGoal(record(response).output), undefined, !this.goals.known(runtime.resumeId));
+    return this.goals.goal(runtime.resumeId);
+  }
+
+  // The goal plugin takes the same words as the TUI's /goal.
+  async goal(processId: string, action: IntegratedGoalAction, objective?: string): Promise<unknown> {
+    if (action === 'set' && !objective) throw new Error('Describe the goal after /goal');
+    return this.command(processId, 'goal', action === 'set' ? objective! : action);
   }
 
   async olderMessages(processId: string, cursor: string): Promise<unknown> {
@@ -2595,4 +2623,20 @@ function subagentSession(name: unknown, metadata: unknown, ownSession: string): 
   if (typeof name !== 'string' || !/^(subagent|task)$/i.test(name)) return null;
   const child = record(metadata).sessionID;
   return typeof child === 'string' && child && child !== ownSession ? child : null;
+}
+
+// OpenCode's goal plugin counts review rounds up to a limit and keeps the
+// reviewer's latest verdict as the reason.
+export function openCodeGoal(value: unknown): IntegratedGoal | null {
+  const goal = record(value);
+  if (typeof goal.objective !== 'string' || !goal.objective) return null;
+  const status = goal.status === 'paused' ? 'paused' : goal.status === 'complete' ? 'complete' : 'active';
+  return {
+    objective: goal.objective,
+    status,
+    ...(typeof goal.reason === 'string' && goal.reason ? { reason: goal.reason } : {}),
+    ...(typeof goal.rounds === 'number' ? { rounds: goal.rounds } : {}),
+    ...(typeof goal.maxRounds === 'number' ? { maxRounds: goal.maxRounds } : {}),
+    ...(typeof goal.updatedAt === 'number' ? { updatedAt: new Date(goal.updatedAt).toISOString() } : {})
+  };
 }

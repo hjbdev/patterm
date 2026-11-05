@@ -33,6 +33,7 @@ import {
   type CodexStatus,
   type CodexConversationState, restoreCodexWindowGap, CODEX_PLAN_TITLE } from './CodexTranscript';
 import type { TranscriptImageStore } from './TranscriptImageStore';
+import { GoalLog, goalCommand, snapshotWithGoal, type IntegratedGoal, type IntegratedGoalAction } from './IntegratedGoal';
 import type { RealtimeVoiceOptions } from './AssistantVoiceProfile';
 import { CODEX_MCP_PROXY_ENV, codexMcpOverrides as globalCodexMcpOverrides } from '../Harness/McpDelivery';
 import { ipcPath } from '../Platform/Ipc';
@@ -101,7 +102,7 @@ const CODEX_OLDER_PAGE = 50;
 const CODEX_CHILD_THREADS = 8;
 // Notifications consumed outside the channel projection (turn tracking, usage,
 // rate limits, and requests), so they are not reported as unhandled.
-const CODEX_OBSERVED = new Set(['thread/tokenUsage/updated', 'account/rateLimits/updated', 'serverRequest/resolved', 'thread/started']);
+const CODEX_OBSERVED = new Set(['thread/goal/updated', 'thread/goal/cleared', 'thread/tokenUsage/updated', 'account/rateLimits/updated', 'serverRequest/resolved', 'thread/started']);
 // Patterm's own notifications for a request arriving and being answered.
 const REQUEST_ARRIVED = 'server/request';
 const REQUEST_ANSWERED = 'server/answered';
@@ -235,9 +236,10 @@ export class CodexAppServerService {
       const detail = state?.detail;
       const historyUnavailable = state?.historyUnavailable ?? false;
       const tasks = codexTasks(messages, client, await this.trackBackgroundTerminals(client, runtime.threadId, messages));
+      const goal = this.threadGoal(processId, client, runtime.threadId);
       const pending = client.pendingRequests();
       const plan = this.planApproval(processId, messages, !pending.length && (status === 'idle' || status === 'error'));
-      return {
+      return snapshotWithGoal({
         process_id: processId,
         session_id: runtime.sessionId,
         provider_session_id: runtime.threadId,
@@ -256,7 +258,7 @@ export class CodexAppServerService {
         diagnostics: { unhandled: channel.unhandled },
         messages: { data: messages },
         mode: this.collaborationModes.get(processId) ?? 'default'
-      };
+      }, goal, client.goals.list(runtime.threadId));
     }
     const { response, unavailable } = await this.listItems(client, runtime.threadId);
     // Newest-first bounded read, reversed for chronological display. Pending
@@ -274,10 +276,11 @@ export class CodexAppServerService {
       this.readThreadStatuses(client, [...spawned.keys()])
     ]);
     const messages = [...parentMessages, ...childMessages];
+    const goal = this.threadGoal(processId, client, runtime.threadId);
     const pending = client.pendingRequests();
     const { status } = effectiveStatus(own, client, spawned.keys());
     const plan = this.planApproval(processId, messages, !pending.length && (status === 'idle' || status === 'error'));
-    return {
+    return snapshotWithGoal({
       process_id: processId,
       session_id: runtime.sessionId,
       provider_session_id: runtime.threadId,
@@ -295,7 +298,40 @@ export class CodexAppServerService {
       messages: { data: messages },
       mode: this.collaborationModes.get(processId) ?? 'default',
       ...withPlan(pendingViews(pending, runtime.threadId, messages), plan)
-    };
+    }, goal, client.goals.list(runtime.threadId));
+  }
+
+  // The connection learns goal changes from notifications. A thread it has
+  // not seen one for, such as a resumed one, is read once in the background,
+  // so a snapshot never waits on it; a goal found asks for a fresh snapshot.
+  // Without goal support (older Codex) the thread has none.
+  private threadGoal(processId: string, client: CodexRpcClient, threadId: string): IntegratedGoal | null {
+    if (!client.goals.known(threadId) && !client.goalReads.has(threadId)) {
+      client.goalReads.add(threadId);
+      void client.request('thread/goal/get', { threadId }).then(
+        (response) => codexGoal(record(response).goal),
+        () => null
+      ).then((goal) => {
+        client.goalReads.delete(threadId);
+        if (client.goals.known(threadId)) return;
+        client.goals.observe(threadId, goal, undefined, true);
+        const channel = this.channels.get(processId);
+        if (goal && channel && !channel.closed) this.enqueue(channel, { revision: 0, kind: 'pending' });
+      });
+    }
+    return client.goals.goal(threadId);
+  }
+
+  async goal(processId: string, action: IntegratedGoalAction, objective?: string): Promise<unknown> {
+    const runtime = this.runtime(processId);
+    const client = await this.client(runtime);
+    const threadId = runtime.threadId;
+    if (action === 'clear') return client.request('thread/goal/clear', { threadId, origin: 'user' });
+    if (action === 'set') {
+      if (!objective) throw new Error('Describe the goal after /goal');
+      return client.request('thread/goal/set', { threadId, objective, status: 'active', origin: 'user' });
+    }
+    return client.request('thread/goal/set', { threadId, status: action === 'pause' ? 'paused' : 'active', origin: 'user' });
   }
 
   // Readers that arrive while a refresh runs wait for the same one, so none
@@ -667,6 +703,11 @@ export class CodexAppServerService {
       this.handleChildNotification(channel, threadId, method, params);
       return;
     }
+    // Only a snapshot carries the goal and its markers.
+    if (method === 'thread/goal/updated' || method === 'thread/goal/cleared') {
+      this.enqueue(channel, { revision: 0, kind: 'pending' });
+      return;
+    }
     if (method === 'mcpServer/startupStatus/updated') {
       if (params.status === 'failed' && typeof params.name === 'string') this.reportMcpFailure(channel.processId, params.name, typeof params.error === 'string' ? params.error : '');
       return;
@@ -877,9 +918,10 @@ export class CodexAppServerService {
         { name: 'review', description: 'Review uncommitted changes, or base <branch>, commit <sha>, or instructions' },
         { name: 'undo', description: 'Remove the latest turn from the conversation history (files are not reverted)' },
         { name: 'rename', description: 'Rename the thread' },
-        { name: 'goal', description: 'Set the thread goal' },
+        { name: 'goal', description: 'Set a goal to work toward, or pause, resume, or clear it' },
         { name: 'shell', description: 'Run a shell command outside the sandbox' }
-      ]
+      ],
+      goals: { canPause: true, canResume: true, canEdit: true, canBudget: true }
     };
   }
 
@@ -990,8 +1032,8 @@ export class CodexAppServerService {
       return client.request('thread/name/set', { threadId: runtime.threadId, name: argument });
     }
     if (name === 'goal') {
-      if (!argument) throw new Error('Describe the goal after /goal');
-      return client.request('thread/goal/set', { threadId: runtime.threadId, objective: argument });
+      const { action, objective } = goalCommand(argument);
+      return this.goal(processId, action, objective);
     }
     if (name === 'shell') {
       if (!argument) throw new Error('Give a shell command after /shell');
@@ -1494,6 +1536,11 @@ export class CodexRpcClient {
   // Latest status per thread from its notifications, its turns, and native
   // reads. Running subagent threads keep their agent working.
   private readonly threadStatuses = new Map<string, CodexDeliveryStatus>();
+  // Goal state per thread, kept from notifications so changes nobody was
+  // watching still leave their transcript markers.
+  readonly goals = new GoalLog();
+  // Threads whose goal is being read.
+  readonly goalReads = new Set<string>();
 
   // Null when this connection has not learned the thread's status.
   threadStatus(threadId: string): CodexDeliveryStatus | null { return this.threadStatuses.get(threadId) ?? null; }
@@ -1664,6 +1711,10 @@ export class CodexRpcClient {
           }
           this.endedTurns.set(threadId, typeof record(params.turn).status === 'string' ? String(record(params.turn).status) : 'completed');
           if (this.endedTurns.size > 500) this.endedTurns.delete(this.endedTurns.keys().next().value!);
+        } else if (method === 'thread/goal/updated' && threadId) {
+          this.goals.observe(threadId, codexGoal(params.goal));
+        } else if (method === 'thread/goal/cleared' && threadId) {
+          this.goals.observe(threadId, null);
         } else if (method === 'thread/tokenUsage/updated' && threadId) {
           this.tokenUsage.set(threadId, record(params.tokenUsage));
           // Codex reports usage after each model response in the thread.
@@ -2031,4 +2082,25 @@ async function stopRuntime(argv: string[]): Promise<void> {
 // is ended without running its own cleanup.
 function removeForcedHostConfig(configPath: string | null): void {
   if (process.platform === 'win32' && configPath?.endsWith('.json')) fs.rmSync(configPath, { force: true });
+}
+
+const CODEX_GOAL_STATUS: Record<string, IntegratedGoal['status']> = {
+  active: 'active', paused: 'paused', blocked: 'blocked', usageLimited: 'limited', budgetLimited: 'limited', complete: 'complete'
+};
+
+// Codex counts tokens and seconds but gives no check verdict or rounds.
+export function codexGoal(value: unknown): IntegratedGoal | null {
+  const goal = record(value);
+  if (typeof goal.objective !== 'string' || !goal.objective) return null;
+  const status = CODEX_GOAL_STATUS[String(goal.status)] ?? 'active';
+  const limit = goal.status === 'usageLimited' ? 'Usage limit reached' : goal.status === 'budgetLimited' ? 'Token budget used up' : undefined;
+  return {
+    objective: goal.objective,
+    status,
+    ...(limit ? { reason: limit } : {}),
+    ...(typeof goal.tokensUsed === 'number' ? { tokensUsed: goal.tokensUsed } : {}),
+    ...(typeof goal.tokenBudget === 'number' ? { tokenBudget: goal.tokenBudget } : {}),
+    ...(typeof goal.timeUsedSeconds === 'number' ? { timeUsedSeconds: goal.timeUsedSeconds } : {}),
+    ...(typeof goal.updatedAt === 'number' ? { updatedAt: new Date(goal.updatedAt * 1000).toISOString() } : {})
+  };
 }

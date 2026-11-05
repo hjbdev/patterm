@@ -91,6 +91,9 @@ export interface SessionRecord {
   // Background tasks still running, such as a shell the agent waits on. Older
   // paired hosts omit it.
   backgroundTasks?: number;
+  // The status of the agent's open native goal, or null without one. Older
+  // paired hosts omit it.
+  goalStatus?: string | null;
   // When the backing process last changed activity, status or name. Older
   // paired hosts omit it.
   activityAt?: string | null;

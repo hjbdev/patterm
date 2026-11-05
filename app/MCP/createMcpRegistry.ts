@@ -97,7 +97,7 @@ interface RegistryServices {
   workbench: WorkbenchRepository;
   harnessDiscovery: HarnessDiscoveryService;
   harnessLauncher: HarnessLauncher;
-  integrated?: Pick<IntegratedAgentService, 'conversation' | 'peekConversation' | 'olderMessages' | 'prompt' | 'files' | 'delivery' | 'interrupt' | 'stopTask' | 'taskOutput' | 'updateQueued' | 'replyPermission' | 'replyQuestion' | 'replyForm' | 'controls' | 'configure' | 'command' | 'isEmpty' | 'liveSettings' | 'sessionDirectory'>;
+  integrated?: Pick<IntegratedAgentService, 'conversation' | 'peekConversation' | 'olderMessages' | 'prompt' | 'files' | 'delivery' | 'interrupt' | 'stopTask' | 'taskOutput' | 'updateQueued' | 'replyPermission' | 'replyQuestion' | 'replyForm' | 'controls' | 'configure' | 'command' | 'goal' | 'isEmpty' | 'liveSettings' | 'sessionDirectory'>;
   transcriptImages?: Pick<TranscriptImageStore, 'read' | 'fromFile'>;
   figureVideos?: Pick<FigureVideoStore, 'fromFile'>;
   // Draws pages off screen for html_preview; only the desktop app has one.
@@ -214,6 +214,8 @@ const integratedHistoryInput = processIdInput.extend({ cursor: z.string().min(1)
 const integratedGetInput = processIdInput.extend({ transcript_only: z.boolean().optional() });
 const integratedConfigureInput = processIdInput.extend({ selector: z.string().min(1).max(50), value: z.string().min(1).max(500) });
 const integratedCommandInput = processIdInput.extend({ name: z.string().min(1).max(100), text: z.string().max(262_144).default('') });
+const integratedGoalInput = processIdInput.extend({ action: z.enum(['set', 'pause', 'resume', 'clear']), objective: z.string().trim().min(1).max(20_000).optional() })
+  .refine((input) => input.action !== 'set' || input.objective, { message: 'Describe when the work is done', path: ['objective'] });
 const integratedPermissionInput = processIdInput.extend({ request_id: z.string().min(1), reply: z.enum(['once', 'always', 'reject']), message: z.string().max(10_000).optional() });
 const integratedTaskInput = processIdInput.extend({ task_id: z.string().min(1).max(500) });
 const integratedTaskOutputInput = integratedTaskInput.extend({ since: z.string().max(100).nullish(), cursor: z.string().max(2_000).nullish() });
@@ -658,6 +660,21 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
   registry.register(
     { name: 'integrated_command', namespace: 'integrated', description: 'Run one native slash command for an Integrated agent session.', hidden: true, inputSchema: { type: 'object', required: ['process_id', 'name'] } },
     (args, context) => { const input = integratedCommandInput.parse(args); return requireIntegrated(services).command(processFor(context, input.process_id), input.name, input.text); }
+  );
+  registry.register(
+    { name: 'integrated_goal', namespace: 'integrated', description: 'Set, pause, resume, or clear the native goal of an Integrated agent session.', hidden: true, inputSchema: { type: 'object', required: ['process_id', 'action'] } },
+    (args, context) => {
+      const input = integratedGoalInput.parse(args);
+      const processId = processFor(context, input.process_id);
+      // Setting or resuming a goal starts work, as a message does.
+      if (input.action === 'set' || input.action === 'resume') {
+        services.autoSummaries?.userInput(processId);
+        services.closeRequests?.clear(processId);
+        services.snoozes?.userInput(processId);
+        services.statusLabels?.userInput(processId);
+      }
+      return requireIntegrated(services).goal(processId, input.action, input.objective);
+    }
   );
   registry.register(
     { name: 'integrated_interrupt', namespace: 'integrated', description: 'Interrupt the active turn for an Integrated agent session.', hidden: true, inputSchema: { type: 'object', required: ['process_id'] } },

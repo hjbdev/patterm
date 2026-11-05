@@ -91,6 +91,20 @@ export function claudeConversationSaved(location: ClaudeTaskLocation): boolean {
   }
 }
 
+// The session's own transcript, which records goal checks the stream leaves out.
+export function claudeSessionTranscript(location: ClaudeTaskLocation): string | null {
+  const root = path.join(claudeConfigDir(location.env), 'projects');
+  const name = `${location.sessionId}.jsonl`;
+  const direct = path.join(root, location.cwd.replace(/[^a-zA-Z0-9]/g, '-'), name);
+  if (fs.existsSync(direct)) return direct;
+  try {
+    const entry = fs.readdirSync(root).find((candidate) => fs.existsSync(path.join(root, candidate, name)));
+    return entry ? path.join(root, entry, name) : null;
+  } catch {
+    return null;
+  }
+}
+
 // Claude names the project directory after the cwd with every other character
 // replaced by '-', and shortens long paths, so fall back to finding the
 // session directory by its unique id.

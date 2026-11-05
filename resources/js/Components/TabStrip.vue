@@ -52,7 +52,11 @@
                     <UnreadDot :urgency="unreadUrgency(tab.family.root.session.processId)" />
                   </span>
                   <!-- The timer and count sit close together, tucked against the close button. -->
-                  <span v-if="familyTimers(tab.family).length || familyMenuCount(tab.family) > 0" class="flex shrink-0 items-center gap-1">
+                  <span v-if="tab.family.root.session.goalStatus || familyTimers(tab.family).length || familyMenuCount(tab.family) > 0" class="flex shrink-0 items-center gap-1">
+                    <!-- An open native goal: the agent keeps working until it is met. -->
+                    <span v-if="tab.family.root.session.goalStatus" class="flex shrink-0 items-center" :class="tab.family.root.session.goalStatus === 'active' ? 'text-muted-foreground' : 'text-warning/80'" :aria-label="goalStatusLabel(tab.family.root.session.goalStatus as IntegratedGoalStatus)" data-component="tab-goal">
+                      <Target class="h-[13px] w-[13px]" :stroke-width="2.3" aria-hidden="true" />
+                    </span>
                     <span v-if="familyTimers(tab.family).length" class="flex shrink-0 items-center text-muted-foreground" :aria-label="`${familyTimers(tab.family).length} ${familyTimers(tab.family).length === 1 ? 'timer' : 'timers'} set`">
                       <!-- 13px with a 1.25px stroke matches the count's height; lifted half a pixel because its crown sits it low. -->
                       <TimerIcon class="h-[13px] w-[13px] -translate-y-[0.5px]" :stroke-width="2.3" />
@@ -176,7 +180,8 @@ import StatusLabelPill from './StatusLabelPill.vue';
 import { ownerBotOf } from '../Composables/useBots';
 import SnoozedProjectHeader from './SnoozedProjectHeader.vue';
 import { computed, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue';
-import { Clock, Copy, Moon, Pencil, Pin, PinOff, Sun, Timer as TimerIcon, X } from 'lucide-vue-next';
+import { Clock, Copy, Moon, Pencil, Pin, PinOff, Sun, Target, Timer as TimerIcon, X } from 'lucide-vue-next';
+import { goalStatusLabel, type IntegratedGoalStatus } from '../lib/integratedConversation';
 import { canSnooze, openSnooze, unsnooze } from '../Composables/useSnooze';
 import { moveAwakeTab, setTabPinned, tabSnoozed } from '../lib/snooze';
 import { confirmClose } from '../Composables/useCloseConfirm';

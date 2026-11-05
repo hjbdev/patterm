@@ -223,7 +223,10 @@
         :bots="mentionBots"
         :processes="mentionProcesses"
         :launchers="mentionLaunchers"
+        :goal="shownGoal"
+        :set-goal="setGoal"
         @send="sendRequest"
+        @goal="goalAction"
         @command="runPattermCommand($event, '')"
         @invalid="error = $event"
         @interrupt="interrupt"
@@ -305,6 +308,8 @@ import {
   figureAnswers,
   forgetConversation,
   formFieldVisible,
+  goalIsOpen,
+  normaliseGoalSupport,
   HELD_QUEUE_EVENT_ID,
   isSessionUnavailableError,
   mergeTranscriptWindows,
@@ -319,6 +324,8 @@ import {
   type IntegratedQuestion,
   type IntegratedUsage,
   type IntegratedTask,
+  type IntegratedGoal,
+  type IntegratedGoalAction,
   type IntegratedQueuedMessage,
   type IntegratedPermission,
   type IntegratedQuestionRequest,
@@ -350,6 +357,20 @@ const forms = shallowRef<IntegratedFormRequest[]>([]);
 const usage = shallowRef<IntegratedUsage | null>(null);
 const tasks = shallowRef<IntegratedTask[]>([]);
 const queue = shallowRef<IntegratedQueuedMessage[]>([]);
+const goal = shallowRef<IntegratedGoal | null>(null);
+// A met goal shows its success for a moment before the chip goes; the
+// transcript marker keeps the record.
+const goalMetFlash = ref(false);
+let goalMetTimer: ReturnType<typeof setTimeout> | undefined;
+const shownGoal = computed(() => goalIsOpen(goal.value) || (goalMetFlash.value && goal.value) ? goal.value : null);
+watch(goal, (next, previous) => {
+  const met = next?.status === 'complete' && (previous?.status !== 'complete' || previous.objective !== next.objective);
+  // A goal already met when the pane opens needs no celebration.
+  if (!met || !previous) return;
+  clearTimeout(goalMetTimer);
+  goalMetFlash.value = true;
+  goalMetTimer = setTimeout(() => { goalMetFlash.value = false; }, 4_000);
+});
 const transcriptMessages = computed(() => {
   const all = outgoingTranscript(props.processId, messages.value, queue.value);
   return props.hideBackground ? all.filter((message) => !(message.role === 'user' && message.kind === 'text' && hiddenFromBot(message.text))) : all;
@@ -496,6 +517,7 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
   rememberState(props.processId);
+  clearTimeout(goalMetTimer);
   publishIntegratedControls(props.processId, null);
   stopWorkspaceRequests?.();
   stopWorkspaceRequests = undefined;
@@ -608,6 +630,7 @@ function rememberState(processId: string | undefined): void {
     usage: usage.value,
     tasks: tasks.value,
     queue: queue.value,
+    goal: goal.value,
     controls: controls.value,
     provider: provider.value,
     streaming: streaming.value,
@@ -629,6 +652,7 @@ function restoreState(processId: string): void {
   usage.value = cached.usage;
   tasks.value = cached.tasks;
   queue.value = cached.queue;
+  goal.value = cached.goal;
   controls.value = cached.controls;
   provider.value = cached.provider;
   historyTruncated.value = cached.historyTruncated;
@@ -645,6 +669,9 @@ function resetState(): void {
   usage.value = null;
   tasks.value = [];
   queue.value = [];
+  goal.value = null;
+  goalMetFlash.value = false;
+  clearTimeout(goalMetTimer);
   questionAnswers.value = {};
   singleQuestionAnswers.value = {};
   customQuestionAnswers.value = {};
@@ -747,7 +774,7 @@ async function applySnapshot(load: () => Promise<Record<string, unknown>>, reque
     // captured before its payload, so equal revisions can hold different
     // content. Streamed snapshots are only taken on switch, reconnect, gaps,
     // and status or pending events, so they apply without the comparison.
-    const conversation = pushCapable() ? '' : JSON.stringify([result.messages, result.archived_messages, result.permissions, result.questions, result.forms, result.usage, result.tasks, result.queue]);
+    const conversation = pushCapable() ? '' : JSON.stringify([result.messages, result.archived_messages, result.permissions, result.questions, result.forms, result.usage, result.tasks, result.queue, result.goal]);
     if (!conversation || conversation !== lastConversation) {
       lastConversation = conversation;
       const projection = normaliseConversation(result);
@@ -761,6 +788,7 @@ async function applySnapshot(load: () => Promise<Record<string, unknown>>, reque
       usage.value = projection.usage;
       tasks.value = projection.tasks;
       queue.value = projection.queue;
+      goal.value = projection.goal;
     }
     refreshError.value = '';
     // A resumed conversation opens with little or nothing live, so show its
@@ -1029,7 +1057,8 @@ async function loadControls(): Promise<void> {
     controls.value = {
       selectors: Array.isArray(result.selectors) ? result.selectors : [],
       commands: Array.isArray(result.commands) ? result.commands : [],
-      ...(typeof result.revision === 'string' ? { revision: result.revision } : {})
+      ...(typeof result.revision === 'string' ? { revision: result.revision } : {}),
+      ...(normaliseGoalSupport(result.goals) ? { goals: normaliseGoalSupport(result.goals)! } : {})
     };
     controlsError.value = '';
   } catch (cause) {
@@ -1044,6 +1073,27 @@ async function loadControls(): Promise<void> {
   const wanted = wantedControls;
   wantedControls = null;
   if (wanted?.generation === token && token === generation && wanted.revision !== controls.value.revision && !controlsError.value) void loadControls();
+}
+
+// Goal mode's submission. It stays with the agent it was set for.
+async function setGoal(objective: string): Promise<boolean> {
+  const processId = props.processId;
+  const token = generation;
+  if (!canReply.value) return false;
+  error.value = '';
+  transcriptRef.value?.followEnd();
+  try {
+    await mutate('integrated_goal', { process_id: processId, action: 'set', objective });
+  } catch (cause) {
+    if (token === generation) error.value = cause instanceof Error ? cause.message : String(cause);
+    return false;
+  }
+  if (token === generation) await refresh();
+  return true;
+}
+
+function goalAction(action: Exclude<IntegratedGoalAction, 'set'>): void {
+  void respond('goal', () => runMutation('integrated_goal', { process_id: props.processId, action }));
 }
 
 async function configure(selectorId: string, value: string): Promise<void> {

@@ -4,6 +4,9 @@
 // keeps readers free of provider branching. Everything here is pure so the
 // smoke tests can exercise it without a browser.
 
+import { normaliseGoal, type IntegratedGoal, type IntegratedGoalSupport } from './IntegratedGoal';
+export * from './IntegratedGoal';
+
 export type TranscriptToolFamily = 'shell' | 'read' | 'list' | 'glob' | 'grep' | 'edit' | 'write' | 'patch' | 'web' | 'task' | 'todo' | 'skill' | 'mcp' | 'generic';
 export type TranscriptToolStatus = 'running' | 'completed' | 'failed' | 'pending';
 
@@ -238,6 +241,7 @@ export interface ConversationProjection {
   usage: IntegratedUsage | null;
   tasks: IntegratedTask[];
   queue: IntegratedQueuedMessage[];
+  goal: IntegratedGoal | null;
 }
 
 export interface IntegratedControlSelector { id: string; label: string; value: string; options: Array<{ value: string; label: string; description?: string }> }
@@ -245,7 +249,8 @@ export interface IntegratedControlSelector { id: string; label: string; value: s
 export interface IntegratedNativeCommand { name: string; description?: string; source?: 'patterm' }
 // `revision`, when the provider has one, matches the `controls_revision` its
 // snapshots report while the controls are unchanged.
-export interface IntegratedControls { selectors: IntegratedControlSelector[]; commands: IntegratedNativeCommand[]; revision?: string }
+// `goals` is present for harnesses with native goals.
+export interface IntegratedControls { selectors: IntegratedControlSelector[]; commands: IntegratedNativeCommand[]; revision?: string; goals?: IntegratedGoalSupport }
 
 // The last state a pane showed for a process. Switching back paints it at once
 // and the fresh snapshot replaces it; it is never treated as authoritative.
@@ -301,6 +306,7 @@ export function normaliseConversation(value: unknown): ConversationProjection {
     forms: normaliseForms(envelope.forms),
     usage: normaliseUsage(envelope.usage),
     tasks: normaliseTasks(envelope.tasks),
+    goal: normaliseGoal(envelope.goal),
     queue: rows(envelope.queue).flatMap((raw) => {
       const row = record(raw);
       const id = stringField(row.id);
