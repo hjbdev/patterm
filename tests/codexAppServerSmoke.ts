@@ -1382,7 +1382,7 @@ if (socketPath) {
     ['command_review_start', { threadId: 'thread_test', target: { type: 'baseBranch', branch: 'main' }, delivery: 'inline' }],
     ['command_review_start', { threadId: 'thread_test', target: { type: 'commit', sha: 'abc1234', title: null }, delivery: 'inline' }],
     ['command_thread_name_set', { threadId: 'thread_test', name: 'Auth refactor' }],
-    ['command_thread_goal_set', { threadId: 'thread_test', objective: 'Ship the login page' }],
+    ['command_thread_goal_set', { threadId: 'thread_test', objective: 'Ship the login page', status: 'active', origin: 'user' }],
     ['command_thread_shellCommand', { threadId: 'thread_test', command: 'git status' }],
     ['command_thread_revert', { threadId: 'thread_test', beforeTurnId: 'turn_done' }]
   ]);

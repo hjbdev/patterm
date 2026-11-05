@@ -136,6 +136,7 @@
                   :data-level="row.message.level ?? 'info'"
                 >
                   <AlertTriangle v-if="row.message.level === 'error' || row.message.level === 'warning'" class="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <Target v-else-if="row.message.title === 'goal'" class="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                   <Info v-else class="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                   <p class="min-w-0 whitespace-pre-wrap break-words">{{ row.message.text }}</p>
                 </div>
@@ -171,7 +172,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, provide, ref, watch } from 'vue';
 import { elementScroll, measureElement, observeElementOffset, useVirtualizer, type VirtualItem, type Virtualizer } from '@tanstack/vue-virtual';
-import { AlertTriangle, ChevronDown, FileText, Info, Loader2 } from 'lucide-vue-next';
+import { AlertTriangle, ChevronDown, FileText, Info, Loader2, Target } from 'lucide-vue-next';
 import { Bubble, BubbleContent } from './ui/bubble';
 import { Message, MessageContent } from './ui/message';
 import {

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Integrated agents on Codex, OpenCode and Claude Code take native goals from
+  the composer. The target button switches the composer to goal mode, where
+  sending describes when the work is done; Esc goes back to messages. While a
+  goal is open a chip beside it shows its status and rounds, and opens the
+  objective, the latest check's verdict, tokens and time where the harness
+  reports them, with Edit, Pause or Resume, and Clear where the harness
+  supports them (Claude Code goals cannot be paused). Agent tabs show a target
+  while a goal is open, and the transcript records each goal change and check
+  as a muted marker. Typing `/goal` keeps working on every harness.
 - HTML figures play local videos. An agent can show an MP4 (H.264, with AAC
   audio) or WebM (VP8, VP9 or AV1) file from its working directory or project
   in `<video src>` or `<source src>`, up to 100 MB each. Patterm keeps copies

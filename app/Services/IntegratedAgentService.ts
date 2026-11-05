@@ -12,6 +12,7 @@ import type { UsageService } from './UsageService';
 import type { MemoryPushService, MemoryUpdate } from './MemoryPushService';
 import { callIntegratedHost, detachedHostLauncher, integratedHostListening, type IntegratedHostLauncher } from './IntegratedHostLauncher';
 import { presetHarnessInput } from '../Harness/HarnessPresets';
+import { goalIsOpen, normaliseGoal, type IntegratedGoalAction, type IntegratedGoalSupport } from './IntegratedGoal';
 
 const ARCHIVE_PAGE_SIZE = 80;
 const ARCHIVE_CURSOR_PREFIX = 'archive:';
@@ -84,6 +85,8 @@ export interface IntegratedControls {
   // Set by providers whose conversation snapshots report `controls_revision`;
   // equal values mean the controls haven't changed.
   revision?: string;
+  // Present for harnesses with native goals.
+  goals?: IntegratedGoalSupport;
 }
 
 const PATTERM_COMMANDS: IntegratedCommand[] = [
@@ -114,6 +117,9 @@ export interface IntegratedProviderService {  prepare(input: IntegratedLaunchInp
   controls?(processId: string): Promise<IntegratedControls>;
   configure?(processId: string, selector: string, value: string): Promise<void>;
   command?(processId: string, name: string, text: string): Promise<unknown>;
+  // Sets, pauses, resumes, or clears the native goal. Typing /goal reaches
+  // the same native operation through `command`.
+  goal?(processId: string, action: IntegratedGoalAction, objective?: string): Promise<unknown>;
   // Native compaction, never a custom command of the same name.
   compact?(processId: string): Promise<unknown>;
   // The native session's current model, where Patterm's selection can be stale.
@@ -947,6 +953,22 @@ export class IntegratedAgentService {
     return result;
   }
 
+  // A goal that starts work (set or resume) counts as a turn like a prompt.
+  goal(processId: string, action: IntegratedGoalAction, objective?: string): Promise<unknown> {
+    return this.whileSending(processId, async () => {
+      const provider = this.forProcess(processId);
+      const goal = provider.goal;
+      if (!goal) throw new Error('This agent does not support goals');
+      if (action === 'set' && !objective?.trim()) throw new Error('Describe when the work is done');
+      const key = this.ledgerKey(processId);
+      const result = await goal.call(provider, processId, action, objective?.trim());
+      if (action === 'set' || action === 'resume') this.signal(key, 'turn');
+      this.refreshObserved(key);
+      if (action === 'set' && objective) try { this.refreshTitle(processId, `/goal ${objective.trim()}`); } catch { /* titles are best effort */ }
+      return result;
+    });
+  }
+
   // Native compaction outside a user turn. It bypasses custom commands that
   // share the name, leaves the title alone, and is only admitted while the
   // agent is idle with no prompt on its way.
@@ -1283,6 +1305,7 @@ export class IntegratedAgentService {
         // Only these reads set the task count: they run one at a time, so a
         // slower, older read cannot overwrite a newer count.
         this.markBackgroundTasks(key, runningTasks(record(conversation).tasks));
+        this.markGoal(key, openGoalStatus(record(conversation).goal));
         this.markAsking(key, pendingAsk(conversation));
       }
       // Covers prompts held before a restart, when no transition follows.
@@ -1338,6 +1361,13 @@ export class IntegratedAgentService {
   private markBackgroundTasks(processId: string, count: number): void {
     const result = this.database.connection.prepare(`update processes set background_tasks = ? where id = ? and status = 'running' and background_tasks != ?`)
       .run(count, processId, count);
+    if (result.changes > 0) this.onWorkbenchChange?.();
+  }
+
+  // The open goal's status, for the agent's tab.
+  private markGoal(processId: string, status: string | null): void {
+    const result = this.database.connection.prepare(`update processes set goal_status = ? where id = ? and status = 'running' and goal_status is not ?`)
+      .run(status, processId, status);
     if (result.changes > 0) this.onWorkbenchChange?.();
   }
 
@@ -1545,4 +1575,9 @@ function runningTasks(tasks: unknown): number {
     const status = record(task).status;
     return status === 'running' || status === 'pending';
   }).length;
+}
+
+function openGoalStatus(value: unknown): string | null {
+  const goal = normaliseGoal(value);
+  return goal && goalIsOpen(goal) ? goal.status : null;
 }

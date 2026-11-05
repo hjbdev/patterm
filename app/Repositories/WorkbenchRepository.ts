@@ -77,6 +77,9 @@ export interface SessionDto {
   // Background tasks still running, such as a shell the agent waits on. Older
   // paired hosts omit it.
   backgroundTasks?: number;
+  // The status of the agent's open native goal, or null without one. Older
+  // paired hosts omit it.
+  goalStatus?: string | null;
   // When the backing process last changed activity, status or name, for
   // sorting by recent activity. Older paired hosts omit it.
   activityAt?: string | null;
@@ -202,6 +205,7 @@ interface ProcessRow {
   status: string;
   activity: string;
   background_tasks: number;
+  goal_status: string | null;
   asking: string | null;
   status_label_id: string | null;
   status_label_set_at: string | null;
@@ -370,6 +374,7 @@ function mapSessions(sessions: SessionRow[], processes: ProcessRow[], labels: St
   const closeRequests = new Map(processes.map((process) => [process.id, mapCloseRequest(process)]));
   const snoozes = new Map(processes.map((process) => [process.id, mapSnooze(process)]));
   const backgroundTasks = new Map(processes.map((process) => [process.id, process.background_tasks]));
+  const goals = new Map(processes.map((process) => [process.id, process.goal_status]));
   const asking = new Map(processes.map((process) => [process.id, process.asking]));
   const labelsById = new Map(labels.map((label) => [label.id, label]));
   const statusLabels = new Map(processes.map((process) => [process.id, mapStatusLabel(process, labelsById)]));
@@ -410,6 +415,7 @@ function mapSessions(sessions: SessionRow[], processes: ProcessRow[], labels: St
       resumeStatus: session.resume_status,
       activity: session.process_id ? activityByProcessId.get(session.process_id) ?? 'idle' : 'idle',
       backgroundTasks: session.process_id ? backgroundTasks.get(session.process_id) ?? 0 : 0,
+      goalStatus: session.process_id ? goals.get(session.process_id) ?? null : null,
       activityAt: session.process_id ? activityAtByProcessId.get(session.process_id) ?? null : null,
       asking: session.process_id ? asking.get(session.process_id) ?? null : null,
       statusLabel: session.process_id ? statusLabels.get(session.process_id) ?? null : null,

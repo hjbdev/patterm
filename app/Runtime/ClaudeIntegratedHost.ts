@@ -544,6 +544,9 @@ function receiveClaude(chunk: string): void {
         recordContext(record(record(event.message).usage));
       }
       applyAssistantMessage(event, parentOf(event));
+      // /goal answers locally; the goal it set or cleared is in the
+      // transcript, which only a snapshot reads.
+      if (record(event.local_command_run).command === 'goal') publish({ kind: 'pending' });
     } else if (event.type === 'user') {
       // --replay-user-messages echoes an accepted client uuid; tool_result
       // blocks pair with their streamed or final tool_use row.

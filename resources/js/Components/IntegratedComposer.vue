@@ -168,7 +168,29 @@
         <div v-if="controls.selectors.length" class="hidden flex-wrap items-center gap-2 sm:flex">
           <IntegratedControlPicker v-for="selector in controls.selectors" :key="selector.id" :selector="selector" :disabled="!controlling || sending || ended" @select="emit('configure', selector.id, $event)" />
         </div>
-        <span class="flex-1" />
+        <!-- Goal mode turns the next submission into the agent's goal; the
+             chip shows the goal it is working toward. It takes the free
+             space, so a long objective truncates rather than wrap the row. -->
+        <div v-if="goalSupport && !ended" class="flex min-w-0 flex-1 items-center gap-1 max-sm:order-first">
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            class="h-8 shrink-0 gap-1.5 px-2 text-xs font-[440]"
+            :class="goalMode ? 'bg-muted text-foreground hover:bg-muted' : 'text-muted-foreground'"
+            :disabled="!controlling"
+            :aria-pressed="goalMode"
+            :aria-label="goalMode ? 'Goal mode: describe when the work is done. Turn off' : 'Set a goal'"
+            :title="goalMode ? 'Back to messages (Esc)' : 'Set a goal the agent works toward until it is met'"
+            data-component="integrated-goal-toggle"
+            @click="toggleGoalMode()"
+          >
+            <Target class="h-3.5 w-3.5" aria-hidden="true" />
+            <span v-if="goalMode">Goal</span>
+          </Button>
+          <IntegratedGoalChip v-if="goal && !goalMode" :goal="goal" :support="goalSupport" :actions="controlling" :disabled="goalBusy" @action="goalAction" />
+        </div>
+        <span v-if="!goalSupport || ended" class="flex-1" />
         <!-- The agent's state and usage, from the conversation. -->
         <!-- On narrow phones it clips rather than run under the buttons. -->
         <div class="flex min-w-0 items-center gap-2 overflow-hidden max-sm:order-first">
@@ -182,7 +204,7 @@
         <Button v-else-if="stoppable" type="button" size="icon" class="h-8 w-8 shrink-0 max-sm:order-4" aria-label="Stop response" title="Stop response" @click="emit('interrupt')">
           <Square class="h-3.5 w-3.5 fill-current" />
         </Button>
-        <Button v-else type="submit" size="icon" class="h-8 w-8 shrink-0 max-sm:order-4" :disabled="!canSend" :aria-label="sending ? 'Sending' : 'Send message'" :title="sendTitle">
+        <Button v-else type="submit" size="icon" class="h-8 w-8 shrink-0 max-sm:order-4" :disabled="!canSend" :aria-label="goalMode ? 'Set goal' : sending ? 'Sending' : 'Send message'" :title="sendTitle">
           <ArrowUp class="h-4 w-4" />
         </Button>
         <IntegratedControlDrawer v-if="controls.selectors.length" :selectors="controls.selectors" :disabled="!controlling || sending || ended" @select="(id, value) => emit('configure', id, value)" />
@@ -196,12 +218,13 @@
 import { cn } from '@/lib/utils';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useId, watch } from 'vue';
 import { EditorContent } from '@tiptap/vue-3';
-import { ArrowUp, Paperclip, Square, TerminalSquare } from 'lucide-vue-next';
+import { ArrowUp, Paperclip, Square, Target, TerminalSquare } from 'lucide-vue-next';
 import { Button } from './ui/button';
 import AgentIcon from './AgentIcon.vue';
 import ComposerWorkingBorder from './ComposerWorkingBorder.vue';
 import IntegratedControlDrawer from './IntegratedControlDrawer.vue';
 import IntegratedControlPicker from './IntegratedControlPicker.vue';
+import IntegratedGoalChip from './IntegratedGoalChip.vue';
 import HostBadge from './HostBadge.vue';
 import TabActivity from './TabActivity.vue';
 import {
@@ -219,6 +242,7 @@ import {
   type ComposerSendPayload
 } from '../lib/integratedComposer';
 import type { MentionAgent, MentionBot, MentionLauncher, MentionProcess } from '../lib/agentMentions';
+import type { IntegratedGoal, IntegratedGoalAction, IntegratedGoalSupport } from '../lib/integratedConversation';
 import { harnessLabel } from '../lib/harnesses';
 import type { ComposerChip } from '../lib/composerDocument';
 import { createComposerEditor, type ComposerEditor } from '../lib/composerEditor';
@@ -232,7 +256,7 @@ interface NativeCommand { name: string; description?: string; source?: 'patterm'
 const props = defineProps<{
   processId: string;
   provider?: string | null;
-  controls: { selectors: Selector[]; commands: NativeCommand[] };
+  controls: { selectors: Selector[]; commands: NativeCommand[]; goals?: IntegratedGoalSupport };
   controlling: boolean;
   sending: boolean;
   pending: boolean;
@@ -252,6 +276,10 @@ const props = defineProps<{
   // placeholder names who you're messaging.
   compact?: boolean;
   addressee?: string | undefined;
+  // The goal shown as a chip, while it is open or just met.
+  goal?: IntegratedGoal | null | undefined;
+  // Sets the goal from goal mode; resolves whether it was set.
+  setGoal?: ((objective: string) => Promise<boolean>) | undefined;
 }>();
 const emit = defineEmits<{
   send: [request: ComposerSendPayload & { hash: string }];
@@ -259,6 +287,7 @@ const emit = defineEmits<{
   invalid: [message: string];
   interrupt: [];
   configure: [selector: string, value: string];
+  goal: [action: Exclude<IntegratedGoalAction, 'set'>];
   takeControl: [];
 }>();
 
@@ -302,8 +331,14 @@ const previewSessionId = computed(() => {
   const item = menuOpen.value ? menuItems.value[menuIndex.value] : undefined;
   return item?.kind === 'agent' ? item.agent.session.id : null;
 });
+const goalSupport = computed(() => props.compact || !props.setGoal ? null : props.controls.goals ?? null);
+// Goal mode borrows the editor; the message draft waits until it ends.
+const goalMode = ref(false);
+const goalBusy = ref(false);
+let stashedDraft: { processId: string; text: string; chips: ComposerChip[] } | null = null;
 const placeholder = computed(() => {
   if (props.ended) return props.restartable ? 'Type /restart to resume this conversation' : 'This session has ended';
+  if (goalMode.value) return 'Describe when the work is done…';
   if (props.compact) return `Message ${props.addressee ?? 'agent'}`;
   const parts = ['Message agent', ...mentionable.value ? ['type @ for agents'] : [], ...props.controls.commands.length ? ['/ for commands'] : []];
   return parts.join(', ');
@@ -315,7 +350,7 @@ const editorAttributes = computed<Record<string, string>>(() => ({
     : 'block max-h-44 min-h-14 w-full overflow-y-auto bg-transparent px-4 pb-1 pt-3 text-sm leading-5 outline-none',
   'data-patterm-integrated-input': '',
   role: 'combobox',
-  'aria-label': 'Message agent',
+  'aria-label': goalMode.value ? 'Goal: describe when the work is done' : 'Message agent',
   'aria-placeholder': placeholder.value,
   'aria-multiline': 'true',
   'aria-autocomplete': 'list',
@@ -326,13 +361,15 @@ const editorAttributes = computed<Record<string, string>>(() => ({
 const recoveryCommand = computed(() => Boolean(props.ended && props.restartable
   && (draft.value.text.trim() === '/restart' || /^\/resume(?:\s|$)/.test(draft.value.text.trim()))
   && !draft.value.chips.length && !draft.value.attachments.length));
-const canSend = computed(() => props.controlling && (!props.ended || recoveryCommand.value) && !props.sending && !props.pending
+const canSend = computed(() => goalMode.value ? props.controlling && !props.ended && !goalBusy.value && draft.value.text.trim().length > 0
+  : props.controlling && (!props.ended || recoveryCommand.value) && !props.sending && !props.pending
   && (draft.value.text.trim().length > 0 || draft.value.attachments.length > 0)
   && !draft.value.attachments.some((attachment) => attachment.status !== 'ready'));
 // While the agent works, an empty box offers Stop in Send's place.
-const stoppable = computed(() => Boolean(props.working) && props.controlling && !props.ended && !props.sending
+const stoppable = computed(() => !goalMode.value && Boolean(props.working) && props.controlling && !props.ended && !props.sending
   && !draft.value.text.trim() && !draft.value.attachments.length);
 const sendTitle = computed(() => {
+  if (goalMode.value) return 'Set goal';
   if (props.pending) return 'Resolve the pending delivery before sending again';
   if (props.sending) return 'Sending';
   if (draft.value.attachments.some((attachment) => attachment.status !== 'ready')) return 'Wait for attachments to finish uploading';
@@ -359,6 +396,11 @@ function closeMenus(): void {
 function evaluate(): void {
   const current = editor.value;
   if (!current) return;
+  // A goal is plain text, without mentions or commands.
+  if (goalMode.value) {
+    closeMenus();
+    return;
+  }
   const caret = current.getSelection().start;
   const mention = mentionable.value ? mentionQuery(draft.value.text, caret) : null;
   if (mention) {
@@ -468,12 +510,21 @@ function onKeydown(event: KeyboardEvent): void {
     closeMenus();
     return;
   }
+  if (event.key === 'Escape' && goalMode.value) {
+    event.preventDefault();
+    leaveGoalMode();
+    return;
+  }
   if (event.key !== 'Enter' || event.shiftKey) return;
   event.preventDefault();
   submit();
 }
 
 function submit(): void {
+  if (goalMode.value) {
+    void submitGoal();
+    return;
+  }
   if (!canSend.value) return;
   const prepared = payloadFor(props.processId);
   if (!prepared.ok) {
@@ -482,6 +533,53 @@ function submit(): void {
   }
   emit('send', { ...prepared.payload, hash: prepared.hash });
   closeMenus();
+}
+
+// `prefill` is the goal being edited.
+function enterGoalMode(prefill = ''): void {
+  if (!goalMode.value) stashedDraft = { processId: props.processId, text: draft.value.text, chips: draft.value.chips };
+  closeMenus();
+  draft.value.chips = [];
+  draft.value.text = prefill;
+  goalMode.value = true;
+  void nextTick(focusEditor);
+}
+
+function leaveGoalMode(): void {
+  if (!goalMode.value) return;
+  goalMode.value = false;
+  const stashed = stashedDraft;
+  stashedDraft = null;
+  const target = draftFor(stashed?.processId ?? props.processId);
+  target.chips = stashed?.chips ?? [];
+  target.text = stashed?.text ?? '';
+  void nextTick(focusEditor);
+}
+
+function toggleGoalMode(): void {
+  if (goalMode.value) leaveGoalMode();
+  else enterGoalMode();
+}
+
+// A goal is plain text: mentions and files belong to messages.
+async function submitGoal(): Promise<void> {
+  const objective = draft.value.text.trim();
+  if (!objective || goalBusy.value || !props.setGoal || !props.controlling) return;
+  if (draft.value.chips.length || draft.value.attachments.length) {
+    emit('invalid', 'A goal is plain text; send mentions and files as a message.');
+    return;
+  }
+  goalBusy.value = true;
+  try {
+    if (await props.setGoal(objective)) leaveGoalMode();
+  } finally {
+    goalBusy.value = false;
+  }
+}
+
+function goalAction(action: 'edit' | Exclude<IntegratedGoalAction, 'set'>): void {
+  if (action === 'edit') enterGoalMode(props.goal?.objective ?? '');
+  else emit('goal', action);
 }
 
 // Returns true when the composer took the paste over.
@@ -576,6 +674,8 @@ function focusOnArrival(): void {
 }
 
 watch(() => props.processId, () => {
+  // The stashed draft belongs to the agent being left.
+  if (goalMode.value) leaveGoalMode();
   closeMenus();
   mountEditor();
   void nextTick(focusOnArrival);
@@ -586,6 +686,7 @@ watch(previewSessionId, (sessionId) => { mentionPreview.value = sessionId; });
 mountEditor();
 onMounted(() => void nextTick(focusOnArrival));
 onBeforeUnmount(() => {
+  leaveGoalMode();
   mentionPreview.value = null;
   editor.value?.destroy();
 });

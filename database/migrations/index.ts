@@ -14,6 +14,7 @@ import shareMemory from './2026_11_02_000061_share_memory';
 import addProcessStatusLabel from './2026_11_02_000062_add_process_status_label';
 import addOpenCodePendingPrompts from './2026_11_04_000063_add_opencode_pending_prompts';
 import addSessionSecretExpiry from './2026_11_04_000064_add_session_secret_expiry';
+import addProcessGoalStatus from './2026_11_05_000065_add_process_goal_status';
 import createInitialSchema from './2026_06_03_000001_create_initial_schema';
 import addProcessRuntimeColumns from './2026_06_03_000002_add_process_runtime_columns';
 import addProcessWorktreeId from './2026_06_03_000003_add_process_worktree_id';
@@ -132,5 +133,6 @@ export const migrations: Migration[] = [
   shareMemory,
   addProcessStatusLabel,
   addOpenCodePendingPrompts,
-  addSessionSecretExpiry
+  addSessionSecretExpiry,
+  addProcessGoalStatus
 ];

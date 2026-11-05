@@ -10,6 +10,8 @@ import type { IntegratedConversationEvent, IntegratedConversationListener } from
 import type { ResolvedIntegratedPrompt } from './IntegratedInput';
 import { memoryPushSupported, type MemoryUpdate } from './MemoryPushService';
 import { readClaudeTaskOutput, type ClaudeTaskOutput } from './ClaudeTaskOutput';
+import { ClaudeGoalReader } from './ClaudeGoal';
+import { snapshotWithGoal, type IntegratedGoalAction } from './IntegratedGoal';
 import { containsReferenceToken, referenceToken } from './PromptReferences';
 import type { TranscriptImageStore } from './TranscriptImageStore';
 import { claudeMcpServers } from '../Harness/McpDelivery';
@@ -43,6 +45,8 @@ export class ClaudeStreamService {
     private readonly launcher: IntegratedHostLauncher = detachedHostLauncher,
     private readonly images: TranscriptImageStore | null = null
   ) {}
+
+  private readonly goals = new ClaudeGoalReader();
 
   async prepare(input: IntegratedLaunchInput): Promise<IntegratedLaunchResult> {
     const directory = path.join(this.runtimeDir, 'claude');
@@ -108,7 +112,8 @@ export class ClaudeStreamService {
     // The model and command lists, tens of kilobytes, belong to the controls,
     // which clients read once and again only when their revision changes.
     const { models: _models, commands: _commands, ...state } = result;
-    return {
+    const { goal, markers } = this.goals.read({ cwd: runtime.cwd, sessionId: runtime.sessionId, env: this.env });
+    return snapshotWithGoal({
       process_id: processId, session_id: runtime.pattermSessionId, provider_session_id: runtime.sessionId, provider: 'claude',
       ...state,
       controls_revision: controlsRevision(this.run, result),
@@ -116,7 +121,7 @@ export class ClaudeStreamService {
       streaming: true,
       status: claudeActivity(result.status),
       questions: { data: claudeQuestionRequests(result.questions) }
-    };
+    }, goal, markers);
   }
 
   // The host streams targeted transcript events over a persistent connection.
@@ -275,12 +280,22 @@ export class ClaudeStreamService {
 
   async controls(processId: string): Promise<IntegratedControls> {
     const { state, revision } = await this.controlState(this.runtime(processId).socketPath);
+    const commands = nativeCommands(state);
     return {
       selectors: [claudeModelSelector(state), claudeEffortSelector(state), claudeModeSelector(state)]
         .filter((selector): selector is IntegratedControlSelector => selector !== null),
-      commands: nativeCommands(state),
-      revision
+      commands,
+      revision,
+      // Claude's goal is a stop condition: it can be replaced or cleared,
+      // never paused.
+      ...(commands.some((command) => command.name === 'goal') ? { goals: { canPause: false, canResume: false, canEdit: true, canBudget: false } } : {})
     };
+  }
+
+  goal(processId: string, action: IntegratedGoalAction, objective?: string): Promise<unknown> {
+    if (action === 'pause' || action === 'resume') throw new Error('Claude Code goals cannot be paused');
+    if (action === 'set' && !objective) throw new Error('Describe the goal after /goal');
+    return this.command(processId, 'goal', action === 'set' ? objective! : 'clear');
   }
 
   async configure(processId: string, selector: string, value: string): Promise<void> {
