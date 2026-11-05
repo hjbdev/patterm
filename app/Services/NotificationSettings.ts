@@ -35,6 +35,7 @@ export const notificationSettingsInput = z.object({
   }).default(NOTIFICATION_SOURCE_DEFAULTS),
   minimumUrgency: notificationUrgency.default('normal'),
   toasts: z.boolean().default(true),
+  subagentNotifications: z.boolean().default(true),
   // Integrated turns that only report progress or wait on other agents stay
   // in the app instead of toasting and pushing.
   quietRoutineTurns: z.boolean().default(false),

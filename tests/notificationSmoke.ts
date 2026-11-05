@@ -179,6 +179,45 @@ async function main(): Promise<void> {
     assert.equal(orphanRecord.audience, 'user');
     assert.equal(orphanRecord.body, 'From Reviewer, a child agent whose parent is no longer running.\nKeep the column?');
 
+    // Muting subagents suppresses user notices even after their parent exits,
+    // but leaves root/detached notices and parent communication working.
+    assert.equal(settings.notificationSettings().subagentNotifications, true);
+    settings.updateNotificationSettings({ subagentNotifications: false });
+    assert.equal(new SettingsService(database).notificationSettings().subagentNotifications, false);
+    for (const input of [
+      { source: 'mcp', kind: 'attention' },
+      { source: 'terminal', kind: 'attention' },
+      { source: 'integrated', kind: 'turn_finished' },
+      { source: 'integrated', kind: 'permission' },
+      { source: 'runtime', kind: 'failure' }
+    ] as const) {
+      const before = changes.length;
+      assert.equal((await service.raise({ processId: 'orphan', ...input, body: 'Muted subagent' })).status, 'suppressed');
+      assert.equal(changes.length, before, 'muted user notices emit no delivery events');
+    }
+    service.markRead({ process_id: 'child' });
+    service.markRead({ process_id: 'bot-child' });
+    const beforeMutedParent = messages.length;
+    assert.equal((await service.raise({ processId: 'child', source: 'mcp', kind: 'attention', body: 'Still need help' })).status, 'routed_to_parent');
+    await service.raise({ processId: 'child', source: 'integrated', kind: 'permission', body: 'Still needs approval' });
+    await service.raise({ processId: 'bot-child', source: 'runtime', kind: 'failure', body: 'Still tell the bot' });
+    assert.equal(messages.length, beforeMutedParent + 3);
+    await service.raise({ processId: 'child', source: 'integrated', kind: 'permission', body: 'Still needs approval' });
+    assert.equal(messages.length, beforeMutedParent + 3, 'muted repeats still deduplicate parent messages');
+    assert.equal(service.unread().some((row) => row.process_id === 'child'), false, 'muted repeats leave no unread dot');
+    assert.equal(service.unread().some((row) => row.process_id === 'bot-child'), false, 'muted bot child notices leave no unread dot');
+    for (const processId of ['root', 'detached']) {
+      const result = await service.raise({ processId, source: 'integrated', kind: 'turn_finished', body: 'User still hears this', dedupeKey: 'test:subagent-toggle' });
+      assert.equal(result.status, 'raised');
+      const notice = (result as { notification: NotificationRecord }).notification;
+      assert.equal(notice.delivery, 'all');
+      assert.equal(notice.audience, 'user');
+      service.resolve({ ids: [notice.id] });
+    }
+    settings.updateNotificationSettings({ subagentNotifications: true });
+    assert.equal((await service.raise({ processId: 'orphan', source: 'runtime', kind: 'failure', body: 'Enabled again' })).status, 'raised');
+    service.resolve({ process_id: 'child' });
+
     // Bells collapse into one record and default to in-app only for agents.
     const bell = await service.raise({ processId: 'root', source: 'terminal', kind: 'bell' });
     assert.equal((bell as { notification: NotificationRecord }).notification.delivery, 'in_app');

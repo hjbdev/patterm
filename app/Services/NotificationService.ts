@@ -143,6 +143,12 @@ export class NotificationService {
       return { status: 'routed_to_parent', parent_process_id: process.parent_process_id! };
     }
 
+    // This preference controls notices for the user. Parent routing and the
+    // records used by parents remain available, including bot child failures.
+    const mutedSubagent = Boolean(process?.kind === 'agent' && process.parent_process_id
+      && !this.settings.notificationSettings().subagentNotifications);
+    if (!child && mutedSubagent) return { status: 'suppressed' };
+
     // Toasts, the tray, and push show plain text; parents above keep the Markdown.
     const text = clean(markdownText(source ?? ''), Math.min(input.bodyLimit ?? BODY_LIMIT, BODY_LIMIT));
     const level = input.source === 'system' ? 'all' : this.level(categoryFor(input, process));
@@ -162,7 +168,7 @@ export class NotificationService {
       const existing = db.prepare(`select * from notifications where process_id = ? and dedupe_key = ? and resolved_at is null order by created_at desc limit 1`)
         .get(process.id, dedupeKey) as NotificationRow | undefined;
       if (existing) {
-        const notification = this.touch(existing.id, title, text, at, 'updated', held);
+        const notification = this.touch(existing.id, title, text, at, 'updated', held, mutedSubagent);
         // Repeated events in one episode stay silent. A retry ends the old
         // failure episode when the agent resumes work.
         const changed = existing.title !== title || existing.body !== text;
@@ -174,15 +180,15 @@ export class NotificationService {
       const since = new Date(this.now() - RATE_WINDOW_MS).toISOString();
       const recent = db.prepare(`select id from notifications where process_id = ? and source = 'mcp' and created_at >= ? order by created_at desc`)
         .all(process.id, since) as Array<{ id: string }>;
-      if (recent.length >= RATE_LIMIT) return { status: 'rate_limited', notification: this.touch(recent[0]!.id, title, text, at, 'updated', held) };
+      if (recent.length >= RATE_LIMIT) return { status: 'rate_limited', notification: this.touch(recent[0]!.id, title, text, at, 'updated', held, mutedSubagent) };
     }
 
     const id = `notification_${randomUUID()}`;
     const routedTo = child && (isBlocking(input.kind) || botChild) ? process!.parent_process_id : null;
     db.prepare(`insert into notifications
-      (id, project_id, process_id, session_id, source, kind, urgency, delivery, held, audience, routed_to_process_id, title, body, dedupe_key, created_at, updated_at)
-      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, projectId, process?.id ?? null, process?.session_id ?? null, input.source, input.kind, urgency, delivery, held ? 1 : 0, child ? 'parent' : 'user', routedTo, title, text, dedupeKey, at, at);
+      (id, project_id, process_id, session_id, source, kind, urgency, delivery, held, audience, routed_to_process_id, title, body, dedupe_key, created_at, updated_at, read_at)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, projectId, process?.id ?? null, process?.session_id ?? null, input.source, input.kind, urgency, delivery, held ? 1 : 0, child ? 'parent' : 'user', routedTo, title, text, dedupeKey, at, at, mutedSubagent ? at : null);
     this.timeline.append({ event_type: 'notification.raised', project_id: projectId, process_id: process?.id ?? null, session_id: process?.session_id ?? null, actor_type: input.source === 'mcp' ? 'agent' : 'system', metadata: { notification_id: id, source: input.source, kind: input.kind, urgency, title } });
     const notification = this.get(id)!;
     this.onChange({ type: 'raised', notification });
@@ -335,8 +341,8 @@ export class NotificationService {
 
   // A repeat while its project is snoozed is held like a new notice, so the
   // project's summary counts it.
-  private touch(id: string, title: string, body: string, at: string, type: 'updated', held = false): NotificationRecord {
-    this.database.connection.prepare(`update notifications set title = ?, body = ?, updated_at = ?, read_at = null, occurrences = occurrences + 1 where id = ?`).run(title, body, at, id);
+  private touch(id: string, title: string, body: string, at: string, type: 'updated', held = false, read = false): NotificationRecord {
+    this.database.connection.prepare(`update notifications set title = ?, body = ?, updated_at = ?, read_at = ?, occurrences = occurrences + 1 where id = ?`).run(title, body, at, read ? at : null, id);
     if (held) this.database.connection.prepare(`update notifications set held = 1, delivery = 'in_app' where id = ?`).run(id);
     const notification = this.get(id)!;
     this.onChange({ type, notification });
