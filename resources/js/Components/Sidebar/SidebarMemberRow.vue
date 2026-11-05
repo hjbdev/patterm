@@ -44,7 +44,7 @@
         @pointerdown.stop
         @click.stop="nodes.setOpen(nodeId, !expanded)"
       >
-        <MemberCount :count="count" :open="expanded" :shimmer="subagentPulse(rowActivity) === 'working'" :bare="countInRing(rowActivity)" />
+        <MemberCount :count="count" :open="expanded" :bare="countInRing(rowActivity)" />
       </button>
       <!-- The unread dot becomes the close button in place, so nothing moves on hover. -->
       <span class="relative flex h-5 w-5 items-center justify-center">
@@ -65,7 +65,7 @@ import MemberCount from '../MemberCount.vue';
 import { cn } from '@/lib/utils';
 import { agentLabel } from '../../lib/agentTabs';
 import { hostLabel } from '../../lib/hosts';
-import { countInRing, processActivity, subagentCountClass, subagentPulse } from '../../lib/rowActivity';
+import { countInRing, processActivity, subagentCountClass } from '../../lib/rowActivity';
 import type { StripTab } from '../../lib/tabStrip';
 import type { ProcessRecord, ProjectSummary, SessionRecord } from '../../types';
 import { unreadUrgency, type NotificationUrgency } from '../../Composables/useNotifications';

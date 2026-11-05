@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Tabs and sidebar rows show work one way: the status ring spins at full
+  strength while the agent or any subagent below it works. The half-strength
+  ring, the shimmering subagent counts and the "waiting" label are gone; the
+  tooltip still says who is working.
+
 - The secret form is clearer. Each way the agent can use a secret is a card
   that says whether the agent can see the value, and the proxy's header
   settings sit inside the proxy card. Fields have labels, a request shows

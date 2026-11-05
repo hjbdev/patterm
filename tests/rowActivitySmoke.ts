@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 
 import { buildAgentTabFamilies } from '../resources/js/lib/agentTabs';
-import { activityLookup, countInRing, describeActivity, memberLabel, processActivity, shownActivity, subagentCountClass, subagentPulse } from '../resources/js/lib/rowActivity';
+import { activityLookup, countInRing, describeActivity, isWorking, memberLabel, processActivity, shownActivity, subagentCountClass, subagentPulse } from '../resources/js/lib/rowActivity';
 import type { ActivityState, ProcessRecord, SessionRecord } from '../resources/js/types';
 
 function session(id: string, parentId: string | null, activity: ActivityState): SessionRecord {
@@ -178,4 +178,5 @@ const activity = (id: string) => activityFor(byId.get(id)!);
   assert.equal(lookup(dead).self, 'dead');
   assert.equal(describeActivity(lookup(dead)), 'Dead, 1 subagent working');
   assert.equal(countInRing(lookup(dead)), false, 'dead agents show a distinct mark while child activity is retained');
+  assert.equal(isWorking(lookup(dead)), true, 'a marked agent still spins while a subagent works');
 }

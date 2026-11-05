@@ -31,6 +31,7 @@ import { computed } from 'vue';
 import { cn } from '@/lib/utils';
 import type { DigestMember } from '../../lib/agentDigest';
 import { hostLabel } from '../../lib/hosts';
+import { isWorking } from '../../lib/rowActivity';
 import { MAX_INDENT_DEPTH } from '../../lib/sidebarTree';
 import HostBadge from '../HostBadge.vue';
 import RowStatus from '../RowStatus.vue';
@@ -47,17 +48,15 @@ const active = computed(() => props.member.session ? sidebar.sessionActive(props
   : props.member.process ? sidebar.processActive(props.member.process) : false);
 
 const word = computed(() => {
-  const { activity, process } = props.member;
+  const { activity } = props.member;
   switch (activity.self) {
     case 'permission': return 'needs you';
     case 'question': return 'asking';
     case 'error': return 'error';
     case 'closing': return 'done';
-    case 'working': return 'working';
-    case 'unknown': return 'unknown';
     default:
-      // An idle subagent whose own subagents are at work is waiting on them.
-      return !process && activity.subagents.working ? 'waiting' : 'idle';
+      if (isWorking(activity)) return 'working';
+      return activity.self === 'unknown' ? 'unknown' : 'idle';
   }
 });
 

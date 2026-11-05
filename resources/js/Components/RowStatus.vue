@@ -1,24 +1,24 @@
 <template>
   <!-- A tab or row's status in a 14px slot, in place of an icon: the ring at
-       rest while the agent is idle, a comet circling it while the agent works
-       (at half strength when only its subagents work), and `?`, `✕` or `✓`
-       when it needs permission, has an error, or asked to be closed. With
-       subagents, their count sits inside the ring: the ring then shows only the
-       agent's own state, and the count shimmers while subagents work and turns
-       amber or red when one needs you. -->
+       rest while nothing runs, a comet circling it while the agent or any of
+       its subagents works, and `?`, `✕` or `✓` when it needs permission, has
+       an error, or asked to be closed. The comet circles a mark too while
+       subagents work under it. With subagents, their count sits inside the
+       ring and turns amber or red when one needs you. -->
   <span class="relative inline-flex h-3.5 w-3.5 shrink-0" :title="description">
     <span class="row-status-glyph">
       <StatusIcon v-if="mark" :spec="mark" class="h-3.5 w-3.5" aria-hidden="true" />
-      <StatusRing v-else :moving="ringCount ? working : spinning" :data-faint="!ringCount && spinning && !working ? '' : undefined" />
+      <StatusRing v-else :moving="working" />
     </span>
-    <RingCount v-if="ringCount" :count="count!" :shimmer="subagentPulse(activity) === 'working'" :class="subagentCountClass(activity)" />
+    <span v-if="mark && working" class="row-status-glyph"><StatusRing moving /></span>
+    <RingCount v-if="ringCount" :count="count!" :class="subagentCountClass(activity)" />
   </span>
   <span class="sr-only">{{ description }}<template v-if="ringCount">, {{ countLabel }}</template></span>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { countInRing, describeActivity, subagentCountClass, subagentPulse, type RowActivity } from '../lib/rowActivity';
+import { countInRing, describeActivity, isWorking, subagentCountClass, type RowActivity } from '../lib/rowActivity';
 import { activityIcon, CLOSING_MARK, DEAD_MARK } from '../lib/statusIcons';
 import RingCount from './RingCount.vue';
 import StatusIcon from './StatusIcon.vue';
@@ -28,8 +28,7 @@ import StatusRing from './StatusRing.vue';
 // `countLabel` says what they are, for screen readers.
 const props = defineProps<{ activity: RowActivity; count?: number | undefined; countLabel?: string | undefined }>();
 
-const working = computed(() => props.activity.self === 'working');
-const spinning = computed(() => working.value || ((props.activity.self === 'idle' || props.activity.self === 'unknown') && props.activity.subagents.working > 0));
+const working = computed(() => isWorking(props.activity));
 const mark = computed(() => {
   const self = props.activity.self;
   if (self === 'dead') return DEAD_MARK;
@@ -49,9 +48,5 @@ const description = computed(() => describeActivity(props.activity));
   align-items: center;
   justify-content: center;
   pointer-events: none;
-}
-
-.row-status-glyph > [data-faint] {
-  opacity: 0.5;
 }
 </style>

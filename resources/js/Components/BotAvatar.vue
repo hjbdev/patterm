@@ -1,10 +1,10 @@
 <template>
   <!-- A bot's face, emoji, picture or Patterm's mark, carrying the status a row's ring shows
-       for other agents: a comet circling it while the bot works (faint while
-       only its hidden helpers work), the `?`, `✕` or `✓` mark when it needs
+       for other agents: a comet circling it while the bot or any of its
+       hidden helpers works, the `?`, `✕` or `✓` mark when it needs
        you, has an error or asked to close, and dimmed once it has exited. -->
   <span :class="cn('bot-avatar', props.class)" :data-dead="dead ? '' : undefined" :style="{ width: `${px}px`, height: `${px}px` }" :title="description ?? undefined">
-    <span v-if="moving" class="bot-avatar-ring" :data-faint="faint ? '' : undefined" :style="{ animationDelay: `${syncDelay()}ms` }" aria-hidden="true" />
+    <span v-if="moving" class="bot-avatar-ring" :style="{ animationDelay: `${syncDelay()}ms` }" aria-hidden="true" />
     <span class="bot-avatar-body" :style="{ width: `${px}px`, height: `${px}px` }">
       <slot>
         <span v-if="avatar?.kind === 'mark'" class="flex size-full items-center justify-center rounded-full bg-muted text-foreground/80"><Sparkles class="size-[55%]" aria-hidden="true" /></span>
@@ -23,7 +23,7 @@ import { computed } from 'vue';
 import { Sparkles } from 'lucide-vue-next';
 import { cn } from '@/lib/utils';
 import type { BotAvatar } from '../../../app/Bots/BotAvatar';
-import { describeActivity, type RowActivity } from '../lib/rowActivity';
+import { describeActivity, isWorking, type RowActivity } from '../lib/rowActivity';
 import { activityIcon, CLOSING_MARK } from '../lib/statusIcons';
 import ProfileFace from './ProfileFace.vue';
 import StatusIcon from './StatusIcon.vue';
@@ -33,9 +33,7 @@ const props = withDefaults(defineProps<{ avatar?: BotAvatar; size?: number; acti
 const px = computed(() => props.size ?? 20);
 const animate = computed(() => props.motion ?? false);
 const self = computed(() => props.activity?.self ?? 'idle');
-const helpersWorking = computed(() => (props.activity?.subagents.working ?? 0) > 0);
-const moving = computed(() => self.value === 'working' || ((self.value === 'idle' || self.value === 'unknown') && helpersWorking.value));
-const faint = computed(() => self.value !== 'working');
+const moving = computed(() => props.activity ? isWorking(props.activity) : false);
 const dead = computed(() => self.value === 'dead');
 const mark = computed(() => {
   if (self.value === 'closing') return CLOSING_MARK;
@@ -62,7 +60,6 @@ function syncDelay(): number {
   mask: radial-gradient(farthest-side, transparent calc(100% - 1.5px), #000 calc(100% - 1.2px));
   animation: bot-avatar-spin 1.1s linear infinite;
 }
-.bot-avatar-ring[data-faint] { opacity: 0.45; }
 .bot-avatar-badge {
   position: absolute;
   right: -3px;
