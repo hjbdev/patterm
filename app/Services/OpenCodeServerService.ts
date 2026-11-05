@@ -1737,10 +1737,11 @@ export class OpenCodeServerService {
 
   // The plugin's own state wins; change events between snapshots leave the
   // markers. A read that fails, as on daemons without the goal plugin, keeps
-  // what the events said.
+  // what the events said, as does one that a change event overtook.
   private async sessionGoal(runtime: { executable: string; cwd: string; resumeId: string }): Promise<IntegratedGoal | null> {
+    const revision = this.goals.revision(runtime.resumeId);
     const response = await this.api(runtime.executable, runtime.cwd, 'POST', '/api/rpc/opencode.goal/get', { input: { sessionID: runtime.resumeId } }).catch(() => undefined);
-    if (response !== undefined) this.goals.observe(runtime.resumeId, openCodeGoal(record(response).output), undefined, !this.goals.known(runtime.resumeId));
+    if (response !== undefined && this.goals.revision(runtime.resumeId) === revision) this.goals.observe(runtime.resumeId, openCodeGoal(record(response).output), undefined, !this.goals.known(runtime.resumeId));
     return this.goals.goal(runtime.resumeId);
   }
 

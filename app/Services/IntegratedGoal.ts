@@ -103,6 +103,8 @@ export class GoalLog {
   private readonly goals = new Map<string, IntegratedGoal | null>();
   private readonly markers = new Map<string, IntegratedGoalMarker[]>();
   private sequence = 0;
+  // Each observation's sequence, so a slow read can tell a newer one came in.
+  private readonly revisions = new Map<string, number>();
 
   known(key: string): boolean {
     return this.goals.has(key);
@@ -112,13 +114,22 @@ export class GoalLog {
     return this.goals.get(key) ?? null;
   }
 
+  revision(key: string): number {
+    return this.revisions.get(key) ?? 0;
+  }
+
   // `quiet` records state read on demand, such as after a reconnect, which
   // is not a change anyone saw happen.
   observe(key: string, goal: IntegratedGoal | null, at = new Date().toISOString(), quiet = false): boolean {
     const known = this.goals.has(key);
     const previous = this.goals.get(key) ?? null;
     this.goals.set(key, goal);
-    if (this.goals.size > 500) this.goals.delete(this.goals.keys().next().value!);
+    this.revisions.set(key, ++this.sequence);
+    if (this.goals.size > 500) {
+      const oldest = this.goals.keys().next().value!;
+      this.goals.delete(oldest);
+      this.revisions.delete(oldest);
+    }
     const change = quiet || !known && !goal ? null : goalTransition(previous, goal);
     if (!change) return known && JSON.stringify(previous) !== JSON.stringify(goal);
     const list = [...(this.markers.get(key) ?? []), { id: `patterm_goal_${++this.sequence}`, at, ...change }].slice(-MARKER_LIMIT);
@@ -134,6 +145,7 @@ export class GoalLog {
   forget(key: string): void {
     this.goals.delete(key);
     this.markers.delete(key);
+    this.revisions.delete(key);
   }
 }
 

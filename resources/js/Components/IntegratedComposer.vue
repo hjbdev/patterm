@@ -123,7 +123,7 @@
         </template>
       </div>
 
-      <div v-if="draft.attachments.length" class="flex flex-wrap items-center gap-2 px-2 pt-2">
+      <div v-if="draft.attachments.length && !goalMode" class="flex flex-wrap items-center gap-2 px-2 pt-2">
         <div
           v-for="attachment in draft.attachments"
           :key="attachment.id"
@@ -147,7 +147,7 @@
       <div :class="compact ? 'flex items-end gap-1 p-1.5' : ''">
         <EditorContent v-if="editor" :editor="editor.tiptap" :class="cn('composer-editor', compact && 'min-w-0 flex-1')" />
         <template v-if="compact">
-          <Button type="button" size="icon" variant="ghost" class="h-8 w-8 shrink-0 text-muted-foreground" :disabled="!controlling || ended" aria-label="Attach files" title="Attach files" @click="picker?.click()">
+          <Button type="button" size="icon" variant="ghost" class="h-8 w-8 shrink-0 text-muted-foreground" :disabled="!controlling || ended || goalMode" aria-label="Attach files" title="Attach files" @click="picker?.click()">
             <Paperclip class="h-4 w-4" />
           </Button>
           <Button v-if="!controlling && (!ended || restartable)" type="button" size="sm" @click="emit('takeControl')">Take control</Button>
@@ -197,7 +197,7 @@
           <slot name="status" />
         </div>
         <span v-if="sending" class="text-xs text-muted-foreground" role="status">Sending…</span>
-        <Button type="button" size="icon" variant="ghost" class="h-8 w-8 shrink-0 text-muted-foreground max-sm:order-1" :disabled="!controlling || ended" aria-label="Attach files" title="Attach files" @click="picker?.click()">
+        <Button type="button" size="icon" variant="ghost" class="h-8 w-8 shrink-0 text-muted-foreground max-sm:order-1" :disabled="!controlling || ended || goalMode" aria-label="Attach files" title="Attach files" @click="picker?.click()">
           <Paperclip class="h-4 w-4" />
         </Button>
         <Button v-if="!controlling && (!ended || restartable)" type="button" size="sm" class="max-sm:order-4" @click="emit('takeControl')">Take control</Button>
@@ -336,6 +336,8 @@ const goalSupport = computed(() => props.compact || !props.setGoal ? null : prop
 const goalMode = ref(false);
 const goalBusy = ref(false);
 let stashedDraft: { processId: string; text: string; chips: ComposerChip[] } | null = null;
+// Counts goal edits, so a slow submit only ends the edit it came from.
+let goalEdit = 0;
 const placeholder = computed(() => {
   if (props.ended) return props.restartable ? 'Type /restart to resume this conversation' : 'This session has ended';
   if (goalMode.value) return 'Describe when the work is done…';
@@ -537,7 +539,10 @@ function submit(): void {
 
 // `prefill` is the goal being edited.
 function enterGoalMode(prefill = ''): void {
-  if (!goalMode.value) stashedDraft = { processId: props.processId, text: draft.value.text, chips: draft.value.chips };
+  if (!goalMode.value) {
+    stashedDraft = { processId: props.processId, text: draft.value.text, chips: draft.value.chips };
+    goalEdit += 1;
+  }
   closeMenus();
   draft.value.chips = [];
   draft.value.text = prefill;
@@ -565,13 +570,17 @@ function toggleGoalMode(): void {
 async function submitGoal(): Promise<void> {
   const objective = draft.value.text.trim();
   if (!objective || goalBusy.value || !props.setGoal || !props.controlling) return;
-  if (draft.value.chips.length || draft.value.attachments.length) {
-    emit('invalid', 'A goal is plain text; send mentions and files as a message.');
+  if (draft.value.chips.length) {
+    emit('invalid', 'A goal is plain text; send mentions as a message.');
     return;
   }
+  const edit = goalEdit;
+  const processId = props.processId;
   goalBusy.value = true;
   try {
-    if (await props.setGoal(objective)) leaveGoalMode();
+    const set = await props.setGoal(objective);
+    // Text typed while the goal was being set stays for another try.
+    if (set && goalMode.value && goalEdit === edit && props.processId === processId && draft.value.text.trim() === objective) leaveGoalMode();
   } finally {
     goalBusy.value = false;
   }
@@ -593,7 +602,7 @@ function onPaste(event: ClipboardEvent): boolean {
   });
   if (pasted.length) {
     event.preventDefault();
-    void addFiles(props.processId, pasted);
+    attach(pasted);
     return true;
   }
   const range = editor.value?.getSelection() ?? { start: draft.value.text.length, end: draft.value.text.length };
@@ -611,13 +620,19 @@ function insertText(text: string, range: { start: number; end: number }): void {
 function onDrop(event: DragEvent): void {
   dragging.value = false;
   const dropped = event.dataTransfer?.files;
-  if (dropped?.length) void addFiles(props.processId, Array.from(dropped));
+  if (dropped?.length) attach(Array.from(dropped));
 }
 
 function onPick(event: Event): void {
   const input = event.target as HTMLInputElement;
-  if (input.files?.length) void addFiles(props.processId, Array.from(input.files));
+  if (input.files?.length) attach(Array.from(input.files));
   input.value = '';
+}
+
+// Files belong to the message draft, which goal mode sets aside.
+function attach(files: File[]): void {
+  if (goalMode.value) emit('invalid', 'A goal is plain text; attach files to a message.');
+  else void addFiles(props.processId, files);
 }
 
 function onBlur(): void {
