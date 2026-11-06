@@ -1,6 +1,5 @@
 import { reactive, watch } from 'vue';
 import { activeAgentSessions } from './agentTabs';
-import type { TabLayout } from './tabStrip';
 import type { ProcessRecord, ProjectSummary, ProjectWorkbench, SessionRecord, TimerRecord } from '../types';
 
 // "All agents" shows every shown project's open agents together. It stays on
@@ -115,23 +114,9 @@ export function buildAllAgentsView(projects: readonly ProjectWorkbench[], hidden
   };
 }
 
-// A layout change made while some projects are hidden covers only the tabs
-// that show. The hidden projects' tabs keep their slots, and so their order
-// and pins, for when those projects show again; the shown tabs fill the other
-// slots in their new order.
-export function keepHiddenTabs(previous: TabLayout, next: TabLayout, hidden: (key: string) => boolean): TabLayout {
-  const shown = new Set(next.order);
-  const queue = [...next.order];
-  const order = previous.order.flatMap((key) => shown.has(key) ? [queue.shift()!] : hidden(key) ? [key] : []);
-  return {
-    order: [...order, ...queue],
-    pinned: [...next.pinned, ...previous.pinned.filter((key) => hidden(key) && !next.pinned.includes(key))]
-  };
-}
-
-// Pinned tabs first, as you placed them, then the rest kept together by project.
-export function tabsGroupedByProject<T extends { pinned: boolean }>(tabs: readonly T[], projects: readonly ProjectSummary[], ownerOf: (tab: T) => ProjectSummary | null): T[] {
-  return [...tabs.filter((tab) => tab.pinned), ...groupByProject(tabs.filter((tab) => !tab.pinned), projects, ownerOf).flatMap((group) => group.items)];
+// Tabs kept together by project, each project's in their own order.
+export function tabsGroupedByProject<T>(tabs: readonly T[], projects: readonly ProjectSummary[], ownerOf: (tab: T) => ProjectSummary | null): T[] {
+  return groupByProject(tabs, projects, ownerOf).flatMap((group) => group.items);
 }
 
 // Items in project order, keeping their own order within each project.

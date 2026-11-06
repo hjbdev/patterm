@@ -34,6 +34,7 @@ import { AutoSummaryService } from './Services/AutoSummaryService';
 import { AutoSummaryRunner } from './Services/AutoSummaryRunner';
 import { AutoSummaryActions, registerAutoSummaryControl } from './Actions/AutoSummaryActions';
 import { registerSemanticSearchTools, SemanticSearchActions } from './Actions/SemanticSearchActions';
+import { registerTabLayoutTools, TabLayoutActions } from './Actions/TabLayoutActions';
 import { BrowserActions, registerBrowserTools } from './Actions/BrowserActions';
 import { BrowserService } from './Services/Browser/BrowserService';
 import { SecretActions, registerSecretTools } from './Actions/SecretActions';
@@ -817,6 +818,7 @@ async function createApplicationResources(
   });
   registerAutoSummaryControl(mcp, autoSummaryActions);
   registerSemanticSearchTools(mcp, semanticSearchActions);
+  registerTabLayoutTools(mcp, new TabLayoutActions(database, settings));
   registerBrowserTools(mcp, browserActions);
   registerSecretTools(mcp, secretActions);
   registerMcpServerTools(mcp, mcpServers);

@@ -18,7 +18,7 @@ test('Shell menu actions use the process record ID and report failures', async (
   const errors = [];
   const confirmations = [];
   let failure = false;
-  const tabs = setup(computed, ref, () => ({ process: null, active: false, pinned: false }), () => () => {}, props => props,
+  const tabs = setup(computed, ref, () => ({ process: null, active: false }), () => () => {}, props => props,
     { patterm: { call: async (name, args) => { if (failure) throw new Error('Request failed'); calls.push({ name, args }); } } },
     { clipboard: { writeText: async value => { if (failure) throw new Error('Clipboard failed'); copied.push(value); } } },
     { error: message => errors.push(message) },

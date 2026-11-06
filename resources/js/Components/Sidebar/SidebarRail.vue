@@ -7,11 +7,49 @@
     </div>
     <div ref="list" class="flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-y-auto overflow-x-hidden py-1 [scrollbar-width:none]">
       <HarnessLaunchTabs v-for="projectId in sidebar.shownProjectIds.value" :key="projectId" :project-id="projectId" vertical compact />
-      <template v-for="(tab, index) in tabs" :key="tab.key">
-        <div v-if="index > 0 && tab.pinned !== tabs[index - 1]!.pinned" class="my-1 w-5 border-t border-white/10" />
-        <!-- Showing all agents, a project's logo heads each run of its tabs. -->
-        <ProjectLogo v-if="projectStarts(index)" :project="sidebar.projectOf(tab)!" :size="12" :title="sidebar.projectOf(tab)!.name" class="mt-1 opacity-70" />
+      <template v-for="(item, index) in items" :key="item.key">
+        <!-- A rule sets each folder, and an open folder's tabs, apart. -->
+        <div v-if="ruleBefore(index)" class="my-1 w-5 border-t border-white/10" />
         <div
+          v-if="item.kind === 'folder'"
+          :ref="(element) => setElement(item.key, element)"
+          class="relative"
+          :class="draggingKey === item.key && 'z-10'"
+          @pointerdown="onPointerDown($event, item.key)"
+          @click.capture="consumeClick($event, item.key)"
+        >
+          <span v-if="dropLine?.key === item.key" class="pointer-events-none absolute inset-x-1 h-0.5 rounded-full bg-primary/70" :class="dropLine.edge === 'before' ? '-top-[3px]' : '-bottom-[3px]'" aria-hidden="true" />
+          <ContextMenu>
+            <ContextMenuTrigger as-child>
+              <button
+                type="button"
+                :aria-label="`${item.folder.name}, folder, ${item.tabs.length} ${item.tabs.length === 1 ? 'agent' : 'agents'}`"
+                :aria-expanded="item.open"
+                :title="item.folder.name"
+                class="relative flex h-8 w-8 items-center justify-center rounded-tab text-muted-foreground transition-[color,background-color,box-shadow] hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                :class="[!item.open && item.tabs.some(tabActive) && 'bg-primary/10', dropInto === item.key && 'bg-primary/15 ring-1 ring-inset ring-primary/60', draggingKey === item.key && 'bg-[hsl(0_0%_14%)] shadow-lg']"
+                @click="expansion.setOpen(item.key, !item.open)"
+              >
+                <FolderOpen v-if="item.open" class="h-4 w-4" :stroke-width="1.75" />
+                <Folder v-else class="h-4 w-4" :stroke-width="1.75" />
+                <UnreadDot v-if="!item.open" class="absolute right-1 top-1" :urgency="folderUnread(item.tabs)" />
+                <span v-if="item.tabs.length && !item.open" class="absolute -bottom-0.5 right-0 rounded-sm bg-[#080808] px-0.5 text-[9px] font-medium leading-3 tabular-nums">{{ item.tabs.length }}</span>
+              </button>
+            </ContextMenuTrigger>
+            <ContextMenuContent class="w-52">
+              <ContextMenuItem @select="openRenameFolder(item.folder)"><Pencil class="h-4 w-4" /><span>Rename</span></ContextMenuItem>
+              <ContextMenuItem @select="openNewFolder()"><FolderPlus class="h-4 w-4" /><span>New folder…</span></ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem @select="sidebar.deleteFolder(item.folder.id)"><FolderX class="h-4 w-4" /><span>Delete folder</span></ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
+        </div>
+        <template v-else>
+        <!-- Showing all agents, a project's logo heads each run of its tabs. -->
+        <ProjectLogo v-if="projectStarts(index)" :project="sidebar.projectOf(item.tab)!" :size="12" :title="sidebar.projectOf(item.tab)!.name" class="mt-1 opacity-70" />
+        <div
+          v-for="tab in [item.tab]"
+          :key="tab.key"
           :ref="(element) => setElement(tab.key, element)"
           class="relative"
           :class="draggingKey === tab.key && 'z-10'"
@@ -75,6 +113,7 @@
             </PopoverContent>
           </Popover>
         </div>
+        </template>
       </template>
     </div>
     <div class="flex shrink-0 flex-col items-center gap-1 border-t border-white/5 pb-1 pt-2">
@@ -93,12 +132,16 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { PanelLeftOpen } from 'lucide-vue-next';
+import { Folder, FolderOpen, FolderPlus, FolderX, PanelLeftOpen, Pencil } from 'lucide-vue-next';
 import { agentLabel } from '../../lib/agentTabs';
 import { hostLabel } from '../../lib/hosts';
 import { cn } from '@/lib/utils';
 import { countInRing, describeActivity, memberLabel, processActivity, subagentCountClass, type RowActivity } from '../../lib/rowActivity';
-import type { StripTab } from '../../lib/tabStrip';
+import { folderKey, layoutEntries, type StripTab, type TabFolder } from '../../lib/tabStrip';
+import { tabSnoozed } from '../../lib/snooze';
+import { useSidebarExpansion } from '../../Composables/useSidebarExpansion';
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '../ui/context-menu';
+import { dropSidebarRow } from './sidebarDrop';
 import type { ProcessRecord, SessionRecord } from '../../types';
 import { unreadUrgency, type NotificationUrgency } from '../../Composables/useNotifications';
 import AgentFamilyMenu from '../AgentFamilyMenu.vue';
@@ -113,7 +156,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import BoardButton from './BoardButton.vue';
 import SidebarItemMenu from './SidebarItemMenu.vue';
 import SidebarNavLinks from './SidebarNavLinks.vue';
-import { closeSession, copyId, openRename, openTimer } from './sidebarActions';
+import { closeSession, copyId, openNewFolder, openRename, openRenameFolder, openTimer } from './sidebarActions';
 import { useSidebar } from './sidebarContext';
 import { useHoverPopover } from '../../Composables/useHoverPopover';
 import { useSidebarReorder } from '../../Composables/useSidebarReorder';
@@ -122,6 +165,32 @@ import { useSidebarMention } from './sidebarMention';
 const emit = defineEmits<{ expand: [] }>();
 const sidebar = useSidebar();
 const tabs = computed(() => sidebar.tabs.value);
+const expansion = useSidebarExpansion(() => sidebar.expansionScope.value);
+
+// The tabs as the top bar has them, with folders: each open folder's tabs
+// after it. Snoozed tabs wait at the end, out of their folders.
+type RailItem =
+  | { kind: 'tab'; key: string; tab: StripTab; member: string | null }
+  | { kind: 'folder'; key: string; folder: TabFolder; tabs: StripTab[]; open: boolean };
+const items = computed<RailItem[]>(() => {
+  const manual = !(sidebar.allAgents.value && expansion.view.value.groupByProject);
+  return [
+    ...layoutEntries(tabs.value.filter((tab) => !tabSnoozed(tab)), sidebar.layout.value, manual).flatMap((entry): RailItem[] => {
+      if (entry.kind === 'tab') return [{ kind: 'tab', key: entry.key, tab: entry.tab, member: null }];
+      const open = expansion.isOpen(entry.key);
+      return [
+        { kind: 'folder', key: entry.key, folder: entry.folder, tabs: entry.tabs, open },
+        ...(open ? entry.tabs.map((tab) => ({ kind: 'tab' as const, key: tab.key, tab, member: entry.folder.id })) : [])
+      ];
+    }),
+    ...tabs.value.filter(tabSnoozed).map((tab) => ({ kind: 'tab' as const, key: tab.key, tab, member: null }))
+  ];
+});
+const inFolder = (item: RailItem | undefined) => Boolean(item && (item.kind === 'folder' || item.member));
+function ruleBefore(index: number): boolean {
+  const item = items.value[index], previous = items.value[index - 1];
+  return Boolean(item && previous && (item.kind === 'folder' || (inFolder(previous) && !inFolder(item))));
+}
 
 // The rail has no rows for subagents, so a highlighted subagent's family glows.
 const list = ref<HTMLElement>();
@@ -142,10 +211,15 @@ const openKey = computed(() => {
 });
 
 function projectStarts(index: number): boolean {
-  const tab = tabs.value[index];
-  if (!sidebar.allAgents.value || !tab || tab.pinned) return false;
-  const previous = tabs.value[index - 1];
-  return Boolean(sidebar.projectOf(tab)) && (!previous || previous.pinned || sidebar.projectOf(previous)?.id !== sidebar.projectOf(tab)?.id);
+  const item = items.value[index];
+  if (!sidebar.allAgents.value || item?.kind !== 'tab' || item.member) return false;
+  const previous = items.value[index - 1];
+  return Boolean(sidebar.projectOf(item.tab)) && (previous?.kind !== 'tab' || Boolean(previous.member) || sidebar.projectOf(previous.tab)?.id !== sidebar.projectOf(item.tab)?.id);
+}
+// A folded folder's most urgent unread.
+function folderUnread(tabs: readonly StripTab[]): NotificationUrgency | null {
+  const urgencies = tabs.map(tabUnread);
+  return urgencies.includes('high') ? 'high' : urgencies.find(Boolean) ?? null;
 }
 function tabLabel(tab: StripTab): string {
   return tab.kind === 'agent' ? hostLabel(agentLabel(tab.family.root.session), tab.family.root.session.host) : hostLabel(tab.process.name, tab.process.host);
@@ -178,8 +252,17 @@ function select(tab: StripTab): void {
   else sidebar.selectProcess(tab.process);
 }
 
-const { setElement, element, draggingKey, dropLine, onPointerDown, consumeClick } = useSidebarReorder(
-  () => tabs.value.map((tab) => ({ key: tab.key, group: tab.pinned ? 'pinned' : 'open' })),
-  sidebar.moveTab
+// Snoozed tabs keep their places.
+const { setElement, element, draggingKey, dropLine, dropInto, onPointerDown, consumeClick } = useSidebarReorder(
+  () => items.value.flatMap((item) => item.kind === 'tab' && tabSnoozed(item.tab) ? [] : [{
+    key: item.key,
+    group: item.kind === 'tab' && item.member ? folderKey(item.member) : 'open',
+    folder: item.kind === 'folder',
+    sortable: true
+  }]),
+  (key, drop) => dropSidebarRow(sidebar, key, drop, (folder) => {
+    const item = items.value.find((candidate) => candidate.key === folder);
+    return item?.kind === 'folder' && item.open ? item.tabs[0]?.key ?? null : null;
+  })
 );
 </script>

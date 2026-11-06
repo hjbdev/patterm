@@ -8,10 +8,8 @@
             ref="button"
             type="button"
             :data-patterm-tab-id="`process:${process.id}`"
-            :aria-label="pinned ? `${hostLabel(process.name, process.host)}, ${describeActivity(processActivity(process))}` : undefined"
             :class="cn(
-              'relative isolate flex h-[26px] w-full touch-none select-none items-center gap-1.5 overflow-hidden rounded-tab bg-transparent text-left text-[13px] transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
-              pinned ? 'justify-center' : 'pl-2 pr-6',
+              'relative isolate flex h-[26px] w-full touch-none select-none items-center gap-1.5 overflow-hidden rounded-tab bg-transparent pl-2 pr-6 text-left text-[13px] transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
               active && 'bg-primary/10'
             )"
             @click="emit('select')"
@@ -20,10 +18,10 @@
           >
             <TabWash :activity="processActivity(process)" />
             <RowStatus :activity="processActivity(process)" />
-            <ProjectLogo v-if="!pinned && project" :project="project" :size="14" :title="project.name" />
-            <span v-if="!pinned" class="min-w-0 flex-1 truncate">{{ process.name }}</span>
-            <HostBadge v-if="!pinned && process.host" :host="process.host" />
-            <UnreadDot :class="pinned && 'absolute right-1 top-1'" :urgency="unreadUrgency(process.id)" />
+            <ProjectLogo v-if="project" :project="project" :size="14" :title="project.name" />
+            <span class="min-w-0 flex-1 truncate">{{ process.name }}</span>
+            <HostBadge v-if="process.host" :host="process.host" />
+            <UnreadDot :urgency="unreadUrgency(process.id)" />
           </button>
         </TooltipTrigger>
       </ContextMenuTrigger>
@@ -31,9 +29,7 @@
         <ContextMenuItem @select="openRenameProcess(process)">
           <Pencil class="h-4 w-4" /><span>Rename</span>
         </ContextMenuItem>
-        <ContextMenuItem @select="emit('update:pinned', !pinned)">
-          <PinOff v-if="pinned" class="h-4 w-4" /><Pin v-else class="h-4 w-4" /><span>{{ pinned ? 'Unpin tab' : 'Pin tab' }}</span>
-        </ContextMenuItem>
+        <FolderMenu v-if="tab" :tab="tab" />
         <ContextMenuItem @select="copyProcessId(process)">
           <Copy class="h-4 w-4" /><span>Copy process ID</span>
         </ContextMenuItem>
@@ -44,7 +40,7 @@
     </ContextMenu>
     <!-- The trigger's anchor goes to the context menu, so the tooltip anchors itself. -->
     <TooltipContent :reference="button" class="bg-popover text-popover-foreground">
-      <p v-if="pinned || !process.summary" :class="process.summary && 'px-2 pt-2 font-medium'">{{ hostLabel(process.name, process.host) }}</p>
+      <p v-if="!process.summary" :class="process.summary && 'px-2 pt-2 font-medium'">{{ hostLabel(process.name, process.host) }}</p>
       <AutoSummaryPreview v-if="process.summary" :summary="process.summary" />
     </TooltipContent>
   </Tooltip>
@@ -70,10 +66,12 @@
 import HostBadge from './HostBadge.vue';
 import ProjectLogo from './ProjectLogo.vue';
 import { computed, ref } from 'vue';
-import { Copy, Pencil, Pin, PinOff, X } from 'lucide-vue-next';
+import { Copy, Pencil, X } from 'lucide-vue-next';
 import { toast } from 'vue-sonner';
 import { cn } from '@/lib/utils';
-import { describeActivity, processActivity } from '../lib/rowActivity';
+import { processActivity } from '../lib/rowActivity';
+import type { StripTab } from '../lib/tabStrip';
+import FolderMenu from './FolderMenu.vue';
 import type { ProcessRecord, ProjectSummary } from '../types';
 import RowStatus from './RowStatus.vue';
 import TabWash from './TabWash.vue';
@@ -91,14 +89,14 @@ import { Input } from './ui/input';
 defineProps<{
   process: ProcessRecord;
   active: boolean;
-  pinned: boolean;
+  // The top bar's tab, which can move to a folder.
+  tab?: StripTab | undefined;
   // Shown while listing all agents.
   project?: ProjectSummary | null | undefined;
 }>();
 
 const emit = defineEmits<{
   select: [];
-  'update:pinned': [pinned: boolean];
 }>();
 
 const button = ref<HTMLButtonElement>();

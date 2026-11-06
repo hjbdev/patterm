@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Folders for agents and processes, replacing pinned tabs. File a tab from its
+  menu (Move to folder), or drag it onto a folder in the sidebar. A folder sits
+  in the list like an agent: folded, it shows a dot for each tab in it, and any
+  agent that needs you or holds the selection still shows under it. In the top
+  bar a folder is a chip, and its tabs follow it while it's open. The layout
+  is now saved on the server, so the desktop window and every browser share
+  it. Each device's old order carries over the first time, its pinned tabs in
+  a Pinned folder.
 - The notifications tray has an Unread tab that lists only unread,
   unhandled notifications. `notification_list` takes `unread_only` too.
 - A phone's top bar has the notifications bell, so the tray no longer hides

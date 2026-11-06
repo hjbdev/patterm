@@ -101,6 +101,12 @@
   [data-phone-list] .group\/row > .absolute {
     top: 0.75rem;
   }
+  [data-phone-list] .sidebar-folder-member::after {
+    top: 24px;
+  }
+  [data-phone-list] .sidebar-folder-member[data-last]::before {
+    height: 25px;
+  }
 }
 
 /* A phone's page transitions (lib/phoneTransitions.ts), eased like the
@@ -214,6 +220,41 @@ button.mention-glow:hover {
 .sidebar-tree > *::after {
   top: 13px;
   left: calc(-0.25rem + 1px);
+  width: 9px;
+  height: 1px;
+}
+
+/* Agents in a folder hang off a line like subagents do, each 2px below the
+   last, with the line running through the gap. */
+.sidebar-folder-member {
+  margin-left: 1rem;
+  padding-left: 0.25rem;
+  padding-top: 2px;
+}
+
+.sidebar-folder-member::before,
+.sidebar-folder-member::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  background: rgb(255 255 255 / 0.08);
+  pointer-events: none;
+}
+
+.sidebar-folder-member::before {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.sidebar-folder-member[data-last]::before {
+  bottom: auto;
+  height: 16px;
+}
+
+.sidebar-folder-member::after {
+  top: 15px;
+  left: 1px;
   width: 9px;
   height: 1px;
 }

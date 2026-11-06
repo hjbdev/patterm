@@ -57,7 +57,6 @@
               :active-session-id="activeWorkspacePage === 'workbench' && projectViewMode === 'agents' ? selectedAgent?.id : null"
               :selected-by-root="selectedAgentByRoot"
               @update:selected-by-root="selectedAgentByRoot = $event"
-              @update:layout="updateCurrentTabLayout"
               @select="selectAgentSession"
               @select-process="selectAgentProcess"
             />
@@ -115,7 +114,7 @@ import { RouterView } from 'vue-router';
 import CloseConfirmDialog from '../Components/CloseConfirmDialog.vue';
 import SnoozeDialog from '../Components/SnoozeDialog.vue';
 import ProjectSnoozeDialog from '../Components/ProjectSnoozeDialog.vue';
-import { snoozedLast, tabSnoozed } from '../lib/snooze';
+import { tabSnoozed } from '../lib/snooze';
 import { projectSnoozed } from '../lib/projectSnooze';
 import { showSnoozed } from '../Composables/useSnooze';
 import CommandPalette from '../Components/CommandPalette.vue';
@@ -148,8 +147,9 @@ import {
 import { openCommandPaletteKey } from '../lib/commandPalette';
 import { isNavigationModeToggle, navigationModeAction } from '../lib/navigationMode';
 import { activeProcesses, topLevelProcessesForSessions } from '../lib/processTabs';
-import { agentTabKey, buildStripTabs, EMPTY_TAB_LAYOUT, processTabKey, readStoredTabLayout, withLiveTabs, writeStoredTabLayout, type StripTab, type TabLayout } from '../lib/tabStrip';
-import { ALL_AGENTS_SCOPE, allAgents, allAgentsHiding, buildAllAgentsView, keepHiddenTabs, listedProjects, projectShown, tabsGroupedByProject } from '../lib/allAgents';
+import { agentTabKey, buildStripTabs, EMPTY_TAB_LAYOUT, entryTabs, forgetClosedTabs, layoutEntries, processTabKey, withLiveTabs, type StripTab, type TabLayout } from '../lib/tabStrip';
+import { useTabLayouts } from '../Composables/useTabLayouts';
+import { ALL_AGENTS_SCOPE, allAgents, allAgentsHiding, buildAllAgentsView, listedProjects, projectShown, tabsGroupedByProject } from '../lib/allAgents';
 import { useSidebarExpansion } from '../Composables/useSidebarExpansion';
 import type { ProcessRecord, ProjectSummary, SessionRecord } from '../types';
 import { startPrefetch } from '../lib/prefetch';
@@ -175,7 +175,7 @@ startPrefetch(() => activeProjectId.value);
 const selectedAgentByRoot = ref<SelectedAgentByRoot>({});
 const pendingLaunches = useHarnessLaunchesFor(() => shownProjectIds.value);
 const navigationMode = ref(false);
-const tabLayoutByProject = ref<Record<string, TabLayout>>({});
+const tabLayouts = useTabLayouts();
 const paletteOpen = ref(false);
 provide(openCommandPaletteKey, () => { paletteOpen.value = true; });
 const searchOpen = ref(false);
@@ -264,7 +264,7 @@ function handleAgentTabShortcut(event: KeyboardEvent): void {
   event.stopPropagation();
 }
 
-// Top-bar tabs in visual order, pinned tabs first.
+// Top-bar tabs in visual order, each folder's in its place.
 function selectNavigationTab(index: number | null, delta: number): void {
   const tabs = shownStripTabs.value.map((tab) => tab.kind === 'agent'
     ? {
@@ -312,23 +312,19 @@ function selectAgentTabTarget(target: AgentTabSelectionTarget): void {
 // All agents keeps one order of its own, apart from each project's.
 const tabLayoutScope = computed(() => showingAll.value ? ALL_AGENTS_SCOPE : activeProjectId.value);
 
-function updateCurrentTabLayout(change: TabLayout): void {
+// Edits apply to the whole saved layout, so tabs that don't show here, from
+// projects switched off or started by bots, keep their places and folders.
+// Closed tabs are forgotten.
+function updateCurrentTabLayout(edit: (layout: TabLayout) => TabLayout): void {
   const scope = tabLayoutScope.value;
   if (!scope) return;
-  // Tabs that don't show, from hidden projects, snoozed or started by bots, keep their places.
-  const hidden = (key: string) => (showingAll.value && hiddenTabKeys.value.has(key)) || hiddenSnoozedKeys.value.has(key) || hiddenBotKeys.value.has(key);
-  // Hidden tabs the saved layout hasn't recorded yet keep their places too.
-  const previous = withLiveTabs(currentTabLayout.value ?? EMPTY_TAB_LAYOUT, everyStripTabs.value.map((tab) => tab.key));
-  const layout = showingAll.value || hiddenSnoozedKeys.value.size || hiddenBotKeys.value.size ? keepHiddenTabs(previous, change, hidden) : change;
-  tabLayoutByProject.value = { ...tabLayoutByProject.value, [scope]: layout };
-  writeStoredTabLayout(scope, layout);
+  const live = new Set(everyStripTabs.value.map((tab) => tab.key));
+  const hidden = (key: string) => (showingAll.value && hiddenTabKeys.value.has(key)) || hiddenBotKeys.value.has(key);
+  const layout = edit(withLiveTabs(tabLayouts.layout(scope), [...live]));
+  void tabLayouts.save(scope, forgetClosedTabs(layout, (key) => live.has(key) || hidden(key)));
 }
 
-const currentTabLayout = computed(() => {
-  const scope = tabLayoutScope.value;
-  if (!scope) return undefined;
-  return tabLayoutByProject.value[scope] ?? readStoredTabLayout(scope);
-});
+const currentTabLayout = computed(() => tabLayoutScope.value ? tabLayouts.layout(tabLayoutScope.value) : EMPTY_TAB_LAYOUT);
 
 // All agents lists every shown project's agents instead of the route's
 // project's. Opening one goes to its own project and keeps the list.
@@ -375,14 +371,15 @@ const currentStripTabs = computed(() => buildStripTabs(
 // sidebar groups its own list.
 const allAgentsOptions = useSidebarExpansion(() => ALL_AGENTS_SCOPE);
 const groupedByProject = computed(() => showingAll.value && allAgentsOptions.view.value.groupByProject);
-// Snoozed tabs wait at the end, or stay out of sight unless you show them.
+// Folders hold their tabs in place. Snoozed tabs wait at the end, or stay out
+// of sight unless you show them.
 const shownStripTabs = computed(() => {
-  const tabs = snoozedLast(groupedByProject.value ? tabsGroupedByProject(currentStripTabs.value, listedSummaries.value, stripTabProject) : currentStripTabs.value);
-  return showSnoozed.value ? tabs : tabs.filter((tab) => !tabSnoozed(tab));
+  const grouped = (tabs: StripTab[]) => groupedByProject.value ? tabsGroupedByProject(tabs, listedSummaries.value, stripTabProject) : tabs;
+  const awake = layoutEntries(grouped(currentStripTabs.value.filter((tab) => !tabSnoozed(tab))), currentTabLayout.value, !groupedByProject.value);
+  return [...entryTabs(awake), ...(showSnoozed.value ? grouped(currentStripTabs.value.filter(tabSnoozed)) : [])];
 });
 // Tabs of agents started by bots while you hide them.
 const hiddenBotKeys = computed(() => new Set(showBotAgents.value ? [] : [...[...botHidden.value.sessions].map(agentTabKey), ...[...botHidden.value.processes].map(processTabKey)]));
-const hiddenSnoozedKeys = computed(() => new Set(showSnoozed.value ? [] : currentStripTabs.value.filter(tabSnoozed).map((tab) => tab.key)));
 function stripTabProject(tab: StripTab): ProjectSummary | null {
   return projectOf(tab.kind === 'agent' ? tab.family.rootId : tab.process.id);
 }
@@ -421,6 +418,7 @@ provideSidebarContext({
   selectSession: (rootId, session) => selectAgentTabTarget({ rootId, session }),
   selectProcess: selectAgentProcess,
   navigate: (page) => { if (activeProjectId.value) void router.push({ name: page, params: { projectId: activeProjectId.value } }); },
+  layout: () => currentTabLayout.value,
   updateLayout: updateCurrentTabLayout,
 });
 

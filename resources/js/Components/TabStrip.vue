@@ -1,11 +1,59 @@
 <template>
   <div ref="strip" data-no-drag :class="cn('flex min-w-max items-center', props.class)">
     <TransitionGroup name="strip-tab" tag="div" class="flex min-w-max items-center gap-1">
+      <template v-for="(item, index) in items" :key="item.key">
+      <!-- A folder's chip, and while it's open, its tabs after it, underlined together. -->
       <div
-        v-for="(tab, index) in tabs"
+        v-if="item.kind === 'folder'"
+        :key="item.key"
+        :ref="(element) => setTabElement(item.key, element)"
+        :class="cn('strip-tab group/tab relative shrink-0 rounded-tab', startsGroup(index) && SEPARATOR, item.open && item.tabs.length && FOLDER_LINE)"
+        :data-dragging="draggingKey === item.key ? 'true' : undefined"
+        @pointerdown="onTabPointerDown($event, item.key)"
+        @click.capture="consumeTabClick($event, item.key)"
+      >
+        <ContextMenu>
+          <ContextMenuTrigger as-child>
+            <button
+              type="button"
+              :aria-expanded="item.open"
+              :aria-label="`${item.folder.name}, folder, ${item.tabs.length} ${item.tabs.length === 1 ? 'tab' : 'tabs'}`"
+              :class="cn(
+                'relative flex h-[26px] touch-none select-none items-center gap-1.5 rounded-tab px-2 text-[13px] text-foreground/85 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
+                !item.open && item.tabs.some(tabActive) && 'bg-primary/10 text-foreground'
+              )"
+              @click="expansion.setOpen(item.key, !item.open)"
+            >
+              <FolderOpen v-if="item.open" class="h-[15px] w-[15px] shrink-0 text-muted-foreground" :stroke-width="1.75" aria-hidden="true" />
+              <Folder v-else class="h-[15px] w-[15px] shrink-0 text-muted-foreground" :stroke-width="1.75" aria-hidden="true" />
+              <span class="max-w-40 truncate">{{ item.folder.name }}</span>
+              <FolderDots v-if="!item.open && item.tabs.length" :tabs="item.tabs" />
+              <span v-else-if="item.tabs.length" class="flex text-muted-foreground"><MemberCount :count="item.tabs.length" open /></span>
+            </button>
+          </ContextMenuTrigger>
+          <ContextMenuContent class="w-52">
+            <ContextMenuItem @select="openRenameFolder(item.folder)">
+              <Pencil class="h-4 w-4" />
+              <span>Rename</span>
+            </ContextMenuItem>
+            <ContextMenuItem @select="openNewFolder()">
+              <FolderPlus class="h-4 w-4" />
+              <span>New folder…</span>
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem @select="sidebar.deleteFolder(item.folder.id)">
+              <FolderX class="h-4 w-4" />
+              <span>Delete folder</span>
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
+      </div>
+      <template v-else>
+      <div
+        v-for="tab in [item.tab]"
         :key="tab.key"
         :ref="(element) => setTabElement(tab.key, element)"
-        :class="cn('strip-tab group/tab relative shrink-0 rounded-tab', compact(tab) ? 'w-8' : 'w-56', (startsProject(index) || startsSnoozed(index)) && 'ml-2 before:absolute before:-left-[5px] before:top-1 before:h-[18px] before:w-px before:bg-white/10')"
+        :class="cn('strip-tab group/tab relative shrink-0 rounded-tab', compact(tab) ? 'w-8' : 'w-56', startsGroup(index) && SEPARATOR, item.member && FOLDER_LINE)"
         :data-dragging="draggingKey === tab.key ? 'true' : undefined"
         @pointerdown="onTabPointerDown($event, tab.key); if (tab.kind === 'agent') prefetchTab(tab.family.root.session)"
         @click.capture="consumeTabClick($event, tab.key)"
@@ -34,10 +82,6 @@
                 <!-- Snoozed tabs sit at the end of the strip, quiet until the agent's next message. -->
                 <template v-if="tabSnoozed(tab)">
                   <Moon class="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
-                  <UnreadDot class="absolute right-1 top-1" :urgency="unreadUrgency(tab.family.root.session.processId)" />
-                </template>
-                <template v-else-if="tab.pinned">
-                  <RowStatus :activity="activityFor(tab.family.root.session)" :count="familyMenuCount(tab.family)" :count-label="familyMemberLabel(tab.family)" />
                   <UnreadDot class="absolute right-1 top-1" :urgency="unreadUrgency(tab.family.root.session.processId)" />
                 </template>
                 <template v-else>
@@ -74,11 +118,7 @@
                 <span>Rename</span>
               </ContextMenuItem>
               <StatusLabelMenu :session="tab.family.root.session" />
-              <ContextMenuItem @select="setPinned(tab, !tab.pinned)">
-                <PinOff v-if="tab.pinned" class="h-4 w-4" />
-                <Pin v-else class="h-4 w-4" />
-                <span>{{ tab.pinned ? 'Unpin tab' : 'Pin tab' }}</span>
-              </ContextMenuItem>
+              <FolderMenu :tab="tab" />
               <ContextMenuItem v-if="tabSnoozed(tab)" @select="unsnooze(tab.family.root.session.processId!)">
                 <Sun class="h-4 w-4" />
                 <span>Wake</span>
@@ -134,12 +174,11 @@
           v-else
           :process="tab.process"
           :project="tabProject(tab)"
-          :pinned="tab.pinned"
+          :tab="tab"
           :active="tab.process.ptyProcessId === activeTerminalId"
           @select="selectProcess(tab.process)"
-          @update:pinned="setPinned(tab, $event)"
         />
-        <!-- Pinned and snoozed tabs have no room for a close button; their menus still close them. -->
+        <!-- Snoozed tabs have no room for a close button; their menus still close them. -->
         <CloseRowButton
           v-if="!compact(tab)"
           :label="tab.kind === 'agent' ? agentLabel(tab.family.root.session) : tab.process.name"
@@ -147,6 +186,8 @@
           @close="tab.kind === 'agent' ? closeAgent(tab.family.root.session) : confirmClose(tab.process.id, tab.process.name, 'process')"
         />
       </div>
+      </template>
+      </template>
     </TransitionGroup>
     <div v-if="snoozedProjects?.length" class="ml-2 flex items-center gap-1 before:mr-1 before:h-[18px] before:w-px before:bg-white/10">
       <SnoozedProjectHeader v-for="project in snoozedProjects" :key="project.id" :project="project" chip />
@@ -180,10 +221,10 @@ import StatusLabelPill from './StatusLabelPill.vue';
 import { ownerBotOf } from '../Composables/useBots';
 import SnoozedProjectHeader from './SnoozedProjectHeader.vue';
 import { computed, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue';
-import { Clock, Copy, Moon, Pencil, Pin, PinOff, Sun, Target, Timer as TimerIcon, X } from 'lucide-vue-next';
+import { Clock, Copy, Folder, FolderOpen, FolderPlus, FolderX, Moon, Pencil, Sun, Target, Timer as TimerIcon, X } from 'lucide-vue-next';
 import { goalStatusLabel, type IntegratedGoalStatus } from '../lib/integratedConversation';
 import { canSnooze, openSnooze, unsnooze } from '../Composables/useSnooze';
-import { moveAwakeTab, setTabPinned, tabSnoozed } from '../lib/snooze';
+import { tabSnoozed } from '../lib/snooze';
 import { confirmClose } from '../Composables/useCloseConfirm';
 import { cn } from '@/lib/utils';
 import {
@@ -197,11 +238,16 @@ import { mentionPreview } from '../lib/integratedComposer';
 import { ownedProcessesForSessions } from '../lib/processTabs';
 import { activityLookup, countInRing, describeActivity, memberLabel, subagentCountClass } from '../lib/rowActivity';
 import MemberCount from './MemberCount.vue';
-import type { StripTab, TabLayout } from '../lib/tabStrip';
+import { folderKey, isFolderKey, layoutEntries, type StripTab, type TabFolder } from '../lib/tabStrip';
+import { useSidebar } from './Sidebar/sidebarContext';
+import { openNewFolder, openRenameFolder } from './Sidebar/sidebarActions';
+import { useSidebarExpansion } from '../Composables/useSidebarExpansion';
+import FolderDots from './FolderDots.vue';
+import FolderMenu from './FolderMenu.vue';
 import { timersForProcesses } from '../lib/timers';
 import type { ProcessRecord, ProjectSummary, SessionRecord, TimerRecord } from '../types';
 import ProjectLogo from './ProjectLogo.vue';
-import { animateTabMoves, useTabStripDrag } from '../Composables/useTabStripDrag';
+import { useTabStripDrag } from '../Composables/useTabStripDrag';
 import { useHoverPopover } from '../Composables/useHoverPopover';
 import CloseRowButton from './CloseRowButton.vue';
 import AgentFamilyMenu from './AgentFamilyMenu.vue';
@@ -213,7 +259,7 @@ import UnreadDot from './UnreadDot.vue';
 import { unreadUrgency } from '../Composables/useNotifications';
 import { hostLabel } from '../lib/hosts';
 import { Button } from './ui/button';
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from './ui/context-menu';
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from './ui/context-menu';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { Input } from './ui/input';
 import { Popover, PopoverAnchor, PopoverContent } from './ui/popover';
@@ -249,27 +295,50 @@ const props = withDefaults(
 function tabProject(tab: StripTab): ProjectSummary | null {
   return props.projectOf?.(tab.kind === 'agent' ? tab.family.rootId : tab.process.id) ?? null;
 }
-// Pinned and snoozed tabs show only their status.
+// Snoozed tabs show only their status.
 function compact(tab: StripTab): boolean {
-  return tab.pinned || tabSnoozed(tab);
+  return tabSnoozed(tab);
 }
 
-// A rule sets snoozed tabs apart from the rest.
-function startsSnoozed(index: number): boolean {
-  const tab = props.tabs[index], previous = props.tabs[index - 1];
-  return Boolean(tab && previous && tabSnoozed(tab) && !tabSnoozed(previous));
-}
+// The strip's tabs and folders, each open folder's tabs after its chip. In
+// your order, folders sit where you put them; grouped by project, they follow
+// the projects' tabs. Snoozed tabs wait at the end, out of their folders.
+const sidebar = useSidebar();
+const expansion = useSidebarExpansion(() => sidebar.expansionScope.value);
+type StripItem =
+  | { kind: 'tab'; key: string; tab: StripTab; member: string | null }
+  | { kind: 'folder'; key: string; folder: TabFolder; tabs: StripTab[]; open: boolean };
+const items = computed<StripItem[]>(() => [
+  ...layoutEntries(props.tabs.filter((tab) => !tabSnoozed(tab)), sidebar.layout.value, !props.groupedByProject).flatMap((entry): StripItem[] => {
+    if (entry.kind === 'tab') return [{ kind: 'tab', key: entry.key, tab: entry.tab, member: null }];
+    const open = expansion.isOpen(entry.key);
+    return [
+      { kind: 'folder', key: entry.key, folder: entry.folder, tabs: entry.tabs, open },
+      ...(open ? entry.tabs.map((tab) => ({ kind: 'tab' as const, key: tab.key, tab, member: entry.folder.id })) : [])
+    ];
+  }),
+  ...props.tabs.filter(tabSnoozed).map((tab) => ({ kind: 'tab' as const, key: tab.key, tab, member: null }))
+]);
 
-function startsProject(index: number): boolean {
-  const tab = props.tabs[index], previous = props.tabs[index - 1];
-  return Boolean(props.groupedByProject && tab && previous && !compact(tab) && !compact(previous) && tabProject(tab)?.id !== tabProject(previous)?.id);
+const SEPARATOR = 'ml-2 before:absolute before:-left-[5px] before:top-1 before:h-[18px] before:w-px before:bg-white/10';
+const FOLDER_LINE = 'after:pointer-events-none after:absolute after:inset-x-1 after:-bottom-[3px] after:h-0.5 after:rounded-full after:bg-white/15';
+
+// A rule sets snoozed tabs apart from the rest, and grouped by project, each
+// project's tabs and the folders after them.
+function startsGroup(index: number): boolean {
+  const item = items.value[index], previous = items.value[index - 1];
+  if (!item || !previous) return false;
+  const loose = (candidate: StripItem): candidate is Extract<StripItem, { kind: 'tab' }> => candidate.kind === 'tab' && !candidate.member && !tabSnoozed(candidate.tab);
+  if (item.kind === 'tab' && tabSnoozed(item.tab)) return previous.kind !== 'tab' || !tabSnoozed(previous.tab);
+  if (!props.groupedByProject || !loose(previous)) return false;
+  if (item.kind === 'folder') return true;
+  return loose(item) && tabProject(item.tab)?.id !== tabProject(previous.tab)?.id;
 }
 
 const emit = defineEmits<{
   select: [session: SessionRecord];
   selectProcess: [process: ProcessRecord];
   'update:selectedByRoot': [selected: SelectedAgentByRoot];
-  'update:layout': [layout: TabLayout];
 }>();
 
 const renameOpen = ref(false);
@@ -288,12 +357,17 @@ const {
   consumeClick: consumeTabClick,
   cancel: cancelTabDrag
 } = useTabStripDrag({
-  tabs: () => props.tabs.map((tab) => ({ key: tab.key, group: tabSnoozed(tab) ? 'snoozed' : tab.pinned ? 'pinned' : 'tabs' })),
+  // An open folder's tabs move with its chip, and among themselves.
+  tabs: () => items.value.map((item) => item.kind === 'folder'
+    ? { key: item.key, group: 'tabs', attached: item.open ? item.tabs.map((tab) => tab.key) : [] }
+    : { key: item.key, group: tabSnoozed(item.tab) ? 'snoozed' : item.member ? folderKey(item.member) : 'tabs' }),
   element: (key) => tabElements.get(key),
   onDragStart: () => hover.close(),
-  onDrop: (key, index) => {
-    const layout = moveAwakeTab(props.tabs, key, index);
-    if (layout) emit('update:layout', layout);
+  // Snoozed tabs keep their places.
+  onDrop: (key, beforeKey, afterKey) => {
+    if (isFolderKey(key)) return sidebar.moveFolder(key.slice('folder:'.length), beforeKey, afterKey);
+    const item = items.value.find((candidate) => candidate.key === key);
+    if (item?.kind === 'tab' && !tabSnoozed(item.tab)) sidebar.placeTab(key, item.member, beforeKey, afterKey);
   }
 });
 const hover = useHoverPopover(() => Boolean(draggingKey.value));
@@ -368,7 +442,7 @@ function familyMemberLabel(family: AgentTabFamily): string {
   return memberLabel(family.options.length - 1, ownedProcesses(family).length);
 }
 
-// Pinned and snoozed tabs hide their label, so their menu always opens to show it.
+// Snoozed tabs hide their label, so their menu always opens to show it.
 function hasPopover(tab: Extract<StripTab, { kind: 'agent' }>): boolean {
   return compact(tab)
     || familyMenuCount(tab.family) > 0
@@ -402,7 +476,7 @@ watch(
 );
 
 // A tab opening, closing, or changing group mid-drag invalidates the slots.
-watch(() => props.tabs.map((tab) => `${tab.key}:${tab.pinned}:${tabSnoozed(tab)}`).join(' '), cancelTabDrag);
+watch(() => items.value.map((item) => item.kind === 'folder' ? `${item.key}:${item.open}` : `${item.key}:${item.member}:${tabSnoozed(item.tab)}`).join(' '), cancelTabDrag);
 
 function setTabElement(key: string, element: Element | ComponentPublicInstance | null): void {
   if (element instanceof HTMLElement) {
@@ -414,11 +488,6 @@ function setTabElement(key: string, element: Element | ComponentPublicInstance |
 
 function popoverReference(key: string): HTMLElement {
   return tabElements.get(key) ?? document.body;
-}
-
-function setPinned(tab: StripTab, pinned: boolean): void {
-  const layout = setTabPinned(props.tabs, tab.key, pinned);
-  void animateTabMoves([...tabElements.values()], () => emit('update:layout', layout));
 }
 
 function selectSession(rootId: string, session: SessionRecord): void {
