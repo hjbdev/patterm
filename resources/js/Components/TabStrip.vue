@@ -361,18 +361,18 @@ const {
   consumeClick: consumeTabClick,
   cancel: cancelTabDrag
 } = useTabStripDrag({
-  // An open folder's tabs move with its chip, and among themselves.
+  // An open folder's tabs move with its chip, and among themselves. Grouped
+  // by project, tabs and folders move within their project, as in the sidebar.
   tabs: () => items.value.map((item) => item.kind === 'folder'
-    ? { key: item.key, group: 'tabs', attached: item.open ? item.tabs.map((tab) => tab.key) : [] }
-    : { key: item.key, group: tabSnoozed(item.tab) ? 'snoozed' : item.member ? folderKey(item.member) : 'tabs' }),
+    ? { key: item.key, group: item.group ?? 'tabs', attached: item.open ? item.tabs.map((tab) => tab.key) : [] }
+    : { key: item.key, group: tabSnoozed(item.tab) ? 'snoozed' : item.member ? folderKey(item.member) : item.group ?? 'tabs' }),
   element: (key) => tabElements.get(key),
   onDragStart: () => hover.close(),
-  // Snoozed tabs keep their places.
+  // Snoozed tabs keep their places. A folder keeps the project it shows in.
   onDrop: (key, beforeKey, afterKey) => {
-    // Grouped by project, a folder takes the project of the tabs it lands beside.
     if (isFolderKey(key)) {
-      const beside = items.value.find((item) => item.key === (beforeKey ?? afterKey));
-      return sidebar.moveFolder(key.slice('folder:'.length), beforeKey, afterKey, beside?.group ?? undefined);
+      const folder = items.value.find((item) => item.key === key);
+      return sidebar.moveFolder(key.slice('folder:'.length), beforeKey, afterKey, folder?.group ?? undefined);
     }
     const item = items.value.find((candidate) => candidate.key === key);
     if (item?.kind === 'tab' && !tabSnoozed(item.tab)) sidebar.placeTab(key, item.member, beforeKey, afterKey);
