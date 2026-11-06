@@ -13,7 +13,9 @@ const KEY_LIMIT = 4000;
 const keyInput = z.string().min(1).max(400);
 export const tabFolderInput = z.object({
   id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
-  name: z.string().trim().min(1).max(60)
+  name: z.string().trim().min(1).max(60),
+  // Grouped by project, the project an empty folder was last put in.
+  project: z.string().min(1).max(200).optional()
 }).strict();
 export const tabLayoutBody = z.object({
   order: z.array(keyInput).max(KEY_LIMIT),

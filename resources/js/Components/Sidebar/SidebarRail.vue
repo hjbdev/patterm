@@ -10,6 +10,8 @@
       <template v-for="(item, index) in items" :key="item.key">
         <!-- A rule sets each folder, and an open folder's tabs, apart. -->
         <div v-if="ruleBefore(index)" class="my-1 w-5 border-t border-white/10" />
+        <!-- Showing all agents, a project's logo heads each run of its tabs and folders. -->
+        <ProjectLogo v-if="projectStarts(index)" :project="item.project!" :size="12" :title="item.project!.name" class="mt-1 opacity-70" />
         <div
           v-if="item.kind === 'folder'"
           :ref="(element) => setElement(item.key, element)"
@@ -45,8 +47,6 @@
           </ContextMenu>
         </div>
         <template v-else>
-        <!-- Showing all agents, a project's logo heads each run of its tabs. -->
-        <ProjectLogo v-if="projectStarts(index)" :project="sidebar.projectOf(item.tab)!" :size="12" :title="sidebar.projectOf(item.tab)!.name" class="mt-1 opacity-70" />
         <div
           v-for="tab in [item.tab]"
           :key="tab.key"
@@ -138,11 +138,12 @@ import { hostLabel } from '../../lib/hosts';
 import { cn } from '@/lib/utils';
 import { countInRing, describeActivity, memberLabel, processActivity, subagentCountClass, type RowActivity } from '../../lib/rowActivity';
 import { folderKey, layoutEntries, type StripTab, type TabFolder } from '../../lib/tabStrip';
+import { emptyFolderOwner, groupEntriesByProject } from '../../lib/allAgents';
 import { tabSnoozed } from '../../lib/snooze';
 import { useSidebarExpansion } from '../../Composables/useSidebarExpansion';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '../ui/context-menu';
 import { dropSidebarRow } from './sidebarDrop';
-import type { ProcessRecord, SessionRecord } from '../../types';
+import type { ProcessRecord, ProjectSummary, SessionRecord } from '../../types';
 import { unreadUrgency, type NotificationUrgency } from '../../Composables/useNotifications';
 import AgentFamilyMenu from '../AgentFamilyMenu.vue';
 import LaunchAgentMenu from '../LaunchAgentMenu.vue';
@@ -168,22 +169,29 @@ const tabs = computed(() => sidebar.tabs.value);
 const expansion = useSidebarExpansion(() => sidebar.expansionScope.value);
 
 // The tabs as the top bar has them, with folders: each open folder's tabs
-// after it. Snoozed tabs wait at the end, out of their folders.
+// after it. Snoozed tabs wait at the end, out of their folders. Showing all
+// agents, each item knows its project: grouped, its group's; otherwise a
+// loose tab's own.
 type RailItem =
-  | { kind: 'tab'; key: string; tab: StripTab; member: string | null }
-  | { kind: 'folder'; key: string; folder: TabFolder; tabs: StripTab[]; open: boolean };
+  | { kind: 'tab'; key: string; tab: StripTab; member: string | null; project: ProjectSummary | null }
+  | { kind: 'folder'; key: string; folder: TabFolder; tabs: StripTab[]; open: boolean; project: ProjectSummary | null };
+const grouped = computed(() => sidebar.allAgents.value && expansion.view.value.groupByProject);
 const items = computed<RailItem[]>(() => {
-  const manual = !(sidebar.allAgents.value && expansion.view.value.groupByProject);
+  const entries = layoutEntries(tabs.value.filter((tab) => !tabSnoozed(tab)), sidebar.layout.value);
+  const groups = grouped.value
+    ? groupEntriesByProject(entries, sidebar.projects.value, sidebar.projectOf, emptyFolderOwner(sidebar.layout.value, tabs.value, sidebar.projects.value, sidebar.projectOf))
+    : [{ project: null, items: entries }];
+  const own = (tab: StripTab) => sidebar.allAgents.value ? sidebar.projectOf(tab) : null;
   return [
-    ...layoutEntries(tabs.value.filter((tab) => !tabSnoozed(tab)), sidebar.layout.value, manual).flatMap((entry): RailItem[] => {
-      if (entry.kind === 'tab') return [{ kind: 'tab', key: entry.key, tab: entry.tab, member: null }];
+    ...groups.flatMap(({ project, items: grouped }) => grouped.flatMap((entry): RailItem[] => {
+      if (entry.kind === 'tab') return [{ kind: 'tab', key: entry.key, tab: entry.tab, member: null, project: project ?? own(entry.tab) }];
       const open = expansion.isOpen(entry.key);
       return [
-        { kind: 'folder', key: entry.key, folder: entry.folder, tabs: entry.tabs, open },
-        ...(open ? entry.tabs.map((tab) => ({ kind: 'tab' as const, key: tab.key, tab, member: entry.folder.id })) : [])
+        { kind: 'folder', key: entry.key, folder: entry.folder, tabs: entry.tabs, open, project },
+        ...(open ? entry.tabs.map((tab) => ({ kind: 'tab' as const, key: tab.key, tab, member: entry.folder.id, project })) : [])
       ];
-    }),
-    ...tabs.value.filter(tabSnoozed).map((tab) => ({ kind: 'tab' as const, key: tab.key, tab, member: null }))
+    })),
+    ...tabs.value.filter(tabSnoozed).map((tab) => ({ kind: 'tab' as const, key: tab.key, tab, member: null, project: null }))
   ];
 });
 const inFolder = (item: RailItem | undefined) => Boolean(item && (item.kind === 'folder' || item.member));
@@ -212,9 +220,8 @@ const openKey = computed(() => {
 
 function projectStarts(index: number): boolean {
   const item = items.value[index];
-  if (!sidebar.allAgents.value || item?.kind !== 'tab' || item.member) return false;
-  const previous = items.value[index - 1];
-  return Boolean(sidebar.projectOf(item.tab)) && (previous?.kind !== 'tab' || Boolean(previous.member) || sidebar.projectOf(previous.tab)?.id !== sidebar.projectOf(item.tab)?.id);
+  if (!item?.project || (item.kind === 'tab' && item.member)) return false;
+  return items.value[index - 1]?.project?.id !== item.project.id;
 }
 // A folded folder's most urgent unread.
 function folderUnread(tabs: readonly StripTab[]): NotificationUrgency | null {
@@ -256,7 +263,8 @@ function select(tab: StripTab): void {
 const { setElement, element, draggingKey, dropLine, dropInto, onPointerDown, consumeClick } = useSidebarReorder(
   () => items.value.flatMap((item) => item.kind === 'tab' && tabSnoozed(item.tab) ? [] : [{
     key: item.key,
-    group: item.kind === 'tab' && item.member ? folderKey(item.member) : 'open',
+    // Grouped by project, rows move within their project, as in the list.
+    group: item.kind === 'tab' && item.member ? folderKey(item.member) : grouped.value && item.project ? `project:${item.project.id}` : 'open',
     folder: item.kind === 'folder',
     sortable: true
   }]),

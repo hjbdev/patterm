@@ -3,7 +3,7 @@ import { agentLabel, type AgentTabFamily } from './agentTabs';
 import type { AgentNode } from './agentTree';
 import type { LiveProcessRecord } from './processTabs';
 import type { RowActivity } from './rowActivity';
-import type { StripTab } from './tabStrip';
+import type { LayoutEntry, StripTab } from './tabStrip';
 import { timerLabel, timerRemaining, timerRemainingToMinute } from './timers';
 import type { ProcessRecord, SessionRecord, TimerRecord } from '../types';
 
@@ -173,6 +173,14 @@ export function familyActivityAt(node: AgentNode): string {
     const at = familyActivityAt(child);
     return at > latest ? at : latest;
   }, node.session.activityAt ?? node.session.startedAt);
+}
+
+// Rows and folders with the most recent activity first, a folder by its
+// newest tab's; others keep their place after them, in the order given.
+export function sortEntriesByActivity<T extends LayoutEntry>(entries: readonly T[]): T[] {
+  const of = (tab: StripTab) => tab.kind === 'agent' ? familyActivityAt(tab.family.root) : '';
+  const at = new Map(entries.map((entry) => [entry.key, entry.kind === 'tab' ? of(entry.tab) : entry.tabs.map(of).reduce((a, b) => b > a ? b : a, '')]));
+  return [...entries].sort((a, b) => (at.get(b.key) ?? '').localeCompare(at.get(a.key) ?? ''));
 }
 
 // Agents with the most recent activity first; other tabs keep their place

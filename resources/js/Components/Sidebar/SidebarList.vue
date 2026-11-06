@@ -137,7 +137,7 @@ import SidebarFolderRow from './SidebarFolderRow.vue';
 import SidebarMemberRow from './SidebarMemberRow.vue';
 import SidebarViewOptions from './SidebarViewOptions.vue';
 import { useSidebar, type AgentTab } from './sidebarContext';
-import { familyStatus, familyWaitingOn, selectedThread, sortByActivity, SIDEBAR_STATUSES, type SidebarStatus } from '../../lib/sidebarTree';
+import { familyStatus, familyWaitingOn, selectedThread, sortByActivity, sortEntriesByActivity, SIDEBAR_STATUSES, type SidebarStatus } from '../../lib/sidebarTree';
 import { collapseOut, expandIn, rowTops, slideFrom } from '../../lib/sidebarMotion';
 import { sidebarNodesKey } from './sidebarNodes';
 import { useSidebarMention } from './sidebarMention';
@@ -146,7 +146,7 @@ import { useSidebarKeys } from '../../Composables/useSidebarKeys';
 import { useSidebarReorder } from '../../Composables/useSidebarReorder';
 import { dropSidebarRow, moveSidebarRow } from './sidebarDrop';
 import { useSettledValues } from '../../Composables/useSettledValues';
-import { allAgents as allAgentsState, groupByProject, projectShown } from '../../lib/allAgents';
+import { allAgents as allAgentsState, emptyFolderOwner, groupEntriesByProject, projectShown } from '../../lib/allAgents';
 import { tabSnoozed } from '../../lib/snooze';
 import { projectSnoozed } from '../../lib/projectSnooze';
 import SnoozedProjectHeader from '../SnoozedProjectHeader.vue';
@@ -165,7 +165,7 @@ const expansion = useSidebarExpansion(() => sidebar.expansionScope.value);
 // Grouped by status, a family moves once its new status has lasted a moment,
 // so output blips don't bounce it between groups. Needing you moves at once.
 const liveStatuses = computed(() => new Map<string, SidebarStatus>(expansion.view.value.groupByStatus
-  ? sidebar.tabs.value.flatMap((tab) => tab.kind === 'agent' && !tab.folder && !tabSnoozed(tab) ? [[tab.key, familyStatus(sidebar, tab.family, sidebar.activity(tab.family.root.session))] as const] : [])
+  ? sidebar.tabs.value.flatMap((tab) => tab.kind === 'agent' && !tabSnoozed(tab) ? [[tab.key, familyStatus(sidebar, tab.family, sidebar.activity(tab.family.root.session))] as const] : [])
   : []));
 const status = useSettledValues(() => liveStatuses.value, {
   minimumMs: 2_000,
@@ -181,31 +181,34 @@ const snoozedProjects = computed(() => sidebar.allAgents.value
 // All agents groups by project unless you'd rather sort them yourself.
 const byProject = computed(() => sidebar.allAgents.value && expansion.view.value.groupByProject);
 const sorted = computed(() => expansion.view.value.sortByActivity);
-// In the order you give it, folders sit among the agents where you put them.
-// Grouped or sorted, folders follow the agents, still in your order.
-const manual = computed(() => !sorted.value && !byProject.value && !expansion.view.value.groupByStatus);
 
-// Agents, grouped by project or status if you ask; your order, or recent
-// activity, holds within each group. Folders hold their agents and any
+// Agents and folders, grouped by project or status if you ask; your order, or
+// recent activity, holds within each group. A folder sits among the agents,
+// grouped by its first tab's project, or its most urgent tab's status, and
+// sorted by its newest tab's activity. Folders hold their agents and any
 // processes filed with them. Snoozed agents wait at the end until their next
 // message, out of their folders until then.
 type FolderItem = Extract<LayoutEntry, { kind: 'folder' }>;
 type Item = StripTab | FolderItem;
 interface Group { id: string; label: string | null; items: Item[]; sortable: boolean; project?: ProjectSummary }
+const STATUS_RANK: Record<SidebarStatus, number> = { attention: 2, working: 1, idle: 0 };
+function entryStatus(entry: LayoutEntry): SidebarStatus {
+  const of = (tab: StripTab) => status(tab.key) ?? 'idle';
+  if (entry.kind === 'tab') return of(entry.tab);
+  return entry.tabs.map(of).reduce<SidebarStatus>((worst, next) => STATUS_RANK[next] > STATUS_RANK[worst] ? next : worst, 'idle');
+}
 const groups = computed<Group[]>(() => {
   const listed = sidebar.tabs.value.filter((tab) => !tabSnoozed(tab) && (tab.kind === 'agent' || tab.folder));
-  const placed = layoutEntries(listed, sidebar.layout.value, manual.value);
-  const snoozed = { id: 'snoozed', label: 'Snoozed', items: sidebar.tabs.value.filter(tabSnoozed), sortable: false };
-  if (manual.value) return [{ id: 'open', label: null, items: placed.map((entry) => entry.kind === 'tab' ? entry.tab : entry), sortable: true }, snoozed].filter((group) => group.items.length);
-  const loose = placed.flatMap((entry) => entry.kind === 'tab' ? [entry.tab] : []);
-  const open = sorted.value ? sortByActivity(loose) : loose;
+  const placed = layoutEntries(listed, sidebar.layout.value);
+  const open = sorted.value ? sortEntriesByActivity(placed) : placed;
+  const item = (entry: LayoutEntry): Item => entry.kind === 'tab' ? entry.tab : entry;
   const rest: Group[] = byProject.value
-    ? groupByProject(open, sidebar.projects.value, sidebar.projectOf).map(({ project, items }) => ({ id: `project:${project.id}`, label: project.name, project, items, sortable: !sorted.value }))
+    ? groupEntriesByProject(open, sidebar.projects.value, sidebar.projectOf, emptyFolderOwner(sidebar.layout.value, sidebar.tabs.value, sidebar.projects.value, sidebar.projectOf)).map(({ project, items }) => ({ id: `project:${project.id}`, label: project.name, project, items: items.map(item), sortable: !sorted.value }))
     : expansion.view.value.groupByStatus
-    ? SIDEBAR_STATUSES.map(({ id, label }) => ({ id, label, items: open.filter((tab) => (status(tab.key) ?? 'idle') === id), sortable: !sorted.value }))
-    : [{ id: 'open', label: null, items: open, sortable: false }];
-  const folders = { id: 'folders', label: null, items: placed.filter((entry): entry is FolderItem => entry.kind === 'folder'), sortable: true };
-  return [...rest, folders, snoozed].filter((group) => group.items.length);
+    ? SIDEBAR_STATUSES.map(({ id, label }) => ({ id, label, items: open.filter((entry) => entryStatus(entry) === id).map(item), sortable: !sorted.value }))
+    : [{ id: 'open', label: null, items: open.map(item), sortable: !sorted.value }];
+  const snoozed = { id: 'snoozed', label: 'Snoozed', items: sidebar.tabs.value.filter(tabSnoozed), sortable: false };
+  return [...rest, snoozed].filter((group) => group.items.length);
 });
 
 type Entry =
@@ -308,7 +311,11 @@ function firstIn(key: string): string | null {
   const folder = entries.value.find((entry) => entry.kind === 'folder' && entry.key === key);
   return folder?.kind === 'folder' && folder.open ? folder.tabs[0]?.key ?? null : null;
 }
-const { onKeydown } = useSidebarKeys({ toggle: setExpanded, move: (key, beforeKey, afterKey) => moveSidebarRow(sidebar, key, beforeKey, afterKey) });
+function groupOf(key: string): string | undefined {
+  const entry = entries.value.find((candidate) => candidate.key === key);
+  return entry && (entry.kind === 'tab' || entry.kind === 'folder') ? entry.group : undefined;
+}
+const { onKeydown } = useSidebarKeys({ toggle: setExpanded, move: (key, beforeKey, afterKey) => moveSidebarRow(sidebar, key, beforeKey, afterKey, groupOf(key)) });
 const { setElement, draggingKey, dropLine, dropInto, onPointerDown, consumeClick } = useSidebarReorder(
   () => [
     ...entries.value.flatMap((entry) => entry.kind === 'tab' || entry.kind === 'folder'
