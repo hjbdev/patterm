@@ -12,7 +12,9 @@ import type { IntegratedConversationEvent } from './IntegratedConversation';
 // - Claude Code caches for 1 hour on a subscription within its limits.
 // - Codex keys the cache by thread; GPT-5.6 and later keep it for 30 minutes.
 // - OpenCode on those OpenAI models keys it by session, as Codex does. Other
-//   providers, such as DeepSeek, keep it for hours.
+//   providers, such as DeepSeek, keep it for hours. Its Claude Agent provider
+//   runs each request through Claude Code, so it has Claude Code's cache;
+//   OpenCode's own Anthropic provider caches for 5 minutes and is left alone.
 // The lifetime runs from the last request, which starts before the turn ends.
 // Across two weeks of transcripts a turn's final request took at most about
 // 2.5 minutes (p99 under 30 seconds), so compaction leaves 3 minutes' margin.
@@ -21,6 +23,7 @@ export const IDLE_COMPACTION_AFTER_MS: Partial<Record<string, number>> = {
   codex: 27 * 60_000,
   opencode: 27 * 60_000
 };
+const CLAUDE_AGENT_PROVIDER = 'claude-agent/';
 // The slowest final request leaves Claude under 30 seconds of headroom, so a
 // deadline overdue by more than timer delay is skipped rather than risk an
 // expired cache.
@@ -38,11 +41,23 @@ export function thirtyMinuteCacheModel(model: string): boolean {
   return major > 5 || (major === 5 && Number(match[2] ?? 0) >= 6);
 }
 
-function eligibleModel(harness: string, model: string | null): boolean {
-  if (harness === 'claude') return true;
-  if (!model) return false;
-  if (harness === 'codex') return thirtyMinuteCacheModel(model);
-  return harness === 'opencode' && model.startsWith('openai/') && thirtyMinuteCacheModel(model.slice('openai/'.length));
+// How long an agent on this model idles before compacting, or undefined when
+// its cache lifetime is unknown.
+function idleDelay(harness: string, model: string | null): number | undefined {
+  if (harness === 'claude') return IDLE_COMPACTION_AFTER_MS.claude;
+  if (!model) return undefined;
+  if (harness === 'codex') return thirtyMinuteCacheModel(model) ? IDLE_COMPACTION_AFTER_MS.codex : undefined;
+  if (harness !== 'opencode') return undefined;
+  if (model.startsWith(CLAUDE_AGENT_PROVIDER)) return IDLE_COMPACTION_AFTER_MS.claude;
+  return model.startsWith('openai/') && thirtyMinuteCacheModel(model.slice('openai/'.length)) ? IDLE_COMPACTION_AFTER_MS.opencode : undefined;
+}
+
+// The model is read when a deadline arrives, so a harness's first deadline is
+// the soonest any of its models can be due.
+function firstDelay(harness: string): number | undefined {
+  const after = IDLE_COMPACTION_AFTER_MS[harness];
+  const claude = IDLE_COMPACTION_AFTER_MS.claude;
+  return harness === 'opencode' && after && claude ? Math.min(after, claude) : after;
 }
 
 export interface IdleCompactionSource {
@@ -195,13 +210,13 @@ export class IdleCompactionService {
   }
 
   private eligibleAgent(row: CompactionRow): boolean {
-    return Boolean(IDLE_COMPACTION_AFTER_MS[row.harness]);
+    return Boolean(firstDelay(row.harness));
   }
 
-  private schedule(processId: string): void {
+  private schedule(processId: string, delayAfter?: number): void {
     this.cancel(processId);
     const row = this.row(processId);
-    const after = row && IDLE_COMPACTION_AFTER_MS[row.harness];
+    const after = delayAfter ?? (row && firstDelay(row.harness));
     if (!row?.idle_since || !after) return;
     const delay = Math.max(0, Date.parse(row.idle_since) + after - this.now());
     const timer = setTimeout(() => {
@@ -215,7 +230,7 @@ export class IdleCompactionService {
   }
 
   private async fire(processId: string): Promise<void> {
-    const row = this.due(processId);
+    const row = this.waiting(processId);
     if (!row) return;
     if (!this.enabled(row.harness)) {
       this.write(processId, null, null);
@@ -233,18 +248,17 @@ export class IdleCompactionService {
         return;
       }
       this.restored.delete(processId);
-      if (!this.due(processId)) return;
     }
-    if (row.harness !== 'claude') {
-      const model = await this.integrated.model(processId);
-      if (!this.unchanged(processId, row)) return;
-      if (!eligibleModel(row.harness, model)) {
-        this.write(processId, null, null);
-        this.log('skipped', { processId, harness: row.harness, model, reason: 'model' });
-        return;
-      }
-      if (!this.due(processId)) return;
+    const model = row.harness === 'claude' ? null : await this.integrated.model(processId);
+    if (!this.unchanged(processId, row)) return;
+    const after = idleDelay(row.harness, model);
+    if (!after) {
+      this.write(processId, null, null);
+      this.log('skipped', { processId, harness: row.harness, model, reason: 'model' });
+      return;
     }
+    // A model with a longer cache waits on from the harness's first deadline.
+    if (!this.due(processId, after)) return;
     // Recheck after the async model lookup: a voice call may have started.
     if ((row.role === 'assistant' || row.role === 'bot') && this.voiceActive(processId)) {
       this.write(processId, null, null);
@@ -282,15 +296,21 @@ export class IdleCompactionService {
     return current?.state === 'armed' && current.idle_since === row.idle_since;
   }
 
-  // An armed agent that has been idle long enough, and not so long that its
-  // cache has gone.
-  private due(processId: string): CompactionRow | null {
+  // An armed agent that is still idle.
+  private waiting(processId: string): CompactionRow | null {
     const row = this.row(processId);
-    const after = row && IDLE_COMPACTION_AFTER_MS[row.harness];
-    if (!row || !after || !this.eligibleAgent(row) || row.state !== 'armed' || !row.idle_since || row.activity !== 'idle') return null;
-    const idleFor = this.now() - Date.parse(row.idle_since);
+    if (!row || !this.eligibleAgent(row) || row.state !== 'armed' || !row.idle_since || row.activity !== 'idle') return null;
+    return row;
+  }
+
+  // A waiting agent that has been idle for `after`, and not so long that its
+  // cache has gone.
+  private due(processId: string, after: number): CompactionRow | null {
+    const row = this.waiting(processId);
+    if (!row) return null;
+    const idleFor = this.now() - Date.parse(row.idle_since!);
     if (idleFor < after) {
-      this.schedule(processId);
+      this.schedule(processId, after);
       return null;
     }
     if (idleFor > after + LATE_MS) {

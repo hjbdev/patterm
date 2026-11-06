@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Idle compaction covers OpenCode agents on the Claude Agent provider. It
+  runs each request through Claude Code, so these agents compact after
+  Claude's 57 idle minutes rather than OpenCode's 27. OpenCode's own Anthropic
+  provider keeps a 5-minute cache and is still left alone.
+
 - Reuse successful syntax highlighting for unchanged code blocks as replies
   stream, avoiding repeated worker computation. The in-memory cache is bounded
   to 64 blocks and an estimated 4 MiB of strings per worker or fallback realm.
