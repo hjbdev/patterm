@@ -87,6 +87,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Quitting no longer reports a cleanup error when an Integrated Codex host
+  has already disappeared. Host cleanup still runs if interruption fails,
+  and genuine cleanup failures are still reported.
 - An OpenCode agent that moves its session to another directory with
   `session_move` keeps Patterm's tools. Before each message, Patterm installs
   its bridge and MCP servers where the session is now; they were left behind
