@@ -105,13 +105,13 @@
     <slot name="terminal-tabs" />
 
     <div class="ml-auto flex shrink-0 items-center gap-1.5">
-      <!-- The app's own pages wait behind ⋯. A phone's Library has them and
-           the notifications instead. -->
+      <!-- The app's own pages wait behind ⋯. A phone's Library has them
+           instead. -->
       <Button variant="ghost" size="sm" class="h-7 gap-2 rounded-tab px-2 text-xs text-muted-foreground" aria-label="Search or jump to" @click="emit('commandPalette')">
         <Search class="h-4 w-4" /><span class="hidden sm:inline">Search or jump to…</span><kbd class="hidden rounded border border-border/70 px-1 text-[10px] sm:inline">Ctrl K</kbd>
       </Button>
+      <NotificationTray />
       <template v-if="!phoneLayout">
-        <NotificationTray />
         <DropdownMenu>
           <DropdownMenuTrigger as-child>
             <Button variant="ghost" size="icon" class="relative h-7 w-7 rounded-tab text-muted-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground" :aria-label="menuLabel" :title="menuLabel">

@@ -17,12 +17,6 @@
           <Gauge :class="ICON" />
           <span class="min-w-0 flex-1 truncate">Usage</span>
         </RouterLink>
-        <!-- A phone's bar has no bell or ⋯, so its notifications live here. -->
-        <button type="button" :class="ROW" @click="notificationsOpen = true">
-          <Bell :class="ICON" />
-          <span class="min-w-0 flex-1 truncate">Notifications</span>
-          <span v-if="unread" :class="COUNT">{{ unread }}</span>
-        </button>
         <RouterLink :to="{ name: 'settings' }" :class="ROW">
           <Settings :class="ICON" />
           <span class="min-w-0 flex-1">
@@ -33,19 +27,16 @@
         <SidebarViewOptions label="List options" :trigger-class="cn(ROW, 'justify-start [&>svg]:ml-auto')" />
       </template>
     </nav>
-    <NotificationTray v-if="phoneLayout" v-model:open="notificationsOpen" bare />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { RouterLink } from 'vue-router';
-import { Bell, CalendarClock, Gauge, Settings } from 'lucide-vue-next';
+import { CalendarClock, Gauge, Settings } from 'lucide-vue-next';
 import { cn } from '@/lib/utils';
 import LibraryRows from '../Components/LibraryRows.vue';
-import NotificationTray from '../Components/NotificationTray.vue';
 import SidebarViewOptions from '../Components/Sidebar/SidebarViewOptions.vue';
-import { totalUnread } from '../Composables/useNotifications';
 import { phoneLayout } from '../lib/phoneLayout';
 import { listRoutines, type RoutineRecord } from '../lib/routines';
 import { useUpdates } from '../lib/updates';
@@ -60,8 +51,6 @@ const routines = ref<RoutineRecord[]>([]);
 listRoutines().then((list) => { routines.value = list; }, () => undefined);
 const routineCount = computed(() => routines.value.filter((routine) => routine.enabled).length);
 
-const notificationsOpen = ref(false);
-const unread = computed(() => totalUnread());
 const updates = useUpdates();
 const updateAvailable = computed(() => updates.value?.status === 'available');
 </script>

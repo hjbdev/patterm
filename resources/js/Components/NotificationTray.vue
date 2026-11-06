@@ -1,7 +1,6 @@
 <template>
-  <!-- `bare` opens it with no trigger at all. -->
   <DrawerRoot v-if="mobile" v-model:open="open">
-    <DrawerTrigger v-if="!bare" as-child>
+    <DrawerTrigger as-child>
       <Button variant="ghost" size="icon" class="relative h-7 w-7 rounded-tab text-muted-foreground" :aria-label="label" :title="label">
         <Bell class="h-4 w-4" />
         <span v-if="count" class="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-1 text-[9px] font-semibold tabular-nums text-background" :class="badgeTone">{{ badge }}</span>
@@ -17,7 +16,7 @@
     </DrawerPortal>
   </DrawerRoot>
   <Popover v-else v-model:open="open">
-    <PopoverTrigger v-if="!bare" as-child>
+    <PopoverTrigger as-child>
       <Button variant="ghost" size="icon" class="relative h-7 w-7 rounded-tab text-muted-foreground" :aria-label="label" :title="label">
         <Bell class="h-4 w-4" />
         <span v-if="count" class="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-1 text-[9px] font-semibold tabular-nums text-background" :class="badgeTone">{{ badge }}</span>
@@ -30,7 +29,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { DrawerContent, DrawerHandle, DrawerOverlay, DrawerPortal, DrawerRoot, DrawerTitle, DrawerTrigger } from 'vaul-vue';
 import { Bell } from 'lucide-vue-next';
 import { highestUnread, setNotificationTrayOpen, totalUnread } from '../Composables/useNotifications';
@@ -39,8 +38,7 @@ import { phoneLayout } from '../lib/phoneLayout';
 import { Button } from './ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 
-defineProps<{ bare?: boolean }>();
-const open = defineModel<boolean>('open', { default: false });
+const open = ref(false);
 const mobile = phoneLayout;
 const count = computed(() => totalUnread());
 const badge = computed(() => count.value > 99 ? '99+' : String(count.value));

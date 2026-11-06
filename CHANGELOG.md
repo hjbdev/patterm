@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The notifications tray has an Unread tab that lists only unread,
+  unhandled notifications. `notification_list` takes `unread_only` too.
+- A phone's top bar has the notifications bell, so the tray no longer hides
+  in the Library.
+
 - Settings › Notifications has a switch to disable user-facing subagent
   notifications and clear their unread dots. Parent agents still receive
   child alerts and reports.
