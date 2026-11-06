@@ -15,6 +15,9 @@ export interface ReorderRow { key: string; group: string; folder?: boolean; sort
 export interface ReorderDrop { group: string; beforeKey: string | null; afterKey: string | null; into: string | null; line: { key: string; edge: 'before' | 'after' } | null }
 
 type Target = { row: ReorderRow; edge: 'before' | 'after' | 'into' };
+type Placement = 'line' | 'into' | 'edges-or-into' | null;
+// How far apart neighbouring rows can be and still count as touching.
+const ROW_GAP_PX = 6;
 
 const isFolderGroup = (group: string) => group.startsWith('folder:');
 
@@ -40,7 +43,7 @@ function useVerticalReorder(options: {
 
   // Where each other row can take the dragged one: beside it, on it (a
   // folder's row, or a row in a folder kept in its own order), or nowhere.
-  function placement(dragged: ReorderRow, row: ReorderRow): 'line' | 'into' | 'edges-or-into' | null {
+  function placement(dragged: ReorderRow, row: ReorderRow): Placement {
     if (row.key === dragged.key) return null;
     if (dragged.folder) return row.group === dragged.group && row.sortable ? 'line' : null;
     if (row.folder) return row.group === dragged.group && row.sortable ? 'edges-or-into' : 'into';
@@ -49,38 +52,37 @@ function useVerticalReorder(options: {
     return isFolderGroup(dragged.group) ? 'line' : null;
   }
 
-  function candidates(key: string): Array<{ row: ReorderRow; mode: 'line' | 'into' | 'edges-or-into'; rect: DOMRect }> {
+  // Every other row, top to bottom, with where it can take the dragged one.
+  function measured(key: string): Array<{ row: ReorderRow; mode: Placement; rect: DOMRect }> {
     const rows = options.rows();
     const dragged = rows.find((row) => row.key === key);
     if (!dragged) return [];
     return rows.flatMap((row) => {
-      const mode = placement(dragged, row);
-      const rect = mode && options.element(row.key)?.getBoundingClientRect();
-      return mode && rect ? [{ row, mode, rect }] : [];
+      const rect = row.key !== key ? options.element(row.key)?.getBoundingClientRect() : undefined;
+      return rect ? [{ row, mode: placement(dragged, row), rect }] : [];
     }).sort((a, b) => a.rect.top - b.rect.top);
   }
 
+  // The drop goes by the row under the pointer, or in the narrow gap between
+  // two rows, the nearer one. If that row can't take it, as when the list is
+  // sorted, or the pointer is over a heading or past the list, nothing moves.
+  // A row it can only go into takes it only when dropped on.
   function targetAt(key: string, y: number): Target | null {
-    const rows = candidates(key);
-    const hit = rows.find(({ rect }) => y >= rect.top && y < rect.bottom);
-    if (hit) {
-      const offset = (y - hit.rect.top) / hit.rect.height;
-      if (hit.mode === 'into' || (hit.mode === 'edges-or-into' && offset > 0.25 && offset < 0.75)) return { row: hit.row, edge: 'into' };
-      return { row: hit.row, edge: offset < 0.5 ? 'before' : 'after' };
-    }
-    // Between rows, the nearest line. A row the dragged one can only go into
-    // takes it only when dropped on, so a drop elsewhere never files it.
-    const lines = rows.filter(({ mode }) => mode !== 'into');
-    const next = lines.find(({ rect }) => y < rect.top + rect.height / 2);
-    const nearest = next ?? lines[lines.length - 1];
-    if (!nearest) return null;
-    return { row: nearest.row, edge: next ? 'before' : 'after' };
+    const rows = measured(key);
+    const distance = (rect: DOMRect) => y < rect.top ? rect.top - y : y >= rect.bottom ? y - rect.bottom : 0;
+    const nearest = rows.reduce<typeof rows[number] | null>((best, row) => !best || distance(row.rect) < distance(best.rect) ? row : best, null);
+    if (!nearest?.mode || distance(nearest.rect) > ROW_GAP_PX) return null;
+    const { row, mode, rect } = nearest;
+    const offset = (y - rect.top) / rect.height;
+    const over = offset >= 0 && offset < 1;
+    if (mode === 'into' || (mode === 'edges-or-into' && offset > 0.25 && offset < 0.75)) return over ? { row, edge: 'into' } : null;
+    return { row, edge: offset < 0.5 ? 'before' : 'after' };
   }
 
   function onMove(event: PointerEvent): void {
     if (!press || event.pointerId !== press.pointerId) return;
     if (!press.dragging) {
-      if (Math.abs(event.clientY - press.startY) < 5 || !candidates(press.key).length) return;
+      if (Math.abs(event.clientY - press.startY) < 5 || !measured(press.key).some(({ mode }) => mode)) return;
       press.dragging = true;
       draggingKey.value = press.key;
     }
