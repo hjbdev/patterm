@@ -158,12 +158,14 @@ export function renameFolderInLayout(layout: TabLayout, id: string, name: string
   return { ...layout, folders: layout.folders.map((folder) => folder.id === id ? { ...folder, name } : folder) };
 }
 
-// Its tabs stay where the folder was, in its order.
+// Its tabs stay where the folder was, in its order. A folder already gone,
+// such as one another window deleted first, leaves the layout as it is.
 export function deleteFolderFromLayout(layout: TabLayout, id: string): TabLayout {
   const key = folderKey(id);
+  if (!layout.order.includes(key)) return layout;
   const members = layout.order.filter((candidate) => layout.filed[candidate] === id);
   const order = layout.order.filter((candidate) => layout.filed[candidate] !== id);
-  order.splice(Math.max(order.indexOf(key), 0), 1, ...members);
+  order.splice(order.indexOf(key), 1, ...members);
   return {
     order: order.filter((candidate) => candidate !== key),
     folders: layout.folders.filter((folder) => folder.id !== id),

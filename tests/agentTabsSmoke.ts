@@ -213,6 +213,7 @@ assert.equal(agentOptionTargetByDelta(families, 'pty-unknown', 1), null, 'unknow
   const deleted = deleteFolderFromLayout(live, 'later');
   assert.deepEqual(deleted.order.slice(0, 4), ['agent:root-c', 'process:shell', 'agent:root-a', 'agent:root-b'], "a deleted folder's tabs stay where it was");
   assert.deepEqual([deleted.folders, deleted.filed], [[], {}]);
+  assert.equal(deleteFolderFromLayout(deleted, 'later'), deleted, 'deleting a folder already gone changes nothing');
 
   const pruned = forgetClosedTabs(layout, (key) => key !== 'agent:closed' && key !== 'agent:root-b');
   assert.deepEqual(pruned.order, ['agent:root-c', 'folder:later', 'process:shell', 'agent:root-a'], 'closed tabs are forgotten, folders kept');

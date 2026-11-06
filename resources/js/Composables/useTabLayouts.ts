@@ -18,6 +18,7 @@ interface ScopeState {
   // Until the first read, the layout this device had before.
   placeholder: TabLayout;
   edits: TabLayoutEdit[];
+  loading: boolean;
   writing: boolean;
 }
 
@@ -29,7 +30,7 @@ function stateFor(scope: string): ScopeState {
   let state = scopes.get(scope);
   if (!state) {
     const placeholder = readLegacyTabLayout(scope) ?? EMPTY_TAB_LAYOUT;
-    state = reactive<ScopeState>({ layout: placeholder, saved: null, placeholder, edits: [], writing: false });
+    state = reactive<ScopeState>({ layout: placeholder, saved: null, placeholder, edits: [], loading: false, writing: false });
     scopes.set(scope, state);
     void load(scope);
   }
@@ -56,12 +57,24 @@ async function fetchSaved(scope: string, fresh = false): Promise<Saved> {
   return fresh ? await read() : await topicRead('layout', ['settings_tab_layout_get', scope], read);
 }
 
+// Before the first read, edits wait for it; if it fails, they can't save, so
+// they are dropped with an error and the next edit tries reading again.
 async function load(scope: string): Promise<void> {
   const state = scopes.get(scope);
-  if (!state) return;
+  if (!state || state.loading) return;
+  state.loading = true;
   let saved: Saved;
   try { saved = await fetchSaved(scope); }
-  catch { return; }
+  catch {
+    if (!state.saved && state.edits.length) {
+      state.edits = [];
+      show(state);
+      toast.error('Could not load the tab layout, so the change was not saved');
+    }
+    return;
+  } finally {
+    state.loading = false;
+  }
   // Nothing saved yet: this device's old layout becomes everyone's, unless
   // another window saved one first.
   if (!state.saved && saved.revision === 0) {
@@ -76,7 +89,7 @@ async function load(scope: string): Promise<void> {
 // is applied again to the newer layout, once; any other failure drops it.
 async function write(scope: string): Promise<void> {
   const state = scopes.get(scope);
-  if (!state || state.writing || !state.saved) return;
+  if (!state || state.writing || !state.saved || !state.edits.length) return;
   state.writing = true;
   try {
     while (state.edits.length && state.saved) {
@@ -109,7 +122,8 @@ function save(scope: string, edit: TabLayoutEdit): void {
   const state = stateFor(scope);
   state.edits.push(edit);
   show(state);
-  void write(scope);
+  if (state.saved) void write(scope);
+  else void load(scope);
 }
 
 // Call during a component's setup.
