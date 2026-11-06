@@ -68,10 +68,13 @@ function useVerticalReorder(options: {
       if (hit.mode === 'into' || (hit.mode === 'edges-or-into' && offset > 0.25 && offset < 0.75)) return { row: hit.row, edge: 'into' };
       return { row: hit.row, edge: offset < 0.5 ? 'before' : 'after' };
     }
-    const next = rows.find(({ rect }) => y < rect.top + rect.height / 2);
-    const nearest = next ?? rows[rows.length - 1];
+    // Between rows, the nearest line. A row the dragged one can only go into
+    // takes it only when dropped on, so a drop elsewhere never files it.
+    const lines = rows.filter(({ mode }) => mode !== 'into');
+    const next = lines.find(({ rect }) => y < rect.top + rect.height / 2);
+    const nearest = next ?? lines[lines.length - 1];
     if (!nearest) return null;
-    return { row: nearest.row, edge: nearest.mode === 'into' ? 'into' : next ? 'before' : 'after' };
+    return { row: nearest.row, edge: next ? 'before' : 'after' };
   }
 
   function onMove(event: PointerEvent): void {
