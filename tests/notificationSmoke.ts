@@ -321,6 +321,9 @@ async function main(): Promise<void> {
     assert.equal(rootUnread?.urgency, 'normal');
     assert.ok(service.markRead({ session_id: 'session_root' }) > 0);
     assert.equal(service.unread().find((row) => row.process_id === 'root'), undefined);
+    const unreadOnly = service.list({ include_resolved: true, unread_only: true, limit: 200 });
+    assert.ok(unreadOnly.items.length > 0 && unreadOnly.items.every((item) => !item.read_at && !item.resolved_at), 'unread only lists unread, unresolved records');
+    assert.equal(unreadOnly.total, service.unread().reduce((sum, row) => sum + row.count, 0));
     assert.ok(service.resolveHandled('shell') > 0);
     assert.equal(service.list({ process_id: 'shell' }).items.map((row) => row.kind).join(), 'failure', 'user input keeps failures');
     assert.equal(service.markRead({}), 0, 'an empty read selects nothing');

@@ -17,6 +17,7 @@ export const notificationListInput = z.object({
   project_id: id.optional(),
   process_id: id.optional(),
   include_resolved: z.boolean().default(false),
+  unread_only: z.boolean().default(false),
   limit: z.number().int().min(1).max(200).default(50),
   offset: z.number().int().nonnegative().default(0),
   cursor: z.string().min(3).max(200).optional()

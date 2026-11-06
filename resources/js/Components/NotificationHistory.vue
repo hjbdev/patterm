@@ -2,6 +2,12 @@
   <div class="flex min-h-0 flex-col">
     <div class="flex items-center gap-2 px-3 py-2">
       <h2 v-if="showTitle" class="text-sm font-medium">Notifications</h2>
+      <Tabs v-model="view">
+        <TabsList class="h-7 p-0.5">
+          <TabsTrigger value="all" class="h-6 px-2 text-xs">All</TabsTrigger>
+          <TabsTrigger value="unread" class="h-6 px-2 text-xs">Unread</TabsTrigger>
+        </TabsList>
+      </Tabs>
       <Button variant="ghost" size="sm" class="ml-auto h-7 gap-1.5 px-2 text-xs text-muted-foreground" :disabled="!totalUnread()" @click="markAllRead">
         <CheckCheck class="h-3.5 w-3.5" />Mark all read
       </Button>
@@ -10,7 +16,8 @@
       <p v-if="error" role="alert" class="px-4 py-6 text-center text-xs text-red-400">{{ error }}</p>
       <div v-else-if="!items.length && !more" class="flex flex-col items-center gap-2 px-4 py-10 text-center">
         <BellOff class="h-5 w-5 text-muted-foreground/60" />
-        <p class="text-xs text-muted-foreground">No notifications yet. Agent requests, terminal notifications, and failures appear here.</p>
+        <p v-if="view === 'unread'" class="text-xs text-muted-foreground">You're all caught up.</p>
+        <p v-else class="text-xs text-muted-foreground">No notifications yet. Agent requests, terminal notifications, and failures appear here.</p>
       </div>
       <ul v-else class="divide-y divide-border/40">
         <li v-for="item in items" :key="item.id">
@@ -31,18 +38,19 @@
       </ul>
       <div ref="sentinel" class="h-px" />
       <p v-if="loading" class="flex items-center justify-center gap-2 py-3 text-[11px] text-muted-foreground"><Loader2 class="h-3.5 w-3.5 animate-spin" />Loading…</p>
-      <p v-else-if="items.length && !more" class="py-3 text-center text-[10px] text-muted-foreground/60">Notifications are kept for 30 days after they are read.</p>
+      <p v-else-if="items.length && !more && view === 'all'" class="py-3 text-center text-[10px] text-muted-foreground/60">Notifications are kept for 30 days after they are read.</p>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, type Component } from 'vue';
+import { onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue';
 import { useRouter } from 'vue-router';
 import { AlertTriangle, Bell, BellOff, CheckCheck, CheckCircle2, Loader2, MessageSquare, ShieldAlert } from 'lucide-vue-next';
 import { totalUnread, type NotificationRecord } from '../Composables/useNotifications';
 import { relativeTime } from '../lib/format';
 import { Button } from './ui/button';
+import { Tabs, TabsList, TabsTrigger } from './ui/tabs';
 import UnreadDot from './UnreadDot.vue';
 
 defineProps<{ showTitle?: boolean; scrollerClass?: string }>();
@@ -67,27 +75,44 @@ const sentinel = ref<HTMLElement | null>(null);
 let observer: IntersectionObserver | null = null;
 let clock: ReturnType<typeof setInterval> | undefined;
 let unsubscribe: (() => void) | undefined;
+// Switching views starts the list again; pages fetched for the old view are dropped.
+const view = ref<'all' | 'unread'>('all');
+let generation = 0;
+watch(view, () => {
+  generation++;
+  items.value = [];
+  cursor.value = null;
+  more.value = true;
+  loading.value = false;
+  error.value = '';
+  refreshing = null;
+  scroller.value?.scrollTo({ top: 0 });
+  void loadMore();
+});
 
 function fetchPage(after: string | null): Promise<Page> {
-  return window.patterm.notificationsList({ include_resolved: true, limit: PAGE_SIZE, ...(after ? { cursor: after } : {}) }) as Promise<Page>;
+  return window.patterm.notificationsList({ include_resolved: true, unread_only: view.value === 'unread', limit: PAGE_SIZE, ...(after ? { cursor: after } : {}) }) as Promise<Page>;
 }
 
 // Pages older records in as the list scrolls to its end.
 async function loadMore(): Promise<void> {
   if (loading.value || !more.value) return;
+  const started = generation;
   loading.value = true;
   error.value = '';
   try {
     const page = await fetchPage(cursor.value);
+    if (started !== generation) return;
     const seen = new Set(items.value.map((item) => item.id));
     items.value.push(...page.items.filter((item) => !seen.has(item.id)));
     cursor.value = page.next_cursor;
     more.value = page.next_cursor !== null;
   } catch {
+    if (started !== generation) return;
     error.value = 'Notifications could not be loaded.';
     more.value = false;
   } finally {
-    loading.value = false;
+    if (started === generation) loading.value = false;
   }
   // A short first page may leave the sentinel in view with more to fetch.
   requestAnimationFrame(() => { if (more.value && sentinelVisible()) void loadMore(); });
@@ -96,7 +121,9 @@ async function loadMore(): Promise<void> {
 // New and repeated notifications move to the top; older pages stay loaded.
 let refreshing: Promise<void> | null = null;
 function refreshHead(): Promise<void> {
+  const started = generation;
   refreshing ??= fetchPage(null).then((page) => {
+    if (started !== generation) return;
     const fresh = new Set(page.items.map((item) => item.id));
     items.value = [...page.items, ...items.value.filter((item) => !fresh.has(item.id))];
     if (!cursor.value && more.value) { cursor.value = page.next_cursor; more.value = page.next_cursor !== null; }
@@ -108,6 +135,7 @@ function applyChange(raw: unknown): void {
   const change = raw as Change;
   if (change.type === 'read' || change.type === 'resolved') {
     const ids = new Set(change.ids);
+    if (view.value === 'unread') { items.value = items.value.filter((item) => !ids.has(item.id)); return; }
     const at = new Date().toISOString();
     items.value = items.value.map((item) => !ids.has(item.id) ? item : {
       ...item,

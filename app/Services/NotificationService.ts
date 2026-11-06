@@ -220,12 +220,13 @@ export class NotificationService {
 
   // Newest activity first. Pass the previous page's `next_cursor` to page
   // back; unlike offsets, cursors stay stable while new records arrive.
-  list(input: { project_id?: string | undefined; process_id?: string | undefined; include_resolved?: boolean | undefined; limit?: number | undefined; offset?: number | undefined; cursor?: string | undefined } = {}): { items: NotificationRecord[]; total: number; next_cursor: string | null } {
+  list(input: { project_id?: string | undefined; process_id?: string | undefined; include_resolved?: boolean | undefined; unread_only?: boolean | undefined; limit?: number | undefined; offset?: number | undefined; cursor?: string | undefined } = {}): { items: NotificationRecord[]; total: number; next_cursor: string | null } {
     const where: string[] = [];
     const params: string[] = [];
     if (input.project_id) { where.push('notifications.project_id = ?'); params.push(input.project_id); }
     if (input.process_id) { where.push('notifications.process_id = ?'); params.push(input.process_id); }
-    if (!input.include_resolved) where.push('notifications.resolved_at is null');
+    if (!input.include_resolved || input.unread_only) where.push('notifications.resolved_at is null');
+    if (input.unread_only) where.push('notifications.read_at is null');
     const filter = where.length ? `where ${where.join(' and ')}` : '';
     const cursor = decodeCursor(input.cursor);
     const page = cursor ? [...where, '(notifications.updated_at < ? or (notifications.updated_at = ? and notifications.id < ?))'] : where;
