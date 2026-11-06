@@ -52,7 +52,8 @@ export interface SidebarContext extends SidebarTreeView {
   moveTab: (key: string, beforeKey: string | null, afterKey: string | null) => void;
   // Files a tab in a folder, or takes it out with null.
   placeTab: (key: string, folder: string | null, beforeKey?: string | null, afterKey?: string | null) => void;
-  moveFolder: (id: string, beforeKey: string | null, afterKey: string | null) => void;
+  // Grouped by project, `project` is the group it was put in.
+  moveFolder: (id: string, beforeKey: string | null, afterKey: string | null, project?: string) => void;
   createFolder: (name: string, keys: readonly string[]) => TabFolder;
   renameFolder: (id: string, name: string) => void;
   deleteFolder: (id: string) => void;
@@ -150,7 +151,10 @@ export function provideSidebarContext(input: SidebarInput): SidebarContext {
     },
     // The list slides the row to its new place.
     placeTab: (key, folder, beforeKey = null, afterKey = null) => input.updateLayout((layout) => placeInLayout(layout, key, { folder, before: beforeKey, after: afterKey })),
-    moveFolder: (id, beforeKey, afterKey) => input.updateLayout((layout) => placeInLayout(layout, folderKey(id), { folder: null, before: beforeKey, after: afterKey })),
+    moveFolder: (id, beforeKey, afterKey, project) => input.updateLayout((layout) => {
+      const placed = placeInLayout(layout, folderKey(id), { folder: null, before: beforeKey, after: afterKey });
+      return project ? { ...placed, folders: placed.folders.map((folder) => folder.id === id ? { ...folder, project } : folder) } : placed;
+    }),
     createFolder: (name, keys) => {
       const folder = { id: randomId(), name };
       input.updateLayout((layout) => createFolderInLayout(layout, folder, keys));

@@ -12,6 +12,7 @@ import {
   setProjectShown,
   tabsGroupedByProject,
   groupEntriesByProject,
+  emptyFolderOwner,
   type AllAgentsState
 } from '../resources/js/lib/allAgents';
 import type { ProcessRecord, ProjectSummary, ProjectWorkbench, SessionRecord } from '../resources/js/types';
@@ -91,15 +92,26 @@ assert.deepEqual(groupByProject(['guide'], [web.project, docs.project], (id) => 
 const tabs = [{ id: 'guide' }, { id: 'checkout' }, { id: 'reviewer' }, { id: 'dev-server' }];
 assert.deepEqual(tabsGroupedByProject(tabs, [web.project, docs.project], (tab) => all.owners.get(tab.id) ?? null).map((tab) => tab.id), ['checkout', 'reviewer', 'dev-server', 'guide']);
 
-// Folders group with their first tab's project; an empty one with the row
-// after it. Each project keeps its own order of rows and folders.
+// Folders group with their first tab's project. An empty one groups with the
+// project it was last put in, else the tab before it in your order, else
+// after; sorting rows doesn't move it.
 {
-  const tab = (id: string) => ({ kind: 'tab' as const, key: id, tab: { key: id, id } as never });
-  const folder = (id: string, tabs: string[]) => ({ kind: 'folder' as const, key: `folder:${id}`, folder: { id, name: id }, tabs: tabs.map((each) => ({ key: each, id: each }) as never) });
-  const owner = (item: { id: string }) => all.owners.get(item.id) ?? null;
-  const grouped = groupEntriesByProject([tab('guide'), folder('retros', ['checkout']), tab('reviewer'), folder('empty', []), tab('dev-server')], [web.project, docs.project], owner as never);
+  const strip = (id: string) => ({ key: id, id }) as never;
+  const tab = (id: string) => ({ kind: 'tab' as const, key: id, tab: strip(id) });
+  const folder = (id: string, tabs: string[], project?: string) => ({ kind: 'folder' as const, key: `folder:${id}`, folder: { id, name: id, ...(project ? { project } : {}) }, tabs: tabs.map(strip) });
+  const owner = ((item: { id: string }) => all.owners.get(item.id) ?? null) as never;
+  const projectsShown = [web.project, docs.project];
+  const tabs = ['guide', 'checkout', 'reviewer', 'dev-server'].map(strip);
+  const layout = { order: ['folder:empty', 'guide', 'folder:retros', 'checkout', 'reviewer', 'folder:after', 'dev-server'], folders: [], filed: {} };
+  const empty = emptyFolderOwner(layout, tabs, projectsShown, owner);
+  assert.equal(empty({ id: 'empty', name: 'e' })?.id, 'docs', 'with no tab before it, the tab after it');
+  assert.equal(empty({ id: 'after', name: 'a' })?.id, 'web', 'the tab before it');
+  assert.equal(empty({ id: 'after', name: 'a', project: 'docs' })?.id, 'docs', 'the project it was put in');
+  // Sorted the other way round, the empty folder stays with the same project.
+  const entries = [tab('dev-server'), folder('after', []), tab('reviewer'), folder('retros', ['checkout']), tab('guide')];
+  const grouped = groupEntriesByProject(entries, projectsShown, owner, empty);
   assert.deepEqual(grouped.map((group) => [group.project.id, group.items.map((entry) => entry.key)]), [
-    ['web', ['folder:retros', 'reviewer', 'folder:empty', 'dev-server']],
+    ['web', ['dev-server', 'folder:after', 'reviewer', 'folder:retros']],
     ['docs', ['guide']]
   ]);
 }

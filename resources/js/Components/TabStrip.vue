@@ -239,7 +239,7 @@ import { ownedProcessesForSessions } from '../lib/processTabs';
 import { activityLookup, countInRing, describeActivity, memberLabel, subagentCountClass } from '../lib/rowActivity';
 import MemberCount from './MemberCount.vue';
 import { folderKey, isFolderKey, layoutEntries, type StripTab, type TabFolder } from '../lib/tabStrip';
-import { groupEntriesByProject } from '../lib/allAgents';
+import { emptyFolderOwner, groupEntriesByProject } from '../lib/allAgents';
 import { useSidebar } from './Sidebar/sidebarContext';
 import { openNewFolder, openRenameFolder } from './Sidebar/sidebarActions';
 import { useSidebarExpansion } from '../Composables/useSidebarExpansion';
@@ -312,7 +312,7 @@ type StripItem =
 const items = computed<StripItem[]>(() => {
   const entries = layoutEntries(props.tabs.filter((tab) => !tabSnoozed(tab)), sidebar.layout.value);
   const groups = props.groupedByProject
-    ? groupEntriesByProject(entries, sidebar.projects.value, sidebar.projectOf).map(({ project, items: grouped }) => ({ group: project.id as string | null, entries: grouped }))
+    ? groupEntriesByProject(entries, sidebar.projects.value, sidebar.projectOf, emptyFolderOwner(sidebar.layout.value, props.tabs, sidebar.projects.value, sidebar.projectOf)).map(({ project, items: grouped }) => ({ group: project.id as string | null, entries: grouped }))
     : [{ group: null, entries }];
   return [
     ...groups.flatMap(({ group, entries: grouped }) => grouped.flatMap((entry): StripItem[] => {
@@ -369,7 +369,11 @@ const {
   onDragStart: () => hover.close(),
   // Snoozed tabs keep their places.
   onDrop: (key, beforeKey, afterKey) => {
-    if (isFolderKey(key)) return sidebar.moveFolder(key.slice('folder:'.length), beforeKey, afterKey);
+    // Grouped by project, a folder takes the project of the tabs it lands beside.
+    if (isFolderKey(key)) {
+      const beside = items.value.find((item) => item.key === (beforeKey ?? afterKey));
+      return sidebar.moveFolder(key.slice('folder:'.length), beforeKey, afterKey, beside?.group ?? undefined);
+    }
     const item = items.value.find((candidate) => candidate.key === key);
     if (item?.kind === 'tab' && !tabSnoozed(item.tab)) sidebar.placeTab(key, item.member, beforeKey, afterKey);
   }

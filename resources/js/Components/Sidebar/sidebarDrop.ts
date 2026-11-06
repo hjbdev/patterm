@@ -15,7 +15,7 @@ export function moveSidebarRow(sidebar: SidebarContext, key: string, beforeKey: 
 // under an open folder's row is the top of the folder: `firstIn` names its
 // first row.
 export function dropSidebarRow(sidebar: SidebarContext, key: string, { group, beforeKey, afterKey, into, line }: ReorderDrop, firstIn: (folder: string) => string | null): void {
-  if (isFolderKey(key)) return moveSidebarRow(sidebar, key, beforeKey, afterKey);
+  if (isFolderKey(key)) return sidebar.moveFolder(folderId(key), beforeKey, afterKey, group.startsWith('project:') ? group.slice('project:'.length) : undefined);
   if (into) return sidebar.placeTab(key, folderId(into));
   if (isFolderKey(group)) return sidebar.placeTab(key, folderId(group), beforeKey, afterKey);
   const below = line?.edge === 'after' && isFolderKey(line.key) ? line.key : null;

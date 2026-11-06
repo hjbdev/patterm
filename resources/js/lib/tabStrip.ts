@@ -6,7 +6,8 @@ import type { LiveProcessRecord } from './processTabs';
 // `folder:<id>`.
 export type TabKey = string;
 
-export interface TabFolder { id: string; name: string }
+// `project`: grouped by project, the project an empty folder was last put in.
+export interface TabFolder { id: string; name: string; project?: string }
 
 // One scope's arrangement, saved on the server (app/Services/TabLayouts).
 // `order` holds tabs and folders as they show; a tab filed in a folder shows

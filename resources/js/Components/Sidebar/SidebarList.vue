@@ -146,7 +146,7 @@ import { useSidebarKeys } from '../../Composables/useSidebarKeys';
 import { useSidebarReorder } from '../../Composables/useSidebarReorder';
 import { dropSidebarRow, moveSidebarRow } from './sidebarDrop';
 import { useSettledValues } from '../../Composables/useSettledValues';
-import { allAgents as allAgentsState, groupEntriesByProject, projectShown } from '../../lib/allAgents';
+import { allAgents as allAgentsState, emptyFolderOwner, groupEntriesByProject, projectShown } from '../../lib/allAgents';
 import { tabSnoozed } from '../../lib/snooze';
 import { projectSnoozed } from '../../lib/projectSnooze';
 import SnoozedProjectHeader from '../SnoozedProjectHeader.vue';
@@ -203,7 +203,7 @@ const groups = computed<Group[]>(() => {
   const open = sorted.value ? sortEntriesByActivity(placed) : placed;
   const item = (entry: LayoutEntry): Item => entry.kind === 'tab' ? entry.tab : entry;
   const rest: Group[] = byProject.value
-    ? groupEntriesByProject(open, sidebar.projects.value, sidebar.projectOf).map(({ project, items }) => ({ id: `project:${project.id}`, label: project.name, project, items: items.map(item), sortable: !sorted.value }))
+    ? groupEntriesByProject(open, sidebar.projects.value, sidebar.projectOf, emptyFolderOwner(sidebar.layout.value, sidebar.tabs.value, sidebar.projects.value, sidebar.projectOf)).map(({ project, items }) => ({ id: `project:${project.id}`, label: project.name, project, items: items.map(item), sortable: !sorted.value }))
     : expansion.view.value.groupByStatus
     ? SIDEBAR_STATUSES.map(({ id, label }) => ({ id, label, items: open.filter((entry) => entryStatus(entry) === id).map(item), sortable: !sorted.value }))
     : [{ id: 'open', label: null, items: open.map(item), sortable: !sorted.value }];

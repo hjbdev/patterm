@@ -1,7 +1,7 @@
 import { reactive, watch } from 'vue';
 import { activeAgentSessions } from './agentTabs';
 import type { ProcessRecord, ProjectSummary, ProjectWorkbench, SessionRecord, TimerRecord } from '../types';
-import type { LayoutEntry, StripTab } from './tabStrip';
+import type { LayoutEntry, StripTab, TabFolder, TabLayout } from './tabStrip';
 
 // "All agents" shows every shown project's open agents together. It stays on
 // while you open agents in different projects, until you pick a project.
@@ -121,13 +121,29 @@ export function tabsGroupedByProject<T>(tabs: readonly T[], projects: readonly P
 }
 
 // Rows and folders in project order, keeping their own order within each
-// project. A folder goes with its first tab's project; an empty one with the
-// row after it, or else before it.
-export function groupEntriesByProject<T extends LayoutEntry>(entries: readonly T[], projects: readonly ProjectSummary[], ownerOf: (tab: StripTab) => ProjectSummary | null): Array<{ project: ProjectSummary; items: T[] }> {
-  const own = entries.map((entry) => entry.kind === 'tab' ? ownerOf(entry.tab) : entry.tabs.map(ownerOf).find(Boolean) ?? null);
-  const nearest = (index: number) => own.slice(index + 1).find(Boolean) ?? own.slice(0, index).reverse().find(Boolean) ?? projects[0] ?? null;
-  const owners = new Map(entries.map((entry, index) => [entry, own[index] ?? nearest(index)]));
-  return groupByProject(entries, projects, (entry) => owners.get(entry) ?? null);
+// project. A folder goes with its first tab's project; an empty one with
+// `emptyOwner`'s (see `emptyFolderOwner`).
+export function groupEntriesByProject<T extends LayoutEntry>(entries: readonly T[], projects: readonly ProjectSummary[], ownerOf: (tab: StripTab) => ProjectSummary | null, emptyOwner: (folder: TabFolder) => ProjectSummary | null): Array<{ project: ProjectSummary; items: T[] }> {
+  const owner = (entry: T) => entry.kind === 'tab' ? ownerOf(entry.tab) : entry.tabs.map(ownerOf).find(Boolean) ?? emptyOwner(entry.folder) ?? projects[0] ?? null;
+  return groupByProject(entries, projects, owner);
+}
+
+// The project an empty folder groups with: the one it was last put in, else
+// that of the tab before it in your order, else after. Read from the layout,
+// not the list as sorted, so it holds while activity reorders rows.
+export function emptyFolderOwner(layout: TabLayout, tabs: readonly StripTab[], projects: readonly ProjectSummary[], ownerOf: (tab: StripTab) => ProjectSummary | null): (folder: TabFolder) => ProjectSummary | null {
+  const byKey = new Map(tabs.map((tab) => [tab.key, tab]));
+  const owners = layout.order.map((key) => {
+    const tab = byKey.get(key);
+    return tab ? ownerOf(tab) : null;
+  });
+  return (folder) => {
+    const saved = folder.project && projects.find((project) => project.id === folder.project);
+    if (saved) return saved;
+    const at = layout.order.indexOf(`folder:${folder.id}`);
+    if (at < 0) return null;
+    return owners.slice(0, at).reverse().find(Boolean) ?? owners.slice(at + 1).find(Boolean) ?? null;
+  };
 }
 
 // Items in project order, keeping their own order within each project.
