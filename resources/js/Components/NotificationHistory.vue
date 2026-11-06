@@ -78,8 +78,12 @@ let unsubscribe: (() => void) | undefined;
 // Switching views starts the list again; pages fetched for the old view are dropped.
 const view = ref<'all' | 'unread'>('all');
 let generation = 0;
-watch(view, () => {
+// Reads and resolutions seen since the list started. A page requested before
+// one arrived still shows the record unread, so every page is settled first.
+const marks = new Map<string, { read_at: string; resolved_at?: string }>();
+function restart(): void {
   generation++;
+  marks.clear();
   items.value = [];
   cursor.value = null;
   more.value = true;
@@ -88,7 +92,16 @@ watch(view, () => {
   refreshing = null;
   scroller.value?.scrollTo({ top: 0 });
   void loadMore();
-});
+}
+watch(view, restart);
+
+function settle(list: NotificationRecord[]): NotificationRecord[] {
+  const settled = list.map((item) => {
+    const mark = marks.get(item.id);
+    return mark ? { ...item, read_at: item.read_at ?? mark.read_at, resolved_at: item.resolved_at ?? mark.resolved_at ?? null } : item;
+  });
+  return view.value === 'unread' ? settled.filter(unreadItem) : settled;
+}
 
 function fetchPage(after: string | null): Promise<Page> {
   return window.patterm.notificationsList({ include_resolved: true, unread_only: view.value === 'unread', limit: PAGE_SIZE, ...(after ? { cursor: after } : {}) }) as Promise<Page>;
@@ -104,7 +117,7 @@ async function loadMore(): Promise<void> {
     const page = await fetchPage(cursor.value);
     if (started !== generation) return;
     const seen = new Set(items.value.map((item) => item.id));
-    items.value.push(...page.items.filter((item) => !seen.has(item.id)));
+    items.value.push(...settle(page.items.filter((item) => !seen.has(item.id))));
     cursor.value = page.next_cursor;
     more.value = page.next_cursor !== null;
   } catch {
@@ -122,27 +135,32 @@ async function loadMore(): Promise<void> {
 let refreshing: Promise<void> | null = null;
 function refreshHead(): Promise<void> {
   const started = generation;
-  refreshing ??= fetchPage(null).then((page) => {
+  if (refreshing) return refreshing;
+  const request: Promise<void> = fetchPage(null).then((page) => {
     if (started !== generation) return;
     const fresh = new Set(page.items.map((item) => item.id));
-    items.value = [...page.items, ...items.value.filter((item) => !fresh.has(item.id))];
+    items.value = [...settle(page.items), ...items.value.filter((item) => !fresh.has(item.id))];
     if (!cursor.value && more.value) { cursor.value = page.next_cursor; more.value = page.next_cursor !== null; }
-  }).catch(() => {}).finally(() => { refreshing = null; });
-  return refreshing;
+  }).catch(() => {}).finally(() => { if (refreshing === request) refreshing = null; });
+  refreshing = request;
+  return request;
 }
 
 function applyChange(raw: unknown): void {
   const change = raw as Change;
   if (change.type === 'read' || change.type === 'resolved') {
-    const ids = new Set(change.ids);
-    if (view.value === 'unread') { items.value = items.value.filter((item) => !ids.has(item.id)); return; }
     const at = new Date().toISOString();
-    items.value = items.value.map((item) => !ids.has(item.id) ? item : {
-      ...item,
-      read_at: item.read_at ?? at,
-      ...(change.type === 'resolved' ? { resolved_at: item.resolved_at ?? at } : {})
-    });
-  } else {
+    for (const id of change.ids) {
+      const mark = marks.get(id);
+      marks.set(id, { read_at: mark?.read_at ?? at, ...(change.type === 'resolved' ? { resolved_at: mark?.resolved_at ?? at } : mark?.resolved_at ? { resolved_at: mark.resolved_at } : {}) });
+    }
+    items.value = settle(items.value);
+  } else if (change.type === 'reconnected') {
+    // Changes made while disconnected never arrived, so load the list again.
+    restart();
+  } else if (change.type === 'raised' || change.type === 'updated') {
+    // A repeat can make a read record unread again; the server's copy is newer.
+    marks.delete(change.notification.id);
     void refreshHead();
   }
 }
