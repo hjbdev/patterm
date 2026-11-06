@@ -1299,7 +1299,12 @@ export class CodexAppServerService {
       select processes.id from processes join sessions on sessions.process_id = processes.id
       where sessions.harness = 'codex' and sessions.interface_mode = 'integrated' and sessions.exited_at is null
     `).all() as Array<{ id: string }>;
-    const results = await Promise.allSettled(rows.map(async (row) => { await this.interrupt(row.id); await this.stop(row.id); }));
+    const results = await Promise.allSettled(rows.map(async (row) => {
+      // A missing or unresponsive host cannot acknowledge an interrupt.
+      // Always attempt host cleanup; failures of the stop still propagate.
+      try { await this.interrupt(row.id); } catch { /* the host stop decides */ }
+      await this.stop(row.id);
+    }));
     // Also stop hosts whose sessions were already reconciled as failed.
     results.push(...await Promise.allSettled([(this.options.launcher ?? detachedHostLauncher).stopAll('codex')]));
     const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');

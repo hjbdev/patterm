@@ -563,6 +563,33 @@ if (socketPath) {
     database.initialize();
   const now = new Date().toISOString();
   database.connection.prepare('insert into projects (id,name,path,created_at,updated_at) values (?,?,?,?,?)').run('project_test', 'Test', directory, now, now);
+  // Shutdown must clean up even when the host has already disappeared.
+  {
+    const goneSocket = path.join(directory, 'gone.sock');
+    database.connection.prepare(`insert into processes (id,project_id,kind,name,status,cwd,argv,created_at,updated_at) values ('process_shutdown','project_test','agent','Codex','running',?,?,?,?)`)
+      .run(directory, JSON.stringify([executable, 'app-server', goneSocket, '']), now, now);
+    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor) values ('session_shutdown','project_test','process_shutdown','codex','integrated','identity_shutdown','thread_shutdown',?,'orchestrator','found','user')`)
+      .run(now);
+    const shutdown = new CodexAppServerService(database, directory);
+    try {
+      await assert.doesNotReject(shutdown.stopAll(), 'an absent host has nothing left to interrupt');
+      // A directory cannot be unlinked as a socket: a real cleanup failure
+      // must still propagate after the best-effort interruption.
+      fs.mkdirSync(goneSocket);
+      await assert.rejects(shutdown.stopAll(), (error: unknown) => {
+        assert.ok(error instanceof AggregateError);
+        assert.equal(error.message, 'Could not stop every Codex app-server');
+        assert.equal(error.errors[0].syscall, 'unlink');
+        return true;
+      });
+      fs.rmdirSync(goneSocket);
+      await assert.doesNotReject(shutdown.stopAll(), 'cleanup can be retried');
+    } finally {
+      shutdown.disconnect();
+      database.connection.prepare(`delete from sessions where id = 'session_shutdown'`).run();
+      database.connection.prepare(`delete from processes where id = 'process_shutdown'`).run();
+    }
+  }
   const runtimeDirectory = path.join(directory, 'runtime');
   const argvPath = path.join(directory, 'codex-argv.json');
   process.env.CODEX_ARGV_FILE = argvPath;
