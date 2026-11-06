@@ -99,6 +99,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Dragging an agent in the sidebar no longer files it in a folder you didn't
+  drop it on. A drop goes by the row under the pointer; over a heading, past
+  the list, or where the list can't be reordered, such as when sorted by
+  activity, the agent stays put.
 - Quitting no longer reports a cleanup error when an Integrated Codex host
   has already disappeared. Host cleanup still runs if interruption fails,
   and genuine cleanup failures are still reported.
