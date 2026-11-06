@@ -147,7 +147,7 @@ import {
 import { openCommandPaletteKey } from '../lib/commandPalette';
 import { isNavigationModeToggle, navigationModeAction } from '../lib/navigationMode';
 import { activeProcesses, topLevelProcessesForSessions } from '../lib/processTabs';
-import { agentTabKey, buildStripTabs, EMPTY_TAB_LAYOUT, entryTabs, forgetClosedTabs, layoutEntries, processTabKey, withLiveTabs, type StripTab, type TabLayout } from '../lib/tabStrip';
+import { agentTabKey, buildStripTabs, EMPTY_TAB_LAYOUT, entryTabs, forgetClosedTabs, isFolderKey, layoutEntries, processTabKey, withLiveTabs, type StripTab, type TabLayout } from '../lib/tabStrip';
 import { useTabLayouts } from '../Composables/useTabLayouts';
 import { ALL_AGENTS_SCOPE, allAgents, allAgentsHiding, buildAllAgentsView, listedProjects, projectShown, tabsGroupedByProject } from '../lib/allAgents';
 import { useSidebarExpansion } from '../Composables/useSidebarExpansion';
@@ -314,13 +314,16 @@ const tabLayoutScope = computed(() => showingAll.value ? ALL_AGENTS_SCOPE : acti
 
 // Edits apply to the whole saved layout, as the server has it when they
 // save, so tabs that don't show here, from projects switched off or started by
-// bots, keep their places and folders. Closed tabs are forgotten.
+// bots, keep their places and folders. Tabs this window knows have closed are
+// forgotten; tabs another window added meanwhile are kept.
 function updateCurrentTabLayout(edit: (layout: TabLayout) => TabLayout): void {
   const scope = tabLayoutScope.value;
   if (!scope) return;
   const live = everyStripTabs.value.map((tab) => tab.key);
   const kept = new Set([...live, ...(showingAll.value ? hiddenTabKeys.value : []), ...hiddenBotKeys.value]);
-  tabLayouts.save(scope, (layout) => forgetClosedTabs(edit(withLiveTabs(layout, live)), (key) => kept.has(key)));
+  const shown = tabLayouts.layout(scope);
+  const closed = new Set([...shown.order, ...Object.keys(shown.filed)].filter((key) => !isFolderKey(key) && !kept.has(key)));
+  tabLayouts.save(scope, (layout) => forgetClosedTabs(edit(withLiveTabs(layout, live)), (key) => !closed.has(key)));
 }
 
 const currentTabLayout = computed(() => tabLayoutScope.value ? tabLayouts.layout(tabLayoutScope.value) : EMPTY_TAB_LAYOUT);

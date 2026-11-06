@@ -116,7 +116,7 @@ export function withLiveTabs(layout: TabLayout, liveKeys: readonly TabKey[]): Ta
   return { ...layout, order: [...layout.order, ...liveKeys.filter((key) => !known.has(key))] };
 }
 
-// Forgets closed tabs, keeping folders and any tab `keep` names.
+// Forgets closed tabs: those `keep` refuses. Folders always stay.
 export function forgetClosedTabs(layout: TabLayout, keep: (key: TabKey) => boolean): TabLayout {
   return {
     order: layout.order.filter((key) => isFolderKey(key) || keep(key)),

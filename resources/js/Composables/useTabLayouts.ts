@@ -19,6 +19,8 @@ interface ScopeState {
   placeholder: TabLayout;
   edits: TabLayoutEdit[];
   loading: boolean;
+  // A change was announced while a read was under way, so read again after it.
+  reload: boolean;
   writing: boolean;
 }
 
@@ -30,7 +32,7 @@ function stateFor(scope: string): ScopeState {
   let state = scopes.get(scope);
   if (!state) {
     const placeholder = readLegacyTabLayout(scope) ?? EMPTY_TAB_LAYOUT;
-    state = reactive<ScopeState>({ layout: placeholder, saved: null, placeholder, edits: [], loading: false, writing: false });
+    state = reactive<ScopeState>({ layout: placeholder, saved: null, placeholder, edits: [], loading: false, reload: false, writing: false });
     scopes.set(scope, state);
     void load(scope);
   }
@@ -61,8 +63,13 @@ async function fetchSaved(scope: string, fresh = false): Promise<Saved> {
 // they are dropped with an error and the next edit tries reading again.
 async function load(scope: string): Promise<void> {
   const state = scopes.get(scope);
-  if (!state || state.loading) return;
+  if (!state) return;
+  if (state.loading) {
+    state.reload = true;
+    return;
+  }
   state.loading = true;
+  state.reload = false;
   let saved: Saved;
   try { saved = await fetchSaved(scope); }
   catch {
@@ -74,6 +81,7 @@ async function load(scope: string): Promise<void> {
     return;
   } finally {
     state.loading = false;
+    if (state.reload) void load(scope);
   }
   // Nothing saved yet: this device's old layout becomes everyone's, unless
   // another window saved one first.
