@@ -312,16 +312,15 @@ function selectAgentTabTarget(target: AgentTabSelectionTarget): void {
 // All agents keeps one order of its own, apart from each project's.
 const tabLayoutScope = computed(() => showingAll.value ? ALL_AGENTS_SCOPE : activeProjectId.value);
 
-// Edits apply to the whole saved layout, so tabs that don't show here, from
-// projects switched off or started by bots, keep their places and folders.
-// Closed tabs are forgotten.
+// Edits apply to the whole saved layout, as the server has it when they
+// save, so tabs that don't show here, from projects switched off or started by
+// bots, keep their places and folders. Closed tabs are forgotten.
 function updateCurrentTabLayout(edit: (layout: TabLayout) => TabLayout): void {
   const scope = tabLayoutScope.value;
   if (!scope) return;
-  const live = new Set(everyStripTabs.value.map((tab) => tab.key));
-  const hidden = (key: string) => (showingAll.value && hiddenTabKeys.value.has(key)) || hiddenBotKeys.value.has(key);
-  const layout = edit(withLiveTabs(tabLayouts.layout(scope), [...live]));
-  void tabLayouts.save(scope, forgetClosedTabs(layout, (key) => live.has(key) || hidden(key)));
+  const live = everyStripTabs.value.map((tab) => tab.key);
+  const kept = new Set([...live, ...(showingAll.value ? hiddenTabKeys.value : []), ...hiddenBotKeys.value]);
+  tabLayouts.save(scope, (layout) => forgetClosedTabs(edit(withLiveTabs(layout, live)), (key) => kept.has(key)));
 }
 
 const currentTabLayout = computed(() => tabLayoutScope.value ? tabLayouts.layout(tabLayoutScope.value) : EMPTY_TAB_LAYOUT);

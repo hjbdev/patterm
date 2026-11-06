@@ -11,7 +11,8 @@ import { animateRowMoves } from '../lib/sidebarMotion';
 // Rows in a group that isn't `sortable` keep an order of their own, so a drop
 // there only changes which group the row is in.
 export interface ReorderRow { key: string; group: string; folder?: boolean; sortable: boolean }
-export interface ReorderDrop { group: string; beforeKey: string | null; afterKey: string | null; into: string | null }
+// `line` is where the drop line was drawn, beside which row.
+export interface ReorderDrop { group: string; beforeKey: string | null; afterKey: string | null; into: string | null; line: { key: string; edge: 'before' | 'after' } | null }
 
 type Target = { row: ReorderRow; edge: 'before' | 'after' | 'into' };
 
@@ -103,14 +104,14 @@ function useVerticalReorder(options: {
       if (!landed) return;
       const { row, edge } = landed;
       if (edge === 'into') {
-        options.onDrop(current.key, { group: row.folder ? row.key : row.group, beforeKey: null, afterKey: null, into: row.folder ? row.key : row.group });
+        options.onDrop(current.key, { group: row.folder ? row.key : row.group, beforeKey: null, afterKey: null, into: row.folder ? row.key : row.group, line: null });
         return;
       }
       const rows = options.rows().filter((candidate) => candidate.group === row.group && candidate.key !== current.key);
       const index = rows.findIndex((candidate) => candidate.key === row.key);
       const beforeKey = edge === 'before' ? row.key : rows[index + 1]?.key ?? null;
       const afterKey = edge === 'after' ? row.key : rows[index - 1]?.key ?? null;
-      options.onDrop(current.key, { group: row.group, beforeKey, afterKey, into: null });
+      options.onDrop(current.key, { group: row.group, beforeKey, afterKey, into: null, line: { key: row.key, edge } });
     });
   }
 

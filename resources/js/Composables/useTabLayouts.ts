@@ -3,16 +3,22 @@ import { toast } from 'vue-sonner';
 import { EMPTY_TAB_LAYOUT, readLegacyTabLayout, type TabLayout } from '../lib/tabStrip';
 import { topicChanged, topicRead, useTopicRefresh } from '../lib/serverQuery';
 
-// Each scope's tab layout as the server has it, shared by every view. Edits
-// show at once and save in the background; a save the server refuses, because
-// another window changed the layout first, reads it again instead.
+// Each scope's tab layout as the server has it, shared by every view. An edit
+// is a change to the layout, not a new copy: it shows at once, on top of the
+// last saved layout, and saves in turn, one at a time. Saved against a layout
+// another window has changed since, it is applied again to theirs, so neither
+// window's change is lost.
+export type TabLayoutEdit = (layout: TabLayout) => TabLayout;
 interface Saved extends TabLayout { revision: number }
 interface ScopeState {
+  // What views show: the edits still to save, on top of the saved layout.
   layout: TabLayout;
-  // The revision `layout` was saved as, or null until the first read.
-  revision: number | null;
-  // Saves still on their way: until they land, reads can't replace the edit.
-  pending: number;
+  // The newest layout the server has given, or null until the first read.
+  saved: Saved | null;
+  // Until the first read, the layout this device had before.
+  placeholder: TabLayout;
+  edits: TabLayoutEdit[];
+  writing: boolean;
 }
 
 // Each state is reactive; the map isn't, so a view reading a scope for the
@@ -22,56 +28,88 @@ const scopes = new Map<string, ScopeState>();
 function stateFor(scope: string): ScopeState {
   let state = scopes.get(scope);
   if (!state) {
-    // Until the server answers, the layout this device had before.
-    state = reactive<ScopeState>({ layout: readLegacyTabLayout(scope) ?? EMPTY_TAB_LAYOUT, revision: null, pending: 0 });
+    const placeholder = readLegacyTabLayout(scope) ?? EMPTY_TAB_LAYOUT;
+    state = reactive<ScopeState>({ layout: placeholder, saved: null, placeholder, edits: [], writing: false });
     scopes.set(scope, state);
     void load(scope);
   }
   return state;
 }
 
-async function read(scope: string): Promise<Saved> {
-  return await topicRead('layout', ['settings_tab_layout_get', scope], async () => await window.patterm.call('settings_tab_layout_get', { scope }) as Saved);
+const body = ({ order, folders, filed }: TabLayout): TabLayout => ({ order, folders, filed });
+// A plain copy: Electron's IPC can't clone Vue's reactive proxies.
+const plain = (layout: TabLayout): TabLayout => JSON.parse(JSON.stringify(body(layout))) as TabLayout;
+
+function show(state: ScopeState): void {
+  state.layout = state.edits.reduce((layout, edit) => edit(layout), state.saved ? body(state.saved) : state.placeholder);
+}
+
+// Revisions only grow, so a read that answers late can't undo a newer one.
+function adopt(state: ScopeState, saved: Saved): void {
+  if (state.saved && saved.revision < state.saved.revision) return;
+  state.saved = saved;
+  show(state);
+}
+
+async function fetchSaved(scope: string, fresh = false): Promise<Saved> {
+  const read = async () => await window.patterm.call('settings_tab_layout_get', { scope }) as Saved;
+  return fresh ? await read() : await topicRead('layout', ['settings_tab_layout_get', scope], read);
 }
 
 async function load(scope: string): Promise<void> {
-  let saved: Saved;
-  try { saved = await read(scope); }
-  catch { return; }
   const state = scopes.get(scope);
-  if (!state || state.pending) return;
-  // Nothing saved yet: this device's old layout becomes everyone's.
-  if (saved.revision === 0 && state.revision === null) {
+  if (!state) return;
+  let saved: Saved;
+  try { saved = await fetchSaved(scope); }
+  catch { return; }
+  // Nothing saved yet: this device's old layout becomes everyone's, unless
+  // another window saved one first.
+  if (!state.saved && saved.revision === 0) {
     const legacy = readLegacyTabLayout(scope);
-    if (legacy) {
-      state.revision = 0;
-      void save(scope, legacy);
-      return;
-    }
+    if (legacy) state.edits.unshift((layout) => layout.order.length || layout.folders.length ? layout : legacy);
   }
-  state.layout = { order: saved.order, folders: saved.folders, filed: saved.filed };
-  state.revision = saved.revision;
+  adopt(state, saved);
+  void write(scope);
 }
 
-async function save(scope: string, layout: TabLayout): Promise<void> {
-  const state = stateFor(scope);
-  if (state.revision === null) await load(scope);
-  const base = state.revision ?? 0;
-  state.layout = layout;
-  state.revision = base + 1;
-  state.pending += 1;
+// Saves the edits in order. One refused because the layout changed elsewhere
+// is applied again to the newer layout, once; any other failure drops it.
+async function write(scope: string): Promise<void> {
+  const state = scopes.get(scope);
+  if (!state || state.writing || !state.saved) return;
+  state.writing = true;
   try {
-    const saved = await window.patterm.call('settings_tab_layout_save', { scope, base_revision: base, ...layout }) as Saved;
-    state.pending -= 1;
-    if (!state.pending) Object.assign(state, { layout: { order: saved.order, folders: saved.folders, filed: saved.filed }, revision: saved.revision });
-  } catch (caught) {
-    state.pending -= 1;
-    state.revision = null;
-    toast.error(caught instanceof Error ? caught.message : 'Could not save the tab layout');
-    void load(scope);
+    while (state.edits.length && state.saved) {
+      const edit = state.edits[0]!;
+      for (let attempt = 0; ; attempt += 1) {
+        const base = state.saved;
+        try {
+          adopt(state, await window.patterm.call('settings_tab_layout_save', { scope, base_revision: base.revision, ...plain(edit(body(base))) }) as Saved);
+          break;
+        } catch (caught) {
+          const conflict = caught instanceof Error && caught.message.includes('changed elsewhere');
+          if (conflict && attempt === 0) {
+            try { adopt(state, await fetchSaved(scope, true)); continue; }
+            catch { /* Reported below. */ }
+          }
+          toast.error(caught instanceof Error ? caught.message : 'Could not save the tab layout');
+          break;
+        }
+      }
+      state.edits.shift();
+      show(state);
+    }
   } finally {
+    state.writing = false;
     topicChanged('layout');
   }
+}
+
+function save(scope: string, edit: TabLayoutEdit): void {
+  const state = stateFor(scope);
+  state.edits.push(edit);
+  show(state);
+  void write(scope);
 }
 
 // Call during a component's setup.

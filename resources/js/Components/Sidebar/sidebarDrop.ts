@@ -11,13 +11,15 @@ export function moveSidebarRow(sidebar: SidebarContext, key: string, beforeKey: 
 }
 
 // A drag's drop: a folder moves among the rows; a tab moves beside other
-// rows, into a folder dropped on, or among a folder's rows. Just under an open
-// folder's row is the top of the folder: `firstIn` names its first row.
-export function dropSidebarRow(sidebar: SidebarContext, key: string, { group, beforeKey, afterKey, into }: ReorderDrop, firstIn: (folder: string) => string | null): void {
+// rows, into a folder dropped on, or among a folder's rows. A line drawn just
+// under an open folder's row is the top of the folder: `firstIn` names its
+// first row.
+export function dropSidebarRow(sidebar: SidebarContext, key: string, { group, beforeKey, afterKey, into, line }: ReorderDrop, firstIn: (folder: string) => string | null): void {
   if (isFolderKey(key)) return moveSidebarRow(sidebar, key, beforeKey, afterKey);
   if (into) return sidebar.placeTab(key, folderId(into));
   if (isFolderKey(group)) return sidebar.placeTab(key, folderId(group), beforeKey, afterKey);
-  const first = afterKey && isFolderKey(afterKey) ? firstIn(afterKey) : null;
-  if (afterKey && first && first !== key) return sidebar.placeTab(key, folderId(afterKey), first, null);
+  const below = line?.edge === 'after' && isFolderKey(line.key) ? line.key : null;
+  const first = below ? firstIn(below) : null;
+  if (below && first && first !== key) return sidebar.placeTab(key, folderId(below), first, null);
   sidebar.placeTab(key, null, beforeKey, afterKey);
 }
