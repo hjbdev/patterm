@@ -311,8 +311,11 @@ function firstIn(key: string): string | null {
   const folder = entries.value.find((entry) => entry.kind === 'folder' && entry.key === key);
   return folder?.kind === 'folder' && folder.open ? folder.tabs[0]?.key ?? null : null;
 }
-const groupOf = (key: string) => entries.value.find((entry) => (entry.kind === 'tab' || entry.kind === 'folder') && entry.key === key)?.group;
-const { onKeydown } = useSidebarKeys({ toggle: setExpanded, move: (key, beforeKey, afterKey) => moveSidebarRow(sidebar, key, beforeKey, afterKey, groupOf(key) as string | undefined) });
+function groupOf(key: string): string | undefined {
+  const entry = entries.value.find((candidate) => candidate.key === key);
+  return entry && (entry.kind === 'tab' || entry.kind === 'folder') ? entry.group : undefined;
+}
+const { onKeydown } = useSidebarKeys({ toggle: setExpanded, move: (key, beforeKey, afterKey) => moveSidebarRow(sidebar, key, beforeKey, afterKey, groupOf(key)) });
 const { setElement, draggingKey, dropLine, dropInto, onPointerDown, consumeClick } = useSidebarReorder(
   () => [
     ...entries.value.flatMap((entry) => entry.kind === 'tab' || entry.kind === 'folder'
