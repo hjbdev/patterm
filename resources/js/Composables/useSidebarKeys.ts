@@ -3,7 +3,7 @@ import { animateRowMoves, sidebarBlocks } from '../lib/sidebarMotion';
 
 // Keyboard movement through a sidebar's rows, like a file tree:
 // Up/Down/Home/End move, Right expands or steps in, Left collapses or steps
-// out to the parent, and Alt+Up/Down moves a top-level row. Rows are buttons
+// out to the parent, and Alt+Up/Down moves a top-level row or folder. Rows are buttons
 // marked `data-sidebar-row`, with `data-row-key`, `data-parent` (the parent
 // row's key), and, on rows that fold, `data-node` (the agent's session ID),
 // `data-expandable`, and `data-expanded`.
@@ -51,7 +51,7 @@ export function useSidebarKeys(options: {
     if (!options.move || !key || current.dataset.parent) return;
     const groupOf = (row: HTMLElement) => row.closest<HTMLElement>('[data-sidebar-group]')?.dataset.sidebarGroup;
     const group = groupOf(current);
-    const topLevel = rows.filter((row) => !row.dataset.parent && groupOf(row) === group && row.dataset.rowKey?.match(/^(agent|process):/));
+    const topLevel = rows.filter((row) => !row.dataset.parent && groupOf(row) === group && row.dataset.rowKey?.match(/^(agent|process|folder):/));
     const neighbour = topLevel[topLevel.indexOf(current) + direction]?.dataset.rowKey;
     if (!neighbour) return;
     const move = options.move;

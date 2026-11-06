@@ -194,11 +194,11 @@ const remoteProcesses = [remote(processRecord('watch', 'helper')), remote(proces
 const mixedSessions = [...sessions, ...remoteSessions];
 const mixedProcesses = [...processes, ...remoteProcesses];
 const mixedFamilies = buildAgentTabFamilies(mixedSessions);
-const mixedTabs = buildStripTabs(mixedFamilies, mixedProcesses.filter((process) => !process.parentProcessId) as LiveProcessRecord[], { order: [], pinned: ['agent:workstation:lead'] });
+const mixedTabs = buildStripTabs(mixedFamilies, mixedProcesses.filter((process) => !process.parentProcessId) as LiveProcessRecord[], { order: ['folder:remote'], folders: [{ id: 'remote', name: 'Remote' }], filed: { 'agent:workstation:lead': 'remote' } });
 const lead = mixedFamilies.find((candidate) => candidate.rootId === 'workstation:lead')!;
 assert.deepEqual(lead.options.map((option) => option.session.id), ['workstation:lead', 'workstation:helper'], 'a qualified parent ID nests its subagent');
 assert.ok(mixedFamilies.find((candidate) => candidate.rootId === 'root')!.options.some((option) => option.session.id === 'workstation:visitor'), 'a remote agent started by a local one sits in its family');
-assert.equal(mixedTabs.find((tab) => tab.key === 'agent:workstation:lead')?.pinned, true, 'a remote family pins by its qualified key');
+assert.equal(mixedTabs.find((tab) => tab.key === 'agent:workstation:lead')?.folder, 'remote', 'a remote family files by its qualified key');
 const remoteView: SidebarTreeView = {
   ...view({ process: 'workstation:watch' }, { 'workstation:process-serve': 'normal' }),
   ownedProcesses: (candidate) => ownedProcessesForSessions(candidate.options.map((option) => option.session), mixedProcesses)

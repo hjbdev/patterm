@@ -11,10 +11,7 @@
         <Pencil class="h-4 w-4" /><span>Rename</span>
       </component>
       <StatusLabelMenu v-if="session" :session="session" :dropdown="Boolean(dropdown)" />
-      <component :is="parts.Item" v-if="tab" @select="sidebar.setPinned(tab, !tab.pinned)">
-        <PinOff v-if="tab.pinned" class="h-4 w-4" /><Pin v-else class="h-4 w-4" />
-        <span>{{ tab.pinned ? 'Unpin' : 'Pin to top' }}</span>
-      </component>
+      <FolderMenu v-if="tab" :tab="tab" :dropdown="Boolean(dropdown)" />
       <!-- Agents in the list, not their subagents, can be snoozed. -->
       <template v-if="tab && session">
         <component :is="parts.Item" v-if="isSnoozed(session)" @select="unsnooze(session.processId!)">
@@ -44,7 +41,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { Clock, Copy, ListTree, Moon, Pencil, Pin, PinOff, Sun, X } from 'lucide-vue-next';
+import { Clock, Copy, ListTree, Moon, Pencil, Sun, X } from 'lucide-vue-next';
 import { useSidebarExpansion } from '../../Composables/useSidebarExpansion';
 import { canSnooze, openSnooze, unsnooze } from '../../Composables/useSnooze';
 import { isSnoozed } from '../../lib/snooze';
@@ -55,6 +52,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { closeProcess, closeSession, copyId, openRename, openTimer } from './sidebarActions';
 import { useSidebar } from './sidebarContext';
 import StatusLabelMenu from '../StatusLabelMenu.vue';
+import FolderMenu from '../FolderMenu.vue';
 
 const props = defineProps<{ session?: SessionRecord | undefined; process?: ProcessRecord | undefined; tab?: StripTab | undefined; dropdown?: boolean }>();
 const sidebar = useSidebar();

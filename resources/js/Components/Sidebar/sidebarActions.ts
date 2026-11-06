@@ -13,7 +13,12 @@ export const sidebarDialogs = reactive({
   renameName: '',
   timerOpen: false,
   timerTargetId: null as string | null,
-  timerTargetName: null as string | null
+  timerTargetName: null as string | null,
+  // A new folder, holding the tabs in `folderKeys`, or a folder to rename.
+  folderOpen: false,
+  folderId: null as string | null,
+  folderKeys: [] as string[],
+  folderName: ''
 });
 
 function lifecycleId(session: SessionRecord): string {
@@ -24,6 +29,14 @@ export function openRename(target: { session: SessionRecord } | { process: Proce
   if ('session' in target) Object.assign(sidebarDialogs, { renameKind: 'agent', renameTargetId: lifecycleId(target.session), renameName: agentLabel(target.session) });
   else Object.assign(sidebarDialogs, { renameKind: 'process', renameTargetId: target.process.id, renameName: target.process.name });
   sidebarDialogs.renameOpen = true;
+}
+
+export function openNewFolder(keys: readonly string[] = []): void {
+  Object.assign(sidebarDialogs, { folderId: null, folderKeys: [...keys], folderName: '', folderOpen: true });
+}
+
+export function openRenameFolder(folder: { id: string; name: string }): void {
+  Object.assign(sidebarDialogs, { folderId: folder.id, folderKeys: [], folderName: folder.name, folderOpen: true });
 }
 
 export function openTimer(session: SessionRecord): void {

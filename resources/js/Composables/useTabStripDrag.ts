@@ -6,16 +6,18 @@ import { nextTick, onBeforeUnmount, ref } from 'vue';
 
 export interface DraggableTab {
   key: string;
-  // Tabs only move within their group, such as pinned or unpinned tabs.
+  // Tabs only move within their group, such as a folder's tabs.
   group: string;
+  // Tabs that move with this one, such as an open folder's after its chip.
+  attached?: readonly string[];
 }
 
 export interface TabStripDragOptions {
   tabs: () => readonly DraggableTab[];
   element: (key: string) => HTMLElement | undefined;
   onDragStart?: () => void;
-  // `index` is the dropped tab's position in the strip without it.
-  onDrop: (key: string, index: number) => void;
+  // The dropped tab's new neighbours in its group, if any.
+  onDrop: (key: string, beforeKey: string | null, afterKey: string | null) => void;
 }
 
 const TAB_MOTION_MS = 180;
@@ -24,10 +26,11 @@ const DRAG_THRESHOLD_PX = 6;
 const AUTOSCROLL_EDGE_PX = 48;
 const AUTOSCROLL_MAX_STEP_PX = 16;
 
+// A tab, with any that move with it.
 interface Slot {
   key: string;
-  element: HTMLElement;
-  // Untransformed position in the scroller's content space.
+  elements: HTMLElement[];
+  // Untransformed position in the scroller's content space, across them all.
   left: number;
   width: number;
 }
@@ -37,7 +40,6 @@ interface ActiveDrag {
   slots: Slot[];
   index: number;
   target: number;
-  groupStart: number;
   gap: number;
   grabOffset: number;
   scroller: HTMLElement | null;
@@ -133,8 +135,9 @@ export function useTabStripDrag(options: TabStripDragOptions) {
     const tabs = options.tabs();
     const group = tabs.find((tab) => tab.key === current.key)?.group;
     const groupTabs = tabs.filter((tab) => tab.group === group);
-    const elements = groupTabs.map((tab) => options.element(tab.key));
-    if (groupTabs.length < 2 || !elements.every((element): element is HTMLElement => Boolean(element))) return null;
+    const elementSets = groupTabs.map((tab) => [tab.key, ...(tab.attached ?? [])].map((key) => options.element(key)));
+    if (groupTabs.length < 2 || !elementSets.every((set): set is HTMLElement[] => set.every(Boolean))) return null;
+    const elements = elementSets.flat();
 
     // Land any tab still settling from an earlier move before measuring.
     for (const element of elements) {
@@ -143,15 +146,18 @@ export function useTabStripDrag(options: TabStripDragOptions) {
     const scroller = scrollParent(elements[0]!);
     const origin = scrollOrigin(scroller);
     const slots = groupTabs.map((tab, index) => {
-      const element = elements[index]!;
-      const rect = element.getBoundingClientRect();
-      return { key: tab.key, element, left: rect.left - origin, width: rect.width };
+      const set = elementSets[index]!;
+      const first = set[0]!.getBoundingClientRect();
+      const last = set[set.length - 1]!.getBoundingClientRect();
+      return { key: tab.key, elements: set, left: first.left - origin, width: last.right - first.left };
     });
     const index = slots.findIndex((slot) => slot.key === current.key);
     const dragged = slots[index]!;
     for (const slot of slots) {
-      slot.element.style.willChange = 'transform';
-      slot.element.style.transition = slot === dragged ? 'none' : `transform ${tabMotionMs()}ms ${TAB_MOTION_EASING}`;
+      for (const element of slot.elements) {
+        element.style.willChange = 'transform';
+        element.style.transition = slot === dragged ? 'none' : `transform ${tabMotionMs()}ms ${TAB_MOTION_EASING}`;
+      }
     }
     try {
       current.captureTarget.setPointerCapture(current.pointerId);
@@ -164,7 +170,6 @@ export function useTabStripDrag(options: TabStripDragOptions) {
       slots,
       index,
       target: index,
-      groupStart: tabs.findIndex((tab) => tab.group === group),
       gap: Number.parseFloat(getComputedStyle(elements[0]!.parentElement ?? elements[0]!).columnGap) || 0,
       grabOffset: current.startX - origin - dragged.left,
       scroller,
@@ -198,17 +203,18 @@ export function useTabStripDrag(options: TabStripDragOptions) {
     if (commit) layoutDrag(drag);
 
     const generation = dragGeneration;
-    const dragged = drag.slots[drag.index]!.element;
+    const dragged = drag.slots[drag.index]!.elements;
     const moved = commit && drag.target !== drag.index;
-    void animateTabMoves(drag.slots.map((slot) => slot.element), () => {
-      for (const slot of drag.slots) {
-        slot.element.style.removeProperty('transform');
-        slot.element.style.removeProperty('transition');
-        slot.element.style.removeProperty('will-change');
+    const others = drag.slots.filter((slot) => slot.key !== current.key);
+    void animateTabMoves(drag.slots.flatMap((slot) => slot.elements), () => {
+      for (const element of drag.slots.flatMap((slot) => slot.elements)) {
+        element.style.removeProperty('transform');
+        element.style.removeProperty('transition');
+        element.style.removeProperty('will-change');
       }
-      if (moved) options.onDrop(current.key, drag.groupStart + drag.target);
+      if (moved) options.onDrop(current.key, others[drag.target]?.key ?? null, others[drag.target - 1]?.key ?? null);
     }).then(async () => {
-      await Promise.allSettled(dragged.getAnimations().map((animation) => animation.finished));
+      await Promise.allSettled(dragged.flatMap((element) => element.getAnimations()).map((animation) => animation.finished));
       // Keep the tab raised until it lands, unless another drag has begun.
       if (generation === dragGeneration) draggingKey.value = null;
     });
@@ -262,7 +268,7 @@ function layoutDrag(drag: ActiveDrag): void {
   const last = drag.slots[drag.slots.length - 1]!;
   const pointerX = drag.clientX - scrollOrigin(drag.scroller);
   const left = clamp(pointerX - drag.grabOffset, first.left, last.left + last.width - dragged.width);
-  dragged.element.style.transform = `translateX(${left - dragged.left}px)`;
+  for (const element of dragged.elements) element.style.transform = `translateX(${left - dragged.left}px)`;
 
   // The dragged tab takes whichever slot its left edge is closest to.
   const others = drag.slots.filter((slot) => slot !== dragged);
@@ -284,7 +290,7 @@ function layoutDrag(drag: ActiveDrag): void {
   others.forEach((slot, index) => {
     if (index === target) x += dragged.width + drag.gap;
     const shift = x - slot.left;
-    slot.element.style.transform = Math.abs(shift) < 0.5 ? '' : `translateX(${shift}px)`;
+    for (const element of slot.elements) element.style.transform = Math.abs(shift) < 0.5 ? '' : `translateX(${shift}px)`;
     x += slot.width + drag.gap;
   });
 }

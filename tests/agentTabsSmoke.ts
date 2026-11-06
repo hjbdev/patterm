@@ -10,15 +10,19 @@ import {
 } from '../resources/js/lib/agentTabs';
 import { activeProcesses, ownedProcessesForSessions, topLevelProcessesForSessions } from '../resources/js/lib/processTabs';
 import {
-  EMPTY_TAB_LAYOUT,
   buildStripTabs,
-  moveStripTab,
-  readStoredTabLayout,
+  createFolderInLayout,
+  deleteFolderFromLayout,
+  entryTabs,
+  forgetClosedTabs,
+  layoutEntries,
+  placeInLayout,
+  readLegacyTabLayout,
   reconcileTabOrder,
-  setStripTabPinned,
-  stripTabLayout,
-  writeStoredTabLayout,
+  renameFolderInLayout,
+  withLiveTabs,
   type StripTab,
+  type TabLayout,
 } from '../resources/js/lib/tabStrip';
 import { isNavigationModeToggle, navigationModeAction, type NavigationModeKey } from '../resources/js/lib/navigationMode';
 import { formatDuration, timerLabel, timerRemaining, timersForProcesses } from '../resources/js/lib/timers';
@@ -166,34 +170,54 @@ assert.equal(agentOptionTargetByDelta(families, 'pty-unknown', 1), null, 'unknow
 
   assert.deepEqual(keys(buildStripTabs(families, shell)), ['agent:root-a', 'agent:root-b', 'agent:root-c', 'process:shell'], 'new tabs list agents before processes');
 
-  const reordered = buildStripTabs(families, shell, { order: ['agent:root-c', 'process:shell', 'agent:root-a'], pinned: [] });
+  const reordered = buildStripTabs(families, shell, { order: ['agent:root-c', 'process:shell', 'agent:root-a'], folders: [], filed: {} });
   assert.deepEqual(keys(reordered), ['agent:root-c', 'process:shell', 'agent:root-a', 'agent:root-b'], 'custom order interleaves processes and appends new tabs');
-  const pinned = buildStripTabs(families, shell, {
-    order: ['agent:root-c', 'process:shell', 'agent:root-a', 'agent:root-b'],
-    pinned: ['agent:root-a', 'process:shell', 'agent:closed']
-  });
-  assert.deepEqual(keys(pinned), ['process:shell', 'agent:root-a', 'agent:root-c', 'agent:root-b'], 'pinned tabs lead the strip in layout order');
-  assert.deepEqual(pinned.map((tab) => tab.pinned), [true, true, false, false]);
-  assert.deepEqual(stripTabLayout(pinned), {
-    order: ['process:shell', 'agent:root-a', 'agent:root-c', 'agent:root-b'],
-    pinned: ['process:shell', 'agent:root-a']
-  }, 'saved layouts forget closed tabs');
 
-  assert.deepEqual(moveStripTab(pinned, 'agent:root-b', 2).order, ['process:shell', 'agent:root-a', 'agent:root-b', 'agent:root-c'], 'tabs move left');
-  assert.deepEqual(moveStripTab(pinned, 'agent:root-c', 3).order, ['process:shell', 'agent:root-a', 'agent:root-b', 'agent:root-c'], 'tabs move right');
-  assert.deepEqual(moveStripTab(pinned, 'agent:root-b', 0).order, ['process:shell', 'agent:root-a', 'agent:root-b', 'agent:root-c'], 'unpinned tabs stay out of the pinned group');
-  assert.deepEqual(moveStripTab(pinned, 'process:shell', 10).order, ['agent:root-a', 'process:shell', 'agent:root-c', 'agent:root-b'], 'pinned tabs stay in the pinned group');
-  assert.deepEqual(moveStripTab(pinned, 'agent:unknown', 1), stripTabLayout(pinned), 'moving an unknown tab is a no-op');
+  // Folders sit among the tabs where they were put, holding theirs in order.
+  const later = { id: 'later', name: 'Later' };
+  const layout: TabLayout = {
+    order: ['agent:root-c', 'folder:later', 'agent:root-b', 'process:shell', 'agent:root-a'],
+    folders: [later],
+    filed: { 'agent:root-a': 'later', 'process:shell': 'later', 'agent:closed': 'later' }
+  };
+  const filed = buildStripTabs(families, shell, layout);
+  assert.deepEqual(filed.map((tab) => tab.folder), [null, null, 'later', 'later'], 'tabs know the folder they are filed in');
+  assert.equal(buildStripTabs(families, shell, { ...layout, folders: [] }).every((tab) => !tab.folder), true, 'tabs filed in a deleted folder are loose');
+  const entries = layoutEntries(filed, layout, true);
+  assert.deepEqual(entries.map((entry) => entry.key), ['agent:root-c', 'folder:later', 'agent:root-b'], 'in your order, folders sit among the tabs');
+  assert.deepEqual(entries[1]!.kind === 'folder' && keys(entries[1]!.tabs), ['process:shell', 'agent:root-a'], 'a folder holds its tabs in layout order');
+  assert.deepEqual(keys(entryTabs(entries)), ['agent:root-c', 'process:shell', 'agent:root-a', 'agent:root-b'], "each folder's tabs show in its place");
+  assert.deepEqual(layoutEntries(filed, layout, false).map((entry) => entry.key), ['agent:root-c', 'agent:root-b', 'folder:later'], 'grouped or sorted, folders follow the tabs');
+  assert.deepEqual(layoutEntries([], { ...layout, filed: {} }, true).map((entry) => entry.key), ['folder:later'], 'empty folders still show');
 
-  assert.deepEqual(setStripTabPinned(pinned, 'agent:root-b', true), {
-    order: ['process:shell', 'agent:root-a', 'agent:root-b', 'agent:root-c'],
-    pinned: ['process:shell', 'agent:root-a', 'agent:root-b']
-  }, 'pinning moves a tab to the end of the pinned group');
-  assert.deepEqual(setStripTabPinned(pinned, 'process:shell', false), {
-    order: ['agent:root-a', 'process:shell', 'agent:root-c', 'agent:root-b'],
-    pinned: ['agent:root-a']
-  }, 'unpinning moves a tab to the start of the unpinned group');
-  assert.deepEqual(setStripTabPinned(pinned, 'agent:root-a', true), stripTabLayout(pinned), 'pinning a pinned tab is a no-op');
+  const live = withLiveTabs(layout, ['agent:root-a', 'agent:root-b', 'agent:root-c', 'agent:new', 'process:shell']);
+  assert.deepEqual(live.order.slice(-1), ['agent:new'], 'edits can place tabs beside ones the layout has not seen');
+  const moved = placeInLayout(live, 'agent:root-c', { folder: 'later', before: 'agent:root-a' });
+  assert.deepEqual(moved.filed['agent:root-c'], 'later');
+  assert.deepEqual(keys(layoutEntries(buildStripTabs(families, shell, moved), moved, true).flatMap((entry) => entry.kind === 'folder' ? entry.tabs : [])), ['process:shell', 'agent:root-c', 'agent:root-a'], 'a tab moves into a folder beside its tabs');
+  const appended = placeInLayout(live, 'agent:root-b', { folder: 'later' });
+  assert.deepEqual(keys(buildStripTabs(families, shell, appended).filter((tab) => tab.folder)), ['process:shell', 'agent:root-a', 'agent:root-b'], 'with no neighbour, a tab goes to the end of the folder');
+  const out = placeInLayout(live, 'agent:root-a', { folder: null, after: 'folder:later' });
+  assert.equal(out.filed['agent:root-a'], undefined);
+  assert.deepEqual(layoutEntries(buildStripTabs(families, shell, out), out, true).map((entry) => entry.key), ['agent:root-c', 'folder:later', 'agent:root-a', 'agent:root-b'], 'a tab taken out of a folder can sit just after it');
+  const folderMoved = placeInLayout(live, 'folder:later', { folder: 'later', before: 'agent:root-c' });
+  assert.equal(folderMoved.order[0], 'folder:later', 'folders move among the tabs');
+  assert.equal(folderMoved.filed['folder:later'], undefined, 'folders never go in folders');
+  assert.deepEqual(placeInLayout(live, 'agent:root-b', { folder: 'missing' }).filed['agent:root-b'], undefined, 'a tab cannot go in a folder that does not exist');
+
+  const retros = { id: 'retros', name: 'Retros' };
+  const created = createFolderInLayout(live, retros, ['agent:root-b']);
+  assert.equal(created.order.indexOf('folder:retros'), live.order.indexOf('agent:root-b'), 'a new folder takes the place of the first tab it holds');
+  assert.equal(created.filed['agent:root-b'], 'retros');
+  assert.equal(renameFolderInLayout(created, 'retros', 'Retrospectives').folders[1]!.name, 'Retrospectives');
+  const deleted = deleteFolderFromLayout(live, 'later');
+  assert.deepEqual(deleted.order.slice(0, 4), ['agent:root-c', 'process:shell', 'agent:root-a', 'agent:root-b'], "a deleted folder's tabs stay where it was");
+  assert.deepEqual([deleted.folders, deleted.filed], [[], {}]);
+  assert.equal(deleteFolderFromLayout(deleted, 'later'), deleted, 'deleting a folder already gone changes nothing');
+
+  const pruned = forgetClosedTabs(layout, (key) => key !== 'agent:closed' && key !== 'agent:root-b');
+  assert.deepEqual(pruned.order, ['agent:root-c', 'folder:later', 'process:shell', 'agent:root-a'], 'closed tabs are forgotten, folders kept');
+  assert.equal('agent:closed' in pruned.filed, false);
 
   assert.deepEqual(
     reconcileTabOrder(['agent:c', 'agent:missing', 'agent:c', 'agent:a'], ['agent:a', 'agent:b', 'agent:c']),
@@ -201,16 +225,21 @@ assert.equal(agentOptionTargetByDelta(families, 'pty-unknown', 1), null, 'unknow
     'reconciliation drops missing and duplicate tabs, then appends new live tabs'
   );
 
+  // Layouts saved on a device before they moved to the server carry over,
+  // pinned tabs in a folder at the top.
   const store = new Map<string, string>();
-  const storage = { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => { store.set(key, value); } };
-  writeStoredTabLayout('project-a', { order: ['agent:root-a', 'process:shell'], pinned: ['process:shell'] }, storage);
-  assert.deepEqual(readStoredTabLayout('project-a', storage), { order: ['agent:root-a', 'process:shell'], pinned: ['process:shell'] }, 'tab layouts persist per project');
-  assert.deepEqual(readStoredTabLayout('project-b', storage), EMPTY_TAB_LAYOUT, 'projects without a saved layout use the default order');
-  const storedKey = [...store.keys()][0]!;
-  store.set(storedKey, '{"order":"agent:root-a","pinned":[1,"process:shell"]}');
-  assert.deepEqual(readStoredTabLayout('project-a', storage), { order: [], pinned: ['process:shell'] }, 'malformed layout fields are ignored');
-  store.set(storedKey, '{');
-  assert.deepEqual(readStoredTabLayout('project-a', storage), EMPTY_TAB_LAYOUT, 'unreadable layouts fall back to the default order');
+  const storage = { getItem: (key: string) => store.get(key) ?? null };
+  store.set('patterm.tabs.v1.project-a', JSON.stringify({ order: ['agent:root-a', 'process:shell', 'agent:root-b'], pinned: ['process:shell', 'agent:gone'] }));
+  assert.deepEqual(readLegacyTabLayout('project-a', storage), {
+    order: ['folder:pinned', 'process:shell', 'agent:root-a', 'agent:root-b'],
+    folders: [{ id: 'pinned', name: 'Pinned' }],
+    filed: { 'process:shell': 'pinned' }
+  }, 'pins become a folder');
+  store.set('patterm.tabs.v1.project-b', JSON.stringify({ order: ['agent:root-a'], pinned: [] }));
+  assert.deepEqual(readLegacyTabLayout('project-b', storage), { order: ['agent:root-a'], folders: [], filed: {} }, 'an unpinned layout keeps its order');
+  assert.equal(readLegacyTabLayout('project-c', storage), null, 'nothing saved, nothing carried over');
+  store.set('patterm.tabs.v1.project-a', '{');
+  assert.equal(readLegacyTabLayout('project-a', storage), null, 'unreadable layouts are ignored');
 }
 
 {

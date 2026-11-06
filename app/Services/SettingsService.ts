@@ -8,6 +8,7 @@ import { emptyHarnessModelCatalog, harnessModelCatalogInput, type HarnessModelCa
 import { BOT_VOICE_ACKNOWLEDGEMENTS, BOT_VOICE_PROFILES } from './AssistantVoiceProfile';
 import { BOT_VOICES } from '../Bots/BotIdentity';
 import { DEFAULT_STATUS_LABELS, statusLabelSettingsInput, type StatusLabelSettings } from './StatusLabels';
+import { storedTabLayoutsInput, type StoredTabLayouts } from './TabLayouts';
 import { telemetrySettingsInput, type TelemetrySettings } from './Telemetry/TelemetrySettings';
 
 export const sidebarStateInput = z.object({
@@ -119,6 +120,7 @@ const HARNESS_PRESETS_KEY = 'harness.presets.v1';
 const BOT_SETTINGS_KEY = 'bots.v1';
 const HARNESS_MODEL_CATALOG_KEY = 'harness.models.v1';
 const STATUS_LABELS_KEY = 'status_labels.v1';
+const TAB_LAYOUTS_KEY = 'ui.tab_layouts.v1';
 
 export const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
   uiFont: { preset: 'inter', customFamily: '' },
@@ -415,6 +417,20 @@ export class SettingsService {
     const settings = statusLabelSettingsInput.parse(raw);
     this.write(STATUS_LABELS_KEY, JSON.stringify(settings));
     return settings;
+  }
+
+  // Every scope's saved tab layout. An unreadable list reads as none saved.
+  tabLayouts(): StoredTabLayouts {
+    const row = this.database.connection.prepare('select value from settings where key = ?').get(TAB_LAYOUTS_KEY) as { value: string } | undefined;
+    if (!row) return {};
+    try { return storedTabLayoutsInput.parse(JSON.parse(row.value)); }
+    catch { return {}; }
+  }
+
+  updateTabLayouts(raw: unknown): StoredTabLayouts {
+    const layouts = storedTabLayoutsInput.parse(raw);
+    this.write(TAB_LAYOUTS_KEY, JSON.stringify(layouts));
+    return layouts;
   }
 
   // A missing or unreadable row reads as the schema's defaults.

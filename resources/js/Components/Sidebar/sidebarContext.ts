@@ -2,8 +2,9 @@ import { computed, inject, onBeforeUnmount, provide, ref, type ComputedRef, type
 import { matchesAgentTabSelection, type AgentTabFamily } from '../../lib/agentTabs';
 import { ownedProcessesForSessions, type LiveProcessRecord } from '../../lib/processTabs';
 import { activityLookup, type RowActivity } from '../../lib/rowActivity';
-import type { StripTab, TabLayout } from '../../lib/tabStrip';
-import { moveAwakeTab, setTabPinned } from '../../lib/snooze';
+import { createFolderInLayout, deleteFolderFromLayout, folderKey, placeInLayout, renameFolderInLayout, type StripTab, type TabFolder, type TabLayout } from '../../lib/tabStrip';
+import { tabSnoozed } from '../../lib/snooze';
+import { randomId } from '../../lib/randomId';
 import { timersForProcesses } from '../../lib/timers';
 import { ALL_AGENTS_SCOPE } from '../../lib/allAgents';
 import { unreadUrgency } from '../../Composables/useNotifications';
@@ -45,8 +46,16 @@ export interface SidebarContext extends SidebarTreeView {
   selectSession: (rootId: string, session: SessionRecord) => void;
   selectProcess: (process: ProcessRecord) => void;
   navigate: (page: SidebarPage) => void;
+  // The saved layout: folders, and which tabs are filed in them.
+  layout: ComputedRef<TabLayout>;
+  // Moves a tab beside others in its folder, or out of folders.
   moveTab: (key: string, beforeKey: string | null, afterKey: string | null) => void;
-  setPinned: (tab: StripTab, pinned: boolean) => void;
+  // Files a tab in a folder, or takes it out with null.
+  placeTab: (key: string, folder: string | null, beforeKey?: string | null, afterKey?: string | null) => void;
+  moveFolder: (id: string, beforeKey: string | null, afterKey: string | null) => void;
+  createFolder: (name: string, keys: readonly string[]) => TabFolder;
+  renameFolder: (id: string, name: string) => void;
+  deleteFolder: (id: string) => void;
 }
 
 export const sidebarContextKey: InjectionKey<SidebarContext> = Symbol('sidebarContext');
@@ -75,7 +84,8 @@ export interface SidebarInput {
   selectSession: (rootId: string, session: SessionRecord) => void;
   selectProcess: (process: ProcessRecord) => void;
   navigate: (page: SidebarPage) => void;
-  updateLayout: (layout: TabLayout) => void;
+  layout: () => TabLayout;
+  updateLayout: (edit: (layout: TabLayout) => TabLayout) => void;
 }
 
 // The list row a session or process belongs to: the agent family that holds
@@ -132,17 +142,22 @@ export function provideSidebarContext(input: SidebarInput): SidebarContext {
     selectSession: input.selectSession,
     selectProcess: input.selectProcess,
     navigate: input.navigate,
+    layout: computed(input.layout),
+    // Snoozed tabs wait at the end and keep their places.
     moveTab: (key, beforeKey, afterKey) => {
-      const tabs = input.tabs();
-      const rest = tabs.filter((tab) => tab.key !== key);
-      const index = beforeKey ? rest.findIndex((tab) => tab.key === beforeKey)
-        : afterKey ? rest.findIndex((tab) => tab.key === afterKey) + 1
-          : rest.length;
-      const layout = moveAwakeTab(tabs, key, index);
-      if (layout) input.updateLayout(layout);
+      const tab = input.tabs().find((candidate) => candidate.key === key);
+      if (tab && !tabSnoozed(tab)) input.updateLayout((layout) => placeInLayout(layout, key, { folder: tab.folder, before: beforeKey, after: afterKey }));
     },
-    // The list slides the row to its new group.
-    setPinned: (tab, pinned) => input.updateLayout(setTabPinned(input.tabs(), tab.key, pinned)),
+    // The list slides the row to its new place.
+    placeTab: (key, folder, beforeKey = null, afterKey = null) => input.updateLayout((layout) => placeInLayout(layout, key, { folder, before: beforeKey, after: afterKey })),
+    moveFolder: (id, beforeKey, afterKey) => input.updateLayout((layout) => placeInLayout(layout, folderKey(id), { folder: null, before: beforeKey, after: afterKey })),
+    createFolder: (name, keys) => {
+      const folder = { id: randomId(), name };
+      input.updateLayout((layout) => createFolderInLayout(layout, folder, keys));
+      return folder;
+    },
+    renameFolder: (id, name) => input.updateLayout((layout) => renameFolderInLayout(layout, id, name)),
+    deleteFolder: (id) => input.updateLayout((layout) => deleteFolderFromLayout(layout, id)),
   };
   provide(sidebarContextKey, context);
   return context;

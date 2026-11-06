@@ -7,35 +7,18 @@ import { SnoozeActions } from '../app/Actions/SnoozeActions';
 import type { RaiseNotificationInput } from '../app/Services/NotificationService';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import { removeTree } from './fixtures/TempTree';
-import { moveAwakeTab, setTabPinned, snoozedLast } from '../resources/js/lib/snooze';
-import { EMPTY_TAB_LAYOUT, withLiveTabs, type StripTab } from '../resources/js/lib/tabStrip';
-import { keepHiddenTabs } from '../resources/js/lib/allAgents';
+import { snoozedLast } from '../resources/js/lib/snooze';
+import type { StripTab } from '../resources/js/lib/tabStrip';
 import type { SessionRecord } from '../resources/js/types';
 
-// Snoozed tabs wait at the end, pinned or not, and reordering awake tabs
-// leaves them there.
+// Snoozed tabs wait at the end, in their folders or not.
 function tabOrder(): void {
-  const tab = (key: string, pinned: boolean, snoozed: boolean) => ({
-    key, kind: 'agent', pinned,
+  const tab = (key: string, folder: string | null, snoozed: boolean) => ({
+    key, kind: 'agent', folder,
     family: { root: { session: { snooze: snoozed ? { snoozedAt: 'now', reminder: null } : null, exitedAt: null } as SessionRecord } }
   }) as StripTab;
-  const tabs = snoozedLast([tab('pinned-asleep', true, true), tab('first', false, false), tab('second', false, false), tab('asleep', false, true)]);
-  assert.deepEqual(tabs.map((each) => each.key), ['first', 'second', 'pinned-asleep', 'asleep']);
-  assert.deepEqual(moveAwakeTab(tabs, 'second', 0), { order: ['second', 'first', 'pinned-asleep', 'asleep'], pinned: ['pinned-asleep'] });
-  assert.equal(moveAwakeTab(tabs, 'pinned-asleep', 3), null);
-
-  // Unpinning moves a tab to the start of the awake unpinned tabs, not past
-  // a pinned tab that sleeps at the end.
-  const pinnedAwake = snoozedLast([tab('pinned-awake', true, false), tab('first', false, false), tab('second', false, false), tab('pinned-asleep', true, true)]);
-  assert.deepEqual(setTabPinned(pinnedAwake, 'pinned-awake', false), { order: ['pinned-awake', 'first', 'second', 'pinned-asleep'], pinned: ['pinned-asleep'] });
-  assert.deepEqual(setTabPinned(pinnedAwake, 'pinned-asleep', false), { order: ['pinned-awake', 'first', 'second', 'pinned-asleep'], pinned: ['pinned-awake'] });
-
-  // With nothing saved yet, a hidden snoozed tab keeps its slot when the
-  // shown tabs are reordered, so it returns there when it wakes.
-  const previous = withLiveTabs(EMPTY_TAB_LAYOUT, ['A', 'B', 'C']);
-  assert.deepEqual(keepHiddenTabs(previous, { order: ['C', 'B'], pinned: [] }, (key) => key === 'A'), { order: ['A', 'C', 'B'], pinned: [] });
-  // A saved layout keeps its own order, keys for tabs not live now, and pins.
-  assert.deepEqual(withLiveTabs({ order: ['B', 'gone'], pinned: ['B'] }, ['A', 'B']), { order: ['B', 'gone', 'A'], pinned: ['B'] });
+  const tabs = snoozedLast([tab('filed-asleep', 'later', true), tab('first', null, false), tab('second', 'later', false), tab('asleep', null, true)]);
+  assert.deepEqual(tabs.map((each) => each.key), ['first', 'second', 'filed-asleep', 'asleep']);
 }
 
 function main(): void {
