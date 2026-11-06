@@ -28,7 +28,7 @@ const idle = (harness: IdleCompactionHarness) => afterMinutes.value[harness] ? `
 const rows = computed((): Array<{ harness: IdleCompactionHarness; label: string; description: string }> => [
   { harness: 'claude', label: 'Claude', description: `${idle('claude')} Claude Code keeps its cache for an hour on a subscription within its usage limits.` },
   { harness: 'codex', label: 'Codex', description: `${idle('codex')} Only on GPT-5.6 and later, which keep their cache for 30 minutes. The assistant is never compacted, because voice input that arrives during a compaction would be lost.` },
-  { harness: 'opencode', label: 'OpenCode', description: `${idle('opencode')} Only on OpenAI's GPT-5.6 and later, which keep their cache for 30 minutes. Other providers, such as DeepSeek through OpenCode Go, keep theirs for hours.` }
+  { harness: 'opencode', label: 'OpenCode', description: `${idle('opencode')} Only on OpenAI's GPT-5.6 and later, which keep their cache for 30 minutes, and on the Claude Agent provider, which runs through Claude Code and compacts after Claude's idle time. Other providers, such as DeepSeek through OpenCode Go, keep theirs for hours, and OpenCode's own Anthropic provider for only 5 minutes.` }
 ]);
 
 // Saves run one at a time and each sends the latest switches, so an earlier

@@ -37,7 +37,7 @@ async function main() {
   // An uncertain failure whose compaction the agent did receive.
   let uncertainStarted = false;
   const lastActivities: Record<string, number | null> = {};
-  const models: Record<string, string | null> = { codex: 'gpt-6-astra', assistant: 'gpt-6.1-sol', bot: 'gpt-6.1-sol', old: 'gpt-5.5', openai: 'openai/gpt-5.6', go: 'opencode-go/deepseek-v4.1-flash' };
+  const models: Record<string, string | null> = { codex: 'gpt-6-astra', assistant: 'gpt-6.1-sol', bot: 'gpt-6.1-sol', old: 'gpt-5.5', openai: 'openai/gpt-5.6', go: 'opencode-go/deepseek-v4.1-flash', claudeAgent: 'claude-agent/opus', anthropic: 'anthropic/claude-opus-5-5' };
   let modelGate: Promise<void> | null = null;
   const source: IdleCompactionSource = {
     onActivityChange(listener) { activityListener = listener; return () => { activityListener = undefined; }; },
@@ -87,7 +87,7 @@ async function main() {
   const count = (id: string) => compacted.filter((item) => item === id).length;
   try {
     db.exec("insert into projects(id,name,path,created_at,updated_at) values('project','Test','/tmp','now','now')");
-    for (const [id, harness] of [['claude', 'claude'], ['codex', 'codex'], ['old', 'codex'], ['openai', 'opencode'], ['go', 'opencode'], ['assistant', 'codex'], ['bot', 'codex'], ['second', 'claude']]) add(id!, harness!);
+    for (const [id, harness] of [['claude', 'claude'], ['codex', 'codex'], ['old', 'codex'], ['openai', 'opencode'], ['go', 'opencode'], ['claudeAgent', 'opencode'], ['anthropic', 'opencode'], ['assistant', 'codex'], ['bot', 'codex'], ['second', 'claude']]) add(id!, harness!);
     db.prepare("update sessions set session_role = 'assistant' where process_id = 'assistant'").run();
     db.prepare("update sessions set session_role = 'bot', bot_id = 'fable' where process_id = 'bot'").run();
     service.start();
@@ -312,6 +312,21 @@ async function main() {
     await wait(SETTLE);
     assert.equal(count('go'), 1);
     native('go');
+
+    // OpenCode's Claude Agent provider runs through Claude Code, so it waits
+    // for Claude's longer delay. Its own Anthropic provider is left alone.
+    IDLE_COMPACTION_AFTER_MS.claude = AFTER * 4;
+    turn('claudeAgent');
+    turn('anthropic');
+    await wait(AFTER * 2);
+    assert.equal(count('claudeAgent'), 0, 'not at OpenCode\'s shorter delay');
+    assert.equal(state('claudeAgent').state, 'armed');
+    assert.deepEqual(state('anthropic'), cleared);
+    await wait(AFTER * 4);
+    assert.equal(count('claudeAgent'), 1);
+    assert.equal(count('anthropic'), 0);
+    native('claudeAgent');
+    IDLE_COMPACTION_AFTER_MS.claude = AFTER;
 
     // A turn that ended while Patterm was not watching has no known idle time.
     signalListener?.('claude', 'turn');
