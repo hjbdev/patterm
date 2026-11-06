@@ -239,6 +239,7 @@ import { ownedProcessesForSessions } from '../lib/processTabs';
 import { activityLookup, countInRing, describeActivity, memberLabel, subagentCountClass } from '../lib/rowActivity';
 import MemberCount from './MemberCount.vue';
 import { folderKey, isFolderKey, layoutEntries, type StripTab, type TabFolder } from '../lib/tabStrip';
+import { groupEntriesByProject } from '../lib/allAgents';
 import { useSidebar } from './Sidebar/sidebarContext';
 import { openNewFolder, openRenameFolder } from './Sidebar/sidebarActions';
 import { useSidebarExpansion } from '../Composables/useSidebarExpansion';
@@ -300,39 +301,42 @@ function compact(tab: StripTab): boolean {
   return tabSnoozed(tab);
 }
 
-// The strip's tabs and folders, each open folder's tabs after its chip. In
-// your order, folders sit where you put them; grouped by project, they follow
-// the projects' tabs. Snoozed tabs wait at the end, out of their folders.
+// The strip's tabs and folders, each open folder's tabs after its chip.
+// Folders sit among the tabs where you put them, and grouped by project, with
+// their first tab's project. Snoozed tabs wait at the end, out of their folders.
 const sidebar = useSidebar();
 const expansion = useSidebarExpansion(() => sidebar.expansionScope.value);
 type StripItem =
-  | { kind: 'tab'; key: string; tab: StripTab; member: string | null }
-  | { kind: 'folder'; key: string; folder: TabFolder; tabs: StripTab[]; open: boolean };
-const items = computed<StripItem[]>(() => [
-  ...layoutEntries(props.tabs.filter((tab) => !tabSnoozed(tab)), sidebar.layout.value, !props.groupedByProject).flatMap((entry): StripItem[] => {
-    if (entry.kind === 'tab') return [{ kind: 'tab', key: entry.key, tab: entry.tab, member: null }];
-    const open = expansion.isOpen(entry.key);
-    return [
-      { kind: 'folder', key: entry.key, folder: entry.folder, tabs: entry.tabs, open },
-      ...(open ? entry.tabs.map((tab) => ({ kind: 'tab' as const, key: tab.key, tab, member: entry.folder.id })) : [])
-    ];
-  }),
-  ...props.tabs.filter(tabSnoozed).map((tab) => ({ kind: 'tab' as const, key: tab.key, tab, member: null }))
-]);
+  | { kind: 'tab'; key: string; tab: StripTab; member: string | null; group: string | null }
+  | { kind: 'folder'; key: string; folder: TabFolder; tabs: StripTab[]; open: boolean; group: string | null };
+const items = computed<StripItem[]>(() => {
+  const entries = layoutEntries(props.tabs.filter((tab) => !tabSnoozed(tab)), sidebar.layout.value);
+  const groups = props.groupedByProject
+    ? groupEntriesByProject(entries, sidebar.projects.value, sidebar.projectOf).map(({ project, items: grouped }) => ({ group: project.id as string | null, entries: grouped }))
+    : [{ group: null, entries }];
+  return [
+    ...groups.flatMap(({ group, entries: grouped }) => grouped.flatMap((entry): StripItem[] => {
+      if (entry.kind === 'tab') return [{ kind: 'tab', key: entry.key, tab: entry.tab, member: null, group }];
+      const open = expansion.isOpen(entry.key);
+      return [
+        { kind: 'folder', key: entry.key, folder: entry.folder, tabs: entry.tabs, open, group },
+        ...(open ? entry.tabs.map((tab) => ({ kind: 'tab' as const, key: tab.key, tab, member: entry.folder.id, group })) : [])
+      ];
+    })),
+    ...props.tabs.filter(tabSnoozed).map((tab) => ({ kind: 'tab' as const, key: tab.key, tab, member: null, group: null }))
+  ];
+});
 
 const SEPARATOR = 'ml-2 before:absolute before:-left-[5px] before:top-1 before:h-[18px] before:w-px before:bg-white/10';
 const FOLDER_LINE = 'after:pointer-events-none after:absolute after:inset-x-1 after:-bottom-[3px] after:h-0.5 after:rounded-full after:bg-white/15';
 
 // A rule sets snoozed tabs apart from the rest, and grouped by project, each
-// project's tabs and the folders after them.
+// project's tabs and folders.
 function startsGroup(index: number): boolean {
   const item = items.value[index], previous = items.value[index - 1];
   if (!item || !previous) return false;
-  const loose = (candidate: StripItem): candidate is Extract<StripItem, { kind: 'tab' }> => candidate.kind === 'tab' && !candidate.member && !tabSnoozed(candidate.tab);
   if (item.kind === 'tab' && tabSnoozed(item.tab)) return previous.kind !== 'tab' || !tabSnoozed(previous.tab);
-  if (!props.groupedByProject || !loose(previous)) return false;
-  if (item.kind === 'folder') return true;
-  return loose(item) && tabProject(item.tab)?.id !== tabProject(previous.tab)?.id;
+  return Boolean(props.groupedByProject && item.group !== previous.group);
 }
 
 const emit = defineEmits<{

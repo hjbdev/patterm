@@ -183,23 +183,22 @@ assert.equal(agentOptionTargetByDelta(families, 'pty-unknown', 1), null, 'unknow
   const filed = buildStripTabs(families, shell, layout);
   assert.deepEqual(filed.map((tab) => tab.folder), [null, null, 'later', 'later'], 'tabs know the folder they are filed in');
   assert.equal(buildStripTabs(families, shell, { ...layout, folders: [] }).every((tab) => !tab.folder), true, 'tabs filed in a deleted folder are loose');
-  const entries = layoutEntries(filed, layout, true);
-  assert.deepEqual(entries.map((entry) => entry.key), ['agent:root-c', 'folder:later', 'agent:root-b'], 'in your order, folders sit among the tabs');
+  const entries = layoutEntries(filed, layout);
+  assert.deepEqual(entries.map((entry) => entry.key), ['agent:root-c', 'folder:later', 'agent:root-b'], 'folders sit among the tabs where they were put');
   assert.deepEqual(entries[1]!.kind === 'folder' && keys(entries[1]!.tabs), ['process:shell', 'agent:root-a'], 'a folder holds its tabs in layout order');
   assert.deepEqual(keys(entryTabs(entries)), ['agent:root-c', 'process:shell', 'agent:root-a', 'agent:root-b'], "each folder's tabs show in its place");
-  assert.deepEqual(layoutEntries(filed, layout, false).map((entry) => entry.key), ['agent:root-c', 'agent:root-b', 'folder:later'], 'grouped or sorted, folders follow the tabs');
-  assert.deepEqual(layoutEntries([], { ...layout, filed: {} }, true).map((entry) => entry.key), ['folder:later'], 'empty folders still show');
+  assert.deepEqual(layoutEntries([], { ...layout, filed: {} }).map((entry) => entry.key), ['folder:later'], 'empty folders still show');
 
   const live = withLiveTabs(layout, ['agent:root-a', 'agent:root-b', 'agent:root-c', 'agent:new', 'process:shell']);
   assert.deepEqual(live.order.slice(-1), ['agent:new'], 'edits can place tabs beside ones the layout has not seen');
   const moved = placeInLayout(live, 'agent:root-c', { folder: 'later', before: 'agent:root-a' });
   assert.deepEqual(moved.filed['agent:root-c'], 'later');
-  assert.deepEqual(keys(layoutEntries(buildStripTabs(families, shell, moved), moved, true).flatMap((entry) => entry.kind === 'folder' ? entry.tabs : [])), ['process:shell', 'agent:root-c', 'agent:root-a'], 'a tab moves into a folder beside its tabs');
+  assert.deepEqual(keys(layoutEntries(buildStripTabs(families, shell, moved), moved).flatMap((entry) => entry.kind === 'folder' ? entry.tabs : [])), ['process:shell', 'agent:root-c', 'agent:root-a'], 'a tab moves into a folder beside its tabs');
   const appended = placeInLayout(live, 'agent:root-b', { folder: 'later' });
   assert.deepEqual(keys(buildStripTabs(families, shell, appended).filter((tab) => tab.folder)), ['process:shell', 'agent:root-a', 'agent:root-b'], 'with no neighbour, a tab goes to the end of the folder');
   const out = placeInLayout(live, 'agent:root-a', { folder: null, after: 'folder:later' });
   assert.equal(out.filed['agent:root-a'], undefined);
-  assert.deepEqual(layoutEntries(buildStripTabs(families, shell, out), out, true).map((entry) => entry.key), ['agent:root-c', 'folder:later', 'agent:root-a', 'agent:root-b'], 'a tab taken out of a folder can sit just after it');
+  assert.deepEqual(layoutEntries(buildStripTabs(families, shell, out), out).map((entry) => entry.key), ['agent:root-c', 'folder:later', 'agent:root-a', 'agent:root-b'], 'a tab taken out of a folder can sit just after it');
   const folderMoved = placeInLayout(live, 'folder:later', { folder: 'later', before: 'agent:root-c' });
   assert.equal(folderMoved.order[0], 'folder:later', 'folders move among the tabs');
   assert.equal(folderMoved.filed['folder:later'], undefined, 'folders never go in folders');

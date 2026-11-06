@@ -1,6 +1,7 @@
 import { reactive, watch } from 'vue';
 import { activeAgentSessions } from './agentTabs';
 import type { ProcessRecord, ProjectSummary, ProjectWorkbench, SessionRecord, TimerRecord } from '../types';
+import type { LayoutEntry, StripTab } from './tabStrip';
 
 // "All agents" shows every shown project's open agents together. It stays on
 // while you open agents in different projects, until you pick a project.
@@ -117,6 +118,16 @@ export function buildAllAgentsView(projects: readonly ProjectWorkbench[], hidden
 // Tabs kept together by project, each project's in their own order.
 export function tabsGroupedByProject<T>(tabs: readonly T[], projects: readonly ProjectSummary[], ownerOf: (tab: T) => ProjectSummary | null): T[] {
   return groupByProject(tabs, projects, ownerOf).flatMap((group) => group.items);
+}
+
+// Rows and folders in project order, keeping their own order within each
+// project. A folder goes with its first tab's project; an empty one with the
+// row after it, or else before it.
+export function groupEntriesByProject<T extends LayoutEntry>(entries: readonly T[], projects: readonly ProjectSummary[], ownerOf: (tab: StripTab) => ProjectSummary | null): Array<{ project: ProjectSummary; items: T[] }> {
+  const own = entries.map((entry) => entry.kind === 'tab' ? ownerOf(entry.tab) : entry.tabs.map(ownerOf).find(Boolean) ?? null);
+  const nearest = (index: number) => own.slice(index + 1).find(Boolean) ?? own.slice(0, index).reverse().find(Boolean) ?? projects[0] ?? null;
+  const owners = new Map(entries.map((entry, index) => [entry, own[index] ?? nearest(index)]));
+  return groupByProject(entries, projects, (entry) => owners.get(entry) ?? null);
 }
 
 // Items in project order, keeping their own order within each project.

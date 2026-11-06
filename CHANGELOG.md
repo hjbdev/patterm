@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is now saved on the server, so the desktop window and every browser share
   it. Each device's old order carries over the first time, its pinned tabs in
   a Pinned folder.
+- Folders always sit among the agents, not in a section of their own. Sorted
+  by recent activity, a folder sorts by its newest agent; grouped by status,
+  by its most urgent; grouped by project, with its first agent's project.
+  Folders can be dragged into place wherever agents can.
 - The notifications tray has an Unread tab that lists only unread,
   unhandled notifications. `notification_list` takes `unread_only` too.
 - A phone's top bar has the notifications bell, so the tray no longer hides

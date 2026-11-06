@@ -138,6 +138,7 @@ import { hostLabel } from '../../lib/hosts';
 import { cn } from '@/lib/utils';
 import { countInRing, describeActivity, memberLabel, processActivity, subagentCountClass, type RowActivity } from '../../lib/rowActivity';
 import { folderKey, layoutEntries, type StripTab, type TabFolder } from '../../lib/tabStrip';
+import { groupEntriesByProject } from '../../lib/allAgents';
 import { tabSnoozed } from '../../lib/snooze';
 import { useSidebarExpansion } from '../../Composables/useSidebarExpansion';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '../ui/context-menu';
@@ -173,9 +174,12 @@ type RailItem =
   | { kind: 'tab'; key: string; tab: StripTab; member: string | null }
   | { kind: 'folder'; key: string; folder: TabFolder; tabs: StripTab[]; open: boolean };
 const items = computed<RailItem[]>(() => {
-  const manual = !(sidebar.allAgents.value && expansion.view.value.groupByProject);
+  const entries = layoutEntries(tabs.value.filter((tab) => !tabSnoozed(tab)), sidebar.layout.value);
+  const grouped = sidebar.allAgents.value && expansion.view.value.groupByProject
+    ? groupEntriesByProject(entries, sidebar.projects.value, sidebar.projectOf).flatMap((group) => group.items)
+    : entries;
   return [
-    ...layoutEntries(tabs.value.filter((tab) => !tabSnoozed(tab)), sidebar.layout.value, manual).flatMap((entry): RailItem[] => {
+    ...grouped.flatMap((entry): RailItem[] => {
       if (entry.kind === 'tab') return [{ kind: 'tab', key: entry.key, tab: entry.tab, member: null }];
       const open = expansion.isOpen(entry.key);
       return [

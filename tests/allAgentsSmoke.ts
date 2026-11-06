@@ -11,6 +11,7 @@ import {
   launchTargets,
   setProjectShown,
   tabsGroupedByProject,
+  groupEntriesByProject,
   type AllAgentsState
 } from '../resources/js/lib/allAgents';
 import type { ProcessRecord, ProjectSummary, ProjectWorkbench, SessionRecord } from '../resources/js/types';
@@ -89,6 +90,19 @@ assert.deepEqual(groupByProject(['guide'], [web.project, docs.project], (id) => 
 // Tabs gather by project, each project's in their own order.
 const tabs = [{ id: 'guide' }, { id: 'checkout' }, { id: 'reviewer' }, { id: 'dev-server' }];
 assert.deepEqual(tabsGroupedByProject(tabs, [web.project, docs.project], (tab) => all.owners.get(tab.id) ?? null).map((tab) => tab.id), ['checkout', 'reviewer', 'dev-server', 'guide']);
+
+// Folders group with their first tab's project; an empty one with the row
+// after it. Each project keeps its own order of rows and folders.
+{
+  const tab = (id: string) => ({ kind: 'tab' as const, key: id, tab: { key: id, id } as never });
+  const folder = (id: string, tabs: string[]) => ({ kind: 'folder' as const, key: `folder:${id}`, folder: { id, name: id }, tabs: tabs.map((each) => ({ key: each, id: each }) as never) });
+  const owner = (item: { id: string }) => all.owners.get(item.id) ?? null;
+  const grouped = groupEntriesByProject([tab('guide'), folder('retros', ['checkout']), tab('reviewer'), folder('empty', []), tab('dev-server')], [web.project, docs.project], owner as never);
+  assert.deepEqual(grouped.map((group) => [group.project.id, group.items.map((entry) => entry.key)]), [
+    ['web', ['folder:retros', 'reviewer', 'folder:empty', 'dev-server']],
+    ['docs', ['guide']]
+  ]);
+}
 
 // Stored state survives bad input.
 const storage = (value: string | null) => ({ getItem: () => value });

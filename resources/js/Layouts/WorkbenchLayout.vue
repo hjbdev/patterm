@@ -149,7 +149,7 @@ import { isNavigationModeToggle, navigationModeAction } from '../lib/navigationM
 import { activeProcesses, topLevelProcessesForSessions } from '../lib/processTabs';
 import { agentTabKey, buildStripTabs, EMPTY_TAB_LAYOUT, entryTabs, forgetClosedTabs, isFolderKey, layoutEntries, processTabKey, withLiveTabs, type StripTab, type TabLayout } from '../lib/tabStrip';
 import { useTabLayouts } from '../Composables/useTabLayouts';
-import { ALL_AGENTS_SCOPE, allAgents, allAgentsHiding, buildAllAgentsView, listedProjects, projectShown, tabsGroupedByProject } from '../lib/allAgents';
+import { ALL_AGENTS_SCOPE, allAgents, allAgentsHiding, buildAllAgentsView, groupEntriesByProject, listedProjects, projectShown, tabsGroupedByProject } from '../lib/allAgents';
 import { useSidebarExpansion } from '../Composables/useSidebarExpansion';
 import type { ProcessRecord, ProjectSummary, SessionRecord } from '../types';
 import { startPrefetch } from '../lib/prefetch';
@@ -376,9 +376,10 @@ const groupedByProject = computed(() => showingAll.value && allAgentsOptions.vie
 // Folders hold their tabs in place. Snoozed tabs wait at the end, or stay out
 // of sight unless you show them.
 const shownStripTabs = computed(() => {
-  const grouped = (tabs: StripTab[]) => groupedByProject.value ? tabsGroupedByProject(tabs, listedSummaries.value, stripTabProject) : tabs;
-  const awake = layoutEntries(grouped(currentStripTabs.value.filter((tab) => !tabSnoozed(tab))), currentTabLayout.value, !groupedByProject.value);
-  return [...entryTabs(awake), ...(showSnoozed.value ? grouped(currentStripTabs.value.filter(tabSnoozed)) : [])];
+  const entries = layoutEntries(currentStripTabs.value.filter((tab) => !tabSnoozed(tab)), currentTabLayout.value);
+  const awake = groupedByProject.value ? groupEntriesByProject(entries, listedSummaries.value, stripTabProject).flatMap((group) => group.items) : entries;
+  const asleep = currentStripTabs.value.filter(tabSnoozed);
+  return [...entryTabs(awake), ...(showSnoozed.value ? groupedByProject.value ? tabsGroupedByProject(asleep, listedSummaries.value, stripTabProject) : asleep : [])];
 });
 // Tabs of agents started by bots while you hide them.
 const hiddenBotKeys = computed(() => new Set(showBotAgents.value ? [] : [...[...botHidden.value.sessions].map(agentTabKey), ...[...botHidden.value.processes].map(processTabKey)]));

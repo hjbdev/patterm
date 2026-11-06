@@ -84,24 +84,20 @@ export function reconcileTabOrder(order: readonly TabKey[], liveKeys: readonly T
   return [...next];
 }
 
-// The tabs as rows and folders, each folder holding its tabs. In `manual`
-// order, folders sit where you put them among the tabs; otherwise, while
-// tabs are grouped or sorted, folders follow them, in your order.
-export function layoutEntries(tabs: readonly StripTab[], layout: TabLayout, manual: boolean): LayoutEntry[] {
+// The tabs as rows and folders, each folder holding its tabs. Folders sit
+// among the tabs where you put them; grouping and sorting apply to both.
+export function layoutEntries(tabs: readonly StripTab[], layout: TabLayout): LayoutEntry[] {
   const members = new Map<string, StripTab[]>(layout.folders.map((folder) => [folder.id, []]));
   const loose: StripTab[] = [];
   for (const tab of tabs) (tab.folder && members.get(tab.folder) || loose).push(tab);
   const index = new Map(layout.order.map((key, at) => [key, at]));
-  const folders = layout.folders
-    .map((folder) => ({ kind: 'folder' as const, key: folderKey(folder.id), folder, tabs: members.get(folder.id)! }))
-    .sort((a, b) => (index.get(a.key) ?? Infinity) - (index.get(b.key) ?? Infinity));
-  const rows = loose.map((tab) => ({ kind: 'tab' as const, key: tab.key, tab }));
-  if (!manual) return [...rows, ...folders];
   const end = layout.order.length;
-  const at = (entry: LayoutEntry, fallback: number) => index.get(entry.key) ?? fallback;
-  return [...rows.map((entry, i) => ({ entry, at: at(entry, end + i) })), ...folders.map((entry) => ({ entry, at: at(entry, Infinity) }))]
-    .sort((a, b) => a.at - b.at)
-    .map(({ entry }) => entry);
+  const rows = loose.map((tab, i) => ({ entry: { kind: 'tab' as const, key: tab.key, tab }, at: index.get(tab.key) ?? end + i }));
+  const folders = layout.folders.map((folder) => ({
+    entry: { kind: 'folder' as const, key: folderKey(folder.id), folder, tabs: members.get(folder.id)! },
+    at: index.get(folderKey(folder.id)) ?? Infinity
+  }));
+  return [...rows, ...folders].sort((a, b) => a.at - b.at).map(({ entry }) => entry);
 }
 
 // Every tab in the entries, as they show: each folder's after its place.
