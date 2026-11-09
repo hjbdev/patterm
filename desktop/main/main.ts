@@ -165,7 +165,7 @@ async function createWindow(): Promise<void> {
   });
   const unsubscribeNotifications = patterm.onNotificationsChanged((change) => {
     mainWindow?.webContents.send('patterm:notifications:changed', change);
-    const unread = patterm?.notifications.state().unread.reduce((total, row) => total + row.count, 0) ?? 0;
+    const unread = patterm?.notifications.state().unread.reduce((total, row) => row.snoozed ? total : total + row.count, 0) ?? 0;
     app.setBadgeCount(unread);
     // Windows taskbars have no badge count; show a dot over the icon instead.
     if (process.platform === 'win32') mainWindow?.setOverlayIcon(unread > 0 ? unreadOverlay() : null, unread > 0 ? `${unread} unread notifications` : '');
