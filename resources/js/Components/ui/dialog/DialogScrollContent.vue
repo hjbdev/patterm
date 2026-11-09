@@ -8,6 +8,7 @@ import {
   DialogContent,
   DialogOverlay,
   DialogPortal,
+  injectDialogRootContext,
   useForwardPropsEmits,
 } from "reka-ui"
 import { cn } from "@/lib/utils"
@@ -18,13 +19,18 @@ const emits = defineEmits<DialogContentEmits>()
 const delegatedProps = reactiveOmit(props, "class")
 
 const forwarded = useForwardPropsEmits(delegatedProps, emits)
+const root = injectDialogRootContext()
 </script>
 
 <template>
   <DialogPortal>
     <DialogOverlay
-      class="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
-    >
+      class="fixed inset-0 z-50 bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
+    />
+    <!-- The overlay cancels every press that reaches it, which stops text
+         selection, so the content scrolls in a sibling and not inside it. The
+         modal dialog leaves the body with pointer-events: none. -->
+    <div v-if="root.open.value" class="pointer-events-auto fixed inset-0 z-50 grid place-items-center overflow-y-auto">
       <DialogContent
         :class="
           cn(
@@ -50,6 +56,6 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
           <span class="sr-only">Close</span>
         </DialogClose>
       </DialogContent>
-    </DialogOverlay>
+    </div>
   </DialogPortal>
 </template>
