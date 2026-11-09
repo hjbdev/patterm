@@ -99,6 +99,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The notification tray stays on the Unread tab when you close and reopen it.
 - You can select and copy text in a routine's report and in the routine editor.
 - Dragging an agent in the sidebar no longer files it in a folder you didn't
   drop it on. A drop goes by the row under the pointer; over a heading, past

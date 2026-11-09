@@ -43,8 +43,15 @@
   </div>
 </template>
 
+<script lang="ts">
+import { ref } from 'vue';
+
+// The tray unmounts this list when it closes; the chosen tab outlives it.
+const lastView = ref<'all' | 'unread'>('all');
+</script>
+
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue';
+import { onBeforeUnmount, onMounted, watch, type Component } from 'vue';
 import { useRouter } from 'vue-router';
 import { AlertTriangle, Bell, BellOff, CheckCheck, CheckCircle2, Loader2, MessageSquare, ShieldAlert } from 'lucide-vue-next';
 import { totalUnread, type NotificationRecord } from '../Composables/useNotifications';
@@ -76,7 +83,7 @@ let observer: IntersectionObserver | null = null;
 let clock: ReturnType<typeof setInterval> | undefined;
 let unsubscribe: (() => void) | undefined;
 // Switching views starts the list again; pages fetched for the old view are dropped.
-const view = ref<'all' | 'unread'>('all');
+const view = lastView;
 let generation = 0;
 // Reads and resolutions seen since the list started. A page requested before
 // one arrived still shows the record unread, so every page is settled first.
