@@ -35,7 +35,7 @@ export class ProjectSnoozeActions {
   constructor(
     private readonly database: DatabaseService,
     private readonly timeline: Pick<TimelineService, 'append'>,
-    private readonly notifications: Pick<NotificationService, 'releaseHeld'>,
+    private readonly notifications: Pick<NotificationService, 'releaseHeld' | 'snoozeChanged'>,
     private readonly raise: (input: RaiseNotificationInput) => void,
     private readonly onChanged: () => void,
     private readonly now: () => number = Date.now
@@ -51,6 +51,7 @@ export class ProjectSnoozeActions {
     this.database.connection.prepare(`update projects set snoozed_until = ? where id = ?`).run(snoozedUntil, project.id);
     this.timeline.append({ event_type: 'project.snoozed', project_id: project.id, actor_type: 'user', metadata: { snoozed_until: snoozedUntil } });
     this.onChanged();
+    this.notifications.snoozeChanged();
     this.tick();
     return { snoozed_until: snoozedUntil };
   }
@@ -94,6 +95,7 @@ export class ProjectSnoozeActions {
     const held = this.notifications.releaseHeld(project.id);
     this.timeline.append({ event_type: 'project.woke', project_id: project.id, actor_type: actor, metadata: { held } });
     this.onChanged();
+    this.notifications.snoozeChanged();
     if (held) {
       this.raise({
         projectId: project.id,

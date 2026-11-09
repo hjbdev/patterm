@@ -99,6 +99,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A snoozed project's notifications no longer add to the notification tray's
+  count, the window title or the app badge. They still show in the tray's
+  list and as dots on their tabs.
 - The notification tray stays on the Unread tab when you close and reopen it.
 - You can select and copy text in a routine's report and in the routine editor.
 - Dragging an agent in the sidebar no longer files it in a folder you didn't

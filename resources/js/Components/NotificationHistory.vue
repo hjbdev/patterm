@@ -8,7 +8,7 @@
           <TabsTrigger value="unread" class="h-6 px-2 text-xs">Unread</TabsTrigger>
         </TabsList>
       </Tabs>
-      <Button variant="ghost" size="sm" class="ml-auto h-7 gap-1.5 px-2 text-xs text-muted-foreground" :disabled="!totalUnread()" @click="markAllRead">
+      <Button variant="ghost" size="sm" class="ml-auto h-7 gap-1.5 px-2 text-xs text-muted-foreground" :disabled="!anyUnread()" @click="markAllRead">
         <CheckCheck class="h-3.5 w-3.5" />Mark all read
       </Button>
     </div>
@@ -54,7 +54,7 @@ const lastView = ref<'all' | 'unread'>('all');
 import { onBeforeUnmount, onMounted, watch, type Component } from 'vue';
 import { useRouter } from 'vue-router';
 import { AlertTriangle, Bell, BellOff, CheckCheck, CheckCircle2, Loader2, MessageSquare, ShieldAlert } from 'lucide-vue-next';
-import { totalUnread, type NotificationRecord } from '../Composables/useNotifications';
+import { anyUnread, type NotificationRecord } from '../Composables/useNotifications';
 import { relativeTime } from '../lib/format';
 import { Button } from './ui/button';
 import { Tabs, TabsList, TabsTrigger } from './ui/tabs';

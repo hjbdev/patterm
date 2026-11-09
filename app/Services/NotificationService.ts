@@ -61,13 +61,17 @@ export type RaiseNotificationResult =
 export type NotificationChange =
   | { type: 'raised'; notification: NotificationRecord }
   | { type: 'updated'; notification: NotificationRecord }
-  | { type: 'read' | 'resolved'; ids: string[] };
+  | { type: 'read' | 'resolved'; ids: string[] }
+  // A project was snoozed or woke, so unread totals changed.
+  | { type: 'counts' };
 
 export interface NotificationUnread {
   process_id: string | null;
   project_id: string | null;
   count: number;
   urgency: NotificationUrgency;
+  // Its project is snoozed: it marks the tab but stays out of the tray's total.
+  snoozed: boolean;
 }
 
 interface ProcessContext {
@@ -244,11 +248,18 @@ export class NotificationService {
 
   // Unread, unresolved counts per process for tab and project indicators.
   unread(): NotificationUnread[] {
-    const rows = this.database.connection.prepare(`select process_id, project_id, count(*) as count,
-        max(case urgency when 'high' then 2 when 'normal' then 1 else 0 end) as rank
-      from notifications where resolved_at is null and read_at is null
-      group by process_id, project_id`).all() as Array<{ process_id: string | null; project_id: string | null; count: number; rank: number }>;
-    return rows.map((row) => ({ process_id: row.process_id, project_id: row.project_id, count: row.count, urgency: row.rank === 2 ? 'high' : row.rank === 1 ? 'normal' : 'low' }));
+    const rows = this.database.connection.prepare(`select notifications.process_id, notifications.project_id, count(*) as count,
+        max(case notifications.urgency when 'high' then 2 when 'normal' then 1 else 0 end) as rank,
+        coalesce(projects.snoozed_until > ?, 0) as snoozed
+      from notifications left join projects on projects.id = notifications.project_id
+      where notifications.resolved_at is null and notifications.read_at is null
+      group by notifications.process_id, notifications.project_id`).all(new Date(this.now()).toISOString()) as Array<{ process_id: string | null; project_id: string | null; count: number; rank: number; snoozed: number }>;
+    return rows.map((row) => ({ process_id: row.process_id, project_id: row.project_id, count: row.count, urgency: row.rank === 2 ? 'high' : row.rank === 1 ? 'normal' : 'low', snoozed: Boolean(row.snoozed) }));
+  }
+
+  // Unread totals depend on which projects are snoozed.
+  snoozeChanged(): void {
+    this.onChange({ type: 'counts' });
   }
 
   // Muting subagents also clears their existing dots across connected clients.

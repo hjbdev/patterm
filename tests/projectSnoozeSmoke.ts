@@ -52,7 +52,8 @@ async function main(): Promise<void> {
       values ('agent', 'project_a', 'agent', 'agent', 'running', 'idle', 'pty_agent', ?, ?)`).run(at, at);
 
     let now = Date.parse('2026-10-19T12:00:00Z');
-    const notifications = new NotificationService(database, new SettingsService(database), { append: () => 'event' }, async () => {}, () => undefined, () => now);
+    const notificationChanges: string[] = [];
+    const notifications = new NotificationService(database, new SettingsService(database), { append: () => 'event' }, async () => {}, (change) => { notificationChanges.push(change.type); }, () => now);
     const raised: RaiseNotificationInput[] = [];
     let changes = 0;
     const snoozes = new ProjectSnoozeActions(database, { append: () => 'event' }, notifications,
@@ -69,6 +70,8 @@ async function main(): Promise<void> {
     snoozes.snooze({ project_id: 'project_a', until: '2026-10-20T09:00:00+01:00' });
     assert.equal(project().snoozedUntil, '2026-10-20T08:00:00.000Z');
     assert.ok(changes > 0);
+    // Snoozing changes the tray's total, so clients re-read it.
+    assert.ok(notificationChanges.includes('counts'));
 
     // Snoozed, everything is held in the app, permission requests included.
     const permission = await notifications.raise({ processId: 'agent', source: 'integrated', kind: 'permission', body: 'Run rm?' });
@@ -81,6 +84,8 @@ async function main(): Promise<void> {
     // System notices, like the summary, are never held.
     const system = await notifications.raise({ projectId: 'project_a', source: 'system', kind: 'message', body: 'Update ready', dedupeKey: 'x' });
     assert.ok(system.status === 'raised' && !system.notification.held);
+    // A snoozed project's unread, from before the snooze too, stay out of the tray's total.
+    assert.ok(notifications.unread().every((row) => row.project_id !== 'project_a' || row.snoozed));
 
     // The deadline passes while Patterm is stopped; starting wakes it with
     // one summary of what was held.
@@ -95,6 +100,8 @@ async function main(): Promise<void> {
     assert.equal((db.prepare(`select count(*) as count from notifications where held = 1`).get() as { count: number }).count, 0);
     // Held ones stay unread for the list.
     assert.ok(notifications.unread().some((row) => row.project_id === 'project_a' && row.count >= 2));
+    // Awake, they count again.
+    assert.ok(notifications.unread().every((row) => !row.snoozed));
 
     // A repeat of a notice from before the snooze is held and counted too,
     // in this snooze and the next.

@@ -35,11 +35,14 @@ interface Unread {
   project_id: string | null;
   count: number;
   urgency: NotificationUrgency;
+  // Its project is snoozed; older hosts omit it.
+  snoozed?: boolean;
 }
 
 export type NotificationChange =
   | { type: 'raised' | 'updated'; notification: NotificationRecord }
   | { type: 'read' | 'resolved'; ids: string[] }
+  | { type: 'counts' }
   | { type: 'reconnected' };
 
 const RANK: Record<NotificationUrgency, number> = { low: 0, normal: 1, high: 2 };
@@ -69,12 +72,23 @@ export function unreadUrgency(processId: string | null | undefined): Notificatio
   return unread.value.find((row) => row.process_id === processId)?.urgency ?? null;
 }
 
+// Snoozed projects' notifications stay in the tray's list but out of its
+// count, the window title, and the app badge.
+function counted(rows: Unread[]): Unread[] {
+  return rows.filter((row) => !row.snoozed);
+}
+
 export function totalUnread(): number {
-  return unread.value.reduce((total, row) => total + row.count, 0);
+  return counted(unread.value).reduce((total, row) => total + row.count, 0);
+}
+
+// Any unread notification, snoozed projects' included, for Mark all read.
+export function anyUnread(): boolean {
+  return unread.value.length > 0;
 }
 
 export function highestUnread(): NotificationUrgency | null {
-  return unread.value.reduce<NotificationUrgency | null>((top, row) => !top || RANK[row.urgency] > RANK[top] ? row.urgency : top, null);
+  return counted(unread.value).reduce<NotificationUrgency | null>((top, row) => !top || RANK[row.urgency] > RANK[top] ? row.urgency : top, null);
 }
 
 export function projectUnread(projectId: string): number {
@@ -124,7 +138,7 @@ export function startNotifications(router: Router): void {
     const state = await api.notificationState().catch(() => null) as { unread?: Unread[] } | null;
     if (!state?.unread) return;
     unread.value = state.unread;
-    const total = state.unread.reduce((sum, row) => sum + row.count, 0);
+    const total = totalUnread();
     // Chrome prefixes an installed app's title with its name unless the title
     // starts with it, so the count goes after: "Patterm (7)".
     document.title = total ? `${baseTitle} (${total})` : baseTitle;
