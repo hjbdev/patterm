@@ -1311,7 +1311,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
         properties: {
           name: { type: 'string', description: 'Lowercase words and -, in parts split by /, such as status-cards/verdict.' },
           description: { type: 'string', description: 'What the template shows and when to use it, up to 500 characters.' },
-          html: { type: 'string', description: `The page, up to ${MAX_FIGURE_HTML_CHARS} characters. It reads its data from <script type="application/json" id="data">, which Patterm fills (replacing any sample there), or from patterm.data. No local files.` },
+          html: { type: 'string', description: `The page, up to ${MAX_FIGURE_HTML_CHARS} characters. It reads its data from the first <script type="application/json" id="data"> (Patterm puts the data there, ahead of any sample in the page) or from patterm.data. No local files.` },
           schema: { type: 'object', description: 'A JSON Schema (draft-07 by default; 2019-09 and 2020-12 by $schema) the data must match.' },
           example: { description: 'Example data. It must match the schema; template_get shows it to agents.' }
         }

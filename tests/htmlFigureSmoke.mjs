@@ -523,20 +523,15 @@ test('html_render fills a template from checked data and records the version it 
   assert.equal(ui.figureTemplate({ ...row, output: JSON.stringify({ ok: true, template: { name: 'Bad', version: 1 } }) }), null);
 });
 
-test('a template\'s data is the first data block, and nothing in it can close the script', () => {
+test('a template\'s data comes before the page, so lookalikes in it never matter, and nothing in it can close the script', () => {
   const data = { verdict: 'RED', text: '</script><script>alert(1)</script> \u2028' };
-  const filled = ui.fillFigureTemplate(CARD, data);
-  const block = /<script type="application\/json" id="data">([\s\S]*?)<\/script>/.exec(filled);
-  assert.deepEqual(JSON.parse(block[1]), data, 'the first block holds the data');
-  assert.ok(block.index < filled.indexOf('<!-- Copy'), 'it comes before anything else in <head>');
-  assert.equal(filled.slice(block.index + block[0].length), CARD.slice(CARD.indexOf('<head>') + '<head>'.length), 'the rest of the page is untouched');
-  assert.ok(!filled.includes('</script><script>alert'), 'a closing tag in the data is escaped');
-  // Lookalikes in comments, text and other scripts never come first.
-  const tricky = '<!-- <head> --><html><head></head><body><textarea><script type="application/json" id="data">{}</script></textarea></body></html>';
-  assert.match(ui.fillFigureTemplate(tricky, { a: 1 }), /^<!-- <head> --><html><head><script type="application\/json" id="data">\{"a":1\}<\/script><\/head>/);
-  assert.match(ui.fillFigureTemplate('<p>x</p>', { a: 1 }), /^<!doctype html><head><script type="application\/json" id="data">\{"a":1\}<\/script><\/head><p>x<\/p>$/);
-  const prepared = ui.prepareFigureHtml(filled, '', data);
-  assert.ok(prepared.indexOf('id="patterm-theme"') < prepared.indexOf('id="data">'));
-  assert.match(prepared, /data: \{"verdict":"RED","text":"\\u003c\/script>/, 'patterm.data carries the data');
+  const prepared = ui.prepareTemplateHtml(CARD, data, '');
+  assert.ok(prepared.endsWith(CARD), 'the page itself is untouched');
+  const head = prepared.slice(0, prepared.length - CARD.length);
+  assert.match(head, /^<!doctype html><style id="patterm-theme">.*<\/script><script type="application\/json" id="data">.*<\/script>$/s);
+  const block = /<script type="application\/json" id="data">([\s\S]*?)<\/script>$/.exec(head);
+  assert.deepEqual(JSON.parse(block[1]), data);
+  assert.ok(!head.includes('</script><script>alert'), 'a closing tag in the data is escaped');
+  assert.match(head, /data: \{"verdict":"RED","text":"\\u003c\/script>/, 'patterm.data carries the data');
   assert.match(ui.prepareFigureHtml('<p>x</p>'), /data: null\n/, 'raw pages have no data');
 });

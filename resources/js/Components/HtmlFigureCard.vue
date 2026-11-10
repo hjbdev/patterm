@@ -34,7 +34,7 @@ import { Maximize2 } from 'lucide-vue-next';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
 import HtmlFigureFrame from './HtmlFigureFrame.vue';
-import { clampFigureHeight, fillFigureTemplate, figureImages, figurePage, figureTemplate, figureToolInput, figureVideos, prepareFigureHtml, replaceFigureImages, replaceFigureVideos, type FigurePage } from '../../../app/Services/HtmlFigure';
+import { clampFigureHeight, figureImages, figurePage, figureTemplate, figureToolInput, figureVideos, prepareFigureHtml, prepareTemplateHtml, replaceFigureImages, replaceFigureVideos, type FigurePage } from '../../../app/Services/HtmlFigure';
 import { figureFontCss, figureFontVersion, figureImageUrls, figureTemplatePage, figureVideoBlobs } from '../lib/htmlFigure';
 import type { TranscriptMessage } from '../lib/integratedConversation';
 
@@ -83,7 +83,7 @@ watch([source, images, videos, figureFontVersion], async ([, storedImages, store
     if (html === null) { prepared.value = null; missingTemplate.value = `Template ${version.name} version ${version.version} is not saved on this host.`; return; }
     media.value = new Map();
     missingVideos.value = 0;
-    prepared.value = prepareFigureHtml(fillFigureTemplate(html, current.data), fonts, current.data);
+    prepared.value = prepareTemplateHtml(html, current.data, fonts);
     return;
   }
   const html = current.html;

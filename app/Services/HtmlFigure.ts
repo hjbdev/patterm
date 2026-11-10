@@ -275,22 +275,18 @@ const bootstrap = (data: string) => `(function () {
 
 // The agent's page with the theme and bootstrap first in <head>, so its own
 // rules and scripts follow them. A template's data is also patterm.data.
-export function prepareFigureHtml(page: string, fontCss = '', data?: unknown): string {
-  const head = `<style id="patterm-theme">${BASE_CSS}</style>${fontCss ? `<style id="patterm-fonts">${fontCss}</style>` : ''}<script>${bootstrap(data === undefined ? 'null' : scriptJson(data))}</script>`;
-  return insertHead(page, head);
+export function prepareFigureHtml(page: string, fontCss = ''): string {
+  return insertHead(page, figureHead(fontCss, 'null'));
 }
 
-// The first tag, not one named in a comment before it.
-function firstTag(page: string, tag: 'head' | 'html'): RegExpExecArray | null {
-  const pattern = new RegExp(`<!--[\\s\\S]*?(?:-->|$)|<${tag}\\b[^>]*>`, 'gi');
-  for (let match = pattern.exec(page); match; match = pattern.exec(page)) if (!match[0].startsWith('<!--')) return match;
-  return null;
+function figureHead(fontCss: string, data: string): string {
+  return `<style id="patterm-theme">${BASE_CSS}</style>${fontCss ? `<style id="patterm-fonts">${fontCss}</style>` : ''}<script>${bootstrap(data)}</script>`;
 }
 
 function insertHead(page: string, head: string): string {
-  const opening = firstTag(page, 'head');
+  const opening = /<head\b[^>]*>/i.exec(page);
   if (opening) return page.slice(0, opening.index + opening[0].length) + head + page.slice(opening.index + opening[0].length);
-  const html = firstTag(page, 'html');
+  const html = /<html\b[^>]*>/i.exec(page);
   if (html) return `${page.slice(0, html.index + html[0].length)}<head>${head}</head>${page.slice(html.index + html[0].length)}`;
   const doctype = /^\s*<!doctype[^>]*>/i.exec(page);
   return doctype ? `${doctype[0]}<head>${head}</head>${page.slice(doctype[0].length)}` : `<!doctype html><head>${head}</head>${page}`;
@@ -303,14 +299,18 @@ function scriptJson(data: unknown): string {
   return JSON.stringify(data).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
 }
 
-// A saved template's page holding this data, in the block the status cards
-// read: <script type="application/json" id="data">. It goes first in <head>,
-// so it is the first element with that id and getElementById finds it. The
-// page's own sample block, if any, stays below it unread; nothing has to
-// find that block in the source, where comments, scripts and text such as a
-// <textarea> could hold lookalikes.
-export function fillFigureTemplate(page: string, data: unknown): string {
-  return insertHead(page, `<script type="application/json" id="data">${scriptJson(data)}</script>`);
+// A saved template's page drawing this data. Nothing is searched for in the
+// page, where comments, scripts and text such as a <textarea> can hold
+// lookalike tags: Patterm's theme, bootstrap and the data block, in the
+// <script type="application/json" id="data"> the status cards read, go
+// before the page. The parser puts them in <head>, ignores the page's own
+// doctype and <head> tag, and merges its <html> attributes, so the data is
+// the first element with that id and getElementById finds it. A sample
+// block in the page stays below it, unread. Templates always draw in
+// standards mode. The data is also patterm.data.
+export function prepareTemplateHtml(page: string, data: unknown, fontCss = ''): string {
+  const json = scriptJson(data);
+  return `<!doctype html>${figureHead(fontCss, json)}<script type="application/json" id="data">${json}</script>${page}`;
 }
 
 /* ---------- local images and videos ---------- */
