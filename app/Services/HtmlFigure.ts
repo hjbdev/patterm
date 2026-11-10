@@ -297,15 +297,29 @@ function scriptJson(data: unknown): string {
 }
 
 // The block a template reads its data from, as the status cards do:
-// <script type="application/json" id="data">. A tag without the JSON type,
-// such as one named in a comment, is not it.
-const DATA_BLOCK = /<script\b(?=[^>]*\btype\s*=\s*["']?application\/json["']?[\s/>])(?=[^>]*\bid\s*=\s*(?:"data"|'data'|data(?=[\s/>])))[^>]*>[\s\S]*?<\/script\s*>/i;
+// <script type="application/json" id="data">. Comments are skipped whole, so
+// a tag named in one is never it, and other scripts are skipped whole, so
+// text inside them is never mistaken for a tag.
+const COMMENT_OR_SCRIPT = /<!--[\s\S]*?(?:-->|$)|<script\b([^>]*)>[\s\S]*?(?:<\/script\s*>|$)/gi;
+const ATTRIBUTE = /([^\s=/>]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g;
+
+function isDataBlock(attributes: string): boolean {
+  const found = new Map<string, string>();
+  for (const match of attributes.matchAll(ATTRIBUTE)) {
+    const name = match[1]!.toLowerCase();
+    if (!found.has(name)) found.set(name, match[2] ?? match[3] ?? match[4] ?? '');
+  }
+  return found.get('type')?.trim().toLowerCase() === 'application/json' && found.get('id') === 'data';
+}
 
 // A saved template's page holding this data. Its own sample data, if it has
 // a block, is replaced; otherwise the block goes first in <head>.
 export function fillFigureTemplate(page: string, data: unknown): string {
   const block = `<script type="application/json" id="data">${scriptJson(data)}</script>`;
-  return DATA_BLOCK.test(page) ? page.replace(DATA_BLOCK, () => block) : insertHead(page, block);
+  for (const match of page.matchAll(COMMENT_OR_SCRIPT)) {
+    if (match[1] !== undefined && isDataBlock(match[1])) return page.slice(0, match.index) + block + page.slice(match.index + match[0].length);
+  }
+  return insertHead(page, block);
 }
 
 /* ---------- local images and videos ---------- */

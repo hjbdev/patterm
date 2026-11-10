@@ -480,6 +480,7 @@ test('publishing checks the schema, the example and the page before anything is 
   assert.throws(() => templates.publish({ ...base, html: '<img src="shot.png">' }, agent), /templates cannot show local files \("shot\.png"\)/);
   assert.throws(() => templates.publish({ ...base, name: 'Bad Name' }, agent), /lowercase letters/);
   assert.throws(() => templates.publish({ name: 'cards/x', html: CARD, schema: CARD_SCHEMA }, agent), /example: send an example/);
+  assert.throws(() => templates.publish({ ...base, schema: { $async: true, type: 'object', required: ['text'], properties: { text: { type: 'string' } } }, example: { text: 99 } }, agent), /schema: \$async schemas are not supported/);
   assert.deepEqual(templates.list(), []);
   const modern = templates.publish({ ...base, name: 'cards/modern', schema: { $schema: 'https://json-schema.org/draft/2020-12/schema', type: 'object', prefixItems: [{ type: 'string' }], properties: { verdict: { const: 'GREEN' } } } }, agent);
   assert.equal(modern.version, 1, '2020-12 schemas compile');
@@ -531,6 +532,15 @@ test('a template\'s data replaces its sample block, and nothing in it can close 
   assert.ok(!filled.includes('</script><script>alert'), 'a closing tag in the data is escaped');
   const block = /<script type="application\/json" id="data">([\s\S]*?)<\/script>/.exec(filled);
   assert.deepEqual(JSON.parse(block[1]), data);
+  // A full block in a comment, one opened in a comment, and lookalike
+  // attributes are all left alone; only the real block is replaced.
+  const tricky = CARD
+    .replace('<script id="data">', '<script type="application/json" id="data">{"in":"comment"}</script>')
+    .replace('<div id="w"></div>', '<!-- <script type="application/json" id="data"> --><div id="w"></div><script type="application/json" data-id="data">{"keep":1}</script><script>var s = \'<script type="application/json" id="data">\';</script>');
+  const replaced = ui.fillFigureTemplate(tricky, { a: 1 });
+  assert.equal(replaced.length, tricky.length - '{"verdict":"RED","findings":[]}'.length + '{"a":1}'.length, 'only the sample data changed');
+  assert.ok(replaced.includes('{"in":"comment"}') && replaced.includes('{"keep":1}') && replaced.includes('<div id="w"></div>'));
+  assert.match(ui.fillFigureTemplate('<p></p><SCRIPT ID=data TYPE="Application/JSON">{}</SCRIPT>', { a: 1 }), /^<p><\/p><script type="application\/json" id="data">\{"a":1\}<\/script>$/);
   assert.match(ui.fillFigureTemplate('<html><head></head><body></body></html>', { a: 1 }), /^<html><head><script type="application\/json" id="data">\{"a":1\}<\/script><\/head>/);
   const prepared = ui.prepareFigureHtml(filled, '', data);
   assert.ok(prepared.indexOf('id="patterm-theme"') < prepared.indexOf('id="data">'));

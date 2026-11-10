@@ -184,7 +184,10 @@ function compile(schema: Record<string, unknown>): ValidateFunction {
   const draft = typeof schema.$schema === 'string' ? schema.$schema : '';
   const options = { allErrors: true, strict: false } as const;
   const ajv = draft.includes('2020-12') ? new Ajv2020(options) : draft.includes('2019-09') ? new Ajv2019(options) : new Ajv(options);
-  return ajv.compile(schema);
+  const validate = ajv.compile(schema);
+  // An $async schema validates through a promise, which would read as valid.
+  if ((validate as { $async?: unknown }).$async) throw new Error('$async schemas are not supported');
+  return validate;
 }
 
 // Field-level messages an agent can act on, such as
