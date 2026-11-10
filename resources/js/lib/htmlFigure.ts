@@ -133,3 +133,20 @@ export async function figureFontCss(): Promise<string> {
   }
   return style.catch(() => '');
 }
+
+// A saved template version's page. Versions never change, so each is read
+// once; one this host does not have stays missing until asked for again.
+const templatePages = new Map<string, Promise<string>>();
+export function figureTemplatePage(name: string, version: number): Promise<string> {
+  const key = `${name}@${version}`;
+  let page = templatePages.get(key);
+  if (!page) {
+    page = (window.patterm.call('figure_template_page', { name, version }) as Promise<{ html?: unknown }>).then((result) => {
+      if (typeof result?.html !== 'string') throw new Error('This template is not saved here');
+      return result.html;
+    });
+    page.catch(() => templatePages.delete(key));
+    templatePages.set(key, page);
+  }
+  return page;
+}

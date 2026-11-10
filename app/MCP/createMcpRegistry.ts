@@ -52,10 +52,11 @@ import type { HarnessModelCatalogService } from '../Services/HarnessModelCatalog
 import type { AutoSummaryService } from '../Services/AutoSummaryService';
 import { MAX_FIGURE_VIDEO_BYTES, type FigureVideoStore } from '../Services/FigureVideoStore';
 import type { TranscriptImageStore } from '../Services/TranscriptImageStore';
+import type { FigureTemplateService } from '../Services/FigureTemplateService';
 import { McpToolRegistry, type McpCallContext } from './ToolRegistry';
 import { RenderHtmlFigureAction } from '../Actions/RenderHtmlFigureAction';
 import { PreviewHtmlFigureAction, type PagePreviewer } from '../Actions/PreviewHtmlFigureAction';
-import { FIGURE_BRIDGE_GUIDE, FIGURE_HEIGHT, FIGURE_LAYOUT_GUIDE, FIGURE_THEME_GUIDE, HTML_PREVIEW_TOOL, HTML_RENDER_TOOL, MAX_FIGURE_HTML_CHARS, PREVIEW_WIDTH } from '../Services/HtmlFigure';
+import { FIGURE_BRIDGE_GUIDE, FIGURE_HEIGHT, FIGURE_LAYOUT_GUIDE, FIGURE_THEME_GUIDE, figureTemplateName, HTML_PREVIEW_TOOL, HTML_RENDER_TOOL, MAX_FIGURE_HTML_CHARS, PREVIEW_WIDTH } from '../Services/HtmlFigure';
 import { registerProjectContextTools } from './registerProjectContextTools';
 import { registerUsageTools } from './registerUsageTools';
 import { registerRoutineTools } from './registerRoutineTools';
@@ -100,6 +101,8 @@ interface RegistryServices {
   integrated?: Pick<IntegratedAgentService, 'conversation' | 'peekConversation' | 'olderMessages' | 'prompt' | 'files' | 'delivery' | 'interrupt' | 'stopTask' | 'taskOutput' | 'updateQueued' | 'replyPermission' | 'replyQuestion' | 'replyForm' | 'controls' | 'configure' | 'command' | 'goal' | 'isEmpty' | 'liveSettings' | 'sessionDirectory'>;
   transcriptImages?: Pick<TranscriptImageStore, 'read' | 'fromFile'>;
   figureVideos?: Pick<FigureVideoStore, 'fromFile'>;
+  // Saved html_render templates, shared by the workspace.
+  figureTemplates?: FigureTemplateService;
   // Draws pages off screen for html_preview; only the desktop app has one.
   pagePreviewer?: PagePreviewer;
   settings?: Pick<SettingsService, 'agentInterface' | 'updateAgentInterface' | 'figuresEnabled' | 'updateFiguresEnabled'>;
@@ -1280,7 +1283,66 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     const result = await services.notifications.notifyUser(current.process_id, args);
     return 'notification' in result ? { status: result.status, notification_id: result.notification.id } : result;
   });
-  const renderFigure = new RenderHtmlFigureAction(services.transcriptImages, services.figureVideos);
+  const registerFigureTemplateTools = (templates: FigureTemplateService, unavailable: (tool: string) => (context: McpCallContext) => string | null) => {
+    registry.register({
+      name: 'template_list',
+      namespace: 'cli.ui',
+      description: 'List the saved html_render templates: each one\'s name, latest version, description, and who published it and when.',
+      inputSchema: { type: 'object', properties: {} },
+      changes: [],
+      unavailable: unavailable('template_list'),
+      usageNotes: ['Read one with template_get, then call html_render with template and data instead of html.']
+    }, () => ({ templates: templates.list() }));
+    registry.register({
+      name: 'template_get',
+      namespace: 'cli.ui',
+      description: 'Read a saved html_render template\'s JSON Schema and example data, to fill it with html_render\'s template and data. The page itself is not returned.',
+      inputSchema: { type: 'object', required: ['name'], properties: { name: { type: 'string', description: 'The template, such as status-cards/verdict.' }, version: { type: 'integer', description: 'A version to read. Defaults to the latest.' } } },
+      changes: [],
+      unavailable: unavailable('template_get')
+    }, (args) => templates.get(args));
+    registry.register({
+      name: 'template_publish',
+      namespace: 'cli.ui',
+      description: 'Publish a new version of a saved html_render template: an HTML page, a JSON Schema for its data, and an example. Earlier versions never change, and the user sees every version in Settings with who published it.',
+      inputSchema: {
+        type: 'object',
+        required: ['name', 'html', 'schema', 'example'],
+        properties: {
+          name: { type: 'string', description: 'Lowercase words and -, in parts split by /, such as status-cards/verdict.' },
+          description: { type: 'string', description: 'What the template shows and when to use it, up to 500 characters.' },
+          html: { type: 'string', description: `The page, up to ${MAX_FIGURE_HTML_CHARS} characters. It reads its data from the first <script type="application/json" id="data"> (Patterm puts the data there, ahead of any sample in the page) or from patterm.data. No local files.` },
+          schema: { type: 'object', description: 'A JSON Schema (draft-07 by default; 2019-09 and 2020-12 by $schema) the data must match.' },
+          example: { description: 'Example data. It must match the schema; template_get shows it to agents.' }
+        }
+      },
+      changes: ['settings'],
+      usageNotes: [
+        'Publish only templates the user asked for, such as from their own skills. Publishing the same page, schema, example and description as the latest version changes nothing.',
+        'Check the page first with html_preview when it is available, using the example in the data block.'
+      ],
+      unavailable: (context) => context.remote ? 'template_publish works only on your own host' : null
+    }, (args, context) => {
+      const current = caller(context);
+      if (!current || context.remote) throw new Error('template_publish requires an authenticated agent');
+      const role = isAssistant(current) ? 'assistant' : isBot(current) ? 'bot' : current.session_role === 'routine' ? 'routine' : 'agent';
+      return templates.publish(args, { role, name: role === 'bot' ? current.bot_id ?? current.title : current.title, session_id: current.session_id });
+    });
+    registry.register(
+      { name: 'figure_template_page', namespace: 'cli.ui', description: 'Read the page of one saved template version, to draw a figure.', hidden: true, changes: [], inputSchema: { type: 'object', required: ['name', 'version'] } },
+      (args) => {
+        const { name, version } = z.object({ name: figureTemplateName, version: z.number().int().min(1) }).parse(args);
+        const page = templates.page(name, version);
+        if (!page) throw new Error(`Template ${name} version ${version} is not saved on this host`);
+        return page;
+      }
+    );
+    registry.register(
+      { name: 'settings_figure_templates', namespace: 'settings', description: 'List every saved template version with who published it.', hidden: true, changes: [], inputSchema: { type: 'object' } },
+      () => ({ versions: templates.history() })
+    );
+  };
+  const renderFigure = new RenderHtmlFigureAction(services.transcriptImages, services.figureVideos, services.figureTemplates);
   const figureUnavailable = (tool: string) => (context: McpCallContext): string | null => {
     if (services.settings?.figuresEnabled() === false) return `${tool} is turned off in Patterm settings. Answer in text instead.`;
     // Only Integrated transcripts draw pages. OpenCode's shared helpers
@@ -1296,22 +1358,28 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     description: 'Show a chart, table, diagram, mockup, or small interactive tool in your reply as an HTML page. It returns ref [patterm_figure:id]; put it on its own line in your reply where the page belongs. Unplaced, it never shows.',
     inputSchema: {
       type: 'object',
-      required: ['title', 'html'],
+      required: ['title'],
       properties: {
         id: { type: 'string', description: 'Reuse an id to replace that page everywhere it appears.' },
         title: { type: 'string', description: 'Shown above the page; do not repeat it inside.' },
         html,
+        ...(services.figureTemplates ? {
+          template: { type: 'string', description: 'A saved template to fill instead of sending html, such as status-cards/verdict. template_list shows them.' },
+          data: { description: 'With template: the data it draws, checked against its schema (template_get).' },
+          version: { type: 'integer', description: 'With template: the version to use. Defaults to the latest.' }
+        } : {}),
         height: { type: 'integer', description: `Initial height in px (${FIGURE_HEIGHT.min}-${FIGURE_HEIGHT.max}); the frame then follows the page.` }
       }
     },
     changes: [],
     unavailable: figureUnavailable(HTML_RENDER_TOOL),
-    usageNotes: [FIGURE_LAYOUT_GUIDE, FIGURE_THEME_GUIDE, FIGURE_BRIDGE_GUIDE, 'Do not describe or restate what the page shows.']
+    usageNotes: [FIGURE_LAYOUT_GUIDE, FIGURE_THEME_GUIDE, FIGURE_BRIDGE_GUIDE, 'Do not describe or restate what the page shows.', ...(services.figureTemplates ? ['Or fill a saved template: send template and data instead of html.'] : [])]
   }, (args, context) => {
     // Images and videos are read on the caller's own host, never across hosts.
     const current = context.remote ? null : caller(context);
     return renderFigure.execute(args, { cwd: current?.cwd ?? null, project_path: current?.project_path ?? null });
   });
+  if (services.figureTemplates) registerFigureTemplateTools(services.figureTemplates, figureUnavailable);
   // Only the desktop app can draw a page off screen, so the server never lists it.
   if (services.pagePreviewer) {
     const previewFigure = new PreviewHtmlFigureAction(services.pagePreviewer, services.transcriptImages, services.figureVideos);

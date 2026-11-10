@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import { build } from 'esbuild';
 import ts from 'typescript';
+import { DatabaseSync } from 'node:sqlite';
 import { computed, markRaw, nextTick, ref, watch } from 'vue';
 
 // The shared module, the action and the transcript helpers are bundled
@@ -16,6 +17,8 @@ await build({
     contents: `
       export * from './app/Services/HtmlFigure';
       export { RenderHtmlFigureAction } from './app/Actions/RenderHtmlFigureAction';
+      export { FigureTemplateService } from './app/Services/FigureTemplateService';
+      export { default as figureTemplatesMigration } from './database/migrations/2026_11_10_000066_add_figure_templates';
       export { FigureVideoStore, MAX_FIGURE_VIDEO_BYTES, sniffVideo } from './app/Services/FigureVideoStore';
       export { PreviewHtmlFigureAction } from './app/Actions/PreviewHtmlFigureAction';
       export { McpToolRegistry } from './app/MCP/ToolRegistry';
@@ -429,4 +432,106 @@ test('pages outside a live conversation, or for answered questions, cannot answe
   const stranger = mountFrame({ channel });
   stranger.onMessage({ source: {}, data: { source: 'patterm-figure', type: 'answer', requestId: 1, id: 'q', picks: [{ label: 'A', value: 'a' }] } });
   assert.deepEqual(stranger.posted, [], 'only this page\'s own frame is heard');
+});
+
+
+// A card shaped like the status cards: sample data in a JSON block, read by
+// the script below it, with the block named in a comment first.
+const CARD = `<!doctype html><html><head><meta charset="utf-8"><!-- Copy unchanged except the JSON in <script id="data">. --></head><body><div id="w"></div>
+<script type="application/json" id="data">{"verdict":"RED","findings":[]}</script>
+<script>const d = JSON.parse(document.getElementById('data').textContent); document.getElementById('w').textContent = d.verdict;</script></body></html>`;
+const CARD_SCHEMA = {
+  type: 'object',
+  required: ['verdict'],
+  additionalProperties: false,
+  properties: {
+    verdict: { enum: ['GREEN', 'YELLOW', 'RED'] },
+    findings: { type: 'array', items: { type: 'object', required: ['kind', 'text'], properties: { kind: { enum: ['must', 'should', 'followup'] }, text: { type: 'string' } } } }
+  }
+};
+
+function templateStore(now = () => new Date('2026-11-10T12:00:00Z')) {
+  const connection = new DatabaseSync(':memory:');
+  ui.figureTemplatesMigration.up({ connection, sql: (statement) => connection.exec(statement) });
+  return new ui.FigureTemplateService({ connection }, now);
+}
+const agent = { role: 'agent', name: 'Implement templates', session_id: 'session_1' };
+
+test('template versions are immutable: republishing the same files changes nothing, a change adds a version', () => {
+  const templates = templateStore();
+  const first = templates.publish({ name: 'status-cards/verdict', description: 'Review verdict', html: CARD, schema: CARD_SCHEMA, example: { verdict: 'GREEN' } }, agent);
+  assert.deepEqual([first.version, first.unchanged, first.published_by, first.published_at], [1, false, { role: 'agent', name: 'Implement templates' }, '2026-11-10T12:00:00.000Z']);
+  assert.equal(templates.publish({ name: 'status-cards/verdict', description: 'Review verdict', html: CARD, schema: CARD_SCHEMA, example: { verdict: 'GREEN' } }, agent).unchanged, true);
+  const second = templates.publish({ name: 'status-cards/verdict', description: 'Review verdict', html: CARD.replace('RED', 'YELLOW'), schema: CARD_SCHEMA, example: { verdict: 'GREEN' } }, { role: 'assistant', name: null, session_id: 's2' });
+  assert.equal(second.version, 2);
+  assert.equal(templates.page('status-cards/verdict', 1).html, CARD, 'version 1 keeps its page');
+  assert.deepEqual(templates.list().map((item) => [item.name, item.version, item.versions]), [['status-cards/verdict', 2, 2]]);
+  assert.deepEqual(templates.history().map((item) => [item.version, item.published_by.role]), [[2, 'assistant'], [1, 'agent']]);
+  const got = templates.get({ name: 'status-cards/verdict', version: 1 });
+  assert.deepEqual([got.version, got.schema, got.example, 'html' in got], [1, CARD_SCHEMA, { verdict: 'GREEN' }, false], 'template_get never returns the page');
+  assert.throws(() => templates.get({ name: 'status-cards/missing' }), /no template is saved as "status-cards\/missing"/);
+});
+
+test('publishing checks the schema, the example and the page before anything is saved', () => {
+  const templates = templateStore();
+  const base = { name: 'cards/x', html: CARD, schema: CARD_SCHEMA, example: { verdict: 'GREEN' } };
+  assert.throws(() => templates.publish({ ...base, example: { verdict: 'BLUE' } }, agent), /nothing was published[\s\S]*example: verdict must be one of "GREEN", "YELLOW", "RED"/);
+  assert.throws(() => templates.publish({ ...base, schema: { type: 'nonsense' } }, agent), /schema: /);
+  assert.throws(() => templates.publish({ ...base, html: '<img src="shot.png">' }, agent), /templates cannot show local files \("shot\.png"\)/);
+  assert.throws(() => templates.publish({ ...base, name: 'Bad Name' }, agent), /lowercase letters/);
+  assert.throws(() => templates.publish({ name: 'cards/x', html: CARD, schema: CARD_SCHEMA }, agent), /example: send an example/);
+  assert.throws(() => templates.publish({ ...base, schema: { $async: true, type: 'object', required: ['text'], properties: { text: { type: 'string' } } }, example: { text: 99 } }, agent), /schema: \$async schemas are not supported/);
+  assert.deepEqual(templates.list(), []);
+  const modern = templates.publish({ ...base, name: 'cards/modern', schema: { $schema: 'https://json-schema.org/draft/2020-12/schema', type: 'object', prefixItems: [{ type: 'string' }], properties: { verdict: { const: 'GREEN' } } } }, agent);
+  assert.equal(modern.version, 1, '2020-12 schemas compile');
+  assert.throws(() => templates.publish({ ...base, name: 'cards/modern', schema: { $schema: 'https://json-schema.org/draft/2020-12/schema', properties: { verdict: { const: 'RED' } } } }, agent), /example: verdict must be "RED"/);
+});
+
+test('html_render fills a template from checked data and records the version it drew', async () => {
+  const templates = templateStore();
+  templates.publish({ name: 'status-cards/verdict', html: CARD, schema: CARD_SCHEMA, example: { verdict: 'GREEN' } }, agent);
+  const action = new ui.RenderHtmlFigureAction(undefined, undefined, templates);
+  const caller = { cwd: null, project_path: null };
+  const data = { verdict: 'GREEN', findings: [{ kind: 'must', text: 'a' }, { kind: 'should', text: 'b' }, { kind: 'nit', text: 'c' }] };
+  await assert.rejects(action.execute({ id: 'verdict-1', title: 'Verdict', template: 'status-cards/verdict', data }, caller), (error) => {
+    assert.match(error.message, /^html_render: nothing was rendered/);
+    assert.match(error.message, /- findings\[2\]\.kind must be one of "must", "should", "followup"/);
+    return true;
+  });
+  await assert.rejects(action.execute({ title: 'V', template: 'status-cards/verdict', data: { findings: [], extra: 1 } }, caller), /- verdict is required\n- data has an unknown field "extra"/);
+  await assert.rejects(action.execute({ title: 'V', template: 'status-cards/nope', data: {} }, caller), /no template is saved as "status-cards\/nope"/);
+  await assert.rejects(action.execute({ title: 'V', template: 'status-cards/verdict', version: 9, data: {} }, caller), /has no version 9/);
+  await assert.rejects(action.execute({ title: 'V', template: 'status-cards/verdict' }, caller), /data: send the data/);
+  await assert.rejects(action.execute({ title: 'V', html: CARD, template: 'status-cards/verdict', data: {} }, caller), /html or template, not both/);
+  await assert.rejects(action.execute({ title: 'V', html: CARD, data: {} }, caller), /data and version go with template/);
+  await assert.rejects(new ui.RenderHtmlFigureAction(undefined).execute({ title: 'V', template: 'status-cards/verdict', data: { verdict: 'RED' } }, caller), /templates are unavailable here/);
+  const ok = await action.execute({ id: 'verdict-1', title: 'Verdict', template: 'status-cards/verdict', data: { verdict: 'RED' } }, caller);
+  assert.deepEqual([ok.ref, ok.template], ['[patterm_figure:verdict-1]', { name: 'status-cards/verdict', version: 1 }]);
+  templates.publish({ name: 'status-cards/verdict', html: CARD.replace('textContent = d.verdict', 'textContent = "v2 " + d.verdict'), schema: CARD_SCHEMA, example: { verdict: 'GREEN' } }, agent);
+  assert.deepEqual((await action.execute({ title: 'V', template: 'status-cards/verdict', data: { verdict: 'RED' } }, caller)).template.version, 2, 'the latest by default');
+  assert.deepEqual((await action.execute({ title: 'V', template: 'status-cards/verdict', version: 1, data: { verdict: 'RED' } }, caller)).template.version, 1);
+
+  // The transcript row draws the version its reply recorded, in every
+  // harness's reply shape.
+  const input = { id: 'verdict-1', title: 'Verdict', template: 'status-cards/verdict', data: { verdict: 'RED' } };
+  const row = { ...claude, input, output: JSON.stringify(ok) };
+  assert.deepEqual(ui.figurePage(ui.figureToolInput(row)), { id: 'verdict-1', title: 'Verdict', template: 'status-cards/verdict', data: { verdict: 'RED' } });
+  assert.deepEqual(ui.figureTemplate(row), { name: 'status-cards/verdict', version: 1 });
+  assert.equal(ui.figureId(row), 'verdict-1');
+  const codex = { ...claude, name: 'patterm', input: { server: 'patterm', tool: 'html_render', arguments: JSON.stringify(input) }, output: undefined, result: { content: [{ type: 'text', text: JSON.stringify(ok, null, 2) }], structuredContent: null } };
+  assert.deepEqual(ui.figureTemplate(codex), { name: 'status-cards/verdict', version: 1 });
+  assert.equal(ui.figureTemplate({ ...row, output: JSON.stringify({ ok: true, template: { name: 'Bad', version: 1 } }) }), null);
+});
+
+test('a template\'s data comes before the page, so lookalikes in it never matter, and nothing in it can close the script', () => {
+  const data = { verdict: 'RED', text: '</script><script>alert(1)</script> \u2028' };
+  const prepared = ui.prepareTemplateHtml(CARD, data, '');
+  assert.ok(prepared.endsWith(CARD), 'the page itself is untouched');
+  const head = prepared.slice(0, prepared.length - CARD.length);
+  assert.match(head, /^<!doctype html><style id="patterm-theme">.*<\/script><script type="application\/json" id="data">.*<\/script>$/s);
+  const block = /<script type="application\/json" id="data">([\s\S]*?)<\/script>$/.exec(head);
+  assert.deepEqual(JSON.parse(block[1]), data);
+  assert.ok(!head.includes('</script><script>alert'), 'a closing tag in the data is escaped');
+  assert.match(head, /data: \{"verdict":"RED","text":"\\u003c\/script>/, 'patterm.data carries the data');
+  assert.match(ui.prepareFigureHtml('<p>x</p>'), /data: null\n/, 'raw pages have no data');
 });
