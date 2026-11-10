@@ -523,25 +523,18 @@ test('html_render fills a template from checked data and records the version it 
   assert.equal(ui.figureTemplate({ ...row, output: JSON.stringify({ ok: true, template: { name: 'Bad', version: 1 } }) }), null);
 });
 
-test('a template\'s data replaces its sample block, and nothing in it can close the script', () => {
+test('a template\'s data is the first data block, and nothing in it can close the script', () => {
   const data = { verdict: 'RED', text: '</script><script>alert(1)</script> \u2028' };
   const filled = ui.fillFigureTemplate(CARD, data);
-  assert.equal(filled.split('id="data"').length - 1, 2, 'the comment keeps its mention and the one block is replaced');
-  assert.ok(filled.includes('<!-- Copy unchanged except the JSON in <script id="data">. -->'));
-  assert.ok(!filled.includes('"findings":[]'), 'the sample data is gone');
-  assert.ok(!filled.includes('</script><script>alert'), 'a closing tag in the data is escaped');
   const block = /<script type="application\/json" id="data">([\s\S]*?)<\/script>/.exec(filled);
-  assert.deepEqual(JSON.parse(block[1]), data);
-  // A full block in a comment, one opened in a comment, and lookalike
-  // attributes are all left alone; only the real block is replaced.
-  const tricky = CARD
-    .replace('<script id="data">', '<script type="application/json" id="data">{"in":"comment"}</script>')
-    .replace('<div id="w"></div>', '<!-- <script type="application/json" id="data"> --><div id="w"></div><script type="application/json" data-id="data">{"keep":1}</script><script>var s = \'<script type="application/json" id="data">\';</script>');
-  const replaced = ui.fillFigureTemplate(tricky, { a: 1 });
-  assert.equal(replaced.length, tricky.length - '{"verdict":"RED","findings":[]}'.length + '{"a":1}'.length, 'only the sample data changed');
-  assert.ok(replaced.includes('{"in":"comment"}') && replaced.includes('{"keep":1}') && replaced.includes('<div id="w"></div>'));
-  assert.match(ui.fillFigureTemplate('<p></p><SCRIPT ID=data TYPE="Application/JSON">{}</SCRIPT>', { a: 1 }), /^<p><\/p><script type="application\/json" id="data">\{"a":1\}<\/script>$/);
-  assert.match(ui.fillFigureTemplate('<html><head></head><body></body></html>', { a: 1 }), /^<html><head><script type="application\/json" id="data">\{"a":1\}<\/script><\/head>/);
+  assert.deepEqual(JSON.parse(block[1]), data, 'the first block holds the data');
+  assert.ok(block.index < filled.indexOf('<!-- Copy'), 'it comes before anything else in <head>');
+  assert.equal(filled.slice(block.index + block[0].length), CARD.slice(CARD.indexOf('<head>') + '<head>'.length), 'the rest of the page is untouched');
+  assert.ok(!filled.includes('</script><script>alert'), 'a closing tag in the data is escaped');
+  // Lookalikes in comments, text and other scripts never come first.
+  const tricky = '<!-- <head> --><html><head></head><body><textarea><script type="application/json" id="data">{}</script></textarea></body></html>';
+  assert.match(ui.fillFigureTemplate(tricky, { a: 1 }), /^<!-- <head> --><html><head><script type="application\/json" id="data">\{"a":1\}<\/script><\/head>/);
+  assert.match(ui.fillFigureTemplate('<p>x</p>', { a: 1 }), /^<!doctype html><head><script type="application\/json" id="data">\{"a":1\}<\/script><\/head><p>x<\/p>$/);
   const prepared = ui.prepareFigureHtml(filled, '', data);
   assert.ok(prepared.indexOf('id="patterm-theme"') < prepared.indexOf('id="data">'));
   assert.match(prepared, /data: \{"verdict":"RED","text":"\\u003c\/script>/, 'patterm.data carries the data');

@@ -280,10 +280,17 @@ export function prepareFigureHtml(page: string, fontCss = '', data?: unknown): s
   return insertHead(page, head);
 }
 
+// The first tag, not one named in a comment before it.
+function firstTag(page: string, tag: 'head' | 'html'): RegExpExecArray | null {
+  const pattern = new RegExp(`<!--[\\s\\S]*?(?:-->|$)|<${tag}\\b[^>]*>`, 'gi');
+  for (let match = pattern.exec(page); match; match = pattern.exec(page)) if (!match[0].startsWith('<!--')) return match;
+  return null;
+}
+
 function insertHead(page: string, head: string): string {
-  const opening = /<head\b[^>]*>/i.exec(page);
+  const opening = firstTag(page, 'head');
   if (opening) return page.slice(0, opening.index + opening[0].length) + head + page.slice(opening.index + opening[0].length);
-  const html = /<html\b[^>]*>/i.exec(page);
+  const html = firstTag(page, 'html');
   if (html) return `${page.slice(0, html.index + html[0].length)}<head>${head}</head>${page.slice(html.index + html[0].length)}`;
   const doctype = /^\s*<!doctype[^>]*>/i.exec(page);
   return doctype ? `${doctype[0]}<head>${head}</head>${page.slice(doctype[0].length)}` : `<!doctype html><head>${head}</head>${page}`;
@@ -296,30 +303,14 @@ function scriptJson(data: unknown): string {
   return JSON.stringify(data).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
 }
 
-// The block a template reads its data from, as the status cards do:
-// <script type="application/json" id="data">. Comments are skipped whole, so
-// a tag named in one is never it, and other scripts are skipped whole, so
-// text inside them is never mistaken for a tag.
-const COMMENT_OR_SCRIPT = /<!--[\s\S]*?(?:-->|$)|<script\b([^>]*)>[\s\S]*?(?:<\/script\s*>|$)/gi;
-const ATTRIBUTE = /([^\s=/>]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g;
-
-function isDataBlock(attributes: string): boolean {
-  const found = new Map<string, string>();
-  for (const match of attributes.matchAll(ATTRIBUTE)) {
-    const name = match[1]!.toLowerCase();
-    if (!found.has(name)) found.set(name, match[2] ?? match[3] ?? match[4] ?? '');
-  }
-  return found.get('type')?.trim().toLowerCase() === 'application/json' && found.get('id') === 'data';
-}
-
-// A saved template's page holding this data. Its own sample data, if it has
-// a block, is replaced; otherwise the block goes first in <head>.
+// A saved template's page holding this data, in the block the status cards
+// read: <script type="application/json" id="data">. It goes first in <head>,
+// so it is the first element with that id and getElementById finds it. The
+// page's own sample block, if any, stays below it unread; nothing has to
+// find that block in the source, where comments, scripts and text such as a
+// <textarea> could hold lookalikes.
 export function fillFigureTemplate(page: string, data: unknown): string {
-  const block = `<script type="application/json" id="data">${scriptJson(data)}</script>`;
-  for (const match of page.matchAll(COMMENT_OR_SCRIPT)) {
-    if (match[1] !== undefined && isDataBlock(match[1])) return page.slice(0, match.index) + block + page.slice(match.index + match[0].length);
-  }
-  return insertHead(page, block);
+  return insertHead(page, `<script type="application/json" id="data">${scriptJson(data)}</script>`);
 }
 
 /* ---------- local images and videos ---------- */
