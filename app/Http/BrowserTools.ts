@@ -17,7 +17,7 @@ export const BROWSER_TOOLS = new Set([
   'harness_launch', 'harness_list', 'harness_discover', 'harness_presets', 'opencode_service_restart',
   'integrated_get', 'integrated_history', 'integrated_image', 'integrated_send', 'integrated_controls', 'integrated_files_search', 'integrated_delivery', 'integrated_configure', 'integrated_command', 'integrated_goal', 'integrated_interrupt',
   'integrated_permission_reply', 'integrated_question_reply', 'integrated_form_reply', 'integrated_task_stop', 'integrated_task_output', 'integrated_queue_update', 'integrated_new',
-  'settings_agent_interface_get', 'settings_agent_interface_update', 'settings_figures_get', 'settings_figures_update',
+  'settings_agent_interface_get', 'settings_agent_interface_update', 'settings_figures_get', 'settings_figures_update', 'settings_figure_templates', 'figure_template_page',
   'routine_list', 'routine_get', 'routine_create', 'routine_update', 'routine_delete', 'routine_run_now', 'routine_run', 'routine_runs', 'routine_log',
   'usage_summary', 'auto_summary_control',
   'settings_idle_compaction_get', 'settings_idle_compaction_update',

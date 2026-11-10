@@ -19,12 +19,28 @@ export const FIGURE_FRAME_PATH = '/figure-frame';
 
 const html = z.string().min(1, 'send the page as html').max(MAX_FIGURE_HTML_CHARS, `keep the page under ${MAX_FIGURE_HTML_CHARS} characters`);
 
+// Saved templates are named like status-cards/verdict: lowercase words with
+// hyphens, in up to four parts.
+export const FIGURE_TEMPLATE_NAME = '[a-z0-9][a-z0-9-]{0,39}(?:/[a-z0-9][a-z0-9-]{0,39}){0,3}';
+export const figureTemplateName = z.string().max(120).regex(new RegExp(`^${FIGURE_TEMPLATE_NAME}$`), 'use lowercase letters, digits and -, in parts split by /, such as status-cards/verdict');
+export const MAX_FIGURE_DATA_CHARS = 128_000;
+
+// A page is either the agent's own html, or a saved template and the data
+// it draws, checked against the template's schema before anything shows.
 export const htmlRenderInput = z.object({
   id: z.string().regex(new RegExp(`^${FIGURE_ID}$`), 'use letters, digits, _ and -, up to 48').optional(),
   title: z.string().trim().min(1).max(200),
-  html,
+  html: html.optional(),
+  template: figureTemplateName.optional(),
+  version: z.number().int().min(1).optional(),
+  data: z.unknown().optional(),
   height: z.number().int().optional()
-}).strict();
+}).strict().superRefine((input, context) => {
+  if (input.html !== undefined && input.template !== undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: ['template'], message: 'send html or template, not both' });
+  else if (input.html === undefined && input.template === undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: ['html'], message: 'send the page as html, or name a saved template with its data' });
+  if (input.template === undefined && (input.data !== undefined || input.version !== undefined)) context.addIssue({ code: z.ZodIssueCode.custom, path: [input.data !== undefined ? 'data' : 'version'], message: 'data and version go with template' });
+  if (input.template !== undefined && input.data === undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: ['data'], message: 'send the data the template draws' });
+});
 export type HtmlRenderInput = z.infer<typeof htmlRenderInput>;
 
 export const htmlPreviewInput = z.object({
@@ -193,8 +209,8 @@ export function figureFrameCsp(frameAncestors: string | null): string {
 }
 
 // Runs first in every page: reports its height, hands links to Patterm and
-// exposes the answer bridge.
-const BOOTSTRAP = `(function () {
+// exposes the answer bridge, and a template's data.
+const bootstrap = (data: string) => `(function () {
   var host = window.parent;
   var state = { answers: {}, canAnswer: false };
   var listeners = [];
@@ -252,20 +268,44 @@ const BOOTSTRAP = `(function () {
     },
     answered: function (id) { return state.answers[id] || null; },
     get canAnswer() { return state.canAnswer; },
-    onChange: function (listener) { listeners.push(listener); }
+    onChange: function (listener) { listeners.push(listener); },
+    data: ${data}
   });
 })();`;
 
 // The agent's page with the theme and bootstrap first in <head>, so its own
-// rules and scripts follow them.
-export function prepareFigureHtml(page: string, fontCss = ''): string {
-  const head = `<style id="patterm-theme">${BASE_CSS}</style>${fontCss ? `<style id="patterm-fonts">${fontCss}</style>` : ''}<script>${BOOTSTRAP}</script>`;
+// rules and scripts follow them. A template's data is also patterm.data.
+export function prepareFigureHtml(page: string, fontCss = '', data?: unknown): string {
+  const head = `<style id="patterm-theme">${BASE_CSS}</style>${fontCss ? `<style id="patterm-fonts">${fontCss}</style>` : ''}<script>${bootstrap(data === undefined ? 'null' : scriptJson(data))}</script>`;
+  return insertHead(page, head);
+}
+
+function insertHead(page: string, head: string): string {
   const opening = /<head\b[^>]*>/i.exec(page);
   if (opening) return page.slice(0, opening.index + opening[0].length) + head + page.slice(opening.index + opening[0].length);
   const html = /<html\b[^>]*>/i.exec(page);
   if (html) return `${page.slice(0, html.index + html[0].length)}<head>${head}</head>${page.slice(html.index + html[0].length)}`;
   const doctype = /^\s*<!doctype[^>]*>/i.exec(page);
   return doctype ? `${doctype[0]}<head>${head}</head>${page.slice(doctype[0].length)}` : `<!doctype html><head>${head}</head>${page}`;
+}
+
+/* ---------- templates ---------- */
+
+// JSON that is also safe inside a <script>: nothing in it can close the tag.
+function scriptJson(data: unknown): string {
+  return JSON.stringify(data).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+}
+
+// The block a template reads its data from, as the status cards do:
+// <script type="application/json" id="data">. A tag without the JSON type,
+// such as one named in a comment, is not it.
+const DATA_BLOCK = /<script\b(?=[^>]*\btype\s*=\s*["']?application\/json["']?[\s/>])(?=[^>]*\bid\s*=\s*(?:"data"|'data'|data(?=[\s/>])))[^>]*>[\s\S]*?<\/script\s*>/i;
+
+// A saved template's page holding this data. Its own sample data, if it has
+// a block, is replaced; otherwise the block goes first in <head>.
+export function fillFigureTemplate(page: string, data: unknown): string {
+  const block = `<script type="application/json" id="data">${scriptJson(data)}</script>`;
+  return DATA_BLOCK.test(page) ? page.replace(DATA_BLOCK, () => block) : insertHead(page, block);
 }
 
 /* ---------- local images and videos ---------- */
@@ -330,10 +370,33 @@ export function replaceFigureVideos(page: string, placeholders: ReadonlyMap<stri
 
 export { figureAnswers, figureAnswerText, figureId, figureToken, figureToolInput, isFigureTool, isSavedFigure } from './TranscriptProjection';
 
+export type FigurePage =
+  | { id?: string | undefined; title: string; html: string; height?: number | undefined }
+  | { id?: string | undefined; title: string; template: string; data: unknown; height?: number | undefined };
+
 // The page a saved figure's call sent, or null for anything unreadable.
-export function figurePage(input: unknown): { title: string; html: string; height?: number | undefined } | null {
+export function figurePage(input: unknown): FigurePage | null {
   const parsed = htmlRenderInput.safeParse(input);
-  return parsed.success ? parsed.data : null;
+  if (!parsed.success) return null;
+  const { id, title, height, html, template, data } = parsed.data;
+  const common = { ...(id !== undefined ? { id } : {}), title, ...(height !== undefined ? { height } : {}) };
+  if (template !== undefined) return { ...common, template, data };
+  return html === undefined ? null : { ...common, html };
+}
+
+// The template version a figure drew, as its reply recorded it. The call
+// may leave the version out; the reply always says which one it used.
+export function figureTemplate(tool: TranscriptTool): { name: string; version: number } | null {
+  const name = new RegExp(`^${FIGURE_TEMPLATE_NAME}$`);
+  for (const candidate of [tool.result, tool.output, tool.state]) {
+    const found = findInReply(candidate, 'template', 0, (value) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+      const record = value as Record<string, unknown>;
+      return typeof record.name === 'string' && name.test(record.name) && Number.isInteger(record.version) && (record.version as number) > 0 ? { name: record.name, version: record.version as number } : null;
+    });
+    if (found) return found;
+  }
+  return null;
 }
 
 // The tool's reply maps each image or video path to its stored copy.
@@ -349,31 +412,32 @@ export function figureVideos(tool: TranscriptTool): Record<string, string> {
 }
 
 function figureMedia(tool: TranscriptTool, key: 'images' | 'videos'): Record<string, string> {
+  const hashes = (media: unknown) => media && typeof media === 'object' && !Array.isArray(media)
+    ? Object.fromEntries(Object.entries(media).filter((entry): entry is [string, string] => typeof entry[1] === 'string' && /^[0-9a-f]{64}$/.test(entry[1])))
+    : null;
   for (const candidate of [tool.result, tool.output, tool.state]) {
-    const found = findMedia(candidate, key, 0);
+    const found = findInReply(candidate, key, 0, hashes);
     if (found) return found;
   }
   return {};
 }
 
-function findMedia(value: unknown, key: 'images' | 'videos', depth: number): Record<string, string> | null {
+function findInReply<T>(value: unknown, key: string, depth: number, accept: (found: unknown) => T | null): T | null {
   if (depth > 8 || value === null || value === undefined) return null;
   if (typeof value === 'string') {
     if (!value.includes(key)) return null;
-    try { return findMedia(JSON.parse(value), key, depth + 1); } catch { return null; }
+    try { return findInReply(JSON.parse(value), key, depth + 1, accept); } catch { return null; }
   }
   if (Array.isArray(value)) {
-    for (const item of value) { const found = findMedia(item, key, depth + 1); if (found) return found; }
+    for (const item of value) { const found = findInReply(item, key, depth + 1, accept); if (found) return found; }
     return null;
   }
   if (typeof value !== 'object') return null;
   const record = value as Record<string, unknown>;
-  const media = record[key];
-  if (media && typeof media === 'object' && !Array.isArray(media)) {
-    return Object.fromEntries(Object.entries(media).filter((entry): entry is [string, string] => typeof entry[1] === 'string' && /^[0-9a-f]{64}$/.test(entry[1])));
-  }
+  const accepted = key in record ? accept(record[key]) : null;
+  if (accepted) return accepted;
   for (const nested of ['structuredContent', 'content', 'text', 'result', 'output']) {
-    const found = findMedia(record[nested], key, depth + 1);
+    const found = findInReply(record[nested], key, depth + 1, accept);
     if (found) return found;
   }
   return null;

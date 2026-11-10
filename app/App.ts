@@ -86,6 +86,7 @@ import type { IdleCompactionSettings } from './Services/SettingsService';
 import { IntegratedAgentService } from './Services/IntegratedAgentService';
 import type { IntegratedConversationEvent } from './Services/IntegratedConversation';
 import type { PagePreviewer } from './Actions/PreviewHtmlFigureAction';
+import { FigureTemplateService } from './Services/FigureTemplateService';
 import { FigureVideoStore } from './Services/FigureVideoStore';
 import { TranscriptImageStore } from './Services/TranscriptImageStore';
 import { WorktreeFileService } from './Services/WorktreeFileService';
@@ -788,6 +789,7 @@ async function createApplicationResources(
     integrated,
     transcriptImages,
     figureVideos,
+    figureTemplates: new FigureTemplateService(database),
     ...(options.pagePreviewer ? { pagePreviewer: options.pagePreviewer } : {}),
     settings,
     harnessPresets,

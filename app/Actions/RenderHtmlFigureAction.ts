@@ -4,6 +4,7 @@ import path from 'node:path';
 import { pathContains } from '../Platform/PathIdentity';
 import { MAX_FIGURE_VIDEO_BYTES, type FigureVideoStore } from '../Services/FigureVideoStore';
 import { figureImagePaths, figureToken, figureVideoPaths, formatInputErrors, htmlRenderInput } from '../Services/HtmlFigure';
+import type { FigureTemplateService } from '../Services/FigureTemplateService';
 import type { TranscriptImageStore } from '../Services/TranscriptImageStore';
 
 export interface FigureCaller {
@@ -13,26 +14,39 @@ export interface FigureCaller {
 
 export type FigureVideos = Pick<FigureVideoStore, 'fromFile'>;
 
+export type FigureTemplates = Pick<FigureTemplateService, 'check'>;
+
 // Checks an agent's page and stores the local images and videos it shows. The page
 // itself stays in the harness's own transcript as the tool call's input; the
 // reply carries the stored copies so the renderer never reads agent paths.
+// A template's data is checked against its schema instead, and the reply
+// records the version it drew, which the renderer reads back.
 export class RenderHtmlFigureAction {
   constructor(
     private readonly images: Pick<TranscriptImageStore, 'fromFile'> | undefined,
-    private readonly videos?: FigureVideos | undefined
+    private readonly videos?: FigureVideos | undefined,
+    private readonly templates?: FigureTemplates | undefined
   ) {}
 
-  async execute(raw: unknown, caller: FigureCaller): Promise<{ ok: true; ref: string; shown: string; images?: Record<string, string>; videos?: Record<string, string> }> {
+  async execute(raw: unknown, caller: FigureCaller): Promise<{ ok: true; ref: string; shown: string; images?: Record<string, string>; videos?: Record<string, string>; template?: { name: string; version: number } }> {
     const parsed = htmlRenderInput.safeParse(raw);
     if (!parsed.success) throw rejected(formatInputErrors(parsed.error));
-    const { images, errors } = storeImages(this.images, parsed.data.html, caller);
-    const stored = await storeVideos(this.videos, parsed.data.html, caller);
-    errors.push(...stored.errors);
-    if (errors.length) throw rejected(errors);
     // Pages appear only where the reply places this token. Agents otherwise
     // restate what they drew in prose.
     const ref = figureToken(parsed.data.id ?? `fig_${randomBytes(3).toString('hex')}`);
-    return { ok: true, ref, shown: `Not shown yet. Put ${ref} on its own line in your reply where it belongs and write around it; do not describe what the page already shows.`, ...(Object.keys(images).length ? { images } : {}), ...(Object.keys(stored.videos).length ? { videos: stored.videos } : {}) };
+    const shown = `Not shown yet. Put ${ref} on its own line in your reply where it belongs and write around it; do not describe what the page already shows.`;
+    if (parsed.data.template !== undefined) {
+      if (!this.templates) throw rejected(['template: saved templates are unavailable here; send html instead']);
+      const checked = this.templates.check(parsed.data.template, parsed.data.version, parsed.data.data);
+      if (!checked.ok) throw rejected(checked.errors);
+      return { ok: true, ref, shown, template: { name: checked.name, version: checked.version } };
+    }
+    const page = parsed.data.html!;
+    const { images, errors } = storeImages(this.images, page, caller);
+    const stored = await storeVideos(this.videos, page, caller);
+    errors.push(...stored.errors);
+    if (errors.length) throw rejected(errors);
+    return { ok: true, ref, shown, ...(Object.keys(images).length ? { images } : {}), ...(Object.keys(stored.videos).length ? { videos: stored.videos } : {}) };
   }
 }
 

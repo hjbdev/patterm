@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Saved templates for `html_render`. An agent publishes a page once, with a
+  JSON Schema and example data, through `template_publish`; after that it
+  sends only `template` and `data`, and Patterm fills the page. Data that
+  doesn't match the schema is rejected with the fields to fix, and nothing
+  shows. `template_list` and `template_get` let agents learn a template
+  without reading its page. Versions never change once published, each page
+  shown keeps the version it drew, and Settings › Figures lists every version
+  with who published it and when.
 - Folders for agents and processes, replacing pinned tabs. File a tab from its
   menu (Move to folder), or drag it onto a folder in the sidebar. A folder sits
   in the list like an agent: folded, it shows a dot for each tab in it, and any
