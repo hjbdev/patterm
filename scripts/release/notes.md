@@ -1,22 +1,19 @@
-## Patterm 0.4.0
+## Patterm 0.5.0
 
-- The assistant joins the other bots in the sidebar. Bots can use voice, Focus
-  mode and notification digests, and keep their own harness and model settings.
-- Agents and bots share saved memory across projects, with an optional nightly
-  review of new conversation activity.
-- Bots and their helpers are easier to find and message, including bots on
-  paired hosts. Bot notifications show their reply and their picture.
-- Agents can pin a configurable status label, such as "Waiting for review".
-- Optional usage telemetry helps you find features you use and those you don't.
-  It is off until you enable it with your own PostHog project key.
-- The command palette can launch presets, and the sidebar can sort agents by
-  recent activity.
-- OpenCode fixes keep tools available after idle eviction, preserve streamed
-  replies, and keep the model and speed pickers in sync. Codex conversation
-  history and model selection are more reliable too.
+- Organise agents and processes into folders shared across your desktop and
+  browsers. Folders replace pinned tabs and fit into the sidebar's sort order.
+- Integrated agents can set and track native goals from the composer.
+- Agents can publish reusable HTML figure templates and show local videos in
+  figures. Figure-only replies now fill the conversation column correctly.
+- The notifications tray has an Unread tab, and its bell is available on phones.
+  You can also disable user-facing subagent notifications.
+- OpenCode agents keep Patterm's tools when a session moves, and undelivered
+  steering messages can be sent again or dismissed.
+- Secrets expire after 24 hours by default, with longer lifetimes available.
+  **Existing secrets expire on upgrade** because their creation time was not
+  recorded; agents can ask for them again.
 
-See CHANGELOG.md for the full list of changes since 0.3.0, including upgrade
-notes for shared memory and OpenCode speed variants.
+See CHANGELOG.md for the full list of changes since 0.4.0.
 
 ## Platform support
 
