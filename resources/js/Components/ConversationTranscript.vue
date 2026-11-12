@@ -141,8 +141,8 @@
                   <p class="min-w-0 whitespace-pre-wrap break-words">{{ row.message.text }}</p>
                 </div>
                 <ConversationThoughtRow v-else-if="row.message.kind === 'reasoning'" :message="row.message" :process-id="processId" :duration-ms="thoughtDurations.get(row.message.id)" :thinking="isThinking(row.message)" :active="activeMessageId === row.message.id" />
-                <Bubble v-else variant="ghost" align="start" class="max-w-full">
-                  <BubbleContent>
+                <Bubble v-else variant="ghost" align="start" class="w-full max-w-full">
+                  <BubbleContent class="w-full">
                     <p v-if="row.message.redactionCount" class="mb-2 text-xs text-muted-foreground">{{ row.message.redactionCount }} redacted</p>
                     <ApprovalDetails v-if="row.message.approval" :details="row.message.approval" />
                     <Markdown v-else :source="row.message.text" :reveal-appends="Boolean(live)">

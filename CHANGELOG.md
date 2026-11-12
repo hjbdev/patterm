@@ -107,6 +107,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- HTML figures fill the reply column consistently, including replies containing
+  only a figure, instead of shrinking to the iframe's default 300 px width.
 - A snoozed project's notifications no longer add to the notification tray's
   count, the window title or the app badge. They still show in the tray's
   list and as dots on their tabs.
