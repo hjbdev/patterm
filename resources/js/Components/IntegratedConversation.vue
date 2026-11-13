@@ -1164,13 +1164,14 @@ function goalAction(action: Exclude<IntegratedGoalAction, 'set'>): void {
 
 async function configure(selectorId: string, value: string): Promise<void> {
   const token = generation;
-  const before = controlsRead;
-  await runMutation('integrated_configure', { process_id: props.processId, selector: selectorId, value });
+  const settled: { before: typeof controlsRead } = { before: null };
+  await runMutation('integrated_configure', { process_id: props.processId, selector: selectorId, value }, () => { settled.before = controlsRead; });
   // A setter can alter other controls, or reject a requested value in favour
   // of a native default. Read back the actual state, only for this pane.
   if (token !== generation) return;
-  // An unversioned read begun before the mutation cannot confirm its result.
-  if (before && controlsRead === before) await before.promise;
+  // Capture at acknowledgement, not dispatch: another setter can start a read
+  // while this mutation is pending. That read cannot confirm this result.
+  if (settled.before && controlsRead === settled.before) await settled.before.promise;
   if (token === generation) await loadControls();
 }
 
@@ -1456,11 +1457,11 @@ function replySnapshot(reply: unknown): SnapshotLoader | null {
 }
 
 
-async function runMutation(tool: string, args: { process_id: string } & Record<string, unknown>): Promise<void> {
+async function runMutation(tool: string, args: { process_id: string } & Record<string, unknown>, settled?: () => void): Promise<void> {
   const token = generation;
   error.value = '';
   try {
-    await mutate(tool, args);
+    await mutate(tool, args).finally(settled);
     if (token !== generation) return;
     await refresh();
   } catch (cause) {

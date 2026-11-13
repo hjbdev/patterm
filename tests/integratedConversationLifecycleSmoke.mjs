@@ -1245,6 +1245,37 @@ test('configuration reads back native controls and a late setter cannot change a
   harness.scope.stop();
 });
 
+test('overlapping setters on an unversioned provider read again after each native mutation', async () => {
+  const harness = createHarness({ processId: 'overlapping_settings' });
+  await mountSettled(harness);
+  const controlsWith = (mode, effort) => ({ selectors: [
+    { id: 'mode', label: 'Mode', value: mode, options: [] },
+    { id: 'effort', label: 'Effort', value: effort, options: [] }
+  ], commands: [] });
+  harness.pane.controls.value = controlsWith('default', 'low');
+  const mode = harness.pane.configure('mode', 'plan');
+  const effort = harness.pane.configure('effort', 'high');
+  await flush();
+  harness.mutations[0].resolve({});
+  await flush();
+  await resolveGets(harness, emptyConversation());
+  const firstRead = pending(harness, 'integrated_controls')[0];
+  assert.ok(firstRead, 'the first setter starts a read while the second is still pending');
+  harness.mutations[1].resolve({});
+  await flush();
+  await resolveGets(harness, emptyConversation());
+  firstRead.resolve(controlsWith('plan', 'low'));
+  await flush();
+  const secondRead = pending(harness, 'integrated_controls')[0];
+  assert.ok(secondRead, 'a read begun before the second native mutation settled cannot confirm its value');
+  secondRead.resolve(controlsWith('plan', 'high'));
+  await Promise.all([mode, effort]);
+  assert.equal(harness.pane.controls.value.selectors.find((item) => item.id === 'effort').value, 'high');
+  assert.equal(pending(harness, 'integrated_controls').length, 0);
+  harness.lifecycle.beforeUnmount.forEach(callback => callback());
+  harness.scope.stop();
+});
+
 test('palette requests run through the open conversation and its controls are published', async () => {
   const harness = createHarness({ processId: 'A' });
   await resolveSubscriptions(harness);

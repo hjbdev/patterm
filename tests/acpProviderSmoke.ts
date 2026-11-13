@@ -187,7 +187,10 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     assert.equal(state.messages.data.find((row: any) => row.id === 'tool:edit').tool.name, 'write_file', 'partial tool updates keep the native name');
     assert.equal(state.messages.data.find((row: any) => row.id === 'tool:edit').tool.state.status, 'failed');
     assert.equal(state.messages.data.find((row: any) => row.id === 'tool:edit').tool.state.error, 'Response stopped');
-    assert(frames().some((frame) => frame.id === 42 && frame.result?.outcome?.outcome === 'cancelled'));
+    // The turn-end frame and the fake CLI recording the cancellation reply
+    // travel in opposite directions. Idle alone does not prove that second
+    // process has consumed its stdin yet.
+    await waitFor(provider, () => frames().some((frame) => frame.id === 42 && frame.result?.outcome?.outcome === 'cancelled'));
 
     await ask('always');
     state = await waitFor(provider, (snapshot) => snapshot.status === 'permission');
