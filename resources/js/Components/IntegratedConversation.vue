@@ -499,6 +499,7 @@ let controlsRetry: ReturnType<typeof setTimeout> | undefined;
 // The generation a controls read is under way for, if any, and the newest
 // revision a snapshot asked for meanwhile, which the read must reach.
 let controlsReadingFor = -1;
+let controlsRead: { generation: number; promise: Promise<void> } | null = null;
 let wantedControls: { generation: number; revision: string } | null = null;
 let stopped = false;
 // Every process change and unmount starts a new generation. Results from an
@@ -1100,9 +1101,26 @@ async function recoverOpenCode(): Promise<void> {
   await restartSession(false);
 }
 
-async function loadControls(): Promise<void> {
-  if (stopped || ended.value) return;
+function loadControls(): Promise<void> {
+  if (stopped || ended.value) return Promise.resolve();
+  if (controlsRead?.generation === generation) return controlsRead.promise;
   const token = generation;
+  clearTimeout(controlsRetry);
+  const promise = readControls(token).finally(() => {
+    if (controlsRead?.promise !== promise) return;
+    controlsRead = null;
+    if (token !== generation || stopped || ended.value) return;
+    // A snapshot arriving during the read can name a newer revision. Wait for
+    // this read to end before starting the next one, so replies cannot race.
+    const wanted = wantedControls;
+    wantedControls = null;
+    if (wanted?.generation === token && wanted.revision !== controls.value.revision && !controlsError.value) return loadControls();
+  });
+  controlsRead = { generation: token, promise };
+  return promise;
+}
+
+async function readControls(token: number): Promise<void> {
   controlsReadingFor = token;
   try {
     const result = await window.patterm.call('integrated_controls', { process_id: props.processId }) as Partial<IntegratedControls>;
@@ -1121,11 +1139,6 @@ async function loadControls(): Promise<void> {
   } finally {
     if (controlsReadingFor === token) controlsReadingFor = -1;
   }
-  // A snapshot that arrived during the read may name newer controls than it
-  // returned; read once more for them.
-  const wanted = wantedControls;
-  wantedControls = null;
-  if (wanted?.generation === token && token === generation && wanted.revision !== controls.value.revision && !controlsError.value) void loadControls();
 }
 
 // Goal mode's submission. It stays with the agent it was set for.
@@ -1150,12 +1163,16 @@ function goalAction(action: Exclude<IntegratedGoalAction, 'set'>): void {
 }
 
 async function configure(selectorId: string, value: string): Promise<void> {
-  await runMutation('integrated_configure', { process_id: props.processId, selector: selectorId, value });
-  const selector = controls.value.selectors.find((item) => item.id === selectorId);
-  if (!error.value && selector) {
-    controls.value = { ...controls.value, selectors: controls.value.selectors.map((item) => item === selector ? { ...item, value } : item) };
-    if (selectorId === 'model') await loadControls();
-  }
+  const token = generation;
+  const settled: { before: typeof controlsRead } = { before: null };
+  await runMutation('integrated_configure', { process_id: props.processId, selector: selectorId, value }, () => { settled.before = controlsRead; });
+  // A setter can alter other controls, or reject a requested value in favour
+  // of a native default. Read back the actual state, only for this pane.
+  if (token !== generation) return;
+  // Capture at acknowledgement, not dispatch: another setter can start a read
+  // while this mutation is pending. That read cannot confirm this result.
+  if (settled.before && controlsRead === settled.before) await settled.before.promise;
+  if (token === generation) await loadControls();
 }
 
 // Resolves whether the update succeeded. It stays with the agent it was made
@@ -1440,11 +1457,11 @@ function replySnapshot(reply: unknown): SnapshotLoader | null {
 }
 
 
-async function runMutation(tool: string, args: { process_id: string } & Record<string, unknown>): Promise<void> {
+async function runMutation(tool: string, args: { process_id: string } & Record<string, unknown>, settled?: () => void): Promise<void> {
   const token = generation;
   error.value = '';
   try {
-    await mutate(tool, args);
+    await mutate(tool, args).finally(settled);
     if (token !== generation) return;
     await refresh();
   } catch (cause) {

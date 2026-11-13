@@ -45,6 +45,9 @@ export interface IntegratedLaunchInput {
   // A restart reconnects MCP servers a shared daemon keeps across sessions,
   // so their tool lists are fetched again.
   reconnectMcp?: boolean;
+  // Recovery fallbacks are not explicit model/effort overrides. A provider's
+  // saved controls can be newer than the stopped session's launch columns.
+  restoreSavedSettings?: boolean;
   // The assistant and bots: Patterm keeps their saved memory current.
   memoryPush?: boolean;
 }

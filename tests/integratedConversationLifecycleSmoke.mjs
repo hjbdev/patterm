@@ -142,7 +142,7 @@ return {
     uncertain: submissionFor(props.processId)?.state === 'uncertain',
     canReply: canReply.value
   }),
-  refresh, loadOlder, historyCursor, loadingOlder, historyError, sendRequest, retryMessage, reconcileDelivery, replyQuestion, replyPermission, replyForm, takeControl,
+   refresh, loadOlder, historyCursor, loadingOlder, historyError, sendRequest, retryMessage, reconcileDelivery, replyQuestion, replyPermission, replyForm, takeControl, configure,
   transcriptMessages, messages, questions, permissions, questionAnswers, singleQuestionAnswers, customQuestionAnswers,
   forms, formAnswers, formErrors, setFormAnswer, toggleMultiselect, activeFields, isResponding,
    controls, resumeOpen, resumeQuery, transcriptRef, restartSession, recoverOpenCode, restartNeedsServer,
@@ -1212,6 +1212,68 @@ test('controls are read again only when a snapshot reports a new revision', asyn
   await flush();
   assert.equal(pending(revisit, 'integrated_controls').length, 1, 'controls without a revision are read on every visit');
   revisit.scope.stop();
+});
+
+test('configuration reads back native controls and a late setter cannot change another pane', async () => {
+  const harness = createHarness({ processId: 'settings_A' });
+  await mountSettled(harness);
+  harness.pane.controls.value = { selectors: [{ id: 'mode', label: 'Mode', value: 'default', options: [] }], commands: [], revision: 'r1' };
+  const configuring = harness.pane.configure('mode', 'auto');
+  await flush();
+  harness.mutations.at(-1).resolve({});
+  await flush();
+  await resolveGets(harness, { ...emptyConversation(), controls_revision: 'r2' });
+  const read = pending(harness, 'integrated_controls').at(-1);
+  assert.ok(read, 'every setting change reads the authoritative native state');
+  assert.equal(pending(harness, 'integrated_controls').length, 1, 'the revision refresh and setter share one read');
+  read.resolve({ selectors: [{ id: 'mode', label: 'Mode', value: 'default', options: [] }], commands: [], revision: 'r2' });
+  await configuring;
+  assert.equal(harness.pane.controls.value.selectors[0].value, 'default', 'the UI does not invent a value the native agent did not apply');
+
+  const late = harness.pane.configure('mode', 'auto');
+  await flush();
+  const mutation = harness.mutations.at(-1);
+  harness.props.processId = 'settings_B';
+  await flush();
+  await mountSettled(harness);
+  harness.pane.controls.value = { selectors: [{ id: 'mode', label: 'Mode', value: 'plan', options: [] }], commands: [] };
+  mutation.resolve({});
+  await late;
+  assert.equal(harness.pane.controls.value.selectors[0].value, 'plan');
+  assert.equal(pending(harness, 'integrated_controls').length, 0);
+  harness.lifecycle.beforeUnmount.forEach(callback => callback());
+  harness.scope.stop();
+});
+
+test('overlapping setters on an unversioned provider read again after each native mutation', async () => {
+  const harness = createHarness({ processId: 'overlapping_settings' });
+  await mountSettled(harness);
+  const controlsWith = (mode, effort) => ({ selectors: [
+    { id: 'mode', label: 'Mode', value: mode, options: [] },
+    { id: 'effort', label: 'Effort', value: effort, options: [] }
+  ], commands: [] });
+  harness.pane.controls.value = controlsWith('default', 'low');
+  const mode = harness.pane.configure('mode', 'plan');
+  const effort = harness.pane.configure('effort', 'high');
+  await flush();
+  harness.mutations[0].resolve({});
+  await flush();
+  await resolveGets(harness, emptyConversation());
+  const firstRead = pending(harness, 'integrated_controls')[0];
+  assert.ok(firstRead, 'the first setter starts a read while the second is still pending');
+  harness.mutations[1].resolve({});
+  await flush();
+  await resolveGets(harness, emptyConversation());
+  firstRead.resolve(controlsWith('plan', 'low'));
+  await flush();
+  const secondRead = pending(harness, 'integrated_controls')[0];
+  assert.ok(secondRead, 'a read begun before the second native mutation settled cannot confirm its value');
+  secondRead.resolve(controlsWith('plan', 'high'));
+  await Promise.all([mode, effort]);
+  assert.equal(harness.pane.controls.value.selectors.find((item) => item.id === 'effort').value, 'high');
+  assert.equal(pending(harness, 'integrated_controls').length, 0);
+  harness.lifecycle.beforeUnmount.forEach(callback => callback());
+  harness.scope.stop();
 });
 
 test('palette requests run through the open conversation and its controls are published', async () => {
