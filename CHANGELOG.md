@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Integrated agents now show one recovery panel with a resume button and
+  expandable diagnostics instead of stacked error and stopped-session notices.
+  When `/restart` is blocked by an OpenCode version mismatch, the panel offers
+  an explicit shared-server restart and resumes the same conversation afterwards,
+  with a warning that other OpenCode turns will be interrupted. Cloudflare blocks
+  are explained without assuming the user's login has expired.
+
 ## [0.5.0] - 2026-11-12
 
 ### Added

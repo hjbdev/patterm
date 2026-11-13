@@ -339,7 +339,7 @@ let stashedDraft: { processId: string; text: string; chips: ComposerChip[] } | n
 // Counts goal edits, so a slow submit only ends the edit it came from.
 let goalEdit = 0;
 const placeholder = computed(() => {
-  if (props.ended) return props.restartable ? 'Type /restart to resume this conversation' : 'This session has ended';
+  if (props.ended) return props.restartable ? 'Choose a recovery option above' : 'This session has ended';
   if (goalMode.value) return 'Describe when the work is done…';
   if (props.compact) return `Message ${props.addressee ?? 'agent'}`;
   const parts = ['Message agent', ...mentionable.value ? ['type @ for agents'] : [], ...props.controls.commands.length ? ['/ for commands'] : []];
