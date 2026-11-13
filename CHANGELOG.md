@@ -18,7 +18,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Patterm imports user requests, model replies, tool steps and token counts;
   generated system metadata is excluded.
 
+### Changed
+
+- Antigravity starts in Auto when available and approves supplied MCP tools,
+  including writes, in that mode. Its MCP picker can switch back to asking.
+  Default and Plan keep native approval rules; shell and file approval are not bypassed.
+
 ### Fixed
+
+- Antigravity keeps model, thinking, mode and MCP choices when resuming a
+  conversation. Native turn errors can be retried without restarting a healthy
+  host. Cancellation closes unfinished tools and discards late permission
+  requests; partial tool updates retain their output and approval cards keep
+  the native scope labels.
+- PDF attachments reach Antigravity through native file references rather than
+  embedded blobs, which agy 1.5.8 silently ignores.
+- Integrated setting pickers read back the actual native values, and a setting
+  change that finishes after switching agents cannot change the new pane.
 
 - Integrated agents now show one recovery panel with a resume button and
   expandable diagnostics instead of stacked error and stopped-session notices.

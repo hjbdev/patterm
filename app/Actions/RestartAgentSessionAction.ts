@@ -154,7 +154,12 @@ export class RestartAgentSessionAction {
           // Only a chosen name is passed on; an unnamed agent keeps its generated or native title.
           name: source.display_name ?? undefined,
           interface_mode: 'integrated'
-        }, { resume_id: source.resume_id!, conversation_id: '', source_session_id: source.session_id, reconnect_mcp: true });
+        }, {
+          resume_id: source.resume_id!, conversation_id: '', source_session_id: source.session_id, reconnect_mcp: true,
+          // A live native report wins even if saving its latest change failed.
+          // Only the launch-column fallback defers to persisted controls.
+          restore_saved_settings: !Object.hasOwn(live, 'model') && !Object.hasOwn(live, 'reasoning')
+        });
       } catch (error) {
         this.processes.releaseTimers(held);
         const reason = error instanceof Error ? error.message : String(error);

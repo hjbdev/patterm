@@ -62,6 +62,21 @@ under history settings. Native terminal launches, hidden memory updates and
 automatic idle compaction are not supported for agy yet; native questions appear
 in the conversation rather than Patterm forms.
 
+New Antigravity sessions use **Auto** when the account and platform offer it.
+In Auto, Patterm approves MCP reads **and writes** on servers supplied to the
+session. Change **MCP in Auto** to **Ask for MCP tools** to review those requests;
+Default and Plan modes leave MCP approval to agy's native rules. Shell, file and web
+requests still follow agy's native policy, and native deny rules still block.
+This is scoped client approval, not `--dangerously-skip-permissions`, and never
+changes agy's global configuration. Model, thinking level, mode and MCP choice
+are saved per conversation and restored when it resumes. Explicit model or
+thinking overrides at resume take precedence. Accounts without Auto retain their
+native mode and show a notice instead of pretending Auto is active.
+Images are sent inline. PDFs are passed as validated file references for agy's
+native tools to read; native file-access prompts can still apply. Embedded PDF
+blobs are not used because agy 1.5.8 silently ignores them.
+Follow-ups wait for the current turn; native mid-turn steering is not supported.
+
 To keep agents running on a machine that stays on, run Patterm as a background
 service and open it in any browser:
 
@@ -82,9 +97,9 @@ service.
 ## What Patterm is not
 
 - It is not an agent. It never calls a model API and holds no model credentials.
-- It doesn't change how your agents work. Each CLI keeps its own login,
-  permission prompts and resume behaviour, and runs with your account's
-  permissions.
+- Each CLI keeps its own login and runs with your account's permissions.
+  Patterm renders native approval requests; Antigravity's scoped MCP approval
+  policy is described above.
 - It doesn't commit or open pull requests. Agents use their own git and `gh`
   workflows, and Patterm only records the links they attach.
 - It keeps your data in SQLite on the hosting machine and doesn't record raw

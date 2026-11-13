@@ -76,6 +76,7 @@ export interface HarnessResume {
   source_session_id?: string;
   // Set by a restart, which should pick up changed MCP servers.
   reconnect_mcp?: boolean;
+  restore_saved_settings?: boolean;
 }
 
 // Minimal slice of TerminalService the launcher needs, so tests can supply a
@@ -242,6 +243,7 @@ export class HarnessLauncher {
         executable: install.executablePath, cwd, name: input.name?.trim() || null, context: agentContext, mcp, mcpServers, resumeId: providerSessionId,
         model: selection.model, reasoning: selection.reasoning, serviceTier: selection.serviceTier,
         reconnectMcp: resume?.reconnect_mcp === true,
+        restoreSavedSettings: resume?.restore_saved_settings === true,
         memoryPush: input.session_role === 'assistant' || input.session_role === 'bot'
       };
       const prepared = await this.deps.integrated.prepare(harness as 'claude' | 'codex' | 'opencode' | 'agy', launchInput);

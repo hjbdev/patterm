@@ -292,9 +292,11 @@ async function main(): Promise<void> {
     const helperAccess = new McpHelperAccess(database, () => false, launchingIdentities);
     const helperHarnesses: string[] = [];
     const reconnectedMcp: boolean[] = [];
+    const restoredControls: boolean[] = [];
     const integratedService = {
-      prepare: async (_harness: 'claude' | 'codex' | 'opencode', input: { context: string; mcp: { env: Record<string, string> }; reconnectMcp?: boolean }) => {
+      prepare: async (_harness: 'claude' | 'codex' | 'opencode', input: { context: string; mcp: { env: Record<string, string> }; reconnectMcp?: boolean; restoreSavedSettings?: boolean }) => {
         reconnectedMcp.push(input.reconnectMcp === true);
+        restoredControls.push(input.restoreSavedSettings === true);
         helperHarnesses.push(helperAccess.harness({ identity: input.mcp.env.PATTERM_MCP_IDENTITY!, opencodeBridge: undefined })!);
         openInstruction = input.context; return { resumeId: 'ses_prepared', argv: ['/usr/bin/opencode'] }; },
       prompt: async (processId: string, text: string, context?: string) => {
@@ -782,9 +784,11 @@ async function main(): Promise<void> {
     await assert.rejects(restart.execute({ process_id: restartChild.process_id, project_id: projectId }), /Only top-level agents/);
     database.connection.prepare(`update processes set activity = 'idle' where id = ?`).run(restartTab.process_id);
     reconnectedMcp.length = 0;
+    restoredControls.length = 0;
     const restarted = await restart.execute({ process_id: restartTab.process_id, project_id: projectId });
     assert.equal(restarted.replaced_process_id, restartTab.process_id);
     assert.deepEqual(reconnectedMcp, [true], 'a restart reconnects shared MCP servers so their tool lists are fetched again');
+    assert.deepEqual(restoredControls, [false], 'successfully read live controls outrank older saved preferences');
     assert.deepEqual(restartSteps, [`hold:${restartTab.process_id}`, `stop:${restartTab.process_id}`, 'transfer', `release:timer_${restartTab.process_id}`, `close:${restartTab.process_id}`],
       'timers wait through the gap, and the old process stops before the resume and closes after it');
     assert.deepEqual(timerTransfers, [[[restartTab.process_id], restarted.process_id]]);
@@ -802,6 +806,7 @@ async function main(): Promise<void> {
     database.connection.prepare("update processes set status = 'failed', activity = 'working' where id = ?").run(deadTab.process_id);
     database.connection.prepare('update sessions set exited_at = ? where id = ?').run(new Date().toISOString(), deadTab.session_id);
     const recovered = await restart.execute({ process_id: deadTab.process_id, project_id: projectId });
+    assert.equal(restoredControls.at(-1), true, 'ended-host recovery marks launch columns as fallbacks for newer saved controls');
     assert.equal(recovered.replaced_process_id, deadTab.process_id);
     assert.equal((database.connection.prepare('select parent_process_id from processes where id = ?').get(liveChild.process_id) as { parent_process_id: string }).parent_process_id, recovered.process_id);
     assert.equal((database.connection.prepare('select resumed_from_session_id from sessions where id = ?').get(recovered.session_id) as { resumed_from_session_id: string }).resumed_from_session_id, deadTab.session_id);

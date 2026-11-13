@@ -41,7 +41,7 @@ export class AcpProviderService implements IntegratedProviderService {
       const server = value as { command: string; args: string[]; env: Record<string, string> };
       return { name, command: server.command, args: server.args, env: Object.entries(server.env).map(([name, value]) => ({ name, value })) };
     });
-    fs.writeFileSync(configPath, JSON.stringify({ socketPath, executable: input.executable, cwd: input.cwd, resumeId: input.resumeId, context: input.context, model: input.model ?? null, reasoning: input.reasoning ?? null, mcpServers, ...(this.images ? { imageDirectory: this.images.directory } : {}) }), { mode: 0o600 });
+    fs.writeFileSync(configPath, JSON.stringify({ socketPath, settingsDirectory: path.join(directory, 'settings'), restoreSavedSettings: input.restoreSavedSettings === true, executable: input.executable, cwd: input.cwd, resumeId: input.resumeId, context: input.context, model: input.model ?? null, reasoning: input.reasoning ?? null, mcpServers, ...(this.images ? { imageDirectory: this.images.directory } : {}) }), { mode: 0o600 });
     let pid: number | null = null;
     try {
       pid = await this.launcher.launch({ harness: 'agy', key, nodePath: this.nodePath, script: this.hostScript, configPath, cwd: input.cwd, env: this.env });
@@ -75,9 +75,16 @@ export class AcpProviderService implements IntegratedProviderService {
     const attachments: Row[] = input.references.map((reference) => ({ type: 'reference', name: reference.name, detail: `@${reference.relativePath}` }));
     for (const reference of input.references) prompt.push({ type: 'resource_link', uri: pathToFileURL(reference.path).href, name: reference.name });
     for (const attachment of input.attachments) {
+      // agy 1.5.8 silently ignores embedded PDF blobs. A real file reference
+      // reaches its native reader instead, with its normal file permissions.
+      if (attachment.mime === 'application/pdf') {
+        prompt.push({ type: 'resource_link', uri: pathToFileURL(attachment.path).href, name: attachment.name, mimeType: attachment.mime });
+        attachments.push({ type: 'file', name: attachment.name, mime: attachment.mime });
+        continue;
+      }
       const data = attachment.data ?? fs.readFileSync(attachment.path).toString('base64');
       if (attachment.mime.startsWith('image/')) prompt.push({ type: 'image', mimeType: attachment.mime, data });
-      else prompt.push({ type: 'resource', resource: { uri: `attachment:///${encodeURIComponent(attachment.name)}`, mimeType: attachment.mime, ...(attachment.mime === 'application/pdf' ? { blob: data } : { text: Buffer.from(data, 'base64').toString('utf8') }) } });
+      else prompt.push({ type: 'resource', resource: { uri: `attachment:///${encodeURIComponent(attachment.name)}`, mimeType: attachment.mime, text: Buffer.from(data, 'base64').toString('utf8') } });
       const stored = attachment.mime.startsWith('image/') ? this.images?.fromBase64(data) : null;
       attachments.push({ type: stored ? 'image' : 'file', name: attachment.name, mime: attachment.mime, ...(stored ? { sha256: stored.sha256 } : {}) });
     }
@@ -104,7 +111,13 @@ export class AcpProviderService implements IntegratedProviderService {
       commands: (state.commands ?? []).map((command: Row) => ({ name: String(command.name), description: String(command.description ?? '') })), revision: state.controls_revision
     };
   }
-  async configure(processId: string, selector: string, value: string): Promise<void> { await callIntegratedHost(this.runtime(processId).socketPath, 'configure', { selector, value }); }
+  async configure(processId: string, selector: string, value: string): Promise<void> {
+    await callIntegratedHost(this.runtime(processId).socketPath, 'configure', { selector, value });
+    // Recovery of an ended host falls back to these columns. Do not leave its
+    // original launch model/effort behind after the user changes the pickers.
+    const settings = await this.nativeSettings(processId);
+    this.database.connection.prepare('update sessions set model = ?, reasoning = ? where id = ?').run(settings.model ?? null, settings.reasoning ?? null, this.runtime(processId).sessionId);
+  }
   async command(processId: string, name: string, text: string): Promise<unknown> {
     return this.prompt(processId, { text: `/${name}${text ? ` ${text}` : ''}`, attachments: [], references: [] });
   }

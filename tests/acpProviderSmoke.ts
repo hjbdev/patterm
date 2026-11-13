@@ -29,13 +29,17 @@ const update = value => out({method:'session/update',params:{sessionId:'native-s
 const options = [
  {id:'model',name:'Model',type:'select',currentValue:'flash',options:[{value:'flash',name:'Flash'}]},
  {id:'thought_level',name:'Thinking Level',type:'select',currentValue:'high',options:[{value:'low',name:'Low'},{value:'high',name:'High'}]},
- {id:'mode',name:'Mode',type:'select',currentValue:'default',options:[{value:'default',name:'Default'},{value:'plan',name:'Plan'}]}
+ {id:'mode',name:'Mode',type:'select',currentValue:'default',options:[{value:'default',name:'Default'},...(!process.env.ACP_NO_AUTO ? [{value:'auto',name:'Auto'}] : []),{value:'plan',name:'Plan'}]}
 ];
+// ACP also allows grouped select values; launch and restore must flatten them
+// just as the picker and configure path do.
+options[2].options = [{name:'Execution modes',options:options[2].options}];
 const echo = text => update({sessionUpdate:'user_message_chunk',content:{type:'text',text}});
 const say = text => update({sessionUpdate:'agent_message_chunk',content:{type:'text',text}});
-const permission = () => {
- update({sessionUpdate:'tool_call',toolCallId:'edit',name:'write_file',title:'File probe.txt',status:'pending',rawInput:{Path:'probe.txt',Content:'new'}});
- out({id:41,method:'session/request_permission',params:{sessionId:'native-session',toolCall:{title:'File probe.txt',locations:[{path:'probe.txt'}],content:[{type:'diff',path:'probe.txt',oldText:'old\n',newText:'new\n'}]},options:[{optionId:'allow',kind:'allow_once',name:'Allow'},{optionId:'deny',kind:'reject_once',name:'Deny'}]}});
+const permission = (text) => {
+ const name=text==='mcp' ? 'mcp_patterm_mutate' : text==='unknown-mcp' ? 'mcp_other_mutate' : 'write_file';
+ update({sessionUpdate:'tool_call',toolCallId:'edit',name,title:'File probe.txt',status:'pending',rawInput:{Path:'probe.txt',Content:'new'}});
+ out({id:41,method:'session/request_permission',params:{sessionId:'native-session',toolCall:{toolCallId:'edit',name,title:text==='spoof-mcp' ? 'Run mcp_patterm_mutate' : 'File probe.txt',locations:[{path:'probe.txt'}],content:[{type:'diff',path:'probe.txt',oldText:'old\n',newText:'new\n'}]},options:[{optionId:'allow',kind:'allow_once',name:'Allow'},...(text==='always' ? [{optionId:'session',kind:'allow_always',name:'Allow for this session'}] : []),{optionId:'deny',kind:'reject_once',name:'Deny'}]}});
 };
 require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
  const q=JSON.parse(line);fs.appendFileSync(process.env.ACP_TRACE,line+'\n');
@@ -54,7 +58,11 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   if(text==='crash') {fs.writeFileSync(process.env.ACP_TRACE+'.side-effect','executed');process.exit(17);}
   echo(text);
   if(text==='failure-after-echo') return out({id:q.id,error:{code:-32000,message:'Native acknowledged turn failed'}});
-  if(text==='permission'||text==='cancel') return permission();
+   if(['permission','cancel','mcp','unknown-mcp','spoof-mcp','always'].includes(text)) return permission(text);
+   if(text==='change-settings') {options[1].currentValue='high';update({sessionUpdate:'config_option_update',configOptions:options});}
+   update({sessionUpdate:'tool_call',toolCallId:'read',name:'read_file',status:'in_progress'});
+   update({sessionUpdate:'tool_call_update',toolCallId:'read',rawOutput:{result:'kept'}});
+   update({sessionUpdate:'tool_call_update',toolCallId:'read',status:'completed'});
   update({sessionUpdate:'agent_thought_chunk',content:{type:'text',text:'Thinking'}});
   say('Hello ');say('Flash');
   update({sessionUpdate:'session_info_update',title:'Native title'});
@@ -62,8 +70,9 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   update({sessionUpdate:'usage_update',used:42,size:1000});
   result(q.id,{stopReason:'end_turn',usage:{inputTokens:20,outputTokens:5}});prompt=null;return;
  }
- if(q.method==='session/cancel') {
-  update({sessionUpdate:'tool_call_update',toolCallId:'edit',status:'failed'});
+  if(q.method==='session/cancel') {
+   // A late request must not re-open a permission card or be auto-approved.
+   out({id:42,method:'session/request_permission',params:{sessionId:'native-session',toolCall:{name:'mcp_patterm_mutate'},options:[{optionId:'allow',kind:'allow_once',name:'Allow'}]}});
   if(prompt) result(prompt,{stopReason:'cancelled'});prompt=null;return;
  }
  if(q.id===41 && prompt){say(JSON.stringify(q.result));result(prompt,{stopReason:'end_turn'});prompt=null;}
@@ -97,6 +106,9 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     assert.deepEqual(frames()[0].params.clientCapabilities, {}, 'unimplemented filesystem and terminal capabilities are not advertised');
     if (process.platform !== 'win32') assert.equal(fs.statSync(prepared.argv[4]!).mode & 0o777, 0o600);
     await assert.rejects(provider.prepare({ ...input, resumeId: prepared.resumeId }), /already attached/);
+    const selector = async (id: string) => (await provider.controls('process')).selectors.find((option) => option.id === id);
+    assert.equal((await selector('mode'))?.value, 'auto', 'fresh sessions start in native Auto mode');
+    assert.equal((await selector('patterm_mcp'))?.value, 'allow', 'MCP trust is explicit and visible');
 
     const events: IntegratedConversationEvent[] = [];
     release = await provider.subscribe('process', (event) => events.push(event));
@@ -108,20 +120,47 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     assert(state.messages.data.some((row: any) => row.text === 'Hello Flash'));
     assert.equal(state.usage.contextTokens, 42);
     assert.equal(state.usage.outputTokens, 5);
+    assert.deepEqual(state.messages.data.find((row: any) => row.id === 'tool:read').tool.state.output, { result: 'kept' }, 'status-only updates retain native output');
     assert(events.some((event) => event.kind === 'append' && event.delta === 'Flash'));
     assert.equal(await provider.title('process'), 'Native title');
     assert.deepEqual(await provider.nativeSettings('process'), { model: 'flash', reasoning: 'low' });
     assert.equal((await provider.controls('process')).commands[0]?.name, 'compact');
-    await provider.configure('process', 'mode', 'plan');
     await assert.rejects(provider.configure('process', 'mode', 'invented'), /Unknown ACP setting value/);
     assert.equal(frames().find((frame) => frame.method === 'session/prompt').params.prompt[1].uri, pathToFileURL(path.join(directory, 'a #.txt')).href);
     const count = frames().filter((frame) => frame.method === 'session/prompt').length;
     await provider.prompt('process', { text: 'hello', references: [], attachments: [], messageId: 'hello-id' });
     assert.equal(frames().filter((frame) => frame.method === 'session/prompt').length, count, 'an acknowledged message is never resubmitted');
+    await provider.prompt('process', { text: 'pdf-attachment', references: [], attachments: [{ path: path.join(directory, 'a #.pdf'), name: 'a #.pdf', mime: 'application/pdf', size: 3, data: Buffer.from('pdf').toString('base64') }] });
+    await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    assert.deepEqual(frames().filter((frame) => frame.method === 'session/prompt').at(-1).params.prompt[1], { type: 'resource_link', uri: pathToFileURL(path.join(directory, 'a #.pdf')).href, name: 'a #.pdf', mimeType: 'application/pdf' }, 'PDFs use native file reading, not silently ignored binary blobs');
+
+    const ask = (text: string) => provider.prompt('process', { text, references: [], attachments: [] });
+    await ask('mcp');
+    await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    assert(frames().some((frame) => frame.id === 41 && frame.result?.outcome?.optionId === 'allow'), 'Auto approves native MCP write requests without a card');
+    for (const text of ['unknown-mcp', 'spoof-mcp']) {
+      await ask(text);
+      await waitFor(provider, (snapshot) => snapshot.status === 'permission');
+      await provider.replyPermission('process', '41', 'reject');
+      await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    }
+    await provider.configure('process', 'patterm_mcp', 'ask');
+    await ask('mcp');
+    await waitFor(provider, (snapshot) => snapshot.status === 'permission');
+    await provider.replyPermission('process', '41', 'reject');
+    await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    await provider.configure('process', 'patterm_mcp', 'allow');
+    await provider.configure('process', 'mode', 'plan');
+    await ask('mcp');
+    await waitFor(provider, (snapshot) => snapshot.status === 'permission');
+    await provider.replyPermission('process', '41', 'reject');
+    await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    await provider.configure('process', 'mode', 'auto');
 
     // A new provider instance reconnects to the durable host; a viewer closing
     // its subscription neither stops the CLI nor loses the conversation.
     release(); release = undefined;
+    state = await provider.conversation('process');
     assert.equal(JSON.stringify((await service().conversation('process') as any).messages), JSON.stringify(state.messages));
     await provider.prompt('process', { text: 'permission', references: [], attachments: [], messageId: 'permission-id' });
     state = await waitFor(provider, (state) => state.status === 'permission');
@@ -147,22 +186,76 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     assert.equal(state.permissions.data.length, 0);
     assert.equal(state.messages.data.find((row: any) => row.id === 'tool:edit').tool.name, 'write_file', 'partial tool updates keep the native name');
     assert.equal(state.messages.data.find((row: any) => row.id === 'tool:edit').tool.state.status, 'failed');
+    assert.equal(state.messages.data.find((row: any) => row.id === 'tool:edit').tool.state.error, 'Response stopped');
+    assert(frames().some((frame) => frame.id === 42 && frame.result?.outcome?.outcome === 'cancelled'));
+
+    await ask('always');
+    state = await waitFor(provider, (snapshot) => snapshot.status === 'permission');
+    assert.equal(state.permissions.data[0].alwaysLabel, 'Allow for this session', 'the native approval scope is not relabelled as permanent');
+    await provider.replyPermission('process', '41', 'always');
+    await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+
+    // A deterministic filesystem failure exercises both local policy commit
+    // and native controls changed during a successful turn. Neither may kill
+    // the CLI or enable approvals behind a stale Ask picker.
+    await provider.configure('process', 'patterm_mcp', 'ask');
+    const settingsDirectory = path.join(directory, 'acp', 'settings');
+    fs.renameSync(settingsDirectory, settingsDirectory + '.saved');
+    fs.writeFileSync(settingsDirectory, 'not a directory');
+    try {
+      await assert.rejects(provider.configure('process', 'patterm_mcp', 'allow'), /policy was not changed/);
+      assert.equal((await selector('patterm_mcp'))?.value, 'ask');
+      await ask('mcp');
+      await waitFor(provider, (snapshot) => snapshot.status === 'permission');
+      await provider.replyPermission('process', '41', 'reject');
+      await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+      await ask('change-settings');
+      state = await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+      assert(state.messages.data.some((row: any) => row.id === 'acp-settings-save' && row.level === 'warning'));
+      await ask('healthy-after-save-failure');
+      await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    } finally {
+      fs.rmSync(settingsDirectory);
+      fs.renameSync(settingsDirectory + '.saved', settingsDirectory);
+    }
 
     await assert.rejects(provider.prompt('process', { text: 'late', references: [], attachments: [], messageId: 'late-id' }), UncertainDeliveryError);
     await waitFor(provider, (state) => state.status === 'idle');
     assert.equal(await provider.reconcile('process', 'late-id'), 'accepted', 'late native evidence resolves uncertain admission');
     await assert.rejects(provider.prompt('process', { text: 'failure', references: [], attachments: [] }), /Native turn failed/);
     assert.equal((await provider.conversation('process') as any).status, 'error');
+    await ask('hello-after-error');
+    await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    await provider.configure('process', 'thought_level', 'low');
+    await provider.configure('process', 'mode', 'plan');
+    await provider.configure('process', 'patterm_mcp', 'ask');
+    await ask('change-settings');
+    await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    assert.equal((database.connection.prepare("select reasoning from sessions where id = 'session'").get() as any).reasoning, 'low', 'native updates can be newer than launch/recovery fallback columns');
     await provider.stop('process');
     await hosts.waitForExit(Number(prepared.argv[3]));
     database.connection.prepare("update sessions set exited_at = ? where id = 'session'").run(now);
-    const resumed = await provider.prepare({ ...input, model: 'flash', resumeId: prepared.resumeId });
+    const resumed = await provider.prepare({ ...input, model: null, reasoning: null, resumeId: prepared.resumeId });
     assert.equal(resumed.resumeId, prepared.resumeId);
     assert(frames().some((frame) => frame.method === 'session/load'));
     const loaded = await callIntegratedHost(resumed.argv[2]!, 'conversation', {}) as any;
     assert.deepEqual(loaded.messages.data.map((row: any) => row.text), ['Earlier user', 'Earlier assistant']);
+    assert.equal(loaded.configOptions.find((option: any) => option.id === 'model').currentValue, 'flash');
+    assert.equal(loaded.configOptions.find((option: any) => option.id === 'thought_level').currentValue, 'high');
+    assert.equal(loaded.configOptions.find((option: any) => option.id === 'mode').currentValue, 'plan');
+    assert.equal(loaded.configOptions.find((option: any) => option.id === 'patterm_mcp').currentValue, 'ask');
     await provider.cleanupLaunch(input, resumed);
     await hosts.waitForExit(Number(resumed.argv[3]));
+    const recovery = await provider.prepare({ ...input, model: 'flash-low', reasoning: 'low', resumeId: prepared.resumeId, restoreSavedSettings: true });
+    const recoveredSettings = await callIntegratedHost(recovery.argv[2]!, 'conversation', {}) as any;
+    assert.equal(recoveredSettings.configOptions.find((option: any) => option.id === 'thought_level').currentValue, 'high', 'stopped-host recovery fallbacks must not undo newer saved native controls');
+    await provider.cleanupLaunch(input, recovery);
+    await hosts.waitForExit(Number(recovery.argv[3]));
+    const override = await provider.prepare({ ...input, model: 'flash-low', reasoning: null, resumeId: prepared.resumeId });
+    const overridden = await callIntegratedHost(override.argv[2]!, 'conversation', {}) as any;
+    assert.equal(overridden.configOptions.find((option: any) => option.id === 'thought_level').currentValue, 'low', 'saved High thinking does not undo an explicit low-thinking model override');
+    await provider.cleanupLaunch(input, override);
+    await hosts.waitForExit(Number(override.argv[3]));
 
     // Check the real orchestration boundary, not just the provider's error
     // class: an executed-but-unacknowledged prompt must keep its reservation.
@@ -182,6 +275,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       const activity = (database.connection.prepare("select activity from processes where id = 'process'").get() as { activity: string }).activity;
       assert.equal(activity, 'error');
       assert(isActivityState(activity));
+      await assert.rejects(provider.prompt('process', { text: 'do-not-replay', references: [], attachments: [] }), /ACP agent exited/);
     } finally {
       integrated.dispose();
       await provider.stop('process');
@@ -199,6 +293,8 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       await waitFor(provider, (state) => state.status === 'error' && (database.connection.prepare("select activity from processes where id = 'process'").get() as any).activity === 'error');
       await failedTurn.conversation('process');
       assert.equal((database.connection.prepare("select activity from processes where id = 'process'").get() as any).activity, 'error');
+      await failedTurn.prompt('process', { text: 'hello-after-acknowledged-error', messageId: 'recovery' });
+      await waitFor(provider, (snapshot) => snapshot.status === 'idle');
     } finally {
       failedTurn.dispose();
       await provider.stop('process');
@@ -208,6 +304,13 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
 
     const unauthenticated = new AcpProviderService(database, directory, process.execPath, { ...env, ACP_AUTH_FAIL: '1' }, undefined, hosts);
     await assert.rejects(unauthenticated.prepare(input), /Authentication required/);
+    const withoutAuto = new AcpProviderService(database, directory, process.execPath, { ...env, ACP_NO_AUTO: '1' }, undefined, hosts);
+    const fallback = await withoutAuto.prepare(input);
+    const fallbackState = await callIntegratedHost(fallback.argv[2]!, 'conversation', {}) as any;
+    assert.equal(fallbackState.configOptions.find((option: any) => option.id === 'mode').currentValue, 'default');
+    assert.match(fallbackState.messages.data[0].text, /does not offer auto mode/);
+    await withoutAuto.cleanupLaunch(input, fallback);
+    await hosts.waitForExit(Number(fallback.argv[3]));
 
     // Native JSONL history has the same session identity. Generated metadata
     // is not user text and sibling full logs must not create duplicate imports.
