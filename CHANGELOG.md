@@ -14,7 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   When `/restart` is blocked by an OpenCode version mismatch, the panel offers
   an explicit shared-server restart and resumes the same conversation afterwards,
   with a warning that other OpenCode turns will be interrupted. Cloudflare blocks
-  are explained without assuming the user's login has expired.
+  are explained without assuming the user's login has expired. Bots keep their
+  transcript and recovery controls visible after stopping. Paired-host sessions
+  never restart the local OpenCode server.
 
 ## [0.5.0] - 2026-11-12
 

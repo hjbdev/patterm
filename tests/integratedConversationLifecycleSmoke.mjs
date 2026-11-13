@@ -1538,3 +1538,45 @@ test('project recovery uses the controlled restart route and selects the replace
   assert.equal(h.pane.restartNeedsServer.value, false);
   h.scope.stop();
 });
+
+test('the real bot owner propagates a mismatch to the panel and restarts the stopped bot on recovery', async () => {
+  const botPage = fs.readFileSync(new URL('../resources/js/Pages/BotPage.vue', import.meta.url), 'utf8');
+  const botScript = ts.createSourceFile('bot.ts', botPage.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1], ts.ScriptTarget.Latest, true);
+  const restartFunction = botScript.statements.find(statement => ts.isFunctionDeclaration(statement) && statement.name.text === 'restart').getFullText(botScript);
+  const js = ts.transpileModule(restartFunction, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const live = ref(true);
+  const busy = ref(false);
+  const ownerError = ref('');
+  const calls = [];
+  let h;
+  const restart = new Function('row', 'live', 'busy', 'error', 'restartBot', 'startBot', `${js}; return restart;`)(
+    ref({ bot: { id: 'assistant' }, session: { processId: 'bot_recovery' } }), live, busy, ownerError,
+    async () => { live.value = false; h.props.exited = true; await nextTick(); throw new Error('OpenCode server version mismatch'); },
+    async id => { calls.push(id); }
+  );
+  h = createHarness({ processId: 'bot_recovery', restartable: true, onRestartSession: () => restart(false, true) });
+  await mountSettled(h);
+  h.emitControl({ processId: 'bot_recovery', controlling: true });
+  await h.pane.restartSession(false);
+  assert.equal(h.pane.restartNeedsServer.value, true);
+  assert.equal(ownerError.value, '', 'the panel owns the error, not a duplicate page banner');
+  const recovering = h.pane.recoverOpenCode();
+  await flush();
+  pending(h, 'opencode_service_restart')[0].resolve({ version: '2.2.7' });
+  await recovering;
+  assert.deepEqual(calls, ['assistant']);
+  assert.equal(busy.value, false);
+  h.scope.stop();
+});
+
+test('a paired-host mismatch never restarts the local shared server', async () => {
+  const h = createHarness({ processId: 'other:process_remote', exited: true, restartable: true, onRestartSession: async () => {
+    throw new Error('OpenCode server version mismatch');
+  } });
+  await mountSettled(h);
+  h.emitControl({ processId: h.props.processId, controlling: true });
+  await h.pane.restartSession(false);
+  await h.pane.recoverOpenCode();
+  assert.equal(pending(h, 'opencode_service_restart').length, 0);
+  h.scope.stop();
+});

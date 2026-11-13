@@ -16,9 +16,9 @@
           <p :role="recoveryError ? 'alert' : 'status'" class="font-medium">{{ recoveryError || restartNeedsServer ? recoveryCopy.title : 'This agent has stopped' }}</p>
           <p class="mt-1 text-xs leading-relaxed text-muted-foreground">{{ recoveryError || restartNeedsServer ? recoveryCopy.detail : canRestart ? 'Resume this conversation here. Your saved history will be kept.' : 'The transcript is read-only.' }}</p>
           <template v-if="restartNeedsServer && canRestart">
-            <p class="mt-3 text-xs leading-relaxed text-muted-foreground">Restarting the shared server interrupts all running OpenCode turns, including sessions outside Patterm. No prompt will be resent automatically.</p>
+            <p class="mt-3 text-xs leading-relaxed text-muted-foreground">{{ localProcess ? 'Restarting the shared server interrupts all running OpenCode turns, including sessions outside Patterm. No prompt will be resent automatically.' : 'This agent runs on a paired host. Restart the OpenCode server on that host, then try again here. This page will not restart your local server.' }}</p>
             <div class="mt-3 flex flex-wrap gap-2">
-              <Button size="sm" :disabled="restarting" @click="recoverOpenCode">{{ restarting ? 'Recovering…' : 'Restart server and resume' }}</Button>
+              <Button v-if="localProcess" size="sm" :disabled="restarting" @click="recoverOpenCode">{{ restarting ? 'Recovering…' : 'Restart server and resume' }}</Button>
               <Button size="sm" variant="outline" :disabled="restarting" @click="restartSession(false)">Try again without restarting server</Button>
             </div>
           </template>
@@ -481,6 +481,7 @@ let startingNew = false;
 const restarting = ref(false);
 const displayError = computed(() => error.value || refreshError.value || controlsError.value);
 const restartNeedsServer = ref(false);
+const localProcess = computed(() => !props.processId.includes(':'));
 const recoveryError = computed(() => displayError.value || (streamStatus.value === 'error' ? statusDetail.value || 'The last turn ended with an error; see the transcript.' : ''));
 const recoveryCopy = computed(() => conversationFailure(restartNeedsServer.value ? OPENCODE_VERSION_MISMATCH : recoveryError.value));
 const canReply = computed(() => controlling.value && !ended.value);
@@ -1078,7 +1079,7 @@ async function restartSession(force: boolean): Promise<void> {
 // This click is deliberately separate from /restart: replacing the shared
 // daemon can interrupt other agents, so ordinary recovery must never do it.
 async function recoverOpenCode(): Promise<void> {
-  if (restarting.value || !restartNeedsServer.value || !canRestart.value) return;
+  if (restarting.value || !restartNeedsServer.value || !canRestart.value || !localProcess.value) return;
   const token = generation;
   restarting.value = true;
   try {
