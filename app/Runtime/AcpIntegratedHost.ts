@@ -10,6 +10,7 @@ import type { IntegratedConversationMessage } from '../Services/IntegratedConver
 import { TranscriptImageStore } from '../Services/TranscriptImageStore';
 
 type Row = Record<string, any>;
+class NativeAcpTransportError extends Error {}
 interface Config {
   socketPath: string;
   executable: string;
@@ -39,6 +40,7 @@ let controlsRevision = 0;
 let active = false;
 let stopping = false;
 let loaded = false;
+let failed = false;
 let block: IntegratedConversationMessage | null = null;
 let userEcho: IntegratedConversationMessage | null = null;
 let userConfirmed = false;
@@ -53,10 +55,11 @@ const child = spawn(native.command, native.args, { cwd: config.cwd, env: process
 let stderr = '';
 child.stderr.setEncoding('utf8');
 child.stderr.on('data', (chunk: string) => { stderr = (stderr + chunk).slice(-8192); });
-child.on('error', fail);
-child.stdin.on('error', fail);
+const transportFailed = (error: Error) => fail(new NativeAcpTransportError(error.message, { cause: error }));
+child.on('error', transportFailed);
+child.stdin.on('error', transportFailed);
 child.on('exit', (code) => {
-  const error = new Error(`ACP agent exited (${code ?? 'signal'})${stderr.trim() ? `: ${stderr.trim()}` : ''}`);
+  const error = new NativeAcpTransportError(`ACP agent exited (${code ?? 'signal'})${stderr.trim() ? `: ${stderr.trim()}` : ''}`);
   for (const request of requests.values()) { if (request.timer) clearTimeout(request.timer); request.reject(error); }
   requests.clear();
   permissions.clear();
@@ -67,13 +70,13 @@ let buffer = '';
 child.stdout.setEncoding('utf8');
 child.stdout.on('data', (chunk: string) => {
   buffer += chunk;
-  if (buffer.length > 32 * 1024 * 1024) { fail(new Error('ACP frame exceeds limit')); void stop(); return; }
+  if (buffer.length > 32 * 1024 * 1024) { transportFailed(new Error('ACP frame exceeds limit')); void stop(); return; }
   for (;;) {
     const newline = buffer.indexOf('\n');
     if (newline < 0) break;
     const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
     if (!line.trim()) continue;
-    try { receive(JSON.parse(line)); } catch (error) { fail(error instanceof Error ? error : new Error(String(error))); }
+    try { receive(JSON.parse(line)); } catch (error) { transportFailed(error instanceof Error ? error : new Error(String(error))); }
   }
 });
 
@@ -100,12 +103,21 @@ function publish(event: Row): void {
   }
 }
 function state(): void {
-  status = permissions.size ? 'permission' : active ? 'working' : loaded ? 'idle' : status;
+  status = failed ? 'error' : permissions.size ? 'permission' : active ? 'working' : loaded ? 'idle' : status;
   publish({ kind: 'status', status });
 }
 function fail(error: Error): void {
-  if (admission) { clearTimeout(admission.timer); admission.reject(error); admission = null; }
-  status = 'failed'; statusDetail = error.message; publish({ kind: 'status', status, detail: statusDetail });
+  if (admission) {
+    clearTimeout(admission.timer);
+    // A native RPC error is a definitive rejection. Losing the native pipe
+    // after dispatch cannot prove whether the agent already did the work.
+    admission.reject(error instanceof NativeAcpTransportError
+      ? new Error(`ACP prompt delivery is uncertain: ${error.message}`)
+      : error);
+    admission = null;
+  }
+  failed = true;
+  status = 'error'; statusDetail = error.message; publish({ kind: 'status', status, detail: statusDetail });
 }
 function admit(): void {
   if (userEcho && !userConfirmed) {
@@ -267,7 +279,7 @@ async function handle(method: string, params: Row): Promise<unknown> {
   if (method === 'controls') return controlState();
   if (method === 'delivery') return { state: deliveries.has(params.clientMessageId) ? 'accepted' : 'unknown' };
   if (method === 'stop') { setImmediate(() => void stop()); return {}; }
-  if (!loaded || status === 'failed') throw new Error(statusDetail || 'ACP agent is not ready');
+  if (!loaded || failed) throw new Error(statusDetail || 'ACP agent is not ready');
   if (method === 'prompt') {
     if (active) throw new Error('ACP turn is busy');
     if (params.clientMessageId && deliveries.has(params.clientMessageId)) return { accepted: true };

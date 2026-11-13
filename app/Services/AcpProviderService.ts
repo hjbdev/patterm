@@ -50,7 +50,7 @@ export class AcpProviderService implements IntegratedProviderService {
         if (pid) { try { process.kill(pid, 0); } catch { throw new Error('ACP host exited during startup'); } }
         if (await integratedHostReady(socketPath)) {
           const state = await callIntegratedHost(socketPath, 'conversation', {}) as Row;
-          if (state.status === 'failed') throw new Error(String(state.status_detail ?? 'Antigravity could not start'));
+          if (state.status === 'error') throw new Error(String(state.status_detail ?? 'Antigravity could not start'));
           if (state.status !== 'starting' && state.provider_session_id) return { resumeId: String(state.provider_session_id), argv: [input.executable, 'acp-host', socketPath, String(pid ?? ''), configPath] };
         }
         await new Promise((resolve) => setTimeout(resolve, 100));
@@ -85,7 +85,7 @@ export class AcpProviderService implements IntegratedProviderService {
       return await callIntegratedHost(this.runtime(processId).socketPath, 'prompt', { prompt, text: input.text, clientMessageId: input.messageId, attachments });
     } catch (error) {
       if (error instanceof Error && error.message === 'ACP turn is busy') throw new TurnBusyError(error.message, 'prompt');
-      if (error instanceof Error && error.message === 'ACP prompt delivery is uncertain') throw new UncertainDeliveryError(error.message, input.messageId);
+      if (error instanceof Error && /^ACP prompt delivery is uncertain(?::|$)/.test(error.message)) throw new UncertainDeliveryError(error.message, input.messageId);
       if (error instanceof IntegratedHostTransportError || (error as NodeJS.ErrnoException)?.code) throw new UncertainDeliveryError(error instanceof Error ? error.message : String(error), input.messageId);
       throw error;
     }

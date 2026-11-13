@@ -10,6 +10,8 @@ import { TurnBusyError, UncertainDeliveryError } from '../app/Services/Integrate
 import type { IntegratedConversationEvent } from '../app/Services/IntegratedConversation';
 import { TranscriptImageStore } from '../app/Services/TranscriptImageStore';
 import { callIntegratedHost } from '../app/Services/IntegratedHostLauncher';
+import { IntegratedAgentService } from '../app/Services/IntegratedAgentService';
+import { isActivityState } from '../app/Services/Activity';
 import { writeNodeCli } from './fixtures/IntegratedFakeCli';
 import { IntegratedTestHosts } from './fixtures/IntegratedTestHosts';
 import { removeTree } from './fixtures/TempTree';
@@ -49,7 +51,9 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   const text=q.params.prompt[0].text;prompt=q.id;
   if(text==='late') {setTimeout(()=>{echo(text);say('Late accepted');result(prompt,{stopReason:'end_turn'});prompt=null;},8300);return;}
   if(text==='failure') return out({id:q.id,error:{code:-32000,message:'Native turn failed'}});
+  if(text==='crash') {fs.writeFileSync(process.env.ACP_TRACE+'.side-effect','executed');process.exit(17);}
   echo(text);
+  if(text==='failure-after-echo') return out({id:q.id,error:{code:-32000,message:'Native acknowledged turn failed'}});
   if(text==='permission'||text==='cancel') return permission();
   update({sessionUpdate:'agent_thought_chunk',content:{type:'text',text:'Thinking'}});
   say('Hello ');say('Flash');
@@ -148,7 +152,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     await waitFor(provider, (state) => state.status === 'idle');
     assert.equal(await provider.reconcile('process', 'late-id'), 'accepted', 'late native evidence resolves uncertain admission');
     await assert.rejects(provider.prompt('process', { text: 'failure', references: [], attachments: [] }), /Native turn failed/);
-    assert.equal((await provider.conversation('process') as any).status, 'failed');
+    assert.equal((await provider.conversation('process') as any).status, 'error');
     await provider.stop('process');
     await hosts.waitForExit(Number(prepared.argv[3]));
     database.connection.prepare("update sessions set exited_at = ? where id = 'session'").run(now);
@@ -159,6 +163,48 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     assert.deepEqual(loaded.messages.data.map((row: any) => row.text), ['Earlier user', 'Earlier assistant']);
     await provider.cleanupLaunch(input, resumed);
     await hosts.waitForExit(Number(resumed.argv[3]));
+
+    // Check the real orchestration boundary, not just the provider's error
+    // class: an executed-but-unacknowledged prompt must keep its reservation.
+    const crashed = await provider.prepare(input);
+    database.connection.prepare("update processes set argv = ?, activity = 'idle' where id = 'process'").run(JSON.stringify(crashed.argv));
+    database.connection.prepare("update sessions set exited_at = null where id = 'session'").run();
+    const integrated = new IntegratedAgentService(database, { agy: provider });
+    try {
+      integrated.observe('process');
+      const outcome = await integrated.prompt('process', { text: 'crash', messageId: 'crash-id' }) as any;
+      assert.equal(outcome.delivery, 'uncertain');
+      assert.equal(fs.readFileSync(trace + '.side-effect', 'utf8'), 'executed');
+      const reservation = database.connection.prepare('select state from integrated_submissions where message_id = ?').get('crash-id') as { state: string };
+      assert.equal(reservation.state, 'uncertain');
+      await waitFor(provider, (state) => state.status === 'error' && (database.connection.prepare("select activity from processes where id = 'process'").get() as any).activity === 'error');
+      await integrated.conversation('process');
+      const activity = (database.connection.prepare("select activity from processes where id = 'process'").get() as { activity: string }).activity;
+      assert.equal(activity, 'error');
+      assert(isActivityState(activity));
+    } finally {
+      integrated.dispose();
+      await provider.stop('process');
+      await hosts.waitForExit(Number(crashed.argv[3]));
+      database.connection.prepare("update sessions set exited_at = ? where id = 'session'").run(now);
+    }
+
+    const acknowledgedFailure = await provider.prepare(input);
+    database.connection.prepare("update processes set argv = ?, activity = 'idle' where id = 'process'").run(JSON.stringify(acknowledgedFailure.argv));
+    database.connection.prepare("update sessions set exited_at = null where id = 'session'").run();
+    const failedTurn = new IntegratedAgentService(database, { agy: provider });
+    try {
+      failedTurn.observe('process');
+      await failedTurn.prompt('process', { text: 'failure-after-echo', messageId: 'acknowledged-failure' });
+      await waitFor(provider, (state) => state.status === 'error' && (database.connection.prepare("select activity from processes where id = 'process'").get() as any).activity === 'error');
+      await failedTurn.conversation('process');
+      assert.equal((database.connection.prepare("select activity from processes where id = 'process'").get() as any).activity, 'error');
+    } finally {
+      failedTurn.dispose();
+      await provider.stop('process');
+      await hosts.waitForExit(Number(acknowledgedFailure.argv[3]));
+      database.connection.prepare("update sessions set exited_at = ? where id = 'session'").run(now);
+    }
 
     const unauthenticated = new AcpProviderService(database, directory, process.execPath, { ...env, ACP_AUTH_FAIL: '1' }, undefined, hosts);
     await assert.rejects(unauthenticated.prepare(input), /Authentication required/);
