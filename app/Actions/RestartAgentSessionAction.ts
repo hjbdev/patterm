@@ -143,7 +143,7 @@ export class RestartAgentSessionAction {
         // old one stops before the new one resumes it.
         await this.processes.stop(processId);
         launched = await this.launcher.resume({
-          harness: source.harness as 'claude' | 'codex' | 'opencode',
+          harness: source.harness as 'claude' | 'codex' | 'opencode' | 'agy',
           model: source.model,
           reasoning: source.reasoning,
           service_tier: source.service_tier,
@@ -230,5 +230,5 @@ function isWorking(source: SourceSession): boolean {
 }
 
 function isIntegratedHarness(harness: string): boolean {
-  return harness === 'claude' || harness === 'codex' || harness === 'opencode';
+  return harness === 'claude' || harness === 'codex' || harness === 'opencode' || harness === 'agy';
 }

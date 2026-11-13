@@ -36,11 +36,12 @@ assert.equal(profileDetail({ harness: 'codex', model: 'fable', reasoning: null }
 const profile = (id: string, harness: Profile['harness'], name: string, model: string | null = null): Profile => ({ id, harness, name, model, reasoning: null, serviceTier: null, look: null });
 const settings: ProfileSettings = {
   presets: [profile('fable', 'claude', 'Fable', 'fable'), profile('d_codex', 'codex', 'Default', 'gpt-6.1-sol'), profile('d_claude', 'claude', 'Default'), profile('smarty', 'codex', 'Smartypants'), profile('work', 'opencode', 'Workhorse')],
-  defaultPresetIdByHarness: { claude: 'd_claude', codex: 'd_codex', opencode: null }
+  defaultPresetIdByHarness: { claude: 'd_claude', codex: 'd_codex', opencode: null, agy: null }
 };
 assert.deepEqual(rosterRows(settings, ['claude', 'codex', 'opencode'], null).map((row) => row.name), ['Claude Code', 'Codex', 'Workhorse', 'Fable', 'Smartypants']);
 assert.deepEqual(rosterRows(settings, ['codex'], null).map((row) => row.presetId), ['d_codex', 'smarty']);
-assert.deepEqual(rosterRows({ presets: [], defaultPresetIdByHarness: { claude: null, codex: null, opencode: null } }, ['opencode'], null).map((row) => [row.name, row.presetId]), [['OpenCode', null]]);
+assert.deepEqual(rosterRows({ presets: [], defaultPresetIdByHarness: { claude: null, codex: null, opencode: null, agy: null } }, ['opencode'], null).map((row) => [row.name, row.presetId]), [['OpenCode', null]]);
+assert.deepEqual(rosterRows(settings, ['agy'], null).map((row) => [row.name, row.harness]), [['Antigravity', 'agy']]);
 // Another host launches each CLI with its own default, so local profiles don't apply.
 assert.deepEqual(rosterRows(settings, ['claude', 'codex'], 'workstation').map((row) => [row.name, row.presetId, row.detail]), [['Claude Code', null, 'workstation’s default'], ['Codex', null, 'workstation’s default']]);
 

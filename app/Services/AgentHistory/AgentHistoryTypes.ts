@@ -1,4 +1,4 @@
-export type AgentHistoryProvider = 'claude' | 'codex' | 'opencode';
+export type AgentHistoryProvider = 'claude' | 'codex' | 'opencode' | 'agy';
 
 export const HISTORY_IMPORT_STALE_MS = 5 * 60_000;
 

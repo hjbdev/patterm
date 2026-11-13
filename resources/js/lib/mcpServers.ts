@@ -1,8 +1,8 @@
 import { computed, readonly, ref, shallowRef } from 'vue';
 import { topicChanged, topicRead, useTopicRefresh } from './serverQuery';
 
-export type McpHarness = 'claude' | 'codex' | 'opencode';
-export const MCP_HARNESSES: readonly McpHarness[] = ['claude', 'codex', 'opencode'];
+export type McpHarness = 'claude' | 'codex' | 'opencode' | 'agy';
+export const MCP_HARNESSES: readonly McpHarness[] = ['claude', 'codex', 'opencode', 'agy'];
 
 export interface McpSignInPending { authorization_url: string; redirect_uri: string; loopback: boolean }
 export interface McpSignInState { signed_in: boolean; expires_at: string | null; pending: McpSignInPending | null }

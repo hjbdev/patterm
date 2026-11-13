@@ -71,7 +71,7 @@ function assertSelectionRules(): void {
 function assertPresetService(database: DatabaseService): void {
   const service = new HarnessPresetService(new SettingsService(database));
   const seeded = service.list();
-  assert.deepEqual(seeded.presets.map((preset) => `${preset.harness}/${preset.name}`), ['claude/Default', 'codex/Default', 'opencode/Default']);
+  assert.deepEqual(seeded.presets.map((preset) => `${preset.harness}/${preset.name}`), ['claude/Default', 'codex/Default', 'opencode/Default', 'agy/Default']);
   assert.ok(seeded.presets.every((preset) => preset.model === null && preset.reasoning === null), 'seeded defaults keep the harness configuration');
   assert.equal(seeded.defaultPresetIdByHarness.claude, 'preset_default_claude');
 

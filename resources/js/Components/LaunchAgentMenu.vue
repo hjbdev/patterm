@@ -183,7 +183,7 @@ watch([() => launchTarget.value?.host, menuOpen], async ([host, open]) => {
   }
 });
 
-const presets = ref<ProfileSettings>({ presets: [], defaultPresetIdByHarness: { claude: null, codex: null, opencode: null } });
+const presets = ref<ProfileSettings>({ presets: [], defaultPresetIdByHarness: { claude: null, codex: null, opencode: null, agy: null } });
 // Model names as Settings shows them, such as Fable 5.1 for `fable`.
 const catalog = ref<ModelCatalog | null>(null);
 const modelLabel: ModelLabel = (harness, model) => {

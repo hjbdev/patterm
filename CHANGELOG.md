@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Antigravity CLI (`agy`) in Integrated mode through its native ACP server:
+  streamed replies and tools, permissions, cancellation, session loading,
+  model and thinking controls, presets, bots and routines. Sign in with
+  `agy acp --login` first. MCP servers are supplied per launch, without changing
+  agy's configuration. Native terminal mode is not supported yet.
+- Antigravity's native JSONL transcripts can be enabled in history settings.
+  Patterm imports user requests, model replies, tool steps and token counts;
+  generated system metadata is excluded.
+
 ## [0.5.0] - 2026-11-12
 
 ### Added

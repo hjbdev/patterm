@@ -2,7 +2,7 @@
 // Bots are set up with the same fields, so both editors share them. The
 // catalog shapes mirror app/Harness/ModelCatalog.
 
-export type ProfileHarness = 'claude' | 'codex' | 'opencode';
+export type ProfileHarness = 'claude' | 'codex' | 'opencode' | 'agy';
 
 export interface CatalogModel {
   id: string;
@@ -45,10 +45,10 @@ export interface ProfileSettingsValue {
 
 export const CUSTOM_MODEL = '__custom__';
 export const DEFAULT_MODEL = '__default__';
-export const PROFILE_HARNESSES: ProfileHarness[] = ['claude', 'codex', 'opencode'];
+export const PROFILE_HARNESSES: ProfileHarness[] = ['claude', 'codex', 'opencode', 'agy'];
 
 export function emptyModelCatalog(): ModelCatalog {
-  return { providers: { claude: null, codex: null, opencode: null } };
+  return { providers: { claude: null, codex: null, opencode: null, agy: null } };
 }
 
 export function modelsFor(catalog: ModelCatalog, harness: ProfileHarness): CatalogModel[] {

@@ -165,7 +165,7 @@ export interface WorktreeRecord {
 }
 
 // Discovered agent-harness CLIs.
-export type HarnessId = 'claude' | 'codex' | 'opencode' | 'rawpty';
+export type HarnessId = 'claude' | 'codex' | 'opencode' | 'agy' | 'rawpty';
 export type HarnessStatus = 'available' | 'missing' | 'broken';
 
 export interface HarnessInstallationRecord {

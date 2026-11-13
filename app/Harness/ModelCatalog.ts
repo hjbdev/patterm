@@ -5,7 +5,7 @@ import { z } from 'zod';
 // Codex renders its catalog via `debug models`; OpenCode exposes models through
 // its HTTP API.
 
-export const catalogHarnessInput = z.enum(['claude', 'codex', 'opencode']);
+export const catalogHarnessInput = z.enum(['claude', 'codex', 'opencode', 'agy']);
 export const CATALOG_HARNESSES = catalogHarnessInput.options;
 
 export const harnessModelInput = z.object({
@@ -40,13 +40,14 @@ export const harnessModelCatalogInput = z.object({
     claude: providerCatalogSlot(),
     codex: providerCatalogSlot(),
     opencode: providerCatalogSlot(),
-  }).default({ claude: null, codex: null, opencode: null })
+    agy: providerCatalogSlot(),
+  }).default({ claude: null, codex: null, opencode: null, agy: null })
 });
 
 export type HarnessModelCatalog = z.infer<typeof harnessModelCatalogInput>;
 
 export function emptyHarnessModelCatalog(): HarnessModelCatalog {
-  return { providers: { claude: null, codex: null, opencode: null } };
+  return { providers: { claude: null, codex: null, opencode: null, agy: null } };
 }
 
 // Claude Code accepts aliases for the latest model in each family plus full

@@ -141,8 +141,8 @@ test('a page read before an import never undoes a newer refreshed row', async ()
   generation.value += 1;
   const refresh = history.refreshConversations();
   const refreshCalls = pending.splice(0);
-  assert.equal(pageCalls.length, 3);
-  assert.equal(refreshCalls.length, 3);
+  assert.equal(pageCalls.length, 4);
+  assert.equal(refreshCalls.length, 4);
   // The refresh, read after the import, lands first; the older page lands last
   // with the same provider timestamp.
   refreshCalls.forEach((call, index) => call.resolve({ conversations: index === 0 ? [row(2, '2026-10-02T00:00:00.000Z')] : [] }));
@@ -156,7 +156,7 @@ test('mounting loads the first page of every provider', async () => {
   const { pending } = mount(false, { projectId: 'p' }, true);
   await nextTick();
   assert.deepEqual(pending.map((call) => [call.name, call.args.provider, call.args.offset]), [
-    ['history_list', 'claude', 0], ['history_list', 'codex', 0], ['history_list', 'opencode', 0]
+    ['history_list', 'claude', 0], ['history_list', 'codex', 0], ['history_list', 'opencode', 0], ['history_list', 'agy', 0]
   ]);
 });
 

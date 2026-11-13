@@ -239,7 +239,7 @@ const route = useRoute();
 const { settings, rows, voices } = useBots();
 const { projects } = useWorkbench();
 const bots = computed(() => settings.value.bots);
-const presets = ref<ProfileSettings>({ presets: [], defaultPresetIdByHarness: { claude: null, codex: null, opencode: null } });
+const presets = ref<ProfileSettings>({ presets: [], defaultPresetIdByHarness: { claude: null, codex: null, opencode: null, agy: null } });
 const userProjects = computed(() => projects.value.map((item) => item.project).filter((project) => project.kind === 'workspace' || project.kind === 'personal' || !project.kind));
 const catalog = ref<ModelCatalog>(emptyModelCatalog());
 const presetOptions = computed(() => presets.value.presets.map((preset) => ({ value: preset.id as string | null, label: `${profileName(preset)} · ${harnessLabel(preset.harness)}` })));

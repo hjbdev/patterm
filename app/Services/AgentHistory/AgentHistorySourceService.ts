@@ -7,7 +7,7 @@ import { ProviderHistoryDiscoveryService } from './ProviderHistoryDiscoveryServi
 import type { AgentHistoryDb } from './AgentHistoryDb';
 
 export const historyConfigureInput = z.object({
-  provider: z.enum(['claude', 'codex', 'opencode']),
+  provider: z.enum(['claude', 'codex', 'opencode', 'agy']),
   path: z.string().min(1),
   enabled: z.boolean().default(true),
   watch_enabled: z.boolean().default(true),

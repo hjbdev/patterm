@@ -30,7 +30,7 @@ export interface Bot {
   name: string;
   // The CLI it runs and its model settings, its own copy of a profile's.
   // Null keeps the CLI's own configuration.
-  harness: 'claude' | 'codex' | 'opencode';
+  harness: 'claude' | 'codex' | 'opencode' | 'agy';
   model: string | null;
   reasoning: string | null;
   serviceTier: string | null;

@@ -159,7 +159,7 @@ export interface IntegratedActivityChange {
 export class IntegratedAgentService {
   constructor(
     private readonly database: DatabaseService,
-    private readonly providers: Partial<Record<'claude' | 'codex' | 'opencode', IntegratedProviderService>>,
+    private readonly providers: Partial<Record<'claude' | 'codex' | 'opencode' | 'agy', IntegratedProviderService>>,
     // Reading a conversation is not a workbench mutation, but providers report
     // activity and titles as a side effect. Notify only when either actually
     // changes so polling the transcript does not refetch the whole workspace.
@@ -285,11 +285,11 @@ export class IntegratedAgentService {
     }
   }
 
-  prepare(harness: 'claude' | 'codex' | 'opencode', input: IntegratedLaunchInput): Promise<IntegratedLaunchResult> {
+  prepare(harness: 'claude' | 'codex' | 'opencode' | 'agy', input: IntegratedLaunchInput): Promise<IntegratedLaunchResult> {
     return this.provider(harness).prepare(input);
   }
 
-  async cleanupLaunch(harness: 'claude' | 'codex' | 'opencode', input: IntegratedLaunchInput, result: IntegratedLaunchResult): Promise<void> {
+  async cleanupLaunch(harness: 'claude' | 'codex' | 'opencode' | 'agy', input: IntegratedLaunchInput, result: IntegratedLaunchResult): Promise<void> {
     await this.provider(harness).cleanupLaunch?.(input, result);
   }
 
@@ -1175,7 +1175,7 @@ export class IntegratedAgentService {
     return row?.harness ?? null;
   }
 
-  private harness(processId: string): 'claude' | 'codex' | 'opencode' {
+  private harness(processId: string): 'claude' | 'codex' | 'opencode' | 'agy' {
     const parsed = presetHarnessInput.safeParse(this.sessionHarness(processId));
     if (!parsed.success) throw new Error('Integrated agent session not found');
     return parsed.data;
@@ -1187,16 +1187,17 @@ export class IntegratedAgentService {
   private archiveSession(processId: string, conversation: unknown): { provider: string; resumeId: string; projectId: string; startedAt: string } | null {
     const row = this.database.connection.prepare(`
       select harness, resume_id, project_id, started_at from sessions
-      where (process_id = ? or id = ?) and interface_mode = 'integrated' and harness in ('claude', 'codex', 'opencode') and resume_id is not null
+      where (process_id = ? or id = ?) and interface_mode = 'integrated' and harness in ('claude', 'codex', 'opencode', 'agy') and resume_id is not null
       order by exited_at is null desc, started_at desc limit 1
     `).get(processId, processId) as { harness: string; resume_id: string; project_id: string; started_at: string } | undefined;
     if (!row) return null;
     if (row.harness === 'opencode' && conversation !== null) return null;
+    if (row.harness === 'agy' && conversation !== null) return null;
     if (row.harness === 'codex' && conversation !== null && record(conversation).history_unavailable !== true) return null;
     return { provider: row.harness, resumeId: row.resume_id, projectId: row.project_id, startedAt: row.started_at };
   }
 
-  private provider(harness: 'claude' | 'codex' | 'opencode'): IntegratedProviderService {
+  private provider(harness: 'claude' | 'codex' | 'opencode' | 'agy'): IntegratedProviderService {
     const provider = this.providers[harness];
     if (!provider) throw new Error(`${harness} Integrated conversations are unavailable`);
     return provider;

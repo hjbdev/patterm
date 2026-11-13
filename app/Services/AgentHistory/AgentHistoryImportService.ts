@@ -20,7 +20,7 @@ export { historyConfigureInput } from './AgentHistorySourceService';
 const IMPORT_MESSAGE_CHUNK_SIZE = 500;
 
 export const historyImportInput = z.object({
-  provider: z.enum(['claude', 'codex', 'opencode']).optional(),
+  provider: z.enum(['claude', 'codex', 'opencode', 'agy']).optional(),
   path: z.string().min(1).optional(),
   project_id: z.string().min(1).nullable().optional(),
   trigger: z.enum(['manual', 'startup', 'watcher', 'session_exit']).default('manual')

@@ -80,6 +80,7 @@ import { HarnessPresetService } from './Services/HarnessPresetService';
 import { OpenCodeServerService } from './Services/OpenCodeServerService';
 import { CodexAppServerService } from './Services/CodexAppServerService';
 import { ClaudeStreamService } from './Services/ClaudeStreamService';
+import { AcpProviderService } from './Services/AcpProviderService';
 import { detachedHostLauncher, systemdHostLauncher } from './Services/IntegratedHostLauncher';
 import { IdleCompactionService } from './Services/IdleCompactionService';
 import type { IdleCompactionSettings } from './Services/SettingsService';
@@ -361,8 +362,9 @@ async function createApplicationResources(
   const nodePath = process.env.PATTERM_NODE || process.execPath;
   const codexAppServer = new CodexAppServerService(database, harnessRuntimeDir, resolvedEnv, nodePath, undefined, { launcher: hostLauncher, images: transcriptImages });
   const claudeStream = new ClaudeStreamService(database, harnessRuntimeDir, nodePath, resolvedEnv, undefined, hostLauncher, transcriptImages);
+  const agyAcp = new AcpProviderService(database, harnessRuntimeDir, nodePath, resolvedEnv, undefined, hostLauncher, transcriptImages);
   const integratedInputs = new WorktreeFileService(database, new UploadService(path.join(options.appDataPath, 'uploads')));
-  const integrated = new IntegratedAgentService(database, { opencode: openCodeServer, codex: codexAppServer, claude: claudeStream }, () => notifyWorkbenchChanged(), integratedInputs, hostLauncher);
+  const integrated = new IntegratedAgentService(database, { opencode: openCodeServer, codex: codexAppServer, claude: claudeStream, agy: agyAcp }, () => notifyWorkbenchChanged(), integratedInputs, hostLauncher);
   integrated.setDebugLog(debugLog);
   integrated.setMemoryPush(new MemoryPushService(database, assistantMemory, (event, data) => debugLog.write('memory', event, data)));
   // Holds unprompted input for a bot while its Focus mode is on.
@@ -581,7 +583,7 @@ async function createApplicationResources(
   defer(integrated.onActivityChange(integratedHistoryCheckpoints({
     provider: (processId) => {
       const row = database.connection.prepare('select harness from sessions where process_id = ? or id = ? limit 1').get(processId, processId) as { harness: string | null } | undefined;
-      return row?.harness === 'claude' || row?.harness === 'codex' || row?.harness === 'opencode' ? row.harness : null;
+      return row?.harness === 'claude' || row?.harness === 'codex' || row?.harness === 'opencode' || row?.harness === 'agy' ? row.harness : null;
     },
     flush: (provider) => historyWatcher.flush(provider)
   })));

@@ -137,5 +137,15 @@ const rawpty: HarnessProvider = {
   }
 };
 
-export const harnessProviders: HarnessProvider[] = [claude, codex, opencode, rawpty];
+const agy: HarnessProvider = {
+  id: 'agy',
+  displayName: 'Antigravity',
+  executableCandidates: ['agy'],
+  versionArgs: ['--version'],
+  parseVersion: firstSemver,
+  buildLaunch(): HarnessLaunchPlan {
+    throw new Error('Antigravity currently requires Integrated mode; choose Integrated in agent settings');
+  }
+};
 
+export const harnessProviders: HarnessProvider[] = [claude, codex, opencode, agy, rawpty];
