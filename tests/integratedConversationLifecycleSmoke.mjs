@@ -10,6 +10,8 @@ const helpers = require('../dist/tests/resources/js/lib/integratedConversation.j
 const composer = require('../dist/tests/resources/js/lib/integratedComposer.js');
 const { archiveTranscript } = require('../dist/tests/resources/js/lib/historyTranscript.js');
 const { awaitingUser } = require('../dist/tests/resources/js/lib/activity.js');
+const { conversationFailure } = require('../dist/tests/resources/js/lib/conversationFailure.js');
+const { isOpenCodeVersionMismatch, OPENCODE_VERSION_MISMATCH } = require('../dist/tests/app/Services/OpenCodeServiceErrors.js');
 
 // The pane keeps provider/business logic in helpers and services. This harness
 // runs its real <script setup> with controllable browser APIs, timers, and
@@ -113,6 +115,7 @@ function createHarness({ processId = 'process_a', exited = false, restartable = 
     failOutgoingMessage: composer.failOutgoingMessage,
     archiveTranscript,
     awaitingUser,
+    conversationFailure, isOpenCodeVersionMismatch, OPENCODE_VERSION_MISMATCH,
     randomId: () => crypto.randomUUID(),
     payloadHash: composer.payloadHash,
     provide: (key, value) => provided.set(key, value),
@@ -142,7 +145,8 @@ return {
   refresh, loadOlder, historyCursor, loadingOlder, historyError, sendRequest, retryMessage, reconcileDelivery, replyQuestion, replyPermission, replyForm, takeControl,
   transcriptMessages, messages, questions, permissions, questionAnswers, singleQuestionAnswers, customQuestionAnswers,
   forms, formAnswers, formErrors, setFormAnswer, toggleMultiselect, activeFields, isResponding,
-  controls, resumeOpen, resumeQuery, transcriptRef
+   controls, resumeOpen, resumeQuery, transcriptRef, restartSession, recoverOpenCode, restartNeedsServer,
+   recoveryError, recoveryCopy
 };`);
   const scope = effectScope();
   const pane = scope.run(() => setup(...Object.keys(bindings).map(key => bindings[key])));
@@ -1445,5 +1449,134 @@ test('reopening a dead parent reads saved history and /restart uses its owner wi
   await h.pane.sendRequest({ ...prepared.payload, hash: prepared.hash });
   assert.deepEqual(calls, ['dead_parent']);
   assert.deepEqual(h.mutations, []);
+  h.scope.stop();
+});
+
+test('a blocked /restart offers explicit shared-server recovery and retries the same conversation', async () => {
+  const calls = [];
+  const h = createHarness({ processId: 'blocked_restart', exited: true, restartable: true, onRestartSession: async id => {
+    calls.push(id);
+    if (calls.length === 1) throw new Error('The agent did not restart: OpenCode server version mismatch: CLI 2.2.7, server 2.2.6, with 1 OpenCode turn running.');
+  } });
+  await mountSettled(h);
+  h.emitControl({ processId: 'blocked_restart', controlling: true });
+  await h.pane.restartSession(false);
+  assert.equal(h.pane.restartNeedsServer?.value, true, 'failed restart exposes a recovery action instead of another dead-end /restart hint');
+  assert.equal(pending(h, 'opencode_service_restart').length, 0, 'a mismatch never restarts the shared server without consent');
+  const recovering = h.pane.recoverOpenCode();
+  await flush();
+  pending(h, 'opencode_service_restart')[0].resolve({ version: '2.2.7' });
+  await recovering;
+  assert.deepEqual(calls, ['blocked_restart', 'blocked_restart']);
+  assert.equal(h.pane.restartNeedsServer.value, false);
+  h.scope.stop();
+});
+
+test('failed server recovery stays retryable and never resumes before a successful restart', async () => {
+  let resumes = 0;
+  const h = createHarness({ exited: true, restartable: true, onRestartSession: async () => {
+    resumes++;
+    throw new Error('OpenCode server version mismatch');
+  } });
+  await mountSettled(h);
+  h.emitControl({ processId: h.props.processId, controlling: true });
+  composer.draftFor(h.props.processId).text = 'keep this unsent draft';
+  await h.pane.restartSession(false);
+  const recovering = h.pane.recoverOpenCode();
+  await flush();
+  pending(h, 'opencode_service_restart')[0].reject(new Error('Server restart failed'));
+  await recovering;
+  assert.equal(resumes, 1);
+  assert.equal(h.pane.restartNeedsServer.value, true);
+  assert.equal(h.pane.recoveryError.value, 'Server restart failed');
+  assert.equal(composer.draftFor(h.props.processId).text, 'keep this unsent draft');
+  h.scope.stop();
+});
+
+test('server recovery cannot resume a different agent after switching tabs', async () => {
+  const calls = [];
+  const h = createHarness({ processId: 'recover_A', exited: true, restartable: true, onRestartSession: async id => {
+    calls.push(id);
+    throw new Error('OpenCode server version mismatch');
+  } });
+  await mountSettled(h);
+  h.emitControl({ processId: 'recover_A', controlling: true });
+  await h.pane.restartSession(false);
+  const recovering = h.pane.recoverOpenCode();
+  await flush();
+  const restart = pending(h, 'opencode_service_restart')[0];
+  h.props.processId = 'recover_B';
+  await nextTick();
+  restart.resolve({ version: '2.2.7' });
+  await recovering;
+  assert.deepEqual(calls, ['recover_A']);
+  assert.equal(h.pane.restartNeedsServer.value, false);
+  h.scope.stop();
+});
+
+test('project recovery uses the controlled restart route and selects the replacement session', async () => {
+  const launched = [];
+  const h = createHarness({ processId: 'project_restart', exited: true, restartable: true });
+  h.props.projectId = 'project_one';
+  h.props.onLaunched = id => launched.push(id);
+  await mountSettled(h);
+  h.emitControl({ processId: 'project_restart', controlling: true });
+  let restarting = h.pane.restartSession(false);
+  await flush();
+  h.mutations.at(-1).reject(new Error('OpenCode server version mismatch: CLI 2.2.7, server 2.2.6'));
+  await restarting;
+  assert.equal(h.pane.restartNeedsServer.value, true);
+  restarting = h.pane.recoverOpenCode();
+  await flush();
+  pending(h, 'opencode_service_restart')[0].resolve({ version: '2.2.7' });
+  await flush();
+  assert.equal(h.mutations.at(-1).tool, 'integrated_restart');
+  assert.deepEqual(h.mutations.at(-1).args, { process_id: 'project_restart', project_id: 'project_one' });
+  h.mutations.at(-1).resolve({ session_id: 'replacement', process_id: 'replacement_process' });
+  await restarting;
+  assert.deepEqual(launched, ['replacement']);
+  assert.equal(h.pane.restartNeedsServer.value, false);
+  h.scope.stop();
+});
+
+test('the real bot owner propagates a mismatch to the panel and restarts the stopped bot on recovery', async () => {
+  const botPage = fs.readFileSync(new URL('../resources/js/Pages/BotPage.vue', import.meta.url), 'utf8');
+  const botScript = ts.createSourceFile('bot.ts', botPage.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1], ts.ScriptTarget.Latest, true);
+  const restartFunction = botScript.statements.find(statement => ts.isFunctionDeclaration(statement) && statement.name.text === 'restart').getFullText(botScript);
+  const js = ts.transpileModule(restartFunction, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const live = ref(true);
+  const busy = ref(false);
+  const ownerError = ref('');
+  const calls = [];
+  let h;
+  const restart = new Function('row', 'live', 'busy', 'error', 'restartBot', 'startBot', `${js}; return restart;`)(
+    ref({ bot: { id: 'assistant' }, session: { processId: 'bot_recovery' } }), live, busy, ownerError,
+    async () => { live.value = false; h.props.exited = true; await nextTick(); throw new Error('OpenCode server version mismatch'); },
+    async id => { calls.push(id); }
+  );
+  h = createHarness({ processId: 'bot_recovery', restartable: true, onRestartSession: () => restart(false, true) });
+  await mountSettled(h);
+  h.emitControl({ processId: 'bot_recovery', controlling: true });
+  await h.pane.restartSession(false);
+  assert.equal(h.pane.restartNeedsServer.value, true);
+  assert.equal(ownerError.value, '', 'the panel owns the error, not a duplicate page banner');
+  const recovering = h.pane.recoverOpenCode();
+  await flush();
+  pending(h, 'opencode_service_restart')[0].resolve({ version: '2.2.7' });
+  await recovering;
+  assert.deepEqual(calls, ['assistant']);
+  assert.equal(busy.value, false);
+  h.scope.stop();
+});
+
+test('a paired-host mismatch never restarts the local shared server', async () => {
+  const h = createHarness({ processId: 'other:process_remote', exited: true, restartable: true, onRestartSession: async () => {
+    throw new Error('OpenCode server version mismatch');
+  } });
+  await mountSettled(h);
+  h.emitControl({ processId: h.props.processId, controlling: true });
+  await h.pane.restartSession(false);
+  await h.pane.recoverOpenCode();
+  assert.equal(pending(h, 'opencode_service_restart').length, 0);
   h.scope.stop();
 });

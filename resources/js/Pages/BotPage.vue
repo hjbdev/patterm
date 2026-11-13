@@ -50,13 +50,13 @@
           </span>
           <Button variant="ghost" size="sm" class="h-6 shrink-0 px-2 text-xs" @click="toggleFocus(false)">{{ relay.focus.enabled ? 'End focus' : 'Deliver' }}</Button>
         </div>
-        <p v-if="error && live" role="alert" class="shrink-0 border-b border-white/[0.06] px-4 py-1.5 text-xs text-destructive">{{ error }}</p>
+        <p v-if="error && row.session?.processId" role="alert" class="shrink-0 border-b border-white/[0.06] px-4 py-1.5 text-xs text-destructive">{{ error }}</p>
         <div class="relative min-h-0 min-w-0 flex-1">
           <!-- The transcript fades in under the header, as on an agent's page. -->
           <div v-if="live" class="pointer-events-none absolute inset-x-0 top-0 z-10 h-8 bg-gradient-to-b from-background to-transparent" aria-hidden="true" />
           <!-- Helpers' reports and Patterm's notes to the bot stay out of view.
                The chat stays mounted during a voice call, so its draft survives. -->
-          <div v-if="live && row.session?.processId" v-show="mode === 'chat'" class="h-full">
+          <div v-if="row.session?.processId" v-show="mode === 'chat'" class="h-full">
             <IntegratedConversation
               :key="row.session.processId"
               :process-id="row.session.processId"
@@ -67,14 +67,15 @@
               :mention-processes="mentions.processes"
               :mention-launchers="mentionLaunchers"
               :restartable="true"
-              :on-new-session="() => restart(true)"
-              :on-restart-session="() => restart(false)"
+              :exited="!live"
+              :on-new-session="() => restart(true, true)"
+              :on-restart-session="() => restart(false, true)"
               class="h-full"
               @transcript="onTranscript"
             />
           </div>
           <AssistantVoice v-if="live && mode === 'voice'" :key="`voice-${row.bot.id}`" :transcript="transcript" :stream-status="streamStatus" :bot-id="row.bot.id" :bot-name="row.bot.name" wide @end="mode = 'chat'" />
-          <div v-if="!live || !row.session?.processId" class="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+          <div v-if="!row.session?.processId" class="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
             <BotAvatar :avatar="row.bot.avatar" :size="72" motion />
             <p class="text-sm text-muted-foreground">{{ busy || !row.session ? `Starting ${row.bot.name}…` : `${row.bot.name} has stopped.` }}</p>
             <Button v-if="(row.session || error) && !busy" size="sm" @click="restart(false)">Start again</Button>
@@ -225,7 +226,7 @@ watch([row, busy], ([current]) => {
   void restart(false);
 }, { immediate: true });
 
-async function restart(fresh: boolean): Promise<void> {
+async function restart(fresh: boolean, fromConversation = false): Promise<void> {
   const bot = row.value?.bot;
   if (!bot || busy.value) return;
   busy.value = true;
@@ -235,6 +236,9 @@ async function restart(fresh: boolean): Promise<void> {
     if (processId) await restartBot(processId, fresh);
     else await startBot(bot.id, fresh);
   } catch (caught) {
+    // The conversation owns its recovery panel; do not turn its failed
+    // restart into a successful callback or a second page-level error.
+    if (fromConversation) throw caught;
     error.value = caught instanceof Error ? caught.message : String(caught);
   } finally {
     busy.value = false;

@@ -158,7 +158,7 @@ export class RestartAgentSessionAction {
       } catch (error) {
         this.processes.releaseTimers(held);
         const reason = error instanceof Error ? error.message : String(error);
-        throw new Error(`The agent did not restart: ${reason}. Its conversation is saved; resume it from history.`);
+        throw new Error(`The agent did not restart: ${reason}. Its conversation is saved. You can retry from this conversation.`);
       }
       const db = this.database.connection;
       db.transaction(() => {
