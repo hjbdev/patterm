@@ -10,9 +10,25 @@
         <div class="min-h-0 flex-1" :class="composerAdjoins && '-mb-4'">
           <ConversationTranscript ref="transcriptRef" :key="processId" :messages="transcriptMessages" :truncated="historyTruncated" :history-unavailable="historyUnavailable" :has-older="Boolean(historyCursor)" :loading-older="loadingOlder" :history-error="historyError" :process-id="processId" :live="streaming" :working="streamStatus === 'working' && !ended" :settling="loadingTranscript" :can-retry="canReply && !submission" :can-cancel="canReply" auto-load-older @load-older="loadOlder" @retry-message="retryMessage" @resend-message="resendMessage" @edit-message="editQueued" @cancel-message="cancelQueued" />
         </div>
-        <p v-if="displayError" role="alert" class="mx-auto w-full max-w-[50rem] shrink-0 break-words px-4 pb-4 text-sm text-destructive 2xl:max-w-[1000px]">{{ displayError }}</p>
       </div>
-      <div v-if="ended" class="mx-auto w-full max-w-[50rem] shrink-0 px-4 2xl:max-w-[1000px]"><p role="status" class="border-t border-border/60 py-3 text-sm text-muted-foreground">{{ canRestart ? 'This agent has stopped. Use /restart to resume this conversation.' : 'This agent session has ended. The transcript is read-only.' }}</p></div>
+      <section v-if="recoveryError || ended || restartNeedsServer" class="mx-auto mb-3 w-full max-w-[50rem] shrink-0 px-4 2xl:max-w-[1000px]" aria-label="Agent recovery">
+        <div class="rounded-xl border border-border bg-muted/20 p-4 text-sm">
+          <p :role="recoveryError ? 'alert' : 'status'" class="font-medium">{{ recoveryError || restartNeedsServer ? recoveryCopy.title : 'This agent has stopped' }}</p>
+          <p class="mt-1 text-xs leading-relaxed text-muted-foreground">{{ recoveryError || restartNeedsServer ? recoveryCopy.detail : canRestart ? 'Resume this conversation here. Your saved history will be kept.' : 'The transcript is read-only.' }}</p>
+          <template v-if="restartNeedsServer && canRestart">
+            <p class="mt-3 text-xs leading-relaxed text-muted-foreground">{{ localProcess ? 'Restarting the shared server interrupts all running OpenCode turns, including sessions outside Patterm. No prompt will be resent automatically.' : 'This agent runs on a paired host. Restart the OpenCode server on that host, then try again here. This page will not restart your local server.' }}</p>
+            <div class="mt-3 flex flex-wrap gap-2">
+              <Button v-if="localProcess" size="sm" :disabled="restarting" @click="recoverOpenCode">{{ restarting ? 'Recovering…' : 'Restart server and resume' }}</Button>
+              <Button size="sm" variant="outline" :disabled="restarting" @click="restartSession(false)">Try again without restarting server</Button>
+            </div>
+          </template>
+          <Button v-else-if="canRestart && (ended || streamStatus !== 'working')" class="mt-3" size="sm" variant="outline" :disabled="restarting" @click="restartSession(false)">{{ restarting ? 'Resuming…' : ended ? 'Resume conversation' : 'Restart agent' }}</Button>
+          <details v-if="recoveryError" class="mt-3 text-xs text-muted-foreground">
+            <summary class="cursor-pointer">Details</summary>
+            <p class="mt-2 max-h-36 overflow-auto whitespace-pre-wrap break-words">{{ recoveryError }}</p>
+          </details>
+        </div>
+      </section>
       <!-- On a phone a question or permission docks where the composer was,
            within a thumb's reach, and the composer comes back once it's answered. -->
       <div v-if="permissions.length || questions.length || forms.length || ((closeRequest || snooze) && !ended)" class="shrink-0 pb-2" :class="docked && 'pb-[calc(0.5rem+env(safe-area-inset-bottom))]'">
@@ -185,7 +201,6 @@
         </ul>
       </section>
       <p v-if="streamStatus === 'reconnecting'" role="status" class="mx-auto mb-2 w-full max-w-[50rem] 2xl:max-w-[1000px] px-4 text-xs text-muted-foreground">Reconnecting to the native agent…</p>
-      <p v-else-if="streamStatus === 'error'" role="status" class="mx-auto mb-2 w-full max-w-[50rem] 2xl:max-w-[1000px] break-words px-4 text-xs text-destructive">{{ statusDetail ? `The last turn ended with an error: ${statusDetail}` : 'The last turn ended with an error; see the transcript.' }}</p>
       <div v-if="uncertain" role="status" class="mx-auto mb-3 w-full max-w-[50rem] 2xl:max-w-[1000px] rounded-lg border border-border bg-muted/20 p-3 text-sm">
         <p class="font-medium">Delivery uncertain</p>
         <p class="mt-1 text-xs text-muted-foreground">{{ uncertain.message }} The prompt may already be running; check the transcript before sending again.</p>
@@ -337,6 +352,8 @@ import { phoneLayout } from '../lib/phoneLayout';
 import { permissionAsk } from '../../../app/Services/IntegratedAsking';
 import { publishIntegratedControls } from '../lib/integratedControlsRegistry';
 import { onWorkspaceRequest, type WorkspaceRequest } from '../lib/workspaceRequests';
+import { conversationFailure } from '../lib/conversationFailure';
+import { isOpenCodeVersionMismatch, OPENCODE_VERSION_MISMATCH } from '../../../app/Services/OpenCodeServiceErrors';
 
 // `embedded` conversations live outside the workbench main area, such as a routine run's dialog.
 // `onLaunched` is a prop rather than an emit: /new and /resume close this tab
@@ -463,6 +480,10 @@ const resumeQuery = ref('');
 let startingNew = false;
 const restarting = ref(false);
 const displayError = computed(() => error.value || refreshError.value || controlsError.value);
+const restartNeedsServer = ref(false);
+const localProcess = computed(() => !props.processId.includes(':'));
+const recoveryError = computed(() => displayError.value || (streamStatus.value === 'error' ? statusDetail.value || 'The last turn ended with an error; see the transcript.' : ''));
+const recoveryCopy = computed(() => conversationFailure(restartNeedsServer.value ? OPENCODE_VERSION_MISMATCH : recoveryError.value));
 const canReply = computed(() => controlling.value && !ended.value);
 // A page's answer is an ordinary message, through the same send path
 // and control check as the composer, without touching the draft.
@@ -681,6 +702,8 @@ function resetState(): void {
   responding.value = {};
   error.value = '';
   refreshError.value = '';
+  restartNeedsServer.value = false;
+  restarting.value = false;
   controlsError.value = '';
   controls.value = { selectors: [], commands: [] };
   controlling.value = window.patterm.runtime !== 'browser';
@@ -1031,20 +1054,49 @@ async function restartSession(force: boolean): Promise<void> {
   try {
     if (window.patterm.runtime === 'browser' && !controlling.value) {
       await takeControl();
+      if (token !== generation) return;
       if (!controlling.value) throw new Error('Take control of this agent before restarting it.');
     }
     if (props.onRestartSession) {
       if (!force && !ended.value && streamStatus.value === 'working') throw new Error('This agent is still working. Wait for it to finish or use Restart in the assistant menu to confirm stopping it.');
       await props.onRestartSession(props.processId);
+      if (token === generation) restartNeedsServer.value = false;
       return;
     }
     const result = await mutate('integrated_restart', { process_id: props.processId, project_id: props.projectId, ...(force ? { force: true } : {}) }) as { session_id?: unknown };
+    if (token === generation) restartNeedsServer.value = false;
     if (typeof result?.session_id === 'string') props.onLaunched?.(result.session_id);
   } catch (cause) {
-    if (token === generation) error.value = cause instanceof Error ? cause.message : String(cause);
+    if (token === generation) {
+      error.value = cause instanceof Error ? cause.message : String(cause);
+      restartNeedsServer.value = isOpenCodeVersionMismatch(error.value);
+    }
   } finally {
-    restarting.value = false;
+    if (token === generation) restarting.value = false;
   }
+}
+
+// This click is deliberately separate from /restart: replacing the shared
+// daemon can interrupt other agents, so ordinary recovery must never do it.
+async function recoverOpenCode(): Promise<void> {
+  if (restarting.value || !restartNeedsServer.value || !canRestart.value || !localProcess.value) return;
+  const token = generation;
+  restarting.value = true;
+  try {
+    if (window.patterm.runtime === 'browser' && !controlling.value) {
+      await takeControl();
+      if (token !== generation) return;
+      if (!controlling.value) throw new Error('Take control of this agent before recovering it.');
+    }
+    await window.patterm.call('opencode_service_restart', {});
+    if (token !== generation) return;
+  } catch (cause) {
+    if (token === generation) error.value = cause instanceof Error ? cause.message : String(cause);
+    return;
+  } finally {
+    if (token === generation) restarting.value = false;
+  }
+  await restartSession(false);
 }
 
 async function loadControls(): Promise<void> {

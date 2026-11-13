@@ -29,6 +29,11 @@ import {
 } from '../resources/js/lib/integratedConversation';
 import { taskInlineDetail } from '../resources/js/lib/integratedTasks';
 import { contextPercent } from '../resources/js/lib/integratedUsage';
+import { conversationFailure } from '../resources/js/lib/conversationFailure';
+
+assert.equal(conversationFailure('Failed to authenticate. API Error: 403 Attention Required! | Cloudflare').title, 'Cloudflare blocked the provider request');
+assert.match(conversationFailure('OpenCode server version mismatch: CLI 2.2.7, server 2.2.6').detail, /Wait for other OpenCode turns/);
+assert.equal(conversationFailure('unexpected error').title, 'The agent could not complete this action');
 
 // Claude flattens tool_use records into shell rows without text, so the
 // normaliser must keep them (regression: they were dropped from the pane).
