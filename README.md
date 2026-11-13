@@ -6,6 +6,9 @@ Run Claude Code, Codex and OpenCode in their own TUIs or as Integrated
 conversations, signed in with your own accounts. Each project's agents,
 worktrees, diffs and history stay in one window.
 
+Antigravity CLI (`agy`) is also supported in Integrated mode through its native
+Agent Client Protocol (ACP) server.
+
 ![An Integrated Claude Code conversation in Patterm, with a chart the agent drew inline and its helper agents nested under it in the sidebar](docs/images/patterm-workspace.png)
 
 *A demo project with synthetic data.*
@@ -48,6 +51,16 @@ patterm
 Install and sign in to the agent CLIs you want to use separately. Add a project
 folder, then choose a CLI from **Launch agent**. Releases bundle Node, Electron
 and the terminal engine, and update themselves from Settings › About.
+
+For Antigravity, install the [official CLI](https://antigravity.google/docs/install/)
+and run `agy acp --login` on the machine hosting Patterm. Choose **Integrated**
+in agent settings, then launch **Antigravity**. Model choices come from `agy models`;
+you can save a Flash preset to keep costs down. Existing presets and MCP-server
+assignments are left alone: add an Antigravity profile and enable its MCP servers
+in Settings as needed. To import native history, enable the Antigravity source
+under history settings. Native terminal launches, hidden memory updates and
+automatic idle compaction are not supported for agy yet; native questions appear
+in the conversation rather than Patterm forms.
 
 To keep agents running on a machine that stays on, run Patterm as a background
 service and open it in any browser:

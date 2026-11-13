@@ -9,7 +9,7 @@ import type { AgentInterface, ConversationRecord, ProjectWorkbench, TimerRecord,
 // Rows the palette builds from conversations, timers, workspace search, and the
 // launch choices, so every layout shares the same commands.
 
-export const HISTORY_PROVIDERS = ['claude', 'codex', 'opencode'] as const;
+export const HISTORY_PROVIDERS = ['claude', 'codex', 'opencode', 'agy'] as const;
 
 export interface HarnessPreset {
   id: string;

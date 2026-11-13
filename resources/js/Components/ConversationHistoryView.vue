@@ -119,7 +119,7 @@ const MESSAGE_PAGE_SIZE = 100;
 // Opened transcript pages stay cached for going back, within this budget, so
 // reading many long conversations doesn't hold them all.
 const TRANSCRIPT_CACHE = { entries: 24, size: 4_000_000 };
-const historyProviders = ['claude', 'codex', 'opencode'] as const;
+const historyProviders = ['claude', 'codex', 'opencode', 'agy'] as const;
 type HistoryProvider = typeof historyProviders[number];
 
 interface ProviderPageState {
@@ -303,6 +303,7 @@ function initialProviderState(): Record<HistoryProvider, ProviderPageState> {
     claude: { offset: 0, hasMore: true, loading: false },
     codex: { offset: 0, hasMore: true, loading: false },
     opencode: { offset: 0, hasMore: true, loading: false },
+    agy: { offset: 0, hasMore: true, loading: false },
   };
 }
 
@@ -331,6 +332,7 @@ function isHistoryProvider(value: string): value is HistoryProvider {
 function providerLabel(provider: HistoryProvider): string {
   if (provider === 'claude') return 'Claude';
   if (provider === 'codex') return 'Codex';
+  if (provider === 'agy') return 'Antigravity';
   return 'OpenCode';
 }
 

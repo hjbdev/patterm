@@ -151,8 +151,8 @@ export class ResumeConversationAgentAction {
   }
 }
 
-function isResumableProvider(provider: string): provider is 'claude' | 'codex' | 'opencode' {
-  return provider === 'claude' || provider === 'codex' || provider === 'opencode';
+function isResumableProvider(provider: string): provider is 'claude' | 'codex' | 'opencode' | 'agy' {
+  return provider === 'claude' || provider === 'codex' || provider === 'opencode' || provider === 'agy';
 }
 
 function duplicateResumeError(processId: string): Error {

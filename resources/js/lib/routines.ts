@@ -80,7 +80,7 @@ export interface RoutineChoiceOption {
   group?: string;
 }
 
-export const ROUTINE_HARNESSES = ['claude', 'codex', 'opencode'] as const;
+export const ROUTINE_HARNESSES = ['claude', 'codex', 'opencode', 'agy'] as const;
 
 // Routine reads are cached until routines or the workbench change: a run's
 // waiting and needs-you state follow its agent's activity. Writes here mark

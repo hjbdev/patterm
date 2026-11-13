@@ -122,7 +122,7 @@ const PRESET_HARNESSES = PROFILE_HARNESSES;
 
 const { harnesses } = useWorkbench();
 const presets = ref<HarnessPreset[]>([]);
-const defaults = reactive<Record<PresetHarness, string | null>>({ claude: null, codex: null, opencode: null });
+const defaults = reactive<Record<PresetHarness, string | null>>({ claude: null, codex: null, opencode: null, agy: null });
 const catalog = ref<ModelCatalog>(emptyModelCatalog());
 const editor = ref<EditorState | null>(null);
 const editorOpen = ref(false);
@@ -156,13 +156,14 @@ function applySettings(settings: PresetSettings): void {
   defaults.claude = settings.defaultPresetIdByHarness?.claude ?? null;
   defaults.codex = settings.defaultPresetIdByHarness?.codex ?? null;
   defaults.opencode = settings.defaultPresetIdByHarness?.opencode ?? null;
+  defaults.agy = settings.defaultPresetIdByHarness?.agy ?? null;
 }
 
 function snapshot(): PresetSettings {
   return {
     // Electron IPC cannot clone Vue's reactive array or its proxy elements.
     presets: presets.value.map(({ id, harness, name, model, reasoning, serviceTier, look }) => ({ id, harness, name, model, reasoning, serviceTier: serviceTier ?? null, look: look ? { ...look } : null })),
-    defaultPresetIdByHarness: { claude: defaults.claude, codex: defaults.codex, opencode: defaults.opencode }
+    defaultPresetIdByHarness: { claude: defaults.claude, codex: defaults.codex, opencode: defaults.opencode, agy: defaults.agy }
   };
 }
 

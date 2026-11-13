@@ -105,6 +105,7 @@ const HARNESS_LABELS: Record<string, string> = {
   claude: 'Claude',
   codex: 'Codex',
   opencode: 'OpenCode',
+  agy: 'Antigravity',
   rawpty: 'Raw terminal'
 };
 

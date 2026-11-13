@@ -5,7 +5,7 @@ import { proseLabel, proseText, type ProseMessage } from './SummaryProseIndex';
 
 export const historyListInput = z.object({
   project_id: z.string().min(1).optional(),
-  provider: z.enum(['claude', 'codex', 'opencode']).optional(),
+  provider: z.enum(['claude', 'codex', 'opencode', 'agy']).optional(),
   session_id: z.string().min(1).optional(),
   // The /resume picker: hides sub-agent and routine-run conversations and orders by the later
   // of last activity and when the session closed.
@@ -24,14 +24,14 @@ export const historyGetInput = z.object({
 export const conversationHistorySearchInput = z.object({
   query: z.string().min(1),
   project_id: z.string().min(1),
-  provider: z.enum(['claude', 'codex', 'opencode']).optional(),
+  provider: z.enum(['claude', 'codex', 'opencode', 'agy']).optional(),
   limit: z.number().int().positive().max(50).default(20)
 });
 
 export const conversationSearchInput = z.object({
   query: z.string().min(1),
   project_id: z.string().min(1),
-  provider: z.enum(['claude', 'codex', 'opencode']).optional(),
+  provider: z.enum(['claude', 'codex', 'opencode', 'agy']).optional(),
   resumable: z.boolean().default(false),
   limit: z.number().int().positive().max(50).default(30)
 });

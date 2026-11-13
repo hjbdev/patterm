@@ -5,7 +5,7 @@ import { FACE_COLORS, FACE_EYES, FACE_FINISHES, FACE_HATS, FACE_IDLES, FACE_MARK
 // Named model/reasoning presets a user configures per agent harness. Presets are
 // resolved to provider flags at launch time (see HarnessLauncher). `rawpty` has
 // no model surface, so presets only cover agent CLIs.
-export const presetHarnessInput = z.enum(['claude', 'codex', 'opencode']);
+export const presetHarnessInput = z.enum(['claude', 'codex', 'opencode', 'agy']);
 export type PresetHarness = z.infer<typeof presetHarnessInput>;
 
 export const PRESET_HARNESSES = presetHarnessInput.options;
@@ -47,11 +47,12 @@ const defaultPresetIds = z.object({
   claude: z.string().nullable().default(null),
   codex: z.string().nullable().default(null),
   opencode: z.string().nullable().default(null),
+  agy: z.string().nullable().default(null),
 });
 
 export const harnessPresetSettingsInput = z.object({
   presets: z.array(harnessPresetInput).max(100).default([]),
-  defaultPresetIdByHarness: defaultPresetIds.default({ claude: null, codex: null, opencode: null })
+  defaultPresetIdByHarness: defaultPresetIds.default({ claude: null, codex: null, opencode: null, agy: null })
 }).superRefine((value, context) => {
   const ids = new Set<string>();
   const names = new Set<string>();
@@ -89,7 +90,7 @@ export const harnessPresetSettingsInput = z.object({
 export type HarnessPresetSettings = z.infer<typeof harnessPresetSettingsInput>;
 
 export function emptyHarnessPresetSettings(): HarnessPresetSettings {
-  return { presets: [], defaultPresetIdByHarness: { claude: null, codex: null, opencode: null } };
+  return { presets: [], defaultPresetIdByHarness: { claude: null, codex: null, opencode: null, agy: null } };
 }
 
 // First-run defaults: one "Default" preset per harness that passes no model or
@@ -111,6 +112,7 @@ export function seededHarnessPresetSettings(): HarnessPresetSettings {
       claude: 'preset_default_claude',
       codex: 'preset_default_codex',
       opencode: 'preset_default_opencode',
+      agy: 'preset_default_agy',
     }
   };
 }

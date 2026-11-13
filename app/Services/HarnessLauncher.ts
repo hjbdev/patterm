@@ -29,7 +29,7 @@ import type { LaunchingMcpIdentities } from '../MCP/McpHelperAccess';
 import type { AssistantMemoryService } from './AssistantMemoryService';
 
 export const launchHarnessInput = z.object({
-  harness: z.enum(['claude', 'codex', 'opencode', 'rawpty']).optional(),
+  harness: z.enum(['claude', 'codex', 'opencode', 'agy', 'rawpty']).optional(),
   preset: z.string().trim().min(1).max(160).nullable().default(null),
   model: z.string().trim().min(1).max(160).nullable().default(null),
   reasoning: z.string().trim().min(1).max(60).nullable().default(null),
@@ -244,7 +244,7 @@ export class HarnessLauncher {
         reconnectMcp: resume?.reconnect_mcp === true,
         memoryPush: input.session_role === 'assistant' || input.session_role === 'bot'
       };
-      const prepared = await this.deps.integrated.prepare(harness as 'claude' | 'codex' | 'opencode', launchInput);
+      const prepared = await this.deps.integrated.prepare(harness as 'claude' | 'codex' | 'opencode' | 'agy', launchInput);
       integratedLaunch = { input: launchInput, result: prepared };
       providerSessionId = prepared.resumeId;
       integratedArgv = prepared.argv;
@@ -417,7 +417,7 @@ export class HarnessLauncher {
       return { process_id, session_id };
       })();
     } catch (error) {
-      await this.deps.integrated?.cleanupLaunch(selection.harness as 'claude' | 'codex' | 'opencode', launch.input, launch.result).catch(() => undefined);
+      await this.deps.integrated?.cleanupLaunch(selection.harness as 'claude' | 'codex' | 'opencode' | 'agy', launch.input, launch.result).catch(() => undefined);
       throw error;
     }
     timing.mark('integrated.registered', registered);
@@ -530,7 +530,7 @@ export class HarnessLauncher {
 }
 
 function providerName(harness: string): string {
-  return harness === 'claude' ? 'Claude Code' : harness === 'codex' ? 'Codex' : harness === 'opencode' ? 'OpenCode' : harness;
+  return harness === 'claude' ? 'Claude Code' : harness === 'codex' ? 'Codex' : harness === 'opencode' ? 'OpenCode' : harness === 'agy' ? 'Antigravity' : harness;
 }
 
 async function waitForTerminalIdle(terminal: SpawnSink, processId: string, idleMs: number, maxMs: number): Promise<void> {

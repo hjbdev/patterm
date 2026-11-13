@@ -128,7 +128,7 @@ export class HarnessModelCatalogService {
     }
     const executable = this.executableFor(harness);
     if (!executable) {
-      throw new Error(`${harness === 'codex' ? 'Codex' : 'OpenCode'} was not discovered.`);
+      throw new Error(`${harness} was not discovered.`);
     }
     if (harness === 'codex') {
       const output = await this.run(executable, ['debug', 'models'], this.codexTimeoutMs);
@@ -139,6 +139,17 @@ export class HarnessModelCatalogService {
         error: null,
         models: parseCodexCatalog(JSON.parse(output))
       };
+    }
+    if (harness === 'agy') {
+      // Native listing performs no model request. Its versioned model ids
+      // already encode thinking level, so do not invent reasoning options.
+      const output = await this.run(executable, ['models'], this.openCodeTimeoutMs);
+      const models = output.split(/\r?\n/).flatMap((line) => {
+        const match = /^(\S+)\t(.+)$/.exec(line);
+        return match ? [{ id: match[1]!, label: match[2]!, reasoning: [], defaultReasoning: null }] : [];
+      });
+      if (!models.length) throw new Error('Antigravity returned no selectable models');
+      return { harness, source: 'cli', refreshedAt: this.now(), error: null, models };
     }
     const server = this.deps.openCodeServer;
     const [response, providers] = await Promise.all([

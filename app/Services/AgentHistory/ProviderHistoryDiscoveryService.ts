@@ -4,9 +4,10 @@ import type { AgentHistoryProvider, HistorySourceCandidate, ProviderHistoryAdapt
 import { ClaudeHistoryAdapter } from './ClaudeHistoryAdapter';
 import { CodexHistoryAdapter } from './CodexHistoryAdapter';
 import { OpenCodeHistoryAdapter } from './OpenCodeHistoryAdapter';
+import { AntigravityHistoryAdapter } from './AntigravityHistoryAdapter';
 
 export class ProviderHistoryDiscoveryService {
-  constructor(readonly adapters: ProviderHistoryAdapter[] = [new ClaudeHistoryAdapter(), new CodexHistoryAdapter(), new OpenCodeHistoryAdapter()]) {}
+  constructor(readonly adapters: ProviderHistoryAdapter[] = [new ClaudeHistoryAdapter(), new CodexHistoryAdapter(), new OpenCodeHistoryAdapter(), new AntigravityHistoryAdapter()]) {}
 
   adapter(provider: AgentHistoryProvider): ProviderHistoryAdapter {
     const adapter = this.adapters.find((candidate) => candidate.provider === provider);

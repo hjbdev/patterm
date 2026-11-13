@@ -463,6 +463,7 @@ const providerLabel = computed(() => {
   if (provider.value === 'codex') return 'Codex';
   if (provider.value === 'opencode') return 'OpenCode';
   if (provider.value === 'claude') return 'Claude';
+  if (provider.value === 'agy') return 'Antigravity';
   return 'The agent';
 });
 const controls = shallowRef<IntegratedControls>({ selectors: [], commands: [] });

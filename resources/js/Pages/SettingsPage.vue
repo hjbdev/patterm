@@ -376,7 +376,7 @@ function goBack(): void {
   }
 }
 
-const HISTORY_PROVIDERS: HistoryProvider[] = ['claude', 'codex', 'opencode'];
+const HISTORY_PROVIDERS: HistoryProvider[] = ['claude', 'codex', 'opencode', 'agy'];
 const historyBusy = ref(false);
 const historyError = ref('');
 const historySources = ref<HistorySource[]>([]);
@@ -455,10 +455,10 @@ async function resetAndReimportHistory(): Promise<void> {
   }
 }
 
-type HistoryProvider = 'claude' | 'codex' | 'opencode';
+type HistoryProvider = 'claude' | 'codex' | 'opencode' | 'agy';
 
 function providerLabel(provider: HistoryProvider): string {
-  return { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' }[provider];
+  return { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode', agy: 'Antigravity' }[provider];
 }
 
 interface HistorySource {

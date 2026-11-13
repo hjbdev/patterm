@@ -24,6 +24,7 @@ interface HarnessRow {
 
 async function main(): Promise<void> {
   assert.equal(harnessProviders.find((provider) => provider.id === 'opencode')?.parseVersion('opencode v2.0.14'), '2.0.14');
+  assert.equal(harnessProviders.find((provider) => provider.id === 'agy')?.parseVersion('1.5.8'), '1.5.8');
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-harness-'));
   const binDir = path.join(tempDir, 'bin');
   fs.mkdirSync(binDir);

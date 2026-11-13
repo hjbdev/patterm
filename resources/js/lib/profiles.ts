@@ -6,7 +6,7 @@ import { harnessLabel } from './harnessLabels';
 // kept for bots; profiles themselves show their CLI's icon.
 // The shapes mirror app/Harness/HarnessPresets, which the renderer can't
 // import without its Node dependencies.
-type PresetHarness = 'claude' | 'codex' | 'opencode';
+type PresetHarness = 'claude' | 'codex' | 'opencode' | 'agy';
 
 export interface Profile {
   id: string;
@@ -23,7 +23,7 @@ export interface ProfileSettings {
   defaultPresetIdByHarness: Record<PresetHarness, string | null>;
 }
 
-const HARNESS_ORDER: readonly string[] = ['claude', 'codex', 'opencode'];
+const HARNESS_ORDER: readonly string[] = ['claude', 'codex', 'opencode', 'agy'];
 
 // Each CLI's seeded "Default" preset is the plain CLI, so it shows under the
 // CLI's name instead of three rows all called Default.
