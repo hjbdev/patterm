@@ -59,6 +59,7 @@ import { SnoozeActions } from './Actions/SnoozeActions';
 import { ProjectSnoozeActions } from './Actions/ProjectSnoozeActions';
 import { GetUsageSummaryAction } from './Actions/UsageActions';
 import { UsageService } from './Services/UsageService';
+import { AntigravityQuotaService } from './Services/AntigravityQuotaService';
 import { harnessProviders } from './Harness/providers';
 import { AgentHistoryImportService } from './Services/AgentHistory/AgentHistoryImportService';
 import { AgentHistoryImportQueueService } from './Services/AgentHistory/AgentHistoryImportQueueService';
@@ -778,10 +779,12 @@ async function createApplicationResources(
   defer(() => routines.dispose());
 
   const usage = new UsageService(database, historyDatabase);
+  const antigravityQuotas = new AntigravityQuotaService({ database, usage, env: resolvedEnv, debugLog });
+  defer(() => antigravityQuotas.dispose());
   integrated.setUsage(usage);
   const mcp = createMcpRegistry({
     actions,
-    usage: new GetUsageSummaryAction(usage),
+    usage: new GetUsageSummaryAction(usage, antigravityQuotas),
     database,
     terminal,
     timeline,

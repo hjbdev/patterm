@@ -23,7 +23,7 @@
             <section aria-label="Remaining quota">
               <p class="mb-2 text-xs text-muted-foreground">Remaining</p>
               <p v-if="!summary.limits.length" class="text-xs text-muted-foreground">
-                No quota windows seen yet. Claude reports them during Integrated sessions; Codex records them in its transcripts.
+                No quota windows seen yet. Claude reports them during Integrated sessions; Codex records them in its transcripts. Antigravity refreshes them from its native CLI when you open this page.
               </p>
               <ul v-else class="-mx-2">
                 <li v-for="limit in summary.limits" :key="`${limit.harness}:${limit.label}`" class="rounded-md px-2 py-2 hover:bg-white/[0.03]" data-component="usage-limit">
