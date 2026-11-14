@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Antigravity's local file references render as readable labels with the full
+  path on hover instead of exposing raw Markdown links. Local file URLs remain
+  non-navigable and cannot load images.
 - Antigravity keeps model, thinking, mode and MCP choices when resuming a
   conversation. Native turn errors can be retried without restarting a healthy
   host. Cancellation closes unfinished tools and discards late permission
