@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Usage shows Antigravity's remaining five-hour and weekly quotas for each model
+  group, with reset times, fetched through the native CLI without a model call.
 - Antigravity's local file references render as readable labels with the full
   path on hover instead of exposing raw Markdown links. Local file URLs remain
   non-navigable and cannot load images.
