@@ -3,17 +3,47 @@ import { splitProcessMentions } from './agentMentions';
 import { highlightCodeBlocks, type CodeBlock } from './codeHighlight';
 
 // html:false keeps raw HTML in source inert (rendered as escaped text), and
-// markdown-it's default link validation rejects javascript:/data: URIs, so no
-// extra sanitiser is needed for agent/user-authored bodies.
+// markdown-it's default link validation rejects dangerous URL schemes.
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
 
-// Force links to open out-of-process. The main process intercepts target=_blank
+// Antigravity cites source files with file: URLs. Parse those references, but
+// render them as inert labels rather than exposing navigation or local images.
+const isFileUrl = (url: string) => /^file:/i.test(url.trim());
+const validateLink = md.validateLink;
+md.validateLink = (url) => isFileUrl(url) || validateLink(url);
+md.core.ruler.push('file_references', (state) => {
+  for (const block of state.tokens) {
+    const fileLinks: boolean[] = [];
+    for (const token of block.children ?? []) {
+      if (token.type === 'link_open') {
+        const href = token.attrGet('href') ?? '';
+        const fileLink = isFileUrl(href);
+        fileLinks.push(fileLink);
+        if (fileLink) {
+          // Keep the link token type so the mentions rule leaves its label alone.
+          token.tag = 'span';
+          token.attrs = [['title', href]];
+        }
+      } else if (token.type === 'link_close') {
+        if (fileLinks.pop()) token.tag = 'span';
+      } else if (token.type === 'image' && isFileUrl(token.attrGet('src') ?? '')) {
+        token.type = 'text';
+        token.tag = '';
+        token.attrs = null;
+        token.children = null;
+      }
+    }
+  }
+});
+
+// Web links open out-of-process. The main process intercepts target=_blank
 // (setWindowOpenHandler) and routes http(s) to the OS browser, so links never
 // navigate the SPA away. rel hardens against opener access.
 const defaultLinkOpen =
   md.renderer.rules.link_open ?? ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
 md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
   const token = tokens[idx];
+  if (token?.tag === 'span') return self.renderToken(tokens, idx, options);
   if (token) {
     token.attrSet('target', '_blank');
     token.attrSet('rel', 'noopener noreferrer');

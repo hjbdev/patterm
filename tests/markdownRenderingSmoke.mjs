@@ -63,5 +63,9 @@ test('small Markdown appears immediately and stays visible while highlighting lo
     await new Promise((resolve) => setImmediate(resolve));
     await nextTick();
     assert.match(markdown().props.innerHTML, /Different conversation/, 'old highlights must not replace the current conversation');
+    source.value = '**Analysis** in [StoresDemoAnalysis.php](file:///home/harry/Dev/stratbase/app/Jobs/Demos/Concerns/StoresDemoAnalysis.php#L58-L65).';
+    await nextTick();
+    assert.match(markdown().props.innerHTML, /<strong>Analysis<\/strong> in <span [^>]*>StoresDemoAnalysis.php<\/span>\./, 'Antigravity references use readable labels in the conversation component');
+    assert.doesNotMatch(markdown().props.innerHTML, /(?:href|src)="file:/, 'local file references cannot navigate the conversation');
   } finally { app.unmount(); delete globalThis.window; delete globalThis.finishMarkdownHighlight; }
 });
