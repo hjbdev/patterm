@@ -13,7 +13,7 @@ import { buildSync } from 'esbuild';
 import { ipcPath } from '../app/Platform/Ipc';
 
 const descriptors: Array<{ name: string; namespace: string; description: string; inputSchema: Record<string, unknown>; changes?: string[] }> = [
-  { name: 'whoami', namespace: 'cli.meta', description: 'Return caller identity.', inputSchema: { type: 'object', additionalProperties: false } },
+  { name: 'whoami', namespace: 'cli.meta', description: 'Return caller identity.', inputSchema: { $schema: 'http://json-schema.org/draft-07/schema#', type: 'object', additionalProperties: false, properties: {}, required: [] } },
   { name: 'spawn_process', namespace: 'cli.process', description: 'Start a process.', inputSchema: { type: 'object', properties: { argv: { type: 'array', items: { type: 'string' } } } } },
   { name: 'todo_create', namespace: 'todo', description: 'Create a todo.', inputSchema: { type: 'object', properties: { title: { type: 'string', minLength: 1 } }, required: ['title'] } },
   { name: 'help', namespace: 'meta', description: 'Describe a tool.', inputSchema: { type: 'object', properties: { tool: { type: 'string' } }, required: ['tool'] } }
@@ -76,6 +76,7 @@ async function main(): Promise<void> {
     const list = await modern.listTools();
     assert.deepEqual(list.tools.map(({ name }) => name), descriptors.map(({ name }) => name), 'every public registry tool is directly listed');
     assert.deepEqual(list.tools.find(({ name }) => name === 'todo_create')?.inputSchema.required, ['title']);
+    assert.deepEqual(list.tools.find(({ name }) => name === 'whoami')?.inputSchema, { type: 'object', additionalProperties: false }, 'listed schemas leave out $schema and empty lists but keep their constraints');
     const created = await modern.callTool({ name: 'todo_create', arguments: { title: 'Direct MCP' } });
     assert.equal(created.isError, undefined);
     assert.match(JSON.stringify(created), /Direct MCP/);

@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Antigravity agents can call every Patterm tool, including
+  `spawn_agent` and `html_render`. agy 1.5.9 declares MCP tools only up to a
+  size budget and silently drops the largest, so Antigravity now gets tool
+  descriptions without usage notes (`help` still has them). Every harness gets
+  slimmer tool schemas, without `$schema` or empty lists, and shorter routine
+  field descriptions.
 - Usage shows Antigravity's remaining five-hour and weekly quotas for each model
   group, with reset times, fetched through the native CLI without a model call.
 - Antigravity's local file references render as readable labels with the full

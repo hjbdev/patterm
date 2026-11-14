@@ -93,13 +93,43 @@ function isImage(value: unknown): value is { data: string; mimeType: string } {
   return Boolean(value && typeof value === 'object' && typeof (value as { data?: unknown }).data === 'string' && typeof (value as { mimeType?: unknown }).mimeType === 'string');
 }
 
+// Antigravity declares MCP tools only up to a shared size budget, about
+// 60 KB across every server, then drops the largest, with no way to call
+// them. Its sessions get descriptions without usage notes, which help
+// still returns.
+const COMPACT = process.env.PATTERM_MCP_COMPACT === '1';
+
 function describe(tool: McpToolDescriptor): string {
-  return [tool.description, ...(tool.namespace.startsWith('cli.') ? tool.usageNotes ?? [] : [])].join(' ');
+  const notes = tool.namespace.startsWith('cli.') ? tool.usageNotes ?? [] : [];
+  if (COMPACT && notes.length) return `${tool.description} See help for usage notes.`;
+  return [tool.description, ...notes].join(' ');
+}
+
+const SCHEMA_MAPS = new Set(['properties', 'patternProperties', '$defs', 'definitions']);
+const SCHEMA_LISTS = new Set(['anyOf', 'oneOf', 'allOf', 'prefixItems']);
+const SCHEMA_VALUES = new Set(['items', 'additionalProperties', 'not', 'if', 'then', 'else', 'contains']);
+
+// Leaves out what tells a client nothing: $schema, and empty required and
+// properties lists. Handlers validate every call themselves.
+function advertisedSchema(schema: unknown): unknown {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return schema;
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(schema)) {
+    if (key === '$schema') continue;
+    if (key === 'required' && Array.isArray(value) && value.length === 0) continue;
+    if (key === 'properties' && value && typeof value === 'object' && Object.keys(value).length === 0) continue;
+    if (SCHEMA_MAPS.has(key) && value && typeof value === 'object') {
+      result[key] = Object.fromEntries(Object.entries(value).map(([name, entry]) => [name, advertisedSchema(entry)]));
+    } else if (SCHEMA_LISTS.has(key) && Array.isArray(value)) result[key] = value.map(advertisedSchema);
+    else if (SCHEMA_VALUES.has(key)) result[key] = advertisedSchema(value);
+    else result[key] = value;
+  }
+  return result;
 }
 
 // Only what the client is shown counts as a change.
 function signaturesOf(tools: McpToolDescriptor[]): Signatures {
-  return new Map(tools.map((tool) => [tool.name, JSON.stringify([describe(tool), tool.inputSchema, tool.annotations ?? null])]));
+  return new Map(tools.map((tool) => [tool.name, JSON.stringify([describe(tool), advertisedSchema(tool.inputSchema), tool.annotations ?? null])]));
 }
 
 function sameSignatures(a: Signatures, b: Signatures): boolean {
@@ -109,7 +139,7 @@ function sameSignatures(a: Signatures, b: Signatures): boolean {
 function toolConfig(tool: McpToolDescriptor) {
   return {
     description: describe(tool),
-    inputSchema: fromJsonSchema<Record<string, unknown>>(tool.inputSchema as JsonSchemaType),
+    inputSchema: fromJsonSchema<Record<string, unknown>>(advertisedSchema(tool.inputSchema) as JsonSchemaType),
     ...(tool.annotations ? { annotations: tool.annotations } : {})
   };
 }

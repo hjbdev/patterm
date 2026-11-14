@@ -102,7 +102,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     const frames = () => fs.readFileSync(trace, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
     const creation = frames().find((frame) => frame.method === 'session/new');
     assert.equal(creation.params._meta.antigravity.systemPrompt.append, input.context);
-    assert.deepEqual(creation.params.mcpServers[0].env, [{ name: 'PATTERM_MCP_IDENTITY', value: 'private-identity' }]);
+    assert.deepEqual(creation.params.mcpServers[0].env, [{ name: 'PATTERM_MCP_IDENTITY', value: 'private-identity' }, { name: 'PATTERM_MCP_COMPACT', value: '1' }], 'agy gets the compact Patterm catalogue');
     assert.deepEqual(frames()[0].params.clientCapabilities, {}, 'unimplemented filesystem and terminal capabilities are not advertised');
     if (process.platform !== 'win32') assert.equal(fs.statSync(prepared.argv[4]!).mode & 0o777, 0o600);
     await assert.rejects(provider.prepare({ ...input, resumeId: prepared.resumeId }), /already attached/);

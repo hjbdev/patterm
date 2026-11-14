@@ -36,7 +36,10 @@ export class AcpProviderService implements IntegratedProviderService {
     const key = randomUUID();
     const socketPath = path.join(directory, `${key}.sock`);
     const configPath = path.join(directory, `${key}.json`);
-    const servers = { ...claudeMcpServers(input.mcpServers ?? [], input.mcp), patterm: input.mcp };
+    // agy drops the largest MCP tools once their declarations pass its size
+    // budget, so Patterm's own tools advertise without usage notes.
+    const patterm = { ...input.mcp, env: { ...input.mcp.env, PATTERM_MCP_COMPACT: '1' } };
+    const servers = { ...claudeMcpServers(input.mcpServers ?? [], input.mcp), patterm };
     const mcpServers = Object.entries(servers).map(([name, value]) => {
       const server = value as { command: string; args: string[]; env: Record<string, string> };
       return { name, command: server.command, args: server.args, env: Object.entries(server.env).map(([name, value]) => ({ name, value })) };
