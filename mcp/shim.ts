@@ -129,7 +129,7 @@ function advertisedSchema(schema: unknown): unknown {
 
 // Only what the client is shown counts as a change.
 function signaturesOf(tools: McpToolDescriptor[]): Signatures {
-  return new Map(tools.map((tool) => [tool.name, JSON.stringify([describe(tool), tool.inputSchema, tool.annotations ?? null])]));
+  return new Map(tools.map((tool) => [tool.name, JSON.stringify([describe(tool), advertisedSchema(tool.inputSchema), tool.annotations ?? null])]));
 }
 
 function sameSignatures(a: Signatures, b: Signatures): boolean {
