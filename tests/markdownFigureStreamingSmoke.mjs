@@ -18,7 +18,7 @@ test('streaming Markdown leaves an existing figure frame connected and loaded', 
     stdin: { contents: `
       import { createApp, h, ref, nextTick } from 'vue';
       import Markdown from './resources/js/Components/Markdown.vue';
-      const source = ref('Before [StoresDemoAnalysis.php](file:///repo/StoresDemoAnalysis.php#L58-L65)\\n\\n[patterm_figure:demo]\\n\\nAfter');
+      const source = ref('Before [StoresDemoAnalysis.php](file:///repo/StoresDemoAnalysis.php#L58-L65)\\n\\n[outer <https://example.com>](file:///repo/outer#L1-L2) after **bold** [next](https://next.example)\\n\\n[patterm_figure:demo]\\n\\nAfter');
       let loads = 0;
       createApp({ render: () => h(Markdown, { source: source.value, revealAppends: true }, {
         mention: ({ part }) => part.figure ? h('iframe', {
@@ -37,7 +37,8 @@ test('streaming Markdown leaves an existing figure frame connected and loaded', 
         }
         const reference = document.querySelector('span[title="file:///repo/StoresDemoAnalysis.php#L58-L65"]');
         return { loads, sameFrame: frame === document.querySelector('iframe'), state: frame.contentWindow.persistentState,
-          fileLabel: reference?.textContent, fileResources: document.querySelectorAll('[href^="file:"], [src^="file:"]').length };
+          fileLabel: reference?.textContent, nestedLabel: document.querySelector('span[title="file:///repo/outer#L1-L2"]')?.textContent,
+          fileResources: document.querySelectorAll('[href^="file:"], [src^="file:"]').length };
       };
     `, resolveDir: path.resolve('.'), loader: 'ts' },
     outfile: path.join(directory, 'fixture.js'), bundle: true, platform: 'browser', format: 'iife', logLevel: 'error',
@@ -59,5 +60,5 @@ test('streaming Markdown leaves an existing figure frame connected and loaded', 
   } finally { fs.rmSync(profile, { recursive: true, force: true }); }
   assert.equal(result.status, 0, result.stderr || result.error?.message);
   const output = JSON.parse((result.stdout.match(/data-result="([^"]*)"/)?.[1] ?? 'null').replaceAll('&quot;', '"'));
-  assert.deepEqual(output, { loads: 1, sameFrame: true, state: 'selected', fileLabel: 'StoresDemoAnalysis.php', fileResources: 0 }, 'streaming must preserve the figure and render inert file references');
+  assert.deepEqual(output, { loads: 1, sameFrame: true, state: 'selected', fileLabel: 'StoresDemoAnalysis.php', nestedLabel: 'outer https://example.com', fileResources: 0 }, 'streaming must preserve the figure and render inert file references without absorbing following text');
 });

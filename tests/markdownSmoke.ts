@@ -27,6 +27,14 @@ async function main(): Promise<void> {
   assert.doesNotMatch(renderPlainMarkdown('![private](file:///etc/passwd) ![remote](file://remote/share/image.png)'), /<img/, 'allowing file references never enables local or network file images');
   assert.equal(renderPlainMarkdown('![private][image]\n\n[image]: FILE:///etc/passwd'), '<p>private</p>\n', 'reference-style file images fall back to escaped alt text');
   assert.match(renderPlainMarkdown('[file](file:///repo/file) [Example](https://example.com)'), /<\/span> <a href="https:\/\/example.com" target="_blank" rel="noopener noreferrer">Example<\/a>/, 'a file reference does not change the next web link');
+  for (const render of [renderPlainMarkdown, renderMarkdown]) {
+    for (const nested of ['https://example.com', 'file:///repo/inner#L3']) {
+      const html = await render(`[outer <${nested}>](file:///repo/outer#L1-L2) after **bold** [next](https://next.example) process_14`, { mentions: true });
+      assert.match(html, /<\/(?:a|span)><\/span> after <strong>bold<\/strong> <a href="https:\/\/next.example" target="_blank" rel="noopener noreferrer">next<\/a> <span data-mention="process_14"><\/span>/, 'nested autolinks close the outer file reference before following text, links and mentions');
+      assert.doesNotMatch(html, /(?:href|src)="file:/i, 'nested file references remain inert');
+    }
+    assert.match(await render('[outer <file:///repo/inner>](https://outer.example) after'), /<\/span><\/a> after/, 'a nested file reference preserves the closing tag of an outer web link');
+  }
   assert.match(renderPlainMarkdown('| File |\n| --- |\n| [worker](file:///repo/worker.yml#L109) |'), /<td><span [^>]*>worker<\/span><\/td>/, 'file references also render inside tables');
   assert.match(renderPlainMarkdown('`[file](file:///repo/file)`\n\n```md\n[file](file:///repo/file)\n```'), /<code>\[file\]\(file:\/\/\/repo\/file\)<\/code>/, 'examples of Markdown links remain literal code');
   assert.doesNotMatch(renderPlainMarkdown('[file](<file:///repo/"onmouseover=alert(1)> "ignored title")'), /(?:\s|<)onmouseover=|href=/, 'file reference paths cannot inject attributes');

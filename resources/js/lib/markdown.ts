@@ -13,19 +13,19 @@ const validateLink = md.validateLink;
 md.validateLink = (url) => isFileUrl(url) || validateLink(url);
 md.core.ruler.push('file_references', (state) => {
   for (const block of state.tokens) {
-    let fileLink = false;
+    const fileLinks: boolean[] = [];
     for (const token of block.children ?? []) {
       if (token.type === 'link_open') {
         const href = token.attrGet('href') ?? '';
-        fileLink = isFileUrl(href);
+        const fileLink = isFileUrl(href);
+        fileLinks.push(fileLink);
         if (fileLink) {
           // Keep the link token type so the mentions rule leaves its label alone.
           token.tag = 'span';
           token.attrs = [['title', href]];
         }
-      } else if (token.type === 'link_close' && fileLink) {
-        token.tag = 'span';
-        fileLink = false;
+      } else if (token.type === 'link_close') {
+        if (fileLinks.pop()) token.tag = 'span';
       } else if (token.type === 'image' && isFileUrl(token.attrGet('src') ?? '')) {
         token.type = 'text';
         token.tag = '';
