@@ -345,23 +345,33 @@ async function main(): Promise<void> {
     ] } } };
     const replyFile = path.join(directory, 'quota-response.json');
     const traceFile = path.join(directory, 'quota-invocations.jsonl');
+    const pidFile = path.join(directory, 'quota-helper.pid');
     fs.writeFileSync(replyFile, JSON.stringify(quotaReport));
     const executable = writeNodeCli(path.join(directory, 'agy'), String.raw`
       const fs = require('node:fs');
       fs.appendFileSync(process.env.PATTERM_TEST_QUOTA_TRACE, JSON.stringify(process.argv.slice(2)) + '\n');
       const reply = fs.readFileSync(process.env.PATTERM_TEST_QUOTA_REPLY, 'utf8');
-      if (reply === 'HANG') setInterval(() => {}, 1000);
+      if (reply === 'HANG') { process.on('SIGTERM', () => {}); fs.writeFileSync(process.env.PATTERM_TEST_QUOTA_PID, String(process.pid)); setInterval(() => {}, 1000); }
       else if (reply === 'FAIL') { process.stderr.write('private provider diagnostic'); process.exitCode = 1; }
       else process.stdout.write(reply);
     `);
     let quotaNow = now.getTime();
     const quotaUsage = new UsageService(appDatabase, null);
     const quotas = new AntigravityQuotaService({ database: appDatabase, usage: quotaUsage,
-      env: { ...process.env, HOME: directory, USERPROFILE: directory, PATTERM_TEST_QUOTA_TRACE: traceFile, PATTERM_TEST_QUOTA_REPLY: replyFile },
+      env: { ...process.env, HOME: directory, USERPROFILE: directory, PATTERM_TEST_QUOTA_TRACE: traceFile, PATTERM_TEST_QUOTA_REPLY: replyFile, PATTERM_TEST_QUOTA_PID: pidFile },
       now: () => quotaNow, timeoutMs: 1500 });
     const quotaAction = new GetUsageSummaryAction(quotaUsage, quotas);
     const invocations = () => fs.existsSync(traceFile) ? fs.readFileSync(traceFile, 'utf8').trim().split('\n').map(line => JSON.parse(line)) : [];
     const onlyAgy = (summary: ReturnType<UsageService['summary']>) => summary.limits.filter(limit => limit.harness === 'agy');
+    const helperExited = async () => {
+      const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        try { process.kill(pid, 0); } catch { return; }
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      assert.fail('quota helper survived cancellation');
+    };
     try {
       await quotaAction.execute({ days: 1 });
       assert.equal(invocations().length, 0, 'an undiscovered Antigravity installation never runs a CLI');
@@ -391,7 +401,18 @@ async function main(): Promise<void> {
         JSON.stringify(quotaReport).replace(at(-60), 'not-a-date'), 'x'.repeat(1024 * 1024 + 1), 'HANG']) {
         quotaNow += 61_000;
         fs.writeFileSync(replyFile, response);
-        const retained = onlyAgy(await quotaAction.execute({ days: 1 }));
+        let watchdog: ReturnType<typeof setTimeout> | undefined;
+        let retained;
+        try {
+          retained = onlyAgy(await Promise.race([quotaAction.execute({ days: 1 }), new Promise<never>((_resolve, reject) => {
+            watchdog = setTimeout(() => reject(new Error('quota deadline did not settle')), 6000);
+          })]));
+          if (response === 'HANG') await helperExited();
+        } finally {
+          clearTimeout(watchdog);
+          // Clean up only this fake helper, including when the regression fails.
+          if (response === 'HANG' && fs.existsSync(pidFile)) try { process.kill(Number(fs.readFileSync(pidFile, 'utf8')), 'SIGKILL'); } catch { /* already ended */ }
+        }
         assert.deepEqual(retained, changed, 'failed, malformed, oversized and timed-out reads retain the original dated quota');
         const count = invocations().length;
         await quotaAction.execute({ days: 1 });
@@ -400,10 +421,20 @@ async function main(): Promise<void> {
       assert.equal((appDatabase.connection.prepare("select count(*) as count from harness_rate_limit_readings where harness = 'agy'").get() as { count: number }).count, 8, 'only two successful native observations were persisted');
       assert.equal(quotaUsage.summary(1).limits.filter(limit => limit.harness === 'claude').length, 2, 'Antigravity refresh never changes other harness windows');
       quotaNow += 61_000;
+      fs.writeFileSync(replyFile, JSON.stringify(quotaReport));
+      const recovered = onlyAgy(await quotaAction.execute({ days: 1 }));
+      assert.equal(recovered[0]?.observedAt, new Date(quotaNow).toISOString(), 'a healthy refresh after timeout is not stuck on the cancelled promise');
+      quotaNow += 61_000;
+      fs.rmSync(pidFile, { force: true });
+      fs.writeFileSync(replyFile, 'HANG');
       const stopping = quotas.refresh();
+      const readyBy = Date.now() + 5000;
+      while (!fs.existsSync(pidFile) && Date.now() < readyBy) await new Promise(resolve => setTimeout(resolve, 20));
+      assert.ok(fs.existsSync(pidFile), 'the stubborn helper is running before disposal');
       quotas.dispose();
       await stopping;
-      assert.deepEqual(onlyAgy(quotaUsage.summary(1)), changed, 'disposing an in-flight reader prevents later database writes');
+      await helperExited();
+      assert.deepEqual(onlyAgy(quotaUsage.summary(1)), recovered, 'disposing an in-flight reader prevents later database writes');
     } finally { quotas.dispose(); }
     console.log('usage smoke ok');
   } finally {

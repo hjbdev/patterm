@@ -1,6 +1,5 @@
-import type { ChildProcess } from 'node:child_process';
 import { z } from 'zod';
-import { execFileResolved, stopChild, userHome } from '../Platform/ServiceProcess';
+import { spawnResolved, stopChild, userHome } from '../Platform/ServiceProcess';
 import type { DatabaseService } from './DatabaseService';
 import type { DebugLogService } from './DebugLogService';
 import type { UsageService } from './UsageService';
@@ -38,7 +37,7 @@ interface Options {
 export class AntigravityQuotaService {
   private pending: Promise<void> | null = null;
   private lastAttempt: { executable: string; at: number } | null = null;
-  private child: ChildProcess | null = null;
+  private cancel: (() => void) | null = null;
   private disposed = false;
   private readonly now: () => number;
 
@@ -68,18 +67,43 @@ export class AntigravityQuotaService {
 
   dispose(): void {
     this.disposed = true;
-    if (this.child) stopChild(this.child, 'SIGTERM');
+    this.cancel?.();
   }
 
   private async collect(executable: string): Promise<void> {
     const output = await new Promise<string>((resolve, reject) => {
-      this.child = execFileResolved(executable, ['--print', '/usage', '--output-format', 'json'], {
-        env: this.options.env, cwd: userHome(this.options.env), timeout: this.options.timeoutMs ?? 15_000, maxBuffer: 1024 * 1024
-      }, (error, stdout) => {
-        this.child = null;
-        if (error) reject(new Error('Antigravity quota refresh failed'));
-        else resolve(stdout);
+      const group = process.platform !== 'win32';
+      const child = spawnResolved(executable, ['--print', '/usage', '--output-format', 'json'], {
+        env: this.options.env, cwd: userHome(this.options.env), detached: group, stdio: ['ignore', 'pipe', 'pipe']
       });
+      let settled = false;
+      let bytes = 0;
+      const chunks: Buffer[] = [];
+      const finish = (ok: boolean): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        this.cancel = null;
+        // A one-shot reader has no work to preserve. Kill its owned POSIX
+        // group (Windows: process tree) without waiting on graceful shutdown.
+        stopChild(child, 'SIGKILL', group);
+        if (ok) resolve(Buffer.concat(chunks).toString('utf8'));
+        else reject(new Error('Antigravity quota refresh failed'));
+      };
+      this.cancel = () => finish(false);
+      // Node execFile's timeout waits for close after SIGTERM. This deadline
+      // settles the request itself, even if a helper ignores the signal.
+      const timer = setTimeout(this.cancel, this.options.timeoutMs ?? 15_000);
+      child.once('error', () => finish(false));
+      child.once('close', (code) => finish(code === 0));
+      const receive = (chunk: Buffer, stdout: boolean): void => {
+        if (settled) return;
+        bytes += chunk.length;
+        if (bytes > 1024 * 1024) finish(false);
+        else if (stdout) chunks.push(chunk);
+      };
+      child.stdout!.on('data', (chunk: Buffer) => receive(chunk, true));
+      child.stderr!.on('data', (chunk: Buffer) => receive(chunk, false));
     });
     if (this.disposed) return;
     const report = reportSchema.parse(JSON.parse(output));
