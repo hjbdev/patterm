@@ -13,6 +13,9 @@ import { HistoryDatabaseService } from '../app/Services/HistoryDatabaseService';
 import { modelPrice } from '../app/Services/ModelPrices';
 import { AutoSummaryUsageService } from '../app/Services/AutoSummaryUsageService';
 import { UsageService, usagePace } from '../app/Services/UsageService';
+import { AntigravityQuotaService } from '../app/Services/AntigravityQuotaService';
+import { GetUsageSummaryAction } from '../app/Actions/UsageActions';
+import { writeNodeCli } from './fixtures/IntegratedFakeCli';
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-usage-'));
 const now = new Date();
@@ -98,7 +101,7 @@ function paceSmoke(): void {
   assert.equal(usagePace(weekly(40, { label: 'Overage' }), [{ usedPercent: 30, observedAt: hours(-48) }], now), null, 'a window of unknown length has no pace');
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const appDatabase = new DatabaseService(directory);
   const historyDatabase = new HistoryDatabaseService(directory);
   try {
@@ -326,6 +329,113 @@ function main(): void {
     imports.import({ provider: 'claude', trigger: 'manual' });
     assert.equal(usage.summary(7, now).models.find((row) => row.provider === 'opencode' && row.model === 'opus')?.responses, 2, 'subagent activity does not hide the parent\'s newer reply');
     paceSmoke();
+    // Captured shape of agy --print /usage --output-format json. This is a
+    // native quota command, with no conversation or model turn involved.
+    const quotaReport = { status: 'SUCCESS', num_turns: 0, command: { name: 'usage', data: { groups: [
+      { name: 'Gemini Models', buckets: [
+        { id: 'gemini-weekly', name: 'Weekly Limit Remaining', window: 'weekly', remaining_fraction: 0.5, reset_time: at(-10_080) },
+        { id: 'gemini-5h', name: 'Five Hour Limit Remaining', window: '5h', remaining_fraction: 0.75, reset_time: at(-60) },
+        { id: 'disabled', name: 'Disabled quota', remaining_fraction: 0, disabled: true },
+        { id: 'amount', name: 'Credits', remaining_amount: 42 }
+      ] },
+      { name: 'Claude and GPT models', buckets: [
+        { id: '3p-weekly', name: 'Weekly Limit Remaining', window: 'weekly', remaining_fraction: 1, reset_time: at(-10_080) },
+        { id: '3p-5h', name: 'Five Hour Limit Remaining', window: '5h', remaining_fraction: 1, reset_time: at(-60) }
+      ] }
+    ] } } };
+    const replyFile = path.join(directory, 'quota-response.json');
+    const traceFile = path.join(directory, 'quota-invocations.jsonl');
+    const pidFile = path.join(directory, 'quota-helper.pid');
+    fs.writeFileSync(replyFile, JSON.stringify(quotaReport));
+    const executable = writeNodeCli(path.join(directory, 'agy'), String.raw`
+      const fs = require('node:fs');
+      fs.appendFileSync(process.env.PATTERM_TEST_QUOTA_TRACE, JSON.stringify(process.argv.slice(2)) + '\n');
+      const reply = fs.readFileSync(process.env.PATTERM_TEST_QUOTA_REPLY, 'utf8');
+      if (reply === 'HANG') { process.on('SIGTERM', () => {}); fs.writeFileSync(process.env.PATTERM_TEST_QUOTA_PID, String(process.pid)); setInterval(() => {}, 1000); }
+      else if (reply === 'FAIL') { process.stderr.write('private provider diagnostic'); process.exitCode = 1; }
+      else process.stdout.write(reply);
+    `);
+    let quotaNow = now.getTime();
+    const quotaUsage = new UsageService(appDatabase, null);
+    const quotas = new AntigravityQuotaService({ database: appDatabase, usage: quotaUsage,
+      env: { ...process.env, HOME: directory, USERPROFILE: directory, PATTERM_TEST_QUOTA_TRACE: traceFile, PATTERM_TEST_QUOTA_REPLY: replyFile, PATTERM_TEST_QUOTA_PID: pidFile },
+      now: () => quotaNow, timeoutMs: 1500 });
+    const quotaAction = new GetUsageSummaryAction(quotaUsage, quotas);
+    const invocations = () => fs.existsSync(traceFile) ? fs.readFileSync(traceFile, 'utf8').trim().split('\n').map(line => JSON.parse(line)) : [];
+    const onlyAgy = (summary: ReturnType<UsageService['summary']>) => summary.limits.filter(limit => limit.harness === 'agy');
+    const helperExited = async () => {
+      const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        try { process.kill(pid, 0); } catch { return; }
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      assert.fail('quota helper survived cancellation');
+    };
+    try {
+      await quotaAction.execute({ days: 1 });
+      assert.equal(invocations().length, 0, 'an undiscovered Antigravity installation never runs a CLI');
+      appDatabase.connection.prepare(`insert into harness_installations (id, harness, executable_path, version, status, discovered_at, last_checked_at) values ('agy_quota', 'agy', ?, '1.5.8', 'available', ?, ?)`).run(executable, stamp, stamp);
+      const [fresh] = await Promise.all([quotaAction.execute({ days: 1 }), quotaAction.execute({ days: 7 }), quotaAction.execute({ days: 30 })]);
+      assert.equal(fresh!.historyAvailable, false, 'account quotas do not require history imports or an active agent');
+      assert.deepEqual(onlyAgy(fresh!).map(limit => [limit.label, limit.usedPercent, limit.resetsAt, limit.observedAt]), [
+        ['Claude and GPT models · 5h limit', 0, at(-60), stamp],
+        ['Gemini Models · 5h limit', 25, at(-60), stamp],
+        ['Claude and GPT models · Weekly limit', 0, at(-10_080), stamp],
+        ['Gemini Models · Weekly limit', 50, at(-10_080), stamp]
+      ], 'native remaining fractions become four used-percentage windows with reset and observation dates');
+      assert.deepEqual(invocations(), [['--print', '/usage', '--output-format', 'json']], 'concurrent requests share one native quota command, never a model prompt');
+      await quotaAction.execute({ days: 1 });
+      assert.equal(invocations().length, 1, 'page refreshes are throttled to one CLI call a minute');
+      quotaNow += 61_000;
+      await assert.rejects(quotaAction.execute({ days: 2 }), /Invalid/);
+      assert.equal(invocations().length, 1, 'invalid requests are rejected before starting the native CLI');
+      quotaReport.command.data.groups[0]!.buckets[1]!.remaining_fraction = 0.5;
+      fs.writeFileSync(replyFile, JSON.stringify(quotaReport));
+      const changed = onlyAgy(await quotaAction.execute({ days: 1 }));
+      assert.equal(changed.find(limit => limit.label === 'Gemini Models · 5h limit')?.usedPercent, 50);
+      assert.equal(invocations().length, 2, 'a later page read refreshes the native report');
+      for (const response of ['FAIL', 'not JSON', JSON.stringify({ ...quotaReport, num_turns: 1 }),
+        JSON.stringify({ ...quotaReport, command: { name: 'other', data: quotaReport.command.data } }),
+        JSON.stringify(quotaReport).replace('"remaining_fraction":0.5', '"remaining_fraction":-1'),
+        JSON.stringify(quotaReport).replace(at(-60), 'not-a-date'), 'x'.repeat(1024 * 1024 + 1), 'HANG']) {
+        quotaNow += 61_000;
+        fs.writeFileSync(replyFile, response);
+        let watchdog: ReturnType<typeof setTimeout> | undefined;
+        let retained;
+        try {
+          retained = onlyAgy(await Promise.race([quotaAction.execute({ days: 1 }), new Promise<never>((_resolve, reject) => {
+            watchdog = setTimeout(() => reject(new Error('quota deadline did not settle')), 6000);
+          })]));
+          if (response === 'HANG') await helperExited();
+        } finally {
+          clearTimeout(watchdog);
+          // Clean up only this fake helper, including when the regression fails.
+          if (response === 'HANG' && fs.existsSync(pidFile)) try { process.kill(Number(fs.readFileSync(pidFile, 'utf8')), 'SIGKILL'); } catch { /* already ended */ }
+        }
+        assert.deepEqual(retained, changed, 'failed, malformed, oversized and timed-out reads retain the original dated quota');
+        const count = invocations().length;
+        await quotaAction.execute({ days: 1 });
+        assert.equal(invocations().length, count, 'failures are throttled too');
+      }
+      assert.equal((appDatabase.connection.prepare("select count(*) as count from harness_rate_limit_readings where harness = 'agy'").get() as { count: number }).count, 8, 'only two successful native observations were persisted');
+      assert.equal(quotaUsage.summary(1).limits.filter(limit => limit.harness === 'claude').length, 2, 'Antigravity refresh never changes other harness windows');
+      quotaNow += 61_000;
+      fs.writeFileSync(replyFile, JSON.stringify(quotaReport));
+      const recovered = onlyAgy(await quotaAction.execute({ days: 1 }));
+      assert.equal(recovered[0]?.observedAt, new Date(quotaNow).toISOString(), 'a healthy refresh after timeout is not stuck on the cancelled promise');
+      quotaNow += 61_000;
+      fs.rmSync(pidFile, { force: true });
+      fs.writeFileSync(replyFile, 'HANG');
+      const stopping = quotas.refresh();
+      const readyBy = Date.now() + 5000;
+      while (!fs.existsSync(pidFile) && Date.now() < readyBy) await new Promise(resolve => setTimeout(resolve, 20));
+      assert.ok(fs.existsSync(pidFile), 'the stubborn helper is running before disposal');
+      quotas.dispose();
+      await stopping;
+      await helperExited();
+      assert.deepEqual(onlyAgy(quotaUsage.summary(1)), recovered, 'disposing an in-flight reader prevents later database writes');
+    } finally { quotas.dispose(); }
     console.log('usage smoke ok');
   } finally {
     historyDatabase.dispose();
@@ -334,4 +444,4 @@ function main(): void {
   }
 }
 
-main();
+void main().catch(error => { console.error(error); process.exitCode = 1; });

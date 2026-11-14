@@ -77,6 +77,11 @@ native tools to read; native file-access prompts can still apply. Embedded PDF
 blobs are not used because agy 1.5.8 silently ignores them.
 Follow-ups wait for the current turn; native mid-turn steering is not supported.
 
+The Usage page reads Antigravity's model-group quotas and reset times through
+`agy --print /usage --output-format json`, at most once a minute while the page
+is open. This native command makes no model request and needs no active agent
+or history import. Failed refreshes keep the last figures and their Seen time.
+
 To keep agents running on a machine that stays on, run Patterm as a background
 service and open it in any browser:
 
