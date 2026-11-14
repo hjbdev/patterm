@@ -22,25 +22,25 @@ const scheduleOnceInput = z.object({
 const runsInput = z.object({ routine_id: z.string().min(1), limit: z.number().int().min(1).max(100).default(20) }).strict();
 
 const launchProperties = {
-  harness: { type: 'string', enum: [...ROUTINE_HARNESSES], description: 'Agent CLI to start. harness_list shows which are installed.' },
-  preset: { type: ['string', 'null'], description: 'A configured preset name for this harness (harness_presets). Leave null to pick a model instead, or for the harness default.' },
-  model: { type: ['string', 'null'], description: 'A model ID from harness_models, used instead of a preset.' },
-  reasoning: { type: ['string', 'null'], description: 'Effort level for the chosen model.' },
-  service_tier: { type: ['string', 'null'], description: 'Codex only: priority for Fast, default for Standard.' }
+  harness: { type: 'string', enum: [...ROUTINE_HARNESSES], description: 'Agent CLI to start (harness_list).' },
+  preset: { type: ['string', 'null'], description: 'Preset name (harness_presets); null for a model or the harness default.' },
+  model: { type: ['string', 'null'], description: 'Model ID (harness_models), instead of a preset.' },
+  reasoning: { type: ['string', 'null'], description: 'Effort level for the model.' },
+  service_tier: { type: ['string', 'null'], description: 'Codex only: priority (Fast) or default.' }
 };
 
 const routineProperties = {
   name: { type: 'string', maxLength: 120 },
-  enabled: { type: 'boolean', description: 'Whether it runs on schedule. Paused routines can still run with routine_run_now.' },
-  project_id: { type: ['string', 'null'], description: 'Project the run belongs to. Null makes a workspace routine that reads across every project; only the user, the assistant, and workspace routines can choose this.' },
-  days: { type: 'array', items: { type: 'integer', minimum: 0, maximum: 6 }, description: 'Weekdays to run on: 0 is Sunday, 1 Monday, through 6 Saturday.' },
-  time: { type: 'string', description: 'Local 24-hour time, HH:MM.' },
-  timezone: { type: 'string', description: 'IANA time zone, such as Europe/London. Defaults to the server\'s zone.' },
-  prompt: { type: 'string', maxLength: 20000, description: 'Task for each run. {{date}}, {{weekday}}, {{since}} (the last successful run), and {{last_run_at}} are filled in when it starts.' },
+  enabled: { type: 'boolean', description: 'Runs on schedule when true; routine_run_now works while paused.' },
+  project_id: { type: ['string', 'null'], description: 'Project of its runs. Null is a workspace routine reading every project; only the user, the assistant and workspace routines choose this.' },
+  days: { type: 'array', items: { type: 'integer', minimum: 0, maximum: 6 }, description: 'Weekdays: 0 Sunday to 6 Saturday.' },
+  time: { type: 'string', description: 'Local time, HH:MM, 24-hour.' },
+  timezone: { type: 'string', description: 'IANA zone, such as Europe/London; defaults to the server\'s.' },
+  prompt: { type: 'string', maxLength: 20000, description: 'Task for each run. Fills in {{date}}, {{weekday}}, {{since}} (last successful run) and {{last_run_at}}.' },
   ...launchProperties,
-  delivery: { type: 'string', enum: ['notification', 'assistant', 'none'], description: 'What happens when a run reports: notify the user, hand it to the assistant to filter for the user (problems still notify directly; no_findings stays quiet), or nothing.' },
-  run_at: { type: ['string', 'null'], description: 'ISO time with an offset. Set it to run once at that time instead of on days; null makes it repeat again.' },
-  worktree_id: { type: ['string', 'null'], description: 'A project worktree to start each run in, from worktree_list.' }
+  delivery: { type: 'string', enum: ['notification', 'assistant', 'none'], description: 'On report: notify the user, let the assistant filter it (problems still notify; no_findings stays quiet), or nothing.' },
+  run_at: { type: ['string', 'null'], description: 'ISO time with offset: run once then instead of on days. Null repeats again.' },
+  worktree_id: { type: ['string', 'null'], description: 'Worktree to start each run in (worktree_list).' }
 };
 
 const { days: _days, time: _time, enabled: _enabled, run_at: _runAt, ...onceProperties } = routineProperties;
