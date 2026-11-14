@@ -3,7 +3,7 @@
        header, with a way back to the list that shows the status of anyone
        else waiting on you, and ⋯ for the agent's context and actions. A swipe
        across it moves to the agent beside this one in the list. -->
-  <ContextHeader v-if="session" :project-id="projectId" :session="session" :active-worktree-id="activeWorktreeId" :folded="folded" @peek="emit('peek', $event)" @pointerdown="swipeStart" @pointerup="swipeEnd" @pointercancel="swipeX = null">
+  <ContextHeader v-if="session" :project-id="projectId" :session="session" :active-worktree-id="activeWorktreeId" :folded="folded" @peek="emit('peek', $event)" @open-worktree="emit('openWorktree', $event)" @pointerdown="swipeStart" @pointerup="swipeEnd" @pointercancel="swipeX = null">
     <template #leading><PhoneBackButton :waiting="waiting" @back="back" /></template>
     <template #trailing>
       <SidebarItemMenu dropdown :session="session" :tab="menuTab">
@@ -39,6 +39,7 @@ import SidebarItemMenu from '../Sidebar/SidebarItemMenu.vue';
 import { familyTabOf, useSidebar, type AgentTab } from '../Sidebar/sidebarContext';
 import PhoneBackButton from './PhoneBackButton.vue';
 import type { Peek } from '../../lib/peek';
+import type { SessionWorktree } from '../../lib/projectContext';
 import { processPort, serverLabel } from '../../lib/servers';
 import { nextWaiting } from '../../lib/sidebarTree';
 import { tabSnoozed } from '../../lib/snooze';
@@ -46,7 +47,7 @@ import type { ProcessRecord, SessionRecord } from '../../types';
 
 // `folded` keeps the header to one line, as over a terminal while typing.
 const props = defineProps<{ projectId: string; session?: SessionRecord | null; process?: ProcessRecord | null; activeWorktreeId?: string | null; folded?: boolean }>();
-const emit = defineEmits<{ peek: [peek: Peek] }>();
+const emit = defineEmits<{ peek: [peek: Peek]; openWorktree: [worktree: SessionWorktree] }>();
 const router = useRouter();
 const sidebar = useSidebar();
 const ACTION = 'flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:text-foreground';

@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A worktree in an agent's header opens its full diff review directly, instead
+  of a file list beside the conversation.
 - Antigravity starts in Auto when available and approves supplied MCP tools,
   including writes, in that mode. Its MCP picker can switch back to asking.
   Default and Plan keep native approval rules; shell and file approval are not bypassed.

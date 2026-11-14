@@ -163,7 +163,7 @@ import type { ProcessRecord, SessionRecord } from '../../types';
 // `inner` lines the header up with what's below it, such as the conversation
 // column. Folded, only the name shows, as over a terminal while typing.
 const props = defineProps<{ projectId: string; session: SessionRecord; inner?: string | undefined; activeWorktreeId?: string | null | undefined; folded?: boolean | undefined }>();
-const emit = defineEmits<{ peek: [peek: Peek] }>();
+const emit = defineEmits<{ peek: [peek: Peek]; openWorktree: [worktree: SessionWorktree] }>();
 const sidebar = useSidebar();
 
 const ADD_CHIP = cn(CHIP, 'w-7 justify-center px-0 max-sm:w-8 max-sm:px-0');
@@ -235,7 +235,7 @@ function openServer(server: (typeof servers.value)[number]): void {
 }
 function openDiff(worktree: SessionWorktree): void {
   openChip.value = null;
-  emit('peek', { kind: 'diff', worktree });
+  emit('openWorktree', worktree);
 }
 function openImage(index: number): void {
   openChip.value = null;
