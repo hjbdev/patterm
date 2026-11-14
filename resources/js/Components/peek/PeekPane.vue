@@ -1,7 +1,6 @@
 <template>
-  <!-- One thing beside the agent: its browser, an image, a worktree's
-       changes, or the whole session context. Opening another replaces it; Esc
-       or × closes it. -->
+  <!-- One thing beside the agent: its browser, an image, or the whole
+       session context. Opening another replaces it; Esc or × closes it. -->
   <PeekBrowser v-if="peek.kind === 'browser' && processId" :process-id="processId" :url="peek.url" @close="emit('close')" />
   <SessionContextPanel v-else-if="peek.kind === 'context'" :project-id="projectId" :session-id="sessionId" :process-id="processId" :summary="summary" :can-summarize="Boolean(canSummarize)" :active-worktree-id="activeWorktreeId" @open-worktree="emit('openWorktree', $event)" @close="emit('close')" />
   <div v-else class="flex min-h-0 flex-1 flex-col">
@@ -15,12 +14,6 @@
           <Button variant="ghost" size="icon" :class="ACTION" aria-label="Next image" @click="step(1)"><ChevronRight class="h-4 w-4" /></Button>
         </template>
         <Button v-if="image" as-child variant="ghost" size="icon" :class="ACTION"><RouterLink :to="image.to" aria-label="Show in conversation" title="Show in conversation"><MessageSquare class="h-3.5 w-3.5" /></RouterLink></Button>
-      </template>
-      <template v-else-if="peek.kind === 'diff'">
-        <h2 class="min-w-0 truncate text-[13px] font-medium">{{ peek.worktree.branch ?? 'Changes' }}</h2>
-        <DiffStat v-if="totals" :additions="totals.additions" :deletions="totals.deletions" class="shrink-0" />
-        <span class="flex-1" />
-        <Button variant="ghost" size="sm" class="h-7 shrink-0 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground" @click="emit('openWorktree', peek.worktree)"><FileDiff class="h-3.5 w-3.5" />Open diff review</Button>
       </template>
       <Button variant="ghost" size="icon" :class="ACTION" aria-label="Close peek" @click="emit('close')"><X class="h-4 w-4" /></Button>
     </header>
@@ -36,33 +29,26 @@
         </span>
       </div>
     </template>
-    <PeekDiff v-else-if="peek.kind === 'diff'" :worktree-id="peek.worktree.id" @review="emit('openWorktree', peek.worktree)" @loaded="totals = $event.totals" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { RouterLink } from 'vue-router';
-import { ChevronLeft, ChevronRight, FileDiff, MessageSquare, X } from 'lucide-vue-next';
-import DiffStat from '../DiffStat.vue';
+import { ChevronLeft, ChevronRight, MessageSquare, X } from 'lucide-vue-next';
 import SessionContextPanel from '../session-context/SessionContextPanel.vue';
 import { Button } from '../ui/button';
 import MediaThumb from './MediaThumb.vue';
 import PeekBrowser from './PeekBrowser.vue';
-import PeekDiff from './PeekDiff.vue';
 import type { SessionWorktree } from '../../lib/projectContext';
 import type { Peek } from '../../lib/peek';
 import { transcriptImageUrl } from '../../lib/transcriptImages';
-import type { DiffTotals } from '../../lib/worktreeDiff';
 import type { AutoSummaryRecord } from '../../types';
 
 // `processId` is the agent's, whose browser the peek shows.
 const props = defineProps<{ peek: Peek; projectId: string; sessionId: string; processId?: string | null | undefined; summary?: AutoSummaryRecord | null | undefined; canSummarize?: boolean | undefined; activeWorktreeId?: string | null | undefined }>();
 const emit = defineEmits<{ close: []; 'update:peek': [peek: Peek]; openWorktree: [worktree: SessionWorktree] }>();
 const ACTION = 'h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground';
-
-const totals = ref<DiffTotals | null>(null);
-watch(() => props.peek.kind === 'diff' ? props.peek.worktree.id : null, () => { totals.value = null; });
 
 const image = computed(() => props.peek.kind === 'image' ? props.peek.images[props.peek.index] ?? null : null);
 const imageUrl = ref<string | null>(null), imageFailed = ref(false);

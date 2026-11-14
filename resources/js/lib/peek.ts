@@ -1,6 +1,5 @@
 import { ref } from 'vue';
 import type { RouteLocationRaw } from 'vue-router';
-import type { SessionWorktree } from './projectContext';
 
 // An image the peek pane steps through, with the message it came from.
 export interface PeekImage { key: string; sha256: string; name?: string; to: RouteLocationRaw }
@@ -11,8 +10,7 @@ export interface PeekImage { key: string; sha256: string; name?: string; to: Rou
 export type Peek =
   | { kind: 'context' }
   | { kind: 'browser'; url?: string | undefined; serverProcessId?: string | null | undefined }
-  | { kind: 'image'; images: PeekImage[]; index: number }
-  | { kind: 'diff'; worktree: SessionWorktree };
+  | { kind: 'image'; images: PeekImage[]; index: number };
 
 // A peek asked for before its agent was showing, such as a server's preview
 // opened from the sidebar. That agent's page opens it when it arrives.

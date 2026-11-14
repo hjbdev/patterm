@@ -30,7 +30,7 @@
            form survives the phone keyboard that typing in it brings up, and
            a new secret request still opens its list. -->
       <div v-show="!folded || openChip" class="flex items-center gap-1.5" :class="phoneLayout ? 'mt-1.5 overflow-x-auto px-3 [scrollbar-width:none]' : 'mt-2.5 flex-wrap'">
-        <ResponsivePopover v-if="worktrees.length" v-bind="chip('worktrees')" title="Worktrees" content-class="w-[22rem]">
+        <ResponsivePopover v-if="worktrees.length" v-bind="chip('worktrees')" title="Worktrees" content-class="w-[22rem]" :keep-focus="openingDiff">
           <template #trigger><button type="button" :class="CHIP"><FolderGit2 :class="CHIP_ICON" /><span :class="CHIP_LABEL">{{ counted(worktrees.length, 'worktree', 'worktrees') }}</span></button></template>
           <ContextWorktreeRow v-for="worktree in worktrees" :key="worktree.id" dense :worktree="worktree" :state="diffTotals.get(worktree.id)" :active="worktree.id === activeWorktreeId" :busy="busy" @open="openDiff(worktree)" @unlink="unlinkWorktree(worktree.id)" />
           <div :class="SEPARATOR" />
@@ -163,7 +163,7 @@ import type { ProcessRecord, SessionRecord } from '../../types';
 // `inner` lines the header up with what's below it, such as the conversation
 // column. Folded, only the name shows, as over a terminal while typing.
 const props = defineProps<{ projectId: string; session: SessionRecord; inner?: string | undefined; activeWorktreeId?: string | null | undefined; folded?: boolean | undefined }>();
-const emit = defineEmits<{ peek: [peek: Peek] }>();
+const emit = defineEmits<{ peek: [peek: Peek]; openWorktree: [worktree: SessionWorktree] }>();
 const sidebar = useSidebar();
 
 const ADD_CHIP = cn(CHIP, 'w-7 justify-center px-0 max-sm:w-8 max-sm:px-0');
@@ -194,7 +194,10 @@ const goalOpen = ref(false);
 const canSummarize = computed(() => !props.session.parentId && !props.session.id.includes(':'));
 
 function chip(key: string) {
-  return { open: openChip.value === key, 'onUpdate:open': (open: boolean) => { if (open) openChip.value = key; else if (openChip.value === key) openChip.value = null; } };
+  return { open: openChip.value === key, 'onUpdate:open': (open: boolean) => {
+    if (open) { openChip.value = key; openingDiff.value = false; }
+    else if (openChip.value === key) openChip.value = null;
+  } };
 }
 watch(() => props.session.id, () => {
   openChip.value = null;
@@ -233,9 +236,13 @@ function openServer(server: (typeof servers.value)[number]): void {
   else if (server.url) window.open(server.url, '_blank', 'noopener,noreferrer');
   else if (server.process) sidebar.selectProcess(server.process);
 }
+// The diff takes focus as it opens, so the closing popover leaves focus alone
+// rather than handing it back to its chip under the diff.
+const openingDiff = ref(false);
 function openDiff(worktree: SessionWorktree): void {
+  openingDiff.value = true;
   openChip.value = null;
-  emit('peek', { kind: 'diff', worktree });
+  emit('openWorktree', worktree);
 }
 function openImage(index: number): void {
   openChip.value = null;

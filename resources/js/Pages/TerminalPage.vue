@@ -1,6 +1,6 @@
 <template>
   <div ref="workspace" class="relative flex h-full min-h-0 flex-col bg-background" :class="activeTerminalId && !phoneLayout && !selectedAgent ? 'py-6' : ''">
-    <PhoneAgentHeader v-if="phoneLayout && activeProject && (route.name === 'agent' || route.name === 'process')" :project-id="activeProject.project.id" :session="selectedAgent" :process="selectedProcess" :active-worktree-id="diffWorktree?.id ?? null" :folded="keyboardOpen && Boolean(activeTerminalId) && !integratedAgent" @peek="openPeek" />
+    <PhoneAgentHeader v-if="phoneLayout && activeProject && (route.name === 'agent' || route.name === 'process')" :project-id="activeProject.project.id" :session="selectedAgent" :process="selectedProcess" :active-worktree-id="diffWorktree?.id ?? null" :folded="keyboardOpen && Boolean(activeTerminalId) && !integratedAgent" @peek="openPeek" @open-worktree="openWorktree" />
     <PhoneServerCard v-if="phoneLayout && activeProject && route.name === 'process' && selectedProcess" v-show="!keyboardOpen" :project-id="activeProject.project.id" :process="selectedProcess" />
     <!-- The row spans the page, so an open peek meets its edge at full height;
          a terminal keeps its own width, centred beside it. -->
@@ -11,7 +11,7 @@
         :style="activeTerminalId ? { maxWidth: 'var(--patterm-terminal-max-width, 960px)' } : undefined"
       >
         <!-- The agent's context, above its conversation or terminal and lined up with it. -->
-        <ContextHeader v-if="!phoneLayout && selectedAgent && activeProject" :project-id="activeProject.project.id" :session="selectedAgent" :inner="integratedAgent ? 'max-w-[50rem] 2xl:max-w-[1000px]' : '!px-0'" :active-worktree-id="diffWorktree?.id ?? null" @peek="openPeek" />
+        <ContextHeader v-if="!phoneLayout && selectedAgent && activeProject" :project-id="activeProject.project.id" :session="selectedAgent" :inner="integratedAgent ? 'max-w-[50rem] 2xl:max-w-[1000px]' : '!px-0'" :active-worktree-id="diffWorktree?.id ?? null" @peek="openPeek" @open-worktree="openWorktree" />
         <div class="relative min-h-0 flex-1" :class="!phoneLayout && selectedAgent && activeTerminalId && !integratedAgent && 'mt-3'">
         <!-- The transcript fades in under the header rather than meeting it at a hard edge. -->
         <div v-if="integratedAgent && selectedAgent" class="pointer-events-none absolute inset-x-0 top-0 z-10 h-8 bg-gradient-to-b from-background to-transparent" aria-hidden="true" />
@@ -184,7 +184,6 @@ const peekLabel = computed(() => {
   switch (peek.value?.kind) {
     case 'browser': return 'Peek: browser';
     case 'image': return 'Peek: image';
-    case 'diff': return `Peek: ${peek.value.worktree.branch ?? 'changes'}`;
     default: return 'Session context';
   }
 });
