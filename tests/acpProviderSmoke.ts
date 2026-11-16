@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -59,6 +60,12 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   echo(text);
   if(text==='failure-after-echo') return out({id:q.id,error:{code:-32000,message:'Native acknowledged turn failed'}});
    if(['permission','cancel','mcp','unknown-mcp','spoof-mcp','always'].includes(text)) return permission(text);
+   if(text==='flood') {
+    for(let i=0;i<450;i++) update({sessionUpdate:'tool_call',toolCallId:'flood-'+i,name:'read_file',status:'completed'});
+    const file=Array.from({length:50},(_,i)=>'line '+i);
+    update({sessionUpdate:'tool_call',toolCallId:'big-edit',name:'edit_file',status:'completed',content:[{type:'diff',path:'big.txt',oldText:file.join('\n')+'\n',newText:file.map((line,i)=>i===25?'changed':line).join('\n')+'\n'}]});
+    result(q.id,{stopReason:'end_turn'});prompt=null;return;
+   }
    if(text==='change-settings') {options[1].currentValue='high';update({sessionUpdate:'config_option_update',configOptions:options});}
    update({sessionUpdate:'tool_call',toolCallId:'read',name:'read_file',status:'in_progress'});
    update({sessionUpdate:'tool_call_update',toolCallId:'read',rawOutput:{result:'kept'}});
@@ -235,6 +242,28 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     await ask('change-settings');
     await waitFor(provider, (snapshot) => snapshot.status === 'idle');
     assert.equal((database.connection.prepare("select reasoning from sessions where id = 'session'").get() as any).reasoning, 'low', 'native updates can be newer than launch/recovery fallback columns');
+
+    // A long session's snapshot is the newest page; older rows page back in
+    // order, and file edits keep only their changed hunks.
+    await ask('flood');
+    const flooded = await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.id === 'tool:big-edit'));
+    assert(flooded.messages.data.length <= 200, 'the snapshot is bounded');
+    assert.equal(flooded.history_truncated, true);
+    const edit = flooded.messages.data.find((row: any) => row.id === 'tool:big-edit');
+    assert.equal(edit.text, 'big.txt', 'the full file text is not kept in the row');
+    assert.equal(edit.tool.input.patch, '--- big.txt\n+++ big.txt\n@@ -23,7 +23,7 @@\n line 22\n line 23\n line 24\n-line 25\n+changed\n line 26\n line 27\n line 28');
+    let rows: any[] = flooded.messages.data;
+    let cursor: string | null = flooded.history_cursor.next;
+    while (cursor) {
+      const page = await provider.olderMessages('process', cursor) as any;
+      assert(page.messages.data.length > 0 && page.messages.data.length <= 200);
+      rows = [...page.messages.data, ...rows];
+      cursor = page.cursor;
+    }
+    const floods = rows.filter((row) => row.id.startsWith('tool:flood-')).map((row) => row.id);
+    assert.deepEqual(floods, Array.from({ length: 450 }, (_, i) => `tool:flood-${i}`), 'paging back returns every row once, in order');
+    assert.equal(new Set(rows.map((row) => row.id)).size, rows.length);
+    await assert.rejects(provider.olderMessages('process', `${randomUUID()}:5`), /no longer valid/, 'a cursor from another host is refused');
     await provider.stop('process');
     await hosts.waitForExit(Number(prepared.argv[3]));
     database.connection.prepare("update sessions set exited_at = ? where id = 'session'").run(now);

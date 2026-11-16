@@ -73,6 +73,11 @@ export class AcpProviderService implements IntegratedProviderService {
     return { ...snapshot, process_id: processId, session_id: runtime.sessionId, provider: 'agy', streaming: true };
   }
 
+  // Pages backwards from a snapshot's history cursor, oldest page last.
+  async olderMessages(processId: string, cursor: string): Promise<unknown> {
+    return callIntegratedHost(this.runtime(processId).socketPath, 'older', { cursor });
+  }
+
   async prompt(processId: string, input: ResolvedIntegratedPrompt): Promise<unknown> {
     const prompt: Row[] = [{ type: 'text', text: input.text }];
     const attachments: Row[] = input.references.map((reference) => ({ type: 'reference', name: reference.name, detail: `@${reference.relativePath}` }));

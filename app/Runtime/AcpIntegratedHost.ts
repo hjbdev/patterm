@@ -425,12 +425,47 @@ function controlState(): Row {
   return { model: options.find((option) => option.id === 'model')?.currentValue ?? model, configOptions: [...options, mcpOption], commands, title, controls_revision: String(controlsRevision) };
 }
 
+// Snapshots carry the newest rows only; older ones are read a page at a time.
+// Rows are only ever appended or replaced in place, so an index into
+// `messages` stays valid for this host's lifetime. The host id makes a cursor
+// from an earlier host, before a restart replayed the session, fail instead of
+// pointing at different rows.
+const PAGE_MESSAGES = 200;
+const PAGE_BYTES = 1024 * 1024;
+const hostId = randomUUID();
+
+function pageStart(end: number): number {
+  let start = end, bytes = 0;
+  while (start > 0 && end - start < PAGE_MESSAGES) {
+    const size = JSON.stringify(messages[start - 1]).length;
+    if (start < end && bytes + size > PAGE_BYTES) break;
+    bytes += size; start--;
+  }
+  return start;
+}
+
+function pageCursor(start: number): string | null {
+  return start > 0 ? `${hostId}:${start}` : null;
+}
+
+function olderPage(cursor: unknown): Row {
+  const match = typeof cursor === 'string' ? /^([0-9a-f-]+):(\d+)$/.exec(cursor) : null;
+  const end = match ? Number(match[2]) : Number.NaN;
+  if (!match || match[1] !== hostId || !Number.isSafeInteger(end) || end < 1 || end > messages.length) throw new Error('This history cursor is no longer valid; reopen the conversation');
+  const start = pageStart(end);
+  return { messages: { data: messages.slice(start, end) }, cursor: pageCursor(start) };
+}
+
 function snapshot(): Row {
+  const start = pageStart(messages.length);
+  const cursor = pageCursor(start);
   return {
     provider_session_id: sessionId,
     status,
     ...(statusDetail ? { status_detail: statusDetail } : {}),
-    messages: { data: messages },
+    messages: { data: messages.slice(start) },
+    history_truncated: cursor !== null,
+    history_cursor: cursor ? { next: cursor } : null,
     permissions: { data: [...permissions.values()].map(({ rpcId: _rpcId, options: _options, ...permission }) => permission) },
     questions: { data: [] },
     usage,
@@ -441,6 +476,7 @@ function snapshot(): Row {
 
 async function handle(method: string, params: Row): Promise<unknown> {
   if (method === 'conversation') return snapshot();
+  if (method === 'older') return olderPage(params.cursor);
   if (method === 'controls') return controlState();
   if (method === 'delivery') return { state: deliveries.has(params.clientMessageId) ? 'accepted' : 'unknown' };
   if (method === 'stop') { setImmediate(() => void stop()); return {}; }
