@@ -226,10 +226,10 @@ async function main(): Promise<void> {
     assert.deepEqual(transcript, { provider: 'claude', messages: [{ id: 'm' }] });
 
     // Append-only decision logging: evidence validation, session/project scoping, superseding, and chronological listing.
-    const dec1 = await registry.callPublic('store_decision', {
+    const dec1 = call<{ id: string; created_at: string }>('store_decision', {
       phase: 'frame', decision: 'Use SQLite decisions table', why: 'Avoid dirtying git worktrees',
       evidence: 'app/Services/ProjectContextService.ts:340', result: 'verified'
-    }, { identity: 'alice' }) as { id: string; created_at: string };
+    }, 'alice');
     assert.ok(dec1.id.startsWith('decision_'));
     assert.ok(!Number.isNaN(Date.parse(dec1.created_at)));
     for (const badEvidence of ['   ', 'I looked at the code and it seems fine to me', 'Everything passed', 'I tried and failed', '`looks fine`', '`looks fine.`', '`Everything passed.`', '`I tried and failed.`']) {
@@ -238,27 +238,27 @@ async function main(): Promise<void> {
       }, { identity: 'alice' }));
     }
     for (const goodEvidence of ['deadbeef', 'feedface', 'commit deadbeef', 'README.md', 'CHANGELOG.md', 'https://example.com/1', '12/12 passed']) {
-      const ok = await registry.callPublic('store_decision', {
+      const ok = call<{ id: string }>('store_decision', {
         phase: 'verify', decision: `Accept ${goodEvidence}`, why: 'Concrete pointer', evidence: goodEvidence, result: 'verified'
-      }, { identity: 'alice' }) as { id: string };
+      }, 'alice');
       assert.ok(ok.id.startsWith('decision_'));
     }
     now += 1000;
-    const dec2 = await registry.callPublic('store_decision', {
+    const dec2 = call<{ id: string; created_at: string }>('store_decision', {
       phase: 'verify', decision: 'Confirmed with test run', why: 'Need passing smoke check',
       evidence: '`pnpm run test:context` exit 0', result: 'verified', supersedes_id: dec1.id
-    }, { identity: 'alice' }) as { id: string; created_at: string };
+    }, 'alice');
     // Same-timestamp entry preserves insertion order via rowid.
-    const dec2SameTs = await registry.callPublic('store_decision', {
+    const dec2SameTs = call<{ id: string; created_at: string }>('store_decision', {
       phase: 'verify', decision: 'Same timestamp tie-breaker', why: 'Chronological order',
       evidence: 'exit 0', result: 'verified'
-    }, { identity: 'alice' }) as { id: string; created_at: string };
+    }, 'alice');
     assert.equal(dec2SameTs.created_at, dec2.created_at);
     now += 1000;
-    const dec3 = await registry.callPublic('store_decision', {
+    const dec3 = call<{ id: string; created_at: string }>('store_decision', {
       phase: 'build', decision: 'Bob logged a sibling decision', why: 'Parallel work',
       evidence: 'commit abc1234', result: 'open'
-    }, { identity: 'bob' }) as { id: string; created_at: string };
+    }, 'bob');
     const foreignDec = call<{ id: string }>('store_decision', {
       project_id: 'other', phase: 'frame', decision: 'Foreign', why: 'Isolated',
       evidence: 'https://example.com/1', result: 'open'
