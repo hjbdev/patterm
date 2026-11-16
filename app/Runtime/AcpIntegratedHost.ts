@@ -221,7 +221,13 @@ function diffPreview(content: unknown): string | null {
     if (part?.type !== 'diff' || typeof part.newText !== 'string' || typeof part.path !== 'string') continue;
     const before: string = typeof part.oldText === 'string' ? part.oldText : '';
     const after: string = part.newText;
-    const lines = (text: string) => text ? text.replace(/\n$/, '').split('\n') : [];
+    // A last line without its newline differs from the same line with one.
+    const lines = (text: string) => {
+      if (!text) return [];
+      const rows = text.replace(/\n$/, '').split('\n');
+      if (!text.endsWith('\n')) rows[rows.length - 1] += NO_EOL;
+      return rows;
+    };
     const hunks = unifiedHunks(lines(before), lines(after));
     // Oversized changes remain identified by path; never show a truncated
     // patch that pretends to describe the whole edit.
@@ -231,6 +237,7 @@ function diffPreview(content: unknown): string | null {
 }
 
 const DIFF_CONTEXT = 3;
+const NO_EOL = '\u0000';
 const MAX_DIFF_EDITS = 1_000;
 
 // One edit script entry per line: ' ' kept, '-' removed, '+' added.
@@ -298,7 +305,10 @@ function unifiedHunks(before: string[], after: string[]): string | null {
     const body = edits.slice(from, to);
     const oldCount = body.filter(([kind]) => kind !== '+').length, newCount = body.filter(([kind]) => kind !== '-').length;
     output.push(`@@ -${oldCount ? oldLine + 1 : oldLine},${oldCount} +${newCount ? newLine + 1 : newLine},${newCount} @@`);
-    for (const [kind, line] of body) output.push(`${kind}${line}`);
+    for (const [kind, line] of body) {
+      if (line.endsWith(NO_EOL)) output.push(`${kind}${line.slice(0, -1)}`, '\\ No newline at end of file');
+      else output.push(`${kind}${line}`);
+    }
   }
   return output.join('\n');
 }

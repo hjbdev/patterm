@@ -1163,7 +1163,8 @@ export function extractUnifiedDiff(value: string): string | null {
   const lines = value.split('\n');
   const start = lines.findIndex((line) => line.startsWith('@@') || line.startsWith('diff --git '));
   if (start < 0 || !lines.some((line) => line.startsWith('@@'))) return null;
-  return lines.slice(start).join('\n').trim();
+  // Only trailing newlines go: a final blank context line is a single space.
+  return lines.slice(start).join('\n').replace(/[\r\n]+$/, '');
 }
 
 export function diffChangeCounts(patch: string): { additions: number; deletions: number } {
