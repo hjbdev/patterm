@@ -652,7 +652,24 @@ export class IntegratedAgentService {
     const raw = record(conversation).messages;
     const messages = Array.isArray(raw) ? raw : record(raw).data;
     const arrived = new Set((Array.isArray(messages) ? messages : []).map((message) => record(message).clientMessageId));
-    for (const row of unconfirmed) if (arrived.has(row.message_id)) this.settleUnconfirmed(key, row.message_id);
+    for (const row of unconfirmed) {
+      if (arrived.has(row.message_id)) this.settleUnconfirmed(key, row.message_id);
+      // A paged snapshot may no longer hold the prompt's row. Absence proves
+      // nothing, so ask the provider's own delivery record instead.
+      else this.reconcileHeld(key, row.message_id);
+    }
+  }
+
+  private readonly heldChecks = new Set<string>();
+
+  private reconcileHeld(key: string, messageId: string): void {
+    const check = `${key}\u0000${messageId}`;
+    if (this.heldChecks.has(check)) return;
+    this.heldChecks.add(check);
+    void this.reconcileNative(key, messageId)
+      .then((state) => { if (state === 'accepted') this.settleUnconfirmed(key, messageId); })
+      .catch(() => undefined)
+      .finally(() => this.heldChecks.delete(check));
   }
 
   private settleUnconfirmed(key: string, messageId: string): void {
