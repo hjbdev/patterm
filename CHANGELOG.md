@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Antigravity's native JSONL transcripts can be enabled in history settings.
   Patterm imports user requests, model replies, tool steps and token counts;
   generated system metadata is excluded.
+- Append-only MCP decision logging (`store_decision` and `list_decisions`)
+  scoped to sessions and projects, with concrete evidence validation,
+  supersession links, chronological listing, and `host_read` support across
+  paired hosts.
 
 ### Changed
 

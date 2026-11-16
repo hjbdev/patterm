@@ -9,7 +9,8 @@ const assignmentOperations = new Set<ContextOperation>(['todo_create', 'todo_ass
 export function registerProjectContextTools(registry: McpToolRegistry, action: ProjectContextAction) {
   for (const operation of Object.keys(contextSchemas) as ContextOperation[]) {
     registry.register({
-      name: operation, namespace: operation.split('_')[0]!,
+      name: operation,
+      namespace: operation === 'store_decision' || operation === 'list_decisions' ? 'decision' : operation.split('_')[0]!,
       hidden: operation === 'todo_lease_revoke',
       description: descriptions[operation] ?? `${operation.replaceAll('_', ' ')} within the caller's project.`,
       inputSchema: objectSchema(contextSchemas[operation]),
@@ -40,7 +41,9 @@ const descriptions: Partial<Record<ContextOperation, string>> = {
   'todo_update': 'Edit a todo with a revision guard; set status to completed to complete, or open to reopen. Completion releases its lease.',
   'todo_lease_acquire': 'Acquire exclusive, expiring work ownership of a todo. Returns the token required for renewal and release.',
   'reference_attach': 'Attach an HTTP(S) link, such as a PR, issue, or dev server preview, to a todo, scratchpad, or session. Agents may omit target_id for their own session. Repeated attachment is idempotent.',
-  'scratchpad_update': 'Replace scratchpad content or metadata with a revision guard; set status to archived or active to archive or restore.'
+  'scratchpad_update': 'Replace scratchpad content or metadata with a revision guard; set status to archived or active to archive or restore.',
+  'store_decision': 'Append an auditable decision entry (phase, decision, why, concrete evidence, result) to the session/project trail. Append-only; pass supersedes_id to supersede an earlier entry.',
+  'list_decisions': 'List decision trail entries in chronological order, scoped to caller session by default or project_id when specified.'
 };
 
 // The context schemas contain only flat primitive fields. Keeping this small

@@ -10,7 +10,7 @@ import type { TimelineService } from './TimelineService';
 // through tools that change nothing. Context reads run as the owner within
 // the linked project; the rest run as a caller scoped to it.
 export const REMOTE_CONTEXT_READ_TOOLS = new Set([
-  'todo_list', 'todo_get', 'scratchpad_list', 'scratchpad_get', 'reference_list'
+  'todo_list', 'todo_get', 'scratchpad_list', 'scratchpad_get', 'reference_list', 'list_decisions'
 ]);
 export const REMOTE_READ_TOOLS = new Set([
   'list_processes', 'get_process_status', 'get_project_status', 'get_process_output', 'get_conversation_output',

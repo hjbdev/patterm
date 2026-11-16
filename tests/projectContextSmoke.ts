@@ -5,7 +5,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { TimelineService } from '../app/Services/TimelineService';
-import { ProjectContextService, type TodoRow, type ScratchpadRow, type ReferenceRow } from '../app/Services/ProjectContextService';
+import { ProjectContextService, type TodoRow, type ScratchpadRow, type ReferenceRow, type DecisionRow } from '../app/Services/ProjectContextService';
 import { ProjectContextAction, type ContextOperation } from '../app/Actions/ProjectContextAction';
 import { RegisterProcessAction, registerProcessInput } from '../app/Actions/RegisterProcessAction';
 import { RegisterSessionAction, registerSessionInput } from '../app/Actions/RegisterSessionAction';
@@ -224,6 +224,79 @@ async function main(): Promise<void> {
     assert.ok('commands' in fullConversation && 'models' in fullConversation);
     const transcript = await conversations.call('integrated_get', { process_id: aliceProcess, transcript_only: true }) as Record<string, unknown>;
     assert.deepEqual(transcript, { provider: 'claude', messages: [{ id: 'm' }] });
+
+    // Append-only decision logging: evidence validation, session/project scoping, superseding, and chronological listing.
+    const dec1 = await registry.callPublic('store_decision', {
+      phase: 'frame', decision: 'Use SQLite decisions table', why: 'Avoid dirtying git worktrees',
+      evidence: 'app/Services/ProjectContextService.ts:340', result: 'verified'
+    }, { identity: 'alice' }) as { id: string; created_at: string };
+    assert.ok(dec1.id.startsWith('decision_'));
+    assert.ok(!Number.isNaN(Date.parse(dec1.created_at)));
+    for (const badEvidence of ['   ', 'I looked at the code and it seems fine to me', 'Everything passed', 'I tried and failed', '`looks fine`', '`looks fine.`', '`Everything passed.`', '`I tried and failed.`']) {
+      await assert.rejects(registry.callPublic('store_decision', {
+        phase: 'verify', decision: 'Bad evidence', why: 'Prose-only', evidence: badEvidence, result: 'verified'
+      }, { identity: 'alice' }));
+    }
+    for (const goodEvidence of ['deadbeef', 'feedface', 'commit deadbeef', 'README.md', 'CHANGELOG.md', 'https://example.com/1', '12/12 passed']) {
+      const ok = await registry.callPublic('store_decision', {
+        phase: 'verify', decision: `Accept ${goodEvidence}`, why: 'Concrete pointer', evidence: goodEvidence, result: 'verified'
+      }, { identity: 'alice' }) as { id: string };
+      assert.ok(ok.id.startsWith('decision_'));
+    }
+    now += 1000;
+    const dec2 = await registry.callPublic('store_decision', {
+      phase: 'verify', decision: 'Confirmed with test run', why: 'Need passing smoke check',
+      evidence: '`pnpm run test:context` exit 0', result: 'verified', supersedes_id: dec1.id
+    }, { identity: 'alice' }) as { id: string; created_at: string };
+    // Same-timestamp entry preserves insertion order via rowid.
+    const dec2SameTs = await registry.callPublic('store_decision', {
+      phase: 'verify', decision: 'Same timestamp tie-breaker', why: 'Chronological order',
+      evidence: 'exit 0', result: 'verified'
+    }, { identity: 'alice' }) as { id: string; created_at: string };
+    assert.equal(dec2SameTs.created_at, dec2.created_at);
+    now += 1000;
+    const dec3 = await registry.callPublic('store_decision', {
+      phase: 'build', decision: 'Bob logged a sibling decision', why: 'Parallel work',
+      evidence: 'commit abc1234', result: 'open'
+    }, { identity: 'bob' }) as { id: string; created_at: string };
+    const foreignDec = call<{ id: string }>('store_decision', {
+      project_id: 'other', phase: 'frame', decision: 'Foreign', why: 'Isolated',
+      evidence: 'https://example.com/1', result: 'open'
+    });
+    await assert.rejects(registry.callPublic('store_decision', {
+      phase: 'pivot', decision: 'Cross-project supersede', why: 'Invalid',
+      evidence: 'commit abc1234', result: 'open', supersedes_id: foreignDec.id
+    }, { identity: 'alice' }), /not found/);
+    await assert.rejects(registry.callPublic('store_decision', {
+      phase: 'pivot', decision: 'Missing session', why: 'Invalid',
+      evidence: 'commit abc1234', result: 'open', session_id: 'session_missing'
+    }, { identity: 'alice' }), /not found/);
+
+    const aliceDecisions = await registry.callPublic('list_decisions', {}, { identity: 'alice' }) as Page<DecisionRow>;
+    assert.equal(aliceDecisions.total, 10);
+    assert.equal(aliceDecisions.items[0]?.id, dec1.id);
+    assert.equal(aliceDecisions.items[8]?.id, dec2.id);
+    assert.equal(aliceDecisions.items[8]?.supersedes_id, dec1.id);
+    assert.equal(aliceDecisions.items[9]?.id, dec2SameTs.id);
+
+    const bobNarrowed = await registry.callPublic('list_decisions', { project_id: 'p', session_id: bob }, { identity: 'alice' }) as Page<DecisionRow>;
+    assert.deepEqual(bobNarrowed.items.map(item => item.id), [dec3.id]);
+
+    const projectDecisions = await registry.callPublic('list_decisions', { project_id: 'p', limit: 2, offset: 9 }, { identity: 'alice' }) as Page<DecisionRow>;
+    assert.equal(projectDecisions.total, 11);
+    assert.deepEqual(projectDecisions.items.map(item => item.id), [dec2SameTs.id, dec3.id]);
+    await assert.rejects(registry.callPublic('list_decisions', { project_id: 'other' }, { identity: 'alice' }), /scope/);
+    assert.deepEqual(registry.changedTopics('store_decision'), ['context']);
+    assert.deepEqual(registry.changedTopics('list_decisions'), []);
+    assert.ok(bumps(() => call('store_decision', {
+      phase: 'review', decision: 'Revision bump check', why: 'Cache invalidation',
+      evidence: 'PR #42', result: 'verified'
+    }, 'alice'))[0]! > 0);
+    assert.deepEqual(bumps(() => assert.throws(() => call('store_decision', {
+      phase: 'review', decision: 'Failed write', why: 'Prose',
+      evidence: 'Everything passed', result: 'verified'
+    }, 'alice'), /concrete pointer/)), [0, 0]);
+
     assert.deepEqual(db.prepare('pragma foreign_key_check').all(), []);
     console.log('project context smoke passed');
   } finally {
