@@ -16,6 +16,9 @@ const resourceType = z.enum(['generic', 'issue', 'pull_request', 'preview']);
 const ttl = z.number().int().min(1).max(86400).default(300);
 const token = z.string().uuid();
 const query = z.string().max(500).optional();
+const shortLabel = z.string().trim().min(1).max(80);
+const line = z.string().trim().min(1).max(1000);
+const evidenceText = z.string().trim().min(1).max(2000);
 const input = <T extends z.ZodRawShape>(shape: T) => z.object({ project_id: id.optional(), ...shape }).strict();
 
 export const contextSchemas = {
@@ -46,10 +49,12 @@ export const contextSchemas = {
   'reference_list': input({ ...target, ...page }),
   'reference_update': input({ reference_id: id, revision, url: z.string().url().max(4096).optional(), resource_type: resourceType.optional(), title: z.string().max(500).optional(), identifier: z.string().max(500).optional(), external_id: z.string().max(500).optional() }),
   'reference_detach': input({ ...target, reference_id: id }),
-  'session_context': input({ session_id: id.optional(), ...page })
+  'session_context': input({ session_id: id.optional(), ...page }),
+  'store_decision': input({ phase: shortLabel, decision: line, why: line, evidence: evidenceText, result: shortLabel, supersedes_id: id.optional(), session_id: id.optional() }),
+  'list_decisions': input({ session_id: id.optional(), ...page })
 };
 export type ContextOperation = keyof typeof contextSchemas;
-export const contextReadOperations = new Set<ContextOperation>(['todo_list', 'todo_get', 'scratchpad_list', 'scratchpad_get', 'reference_list', 'session_context']);
+export const contextReadOperations = new Set<ContextOperation>(['todo_list', 'todo_get', 'scratchpad_list', 'scratchpad_get', 'reference_list', 'session_context', 'list_decisions']);
 
 export class ProjectContextAction {
   constructor(private readonly database: DatabaseService, private readonly service: ProjectContextService) {}
@@ -119,6 +124,8 @@ export class ProjectContextAction {
         if (!session) throw new Error('session_id is required for owner requests');
         return service.sessionContext(actor, session, p);
       }
+      case 'store_decision': return service.storeDecision(actor, contextSchemas[operation].parse(raw));
+      case 'list_decisions': { const p = contextSchemas[operation].parse(raw); return service.listDecisions(actor, p, Boolean(p.project_id)); }
     }
   }
 }

@@ -18,6 +18,11 @@ export interface ReferenceRow {
   id: string; project_id: string; url: string; provider: string; resource_type: string;
   external_id: string | null; identifier: string | null; title: string | null; revision: number;
 }
+export interface DecisionRow {
+  id: string; project_id: string; session_id: string | null; created_by_actor: string;
+  phase: string; decision: string; why: string; evidence: string; result: string;
+  supersedes_id: string | null; created_at: string;
+}
 export type ReferenceTarget = { target_type: 'todo' | 'scratchpad' | 'session'; target_id: string };
 // A session's own worktree (its working directory) comes first, then the
 // worktrees it links, in link order. linked_at is null for the own worktree.
@@ -67,7 +72,7 @@ export class ProjectContextService {
     return { projectId, actorId: 'user', sessionId: null };
   }
 
-  scoped<T>(table: 'todos' | 'scratchpads' | 'sessions' | 'external_references' | 'worktrees', id: string, actor: ContextActor): T {
+  scoped<T>(table: 'todos' | 'scratchpads' | 'sessions' | 'external_references' | 'worktrees' | 'decisions', id: string, actor: ContextActor): T {
     const row = this.db.prepare(`select * from ${table} where id=? and project_id=?`).get(id, actor.projectId);
     if (!row) throw new Error(`${table} record not found in this project`);
     return row as T;
@@ -329,6 +334,55 @@ export class ProjectContextService {
       references: this.references(actor, { target_type: 'session', target_id: session }, page),
       worktrees: this.sessionWorktrees(session) };
   }
+
+  storeDecision(actor: ContextActor, input: { phase: string; decision: string; why: string; evidence: string; result: string; supersedes_id?: string | undefined; session_id?: string | undefined }) {
+    if (!hasConcreteEvidence(input.evidence)) {
+      throw new Error('evidence must include a concrete pointer (commit SHA, URL, file:line, path, or command/exit summary)');
+    }
+    const sessionId = input.session_id ?? actor.sessionId;
+    if (sessionId) this.scoped('sessions', sessionId, actor);
+    if (input.supersedes_id) this.scoped('decisions', input.supersedes_id, actor);
+    const id = `decision_${randomUUID()}`;
+    const createdAt = new Date(this.now()).toISOString();
+    this.db.prepare(`insert into decisions(id,project_id,session_id,created_by_actor,phase,decision,why,evidence,result,supersedes_id,created_at) values(?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(id, actor.projectId, sessionId, actor.actorId, input.phase, input.decision, input.why, input.evidence, input.result, input.supersedes_id ?? null, createdAt);
+    this.event(actor, 'decision.stored', { decision_id: id, session_id: sessionId, phase: input.phase, result: input.result, supersedes_id: input.supersedes_id ?? null });
+    return { id, created_at: createdAt };
+  }
+
+  listDecisions(actor: ContextActor, input: Page & { session_id?: string | undefined }, explicitProject = false) {
+    const clauses = ['project_id=?'];
+    const params: unknown[] = [actor.projectId];
+    const sessionId = input.session_id ?? (explicitProject ? null : actor.sessionId);
+    if (sessionId) {
+      this.scoped('sessions', sessionId, actor);
+      clauses.push('session_id=?');
+      params.push(sessionId);
+    }
+    const where = clauses.join(' and ');
+    const total = (this.db.prepare(`select count(*) as n from decisions where ${where}`).get(...params) as { n: number }).n;
+    const items = this.db.prepare(`select * from decisions where ${where} order by created_at asc, rowid asc limit ? offset ?`)
+      .all(...params, input.limit, input.offset) as DecisionRow[];
+    return { items, total };
+  }
+}
+
+// Reject prose-only evidence by requiring at least one concrete pointer:
+// URL, commit/hex SHA, file:line, path or root filename, inline command/identifier,
+// exit/count summary, issue/PR ref, or figure ref.
+function hasConcreteEvidence(value: string): boolean {
+  return /https?:\/\/\S+/i.test(value)
+    || /^[0-9a-f]{7,40}$/i.test(value.trim())
+    || /\b(?:commit|sha|rev)\s+[0-9a-f]{7,40}\b/i.test(value)
+    || /\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b/i.test(value)
+    || /\b[0-9a-f]{12,40}\b/i.test(value)
+    || /\S+:\d+/.test(value)
+    || /(?:^|[\s`"'(])(?:\.{0,2}\/|~\/|[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_./-]+)/.test(value)
+    || /\b[a-zA-Z0-9_-]+\.(?:md|ts|tsx|js|jsx|mjs|cjs|json|toml|yaml|yml|rs|py|go|sql|vue|sh|txt|log|csv|tsv)\b/i.test(value)
+    || /`[^`]*(?:[a-zA-Z0-9_-]+[/:_][a-zA-Z0-9_./:-]+|[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+|[a-zA-Z0-9_-]+=[^\s`]+|\s--?[a-zA-Z0-9_-]+)[^`]*`/.test(value)
+    || /\b(?:exit(?:ed)?(?:\s+code)?\s*[:=]?\s*\d+|rc\s*=\s*\d+|\d+\/\d+\s+(?:passed|failed|tests?|checks?))\b/i.test(value)
+    || /#\d+\b/.test(value)
+    || /\[patterm_figure:[^\]]+\]/.test(value);
 }
 
 // URL canonicalises host casing and default ports; preserve path, query, and fragment.
