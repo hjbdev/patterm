@@ -806,6 +806,16 @@ async function applySnapshot(load: () => Promise<Record<string, unknown>>, reque
       const rows = Array.isArray(result.archived_messages)
         ? archiveTranscript(result.archived_messages as ConversationMessageRecord[], { projectPath: props.projectPath ?? null, showReasoning: true })
         : projection.messages;
+      // A truncated window that shares no row with those shown, such as after
+      // a reconnect that missed more than a page, would leave a gap nothing can
+      // load. Start again from this window and its own cursor.
+      const shownIds = new Set(messages.value.map((message) => message.id));
+      if (historyLoaded && result.history_truncated === true && !rows.some((message) => shownIds.has(message.id))) {
+        historyLoaded = false;
+        const cursor = result.history_cursor as Record<string, unknown> | null | undefined;
+        historyCursor.value = typeof cursor?.next === 'string' ? cursor.next : null;
+        historyTruncated.value = true;
+      }
       messages.value = historyLoaded ? replaceLiveWindow(messages.value, rows) : rows;
       permissions.value = projection.permissions;
       applyQuestions(projection.questions);

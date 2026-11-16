@@ -237,6 +237,34 @@ test('older pages survive live refreshes and stale page replies cannot cross ses
   harness.scope.stop();
 });
 
+test('a live window past every shown row starts again from its own cursor', async () => {
+  const harness = createHarness({ processId: 'gap' });
+  await mountSettled(harness, {
+    ...emptyConversation(), provider: 'agy', history_truncated: true,
+    history_cursor: { next: 'page-2' },
+    messages: { data: [{ id: 'recent', role: 'assistant', kind: 'text', text: 'recent' }] }
+  });
+  void harness.pane.loadOlder();
+  await flush();
+  pending(harness, 'integrated_history').at(-1).resolve({ messages: { data: [{ id: 'old', role: 'user', kind: 'text', text: 'old' }] }, cursor: null });
+  await flush();
+  assert.equal(harness.pane.historyCursor.value, null);
+  // A reconnect missed more than a page: the new window shares no row.
+  void harness.pane.refresh();
+  await flush();
+  await resolveGets(harness, {
+    ...emptyConversation(), provider: 'agy', history_truncated: true,
+    history_cursor: { next: 'after-gap' },
+    messages: { data: [{ id: 'latest', role: 'assistant', kind: 'text', text: 'latest' }] }
+  });
+  assert.deepEqual(harness.pane.messages.value.map(message => message.id), ['latest'], 'no stale rows sit before an unloadable gap');
+  assert.equal(harness.pane.historyCursor.value, 'after-gap');
+  void harness.pane.loadOlder();
+  await flush();
+  assert.deepEqual(pending(harness, 'integrated_history').at(-1).args, { process_id: 'gap', cursor: 'after-gap' });
+  harness.scope.stop();
+});
+
 test('a resumed conversation loads its imported turns without a scroll', async () => {
   const harness = createHarness({ processId: 'resumed' });
   await mountSettled(harness, { ...emptyConversation(), provider: 'claude', history_truncated: true, history_cursor: { next: 'archive:page' } });

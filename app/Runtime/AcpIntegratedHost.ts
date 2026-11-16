@@ -447,7 +447,7 @@ const hostId = randomUUID();
 function pageStart(end: number): number {
   let start = end, bytes = 0;
   while (start > 0 && end - start < PAGE_MESSAGES) {
-    const size = JSON.stringify(messages[start - 1]).length;
+    const size = Buffer.byteLength(JSON.stringify(messages[start - 1]));
     if (start < end && bytes + size > PAGE_BYTES) break;
     bytes += size; start--;
   }
