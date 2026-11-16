@@ -212,6 +212,8 @@ function contentChunk(content: Row, kind: 'text' | 'reasoning', role: 'user' | '
     block = null;
   }
 }
+// ACP diffs carry whole files. Keep only the changed hunks: a transcript that
+// stores every edited file in full grows past what the pane can load.
 function diffPreview(content: unknown): string | null {
   if (!Array.isArray(content)) return null;
   const parts: string[] = [];
@@ -219,14 +221,86 @@ function diffPreview(content: unknown): string | null {
     if (part?.type !== 'diff' || typeof part.newText !== 'string' || typeof part.path !== 'string') continue;
     const before: string = typeof part.oldText === 'string' ? part.oldText : '';
     const after: string = part.newText;
-    // Oversized files remain identified by path; never show a truncated patch
-    // that pretends to describe the whole edit.
-    if (before.length + after.length > 128_000) continue;
     const lines = (text: string) => text ? text.replace(/\n$/, '').split('\n') : [];
-    const oldLines = lines(before), newLines = lines(after);
-    parts.push(`--- ${part.oldText == null ? '/dev/null' : part.path}\n+++ ${part.path}\n@@ -${oldLines.length ? 1 : 0},${oldLines.length} +${newLines.length ? 1 : 0},${newLines.length} @@\n${[...oldLines.map((line) => `-${line}`), ...newLines.map((line) => `+${line}`)].join('\n')}`);
+    const hunks = unifiedHunks(lines(before), lines(after));
+    // Oversized changes remain identified by path; never show a truncated
+    // patch that pretends to describe the whole edit.
+    if (hunks && hunks.length <= 128_000) parts.push(`--- ${part.oldText == null ? '/dev/null' : part.path}\n+++ ${part.path}\n${hunks}`);
   }
   return parts.length ? parts.join('\n') : null;
+}
+
+const DIFF_CONTEXT = 3;
+const MAX_DIFF_EDITS = 1_000;
+
+// One edit script entry per line: ' ' kept, '-' removed, '+' added.
+function lineEdits(before: string[], after: string[]): Array<[' ' | '-' | '+', string]> {
+  let start = 0;
+  while (start < before.length && start < after.length && before[start] === after[start]) start++;
+  let endBefore = before.length, endAfter = after.length;
+  while (endBefore > start && endAfter > start && before[endBefore - 1] === after[endAfter - 1]) { endBefore--; endAfter--; }
+  const a = before.slice(start, endBefore), b = after.slice(start, endAfter);
+  const kept = (rows: string[]) => rows.map((line): [' ', string] => [' ', line]);
+  return [...kept(before.slice(0, start)), ...myers(a, b), ...kept(before.slice(endBefore))];
+}
+
+// Myers' O(ND) diff. Past MAX_DIFF_EDITS the changed middle is shown as one
+// replacement, which is still correct, only less precise.
+function myers(a: string[], b: string[]): Array<[' ' | '-' | '+', string]> {
+  const replace = (): Array<[' ' | '-' | '+', string]> => [...a.map((line): ['-', string] => ['-', line]), ...b.map((line): ['+', string] => ['+', line])];
+  if (!a.length || !b.length) return replace();
+  const offset = Math.min(a.length + b.length, MAX_DIFF_EDITS) + 1;
+  const v = new Int32Array(2 * offset + 1);
+  const trace: Int32Array[] = [];
+  for (let d = 0; d < offset; d++) {
+    trace.push(v.slice());
+    for (let k = -d; k <= d; k += 2) {
+      let x = k === -d || (k !== d && v[offset + k - 1]! < v[offset + k + 1]!) ? v[offset + k + 1]! : v[offset + k - 1]! + 1;
+      let y = x - k;
+      while (x < a.length && y < b.length && a[x] === b[y]) { x++; y++; }
+      v[offset + k] = x;
+      if (x >= a.length && y >= b.length) return backtrack(trace, a, b, offset);
+    }
+  }
+  return replace();
+}
+
+function backtrack(trace: Int32Array[], a: string[], b: string[], offset: number): Array<[' ' | '-' | '+', string]> {
+  const edits: Array<[' ' | '-' | '+', string]> = [];
+  let x = a.length, y = b.length;
+  for (let d = trace.length - 1; d > 0; d--) {
+    const v = trace[d]!;
+    const k = x - y;
+    const previous = k === -d || (k !== d && v[offset + k - 1]! < v[offset + k + 1]!) ? k + 1 : k - 1;
+    const previousX = v[offset + previous]!, previousY = previousX - previous;
+    while (x > previousX && y > previousY) { edits.push([' ', a[--x]!]); y--; }
+    if (x > previousX) edits.push(['-', a[--x]!]);
+    else edits.push(['+', b[--y]!]);
+  }
+  while (x > 0 && y > 0) { edits.push([' ', a[--x]!]); y--; }
+  return edits.reverse();
+}
+
+function unifiedHunks(before: string[], after: string[]): string | null {
+  const edits = lineEdits(before, after);
+  const changed = edits.flatMap((edit, index) => edit[0] === ' ' ? [] : [index]);
+  if (!changed.length) return null;
+  const output: string[] = [];
+  let cursor = 0;
+  while (cursor < changed.length) {
+    const first = changed[cursor]!;
+    let last = first;
+    while (cursor + 1 < changed.length && changed[cursor + 1]! - last <= DIFF_CONTEXT * 2 + 1) last = changed[++cursor]!;
+    cursor++;
+    const from = Math.max(0, first - DIFF_CONTEXT), to = Math.min(edits.length, last + DIFF_CONTEXT + 1);
+    let oldLine = 0, newLine = 0;
+    for (const [kind] of edits.slice(0, from)) { if (kind !== '+') oldLine++; if (kind !== '-') newLine++; }
+    const body = edits.slice(from, to);
+    const oldCount = body.filter(([kind]) => kind !== '+').length, newCount = body.filter(([kind]) => kind !== '-').length;
+    output.push(`@@ -${oldCount ? oldLine + 1 : oldLine},${oldCount} +${newCount ? newLine + 1 : newLine},${newCount} @@`);
+    for (const [kind, line] of body) output.push(`${kind}${line}`);
+  }
+  return output.join('\n');
 }
 function receive(frame: Row): void {
   if (!frame.method) {
@@ -275,10 +349,11 @@ function receive(frame: Row): void {
       block = null;
       const id = `tool:${String(update.toolCallId)}`;
       const previous = messages.find((row) => row.id === id);
-      const output = (update.content ?? []).map((part: Row) => part.type === 'content' && part.content?.type === 'text' ? part.content.text : part.type === 'diff' ? `${part.path}\n${part.newText ?? ''}` : '').filter(Boolean).join('\n');
+      // A diff part is shown through input.patch; its full file text stays out.
+      const output = (update.content ?? []).map((part: Row) => part.type === 'content' && part.content?.type === 'text' ? part.content.text : part.type === 'diff' ? part.path : '').filter(Boolean).join('\n');
       const rawInput = update.rawInput ?? previous?.tool?.input ?? {};
       const patch = diffPreview(update.content);
-      const input = { ...rawInput, ...(typeof rawInput.Path === 'string' ? { path: rawInput.Path } : {}), ...(typeof rawInput.Content === 'string' ? { content: rawInput.Content } : {}), ...(patch ? { patch } : {}) };
+      const input = { ...rawInput, ...(typeof rawInput.Path === 'string' ? { path: rawInput.Path } : {}), ...(patch ? { patch } : {}) };
       const toolState = { ...(previous?.tool?.state as Row | undefined), status: update.status ?? (previous?.tool?.state as Row | undefined)?.status ?? 'pending', ...(update.rawOutput !== undefined ? { output: update.rawOutput } : {}) };
       replace({ id, role: 'assistant', kind: 'tool', text: output || previous?.text || '', createdAt: previous?.createdAt ?? new Date().toISOString(), ...(['completed', 'failed'].includes(toolState.status) ? { completedAt: previous?.completedAt ?? new Date().toISOString() } : {}), tool: { name: update.name ?? previous?.tool?.name ?? update.kind ?? 'Tool', input, state: toolState } });
       break;

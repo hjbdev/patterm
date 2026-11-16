@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Long Antigravity sessions open again instead of loading forever. File edits
+  are kept as changed hunks with context rather than whole-file copies, which
+  shrank one 460-edit session's transcript from 29 MB to 7 MB, and the diff
+  view shows only the lines that changed.
 - Antigravity agents can call every Patterm tool, including
   `spawn_agent` and `html_render`. agy 1.5.9 declares MCP tools only up to a
   size budget and silently drops the largest, so Antigravity now gets tool
