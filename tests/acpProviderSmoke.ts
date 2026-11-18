@@ -62,18 +62,24 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   if(text==='crash') {fs.writeFileSync(process.env.ACP_TRACE+'.side-effect','executed');process.exit(17);}
   echo(text);
   if(text==='no-cancel-ack') return;
-  if(text==='tool-outlives-prompt') {
-   update({sessionUpdate:'tool_call',toolCallId:'outlives',status:'in_progress'});
+  if(text==='tool-outlives-prompt'||text==='tool-never-starts') {
+   const started = text==='tool-outlives-prompt';
+   update({sessionUpdate:'tool_call',toolCallId:started?'outlives':'unstarted',status:started?'in_progress':'pending'});
    const ready = suffix => {
     const file = process.env.ACP_TRACE + suffix;
     const timer = setInterval(() => {
      if(!fs.existsSync(file)) return;
      clearInterval(timer);
-     if(suffix==='.end-turn') {result(q.id,{stopReason:'end_turn'});prompt=null;update({sessionUpdate:'usage_update',used:314,size:1000});}
+     if(suffix==='.end-turn') {result(q.id,{stopReason:started?'end_turn':'max_tokens'});prompt=null;update({sessionUpdate:'usage_update',used:314,size:1000});}
      else update({sessionUpdate:'tool_call_update',toolCallId:'outlives',status:'completed'});
     },5);
    };
-   ready('.end-turn');ready('.complete-tool');return;
+   ready('.end-turn');if(started) ready('.complete-tool');return;
+  }
+  if(text==='clear-diff') {
+   update({sessionUpdate:'tool_call',toolCallId:'cleared',status:'in_progress',rawInput:{Path:'cleared.txt'},content:[{type:'diff',path:'cleared.txt',oldText:'old\n',newText:'new\n'}]});
+   update({sessionUpdate:'tool_call_update',toolCallId:'cleared',status:'completed',content:[]});
+   result(q.id,{stopReason:'end_turn'});prompt=null;return;
   }
   if(text==='post-prompt') {
    const frames = [
@@ -206,7 +212,18 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       assert(!frames().some((frame) => frame.method === 'session/prompt' && frame.params.prompt[0].text === 'after-outliving-tool'));
       fs.writeFileSync(trace + '.complete-tool', '');
       await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.clientMessageId === 'held-after-tool'));
+      fs.unlinkSync(trace + '.end-turn');
+      await ask('tool-never-starts');
+      assert.equal((await queue.prompt('process', { text: 'after-unstarted-tool', messageId: 'held-after-unstarted' }) as any).delivery, 'queued');
+      fs.writeFileSync(trace + '.end-turn', '');
+      state = await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.clientMessageId === 'held-after-unstarted'));
+      assert.equal(state.messages.data.find((row: any) => row.id === 'tool:unstarted').tool.state.status, 'failed');
     } finally { queue.dispose(); }
+    await ask('clear-diff');
+    state = await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    const cleared = state.messages.data.find((row: any) => row.id === 'tool:cleared');
+    assert.equal(cleared.tool.input.patch, undefined);
+    assert.equal(cleared.text, '');
     await ask('message-ids');
     state = await waitFor(provider, (snapshot) => snapshot.status === 'idle');
     assert.deepEqual(state.messages.data.filter((row: any) => /^first|^second/.test(row.text)).map((row: any) => row.text), ['first chunk', 'second']);

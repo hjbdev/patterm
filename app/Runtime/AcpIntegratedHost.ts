@@ -182,17 +182,17 @@ function fail(error: Error, fatal = true): void {
   finishCancellation();
   if (backgroundQuiet) clearTimeout(backgroundQuiet);
   backgroundQuiet = null;
-  runningTools.clear();
   failed = fatal;
   permissions.clear();
   finishTools(error.message);
   status = 'error'; statusDetail = error.message; publish({ kind: 'status', status, detail: statusDetail });
 }
-function finishTools(reason: string): void {
-  runningTools.clear();
+function finishTools(reason: string, pendingOnly = false): void {
   for (const message of [...messages]) {
     const tool = message.tool;
-    if (!tool || !['pending', 'in_progress'].includes((tool.state as Row | undefined)?.status)) continue;
+    const status = (tool?.state as Row | undefined)?.status;
+    if (!tool || (status !== 'pending' && (pendingOnly || status !== 'in_progress'))) continue;
+    runningTools.delete(message.id);
     replace({ ...message, completedAt: new Date().toISOString(), tool: { ...tool, state: { ...(tool.state as Row), status: 'failed', error: reason } } });
   }
 }
@@ -451,20 +451,20 @@ function receive(frame: Row): void {
       const previous = messages.find((row) => row.id === id);
       // A diff part is shown through input.patch; its full file text stays out.
       const output = (update.content ?? []).map((part: Row) => part.type === 'content' && part.content?.type === 'text' ? part.content.text : part.type === 'diff' ? part.path : '').filter(Boolean).join('\n');
-      const prior = previous?.tool?.input as Row | undefined;
+      const { patch: priorPatch, ...prior } = (previous?.tool?.input ?? {}) as Row;
       const rawInput = update.rawInput ?? {};
-      const patch = diffPreview(update.content) ?? prior?.patch;
+      const patch = update.content === undefined ? priorPatch : diffPreview(update.content);
       const inputPath = rawInput.Path ?? rawInput.path;
       const preview = Buffer.byteLength(JSON.stringify(rawInput)) > TOOL_FIELD_BYTES
         ? { truncated: true, ...(typeof inputPath === 'string' ? { path: toolPreview(inputPath) } : {}) } : rawInput;
       const input = { ...(update.rawInput == null ? prior : preview), ...(typeof rawInput.Path === 'string' ? { path: toolPreview(rawInput.Path) } : {}), ...(patch ? { patch } : {}) };
       const toolState = { ...(previous?.tool?.state as Row | undefined), status: update.status ?? (previous?.tool?.state as Row | undefined)?.status ?? 'pending', ...(update.rawOutput !== undefined ? { output: toolOutput(update.rawOutput) } : {}) };
       if (loaded && !failed && !stopping) {
-        if (toolState.status === 'pending' || toolState.status === 'in_progress') runningTools.add(id);
+        if (toolState.status === 'in_progress') runningTools.add(id);
         else if (runningTools.delete(id) && !runningTools.size && cancelWatchingTools) finishCancellation();
         backgroundActivity();
       }
-      replace({ id, role: 'assistant', kind: 'tool', text: output ? toolPreview(output) : previous?.text || '', createdAt: previous?.createdAt ?? new Date().toISOString(), ...(['completed', 'failed'].includes(toolState.status) ? { completedAt: previous?.completedAt ?? new Date().toISOString() } : {}), tool: { name: update.name ?? previous?.tool?.name ?? update.kind ?? 'Tool', input, state: toolState } });
+      replace({ id, role: 'assistant', kind: 'tool', text: update.content === undefined ? previous?.text ?? '' : toolPreview(output), createdAt: previous?.createdAt ?? new Date().toISOString(), ...(['completed', 'failed'].includes(toolState.status) ? { completedAt: previous?.completedAt ?? new Date().toISOString() } : {}), tool: { name: update.name ?? previous?.tool?.name ?? update.kind ?? 'Tool', input, state: toolState } });
       break;
     }
     case 'available_commands_update': commands = update.availableCommands ?? []; controlsRevision++; publish({ kind: 'pending' }); break;
@@ -614,6 +614,7 @@ async function handle(method: string, params: Row): Promise<unknown> {
       if (failed || stopping) return;
       admit();
       if (result.stopReason === 'cancelled') finishTools('Response stopped');
+      else finishTools('Antigravity ended the turn before this tool started', true);
       finishCancellation();
       const stopped = Object.hasOwn(STOP_REASONS, result.stopReason) ? STOP_REASONS[result.stopReason] : null;
       if (stopped) replace({ id: randomUUID(), role: 'assistant', kind: 'notice', level: 'warning', text: stopped });
