@@ -45,7 +45,9 @@ const permission = (text) => {
 require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
  const q=JSON.parse(line);fs.appendFileSync(process.env.ACP_TRACE,line+'\n');
  if(q.method==='initialize') return result(q.id,{protocolVersion:1,agentCapabilities:{loadSession:true,sessionCapabilities:{close:{}},_meta:{antigravity:{systemPrompt:{append:true}}}}});
- if(q.method==='session/close') return result(q.id);
+ if(q.method==='session/close') return setTimeout(() => {
+  fs.appendFileSync(process.env.ACP_TRACE,'{"closeFinished":true}\n');result(q.id);
+ }, 100);
  if(q.method==='session/new'||q.method==='session/load') {
   if(process.env.ACP_AUTH_FAIL) return out({id:q.id,error:{code:-32000,message:'Authentication required'}});
   if(q.method==='session/load'){echo('Earlier user');say('Earlier assistant');}
@@ -60,6 +62,19 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   if(text==='crash') {fs.writeFileSync(process.env.ACP_TRACE+'.side-effect','executed');process.exit(17);}
   echo(text);
   if(text==='no-cancel-ack') return;
+  if(text==='tool-outlives-prompt') {
+   update({sessionUpdate:'tool_call',toolCallId:'outlives',status:'in_progress'});
+   const ready = suffix => {
+    const file = process.env.ACP_TRACE + suffix;
+    const timer = setInterval(() => {
+     if(!fs.existsSync(file)) return;
+     clearInterval(timer);
+     if(suffix==='.end-turn') {result(q.id,{stopReason:'end_turn'});prompt=null;update({sessionUpdate:'usage_update',used:314,size:1000});}
+     else update({sessionUpdate:'tool_call_update',toolCallId:'outlives',status:'completed'});
+    },5);
+   };
+   ready('.end-turn');ready('.complete-tool');return;
+  }
   if(text==='post-prompt') {
    const frames = [
     {id:q.id,result:{stopReason:'end_turn'}},
@@ -106,7 +121,10 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   update({sessionUpdate:'tool_call_update',toolCallId:'background',status:'completed'});
   say('Background work done');return;
  }
- if(q.id===41 && prompt){say(JSON.stringify(q.result));result(prompt,{stopReason:'end_turn'});prompt=null;}
+ if(q.id===41 && prompt){
+  update({sessionUpdate:'tool_call_update',toolCallId:'edit',status:q.result?.outcome?.optionId==='deny'?'failed':'completed'});
+  say(JSON.stringify(q.result));result(prompt,{stopReason:'end_turn'});prompt=null;
+ }
 });
 `);
   const database = new DatabaseService(directory);
@@ -177,6 +195,18 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     assert.equal(state.status, 'working', 'background output keeps the session active');
     await assert.rejects(ask('follow-up'), TurnBusyError);
     await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    const queue = new IntegratedAgentService(database, { agy: provider });
+    try {
+      queue.observe('process');
+      await ask('tool-outlives-prompt');
+      assert.equal((await queue.prompt('process', { text: 'after-outliving-tool', messageId: 'held-after-tool' }) as any).delivery, 'queued');
+      fs.writeFileSync(trace + '.end-turn', '');
+      await waitFor(provider, (snapshot) => snapshot.usage.contextTokens === 314);
+      assert.equal((await provider.conversation('process') as any).status, 'working');
+      assert(!frames().some((frame) => frame.method === 'session/prompt' && frame.params.prompt[0].text === 'after-outliving-tool'));
+      fs.writeFileSync(trace + '.complete-tool', '');
+      await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.clientMessageId === 'held-after-tool'));
+    } finally { queue.dispose(); }
     await ask('message-ids');
     state = await waitFor(provider, (snapshot) => snapshot.status === 'idle');
     assert.deepEqual(state.messages.data.filter((row: any) => /^first|^second/.test(row.text)).map((row: any) => row.text), ['first chunk', 'second']);
@@ -308,7 +338,11 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     assert.deepEqual(floods, Array.from({ length: 450 }, (_, i) => `tool:flood-${i}`), 'paging back returns every row once, in order');
     assert.equal(new Set(rows.map((row) => row.id)).size, rows.length);
     await assert.rejects(provider.olderMessages('process', `${randomUUID()}:5`), /no longer valid/, 'a cursor from another host is refused');
-    await provider.stop('process');
+    const shutdownProvider = new AcpProviderService(database, directory, process.execPath, env, undefined, {
+      launch: (input) => hosts.launch(input),
+      stopAll: async () => assert(frames().some((frame) => frame.closeFinished), 'the final host sweep follows native session close')
+    }, images);
+    await shutdownProvider.stopAll();
     await hosts.waitForExit(Number(prepared.argv[3]));
     assert(frames().some((frame) => frame.method === 'session/close'), 'Stop gives the native session a chance to clean up');
     database.connection.prepare("update sessions set exited_at = ? where id = 'session'").run(now);

@@ -50,8 +50,9 @@ let revision = 0;
 let controlsRevision = 0;
 let active = false;
 let backgroundQuiet: NodeJS.Timeout | null = null;
-const backgroundTools = new Set<string>();
+const runningTools = new Set<string>();
 let cancelDeadline: NodeJS.Timeout | null = null;
+let cancelWatchingTools = false;
 let nativeClose = false;
 let stopping = false;
 let shutdown: Promise<void> | null = null;
@@ -139,7 +140,7 @@ function publish(event: Row): void {
   }
 }
 function busy(): boolean {
-  return active || backgroundQuiet !== null || backgroundTools.size > 0 || permissions.size > 0 || cancelling;
+  return active || backgroundQuiet !== null || runningTools.size > 0 || permissions.size > 0 || cancelling;
 }
 function state(): void {
   const next = failed ? 'error' : permissions.size ? 'permission' : busy() ? 'working' : loaded ? 'idle' : status;
@@ -161,6 +162,7 @@ function noteModelActivity(): void {
 function finishCancellation(): void {
   if (cancelDeadline) clearTimeout(cancelDeadline);
   cancelDeadline = null;
+  cancelWatchingTools = false;
   cancelling = false;
 }
 function cancelPermissions(): void {
@@ -180,13 +182,14 @@ function fail(error: Error, fatal = true): void {
   finishCancellation();
   if (backgroundQuiet) clearTimeout(backgroundQuiet);
   backgroundQuiet = null;
-  backgroundTools.clear();
+  runningTools.clear();
   failed = fatal;
   permissions.clear();
   finishTools(error.message);
   status = 'error'; statusDetail = error.message; publish({ kind: 'status', status, detail: statusDetail });
 }
 function finishTools(reason: string): void {
+  runningTools.clear();
   for (const message of [...messages]) {
     const tool = message.tool;
     if (!tool || !['pending', 'in_progress'].includes((tool.state as Row | undefined)?.status)) continue;
@@ -264,10 +267,13 @@ function replace(message: IntegratedConversationMessage): void {
   if (index < 0) messages.push(message); else messages[index] = message;
   publish({ kind: 'replace', message });
 }
+function nativeMessageKey(role: string, kind: string, id: string): string {
+  return JSON.stringify([role, kind, id]);
+}
 function chunk(kind: 'text' | 'reasoning', text: string, role: 'user' | 'assistant', nativeId?: string): void {
   if (role === 'user' && userEcho) { admit(); block = null; return; }
   if (role === 'assistant') admit();
-  const key = nativeId === undefined ? null : JSON.stringify([role, kind, nativeId]);
+  const key = nativeId === undefined ? null : nativeMessageKey(role, kind, nativeId);
   let row = key === null ? block : nativeBlocks.get(key);
   if (!row || row.kind !== kind || row.role !== role) {
     row = { id: randomUUID(), role, kind, text: '', createdAt: new Date().toISOString() };
@@ -288,7 +294,11 @@ function contentChunk(content: Row, kind: 'text' | 'reasoning', role: 'user' | '
   if (content.type === 'image' && typeof content.data === 'string') {
     if (role === 'assistant') admit();
     const stored = images?.fromBase64(content.data);
-    replace({ id: randomUUID(), role, kind: 'text', text: '', attachments: [{ type: 'image', mime: content.mimeType, ...(stored ? { sha256: stored.sha256 } : {}) }], createdAt: new Date().toISOString() });
+    const key = nativeId === undefined ? null : nativeMessageKey(role, kind, nativeId);
+    const row = (key && nativeBlocks.get(key)) || { id: randomUUID(), role, kind, text: '', createdAt: new Date().toISOString() };
+    const message = { ...row, attachments: [...(row.attachments ?? []), { type: 'image', mime: content.mimeType, ...(stored ? { sha256: stored.sha256 } : {}) }] };
+    if (key !== null) nativeBlocks.set(key, message);
+    replace(message);
     block = null;
   }
 }
@@ -441,16 +451,17 @@ function receive(frame: Row): void {
       const previous = messages.find((row) => row.id === id);
       // A diff part is shown through input.patch; its full file text stays out.
       const output = (update.content ?? []).map((part: Row) => part.type === 'content' && part.content?.type === 'text' ? part.content.text : part.type === 'diff' ? part.path : '').filter(Boolean).join('\n');
-      const rawInput = update.rawInput ?? previous?.tool?.input ?? {};
-      const patch = diffPreview(update.content);
+      const prior = previous?.tool?.input as Row | undefined;
+      const rawInput = update.rawInput ?? {};
+      const patch = diffPreview(update.content) ?? prior?.patch;
       const inputPath = rawInput.Path ?? rawInput.path;
       const preview = Buffer.byteLength(JSON.stringify(rawInput)) > TOOL_FIELD_BYTES
         ? { truncated: true, ...(typeof inputPath === 'string' ? { path: toolPreview(inputPath) } : {}) } : rawInput;
-      const input = { ...preview, ...(typeof rawInput.Path === 'string' ? { path: toolPreview(rawInput.Path) } : {}), ...(patch ? { patch } : {}) };
+      const input = { ...(update.rawInput == null ? prior : preview), ...(typeof rawInput.Path === 'string' ? { path: toolPreview(rawInput.Path) } : {}), ...(patch ? { patch } : {}) };
       const toolState = { ...(previous?.tool?.state as Row | undefined), status: update.status ?? (previous?.tool?.state as Row | undefined)?.status ?? 'pending', ...(update.rawOutput !== undefined ? { output: toolOutput(update.rawOutput) } : {}) };
-      if (loaded && !active && !failed && !cancelling && !stopping) {
-        if (toolState.status === 'pending' || toolState.status === 'in_progress') backgroundTools.add(id);
-        else backgroundTools.delete(id);
+      if (loaded && !failed && !stopping) {
+        if (toolState.status === 'pending' || toolState.status === 'in_progress') runningTools.add(id);
+        else if (runningTools.delete(id) && !runningTools.size && cancelWatchingTools) finishCancellation();
         backgroundActivity();
       }
       replace({ id, role: 'assistant', kind: 'tool', text: output ? toolPreview(output) : previous?.text || '', createdAt: previous?.createdAt ?? new Date().toISOString(), ...(['completed', 'failed'].includes(toolState.status) ? { completedAt: previous?.completedAt ?? new Date().toISOString() } : {}), tool: { name: update.name ?? previous?.tool?.name ?? update.kind ?? 'Tool', input, state: toolState } });
@@ -623,6 +634,7 @@ async function handle(method: string, params: Row): Promise<unknown> {
   if (method === 'interrupt') {
     if (!busy() || cancelling) return {};
     cancelling = true;
+    cancelWatchingTools = !active && runningTools.size > 0;
     write({ method: 'session/cancel', params: { sessionId } });
     cancelPermissions();
     cancelDeadline = setTimeout(() => {
