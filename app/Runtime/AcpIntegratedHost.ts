@@ -12,6 +12,14 @@ import { readAcpSettings, writeAcpSettings } from '../Services/AcpSessionSetting
 
 type Row = Record<string, any>;
 class NativeAcpTransportError extends Error {}
+const BACKGROUND_QUIET_MS = Number(process.env.PATTERM_ACP_BACKGROUND_QUIET_MS) || 10_000;
+const CANCEL_TIMEOUT_MS = Number(process.env.PATTERM_ACP_CANCEL_TIMEOUT_MS) || 15_000;
+const TOOL_FIELD_BYTES = 96 * 1024;
+const STOP_REASONS: Record<string, string> = {
+  max_tokens: 'Antigravity stopped at its token limit.',
+  max_turn_requests: 'Antigravity stopped at its request limit.',
+  refusal: 'Antigravity declined to continue.'
+};
 interface Config {
   socketPath: string;
   settingsDirectory: string;
@@ -41,10 +49,18 @@ let statusDetail = '';
 let revision = 0;
 let controlsRevision = 0;
 let active = false;
+let backgroundQuiet: NodeJS.Timeout | null = null;
+const runningTools = new Set<string>();
+const backgroundToolIds = new Set<string>();
+let cancelDeadline: NodeJS.Timeout | null = null;
+let cancelWatchingTools = false;
+let nativeClose = false;
 let stopping = false;
+let shutdown: Promise<void> | null = null;
 let loaded = false;
 let failed = false;
 let block: IntegratedConversationMessage | null = null;
+const nativeBlocks = new Map<string, IntegratedConversationMessage>();
 let userEcho: IntegratedConversationMessage | null = null;
 let userConfirmed = false;
 let admission: { resolve: () => void; reject: (error: Error) => void; timer: NodeJS.Timeout } | null = null;
@@ -76,17 +92,31 @@ child.on('exit', (code) => {
 });
 let buffer = '';
 child.stdout.setEncoding('utf8');
+let draining = false;
 child.stdout.on('data', (chunk: string) => {
   buffer += chunk;
-  if (buffer.length > 32 * 1024 * 1024) { transportFailed(new Error('ACP frame exceeds limit')); void stop(); return; }
-  for (;;) {
-    const newline = buffer.indexOf('\n');
-    if (newline < 0) break;
-    const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
-    if (!line.trim()) continue;
-    try { receive(JSON.parse(line)); } catch (error) { transportFailed(error instanceof Error ? error : new Error(String(error))); }
-  }
+  void drain();
 });
+
+async function drain(): Promise<void> {
+  if (draining) return;
+  draining = true;
+  try {
+    if (buffer.length > 32 * 1024 * 1024) { transportFailed(new Error('ACP frame exceeds limit')); void stop(); return; }
+    for (;;) {
+      const newline = buffer.indexOf('\n');
+      if (newline < 0) break;
+      const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
+      if (!line.trim()) continue;
+      try {
+        const frame = JSON.parse(line);
+        receive(frame);
+        // Apply an RPC result before classifying later updates in the same read.
+        if (!frame.method) await Promise.resolve();
+      } catch (error) { transportFailed(error instanceof Error ? error : new Error(String(error))); }
+    }
+  } finally { draining = false; }
+}
 
 function write(frame: Row): void {
   if (child.exitCode !== null || child.killed || !child.stdin.writable) throw new Error('ACP agent is not running');
@@ -110,9 +140,35 @@ function publish(event: Row): void {
     else socket.write(frame);
   }
 }
+function busy(): boolean {
+  return active || backgroundQuiet !== null || runningTools.size > 0 || permissions.size > 0 || cancelling;
+}
 function state(): void {
-  status = failed ? 'error' : permissions.size ? 'permission' : active ? 'working' : loaded ? 'idle' : status;
+  const next = failed ? 'error' : permissions.size ? 'permission' : busy() ? 'working' : loaded ? 'idle' : status;
+  if (next === status) return;
+  status = next;
   publish({ kind: 'status', status });
+}
+function backgroundActivity(): void {
+  if (!loaded || active || failed || cancelling || stopping) return;
+  if (backgroundQuiet) clearTimeout(backgroundQuiet);
+  // ACP has no stop reason for an unsolicited burst. Explicitly running tools
+  // and open approvals outlive the quiet window; silence covers text alone.
+  backgroundQuiet = setTimeout(() => { backgroundQuiet = null; state(); }, BACKGROUND_QUIET_MS);
+  state();
+}
+function noteModelActivity(): void {
+  if (loaded && !failed && !stopping) usage.lastModelActivityAt = new Date().toISOString();
+}
+function finishCancellation(): void {
+  if (cancelDeadline) clearTimeout(cancelDeadline);
+  cancelDeadline = null;
+  cancelWatchingTools = false;
+  cancelling = false;
+}
+function cancelPermissions(): void {
+  for (const request of permissions.values()) write({ id: request.rpcId, result: { outcome: { outcome: 'cancelled' } } });
+  permissions.clear();
 }
 function fail(error: Error, fatal = true): void {
   if (admission) {
@@ -124,17 +180,37 @@ function fail(error: Error, fatal = true): void {
       : error);
     admission = null;
   }
+  finishCancellation();
+  if (backgroundQuiet) clearTimeout(backgroundQuiet);
+  backgroundQuiet = null;
   failed = fatal;
   permissions.clear();
   finishTools(error.message);
   status = 'error'; statusDetail = error.message; publish({ kind: 'status', status, detail: statusDetail });
 }
-function finishTools(reason: string): void {
+function finishTools(reason: string, pendingOnly = false): void {
   for (const message of [...messages]) {
     const tool = message.tool;
-    if (!tool || !['pending', 'in_progress'].includes((tool.state as Row | undefined)?.status)) continue;
+    const status = (tool?.state as Row | undefined)?.status;
+    if (!tool || (status !== 'pending' && (pendingOnly || status !== 'in_progress'))) continue;
+    runningTools.delete(message.id);
+    backgroundToolIds.add(message.id);
     replace({ ...message, completedAt: new Date().toISOString(), tool: { ...tool, state: { ...(tool.state as Row), status: 'failed', error: reason } } });
   }
+}
+
+const TRUNCATED_TOOL = '\n[Antigravity tool data truncated in Patterm]';
+function toolPreview(value: string): string {
+  // Allow for JSON escaping as well as multibyte text.
+  if (Buffer.byteLength(JSON.stringify(value)) <= TOOL_FIELD_BYTES) return value;
+  const end = Math.floor((TOOL_FIELD_BYTES - TRUNCATED_TOOL.length - 2) / 6);
+  return value.slice(0, end).replace(/[\uD800-\uDBFF]$/, '') + TRUNCATED_TOOL;
+}
+function toolOutput(value: unknown): unknown {
+  const json = JSON.stringify(value);
+  if (json === undefined || Buffer.byteLength(json) <= TOOL_FIELD_BYTES) return value;
+  const text = typeof value === 'string' ? value : typeof (value as Row | null)?.output === 'string' ? (value as Row).output : json;
+  return { output: toolPreview(`${text}${TRUNCATED_TOOL}`) };
 }
 function optionValues(option: Row | undefined): Row[] {
   return (option?.options ?? []).flatMap((entry: Row) => entry.options ?? [entry]);
@@ -169,7 +245,9 @@ function saveSettings(): void {
 
 function allowsMcp(tool: Row): boolean {
   if (!active || cancelling || mcpPolicy !== 'allow' || options.find((option) => option.id === 'mode')?.currentValue !== 'auto') return false;
+  if (typeof tool.toolCallId !== 'string' || backgroundToolIds.has(`tool:${tool.toolCallId}`)) return false;
   const previous = messages.find((message) => message.id === `tool:${tool.toolCallId}`)?.tool;
+  if (!previous) return false;
   // Only native tool identifiers count, never a title, reason or argument
   // claiming to be MCP. agy namespaces direct MCP calls with mcp_<server>_.
   const name = typeof tool.name === 'string' ? tool.name : previous?.name;
@@ -180,6 +258,8 @@ function allowsMcp(tool: Row): boolean {
   return name === 'call_mcp_tool' && typeof input?.ToolName === 'string' && servers.some((server) => input?.ServerName === server.name);
 }
 function admit(): void {
+  // Assistant output and tool requests can belong to background work. Only
+  // the native user echo or this prompt's own RPC response confirms delivery.
   if (userEcho && !userConfirmed) {
     userConfirmed = true;
     if (userEcho.clientMessageId) deliveries.add(userEcho.clientMessageId);
@@ -193,22 +273,36 @@ function replace(message: IntegratedConversationMessage): void {
   if (index < 0) messages.push(message); else messages[index] = message;
   publish({ kind: 'replace', message });
 }
-function chunk(kind: 'text' | 'reasoning', text: string, role: 'user' | 'assistant' = 'assistant'): void {
-  if (role === 'user' && userEcho) { admit(); block = null; return; }
-  if (role === 'assistant') admit();
-  if (!block || block.kind !== kind || block.role !== role) {
-    block = { id: randomUUID(), role, kind, text: '', createdAt: new Date().toISOString() };
-    messages.push(block);
-  }
-  block.text += text;
-  publish({ kind: 'append', id: block.id, messageKind: kind, delta: text });
+function nativeMessageKey(role: string, kind: string, id: string): string {
+  return JSON.stringify([role, kind, id]);
 }
-function contentChunk(content: Row, kind: 'text' | 'reasoning', role: 'user' | 'assistant'): void {
-  if (content.type === 'text') { chunk(kind, String(content.text ?? ''), role); return; }
+function chunk(kind: 'text' | 'reasoning', text: string, role: 'user' | 'assistant', nativeId?: string): void {
+  if (role === 'user' && userEcho) { admit(); block = null; return; }
+  const key = nativeId === undefined ? null : nativeMessageKey(role, kind, nativeId);
+  let row = key === null ? block : nativeBlocks.get(key);
+  if (!row || row.kind !== kind || row.role !== role) {
+    row = { id: randomUUID(), role, kind, text: '', createdAt: new Date().toISOString() };
+    messages.push(row);
+    if (key !== null) nativeBlocks.set(key, row);
+  }
+  block = key === null ? row : null;
+  row.text += text;
+  publish({ kind: 'append', id: row.id, messageKind: kind, delta: text });
+}
+function contentChunk(content: Row, kind: 'text' | 'reasoning', role: 'user' | 'assistant', nativeId?: string): void {
+  if (role === 'assistant' && (content.type === 'text' || content.type === 'image')) {
+    noteModelActivity();
+    backgroundActivity();
+  }
+  if (content.type === 'text') { chunk(kind, String(content.text ?? ''), role, nativeId); return; }
   if (role === 'user' && userEcho) { admit(); return; }
   if (content.type === 'image' && typeof content.data === 'string') {
     const stored = images?.fromBase64(content.data);
-    replace({ id: randomUUID(), role, kind: 'text', text: '', attachments: [{ type: 'image', mime: content.mimeType, ...(stored ? { sha256: stored.sha256 } : {}) }], createdAt: new Date().toISOString() });
+    const key = nativeId === undefined ? null : nativeMessageKey(role, kind, nativeId);
+    const row = (key && nativeBlocks.get(key)) || { id: randomUUID(), role, kind, text: '', createdAt: new Date().toISOString() };
+    const message = { ...row, attachments: [...(row.attachments ?? []), { type: 'image', mime: content.mimeType, ...(stored ? { sha256: stored.sha256 } : {}) }] };
+    if (key !== null) nativeBlocks.set(key, message);
+    replace(message);
     block = null;
   }
 }
@@ -322,10 +416,10 @@ function receive(frame: Row): void {
     return;
   }
   if (frame.method === 'session/request_permission' && frame.id !== undefined) {
-    if (frame.params?.sessionId !== sessionId || !active || cancelling) { write({ id: frame.id, result: { outcome: { outcome: 'cancelled' } } }); return; }
+    if (frame.params?.sessionId !== sessionId || !loaded || cancelling || failed || stopping) { write({ id: frame.id, result: { outcome: { outcome: 'cancelled' } } }); return; }
     const params = frame.params as Row;
-    admit();
     const tool = params.toolCall ?? {};
+    if (!active && typeof tool.toolCallId === 'string') backgroundToolIds.add(`tool:${tool.toolCallId}`);
     const approval = (params.options ?? []).find((option: Row) => option.kind === 'allow_once');
     if (approval && allowsMcp(tool)) {
       write({ id: frame.id, result: { outcome: { outcome: 'selected', optionId: approval.optionId } } });
@@ -338,7 +432,7 @@ function receive(frame: Row): void {
     const always = (params.options ?? []).find((option: Row) => option.kind === 'allow_always');
     const reject = (params.options ?? []).find((option: Row) => option.kind === 'reject_once');
     permissions.set(id, { id, rpcId: frame.id, options: params.options ?? [], action: tool.title ?? 'Tool permission', resources: tool.locations?.map((location: Row) => location.path) ?? [], ...(patch ? { patch } : {}), ...(typeof command === 'string' ? { command } : {}), ...(typeof tool.rawInput?.Reason === 'string' ? { detail: tool.rawInput.Reason } : {}), always: Boolean(always), ...(once ? { onceLabel: once.name } : {}), ...(always ? { alwaysLabel: always.name } : {}), ...(reject ? { rejectLabel: reject.name } : {}) });
-    block = null; state(); publish({ kind: 'pending' }); return;
+    block = null; backgroundActivity(); state(); publish({ kind: 'pending' }); return;
   }
   if (frame.method !== 'session/update') {
     if (frame.id !== undefined) write({ id: frame.id, error: { code: -32601, message: 'Client capability not supported by Patterm' } });
@@ -351,21 +445,31 @@ function receive(frame: Row): void {
   switch (update.sessionUpdate) {
     case 'agent_message_chunk': case 'agent_thought_chunk': case 'user_message_chunk': {
       const content = update.content ?? {};
-      contentChunk(content, update.sessionUpdate === 'agent_thought_chunk' ? 'reasoning' : 'text', update.sessionUpdate === 'user_message_chunk' ? 'user' : 'assistant');
+      contentChunk(content, update.sessionUpdate === 'agent_thought_chunk' ? 'reasoning' : 'text', update.sessionUpdate === 'user_message_chunk' ? 'user' : 'assistant', typeof update.messageId === 'string' ? update.messageId : undefined);
       break;
     }
     case 'tool_call': case 'tool_call_update': {
-      admit();
       block = null;
       const id = `tool:${String(update.toolCallId)}`;
       const previous = messages.find((row) => row.id === id);
       // A diff part is shown through input.patch; its full file text stays out.
       const output = (update.content ?? []).map((part: Row) => part.type === 'content' && part.content?.type === 'text' ? part.content.text : part.type === 'diff' ? part.path : '').filter(Boolean).join('\n');
-      const rawInput = update.rawInput ?? previous?.tool?.input ?? {};
-      const patch = diffPreview(update.content);
-      const input = { ...rawInput, ...(typeof rawInput.Path === 'string' ? { path: rawInput.Path } : {}), ...(patch ? { patch } : {}) };
-      const toolState = { ...(previous?.tool?.state as Row | undefined), status: update.status ?? (previous?.tool?.state as Row | undefined)?.status ?? 'pending', ...(update.rawOutput !== undefined ? { output: update.rawOutput } : {}) };
-      replace({ id, role: 'assistant', kind: 'tool', text: output || previous?.text || '', createdAt: previous?.createdAt ?? new Date().toISOString(), ...(['completed', 'failed'].includes(toolState.status) ? { completedAt: previous?.completedAt ?? new Date().toISOString() } : {}), tool: { name: update.name ?? previous?.tool?.name ?? update.kind ?? 'Tool', input, state: toolState } });
+      const { patch: priorPatch, ...prior } = (previous?.tool?.input ?? {}) as Row;
+      const rawInput = update.rawInput ?? {};
+      const replacesContent = Array.isArray(update.content);
+      const patch = replacesContent ? diffPreview(update.content) : priorPatch;
+      const inputPath = rawInput.Path ?? rawInput.path;
+      const preview = Buffer.byteLength(JSON.stringify(rawInput)) > TOOL_FIELD_BYTES
+        ? { truncated: true, ...(typeof inputPath === 'string' ? { path: toolPreview(inputPath) } : {}) } : rawInput;
+      const input = { ...(update.rawInput == null ? prior : preview), ...(typeof rawInput.Path === 'string' ? { path: toolPreview(rawInput.Path) } : {}), ...(patch ? { patch } : {}) };
+      const toolState = { ...(previous?.tool?.state as Row | undefined), status: update.status ?? (previous?.tool?.state as Row | undefined)?.status ?? 'pending', ...(update.rawOutput !== undefined ? { output: toolOutput(update.rawOutput) } : {}) };
+      if (loaded && !failed && !stopping) {
+        if (!active) backgroundToolIds.add(id);
+        if (toolState.status === 'in_progress') runningTools.add(id);
+        else if (runningTools.delete(id) && !runningTools.size && cancelWatchingTools) finishCancellation();
+        backgroundActivity();
+      }
+      replace({ id, role: 'assistant', kind: 'tool', text: replacesContent ? toolPreview(output) : previous?.text ?? '', createdAt: previous?.createdAt ?? new Date().toISOString(), ...(['completed', 'failed'].includes(toolState.status) ? { completedAt: previous?.completedAt ?? new Date().toISOString() } : {}), tool: { name: update.name ?? previous?.tool?.name ?? update.kind ?? 'Tool', input, state: toolState } });
       break;
     }
     case 'available_commands_update': commands = update.availableCommands ?? []; controlsRevision++; publish({ kind: 'pending' }); break;
@@ -384,6 +488,7 @@ async function start(): Promise<void> {
   const init = await rpc('initialize', { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: 'Patterm', version: '0.5.0' } });
   if (init.protocolVersion !== 1) throw new Error('Unsupported ACP protocol version');
   const capabilities = init.agentCapabilities ?? {};
+  nativeClose = Boolean(capabilities.sessionCapabilities?.close ?? capabilities.session_capabilities?.close);
   const supportsContext = capabilities._meta?.antigravity?.systemPrompt?.append === true;
   // Never silently drop Patterm's identity and safety context.
   if (config.context && !supportsContext) throw new Error('This ACP agent does not support appending Patterm system context');
@@ -445,9 +550,9 @@ const PAGE_BYTES = 1024 * 1024;
 const hostId = randomUUID();
 
 function pageStart(end: number): number {
-  let start = end, bytes = 0;
+  let start = end, bytes = 2;
   while (start > 0 && end - start < PAGE_MESSAGES) {
-    const size = Buffer.byteLength(JSON.stringify(messages[start - 1]));
+    const size = Buffer.byteLength(JSON.stringify(messages[start - 1])) + (start === end ? 0 : 1);
     if (start < end && bytes + size > PAGE_BYTES) break;
     bytes += size; start--;
   }
@@ -489,11 +594,15 @@ async function handle(method: string, params: Row): Promise<unknown> {
   if (method === 'older') return olderPage(params.cursor);
   if (method === 'controls') return controlState();
   if (method === 'delivery') return { state: deliveries.has(params.clientMessageId) ? 'accepted' : 'unknown' };
-  if (method === 'stop') { setImmediate(() => void stop()); return {}; }
-  if (!loaded || failed) throw new Error(statusDetail || 'ACP agent is not ready');
+  if (method === 'stop') {
+    await stopNative();
+    setImmediate(exitHost);
+    return {};
+  }
+  if (!loaded || failed || stopping) throw new Error(statusDetail || 'ACP agent is not ready');
   if (method === 'prompt') {
-    if (active || configuring) throw new Error('ACP turn is busy');
     if (params.clientMessageId && deliveries.has(params.clientMessageId)) return { accepted: true };
+    if (busy() || configuring) throw new Error('ACP turn is busy');
     if (!Array.isArray(params.prompt) || !params.prompt.length) throw new Error('Message is empty');
     active = true; cancelling = false; statusDetail = ''; block = null; userConfirmed = false;
     userEcho = { id: params.clientMessageId ?? randomUUID(), ...(params.clientMessageId ? { clientMessageId: params.clientMessageId } : {}), role: 'user', kind: 'text', text: String(params.text ?? ''), createdAt: new Date().toISOString(), attachments: params.attachments ?? [] };
@@ -507,23 +616,39 @@ async function handle(method: string, params: Row): Promise<unknown> {
     const turn = rpc('session/prompt', { sessionId, prompt: params.prompt }, 0);
     usage.lastModelActivityAt = new Date().toISOString();
     void turn.then((result) => {
+      if (failed || stopping) return;
       admit();
+      for (const id of runningTools) backgroundToolIds.add(id);
       if (result.stopReason === 'cancelled') finishTools('Response stopped');
+      else finishTools('Antigravity ended the turn before this tool started', true);
+      finishCancellation();
+      const stopped = Object.hasOwn(STOP_REASONS, result.stopReason) ? STOP_REASONS[result.stopReason] : null;
+      if (stopped) replace({ id: randomUUID(), role: 'assistant', kind: 'notice', level: 'warning', text: stopped });
       if (result.usage) {
         usage.inputTokens = (usage.inputTokens ?? 0) + (result.usage.inputTokens ?? 0);
         usage.outputTokens = (usage.outputTokens ?? 0) + (result.usage.outputTokens ?? 0);
       }
-      active = false; userEcho = null; block = null; permissions.clear(); state(); publish({ kind: 'pending' });
+      active = false; userEcho = null; block = null; cancelPermissions();
+      setImmediate(() => { if (!stopping && status !== 'error') state(); });
       saveSettings();
-    }, (error: Error) => { active = false; userEcho = null; permissions.clear(); fail(error, error instanceof NativeAcpTransportError); publish({ kind: 'pending' }); }).catch(fail);
+    }, (error: Error) => {
+      active = false; userEcho = null;
+      if (!failed && !stopping) { cancelPermissions(); fail(error, error instanceof NativeAcpTransportError); publish({ kind: 'pending' }); }
+    }).catch(fail);
     await accepted;
     return { accepted: true };
   }
   if (method === 'interrupt') {
+    if (!busy() || cancelling) return {};
     cancelling = true;
+    cancelWatchingTools = !active && runningTools.size > 0;
     write({ method: 'session/cancel', params: { sessionId } });
-    for (const request of permissions.values()) write({ id: request.rpcId, result: { outcome: { outcome: 'cancelled' } } });
-    permissions.clear(); state(); publish({ kind: 'pending' }); return {};
+    cancelPermissions();
+    cancelDeadline = setTimeout(() => {
+      fail(new NativeAcpTransportError('Antigravity did not confirm cancellation. Restart the agent before sending another message.'));
+      publish({ kind: 'pending' });
+    }, CANCEL_TIMEOUT_MS);
+    state(); publish({ kind: 'pending' }); return {};
   }
   if (method === 'permission') {
     const request = permissions.get(String(params.requestId));
@@ -532,10 +657,10 @@ async function handle(method: string, params: Row): Promise<unknown> {
     const option = request.options.find((entry: Row) => entry.kind === kind);
     if (!option && params.reply !== 'reject') throw new Error('This permission choice was not offered by the agent');
     write({ id: request.rpcId, result: { outcome: option ? { outcome: 'selected', optionId: option.optionId } : { outcome: 'cancelled' } } });
-    permissions.delete(String(params.requestId)); state(); publish({ kind: 'pending' }); return {};
+    permissions.delete(String(params.requestId)); backgroundActivity(); state(); publish({ kind: 'pending' }); return {};
   }
   if (method === 'configure') {
-    if (active) throw new Error('Wait for the ACP turn to finish before changing settings');
+    if (busy()) throw new Error('Wait for the ACP turn to finish before changing settings');
     if (configuring) throw new Error('Wait for the ACP settings update to finish');
     if (params.selector === 'patterm_mcp') {
       if (params.value !== 'allow' && params.value !== 'ask') throw new Error('Unknown ACP setting value');
@@ -590,9 +715,25 @@ server.listen(ipcPath(config.socketPath), () => restrictIpc(config.socketPath));
 void start().catch(fail);
 
 async function stop(): Promise<void> {
-  if (stopping) return;
+  await stopNative();
+  exitHost();
+}
+
+function stopNative(): Promise<void> {
+  if (shutdown) return shutdown;
   stopping = true;
-  if (child.pid) await killProcessTree(child.pid).catch(() => undefined);
+  finishCancellation();
+  shutdown = (async () => {
+    if (nativeClose && loaded && child.exitCode === null && child.signalCode === null) {
+      try { cancelPermissions(); } catch { /* the native pipe may already be closed */ }
+      await rpc('session/close', { sessionId }, 2000).catch(() => undefined);
+    }
+    if (child.pid) await killProcessTree(child.pid).catch(() => undefined);
+  })();
+  return shutdown;
+}
+
+function exitHost(): never {
   for (const socket of subscribers) socket.destroy();
   server.close();
   removeStaleIpc(config.socketPath);

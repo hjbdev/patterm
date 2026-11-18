@@ -181,7 +181,8 @@ export class AcpProviderService implements IntegratedProviderService {
   async cleanupLaunch(_input: IntegratedLaunchInput, result: IntegratedLaunchResult): Promise<void> { await stopHostProcess(Number(result.argv[3]) || null); }
   async stopAll(): Promise<void> {
     const rows = this.database.connection.prepare("select process_id as id from sessions where harness = 'agy' and interface_mode = 'integrated' and exited_at is null").all() as Array<{ id: string }>;
-    const results = await Promise.allSettled([...rows.map((row) => this.stop(row.id)), this.launcher.stopAll('agy')]);
+    const results = await Promise.allSettled(rows.map((row) => this.stop(row.id)));
+    results.push(...await Promise.allSettled([this.launcher.stopAll('agy')]));
     const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
     if (failures.length) throw new AggregateError(failures.map((failure) => failure.reason), 'Could not stop every ACP host');
   }

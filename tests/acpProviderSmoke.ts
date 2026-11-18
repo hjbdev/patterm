@@ -44,7 +44,10 @@ const permission = (text) => {
 };
 require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
  const q=JSON.parse(line);fs.appendFileSync(process.env.ACP_TRACE,line+'\n');
- if(q.method==='initialize') return result(q.id,{protocolVersion:1,agentCapabilities:{loadSession:true,_meta:{antigravity:{systemPrompt:{append:true}}}}});
+ if(q.method==='initialize') return result(q.id,{protocolVersion:1,agentCapabilities:{loadSession:true,sessionCapabilities:{close:{}},_meta:{antigravity:{systemPrompt:{append:true}}}}});
+ if(q.method==='session/close') return setTimeout(() => {
+  fs.appendFileSync(process.env.ACP_TRACE,'{"closeFinished":true}\n');result(q.id);
+ }, 100);
  if(q.method==='session/new'||q.method==='session/load') {
   if(process.env.ACP_AUTH_FAIL) return out({id:q.id,error:{code:-32000,message:'Authentication required'}});
   if(q.method==='session/load'){echo('Earlier user');say('Earlier assistant');}
@@ -56,8 +59,59 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   const text=q.params.prompt[0].text;prompt=q.id;
   if(text==='late') {setTimeout(()=>{echo(text);say('Late accepted');result(prompt,{stopReason:'end_turn'});prompt=null;},8300);return;}
   if(text==='failure') return out({id:q.id,error:{code:-32000,message:'Native turn failed'}});
+  if(text==='reject-after-background-update') {
+   say('Unrelated background output');
+   update({sessionUpdate:'tool_call_update',toolCallId:'deferred',status:'completed'});
+   out({id:q.id,error:{code:-32000,message:'Native rejected without accepting'}});prompt=null;return;
+  }
   if(text==='crash') {fs.writeFileSync(process.env.ACP_TRACE+'.side-effect','executed');process.exit(17);}
   echo(text);
+  if(text==='no-cancel-ack') return;
+  if(text==='delayed-approval') {
+   result(q.id,{stopReason:'end_turn'});prompt=null;
+   update({sessionUpdate:'tool_call',toolCallId:'deferred',name:'mcp_patterm_mutate',status:'pending'});return;
+  }
+  if(text==='overlapping-follow-up') {
+   out({id:44,method:'session/request_permission',params:{sessionId:'native-session',toolCall:{toolCallId:'deferred',title:'Delayed approval'},options:[{optionId:'allow',kind:'allow_once',name:'Allow'}]}});return;
+  }
+  if(text==='tool-outlives-prompt'||text==='tool-never-starts') {
+   const started = text==='tool-outlives-prompt';
+   update({sessionUpdate:'tool_call',toolCallId:started?'outlives':'unstarted',status:started?'in_progress':'pending'});
+   const ready = suffix => {
+    const file = process.env.ACP_TRACE + suffix;
+    const timer = setInterval(() => {
+     if(!fs.existsSync(file)) return;
+     clearInterval(timer);
+     if(suffix==='.end-turn') {result(q.id,{stopReason:started?'end_turn':'max_tokens'});prompt=null;update({sessionUpdate:'usage_update',used:314,size:1000});}
+     else update({sessionUpdate:'tool_call_update',toolCallId:'outlives',status:'completed'});
+    },5);
+   };
+   ready('.end-turn');if(started) ready('.complete-tool');return;
+  }
+  if(text==='clear-diff') {
+   update({sessionUpdate:'tool_call',toolCallId:'cleared',status:'in_progress',rawInput:{Path:'cleared.txt'},content:[{type:'diff',path:'cleared.txt',oldText:'old\n',newText:'new\n'}]});
+   update({sessionUpdate:'tool_call',toolCallId:'retained',status:'in_progress',rawInput:{Path:'retained.txt'},content:[{type:'diff',path:'retained.txt',oldText:'old\n',newText:'new\n'}]});
+   update({sessionUpdate:'tool_call_update',toolCallId:'cleared',status:'completed',content:[]});
+   update({sessionUpdate:'tool_call_update',toolCallId:'retained',status:'completed',content:null});
+   result(q.id,{stopReason:'end_turn'});prompt=null;return;
+  }
+  if(text==='post-prompt') {
+   const frames = [
+    {id:q.id,result:{stopReason:'end_turn'}},
+    {method:'session/update',params:{sessionId:'native-session',update:{sessionUpdate:'tool_call',toolCallId:'background',name:'mcp_patterm_mutate',status:'in_progress'}}},
+    {id:43,method:'session/request_permission',params:{sessionId:'native-session',toolCall:{toolCallId:'background',name:'mcp_patterm_mutate',title:'Background approval'},options:[{optionId:'allow',kind:'allow_once',name:'Allow'}]}}
+   ];
+   prompt=null;process.stdout.write(frames.map(frame=>JSON.stringify({jsonrpc:'2.0',...frame})+'\n').join(''));return;
+  }
+  if(text==='large-output') {
+   update({sessionUpdate:'tool_call',toolCallId:'large',name:'run_command',status:'completed',rawOutput:{output:'界'.repeat(600000)}});
+   update({sessionUpdate:'tool_call_update',toolCallId:'large',status:'completed'});
+   result(q.id,{stopReason:'end_turn'});prompt=null;return;
+  }
+  if(text==='message-ids') {
+   for(const [messageId,text] of [['a','first'],['a',' chunk'],['b','second']]) update({sessionUpdate:'agent_message_chunk',messageId,content:{type:'text',text}});
+   result(q.id,{stopReason:'max_tokens'});prompt=null;return;
+  }
   if(text==='failure-after-echo') return out({id:q.id,error:{code:-32000,message:'Native acknowledged turn failed'}});
    if(['permission','cancel','mcp','unknown-mcp','spoof-mcp','always'].includes(text)) return permission(text);
    if(text==='flood') {
@@ -77,17 +131,26 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   update({sessionUpdate:'usage_update',used:42,size:1000});
   result(q.id,{stopReason:'end_turn',usage:{inputTokens:20,outputTokens:5}});prompt=null;return;
  }
-  if(q.method==='session/cancel') {
+ if(q.method==='session/cancel') {
+   if(process.env.ACP_IGNORE_CANCEL) return;
    // A late request must not re-open a permission card or be auto-approved.
    out({id:42,method:'session/request_permission',params:{sessionId:'native-session',toolCall:{name:'mcp_patterm_mutate'},options:[{optionId:'allow',kind:'allow_once',name:'Allow'}]}});
   if(prompt) result(prompt,{stopReason:'cancelled'});prompt=null;return;
  }
- if(q.id===41 && prompt){say(JSON.stringify(q.result));result(prompt,{stopReason:'end_turn'});prompt=null;}
+ if(q.id===43) {
+  update({sessionUpdate:'tool_call_update',toolCallId:'background',status:'completed'});
+  say('Background work done');return;
+ }
+ if(q.id===44 && prompt){result(prompt,{stopReason:'end_turn'});prompt=null;}
+ if(q.id===41 && prompt){
+  update({sessionUpdate:'tool_call_update',toolCallId:'edit',status:q.result?.outcome?.optionId==='deny'?'failed':'completed'});
+  say(JSON.stringify(q.result));result(prompt,{stopReason:'end_turn'});prompt=null;
+ }
 });
 `);
   const database = new DatabaseService(directory);
   const hosts = new IntegratedTestHosts();
-  const env = { ...process.env, ACP_TRACE: trace };
+  const env = { ...process.env, ACP_TRACE: trace, PATTERM_ACP_BACKGROUND_QUIET_MS: '1000', PATTERM_ACP_CANCEL_TIMEOUT_MS: '250' };
   const images = new TranscriptImageStore(path.join(directory, 'images'));
   const service = () => new AcpProviderService(database, directory, process.execPath, env, undefined, hosts, images);
   const provider = service();
@@ -142,6 +205,67 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     assert.deepEqual(frames().filter((frame) => frame.method === 'session/prompt').at(-1).params.prompt[1], { type: 'resource_link', uri: pathToFileURL(path.join(directory, 'a #.pdf')).href, name: 'a #.pdf', mimeType: 'application/pdf' }, 'PDFs use native file reading, not silently ignored binary blobs');
 
     const ask = (text: string) => provider.prompt('process', { text, references: [], attachments: [] });
+    await ask('post-prompt');
+    state = await waitFor(provider, (snapshot) => snapshot.messages.data.some((row: any) => row.id === 'tool:background') && snapshot.status !== 'starting');
+    assert.equal(state.status, 'permission', 'a background approval after the prompt response still reaches the user');
+    assert.equal(state.permissions.data[0]?.action, 'Background approval');
+    assert(!frames().some((frame) => frame.id === 43), 'a background MCP permission is not auto-approved or cancelled');
+    await assert.rejects(ask('follow-up'), TurnBusyError);
+    await provider.replyPermission('process', '43', 'once');
+    state = await waitFor(provider, (snapshot) => snapshot.messages.data.some((row: any) => row.text === 'Background work done'));
+    assert.equal(state.status, 'working', 'background output keeps the session active');
+    await assert.rejects(ask('follow-up'), TurnBusyError);
+    await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    await ask('delayed-approval');
+    await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.id === 'tool:deferred'));
+    await ask('overlapping-follow-up');
+    state = await waitFor(provider, (snapshot) => snapshot.status === 'permission');
+    assert.equal(state.permissions.data[0]?.id, '44', 'background permissions remain manual during a later foreground prompt');
+    assert(!frames().some((frame) => frame.id === 44));
+    await provider.replyPermission('process', '44', 'reject');
+    await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    const queue = new IntegratedAgentService(database, { agy: provider });
+    try {
+      queue.observe('process');
+      await ask('tool-outlives-prompt');
+      assert.equal((await queue.prompt('process', { text: 'after-outliving-tool', messageId: 'held-after-tool' }) as any).delivery, 'queued');
+      fs.writeFileSync(trace + '.end-turn', '');
+      await waitFor(provider, (snapshot) => snapshot.usage.contextTokens === 314);
+      assert.equal((await provider.conversation('process') as any).status, 'working');
+      assert(!frames().some((frame) => frame.method === 'session/prompt' && frame.params.prompt[0].text === 'after-outliving-tool'));
+      fs.writeFileSync(trace + '.complete-tool', '');
+      await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.clientMessageId === 'held-after-tool'));
+      fs.unlinkSync(trace + '.end-turn');
+      await ask('tool-never-starts');
+      assert.equal((await queue.prompt('process', { text: 'after-unstarted-tool', messageId: 'held-after-unstarted' }) as any).delivery, 'queued');
+      fs.writeFileSync(trace + '.end-turn', '');
+      state = await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.clientMessageId === 'held-after-unstarted'));
+      assert.equal(state.messages.data.find((row: any) => row.id === 'tool:unstarted').tool.state.status, 'failed');
+      fs.unlinkSync(trace + '.end-turn');
+      await ask('tool-never-starts');
+      const rejected = { text: 'reject-after-background-update', messageId: 'held-rejected' };
+      assert.equal((await queue.prompt('process', rejected) as any).delivery, 'queued');
+      fs.writeFileSync(trace + '.end-turn', '');
+      await waitFor(provider, () => Boolean(database.connection.prepare("select 1 from integrated_held_prompts where message_id = 'held-rejected' and error is not null").get()));
+      assert.equal(await provider.reconcile('process', 'held-rejected'), 'unknown');
+      assert.equal(frames().filter((frame) => frame.method === 'session/prompt' && frame.params.prompt[0].text === rejected.text).length, 1);
+      await queue.updateQueued('process', 'held-rejected', 'cancel');
+    } finally { queue.dispose(); }
+    await ask('clear-diff');
+    state = await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    const cleared = state.messages.data.find((row: any) => row.id === 'tool:cleared');
+    assert.equal(cleared.tool.input.patch, undefined);
+    assert.equal(cleared.text, '');
+    assert.match(state.messages.data.find((row: any) => row.id === 'tool:retained').tool.input.patch, /-old\n\+new/);
+    await ask('message-ids');
+    state = await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    assert.deepEqual(state.messages.data.filter((row: any) => /^first|^second/.test(row.text)).map((row: any) => row.text), ['first chunk', 'second']);
+    assert(state.messages.data.some((row: any) => row.kind === 'notice' && /token limit/.test(row.text)));
+    await ask('large-output');
+    state = await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    const large = state.messages.data.find((row: any) => row.id === 'tool:large');
+    assert.match(JSON.stringify(large.tool.state.output), /truncated/i);
+    assert(Buffer.byteLength(JSON.stringify(state.messages.data)) <= 1024 * 1024);
     await ask('mcp');
     await waitFor(provider, (snapshot) => snapshot.status === 'idle');
     assert(frames().some((frame) => frame.id === 41 && frame.result?.outcome?.optionId === 'allow'), 'Auto approves native MCP write requests without a card');
@@ -264,8 +388,13 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     assert.deepEqual(floods, Array.from({ length: 450 }, (_, i) => `tool:flood-${i}`), 'paging back returns every row once, in order');
     assert.equal(new Set(rows.map((row) => row.id)).size, rows.length);
     await assert.rejects(provider.olderMessages('process', `${randomUUID()}:5`), /no longer valid/, 'a cursor from another host is refused');
-    await provider.stop('process');
+    const shutdownProvider = new AcpProviderService(database, directory, process.execPath, env, undefined, {
+      launch: (input) => hosts.launch(input),
+      stopAll: async () => assert(frames().some((frame) => frame.closeFinished), 'the final host sweep follows native session close')
+    }, images);
+    await shutdownProvider.stopAll();
     await hosts.waitForExit(Number(prepared.argv[3]));
+    assert(frames().some((frame) => frame.method === 'session/close'), 'Stop gives the native session a chance to clean up');
     database.connection.prepare("update sessions set exited_at = ? where id = 'session'").run(now);
     const resumed = await provider.prepare({ ...input, model: null, reasoning: null, resumeId: prepared.resumeId });
     assert.equal(resumed.resumeId, prepared.resumeId);
@@ -288,6 +417,18 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     assert.equal(overridden.configOptions.find((option: any) => option.id === 'thought_level').currentValue, 'low', 'saved High thinking does not undo an explicit low-thinking model override');
     await provider.cleanupLaunch(input, override);
     await hosts.waitForExit(Number(override.argv[3]));
+
+    const stuckProvider = new AcpProviderService(database, directory, process.execPath, { ...env, ACP_IGNORE_CANCEL: '1' }, undefined, hosts, images);
+    const stuck = await stuckProvider.prepare(input);
+    database.connection.prepare("update processes set argv = ? where id = 'process'").run(JSON.stringify(stuck.argv));
+    database.connection.prepare("update sessions set exited_at = null where id = 'session'").run();
+    await stuckProvider.prompt('process', { text: 'no-cancel-ack', references: [], attachments: [] });
+    await stuckProvider.interrupt('process');
+    const stalled = await waitFor(stuckProvider, (snapshot) => snapshot.status === 'error');
+    assert.match(stalled.status_detail, /did not confirm cancellation/i);
+    await assert.rejects(stuckProvider.prompt('process', { text: 'do-not-dispatch', references: [], attachments: [] }), /did not confirm cancellation/i);
+    await stuckProvider.stop('process');
+    await hosts.waitForExit(Number(stuck.argv[3]));
 
     // Check the real orchestration boundary, not just the provider's error
     // class: an executed-but-unacknowledged prompt must keep its reservation.

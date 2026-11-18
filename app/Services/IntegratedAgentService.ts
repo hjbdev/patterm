@@ -183,7 +183,7 @@ export class IntegratedAgentService {
   private readonly sending = new Map<string, number>();
   // One delivery run of held prompts per agent. A trigger during a run asks
   // for another run once it ends.
-  private readonly heldFlushes = new Map<string, { again: boolean; started: boolean }>();
+  private readonly heldFlushes = new Map<string, { again: boolean; started: boolean; retryRejected: boolean }>();
   // Prompts reach each agent one at a time in arrival order, so a held prompt
   // is never overtaken by a later one. The tail of each agent's chain.
   private readonly dispatches = new Map<string, Promise<unknown>>();
@@ -566,30 +566,35 @@ export class IntegratedAgentService {
 
   // Sends held prompts oldest first once the agent can take input. Each later
   // prompt steers the turn the first one started, as a typed message would.
-  private flushHeld(key: string): void {
+  private flushHeld(key: string, retryRejected = false): void {
     // A call before the running pass reads the queue joins that pass.
     const running = this.heldFlushes.get(key);
     if (running) {
       if (running.started) running.again = true;
+      if (retryRejected) running.retryRejected = true;
       return;
     }
     if (!this.nextHeld(key)) return;
-    const flush = { again: false, started: false };
+    const flush = { again: false, started: false, retryRejected };
     this.heldFlushes.set(key, flush);
     void this.whileSending(key, () => this.serially(this.dispatches, key, () => {
       flush.started = true;
-      return this.deliverHeld(key);
+      const retry = flush.retryRejected;
+      flush.retryRejected = false;
+      return this.deliverHeld(key, retry);
     })).catch((error: unknown) => {
       this.debugLog?.write('integrated', 'prompt.held_flush_failed', { processId: key, message: error instanceof Error ? error.message : String(error) });
     }).finally(() => {
       this.heldFlushes.delete(key);
-      if (flush.again) this.flushHeld(key);
+      if (flush.again) this.flushHeld(key, flush.retryRejected);
     });
   }
 
-  private async deliverHeld(key: string): Promise<void> {
+  private async deliverHeld(key: string, retryRejected: boolean): Promise<void> {
     if (!this.isLive(key)) return;
     for (let row = this.nextHeld(key); row; row = this.nextHeld(key)) {
+      if (row.error && !retryRejected && this.activity(key) !== 'idle') return;
+      retryRejected = false;
       const resolved = JSON.parse(row.payload) as ResolvedIntegratedPrompt;
       const identity = { key, messageId: row.message_id, hash: row.payload_hash ?? submissionHash(resolved) };
       // Claimed before the call, as a first send reserves its id: a restart
@@ -887,7 +892,7 @@ export class IntegratedAgentService {
       // Cancelling an unconfirmed one only dismisses it.
       if (action === 'cancel') this.removeHeld(key, messageId);
       else if (held.state === 'unconfirmed') throw new Error('This message may already have reached the agent; send it again as a new message if it did not.');
-      else this.flushHeld(key);
+      else this.flushHeld(key, true);
       return;
     }
     const provider = this.forProcess(processId);
