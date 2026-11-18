@@ -59,6 +59,11 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   const text=q.params.prompt[0].text;prompt=q.id;
   if(text==='late') {setTimeout(()=>{echo(text);say('Late accepted');result(prompt,{stopReason:'end_turn'});prompt=null;},8300);return;}
   if(text==='failure') return out({id:q.id,error:{code:-32000,message:'Native turn failed'}});
+  if(text==='reject-after-background-update') {
+   say('Unrelated background output');
+   update({sessionUpdate:'tool_call_update',toolCallId:'deferred',status:'completed'});
+   out({id:q.id,error:{code:-32000,message:'Native rejected without accepting'}});prompt=null;return;
+  }
   if(text==='crash') {fs.writeFileSync(process.env.ACP_TRACE+'.side-effect','executed');process.exit(17);}
   echo(text);
   if(text==='no-cancel-ack') return;
@@ -236,6 +241,15 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       fs.writeFileSync(trace + '.end-turn', '');
       state = await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.clientMessageId === 'held-after-unstarted'));
       assert.equal(state.messages.data.find((row: any) => row.id === 'tool:unstarted').tool.state.status, 'failed');
+      fs.unlinkSync(trace + '.end-turn');
+      await ask('tool-never-starts');
+      const rejected = { text: 'reject-after-background-update', messageId: 'held-rejected' };
+      assert.equal((await queue.prompt('process', rejected) as any).delivery, 'queued');
+      fs.writeFileSync(trace + '.end-turn', '');
+      await waitFor(provider, () => Boolean(database.connection.prepare("select 1 from integrated_held_prompts where message_id = 'held-rejected' and error is not null").get()));
+      assert.equal(await provider.reconcile('process', 'held-rejected'), 'unknown');
+      assert.equal(frames().filter((frame) => frame.method === 'session/prompt' && frame.params.prompt[0].text === rejected.text).length, 1);
+      await queue.updateQueued('process', 'held-rejected', 'cancel');
     } finally { queue.dispose(); }
     await ask('clear-diff');
     state = await waitFor(provider, (snapshot) => snapshot.status === 'idle');

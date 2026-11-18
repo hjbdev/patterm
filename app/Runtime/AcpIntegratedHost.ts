@@ -258,6 +258,8 @@ function allowsMcp(tool: Row): boolean {
   return name === 'call_mcp_tool' && typeof input?.ToolName === 'string' && servers.some((server) => input?.ServerName === server.name);
 }
 function admit(): void {
+  // Assistant output and tool requests can belong to background work. Only
+  // the native user echo or this prompt's own RPC response confirms delivery.
   if (userEcho && !userConfirmed) {
     userConfirmed = true;
     if (userEcho.clientMessageId) deliveries.add(userEcho.clientMessageId);
@@ -276,7 +278,6 @@ function nativeMessageKey(role: string, kind: string, id: string): string {
 }
 function chunk(kind: 'text' | 'reasoning', text: string, role: 'user' | 'assistant', nativeId?: string): void {
   if (role === 'user' && userEcho) { admit(); block = null; return; }
-  if (role === 'assistant') admit();
   const key = nativeId === undefined ? null : nativeMessageKey(role, kind, nativeId);
   let row = key === null ? block : nativeBlocks.get(key);
   if (!row || row.kind !== kind || row.role !== role) {
@@ -296,7 +297,6 @@ function contentChunk(content: Row, kind: 'text' | 'reasoning', role: 'user' | '
   if (content.type === 'text') { chunk(kind, String(content.text ?? ''), role, nativeId); return; }
   if (role === 'user' && userEcho) { admit(); return; }
   if (content.type === 'image' && typeof content.data === 'string') {
-    if (role === 'assistant') admit();
     const stored = images?.fromBase64(content.data);
     const key = nativeId === undefined ? null : nativeMessageKey(role, kind, nativeId);
     const row = (key && nativeBlocks.get(key)) || { id: randomUUID(), role, kind, text: '', createdAt: new Date().toISOString() };
@@ -418,7 +418,6 @@ function receive(frame: Row): void {
   if (frame.method === 'session/request_permission' && frame.id !== undefined) {
     if (frame.params?.sessionId !== sessionId || !loaded || cancelling || failed || stopping) { write({ id: frame.id, result: { outcome: { outcome: 'cancelled' } } }); return; }
     const params = frame.params as Row;
-    if (active) admit();
     const tool = params.toolCall ?? {};
     if (!active && typeof tool.toolCallId === 'string') backgroundToolIds.add(`tool:${tool.toolCallId}`);
     const approval = (params.options ?? []).find((option: Row) => option.kind === 'allow_once');
@@ -450,7 +449,6 @@ function receive(frame: Row): void {
       break;
     }
     case 'tool_call': case 'tool_call_update': {
-      admit();
       block = null;
       const id = `tool:${String(update.toolCallId)}`;
       const previous = messages.find((row) => row.id === id);
