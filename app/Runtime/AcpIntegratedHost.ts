@@ -51,6 +51,7 @@ let controlsRevision = 0;
 let active = false;
 let backgroundQuiet: NodeJS.Timeout | null = null;
 const runningTools = new Set<string>();
+const backgroundToolIds = new Set<string>();
 let cancelDeadline: NodeJS.Timeout | null = null;
 let cancelWatchingTools = false;
 let nativeClose = false;
@@ -193,6 +194,7 @@ function finishTools(reason: string, pendingOnly = false): void {
     const status = (tool?.state as Row | undefined)?.status;
     if (!tool || (status !== 'pending' && (pendingOnly || status !== 'in_progress'))) continue;
     runningTools.delete(message.id);
+    backgroundToolIds.add(message.id);
     replace({ ...message, completedAt: new Date().toISOString(), tool: { ...tool, state: { ...(tool.state as Row), status: 'failed', error: reason } } });
   }
 }
@@ -243,7 +245,9 @@ function saveSettings(): void {
 
 function allowsMcp(tool: Row): boolean {
   if (!active || cancelling || mcpPolicy !== 'allow' || options.find((option) => option.id === 'mode')?.currentValue !== 'auto') return false;
+  if (typeof tool.toolCallId !== 'string' || backgroundToolIds.has(`tool:${tool.toolCallId}`)) return false;
   const previous = messages.find((message) => message.id === `tool:${tool.toolCallId}`)?.tool;
+  if (!previous) return false;
   // Only native tool identifiers count, never a title, reason or argument
   // claiming to be MCP. agy namespaces direct MCP calls with mcp_<server>_.
   const name = typeof tool.name === 'string' ? tool.name : previous?.name;
@@ -416,6 +420,7 @@ function receive(frame: Row): void {
     const params = frame.params as Row;
     if (active) admit();
     const tool = params.toolCall ?? {};
+    if (!active && typeof tool.toolCallId === 'string') backgroundToolIds.add(`tool:${tool.toolCallId}`);
     const approval = (params.options ?? []).find((option: Row) => option.kind === 'allow_once');
     if (approval && allowsMcp(tool)) {
       write({ id: frame.id, result: { outcome: { outcome: 'selected', optionId: approval.optionId } } });
@@ -453,18 +458,20 @@ function receive(frame: Row): void {
       const output = (update.content ?? []).map((part: Row) => part.type === 'content' && part.content?.type === 'text' ? part.content.text : part.type === 'diff' ? part.path : '').filter(Boolean).join('\n');
       const { patch: priorPatch, ...prior } = (previous?.tool?.input ?? {}) as Row;
       const rawInput = update.rawInput ?? {};
-      const patch = update.content === undefined ? priorPatch : diffPreview(update.content);
+      const replacesContent = Array.isArray(update.content);
+      const patch = replacesContent ? diffPreview(update.content) : priorPatch;
       const inputPath = rawInput.Path ?? rawInput.path;
       const preview = Buffer.byteLength(JSON.stringify(rawInput)) > TOOL_FIELD_BYTES
         ? { truncated: true, ...(typeof inputPath === 'string' ? { path: toolPreview(inputPath) } : {}) } : rawInput;
       const input = { ...(update.rawInput == null ? prior : preview), ...(typeof rawInput.Path === 'string' ? { path: toolPreview(rawInput.Path) } : {}), ...(patch ? { patch } : {}) };
       const toolState = { ...(previous?.tool?.state as Row | undefined), status: update.status ?? (previous?.tool?.state as Row | undefined)?.status ?? 'pending', ...(update.rawOutput !== undefined ? { output: toolOutput(update.rawOutput) } : {}) };
       if (loaded && !failed && !stopping) {
+        if (!active) backgroundToolIds.add(id);
         if (toolState.status === 'in_progress') runningTools.add(id);
         else if (runningTools.delete(id) && !runningTools.size && cancelWatchingTools) finishCancellation();
         backgroundActivity();
       }
-      replace({ id, role: 'assistant', kind: 'tool', text: update.content === undefined ? previous?.text ?? '' : toolPreview(output), createdAt: previous?.createdAt ?? new Date().toISOString(), ...(['completed', 'failed'].includes(toolState.status) ? { completedAt: previous?.completedAt ?? new Date().toISOString() } : {}), tool: { name: update.name ?? previous?.tool?.name ?? update.kind ?? 'Tool', input, state: toolState } });
+      replace({ id, role: 'assistant', kind: 'tool', text: replacesContent ? toolPreview(output) : previous?.text ?? '', createdAt: previous?.createdAt ?? new Date().toISOString(), ...(['completed', 'failed'].includes(toolState.status) ? { completedAt: previous?.completedAt ?? new Date().toISOString() } : {}), tool: { name: update.name ?? previous?.tool?.name ?? update.kind ?? 'Tool', input, state: toolState } });
       break;
     }
     case 'available_commands_update': commands = update.availableCommands ?? []; controlsRevision++; publish({ kind: 'pending' }); break;
@@ -613,6 +620,7 @@ async function handle(method: string, params: Row): Promise<unknown> {
     void turn.then((result) => {
       if (failed || stopping) return;
       admit();
+      for (const id of runningTools) backgroundToolIds.add(id);
       if (result.stopReason === 'cancelled') finishTools('Response stopped');
       else finishTools('Antigravity ended the turn before this tool started', true);
       finishCancellation();

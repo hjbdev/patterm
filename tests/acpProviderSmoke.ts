@@ -62,6 +62,13 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   if(text==='crash') {fs.writeFileSync(process.env.ACP_TRACE+'.side-effect','executed');process.exit(17);}
   echo(text);
   if(text==='no-cancel-ack') return;
+  if(text==='delayed-approval') {
+   result(q.id,{stopReason:'end_turn'});prompt=null;
+   update({sessionUpdate:'tool_call',toolCallId:'deferred',name:'mcp_patterm_mutate',status:'pending'});return;
+  }
+  if(text==='overlapping-follow-up') {
+   out({id:44,method:'session/request_permission',params:{sessionId:'native-session',toolCall:{toolCallId:'deferred',title:'Delayed approval'},options:[{optionId:'allow',kind:'allow_once',name:'Allow'}]}});return;
+  }
   if(text==='tool-outlives-prompt'||text==='tool-never-starts') {
    const started = text==='tool-outlives-prompt';
    update({sessionUpdate:'tool_call',toolCallId:started?'outlives':'unstarted',status:started?'in_progress':'pending'});
@@ -78,7 +85,9 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   }
   if(text==='clear-diff') {
    update({sessionUpdate:'tool_call',toolCallId:'cleared',status:'in_progress',rawInput:{Path:'cleared.txt'},content:[{type:'diff',path:'cleared.txt',oldText:'old\n',newText:'new\n'}]});
+   update({sessionUpdate:'tool_call',toolCallId:'retained',status:'in_progress',rawInput:{Path:'retained.txt'},content:[{type:'diff',path:'retained.txt',oldText:'old\n',newText:'new\n'}]});
    update({sessionUpdate:'tool_call_update',toolCallId:'cleared',status:'completed',content:[]});
+   update({sessionUpdate:'tool_call_update',toolCallId:'retained',status:'completed',content:null});
    result(q.id,{stopReason:'end_turn'});prompt=null;return;
   }
   if(text==='post-prompt') {
@@ -127,6 +136,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   update({sessionUpdate:'tool_call_update',toolCallId:'background',status:'completed'});
   say('Background work done');return;
  }
+ if(q.id===44 && prompt){result(prompt,{stopReason:'end_turn'});prompt=null;}
  if(q.id===41 && prompt){
   update({sessionUpdate:'tool_call_update',toolCallId:'edit',status:q.result?.outcome?.optionId==='deny'?'failed':'completed'});
   say(JSON.stringify(q.result));result(prompt,{stopReason:'end_turn'});prompt=null;
@@ -201,6 +211,14 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     assert.equal(state.status, 'working', 'background output keeps the session active');
     await assert.rejects(ask('follow-up'), TurnBusyError);
     await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    await ask('delayed-approval');
+    await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.id === 'tool:deferred'));
+    await ask('overlapping-follow-up');
+    state = await waitFor(provider, (snapshot) => snapshot.status === 'permission');
+    assert.equal(state.permissions.data[0]?.id, '44', 'background permissions remain manual during a later foreground prompt');
+    assert(!frames().some((frame) => frame.id === 44));
+    await provider.replyPermission('process', '44', 'reject');
+    await waitFor(provider, (snapshot) => snapshot.status === 'idle');
     const queue = new IntegratedAgentService(database, { agy: provider });
     try {
       queue.observe('process');
@@ -224,6 +242,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     const cleared = state.messages.data.find((row: any) => row.id === 'tool:cleared');
     assert.equal(cleared.tool.input.patch, undefined);
     assert.equal(cleared.text, '');
+    assert.match(state.messages.data.find((row: any) => row.id === 'tool:retained').tool.input.patch, /-old\n\+new/);
     await ask('message-ids');
     state = await waitFor(provider, (snapshot) => snapshot.status === 'idle');
     assert.deepEqual(state.messages.data.filter((row: any) => /^first|^second/.test(row.text)).map((row: any) => row.text), ['first chunk', 'second']);
