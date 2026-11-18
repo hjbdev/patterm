@@ -32,6 +32,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Integrated Antigravity shows work and asks for approval when a background
+  task wakes the agent after a prompt ends. New prompts wait behind observed
+  activity. If Antigravity doesn't confirm cancellation, Patterm shows a
+  restart prompt rather than leaving the turn spinning.
+- Integrated Antigravity keeps distinct native messages separate, explains
+  token and request limits or refusals, and previews oversized tool data
+  instead of sending it all to the conversation pane.
+
 - Long Antigravity sessions open again instead of loading forever. The pane
   loads the newest page of the conversation and earlier pages as you scroll
   back, as with Codex and OpenCode. File edits are kept as changed hunks with
