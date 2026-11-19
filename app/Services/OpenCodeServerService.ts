@@ -19,6 +19,8 @@ import type { McpLaunchServer } from './McpServerRegistry';
 import { messagesTaskOutput, textTaskOutput, type IntegratedConversationEvent, type IntegratedConversationListener, type IntegratedDeliveryStatus, type IntegratedQueuedMessage, type IntegratedTaskOutput } from './IntegratedConversation';
 import type { TranscriptImageRef, TranscriptImageStore } from './TranscriptImageStore';
 import { GoalLog, snapshotWithGoal, type IntegratedGoal, type IntegratedGoalAction } from './IntegratedGoal';
+import { QUIET_NOTIFICATION_INSTRUCTION } from './TranscriptProjection';
+import { ASSISTANT_BOT_ID } from '../Bots/BotSettings';
 
 // `opencode api` sends the JSON body as one argv entry: the kernel rejects any
 // single argument at or above 128 KiB (E2BIG) before the CLI starts. Managed
@@ -83,8 +85,11 @@ interface OpenCodeActivity {
 // run in event order on their own chain.
 interface OpenCodeStream {
   emit: OpenCodeEmit;
-  runtime: { executable: string; cwd: string };
+  runtime: { executable: string; cwd: string; assistant: boolean };
   serial: Promise<void>;
+  // Null until an execution starts on this connection. After a gap, never
+  // infer delivery from an enqueue or from the adjacent transcript text.
+  delivered: Set<string> | null;
 }
 
 // One projected transcript row, keyed by its native identity: a tool call id,
@@ -420,7 +425,13 @@ export class OpenCodeServerService {
     const files = this.promptFiles(input);
     await this.ensureMcp(runtime);
     if (review && !review.current()) throw new Error('This request is no longer waiting for this parent');
-    const messageId = review ? `msg_${review.id}` : input.messageId ? `msg_${input.messageId}` : undefined;
+    const quiet = runtime.assistant && input.quietNotification === true && !review;
+    const messageId = review ? `msg_${review.id}` : input.messageId ? `msg_${input.messageId}` : quiet ? `msg_${randomUUID()}` : undefined;
+    if (quiet) {
+      // Register before POST: native delivery and the first step can race the
+      // HTTP acknowledgement. The native ID, not the prompt text, opts in.
+      this.database.connection.prepare('insert or ignore into opencode_quiet_notification_prompts values (?, ?)').run(runtime.resumeId, messageId!);
+    }
     const cancelOnRevoke = (id: string) => {
       if (!review) return;
       const cancel = () => {
@@ -434,7 +445,7 @@ export class OpenCodeServerService {
     };
     try {
       const body = {
-        text: input.text.trim(),
+        text: quiet ? input.text.trim().replace('\n', `\n${QUIET_NOTIFICATION_INSTRUCTION}\n`) : input.text.trim(),
         ...(files.length ? { files } : {}),
         ...(messageId ? { id: messageId } : {}),
         // Like OpenCode's own clients, a prompt sent mid-turn joins the turn
@@ -524,11 +535,12 @@ export class OpenCodeServerService {
       this.revisions.set(processId, revision);
       listener({ ...event, processId, revision });
     };
-    const stream: OpenCodeStream = { emit, runtime, serial: Promise.resolve() };
+    const stream: OpenCodeStream = { emit, runtime, serial: Promise.resolve(), delivered: null };
     const activity = this.activityState(sessionId);
     activity.emitters.add(emit);
     const schedule = (): void => {
       if (stopped) return;
+      stream.delivered = null;
       emit({ kind: 'reconnecting' });
       attempts += 1;
       if (attempts > OPENCODE_RECONNECT_ATTEMPTS) {
@@ -677,6 +689,17 @@ export class OpenCodeServerService {
     if (eventSession !== sessionId) return;
     const projection = this.projection(sessionId);
     const execution = executionEvent(type, data);
+    if (runtime.assistant) {
+      if (execution) stream.delivered = execution === 'started' ? new Set() : null;
+      if (type === 'session.inbox.delivered' && typeof data.inboxID === 'string') stream.delivered?.add(data.inboxID);
+      if (type === 'session.step.started' && stream.delivered?.size === 1 &&
+          record(data.model).providerID === 'claude-agent' && typeof data.assistantMessageID === 'string') {
+        const [promptId] = stream.delivered;
+        this.database.connection.prepare(`insert or ignore into opencode_quiet_notification_steps
+          select session_id, ?, message_id from opencode_quiet_notification_prompts where session_id = ? and message_id = ?`)
+          .run(data.assistantMessageID, sessionId, promptId!);
+      }
+    }
     if (execution) {
       const failure = execution === 'failed' ? String(record(data.error).message ?? data.message ?? '').trim() : '';
       if (failure) emit({ kind: 'replace', message: { id: `error_${String(event.id ?? randomUUID())}`, role: 'assistant', kind: 'notice', level: 'error', text: failure, createdAt: at, completedAt: at } });
@@ -704,7 +727,12 @@ export class OpenCodeServerService {
     // only for genuinely unmappable events (removals or a legacy part whose
     // identity cannot be established), never for every delta.
     if (type.startsWith('session.text.') || type.startsWith('session.reasoning.')) {
-      this.applyFamilyEvent(projection, data, type, emit, at);
+      const step = runtime.assistant && type.startsWith('session.text.') && typeof data.assistantMessageID === 'string' &&
+        this.quietStep(sessionId, data.assistantMessageID) ? data.assistantMessageID : undefined;
+      this.applyFamilyEvent(projection, data, type, step ? (event) => {
+        if (event.kind === 'replace' && event.message) emit({ ...event, message: { ...event.message, quietNotificationStep: step } });
+        else emit({ ...event, quietNotificationStep: step });
+      } : emit, at);
       return;
     }
     if (type.startsWith('session.tool.')) {
@@ -728,7 +756,8 @@ export class OpenCodeServerService {
       const item = record(data.item);
       const payload = record(item.payload);
       if (inboxID && item.type === 'user' && typeof payload.text === 'string') {
-        emit({ kind: 'replace', message: { id: inboxID, role: 'user', kind: 'text', text: payload.text, createdAt: at, completedAt: at } });
+        const text = runtime.assistant ? this.notificationReceipt(sessionId, inboxID, payload.text) : payload.text;
+        emit({ kind: 'replace', message: { id: inboxID, role: 'user', kind: 'text', text, createdAt: at, completedAt: at } });
       }
       return;
     }
@@ -1734,7 +1763,10 @@ export class OpenCodeServerService {
       history_cursor: cursor ?? null,
       revision,
       streaming: true,
-      messages: { data: this.withStoredImages(withLiveParts([...[...rows].reverse(), ...nestedRows], live)) },
+      messages: { data: this.withStoredImages([
+        ...this.notificationRows(runtime, withLiveParts([...rows].reverse(), live)),
+        ...withLiveParts(nestedRows, live)
+      ]) },
       permissions: { data: permissions.map(permissionView) },
       forms: declinableForms(forms),
       usage,
@@ -1776,9 +1808,31 @@ export class OpenCodeServerService {
     const rows = Array.isArray(listing.data) ? listing.data as unknown[] : [];
     const next = record(listing.cursor).next;
     return {
-      messages: { data: this.withStoredImages([...rows].reverse()) },
+      messages: { data: this.withStoredImages(this.notificationRows(runtime, [...rows].reverse())) },
       cursor: rows.length >= limit && typeof next === 'string' ? next : null
     };
+  }
+
+  private quietStep(sessionId: string, messageId: string): boolean {
+    return Boolean(this.database.connection.prepare('select 1 from opencode_quiet_notification_steps where session_id = ? and message_id = ?').get(sessionId, messageId));
+  }
+
+  private notificationReceipt(sessionId: string, id: string, text: string): string {
+    const instruction = `\n${QUIET_NOTIFICATION_INSTRUCTION}\n`;
+    if (!text.includes(instruction)) return text;
+    return this.database.connection.prepare('select 1 from opencode_quiet_notification_prompts where session_id = ? and message_id = ?').get(sessionId, id)
+      ? text.replace(instruction, '\n') : text;
+  }
+
+  private notificationRows(runtime: { resumeId: string; assistant: boolean }, rows: unknown[]): unknown[] {
+    if (!runtime.assistant) return rows;
+    return rows.map((raw) => {
+      const row = record(raw);
+      if (typeof row.id !== 'string') return raw;
+      if (row.type === 'assistant' && this.quietStep(runtime.resumeId, row.id)) return { ...row, quietNotificationStep: row.id };
+      if (row.type === 'user' && typeof row.text === 'string') return { ...row, text: this.notificationReceipt(runtime.resumeId, row.id, row.text) };
+      return raw;
+    });
   }
 
   // Reconciliation and display read the newest bounded window so a >200-row
@@ -2250,19 +2304,19 @@ export class OpenCodeServerService {
     return commandLineTooLong(resolveService(executable, args, this.env));
   }
 
-  private runtime(processId: string): { executable: string; cwd: string; resumeId: string; sessionId: string; model: string | null; reasoning: string | null } {
+  private runtime(processId: string): { executable: string; cwd: string; resumeId: string; sessionId: string; model: string | null; reasoning: string | null; assistant: boolean } {
     const row = this.database.connection.prepare(`
-      select sessions.id, sessions.resume_id, sessions.model, sessions.reasoning, processes.cwd, processes.argv
+      select sessions.id, sessions.resume_id, sessions.model, sessions.reasoning, sessions.session_role, sessions.bot_id, processes.cwd, processes.argv
       from sessions join processes on processes.id = sessions.process_id
       where sessions.process_id = ? and sessions.harness = 'opencode'
         and sessions.interface_mode = 'integrated' and sessions.exited_at is null
         and processes.status = 'running'
-    `).get(processId) as { id: string; resume_id: string | null; model: string | null; reasoning: string | null; cwd: string | null; argv: string | null } | undefined;
+    `).get(processId) as { id: string; resume_id: string | null; model: string | null; reasoning: string | null; cwd: string | null; argv: string | null; session_role: string; bot_id: string | null } | undefined;
     const argv = row?.argv ? JSON.parse(row.argv) as unknown : null;
     if (!row?.resume_id || !row.cwd || !Array.isArray(argv) || typeof argv[0] !== 'string') {
       throw new Error('OpenCode Integrated session is not active');
     }
-    return { executable: argv[0], cwd: row.cwd, resumeId: row.resume_id, sessionId: row.id, model: row.model, reasoning: row.reasoning };
+    return { executable: argv[0], cwd: row.cwd, resumeId: row.resume_id, sessionId: row.id, model: row.model, reasoning: row.reasoning, assistant: row.session_role === 'assistant' && row.bot_id === ASSISTANT_BOT_ID };
   }
 
   private runCli(executable: string, cwd: string, args: string[]): Promise<string> {

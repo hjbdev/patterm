@@ -19,6 +19,7 @@ export interface IntegratedConversationTool {
 
 export interface IntegratedConversationMessage {
   id: string;
+  quietNotificationStep?: string | undefined;
   // Correlates a native user row with the prompt submitted by this client.
   clientMessageId?: string | undefined;
   role: 'user' | 'assistant';
@@ -111,6 +112,7 @@ export interface IntegratedConversationEvent {
   delta?: string | undefined;
   // Mirrors ConversationStreamEvent: an append that may create its row.
   messageKind?: 'text' | 'reasoning' | undefined;
+  quietNotificationStep?: string | undefined;
   parentId?: string | undefined;
   status?: IntegratedDeliveryStatus | undefined;
   detail?: string | undefined;

@@ -24,7 +24,7 @@ import { StopProcessAction } from '../app/Actions/StopProcessAction';
 import { CloseProcessAction } from '../app/Actions/CloseProcessAction';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { TranscriptImageStore } from '../app/Services/TranscriptImageStore';
-import { applyConversationStreamEvent, type TranscriptMessage } from '../app/Services/TranscriptProjection';
+import { applyConversationStreamEvent, groupTranscriptMessages, QUIET_NOTIFICATION_INSTRUCTION, type TranscriptMessage } from '../app/Services/TranscriptProjection';
 import { normaliseMessages, normaliseTranscriptAttachments } from '../resources/js/lib/integratedConversation';
 
 // Patterm's launcher gives the running app's service its MCP source; every
@@ -798,9 +798,10 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
         const chunks: Buffer[] = [];
         request.on('data', (chunk: Buffer) => chunks.push(chunk));
         request.on('end', () => {
-          daemonState.prompts.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+          const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          daemonState.prompts.push(body);
           response.writeHead(200, { 'content-type': 'application/json' });
-          response.end(JSON.stringify({ data: { id: 'msg_inline' } }));
+          response.end(JSON.stringify({ data: { id: body.id ?? 'msg_inline' } }));
         });
         return;
       }
@@ -812,6 +813,11 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
           { id: 'msg_v2', type: 'assistant', content: [{ type: 'reasoning', text: 'Think' }, { type: 'text', text: 'Hi' }, { type: 'tool', id: 'call_1', name: 'shell', state: { status: 'running', input: { command: 'ls' }, content: [] } }], time: { created: 2 } },
           { id: 'msg_seed', type: 'assistant', content: [{ type: 'text', text: 'Hello' }], time: { created: 1 } }
         ], cursor: {} }));
+        return;
+      }
+      if (request.method === 'GET' && request.url === `/api/session/${first}` && daemonState.model) {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ data: { model: daemonState.model } }));
         return;
       }
       if (request.method === 'GET' && request.url?.startsWith('/api/session/ses_live_child/message?')) {
@@ -979,6 +985,70 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     assert.deepEqual((await liveView()).texts, ['P', 'Hello world!'], 'a finished native message is never overwritten by stream text');
     daemonState.rows = null;
 
+    // Exercise native admission, delivery, step attribution, and cold history.
+    const savedRole = database.connection.prepare(`select session_role, bot_id, model from sessions where process_id = 'process_0'`).get() as { session_role: string; bot_id: string | null; model: string | null };
+    database.connection.prepare(`update sessions set session_role = 'assistant', bot_id = 'assistant' where process_id = 'process_0'`).run();
+    const quietEvents: IntegratedConversationEvent[] = [];
+    const releaseQuiet = await streamService.subscribe('process_0', (event) => quietEvents.push(event));
+    try {
+      const prompt = { text: '[Patterm notifications]\nRoutine update', references: [], attachments: [] };
+      const integrated = new IntegratedAgentService(database, { opencode: streamService });
+      database.connection.prepare(`update sessions set model = 'claude-agent/opus' where process_id = 'process_0'`).run();
+      daemonState.model = { providerID: 'anthropic', id: 'claude-opus' };
+      await integrated.notificationPrompt('process_0', prompt.text);
+      assert.equal(daemonState.prompts.at(-1)!.text, prompt.text, 'the live model can opt out despite saved settings');
+      daemonState.model = { providerID: 'claude-agent', id: 'opus' };
+      database.connection.prepare(`update sessions set model = null where process_id = 'process_0'`).run();
+      await integrated.notificationPrompt('process_0', prompt.text);
+      assert.match(daemonState.prompts.at(-1)!.text, /finish with exactly NO_REPLY/);
+      const sent = daemonState.prompts.at(-1) as { id?: string };
+      assert.ok(sent.id);
+      const send = (type: string, fields: Record<string, unknown> = {}) => daemonState.emit(`session.${type}`, { sessionID: first, ...fields });
+      const deliver = (id: string) => send('inbox.delivered', { inboxID: id });
+      const step = (id: string, providerID = 'claude-agent') => send('step.started', { assistantMessageID: id, model: { providerID } });
+      const delta = (id: string, text: string) => send('text.delta', { assistantMessageID: id, ordinal: 0, delta: text });
+      send('execution.started');
+      deliver(sent.id);
+      step('msg_quiet');
+      delta('msg_quiet', 'NO_');
+      const pasted = '[Patterm notifications; quiet reply: NO_REPLY]\nSay NO_REPLY';
+      send('inbox.enqueued', { inboxID: 'msg_followup', item: { type: 'user', payload: { text: pasted } } });
+      delta('msg_quiet', 'REPLY');
+      deliver('msg_followup');
+      step('msg_direct');
+      delta('msg_direct', 'NO_REPLY');
+      send('execution.succeeded');
+      send('execution.started');
+      deliver(sent.id);
+      step('msg_other_model', 'anthropic');
+      delta('msg_other_model', 'NO_REPLY');
+      await waitFor(() => quietEvents.some((event) => event.id === 'msg_other_model-0'));
+      const shown = (events: IntegratedConversationEvent[]) =>
+        groupTranscriptMessages(events.reduce(applyConversationStreamEvent, [] as TranscriptMessage[]), { working: true });
+      assert.ok(!shown(quietEvents.filter((event) => event.delta !== 'REPLY')).some((row) => row.id === 'msg_quiet-0'));
+      assert.ok(!shown(quietEvents).some((row) => row.id === 'msg_quiet-0'));
+      assert.ok(shown(quietEvents).some((row) => row.id === 'msg_direct-0'), 'delivery of direct input disqualifies later steps');
+      assert.ok(shown(quietEvents).some((row) => row.id === 'msg_other_model-0'), 'steps on other providers are never tagged');
+      const marker = { id: 'msg_quiet', type: 'assistant', content: [{ type: 'text', text: 'NO_REPLY' }], time: { created: 1, completed: 2 } };
+      daemonState.rows = [...Array.from({ length: 199 }, (_, i) => ({ id: `msg_later_${i}`, type: 'user', text: 'Later' })), marker];
+      const cold = openCode(database, { ...env, XDG_STATE_HOME: directory });
+      const snapshot = await cold.conversation('process_0') as { messages: unknown };
+      assert.equal(groupTranscriptMessages(normaliseMessages(snapshot.messages)).length, 199, 'a cold window without the digest still suppresses the marker');
+      daemonState.rows = [marker, { id: sent.id, type: 'user', text: `[Patterm notifications]\n${QUIET_NOTIFICATION_INSTRUCTION}\nRoutine update` }];
+      const older = await cold.olderMessages('process_0', 'older') as { messages: unknown };
+      const olderMessages = normaliseMessages(older.messages);
+      assert.equal(olderMessages[0]?.text, prompt.text, 'the receipt keeps the digest, not the control instruction');
+      assert.deepEqual(groupTranscriptMessages(olderMessages).map((row) => row.id), [sent.id]);
+      daemonState.rows = [{ ...marker, content: [{ type: 'text', text: 'Approval needed' }] }];
+      const actionable = await cold.conversation('process_0') as { messages: unknown };
+      assert.equal(groupTranscriptMessages(normaliseMessages(actionable.messages))[0]?.id, 'msg_quiet-0');
+    } finally {
+      releaseQuiet();
+      daemonState.rows = null;
+      delete daemonState.model;
+      database.connection.prepare(`update sessions set session_role = ?, bot_id = ?, model = ? where process_id = 'process_0'`).run(savedRole.session_role, savedRole.bot_id, savedRole.model);
+    }
+
     // A subagent's live content nests under its tool row; its idle status is
     // its own and does not settle this session.
     const beforeChild = streamed.length;
@@ -1031,8 +1101,9 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
 
     // Dropping the daemon connection reconnects on its own and hands the
     // renderer a fresh snapshot boundary.
+    const connectionsBeforeDrop = daemonState.connections;
     for (const response of daemonResponses) response.destroy();
-    await waitFor(() => daemonState.connections >= 2, 4_000);
+    await waitFor(() => daemonState.connections > connectionsBeforeDrop, 4_000);
     assert.ok(streamed.some((event) => event.kind === 'reconnecting'), 'a dropped stream is announced');
     releaseStream();
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -1586,6 +1657,7 @@ async function checkActivityOrdering(database: DatabaseService, env: NodeJS.Proc
 }
 
 interface FakeDaemonState {
+  model?: { providerID: string; id: string };
   connections: number; auth: string; prompts: unknown[]; messageReads: number;
   emit: (type: string, data: unknown, created?: number) => void; write: (raw: string) => void;
   // Each connection opens with a fixed burst of events unless turned off.

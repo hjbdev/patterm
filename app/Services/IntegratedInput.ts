@@ -45,6 +45,9 @@ export interface ResolvedIntegratedPrompt {
   references: ResolvedIntegratedReference[];
   attachments: ResolvedIntegratedAttachment[];
   messageId?: string | undefined;
+  // Set by the assistant relay, never by the composer or public prompt tools.
+  assistantNotification?: true;
+  quietNotification?: true;
 }
 
 export interface IntegratedWorktreeFile {

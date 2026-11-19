@@ -389,6 +389,10 @@ export class IntegratedAgentService {
     return this.whileSending(processId, () => this.submit(processId, input));
   }
 
+  notificationPrompt(processId: string, text: string): Promise<unknown> {
+    return this.whileSending(processId, () => this.submit(processId, text, true));
+  }
+
   // Expiring offers must not get stuck in Patterm's durable held prompt queue.
   reviewPrompt(processId: string, text: string, review: ReviewPrompt): Promise<unknown> {
     const key = this.ledgerKey(processId);
@@ -424,7 +428,7 @@ export class IntegratedAgentService {
     }
   }
 
-  private async submit(processId: string, input: IntegratedPromptInput | string): Promise<unknown> {
+  private async submit(processId: string, input: IntegratedPromptInput | string, assistantNotification = false): Promise<unknown> {
     const request: IntegratedPromptInput = typeof input === 'string' ? { text: input } : input;
     const hasContent = Boolean(request.text.trim() || request.references?.length || request.attachments?.length);
     if (!hasContent) throw new Error('Message is empty');
@@ -433,10 +437,12 @@ export class IntegratedAgentService {
     }
     const key = this.ledgerKey(processId);
     const arrived = await this.serially(this.arrivals, key, async () => {
-      const resolved = this.inputs ? await this.inputs.resolve(processId, request) : { ...request, references: [], attachments: [] };
+      const resolved = this.inputs ? await this.inputs.resolve(processId, request) : {
+        text: request.text, messageId: request.messageId, references: [], attachments: []
+      };
       // Wrapped so the arrival chain waits for the prompt's place, not its
       // native call.
-      const result = this.accept(processId, key, resolved);
+      const result = this.accept(processId, key, assistantNotification ? { ...resolved, assistantNotification: true } : resolved);
       void result.catch(() => {});
       return { result };
     });
@@ -505,6 +511,12 @@ export class IntegratedAgentService {
       if (review && !review.current()) throw new Error('This request is no longer waiting for this parent');
       for (const listener of this.promptDispatchListeners) {
         try { listener(this.ledgerKey(processId)); } catch { /* listeners own their failures */ }
+      }
+      // Look up the live model at dispatch, including after a Patterm-held
+      // prompt drains. A failed lookup must not drop a notification.
+      if (resolved.assistantNotification && provider === this.providers.opencode) {
+        return this.model(processId).catch(() => null).then((model) =>
+          provider.prompt(processId, model?.startsWith('claude-agent/') ? { ...resolved, quietNotification: true } : resolved, review));
       }
       return provider.prompt(processId, resolved, review);
     };

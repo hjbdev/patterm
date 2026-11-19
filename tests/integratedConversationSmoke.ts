@@ -469,12 +469,11 @@ assert.equal(normaliseUsage({ lastModelActivityAt: 'yesterday' }), null);
 
 {
   const prompt = (id: string, text: string) => ({ id, role: 'user' as const, kind: 'text' as const, text });
-  const reply = (id: string, text: string) => ({ id, role: 'assistant' as const, kind: 'text' as const, text });
+  const reply = (id: string, text: string) => ({ id, role: 'assistant' as const, kind: 'text' as const, text, quietNotificationStep: 'native-step' });
   const digest = prompt('digest', '[Patterm notifications; quiet reply: NO_REPLY]\nReview finished');
   const marker = reply('marker', 'NO_REPLY');
   const ids = (messages: Parameters<typeof groupTranscriptMessages>[0], working = false) =>
     groupTranscriptMessages(messages, { working }).map(({ id }) => id);
-  assert.deepEqual(transcriptMessageOrigin(digest), { kind: 'patterm', label: 'Notifications', detail: '', body: 'Review finished' });
   assert.deepEqual(ids([digest, marker]), ['digest']);
   assert.deepEqual(ids([digest, { ...reply('thought', 'Nothing to flag'), kind: 'reasoning' }, marker]), ['digest', 'thought']);
   assert.deepEqual(ids([digest, reply('part-1', 'NO_'), reply('part-2', 'REPLY')]), ['digest']);
@@ -482,9 +481,11 @@ assert.equal(normaliseUsage({ lastModelActivityAt: 'yesterday' }), null);
   assert.deepEqual(ids([digest, reply('stream', 'NO_')]), ['digest', 'stream']);
   assert.deepEqual(ids([digest, reply('stream', 'NO_REPLY is a marker')], true), ['digest', 'stream']);
   assert.deepEqual(ids([digest, reply('alert', 'PR #233 needs your approval'), marker]), ['digest', 'alert', 'marker']);
-  assert.deepEqual(ids([digest, prompt('user', 'Say NO_REPLY'), marker]), ['digest', 'user', 'marker']);
-  assert.deepEqual(ids([prompt('legacy', '[Patterm notifications]\nReview finished'), marker]), ['legacy', 'marker']);
-  assert.deepEqual(ids([marker]), ['marker'], 'do not hide text without the triggering prompt in the loaded transcript');
+  assert.deepEqual(ids([digest, prompt('sending', 'Follow-up'), marker]), ['digest', 'sending']);
+  assert.deepEqual(ids([digest, reply('stream', 'NO_'), prompt('queued', 'Follow-up')], true), ['digest', 'queued']);
+  assert.deepEqual(ids([marker]), [], 'the triggering prompt need not be loaded');
+  const direct = { id: 'direct', role: 'assistant' as const, kind: 'text' as const, text: 'NO_REPLY' };
+  assert.deepEqual(ids([digest, direct]), ['digest', 'direct'], 'a pasted heading does not opt in');
 }
 
 console.log('integrated conversation smoke passed');

@@ -93,6 +93,8 @@ export interface TranscriptMessage {
     rationale: string | null;
   };
   archived?: boolean;
+  // Set by the OpenCode adapter only after a tracked digest was delivered.
+  quietNotificationStep?: string;
 }
 
 export interface TranscriptAttachment {
@@ -444,7 +446,10 @@ export function normaliseMessages(value: unknown): TranscriptMessage[] {
         const last = partIndex === row.content.length - 1;
         const partTimes = rowTimes(partTime.created ?? partTime.start ?? messageTime.created, partTime.completed ?? partTime.end ?? (last ? messageTime.completed : undefined));
         if (part.type === 'text' && typeof part.text === 'string') {
-          result.push({ id: `${id}-${partIndex}`, role: 'assistant', kind: 'text', text: part.text, ...partTimes, ...nested });
+          result.push({
+            id: `${id}-${partIndex}`, role: 'assistant', kind: 'text', text: part.text, ...partTimes, ...nested,
+            ...(row.quietNotificationStep === id ? { quietNotificationStep: id } : {})
+          });
         } else if (part.type === 'reasoning' && typeof part.text === 'string') {
           result.push({ id: `${id}-${partIndex}`, role: 'assistant', kind: 'reasoning', text: part.text, ...partTimes, ...nested });
         } else if (part.type === 'tool') {
@@ -519,6 +524,7 @@ function projectedMessage(row: Record<string, unknown>, id: string): TranscriptM
       : {}),
     ...(attachments.length ? { attachments } : {}),
     ...(typeof row.parentId === 'string' && row.parentId ? { parentId: row.parentId } : {}),
+    ...(typeof row.quietNotificationStep === 'string' ? { quietNotificationStep: row.quietNotificationStep } : {}),
     ...rowTimes(row.createdAt ?? row.created_at, row.completedAt ?? row.completed_at)
   };
 }
@@ -859,6 +865,7 @@ export interface ConversationStreamEvent {
   // An append for a row the renderer does not have yet, such as one a
   // snapshot taken mid-stream left out, creates it with this kind and parent.
   messageKind?: 'text' | 'reasoning' | undefined;
+  quietNotificationStep?: string | undefined;
   parentId?: string | undefined;
   status?: IntegratedDeliveryStatus | undefined;
   detail?: string | undefined;
@@ -884,6 +891,7 @@ export function applyConversationStreamEvent(messages: TranscriptMessage[], even
     if (index < 0) {
       return [...messages, {
         id: event.id, role: 'assistant', kind: event.kind === 'append' ? event.messageKind ?? 'text' : 'text', text: delta,
+        ...(event.quietNotificationStep ? { quietNotificationStep: event.quietNotificationStep } : {}),
         ...(event.kind === 'append' && event.parentId ? { parentId: event.parentId } : {})
       }];
     }
@@ -895,6 +903,7 @@ export function applyConversationStreamEvent(messages: TranscriptMessage[], even
     copy[index] = {
       ...current,
       text,
+      ...(event.quietNotificationStep ? { quietNotificationStep: event.quietNotificationStep } : {}),
       ...(current.tool ? { tool: { ...current.tool, output: `${current.tool.output ?? ''}${delta}` } } : {})
     };
     return copy;
@@ -1229,7 +1238,6 @@ const PATTERM_MESSAGE = /^\[Patterm (timer|notifications|focus digest)\b([^\n]*?
 const PATTERM_LABELS: Record<string, string> = { timer: 'Timer', notifications: 'Notifications', 'focus digest': 'Focus digest' };
 const REPLY_HINT = /\s*\(Reply with send_message target_process_id "assistant"\.\)\s*$/;
 export const QUIET_NOTIFICATION_REPLY = 'NO_REPLY';
-export const QUIET_NOTIFICATION_HEADER = `[Patterm notifications; quiet reply: ${QUIET_NOTIFICATION_REPLY}]`;
 export const QUIET_NOTIFICATION_INSTRUCTION = `For this digest only, if there is nothing the user needs to hear, finish with exactly ${QUIET_NOTIFICATION_REPLY} and no other text. Otherwise reply normally. If the user also asks something, answer them normally.`;
 
 // Reads the headers Patterm puts on text it types into an agent. The headers
@@ -1249,14 +1257,7 @@ export function transcriptMessageOrigin(message: TranscriptMessage): TranscriptO
   match = CHILD_NOTICE.exec(text);
   if (match) return { kind: 'agent', processId: match[2]!, ...(match[3] ? { name: match[3] } : {}), ...(match[1] === 'Failure reported' ? { status: 'failure' } : {}), body: text.slice(match[0].length) };
   match = PATTERM_MESSAGE.exec(text);
-  if (match) {
-    const quiet = match[0].trimEnd() === QUIET_NOTIFICATION_HEADER;
-    const body = text.slice(match[0].length);
-    return {
-      kind: 'patterm', label: PATTERM_LABELS[match[1]!]!, detail: quiet ? '' : match[2]!.trim(),
-      body: quiet && body.startsWith(`${QUIET_NOTIFICATION_INSTRUCTION}\n`) ? body.slice(QUIET_NOTIFICATION_INSTRUCTION.length + 1) : body
-    };
-  }
+  if (match) return { kind: 'patterm', label: PATTERM_LABELS[match[1]!]!, detail: match[2]!.trim(), body: text.slice(match[0].length) };
   return undefined;
 }
 
@@ -1332,23 +1333,20 @@ export function groupTranscriptMessages(input: TranscriptMessage[], { working = 
 
 function quietNotificationReplies(messages: TranscriptMessage[], working: boolean): Set<TranscriptMessage> {
   const hidden = new Set<TranscriptMessage>();
-  let parts: TranscriptMessage[] | null = null;
-  const finish = (streaming = false) => {
-    if (!parts?.length) return;
-    const text = parts.map((part) => part.text).join('').trim();
-    if (text === QUIET_NOTIFICATION_REPLY || (streaming && QUIET_NOTIFICATION_REPLY.startsWith(text))) {
-      for (const part of parts) hidden.add(part);
-    }
-  };
+  const steps = new Map<string, TranscriptMessage[]>();
   for (const message of messages) {
-    if (message.role === 'user') {
-      finish();
-      parts = message.kind === 'text' && !message.parentId && message.text.split(/\r?\n/, 1)[0] === QUIET_NOTIFICATION_HEADER ? [] : null;
-    } else if (message.kind === 'text' && !message.parentId) {
-      parts?.push(message);
+    if (message.role === 'assistant' && message.kind === 'text' && !message.parentId && message.quietNotificationStep) {
+      const parts = steps.get(message.quietNotificationStep) ?? [];
+      parts.push(message);
+      steps.set(message.quietNotificationStep, parts);
     }
   }
-  finish(working);
+  for (const parts of steps.values()) {
+    const text = parts.map((part) => part.text).join('').trim();
+    if (text === QUIET_NOTIFICATION_REPLY || (working && parts.some((part) => !part.completedAt) && QUIET_NOTIFICATION_REPLY.startsWith(text))) {
+      for (const part of parts) hidden.add(part);
+    }
+  }
   return hidden;
 }
 
