@@ -1299,7 +1299,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       usageNotes: ['Use the offer_id from the Patterm message. For a question, answer from task context or escalate. For a permission, approve clearly authorised Antigravity workspace file reads once, reject inappropriate requests, or escalate.'],
       inputSchema: { type: 'object', required: ['offer_id', 'decision'] },
       changes: [],
-      unavailable: (context) => !context.identity || context.remote ? 'Only local agents can review subagent requests' : null
+      unavailable: (context) => context.remote ? 'Only local agents can review subagent requests' : null
     }, (args, context) => {
       const current = caller(context);
       if (!current?.process_id || context.remote) throw new Error('Request review requires an authenticated local agent');
@@ -2460,7 +2460,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     send_message: messageInput,
     report_to_parent: reportToParentInput,
     notify_user: notifyUserInput,
-    parent_request_reply: parentRequestInput,
+    ...(services.parentRequests ? { parent_request_reply: parentRequestInput } : {}),
     request_close: requestCloseInput,
     'notification_list': notificationListInput,
     timer_set: timerSetInput,

@@ -413,7 +413,11 @@ async function createApplicationResources(
       debugLog.write('notifications', 'raise.failed', { source: input.source, kind: input.kind, message: error instanceof Error ? error.message : String(error) });
     });
   };
-  const parentRequests = new ParentRequestService(database, integrated, messageProcess,
+  const parentRequests = new ParentRequestService(database, integrated, async (processId, text, current) => {
+    const bot = assistantInbox.botFor(processId);
+    // Offers expire; never store them in a durable Focus inbox.
+    return integrated.reviewPrompt(processId, text, () => current() && (!bot || !assistantInbox.focus(bot).enabled));
+  },
     (processId, kind) => raiseNotification({ processId, source: 'integrated', kind: 'permission', body: kind === 'permission' ? 'A subagent permission needs your decision' : 'A subagent question needs your answer', dedupeKey: `integrated:escalated_${kind}`, escalatedRequest: true }),
     (processId, kind) => { notificationService.resolve({ process_id: processId, dedupe_key: `integrated:escalated_${kind}` }); },
     (event, data) => debugLog.write('notifications', event, data));

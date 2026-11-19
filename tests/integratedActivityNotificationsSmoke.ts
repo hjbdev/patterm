@@ -361,6 +361,22 @@ async function main(): Promise<void> {
       assert.equal(reviews[6]!.target, 'bot-parent');
       await permissions.reply('session_parent', reviews[6]!.offerId, { decision: 'answer', answers: [['Smoke']] });
       assert.deepEqual(replies.at(-1), ['agent', 'form-1', { suite: 'smoke' }, 'accept']);
+
+      db.prepare(`update sessions set harness = 'agy' where id = 'session_agent'`).run();
+      fs.writeFileSync(path.join(directory, '.env'), 'placeholder');
+      nativePermissions = [{ id: 'sensitive-read', tool_kind: 'read', once: true, action: 'Read file', resources: ['.env'] }];
+      stream!({ processId: 'agent', revision: 11, kind: 'pending' });
+      await settle();
+      const oldOffer = reviews[7]!.offerId;
+      await assert.rejects(permissions.reply('session_parent', oldOffer, { decision: 'once' }), /only a one-time read/i);
+      db.prepare(`update processes set parent_process_id = 'root' where id = 'agent'`).run();
+      stream!({ processId: 'agent', revision: 12, kind: 'pending' });
+      await settle();
+      await assert.rejects(permissions.reply('session_parent', oldOffer, { decision: 'reject' }), /no longer pending for you/);
+      assert.equal(reviews[8]!.target, 'root', 'reparenting offers the unchanged native request to the new parent');
+      await permissions.reply('session_root', reviews[8]!.offerId, { decision: 'escalate' });
+      await Promise.all(permissionNotices);
+      assert.ok(notices.list({ process_id: 'agent' }).items.some((item) => item.kind === 'permission' && item.audience === 'user'));
     } finally {
       agy.dispose();
       permissions.dispose();

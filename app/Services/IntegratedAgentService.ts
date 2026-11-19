@@ -383,6 +383,21 @@ export class IntegratedAgentService {
     return this.whileSending(processId, () => this.submit(processId, input));
   }
 
+  // Expiring offers must not get stuck in Patterm's durable held prompt queue.
+  reviewPrompt(processId: string, text: string, current: () => boolean): Promise<unknown> {
+    const key = this.ledgerKey(processId);
+    return this.serially(this.dispatches, key, async () => {
+      if (!current() || this.nextHeld(key) || this.dispatching.has(key) || awaitingUser(this.activity(key))) {
+        throw new Error('Parent cannot review this offer now');
+      }
+      const input = { text, references: [], attachments: [] };
+      const sequence = this.sequence(key);
+      const result = await this.sendPrompt(processId, input, current);
+      this.admitted(processId, key, sequence, input, null, result);
+      return result;
+    });
+  }
+
   private async whileSending<T>(processId: string, send: () => Promise<T>): Promise<T> {
     let key: string;
     try { key = this.ledgerKey(processId); } catch { return send(); }
@@ -471,9 +486,10 @@ export class IntegratedAgentService {
   }
 
   // Memory goes first, so the agent reads the prompt with it current.
-  private sendPrompt(processId: string, resolved: ResolvedIntegratedPrompt): Promise<unknown> {
+  private sendPrompt(processId: string, resolved: ResolvedIntegratedPrompt, current?: () => boolean): Promise<unknown> {
     const provider = this.forProcess(processId);
     const send = () => {
+      if (current && !current()) throw new Error('This request is no longer waiting for this parent');
       for (const listener of this.promptDispatchListeners) {
         try { listener(this.ledgerKey(processId)); } catch { /* listeners own their failures */ }
       }

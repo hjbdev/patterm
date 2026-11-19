@@ -58,7 +58,7 @@ export class ParentRequestService {
   constructor(
     private readonly database: DatabaseService,
     private readonly integrated: Pick<IntegratedAgentService, 'peekConversation' | 'replyPermission' | 'replyQuestion' | 'replyForm'>,
-    private readonly send: (to: string, text: string, from: string) => Promise<unknown>,
+    private readonly send: (to: string, text: string, current: () => boolean) => Promise<unknown>,
     private readonly notifyUser: (processId: string, kind: RequestKind) => void,
     private readonly clearNotice: (processId: string, kind: RequestKind) => void,
     private readonly log: (event: string, data: Record<string, unknown>) => void
@@ -77,8 +77,8 @@ export class ParentRequestService {
       this.clear(processId);
       return;
     }
-    const previous = this.requests.get(processId);
-    if (previous && [...previous.values()][0]?.source.session_id !== source.session_id) this.clear(processId);
+    const previous = this.requests.get(processId)?.values().next().value?.source;
+    if (previous && (previous.session_id !== source.session_id || previous.parent_process_id !== source.parent_process_id)) this.clear(processId);
     const requests = this.requests.get(processId) ?? new Map<string, Request>();
     const native = new Map(pending.map((item) => [requestKey(item), item]));
     for (const [id, request] of requests) {
@@ -169,7 +169,14 @@ export class ParentRequestService {
 
   private advance(request: Request, parentId: string | null): void {
     this.revoke(request);
-    if (request.answered || !this.isLiveSource(request)) return;
+    if (request.answered) return;
+    const source = this.process(request.source.id);
+    if (source?.status !== 'running' || source.session_id !== request.source.session_id) return;
+    if (source.parent_process_id !== request.source.parent_process_id) {
+      request.source = source;
+      request.visited = new Set([source.id]);
+      parentId = source.parent_process_id;
+    }
     while (parentId && !request.visited.has(parentId)) {
       request.visited.add(parentId);
       const parent = this.process(parentId);
@@ -193,7 +200,7 @@ export class ParentRequestService {
       offer.timer.unref();
       this.offers.set(id, offer);
       request.offer = offer;
-      void this.send(parent.id, reviewMessage(offer), request.source.id).catch(next);
+      void this.send(parent.id, reviewMessage(offer), () => this.isCurrent(offer)).catch(next);
       return;
     }
     request.escalated = true;
@@ -260,13 +267,19 @@ function canApprove(source: Process, permission: IntegratedPermission): boolean 
     || permission.resources[0]!.length > 1_000 || source.cwd.length > 1_000) return false;
   try {
     const cwd = realpathSync(source.cwd);
-    const file = realpathSync(path.resolve(cwd, permission.resources[0]!));
+    const requested = path.resolve(cwd, permission.resources[0]!);
+    const file = realpathSync(requested);
     const relative = path.relative(cwd, file);
     return Boolean(relative) && !path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`)
-      && statSync(file).isFile();
+      && !sensitivePath(path.relative(cwd, requested)) && !sensitivePath(relative) && statSync(file).isFile();
   } catch { return false; }
 }
 
+function sensitivePath(relative: string): boolean {
+  return relative.split(path.sep).some((component) =>
+    /^(?:\.env(?:$|[.-])|\.ssh$|\.aws$|\.git$|\.gnupg$|\.npmrc$|\.netrc$|\.pypirc$|\.docker$|\.kube$|id_(?:rsa|ed25519|ecdsa|dsa)(?:$|\.)|(?:secrets?|credentials?)(?:$|[._-]))/i.test(component)
+    || /\.(?:pem|key|p12|pfx|kdbx)$/i.test(component));
+}
 // OpenCode's question tool uses choice forms. Other forms can include
 // third-party inputs or external actions and stay with the user.
 function choiceQuestions(source: Process, form: IntegratedFormRequest): IntegratedQuestionRequest | null {
