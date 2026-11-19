@@ -10,7 +10,7 @@ import type { DatabaseService } from './DatabaseService';
 import { firstSemver, type McpServerSpec } from '../Harness/HarnessProvider';
 import { openCodeMcpConfigs } from '../Harness/McpDelivery';
 import { openCodeProviderNames } from '../Harness/ModelCatalog';
-import type { IntegratedControls, IntegratedFormAction, IntegratedLaunchInput, IntegratedLaunchResult, LiveSettings } from './IntegratedAgentService';
+import type { IntegratedControls, IntegratedFormAction, IntegratedLaunchInput, IntegratedLaunchResult, LiveSettings, ReviewPrompt } from './IntegratedAgentService';
 import { OPENCODE_VERSION_MISMATCH } from './OpenCodeServiceErrors';
 import { UncertainDeliveryError, type IntegratedDeliveryState } from './IntegratedDelivery';
 import type { ResolvedIntegratedPrompt } from './IntegratedInput';
@@ -415,15 +415,28 @@ export class OpenCodeServerService {
     this.memoryChanges.set(processId, changes);
   }
 
-  async prompt(processId: string, input: ResolvedIntegratedPrompt): Promise<{ id: string }> {
+  async prompt(processId: string, input: ResolvedIntegratedPrompt, review?: ReviewPrompt): Promise<{ id: string }> {
     const runtime = this.runtime(processId);
     const files = this.promptFiles(input);
     await this.ensureMcp(runtime);
+    if (review && !review.current()) throw new Error('This request is no longer waiting for this parent');
+    const messageId = review ? `msg_${review.id}` : input.messageId ? `msg_${input.messageId}` : undefined;
+    const cancelOnRevoke = (id: string) => {
+      if (!review) return;
+      const cancel = () => {
+        const route = `/api/session/${encodeURIComponent(runtime.resumeId)}/inbox/${encodeURIComponent(id)}`;
+        void this.api(runtime.executable, runtime.cwd, 'DELETE', route).catch(() => undefined);
+      };
+      // Wait for admission to settle before trying to cancel the native
+      // inbox item, so a slow POST cannot overtake our DELETE.
+      if (review.revoked.aborted) cancel();
+      else review.revoked.addEventListener('abort', cancel, { once: true });
+    };
     try {
       const body = {
         text: input.text.trim(),
         ...(files.length ? { files } : {}),
-        ...(input.messageId ? { id: `msg_${input.messageId}` } : {}),
+        ...(messageId ? { id: messageId } : {}),
         // Like OpenCode's own clients, a prompt sent mid-turn joins the turn
         // at its next model step instead of waiting for it to end.
         delivery: 'steer', resume: true
@@ -431,12 +444,13 @@ export class OpenCodeServerService {
       const route = `/api/session/${encodeURIComponent(runtime.resumeId)}/prompt`;
       const response = (input.attachments.length
         ? await this.inlinePrompt(route, body)
-        : await this.api(runtime.executable, runtime.cwd, 'POST', route, body)) as { data?: { id?: unknown } };
+        : await this.api(runtime.executable, runtime.cwd, 'POST', route, body, review?.current)) as { data?: { id?: unknown } };
       if (typeof response.data?.id !== 'string') {
         throw new Error('OpenCode did not acknowledge the message');
       }
       this.admitted(runtime.resumeId);
-      this.trackPending(processId, runtime.resumeId, response.data.id, input);
+      if (review) cancelOnRevoke(response.data.id);
+      else this.trackPending(processId, runtime.resumeId, response.data.id, input);
       return { id: response.data.id };
     } catch (error) {
       // 4xx responses and pre-execution failures are definitive rejections.
@@ -445,6 +459,7 @@ export class OpenCodeServerService {
       const status = error instanceof ProviderCommandError ? error.status : undefined;
       if (status && status >= 400 && status < 500) throw error;
       if (error instanceof ProviderCommandError && error.definitive) throw error;
+      if (review) cancelOnRevoke(messageId!);
       if (input.messageId) {
         const state = await this.reconcile(processId, input.messageId).catch((): IntegratedDeliveryState => 'unknown');
         if (state === 'accepted') {
@@ -2159,17 +2174,20 @@ export class OpenCodeServerService {
   // the registration is missing or cannot be verified. A refused connection or
   // rejected credential happens before the request runs, so it rediscovers and
   // retries once; a dropped pooled connection does the same for reads only.
-  private async api(executable: string, cwd: string, method: string, route: string, body?: unknown): Promise<unknown> {
-    const response = await this.daemonRequest(method, route, body, false);
-    return response ? response.value : this.cliApi(executable, cwd, method, route, body);
+  private async api(executable: string, cwd: string, method: string, route: string, body?: unknown, current?: () => boolean): Promise<unknown> {
+    const response = await this.daemonRequest(method, route, body, false, current);
+    if (response) return response.value;
+    if (current && !current()) throw new ProviderCommandError('This request is no longer waiting for this parent', undefined, true);
+    return this.cliApi(executable, cwd, method, route, body);
   }
 
   // Resolves null when an optional daemon cannot be used; a required daemon
   // reports why instead.
-  private async daemonRequest(method: string, route: string, body: unknown, required: boolean): Promise<{ value: unknown } | null> {
+  private async daemonRequest(method: string, route: string, body: unknown, required: boolean, current?: () => boolean): Promise<{ value: unknown } | null> {
     for (let attempt = 0; attempt < 2; attempt++) {
       const daemon = required ? await this.daemon() : await this.daemon().catch(() => null);
       if (!daemon) return null;
+      if (current && !current()) throw new ProviderCommandError('This request is no longer waiting for this parent', undefined, true);
       try {
         return { value: await this.daemonApi(daemon, method, route, body) };
       } catch (error) {

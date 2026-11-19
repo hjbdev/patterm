@@ -51,6 +51,8 @@ export interface RaiseNotificationInput {
   dedupeKey?: string | null | undefined;
   // Routine: record it in the app at low urgency, with no toast or push.
   quiet?: boolean | undefined;
+  // The native request has already gone through the agent chain.
+  escalatedRequest?: boolean;
 }
 
 export type RaiseNotificationResult =
@@ -131,8 +133,8 @@ export class NotificationService {
     const input = raw.source === 'terminal' && raw.kind === 'attention' && process?.kind !== 'agent' ? { ...raw, kind: 'message' as const } : raw;
     // Bot ownership survives a restart; its inbox can hold a notice until
     // the next session. Detached agents have no parent relationship.
-    const botChild = Boolean(process?.parent_process_id && process.kind === 'agent' && process.parent_is_bot);
-    const child = Boolean(process?.parent_process_id && (process.parent_running || botChild));
+    const botChild = !input.escalatedRequest && Boolean(process?.parent_process_id && process.kind === 'agent' && process.parent_is_bot);
+    const child = !input.escalatedRequest && Boolean(process?.parent_process_id && (process.parent_running || botChild));
     const title = clean(input.title, TITLE_LIMIT) || (process ? displayName(process.name) : 'Patterm');
     // A child whose parent has gone asks the user directly, and says so.
     const orphaned = Boolean(process?.parent_process_id && !child && input.source === 'mcp');
@@ -149,7 +151,7 @@ export class NotificationService {
 
     // This preference controls notices for the user. Parent routing and the
     // records used by parents remain available, including bot child failures.
-    const mutedSubagent = Boolean(process?.kind === 'agent' && process.parent_process_id
+    const mutedSubagent = !input.escalatedRequest && Boolean(process?.kind === 'agent' && process.parent_process_id
       && !this.settings.notificationSettings().subagentNotifications);
     if (!child && mutedSubagent) return { status: 'suppressed' };
 

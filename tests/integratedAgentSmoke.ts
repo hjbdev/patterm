@@ -119,6 +119,9 @@ async function main(): Promise<void> {
     );
     assert.deepEqual(await uncertain.delivery('process_test', messageId), { state: 'accepted' });
     assert.deepEqual(await service.delivery('process_test', messageId), { state: 'unknown' }, 'no native evidence means unknown');
+    assert.deepEqual(await uncertain.reviewPrompt('process_test', 'Review a subagent question', {
+      id: messageId, revoked: new AbortController().signal, current: () => true
+    }), { delivery: 'uncertain' }, 'a lost acknowledgement does not revoke a possibly delivered offer');
 
     // Repeated ids share in-flight work, replay known acceptances, and reject a
     // changed payload under the same identity.

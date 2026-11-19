@@ -5,7 +5,7 @@ import path from 'node:path';
 import { awaitingActivity, awaitingUser } from './Activity';
 import type { DatabaseService } from './DatabaseService';
 import { detachedHostLauncher, hostConnectionError, integratedHostReady, stopHostProcess, stopRecordedHostProcess, type IntegratedHostLauncher } from './IntegratedHostLauncher';
-import type { IntegratedControls, IntegratedFormAction, IntegratedLaunchInput, IntegratedLaunchResult } from './IntegratedAgentService';
+import type { IntegratedControls, IntegratedFormAction, IntegratedLaunchInput, IntegratedLaunchResult, ReviewPrompt } from './IntegratedAgentService';
 import { elicitationContent, elicitationForm, type ElicitationForm } from './McpElicitation';
 import { TurnBusyError, UncertainDeliveryError, type IntegratedDeliveryState } from './IntegratedDelivery';
 import type { ResolvedIntegratedPrompt } from './IntegratedInput';
@@ -383,7 +383,7 @@ export class CodexAppServerService {
     }
   }
 
-  async prompt(processId: string, input: ResolvedIntegratedPrompt): Promise<{ turnId: string }> {
+  async prompt(processId: string, input: ResolvedIntegratedPrompt, review?: ReviewPrompt): Promise<{ turnId: string }> {
     const runtime = this.runtime(processId);
     const client = await this.client(runtime);
     const items: Array<Record<string, unknown>> = [];
@@ -403,6 +403,7 @@ export class CodexAppServerService {
       mode: this.collaborationModes.get(processId) ?? 'default',
       settings: { model: model ?? await this.defaultModel(client), reasoning_effort: effort ?? null, developer_instructions: null }
     };
+    if (review && !review.current()) throw new Error('This request is no longer waiting for this parent');
     try {
       // clientUserMessageId is correlation only; Codex does not deduplicate.
       const response = record(await client.request('turn/start', {

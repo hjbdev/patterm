@@ -98,10 +98,16 @@ const PATTERM_COMMANDS: IntegratedCommand[] = [
   { name: 'restart', description: 'Restart the agent and resume this conversation, picking up MCP and settings changes', source: 'patterm' }
 ];
 
+export interface ReviewPrompt {
+  id: string;
+  revoked: AbortSignal;
+  current(): boolean;
+}
+
 export interface IntegratedProviderService {  prepare(input: IntegratedLaunchInput): Promise<IntegratedLaunchResult>;
   conversation(processId: string): Promise<unknown>;
   olderMessages?(processId: string, cursor: string): Promise<unknown>;
-  prompt(processId: string, input: ResolvedIntegratedPrompt): Promise<unknown>;
+  prompt(processId: string, input: ResolvedIntegratedPrompt, review?: ReviewPrompt): Promise<unknown>;
   interrupt(processId: string, options?: { resume?: boolean }): Promise<void>;
   // Stops one background task from the snapshot's `tasks`.
   stopTask?(processId: string, taskId: string): Promise<void>;
@@ -210,6 +216,7 @@ export class IntegratedAgentService {
   private readonly observeAttempts = new Map<string, number>();
   private readonly eventListeners = new Set<(processId: string, event: IntegratedConversationEvent) => void>();
   private readonly activityListeners = new Set<(change: IntegratedActivityChange) => void>();
+  private readonly requestListeners = new Set<(processId: string, pending: unknown) => void>();
   private readonly promptDispatchListeners = new Set<(processId: string) => void>();
   private readonly compactionListeners = new Set<(processId: string, signal: CompactionSignal) => void>();
   // Stream events and synthetic marks bump the sequence. Snapshot reads and
@@ -239,6 +246,17 @@ export class IntegratedAgentService {
   onActivityChange(listener: (change: IntegratedActivityChange) => void): () => void {
     this.activityListeners.add(listener);
     return () => { this.activityListeners.delete(listener); };
+  }
+
+  onPendingRequests(listener: (processId: string, pending: unknown) => void): () => void {
+    this.requestListeners.add(listener);
+    return () => { this.requestListeners.delete(listener); };
+  }
+
+  private emitRequests(processId: string, pending: unknown): void {
+    for (const listener of this.requestListeners) {
+      try { listener(processId, pending); } catch { /* a listener must not break observation */ }
+    }
   }
 
   // A new native submission, after deduplication and queue admission, before
@@ -371,6 +389,28 @@ export class IntegratedAgentService {
     return this.whileSending(processId, () => this.submit(processId, input));
   }
 
+  // Expiring offers must not get stuck in Patterm's durable held prompt queue.
+  reviewPrompt(processId: string, text: string, review: ReviewPrompt): Promise<unknown> {
+    const key = this.ledgerKey(processId);
+    return this.whileSending(processId, () => this.serially(this.dispatches, key, async () => {
+      if (!review.current() || this.nextHeld(key) || this.dispatching.has(key) || awaitingUser(this.activity(key))) {
+        throw new Error('Parent cannot review this offer now');
+      }
+      const input = { text, references: [], attachments: [] };
+      const sequence = this.sequence(key);
+      try {
+        const result = await this.sendPrompt(processId, input, review);
+        this.admitted(processId, key, sequence, input, null, result);
+        return result;
+      } catch (error) {
+        // The parent may already have the offer; keep its deadline rather
+        // than escalating immediately or risking a duplicate prompt.
+        if (!(error instanceof UncertainDeliveryError)) throw error;
+        return { delivery: 'uncertain' };
+      }
+    }));
+  }
+
   private async whileSending<T>(processId: string, send: () => Promise<T>): Promise<T> {
     let key: string;
     try { key = this.ledgerKey(processId); } catch { return send(); }
@@ -459,13 +499,14 @@ export class IntegratedAgentService {
   }
 
   // Memory goes first, so the agent reads the prompt with it current.
-  private sendPrompt(processId: string, resolved: ResolvedIntegratedPrompt): Promise<unknown> {
+  private sendPrompt(processId: string, resolved: ResolvedIntegratedPrompt, review?: ReviewPrompt): Promise<unknown> {
     const provider = this.forProcess(processId);
     const send = () => {
+      if (review && !review.current()) throw new Error('This request is no longer waiting for this parent');
       for (const listener of this.promptDispatchListeners) {
         try { listener(this.ledgerKey(processId)); } catch { /* listeners own their failures */ }
       }
-      return provider.prompt(processId, resolved);
+      return provider.prompt(processId, resolved, review);
     };
     if (!this.memory || !provider.updateMemory) return send();
     return this.memory.deliver(this.ledgerKey(processId), (update) => provider.updateMemory!(processId, update))
@@ -1261,6 +1302,7 @@ export class IntegratedAgentService {
   }
 
   private unobserve(key: string): void {
+    this.emitRequests(key, null);
     this.loggedUnhandled.delete(key);
     this.observeAttempts.delete(key);
     const observer = this.observers.get(key);
@@ -1333,6 +1375,8 @@ export class IntegratedAgentService {
         this.markBackgroundTasks(key, runningTasks(record(conversation).tasks));
         this.markGoal(key, openGoalStatus(record(conversation).goal));
         this.markAsking(key, pendingAsk(conversation));
+        const { permissions, questions, forms } = record(conversation);
+        this.emitRequests(key, { permissions, questions, forms });
       }
       // Covers prompts held before a restart, when no transition follows.
       const status = record(conversation).status;

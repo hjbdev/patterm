@@ -4,12 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { CloseProcessAction } from '../app/Actions/CloseProcessAction';
 import { CloseRequestActions } from '../app/Actions/CloseRequestActions';
-import { integratedActivityNotifications, REPLY_PREVIEW_LIMIT } from '../app/Listeners/IntegratedActivityNotifications';
+import { integratedActivityNotifications, REPLY_PREVIEW_LIMIT, type IntegratedActivityNotificationContext } from '../app/Listeners/IntegratedActivityNotifications';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { IDLE_COMPACTION_AFTER_MS, IdleCompactionService, type IdleCompactionSource } from '../app/Services/IdleCompactionService';
 import { IntegratedAgentService, type CompactionSignal, type IntegratedActivityChange, type IntegratedProviderService } from '../app/Services/IntegratedAgentService';
 import type { IntegratedConversationListener } from '../app/Services/IntegratedConversation';
 import { NotificationService } from '../app/Services/NotificationService';
+import { ParentRequestService } from '../app/Services/ParentRequestService';
 import { SettingsService } from '../app/Services/SettingsService';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { removeTree } from './fixtures/TempTree';
@@ -159,7 +160,7 @@ async function main(): Promise<void> {
       async (target, text) => { assert.equal(target, 'bot-parent'); parentMessages.push(text); }, () => {});
     let automaticCompaction = false;
     const pending: Array<Promise<unknown>> = [];
-    const notify = integratedActivityNotifications({
+    const notificationContext: IntegratedActivityNotificationContext = {
       notifications: notices,
       raise: (input) => { pending.push(notices.raise(input)); },
       closeRequests: () => null,
@@ -169,7 +170,8 @@ async function main(): Promise<void> {
       triage: () => ({ quiet: true, reason: 'model', probability: 0.99, waiting: false }),
       botReply: () => null,
       log: () => {}
-    });
+    };
+    const notify = integratedActivityNotifications(notificationContext);
     const event = async (previous: string, next: string, snapshot = false) => {
       notify({ processId: 'agent', previous, activity: next, snapshot });
       await Promise.all(pending.splice(0));
@@ -270,6 +272,114 @@ async function main(): Promise<void> {
       assert.equal(notices.list({ process_id: 'agent' }).items.filter((item) => item.kind === 'failure').length, 1, 'a late acknowledgement cannot resolve the new failure');
     } finally {
       runtime.dispose();
+    }
+
+    db.prepare(`insert into processes (id, project_id, kind, name, status, created_at, updated_at)
+      values ('root', 'project_a', 'agent', 'root', 'running', ?, ?)`).run(at, at);
+    db.prepare(`insert into sessions (id, project_id, process_id, harness, session_role, interface_mode, mcp_identity, started_at)
+      values ('session_root', 'project_a', 'root', 'claude', 'orchestrator', 'integrated', 'root-identity', ?)`).run(at);
+    db.prepare(`update processes set parent_process_id = 'root' where id = 'bot-parent'`).run();
+    db.prepare(`update sessions set interface_mode = 'integrated', mcp_identity = 'parent-identity' where id = 'session_parent'`).run();
+    db.prepare(`update sessions set cwd = ?, harness = 'agy' where id = 'session_agent'`).run(directory);
+    fs.writeFileSync(path.join(directory, 'README.md'), 'example');
+    settings.updateNotificationSettings({ subagentNotifications: false, sources: { integrated_permission: 'all' } });
+    const reviews: Array<{ target: string; offerId: string }> = [];
+    const replies: unknown[] = [];
+    let nativePermissions = [{ id: 'read-1', tool_kind: 'read', once: true, action: 'Read README', resources: ['README.md'] }];
+    let nativeQuestions: Array<{ id: string; questions: Array<{ question: string; options: Array<{ label: string }> }> }> = [];
+    let nativeForms: unknown[] = [];
+    const delegatedProvider: IntegratedProviderService = {
+      ...provider,
+      conversation: async () => ({ status: nativePermissions.length ? 'permission' : nativeQuestions.length || nativeForms.length ? 'question' : 'working', permissions: { data: nativePermissions }, questions: nativeQuestions, forms: nativeForms }),
+      replyPermission: async (...args) => { replies.push(args); nativePermissions = nativePermissions.filter((permission) => permission.id !== args[1]); },
+      replyQuestion: async (...args) => { replies.push(args); nativeQuestions = nativeQuestions.filter((question) => question.id !== args[1]); },
+      replyForm: async (...args) => { replies.push(args); nativeForms = []; }
+    };
+    const agy = new IntegratedAgentService(database, { agy: delegatedProvider, claude: delegatedProvider, opencode: delegatedProvider });
+    const permissionNotices: Array<Promise<unknown>> = [];
+    const permissions = new ParentRequestService(database, agy,
+      async (target, text) => { reviews.push({ target, offerId: /offer_id "([^"]+)"/.exec(text)![1]! }); },
+      (processId, kind) => { permissionNotices.push(notices.raise({ processId, source: 'integrated', kind: 'permission', body: 'Review needed', dedupeKey: `escalation:${kind}`, escalatedRequest: true })); },
+      (processId, kind) => { notices.resolve({ process_id: processId, dedupe_key: `escalation:${kind}` }); }, () => {});
+    agy.onPendingRequests((processId, requests) => permissions.observe(processId, requests));
+    agy.onActivityChange(integratedActivityNotifications({ ...notificationContext, routesRequests: (id) => permissions.handles(id) }));
+    try {
+      agy.observe('agent');
+      await settle();
+      assert.deepEqual(reviews.map((review) => review.target), ['bot-parent']);
+      assert.equal(notices.list({ process_id: 'agent' }).items.some((item) => item.kind === 'permission'), false);
+      const read = reviews[0]!.offerId;
+      await assert.rejects(permissions.reply('session_root', read, { decision: 'once' }), /no longer pending for you/);
+      nativePermissions.push({ id: 'write-2', tool_kind: 'edit', once: true, action: 'Edit README', resources: ['README.md'] });
+      stream!({ processId: 'agent', revision: 6, kind: 'pending' });
+      await settle();
+      assert.deepEqual(reviews.map((review) => review.target), ['bot-parent', 'bot-parent'], 'new requests are routed without repeating pending requests');
+      await permissions.reply('session_parent', read, { decision: 'once' });
+      assert.deepEqual(replies, [['agent', 'read-1', 'once', undefined]]);
+      const edit = reviews[1]!.offerId;
+      await assert.rejects(permissions.reply('session_parent', edit, { decision: 'once' }), /only a one-time read/i);
+      await permissions.reply('session_parent', edit, { decision: 'escalate' });
+      assert.equal(reviews[2]!.target, 'root');
+      await assert.rejects(permissions.reply('session_parent', edit, { decision: 'reject' }), /no longer pending for you/);
+      await permissions.reply('session_root', reviews[2]!.offerId, { decision: 'escalate' });
+      await Promise.all(permissionNotices);
+      assert.ok(notices.list({ process_id: 'agent' }).items.some((item) => item.kind === 'permission' && item.audience === 'user'));
+      assert.equal(nativePermissions.length, 1, 'escalation leaves the native request pending');
+      await agy.replyPermission('agent', 'write-2', 'reject');
+      stream!({ processId: 'agent', revision: 7, kind: 'pending' });
+      await settle();
+      assert.equal(notices.list({ process_id: 'agent' }).items.some((item) => item.kind === 'permission'), false);
+
+      db.prepare(`update sessions set harness = 'claude' where id = 'session_agent'`).run();
+      const question = { question: 'Which test suite did you delegate?', options: [{ label: 'Smoke' }, { label: 'Browser' }] };
+      nativeQuestions = [{ id: 'question-1', questions: [question] }, { id: 'question-2', questions: [question] }];
+      stream!({ processId: 'agent', revision: 8, kind: 'pending' });
+      await settle();
+      assert.deepEqual(reviews.slice(3).map((review) => review.target), ['bot-parent', 'bot-parent']);
+      assert.equal(notices.list({ process_id: 'agent' }).items.some((item) => item.kind === 'permission'), false);
+      const answer = reviews[3]!.offerId;
+      await assert.rejects(permissions.reply('session_parent', answer, { decision: 'answer', answers: [['Unknown']] }), /invalid answer/i);
+      await permissions.reply('session_parent', answer, { decision: 'answer', answers: [['Smoke']] });
+      assert.deepEqual(replies.at(-1), ['agent', 'question-1', [['Smoke']]]);
+      await permissions.reply('session_parent', reviews[4]!.offerId, { decision: 'escalate' });
+      assert.equal(reviews[5]!.target, 'root');
+      await permissions.reply('session_root', reviews[5]!.offerId, { decision: 'escalate' });
+      await Promise.all(permissionNotices);
+      assert.ok(notices.list({ process_id: 'agent' }).items.some((item) => item.kind === 'permission' && item.audience === 'user'));
+      assert.equal(nativeQuestions[0]?.id, 'question-2');
+      await agy.replyQuestion('agent', 'question-2', [['Browser']]);
+      stream!({ processId: 'agent', revision: 9, kind: 'pending' });
+      await settle();
+      assert.equal(notices.list({ process_id: 'agent' }).items.some((item) => item.kind === 'permission'), false);
+
+      db.prepare(`update sessions set harness = 'opencode' where id = 'session_agent'`).run();
+      nativeForms = [{ id: 'form-1', title: 'Questions', fields: [{
+        key: 'suite', type: 'string', required: true, custom: true, options: [{ label: 'Smoke', value: 'smoke' }]
+      }] }];
+      stream!({ processId: 'agent', revision: 10, kind: 'pending' });
+      await settle();
+      assert.equal(reviews[6]!.target, 'bot-parent');
+      await permissions.reply('session_parent', reviews[6]!.offerId, { decision: 'answer', answers: [['Smoke']] });
+      assert.deepEqual(replies.at(-1), ['agent', 'form-1', { suite: 'smoke' }, 'accept']);
+
+      db.prepare(`update sessions set harness = 'agy' where id = 'session_agent'`).run();
+      fs.writeFileSync(path.join(directory, '.env'), 'placeholder');
+      nativePermissions = [{ id: 'sensitive-read', tool_kind: 'read', once: true, action: 'Read file', resources: ['.env'] }];
+      stream!({ processId: 'agent', revision: 11, kind: 'pending' });
+      await settle();
+      const oldOffer = reviews[7]!.offerId;
+      await assert.rejects(permissions.reply('session_parent', oldOffer, { decision: 'once' }), /only a one-time read/i);
+      db.prepare(`update processes set parent_process_id = 'root' where id = 'agent'`).run();
+      stream!({ processId: 'agent', revision: 12, kind: 'pending' });
+      await settle();
+      await assert.rejects(permissions.reply('session_parent', oldOffer, { decision: 'reject' }), /no longer pending for you/);
+      assert.equal(reviews[8]!.target, 'root', 'reparenting offers the unchanged native request to the new parent');
+      await permissions.reply('session_root', reviews[8]!.offerId, { decision: 'escalate' });
+      await Promise.all(permissionNotices);
+      assert.ok(notices.list({ process_id: 'agent' }).items.some((item) => item.kind === 'permission' && item.audience === 'user'));
+    } finally {
+      agy.dispose();
+      permissions.dispose();
     }
   } finally {
     idleCompaction?.dispose();
