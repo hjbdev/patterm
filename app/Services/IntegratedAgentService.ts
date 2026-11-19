@@ -210,6 +210,7 @@ export class IntegratedAgentService {
   private readonly observeAttempts = new Map<string, number>();
   private readonly eventListeners = new Set<(processId: string, event: IntegratedConversationEvent) => void>();
   private readonly activityListeners = new Set<(change: IntegratedActivityChange) => void>();
+  private readonly requestListeners = new Set<(processId: string, pending: unknown) => void>();
   private readonly promptDispatchListeners = new Set<(processId: string) => void>();
   private readonly compactionListeners = new Set<(processId: string, signal: CompactionSignal) => void>();
   // Stream events and synthetic marks bump the sequence. Snapshot reads and
@@ -239,6 +240,17 @@ export class IntegratedAgentService {
   onActivityChange(listener: (change: IntegratedActivityChange) => void): () => void {
     this.activityListeners.add(listener);
     return () => { this.activityListeners.delete(listener); };
+  }
+
+  onPendingRequests(listener: (processId: string, pending: unknown) => void): () => void {
+    this.requestListeners.add(listener);
+    return () => { this.requestListeners.delete(listener); };
+  }
+
+  private emitRequests(processId: string, pending: unknown): void {
+    for (const listener of this.requestListeners) {
+      try { listener(processId, pending); } catch { /* a listener must not break observation */ }
+    }
   }
 
   // A new native submission, after deduplication and queue admission, before
@@ -1261,6 +1273,7 @@ export class IntegratedAgentService {
   }
 
   private unobserve(key: string): void {
+    this.emitRequests(key, null);
     this.loggedUnhandled.delete(key);
     this.observeAttempts.delete(key);
     const observer = this.observers.get(key);
@@ -1333,6 +1346,8 @@ export class IntegratedAgentService {
         this.markBackgroundTasks(key, runningTasks(record(conversation).tasks));
         this.markGoal(key, openGoalStatus(record(conversation).goal));
         this.markAsking(key, pendingAsk(conversation));
+        const { permissions, questions, forms } = record(conversation);
+        this.emitRequests(key, { permissions, questions, forms });
       }
       // Covers prompts held before a restart, when no transition follows.
       const status = record(conversation).status;

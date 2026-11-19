@@ -27,6 +27,7 @@ import type { DatabaseService } from '../Services/DatabaseService';
 import type { HarnessDiscoveryService } from '../Services/HarnessDiscoveryService';
 import { type HarnessLauncher, launchHarnessInput } from '../Services/HarnessLauncher';
 import { sendAgentInput } from '../Services/AgentInputService';
+import type { ParentRequestService } from '../Services/ParentRequestService';
 import { notificationListInput, notifyUserInput, type NotificationActions } from '../Actions/NotificationActions';
 import { AgentHistoryDeleteService } from '../Services/AgentHistory/AgentHistoryDeleteService';
 import { AgentHistoryImportService, historyConfigureInput, historyImportInput } from '../Services/AgentHistory/AgentHistoryImportService';
@@ -99,6 +100,7 @@ interface RegistryServices {
   harnessDiscovery: HarnessDiscoveryService;
   harnessLauncher: HarnessLauncher;
   integrated?: Pick<IntegratedAgentService, 'conversation' | 'peekConversation' | 'olderMessages' | 'prompt' | 'files' | 'delivery' | 'interrupt' | 'stopTask' | 'taskOutput' | 'updateQueued' | 'replyPermission' | 'replyQuestion' | 'replyForm' | 'controls' | 'configure' | 'command' | 'goal' | 'isEmpty' | 'liveSettings' | 'sessionDirectory'>;
+  parentRequests?: Pick<ParentRequestService, 'reply'>;
   transcriptImages?: Pick<TranscriptImageStore, 'read' | 'fromFile'>;
   figureVideos?: Pick<FigureVideoStore, 'fromFile'>;
   // Saved html_render templates, shared by the workspace.
@@ -220,6 +222,11 @@ const integratedCommandInput = processIdInput.extend({ name: z.string().min(1).m
 const integratedGoalInput = processIdInput.extend({ action: z.enum(['set', 'pause', 'resume', 'clear']), objective: z.string().trim().min(1).max(20_000).optional() })
   .refine((input) => input.action !== 'set' || input.objective, { message: 'Describe when the work is done', path: ['objective'] });
 const integratedPermissionInput = processIdInput.extend({ request_id: z.string().min(1), reply: z.enum(['once', 'always', 'reject']), message: z.string().max(10_000).optional() });
+const parentRequestInput = z.object({
+  offer_id: z.string().uuid(),
+  decision: z.enum(['once', 'reject', 'answer', 'escalate']),
+  answers: z.array(z.array(z.string().max(10_000)).max(20)).max(20).optional()
+}).strict().refine(({ decision, answers }) => (decision === 'answer') === (answers !== undefined), { message: 'Provide answers only with decision "answer"' });
 const integratedTaskInput = processIdInput.extend({ task_id: z.string().min(1).max(500) });
 const integratedTaskOutputInput = integratedTaskInput.extend({ since: z.string().max(100).nullish(), cursor: z.string().max(2_000).nullish() });
 const integratedQueueInput = processIdInput.extend({ message_id: z.string().min(1).max(500), action: z.enum(['steer', 'cancel']) });
@@ -1283,6 +1290,24 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     const result = await services.notifications.notifyUser(current.process_id, args);
     return 'notification' in result ? { status: result.status, notification_id: result.notification.id } : result;
   });
+  if (services.parentRequests) {
+    const requests = services.parentRequests;
+    registry.register({
+      name: 'parent_request_reply',
+      namespace: 'cli.coordination',
+      description: 'Answer a subagent question or review a subagent permission offered to you by Patterm. Escalation passes the same request to the next parent or the user.',
+      usageNotes: ['Use the offer_id from the Patterm message. For a question, answer from task context or escalate. For a permission, approve clearly authorised Antigravity workspace file reads once, reject inappropriate requests, or escalate.'],
+      inputSchema: { type: 'object', required: ['offer_id', 'decision'] },
+      changes: [],
+      unavailable: (context) => !context.identity || context.remote ? 'Only local agents can review subagent requests' : null
+    }, (args, context) => {
+      const current = caller(context);
+      if (!current?.process_id || context.remote) throw new Error('Request review requires an authenticated local agent');
+      const input = parentRequestInput.parse(args);
+      return requests.reply(current.session_id, input.offer_id, input.decision === 'answer'
+        ? { decision: 'answer', answers: input.answers! } : { decision: input.decision });
+    });
+  }
   const registerFigureTemplateTools = (templates: FigureTemplateService, unavailable: (tool: string) => (context: McpCallContext) => string | null) => {
     registry.register({
       name: 'template_list',
@@ -2435,6 +2460,7 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     send_message: messageInput,
     report_to_parent: reportToParentInput,
     notify_user: notifyUserInput,
+    parent_request_reply: parentRequestInput,
     request_close: requestCloseInput,
     'notification_list': notificationListInput,
     timer_set: timerSetInput,

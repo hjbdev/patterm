@@ -436,10 +436,14 @@ function receive(frame: Row): void {
     const patch = diffPreview(tool.content);
     const id = String(frame.id);
     const command = tool.rawInput?.command ?? tool.rawInput?.CommandLine;
+    const target = tool.rawInput?.Path ?? tool.rawInput?.path;
+    const resources = tool.locations?.map((location: Row) => location.path) ?? [];
+    if (typeof target === 'string' && !resources.includes(target)) resources.push(target);
+    const toolKind = tool.kind === 'read' || ((tool.kind == null || tool.kind === 'other') && ['view_file', 'read_file'].includes(tool.name)) ? 'read' : tool.kind ?? tool.name;
     const once = (params.options ?? []).find((option: Row) => option.kind === 'allow_once');
     const always = (params.options ?? []).find((option: Row) => option.kind === 'allow_always');
     const reject = (params.options ?? []).find((option: Row) => option.kind === 'reject_once');
-    permissions.set(id, { id, rpcId: frame.id, options: params.options ?? [], action: tool.title ?? 'Tool permission', resources: tool.locations?.map((location: Row) => location.path) ?? [], ...(patch ? { patch } : {}), ...(typeof command === 'string' ? { command } : {}), ...(typeof tool.rawInput?.Reason === 'string' ? { detail: tool.rawInput.Reason } : {}), always: Boolean(always), ...(once ? { onceLabel: once.name } : {}), ...(always ? { alwaysLabel: always.name } : {}), ...(reject ? { rejectLabel: reject.name } : {}) });
+    permissions.set(id, { id, rpcId: frame.id, options: params.options ?? [], action: tool.title ?? 'Tool permission', resources, tool_kind: toolKind, ...(patch ? { patch } : {}), ...(typeof command === 'string' ? { command } : {}), ...(typeof tool.rawInput?.Reason === 'string' ? { detail: tool.rawInput.Reason } : {}), once: Boolean(once), always: Boolean(always), ...(once ? { onceLabel: once.name } : {}), ...(always ? { alwaysLabel: always.name } : {}), ...(reject ? { rejectLabel: reject.name } : {}) });
     block = null; backgroundActivity(); state(); publish({ kind: 'pending' }); return;
   }
   if (frame.method !== 'session/update') {

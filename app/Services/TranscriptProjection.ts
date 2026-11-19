@@ -110,7 +110,10 @@ export interface TranscriptAttachment {
 export interface IntegratedPermission {
   id: string;
   action: string;
+  toolKind?: string;
   resources: string[];
+  // Only set when the provider reports whether one-time approval is available.
+  once?: boolean;
   // False when the provider cannot persist a rule for this request.
   always?: boolean;
   // Truthful scope label for the persistent action (for example a session rule).
@@ -543,7 +546,8 @@ export function normalisePermissions(value: unknown): IntegratedPermission[] {
   return rows(value).flatMap((raw) => {
     const row = record(raw);
     if (!stringField(row.id)) return [];
-    const alwaysLabel = stringField(row.always_label);
+    const alwaysLabel = stringField(row.always_label ?? row.alwaysLabel);
+    const toolKind = stringField(row.tool_kind);
     const optional = (key: 'detail' | 'command' | 'cwd' | 'patch' | 'plan' | 'onceLabel' | 'rejectLabel', source: unknown) => {
       const value = stringField(source);
       return value ? { [key]: value } : {};
@@ -551,11 +555,13 @@ export function normalisePermissions(value: unknown): IntegratedPermission[] {
     return [{
       id: row.id as string,
       action: String(row.action ?? 'Request'),
+      ...(toolKind ? { toolKind } : {}),
       resources: Array.isArray(row.resources) ? row.resources.map(String) : [],
+      ...(typeof row.once === 'boolean' ? { once: row.once } : {}),
       ...(row.always === false ? { always: false } : {}),
       ...(alwaysLabel ? { alwaysLabel } : {}),
-      ...optional('onceLabel', row.once_label),
-      ...optional('rejectLabel', row.reject_label),
+      ...optional('onceLabel', row.once_label ?? row.onceLabel),
+      ...optional('rejectLabel', row.reject_label ?? row.rejectLabel),
       ...optional('detail', row.detail),
       ...optional('command', row.command),
       ...optional('cwd', row.cwd),

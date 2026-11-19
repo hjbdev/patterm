@@ -7,6 +7,7 @@ import type { TriageDecision } from '../Services/NotificationTriage';
 export interface IntegratedActivityNotificationContext {
   notifications: Pick<NotificationService, 'turnActivity' | 'waiting' | 'resolveHandled' | 'resolve'>;
   raise(input: Parameters<NotificationService['raise']>[0]): void;
+  routesRequests?(processId: string): boolean;
   // Created after this listener is registered.
   closeRequests(): Pick<CloseRequestActions, 'clear' | 'pending' | 'announce'> | null;
   isAssistant(processId: string): boolean;
@@ -39,6 +40,7 @@ export function integratedActivityNotifications(context: IntegratedActivityNotif
       context.notifications.resolve({ process_id: processId, kinds: ['failure'], dedupe_key: 'failure' });
     }
     if (awaitingUser(activity)) {
+      if (context.routesRequests?.(processId)) return;
       void context.notifications.waiting(processId, previous, activity).catch((error: unknown) => {
         context.log('raise.failed', { source: 'integrated', kind: 'permission', message: error instanceof Error ? error.message : String(error) });
       });

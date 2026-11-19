@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Integrated subagent permissions and questions go to their parent first.
+  Parents can answer native questions, approve Antigravity workspace file reads
+  once, deny a permission, or pass a request up the chain. If no parent can
+  handle it, the user gets a notification linked to the original subagent.
+
 - Antigravity CLI (`agy`) in Integrated mode through its native ACP server:
   streamed replies and tools, permissions, cancellation, session loading,
   model and thinking controls, presets, bots and routines. Sign in with

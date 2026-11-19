@@ -122,6 +122,10 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
    result(q.id,{stopReason:'max_tokens'});prompt=null;return;
   }
   if(text==='failure-after-echo') return out({id:q.id,error:{code:-32000,message:'Native acknowledged turn failed'}});
+   if(text==='read-permission') {
+    out({id:41,method:'session/request_permission',params:{sessionId:'native-session',toolCall:{toolCallId:'read',kind:'read',title:'Read file',rawInput:{Path:'probe.txt'}},options:[{optionId:'allow',kind:'allow_once',name:'Allow'}]}});
+    return;
+   }
    if(['permission','cancel','mcp','unknown-mcp','spoof-mcp','always'].includes(text)) return permission(text);
    if(text==='flood') {
     for(let i=0;i<450;i++) update({sessionUpdate:'tool_call',toolCallId:'flood-'+i,name:'read_file',status:'completed'});
@@ -318,6 +322,14 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     await provider.replyPermission('process', '41', 'reject');
     state = await waitFor(provider, (state) => state.status === 'idle');
     assert(state.messages.data.some((row: any) => row.text.includes('"optionId":"deny"')));
+
+    await ask('read-permission');
+    state = await waitFor(provider, (snapshot) => snapshot.status === 'permission');
+    assert.equal(state.permissions.data[0].tool_kind, 'read');
+    assert.equal(state.permissions.data[0].once, true);
+    assert.deepEqual(state.permissions.data[0].resources, ['probe.txt']);
+    await provider.replyPermission('process', state.permissions.data[0].id, 'once');
+    await waitFor(provider, (snapshot) => snapshot.status === 'idle');
 
     await provider.prompt('process', { text: 'cancel', references: [], attachments: [] });
     await waitFor(provider, (state) => state.status === 'permission');

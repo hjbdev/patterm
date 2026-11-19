@@ -11,6 +11,7 @@ import { registerBotTools } from './MCP/registerBotTools';
 import { BotService } from './Services/BotService';
 import { claudeConversationSaved } from './Services/ClaudeTaskOutput';
 import { integratedActivityNotifications } from './Listeners/IntegratedActivityNotifications';
+import { ParentRequestService } from './Services/ParentRequestService';
 import { integratedHistoryCheckpoints } from './Listeners/IntegratedHistoryCheckpoints';
 import { registerHostTools } from './MCP/registerHostTools';
 import { registerProjectTools } from './MCP/registerProjectTools';
@@ -412,6 +413,12 @@ async function createApplicationResources(
       debugLog.write('notifications', 'raise.failed', { source: input.source, kind: input.kind, message: error instanceof Error ? error.message : String(error) });
     });
   };
+  const parentRequests = new ParentRequestService(database, integrated, messageProcess,
+    (processId, kind) => raiseNotification({ processId, source: 'integrated', kind: 'permission', body: kind === 'permission' ? 'A subagent permission needs your decision' : 'A subagent question needs your answer', dedupeKey: `integrated:escalated_${kind}`, escalatedRequest: true }),
+    (processId, kind) => { notificationService.resolve({ process_id: processId, dedupe_key: `integrated:escalated_${kind}` }); },
+    (event, data) => debugLog.write('notifications', event, data));
+  defer(() => parentRequests.dispose());
+  defer(integrated.onPendingRequests((processId, pending) => parentRequests.observe(processId, pending)));
   const turnDigests = new TurnDigests();
   defer(integrated.onConversationEvent((processId, event) => turnDigests.observe(processId, event)));
   // A bot's turn notification shows only a reply from that turn.
@@ -437,6 +444,7 @@ async function createApplicationResources(
   defer(integrated.onActivityChange(integratedActivityNotifications({
     notifications: notificationService,
     raise: raiseNotification,
+    routesRequests: (processId) => parentRequests.handles(processId),
     closeRequests: () => closeRequests,
     isAssistant: (processId) => Boolean(database.connection.prepare(`select 1 from sessions where process_id = ? and session_role = 'assistant'`).get(processId)),
     wokeFromSnooze: (processId) => snoozes.announcedWake(processId),
@@ -792,6 +800,7 @@ async function createApplicationResources(
     harnessDiscovery,
     harnessLauncher,
     integrated,
+    parentRequests,
     transcriptImages,
     figureVideos,
     figureTemplates: new FigureTemplateService(database),
