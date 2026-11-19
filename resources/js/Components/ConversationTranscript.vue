@@ -229,7 +229,7 @@ const figures = computed(() => {
   }
   return byId;
 });
-const rows = computed(() => groupTranscriptMessages(props.messages));
+const rows = computed(() => groupTranscriptMessages(props.messages, { working: props.working }));
 provide(figuresKey, figures);
 // A question the user already answered stays answered when the page redraws.
 provide(figureAnsweredKey, computed(() => figureAnswers(props.messages)));

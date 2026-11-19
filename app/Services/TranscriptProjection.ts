@@ -1228,6 +1228,9 @@ const CLOSE_HINT = /\s*Close it with close_process once its work is settled, or 
 const PATTERM_MESSAGE = /^\[Patterm (timer|notifications|focus digest)\b([^\n]*?)\](?:\r?\n|$)/;
 const PATTERM_LABELS: Record<string, string> = { timer: 'Timer', notifications: 'Notifications', 'focus digest': 'Focus digest' };
 const REPLY_HINT = /\s*\(Reply with send_message target_process_id "assistant"\.\)\s*$/;
+export const QUIET_NOTIFICATION_REPLY = 'NO_REPLY';
+export const QUIET_NOTIFICATION_HEADER = `[Patterm notifications; quiet reply: ${QUIET_NOTIFICATION_REPLY}]`;
+export const QUIET_NOTIFICATION_INSTRUCTION = `For this digest only, if there is nothing the user needs to hear, finish with exactly ${QUIET_NOTIFICATION_REPLY} and no other text. Otherwise reply normally. If the user also asks something, answer them normally.`;
 
 // Reads the headers Patterm puts on text it types into an agent. The headers
 // stay in the agent's transcript so the agent knows the user did not write
@@ -1246,7 +1249,14 @@ export function transcriptMessageOrigin(message: TranscriptMessage): TranscriptO
   match = CHILD_NOTICE.exec(text);
   if (match) return { kind: 'agent', processId: match[2]!, ...(match[3] ? { name: match[3] } : {}), ...(match[1] === 'Failure reported' ? { status: 'failure' } : {}), body: text.slice(match[0].length) };
   match = PATTERM_MESSAGE.exec(text);
-  if (match) return { kind: 'patterm', label: PATTERM_LABELS[match[1]!]!, detail: match[2]!.trim(), body: text.slice(match[0].length) };
+  if (match) {
+    const quiet = match[0].trimEnd() === QUIET_NOTIFICATION_HEADER;
+    const body = text.slice(match[0].length);
+    return {
+      kind: 'patterm', label: PATTERM_LABELS[match[1]!]!, detail: quiet ? '' : match[2]!.trim(),
+      body: quiet && body.startsWith(`${QUIET_NOTIFICATION_INSTRUCTION}\n`) ? body.slice(QUIET_NOTIFICATION_INSTRUCTION.length + 1) : body
+    };
+  }
   return undefined;
 }
 
@@ -1284,8 +1294,9 @@ export function nestSubagentMessages(messages: TranscriptMessage[]): TranscriptM
 // and stay visible, and a lone thought stays a normal row. The group id
 // follows its first member so live appends keep the row, its expansion, and
 // its counters stable.
-export function groupTranscriptMessages(input: TranscriptMessage[]): TranscriptRow[] {
+export function groupTranscriptMessages(input: TranscriptMessage[], { working = false } = {}): TranscriptRow[] {
   const messages = nestSubagentMessages(input);
+  const quietReplies = quietNotificationReplies(messages, working);
   const result: TranscriptRow[] = [];
   let group: TranscriptMessage[] = [];
   const flush = (): void => {
@@ -1298,6 +1309,7 @@ export function groupTranscriptMessages(input: TranscriptMessage[]): TranscriptR
     group = [];
   };
   for (const message of messages) {
+    if (quietReplies.has(message)) continue;
     // Native providers may send an empty/redacted thinking block before the
     // next content block. Keep it in the stream state, but not as a blank row.
     if (message.role === 'assistant' && message.kind !== 'tool' && !message.text.trim()) continue;
@@ -1316,6 +1328,28 @@ export function groupTranscriptMessages(input: TranscriptMessage[]): TranscriptR
   }
   flush();
   return result;
+}
+
+function quietNotificationReplies(messages: TranscriptMessage[], working: boolean): Set<TranscriptMessage> {
+  const hidden = new Set<TranscriptMessage>();
+  let parts: TranscriptMessage[] | null = null;
+  const finish = (streaming = false) => {
+    if (!parts?.length) return;
+    const text = parts.map((part) => part.text).join('').trim();
+    if (text === QUIET_NOTIFICATION_REPLY || (streaming && QUIET_NOTIFICATION_REPLY.startsWith(text))) {
+      for (const part of parts) hidden.add(part);
+    }
+  };
+  for (const message of messages) {
+    if (message.role === 'user') {
+      finish();
+      parts = message.kind === 'text' && !message.parentId && message.text.split(/\r?\n/, 1)[0] === QUIET_NOTIFICATION_HEADER ? [] : null;
+    } else if (message.kind === 'text' && !message.parentId) {
+      parts?.push(message);
+    }
+  }
+  finish(working);
+  return hidden;
 }
 
 // A call to Patterm's html_render. Claude shows mcp__patterm__html_render,

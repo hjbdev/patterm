@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The built-in assistant can finish a routine notification digest quietly when
+  using OpenCode's Claude Agent provider, without Claude retrying the silent turn
+  or showing an acknowledgement in the conversation.
+
 - Integrated Antigravity confirms plain-text prompts from their native receipt
   when the CLI starts a turn without echoing the message over ACP.
 - Integrated Antigravity shows work and asks for approval when a background

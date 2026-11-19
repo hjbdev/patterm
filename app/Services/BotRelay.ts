@@ -11,6 +11,7 @@ import type { BotFocusState, BotInbox, BotInboxItem } from './BotInbox';
 import { AssistantMemoryService } from './AssistantMemoryService';
 import { ASSISTANT_BOT_ID, purviewAllows, type Bot } from '../Bots/BotSettings';
 import type { BotService } from './BotService';
+import { QUIET_NOTIFICATION_HEADER, QUIET_NOTIFICATION_INSTRUCTION } from './TranscriptProjection';
 
 // Notifications arriving together are summarised in one message.
 const DIGEST_DELAY_MS = 5_000;
@@ -314,7 +315,9 @@ export class BotRelay {
         await this.codex.realtimeAppendText(processId,
           `[System notification, not from the user. Briefly tell the user what needs their attention.]\n${lines.join('\n')}`);
       } else {
-        await this.integrated.prompt(processId, `[Patterm notifications]\n${lines.join('\n')}`);
+        const quiet = bot.id === ASSISTANT_BOT_ID && bot.harness === 'opencode' && bot.model?.startsWith('claude-agent/');
+        const heading = quiet ? `${QUIET_NOTIFICATION_HEADER}\n${QUIET_NOTIFICATION_INSTRUCTION}` : '[Patterm notifications]';
+        await this.integrated.prompt(processId, `${heading}\n${lines.join('\n')}`);
       }
     } catch (error) {
       this.log('digest.failed', { bot_id: botId, count: batch.length, message: errorMessage(error) });

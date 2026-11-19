@@ -447,7 +447,15 @@ async function main(): Promise<void> {
     setAssistant(settings, { harness: 'claude', model: null });
     assert.equal(assistant.state().voice.available, false);
     await assert.rejects(assistant.startVoice('on-claude'), /no voice/);
-    setAssistant(settings, { harness: 'codex', model: 'gpt-fast' });
+    for (const [model, quiet] of [['anthropic/claude-opus', false], ['claude-agent/opus', true]] as const) {
+      setAssistant(settings, { harness: 'opencode', model, digests: true });
+      assistant.handleNotification({ type: 'raised', notification: notification(`digest-${model}`, { kind: 'attention' }) });
+      await wait(40);
+      assert.equal(prompts.at(-1)?.includes('finish with exactly NO_REPLY'), quiet);
+      assert.match(prompts.at(-1)!, /Otherwise reply normally|^\[Patterm notifications\]/);
+      assert.match(prompts.at(-1)!, /\[attention\].*Waiting for your permission/);
+    }
+    setAssistant(settings, { harness: 'codex', model: 'gpt-fast', digests: false });
 
     // A launch already under way when it is turned off is stopped without
     // delivering what the inbox holds; the next launch delivers it.
