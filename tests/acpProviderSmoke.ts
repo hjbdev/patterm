@@ -20,7 +20,7 @@ import { removeTree } from './fixtures/TempTree';
 async function main(): Promise<void> {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-acp-'));
   const trace = path.join(directory, 'trace.jsonl');
-  // Native ACP shapes captured from agy 1.5.8. No real CLI or model is used.
+  // Native ACP shapes captured from agy. No real CLI or model is used.
   const executable = writeNodeCli(path.join(directory, 'agy'), String.raw`
 const fs = require('node:fs');
 const out = frame => process.stdout.write(JSON.stringify({jsonrpc:'2.0',...frame})+'\n');
@@ -58,7 +58,16 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
  if(q.method==='session/prompt') {
   const text=q.params.prompt[0].text;prompt=q.id;
   if(text==='late') {setTimeout(()=>{echo(text);say('Late accepted');result(prompt,{stopReason:'end_turn'});prompt=null;},8300);return;}
-  if(text==='failure') return out({id:q.id,error:{code:-32000,message:'Native turn failed'}});
+   if(text==='failure') return out({id:q.id,error:{code:-32000,message:'Native turn failed'}});
+   if(text==='no-live-echo') {
+    say('Working before the prompt response');
+    update({sessionUpdate:'tool_call',toolCallId:'no-echo-read',name:'read_file',status:'completed'});
+    const timer=setInterval(()=>{
+     if(!fs.existsSync(process.env.ACP_TRACE+'.no-echo-done')) return;
+     clearInterval(timer);result(q.id,{stopReason:'end_turn'});prompt=null;
+    },5);
+    return;
+   }
   if(text==='reject-after-background-update') {
    say('Unrelated background output');
    update({sessionUpdate:'tool_call_update',toolCallId:'deferred',status:'completed'});
@@ -150,7 +159,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
 `);
   const database = new DatabaseService(directory);
   const hosts = new IntegratedTestHosts();
-  const env = { ...process.env, ACP_TRACE: trace, PATTERM_ACP_BACKGROUND_QUIET_MS: '1000', PATTERM_ACP_CANCEL_TIMEOUT_MS: '250' };
+  const env = { ...process.env, HOME: directory, USERPROFILE: directory, ACP_TRACE: trace, PATTERM_ACP_BACKGROUND_QUIET_MS: '1000', PATTERM_ACP_CANCEL_TIMEOUT_MS: '250' };
   const images = new TranscriptImageStore(path.join(directory, 'images'));
   const service = () => new AcpProviderService(database, directory, process.execPath, env, undefined, hosts, images);
   const provider = service();
@@ -352,6 +361,25 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       fs.rmSync(settingsDirectory);
       fs.renameSync(settingsDirectory + '.saved', settingsDirectory);
     }
+
+    // agy 1.5.12 records the input in its transcript but does not echo it
+    // over ACP. Keep the RPC open until delivery is verified.
+    const nativeLog = path.join(directory, '.gemini', 'antigravity-cli', 'brain', prepared.resumeId!, '.system_generated', 'logs', 'transcript.jsonl');
+    fs.mkdirSync(path.dirname(nativeLog), { recursive: true });
+    const inputRow = (step: number) => JSON.stringify({ step_index: step, type: 'USER_INPUT', source: 'USER_EXPLICIT', content: '<USER_REQUEST>\nno-live-echo\n</USER_REQUEST>\n' });
+    fs.writeFileSync(nativeLog, inputRow(0) + '\n');
+    const noEcho = provider.prompt('process', { text: 'no-live-echo', references: [], attachments: [], messageId: 'logged-id' });
+    void noEcho.catch(() => {});
+    await waitFor(provider, (snapshot) => snapshot.messages.data.some((row: any) => row.id === 'tool:no-echo-read'));
+    assert.equal(await provider.reconcile('process', 'logged-id'), 'unknown', 'old identical text and live assistant activity are not delivery evidence');
+    fs.appendFileSync(nativeLog, inputRow(1) + '\n');
+    await noEcho;
+    assert.equal(await provider.reconcile('process', 'logged-id'), 'accepted');
+    state = await provider.conversation('process');
+    assert.equal(state.status, 'working', 'delivery does not finish the turn');
+    assert.equal(state.messages.data.filter((row: any) => row.clientMessageId === 'logged-id').length, 1);
+    fs.writeFileSync(trace + '.no-echo-done', '');
+    await waitFor(provider, (snapshot) => snapshot.status === 'idle');
 
     await assert.rejects(provider.prompt('process', { text: 'late', references: [], attachments: [], messageId: 'late-id' }), UncertainDeliveryError);
     await waitFor(provider, (state) => state.status === 'idle');
