@@ -98,10 +98,16 @@ const PATTERM_COMMANDS: IntegratedCommand[] = [
   { name: 'restart', description: 'Restart the agent and resume this conversation, picking up MCP and settings changes', source: 'patterm' }
 ];
 
+export interface ReviewPrompt {
+  id: string;
+  revoked: AbortSignal;
+  current(): boolean;
+}
+
 export interface IntegratedProviderService {  prepare(input: IntegratedLaunchInput): Promise<IntegratedLaunchResult>;
   conversation(processId: string): Promise<unknown>;
   olderMessages?(processId: string, cursor: string): Promise<unknown>;
-  prompt(processId: string, input: ResolvedIntegratedPrompt): Promise<unknown>;
+  prompt(processId: string, input: ResolvedIntegratedPrompt, review?: ReviewPrompt): Promise<unknown>;
   interrupt(processId: string, options?: { resume?: boolean }): Promise<void>;
   // Stops one background task from the snapshot's `tasks`.
   stopTask?(processId: string, taskId: string): Promise<void>;
@@ -384,18 +390,25 @@ export class IntegratedAgentService {
   }
 
   // Expiring offers must not get stuck in Patterm's durable held prompt queue.
-  reviewPrompt(processId: string, text: string, current: () => boolean): Promise<unknown> {
+  reviewPrompt(processId: string, text: string, review: ReviewPrompt): Promise<unknown> {
     const key = this.ledgerKey(processId);
-    return this.serially(this.dispatches, key, async () => {
-      if (!current() || this.nextHeld(key) || this.dispatching.has(key) || awaitingUser(this.activity(key))) {
+    return this.whileSending(processId, () => this.serially(this.dispatches, key, async () => {
+      if (!review.current() || this.nextHeld(key) || this.dispatching.has(key) || awaitingUser(this.activity(key))) {
         throw new Error('Parent cannot review this offer now');
       }
       const input = { text, references: [], attachments: [] };
       const sequence = this.sequence(key);
-      const result = await this.sendPrompt(processId, input, current);
-      this.admitted(processId, key, sequence, input, null, result);
-      return result;
-    });
+      try {
+        const result = await this.sendPrompt(processId, input, review);
+        this.admitted(processId, key, sequence, input, null, result);
+        return result;
+      } catch (error) {
+        // The parent may already have the offer; keep its deadline rather
+        // than escalating immediately or risking a duplicate prompt.
+        if (!(error instanceof UncertainDeliveryError)) throw error;
+        return { delivery: 'uncertain' };
+      }
+    }));
   }
 
   private async whileSending<T>(processId: string, send: () => Promise<T>): Promise<T> {
@@ -486,14 +499,14 @@ export class IntegratedAgentService {
   }
 
   // Memory goes first, so the agent reads the prompt with it current.
-  private sendPrompt(processId: string, resolved: ResolvedIntegratedPrompt, current?: () => boolean): Promise<unknown> {
+  private sendPrompt(processId: string, resolved: ResolvedIntegratedPrompt, review?: ReviewPrompt): Promise<unknown> {
     const provider = this.forProcess(processId);
     const send = () => {
-      if (current && !current()) throw new Error('This request is no longer waiting for this parent');
+      if (review && !review.current()) throw new Error('This request is no longer waiting for this parent');
       for (const listener of this.promptDispatchListeners) {
         try { listener(this.ledgerKey(processId)); } catch { /* listeners own their failures */ }
       }
-      return provider.prompt(processId, resolved);
+      return provider.prompt(processId, resolved, review);
     };
     if (!this.memory || !provider.updateMemory) return send();
     return this.memory.deliver(this.ledgerKey(processId), (update) => provider.updateMemory!(processId, update))

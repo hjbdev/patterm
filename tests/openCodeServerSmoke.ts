@@ -606,6 +606,19 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
       ['DELETE', 'inbox/msg_q1', undefined]
     ]);
 
+    const reviewId = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+    const revoked = new AbortController();
+    const reviewInput = { text: 'Review a subagent question', references: [], attachments: [] };
+    const offer = { id: reviewId, revoked: revoked.signal, current: () => !revoked.signal.aborted };
+    const admittedReview = await queueService.prompt('process_0', reviewInput, offer);
+    assert.equal(admittedReview.id, `msg_${reviewId}`);
+    revoked.abort();
+    await waitFor(() => fs.readFileSync(record, 'utf8').split('\n').some((line) =>
+      line.includes('"method":"DELETE"') && line.includes(`/inbox/${admittedReview.id}`)));
+    await assert.rejects(queueService.prompt('process_0', reviewInput, offer), /no longer waiting/);
+    assert.equal(fs.readFileSync(record, 'utf8').split('\n').filter((line) =>
+      line.includes('"method":"POST"') && line.includes(admittedReview.id)).length, 1, 'only the current offer reaches native admission');
+
     // An accepted steer is tracked until the transcript shows it. One that
     // leaves the inbox without arriving is flagged, never passed off as
     // delivered; dismissing it needs no native call.

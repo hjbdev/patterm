@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import type { DatabaseService } from './DatabaseService';
-import type { IntegratedAgentService } from './IntegratedAgentService';
+import type { IntegratedAgentService, ReviewPrompt } from './IntegratedAgentService';
 import {
   buildFormAnswer, formAsQuestions, formOptionValue, normaliseForms, normalisePermissions, normaliseQuestions,
   type IntegratedFormRequest, type IntegratedPermission, type IntegratedQuestionRequest
@@ -45,6 +45,7 @@ interface Offer {
   request: Request;
   parent: Process;
   timer: NodeJS.Timeout;
+  controller: AbortController;
 }
 
 export type ParentRequestReply =
@@ -58,7 +59,7 @@ export class ParentRequestService {
   constructor(
     private readonly database: DatabaseService,
     private readonly integrated: Pick<IntegratedAgentService, 'peekConversation' | 'replyPermission' | 'replyQuestion' | 'replyForm'>,
-    private readonly send: (to: string, text: string, current: () => boolean) => Promise<unknown>,
+    private readonly send: (to: string, text: string, review: ReviewPrompt) => Promise<unknown>,
     private readonly notifyUser: (processId: string, kind: RequestKind) => void,
     private readonly clearNotice: (processId: string, kind: RequestKind) => void,
     private readonly log: (event: string, data: Record<string, unknown>) => void
@@ -162,8 +163,7 @@ export class ParentRequestService {
   }
 
   dispose(): void {
-    for (const offer of this.offers.values()) clearTimeout(offer.timer);
-    this.offers.clear();
+    for (const offer of this.offers.values()) this.revoke(offer.request);
     this.requests.clear();
   }
 
@@ -196,11 +196,11 @@ export class ParentRequestService {
         }
         this.advance(request, this.process(parent.id)?.parent_process_id ?? null);
       };
-      const offer: Offer = { id, request, parent, timer: setTimeout(next, REVIEW_MS) };
+      const offer: Offer = { id, request, parent, timer: setTimeout(next, REVIEW_MS), controller: new AbortController() };
       offer.timer.unref();
       this.offers.set(id, offer);
       request.offer = offer;
-      void this.send(parent.id, reviewMessage(offer), () => this.isCurrent(offer)).catch(next);
+      void this.send(parent.id, reviewMessage(offer), { id, revoked: offer.controller.signal, current: () => this.isCurrent(offer) }).catch(next);
       return;
     }
     request.escalated = true;
@@ -216,9 +216,11 @@ export class ParentRequestService {
 
   private revoke(request: Request): void {
     if (!request.offer) return;
-    clearTimeout(request.offer.timer);
-    this.offers.delete(request.offer.id);
+    const { id, controller, timer } = request.offer;
+    clearTimeout(timer);
+    this.offers.delete(id);
     request.offer = null;
+    controller.abort();
   }
 
   private isCurrent(offer: Offer): boolean {
