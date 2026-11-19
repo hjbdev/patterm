@@ -9,6 +9,7 @@ import { killProcessTree } from '../Platform/ProcessTree';
 import type { IntegratedConversationMessage } from '../Services/IntegratedConversation';
 import { TranscriptImageStore } from '../Services/TranscriptImageStore';
 import { readAcpSettings, writeAcpSettings } from '../Services/AcpSessionSettings';
+import { watchAntigravityPrompt } from './AntigravityPromptReceipt';
 
 type Row = Record<string, any>;
 class NativeAcpTransportError extends Error {}
@@ -63,6 +64,7 @@ let block: IntegratedConversationMessage | null = null;
 const nativeBlocks = new Map<string, IntegratedConversationMessage>();
 let userEcho: IntegratedConversationMessage | null = null;
 let userConfirmed = false;
+let stopWatchingPrompt: (() => void) | null = null;
 let admission: { resolve: () => void; reject: (error: Error) => void; timer: NodeJS.Timeout } | null = null;
 let model: string | null = null;
 let options: Row[] = [];
@@ -171,6 +173,7 @@ function cancelPermissions(): void {
   permissions.clear();
 }
 function fail(error: Error, fatal = true): void {
+  clearPromptWatch();
   if (admission) {
     clearTimeout(admission.timer);
     // A native RPC error is a definitive rejection. Losing the native pipe
@@ -259,7 +262,8 @@ function allowsMcp(tool: Row): boolean {
 }
 function admit(): void {
   // Assistant output and tool requests can belong to background work. Only
-  // the native user echo or this prompt's own RPC response confirms delivery.
+  // evidence tied to this input (or its own RPC response) confirms delivery.
+  clearPromptWatch();
   if (userEcho && !userConfirmed) {
     userConfirmed = true;
     if (userEcho.clientMessageId) deliveries.add(userEcho.clientMessageId);
@@ -267,6 +271,10 @@ function admit(): void {
   }
   if (!admission) return;
   clearTimeout(admission.timer); admission.resolve(); admission = null;
+}
+function clearPromptWatch(): void {
+  stopWatchingPrompt?.();
+  stopWatchingPrompt = null;
 }
 function replace(message: IntegratedConversationMessage): void {
   const index = messages.findIndex((row) => row.id === message.id);
@@ -610,6 +618,11 @@ async function handle(method: string, params: Row): Promise<unknown> {
       const timer = setTimeout(() => { admission = null; reject(new Error('ACP prompt delivery is uncertain')); }, 8_000);
       admission = { resolve, reject, timer };
     });
+    // Text alone cannot confirm references or attachments. Leave those on
+    // the ACP acknowledgement path.
+    if (params.prompt.length === 1 && params.prompt[0]?.type === 'text' && params.prompt[0].text === userEcho.text) {
+      stopWatchingPrompt = watchAntigravityPrompt(sessionId, userEcho.text, admit);
+    }
     state();
     // The result arrives only at turn end. Keep the host socket responsive to
     // permissions and cancellation instead of awaiting it in this handler.
@@ -722,6 +735,7 @@ async function stop(): Promise<void> {
 function stopNative(): Promise<void> {
   if (shutdown) return shutdown;
   stopping = true;
+  clearPromptWatch();
   finishCancellation();
   shutdown = (async () => {
     if (nativeClose && loaded && child.exitCode === null && child.signalCode === null) {

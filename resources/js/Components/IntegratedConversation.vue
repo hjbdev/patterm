@@ -208,7 +208,7 @@
           <Button size="sm" variant="outline" @click="reconcileDelivery">Check delivery</Button>
           <Button size="sm" variant="secondary" @click="sendRequest(uncertain.payload, { force: true })">Send again</Button>
         </div>
-        <p class="mt-1 text-[10px] text-muted-foreground">Sending again starts a new native submission and can run the prompt twice for Codex.</p>
+        <p class="mt-1 text-[10px] text-muted-foreground">Sending again submits a new message and can run the prompt twice.</p>
       </div>
       <IntegratedTaskShelf
         v-if="tasks.length && !ended"
