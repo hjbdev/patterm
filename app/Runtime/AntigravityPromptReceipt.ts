@@ -30,8 +30,11 @@ export function watchAntigravityPrompt(sessionId: string, text: string, received
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return null;
   }
 
+  // agy timestamps the receipt to the second, not the millisecond. A newly
+  // created file can contain replayed history, so its byte offset isn't enough.
+  const sentSecond = Math.floor(Date.now() / 1000) * 1000;
   // Start at the pre-dispatch EOF, so resending the same words in a resumed
-  // conversation cannot match old history. Only the first new explicit user
+  // conversation cannot match old history. Only the first current explicit user
   // record can be a receipt. Background output and tool activity never count.
   const timer = setInterval(() => {
     const stop = () => clearInterval(timer);
@@ -56,6 +59,8 @@ export function watchAntigravityPrompt(sessionId: string, text: string, received
           let row;
           try { row = JSON.parse(line); } catch { continue; }
           if (row?.source !== 'USER_EXPLICIT' || row.type !== 'USER_INPUT') continue;
+          const created = typeof row.created_at === 'string' ? Date.parse(row.created_at) : NaN;
+          if (!Number.isFinite(created) || created < sentSecond) continue;
           stop();
           const content = row.content;
           const start = '<USER_REQUEST>\n';

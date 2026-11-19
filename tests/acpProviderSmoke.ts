@@ -366,18 +366,29 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     // over ACP. Keep the RPC open until delivery is verified.
     const nativeLog = path.join(directory, '.gemini', 'antigravity-cli', 'brain', prepared.resumeId!, '.system_generated', 'logs', 'transcript.jsonl');
     fs.mkdirSync(path.dirname(nativeLog), { recursive: true });
-    const inputRow = (step: number) => JSON.stringify({ step_index: step, type: 'USER_INPUT', source: 'USER_EXPLICIT', content: '<USER_REQUEST>\nno-live-echo\n</USER_REQUEST>\n' });
+    const inputRow = (step: number, created_at = new Date().toISOString()) => JSON.stringify({ step_index: step, created_at, type: 'USER_INPUT', source: 'USER_EXPLICIT', content: '<USER_REQUEST>\nno-live-echo\n</USER_REQUEST>\n' });
     fs.writeFileSync(nativeLog, inputRow(0) + '\n');
     const noEcho = provider.prompt('process', { text: 'no-live-echo', references: [], attachments: [], messageId: 'logged-id' });
     void noEcho.catch(() => {});
     await waitFor(provider, (snapshot) => snapshot.messages.data.some((row: any) => row.id === 'tool:no-echo-read'));
     assert.equal(await provider.reconcile('process', 'logged-id'), 'unknown', 'old identical text and live assistant activity are not delivery evidence');
-    fs.appendFileSync(nativeLog, inputRow(1) + '\n');
+    fs.appendFileSync(nativeLog, inputRow(1, '2024-01-01T00:00:00Z') + '\n' + inputRow(2) + '\n');
     await noEcho;
     assert.equal(await provider.reconcile('process', 'logged-id'), 'accepted');
     state = await provider.conversation('process');
     assert.equal(state.status, 'working', 'delivery does not finish the turn');
     assert.equal(state.messages.data.filter((row: any) => row.clientMessageId === 'logged-id').length, 1);
+    fs.writeFileSync(trace + '.no-echo-done', '');
+    await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+
+    // A file that appears after dispatch can contain historical input.
+    fs.unlinkSync(nativeLog);
+    fs.unlinkSync(trace + '.no-echo-done');
+    const replayed = provider.prompt('process', { text: 'no-live-echo', references: [], attachments: [], messageId: 'replayed-log-id' });
+    void replayed.catch(() => {});
+    await waitFor(provider, () => frames().filter((frame) => frame.method === 'session/prompt' && frame.params.prompt[0].text === 'no-live-echo').length === 2);
+    fs.writeFileSync(nativeLog, inputRow(1, '2024-01-01T00:00:00Z') + '\n');
+    await assert.rejects(replayed, UncertainDeliveryError, 'a historical row in a newly created file does not confirm delivery');
     fs.writeFileSync(trace + '.no-echo-done', '');
     await waitFor(provider, (snapshot) => snapshot.status === 'idle');
 
