@@ -59,7 +59,7 @@ export class BotRelay {
     private readonly database: DatabaseService,
     private readonly bots: Pick<BotService, 'harness' | 'currentProcess'>,
     private readonly codex: Pick<CodexAppServerService, 'realtimeStart' | 'realtimeStop' | 'realtimeAppendText' | 'onRealtime'>,
-    private readonly integrated: Pick<IntegratedAgentService, 'prompt' | 'conversation'>,
+    private readonly integrated: Pick<IntegratedAgentService, 'prompt' | 'conversation' | 'routineNotificationDigest'>,
     private readonly settings: Pick<SettingsService, 'bots'>,
     private readonly inbox: BotInbox,
     private readonly options: { log?: (event: string, data: Record<string, unknown>) => void; digestDelayMs?: number; compacting?: (processId: string) => boolean } = {}
@@ -314,7 +314,13 @@ export class BotRelay {
         await this.codex.realtimeAppendText(processId,
           `[System notification, not from the user. Briefly tell the user what needs their attention.]\n${lines.join('\n')}`);
       } else {
-        await this.integrated.prompt(processId, `[Patterm notifications]\n${lines.join('\n')}`);
+        const text = `[Patterm notifications]\n${lines.join('\n')}`;
+        if (botId === ASSISTANT_BOT_ID && batch.every((item) =>
+          item.source === 'integrated' && item.kind === 'turn_finished' && item.urgency === 'normal')) {
+          await this.integrated.routineNotificationDigest(processId, text);
+        } else {
+          await this.integrated.prompt(processId, text);
+        }
       }
     } catch (error) {
       this.log('digest.failed', { bot_id: botId, count: batch.length, message: errorMessage(error) });

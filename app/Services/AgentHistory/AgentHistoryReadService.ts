@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import type { SqliteConnection } from '../../Database/SqliteConnection';
+import { isQuietReply, QUIET_REPLY } from '../ClaudeQuietReplies';
 import { HISTORY_IMPORT_STALE_MS } from './AgentHistoryTypes';
 import type { AgentHistoryDb } from './AgentHistoryDb';
 import { proseLabel, proseText, type ProseMessage } from './SummaryProseIndex';
@@ -66,7 +68,26 @@ function resumeParams(sessions: readonly ConversationSessionState[]) {
 }
 
 export class AgentHistoryReadService {
-  constructor(private readonly database: AgentHistoryDb | null) {}
+  private readonly quietConnections = new WeakSet<SqliteConnection>();
+
+  constructor(private readonly database: AgentHistoryDb | null, private readonly quietReplies?: string) {}
+
+  // A history import can read the native text before the host gets the final
+  // result. Re-check at read time so that race never restores a hidden reply.
+  private visibleMessages(table = 'conversation_messages'): string {
+    if (!this.database || !this.quietReplies) return '1';
+    const connection = this.database.connection;
+    if (!this.quietConnections.has(connection)) {
+      connection.registerFunction('patterm_quiet_reply', (sessionId, messageId) =>
+        Number(typeof sessionId === 'string' && typeof messageId === 'string' && isQuietReply(this.quietReplies, sessionId, messageId)));
+      this.quietConnections.add(connection);
+    }
+    return `(case when ${table}.role = 'assistant' and ${table}.kind = 'message' and ${table}.text = '${QUIET_REPLY}'
+      and json_extract(${table}.metadata, '$.source') = 'claude-jsonl' then not patterm_quiet_reply(
+        (select provider_conversation_id from conversations where id = ${table}.conversation_id),
+        json_extract(${table}.metadata, '$.nativeMessageId')
+      ) else 1 end)`;
+  }
 
   // The imported conversation for a Patterm session, matched by the session
   // itself or by its native resume ID. The resume ID wins: other threads, such
@@ -89,7 +110,7 @@ export class AgentHistoryReadService {
       select id from conversations where provider = ? and provider_conversation_id = ? and project_id = ?
     `).get(provider, resumeId, projectId) as { id: string } | undefined;
     if (!conversation) return { count: 0, messages: [] };
-    const predicate = `conversation_id = ? and (provider_created_at is null or provider_created_at < ?)`;
+    const predicate = `conversation_id = ? and (provider_created_at is null or provider_created_at < ?) and ${this.visibleMessages()}`;
     const count = (this.database.connection.prepare(`select count(*) as count from conversation_messages where ${predicate}`).get(conversation.id, before) as { count: number }).count;
     const messages = this.database.connection.prepare(`
       select * from conversation_messages where ${predicate} order by seq asc limit ? offset ?
@@ -122,6 +143,8 @@ export class AgentHistoryReadService {
         join conversations on conversations.id = conversation_history_fts.conversation_id
         where conversation_history_fts match @query and conversations.project_id = @project_id ${provider} ${notHidden}
           and exists (select 1 from conversation_messages where conversation_id = conversations.id)
+          and not exists (select 1 from conversation_messages where id = conversation_history_fts.owner_id
+            and conversation_history_fts.kind = 'conversation_message' and not ${this.visibleMessages()})
       )
       select conversation_id, min(score) as score, kind, owner_id from hits
       group by conversation_id
@@ -167,7 +190,7 @@ export class AgentHistoryReadService {
   messageTexts(ids: readonly string[]): Map<string, { conversationId: string; seq: number; text: string }> {
     if (!ids.length || !this.database || !databaseAvailable(this.database)) return new Map();
     const rows = this.database.connection.prepare(`
-      select id, conversation_id, seq, text from conversation_messages where id in (${ids.map(() => '?').join(', ')})
+      select id, conversation_id, seq, text from conversation_messages where id in (${ids.map(() => '?').join(', ')}) and ${this.visibleMessages()}
     `).all(...ids) as Array<{ id: string; conversation_id: string; seq: number; text: string }>;
     return new Map(rows.map((row) => [row.id, { conversationId: row.conversation_id, seq: row.seq, text: row.text }]));
   }
@@ -229,14 +252,16 @@ export class AgentHistoryReadService {
     let offset = input.offset;
     if (input.anchor_message_id) {
       const anchor = this.database.connection
-        .prepare(`select seq from conversation_messages where id = ? and conversation_id = ?`)
+        .prepare(`select (select count(*) from conversation_messages
+          where conversation_id = anchor.conversation_id and seq < anchor.seq and ${this.visibleMessages()}) as seq
+          from conversation_messages anchor where id = ? and conversation_id = ?`)
         .get(input.anchor_message_id, input.conversation_id) as { seq: number } | undefined;
       if (anchor) offset = Math.max(0, anchor.seq - Math.floor(input.limit / 2));
     }
     const conversation = this.findConversation(input.conversation_id);
     if (!conversation) return { conversation: null, messages: [] };
     const messages = this.database.connection.prepare(`
-      select * from conversation_messages where conversation_id = ? order by seq asc limit ? offset ?
+      select * from conversation_messages where conversation_id = ? and ${this.visibleMessages()} order by seq asc limit ? offset ?
     `).all(input.conversation_id, input.limit, offset) as MessageRow[];
     return { conversation, messages: messages.map(mapMessage), offset };
   }
@@ -248,7 +273,7 @@ export class AgentHistoryReadService {
     const conversation = this.findConversation(conversationId);
     if (!conversation) return { conversation: null, messages: [], has_more: false };
     const rows = this.database.connection.prepare(`
-      select * from conversation_messages where conversation_id = ? and seq < ? order by seq desc limit ?
+      select * from conversation_messages where conversation_id = ? and seq < ? and ${this.visibleMessages()} order by seq desc limit ?
     `).all(conversationId, beforeSeq ?? Number.MAX_SAFE_INTEGER, limit + 1) as MessageRow[];
     return { conversation, messages: rows.slice(0, limit).reverse().map(mapMessage), has_more: rows.length > limit };
   }
@@ -267,6 +292,7 @@ export class AgentHistoryReadService {
     const rows = this.database.connection.prepare(`
       select id, seq, role, kind, text, metadata, coalesce(provider_created_at, created_at) as at from conversation_messages
       where conversation_id = ? and seq > ? and kind = 'message' and role in ('user', 'assistant')
+        and ${this.visibleMessages()}
         and (? or coalesce(provider_created_at, created_at) >= ?)
       order by seq asc limit ?
     `);

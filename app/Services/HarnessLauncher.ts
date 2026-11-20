@@ -244,7 +244,8 @@ export class HarnessLauncher {
         model: selection.model, reasoning: selection.reasoning, serviceTier: selection.serviceTier,
         reconnectMcp: resume?.reconnect_mcp === true,
         restoreSavedSettings: resume?.restore_saved_settings === true,
-        memoryPush: input.session_role === 'assistant' || input.session_role === 'bot'
+        memoryPush: input.session_role === 'assistant' || input.session_role === 'bot',
+        quietNotificationReplies: input.session_role === 'assistant' && input.bot_id === ASSISTANT_BOT_ID
       };
       const prepared = await this.deps.integrated.prepare(harness as 'claude' | 'codex' | 'opencode' | 'agy', launchInput);
       integratedLaunch = { input: launchInput, result: prepared };

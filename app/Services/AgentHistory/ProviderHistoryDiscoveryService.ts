@@ -7,7 +7,11 @@ import { OpenCodeHistoryAdapter } from './OpenCodeHistoryAdapter';
 import { AntigravityHistoryAdapter } from './AntigravityHistoryAdapter';
 
 export class ProviderHistoryDiscoveryService {
-  constructor(readonly adapters: ProviderHistoryAdapter[] = [new ClaudeHistoryAdapter(), new CodexHistoryAdapter(), new OpenCodeHistoryAdapter(), new AntigravityHistoryAdapter()]) {}
+  readonly adapters: ProviderHistoryAdapter[];
+
+  constructor(adapters?: ProviderHistoryAdapter[], quietReplies?: string) {
+    this.adapters = adapters ?? [new ClaudeHistoryAdapter(quietReplies), new CodexHistoryAdapter(), new OpenCodeHistoryAdapter(), new AntigravityHistoryAdapter()];
+  }
 
   adapter(provider: AgentHistoryProvider): ProviderHistoryAdapter {
     const adapter = this.adapters.find((candidate) => candidate.provider === provider);

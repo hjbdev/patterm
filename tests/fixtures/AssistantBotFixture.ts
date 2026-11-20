@@ -17,7 +17,7 @@ export function assistantBot(
   dir: string,
   launcher: Pick<HarnessLauncher, 'launch' | 'resume'>,
   codex: Pick<CodexAppServerService, 'realtimeStart' | 'realtimeStop' | 'realtimeAppendText' | 'onRealtime'>,
-  integrated: Pick<IntegratedAgentService, 'prompt' | 'conversation'>,
+  integrated: Pick<IntegratedAgentService, 'prompt' | 'conversation'> & Partial<Pick<IntegratedAgentService, 'routineNotificationDigest'>>,
   settings: SettingsService,
   processes: { stop(processId: string): Promise<unknown>; transferTimers(from: readonly string[], to: string): void },
   options: { digestDelayMs?: number; compacting?: (processId: string) => boolean } = {}
@@ -32,7 +32,10 @@ export function assistantBot(
     launched: (botId) => relay?.launched(botId),
     stopping: async (botId, processId) => { await relay?.stopping(botId, processId); }
   });
-  const botRelay = new BotRelay(database, bots, codex, integrated, settings, inbox, options);
+  const botRelay = new BotRelay(database, bots, codex, {
+    routineNotificationDigest: (processId, text) => integrated.prompt(processId, text),
+    ...integrated
+  }, settings, inbox, options);
   relay = botRelay;
   botRelay.start();
   const id = ASSISTANT_BOT_ID;

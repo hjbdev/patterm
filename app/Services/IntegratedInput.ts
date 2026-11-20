@@ -45,6 +45,8 @@ export interface ResolvedIntegratedPrompt {
   references: ResolvedIntegratedReference[];
   attachments: ResolvedIntegratedAttachment[];
   messageId?: string | undefined;
+  // Set only by BotRelay's internal dispatch, never by a composer request.
+  routineDigest?: true;
 }
 
 export interface IntegratedWorktreeFile {
