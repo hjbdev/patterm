@@ -161,9 +161,7 @@
       </div>
 
       <!-- Phones keep one row: status on the left, then attach, the drawer
-           that holds the pickers, and send (order 1, 2 and 4). Send turns into
-           Stop while the agent works and the box is empty; with something
-           typed it sends, to the queue. -->
+           that holds the pickers, and the send or stop button (order 1, 2 and 4). -->
       <div v-if="!compact" class="flex min-h-11 items-center gap-2 px-2 pb-1 sm:flex-wrap">
         <div v-if="controls.selectors.length" class="hidden flex-wrap items-center gap-2 sm:flex">
           <IntegratedControlPicker v-for="selector in controls.selectors" :key="selector.id" :selector="selector" :disabled="!controlling || sending || ended" @select="emit('configure', selector.id, $event)" />
@@ -367,9 +365,10 @@ const canSend = computed(() => goalMode.value ? props.controlling && !props.ende
   : props.controlling && (!props.ended || recoveryCommand.value) && !props.sending && !props.pending
   && (draft.value.text.trim().length > 0 || draft.value.attachments.length > 0)
   && !draft.value.attachments.some((attachment) => attachment.status !== 'ready'));
-// While the agent works, an empty box offers Stop in Send's place.
-const stoppable = computed(() => !goalMode.value && Boolean(props.working) && props.controlling && !props.ended && !props.sending
-  && !draft.value.text.trim() && !draft.value.attachments.length);
+// While the agent works, Stop replaces Send if the draft is empty or delivery
+// already blocks another send.
+const stoppable = computed(() => !goalMode.value && Boolean(props.working) && props.controlling && !props.ended
+  && (props.sending || props.pending || (!draft.value.text.trim() && !draft.value.attachments.length)));
 const sendTitle = computed(() => {
   if (goalMode.value) return 'Set goal';
   if (props.pending) return 'Resolve the pending delivery before sending again';

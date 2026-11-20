@@ -86,6 +86,13 @@ export class AcpProviderService implements IntegratedProviderService {
       // agy 1.5.8 silently ignores embedded PDF blobs. A real file reference
       // reaches its native reader instead, with its normal file permissions.
       if (attachment.mime === 'application/pdf') {
+        try {
+          const stat = await fs.promises.stat(attachment.path);
+          if (!stat.isFile()) throw new Error('Attachment is not a file');
+          await fs.promises.access(attachment.path, fs.constants.R_OK);
+        } catch {
+          throw new Error(`Antigravity cannot read “${attachment.name}” on this host. Attach the PDF again before sending.`);
+        }
         prompt.push({ type: 'resource_link', uri: pathToFileURL(attachment.path).href, name: attachment.name, mimeType: attachment.mime });
         attachments.push({ type: 'file', name: attachment.name, mime: attachment.mime });
         continue;

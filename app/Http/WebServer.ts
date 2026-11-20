@@ -26,6 +26,7 @@ import { machineAddresses, type RemoteAccessPlan } from './RemoteAccessPlan';
 import { TailscaleService } from '../Services/TailscaleService';
 
 const rpcInput = z.object({ id: z.number().int().nonnegative(), channel: z.string().max(100), args: z.unknown().optional() });
+const integratedCallInput = z.object({ tool: z.string(), arguments: z.object({ process_id: z.string().min(1) }).passthrough() });
 const MAX_RPC_BYTES = 1024 * 1024;
 const MAX_BUFFER_BYTES = 4 * 1024 * 1024;
 // Requests handled at once, beyond which the server answers 503.
@@ -429,16 +430,29 @@ export class WebServer {
     let snapshotsReading = 0;
     let queued = 0;
     let queuedBytes = 0;
+    let ordered = 0;
+    let sendingTo: string | null = null;
+    let interrupting: Promise<void> | null = null;
     socket.on('message', (data, binary) => {
       const byteLength = Array.isArray(data) ? data.reduce((size, chunk) => size + chunk.byteLength, 0) : data.byteLength;
       queuedBytes += byteLength;
       if (binary || ++queued > 128 || queuedBytes > MAX_BUFFER_BYTES) { socket.terminate(); return; }
-      queue = queue.then(async () => {
+      const release = () => { queued--; queuedBytes -= byteLength; };
+      let payload: z.infer<typeof rpcInput>;
+      let call: z.infer<typeof integratedCallInput> | undefined;
+      let id: number | undefined;
+      try {
+        payload = rpcInput.parse(JSON.parse(data.toString()));
+        id = payload.id;
+        if (payload.channel === 'patterm:integrated:call') call = integratedCallInput.parse(payload.args);
+      } catch (error) {
+        release();
+        send(JSON.stringify({ id, error: errorMessage(error) }));
+        return;
+      }
+      const run = async () => {
         if (socket.readyState !== WebSocket.OPEN) return;
-        let id: number | undefined;
         try {
-          const payload = rpcInput.parse(JSON.parse(data.toString()));
-          id = payload.id;
           const { channel } = payload;
           let args = payload.args;
           let result: unknown;
@@ -466,11 +480,18 @@ export class WebServer {
             // Presence belongs to this socket and ends when it closes.
             this.application.notifications.updatePresence(presenceId, args);
             result = { ok: true };
-          } else if (channel === 'patterm:integrated:call') {
-            const call = z.object({ tool: z.string(), arguments: z.object({ process_id: z.string().min(1) }).passthrough() }).parse(args);
+          } else if (call) {
             if (!INTEGRATED_CONTROL_TOOLS.has(call.tool)) throw new Error('Unknown Integrated control operation');
             this.terminals.guard(client, call.arguments, call.tool === 'integrated_restart' ? 'restart' : 'write');
-            result = await callIntegrated(this.application, call.tool, call.arguments);
+            if (call.tool === 'integrated_send') {
+              sendingTo = call.arguments.process_id;
+              try { result = await callIntegrated(this.application, call.tool, call.arguments); }
+              finally {
+                sendingTo = null;
+                // A delayed Stop must not reach a later queued turn.
+                await interrupting;
+              }
+            } else result = await callIntegrated(this.application, call.tool, call.arguments);
           } else {
             const operation = channel.replace('patterm:terminal:', '');
             if (!channel.startsWith('patterm:terminal:')) throw new Error('Use HTTP for non-terminal operations');
@@ -481,7 +502,29 @@ export class WebServer {
         } catch (error) {
           send(JSON.stringify({ id, error: errorMessage(error) }));
         }
-      }).finally(() => { queued--; queuedBytes -= byteLength; });
+      };
+      // Stop can overtake its in-flight Send, not a queued control change or
+      // another mutation. Presence updates do not change control or agent state.
+      if (!this.stopping && call?.tool === 'integrated_interrupt' && call.arguments.process_id === sendingTo && ordered === 1) {
+        if (interrupting) {
+          release();
+          send(JSON.stringify({ id, error: 'Stop is already in progress' }));
+          return;
+        }
+        this.apiRequests++;
+        const pending = run().finally(() => {
+          interrupting = null;
+          this.requests.delete(pending);
+          this.apiRequests--;
+          release();
+        });
+        interrupting = pending;
+        this.requests.add(pending);
+        return;
+      }
+      const isOrdered = payload.channel !== 'patterm:presence:update';
+      if (isOrdered) ordered++;
+      queue = queue.then(run).finally(() => { if (isOrdered) ordered--; release(); });
       this.queues.set(socket, queue);
     });
     socket.on('error', () => socket.terminate());

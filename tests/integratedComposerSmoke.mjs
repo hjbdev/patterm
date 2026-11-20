@@ -42,7 +42,7 @@ function createHarness({ processId = 'composer_test', provider = 'codex', agents
   const uploads = [];
   const timers = new Map();
   let timerId = 0;
-  const props = reactive({ processId, provider, controls: { selectors: [], commands: [{ name: 'compact', description: 'Compact' }] }, controlling: true, sending: false, pending: false, ended: false, agents, bots, processes, launchers });
+  const props = reactive({ processId, provider, controls: { selectors: [], commands: [{ name: 'compact', description: 'Compact' }] }, controlling: true, working: false, sending: false, pending: false, ended: false, agents, bots, processes, launchers });
   const windowMock = {
     patterm: {
       runtime: 'browser',
@@ -89,7 +89,7 @@ function createHarness({ processId = 'composer_test', provider = 'codex', agents
   };
   const setup = new Function(...Object.keys(bindings), `${outputText}
 return {
-  editor, picker, mode, menuIndex, menuOpen, canSend, agentMatches, botMatches, processMatches, launcherMatches, menuItems, placeholder,
+   editor, picker, mode, menuIndex, menuOpen, canSend, stoppable, agentMatches, botMatches, processMatches, launcherMatches, menuItems, placeholder,
   getDraft: () => draft.value,
   evaluate, onKeydown, submit, chooseAgent, chooseBot, chooseProcess, chooseLauncher, chooseCommand, onPaste, onDrop, onPick
 };`);
@@ -104,6 +104,26 @@ return {
   };
   return { pane, props, emitted, calls, uploads, timers, scope, lifecycle, editors, setEditor };
 }
+
+test('a working agent can be stopped while its send is awaiting a receipt', () => {
+  const { props, pane, scope } = createHarness({ provider: 'agy', processId: 'pending-receipt' });
+  try {
+    pane.getDraft().text = 'unsent follow-up';
+    props.working = true;
+    props.sending = true;
+    assert.equal(pane.canSend.value, false);
+    assert.equal(pane.stoppable.value, true);
+    props.sending = false;
+    props.pending = true;
+    assert.equal(pane.stoppable.value, true);
+    props.controlling = false;
+    assert.equal(pane.stoppable.value, false);
+    props.controlling = true;
+    props.pending = false;
+    assert.equal(pane.canSend.value, true);
+    assert.equal(pane.stoppable.value, false);
+  } finally { scope.stop(); }
+});
 
 // Stands in for the Tiptap editor: a run of characters and chips with a
 // caret, reporting edits the way the real editor does.

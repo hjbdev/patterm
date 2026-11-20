@@ -251,7 +251,7 @@
         <!-- Narrow screens keep the label for screen readers; the border
              comet shows the work. -->
         <template v-if="!ended" #status>
-          <span v-if="streamStatus === 'working'" role="status" class="sr-only text-xs text-muted-foreground sm:not-sr-only"><ShimmerText text="Working…" /></span>
+          <span v-if="streamStatus === 'working'" role="status" class="sr-only text-xs text-muted-foreground sm:not-sr-only"><ShimmerText :text="statusDetail || 'Working…'" /></span>
           <!-- The meter carries the last request's time; without one it shows here. -->
           <IntegratedUsageMeter v-if="usage" :usage="usage" :last-request-at="modelActivityAt" />
           <IntegratedModelActivity v-else-if="modelActivityAt" :at="modelActivityAt" class="min-w-0 truncate whitespace-nowrap text-xs text-muted-foreground" />
@@ -787,12 +787,17 @@ async function applySnapshot(load: () => Promise<Record<string, unknown>>, reque
     // Streamed or polled, a snapshot carries the status; while polling it is
     // the only source.
     const status = snapshotStatus(result.status);
-    if (status === 'working') streamStatus.value = 'working';
-    else if (status === 'error') {
-      streamStatus.value = 'error';
+    if (status === 'working') {
+      streamStatus.value = 'working';
+      statusDetail.value = result.status === 'working' && typeof result.status_detail === 'string' ? result.status_detail : '';
+    } else if (status === 'error') {
       if (typeof result.status_detail === 'string') statusDetail.value = result.status_detail;
+      else if (streamStatus.value !== 'error') statusDetail.value = '';
+      streamStatus.value = 'error';
+    } else if (status === 'idle' && streamStatus.value !== 'error') {
+      streamStatus.value = 'idle';
+      statusDetail.value = '';
     }
-    else if (status === 'idle' && streamStatus.value !== 'error') streamStatus.value = 'idle';
     // The 750ms poll mostly re-reads an unchanged conversation, so polled
     // payloads are compared before re-projecting. No cheaper exact signal
     // exists: polled providers carry no revision, and a snapshot revision is
@@ -1614,7 +1619,7 @@ function applyStreamEvent(event: ConversationStreamEvent): void {
   }
   if (event.kind === 'status' && event.status) {
     streamStatus.value = snapshotStatus(event.status) ?? '';
-    statusDetail.value = event.status === 'error' ? event.detail ?? '' : '';
+    statusDetail.value = event.status === 'error' || event.status === 'working' ? event.detail ?? '' : '';
     // Completion and interruption re-read the authoritative snapshot. A
     // permission or question arrives with a pending event, which re-reads it
     // already.
