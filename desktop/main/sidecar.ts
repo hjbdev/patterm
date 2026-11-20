@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 
 export function isInstalledLaunch(): boolean {
@@ -42,4 +43,11 @@ export function resolveMcpShimPath(isPackaged: boolean): string {
   }
 
   return path.join(process.cwd(), 'dist', 'mcp', 'patterm-mcp.js');
+}
+
+// Native Rust MCP shim alongside patterm-terminal-core, when built.
+export function resolveNativeMcpPath(isPackaged: boolean): string | null {
+  const binary = process.platform === 'win32' ? 'patterm-mcp.exe' : 'patterm-mcp';
+  const candidate = path.join(path.dirname(resolveSidecarPath(isPackaged)), binary);
+  return fs.existsSync(candidate) ? candidate : null;
 }

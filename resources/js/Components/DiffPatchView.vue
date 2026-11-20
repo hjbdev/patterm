@@ -20,6 +20,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { FileDiff, parsePatchFiles, type FileDiffMetadata } from '@pierre/diffs';
 import '../lib/diffLanguages';
+import { diffHighlighterPool } from '../lib/diffHighlighter';
 
 const props = defineProps<{ patch: string; cacheKey: string }>();
 const container = ref<HTMLElement | null>(null);
@@ -105,8 +106,9 @@ function renderFile(root: HTMLElement, fileDiff: FileDiffMetadata): void {
     diffStyle: 'split',
     overflow: 'scroll',
     stickyHeader: true,
-    hunkSeparators: 'line-info-basic'
-  });
+    hunkSeparators: 'line-info-basic',
+    preferredHighlighter: 'shiki-wasm'
+  }, diffHighlighterPool());
   // The library creates and manages its own `diffs-container` custom element
   // (which adopts the base stylesheet) when given a wrapper. Passing a plain
   // div as fileContainer bypasses that stylesheet and breaks the split layout.

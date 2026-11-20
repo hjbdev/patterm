@@ -96,7 +96,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, shallowRef, watch } from 'vue';
+import { computed, nextTick, onActivated, onDeactivated, onMounted, reactive, ref, shallowRef, watch } from 'vue';
 import { useElementSize } from '@vueuse/core';
 import { Maximize2, Minus, Plus, Undo2, X } from 'lucide-vue-next';
 import { cn } from '@/lib/utils';
@@ -128,8 +128,9 @@ const PROCESSES_SHOWN = 4;
 type ProcessTab = Extract<StripTab, { kind: 'process' }>;
 
 const { digests, now, show } = useAgentDigests();
+const active = ref(true);
 // Cards show each agent's links and branch, so they stay fresh while it's open.
-show(() => true);
+show(() => active.value);
 const board = useBoardRoute();
 const sidebar = useSidebar();
 const { projects } = useWorkbench();
@@ -388,13 +389,22 @@ function onKeydown(event: KeyboardEvent): void {
   focusNode(best);
 }
 
-// Start on the most urgent agent, so Enter goes straight to what needs you;
-// Esc goes back to where you were.
-onMounted(() => {
+function focusInitial(): void {
   const urgent = digests.value.find((digest) => digest.state === 'attention')?.session.id;
   const target = urgent ?? nodes.value[0]?.id;
   if (target) focusNode(target);
   else root.value?.focus({ preventScroll: true });
+}
+
+// Start on the most urgent agent, so Enter goes straight to what needs you;
+// Esc goes back to where you were.
+onMounted(focusInitial);
+onActivated(() => {
+  active.value = true;
+  focusInitial();
+});
+onDeactivated(() => {
+  active.value = false;
 });
 </script>
 

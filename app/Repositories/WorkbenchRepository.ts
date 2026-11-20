@@ -297,9 +297,6 @@ export class WorkbenchRepository {
   // One session or process, whether or not the snapshot still lists it. An
   // agent's process ID alone reads its latest session.
   record(input: { project_id: string; session_id?: string | undefined; process_id?: string | undefined }): { session: SessionDto | null; process: ProcessDto | null } {
-    const processRows = this.db
-      .prepare(`select * from processes where project_id = ? order by created_at asc`)
-      .all(input.project_id) as ProcessRow[];
     const sessionRow = input.session_id
       ? this.db.prepare(`select ${SESSION_COLUMNS} from sessions left join processes on processes.id = sessions.process_id ${SESSION_OWNER_JOIN} where sessions.project_id = ? and sessions.id = ?`)
         .get(input.project_id, input.session_id) as SessionRow | undefined
@@ -308,9 +305,16 @@ export class WorkbenchRepository {
             where sessions.project_id = ? and sessions.process_id = ? and processes.kind = 'agent' order by sessions.started_at desc limit 1`)
           .get(input.project_id, input.process_id) as SessionRow | undefined
         : undefined;
-    const processRow = input.process_id ? processRows.find((row) => row.id === input.process_id && row.kind !== 'agent') : undefined;
+    const sessionProcessRow = sessionRow?.process_id
+      ? this.db.prepare(`select * from processes where project_id = ? and id = ?`).get(input.project_id, sessionRow.process_id) as ProcessRow | undefined
+      : undefined;
+    const processRow = input.process_id
+      ? (sessionProcessRow && sessionProcessRow.id === input.process_id
+          ? (sessionProcessRow.kind !== 'agent' ? sessionProcessRow : undefined)
+          : this.db.prepare(`select * from processes where project_id = ? and id = ? and kind != 'agent'`).get(input.project_id, input.process_id) as ProcessRow | undefined)
+      : undefined;
     return {
-      session: sessionRow ? mapSessions([sessionRow], processRows, this.settings.statusLabels().labels)[0] ?? null : null,
+      session: sessionRow ? mapSessions([sessionRow], sessionProcessRow ? [sessionProcessRow] : [], this.settings.statusLabels().labels)[0] ?? null : null,
       process: processRow ? mapProcess(processRow) : null
     };
   }
@@ -319,6 +323,7 @@ export class WorkbenchRepository {
     // Keep recent history, assigned sessions, and ancestors of live processes.
     // An old failed parent must not disappear from its surviving family.
     const since = this.now() - WORKBENCH_HISTORY_MS;
+    const sinceIso = new Date(since).toISOString();
     const sessionRows = this.db
       .prepare(`with recursive ancestors(id) as (
           select parent_process_id from processes where project_id = ? and status = 'running' and parent_process_id is not null
@@ -327,15 +332,36 @@ export class WorkbenchRepository {
             where p.project_id = ? and p.parent_process_id is not null
         )
         select ${SESSION_COLUMNS} from sessions left join processes on processes.id = sessions.process_id ${SESSION_OWNER_JOIN}
-        where sessions.project_id = ? and (sessions.exited_at is null or julianday(sessions.exited_at) >= julianday(?)
+        where sessions.project_id = ? and (sessions.exited_at is null or sessions.exited_at >= ?
           or sessions.process_id in (select id from ancestors)
           or exists (select 1 from todo_assignments where todo_assignments.session_id = sessions.id))
         order by sessions.started_at asc`)
-      .all(project.id, project.id, project.id, new Date(since).toISOString()) as SessionRow[];
-    // Every process is read: parents and timers may belong to ended ones.
-    const processRows = this.db
-      .prepare(`select * from processes where project_id = ? order by created_at asc`)
-      .all(project.id) as ProcessRow[];
+      .all(project.id, project.id, project.id, sinceIso) as SessionRow[];
+    // Read active/recent processes plus any older process referenced by kept
+    // sessions or live timers, avoiding a full scan of every historical row.
+    const referencedProcessIds = new Set<string>();
+    for (const row of sessionRows) {
+      if (row.process_id) referencedProcessIds.add(row.process_id);
+    }
+    for (const timer of timers) {
+      if (timer.ownerProcessId !== null) referencedProcessIds.add(timer.ownerProcessId);
+    }
+    const processRows = (referencedProcessIds.size > 0
+      ? this.db.prepare(`select * from processes where project_id = ? and id in (
+          select id from processes where project_id = ? and status = 'running'
+          union
+          select id from processes where project_id = ? and (exited_at is null or exited_at >= ?)
+          union
+          select value from json_each(?)
+        ) order by created_at asc, rowid asc`)
+          .all(project.id, project.id, project.id, sinceIso, JSON.stringify([...referencedProcessIds]))
+      : this.db.prepare(`select * from processes where project_id = ? and id in (
+          select id from processes where project_id = ? and status = 'running'
+          union
+          select id from processes where project_id = ? and (exited_at is null or exited_at >= ?)
+        ) order by created_at asc, rowid asc`)
+          .all(project.id, project.id, project.id, sinceIso)
+    ) as ProcessRow[];
     const sessions = mapSessions(sessionRows, processRows, labels);
     const processIds = new Set(processRows.map((row) => row.id));
     const recent = (row: ProcessRow) => row.status === 'running' || !row.exited_at || Date.parse(row.exited_at) >= since;

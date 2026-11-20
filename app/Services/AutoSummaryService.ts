@@ -33,12 +33,17 @@ function oneLine(text: string | undefined): string | null {
   return text ? summarySnapshot(text).replace(/\s+/g, ' ').trim() || null : null;
 }
 
+const IDLE_RECOVERY_SWEEP_MS = 10_000;
+
 export class AutoSummaryService {
   private readonly pending = new Map<string, PendingSummary>();
   private readonly jobs = new Map<AbortController, Promise<unknown>>();
   private readonly unsubscribers: Array<() => void> = [];
   private timer: ReturnType<typeof setInterval> | null = null;
   private disposed = false;
+  private dirty = true;
+  private lastSweepAt = 0;
+  private nextDueAt = Number.POSITIVE_INFINITY;
   private error: string | null = null;
   private errorAt: string | null = null;
   private settings: AutoSummarySettings;
@@ -60,14 +65,25 @@ export class AutoSummaryService {
   start(): void {
     this.unsubscribers.push(this.terminal.onFrame((frame) => {
       if (frame.type !== 'terminal-lifecycle' || !frame.processId) return;
-      if (frame.event === 'activity' && awaitingUser(frame.activity)) {
-        const row = this.database.connection.prepare('select id from processes where pty_process_id = ?').get(frame.processId) as { id: string } | undefined;
-        if (row) this.pending.get(row.id)?.controller?.abort();
+      if (frame.event === 'activity') {
+        if (awaitingUser(frame.activity)) {
+          const row = this.database.connection.prepare('select id from processes where pty_process_id = ?').get(frame.processId) as { id: string } | undefined;
+          if (row) this.pending.get(row.id)?.controller?.abort();
+        } else if (this.pending.size > 0) {
+          this.dirty = true;
+        }
       }
       // Exit does not discard enrollment: the final history import may arrive later.
     }));
-    this.timer = setInterval(() => this.tick(), 1000);
+    this.timer = setInterval(() => this.onInterval(), 1000);
     this.timer.unref();
+  }
+
+  private onInterval(): void {
+    if (this.disposed || !this.settings.enabled) return;
+    const now = this.now();
+    if (!this.dirty && now < this.nextDueAt && now - this.lastSweepAt < IDLE_RECOVERY_SWEEP_MS) return;
+    this.tick();
   }
 
   userInput(key: string): void {
@@ -77,6 +93,7 @@ export class AutoSummaryService {
     if (!row) return;
     if (row.kind === 'agent') this.database.connection.prepare('insert or ignore into auto_summary_enrollments values (?)').run(row.id);
     this.ensurePending(row.id);
+    this.dirty = true;
   }
 
   private ensurePending(id: string): PendingSummary {
@@ -105,6 +122,7 @@ export class AutoSummaryService {
     if (!settings.titles) this.database.connection.prepare('update sessions set auto_title = null where auto_title is not null').run();
     for (const controller of this.jobs.keys()) controller.abort();
     this.pending.clear(); this.error = null; this.errorAt = null;
+    this.dirty = true;
     this.notify();
     return this.settings;
   }
@@ -142,22 +160,37 @@ export class AutoSummaryService {
 
   // Imported content, rather than terminal frames, drives automatic calls. A
   // periodic read is also a recovery path for imports completed while offline.
-  historyChanged(): void { this.tick(); }
+  historyChanged(): void {
+    this.dirty = true;
+    this.tick();
+  }
 
   tick(): void {
     if (this.disposed || !this.settings.enabled) return;
+    this.dirty = false;
+    this.lastSweepAt = this.now();
+    let earliestDue = Number.POSITIVE_INFINITY;
+    const scheduleDue = (at: number) => {
+      if (Number.isFinite(at) && at < earliestDue) earliestDue = at;
+    };
     const reader = this.reader();
     if (reader) {
       const threads = this.threads();
       for (const thread of threads) this.ensurePending(thread.id);
       threads.sort((a, b) => this.pending.get(a.id)!.attempted - this.pending.get(b.id)!.attempted);
       for (const thread of threads) {
-        if (this.jobs.size >= 2) break;
+        if (this.jobs.size >= 2) { scheduleDue(this.now() + 1000); break; }
         const pending = this.pending.get(thread.id)!;
         const now = this.now(), settings = this.settings;
         if (awaitingUser(thread.activity)) { pending.controller?.abort(); continue; }
-        if (pending.controller || now < pending.retryAt || now - pending.attempted < settings.intervalSeconds * 1000) continue;
+        if (pending.controller) continue;
+        const intervalDue = pending.attempted + settings.intervalSeconds * 1000;
+        if (now < pending.retryAt || now < intervalDue) {
+          scheduleDue(Math.max(pending.retryAt, intervalDue));
+          continue;
+        }
         try {
+          let deferredDue: number | null = null;
           const batch = reader.snapshot(() => {
             const source = reader.source(thread);
             if (!source) return null;
@@ -168,14 +201,23 @@ export class AutoSummaryService {
             if (source.revision !== pending.sourceRevision) {
               pending.sourceRevision = source.revision; pending.changed = now;
             }
-            if (now - pending.changed < 2000) return null;
+            if (now - pending.changed < 2000) {
+              deferredDue = pending.changed + 2000;
+              return null;
+            }
             return reader.batch(source, state, this.context(thread));
           });
-          if (!batch) continue;
+          if (!batch) {
+            if (deferredDue !== null) scheduleDue(deferredDue);
+            continue;
+          }
           const source = batch.source;
           // Small changes during an active turn wait for a settled turn or a
           // minute of batching. Idle user corrections are never dropped.
-          if (['working', 'thinking'].includes(thread.activity) && Buffer.byteLength(batch.text) < 2000 && now - (pending.batchStarted ?? now) < 60_000) continue;
+          if (['working', 'thinking'].includes(thread.activity) && Buffer.byteLength(batch.text) < 2000 && now - (pending.batchStarted ?? now) < 60_000) {
+            scheduleDue((pending.batchStarted ?? now) + 60_000);
+            continue;
+          }
           const controller = new AbortController();
           pending.controller = controller; pending.attempted = now; pending.batchStarted = null;
           const job = (async () => {
@@ -219,7 +261,7 @@ export class AutoSummaryService {
               if (saved) { pending.failures = 0; this.notify(); }
               if (saved && titled) this.onTitled();
             } catch (error) { this.failed(pending, settings, controller, error); }
-          })().finally(() => { pending.controller = null; this.jobs.delete(controller); });
+          })().finally(() => { pending.controller = null; this.jobs.delete(controller); this.dirty = true; });
           this.jobs.set(controller, job);
         } catch { /* An unavailable/busy history database is retried without a model call. */ }
       }
@@ -229,9 +271,11 @@ export class AutoSummaryService {
       const row = this.database.connection.prepare('select kind, status, activity, pty_process_id, project_id from processes where id = ?').get(id) as { kind: string; status: string; activity: string; pty_process_id: string | null; project_id: string } | undefined;
       if (!row || row.status === 'closed') { pending.controller?.abort(); this.pending.delete(id); continue; }
       if (row.kind === 'agent' || row.status !== 'running' || awaitingUser(row.activity) || !row.pty_process_id || pending.controller || this.jobs.size >= 2) continue;
-      if (this.now() < pending.retryAt || this.now() - pending.attempted < this.settings.intervalSeconds * 1000 || this.now() - pending.changed < 2000) continue;
+      const now = this.now();
+      const due = Math.max(pending.retryAt, pending.attempted + this.settings.intervalSeconds * 1000, pending.changed + 2000);
+      if (now < due) { scheduleDue(due); continue; }
       const settings = this.settings, controller = new AbortController();
-      pending.attempted = this.now(); pending.controller = controller;
+      pending.attempted = now; pending.controller = controller;
       const job = (async () => {
         try {
           const screen = await this.terminal.request('terminal.process.output', { process_id: row.pty_process_id, max_lines: 100 }) as { screen?: string };
@@ -244,9 +288,10 @@ export class AutoSummaryService {
             .run(summarySnapshot(result.summary), oneLine(result.status), new Date(this.now()).toISOString(), settings.provider, settings.models[settings.provider], id, row.pty_process_id).changes;
           if (changed) { pending.hash = text; pending.failures = 0; this.notify(); }
         } catch (error) { this.failed(pending, settings, controller, error); }
-      })().finally(() => { pending.controller = null; this.jobs.delete(controller); });
+      })().finally(() => { pending.controller = null; this.jobs.delete(controller); this.dirty = true; });
       this.jobs.set(controller, job);
     }
+    this.nextDueAt = earliestDue;
   }
 
   private setCoverage(id: string, coverage: string): void {
@@ -295,7 +340,7 @@ export class AutoSummaryService {
       if (!this.settings.enabled) throw new Error('Enable auto-summaries before resuming.');
       reader.resume(session, source);
     } else if (operation === 'cancel') reader.cancel(session, source);
-    if (operation !== 'inspect') { this.pending.get(session.id)?.controller?.abort(); this.pending.delete(session.id); }
+    if (operation !== 'inspect') { this.pending.get(session.id)?.controller?.abort(); this.pending.delete(session.id); this.dirty = true; }
     const state = reader.snapshot(() => reader.state(session, source)), coverage = reader.coverage(source, state);
     this.setCoverage(session.id, coverage);
     return { coverage, totalMessages: source.message_count, processedMessages: state.position,

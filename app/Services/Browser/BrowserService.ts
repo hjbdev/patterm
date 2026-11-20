@@ -67,6 +67,16 @@ export interface BrowserServiceOptions {
   isLive: (sessionId: string) => boolean;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
+  // Retire idle Chrome processes after this many milliseconds (0 disables).
+  // Profiles on disk are preserved so reopening resumes seamlessly.
+  idleRetireMs?: number;
+}
+
+interface SharedDisplay {
+  name: string;
+  process: ChildProcess;
+  refs: number;
+  stopping: boolean;
 }
 
 interface ManagedBrowser {
@@ -77,7 +87,7 @@ interface ManagedBrowser {
   version: string;
   cdpUrl: string;
   chrome: ChildProcess;
-  display: ChildProcess | null;
+  display: SharedDisplay | null;
   cdp: CdpConnection;
   tabs: Map<string, BrowserTab>;
   // The tab the user watches. It follows the newest tab until the user picks one.
@@ -88,6 +98,7 @@ interface ManagedBrowser {
   frame: BrowserFrame | null;
   waiters: Set<() => void>;
   watchedAt: number;
+  lastActivityAt: number;
   help: BrowserHelpRequest | null;
   stopping: boolean;
 }
@@ -96,6 +107,8 @@ const VIEWPORT = { width: 1366, height: 900 } as const;
 const STARTUP_TIMEOUT_MS = 20_000;
 // The screencast stops this long after the last viewer asked for a frame.
 const VIEWER_IDLE_MS = 15_000;
+// Default idle browser retirement: 20 minutes without CDP/viewer activity.
+const DEFAULT_BROWSER_IDLE_RETIRE_MS = 20 * 60_000;
 const FRAME_WAIT_MS = 20_000;
 const INPUT_WAIT_MS = 3_000;
 
@@ -119,12 +132,19 @@ export class BrowserService {
   private readonly browsers = new Map<string, ManagedBrowser>();
   private readonly launching = new Map<string, Promise<ManagedBrowser>>();
   private readonly idleTimer: NodeJS.Timeout;
+  private readonly idleRetireMs: number;
+  // One shared ref-counted Xvfb display across all headed Linux browsers.
+  private sharedDisplay: SharedDisplay | null = null;
+  private startingDisplay: Promise<SharedDisplay> | null = null;
   private disposed = false;
   // Frame numbers only ever rise, across browsers and Patterm restarts, so a
   // viewer's cursor from an earlier browser never hides a new one's frames.
   private frameSeq = Date.now();
 
   constructor(private readonly options: BrowserServiceOptions) {
+    const envIdleRaw = (options.env ?? process.env).PATTERM_BROWSER_IDLE_MS;
+    const envIdle = envIdleRaw !== undefined && envIdleRaw !== '' ? Number(envIdleRaw) : Number.NaN;
+    this.idleRetireMs = options.idleRetireMs ?? (Number.isFinite(envIdle) && envIdle >= 0 ? envIdle : DEFAULT_BROWSER_IDLE_RETIRE_MS);
     this.idleTimer = setInterval(() => this.stopIdleScreencasts(), 5_000);
     this.idleTimer.unref();
   }
@@ -136,6 +156,7 @@ export class BrowserService {
   // Starts the session's browser if needed and says how to reach it.
   async open(sessionId: string, processId: string): Promise<{ cdp_url: string; websocket_url: string; headed: boolean; chrome_version: string; patchright: string | null }> {
     const browser = await this.ensure(sessionId, processId);
+    browser.lastActivityAt = Date.now();
     const version = await fetch(`${browser.cdpUrl}/json/version`).then((response) => response.json() as Promise<{ webSocketDebuggerUrl?: string }>).catch(() => null);
     return { cdp_url: browser.cdpUrl, websocket_url: version?.webSocketDebuggerUrl ?? '', headed: browser.headed, chrome_version: browser.version, patchright: patchrightPath() };
   }
@@ -160,6 +181,7 @@ export class BrowserService {
     const browser = this.browsers.get(sessionId);
     if (!browser) return { seq: after, data: null };
     browser.watchedAt = Date.now();
+    browser.lastActivityAt = browser.watchedAt;
     await this.ensureScreencast(browser);
     if (browser.frame && browser.frame.seq > after) return browser.frame;
     await new Promise<void>((resolve) => {
@@ -168,6 +190,7 @@ export class BrowserService {
       browser.waiters.add(done);
     });
     browser.watchedAt = Date.now();
+    browser.lastActivityAt = browser.watchedAt;
     return browser.frame && browser.frame.seq > after ? browser.frame : { seq: after, data: null };
   }
 
@@ -175,6 +198,7 @@ export class BrowserService {
   // hold up the other requests on the user's connection.
   async input(sessionId: string, input: BrowserInput): Promise<void> {
     const browser = this.require(sessionId);
+    browser.lastActivityAt = Date.now();
     await Promise.race([this.ensureScreencast(browser), new Promise((resolve) => setTimeout(resolve, INPUT_WAIT_MS))]);
     const target = browser.screencast;
     if (!target) throw new Error('The browser has no open tab');
@@ -195,6 +219,7 @@ export class BrowserService {
   async fillSecret(sessionId: string, input: { targetId?: string | undefined; selector: string; value: () => string; allowed: (host: string) => boolean }): Promise<{ target_id: string; host: string }> {
     const browser = this.browsers.get(sessionId);
     if (!browser) throw new Error('Your browser is not running. Call browser_open and load the sign-in page first.');
+    browser.lastActivityAt = Date.now();
     const targetId = input.targetId ?? browser.activeTargetId ?? [...browser.tabs.keys()].at(-1);
     if (!targetId || !browser.tabs.has(targetId)) throw new Error('That tab is not open');
     const { sessionId: attached } = await browser.cdp.send<{ sessionId: string }>('Target.attachToTarget', { targetId, flatten: true });
@@ -246,6 +271,7 @@ export class BrowserService {
   }
 
   private async show(browser: ManagedBrowser, url: string): Promise<void> {
+    browser.lastActivityAt = Date.now();
     await this.ensureScreencast(browser);
     if (!browser.screencast) {
       await browser.cdp.send('Target.createTarget', { url });
@@ -257,6 +283,7 @@ export class BrowserService {
   async selectTab(sessionId: string, targetId: string): Promise<void> {
     const browser = this.require(sessionId);
     if (!browser.tabs.has(targetId)) throw new Error('That tab has closed');
+    browser.lastActivityAt = Date.now();
     browser.activeTargetId = targetId;
     browser.pinned = true;
     await browser.cdp.send('Target.activateTarget', { targetId }).catch(() => {});
@@ -266,6 +293,7 @@ export class BrowserService {
 
   async requestHelp(sessionId: string, processId: string, reason: string): Promise<void> {
     const browser = await this.ensure(sessionId, processId);
+    browser.lastActivityAt = Date.now();
     browser.help = { reason, requestedAt: new Date().toISOString() };
     this.options.raiseHelp(processId, reason);
     this.options.onChanged();
@@ -274,6 +302,7 @@ export class BrowserService {
   // The user finished what the agent asked for, or stepped in unasked.
   async finishHelp(sessionId: string, note?: string): Promise<void> {
     const browser = this.require(sessionId);
+    browser.lastActivityAt = Date.now();
     const asked = browser.help;
     browser.help = null;
     this.options.resolveHelp(browser.processId);
@@ -310,6 +339,71 @@ export class BrowserService {
   async stopAll(): Promise<void> {
     await Promise.allSettled([...this.launching.values()]);
     await Promise.all([...this.browsers.values()].map((browser) => this.shutdown(browser)));
+    if (this.sharedDisplay) {
+      const display = this.sharedDisplay;
+      display.stopping = true;
+      this.sharedDisplay = null;
+      stopChild(display.process, 'SIGTERM');
+    }
+  }
+
+  private async acquireSharedDisplay(xvfb: string): Promise<SharedDisplay> {
+    for (;;) {
+      if (this.disposed) throw new Error('Patterm is shutting down');
+      if (
+        this.sharedDisplay
+        && !this.sharedDisplay.stopping
+        && this.sharedDisplay.process.exitCode === null
+        && this.sharedDisplay.process.signalCode === null
+      ) {
+        this.sharedDisplay.refs += 1;
+        return this.sharedDisplay;
+      }
+      if (this.startingDisplay) {
+        const display = await this.startingDisplay;
+        if (
+          this.sharedDisplay === display
+          && !display.stopping
+          && display.process.exitCode === null
+          && display.process.signalCode === null
+        ) {
+          display.refs += 1;
+          return display;
+        }
+        continue;
+      }
+      const starting = startDisplay(xvfb).then((started) => {
+        const entry: SharedDisplay = { ...started, refs: 0, stopping: false };
+        started.process.once('exit', () => {
+          entry.stopping = true;
+          if (this.sharedDisplay === entry) this.sharedDisplay = null;
+        });
+        this.sharedDisplay = entry;
+        return entry;
+      }).finally(() => {
+        if (this.startingDisplay === starting) this.startingDisplay = null;
+      });
+      this.startingDisplay = starting;
+      const display = await starting;
+      if (
+        this.sharedDisplay === display
+        && !display.stopping
+        && display.process.exitCode === null
+        && display.process.signalCode === null
+      ) {
+        display.refs += 1;
+        return display;
+      }
+    }
+  }
+
+  private releaseSharedDisplay(display: SharedDisplay | null): void {
+    if (!display) return;
+    display.refs = Math.max(0, display.refs - 1);
+    if (display.refs > 0 || display.stopping) return;
+    display.stopping = true;
+    if (this.sharedDisplay === display) this.sharedDisplay = null;
+    stopChild(display.process, 'SIGTERM');
   }
 
   async dispose(): Promise<void> {
@@ -349,7 +443,7 @@ export class BrowserService {
     await fs.promises.rm(path.join(profile, 'DevToolsActivePort'), { force: true });
 
     const xvfb = platform === 'linux' ? findExecutable('Xvfb', env) : null;
-    const display = xvfb ? await startDisplay(xvfb) : null;
+    const display = xvfb ? await this.acquireSharedDisplay(xvfb) : null;
     const args = [
       '--remote-debugging-port=0',
       '--remote-debugging-address=127.0.0.1',
@@ -368,39 +462,49 @@ export class BrowserService {
       ...(display ? [] : ['--headless=new']),
       'about:blank'
     ];
-    const child = spawn(chrome.executable, args, {
-      env: { ...env, ...(display ? { DISPLAY: display.name } : {}) },
-      stdio: 'ignore',
-      detached: platform !== 'win32',
-      windowsHide: true
-    });
+    let child: ChildProcess | null = null;
     let exited = false;
-    child.once('exit', () => { exited = true; });
-    child.once('error', () => { exited = true; });
+    let cdp: CdpConnection | null = null;
+    let registered = false;
     try {
+      child = spawn(chrome.executable, args, {
+        env: { ...env, ...(display ? { DISPLAY: display.name } : {}) },
+        stdio: 'ignore',
+        detached: platform !== 'win32',
+        windowsHide: true
+      });
+      child.once('exit', () => { exited = true; });
+      child.once('error', () => { exited = true; });
       const port = await waitForPort(path.join(profile, 'DevToolsActivePort'), () => exited);
       const cdpUrl = `http://127.0.0.1:${port.port}`;
-      const cdp = await CdpConnection.connect(`ws://127.0.0.1:${port.port}${port.path}`);
+      cdp = await CdpConnection.connect(`ws://127.0.0.1:${port.port}${port.path}`);
+      const now = Date.now();
       const browser: ManagedBrowser = {
         sessionId, processId, profile, headed: Boolean(display), version: chrome.version, cdpUrl,
-        chrome: child, display: display?.process ?? null, cdp,
+        chrome: child, display, cdp,
         tabs: new Map(), activeTargetId: null, pinned: false, screencast: null, switching: null,
-        frame: null, waiters: new Set(), watchedAt: 0, help: null, stopping: false
+        frame: null, waiters: new Set(), watchedAt: 0, lastActivityAt: now, help: null, stopping: false
       };
       cdp.on((event) => this.onEvent(browser, event));
       await cdp.send('Target.setDiscoverTargets', { discover: true });
       if (this.disposed || !this.options.isLive(sessionId)) {
-        cdp.close();
         throw new Error('The session has ended');
       }
       this.browsers.set(sessionId, browser);
+      registered = true;
       child.once('exit', () => void this.shutdown(browser));
       this.options.onChanged();
       return browser;
     } catch (error) {
-      const stopped = exited ? Promise.resolve() : new Promise<void>((resolve) => { child.once('exit', () => resolve()); setTimeout(resolve, 5_000).unref(); });
-      stopChild(child, 'SIGKILL', platform !== 'win32');
-      if (display) stopChild(display.process, 'SIGTERM');
+      if (!registered) {
+        cdp?.close();
+        if (display) this.releaseSharedDisplay(display);
+      }
+      const spawned = child;
+      const stopped = !spawned || exited
+        ? Promise.resolve()
+        : new Promise<void>((resolve) => { spawned.once('exit', () => resolve()); setTimeout(resolve, 5_000).unref(); });
+      if (spawned) stopChild(spawned, 'SIGKILL', platform !== 'win32');
       if (!this.options.isLive(sessionId)) {
         await stopped;
         await fs.promises.rm(profile, { recursive: true, force: true });
@@ -410,6 +514,7 @@ export class BrowserService {
   }
 
   private onEvent(browser: ManagedBrowser, event: CdpEvent): void {
+    browser.lastActivityAt = Date.now();
     if (event.method === 'Target.targetCreated' || event.method === 'Target.targetInfoChanged') {
       const info = event.params.targetInfo as { targetId: string; type: string; url: string; title: string } | undefined;
       if (!info || info.type !== 'page') return;
@@ -481,8 +586,22 @@ export class BrowserService {
   }
 
   private stopIdleScreencasts(): void {
-    for (const browser of this.browsers.values()) {
-      if (browser.screencast && !browser.switching && Date.now() - browser.watchedAt >= VIEWER_IDLE_MS) void this.stopScreencast(browser);
+    const now = Date.now();
+    for (const browser of [...this.browsers.values()]) {
+      if (browser.screencast && !browser.switching && now - browser.watchedAt >= VIEWER_IDLE_MS) void this.stopScreencast(browser);
+      // Retire browsers idle beyond the configured window while preserving
+      // profiles on disk so a later browser_open resumes the same state.
+      if (
+        this.idleRetireMs > 0
+        && !browser.stopping
+        && !browser.screencast
+        && !browser.switching
+        && !browser.help
+        && !browser.waiters.size
+        && now - Math.max(browser.lastActivityAt, browser.watchedAt) >= this.idleRetireMs
+      ) {
+        void this.shutdown(browser);
+      }
     }
   }
 
@@ -501,7 +620,11 @@ export class BrowserService {
       await exited;
       clearTimeout(timer);
     }
-    if (browser.display) stopChild(browser.display, 'SIGTERM');
+    if (browser.display) {
+      const display = browser.display;
+      browser.display = null;
+      this.releaseSharedDisplay(display);
+    }
     if (!this.disposed) this.options.onChanged();
   }
 }

@@ -1,4 +1,4 @@
-import { onBeforeUnmount, ref, watch } from 'vue';
+import { onScopeDispose, ref, watch } from 'vue';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { latestQueryData, queryClient } from './serverQuery';
 
@@ -65,9 +65,23 @@ export function useContextVersion(projectId: () => string, refresh: () => void) 
   watch(() => projectContextVersion(projectId()), () => refresh());
 }
 
+const CONTEXT_CLOCK_MS = 15_000;
+const contextClockNow = ref(Date.now());
+let contextClockUsers = 0;
+let contextClockTimer: ReturnType<typeof setInterval> | null = null;
+
 export function useContextClock() {
-  const now = ref(Date.now());
-  const timer = setInterval(() => { now.value = Date.now(); }, 1000);
-  onBeforeUnmount(() => clearInterval(timer));
-  return now;
+  if (contextClockUsers === 0) {
+    contextClockNow.value = Date.now();
+    contextClockTimer = setInterval(() => { contextClockNow.value = Date.now(); }, CONTEXT_CLOCK_MS);
+  }
+  contextClockUsers += 1;
+  onScopeDispose(() => {
+    contextClockUsers = Math.max(0, contextClockUsers - 1);
+    if (contextClockUsers === 0 && contextClockTimer !== null) {
+      clearInterval(contextClockTimer);
+      contextClockTimer = null;
+    }
+  });
+  return contextClockNow;
 }

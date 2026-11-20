@@ -16,6 +16,7 @@ import { goalIsOpen, normaliseGoal, type IntegratedGoalAction, type IntegratedGo
 
 const ARCHIVE_PAGE_SIZE = 80;
 const ARCHIVE_CURSOR_PREFIX = 'archive:';
+const HIBERNATED_ARGV_MARKER = '--patterm-hibernated';
 // Native titles appear asynchronously: Claude generates one on request, while
 // OpenCode names the conversation during the first turn. Retry a few
 // times after each accepted prompt, then wait for the next one.
@@ -50,6 +51,17 @@ export interface IntegratedLaunchInput {
   restoreSavedSettings?: boolean;
   // The assistant and bots: Patterm keeps their saved memory current.
   memoryPush?: boolean;
+  // Set when transparently waking a hibernated session in place so duplicate-attach
+  // checks ignore the session's own live row.
+  wakingSessionId?: string;
+}
+
+export interface IntegratedHibernationOptions {
+  idleMs?: number;
+  checkIntervalMs?: number;
+  isBusy?: (processId: string) => boolean;
+  canResume?: (harness: 'claude' | 'codex' | 'agy', cwd: string, resumeId: string) => boolean;
+  wake: (processId: string) => Promise<void>;
 }
 
 // Launch settings a running agent reports. A missing key is one it does not
@@ -222,6 +234,162 @@ export class IntegratedAgentService {
   // Stream events and synthetic marks bump the sequence. Snapshot reads and
   // post-admission marks write only when no newer write landed meanwhile.
   private readonly activitySequence = new Map<string, number>();
+  // Idle host hibernation: idle claude/codex/agy hosts with saved conversations
+  // can be retired while keeping their Patterm sessions live and viewable, and
+  // transparently woken on the next prompt/command/control action.
+  private readonly hibernated = new Set<string>();
+  private readonly hibernating = new Map<string, Promise<void>>();
+  private readonly waking = new Map<string, Promise<void>>();
+  private readonly lastTouched = new Map<string, number>();
+  private hibernation: IntegratedHibernationOptions | null = null;
+  private hibernationTimer: NodeJS.Timeout | null = null;
+  private sweepingIdleHosts = false;
+
+  setHibernation(options: IntegratedHibernationOptions | null): void {
+    if (this.hibernationTimer) {
+      clearInterval(this.hibernationTimer);
+      this.hibernationTimer = null;
+    }
+    this.hibernation = options;
+    const idleMs = options?.idleMs ?? 90 * 60_000;
+    if (!options || !Number.isFinite(idleMs) || idleMs <= 0) return;
+    const intervalMs = options.checkIntervalMs ?? Math.min(60_000, Math.max(5_000, Math.floor(idleMs / 4)));
+    this.hibernationTimer = setInterval(() => { void this.sweepIdleHosts(); }, intervalMs);
+    this.hibernationTimer.unref();
+  }
+
+  isHibernated(processId: string): boolean {
+    return this.hibernated.has(this.ledgerKey(processId));
+  }
+
+  private isPersistedHibernated(processId: string): boolean {
+    const row = this.database.connection.prepare('select argv from processes where id = ?').get(processId) as { argv: string | null } | undefined;
+    if (!row?.argv) return false;
+    try {
+      const parsed = JSON.parse(row.argv) as unknown;
+      return Array.isArray(parsed) && parsed.includes(HIBERNATED_ARGV_MARKER);
+    } catch {
+      return false;
+    }
+  }
+
+  private setPersistedHibernated(processId: string, hibernated: boolean): void {
+    const row = this.database.connection.prepare('select argv from processes where id = ?').get(processId) as { argv: string | null } | undefined;
+    if (!row?.argv) return;
+    let parsed: unknown;
+    try { parsed = JSON.parse(row.argv); } catch { return; }
+    if (!Array.isArray(parsed)) return;
+    const hasMarker = parsed.includes(HIBERNATED_ARGV_MARKER);
+    if (hibernated === hasMarker) return;
+    const next = hibernated
+      ? [...parsed, HIBERNATED_ARGV_MARKER]
+      : parsed.filter((entry) => entry !== HIBERNATED_ARGV_MARKER);
+    this.database.connection.prepare('update processes set argv = ? where id = ?').run(JSON.stringify(next), processId);
+  }
+
+  async ensureAwake(processId: string): Promise<void> {
+    const key = this.ledgerKey(processId);
+    this.lastTouched.set(key, Date.now());
+    const pendingHibernate = this.hibernating.get(key);
+    if (pendingHibernate) await pendingHibernate;
+    if (!this.hibernated.has(key)) return;
+    const inFlight = this.waking.get(key);
+    if (inFlight) return inFlight;
+    const wake = this.hibernation?.wake;
+    if (!wake) {
+      this.hibernated.delete(key);
+      this.setPersistedHibernated(key, false);
+      return;
+    }
+    const promise = (async () => {
+      await wake(key);
+      this.hibernated.delete(key);
+      this.setPersistedHibernated(key, false);
+      this.lastTouched.set(key, Date.now());
+      this.debugLog?.write('integrated', 'host.woken', { processId: key });
+      // Attach any viewer subscriptions that connected while hibernated.
+      const sub = this.conversationSubscriptions.get(key);
+      if (sub && !sub.unsubscribe && sub.listeners.size) {
+        const provider = this.forProcess(key);
+        if (provider.subscribe) {
+          const release = await provider.subscribe(key, (event) => {
+            for (const current of sub.listeners) {
+              try { current(event); } catch { /* listeners own their failures */ }
+            }
+          });
+          if (this.conversationSubscriptions.get(key) === sub) sub.unsubscribe = release;
+          else release();
+        }
+        for (const current of sub.listeners) {
+          try { current({ processId: key, revision: 0, kind: 'pending' }); } catch {}
+        }
+      }
+      this.observe(key);
+    })().finally(() => {
+      if (this.waking.get(key) === promise) this.waking.delete(key);
+    });
+    this.waking.set(key, promise);
+    return promise;
+  }
+
+  private async sweepIdleHosts(): Promise<void> {
+    if (this.sweepingIdleHosts) return;
+    const options = this.hibernation;
+    if (!options) return;
+    const idleMs = options.idleMs ?? 90 * 60_000;
+    if (!Number.isFinite(idleMs) || idleMs <= 0) return;
+    this.sweepingIdleHosts = true;
+    try {
+      const now = Date.now();
+      const rows = this.database.connection.prepare(`
+        select processes.id as process_id, processes.updated_at, sessions.harness, coalesce(sessions.cwd, processes.cwd) as cwd, sessions.resume_id
+        from processes join sessions on sessions.process_id = processes.id
+        where processes.status = 'running'
+          and processes.activity = 'idle'
+          and processes.background_tasks = 0
+          and processes.goal_status is null
+          and processes.asking is null
+          and sessions.interface_mode = 'integrated'
+          and sessions.exited_at is null
+          and sessions.resume_id is not null
+          and sessions.harness in ('claude', 'codex', 'agy')
+      `).all() as Array<{ process_id: string; updated_at: string; harness: 'claude' | 'codex' | 'agy'; cwd: string | null; resume_id: string }>;
+      for (const row of rows) {
+        const key = row.process_id;
+        if (this.hibernated.has(key) || this.hibernating.has(key) || this.waking.has(key)) continue;
+        if (this.sending.get(key) || this.waiting.get(key) || this.dispatching.has(key) || this.heldFlushes.has(key) || this.nextHeld(key)) continue;
+        const sub = this.conversationSubscriptions.get(key);
+        const observerListeners = this.observers.has(key) ? 1 : 0;
+        if (sub && sub.listeners.size > observerListeners) continue;
+        if (options.isBusy?.(key)) continue;
+        const last = Math.max(this.lastTouched.get(key) ?? 0, Date.parse(row.updated_at) || 0);
+        if (now - last < idleMs) continue;
+        if (options.canResume && !options.canResume(row.harness, row.cwd ?? process.cwd(), row.resume_id)) continue;
+        const provider = this.providers[row.harness];
+        if (!provider?.stop) continue;
+        this.hibernated.add(key);
+        this.setPersistedHibernated(key, true);
+        this.unobserve(key);
+        const stopPromise = (async () => {
+          try {
+            await provider.stop!(key);
+            this.debugLog?.write('integrated', 'host.hibernated', { processId: key, harness: row.harness });
+          } catch (error) {
+            this.hibernated.delete(key);
+            this.setPersistedHibernated(key, false);
+            this.debugLog?.write('integrated', 'host.hibernate_failed', { processId: key, harness: row.harness, message: error instanceof Error ? error.message : String(error) });
+            if (this.isLive(key)) this.observe(key);
+          }
+        })().finally(() => {
+          if (this.hibernating.get(key) === stopPromise) this.hibernating.delete(key);
+        });
+        this.hibernating.set(key, stopPromise);
+        await stopPromise;
+      }
+    } finally {
+      this.sweepingIdleHosts = false;
+    }
+  }
 
   setHistoryReadService(history: AgentHistoryReadService): void {
     this.history = history;
@@ -316,6 +484,21 @@ export class IntegratedAgentService {
 
   async conversation(processId: string): Promise<unknown> {
     const key = this.ledgerKey(processId);
+    this.lastTouched.set(key, Date.now());
+    if (this.hibernated.has(key)) {
+      const saved = record(this.savedConversation(processId));
+      return {
+        ...saved,
+        process_id: key,
+        status: 'idle',
+        hibernated: true,
+        streaming: true,
+        permissions: { data: [] },
+        questions: { data: [] },
+        forms: { data: [] },
+        tasks: []
+      };
+    }
     const sequence = this.sequence(key);
     let conversation = await this.forProcess(processId).conversation(processId);
     this.markSnapshot(key, conversation, sequence);
@@ -342,10 +525,11 @@ export class IntegratedAgentService {
   // the pane reads separately, and imported history, which the pane's own
   // snapshot adds. Ended sessions read only their imported history.
   async peekConversation(processId: string): Promise<unknown> {
-    if (!this.isLive(this.ledgerKey(processId))) return this.savedConversation(processId);
+    const key = this.ledgerKey(processId);
+    if (!this.isLive(key) || this.hibernated.has(key)) return this.savedConversation(processId);
     const conversation = record(await this.forProcess(processId).conversation(processId));
     const { commands: _commands, models: _models, ...transcript } = conversation;
-    const held = this.heldQueue(this.ledgerKey(processId));
+    const held = this.heldQueue(key);
     if (!held.length) return transcript;
     const native = transcript.queue;
     return { ...transcript, queue: [...(Array.isArray(native) ? native : []), ...held] };
@@ -493,23 +677,31 @@ export class IntegratedAgentService {
     perProcess.set(messageId, { hash, legacy, promise });
     void promise.finally(() => {
       const current = this.inflight.get(key);
-      if (current?.get(messageId)?.promise === promise) current.delete(messageId);
+      if (current?.get(messageId)?.promise === promise) {
+        current.delete(messageId);
+        if (!current.size) this.inflight.delete(key);
+      }
     }).catch(() => {});
     return promise;
   }
 
   // Memory goes first, so the agent reads the prompt with it current.
   private sendPrompt(processId: string, resolved: ResolvedIntegratedPrompt, review?: ReviewPrompt): Promise<unknown> {
+    const key = this.ledgerKey(processId);
+    this.lastTouched.set(key, Date.now());
+    if (this.hibernated.has(key)) {
+      return this.ensureAwake(key).then(() => this.sendPrompt(processId, resolved, review));
+    }
     const provider = this.forProcess(processId);
     const send = () => {
       if (review && !review.current()) throw new Error('This request is no longer waiting for this parent');
       for (const listener of this.promptDispatchListeners) {
-        try { listener(this.ledgerKey(processId)); } catch { /* listeners own their failures */ }
+        try { listener(key); } catch { /* listeners own their failures */ }
       }
       return provider.prompt(processId, resolved, review);
     };
     if (!this.memory || !provider.updateMemory) return send();
-    return this.memory.deliver(this.ledgerKey(processId), (update) => provider.updateMemory!(processId, update))
+    return this.memory.deliver(key, (update) => provider.updateMemory!(processId, update))
       .then(send);
   }
 
@@ -849,7 +1041,23 @@ export class IntegratedAgentService {
   // One provider subscription per process, shared by every listener (desktop
   // and browser clients). Returns a release function.
   async subscribeConversation(processId: string, listener: IntegratedConversationListener): Promise<() => void> {
+    const key = this.ledgerKey(processId);
+    this.lastTouched.set(key, Date.now());
     let entry = this.conversationSubscriptions.get(processId);
+    if (!entry && this.hibernated.has(key)) {
+      const dormant: ConversationSubscription = { listeners: new Set(), unsubscribe: undefined, ready: Promise.resolve(), retry: null };
+      this.conversationSubscriptions.set(processId, dormant);
+      dormant.listeners.add(listener);
+      return () => {
+        const current = this.conversationSubscriptions.get(processId);
+        if (!current) return;
+        current.listeners.delete(listener);
+        if (current.listeners.size) return;
+        if (current.retry) clearTimeout(current.retry);
+        current.unsubscribe?.();
+        this.conversationSubscriptions.delete(processId);
+      };
+    }
     if (!entry) {
       const provider = this.forProcess(processId);
       const subscribe = provider.subscribe;
@@ -914,7 +1122,8 @@ export class IntegratedAgentService {
 
   // The user's Stop. OpenCode then takes up messages still steering the
   // stopped turn, as its own clients do; other stops never resume.
-  interrupt(processId: string): Promise<void> {
+  async interrupt(processId: string): Promise<void> {
+    if (this.hibernated.has(this.ledgerKey(processId))) return;
     return this.forProcess(processId).interrupt(processId, { resume: true });
   }
 
@@ -968,6 +1177,8 @@ export class IntegratedAgentService {
   }
 
   async controls(processId: string): Promise<IntegratedControls> {
+    const key = this.ledgerKey(processId);
+    if (this.hibernated.has(key)) await this.ensureAwake(key);
     const native = await (this.forProcess(processId).controls?.(processId) ?? Promise.resolve({ selectors: [], commands: [] }));
     const owned = new Set(PATTERM_COMMANDS.map((command) => command.name));
     return { ...native, commands: [...PATTERM_COMMANDS, ...native.commands.filter((command) => !owned.has(command.name))] };
@@ -984,13 +1195,14 @@ export class IntegratedAgentService {
     return !Array.isArray(messages) || messages.length === 0;
   }
 
-  configure(processId: string, selector: string, value: string): Promise<void> {
+  async configure(processId: string, selector: string, value: string): Promise<void> {
+    const key = this.ledgerKey(processId);
+    if (this.hibernated.has(key)) await this.ensureAwake(key);
     const provider = this.forProcess(processId);
     const configure = provider.configure;
     if (!configure) throw new Error('This agent does not support changing that setting');
-    return configure.call(provider, processId, selector, value).then(() => {
-      if (selector === 'model') this.signal(this.ledgerKey(processId), 'model');
-    });
+    await configure.call(provider, processId, selector, value);
+    if (selector === 'model') this.signal(key, 'model');
   }
 
   command(processId: string, name: string, text: string): Promise<unknown> {
@@ -998,10 +1210,11 @@ export class IntegratedAgentService {
   }
 
   private async runCommand(processId: string, name: string, text: string): Promise<unknown> {
+    const key = this.ledgerKey(processId);
+    if (this.hibernated.has(key)) await this.ensureAwake(key);
     const provider = this.forProcess(processId);
     const command = provider.command;
     if (!command) throw new Error('This agent does not support slash commands');
-    const key = this.ledgerKey(processId);
     const compacting = name === 'compact';
     if (compacting) this.signal(key, 'compact');
     let result: unknown;
@@ -1022,11 +1235,12 @@ export class IntegratedAgentService {
   // A goal that starts work (set or resume) counts as a turn like a prompt.
   goal(processId: string, action: IntegratedGoalAction, objective?: string): Promise<unknown> {
     return this.whileSending(processId, async () => {
+      const key = this.ledgerKey(processId);
+      if (this.hibernated.has(key)) await this.ensureAwake(key);
       const provider = this.forProcess(processId);
       const goal = provider.goal;
       if (!goal) throw new Error('This agent does not support goals');
       if (action === 'set' && !objective?.trim()) throw new Error('Describe when the work is done');
-      const key = this.ledgerKey(processId);
       const result = await goal.call(provider, processId, action, objective?.trim());
       if (action === 'set' || action === 'resume') this.signal(key, 'turn');
       this.refreshObserved(key);
@@ -1039,10 +1253,11 @@ export class IntegratedAgentService {
   // share the name, leaves the title alone, and is only admitted while the
   // agent is idle with no prompt on its way.
   async compact(processId: string): Promise<void> {
+    const key = this.ledgerKey(processId);
+    if (this.hibernated.has(key)) await this.ensureAwake(key);
     const provider = this.forProcess(processId);
     const compact = provider.compact;
     if (!compact) throw new Error('This agent cannot compact its conversation');
-    const key = this.ledgerKey(processId);
     if (this.activity(key) !== 'idle' || this.sending.get(key)) throw new Error('The agent is busy');
     this.signal(key, 'compact');
     const sequence = this.sequence(key);
@@ -1058,6 +1273,8 @@ export class IntegratedAgentService {
   // The model the next turn runs on. A native report wins over the selector,
   // which can be stale after a restart.
   async model(processId: string): Promise<string | null> {
+    const key = this.ledgerKey(processId);
+    if (this.hibernated.has(key)) await this.ensureAwake(key);
     const provider = this.forProcess(processId);
     const native = provider.currentModel ? await provider.currentModel(processId) : null;
     return native ?? (await this.controls(processId)).selectors.find((selector) => selector.id === 'model')?.value ?? null;
@@ -1069,6 +1286,8 @@ export class IntegratedAgentService {
   // activity can lag it, for example just after a restart. Like
   // peekConversation, reading it changes nothing.
   async lastActivity(processId: string): Promise<number | null> {
+    const key = this.ledgerKey(processId);
+    if (this.hibernated.has(key)) return this.lastTouched.get(key) ?? null;
     const provider = this.forProcess(processId);
     if (provider.lastActivity) return provider.lastActivity(processId);
     const conversation = record(await provider.conversation(processId));
@@ -1096,6 +1315,7 @@ export class IntegratedAgentService {
   // the agent reports are returned. A `default` model or effort means the
   // harness default; Codex's `default` speed is an explicit Standard tier.
   async liveSettings(processId: string): Promise<LiveSettings> {
+    if (this.hibernated.has(this.ledgerKey(processId))) return {};
     const provider = this.forProcess(processId);
     const native = provider.nativeSettings ? await provider.nativeSettings(processId) : {};
     if (native.model) return native;
@@ -1127,10 +1347,22 @@ export class IntegratedAgentService {
   }
 
   async stop(processId: string): Promise<void> {
+    const key = this.ledgerKey(processId);
+    const pendingHibernate = this.hibernating.get(key);
+    if (pendingHibernate) await pendingHibernate;
+    const pendingWake = this.waking.get(key);
+    if (pendingWake) await pendingWake.catch(() => undefined);
+    if (this.hibernated.delete(key)) {
+      this.setPersistedHibernated(key, false);
+      this.lastTouched.delete(key);
+      this.unobserve(key);
+      return;
+    }
+    this.setPersistedHibernated(key, false);
     const harness = this.sessionHarness(processId);
     if (harness && !presetHarnessInput.safeParse(harness).success) {
       await this.stopUnsupportedHosts([{ process_id: processId, harness }]);
-      this.unobserve(this.ledgerKey(processId));
+      this.unobserve(key);
       return;
     }
     const provider = this.forProcess(processId);
@@ -1139,15 +1371,20 @@ export class IntegratedAgentService {
     // stop is never reported as stopped, and stays observed.
     if (provider.stop) await provider.stop(processId);
     else await provider.interrupt(processId);
-    this.unobserve(this.ledgerKey(processId));
+    this.lastTouched.delete(key);
+    this.unobserve(key);
   }
 
   async stopAll(): Promise<void> {
     this.dispose();
     for (const refresh of this.titleRefreshes.values()) if (refresh.timer) clearTimeout(refresh.timer);
     this.titleRefreshes.clear();
+    if (this.hibernating.size) await Promise.allSettled([...this.hibernating.values()]);
     const rows = this.database.connection.prepare(`select process_id, harness from sessions
       where interface_mode = 'integrated' and process_id is not null and harness is not null`).all() as Array<{ process_id: string; harness: string }>;
+    for (const key of this.hibernated) this.setPersistedHibernated(key, false);
+    for (const row of rows) this.setPersistedHibernated(row.process_id, false);
+    this.hibernated.clear();
     const unsupported = rows.filter((row) => !presetHarnessInput.safeParse(row.harness).success);
     const results = await Promise.allSettled([
       ...Object.values(this.providers).map((provider) => provider?.stopAll?.()),
@@ -1159,11 +1396,20 @@ export class IntegratedAgentService {
 
   async reconcile(): Promise<{ checked: number; failed: number; unreachable: number }> {
     const rows = this.database.connection.prepare(`
-      select process_id, harness from sessions
+      select process_id, harness, resume_id from sessions
       where interface_mode = 'integrated' and exited_at is null and process_id is not null
-    `).all() as Array<{ process_id: string; harness: string }>;
+    `).all() as Array<{ process_id: string; harness: string; resume_id: string | null }>;
     const results = await Promise.all(rows.map(async (row): Promise<'ok' | 'failed' | 'unreachable'> => {
       const unsupported = !presetHarnessInput.safeParse(row.harness).success;
+      if (
+        !unsupported
+        && row.resume_id
+        && (row.harness === 'claude' || row.harness === 'codex' || row.harness === 'agy')
+        && this.isPersistedHibernated(row.process_id)
+      ) {
+        this.hibernated.add(row.process_id);
+        return 'ok';
+      }
       try {
         if (unsupported) await this.stopUnsupportedHosts([row]);
         else {
@@ -1276,11 +1522,12 @@ export class IntegratedAgentService {
     let key: string;
     try {
       key = this.ledgerKey(processId);
-      if (this.observers.has(key)) return;
+      if (this.observers.has(key) || this.hibernated.has(key)) return;
       if (!this.isLive(key)) {
         this.observeAttempts.delete(key);
         return;
       }
+      this.lastTouched.set(key, Date.now());
       this.adoptHeld(key);
     } catch { return; /* observation is best effort */ }
     const observer: ActivityObserver = { release: null, retry: null, refreshing: null, again: false, stale: false, closed: false };
@@ -1298,13 +1545,23 @@ export class IntegratedAgentService {
   // Release every observation without stopping native hosts, for example when
   // a persistent service shuts down and its agents keep running.
   dispose(): void {
+    if (this.hibernationTimer) {
+      clearInterval(this.hibernationTimer);
+      this.hibernationTimer = null;
+    }
     for (const key of [...this.observers.keys()]) this.unobserve(key);
+    for (const refresh of this.titleRefreshes.values()) if (refresh.timer) clearTimeout(refresh.timer);
+    this.titleRefreshes.clear();
   }
 
   private unobserve(key: string): void {
     this.emitRequests(key, null);
     this.loggedUnhandled.delete(key);
     this.observeAttempts.delete(key);
+    this.activitySequence.delete(key);
+    const refresh = this.titleRefreshes.get(key);
+    if (refresh?.timer) clearTimeout(refresh.timer);
+    this.titleRefreshes.delete(key);
     const observer = this.observers.get(key);
     if (!observer) return;
     this.observers.delete(key);
@@ -1317,6 +1574,7 @@ export class IntegratedAgentService {
     // Patterm's own held-queue notice is for viewers. Re-reading activity on it
     // would retry a rejected held prompt on every rejection.
     if (observer.closed || event.id === HELD_QUEUE_EVENT_ID) return;
+    this.lastTouched.set(key, Date.now());
     for (const listener of this.eventListeners) {
       try { listener(key, event); } catch { /* a listener must not break observation */ }
     }

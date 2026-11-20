@@ -8,7 +8,7 @@
         <!-- Runs on under the composer's top padding when nothing sits
              between them, so text fades out at the card's edge. -->
         <div class="min-h-0 flex-1" :class="composerAdjoins && '-mb-4'">
-          <ConversationTranscript ref="transcriptRef" :key="processId" :messages="transcriptMessages" :truncated="historyTruncated" :history-unavailable="historyUnavailable" :has-older="Boolean(historyCursor)" :loading-older="loadingOlder" :history-error="historyError" :process-id="processId" :live="streaming" :working="streamStatus === 'working' && !ended" :settling="loadingTranscript" :can-retry="canReply && !submission" :can-cancel="canReply" auto-load-older @load-older="loadOlder" @retry-message="retryMessage" @resend-message="resendMessage" @edit-message="editQueued" @cancel-message="cancelQueued" />
+          <ConversationTranscript ref="transcriptRef" :messages="transcriptMessages" :truncated="historyTruncated" :history-unavailable="historyUnavailable" :has-older="Boolean(historyCursor)" :loading-older="loadingOlder" :history-error="historyError" :process-id="processId" :live="streaming" :working="streamStatus === 'working' && !ended" :settling="loadingTranscript" :can-retry="canReply && !submission" :can-cancel="canReply" auto-load-older @load-older="loadOlder" @retry-message="retryMessage" @resend-message="resendMessage" @edit-message="editQueued" @cancel-message="cancelQueued" />
         </div>
       </div>
       <section v-if="recoveryError || ended || restartNeedsServer" class="mx-auto mb-3 w-full max-w-[50rem] shrink-0 px-4 2xl:max-w-[1000px]" aria-label="Agent recovery">
@@ -518,6 +518,8 @@ let conversationProcess: string | null = null;
 let snapshotDepth = 0;
 let streamRevision = -1;
 let bufferedStreamEvents: ConversationStreamEvent[] = [];
+let pendingAppendEvents: ConversationStreamEvent[] = [];
+let appendFlushFrame: number | null = null;
 let subscribedProcessId: string | null = null;
 let subscriptionSequence = 0;
 let reconciling = false;
@@ -539,7 +541,9 @@ onMounted(() => {
   void begin(props.processId);
 });
 onBeforeUnmount(() => {
+  flushPendingAppends();
   rememberState(props.processId);
+  cancelPendingAppends();
   clearTimeout(goalMetTimer);
   publishIntegratedControls(props.processId, null);
   stopWorkspaceRequests?.();
@@ -639,6 +643,7 @@ function canSubscribe(): boolean {
 // and on unmount.
 function rememberState(processId: string | undefined): void {
   if (!processId) return;
+  flushPendingAppends();
   if (ended.value) {
     forgetConversation(processId);
     return;
@@ -722,6 +727,7 @@ function resetState(): void {
   historyLoaded = false;
   streamRevision = -1;
   bufferedStreamEvents = [];
+  cancelPendingAppends();
   streamUnavailable = false;
   streaming.value = false;
   ended.value = Boolean(props.exited);
@@ -1555,11 +1561,50 @@ async function stopConversationStream(): Promise<void> {
   const previous = conversationProcess;
   conversationProcess = null;
   bufferedStreamEvents = [];
+  cancelPendingAppends();
   streamRevision = -1;
   if (previous) await window.patterm.conversationSubscribe?.({ process_id: previous, subscribed: false });
 }
 
+function cancelPendingAppends(): void {
+  if (appendFlushFrame !== null && typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(appendFlushFrame);
+  }
+  appendFlushFrame = null;
+  pendingAppendEvents = [];
+}
+
+function flushPendingAppends(): void {
+  if (appendFlushFrame !== null && typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(appendFlushFrame);
+  }
+  appendFlushFrame = null;
+  if (!pendingAppendEvents.length) return;
+  const queued = pendingAppendEvents;
+  pendingAppendEvents = [];
+  let next = messages.value;
+  let index = 0;
+  while (index < queued.length) {
+    const first = queued[index]!;
+    let delta = first.delta ?? '';
+    let nextIndex = index + 1;
+    while (
+      nextIndex < queued.length
+      && queued[nextIndex]!.id === first.id
+      && queued[nextIndex]!.messageKind === first.messageKind
+      && queued[nextIndex]!.parentId === first.parentId
+    ) {
+      delta += queued[nextIndex]!.delta ?? '';
+      nextIndex += 1;
+    }
+    next = applyConversationStreamEvent(next, nextIndex === index + 1 ? first : { ...first, delta });
+    index = nextIndex;
+  }
+  messages.value = next;
+}
+
 function beginSnapshot(): void {
+  flushPendingAppends();
   snapshotDepth++;
 }
 
@@ -1569,6 +1614,7 @@ function endSnapshot(): void {
   const buffered = bufferedStreamEvents.sort((left, right) => left.revision - right.revision);
   bufferedStreamEvents = [];
   for (const event of buffered) applyStreamEvent(event);
+  flushPendingAppends();
 }
 
 // Status as the indicator shows it: an agent waiting for permission or an
@@ -1596,6 +1642,7 @@ function applyStreamEvent(event: ConversationStreamEvent): void {
   // revision domain that snapshots and deltas share.
   // A lost connection is not a failed turn: the server subscribes again.
   if (event.kind === 'reconnecting' || event.id === 'connection_error') {
+    flushPendingAppends();
     streamStatus.value = 'reconnecting';
     if (event.id === 'connection_error') messages.value = applyConversationStreamEvent(messages.value, event);
     return;
@@ -1603,6 +1650,7 @@ function applyStreamEvent(event: ConversationStreamEvent): void {
   // Patterm's held queue changed. Re-read it without touching the native
   // revision order.
   if (event.id === HELD_QUEUE_EVENT_ID) {
+    flushPendingAppends();
     void refresh();
     return;
   }
@@ -1611,6 +1659,16 @@ function applyStreamEvent(event: ConversationStreamEvent): void {
   // Apply what arrived, then re-read the authoritative snapshot to heal it.
   const gap = streamRevision >= 0 && event.revision > streamRevision + 1;
   streamRevision = event.revision;
+  // Coalesce high-frequency append deltas per animation frame so streaming
+  // renders at display refresh rate instead of re-rendering per token.
+  if (event.kind === 'append' && !gap && typeof requestAnimationFrame === 'function') {
+    pendingAppendEvents.push(event);
+    if (appendFlushFrame === null) {
+      appendFlushFrame = requestAnimationFrame(() => flushPendingAppends());
+    }
+    return;
+  }
+  flushPendingAppends();
   if (event.kind === 'replace' || event.kind === 'append' || event.kind === 'error') {
     messages.value = applyConversationStreamEvent(messages.value, event);
     if (event.kind === 'error') streamStatus.value = 'error';

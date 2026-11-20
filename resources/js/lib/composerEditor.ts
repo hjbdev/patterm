@@ -9,7 +9,7 @@ import Paragraph from '@tiptap/extension-paragraph';
 import Text from '@tiptap/extension-text';
 import { Placeholder, UndoRedo } from '@tiptap/extensions';
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
-import { Selection, TextSelection } from '@tiptap/pm/state';
+import { EditorState, Selection, TextSelection } from '@tiptap/pm/state';
 import ComposerMention from '../Components/ComposerMention.vue';
 import { composerChips, composerLines, composerText, positionToTextOffset, textOffsetToPosition, type ComposerChip, type ComposerLine } from './composerDocument';
 
@@ -22,6 +22,9 @@ export interface ComposerEditor {
   replace(start: number, end: number, insert: string | ComposerChip): void;
   // Shows a draft that changed elsewhere, without reporting it as an edit.
   setText(text: string, chips: readonly ComposerChip[]): void;
+  // Swaps to a fresh EditorState (resetting undo/redo history) while reusing
+  // the mounted ProseMirror/Tiptap instance across agent switches.
+  reset(text: string, chips: readonly ComposerChip[]): void;
   focus(): void;
   // Reads the placeholder and attributes again.
   refresh(): void;
@@ -167,6 +170,17 @@ export function createComposerEditor(options: ComposerEditorOptions): ComposerEd
       const doc = state.schema.nodeFromJSON(documentJSON(composerLines(text, chips)));
       const tr = state.tr.replaceWith(0, state.doc.content.size, doc.content).setMeta('preventUpdate', true);
       tiptap.view.dispatch(tr.setSelection(Selection.atEnd(tr.doc)));
+    },
+    reset(text, chips) {
+      const { state } = tiptap.view;
+      const doc = state.schema.nodeFromJSON(documentJSON(composerLines(text, chips)));
+      const nextState = EditorState.create({
+        schema: state.schema,
+        doc,
+        selection: Selection.atEnd(doc),
+        plugins: state.plugins
+      });
+      tiptap.view.updateState(nextState);
     },
     focus() {
       tiptap.commands.focus(undefined, { scrollIntoView: false });

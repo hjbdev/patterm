@@ -11,7 +11,7 @@
       <span v-if="duration" class="shrink-0 text-muted-foreground">{{ duration }}</span>
       <ChevronRight class="h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 transition-[transform,opacity] duration-150 group-hover/thought:opacity-100 group-focus-visible/thought:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100" :class="open ? 'rotate-90 opacity-100' : ''" aria-hidden="true" />
     </button>
-    <div v-if="open" :id="`thinking-${message.id}`" class="mb-1 mt-0.5 break-words pl-3 text-xs italic text-muted-foreground [&>p]:m-0" v-html="renderPlainMarkdown(message.text)" />
+    <div v-if="open" :id="`thinking-${message.id}`" class="mb-1 mt-0.5 break-words pl-3 text-xs italic text-muted-foreground [&>p]:m-0" v-html="renderedHtml" />
   </div>
 </template>
 
@@ -28,4 +28,5 @@ const open = ref(props.active || transcriptRowOpen(props.processId, props.messag
 watch(() => props.active, (active) => { if (active) open.value = true; });
 // Sub-second thoughts show no duration rather than "0s".
 const duration = computed(() => !props.thinking && props.durationMs !== undefined && props.durationMs >= 1_000 ? elapsedLabel(props.durationMs) : '');
+const renderedHtml = computed(() => open.value ? renderPlainMarkdown(props.message.text) : '');
 </script>

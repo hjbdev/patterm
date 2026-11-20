@@ -21,8 +21,19 @@ const processInput = z.object({ process_id: z.string().min(1) });
 export interface BrowserTerminalClient {
   subscriptions: Set<string>;
   sendEvent(event: string, payload: unknown): void;
+  sendRaw?(payload: string | Uint8Array): void;
   conversations?: ClientConversationSubscriptions;
 }
+
+interface ResolvedTerminal {
+  id: string;
+  integrated: boolean;
+  active: boolean;
+  controllable: boolean;
+}
+
+const RESOLVE_CACHE_TTL_MS = 1_000;
+const RESOLVE_CACHE_LIMIT = 512;
 
 // The sidecar owns one viewport/selection per PTY. One browser controls those
 // shared properties; other browsers receive the same screen until taking over.
@@ -30,19 +41,21 @@ export class BrowserTerminalSessions {
   readonly clients = new Set<BrowserTerminalClient>();
   private readonly owners = new Map<string, BrowserTerminalClient>();
   private readonly resizeSequences = new Map<string, number>();
+  private readonly resolveCache = new Map<string, { value: ResolvedTerminal; expiresAt: number }>();
 
   constructor(private readonly application: PattermApplication) {
     // This host decides control of its own processes, between its browsers
     // and paired hosts. A paired host decides control of its processes.
     application.remote.trackLocalControl((key) => this.owners.has(key), (key) => this.revoke(key));
     application.remote.onControlLost((processId) => this.revoke(processId));
+    application.onWorkbenchPatch?.(() => { this.resolveCache.clear(); });
   }
 
   async subscribe(client: BrowserTerminalClient, raw: unknown): Promise<unknown> {
     const payload = subscriptionInput.parse(raw);
     const host = this.application.remote.target({ process_id: payload.process_id });
     if (host) return this.subscribeRemote(client, payload, host);
-    const { id, integrated, controllable } = this.resolve(payload.process_id);
+    const { id, integrated, controllable } = this.resolve(payload.process_id, true);
     let resized = false;
     if (payload.subscribed) {
       if (client.subscriptions.size >= 32 && !client.subscriptions.has(id)) throw new Error('Too many terminal subscriptions');
@@ -84,7 +97,7 @@ export class BrowserTerminalSessions {
   }
 
   async takeControl(client: BrowserTerminalClient, raw: unknown): Promise<unknown> {
-    const { id, controllable } = this.resolve(processInput.parse(raw).process_id);
+    const { id, controllable } = this.resolve(processInput.parse(raw).process_id, true);
     if (!controllable) throw new Error('Session is not active');
     if (!client.subscriptions.has(id)) throw new Error('Subscribe before taking terminal control');
     const host = this.application.remote.target({ process_id: id });
@@ -96,7 +109,7 @@ export class BrowserTerminalSessions {
   }
 
   guard(client: BrowserTerminalClient, raw: unknown, operation: 'write' | 'resize' | 'restart' = 'write'): unknown {
-    const { id, active, controllable } = this.resolve(processInput.parse(raw).process_id);
+    const { id, active, controllable } = this.resolve(processInput.parse(raw).process_id, operation === 'restart');
     // An ended Integrated session can be recovered by its controlling viewer.
     // Every other write still requires a live process.
     if (!active && !(operation === 'restart' && controllable)) throw new Error('Session is not active');
@@ -149,6 +162,7 @@ export class BrowserTerminalSessions {
 
   // Another viewer, here or on a paired host, took control.
   private revoke(id: string): void {
+    this.resolveCache.delete(id);
     if (this.owners.delete(id)) this.notifyControl(id);
   }
 
@@ -190,14 +204,22 @@ export class BrowserTerminalSessions {
     await this.application.terminalSubscriptions.set('browsers', id, subscribed);
   }
 
-  private resolve(processId: string): { id: string; integrated: boolean; active: boolean; controllable: boolean } {
+  private resolve(processId: string, refresh = false): ResolvedTerminal {
     // The paired host checks its own records when the request reaches it.
     if (this.application.remote.target({ process_id: processId })) return { id: processId, integrated: false, active: true, controllable: true };
+    const now = Date.now();
+    if (!refresh) {
+      const cached = this.resolveCache.get(processId);
+      if (cached && cached.expiresAt > now) return cached.value;
+    }
     const integrated = this.application.database.connection.prepare(`select processes.id, processes.status, sessions.exited_at from processes join sessions on sessions.process_id = processes.id
       where processes.id = ? and sessions.interface_mode = 'integrated' order by sessions.started_at desc limit 1`).get(processId) as { id: string; status: string; exited_at: string | null } | undefined;
-    return integrated
+    const value: ResolvedTerminal = integrated
       ? { id: integrated.id, integrated: true, active: integrated.status === 'running' && integrated.exited_at === null, controllable: integrated.status !== 'closed' }
       : { id: resolvePtyProcessId(this.application.database, processId), integrated: false, active: true, controllable: true };
+    if (this.resolveCache.size >= RESOLVE_CACHE_LIMIT) this.resolveCache.clear();
+    this.resolveCache.set(processId, { value, expiresAt: now + RESOLVE_CACHE_TTL_MS });
+    return value;
   }
 
   private notifyControl(id: string): void {

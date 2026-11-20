@@ -35,6 +35,7 @@ function resolveSocketPath(): string {
 
 type ShimRequest =
   | { op: 'catalog' }
+  | { op: 'catalog-subscribe' }
   | { op: 'open-url'; url: string }
   | { op: 'mcp-headers'; server: string; rejected?: string | null }
   | { op: 'mcp-proxy-headers'; server: string }
@@ -47,46 +48,160 @@ function openCodeSessionId(meta?: Record<string, unknown>): unknown {
   return meta?.['ai.opencode/sessionID'] ?? meta?.sessionID;
 }
 
-function registryRequest(request: ShimRequest, meta?: Record<string, unknown>): Promise<unknown> {
-  const bridge = process.env.PATTERM_OPENCODE_BRIDGE;
-  const sessionId = openCodeSessionId(meta);
-  if (bridge && 'tool' in request && typeof sessionId !== 'string') return Promise.reject(new Error('OpenCode MCP call is missing session metadata'));
-  return new Promise((resolve, reject) => {
-    const client = net.createConnection(resolveSocketPath(), () => {
-      // OpenCode's shared daemon runs one helper for all of its sessions, so
-      // its helpers send the bridge token instead of an agent identity.
-      client.write(`${JSON.stringify({ id: 1, version: 2, ...request, ...(bridge && 'tool' in request
-        ? { opencodeBridge: bridge, opencodeSessionId: sessionId }
-        : bridge && 'server' in request ? { opencodeBridge: bridge }
-          : { identity: process.env.PATTERM_MCP_IDENTITY ?? null }) })}\n`);
-    });
-    client.setEncoding('utf8');
+const DISCONNECTED_ERROR = 'Patterm disconnected before responding. The command may have run and was not retried.';
+
+interface PendingSocketRequest {
+  resolve(value: { result: unknown; push: boolean }): void;
+  reject(error: Error): void;
+}
+
+let persistentSocket: net.Socket | null = null;
+let persistentConnecting: Promise<net.Socket> | null = null;
+let persistentSubscribed = false;
+let persistentPushSupported = false;
+let nextRequestId = 1;
+const pendingRequests = new Map<number, PendingSocketRequest>();
+const pendingOrder: number[] = [];
+let onCatalogChanged: (() => void) | null = null;
+
+function failPendingRequests(error: Error): void {
+  const entries = [...pendingRequests.values()];
+  pendingRequests.clear();
+  pendingOrder.length = 0;
+  for (const entry of entries) entry.reject(error);
+}
+
+function getPersistentSocket(): Promise<net.Socket> {
+  if (persistentSocket && !persistentSocket.destroyed && persistentSocket.writable) {
+    return Promise.resolve(persistentSocket);
+  }
+  if (persistentConnecting) return persistentConnecting;
+  persistentConnecting = new Promise<net.Socket>((resolve, reject) => {
+    const client = net.createConnection(resolveSocketPath());
+    let connected = false;
     let buffer = '';
+    client.setEncoding('utf8');
+    client.once('connect', () => {
+      connected = true;
+      persistentSocket = client;
+      persistentSubscribed = false;
+      persistentConnecting = null;
+      // Don't keep one-shot CLI invocations alive on an idle persistent socket.
+      client.unref();
+      resolve(client);
+    });
     client.on('data', (chunk: string) => {
       buffer += chunk;
-      const newline = buffer.indexOf('\n');
-      if (newline < 0) return;
-      client.end();
-      try {
-        const message = JSON.parse(buffer.slice(0, newline)) as { result?: unknown; error?: string };
-        if (message.error) reject(new Error(message.error));
-        else resolve(message.result);
-      } catch (error) {
-        reject(error instanceof Error ? error : new Error(String(error)));
+      for (;;) {
+        const newline = buffer.indexOf('\n');
+        if (newline < 0) return;
+        const line = buffer.slice(0, newline);
+        buffer = buffer.slice(newline + 1);
+        if (!line.trim()) continue;
+        let message: { id?: unknown; event?: unknown; result?: unknown; error?: string; push?: boolean };
+        try {
+          message = JSON.parse(line) as { id?: unknown; event?: unknown; result?: unknown; error?: string; push?: boolean };
+        } catch (error) {
+          const firstId = pendingOrder.shift();
+          if (firstId !== undefined) {
+            const pending = pendingRequests.get(firstId);
+            pendingRequests.delete(firstId);
+            pending?.reject(error instanceof Error ? error : new Error(String(error)));
+          }
+          continue;
+        }
+        if (message.event === 'catalog_changed') {
+          onCatalogChanged?.();
+          continue;
+        }
+        const matchedId = typeof message.id === 'number' && pendingRequests.has(message.id)
+          ? message.id
+          : pendingOrder[0];
+        if (matchedId === undefined) continue;
+        const idx = pendingOrder.indexOf(matchedId);
+        if (idx >= 0) pendingOrder.splice(idx, 1);
+        const pending = pendingRequests.get(matchedId);
+        pendingRequests.delete(matchedId);
+        if (!pending) continue;
+        if (message.error) pending.reject(new Error(message.error));
+        else pending.resolve({ result: message.result, push: message.push === true });
       }
     });
-    client.on('error', reject);
-    // An interrupted mutating command must never be retried implicitly.
-    client.once('close', () => reject(new Error('Patterm disconnected before responding. The command may have run and was not retried.')));
+    client.on('error', (error) => {
+      if (!connected) {
+        persistentConnecting = null;
+        reject(error);
+      } else if (persistentSocket === client) {
+        persistentSocket = null;
+        persistentSubscribed = false;
+        failPendingRequests(error);
+      }
+    });
+    client.once('close', () => {
+      if (!connected) {
+        persistentConnecting = null;
+        reject(new Error(DISCONNECTED_ERROR));
+      } else if (persistentSocket === client) {
+        persistentSocket = null;
+        persistentSubscribed = false;
+        // An interrupted mutating command must never be retried implicitly.
+        failPendingRequests(new Error(DISCONNECTED_ERROR));
+      }
+    });
   });
+  return persistentConnecting;
+}
+
+async function registryRequestRaw(request: ShimRequest, meta?: Record<string, unknown>): Promise<{ result: unknown; push: boolean }> {
+  const bridge = process.env.PATTERM_OPENCODE_BRIDGE;
+  const sessionId = openCodeSessionId(meta);
+  if (bridge && 'tool' in request && typeof sessionId !== 'string') throw new Error('OpenCode MCP call is missing session metadata');
+  const client = await getPersistentSocket();
+  const id = nextRequestId++;
+  const payload = `${JSON.stringify({ id, version: 2, ...request, ...(bridge && 'tool' in request
+    ? { opencodeBridge: bridge, opencodeSessionId: sessionId }
+    : bridge && 'server' in request ? { opencodeBridge: bridge }
+      : { identity: process.env.PATTERM_MCP_IDENTITY ?? null }) })}\n`;
+  return new Promise((resolve, reject) => {
+    pendingRequests.set(id, { resolve, reject });
+    pendingOrder.push(id);
+    client.ref();
+    client.write(payload, (error) => {
+      if (error) {
+        const idx = pendingOrder.indexOf(id);
+        if (idx >= 0) pendingOrder.splice(idx, 1);
+        pendingRequests.delete(id);
+        if (!pendingRequests.size) client.unref();
+        reject(error);
+      }
+    });
+  }).then((value) => {
+    if (!pendingRequests.size && !client.destroyed) client.unref();
+    return value as { result: unknown; push: boolean };
+  }, (error) => {
+    if (!pendingRequests.size && !client.destroyed) client.unref();
+    throw error;
+  });
+}
+
+async function registryRequest(request: ShimRequest, meta?: Record<string, unknown>): Promise<unknown> {
+  return (await registryRequestRaw(request, meta)).result;
 }
 
 type Signatures = Map<string, string>;
 
+function subscribeCatalogIfNeeded(): void {
+  if (!persistentPushSupported || !onCatalogChanged || persistentSubscribed) return;
+  persistentSubscribed = true;
+  void registryRequest({ op: 'catalog-subscribe' }).catch(() => { persistentSubscribed = false; });
+}
+
 async function fetchCatalogue(): Promise<McpToolDescriptor[]> {
-  const tools = await registryRequest({ op: 'catalog' }) as McpToolDescriptor[];
+  const { result: tools, push } = await registryRequestRaw({ op: 'catalog' });
   if (!Array.isArray(tools)) throw new Error('Patterm returned an invalid MCP tool catalogue');
-  return tools;
+  if (push) persistentPushSupported = true;
+  subscribeCatalogIfNeeded();
+  return tools as McpToolDescriptor[];
 }
 
 function isImage(value: unknown): value is { data: string; mimeType: string } {
@@ -240,6 +355,8 @@ async function main(): Promise<void> {
     }
     return send(message, ...rest);
   };
+  onCatalogChanged = () => { void refresh(); };
+  subscribeCatalogIfNeeded();
   setInterval(() => void refresh(), CATALOGUE_REFRESH_MS).unref();
 }
 

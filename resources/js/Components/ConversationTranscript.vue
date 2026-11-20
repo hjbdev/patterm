@@ -18,31 +18,31 @@
         <MessageScrollerContent class="mx-auto w-full max-w-[50rem] px-4 2xl:max-w-[1000px]">
           <div ref="sizerRef" class="relative w-full">
             <div
-            v-for="{ virtualItem, row } in renderedRows"
-            :key="String(virtualItem.key)"
-            :ref="measureRow"
-            :data-index="virtualItem.index"
-            :data-row-id="row.id"
-            :id="`conversation-message-${row.id}`"
+            v-for="item in renderedRows"
+            :key="String(item.virtualItem.key)"
+            v-measure-row="item.virtualItem.index"
+            :data-index="item.virtualItem.index"
+            :data-row-id="item.row.id"
+            :id="`conversation-message-${item.row.id}`"
             class="group/row absolute left-0 top-0 w-full"
-            :class="[activeMessageId === row.id ? 'rounded-lg bg-primary/10' : '', hasFooter(row) ? 'pb-2' : 'pb-4']"
-            :style="{ transform: `translateY(${virtualItem.start}px)` }"
-            :data-tapped="tappedRowId === row.id || undefined"
-            @click="tapRow(row.id, $event)"
+            :class="[activeMessageId === item.row.id ? 'rounded-lg bg-primary/10' : '', item.hasFooter ? 'pb-2' : 'pb-4']"
+            :style="{ transform: `translateY(${item.virtualItem.start}px)` }"
+            :data-tapped="tappedRowId === item.row.id || undefined"
+            @click="tapRow(item.row.id, $event)"
             >
               <MessageScrollerItem
-            :message-id="row.id"
-            :class="rowFresh(row) ? ENTER_CLASS : ''"
+            :message-id="item.row.id"
+            :class="rowFresh(item.row) ? ENTER_CLASS : ''"
           >
-            <Message :align="row.kind === 'message' && row.message.role === 'user' && !row.origin ? 'end' : 'start'">
+            <Message :align="item.row.kind === 'message' && item.row.message.role === 'user' && !item.row.origin ? 'end' : 'start'">
               <MessageContent>
-                <ConversationAgentMessage v-if="row.kind === 'message' && row.origin" :message="row.message" :origin="row.origin" :open="rowOpen(row.id)" @toggle="toggleRow(row.id)" />
-                <template v-else-if="row.kind === 'message' && row.message.role === 'user'">
-                  <div class="flex w-full flex-col items-end gap-2" :data-delivery="row.message.delivery?.state">
-                    <div class="flex w-full flex-col items-end gap-2 transition-opacity duration-200 motion-reduce:transition-none" :class="row.message.delivery?.state === 'sending' || row.message.delivery?.state === 'queued' || row.message.delivery?.state === 'uncertain' || row.message.delivery?.state === 'undelivered' ? 'opacity-50' : ''">
-                    <div v-if="attachmentsOf(row.message).length" class="flex max-w-[min(82%,64ch)] flex-wrap justify-end gap-2">
-                      <template v-for="(attachment, index) in attachmentsOf(row.message)" :key="`${row.id}:attachment:${index}`">
-                      <TranscriptImage v-if="attachment.image && attachment.sha256" :image="{ sha256: attachment.sha256, name: attachment.name }" :gallery="attachmentImages(row.message)" :max-height="200" :max-width="320" />
+                <ConversationAgentMessage v-if="item.row.kind === 'message' && item.row.origin" :message="item.row.message" :origin="item.row.origin" :open="item.open" @toggle="toggleRow(item.row.id)" />
+                <template v-else-if="item.row.kind === 'message' && item.row.message.role === 'user'">
+                  <div class="flex w-full flex-col items-end gap-2" :data-delivery="item.row.message.delivery?.state">
+                    <div class="flex w-full flex-col items-end gap-2 transition-opacity duration-200 motion-reduce:transition-none" :class="item.row.message.delivery?.state === 'sending' || item.row.message.delivery?.state === 'queued' || item.row.message.delivery?.state === 'uncertain' || item.row.message.delivery?.state === 'undelivered' ? 'opacity-50' : ''">
+                    <div v-if="item.attachments.length" class="flex max-w-[min(82%,64ch)] flex-wrap justify-end gap-2">
+                      <template v-for="(attachment, index) in item.attachments" :key="`${item.row.id}:attachment:${index}`">
+                      <TranscriptImage v-if="attachment.image && attachment.sha256" :image="{ sha256: attachment.sha256, name: attachment.name }" :gallery="item.attachmentImages" :max-height="200" :max-width="320" />
                       <div
                         v-else
                         class="flex max-w-56 items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-2 py-1 text-xs"
@@ -56,103 +56,103 @@
                       </div>
                       </template>
                     </div>
-                    <Bubble v-if="row.message.text || row.message.approval || row.message.redactionCount" variant="muted" align="end" class="max-w-[min(82%,64ch)]">
+                    <Bubble v-if="item.row.message.text || item.row.message.approval || item.row.message.redactionCount" variant="muted" align="end" class="max-w-[min(82%,64ch)]">
                       <BubbleContent>
-                        <p v-if="row.message.redactionCount" class="text-xs text-muted-foreground">{{ row.message.redactionCount }} redacted</p>
-                        <ApprovalDetails v-if="row.message.approval" :details="row.message.approval" />
+                        <p v-if="item.row.message.redactionCount" class="text-xs text-muted-foreground">{{ item.row.message.redactionCount }} redacted</p>
+                        <ApprovalDetails v-if="item.row.message.approval" :details="item.row.message.approval" />
                         <!-- Process IDs, such as agent mentions, show as chips. -->
-                        <p v-else class="whitespace-pre-wrap break-words"><MentionPart v-for="(part, index) in splitProcessMentions(row.message.text)" :key="index" :part="part" /></p>
+                        <p v-else class="whitespace-pre-wrap break-words"><MentionPart v-for="(part, index) in splitProcessMentions(item.row.message.text)" :key="index" :part="part" /></p>
                       </BubbleContent>
                     </Bubble>
-                    <div v-if="row.message.fileReferences?.length" class="flex max-w-[min(82%,64ch)] flex-wrap justify-end gap-1">
-                      <span v-for="file in row.message.fileReferences" :key="file" class="max-w-full truncate rounded-md border border-border/70 bg-background/60 px-2 py-1 font-mono text-[11px] text-muted-foreground">{{ file }}</span>
+                    <div v-if="item.row.message.fileReferences?.length" class="flex max-w-[min(82%,64ch)] flex-wrap justify-end gap-1">
+                      <span v-for="file in item.row.message.fileReferences" :key="file" class="max-w-full truncate rounded-md border border-border/70 bg-background/60 px-2 py-1 font-mono text-[11px] text-muted-foreground">{{ file }}</span>
                     </div>
                     </div>
-                    <div v-if="row.message.delivery?.state === 'queued'" class="flex max-w-[min(82%,64ch)] items-center justify-end gap-2 text-xs text-muted-foreground">
-                      <span role="status" :title="row.message.delivery.steering ? 'Joins the running turn at its next step.' : 'Sent when the running turn ends.'">{{ row.message.delivery.steering ? 'Steering' : 'Queued' }}</span>
-                      <button type="button" class="rounded-sm font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50" title="Take it back to the composer to edit" :disabled="!canCancel" @click="emit('edit-message', row.message.delivery.messageId)">Edit</button>
+                    <div v-if="item.row.message.delivery?.state === 'queued'" class="flex max-w-[min(82%,64ch)] items-center justify-end gap-2 text-xs text-muted-foreground">
+                      <span role="status" :title="item.row.message.delivery.steering ? 'Joins the running turn at its next step.' : 'Sent when the running turn ends.'">{{ item.row.message.delivery.steering ? 'Steering' : 'Queued' }}</span>
+                      <button type="button" class="rounded-sm font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50" title="Take it back to the composer to edit" :disabled="!canCancel" @click="emit('edit-message', item.row.message.delivery.messageId)">Edit</button>
                     </div>
-                    <div v-else-if="row.message.delivery?.state === 'undelivered'" class="flex max-w-[min(82%,64ch)] flex-wrap items-center justify-end gap-x-2 gap-y-1 text-xs text-destructive">
+                    <div v-else-if="item.row.message.delivery?.state === 'undelivered'" class="flex max-w-[min(82%,64ch)] flex-wrap items-center justify-end gap-x-2 gap-y-1 text-xs text-destructive">
                       <span role="status" class="inline-flex items-center gap-1.5" title="The agent accepted this message, but it left the queue without reaching the agent.">
                         <AlertTriangle class="h-3 w-3" aria-hidden="true" />
                         Not delivered
                       </span>
-                      <span v-if="row.message.delivery.error" class="break-words">{{ row.message.delivery.error }}</span>
-                      <button type="button" class="rounded-sm font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50" :disabled="!canRetry" @click="emit('resend-message', row.message.delivery.messageId)">Send again</button>
-                      <button type="button" class="rounded-sm font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50" :disabled="!canCancel" @click="emit('cancel-message', row.message.delivery.messageId)">Dismiss</button>
+                      <span v-if="item.row.message.delivery.error" class="break-words">{{ item.row.message.delivery.error }}</span>
+                      <button type="button" class="rounded-sm font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50" :disabled="!canRetry" @click="emit('resend-message', item.row.message.delivery.messageId)">Send again</button>
+                      <button type="button" class="rounded-sm font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50" :disabled="!canCancel" @click="emit('cancel-message', item.row.message.delivery.messageId)">Dismiss</button>
                     </div>
-                    <div v-else-if="row.message.delivery && row.message.delivery.state !== 'accepted'" class="flex max-w-[min(82%,64ch)] flex-wrap items-center justify-end gap-x-2 gap-y-1 text-xs" :class="row.message.delivery.state === 'failed' ? 'text-destructive' : 'text-muted-foreground'">
+                    <div v-else-if="item.row.message.delivery && item.row.message.delivery.state !== 'accepted'" class="flex max-w-[min(82%,64ch)] flex-wrap items-center justify-end gap-x-2 gap-y-1 text-xs" :class="item.row.message.delivery.state === 'failed' ? 'text-destructive' : 'text-muted-foreground'">
                       <span role="status" class="inline-flex items-center gap-1.5">
-                        <Loader2 v-if="row.message.delivery.state === 'sending'" class="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                        <Loader2 v-if="item.row.message.delivery.state === 'sending'" class="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden="true" />
                         <AlertTriangle v-else class="h-3 w-3" aria-hidden="true" />
-                        {{ row.message.delivery.state === 'sending' ? 'Sending…' : row.message.delivery.state === 'uncertain' ? 'Delivery uncertain' : 'Not sent' }}
+                        {{ item.row.message.delivery.state === 'sending' ? 'Sending…' : item.row.message.delivery.state === 'uncertain' ? 'Delivery uncertain' : 'Not sent' }}
                       </span>
-                      <template v-if="row.message.delivery.state === 'failed'">
-                        <span class="break-words">{{ row.message.delivery.error }}</span>
-                        <button type="button" class="rounded-sm font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50" :disabled="!canRetry" @click="emit('retry-message', row.message.delivery.messageId)">Retry</button>
+                      <template v-if="item.row.message.delivery.state === 'failed'">
+                        <span class="break-words">{{ item.row.message.delivery.error }}</span>
+                        <button type="button" class="rounded-sm font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50" :disabled="!canRetry" @click="emit('retry-message', item.row.message.delivery.messageId)">Retry</button>
                       </template>
                     </div>
-                    <ConversationMessageFooter v-if="hasFooter(row)" :text="row.message.text" :created-at="row.message.createdAt" align="end" class="-mt-1 max-w-[min(82%,64ch)]" />
+                    <ConversationMessageFooter v-if="item.hasFooter" :text="item.row.message.text" :created-at="item.row.message.createdAt" align="end" class="-mt-1 max-w-[min(82%,64ch)]" />
                   </div>
                 </template>
-                <div v-else-if="row.kind === 'tools'" class="w-full min-w-0 text-xs" data-component="transcript-tool-group">
+                <div v-else-if="item.row.kind === 'tools'" class="w-full min-w-0 text-xs" data-component="transcript-tool-group">
                   <button
                     type="button"
                     class="group/tools flex max-w-full min-w-0 items-center gap-1 rounded-md py-1 pr-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                    :aria-expanded="rowOpen(row.id)"
-                    @click="toggleRow(row.id)"
+                    :aria-expanded="item.open"
+                    @click="toggleRow(item.row.id)"
                   >
-                    <template v-if="groupSummary(row).count">
-                      <span class="shrink-0 text-muted-foreground"><ShimmerText v-if="groupRunning(row)" text="Using" /><template v-else>Used</template></span>
-                      <span class="min-w-0 truncate font-[440] text-foreground" :title="groupSummary(row).label"><template v-for="(tool, index) in groupSummary(row).tools" :key="tool.title">{{ index ? ', ' : '' }}<template v-if="tool.count > 1"><OdometerNumber :value="tool.count" />{{ ' ' }}</template>{{ tool.title }}</template></span>
+                    <template v-if="item.groupSummary?.count">
+                      <span class="shrink-0 text-muted-foreground"><ShimmerText v-if="item.groupRunning" text="Using" /><template v-else>Used</template></span>
+                      <span class="min-w-0 truncate font-[440] text-foreground" :title="item.groupSummary.label"><template v-for="(tool, index) in item.groupSummary.tools" :key="tool.title">{{ index ? ', ' : '' }}<template v-if="tool.count > 1"><OdometerNumber :value="tool.count" />{{ ' ' }}</template>{{ tool.title }}</template></span>
                     </template>
                     <template v-else>
-                      <span class="shrink-0 font-[440] text-foreground"><ShimmerText v-if="groupRunning(row)" text="Thinking" /><template v-else>Thought</template></span>
-                      <span v-if="!groupRunning(row) && groupThoughtTime(row)" class="shrink-0 text-muted-foreground">{{ groupThoughtTime(row) }}</span>
+                      <span class="shrink-0 font-[440] text-foreground"><ShimmerText v-if="item.groupRunning" text="Thinking" /><template v-else>Thought</template></span>
+                      <span v-if="!item.groupRunning && item.groupThoughtTime" class="shrink-0 text-muted-foreground">{{ item.groupThoughtTime }}</span>
                     </template>
                     <ChevronDown
                       class="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none"
-                      :class="rowOpen(row.id) ? 'rotate-180' : ''"
+                      :class="item.open ? 'rotate-180' : ''"
                       aria-hidden="true"
                     />
                   </button>
-                  <div v-if="!rowOpen(row.id) && groupImages(row).length" class="mt-1 flex flex-wrap gap-2">
-                    <TranscriptImage v-for="image in groupImages(row)" :key="image.sha256" :image="image" :gallery="groupImages(row)" />
+                  <div v-if="!item.open && item.groupImages.length" class="mt-1 flex flex-wrap gap-2">
+                    <TranscriptImage v-for="image in item.groupImages" :key="image.sha256" :image="image" :gallery="item.groupImages" />
                   </div>
-                  <div v-if="rowOpen(row.id)" class="mt-0.5 pl-3">
-                    <template v-for="message in row.messages" :key="message.id">
+                  <div v-if="item.open" class="mt-0.5 pl-3">
+                    <template v-for="message in item.row.messages" :key="message.id">
                       <ConversationThoughtRow v-if="message.kind === 'reasoning'" :message="message" :process-id="processId" :duration-ms="thoughtDurations.get(message.id)" :thinking="isThinking(message)" :active="activeMessageId === message.id" :class="freshIds.has(message.id) ? ENTER_CLASS : ''" />
                       <ConversationToolRow v-else :message="message" :process-id="processId" :active="activeMessageId === message.id" :class="freshIds.has(message.id) ? ENTER_CLASS : ''" />
                     </template>
                   </div>
                 </div>
-                <ConversationToolRow v-else-if="row.message.kind === 'tool'" :message="row.message" :process-id="processId" :active="activeMessageId === row.message.id" />
+                <ConversationToolRow v-else-if="item.row.message.kind === 'tool'" :message="item.row.message" :process-id="processId" :active="activeMessageId === item.row.message.id" />
                 <div
-                  v-else-if="row.message.kind === 'notice'"
+                  v-else-if="item.row.message.kind === 'notice'"
                   class="flex w-full min-w-0 items-start gap-1.5 py-0.5 text-xs"
-                  :class="row.message.level === 'error' ? 'text-destructive' : row.message.level === 'warning' ? 'text-warning' : 'text-muted-foreground'"
-                  :role="row.message.level === 'error' ? 'alert' : 'status'"
+                  :class="item.row.message.level === 'error' ? 'text-destructive' : item.row.message.level === 'warning' ? 'text-warning' : 'text-muted-foreground'"
+                  :role="item.row.message.level === 'error' ? 'alert' : 'status'"
                   data-component="transcript-notice"
-                  :data-level="row.message.level ?? 'info'"
+                  :data-level="item.row.message.level ?? 'info'"
                 >
-                  <AlertTriangle v-if="row.message.level === 'error' || row.message.level === 'warning'" class="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                  <Target v-else-if="row.message.title === 'goal'" class="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <AlertTriangle v-if="item.row.message.level === 'error' || item.row.message.level === 'warning'" class="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <Target v-else-if="item.row.message.title === 'goal'" class="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                   <Info v-else class="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                  <p class="min-w-0 whitespace-pre-wrap break-words">{{ row.message.text }}</p>
+                  <p class="min-w-0 whitespace-pre-wrap break-words">{{ item.row.message.text }}</p>
                 </div>
-                <ConversationThoughtRow v-else-if="row.message.kind === 'reasoning'" :message="row.message" :process-id="processId" :duration-ms="thoughtDurations.get(row.message.id)" :thinking="isThinking(row.message)" :active="activeMessageId === row.message.id" />
+                <ConversationThoughtRow v-else-if="item.row.message.kind === 'reasoning'" :message="item.row.message" :process-id="processId" :duration-ms="thoughtDurations.get(item.row.message.id)" :thinking="isThinking(item.row.message)" :active="activeMessageId === item.row.message.id" />
                 <Bubble v-else variant="ghost" align="start" class="w-full max-w-full">
                   <BubbleContent class="w-full">
-                    <p v-if="row.message.redactionCount" class="mb-2 text-xs text-muted-foreground">{{ row.message.redactionCount }} redacted</p>
-                    <ApprovalDetails v-if="row.message.approval" :details="row.message.approval" />
-                    <Markdown v-else :source="row.message.text" :reveal-appends="Boolean(live)">
+                    <p v-if="item.row.message.redactionCount" class="mb-2 text-xs text-muted-foreground">{{ item.row.message.redactionCount }} redacted</p>
+                    <ApprovalDetails v-if="item.row.message.approval" :details="item.row.message.approval" />
+                    <Markdown v-else :source="item.row.message.text" :reveal-appends="Boolean(live)">
                       <template #mention="{ part }"><MentionPart :part="part" /></template>
                     </Markdown>
-                    <div v-if="row.message.fileReferences?.length" class="mt-2 flex flex-wrap gap-1">
-                      <span v-for="file in row.message.fileReferences" :key="file" class="max-w-full truncate rounded-md border border-border/70 bg-background/60 px-2 py-1 font-mono text-[11px] text-muted-foreground">{{ file }}</span>
+                    <div v-if="item.row.message.fileReferences?.length" class="mt-2 flex flex-wrap gap-1">
+                      <span v-for="file in item.row.message.fileReferences" :key="file" class="max-w-full truncate rounded-md border border-border/70 bg-background/60 px-2 py-1 font-mono text-[11px] text-muted-foreground">{{ file }}</span>
                     </div>
                   </BubbleContent>
-                  <ConversationMessageFooter v-if="hasFooter(row)" :text="row.message.text" :created-at="row.message.createdAt" :duration-ms="turnDurations.get(row.message.id)" />
+                  <ConversationMessageFooter v-if="item.hasFooter" :text="item.row.message.text" :created-at="item.row.message.createdAt" :duration-ms="turnDurations.get(item.row.message.id)" />
                 </Bubble>
               </MessageContent>
             </Message>
@@ -170,7 +170,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, provide, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch, type Directive } from 'vue';
 import { elementScroll, measureElement, observeElementOffset, useVirtualizer, type VirtualItem, type Virtualizer } from '@tanstack/vue-virtual';
 import { AlertTriangle, ChevronDown, FileText, Info, Loader2, Target } from 'lucide-vue-next';
 import { Bubble, BubbleContent } from './ui/bubble';
@@ -286,7 +286,7 @@ const virtualizer = useVirtualizer(computed(() => ({
   // TanStack would otherwise snap to the end as the last row grows; the
   // message scroller glides there instead.
   scrollEndThreshold: -1,
-  getItemKey: (index: number) => rows.value[index]?.id ?? index
+  getItemKey: (index: number) => `${props.processId ?? ''}:${rows.value[index]?.id ?? index}`
 })));
 // Rows wholly above the viewport move it by however much they resize, so the
 // rows on screen stay put. The row across the top edge is being read: a reply
@@ -334,12 +334,60 @@ watch(() => rows.value.length, (count, previous) => {
   instance.scrollOffset = Math.max(0, instance.getTotalSize() - (viewportRef.value?.viewportElement()?.clientHeight ?? 0));
   void nextTick(scrollToBottom);
 });
+interface RenderedTranscriptRow {
+  virtualItem: VirtualItem;
+  row: TranscriptRow;
+  open: boolean;
+  hasFooter: boolean;
+  attachments: ReturnType<typeof normaliseTranscriptAttachments>;
+  attachmentImages: TranscriptImageData[];
+  groupSummary: ReturnType<typeof transcriptToolGroupSummary> | null;
+  groupImages: TranscriptImageData[];
+  groupRunning: boolean;
+  groupThoughtTime: string;
+}
+
 const scrollerRef = ref<InstanceType<typeof MessageScrollerProvider> | null>(null);
 const virtualItems = computed(() => virtualizer.value.getVirtualItems());
-const renderedRows = computed(() => virtualItems.value.flatMap((virtualItem) => {
-  const row = rows.value[virtualItem.index];
-  return row ? [{ virtualItem, row }] : [];
-}));
+const renderedRows = computed<RenderedTranscriptRow[]>(() => {
+  const result: RenderedTranscriptRow[] = [];
+  for (const virtualItem of virtualItems.value) {
+    const row = rows.value[virtualItem.index];
+    if (!row) continue;
+    const open = rowOpen(row.id);
+    const footer = hasFooter(row);
+    if (row.kind === 'tools') {
+      result.push({
+        virtualItem,
+        row,
+        open,
+        hasFooter: footer,
+        attachments: [],
+        attachmentImages: [],
+        groupSummary: groupSummary(row),
+        groupImages: open ? [] : groupImages(row),
+        groupRunning: groupRunning(row),
+        groupThoughtTime: groupThoughtTime(row)
+      });
+    } else {
+      const attachments = row.message.role === 'user' && !row.origin ? attachmentsOf(row.message) : [];
+      const images = attachments.length ? attachments.flatMap((attachment) => attachment.image && attachment.sha256 ? [{ sha256: attachment.sha256, name: attachment.name }] : []) : [];
+      result.push({
+        virtualItem,
+        row,
+        open,
+        hasFooter: footer,
+        attachments,
+        attachmentImages: images,
+        groupSummary: null,
+        groupImages: [],
+        groupRunning: false,
+        groupThoughtTime: ''
+      });
+    }
+  }
+  return result;
+});
 const totalSize = computed(() => virtualizer.value.getTotalSize());
 // The virtualiser owns the sizer's height, so the scroll function above can
 // set it ahead of Vue without Vue later skipping a patch it thinks is current.
@@ -361,6 +409,13 @@ const scrolledByUser = ref(false);
 // single tool regrouping into a tool group do not replay the animation.
 const ENTER_CLASS = 'animate-in fade-in slide-in-from-bottom-1 duration-300 ease-out motion-reduce:animate-none';
 const freshIds = ref<ReadonlySet<string>>(new Set());
+const freshTimers = new Set<ReturnType<typeof setTimeout>>();
+
+function clearFreshTimers(): void {
+  for (const timer of freshTimers) clearTimeout(timer);
+  freshTimers.clear();
+}
+
 watch(() => props.messages, (next, previous) => {
   const last = previous?.at(-1);
   const lastId = last && transcriptMessageKey(last);
@@ -368,20 +423,56 @@ watch(() => props.messages, (next, previous) => {
   if (!lastId || from === 0 || from >= next.length) return;
   const added = next.slice(from).map(transcriptMessageKey);
   freshIds.value = new Set([...freshIds.value, ...added]);
-  window.setTimeout(() => {
+  const timer = window.setTimeout(() => {
+    freshTimers.delete(timer);
     const remaining = new Set(freshIds.value);
     for (const id of added) remaining.delete(id);
     freshIds.value = remaining;
   }, 400);
+  freshTimers.add(timer);
 });
 
 function rowFresh(row: TranscriptRow): boolean {
   return freshIds.value.has(row.kind === 'tools' ? row.messages[0]!.id : row.id);
 }
 
-function measureRow(element: unknown): void {
-  if (element instanceof HTMLElement) virtualizer.value.measureElement(element);
-}
+// Measure each virtual row once on mount (and only again if its index shifts),
+// instead of re-measuring every visible row on every reactive template patch.
+const vMeasureRow: Directive<HTMLElement, number> = {
+  mounted(element) {
+    virtualizer.value.measureElement(element);
+  },
+  updated(element, binding) {
+    if (binding.value !== binding.oldValue) virtualizer.value.measureElement(element);
+  },
+  unmounted() {
+    virtualizer.value.measureElement(null);
+  }
+};
+
+// Reusing the transcript across process switches keeps the viewport, ResizeObservers,
+// and virtualiser alive while resetting per-process UI and scroll state.
+watch(() => props.processId, () => {
+  clearFreshTimers();
+  freshIds.value = new Set();
+  groupState.value = {};
+  tappedRowId.value = null;
+  scrolledByUser.value = false;
+  holdingEnd.value = props.settling;
+  const instance = virtualizer.value;
+  instance.measure();
+  if (!props.activeMessageId) {
+    instance.scrollOffset = Math.max(0, instance.getTotalSize() - (viewportRef.value?.viewportElement()?.clientHeight ?? 0));
+    void nextTick(() => {
+      syncSizer(instance);
+      scrollerRef.value?.scrollToEnd({ behavior: 'auto' });
+    });
+  }
+});
+
+onBeforeUnmount(() => {
+  clearFreshTimers();
+});
 
 onMounted(() => {
   void nextTick(() => {

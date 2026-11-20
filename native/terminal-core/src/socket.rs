@@ -7,10 +7,16 @@
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::path::Path;
-use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::mpsc::{self, TryRecvError};
+#[cfg(not(unix))]
+use std::sync::mpsc::RecvTimeoutError;
+#[cfg(unix)]
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
+#[cfg(unix)]
+use polling::{Event as PollingEvent, Events, PollMode, Poller};
 
 use crate::protocol::{write_frame, CoreRequest, CoreResponse, FRAME_CONTROL_RESPONSE};
 use crate::terminal::{SidecarMessage, TerminalManager};
@@ -21,11 +27,19 @@ use unix as platform;
 use windows as platform;
 
 const PROTOCOL_VERSION: u32 = 1;
+#[cfg(not(unix))]
 const POLL_INTERVAL: Duration = Duration::from_millis(4);
 const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_REQUEST_BYTES: usize = 16 * 1024 * 1024;
 const IO_BUDGET: usize = 64 * 1024;
+const FLUSH_BUDGET: usize = 2 * 1024 * 1024;
 const REQUEST_BUDGET: usize = 64;
+const MESSAGE_BUDGET: usize = 256;
+
+#[cfg(unix)]
+const KEY_LISTENER: usize = 1;
+#[cfg(unix)]
+const KEY_CONTROLLER: usize = 2;
 
 pub fn run(path: &Path, host_id: &str) -> Result<()> {
     if host_id.is_empty()
@@ -36,6 +50,11 @@ pub fn run(path: &Path, host_id: &str) -> Result<()> {
     {
         bail!("host ID must contain 1–64 ASCII letters, digits, hyphens, or underscores");
     }
+    #[cfg(unix)]
+    let poller = Arc::new(Poller::new()?);
+    #[cfg(unix)]
+    let mut transport = SocketTransport::bind_with_poller(path, poller.clone())?;
+    #[cfg(not(unix))]
     let mut transport = SocketTransport::bind(path)?;
     let mut random = [0_u8; 16];
     platform::fill_random(&mut random)?;
@@ -44,8 +63,17 @@ pub fn run(path: &Path, host_id: &str) -> Result<()> {
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
     let (tx, rx) = mpsc::channel();
+    #[cfg(unix)]
+    let mut terminals = TerminalManager::with_id_prefix_and_poller(
+        tx,
+        format!("proc_{host_id}_{incarnation}"),
+        poller.clone(),
+    );
+    #[cfg(not(unix))]
     let mut terminals =
         TerminalManager::with_id_prefix(tx, format!("proc_{host_id}_{incarnation}"));
+    #[cfg(unix)]
+    let mut events = Events::new();
 
     loop {
         let requests = transport.poll()?;
@@ -83,27 +111,85 @@ pub fn run(path: &Path, host_id: &str) -> Result<()> {
                 break;
             }
         }
+
+        let mut disconnected = false;
+        let mut drained = 0;
+        while drained < MESSAGE_BUDGET {
+            match rx.try_recv() {
+                Ok(message) => {
+                    handle_sidecar_message(&mut terminals, &mut transport, message)?;
+                    drained += 1;
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    disconnected = true;
+                    break;
+                }
+            }
+        }
+        if disconnected {
+            break;
+        }
+
         terminals.write_due_events(&mut transport)?;
-        let timeout = terminals
-            .next_deadline()
-            .map(|deadline| deadline.saturating_duration_since(Instant::now()))
-            .unwrap_or(POLL_INTERVAL)
-            .min(POLL_INTERVAL);
-        match rx.recv_timeout(timeout) {
-            Ok(SidecarMessage::TerminalEvent(event)) => {
-                terminals.write_event_frame(&mut transport, event)?;
+        transport.flush()?;
+
+        if drained >= MESSAGE_BUDGET || transport.has_buffered_requests() {
+            continue;
+        }
+
+        #[cfg(unix)]
+        {
+            let timeout = terminals
+                .next_deadline()
+                .map(|deadline| deadline.saturating_duration_since(Instant::now()));
+            if timeout == Some(Duration::ZERO) {
+                continue;
             }
-            Ok(SidecarMessage::Notification {
-                process_id,
-                notification,
-            }) => {
-                terminals.write_notification_frame(&mut transport, process_id, notification)?;
+            transport.sync_poll_interest()?;
+            events.clear();
+            match poller.wait(&mut events, timeout) {
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error.into()),
             }
-            Err(RecvTimeoutError::Disconnected) => break,
-            _ => {}
+        }
+
+        #[cfg(not(unix))]
+        {
+            let idle_wait = if transport.has_pending_output() {
+                Duration::from_millis(1)
+            } else {
+                POLL_INTERVAL
+            };
+            let timeout = terminals
+                .next_deadline()
+                .map(|deadline| deadline.saturating_duration_since(Instant::now()))
+                .unwrap_or(idle_wait)
+                .min(idle_wait);
+            match rx.recv_timeout(timeout) {
+                Ok(message) => handle_sidecar_message(&mut terminals, &mut transport, message)?,
+                Err(RecvTimeoutError::Disconnected) => break,
+                Err(RecvTimeoutError::Timeout) => {}
+            }
         }
     }
     terminals.shutdown()
+}
+
+fn handle_sidecar_message(
+    terminals: &mut TerminalManager,
+    transport: &mut SocketTransport,
+    message: SidecarMessage,
+) -> Result<()> {
+    match message {
+        SidecarMessage::TerminalEvent(event) => terminals.write_event_frame(transport, event),
+        SidecarMessage::Notification {
+            process_id,
+            notification,
+        } => terminals.write_notification_frame(transport, process_id, notification),
+        _ => Ok(()),
+    }
 }
 
 struct SocketTransport {
@@ -113,7 +199,13 @@ struct SocketTransport {
     input: Vec<u8>,
     input_scan_offset: usize,
     output: VecDeque<u8>,
+    read_buf: Vec<u8>,
     disconnected: bool,
+    has_more_requests: bool,
+    #[cfg(unix)]
+    poller: Option<Arc<Poller>>,
+    #[cfg(unix)]
+    controller_writable: bool,
 }
 
 impl SocketTransport {
@@ -124,22 +216,77 @@ impl SocketTransport {
             input: Vec::new(),
             input_scan_offset: 0,
             output: VecDeque::new(),
+            read_buf: vec![0_u8; IO_BUDGET],
             disconnected: false,
+            has_more_requests: false,
+            #[cfg(unix)]
+            poller: None,
+            #[cfg(unix)]
+            controller_writable: false,
         })
+    }
+
+    #[cfg(unix)]
+    fn bind_with_poller(path: &Path, poller: Arc<Poller>) -> Result<Self> {
+        let mut transport = Self::bind(path)?;
+        // SAFETY: listener stays alive until SocketTransport::drop deletes it
+        // from the poller before dropping self.listener.
+        unsafe {
+            poller.add_with_mode(
+                transport.listener.as_unix_listener(),
+                PollingEvent::readable(KEY_LISTENER),
+                PollMode::Level,
+            )?;
+        }
+        transport.poller = Some(poller);
+        Ok(transport)
     }
 
     fn connected(&self) -> bool {
         self.controller.is_some()
     }
 
+    fn has_buffered_requests(&self) -> bool {
+        self.has_more_requests
+    }
+
+    #[cfg(not(unix))]
+    fn has_pending_output(&self) -> bool {
+        !self.output.is_empty()
+    }
+
+    #[cfg(unix)]
+    fn sync_poll_interest(&mut self) -> io::Result<()> {
+        let wants_write = !self.output.is_empty();
+        if wants_write == self.controller_writable {
+            return Ok(());
+        }
+        if let (Some(poller), Some(controller)) = (&self.poller, &self.controller) {
+            let event = if wants_write {
+                PollingEvent::all(KEY_CONTROLLER)
+            } else {
+                PollingEvent::readable(KEY_CONTROLLER)
+            };
+            poller.modify_with_mode(controller, event, PollMode::Level)?;
+            self.controller_writable = wants_write;
+        }
+        Ok(())
+    }
+
     fn disconnect(&mut self) {
         if let Some(controller) = self.controller.take() {
+            #[cfg(unix)]
+            if let Some(poller) = &self.poller {
+                let _ = poller.delete(&controller);
+                self.controller_writable = false;
+            }
             let _ = controller.shutdown(std::net::Shutdown::Both);
             self.disconnected = true;
         }
         self.input.clear();
         self.input_scan_offset = 0;
         self.output.clear();
+        self.has_more_requests = false;
     }
 
     fn take_disconnected(&mut self) -> bool {
@@ -149,14 +296,13 @@ impl SocketTransport {
     fn poll(&mut self) -> Result<Vec<std::result::Result<CoreRequest, String>>> {
         self.flush()?;
         if let Some(controller) = self.controller.as_mut() {
-            let mut bytes = [0_u8; IO_BUDGET];
-            match controller.read(&mut bytes) {
+            match controller.read(&mut self.read_buf) {
                 Ok(0) => self.disconnect(),
                 Ok(length) => {
                     if self.input.len() + length > MAX_REQUEST_BYTES {
                         self.disconnect();
                     } else {
-                        self.input.extend_from_slice(&bytes[..length]);
+                        self.input.extend_from_slice(&self.read_buf[..length]);
                     }
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
@@ -173,6 +319,19 @@ impl SocketTransport {
                         let _ = controller.shutdown(std::net::Shutdown::Both);
                     } else {
                         controller.set_nonblocking(true)?;
+                        #[cfg(unix)]
+                        if let Some(poller) = &self.poller {
+                            // SAFETY: disconnect() and Drop delete controller
+                            // from the poller before dropping it.
+                            unsafe {
+                                poller.add_with_mode(
+                                    &controller,
+                                    PollingEvent::readable(KEY_CONTROLLER),
+                                    PollMode::Level,
+                                )?;
+                            }
+                            self.controller_writable = false;
+                        }
                         self.controller = Some(controller);
                     }
                 }
@@ -204,6 +363,7 @@ impl SocketTransport {
         }
         self.input.drain(..consumed);
         self.input_scan_offset -= consumed;
+        self.has_more_requests = self.input[self.input_scan_offset..].contains(&b'\n');
         Ok(requests)
     }
 }
@@ -227,7 +387,7 @@ impl Write for SocketTransport {
         let Some(controller) = self.controller.as_mut() else {
             return Ok(());
         };
-        let mut budget = IO_BUDGET;
+        let mut budget = FLUSH_BUDGET;
         while !self.output.is_empty() && budget > 0 {
             let bytes = self.output.as_slices().0;
             match controller.write(&bytes[..bytes.len().min(budget)]) {
@@ -254,6 +414,10 @@ impl Write for SocketTransport {
 impl Drop for SocketTransport {
     fn drop(&mut self) {
         self.disconnect();
+        #[cfg(unix)]
+        if let Some(poller) = &self.poller {
+            let _ = poller.delete(self.listener.as_unix_listener());
+        }
     }
 }
 
@@ -328,6 +492,10 @@ mod unix {
 
         pub fn accept(&mut self) -> io::Result<(Stream, SocketAddr)> {
             self.listener.accept()
+        }
+
+        pub fn as_unix_listener(&self) -> &UnixListener {
+            &self.listener
         }
     }
 

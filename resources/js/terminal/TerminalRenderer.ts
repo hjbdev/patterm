@@ -22,8 +22,8 @@ export interface TerminalGridSize {
 export interface TerminalCell {
   char: string;
   flags: number;
-  fg: string;
-  bg: string;
+  fg: number | string;
+  bg: number | string;
   hyperlink?: string;
 }
 
@@ -150,7 +150,7 @@ interface GpuRenderPassLike {
   setBindGroup(index: number, bindGroup: GpuBindGroupLike): void;
   setPipeline(pipeline: GpuRenderPipelineLike): void;
   setVertexBuffer(slot: number, buffer: GpuBufferLike): void;
-  draw(vertexCount: number): void;
+  draw(vertexCount: number, instanceCount?: number, firstVertex?: number, firstInstance?: number): void;
 }
 
 interface GpuRenderPipelineLike {
@@ -173,11 +173,12 @@ const GPU_TEXTURE_USAGE_COPY_DST = 0x2;
 const GPU_TEXTURE_USAGE_TEXTURE_BINDING = 0x4;
 const GPU_TEXTURE_USAGE_RENDER_ATTACHMENT = 0x10;
 const TERMINAL_FRAME_VERSION = 3;
-const TERMINAL_BACKGROUND = '#151515';
-const TERMINAL_FOREGROUND = '#fafafa';
-const TERMINAL_MUTED_FOREGROUND = '#a1a1aa';
-const TERMINAL_CURSOR = '#fafafa';
-const TERMINAL_CURSOR_FOREGROUND = TERMINAL_BACKGROUND;
+const TERMINAL_BACKGROUND_U32 = 0x151515;
+const TERMINAL_FOREGROUND_U32 = 0xfafafa;
+const TERMINAL_MUTED_FOREGROUND_U32 = 0xa1a1aa;
+const TERMINAL_CURSOR_U32 = 0xfafafa;
+const TERMINAL_CURSOR_FOREGROUND_U32 = TERMINAL_BACKGROUND_U32;
+const INV_255 = 1 / 255;
 const DEFAULT_TERMINAL_FONT_FAMILY = 'ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", Consolas, monospace';
 const MAX_CACHED_TERMINAL_GRIDS = 8;
 const MAX_CACHED_GPU_ATLASES = 4;
@@ -282,6 +283,13 @@ export class TerminalRenderer {
     } catch {
       return null;
     }
+  }
+
+  cellMetrics(): { cellWidth: number; cellHeight: number } {
+    return {
+      cellWidth: Math.max(1, Math.round(this.cssCellWidth)),
+      cellHeight: this.cssCellHeight
+    };
   }
 
   gridSize(): TerminalGridSize {
@@ -415,7 +423,8 @@ export class TerminalRenderer {
     }
 
     const damagedRows = new Set<number>();
-    const previousCursorRow = this.cursor.row;
+    const previousCursor = this.cursor;
+    const previousCursorRow = previousCursor.row;
 
     if (frame.frameKind === 'snapshot') {
       this.replaceGrid(frame.cols, frame.rows, frame.epoch);
@@ -441,8 +450,15 @@ export class TerminalRenderer {
       damagedRows.add(run.row);
     }
 
-    damagedRows.add(previousCursorRow);
-    damagedRows.add(this.cursor.row);
+    if (
+      previousCursor.row !== this.cursor.row
+      || previousCursor.col !== this.cursor.col
+      || previousCursor.visible !== this.cursor.visible
+      || previousCursor.shape !== this.cursor.shape
+    ) {
+      damagedRows.add(previousCursorRow);
+      damagedRows.add(this.cursor.row);
+    }
     if (batchDamagedRows) {
       for (const row of damagedRows) {
         batchDamagedRows.add(row);
@@ -608,7 +624,9 @@ export function terminalCellHeightForFontSizeForTest(fontSizePx: number): number
 export function backgroundRunsForTest(cells: TerminalCell[][]): TerminalBackgroundRun[] {
   const runs: TerminalBackgroundRun[] = [];
   const cols = cells.reduce((max, row) => Math.max(max, row.length), 0);
-  visitBackgroundRuns({ rows: cells.length, cols, cells }, (run) => runs.push(run));
+  visitBackgroundRuns({ rows: cells.length, cols, cells }, (row, startCol, colCount, color) => {
+    runs.push({ row, startCol, colCount, color: colorU32ToHex(color) });
+  });
   return runs;
 }
 
@@ -625,63 +643,239 @@ function frameDebugData(frame: ParsedDamageFrame): TerminalFrameDebugData {
   };
 }
 
-// Pack rows without padding so sparse screens do not submit empty geometry.
-// A changed vertex count repacks the buffer; equal-sized edits upload only
-// their row ranges, which covers ordinary typing and colour changes.
+class FloatWriter {
+  data: Float32Array;
+  length = 0;
+
+  constructor(initialCapacity = 1024) {
+    this.data = new Float32Array(initialCapacity);
+  }
+
+  reset(): void {
+    this.length = 0;
+  }
+
+  ensure(extra: number): void {
+    const required = this.length + extra;
+    if (required <= this.data.length) return;
+    let next = this.data.length || 1024;
+    while (next < required) next *= 2;
+    const grown = new Float32Array(next);
+    grown.set(this.data.subarray(0, this.length));
+    this.data = grown;
+  }
+
+  subarray(): Float32Array {
+    return this.data.subarray(0, this.length);
+  }
+}
+
+// Sparse per-row slab allocator in a single Float32Array. Empty rows allocate
+// zero space and submit zero vertices; rows that grow on insert allocate a
+// tail slot with headroom so character-by-character typing never repacks or
+// re-uploads untouched rows. Draw ranges stay in strict row order (0..rows-1).
 class RowGeometry {
   data = new Float32Array(0);
   dirtyRanges: Array<[number, number]> = [];
-  private offsets: number[] = [];
+  drawRanges: Array<[number, number]> = [];
+  fullUploadNeeded = false;
+  usedFloats = 0;
+  private activeFloats = 0;
+  private slotStart = new Int32Array(0);
+  private slotCap = new Int32Array(0);
+  private rowLen = new Int32Array(0);
   private key = '';
+  private scratch = new FloatWriter(4096);
 
-  update(key: string, rowCount: number, damagedRows: Set<number> | undefined, buildRow: (row: number, vertices: number[]) => void): void {
-    const rebuild = key !== this.key || this.offsets.length !== rowCount + 1 || !damagedRows || damagedRows.size >= rowCount;
+  constructor(private readonly strideFloats: number) {}
+
+  update(key: string, rowCount: number, damagedRows: Set<number> | undefined, buildRow: (row: number, writer: FloatWriter) => void): void {
+    const rebuild = key !== this.key || this.rowLen.length !== rowCount || !damagedRows || damagedRows.size >= rowCount;
     if (rebuild) {
-      const vertices: number[] = [];
-      this.offsets = [0];
-      for (let row = 0; row < rowCount; row += 1) {
-        buildRow(row, vertices);
-        this.offsets.push(vertices.length);
-      }
-      this.data = new Float32Array(vertices);
-      this.key = key;
-      this.dirtyRanges = [[0, this.data.length]];
+      this.rebuildAll(key, rowCount, buildRow);
       return;
     }
-    const changed = [...damagedRows].filter((row) => row >= 0 && row < rowCount).sort((a, b) => a - b);
-    const updates = new Map<number, Float32Array>();
-    let repack = false;
-    for (const row of changed) {
-      const vertices: number[] = [];
-      buildRow(row, vertices);
-      const data = new Float32Array(vertices);
-      repack ||= data.length !== this.offsets[row + 1]! - this.offsets[row]!;
-      updates.set(row, data);
-    }
-    this.key = key;
+
     this.dirtyRanges = [];
-    if (repack) {
-      const offsets = [0];
-      for (let row = 0; row < rowCount; row += 1) {
-        offsets.push(offsets[row]! + (updates.get(row)?.length ?? this.offsets[row + 1]! - this.offsets[row]!));
+    this.fullUploadNeeded = false;
+    if (damagedRows.size === 0) return;
+
+    const minSlotFloats = 64 * 6 * this.strideFloats;
+    let relocatedOrResized = false;
+
+    for (const row of damagedRows) {
+      if (row < 0 || row >= rowCount) continue;
+      this.scratch.reset();
+      buildRow(row, this.scratch);
+      const newLen = this.scratch.length;
+      const oldLen = this.rowLen[row]!;
+      this.activeFloats += newLen - oldLen;
+
+      if (newLen !== oldLen) relocatedOrResized = true;
+
+      if (newLen <= this.slotCap[row]!) {
+        const start = this.slotStart[row]!;
+        if (newLen > 0) {
+          this.data.set(this.scratch.subarray(), start);
+          if (!this.fullUploadNeeded) this.pushDirtyRange(start, start + newLen);
+        }
+        this.rowLen[row] = newLen;
+        continue;
       }
-      const data = new Float32Array(offsets[rowCount]!);
-      for (let row = 0; row < rowCount; row += 1) {
-        data.set(updates.get(row) ?? this.data.subarray(this.offsets[row]!, this.offsets[row + 1]!), offsets[row]!);
+
+      // Row grew past its slot capacity: allocate a larger slot at the tail
+      // so subsequent keystrokes write in-place without repacking the screen.
+      relocatedOrResized = true;
+      const newCap = Math.max(newLen, this.slotCap[row]! * 2, minSlotFloats);
+      if (this.usedFloats + newCap > this.data.length) {
+        if (this.usedFloats - this.activeFloats > this.activeFloats && this.activeFloats > 0) {
+          this.compactWithRow(row, newLen, newCap);
+          continue;
+        }
+        const grownLen = Math.max(this.data.length * 2, this.usedFloats + newCap + minSlotFloats);
+        const grown = new Float32Array(grownLen);
+        if (this.usedFloats > 0) grown.set(this.data.subarray(0, this.usedFloats), 0);
+        this.data = grown;
+        this.fullUploadNeeded = true;
       }
-      this.data = data;
-      this.offsets = offsets;
-      this.dirtyRanges.push([0, data.length]);
+
+      const start = this.usedFloats;
+      this.usedFloats += newCap;
+      this.slotStart[row] = start;
+      this.slotCap[row] = newCap;
+      this.rowLen[row] = newLen;
+      this.data.set(this.scratch.subarray(), start);
+      if (!this.fullUploadNeeded) this.pushDirtyRange(start, start + newLen);
+    }
+
+    if (this.fullUploadNeeded) {
+      this.dirtyRanges = this.usedFloats > 0 ? [[0, this.usedFloats]] : [];
+    } else if (this.dirtyRanges.length > 1) {
+      this.coalesceDirtyRanges();
+    }
+
+    if (relocatedOrResized) {
+      this.rebuildDrawRanges(rowCount);
+    }
+  }
+
+  private rebuildAll(key: string, rowCount: number, buildRow: (row: number, writer: FloatWriter) => void): void {
+    this.scratch.reset();
+    if (this.rowLen.length !== rowCount) {
+      this.slotStart = new Int32Array(rowCount);
+      this.slotCap = new Int32Array(rowCount);
+      this.rowLen = new Int32Array(rowCount);
+    }
+    for (let row = 0; row < rowCount; row += 1) {
+      const start = this.scratch.length;
+      buildRow(row, this.scratch);
+      const len = this.scratch.length - start;
+      this.slotStart[row] = start;
+      this.slotCap[row] = len;
+      this.rowLen[row] = len;
+    }
+
+    const usedFloats = this.scratch.length;
+    this.key = key;
+    this.usedFloats = usedFloats;
+    this.activeFloats = usedFloats;
+
+    if (usedFloats === 0) {
+      this.data = new Float32Array(0);
+      this.dirtyRanges = [];
+      this.drawRanges = [];
+      this.fullUploadNeeded = false;
       return;
     }
-    for (const [row, data] of updates) {
-      const start = this.offsets[row]!;
-      const end = start + data.length;
-      this.data.set(data, start);
-      const previous = this.dirtyRanges.at(-1);
-      if (previous && previous[1] === start) previous[1] = end;
-      else this.dirtyRanges.push([start, end]);
+
+    const headroom = rowCount > 1 ? Math.min(usedFloats, 256 * 6 * this.strideFloats) : 0;
+    const desiredCapacity = usedFloats + headroom;
+    if (this.data.length < usedFloats || this.data.length > desiredCapacity * 2 + 65536) {
+      this.data = new Float32Array(desiredCapacity);
     }
+    this.data.set(this.scratch.subarray(), 0);
+    this.dirtyRanges = [[0, usedFloats]];
+    this.drawRanges = [[0, usedFloats / this.strideFloats]];
+    this.fullUploadNeeded = true;
+  }
+
+  private compactWithRow(updatedRow: number, updatedLen: number, updatedCap: number): void {
+    const rowCount = this.rowLen.length;
+    let total = updatedCap;
+    for (let row = 0; row < rowCount; row += 1) {
+      if (row !== updatedRow) total += this.rowLen[row]!;
+    }
+    const headroom = Math.min(total, 256 * 6 * this.strideFloats);
+    const next = new Float32Array(total + headroom);
+    let cursor = 0;
+    for (let row = 0; row < rowCount; row += 1) {
+      if (row === updatedRow) {
+        next.set(this.scratch.subarray(), cursor);
+        this.slotStart[row] = cursor;
+        this.slotCap[row] = updatedCap;
+        this.rowLen[row] = updatedLen;
+        cursor += updatedCap;
+      } else {
+        const len = this.rowLen[row]!;
+        if (len > 0) {
+          const oldStart = this.slotStart[row]!;
+          next.set(this.data.subarray(oldStart, oldStart + len), cursor);
+        }
+        this.slotStart[row] = cursor;
+        this.slotCap[row] = len;
+        cursor += len;
+      }
+    }
+    this.data = next;
+    this.usedFloats = cursor;
+    this.fullUploadNeeded = true;
+  }
+
+  private pushDirtyRange(start: number, end: number): void {
+    const previous = this.dirtyRanges.at(-1);
+    if (previous && previous[1] === start) previous[1] = end;
+    else this.dirtyRanges.push([start, end]);
+  }
+
+  private coalesceDirtyRanges(): void {
+    this.dirtyRanges.sort((a, b) => a[0] - b[0]);
+    let write = 0;
+    for (let read = 1; read < this.dirtyRanges.length; read += 1) {
+      const current = this.dirtyRanges[read]!;
+      const target = this.dirtyRanges[write]!;
+      if (current[0] <= target[1]) {
+        if (current[1] > target[1]) target[1] = current[1];
+      } else {
+        write += 1;
+        this.dirtyRanges[write] = current;
+      }
+    }
+    this.dirtyRanges.length = write + 1;
+  }
+
+  private rebuildDrawRanges(rowCount: number): void {
+    const ranges: Array<[number, number]> = [];
+    const stride = this.strideFloats;
+    let rangeStartFloat = -1;
+    let rangeEndFloat = -1;
+    for (let row = 0; row < rowCount; row += 1) {
+      const len = this.rowLen[row]!;
+      if (len === 0) continue;
+      const start = this.slotStart[row]!;
+      if (start === rangeEndFloat) {
+        rangeEndFloat = start + len;
+      } else {
+        if (rangeStartFloat >= 0) {
+          ranges.push([rangeStartFloat / stride, (rangeEndFloat - rangeStartFloat) / stride]);
+        }
+        rangeStartFloat = start;
+        rangeEndFloat = start + len;
+      }
+    }
+    if (rangeStartFloat >= 0) {
+      ranges.push([rangeStartFloat / stride, (rangeEndFloat - rangeStartFloat) / stride]);
+    }
+    this.drawRanges = ranges;
   }
 }
 
@@ -693,6 +887,8 @@ interface GpuAtlasResources {
   atlas: GlyphAtlas;
   texture: GpuTextureLike;
   bindGroup: GpuBindGroupLike;
+  refCount: number;
+  evicted: boolean;
 }
 
 // Adapter, device, pipelines, and glyph atlases outlive a terminal pane. A
@@ -747,6 +943,10 @@ async function createGpuSharedResources(gpu: GpuLike): Promise<GpuSharedResource
 function watchGpuDeviceLoss(gpu: GpuLike, entry: GpuSharedResourcesEntry, resources: GpuSharedResources): void {
   void resources.device.lost?.then(() => {
     if (gpuSharedResources.get(gpu) === entry) gpuSharedResources.delete(gpu);
+    for (const atlasEntry of resources.atlases.values()) {
+      atlasEntry.evicted = true;
+      atlasEntry.texture.destroy?.();
+    }
     resources.atlases.clear();
     for (const listener of [...resources.lostListeners]) listener();
     resources.lostListeners.clear();
@@ -799,16 +999,28 @@ function sharedGpuAtlas(resources: GpuSharedResources, key: string, state: Termi
     layout: resources.glyphPipeline.getBindGroupLayout(0),
     entries: [{ binding: 0, resource: resources.sampler }, { binding: 1, resource: texture.createView() }]
   });
-  const created = { atlas, texture, bindGroup };
+  const created: GpuAtlasResources = { atlas, texture, bindGroup, refCount: 0, evicted: false };
   resources.atlases.set(key, created);
-  // Evicted atlases are not destroyed because another pane may still draw
-  // with them. The browser releases the texture once nothing references it.
+  // Destroy evicted atlas textures once no pane references them so VRAM is not leaked.
   while (resources.atlases.size > MAX_CACHED_GPU_ATLASES) {
     const oldest = resources.atlases.keys().next().value;
     if (oldest === undefined) break;
+    const evicted = resources.atlases.get(oldest);
     resources.atlases.delete(oldest);
+    if (evicted) {
+      evicted.evicted = true;
+      if (evicted.refCount <= 0) evicted.texture.destroy?.();
+    }
   }
   return created;
+}
+
+function releaseGpuAtlasRef(atlasResources: GpuAtlasResources | null): void {
+  if (!atlasResources) return;
+  atlasResources.refCount = Math.max(0, atlasResources.refCount - 1);
+  if (atlasResources.evicted && atlasResources.refCount === 0) {
+    atlasResources.texture.destroy?.();
+  }
 }
 
 class WebGPUTerminalBackend implements TerminalRendererBackend {
@@ -819,8 +1031,9 @@ class WebGPUTerminalBackend implements TerminalRendererBackend {
   private atlasResources: GpuAtlasResources | null = null;
   private atlasKey = '';
   private atlasGeneration = 0;
-  private colorGeometry = new RowGeometry();
-  private glyphGeometry = new RowGeometry();
+  private colorGeometry = new RowGeometry(6);
+  private glyphGeometry = new RowGeometry(8);
+  private cursorGlyphWriter = new FloatWriter(48);
   private previousCells: TerminalCell[][] | null = null;
   private previousGeometryKey = '';
   private colorVertexBuffer: GpuVertexBufferState = { buffer: null, capacityBytes: 0 };
@@ -867,9 +1080,10 @@ class WebGPUTerminalBackend implements TerminalRendererBackend {
     // Another pane may have reclaimed slots in the shared atlas.
     const atlasReclaimed = prepareAtlasForState(atlas, state, damagedRows) || this.atlasGeneration !== atlas.generation;
     this.atlasGeneration = atlas.generation;
-    this.colorGeometry.update(key, state.rows, damagedRows, (row, vertices) => pushRowColorVertices(vertices, this.canvas, state, row, true));
-    this.glyphGeometry.update(key, state.rows, atlasReclaimed ? undefined : damagedRows, (row, vertices) => pushRowGlyphVertices(vertices, this.canvas, atlas, state, row));
-    const cursorGlyph = buildCursorGlyphVertices(this.canvas, atlas, state);
+    this.colorGeometry.update(key, state.rows, damagedRows, (row, writer) => pushRowColorVertices(writer, this.canvas, state, row, true));
+    this.glyphGeometry.update(key, state.rows, atlasReclaimed ? undefined : damagedRows, (row, writer) => pushRowGlyphVertices(writer, this.canvas, atlas, state, row));
+    this.cursorGlyphWriter.reset();
+    buildCursorGlyphVertices(this.cursorGlyphWriter, this.canvas, atlas, state);
     uploadGpuAtlasIfDirty(device, atlasResources.texture, atlas);
 
     const encoder = device.createCommandEncoder();
@@ -883,10 +1097,10 @@ class WebGPUTerminalBackend implements TerminalRendererBackend {
         }
       ]
     });
-    drawGpuGeometry(device, pass, resources.colorPipeline, this.colorVertexBuffer, this.colorGeometry, 6);
+    drawGpuGeometry(device, pass, resources.colorPipeline, this.colorVertexBuffer, this.colorGeometry);
     pass.setBindGroup(0, atlasResources.bindGroup);
-    drawGpuGeometry(device, pass, resources.glyphPipeline, this.glyphVertexBuffer, this.glyphGeometry, 8);
-    drawGpuVertices(device, pass, resources.glyphPipeline, this.cursorGlyphBuffer, cursorGlyph, 8);
+    drawGpuGeometry(device, pass, resources.glyphPipeline, this.glyphVertexBuffer, this.glyphGeometry);
+    drawGpuWriter(device, pass, resources.glyphPipeline, this.cursorGlyphBuffer, this.cursorGlyphWriter, 8);
     pass.end();
     device.queue.submit([encoder.finish()]);
   }
@@ -902,6 +1116,7 @@ class WebGPUTerminalBackend implements TerminalRendererBackend {
   // are destroyed here.
   private releaseDeviceState(): void {
     this.resources?.lostListeners.delete(this.handleDeviceLost);
+    releaseGpuAtlasRef(this.atlasResources);
     this.colorVertexBuffer.buffer?.destroy?.();
     this.glyphVertexBuffer.buffer?.destroy?.();
     this.cursorGlyphBuffer.buffer?.destroy?.();
@@ -910,8 +1125,8 @@ class WebGPUTerminalBackend implements TerminalRendererBackend {
     this.atlasResources = null;
     this.atlasKey = '';
     this.previousCells = null;
-    this.colorGeometry = new RowGeometry();
-    this.glyphGeometry = new RowGeometry();
+    this.colorGeometry = new RowGeometry(6);
+    this.glyphGeometry = new RowGeometry(8);
     this.colorVertexBuffer = { buffer: null, capacityBytes: 0 };
     this.glyphVertexBuffer = { buffer: null, capacityBytes: 0 };
     this.cursorGlyphBuffer = { buffer: null, capacityBytes: 0 };
@@ -964,12 +1179,16 @@ class WebGPUTerminalBackend implements TerminalRendererBackend {
     const key = `${state.fontFamily}:${state.fontSize}:${Math.ceil(state.cellWidth * ratio)}:${Math.ceil(state.cellHeight * ratio)}:${ratio}`;
     if (this.atlasResources && this.atlasKey === key) return;
 
-    this.atlasResources = sharedGpuAtlas(resources, key, state, ratio);
+    const previous = this.atlasResources;
+    const next = sharedGpuAtlas(resources, key, state, ratio);
+    next.refCount += 1;
+    this.atlasResources = next;
+    releaseGpuAtlasRef(previous);
     this.atlasKey = key;
-    this.atlasGeneration = this.atlasResources.atlas.generation;
+    this.atlasGeneration = next.atlas.generation;
     this.previousCells = null;
-    this.colorGeometry = new RowGeometry();
-    this.glyphGeometry = new RowGeometry();
+    this.colorGeometry = new RowGeometry(6);
+    this.glyphGeometry = new RowGeometry(8);
   }
 
   private mountFallback(): void {
@@ -994,14 +1213,16 @@ class WebGLTerminalBackend implements TerminalRendererBackend {
   private rowGlyphBuffer: WebGLBuffer | null = null;
   private rowColorBytes = 0;
   private rowGlyphBytes = 0;
-  private underlineGeometry = new RowGeometry();
+  private underlineGeometry = new RowGeometry(6);
   private underlineBuffer: WebGLBuffer | null = null;
   private underlineBytes = 0;
   private atlasTexture: WebGLTexture | null = null;
   private atlas: GlyphAtlas | null = null;
   private atlasKey = '';
-  private colorGeometry = new RowGeometry();
-  private glyphGeometry = new RowGeometry();
+  private colorGeometry = new RowGeometry(6);
+  private glyphGeometry = new RowGeometry(8);
+  private cursorColorWriter = new FloatWriter(36);
+  private cursorGlyphWriter = new FloatWriter(48);
   private previousCells: TerminalCell[][] | null = null;
   private previousGeometryKey = '';
 
@@ -1052,16 +1273,16 @@ class WebGLTerminalBackend implements TerminalRendererBackend {
     this.previousCells = state.cells;
     this.previousGeometryKey = key;
     const atlasReclaimed = prepareAtlasForState(this.atlas, state, damagedRows);
-    this.colorGeometry.update(key, state.rows, damagedRows, (row, vertices) => pushRowColorVertices(vertices, this.canvas, state, row, false));
-    this.glyphGeometry.update(key, state.rows, atlasReclaimed ? undefined : damagedRows, (row, vertices) => pushRowGlyphVertices(vertices, this.canvas, this.atlas!, state, row));
+    this.colorGeometry.update(key, state.rows, damagedRows, (row, writer) => pushRowColorVertices(writer, this.canvas, state, row, false));
+    this.glyphGeometry.update(key, state.rows, atlasReclaimed ? undefined : damagedRows, (row, writer) => pushRowGlyphVertices(writer, this.canvas, this.atlas!, state, row));
     uploadAtlasIfDirty(this.gl, this.atlasTexture, this.atlas);
     this.rowColorBytes = uploadGlGeometry(this.gl, this.rowColorBuffer, this.colorGeometry, this.rowColorBytes);
-    drawColorVertices(this.gl, this.colorProgram, this.colorLocations, this.rowColorBuffer, this.colorGeometry.data, false);
+    drawGlColorRanges(this.gl, this.colorProgram, this.colorLocations, this.rowColorBuffer, this.colorGeometry.drawRanges);
     this.rowGlyphBytes = uploadGlGeometry(this.gl, this.rowGlyphBuffer, this.glyphGeometry, this.rowGlyphBytes);
-    drawGlyphVertices(this.gl, this.glyphProgram, this.glyphLocations, this.rowGlyphBuffer, this.atlasTexture, this.glyphGeometry.data, false);
-    this.underlineGeometry.update(key, state.rows, damagedRows, (row, vertices) => pushRowUnderlineVertices(vertices, this.canvas, state, row));
+    drawGlGlyphRanges(this.gl, this.glyphProgram, this.glyphLocations, this.rowGlyphBuffer, this.atlasTexture, this.glyphGeometry.drawRanges);
+    this.underlineGeometry.update(key, state.rows, damagedRows, (row, writer) => pushRowUnderlineVertices(writer, this.canvas, state, row));
     this.underlineBytes = uploadGlGeometry(this.gl, this.underlineBuffer, this.underlineGeometry, this.underlineBytes);
-    drawColorVertices(this.gl, this.colorProgram, this.colorLocations, this.underlineBuffer, this.underlineGeometry.data, false);
+    drawGlColorRanges(this.gl, this.colorProgram, this.colorLocations, this.underlineBuffer, this.underlineGeometry.drawRanges);
     this.renderCursor(state);
   }
 
@@ -1088,35 +1309,36 @@ class WebGLTerminalBackend implements TerminalRendererBackend {
     this.atlasTexture = createAtlasTexture(this.gl, this.atlas.canvas);
     this.atlasKey = key;
     this.previousCells = null;
-    this.colorGeometry = new RowGeometry();
-    this.glyphGeometry = new RowGeometry();
+    this.colorGeometry = new RowGeometry(6);
+    this.glyphGeometry = new RowGeometry(8);
+    this.underlineGeometry = new RowGeometry(6);
   }
 
   private renderCursor(state: TerminalRenderState): void {
     if (!this.colorProgram || !this.colorLocations || !this.colorBuffer || !this.glyphProgram || !this.glyphLocations || !this.glyphBuffer || !this.atlas || !this.atlasTexture) return;
     if (!state.cursor.visible || state.cursor.shape === 'hidden') return;
-    const cursorBackground: number[] = [];
+    this.cursorColorWriter.reset();
     if (state.cursor.shape === 'beam') {
-      pushColorRect(cursorBackground, this.canvas, state.cursor.col, state.cursor.row, state.cellWidth, state.cellHeight, Math.max(1, 2 * (window.devicePixelRatio || 1)), TERMINAL_CURSOR, 'left');
-      drawColorVertices(this.gl, this.colorProgram, this.colorLocations, this.colorBuffer, cursorBackground);
+      pushColorRect(this.cursorColorWriter, this.canvas, state.cursor.col, state.cursor.row, state.cellWidth, state.cellHeight, Math.max(1, 2 * (window.devicePixelRatio || 1)), TERMINAL_CURSOR_U32, 'left');
+      drawColorVertices(this.gl, this.colorProgram, this.colorLocations, this.colorBuffer, this.cursorColorWriter.subarray());
       return;
     }
     if (state.cursor.shape === 'underline') {
-      pushColorRect(cursorBackground, this.canvas, state.cursor.col, state.cursor.row, state.cellWidth, state.cellHeight, Math.max(1, 2 * (window.devicePixelRatio || 1)), TERMINAL_CURSOR, 'bottom');
-      drawColorVertices(this.gl, this.colorProgram, this.colorLocations, this.colorBuffer, cursorBackground);
+      pushColorRect(this.cursorColorWriter, this.canvas, state.cursor.col, state.cursor.row, state.cellWidth, state.cellHeight, Math.max(1, 2 * (window.devicePixelRatio || 1)), TERMINAL_CURSOR_U32, 'bottom');
+      drawColorVertices(this.gl, this.colorProgram, this.colorLocations, this.colorBuffer, this.cursorColorWriter.subarray());
       return;
     }
 
-    pushColorQuad(cursorBackground, this.canvas, state.cursor.col, state.cursor.row, state.cellWidth, state.cellHeight, TERMINAL_CURSOR);
-    drawColorVertices(this.gl, this.colorProgram, this.colorLocations, this.colorBuffer, cursorBackground);
+    pushColorQuad(this.cursorColorWriter, this.canvas, state.cursor.col, state.cursor.row, state.cellWidth, state.cellHeight, TERMINAL_CURSOR_U32);
+    drawColorVertices(this.gl, this.colorProgram, this.colorLocations, this.colorBuffer, this.cursorColorWriter.subarray());
 
-    const cell = state.cells[state.cursor.row]?.[state.cursor.col] ?? blankCell();
+    const cell = state.cells[state.cursor.row]?.[state.cursor.col] ?? BLANK_CELL;
     if (!shouldSkipGlyph(cell)) {
       ensureGlyph(this.atlas, cell.char, cell.flags);
-      const cursorGlyph: number[] = [];
-      pushGlyphQuad(cursorGlyph, this.canvas, this.atlas, state.cursor.col, state.cursor.row, state.cellWidth, state.cellHeight, cell.char, TERMINAL_CURSOR_FOREGROUND, cell.flags);
+      this.cursorGlyphWriter.reset();
+      pushGlyphQuad(this.cursorGlyphWriter, this.canvas, this.atlas, state.cursor.col, state.cursor.row, state.cellWidth, state.cellHeight, cell.char, TERMINAL_CURSOR_FOREGROUND_U32, cell.flags);
       uploadAtlasIfDirty(this.gl, this.atlasTexture, this.atlas);
-      drawGlyphVertices(this.gl, this.glyphProgram, this.glyphLocations, this.glyphBuffer, this.atlasTexture, cursorGlyph);
+      drawGlyphVertices(this.gl, this.glyphProgram, this.glyphLocations, this.glyphBuffer, this.atlasTexture, this.cursorGlyphWriter.subarray());
     }
   }
 }
@@ -1280,8 +1502,8 @@ function decodeCell(view: DataView, offset: number): TerminalCell {
   return {
     char: codepointToString(codepoint),
     flags,
-    fg: decodeColor(fgKind, fgValue, TERMINAL_FOREGROUND),
-    bg: decodeColor(bgKind, bgValue, TERMINAL_BACKGROUND)
+    fg: decodeColorU32(fgKind, fgValue, TERMINAL_FOREGROUND_U32),
+    bg: decodeColorU32(bgKind, bgValue, TERMINAL_BACKGROUND_U32)
   };
 }
 
@@ -1322,7 +1544,7 @@ function parseVersionedDamageFrame(payload: Uint8Array, textDecoder: TextDecoder
 
   const processIdLength = readU16();
   if (processIdLength === null || offset + processIdLength > payload.byteLength) return null;
-  const processId = textDecoder.decode(payload.slice(offset, offset + processIdLength));
+  const processId = textDecoder.decode(payload.subarray(offset, offset + processIdLength));
   offset += processIdLength;
 
   const cols = readU16();
@@ -1406,7 +1628,7 @@ function parseDamageFrameLayout(payload: Uint8Array, textDecoder: TextDecoder, c
 
   const processIdLength = readU16();
   if (processIdLength === null || offset + processIdLength > payload.byteLength) return null;
-  const processId = textDecoder.decode(payload.slice(offset, offset + processIdLength));
+  const processId = textDecoder.decode(payload.subarray(offset, offset + processIdLength));
   offset += processIdLength;
 
   const cols = readU16();
@@ -1508,14 +1730,18 @@ function hasWebGpu(): boolean {
   return Boolean((navigator as unknown as { gpu?: unknown }).gpu && HTMLCanvasElement.prototype.getContext);
 }
 
+const ASCII_CHARS: readonly string[] = Array.from({ length: 128 }, (_v, code) => (code === 0 ? ' ' : String.fromCharCode(code)));
+
 function codepointToString(codepoint: number): string {
-  if (codepoint === 0) return ' ';
+  if (codepoint < 128) return ASCII_CHARS[codepoint]!;
   if (codepoint > 0x10ffff || (codepoint >= 0xd800 && codepoint <= 0xdfff)) return '\uFFFD';
   return String.fromCodePoint(codepoint);
 }
 
+const BLANK_CELL: TerminalCell = { char: ' ', flags: 0, fg: TERMINAL_FOREGROUND_U32, bg: TERMINAL_BACKGROUND_U32 };
+
 function blankCell(): TerminalCell {
-  return { char: ' ', flags: 0, fg: TERMINAL_FOREGROUND, bg: TERMINAL_BACKGROUND };
+  return BLANK_CELL;
 }
 
 function createProgram(gl: WebGLRenderingContext, vertexSource: string, fragmentSource: string): WebGLProgram {
@@ -1603,21 +1829,62 @@ function uploadAtlasIfDirty(gl: WebGLRenderingContext, texture: WebGLTexture, at
 
 function uploadGlGeometry(gl: WebGLRenderingContext, buffer: WebGLBuffer, geometry: RowGeometry, previousBytes: number): number {
   gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-  if (previousBytes !== geometry.data.byteLength) {
+  if (previousBytes < geometry.data.byteLength) {
     gl.bufferData(gl.ARRAY_BUFFER, geometry.data, gl.DYNAMIC_DRAW);
-  } else {
-    for (const [start, end] of geometry.dirtyRanges) {
-      if (end > start) gl.bufferSubData(gl.ARRAY_BUFFER, start * 4, geometry.data.subarray(start, end));
-    }
+    geometry.fullUploadNeeded = false;
+    return geometry.data.byteLength;
   }
-  return geometry.data.byteLength;
+  if (geometry.fullUploadNeeded) {
+    if (geometry.usedFloats > 0) {
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, geometry.data.subarray(0, geometry.usedFloats));
+    }
+    geometry.fullUploadNeeded = false;
+    return previousBytes;
+  }
+  for (const [start, end] of geometry.dirtyRanges) {
+    if (end > start) gl.bufferSubData(gl.ARRAY_BUFFER, start * 4, geometry.data.subarray(start, end));
+  }
+  return previousBytes;
 }
 
-function drawColorVertices(gl: WebGLRenderingContext, program: WebGLProgram, locations: ColorProgramLocations, buffer: WebGLBuffer, vertices: number[] | Float32Array, upload = true): void {
+function drawGlColorRanges(gl: WebGLRenderingContext, program: WebGLProgram, locations: ColorProgramLocations, buffer: WebGLBuffer, drawRanges: ReadonlyArray<[number, number]>): void {
+  if (drawRanges.length === 0) return;
+  gl.useProgram(program);
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  const stride = 6 * Float32Array.BYTES_PER_ELEMENT;
+  gl.enableVertexAttribArray(locations.position);
+  gl.vertexAttribPointer(locations.position, 2, gl.FLOAT, false, stride, 0);
+  gl.enableVertexAttribArray(locations.color);
+  gl.vertexAttribPointer(locations.color, 4, gl.FLOAT, false, stride, 2 * Float32Array.BYTES_PER_ELEMENT);
+  for (const [firstVertex, vertexCount] of drawRanges) {
+    if (vertexCount > 0) gl.drawArrays(gl.TRIANGLES, firstVertex, vertexCount);
+  }
+}
+
+function drawGlGlyphRanges(gl: WebGLRenderingContext, program: WebGLProgram, locations: GlyphProgramLocations, buffer: WebGLBuffer, texture: WebGLTexture, drawRanges: ReadonlyArray<[number, number]>): void {
+  if (drawRanges.length === 0) return;
+  gl.useProgram(program);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.uniform1i(locations.atlas, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  const stride = 8 * Float32Array.BYTES_PER_ELEMENT;
+  gl.enableVertexAttribArray(locations.position);
+  gl.vertexAttribPointer(locations.position, 2, gl.FLOAT, false, stride, 0);
+  gl.enableVertexAttribArray(locations.texcoord);
+  gl.vertexAttribPointer(locations.texcoord, 2, gl.FLOAT, false, stride, 2 * Float32Array.BYTES_PER_ELEMENT);
+  gl.enableVertexAttribArray(locations.color);
+  gl.vertexAttribPointer(locations.color, 4, gl.FLOAT, false, stride, 4 * Float32Array.BYTES_PER_ELEMENT);
+  for (const [firstVertex, vertexCount] of drawRanges) {
+    if (vertexCount > 0) gl.drawArrays(gl.TRIANGLES, firstVertex, vertexCount);
+  }
+}
+
+function drawColorVertices(gl: WebGLRenderingContext, program: WebGLProgram, locations: ColorProgramLocations, buffer: WebGLBuffer, vertices: Float32Array): void {
   if (vertices.length === 0) return;
   gl.useProgram(program);
   gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-  if (upload) gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.DYNAMIC_DRAW);
+  gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
   const stride = 6 * Float32Array.BYTES_PER_ELEMENT;
   gl.enableVertexAttribArray(locations.position);
   gl.vertexAttribPointer(locations.position, 2, gl.FLOAT, false, stride, 0);
@@ -1626,14 +1893,14 @@ function drawColorVertices(gl: WebGLRenderingContext, program: WebGLProgram, loc
   gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 6);
 }
 
-function drawGlyphVertices(gl: WebGLRenderingContext, program: WebGLProgram, locations: GlyphProgramLocations, buffer: WebGLBuffer, texture: WebGLTexture, vertices: number[] | Float32Array, upload = true): void {
+function drawGlyphVertices(gl: WebGLRenderingContext, program: WebGLProgram, locations: GlyphProgramLocations, buffer: WebGLBuffer, texture: WebGLTexture, vertices: Float32Array): void {
   if (vertices.length === 0) return;
   gl.useProgram(program);
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, texture);
   gl.uniform1i(locations.atlas, 0);
   gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-  if (upload) gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.DYNAMIC_DRAW);
+  gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
   const stride = 8 * Float32Array.BYTES_PER_ELEMENT;
   gl.enableVertexAttribArray(locations.position);
   gl.vertexAttribPointer(locations.position, 2, gl.FLOAT, false, stride, 0);
@@ -1644,64 +1911,79 @@ function drawGlyphVertices(gl: WebGLRenderingContext, program: WebGLProgram, loc
   gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 8);
 }
 
-function pushRowUnderlineVertices(vertices: number[], canvas: HTMLCanvasElement, state: TerminalRenderState, row: number): void {
+function pushRowUnderlineVertices(writer: FloatWriter, canvas: HTMLCanvasElement, state: TerminalRenderState, row: number): void {
+  const cellsRow = state.cells[row];
+  if (!cellsRow) return;
+  const thickness = Math.max(1, window.devicePixelRatio || 1);
   for (let col = 0; col < state.cols; col += 1) {
-    const cell = state.cells[row]?.[col] ?? blankCell();
-    if ((cell.flags & FLAG_UNDERLINE) === 0) continue;
-    const foreground = (cell.flags & FLAG_INVERSE) !== 0 ? cell.bg : cell.fg;
-    pushColorRect(vertices, canvas, col, row, state.cellWidth, state.cellHeight, Math.max(1, window.devicePixelRatio || 1), foreground, 'bottom');
+    const cell = cellsRow[col];
+    if (!cell || (cell.flags & FLAG_UNDERLINE) === 0) continue;
+    const foreground = colorToU32((cell.flags & FLAG_INVERSE) !== 0 ? cell.bg : cell.fg);
+    pushColorRect(writer, canvas, col, row, state.cellWidth, state.cellHeight, thickness, foreground, 'bottom');
   }
 }
 
-function pushRowColorVertices(vertices: number[], canvas: HTMLCanvasElement, state: TerminalRenderState, row: number, includeOverlays: boolean): void {
-  pushBackgroundVertices(vertices, canvas, state, row, row + 1);
+function pushRowColorVertices(writer: FloatWriter, canvas: HTMLCanvasElement, state: TerminalRenderState, row: number, includeOverlays: boolean): void {
+  pushBackgroundVertices(writer, canvas, state, row, row + 1);
   const ratio = window.devicePixelRatio || 1;
   const underlineHeight = Math.max(1, ratio);
-  for (let col = 0; col < state.cols; col += 1) {
-    const cell = state.cells[row]?.[col] ?? blankCell();
-    const inverse = (cell.flags & FLAG_INVERSE) !== 0;
-    if (includeOverlays && (cell.flags & FLAG_UNDERLINE) !== 0) {
-      const foreground = inverse ? cell.bg : cell.fg;
-      pushColorRect(vertices, canvas, col, row, state.cellWidth, state.cellHeight, underlineHeight, foreground, 'bottom');
-    }
-    if (isDrawableBoxCharacter(cell.char) && (cell.flags & FLAG_HIDDEN) === 0 && !isWideSpacerCell(cell)) {
-      const foreground = inverse ? cell.bg : cell.fg;
-      pushBoxDrawing(vertices, canvas, col, row, state.cellWidth, state.cellHeight, cell.char, foreground);
-    }
-    if (isDrawableBlockElement(cell.char) && (cell.flags & FLAG_HIDDEN) === 0 && !isWideSpacerCell(cell)) {
-      const foreground = inverse ? cell.bg : cell.fg;
-      pushBlockElement(vertices, canvas, col, row, state.cellWidth, state.cellHeight, cell.char, foreground);
+  const cellsRow = state.cells[row];
+  if (cellsRow) {
+    for (let col = 0; col < state.cols; col += 1) {
+      const cell = cellsRow[col];
+      if (!cell) continue;
+      const flags = cell.flags;
+      const inverse = (flags & FLAG_INVERSE) !== 0;
+      if (includeOverlays && (flags & FLAG_UNDERLINE) !== 0) {
+        const foreground = colorToU32(inverse ? cell.bg : cell.fg);
+        pushColorRect(writer, canvas, col, row, state.cellWidth, state.cellHeight, underlineHeight, foreground, 'bottom');
+      }
+      if ((flags & FLAG_HIDDEN) === 0 && !isWideSpacerCell(cell)) {
+        const ch = cell.char;
+        if (isDrawableBoxCharacter(ch)) {
+          const foreground = colorToU32(inverse ? cell.bg : cell.fg);
+          pushBoxDrawing(writer, canvas, col, row, state.cellWidth, state.cellHeight, ch, foreground);
+        } else if (isDrawableBlockElement(ch)) {
+          const foreground = colorToU32(inverse ? cell.bg : cell.fg);
+          pushBlockElement(writer, canvas, col, row, state.cellWidth, state.cellHeight, ch, foreground);
+        }
+      }
     }
   }
 
   if (state.cursor.row !== row || !includeOverlays || !state.cursor.visible || state.cursor.shape === 'hidden') return;
   const cursorThickness = Math.max(1, 2 * ratio);
   if (state.cursor.shape === 'beam') {
-    pushColorRect(vertices, canvas, state.cursor.col, state.cursor.row, state.cellWidth, state.cellHeight, cursorThickness, TERMINAL_CURSOR, 'left');
+    pushColorRect(writer, canvas, state.cursor.col, state.cursor.row, state.cellWidth, state.cellHeight, cursorThickness, TERMINAL_CURSOR_U32, 'left');
   } else if (state.cursor.shape === 'underline') {
-    pushColorRect(vertices, canvas, state.cursor.col, state.cursor.row, state.cellWidth, state.cellHeight, cursorThickness, TERMINAL_CURSOR, 'bottom');
+    pushColorRect(writer, canvas, state.cursor.col, state.cursor.row, state.cellWidth, state.cellHeight, cursorThickness, TERMINAL_CURSOR_U32, 'bottom');
   } else {
-    pushColorQuad(vertices, canvas, state.cursor.col, state.cursor.row, state.cellWidth, state.cellHeight, TERMINAL_CURSOR);
+    pushColorQuad(writer, canvas, state.cursor.col, state.cursor.row, state.cellWidth, state.cellHeight, TERMINAL_CURSOR_U32);
   }
 }
 
-function pushBackgroundVertices(vertices: number[], canvas: HTMLCanvasElement, state: Pick<TerminalRenderState, 'rows' | 'cols' | 'cells' | 'cellWidth' | 'cellHeight'>, startRow = 0, endRow = state.rows): void {
-  visitBackgroundRuns(state, (run) => {
-    pushColorQuad(vertices, canvas, run.startCol, run.row, state.cellWidth, state.cellHeight, run.color, run.colCount);
+function pushBackgroundVertices(writer: FloatWriter, canvas: HTMLCanvasElement, state: Pick<TerminalRenderState, 'rows' | 'cols' | 'cells' | 'cellWidth' | 'cellHeight'>, startRow = 0, endRow = state.rows): void {
+  visitBackgroundRuns(state, (row, startCol, colCount, color) => {
+    pushColorQuad(writer, canvas, startCol, row, state.cellWidth, state.cellHeight, color, colCount);
   }, startRow, endRow);
 }
 
-function visitBackgroundRuns(state: Pick<TerminalRenderState, 'rows' | 'cols' | 'cells'>, visit: (run: TerminalBackgroundRun) => void, startRow = 0, endRow = state.rows): void {
+function visitBackgroundRuns(state: Pick<TerminalRenderState, 'rows' | 'cols' | 'cells'>, visit: (row: number, startCol: number, colCount: number, color: number) => void, startRow = 0, endRow = state.rows): void {
   for (let row = startRow; row < endRow; row += 1) {
-    let runColor: string | null = null;
+    const cellsRow = state.cells[row];
+    let runColor = -1;
     let runStartCol = 0;
 
     for (let col = 0; col <= state.cols; col += 1) {
-      const background = col < state.cols ? cellBackground(state.cells[row]?.[col] ?? blankCell()) : TERMINAL_BACKGROUND;
+      let background = TERMINAL_BACKGROUND_U32;
+      if (col < state.cols && cellsRow) {
+        const cell = cellsRow[col];
+        if (cell) background = cellBackgroundU32(cell);
+      }
       if (background === runColor) continue;
 
-      if (runColor && runColor !== TERMINAL_BACKGROUND) {
-        visit({ row, startCol: runStartCol, colCount: col - runStartCol, color: runColor });
+      if (runColor >= 0 && runColor !== TERMINAL_BACKGROUND_U32) {
+        visit(row, runStartCol, col - runStartCol, runColor);
       }
 
       runColor = background;
@@ -1710,52 +1992,63 @@ function visitBackgroundRuns(state: Pick<TerminalRenderState, 'rows' | 'cols' | 
   }
 }
 
-function cellBackground(cell: TerminalCell): string {
-  return (cell.flags & FLAG_INVERSE) !== 0 ? cell.fg : cell.bg;
+function cellBackgroundU32(cell: TerminalCell): number {
+  return colorToU32((cell.flags & FLAG_INVERSE) !== 0 ? cell.fg : cell.bg);
 }
 
-function pushRowGlyphVertices(vertices: number[], canvas: HTMLCanvasElement, atlas: GlyphAtlas, state: TerminalRenderState, row: number): void {
+function pushRowGlyphVertices(writer: FloatWriter, canvas: HTMLCanvasElement, atlas: GlyphAtlas, state: TerminalRenderState, row: number): void {
+  const cellsRow = state.cells[row];
+  if (!cellsRow) return;
   for (let col = 0; col < state.cols; col += 1) {
-    const cell = state.cells[row]?.[col] ?? blankCell();
-    if (shouldSkipGlyph(cell)) continue;
+    const cell = cellsRow[col];
+    if (!cell || shouldSkipGlyph(cell)) continue;
     const inverse = (cell.flags & FLAG_INVERSE) !== 0;
-    const foreground = inverse ? cell.bg : cell.fg;
-    pushGlyphQuad(vertices, canvas, atlas, col, row, state.cellWidth, state.cellHeight, cell.char, foreground, cell.flags);
+    const foreground = colorToU32(inverse ? cell.bg : cell.fg);
+    pushGlyphQuad(writer, canvas, atlas, col, row, state.cellWidth, state.cellHeight, cell.char, foreground, cell.flags);
   }
 }
 
-function buildCursorGlyphVertices(canvas: HTMLCanvasElement, atlas: GlyphAtlas, state: TerminalRenderState): number[] {
-  const vertices: number[] = [];
+function buildCursorGlyphVertices(writer: FloatWriter, canvas: HTMLCanvasElement, atlas: GlyphAtlas, state: TerminalRenderState): void {
   if (state.cursor.visible && state.cursor.shape === 'block') {
-    const cell = state.cells[state.cursor.row]?.[state.cursor.col] ?? blankCell();
+    const cell = state.cells[state.cursor.row]?.[state.cursor.col] ?? BLANK_CELL;
     if (!shouldSkipGlyph(cell)) {
-      pushGlyphQuad(vertices, canvas, atlas, state.cursor.col, state.cursor.row, state.cellWidth, state.cellHeight, cell.char, TERMINAL_CURSOR_FOREGROUND, cell.flags);
+      pushGlyphQuad(writer, canvas, atlas, state.cursor.col, state.cursor.row, state.cellWidth, state.cellHeight, cell.char, TERMINAL_CURSOR_FOREGROUND_U32, cell.flags);
     }
   }
-  return vertices;
 }
 
-function drawGpuGeometry(device: GpuDeviceLike, pass: GpuRenderPassLike, pipeline: GpuRenderPipelineLike, bufferState: GpuVertexBufferState, geometry: RowGeometry, strideFloats: number): void {
-  if (geometry.data.length === 0) return;
+function drawGpuGeometry(device: GpuDeviceLike, pass: GpuRenderPassLike, pipeline: GpuRenderPipelineLike, bufferState: GpuVertexBufferState, geometry: RowGeometry): void {
+  if (geometry.drawRanges.length === 0) return;
   const previous = bufferState.buffer;
-  const buffer = ensureGpuVertexBuffer(device, bufferState, geometry.data.byteLength);
-  if (buffer !== previous) device.queue.writeBuffer(buffer, 0, geometry.data);
-  else for (const [start, end] of geometry.dirtyRanges) {
-    if (end > start) device.queue.writeBuffer(buffer, start * 4, geometry.data.subarray(start, end));
+  const buffer = ensureGpuVertexBuffer(device, bufferState, geometry.usedFloats * 4);
+  if (buffer !== previous || geometry.fullUploadNeeded) {
+    if (geometry.usedFloats > 0) {
+      device.queue.writeBuffer(buffer, 0, geometry.data.subarray(0, geometry.usedFloats));
+    }
+    geometry.fullUploadNeeded = false;
+  } else {
+    for (const [start, end] of geometry.dirtyRanges) {
+      if (end > start) device.queue.writeBuffer(buffer, start * 4, geometry.data.subarray(start, end));
+    }
   }
   pass.setPipeline(pipeline);
   pass.setVertexBuffer(0, buffer);
-  pass.draw(geometry.data.length / strideFloats);
+  for (const [firstVertex, vertexCount] of geometry.drawRanges) {
+    if (vertexCount > 0) {
+      if (firstVertex === 0) pass.draw(vertexCount);
+      else pass.draw(vertexCount, 1, firstVertex);
+    }
+  }
 }
 
-function drawGpuVertices(device: GpuDeviceLike, pass: GpuRenderPassLike, pipeline: GpuRenderPipelineLike, bufferState: GpuVertexBufferState, vertices: number[], strideFloats: number): void {
-  if (vertices.length === 0) return;
-  const data = new Float32Array(vertices);
+function drawGpuWriter(device: GpuDeviceLike, pass: GpuRenderPassLike, pipeline: GpuRenderPipelineLike, bufferState: GpuVertexBufferState, writer: FloatWriter, strideFloats: number): void {
+  if (writer.length === 0) return;
+  const data = writer.subarray();
   const buffer = ensureGpuVertexBuffer(device, bufferState, data.byteLength);
   device.queue.writeBuffer(buffer, 0, data);
   pass.setPipeline(pipeline);
   pass.setVertexBuffer(0, buffer);
-  pass.draw(vertices.length / strideFloats);
+  pass.draw(writer.length / strideFloats);
 }
 
 function ensureGpuVertexBuffer(device: GpuDeviceLike, bufferState: GpuVertexBufferState, requiredBytes: number): GpuBufferLike {
@@ -1783,30 +2076,42 @@ function uploadGpuAtlasIfDirty(device: GpuDeviceLike, texture: GpuTextureLike, a
   atlas.dirty = null;
 }
 
-function pushColorQuad(vertices: number[], canvas: HTMLCanvasElement, col: number, row: number, cellWidth: number, cellHeight: number, color: string, widthCells = 1): void {
-  const [r, g, b] = colorToRgb(color);
-  const [x0, y0, x1, y1] = cellRect(canvas, col, row, cellWidth, cellHeight, widthCells);
-  pushQuad(vertices, [x0, y0, x1, y1], r, g, b, 1);
+function pushColorQuad(writer: FloatWriter, canvas: HTMLCanvasElement, col: number, row: number, cellWidth: number, cellHeight: number, color: number, widthCells = 1): void {
+  const r = ((color >> 16) & 0xff) * INV_255;
+  const g = ((color >> 8) & 0xff) * INV_255;
+  const b = (color & 0xff) * INV_255;
+  const ratio = window.devicePixelRatio || 1;
+  const invW = 2 / canvas.width;
+  const invH = 2 / canvas.height;
+  const x0px = col * cellWidth * ratio;
+  const y0px = row * cellHeight * ratio;
+  const x1px = x0px + cellWidth * widthCells * ratio;
+  const y1px = y0px + cellHeight * ratio;
+  pushQuad(writer, x0px * invW - 1, 1 - y0px * invH, x1px * invW - 1, 1 - y1px * invH, r, g, b, 1);
 }
 
-function pushColorRect(vertices: number[], canvas: HTMLCanvasElement, col: number, row: number, cellWidth: number, cellHeight: number, thicknessPx: number, color: string, edge: 'bottom' | 'left'): void {
+function pushColorRect(writer: FloatWriter, canvas: HTMLCanvasElement, col: number, row: number, cellWidth: number, cellHeight: number, thicknessPx: number, color: number, edge: 'bottom' | 'left'): void {
   const ratio = window.devicePixelRatio || 1;
-  const [r, g, b] = colorToRgb(color);
+  const r = ((color >> 16) & 0xff) * INV_255;
+  const g = ((color >> 8) & 0xff) * INV_255;
+  const b = (color & 0xff) * INV_255;
   const cellX = col * cellWidth * ratio;
   const cellY = row * cellHeight * ratio;
   const cellRight = cellX + cellWidth * ratio;
   const cellBottom = cellY + cellHeight * ratio;
-  const x0px = edge === 'left' ? cellX : cellX;
+  const x0px = cellX;
   const y0px = edge === 'left' ? cellY : cellBottom - 2 * ratio - thicknessPx;
   const x1px = edge === 'left' ? cellX + thicknessPx : cellRight;
   const y1px = edge === 'left' ? cellBottom : cellBottom - 2 * ratio;
-  pushQuad(vertices, [(x0px / canvas.width) * 2 - 1, 1 - (y0px / canvas.height) * 2, (x1px / canvas.width) * 2 - 1, 1 - (y1px / canvas.height) * 2], r, g, b, 1);
+  pushQuad(writer, (x0px / canvas.width) * 2 - 1, 1 - (y0px / canvas.height) * 2, (x1px / canvas.width) * 2 - 1, 1 - (y1px / canvas.height) * 2, r, g, b, 1);
 }
 
-function pushPixelRect(vertices: number[], canvas: HTMLCanvasElement, x0px: number, y0px: number, x1px: number, y1px: number, color: string): void {
+function pushPixelRect(writer: FloatWriter, canvas: HTMLCanvasElement, x0px: number, y0px: number, x1px: number, y1px: number, color: number): void {
   if (x1px <= x0px || y1px <= y0px) return;
-  const [r, g, b] = colorToRgb(color);
-  pushQuad(vertices, [(x0px / canvas.width) * 2 - 1, 1 - (y0px / canvas.height) * 2, (x1px / canvas.width) * 2 - 1, 1 - (y1px / canvas.height) * 2], r, g, b, 1);
+  const r = ((color >> 16) & 0xff) * INV_255;
+  const g = ((color >> 8) & 0xff) * INV_255;
+  const b = (color & 0xff) * INV_255;
+  pushQuad(writer, (x0px / canvas.width) * 2 - 1, 1 - (y0px / canvas.height) * 2, (x1px / canvas.width) * 2 - 1, 1 - (y1px / canvas.height) * 2, r, g, b, 1);
 }
 
 export interface BoxDrawingSegments {
@@ -1865,7 +2170,7 @@ const BOX_DRAWING: Record<string, BoxDrawingSegments> = {
   '╬': { top: true, right: true, bottom: true, left: true, style: 'double' }
 };
 
-function pushBoxDrawing(vertices: number[], canvas: HTMLCanvasElement, col: number, row: number, cellWidth: number, cellHeight: number, char: string, color: string): void {
+function pushBoxDrawing(writer: FloatWriter, canvas: HTMLCanvasElement, col: number, row: number, cellWidth: number, cellHeight: number, char: string, color: number): void {
   const segments = boxDrawingSegments(char);
   if (!segments) return;
   const ratio = window.devicePixelRatio || 1;
@@ -1879,27 +2184,27 @@ function pushBoxDrawing(vertices: number[], canvas: HTMLCanvasElement, col: numb
   const offset = Math.max(1, 2 * ratio);
 
   if (segments.style === 'double') {
-    if (segments.left) pushDoubleHorizontal(vertices, canvas, x0, cx + offset, cy, thickness, offset, color);
-    if (segments.right) pushDoubleHorizontal(vertices, canvas, cx - offset, x1, cy, thickness, offset, color);
-    if (segments.top) pushDoubleVertical(vertices, canvas, cx, y0, cy + offset, thickness, offset, color);
-    if (segments.bottom) pushDoubleVertical(vertices, canvas, cx, cy - offset, y1, thickness, offset, color);
+    if (segments.left) pushDoubleHorizontal(writer, canvas, x0, cx + offset, cy, thickness, offset, color);
+    if (segments.right) pushDoubleHorizontal(writer, canvas, cx - offset, x1, cy, thickness, offset, color);
+    if (segments.top) pushDoubleVertical(writer, canvas, cx, y0, cy + offset, thickness, offset, color);
+    if (segments.bottom) pushDoubleVertical(writer, canvas, cx, cy - offset, y1, thickness, offset, color);
     return;
   }
 
-  if (segments.left) pushPixelRect(vertices, canvas, x0, cy - thickness / 2, cx, cy + thickness / 2, color);
-  if (segments.right) pushPixelRect(vertices, canvas, cx, cy - thickness / 2, x1, cy + thickness / 2, color);
-  if (segments.top) pushPixelRect(vertices, canvas, cx - thickness / 2, y0, cx + thickness / 2, cy, color);
-  if (segments.bottom) pushPixelRect(vertices, canvas, cx - thickness / 2, cy, cx + thickness / 2, y1, color);
+  if (segments.left) pushPixelRect(writer, canvas, x0, cy - thickness / 2, cx, cy + thickness / 2, color);
+  if (segments.right) pushPixelRect(writer, canvas, cx, cy - thickness / 2, x1, cy + thickness / 2, color);
+  if (segments.top) pushPixelRect(writer, canvas, cx - thickness / 2, y0, cx + thickness / 2, cy, color);
+  if (segments.bottom) pushPixelRect(writer, canvas, cx - thickness / 2, cy, cx + thickness / 2, y1, color);
 }
 
-function pushDoubleHorizontal(vertices: number[], canvas: HTMLCanvasElement, x0: number, x1: number, cy: number, thickness: number, offset: number, color: string): void {
-  pushPixelRect(vertices, canvas, x0, cy - offset - thickness / 2, x1, cy - offset + thickness / 2, color);
-  pushPixelRect(vertices, canvas, x0, cy + offset - thickness / 2, x1, cy + offset + thickness / 2, color);
+function pushDoubleHorizontal(writer: FloatWriter, canvas: HTMLCanvasElement, x0: number, x1: number, cy: number, thickness: number, offset: number, color: number): void {
+  pushPixelRect(writer, canvas, x0, cy - offset - thickness / 2, x1, cy - offset + thickness / 2, color);
+  pushPixelRect(writer, canvas, x0, cy + offset - thickness / 2, x1, cy + offset + thickness / 2, color);
 }
 
-function pushDoubleVertical(vertices: number[], canvas: HTMLCanvasElement, cx: number, y0: number, y1: number, thickness: number, offset: number, color: string): void {
-  pushPixelRect(vertices, canvas, cx - offset - thickness / 2, y0, cx - offset + thickness / 2, y1, color);
-  pushPixelRect(vertices, canvas, cx + offset - thickness / 2, y0, cx + offset + thickness / 2, y1, color);
+function pushDoubleVertical(writer: FloatWriter, canvas: HTMLCanvasElement, cx: number, y0: number, y1: number, thickness: number, offset: number, color: number): void {
+  pushPixelRect(writer, canvas, cx - offset - thickness / 2, y0, cx - offset + thickness / 2, y1, color);
+  pushPixelRect(writer, canvas, cx + offset - thickness / 2, y0, cx + offset + thickness / 2, y1, color);
 }
 
 function boxDrawingSegments(char: string): BoxDrawingSegments | null {
@@ -1914,7 +2219,7 @@ function isWideSpacerCell(cell: TerminalCell): boolean {
   return (cell.flags & (FLAG_WIDE_CHAR_SPACER | FLAG_LEADING_WIDE_CHAR_SPACER)) !== 0;
 }
 
-function pushBlockElement(vertices: number[], canvas: HTMLCanvasElement, col: number, row: number, cellWidth: number, cellHeight: number, char: string, color: string): void {
+function pushBlockElement(writer: FloatWriter, canvas: HTMLCanvasElement, col: number, row: number, cellWidth: number, cellHeight: number, char: string, color: number): void {
   const rects = blockElementRects(char);
   if (rects.length === 0) return;
   const ratio = window.devicePixelRatio || 1;
@@ -1922,7 +2227,9 @@ function pushBlockElement(vertices: number[], canvas: HTMLCanvasElement, col: nu
   const cellY = row * cellHeight * ratio;
   const pixelWidth = cellWidth * ratio;
   const pixelHeight = cellHeight * ratio;
-  const [r, g, b] = colorToRgb(color);
+  const r = ((color >> 16) & 0xff) * INV_255;
+  const g = ((color >> 8) & 0xff) * INV_255;
+  const b = (color & 0xff) * INV_255;
 
   for (const rect of rects) {
     const x0 = cellX + rect.x * pixelWidth;
@@ -1930,7 +2237,7 @@ function pushBlockElement(vertices: number[], canvas: HTMLCanvasElement, col: nu
     const x1 = x0 + rect.width * pixelWidth;
     const y1 = y0 + rect.height * pixelHeight;
     if (x1 <= x0 || y1 <= y0) continue;
-    pushQuad(vertices, [(x0 / canvas.width) * 2 - 1, 1 - (y0 / canvas.height) * 2, (x1 / canvas.width) * 2 - 1, 1 - (y1 / canvas.height) * 2], r, g, b, rect.alpha);
+    pushQuad(writer, (x0 / canvas.width) * 2 - 1, 1 - (y0 / canvas.height) * 2, (x1 / canvas.width) * 2 - 1, 1 - (y1 / canvas.height) * 2, r, g, b, rect.alpha);
   }
 }
 
@@ -2012,18 +2319,42 @@ function shouldSkipGlyph(cell: TerminalCell): boolean {
   return cell.char === ' ' || (cell.flags & FLAG_HIDDEN) !== 0 || isWideSpacerCell(cell) || isDrawableBoxCharacter(cell.char) || isDrawableBlockElement(cell.char);
 }
 
-function pushGlyphQuad(vertices: number[], canvas: HTMLCanvasElement, atlas: GlyphAtlas, col: number, row: number, cellWidth: number, cellHeight: number, char: string, color: string, flags: number): void {
+function pushGlyphQuad(writer: FloatWriter, canvas: HTMLCanvasElement, atlas: GlyphAtlas, col: number, row: number, cellWidth: number, cellHeight: number, char: string, color: number, flags: number): void {
   const entry = ensureGlyph(atlas, char, flags);
   if (!entry) return;
-  const u0 = (entry.col * atlas.slotWidth + atlas.padding) / atlas.canvas.width;
-  const v0 = (entry.row * atlas.slotHeight + atlas.padding) / atlas.canvas.height;
-  const u1 = (entry.col * atlas.slotWidth + atlas.padding + atlasGlyphWidth(atlas, entry)) / atlas.canvas.width;
-  const v1 = (entry.row * atlas.slotHeight + atlas.padding + atlas.glyphHeight) / atlas.canvas.height;
-  const [r, g, b] = entry.color ? [1, 1, 1] : colorToRgb(color);
+  const invAtlasW = 1 / atlas.canvas.width;
+  const invAtlasH = 1 / atlas.canvas.height;
+  const u0 = (entry.col * atlas.slotWidth + atlas.padding) * invAtlasW;
+  const v0 = (entry.row * atlas.slotHeight + atlas.padding) * invAtlasH;
+  const u1 = (entry.col * atlas.slotWidth + atlas.padding + atlasGlyphWidth(atlas, entry)) * invAtlasW;
+  const v1 = (entry.row * atlas.slotHeight + atlas.padding + atlas.glyphHeight) * invAtlasH;
+  const r = entry.color ? 1 : ((color >> 16) & 0xff) * INV_255;
+  const g = entry.color ? 1 : ((color >> 8) & 0xff) * INV_255;
+  const b = entry.color ? 1 : (color & 0xff) * INV_255;
   const alpha = (flags & FLAG_DIM) !== 0 ? 0.65 : 1;
   const width = (flags & FLAG_WIDE_CHAR) !== 0 ? cellWidth * 2 : cellWidth;
-  const [x0, y0, x1, y1] = glyphRect(canvas, col, row, width, cellWidth, cellHeight, atlas.overdrawX, atlas.overdrawY);
-  vertices.push(x0, y0, u0, v0, r, g, b, alpha, x1, y0, u1, v0, r, g, b, alpha, x0, y1, u0, v1, r, g, b, alpha, x0, y1, u0, v1, r, g, b, alpha, x1, y0, u1, v0, r, g, b, alpha, x1, y1, u1, v1, r, g, b, alpha);
+  const ratio = window.devicePixelRatio || 1;
+  const x0px = col * cellWidth * ratio - atlas.overdrawX;
+  const y0px = row * cellHeight * ratio - atlas.overdrawY;
+  const x1px = x0px + width * ratio + atlas.overdrawX * 2;
+  const y1px = y0px + cellHeight * ratio + atlas.overdrawY * 2;
+  const invW = 2 / canvas.width;
+  const invH = 2 / canvas.height;
+  const x0 = x0px * invW - 1;
+  const y0 = 1 - y0px * invH;
+  const x1 = x1px * invW - 1;
+  const y1 = 1 - y1px * invH;
+
+  writer.ensure(48);
+  const out = writer.data;
+  let i = writer.length;
+  out[i++] = x0; out[i++] = y0; out[i++] = u0; out[i++] = v0; out[i++] = r; out[i++] = g; out[i++] = b; out[i++] = alpha;
+  out[i++] = x1; out[i++] = y0; out[i++] = u1; out[i++] = v0; out[i++] = r; out[i++] = g; out[i++] = b; out[i++] = alpha;
+  out[i++] = x0; out[i++] = y1; out[i++] = u0; out[i++] = v1; out[i++] = r; out[i++] = g; out[i++] = b; out[i++] = alpha;
+  out[i++] = x0; out[i++] = y1; out[i++] = u0; out[i++] = v1; out[i++] = r; out[i++] = g; out[i++] = b; out[i++] = alpha;
+  out[i++] = x1; out[i++] = y0; out[i++] = u1; out[i++] = v0; out[i++] = r; out[i++] = g; out[i++] = b; out[i++] = alpha;
+  out[i++] = x1; out[i++] = y1; out[i++] = u1; out[i++] = v1; out[i++] = r; out[i++] = g; out[i++] = b; out[i++] = alpha;
+  writer.length = i;
 }
 
 function ensureGlyph(atlas: GlyphAtlas, char: string, flags: number): GlyphAtlasEntry | null {
@@ -2165,87 +2496,72 @@ function glyphVariantIndex(flags: number): number {
   return italic + bold + wide;
 }
 
-function pushQuad(vertices: number[], rect: [number, number, number, number], r: number, g: number, b: number, a: number): void {
-  const [x0, y0, x1, y1] = rect;
-  vertices.push(x0, y0, r, g, b, a, x1, y0, r, g, b, a, x0, y1, r, g, b, a, x0, y1, r, g, b, a, x1, y0, r, g, b, a, x1, y1, r, g, b, a);
+function pushQuad(writer: FloatWriter, x0: number, y0: number, x1: number, y1: number, r: number, g: number, b: number, a: number): void {
+  writer.ensure(36);
+  const out = writer.data;
+  let i = writer.length;
+  out[i++] = x0; out[i++] = y0; out[i++] = r; out[i++] = g; out[i++] = b; out[i++] = a;
+  out[i++] = x1; out[i++] = y0; out[i++] = r; out[i++] = g; out[i++] = b; out[i++] = a;
+  out[i++] = x0; out[i++] = y1; out[i++] = r; out[i++] = g; out[i++] = b; out[i++] = a;
+  out[i++] = x0; out[i++] = y1; out[i++] = r; out[i++] = g; out[i++] = b; out[i++] = a;
+  out[i++] = x1; out[i++] = y0; out[i++] = r; out[i++] = g; out[i++] = b; out[i++] = a;
+  out[i++] = x1; out[i++] = y1; out[i++] = r; out[i++] = g; out[i++] = b; out[i++] = a;
+  writer.length = i;
 }
 
-function cellRect(canvas: HTMLCanvasElement, col: number, row: number, cellWidth: number, cellHeight: number, widthCells = 1): [number, number, number, number] {
-  const ratio = window.devicePixelRatio || 1;
-  const x0px = col * cellWidth * ratio;
-  const y0px = row * cellHeight * ratio;
-  const x1px = x0px + cellWidth * widthCells * ratio;
-  const y1px = y0px + cellHeight * ratio;
-  return [
-    (x0px / canvas.width) * 2 - 1,
-    1 - (y0px / canvas.height) * 2,
-    (x1px / canvas.width) * 2 - 1,
-    1 - (y1px / canvas.height) * 2
-  ];
-}
-
-function glyphRect(canvas: HTMLCanvasElement, col: number, row: number, glyphCellWidth: number, cellWidth: number, cellHeight: number, overdrawX: number, overdrawY: number): [number, number, number, number] {
-  const ratio = window.devicePixelRatio || 1;
-  const x0px = col * cellWidth * ratio - overdrawX;
-  const y0px = row * cellHeight * ratio - overdrawY;
-  const x1px = x0px + glyphCellWidth * ratio + overdrawX * 2;
-  const y1px = y0px + cellHeight * ratio + overdrawY * 2;
-  return [
-    (x0px / canvas.width) * 2 - 1,
-    1 - (y0px / canvas.height) * 2,
-    (x1px / canvas.width) * 2 - 1,
-    1 - (y1px / canvas.height) * 2
-  ];
-}
+let measureOwnerDocument: Document | null = null;
+let measureContext: CanvasRenderingContext2D | null = null;
 
 function measureCellWidth(fontSize: number, fontFamily: string): number {
-  const canvas = document.createElement('canvas');
-  const context = canvas.getContext('2d');
-  if (!context) return 9;
-  context.font = `${fontSize}px ${fontFamily.trim() || DEFAULT_TERMINAL_FONT_FAMILY}`;
-  return context.measureText('W').width || 9;
+  if (measureOwnerDocument !== document) {
+    measureOwnerDocument = document;
+    measureContext = document.createElement('canvas').getContext('2d');
+  }
+  if (!measureContext) return 9;
+  measureContext.font = `${fontSize}px ${fontFamily.trim() || DEFAULT_TERMINAL_FONT_FAMILY}`;
+  return measureContext.measureText('W').width || 9;
 }
 
-function colorToRgb(color: string): [number, number, number] {
-  const value = Number.parseInt(color.slice(1), 16);
-  return [((value >> 16) & 0xff) / 255, ((value >> 8) & 0xff) / 255, (value & 0xff) / 255];
+const TERMINAL_BACKGROUND_RGB: [number, number, number] = [
+  ((TERMINAL_BACKGROUND_U32 >> 16) & 0xff) * INV_255,
+  ((TERMINAL_BACKGROUND_U32 >> 8) & 0xff) * INV_255,
+  (TERMINAL_BACKGROUND_U32 & 0xff) * INV_255
+];
+
+const NAMED_COLORS: Record<number, number> = {
+  0: 0x18181b,
+  1: 0xef4444,
+  2: 0x22c55e,
+  3: 0xeab308,
+  4: 0x3b82f6,
+  5: 0xd946ef,
+  6: 0x06b6d4,
+  7: 0xe4e4e7,
+  8: 0x71717a,
+  9: 0xf87171,
+  10: 0x4ade80,
+  11: 0xfacc15,
+  12: 0x60a5fa,
+  13: 0xe879f9,
+  14: 0x22d3ee,
+  15: TERMINAL_FOREGROUND_U32,
+  256: TERMINAL_FOREGROUND_U32,
+  257: TERMINAL_BACKGROUND_U32,
+  268: TERMINAL_FOREGROUND_U32,
+  269: TERMINAL_MUTED_FOREGROUND_U32
+};
+
+function colorToU32(color: number | string): number {
+  if (typeof color === 'number') return color;
+  return Number.parseInt(color.slice(1), 16);
 }
 
-const TERMINAL_BACKGROUND_RGB = colorToRgb(TERMINAL_BACKGROUND);
-
-function decodeColor(kind: number, value: number, fallback: string): string {
-  if (kind === 2) return `#${value.toString(16).padStart(6, '0')}`;
-  if (kind === 1) return ansiIndexedColor(value, fallback);
-  return namedColor(value, fallback);
+function colorU32ToHex(color: number): string {
+  return `#${(color & 0xffffff).toString(16).padStart(6, '0')}`;
 }
 
-function namedColor(value: number, fallback: string): string {
-  const colors: Record<number, string> = {
-    0: '#18181b',
-    1: '#ef4444',
-    2: '#22c55e',
-    3: '#eab308',
-    4: '#3b82f6',
-    5: '#d946ef',
-    6: '#06b6d4',
-    7: '#e4e4e7',
-    8: '#71717a',
-    9: '#f87171',
-    10: '#4ade80',
-    11: '#facc15',
-    12: '#60a5fa',
-    13: '#e879f9',
-    14: '#22d3ee',
-    15: TERMINAL_FOREGROUND,
-    256: TERMINAL_FOREGROUND,
-    257: TERMINAL_BACKGROUND,
-    268: TERMINAL_FOREGROUND,
-    269: TERMINAL_MUTED_FOREGROUND
-  };
-  return colors[value] ?? fallback;
-}
-
-function ansiIndexedColor(value: number, fallback: string): string {
-  if (value < 16) return namedColor(value, fallback);
-  return fallback;
+function decodeColorU32(kind: number, value: number, fallback: number): number {
+  if (kind === 2) return value & 0xffffff;
+  if (kind === 1) return value < 16 ? (NAMED_COLORS[value] ?? fallback) : fallback;
+  return NAMED_COLORS[value] ?? fallback;
 }

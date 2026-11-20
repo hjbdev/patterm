@@ -10,12 +10,12 @@
     v-else
     ref="root"
     class="markdown prose prose-zinc prose-invert prose-sm max-w-none text-foreground [font-size:0.875rem] [overflow-wrap:anywhere] prose-p:my-2 prose-a:text-primary prose-code:rounded prose-code:bg-secondary/50 prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-code:text-[0.85em] prose-code:font-normal prose-code:text-foreground prose-code:before:content-none prose-code:after:content-none prose-pre:border prose-pre:border-border prose-pre:bg-background prose-pre:text-foreground prose-blockquote:border-border prose-blockquote:text-muted-foreground prose-th:border-border prose-td:border-border marker:text-muted-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
-    v-stream-reveal="Boolean(revealAppends)"
   >
-    <template v-for="(block, index) in blocks" :key="index">
+    <template v-for="block in blocks" :key="block.key">
       <div v-if="block.figure" :data-mention="block.figure.text">
         <slot name="mention" :part="block.figure" />
       </div>
+      <div v-else-if="block.tail" class="markdown-text contents" v-stream-reveal="Boolean(revealAppends)" v-html="block.html" />
       <div v-else class="markdown-text contents" v-html="block.html" />
     </template>
   </div>
@@ -29,7 +29,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, shallowRef, useSlots, watch, type Directive } from 'vue';
-import { cachedMarkdown, renderMarkdown, renderPlainMarkdown, type MarkdownOptions } from '../lib/markdown';
+import { cachedMarkdown, renderMarkdown, renderPlainMarkdown, splitStableMarkdownBlocks, type MarkdownOptions } from '../lib/markdown';
 import { highlightInWorker } from '../lib/markdownHighlightWorker';
 import CodeCopyButton from './CodeCopyButton.vue';
 import { splitProcessMentions, type MentionPart } from '../lib/agentMentions';
@@ -95,51 +95,108 @@ function fadeAppendedText(element: HTMLElement, start: number): void {
 const EAGER_MARKDOWN_LIMIT = 80 * 1024;
 const PREVIEW_LIMIT = 40 * 1024;
 
-const rendered = ref('');
+interface StableBlockEntry {
+  source: string;
+  html: string;
+  highlighted: boolean;
+}
 
-// Split only top-level figure paragraphs, after parsing the whole Markdown so
-// reference links and fenced code retain their normal meaning. The surrounding
-// HTML may change on each delta; the figure's parent never moves.
-const blocks = computed(() => {
-  const html = rendered.value;
-  if (!slots.mention || !html.includes('[patterm_figure:')) return [{ html }];
+interface DisplayBlock {
+  key: string;
+  html?: string;
+  figure?: MentionPart;
+  tail?: boolean;
+}
+
+const stableBlocks = shallowRef<StableBlockEntry[]>([]);
+const tailHtml = ref('');
+const renderRevision = ref(0);
+
+// Split only top-level figure paragraphs out of an HTML chunk so iframes never
+// move or reload when surrounding text streams.
+function splitFigures(html: string, prefix: string, isTail: boolean, figureCounts: Map<string, number>): DisplayBlock[] {
+  if (!slots.mention || !html.includes('[patterm_figure:')) {
+    return [{ key: `${prefix}:0`, html, tail: isTail }];
+  }
   const template = document.createElement('template');
   template.innerHTML = html;
-  const result: { html?: string; figure?: MentionPart }[] = [];
+  const result: DisplayBlock[] = [];
   let pending = '';
+  let partIndex = 0;
   for (const node of Array.from(template.content.childNodes)) {
     const element = node instanceof HTMLElement ? node : null;
     const placeholder = element?.tagName === 'P' && element.childNodes.length === 1 ? element.firstElementChild : null;
     const part = placeholder?.tagName === 'SPAN' && placeholder.hasAttribute('data-mention')
       ? splitProcessMentions(placeholder.getAttribute('data-mention') ?? '')[0] : undefined;
     if (part?.figure) {
-      result.push({ html: pending }, { figure: part });
-      pending = '';
+      if (pending) {
+        result.push({ key: `${prefix}:${partIndex++}`, html: pending, tail: false });
+        pending = '';
+      }
+      const seen = figureCounts.get(part.figure) ?? 0;
+      figureCounts.set(part.figure, seen + 1);
+      result.push({ key: `fig:${part.figure}:${seen}`, figure: part });
     } else {
       pending += element?.outerHTML ?? node.textContent ?? '';
     }
   }
-  result.push({ html: pending });
+  if (pending || !result.length) {
+    result.push({ key: `${prefix}:${partIndex}`, html: pending, tail: isTail });
+  }
+  return result;
+}
+
+const blocks = computed<DisplayBlock[]>(() => {
+  const result: DisplayBlock[] = [];
+  const figureCounts = new Map<string, number>();
+  const stable = stableBlocks.value;
+  for (let index = 0; index < stable.length; index++) {
+    result.push(...splitFigures(stable[index]!.html, `s:${index}`, false, figureCounts));
+  }
+  const tail = tailHtml.value;
+  if (tail || !result.length) {
+    result.push(...splitFigures(tail, 'tail', true, figureCounts));
+  }
   return result;
 });
 
 const root = ref<HTMLElement | null>(null);
 const mentions = shallowRef<{ element: HTMLElement; part: MentionPart }[]>([]);
 const codeBlocks = shallowRef<HTMLElement[]>([]);
-watch([() => rendered.value, root], () => {
+
+function sameMentionNodes(left: { element: HTMLElement; part: MentionPart }[], right: { element: HTMLElement; part: MentionPart }[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i++) {
+    if (left[i]!.element !== right[i]!.element || left[i]!.part.text !== right[i]!.part.text) return false;
+  }
+  return true;
+}
+
+function sameElements(left: HTMLElement[], right: HTMLElement[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i++) {
+    if (left[i] !== right[i]) return false;
+  }
+  return true;
+}
+
+watch([renderRevision, root], () => {
   const found = root.value && slots.mention
     ? Array.from(root.value.querySelectorAll<HTMLElement>('.markdown-text [data-mention]'), (element) => ({ element, part: splitProcessMentions(element.dataset.mention ?? '')[0]! }))
     : [];
-  // A new empty list would still render the component again.
-  if (found.length || mentions.value.length) mentions.value = found;
-  // Each render replaces the HTML, so the copy buttons follow the new blocks.
-  const blocks = root.value ? Array.from(root.value.querySelectorAll<HTMLElement>('.code-block')) : [];
-  if (blocks.length || codeBlocks.value.length) codeBlocks.value = blocks;
+  // Stable blocks keep their DOM elements across streaming tail updates, so
+  // unchanged mentions and code blocks never trigger Teleport remounts.
+  if (!sameMentionNodes(found, mentions.value)) mentions.value = found;
+  const foundBlocks = root.value ? Array.from(root.value.querySelectorAll<HTMLElement>('.code-block')) : [];
+  if (!sameElements(foundBlocks, codeBlocks.value)) codeBlocks.value = foundBlocks;
 }, { flush: 'post' });
 
 const rendering = ref(false);
 const renderRequested = ref(false);
 let renderToken = 0;
+let tailToken = 0;
+let lastSource = '';
+let streamingActive = false;
 let idleHandle: number | null = null;
 let timeoutHandle: number | null = null;
 let highlightHandle: ReturnType<typeof setTimeout> | null = null;
@@ -160,6 +217,7 @@ watch(() => props.source, () => {
 
 onBeforeUnmount(() => {
   renderToken += 1;
+  tailToken += 1;
   cancelScheduledRender();
 });
 
@@ -168,39 +226,56 @@ function renderFull(): void {
   scheduleRender(true);
 }
 
+function hasFence(text: string): boolean {
+  return text.includes('```') || text.includes('~~~');
+}
+
 function scheduleRender(force: boolean): void {
   const source = sourceText();
-  renderToken += 1;
+  const isAppend = lastSource.length > 0 && source.length > lastSource.length && source.startsWith(lastSource);
+  const replaced = !isAppend && source !== lastSource;
+  lastSource = source;
+  if (replaced) {
+    streamingActive = Boolean(props.revealAppends);
+    renderToken += 1;
+    stableBlocks.value = [];
+  } else if (isAppend || props.revealAppends) {
+    streamingActive = true;
+  }
+  tailToken += 1;
   cancelScheduledRender();
   rendering.value = false;
   if (!source) {
-    rendered.value = '';
+    stableBlocks.value = [];
+    tailHtml.value = '';
+    renderRevision.value += 1;
     return;
   }
   if (!force && source.length > EAGER_MARKDOWN_LIMIT) return;
 
-  const token = renderToken;
-  const fenced = source.includes('```') || source.includes('~~~');
-  const highlight = (current: number, options: MarkdownOptions) => {
-    void renderMarkdown(source, options, highlightInWorker).then((html) => {
-      if (current !== renderToken) return;
-      rendered.value = html;
-    });
-  };
-  const render = () => {
-    if (token !== renderToken) return;
-    const options = markdownOptions(source);
-    const cached = fenced ? cachedMarkdown(source, options) : undefined;
-    // Native deltas can arrive faster than highlighting. Keep plain Markdown
-    // visible and wait for a short quiet gap before highlighting a change. A
-    // message that has just mounted highlights straight away.
-    const quietGap = rendered.value ? 120 : 0;
-    rendered.value = cached ?? renderPlainMarkdown(source, options);
-    rendering.value = false;
+  const docToken = renderToken;
+  const currentTailToken = tailToken;
+
+  const renderTail = (tailSource: string, hadTail: boolean) => {
+    const options = markdownOptions(tailSource);
+    const fenced = hasFence(tailSource);
+    const cached = fenced ? cachedMarkdown(tailSource, options) : undefined;
+    const quietGap = hadTail ? 120 : 0;
+    tailHtml.value = cached ?? renderPlainMarkdown(tailSource, options);
+    renderRevision.value += 1;
+
+    const highlightTail = (token: number, opts: MarkdownOptions) => {
+      void renderMarkdown(tailSource, opts, highlightInWorker).then((html) => {
+        if (docToken !== renderToken || token !== tailToken) return;
+        tailHtml.value = html;
+        renderRevision.value += 1;
+      });
+    };
+
     if (fenced && cached === undefined) {
       highlightHandle = globalThis.setTimeout(() => {
         highlightHandle = null;
-        highlight(token, options);
+        highlightTail(currentTailToken, options);
       }, quietGap);
     }
     // A process ID held back at the end of a streaming reply becomes a chip
@@ -209,16 +284,77 @@ function scheduleRender(force: boolean): void {
     if (options.holdTrailing) {
       settleHandle = globalThis.setTimeout(() => {
         settleHandle = null;
-        if (token !== renderToken) return;
+        if (docToken !== renderToken || currentTailToken !== tailToken) return;
         const settled = { ...options, holdTrailing: false };
-        const current = ++renderToken;
+        const nextToken = ++tailToken;
         if (highlightHandle !== null) globalThis.clearTimeout(highlightHandle);
         highlightHandle = null;
-        if (fenced) highlight(current, settled);
-        else rendered.value = renderPlainMarkdown(source, settled);
+        if (fenced) highlightTail(nextToken, settled);
+        else {
+          tailHtml.value = renderPlainMarkdown(tailSource, settled);
+          renderRevision.value += 1;
+        }
       }, 400);
     }
   };
+
+  const render = () => {
+    if (docToken !== renderToken || currentTailToken !== tailToken) return;
+    rendering.value = false;
+    const hadTail = Boolean(tailHtml.value);
+
+    // Split completed leading blocks during live streaming so new tokens only
+    // re-parse the tail block and completed highlighted code never flashes.
+    if (streamingActive) {
+      const { stable, tail } = splitStableMarkdownBlocks(source);
+      const previous = stableBlocks.value;
+      const stableOptions: MarkdownOptions = { mentions: Boolean(slots.mention), holdTrailing: false };
+      let stableChanged = stable.length !== previous.length;
+      const nextStable: StableBlockEntry[] = new Array(stable.length);
+      const pendingHighlights: Array<{ index: number; blockSource: string }> = [];
+
+      for (let i = 0; i < stable.length; i++) {
+        const blockSource = stable[i]!;
+        const existing = previous[i];
+        if (existing && existing.source === blockSource) {
+          nextStable[i] = existing;
+          continue;
+        }
+        stableChanged = true;
+        const fenced = hasFence(blockSource);
+        const cached = fenced ? cachedMarkdown(blockSource, stableOptions) : undefined;
+        nextStable[i] = {
+          source: blockSource,
+          html: cached ?? renderPlainMarkdown(blockSource, stableOptions),
+          highlighted: !fenced || cached !== undefined
+        };
+        if (fenced && cached === undefined) {
+          pendingHighlights.push({ index: i, blockSource });
+        }
+      }
+
+      if (stableChanged) stableBlocks.value = nextStable;
+
+      for (const { index, blockSource } of pendingHighlights) {
+        void renderMarkdown(blockSource, stableOptions, highlightInWorker).then((html) => {
+          if (docToken !== renderToken) return;
+          const current = stableBlocks.value;
+          if (current[index]?.source !== blockSource) return;
+          const updated = current.slice();
+          updated[index] = { source: blockSource, html, highlighted: true };
+          stableBlocks.value = updated;
+          renderRevision.value += 1;
+        });
+      }
+
+      renderTail(tail, hadTail);
+      return;
+    }
+
+    if (stableBlocks.value.length) stableBlocks.value = [];
+    renderTail(source, hadTail);
+  };
+
   if (source.length > EAGER_MARKDOWN_LIMIT) {
     rendering.value = true;
     scheduleIdle(render);

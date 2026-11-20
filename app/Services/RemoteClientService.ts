@@ -487,7 +487,7 @@ export class RemoteClientService {
           process_id: frame.processId, payload: Buffer.from(frame.payload).toString('base64'),
           frame_kind: frame.frameKind, frame_seq: frame.frameSeq, resize_seq: frame.resizeSeq
         });
-      } else if (frame.type === 'terminal-lifecycle') {
+      } else if (frame.type === 'terminal-lifecycle' && frame.event === 'mouse_mode') {
         this.peers.emit(hostId, 'terminal.lifecycle', frame);
       }
     }

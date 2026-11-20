@@ -43,15 +43,27 @@ export function usePaletteSources(options: { open: Ref<boolean>; projectId: Ref<
   let searchToken = 0;
   let conversationToken = 0;
 
+  const timers = computed(() => options.open.value ? paletteTimers(projects.value) : []);
+
   watch(options.open, (isOpen) => {
-    stopClock();
-    if (!isOpen) return;
+    if (!isOpen) {
+      stopClock();
+      return;
+    }
     now.value = Date.now();
-    // Timer countdowns tick only while the palette is open.
-    clock = setInterval(() => { now.value = Date.now(); }, 1_000);
     resetLaunch();
     void loadLaunchSettings();
     void loadConversations();
+  }, { immediate: true });
+  // Tick every 15s only while the palette is open and timers exist, so the
+  // open palette does not re-rank its full command list every second.
+  watch(() => options.open.value && timers.value.length > 0, (needsClock) => {
+    if (needsClock) {
+      now.value = Date.now();
+      clock ??= setInterval(() => { now.value = Date.now(); }, 15_000);
+    } else {
+      stopClock();
+    }
   }, { immediate: true });
   watch(options.projectId, () => {
     if (options.open.value) void loadConversations();
@@ -123,7 +135,7 @@ export function usePaletteSources(options: { open: Ref<boolean>; projectId: Ref<
   async function loadLaunchSettings(): Promise<void> {
     const [presets, interfaceSetting] = await Promise.allSettled([
       harnessPresets<PresetSettings>(),
-      window.patterm.call('settings_agent_interface_get', {}) as Promise<{ interface_mode?: unknown }>
+      topicCall<{ interface_mode?: unknown }>('settings', 'settings_agent_interface_get', {})
     ]);
     if (presets.status === 'fulfilled' && presets.value) presetSettings.value = presets.value;
     if (interfaceSetting.status === 'fulfilled') {
@@ -161,12 +173,11 @@ export function usePaletteSources(options: { open: Ref<boolean>; projectId: Ref<
     }
   }
 
-  const conversationCommands = computed(() => conversationRows(resumableConversations(conversations.value, options.projectId.value), now.value, savedInterface.value));
-  const timers = computed(() => paletteTimers(projects.value));
-  const timerCommands = computed(() => timerRows(timers.value, now.value, options.projectId.value));
+  const conversationCommands = computed(() => options.open.value ? conversationRows(resumableConversations(conversations.value, options.projectId.value), now.value, savedInterface.value) : []);
+  const timerCommands = computed(() => options.open.value ? timerRows(timers.value, now.value, options.projectId.value) : []);
   // Live agents are already listed, so search adds only what the list lacks.
-  const liveSessionIds = computed(() => new Set(projects.value.flatMap((project) => project.projectSessions.filter((session) => !session.exitedAt).map((session) => session.id))));
-  const searchCommands = computed(() => searchRows(searchResults.value.filter((result) => !(result.kind === 'session' && liveSessionIds.value.has(result.owner_id)))));
+  const liveSessionIds = computed(() => options.open.value ? new Set(projects.value.flatMap((project) => project.projectSessions.filter((session) => !session.exitedAt).map((session) => session.id))) : new Set<string>());
+  const searchCommands = computed(() => options.open.value ? searchRows(searchResults.value.filter((result) => !(result.kind === 'session' && liveSessionIds.value.has(result.owner_id)))) : []);
 
   return { launch, launchHarnesses, launchPresets, launchWorktrees, chooseHarness, rememberHarness, presetsFor, conversationCommands, timers, timerCommands, searchCommands, searching, now };
 }

@@ -83,6 +83,8 @@ interface QueuedJob {
 }
 
 const WATCHER_FOLLOW_UP_LIMIT = 1;
+const WARM_WORKER_IDLE_MS = 45_000;
+const WARM_WORKER_MAX_JOBS = 50;
 
 export class AgentHistoryImportQueueService {
   private readonly queue: QueuedJob[] = [];
@@ -90,6 +92,10 @@ export class AgentHistoryImportQueueService {
   private running = false;
   private disposed = false;
   private current: HistoryImportWorkerProcess | null = null;
+  private warmWorker: HistoryImportWorkerProcess | null = null;
+  private warmWorkerJobs = 0;
+  private warmIdleTimer: NodeJS.Timeout | null = null;
+  private warmIdleCleanup: (() => void) | null = null;
   private active: QueuedJob | null = null;
   private staleTimer: NodeJS.Timeout | null = null;
   private readonly staleMs: number;
@@ -196,6 +202,7 @@ export class AgentHistoryImportQueueService {
     this.disposed = true;
     this.dirtyWatcherKeys.clear();
     this.clearStaleTimer();
+    this.stopWarmWorker();
     for (const job of this.queue.splice(0)) {
       this.finishJob(job, 'cancelled', 'queue disposed', null);
     }
@@ -207,6 +214,67 @@ export class AgentHistoryImportQueueService {
     this.current = null;
     this.active = null;
     current?.kill();
+  }
+
+  private clearWarmIdleTimer(): void {
+    if (!this.warmIdleTimer) return;
+    clearTimeout(this.warmIdleTimer);
+    this.warmIdleTimer = null;
+  }
+
+  private takeWarmWorker(): HistoryImportWorkerProcess | null {
+    const worker = this.warmWorker;
+    if (!worker) return null;
+    this.clearWarmIdleTimer();
+    this.warmIdleCleanup?.();
+    this.warmIdleCleanup = null;
+    this.warmWorker = null;
+    return worker;
+  }
+
+  private parkWarmWorker(worker: HistoryImportWorkerProcess): void {
+    if (this.disposed || this.warmWorkerJobs >= WARM_WORKER_MAX_JOBS) {
+      this.shutdownWorker(worker);
+      return;
+    }
+    this.warmWorker = worker;
+    const onIdleExit = () => {
+      if (this.warmWorker !== worker) return;
+      this.clearWarmIdleTimer();
+      this.warmIdleCleanup = null;
+      this.warmWorker = null;
+      this.warmWorkerJobs = 0;
+    };
+    worker.once('exit', onIdleExit);
+    worker.once('error', onIdleExit);
+    this.warmIdleCleanup = () => {
+      worker.off('exit', onIdleExit);
+      worker.off('error', onIdleExit);
+    };
+    this.clearWarmIdleTimer();
+    this.warmIdleTimer = setTimeout(() => {
+      this.warmIdleTimer = null;
+      const idle = this.takeWarmWorker();
+      if (idle) this.shutdownWorker(idle);
+    }, WARM_WORKER_IDLE_MS);
+    this.warmIdleTimer.unref?.();
+  }
+
+  private stopWarmWorker(): void {
+    const worker = this.takeWarmWorker();
+    this.warmWorkerJobs = 0;
+    if (worker) {
+      try { worker.kill(); } catch { /* best-effort */ }
+    }
+  }
+
+  private shutdownWorker(worker: HistoryImportWorkerProcess): void {
+    this.warmWorkerJobs = 0;
+    try {
+      worker.postMessage({ type: 'shutdown' });
+    } catch {
+      try { worker.kill(); } catch { /* best-effort */ }
+    }
   }
 
   private drain(): void {
@@ -225,31 +293,81 @@ export class AgentHistoryImportQueueService {
       return;
     }
 
+    this.runWorkerJob(job, false);
+  }
+
+  private runWorkerJob(job: QueuedJob, forceFresh: boolean): void {
     let worker: HistoryImportWorkerProcess;
     const workerPath = path.join(__dirname, 'AgentHistoryImportWorker.js');
     let receivedMessage = false;
+    let receivedAnyMessage = false;
     let released = false;
-    const release = () => {
+    let reused = false;
+    const warm = forceFresh ? null : this.takeWarmWorker();
+    if (warm) {
+      worker = warm;
+      reused = true;
+      this.log('worker.reused', job, { worker_path: workerPath, jobs_handled: this.warmWorkerJobs });
+    } else {
+      try {
+        worker = this.launchWorker(workerPath);
+        this.warmWorkerJobs = 0;
+        this.log('worker.spawned', job, { worker_path: workerPath, retry_after_warm: forceFresh });
+      } catch (error) {
+        this.finishJob(job, 'failed', errorMessage(error), null);
+        this.running = false;
+        const finished = this.active;
+        this.active = null;
+        if (finished) this.enqueueWatcherFollowUp(finished);
+        this.onDone();
+        this.drain();
+        return;
+      }
+    }
+    this.current = worker;
+
+    const detachListeners = () => {
+      worker.off('message', onMessage);
+      worker.off('error', onError);
+      worker.off('exit', onExit);
+    };
+
+    const retryOnFreshWorker = (reason: string, data: Record<string, unknown> = {}): boolean => {
+      if (!reused || receivedAnyMessage || this.disposed || job.status !== 'running' || released) return false;
+      released = true;
+      this.clearStaleTimer();
+      detachListeners();
+      this.current = null;
+      this.warmWorkerJobs = 0;
+      try {
+        worker.kill();
+      } catch {
+        // Best-effort cleanup of the exited/errored warm worker.
+      }
+      this.log('worker.reused_retry', job, { reason, ...data });
+      this.runWorkerJob(job, true);
+      return true;
+    };
+
+    const release = (keepWarm = false) => {
       if (released) return;
       released = true;
       this.clearStaleTimer();
+      detachListeners();
       this.current = null;
       this.running = false;
       const finished = this.active;
       this.active = null;
+      if (keepWarm && !this.disposed) {
+        this.warmWorkerJobs += 1;
+        this.parkWarmWorker(worker);
+      } else {
+        this.warmWorkerJobs = 0;
+      }
       if (finished) this.enqueueWatcherFollowUp(finished);
       this.onDone();
       this.drain();
     };
-    try {
-      worker = this.launchWorker(workerPath);
-      this.log('worker.spawned', job, { worker_path: workerPath });
-    } catch (error) {
-      this.finishJob(job, 'failed', errorMessage(error), null);
-      release();
-      return;
-    }
-    this.current = worker;
     const markStale = () => {
       if (job.status !== 'running') return;
       this.finishJob(job, 'stale', `history import worker stale: no heartbeat for ${formatDuration(this.staleMs)}`, job.progress ? { progress: job.progress } : null);
@@ -259,7 +377,7 @@ export class AgentHistoryImportQueueService {
       } catch {
         // Releasing the queue is more important than preserving a wedged worker.
       }
-      release();
+      release(false);
     };
     const scheduleStaleCheck = () => {
       this.clearStaleTimer();
@@ -269,8 +387,9 @@ export class AgentHistoryImportQueueService {
       this.staleTimer = setTimeout(markStale, Math.max(0, this.staleMs - elapsed));
     };
     scheduleStaleCheck();
-    worker.on('message', (message: unknown) => {
+    const onMessage = (message: unknown) => {
       if (isWorkerHeartbeat(message)) {
+        receivedAnyMessage = true;
         if (job.status === 'running') {
           job.lastHeartbeatAt = new Date().toISOString();
           scheduleStaleCheck();
@@ -279,6 +398,7 @@ export class AgentHistoryImportQueueService {
       }
       const progress = progressFromWorkerMessage(message);
       if (progress) {
+        receivedAnyMessage = true;
         if (job.status === 'running') {
           job.lastHeartbeatAt = new Date().toISOString();
           job.progress = progress;
@@ -289,42 +409,60 @@ export class AgentHistoryImportQueueService {
 
       const resultMessage = resultFromWorkerMessage(message);
       if (!resultMessage) return;
+      receivedAnyMessage = true;
       receivedMessage = true;
-      this.log('worker.message', job, { ok: resultMessage.ok === true, error: resultMessage.error ?? null, result: summarizeResult(resultMessage.result) });
+      this.log('worker.message', job, { ok: resultMessage.ok === true, error: resultMessage.error ?? null, result: summarizeResult(resultMessage.result), reused });
       if (resultMessage.ok) {
         this.applyResultEffects(resultMessage.result);
         this.finishJob(job, 'succeeded', null, summarizeResult(resultMessage.result));
       } else this.finishJob(job, 'failed', resultMessage.error ?? 'history import worker failed', null);
-      try {
-        worker.postMessage({ type: 'result_ack' });
-      } catch {
-        // The parent has already handled the result; ack is best-effort.
+      const keepWarm = resultMessage.ok && resultMessage.keepAlive === true && !this.disposed;
+      if (!keepWarm) {
+        try {
+          worker.postMessage({ type: 'result_ack' });
+        } catch {
+          // The parent has already handled the result; ack is best-effort.
+        }
       }
-      release();
-    });
-    worker.once('error', (error: Error) => {
-      this.log('worker.error', job, { error: error.message });
+      release(keepWarm);
+    };
+    const onError = (error: Error) => {
+      this.log('worker.error', job, { error: error.message, reused });
+      if (retryOnFreshWorker('error', { error: error.message })) return;
       this.finishJob(job, 'failed', error.message, null);
-      release();
-    });
-    worker.once('exit', (code?: number, signal?: string) => {
-      this.log('worker.exit', job, { code: code ?? null, signal: signal ?? null, received_message: receivedMessage });
+      if (!receivedMessage) this.finalizeInterruptedBatch(job);
+      detachListeners();
+      try {
+        worker.kill();
+      } catch {
+        // Releasing the queue is more important than preserving a broken worker.
+      }
+      release(false);
+    };
+    const onExit = (code?: number, signal?: string) => {
+      this.log('worker.exit', job, { code: code ?? null, signal: signal ?? null, received_message: receivedMessage, reused });
+      if (retryOnFreshWorker('exit', { code: code ?? null, signal: signal ?? null })) return;
       if (!receivedMessage && job.status === 'running') {
         this.finishJob(job, 'failed', `history import worker exited before reporting a result${code === undefined ? '' : ` (code ${code})`}`, null);
       }
       if (!receivedMessage) this.finalizeInterruptedBatch(job);
-      release();
-    });
+      release(false);
+    };
+    worker.on('message', onMessage);
+    worker.once('error', onError);
+    worker.once('exit', onExit);
     try {
       worker.postMessage({ appDataPath: this.appDataPath, ...job.message, secretValues: this.secretValues() });
     } catch (error) {
+      if (retryOnFreshWorker('post_message_error', { error: errorMessage(error) })) return;
       this.finishJob(job, 'failed', errorMessage(error), null);
+      detachListeners();
       try {
         worker.kill();
       } catch {
         // If the worker cannot be killed, still release the queue for later jobs.
       }
-      release();
+      release(false);
     }
   }
 
@@ -548,14 +686,15 @@ function isWorkerHeartbeat(message: unknown): boolean {
   return Boolean(message && typeof message === 'object' && (message as { type?: unknown }).type === 'heartbeat');
 }
 
-function resultFromWorkerMessage(message: unknown): { ok: boolean; result?: unknown; error?: string } | null {
+function resultFromWorkerMessage(message: unknown): { ok: boolean; result?: unknown; error?: string; keepAlive?: boolean } | null {
   if (!message || typeof message !== 'object') return null;
   const row = message as Record<string, unknown>;
   if (row.type && row.type !== 'result') return null;
   if (typeof row.ok !== 'boolean') return null;
-  const result: { ok: boolean; result?: unknown; error?: string } = { ok: row.ok };
+  const result: { ok: boolean; result?: unknown; error?: string; keepAlive?: boolean } = { ok: row.ok };
   if ('result' in row) result.result = row.result;
   if (typeof row.error === 'string') result.error = row.error;
+  if (row.keepAlive === true) result.keepAlive = true;
   return result;
 }
 

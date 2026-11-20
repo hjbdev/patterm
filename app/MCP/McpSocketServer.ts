@@ -47,6 +47,7 @@ const MCP_SERVER_OPS = new Set(['mcp-headers', 'mcp-proxy-headers', 'mcp-endpoin
 export class McpSocketServer {
   private server: net.Server | null = null;
   private readonly sockets = new Set<net.Socket>();
+  private readonly catalogSubscribers = new Set<net.Socket>();
 
   constructor(
     private readonly socketPath: string,
@@ -60,6 +61,12 @@ export class McpSocketServer {
 
   get address(): string {
     return ipcPath(this.socketPath);
+  }
+
+  notifyCatalogChanged(): void {
+    for (const socket of this.catalogSubscribers) {
+      this.write(socket, { event: 'catalog_changed' });
+    }
   }
 
   start(): Promise<void> {
@@ -87,6 +94,7 @@ export class McpSocketServer {
   stop(): void {
     for (const socket of this.sockets) socket.destroy();
     this.sockets.clear();
+    this.catalogSubscribers.clear();
     this.server?.close();
     this.server = null;
     this.cleanupStaleSocket();
@@ -94,7 +102,10 @@ export class McpSocketServer {
 
   private handleConnection(socket: net.Socket): void {
     this.sockets.add(socket);
-    socket.once('close', () => this.sockets.delete(socket));
+    socket.once('close', () => {
+      this.sockets.delete(socket);
+      this.catalogSubscribers.delete(socket);
+    });
     socket.setEncoding('utf8');
     const lines = createInterface({ input: socket, crlfDelay: Infinity });
     lines.on('line', (line) => {
@@ -115,7 +126,12 @@ export class McpSocketServer {
       if (request.version !== 2) throw new Error('unsupported MCP shim version');
       if (request.op === 'catalog') {
         // OpenCode's shared helpers list tools without an agent identity.
-        this.write(socket, { id, result: this.registry.publicTools({ identity: typeof request.identity === 'string' && request.identity ? request.identity : null }) });
+        this.write(socket, { id, result: this.registry.publicTools({ identity: typeof request.identity === 'string' && request.identity ? request.identity : null }), push: true });
+        return;
+      }
+      if (request.op === 'catalog-subscribe') {
+        this.catalogSubscribers.add(socket);
+        this.write(socket, { id, result: { subscribed: true } });
         return;
       }
       if (request.op === 'open-url') {

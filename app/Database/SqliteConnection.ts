@@ -41,21 +41,38 @@ export function openSqliteConnection(path: string, options: { readOnly?: boolean
   return new PattermSqliteConnection(db);
 }
 
+const STATEMENT_CACHE_LIMIT = 256;
+const SCHEMA_MUTATION_PATTERN = /\b(?:drop|alter|detach)\b/i;
+
 class PattermSqliteConnection implements SqliteConnection {
   private transactionDepth = 0;
+  private readonly statementCache = new Map<string, PattermSqliteStatement>();
 
   constructor(private readonly db: NativeSqliteConnection) {}
 
   close(): void {
+    this.statementCache.clear();
     this.db.close();
   }
 
   exec(statement: string): void {
+    if (SCHEMA_MUTATION_PATTERN.test(statement)) this.statementCache.clear();
     this.db.exec(statement);
   }
 
   prepare(statement: string): SqliteStatement {
-    return new PattermSqliteStatement(this.db.prepare(statement));
+    const cached = this.statementCache.get(statement);
+    if (cached) {
+      this.statementCache.delete(statement);
+      this.statementCache.set(statement, cached);
+      return cached;
+    }
+    const prepared = new PattermSqliteStatement(this.db.prepare(statement));
+    if (this.statementCache.size >= STATEMENT_CACHE_LIMIT) {
+      this.statementCache.delete(this.statementCache.keys().next().value!);
+    }
+    this.statementCache.set(statement, prepared);
+    return prepared;
   }
 
   transaction<Args extends unknown[], Result>(callback: (...args: Args) => Result): (...args: Args) => Result {

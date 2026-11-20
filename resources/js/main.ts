@@ -9,8 +9,14 @@ import { animatePhoneNavigation } from './lib/phoneTransitions';
 import { warmHighlightWorker } from './lib/markdownHighlightWorker';
 import { syncLoaders } from './lib/loaderSync';
 import { installTelemetry } from './lib/telemetry';
-import './assets/fonts/fonts.css';
+import './appearance/BundledFontStyles';
+import { uiFontFamilyHint } from './appearance/AppearanceSettings';
+import { ensureBundledFontStyles } from './appearance/FontLoading';
 import './styles.css';
+
+// Load only the active UI font stylesheet on startup; other bundled fonts load
+// on demand when selected or when a terminal opens.
+void ensureBundledFontStyles(uiFontFamilyHint());
 
 // A server with a password shows only the sign-in page until this browser
 // signs in.
@@ -39,15 +45,19 @@ function mountWorkbench(): void {
     const url = targetURL ? new URL(targetURL) : null;
     if (url?.origin === location.origin && url.pathname !== '/') void router.push(url.pathname + url.search + url.hash);
   });
-  // Once the first page is up, load the other pages, the diff viewer, and the
-  // code highlighter, so later navigation doesn't wait for them.
+  // Once the first page is up and the main thread is idle, load the other
+  // common pages, the diff viewer, and the code highlighter so later navigation
+  // stays instant without competing with initial render and workbench RPC.
   void router.isReady().then(() => {
     app.mount('#app');
-    setTimeout(() => {
+    const warm = () => {
       prefetchPages();
       void import('./Components/WorktreeFileDiff.vue');
       void import('./lib/diffHighlighter');
       warmHighlightWorker();
-    }, 0);
+    };
+    const idle = (window as Window & { requestIdleCallback?: (cb: () => void, options?: { timeout?: number }) => number }).requestIdleCallback;
+    if (idle) idle(warm, { timeout: 1500 });
+    else setTimeout(warm, 1500);
   });
 }

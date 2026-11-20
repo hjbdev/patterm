@@ -95,7 +95,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { Link2, Server } from 'lucide-vue-next';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -124,11 +124,25 @@ const pairError = ref('');
 const busy = ref(false);
 const code = ref<PairingCode | null>(null);
 const now = ref(Date.now());
-const ticker = setInterval(() => {
-  now.value = Date.now();
-  if (code.value && Date.parse(code.value.expires_at) <= now.value) code.value = null;
-}, 1000);
-onBeforeUnmount(() => clearInterval(ticker));
+let ticker: ReturnType<typeof setInterval> | null = null;
+function stopTicker(): void {
+  if (ticker !== null) {
+    clearInterval(ticker);
+    ticker = null;
+  }
+}
+watch(code, (active) => {
+  if (active) {
+    now.value = Date.now();
+    ticker ??= setInterval(() => {
+      now.value = Date.now();
+      if (code.value && Date.parse(code.value.expires_at) <= now.value) code.value = null;
+    }, 1000);
+  } else {
+    stopTicker();
+  }
+});
+onBeforeUnmount(stopTicker);
 
 // Unlinked projects with the same git remote on each connected host.
 interface Suggestion { project_id: string; project_name: string; remote_project_id: string; remote_name: string; git_remote: string }

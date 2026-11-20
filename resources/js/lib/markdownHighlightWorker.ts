@@ -1,9 +1,10 @@
 import HighlightWorker from './markdownHighlight.worker.ts?worker';
-import { highlightCodeBlocks, type CodeBlock } from './codeHighlight';
+import type { CodeBlock } from './codeHighlight';
 
 // Tokenising the first code block loads Shiki's grammars and WASM engine,
 // which held the main thread for about 60 ms when a conversation opened. The
-// worker does it instead. Without workers, highlighting runs here as before.
+// worker does it instead. Without workers, highlighting dynamically loads the
+// fallback so shiki/wasm stays out of the main-thread entry graph.
 let worker: Worker | null | undefined;
 let nextId = 0;
 const waiting = new Map<number, (html: (string | null)[]) => void>();
@@ -30,9 +31,12 @@ function highlightWorker(): Worker | null {
   return worker;
 }
 
-export function highlightInWorker(blocks: CodeBlock[]): Promise<(string | null)[]> {
+export async function highlightInWorker(blocks: CodeBlock[]): Promise<(string | null)[]> {
   const target = highlightWorker();
-  if (!target) return highlightCodeBlocks(blocks);
+  if (!target) {
+    const { highlightCodeBlocks } = await import('./codeHighlight');
+    return highlightCodeBlocks(blocks);
+  }
   const id = nextId++;
   return new Promise((resolve) => {
     waiting.set(id, resolve);

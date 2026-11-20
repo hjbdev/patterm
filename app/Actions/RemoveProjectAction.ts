@@ -39,6 +39,7 @@ const UNLINKED_ROWS = [
   'delete from assistant_inbox where source_process_id in (select id from processes where project_id = ?)',
   'delete from routine_runs where project_id = ?',
   'delete from peer_messages where project_id = ?',
+  'delete from app_artifacts_fts_rows where fts_rowid in (select rowid from app_artifacts_fts where project_id = ?)',
   'delete from app_artifacts_fts where project_id = ?',
   // Copies from before history had its own database, purged there already.
   'delete from conversations where project_id = ?'

@@ -26,6 +26,7 @@ export const ringFontVersion = ref(0);
 const cache = new Map<string, RingCountFit>();
 let context: CanvasRenderingContext2D | null | undefined;
 let watching = false;
+let lastUiFontFamily = '';
 
 function invalidate(): void {
   cache.clear();
@@ -35,9 +36,16 @@ function invalidate(): void {
 function watchFont(): void {
   if (watching || typeof document === 'undefined') return;
   watching = true;
+  lastUiFontFamily = uiFontFamily();
   document.fonts?.addEventListener('loadingdone', invalidate);
   // The appearance settings set the UI font as a custom property on the root.
-  new MutationObserver(invalidate).observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
+  // Ignore unrelated style mutations (e.g. terminal width or modal scroll lock).
+  new MutationObserver(() => {
+    const next = uiFontFamily();
+    if (next === lastUiFontFamily) return;
+    lastUiFontFamily = next;
+    invalidate();
+  }).observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
 }
 
 function uiFontFamily(): string {

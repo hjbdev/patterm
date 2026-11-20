@@ -68,6 +68,7 @@ export class HistoryDatabaseService {
         this.db.exec(`pragma busy_timeout = ${busyTimeoutMs(this.options.busyTimeoutMs)}`);
         this.db.exec('pragma cache_size = -32000');
         this.db.exec('pragma mmap_size = 134217728');
+        this.db.exec('pragma temp_store = MEMORY');
         this.available = hasHistorySchema(this.db);
       } catch (error) {
         this.dispose();
@@ -88,6 +89,13 @@ export class HistoryDatabaseService {
   }
 
   dispose(): void {
+    if (this.db && (this.options.mode ?? 'write') === 'write') {
+      try {
+        this.db.exec('pragma optimize');
+      } catch {
+        // Best-effort planner statistics refresh before close.
+      }
+    }
     this.db?.close();
     this.db = null;
     this.currentDbPath = null;

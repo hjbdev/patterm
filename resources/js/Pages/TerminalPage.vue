@@ -15,9 +15,9 @@
         <div class="relative min-h-0 flex-1" :class="!phoneLayout && selectedAgent && activeTerminalId && !integratedAgent && 'mt-3'">
         <!-- The transcript fades in under the header rather than meeting it at a hard edge. -->
         <div v-if="integratedAgent && selectedAgent" class="pointer-events-none absolute inset-x-0 top-0 z-10 h-8 bg-gradient-to-b from-background to-transparent" aria-hidden="true" />
-        <IntegratedConversation v-if="integratedAgent" :process-id="integratedAgent.processId" :project-id="activeProject?.project.id ?? null" :project-path="activeProject?.project.path ?? null" :exited="integratedAgent.exited" :restartable="selectedAgent?.sessionRole === 'orchestrator' && selectedAgent?.processStatus !== 'closed'" :mention-agents="mentionAgents" :mention-bots="mentionBots" :mention-processes="mentionProcesses" :mention-launchers="mentionLaunchers" :close-request="selectedAgent?.closeRequest" :snooze="selectedAgent?.snooze" :close-subagents="closeSubagents" class="h-full" @launched="selectLaunchedAgent" />
+        <IntegratedConversation v-if="pageActive && integratedAgent" :process-id="integratedAgent.processId" :project-id="activeProject?.project.id ?? null" :project-path="activeProject?.project.path ?? null" :exited="integratedAgent.exited" :restartable="selectedAgent?.sessionRole === 'orchestrator' && selectedAgent?.processStatus !== 'closed'" :mention-agents="mentionAgents" :mention-bots="mentionBots" :mention-processes="mentionProcesses" :mention-launchers="mentionLaunchers" :close-request="selectedAgent?.closeRequest" :snooze="selectedAgent?.snooze" :close-subagents="closeSubagents" class="h-full" @launched="selectLaunchedAgent" />
         <!-- Hidden rather than unmounted so switching back skips renderer setup. A null ID detaches the PTY. -->
-        <TerminalPane v-show="!integratedAgent" ref="terminalPane" title="Terminal" :process-id="integratedAgent ? null : activeTerminalId" :capture-enabled="!!activeProject" @capture-selection="capture" />
+        <TerminalPane v-show="!integratedAgent" ref="terminalPane" title="Terminal" :process-id="!pageActive || integratedAgent ? null : activeTerminalId" :capture-enabled="!!activeProject" @capture-selection="capture" />
         </div>
         <TerminalKeyRow v-if="keyboardOpen && activeTerminalId && !integratedAgent" :ctrl-held="terminalPane?.ctrlHeld ?? false" @key="terminalPane?.pressKey($event)" />
         <!-- TUI agents have no composer; their snooze and close request sit under the terminal. -->
@@ -66,7 +66,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue';
+defineOptions({ name: 'TerminalPage' });
 import AgentEmptyState from '../Components/AgentEmptyState.vue';
 import { allAgents } from '../lib/allAgents';
 import SnoozeCard from '../Components/SnoozeCard.vue';
@@ -78,8 +79,8 @@ import PhoneAgentHeader from '../Components/Phone/PhoneAgentHeader.vue';
 import PhoneServerCard from '../Components/Phone/PhoneServerCard.vue';
 import ContextHeader from '../Components/session-context/ContextHeader.vue';
 import PeekPane from '../Components/peek/PeekPane.vue';
-import WorktreeDiffDeck from '../Components/WorktreeDiffDeck.vue';
-import WorktreeDiffDrawer from '../Components/WorktreeDiffDrawer.vue';
+const WorktreeDiffDeck = defineAsyncComponent(() => import('../Components/WorktreeDiffDeck.vue'));
+const WorktreeDiffDrawer = defineAsyncComponent(() => import('../Components/WorktreeDiffDrawer.vue'));
 import { Sheet, SheetContent, SheetTitle } from '../Components/ui/sheet';
 import { APPEARANCE_SETTINGS_CHANGED_EVENT, lastKnownAppearanceSettings, loadAppearanceSettings, normalizeAppearanceSettings, type AppearanceSettings } from '../appearance/AppearanceSettings';
 import { mentionableAgents, mentionableBots, mentionableProcesses, mentionLaunchers as buildMentionLaunchers } from '../lib/agentMentions';
@@ -281,23 +282,43 @@ watch(() => browser.value?.help?.requestedAt, (requestedAt) => {
 function appearanceChanged(event: Event) {
   diffLayout.value = normalizeAppearanceSettings((event as CustomEvent<AppearanceSettings>).detail).diffViewer;
 }
+const pageActive = ref(true);
+
+function registerWorkspaceRequests(): void {
+  stopWorkspaceRequests?.();
+  stopWorkspaceRequests = onWorkspaceRequest((request) => {
+    if (!pageActive.value || request.kind === 'integrated' || request.sessionId !== selectedAgent.value?.id) return false;
+    if (request.kind === 'session-context') void openPeek({ kind: 'context' });
+    else if (request.kind === 'peek') void openPeek(request.peek);
+    else openWorktree(request.worktree);
+    return true;
+  });
+}
+
 onMounted(async () => {
   observer = new ResizeObserver(updateNarrow);
   if (workspace.value)
     observer.observe(workspace.value);
   updateNarrow();
   window.addEventListener(APPEARANCE_SETTINGS_CHANGED_EVENT, appearanceChanged);
-  stopWorkspaceRequests = onWorkspaceRequest((request) => {
-    if (request.kind === 'integrated' || request.sessionId !== selectedAgent.value?.id) return false;
-    if (request.kind === 'session-context') void openPeek({ kind: 'context' });
-    else if (request.kind === 'peek') void openPeek(request.peek);
-    else openWorktree(request.worktree);
-    return true;
-  });
+  registerWorkspaceRequests();
   if (!lastKnownAppearanceSettings())
     diffLayout.value = (await loadAppearanceSettings()).diffViewer;
 });
+onActivated(() => {
+  pageActive.value = true;
+  updateNarrow();
+  registerWorkspaceRequests();
+  peekedProcessId.value = peek.value?.kind === 'browser' ? peek.value.serverProcessId ?? null : null;
+});
+onDeactivated(() => {
+  pageActive.value = false;
+  stopWorkspaceRequests?.();
+  stopWorkspaceRequests = undefined;
+  peekedProcessId.value = null;
+});
 onBeforeUnmount(() => {
+  pageActive.value = false;
   observer?.disconnect();
   window.removeEventListener(APPEARANCE_SETTINGS_CHANGED_EVENT, appearanceChanged);
   stopWorkspaceRequests?.();

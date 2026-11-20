@@ -30,7 +30,12 @@ export class AcpProviderService implements IntegratedProviderService {
 
   async prepare(input: IntegratedLaunchInput): Promise<IntegratedLaunchResult> {
     if (input.serviceTier) throw new Error('Antigravity does not support Codex service tiers');
-    if (input.resumeId && this.database.connection.prepare("select id from sessions where harness = 'agy' and resume_id = ? and exited_at is null").get(input.resumeId)) throw new Error('Antigravity session is already attached to Patterm');
+    if (input.resumeId) {
+      const attached = input.wakingSessionId
+        ? this.database.connection.prepare("select id from sessions where harness = 'agy' and resume_id = ? and exited_at is null and id != ?").get(input.resumeId, input.wakingSessionId)
+        : this.database.connection.prepare("select id from sessions where harness = 'agy' and resume_id = ? and exited_at is null").get(input.resumeId);
+      if (attached) throw new Error('Antigravity session is already attached to Patterm');
+    }
     const directory = path.join(this.runtimeDir, 'acp');
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     const key = randomUUID();
@@ -39,7 +44,7 @@ export class AcpProviderService implements IntegratedProviderService {
     // agy drops the largest MCP tools once their declarations pass its size
     // budget, so Patterm's own tools advertise without usage notes.
     const patterm = { ...input.mcp, env: { ...input.mcp.env, PATTERM_MCP_COMPACT: '1' } };
-    const servers = { ...claudeMcpServers(input.mcpServers ?? [], input.mcp), patterm };
+    const servers = { ...claudeMcpServers(input.mcpServers ?? [], input.mcp, { httpNative: false }), patterm };
     const mcpServers = Object.entries(servers).map(([name, value]) => {
       const server = value as { command: string; args: string[]; env: Record<string, string> };
       return { name, command: server.command, args: server.args, env: Object.entries(server.env).map(([name, value]) => ({ name, value })) };
@@ -60,7 +65,8 @@ export class AcpProviderService implements IntegratedProviderService {
       }
       throw new Error('Antigravity did not initialise within 90 seconds');
     } catch (error) {
-      await stopHostProcess(pid);
+      if (this.launcher.stop) await this.launcher.stop(socketPath, pid).catch(() => undefined);
+      else await stopHostProcess(pid);
       fs.rmSync(configPath, { force: true });
       throw error;
     }
@@ -97,7 +103,7 @@ export class AcpProviderService implements IntegratedProviderService {
         attachments.push({ type: 'file', name: attachment.name, mime: attachment.mime });
         continue;
       }
-      const data = attachment.data ?? fs.readFileSync(attachment.path).toString('base64');
+      const data = attachment.data ?? (await fs.promises.readFile(attachment.path)).toString('base64');
       if (attachment.mime.startsWith('image/')) prompt.push({ type: 'image', mimeType: attachment.mime, data });
       else prompt.push({ type: 'resource', resource: { uri: `attachment:///${encodeURIComponent(attachment.name)}`, mimeType: attachment.mime, text: Buffer.from(data, 'base64').toString('utf8') } });
       const stored = attachment.mime.startsWith('image/') ? this.images?.fromBase64(data) : null;
@@ -183,9 +189,19 @@ export class AcpProviderService implements IntegratedProviderService {
   }
   async stop(processId: string): Promise<void> {
     const runtime = this.runtime(processId);
-    try { await callIntegratedHost(runtime.socketPath, 'stop', {}); } catch { await stopRecordedHostProcess(runtime.pid, runtime.socketPath); }
+    try {
+      await callIntegratedHost(runtime.socketPath, 'stop', {});
+    } catch {
+      if (this.launcher.stop) await this.launcher.stop(runtime.socketPath, runtime.pid);
+      else await stopRecordedHostProcess(runtime.pid, runtime.socketPath);
+    }
   }
-  async cleanupLaunch(_input: IntegratedLaunchInput, result: IntegratedLaunchResult): Promise<void> { await stopHostProcess(Number(result.argv[3]) || null); }
+  async cleanupLaunch(_input: IntegratedLaunchInput, result: IntegratedLaunchResult): Promise<void> {
+    const socketPath = typeof result.argv[2] === 'string' ? result.argv[2] : '';
+    const pid = Number(result.argv[3]) || null;
+    if (this.launcher.stop && socketPath) await this.launcher.stop(socketPath, pid);
+    else await stopHostProcess(pid);
+  }
   async stopAll(): Promise<void> {
     const rows = this.database.connection.prepare("select process_id as id from sessions where harness = 'agy' and interface_mode = 'integrated' and exited_at is null").all() as Array<{ id: string }>;
     const results = await Promise.allSettled(rows.map((row) => this.stop(row.id)));

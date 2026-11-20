@@ -131,7 +131,24 @@ export function observedRoutes<T extends RouteRegistrar>(inner: T, telemetry: Pa
   }) as T;
 }
 
+const PTY_CACHE_TTL_MS = 1_000;
+const PTY_CACHE_LIMIT = 512;
+
 export function registerApplicationRoutes(ipcMain: RouteRegistrar, application: PattermApplication): void {
+  const ptyIdCache = new Map<string, { ptyId: string; expiresAt: number }>();
+  application.onWorkbenchPatch?.(() => { ptyIdCache.clear(); });
+  const resolveCachedPty = <T extends { process_id: string }>(payload: T, refresh = false): T => {
+    const now = Date.now();
+    if (!refresh) {
+      const cached = ptyIdCache.get(payload.process_id);
+      if (cached && cached.expiresAt > now) return cached.ptyId === payload.process_id ? payload : { ...payload, process_id: cached.ptyId };
+    }
+    const resolved = withResolvedPtyProcessId(application.database, payload);
+    if (ptyIdCache.size >= PTY_CACHE_LIMIT) ptyIdCache.clear();
+    ptyIdCache.set(payload.process_id, { ptyId: resolved.process_id, expiresAt: now + PTY_CACHE_TTL_MS });
+    return resolved;
+  };
+
   ipcMain.handle('patterm:bootstrap', () => application.bootstrap());
 
   ipcMain.on('patterm:debug:log', (_event, raw) => {
@@ -168,25 +185,25 @@ export function registerApplicationRoutes(ipcMain: RouteRegistrar, application: 
 
   ipcMain.handle('patterm:terminal:resize', async (_event, raw) => {
     return timeSlowIpc(application, 'patterm:terminal:resize', () => {
-      return application.terminal.request('terminal.process.resize', withResolvedPtyProcessId(application.database, terminalResizePayload.parse(raw)));
+      return application.terminal.request('terminal.process.resize', resolveCachedPty(terminalResizePayload.parse(raw)));
     });
   });
 
   ipcMain.handle('patterm:terminal:configure', async (_event, raw) => {
     return timeSlowIpc(application, 'patterm:terminal:configure', () => {
-      return application.terminal.request('terminal.process.configure', withResolvedPtyProcessId(application.database, terminalConfigurePayload.parse(raw)));
+      return application.terminal.request('terminal.process.configure', resolveCachedPty(terminalConfigurePayload.parse(raw)));
     });
   });
 
   ipcMain.handle('patterm:terminal:refresh', async (_event, raw) => {
     return timeSlowIpc(application, 'patterm:terminal:refresh', () => {
-      return application.terminal.request('terminal.process.refresh', withResolvedPtyProcessId(application.database, terminalProcessPayload.parse(raw)));
+      return application.terminal.request('terminal.process.refresh', resolveCachedPty(terminalProcessPayload.parse(raw), true));
     });
   });
 
   ipcMain.handle('patterm:terminal:subscribe', async (_event, raw) => {
     return timeSlowIpc(application, 'patterm:terminal:subscribe', () => {
-      const payload = withResolvedPtyProcessId(application.database, terminalSubscribePayload.parse(raw));
+      const payload = resolveCachedPty(terminalSubscribePayload.parse(raw), true);
       application.terminal.setVisibleDamageProcess(payload.process_id, payload.subscribed);
       return application.terminalSubscriptions.set('desktop', payload.process_id, payload.subscribed);
     });
@@ -194,18 +211,20 @@ export function registerApplicationRoutes(ipcMain: RouteRegistrar, application: 
 
   ipcMain.handle('patterm:terminal:output', async (_event, raw) => {
     return timeSlowIpc(application, 'patterm:terminal:output', () => {
-      return application.terminal.request('terminal.process.output', withResolvedPtyProcessId(application.database, terminalProcessPayload.parse(raw)));
+      return application.terminal.request('terminal.process.output', resolveCachedPty(terminalProcessPayload.parse(raw)));
     });
   });
 
   ipcMain.handle('patterm:terminal:status', async (_event, raw) => {
     return timeSlowIpc(application, 'patterm:terminal:status', () => {
-      return application.terminal.request('terminal.process.status', withResolvedPtyProcessId(application.database, terminalProcessPayload.parse(raw)));
+      return application.terminal.request('terminal.process.status', resolveCachedPty(terminalProcessPayload.parse(raw)));
     });
   });
 
   ipcMain.handle('patterm:workbench:sidebar-state:update', (_event, raw) => {
-    return application.workbench.updateSidebarState(sidebarStateInput.parse(raw));
+    const state = application.workbench.updateSidebarState(sidebarStateInput.parse(raw));
+    application.notifyChanged(['workbench']);
+    return state;
   });
 
   ipcMain.handle('patterm:timers:set', (_event, raw) => {
@@ -249,7 +268,7 @@ export function registerApplicationRoutes(ipcMain: RouteRegistrar, application: 
   ipcMain.handle('patterm:settings:workspace-layout:update', (_event, raw) => application.settings.updateWorkspaceLayout(workspaceLayoutInput.parse(raw)));
 
   ipcMain.handle('patterm:terminal:input', async (_event, raw) => {
-    const input = withResolvedPtyProcessId(application.database, terminalInputPayload.parse(raw));
+    const input = resolveCachedPty(terminalInputPayload.parse(raw));
     const result = await application.terminal.request('terminal.process.input', input);
     application.autoSummaries.userInput(input.process_id);
     application.notifications.userInput(input.process_id);
@@ -269,37 +288,39 @@ export function registerApplicationRoutes(ipcMain: RouteRegistrar, application: 
   ipcMain.handle('patterm:push:list', () => application.notifications.pushSubscriptions());
 
   ipcMain.handle('patterm:terminal:focus', (_event, raw) => {
-    return application.terminal.request('terminal.process.focus', withResolvedPtyProcessId(application.database, terminalFocusPayload.parse(raw)));
+    return application.terminal.request('terminal.process.focus', resolveCachedPty(terminalFocusPayload.parse(raw)));
   });
 
   ipcMain.handle('patterm:terminal:stop', async (_event, raw) => {
-    const result = await application.mcp.call('stop_process', terminalProcessPayload.parse(raw));
+    const payload = terminalProcessPayload.parse(raw);
+    ptyIdCache.delete(payload.process_id);
+    const result = await application.mcp.call('stop_process', payload);
     application.notifyChanged(application.mcp.changedTopics('stop_process'));
     return result;
   });
 
   ipcMain.handle('patterm:terminal:select', async (_event, raw) => {
-    return application.terminal.request('terminal.process.select', withResolvedPtyProcessId(application.database, terminalSelectPayload.parse(raw)));
+    return application.terminal.request('terminal.process.select', resolveCachedPty(terminalSelectPayload.parse(raw)));
   });
 
   ipcMain.handle('patterm:terminal:selection-text', async (_event, raw) => {
-    return application.terminal.request('terminal.process.selection_text', withResolvedPtyProcessId(application.database, terminalProcessPayload.parse(raw)));
+    return application.terminal.request('terminal.process.selection_text', resolveCachedPty(terminalProcessPayload.parse(raw)));
   });
 
   ipcMain.handle('patterm:terminal:search', async (_event, raw) => {
-    return application.terminal.request('terminal.process.search', withResolvedPtyProcessId(application.database, terminalSearchPayload.parse(raw)));
+    return application.terminal.request('terminal.process.search', resolveCachedPty(terminalSearchPayload.parse(raw)));
   });
 
   ipcMain.handle('patterm:terminal:scroll', async (_event, raw) => {
-    return application.terminal.request('terminal.process.scroll', withResolvedPtyProcessId(application.database, terminalScrollPayload.parse(raw)));
+    return application.terminal.request('terminal.process.scroll', resolveCachedPty(terminalScrollPayload.parse(raw)));
   });
 
   ipcMain.handle('patterm:terminal:wheel', async (_event, raw) => {
-    return application.terminal.request('terminal.process.wheel', withResolvedPtyProcessId(application.database, terminalWheelPayload.parse(raw)));
+    return application.terminal.request('terminal.process.wheel', resolveCachedPty(terminalWheelPayload.parse(raw)));
   });
 
   ipcMain.handle('patterm:terminal:mouse', async (_event, raw) => {
-    return application.terminal.request('terminal.process.mouse', withResolvedPtyProcessId(application.database, terminalMousePayload.parse(raw)));
+    return application.terminal.request('terminal.process.mouse', resolveCachedPty(terminalMousePayload.parse(raw)));
   });
 
 }

@@ -1,4 +1,4 @@
-import { computed, inject, onBeforeUnmount, provide, ref, type ComputedRef, type InjectionKey, type Ref } from 'vue';
+import { computed, inject, onBeforeUnmount, provide, ref, watch, type ComputedRef, type InjectionKey, type Ref } from 'vue';
 import { matchesAgentTabSelection, type AgentTabFamily } from '../../lib/agentTabs';
 import { ownedProcessesForSessions, type LiveProcessRecord } from '../../lib/processTabs';
 import { activityLookup, type RowActivity } from '../../lib/rowActivity';
@@ -112,10 +112,25 @@ export function provideSidebarContext(input: SidebarInput): SidebarContext {
   const processActive = (process: ProcessRecord) => Boolean(input.activeTerminalId() && process.ptyProcessId === input.activeTerminalId());
   const activityFor = computed(() => activityLookup(input.tabs().flatMap((tab) => tab.kind === 'agent' ? [tab.family] : [])));
 
-  // Ticks so timer countdowns stay current.
+  // Ticks only while at least one timer exists so countdowns stay current
+  // without waking the sidebar every second when idle.
   const now = ref(Date.now());
-  const clock = setInterval(() => { now.value = Date.now(); }, 1_000);
-  onBeforeUnmount(() => clearInterval(clock));
+  let clock: ReturnType<typeof setInterval> | null = null;
+  function stopClock(): void {
+    if (clock !== null) {
+      clearInterval(clock);
+      clock = null;
+    }
+  }
+  watch(() => input.timers().length > 0, (hasTimers) => {
+    if (hasTimers) {
+      now.value = Date.now();
+      clock ??= setInterval(() => { now.value = Date.now(); }, 1_000);
+    } else {
+      stopClock();
+    }
+  }, { immediate: true });
+  onBeforeUnmount(stopClock);
 
   const context: SidebarContext = {
     projectId: computed(input.projectId),

@@ -31,6 +31,7 @@ export class AgentHistoryWatcherService {
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private readonly pendingSince = new Map<string, number>();
   private readonly scanTimers = new Map<string, NodeJS.Timeout>();
+  private readonly statusTimers = new Map<string, NodeJS.Timeout>();
   private readonly sources = new Map<string, HistorySourceCandidate>();
   private readonly sourceStatus = new Map<string, WatchSourceStatus>();
   private generation = 0;
@@ -56,6 +57,8 @@ export class AgentHistoryWatcherService {
     this.pendingSince.clear();
     for (const timer of this.scanTimers.values()) clearTimeout(timer);
     this.scanTimers.clear();
+    for (const timer of this.statusTimers.values()) clearTimeout(timer);
+    this.statusTimers.clear();
     this.sources.clear();
     this.sourceStatus.clear();
   }
@@ -80,12 +83,13 @@ export class AgentHistoryWatcherService {
   private watchSource(source: HistorySourceCandidate): void {
     const sourceKey = keyFor(source);
     this.sources.set(sourceKey, source);
-    this.updateStatus(source, { exists: fs.existsSync(source.path), watchedPaths: [], missing: !fs.existsSync(source.path), degraded: false, lastError: null });
+    const exists = fs.existsSync(source.path);
+    this.updateStatus(source, { exists, watchedPaths: [], missing: !exists, degraded: false, lastError: null });
     const watchPaths = this.immediateWatchPaths(source);
     for (const watchPath of watchPaths) {
       this.installWatcher(source, watchPath);
     }
-    this.updateStatus(source, { watchedPaths: this.watchedPathsFor(sourceKey), missing: !fs.existsSync(source.path) });
+    this.updateStatus(source, { watchedPaths: this.watchedPathsFor(sourceKey), exists, missing: !exists });
     this.scheduleScan(source, 0);
   }
 
@@ -128,9 +132,8 @@ export class AgentHistoryWatcherService {
     try {
       const watcher = fs.watch(watchPath, { persistent: false }, () => {
         const current = this.sources.get(sourceKey) ?? source;
-        this.updateStatus(current, { lastEventAt: new Date().toISOString() });
         this.scheduleScan(current);
-        this.schedule(current);
+        this.schedule(current, true);
       });
       this.watchers.set(watcherKey, { sourceKey, path: watchPath, watcher });
       return true;
@@ -168,9 +171,11 @@ export class AgentHistoryWatcherService {
       for (const watchPath of desired) {
         degraded = !this.installWatcher(source, watchPath) || degraded;
       }
+      const exists = fs.existsSync(source.path);
       this.updateStatus(source, {
         watchedPaths: this.watchedPathsFor(sourceKey),
-        missing: !fs.existsSync(source.path),
+        exists,
+        missing: !exists,
         degraded,
         scanning: false,
         lastScanFinishedAt: new Date().toISOString()
@@ -181,7 +186,7 @@ export class AgentHistoryWatcherService {
     }
   }
 
-  private schedule(source: HistorySourceCandidate): void {
+  private schedule(source: HistorySourceCandidate, fromWatchEvent = false): void {
     const key = keyFor(source);
     const existing = this.timers.get(key);
     if (existing) clearTimeout(existing);
@@ -191,12 +196,26 @@ export class AgentHistoryWatcherService {
     const since = this.pendingSince.get(key) ?? now;
     this.pendingSince.set(key, since);
     const delay = Math.max(0, Math.min(watcherImportDelayMs(source, this.options), since + (this.options.maxWaitMs ?? 120_000) - now));
-    this.updateStatus(source, { lastScheduledAt: new Date().toISOString() });
+    this.scheduleStatusUpdate(source, fromWatchEvent);
     this.timers.set(key, setTimeout(() => {
       this.timers.delete(key);
       this.pendingSince.delete(key);
       this.imports.import({ provider: source.provider, path: source.path, trigger: 'watcher' });
     }, delay));
+  }
+
+  private scheduleStatusUpdate(source: HistorySourceCandidate, fromWatchEvent: boolean): void {
+    const key = keyFor(source);
+    if (this.statusTimers.has(key)) return;
+    const generation = this.generation;
+    const timer = setTimeout(() => {
+      this.statusTimers.delete(key);
+      if (generation !== this.generation) return;
+      const nowIso = new Date().toISOString();
+      this.updateStatus(source, fromWatchEvent ? { lastEventAt: nowIso, lastScheduledAt: nowIso } : { lastScheduledAt: nowIso });
+    }, 250);
+    timer.unref?.();
+    this.statusTimers.set(key, timer);
   }
 
   status() {
@@ -217,12 +236,13 @@ export class AgentHistoryWatcherService {
   private updateStatus(source: HistorySourceCandidate, patch: Partial<WatchSourceStatus>): void {
     const sourceKey = keyFor(source);
     const existing = this.sourceStatus.get(sourceKey);
+    const exists = patch.exists ?? existing?.exists ?? fs.existsSync(source.path);
     this.sourceStatus.set(sourceKey, {
       provider: source.provider,
       path: source.path,
-      exists: fs.existsSync(source.path),
+      exists,
       watchedPaths: [],
-      missing: !fs.existsSync(source.path),
+      missing: !exists,
       degraded: false,
       scanning: false,
       lastEventAt: null,

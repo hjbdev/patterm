@@ -9,6 +9,7 @@ import { TerminalHostService, type TerminalHostOptions } from './TerminalHostSer
 const FRAME_CONTROL_RESPONSE = 0x01;
 const FRAME_TERMINAL_DAMAGE = 0x05;
 const FRAME_TERMINAL_LIFECYCLE = 0x06;
+const DEBUG_TERMINAL = process.env.PATTERM_DEBUG_TERMINAL === '1';
 
 interface PendingRequest {
   timer: ReturnType<typeof setTimeout>;
@@ -175,7 +176,7 @@ export class TerminalService {
 
     const id = ++this.nextId;
     const payload = JSON.stringify({ id, method, params }) + '\n';
-    this.writeTerminalDebug('request.send', { id, method, params });
+    if (DEBUG_TERMINAL) this.writeTerminalDebug('request.send', { id, method, params });
 
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -254,7 +255,9 @@ export class TerminalService {
   }
 
   private handleStdout(chunk: Buffer): void {
-    this.writeTerminalDebug('stdout.chunk', { byteLength: chunk.byteLength, bufferedBefore: this.stdoutBufferedBytes });
+    if (DEBUG_TERMINAL) {
+      this.writeTerminalDebug('stdout.chunk', { byteLength: chunk.byteLength, bufferedBefore: this.stdoutBufferedBytes });
+    }
     this.stdoutChunks.push(chunk);
     this.stdoutBufferedBytes += chunk.byteLength;
 
@@ -269,7 +272,9 @@ export class TerminalService {
       }
       const totalLength = 4 + frameLength;
       if (this.stdoutBufferedBytes < totalLength) {
-        this.writeTerminalDebug('stdout.partial-frame', { frameLength, buffered: this.stdoutBufferedBytes });
+        if (DEBUG_TERMINAL) {
+          this.writeTerminalDebug('stdout.partial-frame', { frameLength, buffered: this.stdoutBufferedBytes });
+        }
         return;
       }
 
@@ -278,7 +283,9 @@ export class TerminalService {
       if (!frame) return;
       const frameType = frame[0];
       const payload = frame.subarray(1);
-      this.writeTerminalDebug('frame.received', { frameType, frameLength, payloadLength: payload.byteLength, remainingBuffer: this.stdoutBufferedBytes });
+      if (DEBUG_TERMINAL) {
+        this.writeTerminalDebug('frame.received', { frameType, frameLength, payloadLength: payload.byteLength, remainingBuffer: this.stdoutBufferedBytes });
+      }
 
       this.handleFrame(frameType, payload);
     }
@@ -339,8 +346,16 @@ export class TerminalService {
 
     if (frameType === FRAME_TERMINAL_DAMAGE) {
       const metadata = decodeDamageFrameMetadata(payload);
-      this.writeTerminalDebug('frame.forward.damage', { payloadLength: payload.byteLength, listeners: this.frameListeners.size, metadata });
-      const frame = { type: 'terminal-damage' as const, payload: new Uint8Array(payload), ...metadata };
+      if (DEBUG_TERMINAL) {
+        this.writeTerminalDebug('frame.forward.damage', { payloadLength: payload.byteLength, listeners: this.frameListeners.size, metadata });
+      }
+      // Avoid copying full frames when the Buffer mostly owns its backing store
+      // (e.g. dedicated multi-chunk snapshots or large reads). Copy only small
+      // slices from a much larger shared/pooled chunk so tiny frames never pin a slab.
+      const payloadView = payload.byteLength * 2 >= payload.buffer.byteLength
+        ? new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength)
+        : new Uint8Array(payload);
+      const frame = { type: 'terminal-damage' as const, payload: payloadView, ...metadata };
       for (const listener of this.frameListeners) {
         listener(frame);
       }
@@ -354,9 +369,11 @@ export class TerminalService {
         return;
       }
 
-      this.writeTerminalDebug('frame.forward.lifecycle', frame.type === 'terminal-clipboard'
-        ? { processId: frame.processId, textLength: frame.text.length }
-        : frame.type === 'terminal-notification' ? { processId: frame.processId, source: frame.source } : frame);
+      if (DEBUG_TERMINAL) {
+        this.writeTerminalDebug('frame.forward.lifecycle', frame.type === 'terminal-clipboard'
+          ? { processId: frame.processId, textLength: frame.text.length }
+          : frame.type === 'terminal-notification' ? { processId: frame.processId, source: frame.source } : frame);
+      }
       for (const listener of this.frameListeners) {
         listener(frame);
       }
@@ -437,30 +454,30 @@ export class TerminalService {
     }
 
     if (typeof message.id !== 'number') {
-      this.writeTerminalDebug('control-response.missing-id');
+      if (DEBUG_TERMINAL) this.writeTerminalDebug('control-response.missing-id');
       return;
     }
 
     const request = this.pending.get(message.id);
     if (!request) {
-      this.writeTerminalDebug('control-response.unmatched', { id: message.id });
+      if (DEBUG_TERMINAL) this.writeTerminalDebug('control-response.unmatched', { id: message.id });
       return;
     }
 
     this.pending.delete(message.id);
     clearTimeout(request.timer);
     if (message.error) {
-      this.writeTerminalDebug('control-response.error', { id: message.id, error: message.error });
+      if (DEBUG_TERMINAL) this.writeTerminalDebug('control-response.error', { id: message.id, error: message.error });
       request.reject(new Error(message.error));
       return;
     }
 
-    this.writeTerminalDebug('control-response.result', { id: message.id });
+    if (DEBUG_TERMINAL) this.writeTerminalDebug('control-response.result', { id: message.id });
     request.resolve(message.result);
   }
 
   private writeTerminalDebug(event: string, data?: unknown): void {
-    if (!terminalDebugEnabled()) return;
+    if (!DEBUG_TERMINAL) return;
     this.debugLog.write('terminal-service', event, data);
   }
 }
@@ -529,10 +546,6 @@ function decodeDamageFrameMetadata(payload: Buffer): Pick<TerminalDamageFrame, '
     frameSeq,
     resizeSeq
   };
-}
-
-function terminalDebugEnabled(): boolean {
-  return process.env.PATTERM_DEBUG_TERMINAL === '1';
 }
 
 // ConPTY starts only .exe/.com files. Resolve npm-style .cmd shims to their

@@ -15,10 +15,19 @@ const SECRET_PATTERNS: RegExp[] = [
 // Values the user stored as agent secrets. They are masked exactly, before
 // the patterns, wherever they turn up.
 let knownValues: string[] = [];
+let knownValuesVersion = 0;
 
 export class SecretRedactor {
   static useKnownValues(values: readonly string[]): void {
-    knownValues = [...values].filter(Boolean).sort((a, b) => b.length - a.length);
+    const next = [...values].filter(Boolean).sort((a, b) => b.length - a.length);
+    if (next.length !== knownValues.length || next.some((value, index) => value !== knownValues[index])) {
+      knownValues = next;
+      knownValuesVersion += 1;
+    }
+  }
+
+  static knownValuesRevision(): number {
+    return knownValuesVersion;
   }
 
   redact(input: string | null | undefined): RedactedText {

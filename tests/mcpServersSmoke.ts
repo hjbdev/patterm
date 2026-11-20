@@ -171,10 +171,17 @@ async function main(): Promise<void> {
     const servers = registry.forHarness('codex');
     const claude = claudeMcpServers(servers, patterm) as Record<string, Record<string, unknown>>;
     assert.deepEqual(claude['linear-acme'], {
+      type: 'http',
+      url: `${patterm.httpProxyUrl}/${remote.id}`,
+      headersHelper: headersHelperCommand(patterm, remote.id, '--mcp-proxy-headers')
+    });
+    assert.deepEqual(claude.open, { type: 'http', url: 'https://example.com/mcp' });
+    assert.deepEqual(claude.railway, { command: 'railway', args: ['mcp'], env: { RAILWAY_TOKEN: 'secret' } });
+    const acp = claudeMcpServers(servers, patterm, { httpNative: false }) as Record<string, Record<string, unknown>>;
+    assert.deepEqual(acp['linear-acme'], {
       command: patterm.command, args: [...patterm.args, '--mcp-bridge', remote.id], env: patterm.env
     });
-    assert.deepEqual((claude.open!.args as string[]).slice(-2), ['--mcp-bridge', open.id]);
-    assert.deepEqual(claude.railway, { command: 'railway', args: ['mcp'], env: { RAILWAY_TOKEN: 'secret' } });
+    assert.deepEqual((acp.open!.args as string[]).slice(-2), ['--mcp-bridge', open.id]);
     const codex = codexMcpOverrides(servers, patterm);
     assert.ok(codex.includes(`mcp_servers.linear-acme.url="${patterm.httpProxyUrl}/${remote.id}"`));
     assert.ok(codex.some((value) => value.startsWith('mcp_servers.linear-acme.http_headers_helper=')));

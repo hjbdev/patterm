@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
 import { inspect } from 'node:util';
 import { McpHttpProxyService } from './Services/McpHttpProxyService';
 import { BotRelay, type BotRelayEvent } from './Services/BotRelay';
@@ -83,7 +84,7 @@ import { OpenCodeServerService } from './Services/OpenCodeServerService';
 import { CodexAppServerService } from './Services/CodexAppServerService';
 import { ClaudeStreamService } from './Services/ClaudeStreamService';
 import { AcpProviderService } from './Services/AcpProviderService';
-import { detachedHostLauncher, systemdHostLauncher } from './Services/IntegratedHostLauncher';
+import { supervisedHostLauncher, systemdHostLauncher } from './Services/IntegratedHostLauncher';
 import { IdleCompactionService } from './Services/IdleCompactionService';
 import type { IdleCompactionSettings } from './Services/SettingsService';
 import { IntegratedAgentService } from './Services/IntegratedAgentService';
@@ -144,6 +145,8 @@ export interface AppOptions {
   // Path to the bundled MCP stdio shim (dist/mcp/patterm-mcp.js) that launched
   // harnesses run to reach the socket host.
   mcpShimPath: string;
+  // Optional compiled native Rust patterm-mcp binary (used when present).
+  nativeMcpPath?: string | null;
   runtime?: 'node' | 'electron';
   launchDiagnostics?: unknown;
   launchIdentity?: unknown;
@@ -317,6 +320,8 @@ async function createApplicationResources(
   let workbenchSync: WorkbenchSyncService | null = null;
   // Paired hosts' records, merged into every snapshot once the link exists.
   let remoteClient: RemoteClientService | null = null;
+  let mcpSocketServer: McpSocketServer | null = null;
+  let catalogNotifyScheduled = false;
   const changedTopics = new Set<ChangeTopic>();
   let topicsScheduled = false;
   // `fromPeer` marks changes a paired host announced, which are not
@@ -333,6 +338,7 @@ async function createApplicationResources(
       }
       // Paired hosts list this host's bots, so they read them again.
       if (topic === 'settings' && !fromPeer) remoteClient?.localChanged();
+      if ((topic === 'mcp-servers' || topic === 'settings') && !fromPeer) catalogNotifyScheduled = true;
       if (topic === 'workbench' && !fromPeer) reapSessions?.();
       if (topic !== 'workbench') changedTopics.add(topic);
     }
@@ -343,6 +349,10 @@ async function createApplicationResources(
       topicsScheduled = false;
       const changed = [...changedTopics];
       changedTopics.clear();
+      if (catalogNotifyScheduled) {
+        catalogNotifyScheduled = false;
+        mcpSocketServer?.notifyCatalogChanged();
+      }
       events.emit('data:changed', changed);
     });
   };
@@ -356,9 +366,13 @@ async function createApplicationResources(
   void figureVideos.prune();
   const openCodeServer = new OpenCodeServerService(database, resolvedEnv, { persistent, images: transcriptImages });
   const harnessRuntimeDir = path.join(options.appDataPath, 'harness');
-  // Installed services run Integrated hosts in their own systemd units so a
-  // service restart reconnects to them instead of killing them.
-  const hostLauncher = persistent ? systemdHostLauncher(options.appDataPath, resolvedEnv) : detachedHostLauncher;
+  // Installed services run Integrated hosts in one shared systemd supervisor
+  // unit so a service restart reconnects to them; desktop mode (and test
+  // supervisors that avoid invoking systemd) runs them in one shared detached
+  // supervisor process to save ~50-80 MB RSS per agent.
+  const hostLauncher = persistent && !options.terminalHosts?.supervisor
+    ? systemdHostLauncher(options.appDataPath, resolvedEnv)
+    : supervisedHostLauncher(options.appDataPath);
   // A release install names its bundled Node through the `current` symlink, so
   // agents and hosts that outlive an update don't keep a replaced version's path.
   const nodePath = process.env.PATTERM_NODE || process.execPath;
@@ -631,6 +645,12 @@ async function createApplicationResources(
   const launchFence = new ProjectLaunchFence();
   // Bots launch through the launcher, which asks them for their context.
   let botService: BotService | null = null;
+  const autoNativeMcpPath = options.nativeMcpPath !== undefined
+    ? options.nativeMcpPath
+    : (() => {
+      const candidate = path.join(path.dirname(options.sidecarPath), process.platform === 'win32' ? 'patterm-mcp.exe' : 'patterm-mcp');
+      return fs.existsSync(candidate) ? candidate : null;
+    })();
   const harnessLauncher = new HarnessLauncher({
     botContext: (botId) => botService?.context(botId) ?? '',
     fence: launchFence,
@@ -648,12 +668,24 @@ async function createApplicationResources(
     providers: harnessProviders,
     nodePath,
     shimPath: options.mcpShimPath,
+    nativeMcpPath: autoNativeMcpPath,
     socketPath,
     runtimeDir: harnessRuntimeDir,
     inheritedPath: resolvedEnv.PATH,
     search: searchService,
     debugLog,
     presetSettings: settings
+  });
+  const idleHibernateRaw = process.env.PATTERM_IDLE_HIBERNATE_MS;
+  const idleHibernateEnv = idleHibernateRaw !== undefined && idleHibernateRaw !== '' ? Number(idleHibernateRaw) : Number.NaN;
+  const idleHibernateMs = Number.isFinite(idleHibernateEnv) && idleHibernateEnv >= 0 ? idleHibernateEnv : 90 * 60_000;
+  integrated.setHibernation({
+    idleMs: idleHibernateMs,
+    isBusy: (processId) => Boolean(relay?.voiceActive(processId))
+      || idleCompaction.compacting(processId)
+      || timers.list().some((timer) => timer.ownerProcessId === processId && timer.status === 'pending'),
+    canResume: (harness, cwd, resumeId) => harness !== 'claude' || claudeConversationSaved({ cwd, sessionId: resumeId, env: resolvedEnv }),
+    wake: (processId) => harnessLauncher.wakeIntegrated(processId)
   });
   openCodeServer.setMcpSource(harnessLauncher.openCodeMcpSource());
   // Restarts stop a bot like any other agent; actions are created below.
@@ -927,7 +959,8 @@ async function createApplicationResources(
       return opened;
     },
     mcpServerHandlers);
-  defer(() => mcpSocket.stop());
+  mcpSocketServer = mcpSocket;
+  defer(() => { mcpSocketServer = null; mcpSocket.stop(); });
   // Release activity observation before the database closes; persistent
   // hosts keep running and are observed again after reconnect.
   defer(() => integrated.dispose());

@@ -58,7 +58,6 @@
                The chat stays mounted during a voice call, so its draft survives. -->
           <div v-if="row.session?.processId" v-show="mode === 'chat'" class="h-full">
             <IntegratedConversation
-              :key="row.session.processId"
               :process-id="row.session.processId"
               hide-background
               compact-composer
@@ -100,6 +99,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, shallowRef, watch } from 'vue';
+defineOptions({ name: 'BotPage' });
 import { useRoute, useRouter } from 'vue-router';
 import { useElementSize } from '@vueuse/core';
 import { AudioLines, Check, Globe, MessageSquare, MoreHorizontal } from 'lucide-vue-next';

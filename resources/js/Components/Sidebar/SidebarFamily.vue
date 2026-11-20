@@ -139,7 +139,11 @@ const memberLabel = computed(() => {
   return [agents && `${agents} ${agents === 1 ? 'subagent' : 'subagents'}`, processes && `${processes} ${processes === 1 ? 'process' : 'processes'}`].filter(Boolean).join(', ');
 });
 
-const timer = computed(() => familyTimerSummary(sidebar.familyTimers(props.tab.family), sidebar.now.value, ownerName));
+const timer = computed(() => {
+  const timers = sidebar.familyTimers(props.tab.family);
+  if (!timers.length) return null;
+  return familyTimerSummary(timers, sidebar.now.value, ownerName);
+});
 function ownerName(processId: string | null): string | null {
   return familyOwnerLabel(props.tab.family, processId)
     ?? sidebar.ownedProcesses(props.tab.family).find((process) => process.id === processId)?.name

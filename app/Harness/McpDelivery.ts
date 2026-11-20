@@ -23,7 +23,7 @@ interface Invocation {
 // that agent's harness.
 function shim(patterm: McpServerSpec, mode: ShimMode, serverId: string): Invocation {
   const env: Record<string, string> = {};
-  for (const key of ['ELECTRON_RUN_AS_NODE', 'PATTERM_MCP_SOCKET', 'PATTERM_MCP_IDENTITY', 'PATTERM_OPENCODE_BRIDGE']) {
+  for (const key of ['ELECTRON_RUN_AS_NODE', 'PATTERM_MCP_SOCKET', 'PATTERM_MCP_IDENTITY', 'PATTERM_OPENCODE_BRIDGE', 'PATTERM_MCP_JS_SHIM', 'PATTERM_NODE']) {
     if (patterm.env[key] !== undefined) env[key] = patterm.env[key]!;
   }
   return { command: patterm.command, args: [...patterm.args, mode, serverId], env };
@@ -42,9 +42,24 @@ export function headersHelperCommand(patterm: McpServerSpec, serverId: string, m
   ].join(' ');
 }
 
-export function claudeMcpServers(servers: McpLaunchServer[], patterm: McpServerSpec): Record<string, unknown> {
+export function claudeMcpServers(
+  servers: McpLaunchServer[],
+  patterm: McpServerSpec,
+  options: { httpNative?: boolean } = {}
+): Record<string, unknown> {
+  const httpNative = options.httpNative !== false;
   return Object.fromEntries(servers.map((server) => {
     if (server.transport === 'stdio') return [server.name, { command: server.command, args: server.args, env: server.env }];
+    if (httpNative) {
+      if (!server.managedHeaders) return [server.name, { type: 'http', url: server.url }];
+      if (patterm.httpProxyUrl) {
+        return [server.name, {
+          type: 'http',
+          url: `${patterm.httpProxyUrl}/${encodeURIComponent(server.id)}`,
+          headersHelper: headersHelperCommand(patterm, server.id, '--mcp-proxy-headers')
+        }];
+      }
+    }
     const bridge = shim(patterm, '--mcp-bridge', server.id);
     return [server.name, { command: bridge.command, args: bridge.args, env: bridge.env }];
   }));

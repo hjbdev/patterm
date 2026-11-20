@@ -33,6 +33,7 @@ interface OpenCodePartRow {
   time_created: number;
   time_updated: number;
   data: string;
+  parsedData?: Record<string, unknown>;
 }
 
 export class OpenCodeHistoryAdapter implements ProviderHistoryAdapter {
@@ -130,26 +131,32 @@ export class OpenCodeHistoryAdapter implements ProviderHistoryAdapter {
 
   private parseSession(db: DatabaseSync, session: OpenCodeSessionRow, warnings: string[], sourcePath: string, v2 = false): ParsedConversation {
     const messageRows = db.prepare(`select id, session_id, ${v2 ? 'type' : 'null as type'}, time_created, time_updated, data from ${v2 ? 'session_message' : 'message'} where session_id = ? order by ${v2 ? 'seq' : 'time_created'} asc`).all(session.id) as unknown as OpenCodeMessageRow[];
-    const partRows = v2 ? openCode2Parts(messageRows, warnings) : db.prepare(`select id, message_id, session_id, time_created, time_updated, data from part where session_id = ? order by time_created asc`).all(session.id) as unknown as OpenCodePartRow[];
     const messageDataById = new Map<string, Record<string, unknown>>();
+    const rawMessageDataById = new Map<string, Record<string, unknown>>();
     for (const message of messageRows) {
       try {
         const data = JSON.parse(message.data) as Record<string, unknown>;
+        rawMessageDataById.set(message.id, data);
         messageDataById.set(message.id, v2 ? { ...data, role: message.type === 'compaction' ? 'system' : message.type ?? data.type } : data);
       } catch {
         warnings.push(`message ${message.id}: invalid JSON data`);
       }
     }
+    const partRows = v2 ? openCode2Parts(messageRows, rawMessageDataById) : db.prepare(`select id, message_id, session_id, time_created, time_updated, data from part where session_id = ? order by time_created asc`).all(session.id) as unknown as OpenCodePartRow[];
 
     const messages: ParsedMessage[] = [];
     let seq = 0;
     for (const part of partRows) {
       let data: Record<string, unknown>;
-      try {
-        data = JSON.parse(part.data) as Record<string, unknown>;
-      } catch {
-        warnings.push(`part ${part.id}: invalid JSON data`);
-        continue;
+      if (part.parsedData) {
+        data = part.parsedData;
+      } else {
+        try {
+          data = JSON.parse(part.data) as Record<string, unknown>;
+        } catch {
+          warnings.push(`part ${part.id}: invalid JSON data`);
+          continue;
+        }
       }
       const parent = messageDataById.get(part.message_id);
       const type = stringValue(data.type) ?? 'message';
@@ -278,33 +285,29 @@ function openCodeImages(row: { table: 'part' | 'session_message'; id: string; cr
   return out;
 }
 
-function openCode2Parts(messages: OpenCodeMessageRow[], warnings: string[]): OpenCodePartRow[] {
+function openCode2Parts(messages: OpenCodeMessageRow[], parsedMessages: Map<string, Record<string, unknown>>): OpenCodePartRow[] {
   return messages.flatMap((message) => {
-    try {
-      const data = JSON.parse(message.data) as Record<string, unknown>;
-      const type = message.type ?? data.type;
-      if (type === 'synthetic' || type === 'system' || type === 'agent-switched' || type === 'model-switched') return [];
-      const content = Array.isArray(data.content) ? data.content
-        : type === 'user' ? [{ type: 'text', text: [textFromUnknown(data.text), ...openCodeAttachmentLabels(data.files)].filter(Boolean).join('\n') }]
-        : type === 'compaction' ? [{ type: 'step-finish', text: data.summary }]
-        : type === 'shell' ? [{ type: 'tool', name: 'shell', state: { status: data.status, input: { command: data.command }, output: textFromUnknown(data.output) } }]
-        : [];
-      return content.flatMap((part: unknown, index: number) => {
-        if (!part || typeof part !== 'object') return [];
-        const item = part as Record<string, unknown>;
-        const state = item.state && typeof item.state === 'object' ? item.state as Record<string, unknown> : {};
-        const output = Array.isArray(state.content)
-          ? state.content.filter((value) => value?.type === 'text').map((value) => value.text).join('\n')
-          : state.output ?? state.error;
-        return [{
-          ...message, id: `${message.id}:${index}`, message_id: message.id,
-          data: JSON.stringify(item.type === 'tool' ? { ...item, tool: item.name, state: { ...state, output } } : item)
-        }];
-      });
-    } catch {
-      warnings.push(`message ${message.id}: invalid OpenCode JSON data`);
-      return [];
-    }
+    const data = parsedMessages.get(message.id);
+    if (!data) return [];
+    const type = message.type ?? data.type;
+    if (type === 'synthetic' || type === 'system' || type === 'agent-switched' || type === 'model-switched') return [];
+    const content = Array.isArray(data.content) ? data.content
+      : type === 'user' ? [{ type: 'text', text: [textFromUnknown(data.text), ...openCodeAttachmentLabels(data.files)].filter(Boolean).join('\n') }]
+      : type === 'compaction' ? [{ type: 'step-finish', text: data.summary }]
+      : type === 'shell' ? [{ type: 'tool', name: 'shell', state: { status: data.status, input: { command: data.command }, output: textFromUnknown(data.output) } }]
+      : [];
+    return content.flatMap((part: unknown, index: number) => {
+      if (!part || typeof part !== 'object') return [];
+      const item = part as Record<string, unknown>;
+      const state = item.state && typeof item.state === 'object' ? item.state as Record<string, unknown> : {};
+      const output = Array.isArray(state.content)
+        ? state.content.filter((value) => value?.type === 'text').map((value) => value.text).join('\n')
+        : state.output ?? state.error;
+      const parsedData: Record<string, unknown> = item.type === 'tool' ? { ...item, tool: item.name, state: { ...state, output } } : item;
+      return [{
+        ...message, id: `${message.id}:${index}`, message_id: message.id, data: '', parsedData
+      }];
+    });
   });
 }
 

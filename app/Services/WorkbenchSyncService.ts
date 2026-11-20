@@ -100,9 +100,12 @@ export class WorkbenchSyncService {
   }
 
   // Answers a client that holds `since`. Pending changes are published first,
-  // so patches sent to other clients and this answer agree.
+  // so patches sent to other clients and this answer agree; clean reads reuse
+  // the last published snapshot without querying SQLite.
   read(since?: WorkbenchSince | null): WorkbenchRead {
-    const snapshot = this.flush();
+    const snapshot = this.current === null || this.timer !== null
+      ? this.flush()
+      : { ...this.current, epoch: this.epoch, version: this.version };
     if (since?.epoch === this.epoch && typeof since.version === 'number') {
       if (since.version === this.version) return { epoch: this.epoch, version: this.version, current: true };
       const first = this.history.findIndex((patch) => patch.from === since.version);

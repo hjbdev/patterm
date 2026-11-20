@@ -82,7 +82,7 @@ export class HarnessModelCatalogService {
   private async runRefresh(): Promise<HarnessModelCatalog> {
     const current = this.read();
     const providers = { ...current.providers };
-    for (const harness of CATALOG_HARNESSES) {
+    await Promise.allSettled(CATALOG_HARNESSES.map(async (harness) => {
       const previous = current.providers[harness];
       const startedAt = Date.now();
       try {
@@ -106,7 +106,7 @@ export class HarnessModelCatalogService {
           message: providers[harness]?.error ?? null
         });
       }
-    }
+    }));
     const catalog = this.deps.settings.updateHarnessModelCatalog({ providers });
     this.deps.onChanged?.();
     return catalog;

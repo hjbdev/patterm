@@ -155,7 +155,9 @@ async function createWindow(): Promise<void> {
       return;
     }
 
-    if (frame.type === 'terminal-lifecycle') mainWindow?.webContents.send('patterm:terminal:lifecycle', frame);
+    if (frame.type === 'terminal-lifecycle' && frame.event === 'mouse_mode') {
+      mainWindow?.webContents.send('patterm:terminal:lifecycle', frame);
+    }
   });
   // The desktop window is the only client, so terminal copies and link opens
   // act on this machine directly.

@@ -56,7 +56,22 @@ interface TimerEntry {
   timeout: NodeJS.Timeout | null;
   interval: NodeJS.Timeout | null;
   checking?: boolean;
+  isIntegrated?: boolean;
+  lastIntegratedStamp?: string;
 }
+
+interface WatchedProcessRow {
+  id: string;
+  status: string;
+  activity: string;
+  created_at: string;
+  updated_at: string;
+  exit_code: number | null;
+  name: string;
+}
+
+const MAX_INSTRUCTION_ENTRIES = 1_024;
+const WATCH_POLL_MS = 500;
 
 type WatchedState =
   | { process_id: string; satisfied: boolean; reason: 'missing' }
@@ -100,6 +115,7 @@ export class TimerService {
   // timer saves the cutoffs it computes from them.
   private readonly instructions = new Map<string, number>();
   private readonly startedAtUnixMs = Date.now();
+  private watchInterval: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly database: DatabaseService,
@@ -132,6 +148,7 @@ export class TimerService {
     if (this.active) return;
     this.active = true;
     for (const entry of this.timers.values()) this.arm(entry);
+    this.syncWatchInterval();
   }
 
   list(): TimerRecord[] {
@@ -234,7 +251,12 @@ export class TimerService {
   // Reports the recipient makes from then on answer the sender's report
   // timers, even a timer set after the report.
   noteInstruction(fromProcessId: string, toProcessId: string): void {
-    this.instructions.set(`${fromProcessId}>${toProcessId}`, Date.now());
+    const key = `${fromProcessId}>${toProcessId}`;
+    this.instructions.delete(key);
+    this.instructions.set(key, Date.now());
+    while (this.instructions.size > MAX_INSTRUCTION_ENTRIES) {
+      this.instructions.delete(this.instructions.keys().next().value!);
+    }
   }
 
   // Reports count from when the owner last gave the process work: its spawn
@@ -320,6 +342,7 @@ export class TimerService {
     if (entry) {
       this.clearHandles(entry);
       this.timers.delete(timerId);
+      this.syncWatchInterval();
       this.options.onChanged?.();
     }
     return 'ok';
@@ -327,6 +350,12 @@ export class TimerService {
 
   cancelOwnedBy(processIds: readonly string[]): void {
     const owners = new Set(processIds);
+    for (const key of this.instructions.keys()) {
+      const separator = key.indexOf('>');
+      if (separator > 0 && (owners.has(key.slice(0, separator)) || owners.has(key.slice(separator + 1)))) {
+        this.instructions.delete(key);
+      }
+    }
     for (const entry of [...this.timers.values()]) {
       if (entry.ownerProcessId && owners.has(entry.ownerProcessId)) this.cancel(entry.id);
     }
@@ -336,6 +365,8 @@ export class TimerService {
     if (this.options.persistent) this.database.connection.prepare('delete from runtime_timers').run();
     for (const entry of this.timers.values()) this.clearHandles(entry);
     this.timers.clear();
+    this.instructions.clear();
+    this.syncWatchInterval();
   }
 
   pause(timerId: string): 'ok' {
@@ -349,6 +380,7 @@ export class TimerService {
     this.clearHandles(entry);
     entry.status = 'paused';
     this.persist(entry);
+    this.syncWatchInterval();
     this.options.onChanged?.();
     return 'ok';
   }
@@ -390,10 +422,15 @@ export class TimerService {
 
   dispose(): void {
     this.active = false;
+    if (this.watchInterval) {
+      clearInterval(this.watchInterval);
+      this.watchInterval = null;
+    }
     for (const entry of this.timers.values()) {
       this.clearHandles(entry);
     }
     this.timers.clear();
+    this.instructions.clear();
   }
 
   private register(entry: TimerEntry): void {
@@ -414,16 +451,40 @@ export class TimerService {
     if (!this.active || entry.status !== 'pending') return;
     if (entry.firesAtUnixMs !== null) this.armTimeout(entry, entry.firesAtUnixMs - Date.now());
     if (entry.kind === 'idle_any' || entry.kind === 'idle_all') {
-      this.armIdleInterval(entry);
+      this.syncWatchInterval();
       void this.checkIdle(entry).catch(() => undefined);
     } else if (entry.kind === 'report_any' || entry.kind === 'report_all') {
-      this.armReportInterval(entry);
+      this.syncWatchInterval();
       void this.checkReport(entry).catch(() => undefined);
     } else if (entry.kind === 'output') {
       entry.interval = setInterval(() => {
         void this.checkOutput(entry).catch(() => undefined);
       }, OUTPUT_CHECK_MS);
       void this.checkOutput(entry).catch(() => undefined);
+    }
+  }
+
+  private syncWatchInterval(): void {
+    const needsPoller = this.active && [...this.timers.values()].some(
+      (entry) => entry.status === 'pending' && (entry.kind === 'idle_any' || entry.kind === 'idle_all' || entry.kind === 'report_any' || entry.kind === 'report_all')
+    );
+    if (needsPoller && !this.watchInterval) {
+      this.watchInterval = setInterval(() => this.pollWatches(), WATCH_POLL_MS);
+    } else if (!needsPoller && this.watchInterval) {
+      clearInterval(this.watchInterval);
+      this.watchInterval = null;
+    }
+  }
+
+  private pollWatches(): void {
+    const processCache = new Map<string, WatchedProcessRow | undefined>();
+    for (const entry of [...this.timers.values()]) {
+      if (entry.status !== 'pending' || !this.timers.has(entry.id)) continue;
+      if (entry.kind === 'idle_any' || entry.kind === 'idle_all') {
+        void this.checkIdle(entry, processCache).catch(() => undefined);
+      } else if (entry.kind === 'report_any' || entry.kind === 'report_all') {
+        void this.checkReport(entry, processCache).catch(() => undefined);
+      }
     }
   }
 
@@ -444,26 +505,49 @@ export class TimerService {
     if (this.cancelIfOwnerGone(entry)) return;
     entry.checking = true;
     try {
-      const state = await this.outputState(entry.watched[0], entry.pattern);
+      const targetId = entry.watched[0];
+      const row = this.watchedProcess(targetId);
+      if (!row) {
+        await this.fire(entry, 'condition', [watchedFromOutput({ state: 'missing', process_id: targetId })]);
+        return;
+      }
+      if (entry.isIntegrated === undefined) {
+        entry.isIntegrated = Boolean(this.database.connection.prepare(`select 1 from sessions where process_id = ? and interface_mode = 'integrated' and exited_at is null`).get(row.id));
+      }
+      const integratedStamp = entry.isIntegrated ? `${row.status}\0${row.activity}\0${row.updated_at}` : undefined;
+      // Only skip while running and idle; during active turns (`working`/`thinking`),
+      // streamed output arrives without bumping processes.updated_at.
+      if (entry.isIntegrated && row.status === 'running' && row.activity === 'idle' && entry.lastIntegratedStamp === integratedStamp) {
+        return;
+      }
+      const line = await this.findOutputLine(row.id, entry.pattern);
+      if (integratedStamp !== undefined) {
+        entry.lastIntegratedStamp = integratedStamp;
+      }
+      const state: OutputWatchState = line !== null
+        ? { state: 'matched', process_id: row.id, name: row.name, line }
+        : row.status !== 'running'
+          ? { state: 'exited', process_id: row.id, name: row.name, status: row.status, exit_code: row.exit_code }
+          : { state: 'waiting', process_id: row.id, name: row.name };
       if (state.state !== 'waiting') await this.fire(entry, 'condition', [watchedFromOutput(state)]);
     } finally {
       entry.checking = false;
     }
   }
 
-  private async checkIdle(entry: TimerEntry): Promise<void> {
+  private async checkIdle(entry: TimerEntry, processCache?: Map<string, WatchedProcessRow | undefined>): Promise<void> {
     if (entry.status !== 'pending' || entry.watched.length === 0 || !this.timers.has(entry.id)) {
       return;
     }
-    const states = entry.watched.map((id) => this.processIdleState(entry, id));
+    const states = entry.watched.map((id) => this.processIdleState(entry, id, processCache));
     const satisfied = entry.kind === 'idle_any' ? states.some((state) => state.satisfied) : states.every((state) => state.satisfied);
     if (satisfied) {
       await this.fire(entry, 'condition', states);
     }
   }
 
-  private processIdleState(entry: TimerEntry, processId: string): WatchedState {
-    const row = this.watchedProcess(processId);
+  private processIdleState(entry: TimerEntry, processId: string, processCache?: Map<string, WatchedProcessRow | undefined>): WatchedState {
+    const row = this.watchedProcess(processId, processCache);
     if (!row) {
       return { process_id: processId, satisfied: true, reason: 'missing' };
     }
@@ -484,8 +568,9 @@ export class TimerService {
     return { process_id: row.id, satisfied, reason: satisfied ? 'idle' : 'not_started', name: row.name, activity: row.activity };
   }
 
-  private watchedProcess(processId: string) {
-    return this.database.connection
+  private watchedProcess(processId: string, processCache?: Map<string, WatchedProcessRow | undefined>): WatchedProcessRow | undefined {
+    if (processCache?.has(processId)) return processCache.get(processId);
+    const row = this.database.connection
       .prepare(
         `select processes.id, processes.status, processes.activity, processes.created_at, processes.updated_at, processes.exit_code,
                 coalesce((select sessions.title from sessions
@@ -495,14 +580,16 @@ export class TimerService {
          order by processes.status = 'running' desc
          limit 1`
       )
-      .get(processId, processId) as { id: string; status: string; activity: string; created_at: string; updated_at: string; exit_code: number | null; name: string } | undefined;
+      .get(processId, processId) as WatchedProcessRow | undefined;
+    processCache?.set(processId, row);
+    return row;
   }
 
-  private async checkReport(entry: TimerEntry): Promise<void> {
+  private async checkReport(entry: TimerEntry, processCache?: Map<string, WatchedProcessRow | undefined>): Promise<void> {
     if (entry.status !== 'pending' || entry.watched.length === 0 || !this.timers.has(entry.id)) {
       return;
     }
-    const states = entry.watched.map((id) => this.processReportState(entry, id));
+    const states = entry.watched.map((id) => this.processReportState(entry, id, undefined, processCache));
     if (reportSatisfied(entry, states)) {
       await this.fire(entry, 'condition', states);
     }
@@ -559,9 +646,9 @@ export class TimerService {
     return { process_id: label, satisfied: true, reason: 'messaged', name: label, excerpt: excerptOf(typeof metadata.body === 'string' ? metadata.body : ''), at: event.created_at };
   }
 
-  private processReportState(entry: TimerEntry, processId: string, message?: { fromProcessId: string; body: string }): WatchedState {
+  private processReportState(entry: TimerEntry, processId: string, message?: { fromProcessId: string; body: string }, processCache?: Map<string, WatchedProcessRow | undefined>): WatchedState {
     if (processId.includes(':')) return this.remoteReportState(entry, processId);
-    const row = this.watchedProcess(processId);
+    const row = this.watchedProcess(processId, processCache);
     if (!row) {
       return { process_id: processId, satisfied: true, reason: 'missing' };
     }
@@ -669,18 +756,6 @@ export class TimerService {
     entry.timeout = setTimeout(() => {
       void this.fire(entry, 'timeout').catch(() => undefined);
     }, Math.max(0, delayMs));
-  }
-
-  private armIdleInterval(entry: TimerEntry): void {
-    entry.interval = setInterval(() => {
-      void this.checkIdle(entry).catch(() => undefined);
-    }, 500);
-  }
-
-  private armReportInterval(entry: TimerEntry): void {
-    entry.interval = setInterval(() => {
-      void this.checkReport(entry).catch(() => undefined);
-    }, 500);
   }
 
   private toRecord(entry: TimerEntry): TimerRecord {

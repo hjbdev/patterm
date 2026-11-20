@@ -775,15 +775,15 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     const current = caller(context);
     const projectId = picksProject(current) ? projectFor(context, input.project_id) : current?.project_id ?? null;
     if (hasWorkspaceScope(current) && !projectId) throw new Error('list_processes: pass a project_id; assistant_overview lists every project');
-    const local = listCliProcesses(services.database, input.kind, projectId, current?.process_id ?? null)
-      .filter((row) => input.status === 'all' || row.status === 'running' || row.is_current);
+    const local = listCliProcessesPage(services.database, input.kind, projectId, current?.process_id ?? null, { status: input.status, limit: input.limit });
     const remote = await remoteProcessesFor(context, projectId, { ...(input.kind ? { kind: input.kind } : {}), status: input.status, limit: input.limit });
-    const all = [...local, ...remote.processes];
-    const processes = all.slice(0, input.limit);
+    const combined = [...local.rows, ...remote.processes];
+    const processes = combined.slice(0, input.limit);
+    const total = local.total + remote.processes.length;
     return {
       current_process_id: current?.process_id ?? '',
       processes,
-      ...(all.length > processes.length ? { omitted: all.length - processes.length } : {}),
+      ...(total > processes.length ? { omitted: total - processes.length } : {}),
       ...(remote.unavailable.length ? { unavailable_hosts: remote.unavailable } : {})
     };
   });
@@ -803,11 +803,12 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     if (isBot(current) && !input.project_id) return botOverview(services, current!);
     const projectId = picksProject(current) ? projectFor(context, input.project_id) : projectFor(context);
     const remote = await remoteProcessesFor(context, current?.project_id ?? null, {});
+    const targetProjectId = picksProject(current) ? projectId : current?.project_id ?? null;
     return {
       project: projectMeta(services.workbench.getProject(projectId ?? '') ?? null),
       caller: whoami(services.database, context.identity ?? null, false, registry),
       current_process_id: current?.process_id ?? '',
-      processes: [...listCliProcesses(services.database, undefined, picksProject(current) ? projectId : current?.project_id ?? null, current?.process_id ?? null), ...remote.processes],
+      processes: [...listProjectStatusProcesses(services.database, targetProjectId, current?.process_id ?? null), ...remote.processes],
       ...(remote.unavailable.length ? { unavailable_hosts: remote.unavailable } : {})
     };
   });
@@ -2695,57 +2696,262 @@ function statusLabelNames(database: DatabaseService): Map<string, string> {
   return new Map(new SettingsService(database).statusLabels().labels.map((label) => [label.id, label.name]));
 }
 
-function listCliProcesses(database: DatabaseService, kind?: string, projectId?: string | null, currentProcessId?: string | null) {
-  const projectFilter = projectId ? ' and sessions.project_id = @project_id' : '';
-  const sessions = database.connection
+type CliProcessRow = {
+  process_id: string;
+  name: string;
+  kind: string;
+  status: string;
+  is_current?: boolean;
+  parent_process_id?: string;
+  status_label?: string;
+  exit_code?: number;
+};
+
+interface CliSessionRow {
+  process_id: string;
+  title: string | null;
+  harness: string | null;
+  session_role: string;
+  exited_at: string | null;
+  exit_code: number | null;
+  parent_process_id: string | null;
+  process_status: string | null;
+  status_label_id: string | null;
+}
+
+interface CliNonAgentProcessRow {
+  id: string;
+  parent_process_id: string | null;
+  kind: string;
+  name: string;
+  status: string;
+}
+
+function mapCliSessionRow(row: CliSessionRow, currentProcessId: string | null | undefined, labels: Map<string, string>): CliProcessRow {
+  const statusLabel = row.status_label_id && row.process_status === 'running' ? labels.get(row.status_label_id) : undefined;
+  return {
+    process_id: row.process_id,
+    name: row.title ?? row.harness ?? 'agent',
+    kind: 'agent',
+    status: row.process_status && row.process_status !== 'running' ? row.process_status : row.exited_at ? 'exited' : 'running',
+    ...(row.process_id === currentProcessId ? { is_current: true } : {}),
+    ...(row.parent_process_id ? { parent_process_id: row.parent_process_id } : {}),
+    ...(statusLabel !== undefined ? { status_label: statusLabel } : {}),
+    ...(row.exit_code === null ? {} : { exit_code: row.exit_code })
+  };
+}
+
+function mapCliNonAgentRow(row: CliNonAgentProcessRow, currentProcessId: string | null | undefined): CliProcessRow {
+  return {
+    process_id: row.id,
+    name: row.name,
+    kind: row.kind,
+    status: row.status,
+    ...(row.id === currentProcessId ? { is_current: true } : {}),
+    ...(row.parent_process_id ? { parent_process_id: row.parent_process_id } : {})
+  };
+}
+
+function listCliProcessesPage(
+  database: DatabaseService,
+  kind?: string,
+  projectId?: string | null,
+  currentProcessId?: string | null,
+  options: { status?: 'running' | 'all'; limit?: number } = {}
+): { rows: CliProcessRow[]; total: number } {
+  const status = options.status ?? 'all';
+  const limit = options.limit;
+  const includeAgents = !kind || kind === 'agent';
+  const includeOthers = !kind || kind !== 'agent';
+  const sessionCountParams: Record<string, unknown> = {};
+  const sessionWhereParts = ['sessions.process_id is not null'];
+  if (projectId) {
+    sessionWhereParts.push('sessions.project_id = @project_id');
+    sessionCountParams.project_id = projectId;
+  }
+  if (status === 'running') {
+    if (currentProcessId) {
+      sessionWhereParts.push(
+        `(((processes.status is null or processes.status = 'running') and sessions.exited_at is null) or sessions.process_id = @current_process_id)`
+      );
+      sessionCountParams.current_process_id = currentProcessId;
+    } else {
+      sessionWhereParts.push(`((processes.status is null or processes.status = 'running') and sessions.exited_at is null)`);
+    }
+  }
+  const sessionWhere = sessionWhereParts.join(' and ');
+
+  const processCountParams: Record<string, unknown> = {};
+  const processWhereParts = [`kind != 'agent'`];
+  if (projectId) {
+    processWhereParts.push('project_id = @project_id');
+    processCountParams.project_id = projectId;
+  }
+  if (kind && kind !== 'agent') {
+    processWhereParts.push('kind = @kind');
+    processCountParams.kind = kind;
+  }
+  if (status === 'running') {
+    if (currentProcessId) {
+      processWhereParts.push(`(status = 'running' or id = @current_process_id)`);
+      processCountParams.current_process_id = currentProcessId;
+    } else {
+      processWhereParts.push(`status = 'running'`);
+    }
+  }
+  const processWhere = processWhereParts.join(' and ');
+
+  let sessions: CliSessionRow[] = [];
+  if (includeAgents && (limit === undefined || limit > 0)) {
+    const limitClause = limit === undefined ? '' : ' limit @session_limit';
+    const sessionParams = limit === undefined ? sessionCountParams : { ...sessionCountParams, session_limit: limit };
+    sessions = database.connection
+      .prepare(
+        `select sessions.process_id, sessions.title, sessions.harness, sessions.session_role, sessions.exited_at, sessions.exit_code,
+                processes.parent_process_id, processes.status as process_status, processes.status_label_id
+         from sessions left join processes on processes.id = sessions.process_id
+         where ${sessionWhere}
+         order by sessions.started_at desc${limitClause}`
+      )
+      .all(sessionParams) as CliSessionRow[];
+  }
+
+  const remainingLimit = limit === undefined ? undefined : Math.max(0, limit - sessions.length);
+  let processes: CliNonAgentProcessRow[] = [];
+  if (includeOthers && (remainingLimit === undefined || remainingLimit > 0)) {
+    const limitClause = remainingLimit === undefined ? '' : ' limit @process_limit';
+    const processParams = remainingLimit === undefined ? processCountParams : { ...processCountParams, process_limit: remainingLimit };
+    processes = database.connection
+      .prepare(`select id, parent_process_id, kind, name, status from processes where ${processWhere} order by created_at desc${limitClause}`)
+      .all(processParams) as CliNonAgentProcessRow[];
+  }
+
+  const labels = sessions.some((row) => row.status_label_id && row.process_status === 'running')
+    ? statusLabelNames(database)
+    : new Map<string, string>();
+  const rows: CliProcessRow[] = [
+    ...sessions.map((row) => mapCliSessionRow(row, currentProcessId, labels)),
+    ...processes.map((row) => mapCliNonAgentRow(row, currentProcessId))
+  ];
+
+  let total = rows.length;
+  if (limit !== undefined && rows.length >= limit) {
+    const sessionTotal = includeAgents
+      ? (database.connection
+          .prepare(`select count(*) as count from sessions left join processes on processes.id = sessions.process_id where ${sessionWhere}`)
+          .get(sessionCountParams) as { count: number }).count
+      : 0;
+    const processTotal = includeOthers
+      ? (database.connection
+          .prepare(`select count(*) as count from processes where ${processWhere}`)
+          .get(processCountParams) as { count: number }).count
+      : 0;
+    total = sessionTotal + processTotal;
+  }
+
+  return { rows, total };
+}
+
+function listCliProcesses(
+  database: DatabaseService,
+  kind?: string,
+  projectId?: string | null,
+  currentProcessId?: string | null,
+  options: { status?: 'running' | 'all'; limit?: number } = {}
+): CliProcessRow[] {
+  return listCliProcessesPage(database, kind, projectId, currentProcessId, options).rows;
+}
+
+// Project status lists all running processes plus up to 25 recent ended agents
+// and up to 25 recent ended non-agent processes, preserving agents-first then
+// non-agent processes newest-first ordering without historical sessions starving
+// ended non-agent processes.
+const PROJECT_STATUS_RECENT_ENDED_LIMIT = 25;
+
+function listProjectStatusProcesses(database: DatabaseService, projectId: string | null, currentProcessId: string | null): CliProcessRow[] {
+  const running = listCliProcesses(database, undefined, projectId, currentProcessId, { status: 'running' });
+  const seen = new Set(running.map((row) => row.process_id));
+
+  const endedSessionParams: Record<string, unknown> = { limit: PROJECT_STATUS_RECENT_ENDED_LIMIT };
+  const endedSessionWhere = [
+    'sessions.process_id is not null',
+    `not ((processes.status is null or processes.status = 'running') and sessions.exited_at is null)`
+  ];
+  if (projectId) {
+    endedSessionWhere.push('sessions.project_id = @project_id');
+    endedSessionParams.project_id = projectId;
+  }
+  if (currentProcessId) {
+    endedSessionWhere.push('sessions.process_id != @current_process_id');
+    endedSessionParams.current_process_id = currentProcessId;
+  }
+  const endedSessions = database.connection
     .prepare(
       `select sessions.process_id, sessions.title, sessions.harness, sessions.session_role, sessions.exited_at, sessions.exit_code,
               processes.parent_process_id, processes.status as process_status, processes.status_label_id
        from sessions left join processes on processes.id = sessions.process_id
-       where sessions.process_id is not null${projectFilter}
-       order by sessions.started_at desc`
+       where ${endedSessionWhere.join(' and ')}
+       order by sessions.started_at desc
+       limit @limit`
     )
-    .all(projectId ? { project_id: projectId } : {}) as Array<{
-      process_id: string;
-      title: string | null;
-      harness: string | null;
-      session_role: string;
-      exited_at: string | null;
-      exit_code: number | null;
-      parent_process_id: string | null;
-      process_status: string | null;
-      status_label_id: string | null;
-    }>;
-  const labels = statusLabelNames(database);
-  const processFilter = projectId ? ' and project_id = @project_id' : '';
-  const processes = database.connection
-    .prepare(`select id, parent_process_id, kind, name, status from processes where kind != 'agent'${processFilter} order by created_at desc`)
-    .all(projectId ? { project_id: projectId } : {}) as Array<{ id: string; parent_process_id: string | null; kind: string; name: string; status: string }>;
-  const rows = [
-    ...sessions.map((row) => ({
-      process_id: row.process_id,
-      name: row.title ?? row.harness ?? 'agent',
-      kind: 'agent',
-      status: row.process_status && row.process_status !== 'running' ? row.process_status : row.exited_at ? 'exited' : 'running',
-      ...(row.process_id === currentProcessId ? { is_current: true } : {}),
-      ...(row.parent_process_id ? { parent_process_id: row.parent_process_id } : {}),
-      ...(row.status_label_id && row.process_status === 'running' && labels.has(row.status_label_id) ? { status_label: labels.get(row.status_label_id) } : {}),
-      ...(row.exit_code === null ? {} : { exit_code: row.exit_code })
-    })),
-    ...processes.map((row) => ({
-      process_id: row.id,
-      name: row.name,
-      kind: row.kind,
-      status: row.status,
-      ...(row.id === currentProcessId ? { is_current: true } : {}),
-      ...(row.parent_process_id ? { parent_process_id: row.parent_process_id } : {})
-    }))
-  ];
-  return kind ? rows.filter((row) => row.kind === kind) : rows;
+    .all(endedSessionParams) as CliSessionRow[];
+
+  const endedProcessParams: Record<string, unknown> = { limit: PROJECT_STATUS_RECENT_ENDED_LIMIT };
+  const endedProcessWhere = [`kind != 'agent'`, `status != 'running'`];
+  if (projectId) {
+    endedProcessWhere.push('project_id = @project_id');
+    endedProcessParams.project_id = projectId;
+  }
+  if (currentProcessId) {
+    endedProcessWhere.push('id != @current_process_id');
+    endedProcessParams.current_process_id = currentProcessId;
+  }
+  const endedProcesses = database.connection
+    .prepare(
+      `select id, parent_process_id, kind, name, status
+       from processes
+       where ${endedProcessWhere.join(' and ')}
+       order by created_at desc
+       limit @limit`
+    )
+    .all(endedProcessParams) as CliNonAgentProcessRow[];
+
+  const endedLabels = endedSessions.some((row) => row.status_label_id && row.process_status === 'running')
+    ? statusLabelNames(database)
+    : new Map<string, string>();
+  const endedAgents = endedSessions
+    .filter((row) => !seen.has(row.process_id))
+    .map((row) => mapCliSessionRow(row, currentProcessId, endedLabels));
+  const endedOthers = endedProcesses
+    .filter((row) => !seen.has(row.id))
+    .map((row) => mapCliNonAgentRow(row, currentProcessId));
+  const agents = [...running.filter((row) => row.kind === 'agent'), ...endedAgents];
+  const others = [...running.filter((row) => row.kind !== 'agent'), ...endedOthers];
+  return [...agents, ...others];
 }
 
 function findCliProcess(database: DatabaseService, processId: string) {
-  return listCliProcesses(database).find((row) => row.process_id === processId) ?? { process_id: processId, name: processId, kind: 'unknown', status: 'unknown' };
+  const session = database.connection
+    .prepare(
+      `select sessions.process_id, sessions.title, sessions.harness, sessions.session_role, sessions.exited_at, sessions.exit_code,
+              processes.parent_process_id, processes.status as process_status, processes.status_label_id
+       from sessions left join processes on processes.id = sessions.process_id
+       where sessions.process_id = ?
+       order by sessions.started_at desc
+       limit 1`
+    )
+    .get(processId) as CliSessionRow | undefined;
+  if (session) {
+    const labels = session.status_label_id && session.process_status === 'running'
+      ? statusLabelNames(database)
+      : new Map<string, string>();
+    return mapCliSessionRow(session, null, labels);
+  }
+  const proc = database.connection
+    .prepare(`select id, parent_process_id, kind, name, status from processes where id = ? and kind != 'agent' limit 1`)
+    .get(processId) as CliNonAgentProcessRow | undefined;
+  if (proc) return mapCliNonAgentRow(proc, null);
+  return { process_id: processId, name: processId, kind: 'unknown', status: 'unknown' };
 }
 
 async function readProcessOutput(services: RegistryServices, processId: string, mode: string, sinceOffset: number) {

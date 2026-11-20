@@ -54,7 +54,9 @@ export class ClaudeStreamService {
     const key = randomUUID();
     const sessionId = input.resumeId ?? randomUUID();
     if (input.resumeId) {
-      const attached = this.database.connection.prepare('select id from sessions where harness = ? and resume_id = ? and exited_at is null').get('claude', input.resumeId);
+      const attached = input.wakingSessionId
+        ? this.database.connection.prepare('select id from sessions where harness = ? and resume_id = ? and exited_at is null and id != ?').get('claude', input.resumeId, input.wakingSessionId)
+        : this.database.connection.prepare('select id from sessions where harness = ? and resume_id = ? and exited_at is null').get('claude', input.resumeId);
       if (attached) throw new Error('Claude session is already attached to Patterm');
     }
     const socketPath = path.join(directory, `${key}.sock`);
@@ -100,7 +102,8 @@ export class ClaudeStreamService {
       }
       return { resumeId: sessionId, argv: [input.executable, 'claude-host', socketPath, String(pid ?? ''), configPath] };
     } catch (error) {
-      await stopHostProcess(pid);
+      if (this.launcher.stop) await this.launcher.stop(socketPath, pid).catch(() => undefined);
+      else await stopHostProcess(pid);
       throw error;
     }
   }
@@ -112,7 +115,7 @@ export class ClaudeStreamService {
     // The model and command lists, tens of kilobytes, belong to the controls,
     // which clients read once and again only when their revision changes.
     const { models: _models, commands: _commands, ...state } = result;
-    const { goal, markers } = this.goals.read({ cwd: runtime.cwd, sessionId: runtime.sessionId, env: this.env });
+    const { goal, markers } = await this.goals.read({ cwd: runtime.cwd, sessionId: runtime.sessionId, env: this.env });
     return snapshotWithGoal({
       process_id: processId, session_id: runtime.pattermSessionId, provider_session_id: runtime.sessionId, provider: 'claude',
       ...state,
@@ -212,10 +215,10 @@ export class ClaudeStreamService {
     const text = [input.text.trim(), ...references.map((reference) => referenceToken(reference.relativePath))].filter(Boolean).join(' ');
     // Inline the exact bytes validated by UploadService rather than re-reading.
     // Images become image blocks; PDFs and text become document blocks.
-    const uploads = input.attachments.map((attachment) => ({
+    const uploads = await Promise.all(input.attachments.map(async (attachment) => ({
       attachment,
-      data: attachment.data ?? fs.readFileSync(attachment.path).toString('base64')
-    }));
+      data: attachment.data ?? (await fs.promises.readFile(attachment.path)).toString('base64')
+    })));
     const images = uploads.filter(({ attachment }) => attachment.mime.startsWith('image/'))
       .map(({ attachment, data }) => ({ media_type: attachment.mime, data }));
     const documents = uploads.filter(({ attachment }) => !attachment.mime.startsWith('image/'))
@@ -360,13 +363,21 @@ export class ClaudeStreamService {
     // interrupt, but the host stop below still runs and cleans it up. A
     // failure of the host stop itself still propagates.
     try { await this.interrupt(processId); } catch { /* the host stop decides */ }
-    try { await callHost(runtime.socketPath, 'stop', {}); } catch { await stopRecordedHostProcess(runtime.pid, runtime.socketPath); }
+    try {
+      await callHost(runtime.socketPath, 'stop', {});
+    } catch {
+      if (this.launcher.stop) await this.launcher.stop(runtime.socketPath, runtime.pid);
+      else await stopRecordedHostProcess(runtime.pid, runtime.socketPath);
+    }
     this.catalogs.delete(runtime.socketPath);
+    this.goals.forget(runtime.sessionId);
   }
 
   async cleanupLaunch(_input: IntegratedLaunchInput, result: IntegratedLaunchResult): Promise<void> {
+    const socketPath = typeof result.argv[2] === 'string' ? result.argv[2] : '';
     const pid = typeof result.argv[3] === 'string' && /^\d+$/.test(result.argv[3]) ? Number(result.argv[3]) : null;
-    await stopHostProcess(pid);
+    if (this.launcher.stop && socketPath) await this.launcher.stop(socketPath, pid);
+    else await stopHostProcess(pid);
   }
 
   async stopAll(): Promise<void> {

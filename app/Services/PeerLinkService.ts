@@ -1,7 +1,15 @@
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
+import zlib from 'node:zlib';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import { PEER_PROTOCOL_VERSION, type HostService } from './HostService';
+
+const PEER_DEFLATE = {
+  serverNoContextTakeover: true,
+  clientNoContextTakeover: true,
+  threshold: 1024,
+  zlibDeflateOptions: { level: zlib.constants.Z_BEST_SPEED }
+};
 
 export const PEER_LINK_PATH = '/api/peer/link';
 
@@ -71,7 +79,7 @@ export class PeerLinkService {
   private readonly listeners = new Set<(event: PeerEvent) => void>();
   private readonly connectListeners = new Set<(hostId: string) => void>();
   private readonly disconnectListeners = new Set<(hostId: string) => void>();
-  private readonly server = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
+  private readonly server = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES, perMessageDeflate: PEER_DEFLATE });
   // Every socket another host opened, from acceptance until it closes, even
   // before its hello.
   private readonly inbound = new Set<WebSocket>();
@@ -219,7 +227,7 @@ export class PeerLinkService {
     }
     this.setStatus(hostId, 'connecting', dialer.error);
     const url = `${target.url.replace(/^http/, 'ws')}${PEER_LINK_PATH}`;
-    const socket = new WebSocket(url, { headers: { Authorization: `Bearer ${target.credential}` }, maxPayload: MAX_FRAME_BYTES, handshakeTimeout: HELLO_TIMEOUT_MS, followRedirects: false });
+    const socket = new WebSocket(url, { headers: { Authorization: `Bearer ${target.credential}` }, maxPayload: MAX_FRAME_BYTES, handshakeTimeout: HELLO_TIMEOUT_MS, followRedirects: false, perMessageDeflate: PEER_DEFLATE });
     dialer.socket = socket;
     let error: string | null = null;
     let refused = false;

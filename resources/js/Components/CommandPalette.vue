@@ -181,16 +181,17 @@ const currentControls = computed(() => {
   const session = currentSession.value;
   return session?.interfaceMode === 'integrated' && !session.exitedAt ? publishedIntegratedControls(session.processId) : null;
 });
-const sessionsById = computed(() => new Map(projects.value.flatMap(project => project.projectSessions.map(session => [session.id, session] as const))));
-const processesById = computed(() => new Map(projects.value.flatMap(project => project.processes.map(process => [process.id, process] as const))));
+const sessionsById = computed(() => open.value ? new Map(projects.value.flatMap(project => project.projectSessions.map(session => [session.id, session] as const))) : new Map<string, SessionRecord>());
+const processesById = computed(() => open.value ? new Map(projects.value.flatMap(project => project.processes.map(process => [process.id, process] as const))) : new Map<string, ProcessRecord>());
 
 const localCommands = computed(() => {
+  if (!open.value) return [];
   const project = activeProject.value?.project;
   return rendererCommands(props.context.active_project_id, project?.kind !== 'personal', showSnoozed.value, project && canSnoozeProject(project) ? projectSnoozed(project) : null, showBotAgents.value);
 });
 // Launching, resuming, and timers each open a page of their own.
 const sourceCommands = computed<CommandDescriptor[]>(() => {
-  if (!props.context.active_project_id) return [];
+  if (!open.value || !props.context.active_project_id) return [];
   const conversations = sources.conversationCommands.value;
   const timers = sources.timers.value;
   return [
@@ -199,14 +200,21 @@ const sourceCommands = computed<CommandDescriptor[]>(() => {
     ...(timers.length ? [{ id: 'page:timers', label: 'Timers', hint: timersHint(), group: 'navigation', kind: 'page' }] : [])
   ];
 });
-const catalogue = computed(() => [
-  ...localCommands.value,
-  ...withIntegratedSelectors(commands.value.filter(command => !localCommands.value.some(local => local.id === command.id)), currentSession.value?.processId ?? null, currentControls.value),
-  ...sourceCommands.value
-]);
-const visibleRows = computed<PaletteRow[]>(() => page.value
-  ? rankedCommands(page.value.source?.() ?? page.value.commands, page.value.entry ? '' : query.value, [], { flat: true })
-  : rankedCommands(catalogue.value, query.value, recentIds.value, { page: props.context.active_tab, appended: sources.searchCommands.value }));
+const catalogue = computed(() => {
+  if (!open.value) return [];
+  const localIds = new Set(localCommands.value.map(local => local.id));
+  return [
+    ...localCommands.value,
+    ...withIntegratedSelectors(commands.value.filter(command => !localIds.has(command.id)), currentSession.value?.processId ?? null, currentControls.value),
+    ...sourceCommands.value
+  ];
+});
+const visibleRows = computed<PaletteRow[]>(() => {
+  if (!open.value) return [];
+  return page.value
+    ? rankedCommands(page.value.source?.() ?? page.value.commands, page.value.entry ? '' : query.value, [], { flat: true })
+    : rankedCommands(catalogue.value, query.value, recentIds.value, { page: props.context.active_tab, appended: sources.searchCommands.value });
+});
 const placeholder = computed(() => page.value?.entry?.placeholder ?? (page.value ? 'Filter…' : 'Search or jump to…'));
 // At the top, consecutive rows from one section share a heading; search
 // results have none. A page sets its settings and destructive actions apart
@@ -235,9 +243,12 @@ const enterLabel = computed(() => {
   return page.value?.entry?.verb ?? 'Select';
 });
 
-watch([open, query, () => visibleRows.value[highlighted.value]?.command.id, contextKey], () => {
+watch([open, query, highlighted, contextKey], () => {
   armedId.value = null;
 }, { flush: 'sync' });
+watch(() => open.value ? visibleRows.value[highlighted.value]?.command.id : null, () => {
+  armedId.value = null;
+});
 
 watch(open, async (isOpen) => {
   if (!isOpen) return;
@@ -272,7 +283,6 @@ watch(visibleRows, (rows, previous) => {
   highlighted.value = fallback >= 0 ? fallback : 0;
 });
 watch(contextKey, () => {
-  commands.value = [];
   pages.value = [];
   loadedFor = '';
   if (open.value) void reloadCommands();

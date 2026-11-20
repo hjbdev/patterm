@@ -11,6 +11,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+defineOptions({ name: 'ProjectPage' });
 import ProjectCanvas from '../Components/Canvas/ProjectCanvas.vue';
 import PhoneHome from '../Components/Phone/PhoneHome.vue';
 import { useBoardIsHome } from '../Composables/useBoard';

@@ -20,6 +20,8 @@ async function main(): Promise<void> {
   const appDataPath = path.resolve(process.env.PATTERM_DATA_DIR ?? path.join(os.homedir(), '.local/share/patterm-server'));
   const sidecarPath = process.env.PATTERM_SIDECAR ?? path.join(root, 'native/terminal-core/target/release', process.platform === 'win32' ? 'patterm-terminal-core.exe' : 'patterm-terminal-core');
   const mcpShimPath = process.env.PATTERM_MCP_SHIM ?? path.join(root, 'dist/mcp/patterm-mcp.js');
+  const nativeMcpCandidate = path.join(path.dirname(sidecarPath), process.platform === 'win32' ? 'patterm-mcp.exe' : 'patterm-mcp');
+  const nativeMcpPath = !process.env.PATTERM_MCP_SHIM && fs.existsSync(nativeMcpCandidate) ? nativeMcpCandidate : null;
   const rendererPath = path.join(root, 'dist/renderer');
   for (const filename of [sidecarPath, mcpShimPath, path.join(rendererPath, 'index.html')]) fs.accessSync(filename, fs.constants.R_OK);
   fs.accessSync(sidecarPath, fs.constants.X_OK);
@@ -60,7 +62,7 @@ async function main(): Promise<void> {
   })();
   try {
     application = await createApplication({
-      appDataPath, sidecarPath, mcpShimPath, runtime: 'node', appRoot: root, publicOrigin, serverAccess, runtimeLock, ...(ownerLogin ? { ownerLogin } : {}),
+      appDataPath, sidecarPath, mcpShimPath, nativeMcpPath, runtime: 'node', appRoot: root, publicOrigin, serverAccess, runtimeLock, ...(ownerLogin ? { ownerLogin } : {}),
       ...(process.env.PATTERM_TERMINAL_SERVICE ? { terminalHosts: { appDataPath, serviceName: process.env.PATTERM_TERMINAL_SERVICE } } : {}),
       onQuitRequested: () => { setImmediate(() => { void stop(0).catch((error) => { console.error(error); process.exit(1); }); }); }
     });

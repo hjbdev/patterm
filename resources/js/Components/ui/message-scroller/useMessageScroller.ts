@@ -268,6 +268,19 @@ function createEngine(props: MessageScrollerProviderProps) {
 
   // --- imperative scroll primitives ------------------------------------------
 
+  function scheduleAutoscrollingEnd() {
+    if (autoscrollingTimeout !== null) {
+      window.clearTimeout(autoscrollingTimeout)
+      autoscrollingTimeout = null
+    }
+    if (!autoscrolling.value)
+      return
+    autoscrollingTimeout = window.setTimeout(() => {
+      autoscrollingTimeout = null
+      autoscrolling.value = false
+    }, AUTOSCROLLING_TIMEOUT)
+  }
+
   function setAutoscrolling(active: boolean) {
     if (autoscrollingTimeout !== null) {
       window.clearTimeout(autoscrollingTimeout)
@@ -275,12 +288,8 @@ function createEngine(props: MessageScrollerProviderProps) {
     }
     if (autoscrolling.value !== active)
       autoscrolling.value = active
-    if (active) {
-      autoscrollingTimeout = window.setTimeout(() => {
-        autoscrollingTimeout = null
-        autoscrolling.value = false
-      }, AUTOSCROLLING_TIMEOUT)
-    }
+    if (active)
+      scheduleAutoscrollingEnd()
   }
 
   // A write from `from` moves the view without the reader. Their next scroll
@@ -323,25 +332,28 @@ function createEngine(props: MessageScrollerProviderProps) {
     if (glideFrame !== null) {
       window.cancelAnimationFrame(glideFrame)
       glideFrame = null
+      scheduleAutoscrollingEnd()
     }
   }
 
   function glideStep(now: number) {
     glideFrame = null
-    if (!viewport || !following || pointerHeld)
+    if (!viewport || !following || pointerHeld) {
+      scheduleAutoscrollingEnd()
       return
+    }
     const target = maxScrollTop(viewport)
     const remaining = target - viewport.scrollTop
     if (remaining <= SCROLL_EPSILON) {
       if (remaining < -SCROLL_EPSILON)
         viewport.scrollTop = target
+      scheduleAutoscrollingEnd()
       commitScrollState()
       return
     }
     const elapsed = Math.min(64, now - glideTime)
     glideTime = now
     const step = remaining * (1 - Math.exp(-elapsed / GLIDE_TIME_CONSTANT))
-    setAutoscrolling(true)
     const from = viewport.scrollTop
     viewport.scrollTop += Math.max(1, step)
     noteProgrammaticScroll(from)
@@ -358,6 +370,12 @@ function createEngine(props: MessageScrollerProviderProps) {
     following = true
     restingDistance = 0
     if (glideFrame === null) {
+      if (autoscrollingTimeout !== null) {
+        window.clearTimeout(autoscrollingTimeout)
+        autoscrollingTimeout = null
+      }
+      if (!autoscrolling.value)
+        autoscrolling.value = true
       glideTime = performance.now()
       glideFrame = window.requestAnimationFrame(glideStep)
     }

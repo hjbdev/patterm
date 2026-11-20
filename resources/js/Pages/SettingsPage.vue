@@ -204,7 +204,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { Activity, ArrowLeft, Bell, Bot, ChartColumn, ChevronDown, Cpu, History, Info, KeyRound, Palette, Plug, Server, Shrink, Sparkles, Tag } from 'lucide-vue-next';
 import {
   DIFF_VIEWER_OPTIONS,
@@ -218,6 +218,7 @@ import {
   resolveUiFontFamily,
   type AppearanceSettings
 } from '../appearance/AppearanceSettings';
+import { ensureBundledFontStyles } from '../appearance/FontLoading';
 import { Button } from '../Components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../Components/ui/dropdown-menu';
 import { Input } from '../Components/ui/input';
@@ -294,6 +295,10 @@ const loadError = ref('');
 
 const uiPreviewFamily = computed(() => resolveUiFontFamily(draft));
 const terminalPreviewFamily = computed(() => resolveTerminalFontFamily(draft));
+watch([uiPreviewFamily, terminalPreviewFamily], ([ui, terminal]) => {
+  void ensureBundledFontStyles(ui);
+  void ensureBundledFontStyles(terminal);
+}, { immediate: true });
 
 void load();
 

@@ -201,15 +201,18 @@ function syncService(): void {
     mock.timers.tick(5);
     assert.equal(patches.length, 1, 'a rebuild that changes nothing publishes nothing');
 
+    const beforeCleanReads = builds;
     assert.deepEqual(sync.read({ epoch, version: 1 }), { epoch, version: 1, current: true }, 'a current client gets no data');
     const behind = sync.read({ epoch, version: 0 });
     assert.ok('patches' in behind && behind.patches.map((patch) => patch.to).join() === '1', 'a client one change behind gets that patch');
     assert.ok('projects' in sync.read({ epoch: 'restarted', version: 1 }), 'a client from another server run gets the snapshot');
+    assert.equal(builds, beforeCleanReads, 'reads without pending invalidations reuse the cached snapshot');
 
     change();
-    const unannounced = sync.read({ epoch, version: 1 });
-    assert.equal(patches.length, 2, 'a change nobody announced still reaches every client on the next read');
-    assert.ok('patches' in unannounced && unannounced.patches[0]!.from === 1);
+    sync.invalidate();
+    const pendingRead = sync.read({ epoch, version: 1 });
+    assert.equal(patches.length, 2, 'a pending invalidation is flushed before answering a read');
+    assert.ok('patches' in pendingRead && pendingRead.patches[0]!.from === 1);
 
     for (let index = 0; index < 4; index++) { change(); sync.flush(); }
     assert.ok('projects' in sync.read({ epoch, version: 1 }), 'a client older than the kept patches gets the snapshot');

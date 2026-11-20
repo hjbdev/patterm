@@ -1,4 +1,4 @@
-import type { App, ComponentInternalInstance, ComponentPublicInstance } from 'vue';
+import type { App, ComponentInternalInstance, ComponentPublicInstance, VNode } from 'vue';
 import type { Router } from 'vue-router';
 import components from 'virtual:patterm-components';
 import { commandKind } from './commandKind';
@@ -32,17 +32,57 @@ let seconds: Record<string, number> = {};
 let page: { name: string; since: number | null } | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
 let inventorySent = false;
+let installedApp: App | null = null;
+let mixinInstalled = false;
+
+function backfillMountedOwners(root: ComponentInternalInstance | null | undefined): void {
+  if (!root) return;
+  const visited = new Set<ComponentInternalInstance>();
+  const walkVNode = (vnode: VNode | null | undefined): void => {
+    if (!vnode || typeof vnode !== 'object') return;
+    if (vnode.component) walkInstance(vnode.component);
+    if (Array.isArray(vnode.children)) {
+      for (const child of vnode.children) {
+        if (child && typeof child === 'object') walkVNode(child as VNode);
+      }
+    }
+    const suspense = (vnode as { suspense?: { activeBranch?: VNode | null } }).suspense;
+    if (suspense?.activeBranch) walkVNode(suspense.activeBranch);
+  };
+  const walkInstance = (instance: ComponentInternalInstance): void => {
+    if (visited.has(instance)) return;
+    visited.add(instance);
+    // Children first, matching Vue's mounted hook order so a shared root keeps
+    // the child's more specific owner.
+    walkVNode(instance.subTree);
+    const el = instance.proxy?.$el ?? instance.vnode?.el;
+    if (el instanceof Element && !owners.has(el)) {
+      const owner = appOwner(instance);
+      if (owner) owners.set(el, owner);
+    }
+  };
+  walkInstance(root);
+}
+
+function ensureOwnerMixin(): void {
+  if (!installedApp) return;
+  if (!mixinInstalled) {
+    mixinInstalled = true;
+    installedApp.mixin({
+      // Children mount first, so a root element shared with a parent keeps the
+      // child's more specific owner. Skip completely while telemetry is off.
+      mounted(this: ComponentPublicInstance) {
+        if (!epoch || !(this.$el instanceof Element) || owners.has(this.$el)) return;
+        const owner = appOwner(this.$);
+        if (owner) owners.set(this.$el, owner);
+      }
+    });
+  }
+  backfillMountedOwners((installedApp as App & { _instance?: ComponentInternalInstance | null })._instance);
+}
 
 export function installTelemetry(app: App, router: Router): void {
-  app.mixin({
-    // Children mount first, so a root element shared with a parent keeps the
-    // child's more specific owner.
-    mounted(this: ComponentPublicInstance) {
-      if (!(this.$el instanceof Element) || owners.has(this.$el)) return;
-      const owner = appOwner(this.$);
-      if (owner) owners.set(this.$el, owner);
-    }
-  });
+  installedApp = app;
   router.afterEach((to, _from, failure) => {
     if (!epoch || failure) return;
     const name = typeof to.name === 'string' ? to.name : 'unnamed';
@@ -146,6 +186,7 @@ function apply(settings: TelemetrySettings, router: Router): void {
   if (timer) clearInterval(timer);
   timer = null;
   if (!epoch) return;
+  ensureOwnerMixin();
   const name = router.currentRoute.value.name;
   page = { name: typeof name === 'string' ? name : 'unnamed', since: document.visibilityState === 'hidden' ? null : performance.now() };
   views[page.name] = 1;

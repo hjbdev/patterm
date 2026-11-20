@@ -6,7 +6,8 @@ out/
 .vite/
 *.log
 *.tmp
-native/terminal-core/target/
+# Also a symlink with mr-boxington (mbx), so no trailing slash.
+native/terminal-core/target
 debug-pty-logs/
 .worktrees/
 .claude/

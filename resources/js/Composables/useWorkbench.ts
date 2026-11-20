@@ -22,16 +22,17 @@ type WorkbenchRead = HeldWorkbench | (WorkbenchVersion & { patches: WorkbenchPat
 
 // Version checks on window focus catch a connection that dropped silently.
 const FOCUS_CHECK_INTERVAL_MS = 30_000;
+const MAX_ARCHIVED = 500;
 
-const projects = ref<ProjectWorkbench[]>([]);
+const projects = shallowRef<ProjectWorkbench[]>([]);
 // Each bot's hidden project, and the assistant's, held apart so project
 // lists never show them.
-const botProjects = ref<ProjectWorkbench[]>([]);
-const assistantProject = ref<ProjectWorkbench | null>(null);
+const botProjects = shallowRef<ProjectWorkbench[]>([]);
+const assistantProject = shallowRef<ProjectWorkbench | null>(null);
 // Paired hosts' assistants' projects, where their sessions live.
-const remoteAssistantProjects = ref<ProjectWorkbench[]>([]);
-const harnesses = ref<HarnessInstallationRecord[]>([]);
-const sidebarState = ref<SidebarState>({
+const remoteAssistantProjects = shallowRef<ProjectWorkbench[]>([]);
+const harnesses = shallowRef<HarnessInstallationRecord[]>([]);
+const sidebarState = shallowRef<SidebarState>({
   projects: [],
   sections: [],
   knownProjects: [],
@@ -114,6 +115,60 @@ function start(): void {
   });
 }
 
+export interface ProcessLookupMatch {
+  projectId: string;
+  session: SessionRecord | null;
+  process: ProcessRecord | null;
+}
+
+// Shared O(1) index of every live/recent process across projects and bots,
+// built once per workbench update so ProcessMention chips never scan projects.
+const processIndex = computed(() => {
+  const index = new Map<string, ProcessLookupMatch[]>();
+  const allProjects = [
+    ...projects.value,
+    ...botProjects.value,
+    ...(assistantProject.value ? [assistantProject.value] : []),
+    ...remoteAssistantProjects.value
+  ];
+  const push = (processId: string, entry: ProcessLookupMatch) => {
+    const list = index.get(processId);
+    if (list) list.push(entry);
+    else index.set(processId, [entry]);
+  };
+  for (const item of allProjects) {
+    const projectId = item.project.id;
+    const bestSession = new Map<string, SessionRecord>();
+    for (const session of item.projectSessions) {
+      if (!session.processId) continue;
+      const existing = bestSession.get(session.processId);
+      if (!existing) {
+        bestSession.set(session.processId, session);
+      } else if (existing.exitedAt && (!session.exitedAt || session.startedAt > existing.startedAt)) {
+        bestSession.set(session.processId, session);
+      }
+    }
+    for (const [processId, session] of bestSession) {
+      push(processId, { projectId, session, process: null });
+    }
+    for (const process of item.processes) {
+      if (bestSession.has(process.id)) continue;
+      push(process.id, { projectId, session: null, process });
+    }
+  }
+  return index;
+});
+
+function lookupProcess(processId: string, preferProjectId?: string | null): ProcessLookupMatch | null {
+  const entries = processIndex.value.get(processId);
+  if (!entries?.length) return null;
+  if (preferProjectId) {
+    const preferred = entries.find((entry) => entry.projectId === preferProjectId);
+    if (preferred) return preferred;
+  }
+  return entries[0] ?? null;
+}
+
 export function useWorkbench() {
   start();
   const sidecarStatus = computed(() => (sidecarAvailable.value ? 'terminal core online' : 'terminal core not started'));
@@ -123,7 +178,15 @@ export function useWorkbench() {
     sidebarState.value = normalizeSidebarState(saved ?? state);
   };
 
-  return { projects, botProjects, assistantProject, remoteAssistantProjects, harnesses, sidecarStatus, sidecarAvailable, sidebarState, updateSidebarState, loaded, epoch, refresh, revision, lifecycleRevision, archivedSessions, archivedProcesses, loadArchived };
+  return { projects, botProjects, assistantProject, remoteAssistantProjects, harnesses, sidecarStatus, sidecarAvailable, sidebarState, updateSidebarState, loaded, epoch, refresh, revision, lifecycleRevision, archivedSessions, archivedProcesses, loadArchived, lookupProcess };
+}
+
+function setBoundedMap<V>(source: Map<string, V>, key: string, value: V): Map<string, V> {
+  const next = new Map(source);
+  next.delete(key);
+  next.set(key, value);
+  while (next.size > MAX_ARCHIVED) next.delete(next.keys().next().value!);
+  return next;
 }
 
 // Reads one session or process the snapshot no longer lists. Each is read
@@ -132,14 +195,15 @@ async function loadArchived(projectId: string, record: { sessionId?: string; pro
   const key = `${projectId}\0${record.sessionId ?? ''}\0${record.processId ?? ''}`;
   if (archiveReads.has(key) || !window.patterm?.workbenchRecord) return;
   archiveReads.add(key);
+  while (archiveReads.size > MAX_ARCHIVED) archiveReads.delete(archiveReads.values().next().value!);
   try {
     const result = await window.patterm.workbenchRecord({
       project_id: projectId,
       ...(record.sessionId ? { session_id: record.sessionId } : {}),
       ...(record.processId ? { process_id: record.processId } : {})
     }) as { session?: SessionRecord | null; process?: ProcessRecord | null } | null;
-    if (result?.session) archivedSessions.value = new Map(archivedSessions.value).set(result.session.id, result.session);
-    if (result?.process) archivedProcesses.value = new Map(archivedProcesses.value).set(result.process.id, result.process);
+    if (result?.session) archivedSessions.value = setBoundedMap(archivedSessions.value, result.session.id, result.session);
+    if (result?.process) archivedProcesses.value = setBoundedMap(archivedProcesses.value, result.process.id, result.process);
   } catch {
     archiveReads.delete(key);
   }
@@ -181,14 +245,27 @@ function applyPatch(patch: WorkbenchPatch): void {
   if (patch.changes.sidebarState) sidebarState.value = normalizeSidebarState(next.sidebarState);
 }
 
+function sameElements<T>(left: readonly T[], right: readonly T[]): boolean {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index++) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+}
+
 function publish(lifecycle: boolean): void {
   const current = held();
   if (!current) return;
-  projects.value = current.projects.filter((project) => project.project.kind !== 'bots' && project.project.kind !== 'assistant');
-  botProjects.value = current.projects.filter((project) => project.project.kind === 'bots');
-  assistantProject.value = current.projects.find((project) => project.project.kind === 'assistant' && !project.project.host) ?? null;
-  remoteAssistantProjects.value = current.projects.filter((project) => project.project.kind === 'assistant' && project.project.host);
-  harnesses.value = current.harnesses;
+  const nextProjects = current.projects.filter((project) => project.project.kind !== 'bots' && project.project.kind !== 'assistant');
+  const nextBotProjects = current.projects.filter((project) => project.project.kind === 'bots');
+  const nextAssistant = current.projects.find((project) => project.project.kind === 'assistant' && !project.project.host) ?? null;
+  const nextRemoteAssistants = current.projects.filter((project) => project.project.kind === 'assistant' && project.project.host);
+  if (!sameElements(projects.value, nextProjects)) projects.value = nextProjects;
+  if (!sameElements(botProjects.value, nextBotProjects)) botProjects.value = nextBotProjects;
+  if (assistantProject.value !== nextAssistant) assistantProject.value = nextAssistant;
+  if (!sameElements(remoteAssistantProjects.value, nextRemoteAssistants)) remoteAssistantProjects.value = nextRemoteAssistants;
+  if (!sameElements(harnesses.value, current.harnesses)) harnesses.value = current.harnesses;
   sidecarAvailable.value = current.terminalAvailable;
   epoch.value = current.epoch;
   revision.value += 1;
