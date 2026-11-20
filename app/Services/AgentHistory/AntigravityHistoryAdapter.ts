@@ -7,7 +7,7 @@ import { isoFromString, nonNegative, readJsonl, statOnlyFingerprint, stringValue
 // responses are conversation text; generated settings/system metadata stays out.
 export class AntigravityHistoryAdapter implements ProviderHistoryAdapter {
   readonly provider = 'agy' as const;
-  readonly parserVersion = 'agy-jsonl-v1';
+  readonly parserVersion = 'agy-jsonl-v2';
 
   defaultSources(home: string): HistorySourceCandidate[] {
     const source = path.join(home, '.gemini', 'antigravity-cli', 'brain');

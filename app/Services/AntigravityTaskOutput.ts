@@ -106,7 +106,24 @@ export function readAntigravityTaskOutput(
   if (end !== null && (!Number.isInteger(end) || end < 0)) throw new Error('Invalid task output cursor');
   const messages = new AntigravityHistoryAdapter().parseFile(file).conversations[0]?.messages ?? [];
   const sliceEnd = Math.min(end ?? messages.length, messages.length);
-  const start = Math.max(0, sliceEnd - TRANSCRIPT_PAGE);
+  let start = Math.max(0, sliceEnd - TRANSCRIPT_PAGE);
+  // Keep paired tool_call / tool_result rows in the same page so folding in
+  // the drawer never splits a tool call from its output across a page edge.
+  if (start > 0 && start < sliceEnd) {
+    const callIndex = new Map<string, number>();
+    for (let i = 0; i < sliceEnd; i++) {
+      const msg = messages[i];
+      const callId = typeof msg?.metadata?.callId === 'string' ? msg.metadata.callId : '';
+      if (msg?.kind === 'tool_call' && callId && !callIndex.has(callId)) callIndex.set(callId, i);
+    }
+    for (let i = sliceEnd - 1; i >= start; i--) {
+      const msg = messages[i];
+      const callId = typeof msg?.metadata?.callId === 'string' ? msg.metadata.callId : '';
+      if (msg?.kind !== 'tool_result' || !callId) continue;
+      const paired = callIndex.get(callId);
+      if (paired !== undefined && paired < start) start = paired;
+    }
+  }
   const kept = messages.slice(start, sliceEnd);
   return {
     format: 'transcript',

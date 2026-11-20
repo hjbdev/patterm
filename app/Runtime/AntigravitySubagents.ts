@@ -6,6 +6,9 @@ import { buildTranscriptTool, toolActivityLabel } from '../Services/TranscriptPr
 type Row = Record<string, unknown>;
 
 const MAX_READ_BYTES = 1024 * 1024;
+const MAX_CHUNKS_PER_POLL = 16;
+const OVERSIZE_SCAN_CHUNK = 64 * 1024;
+const MAX_OVERSIZE_SCAN_BYTES = 64 * 1024 * 1024;
 const MAX_PREVIEW_CHARS = 8_000;
 const MAX_TASKS = 20;
 const SETTLED_IDLE_MS = 5_000;
@@ -18,6 +21,7 @@ interface FileTail {
   ino: number | null;
   skipPartial: boolean;
   mtimeMs: number;
+  hasMore: boolean;
 }
 
 interface PendingInvoke {
@@ -40,6 +44,7 @@ interface TrackedSubagent {
   tail: FileTail;
   seenSteps: Set<number>;
   pendingTools: Array<{ rowId: string; name: string; input: Record<string, unknown>; createdAt?: string }>;
+  lastToolName: string | null;
   lastStepWasFinal: boolean;
   hasRows: boolean;
 }
@@ -150,7 +155,7 @@ export class AntigravitySubagentTracker {
     if (this.stopped) return;
     this.pollParent();
     for (const subagent of this.subagents.values()) {
-      if (subagent.status === 'running' || subagent.status === 'pending' || !subagent.hasRows) {
+      if (subagent.status !== 'stopped' || !subagent.hasRows) {
         this.pollSubagent(subagent, initialLoad);
       }
     }
@@ -189,7 +194,10 @@ export class AntigravitySubagentTracker {
 
   private updateTimer(): void {
     const needsPoll = this.unlinkedInvokes.length > 0
-      || [...this.subagents.values()].some((subagent) => subagent.status === 'running' || subagent.status === 'pending');
+      || Boolean(this.parentTail?.hasMore)
+      || [...this.subagents.values()].some((subagent) =>
+        subagent.status === 'running' || subagent.status === 'pending' || subagent.tail.hasMore
+      );
     if (needsPoll) this.ensurePolling();
     else if (this.timer) {
       clearInterval(this.timer);
@@ -197,7 +205,13 @@ export class AntigravitySubagentTracker {
     }
   }
 
+  private dropUnlinkedInvoke(toolRowId: string): void {
+    const index = this.unlinkedInvokes.findIndex((item) => item.toolRowId === toolRowId);
+    if (index >= 0) this.unlinkedInvokes.splice(index, 1);
+  }
+
   private attachParentToolRow(subagent: TrackedSubagent, toolRowId: string, label: string, kind: string): void {
+    this.dropUnlinkedInvoke(toolRowId);
     subagent.parentToolRowId = toolRowId;
     this.toolRowToSubagent.set(toolRowId, subagent.id);
     if (label && subagent.label === 'Subagent') subagent.label = label;
@@ -205,8 +219,10 @@ export class AntigravitySubagentTracker {
     // Replay the child's log once we know which parent tool row owns its rows.
     subagent.tail.offset = 0;
     subagent.tail.skipPartial = false;
+    subagent.tail.hasMore = false;
     subagent.seenSteps.clear();
     subagent.pendingTools.length = 0;
+    subagent.lastToolName = null;
     subagent.hasRows = false;
   }
 
@@ -225,10 +241,14 @@ export class AntigravitySubagentTracker {
       const byPrompt = candidates.find((subagent) => subagent.prompt === prompt);
       if (byPrompt) return byPrompt;
     }
-    return candidates[0] ?? null;
+    return candidates.find((subagent) =>
+      (!role || !subagent.role || subagent.role === role)
+      && (!prompt || !subagent.prompt || subagent.prompt === prompt)
+    ) ?? null;
   }
 
   private registerSubagent(id: string, toolRowId: string | null, label: string, kind: string, role = '', prompt = ''): TrackedSubagent {
+    if (toolRowId) this.dropUnlinkedInvoke(toolRowId);
     const existing = this.subagents.get(id);
     if (existing) {
       if (role && !existing.role) existing.role = role;
@@ -252,6 +272,7 @@ export class AntigravitySubagentTracker {
       tail: createTail(transcriptPath ?? ''),
       seenSteps: new Set(),
       pendingTools: [],
+      lastToolName: null,
       lastStepWasFinal: false,
       hasRows: false
     };
@@ -267,206 +288,223 @@ export class AntigravitySubagentTracker {
     let index = role && prompt ? this.unlinkedInvokes.findIndex((item) => item.role === role && item.prompt === prompt) : -1;
     if (index < 0 && role) index = this.unlinkedInvokes.findIndex((item) => item.role === role);
     if (index < 0 && prompt) index = this.unlinkedInvokes.findIndex((item) => item.prompt === prompt);
-    if (index < 0) index = 0;
+    if (index < 0) {
+      index = this.unlinkedInvokes.findIndex((item) =>
+        (!role || !item.role || item.role === role)
+        && (!prompt || !item.prompt || item.prompt === prompt)
+      );
+    }
+    if (index < 0) return null;
     return this.unlinkedInvokes.splice(index, 1)[0] ?? null;
   }
 
   private pollParent(): void {
     if (!this.parentTail) return;
-    const lines = readNewLines(this.parentTail);
-    for (const line of lines) {
-      let row: Row;
-      try {
-        const parsed: unknown = JSON.parse(line);
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
-        row = parsed as Row;
-      } catch {
-        continue;
-      }
-      if (typeof row.step_index === 'number') {
-        if (this.parentSeenSteps.has(row.step_index)) continue;
-        this.parentSeenSteps.add(row.step_index);
-      }
-      if (row.type === 'USER_INPUT' && row.source === 'USER_EXPLICIT') {
-        this.parentPendingTools.length = 0;
-        continue;
-      }
-      if (row.type === 'PLANNER_RESPONSE' && row.source === 'MODEL' && Array.isArray(row.tool_calls)) {
-        for (const rawCall of row.tool_calls) {
-          if (!rawCall || typeof rawCall !== 'object') continue;
-          const call = rawCall as Row;
-          const name = typeof call.name === 'string' ? call.name : '';
-          const args = parseToolArgs(call.args);
-          this.parentPendingTools.push({ name, args });
-          if (name === 'send_message') {
-            const recipient = typeof args.Recipient === 'string' ? args.Recipient : '';
-            const subagent = recipient ? this.subagents.get(recipient) : undefined;
-            if (subagent) {
-              subagent.status = 'running';
-              subagent.lastStepWasFinal = false;
-            }
-          } else if (name === 'manage_subagents') {
-            const action = typeof args.Action === 'string' ? args.Action : '';
-            if (action === 'kill_all') {
-              for (const subagent of this.subagents.values()) {
-                if (subagent.status === 'running' || subagent.status === 'pending') subagent.status = 'stopped';
+    for (let chunk = 0; chunk < MAX_CHUNKS_PER_POLL; chunk++) {
+      const lines = readNewLines(this.parentTail);
+      for (const line of lines) {
+        let row: Row;
+        try {
+          const parsed: unknown = JSON.parse(line);
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+          row = parsed as Row;
+        } catch {
+          continue;
+        }
+        if (typeof row.step_index === 'number') {
+          if (this.parentSeenSteps.has(row.step_index)) continue;
+          this.parentSeenSteps.add(row.step_index);
+        }
+        if (row.type === 'USER_INPUT' && row.source === 'USER_EXPLICIT') {
+          this.parentPendingTools.length = 0;
+          continue;
+        }
+        if (row.type === 'PLANNER_RESPONSE' && row.source === 'MODEL' && Array.isArray(row.tool_calls)) {
+          for (const rawCall of row.tool_calls) {
+            if (!rawCall || typeof rawCall !== 'object') continue;
+            const call = rawCall as Row;
+            const name = typeof call.name === 'string' ? call.name : '';
+            const args = parseToolArgs(call.args);
+            this.parentPendingTools.push({ name, args });
+            if (name === 'send_message') {
+              const recipient = typeof args.Recipient === 'string' ? args.Recipient : '';
+              const subagent = recipient ? this.subagents.get(recipient) : undefined;
+              if (subagent) {
+                subagent.status = 'running';
+                subagent.lastStepWasFinal = false;
               }
-            } else if (action === 'kill' && Array.isArray(args.ConversationIds)) {
-              for (const rawId of args.ConversationIds) {
-                const subagent = typeof rawId === 'string' ? this.subagents.get(rawId) : undefined;
-                if (subagent && (subagent.status === 'running' || subagent.status === 'pending')) subagent.status = 'stopped';
+            } else if (name === 'manage_subagents') {
+              const action = typeof args.Action === 'string' ? args.Action : '';
+              if (action === 'kill_all') {
+                for (const subagent of this.subagents.values()) {
+                  if (subagent.status === 'running' || subagent.status === 'pending') subagent.status = 'stopped';
+                }
+              } else if (action === 'kill' && Array.isArray(args.ConversationIds)) {
+                for (const rawId of args.ConversationIds) {
+                  const subagent = typeof rawId === 'string' ? this.subagents.get(rawId) : undefined;
+                  if (subagent && (subagent.status === 'running' || subagent.status === 'pending')) subagent.status = 'stopped';
+                }
               }
             }
           }
+          continue;
         }
-        continue;
-      }
-      if (row.type === 'GENERIC' && row.source === 'MODEL' && this.parentPendingTools.length) {
-        const call = this.parentPendingTools.shift()!;
-        if (call.name === 'invoke_subagent') {
-          const id = extractAntigravitySubagentId(row.content);
-          if (id && id !== this.options.sessionId) {
-            const alreadyLinked = Boolean(this.subagents.get(id)?.parentToolRowId);
-            const matched = alreadyLinked ? null : this.matchUnlinkedInvoke(call.args);
-            const label = matched?.label && matched.label !== 'Subagent' ? matched.label : invokeLabel(call.args);
-            const kind = matched?.kind && matched.kind !== 'subagent' ? matched.kind : invokeKind(call.args);
-            const role = typeof call.args.Role === 'string' ? call.args.Role : matched?.role ?? '';
-            const prompt = typeof call.args.Prompt === 'string' ? call.args.Prompt : matched?.prompt ?? '';
-            this.registerSubagent(id, matched?.toolRowId ?? null, label, kind, role, prompt);
+        if (row.type === 'GENERIC' && row.source === 'MODEL' && this.parentPendingTools.length) {
+          const call = this.parentPendingTools.shift()!;
+          if (call.name === 'invoke_subagent') {
+            const id = extractAntigravitySubagentId(row.content);
+            if (id && id !== this.options.sessionId) {
+              const alreadyLinked = Boolean(this.subagents.get(id)?.parentToolRowId);
+              const matched = alreadyLinked ? null : this.matchUnlinkedInvoke(call.args);
+              const label = matched?.label && matched.label !== 'Subagent' ? matched.label : invokeLabel(call.args);
+              const kind = matched?.kind && matched.kind !== 'subagent' ? matched.kind : invokeKind(call.args);
+              const role = typeof call.args.Role === 'string' ? call.args.Role : matched?.role ?? '';
+              const prompt = typeof call.args.Prompt === 'string' ? call.args.Prompt : matched?.prompt ?? '';
+              this.registerSubagent(id, matched?.toolRowId ?? null, label, kind, role, prompt);
+            }
           }
+          continue;
         }
-        continue;
+        if (row.type === 'SYSTEM_MESSAGE' && typeof row.content === 'string') {
+          const match = /\[Message\][^\n]*\bsender=([A-Za-z0-9_-]{1,128})\b[^\n]*\bcontent=([\s\S]*?)(?:\n<\/SYSTEM_MESSAGE>|$)/.exec(row.content);
+          if (!match?.[1]) continue;
+          const subagent = this.subagents.get(match[1]);
+          if (!subagent) continue;
+          // Tail the child first so we know whether it sent a mid-turn update
+          // via send_message or finished its turn.
+          this.pollSubagent(subagent, false);
+          const replyLine = firstLine(match[2] ?? '');
+          if (replyLine && subagent.status !== 'failed') subagent.detail = replyLine;
+          const midTurn = subagent.pendingTools.length > 0 || subagent.lastToolName === 'send_message';
+          if (!midTurn && (subagent.status === 'running' || subagent.status === 'pending')) subagent.status = 'completed';
+        }
       }
-      if (row.type === 'SYSTEM_MESSAGE' && typeof row.content === 'string') {
-        const match = /\[Message\][^\n]*\bsender=([A-Za-z0-9_-]{1,128})\b[^\n]*\bcontent=([\s\S]*?)(?:\n<\/SYSTEM_MESSAGE>|$)/.exec(row.content);
-        if (!match?.[1]) continue;
-        const subagent = this.subagents.get(match[1]);
-        if (!subagent) continue;
-        // One final tail read captures any remaining steps before marking done.
-        this.pollSubagent(subagent, false);
-        const replyLine = firstLine(match[2] ?? '');
-        if (replyLine && subagent.status !== 'failed') subagent.detail = replyLine;
-        if (subagent.status === 'running' || subagent.status === 'pending') subagent.status = 'completed';
-      }
+      if (!this.parentTail.hasMore) break;
     }
   }
 
   private pollSubagent(subagent: TrackedSubagent, initialLoad: boolean): void {
     if (!subagent.tail.path) return;
-    const lines = readNewLines(subagent.tail);
-    for (const line of lines) {
-      let row: Row;
-      try {
-        const parsed: unknown = JSON.parse(line);
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
-        row = parsed as Row;
-      } catch {
-        continue;
-      }
-      if (typeof row.step_index !== 'number' || subagent.seenSteps.has(row.step_index)) continue;
-      subagent.seenSteps.add(row.step_index);
-      const createdAt = isoTimestamp(row.created_at);
-      const content = typeof row.content === 'string' ? row.content : '';
-      const parentId = subagent.parentToolRowId ?? undefined;
-
-      if (row.type === 'PLANNER_RESPONSE' && row.source === 'MODEL') {
-        const thinking = typeof row.thinking === 'string' ? row.thinking.trim() : '';
-        if (thinking && parentId) {
-          subagent.hasRows = true;
-          this.options.onMessage({
-            id: `sub:${subagent.id}:${row.step_index}:thinking`,
-            role: 'assistant',
-            kind: 'reasoning',
-            text: clip(thinking, MAX_PREVIEW_CHARS),
-            parentId,
-            ...(createdAt ? { createdAt, completedAt: createdAt } : {})
-          });
+    for (let chunk = 0; chunk < MAX_CHUNKS_PER_POLL; chunk++) {
+      const lines = readNewLines(subagent.tail);
+      for (const line of lines) {
+        let row: Row;
+        try {
+          const parsed: unknown = JSON.parse(line);
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+          row = parsed as Row;
+        } catch {
+          continue;
         }
-        const calls = Array.isArray(row.tool_calls) ? row.tool_calls : [];
-        if (content.trim()) {
-          subagent.hasRows = true;
-          const summary = firstLine(content);
-          if (summary) subagent.detail = summary;
-          if (parentId) {
+        if (typeof row.step_index !== 'number' || subagent.seenSteps.has(row.step_index)) continue;
+        subagent.seenSteps.add(row.step_index);
+        const createdAt = isoTimestamp(row.created_at);
+        const content = typeof row.content === 'string' ? row.content : '';
+        const parentId = subagent.parentToolRowId ?? undefined;
+
+        if (row.type === 'PLANNER_RESPONSE' && row.source === 'MODEL') {
+          const thinking = typeof row.thinking === 'string' ? row.thinking.trim() : '';
+          if (thinking && parentId) {
+            subagent.hasRows = true;
             this.options.onMessage({
-              id: `sub:${subagent.id}:${row.step_index}:text`,
+              id: `sub:${subagent.id}:${row.step_index}:thinking`,
               role: 'assistant',
-              kind: 'text',
+              kind: 'reasoning',
+              text: clip(thinking, MAX_PREVIEW_CHARS),
+              parentId,
+              ...(createdAt ? { createdAt, completedAt: createdAt } : {})
+            });
+          }
+          const calls = Array.isArray(row.tool_calls) ? row.tool_calls : [];
+          if (content.trim()) {
+            subagent.hasRows = true;
+            const summary = firstLine(content);
+            if (summary) subagent.detail = summary;
+            if (parentId) {
+              this.options.onMessage({
+                id: `sub:${subagent.id}:${row.step_index}:text`,
+                role: 'assistant',
+                kind: 'text',
+                text: clip(content, MAX_PREVIEW_CHARS),
+                parentId,
+                ...(createdAt ? { createdAt, completedAt: createdAt } : {})
+              });
+            }
+          }
+          if (calls.length === 0) subagent.lastToolName = null;
+          for (const [index, rawCall] of calls.entries()) {
+            if (!rawCall || typeof rawCall !== 'object') continue;
+            const call = rawCall as Row;
+            const name = typeof call.name === 'string' && call.name ? call.name : 'Tool';
+            subagent.lastToolName = name;
+            const input = parseToolArgs(call.args);
+            const rowId = `sub:${subagent.id}:${row.step_index}:tool:${index}`;
+            subagent.pendingTools.push({ rowId, name, input, ...(createdAt ? { createdAt } : {}) });
+            subagent.detail = toolActivityLabel(buildTranscriptTool(name, { input, state: { status: 'running' } }, ''));
+            if (subagent.status === 'completed') subagent.status = 'running';
+            if (parentId) {
+              subagent.hasRows = true;
+              this.options.onMessage({
+                id: rowId,
+                role: 'assistant',
+                kind: 'tool',
+                text: '',
+                parentId,
+                ...(createdAt ? { createdAt } : {}),
+                tool: { name, input, state: { status: 'running' } }
+              });
+            }
+          }
+          subagent.lastStepWasFinal = calls.length === 0 && (Boolean(content.trim()) || row.status === 'DONE');
+          if (row.status === 'ERROR') {
+            subagent.status = 'failed';
+            subagent.detail = firstLine(content) || 'Subagent step failed';
+          }
+          continue;
+        }
+
+        if (row.type === 'GENERIC' && row.source === 'MODEL' && subagent.pendingTools.length) {
+          const pending = subagent.pendingTools.shift()!;
+          const failed = row.status === 'ERROR';
+          const cleaned = stripStepTimestamps(content);
+          if (parentId) {
+            subagent.hasRows = true;
+            this.options.onMessage({
+              id: pending.rowId,
+              role: 'assistant',
+              kind: 'tool',
+              text: clip(cleaned, MAX_PREVIEW_CHARS),
+              parentId,
+              ...(pending.createdAt ? { createdAt: pending.createdAt } : {}),
+              ...(createdAt ? { completedAt: createdAt } : {}),
+              tool: {
+                name: pending.name,
+                input: pending.input,
+                state: failed ? { status: 'failed', error: firstLine(cleaned) || 'Tool failed' } : { status: 'completed' }
+              }
+            });
+          }
+          continue;
+        }
+
+        if (row.type === 'ERROR_MESSAGE') {
+          subagent.status = 'failed';
+          subagent.detail = firstLine(content) || 'Subagent error';
+          if (parentId && content.trim()) {
+            subagent.hasRows = true;
+            this.options.onMessage({
+              id: `sub:${subagent.id}:${row.step_index}:error`,
+              role: 'assistant',
+              kind: 'notice',
+              level: 'error',
               text: clip(content, MAX_PREVIEW_CHARS),
               parentId,
               ...(createdAt ? { createdAt, completedAt: createdAt } : {})
             });
           }
         }
-        for (const [index, rawCall] of calls.entries()) {
-          if (!rawCall || typeof rawCall !== 'object') continue;
-          const call = rawCall as Row;
-          const name = typeof call.name === 'string' && call.name ? call.name : 'Tool';
-          const input = parseToolArgs(call.args);
-          const rowId = `sub:${subagent.id}:${row.step_index}:tool:${index}`;
-          subagent.pendingTools.push({ rowId, name, input, ...(createdAt ? { createdAt } : {}) });
-          subagent.detail = toolActivityLabel(buildTranscriptTool(name, { input, state: { status: 'running' } }, ''));
-          if (parentId) {
-            subagent.hasRows = true;
-            this.options.onMessage({
-              id: rowId,
-              role: 'assistant',
-              kind: 'tool',
-              text: '',
-              parentId,
-              ...(createdAt ? { createdAt } : {}),
-              tool: { name, input, state: { status: 'running' } }
-            });
-          }
-        }
-        subagent.lastStepWasFinal = calls.length === 0 && (Boolean(content.trim()) || row.status === 'DONE');
-        if (row.status === 'ERROR') {
-          subagent.status = 'failed';
-          subagent.detail = firstLine(content) || 'Subagent step failed';
-        }
-        continue;
       }
-
-      if (row.type === 'GENERIC' && row.source === 'MODEL' && subagent.pendingTools.length) {
-        const pending = subagent.pendingTools.shift()!;
-        const failed = row.status === 'ERROR';
-        const cleaned = stripStepTimestamps(content);
-        if (parentId) {
-          subagent.hasRows = true;
-          this.options.onMessage({
-            id: pending.rowId,
-            role: 'assistant',
-            kind: 'tool',
-            text: clip(cleaned, MAX_PREVIEW_CHARS),
-            parentId,
-            ...(pending.createdAt ? { createdAt: pending.createdAt } : {}),
-            ...(createdAt ? { completedAt: createdAt } : {}),
-            tool: {
-              name: pending.name,
-              input: pending.input,
-              state: failed ? { status: 'failed', error: firstLine(cleaned) || 'Tool failed' } : { status: 'completed' }
-            }
-          });
-        }
-        continue;
-      }
-
-      if (row.type === 'ERROR_MESSAGE') {
-        subagent.status = 'failed';
-        subagent.detail = firstLine(content) || 'Subagent error';
-        if (parentId && content.trim()) {
-          subagent.hasRows = true;
-          this.options.onMessage({
-            id: `sub:${subagent.id}:${row.step_index}:error`,
-            role: 'assistant',
-            kind: 'notice',
-            level: 'error',
-            text: clip(content, MAX_PREVIEW_CHARS),
-            parentId,
-            ...(createdAt ? { createdAt, completedAt: createdAt } : {})
-          });
-        }
-      }
+      if (!subagent.tail.hasMore) break;
     }
 
     // On a resumed session, a subagent whose transcript already ended cleanly
@@ -488,10 +526,11 @@ export class AntigravitySubagentTracker {
 }
 
 function createTail(filePath: string): FileTail {
-  return { path: filePath, offset: 0, dev: null, ino: null, skipPartial: false, mtimeMs: 0 };
+  return { path: filePath, offset: 0, dev: null, ino: null, skipPartial: false, mtimeMs: 0, hasMore: false };
 }
 
 function readNewLines(tail: FileTail): string[] {
+  tail.hasMore = false;
   if (!tail.path) return [];
   let fd: number;
   try {
@@ -515,8 +554,44 @@ function readNewLines(tail: FileTail): string[] {
     const read = fs.readSync(fd, buffer, 0, length, tail.offset);
     if (read <= 0) return [];
     const lastNewline = buffer.subarray(0, read).lastIndexOf(10);
-    if (lastNewline < 0) return [];
+    if (lastNewline < 0) {
+      if (read < MAX_READ_BYTES) return [];
+      // A single JSONL record exceeded MAX_READ_BYTES; scan forward to its
+      // newline so the cursor never stalls on an oversized tool output.
+      let pos = tail.offset + read;
+      const limit = Math.min(stat.size, tail.offset + MAX_OVERSIZE_SCAN_BYTES);
+      const scanBuf = Buffer.allocUnsafe(OVERSIZE_SCAN_CHUNK);
+      let tailText = '';
+      while (pos < limit) {
+        const chunkLen = Math.min(limit - pos, OVERSIZE_SCAN_CHUNK);
+        const chunkRead = fs.readSync(fd, scanBuf, 0, chunkLen, pos);
+        if (chunkRead <= 0) break;
+        const nl = scanBuf.subarray(0, chunkRead).indexOf(10);
+        if (nl >= 0) {
+          tailText = (tailText + scanBuf.toString('utf8', 0, nl)).slice(-16_384);
+          tail.offset = pos + nl + 1;
+          tail.hasMore = tail.offset < stat.size;
+          if (tail.skipPartial) {
+            tail.skipPartial = false;
+            return [];
+          }
+          const summary = summarizeOversizedJsonlLine(buffer.toString('utf8', 0, Math.min(read, 64 * 1024)), tailText);
+          return summary ? [summary] : [];
+        }
+        tailText = (tailText + scanBuf.toString('utf8', 0, chunkRead)).slice(-16_384);
+        pos += chunkRead;
+      }
+      // If we hit the scan cap with more data left, advance past the scanned
+      // slice and drop the remainder once its newline arrives.
+      if (pos >= tail.offset + MAX_OVERSIZE_SCAN_BYTES && pos < stat.size) {
+        tail.offset = pos;
+        tail.skipPartial = true;
+        tail.hasMore = true;
+      }
+      return [];
+    }
     tail.offset += lastNewline + 1;
+    tail.hasMore = tail.offset < stat.size;
     const lines = buffer.toString('utf8', 0, lastNewline).split('\n');
     if (tail.skipPartial) {
       lines.shift();
@@ -528,6 +603,30 @@ function readNewLines(tail: FileTail): string[] {
   } finally {
     fs.closeSync(fd);
   }
+}
+
+function summarizeOversizedJsonlLine(head: string, tailText: string): string | null {
+  const match = (pattern: RegExp): string | undefined => pattern.exec(head)?.[1] ?? pattern.exec(tailText)?.[1];
+  const stepRaw = match(/(?<!\\)"step_index"\s*:\s*(\d+)/);
+  const type = match(/(?<!\\)"type"\s*:\s*"([A-Z_]+)"/);
+  const source = match(/(?<!\\)"source"\s*:\s*"([A-Z_]+)"/);
+  const status = match(/(?<!\\)"status"\s*:\s*"([A-Z_]+)"/);
+  const createdAt = match(/(?<!\\)"created_at"\s*:\s*"([^"]+)"/);
+  if (!type) return null;
+  const row: Row = {
+    ...(stepRaw !== undefined ? { step_index: Number(stepRaw) } : {}),
+    type,
+    ...(source ? { source } : {}),
+    ...(status ? { status } : {}),
+    ...(createdAt ? { created_at: createdAt } : {})
+  };
+  const conversationId = extractAntigravitySubagentId(head) ?? extractAntigravitySubagentId(tailText);
+  if (conversationId) {
+    row.content = JSON.stringify({ conversationId });
+  } else {
+    row.content = '[Antigravity record output truncated in Patterm]';
+  }
+  return JSON.stringify(row);
 }
 
 function parseToolArgs(value: unknown): Record<string, unknown> {

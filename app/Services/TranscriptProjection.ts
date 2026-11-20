@@ -515,7 +515,7 @@ function projectedMessage(row: Record<string, unknown>, id: string): TranscriptM
     text,
     ...(typeof row.title === 'string' ? { title: row.title } : {}),
     ...(typeof tool.name === 'string'
-      ? { tool: buildTranscriptTool(tool.name, { input: tool.input, state: tool.state, result: tool.result, images: tool.images }, text) }
+      ? { tool: buildTranscriptTool(tool.name, { input: tool.input, state: tool.state, result: tool.result, images: tool.images, row: tool }, text) }
       : {}),
     ...(attachments.length ? { attachments } : {}),
     ...(typeof row.parentId === 'string' && row.parentId ? { parentId: row.parentId } : {}),
@@ -1037,17 +1037,22 @@ function toolStatus(state: unknown, output: string): TranscriptToolStatus {
 }
 
 // Claude names MCP tools mcp__<server>__<tool>; Antigravity uses single
-// underscores mcp_<server>_<tool>; OpenCode prefixes Patterm's bridge as
+// underscores mcp_<server>_<tool> (ambiguous for underscore-bearing servers,
+// so only patterm is split unconditionally and hosts pass resolved server/tool
+// metadata when available); OpenCode prefixes Patterm's bridge as
 // patterm_<socket hash>_<tool>.
 const CLAUDE_MCP = /^mcp__(.+?)__(.+)$/;
-const AGY_MCP = /^mcp_([^_]+)_(.+)$/;
+const AGY_PATTERM_MCP = /^mcp_(patterm)_(.+)$/;
+const AGY_GENERIC_MCP = /^mcp_(.+)$/;
 const OPENCODE_BRIDGE = /^patterm_[0-9a-f]{12}_(.+)$/;
 
 function mcpNameParts(name: string): { server?: string | undefined; tool?: string | undefined } {
   const claude = CLAUDE_MCP.exec(name);
   if (claude) return { server: claude[1], tool: claude[2] };
-  const agy = AGY_MCP.exec(name);
-  if (agy) return { server: agy[1], tool: agy[2] };
+  const patterm = AGY_PATTERM_MCP.exec(name);
+  if (patterm) return { server: patterm[1], tool: patterm[2] };
+  const agy = AGY_GENERIC_MCP.exec(name);
+  if (agy) return { tool: agy[1] };
   const bridge = OPENCODE_BRIDGE.exec(name);
   return bridge ? { server: 'patterm', tool: bridge[1] } : {};
 }

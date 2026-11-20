@@ -91,6 +91,7 @@ const nativeBlocks = new Map<string, IntegratedConversationMessage>();
 let userEcho: IntegratedConversationMessage | null = null;
 let userConfirmed = false;
 let promptAnchorId: string | null = null;
+let liveWindowFloorId: string | null = null;
 let plainTextPrompt = false;
 let stopWatchingPrompt: (() => void) | null = null;
 let admission: { resolve: () => void; reject: (error: Error) => void; timer: NodeJS.Timeout } | null = null;
@@ -280,6 +281,26 @@ function saveSettings(): void {
   try { rememberSettings(); } catch (error) { warnSettings(error); }
 }
 
+function matchConfiguredMcpTool(name: string): { server: string; tool: string } | null {
+  const servers = (config.mcpServers as Array<{ name: string }>).filter((server) => typeof server?.name === 'string' && server.name);
+  const lowerName = name.toLowerCase();
+  const normalizedName = lowerName.replace(/-/g, '_');
+  let best: { server: string; tool: string; len: number } | null = null;
+  for (const server of servers) {
+    const expected = server.name.toLowerCase();
+    const candidates: Array<[string, string]> = [
+      [`mcp_${expected}_`, lowerName],
+      [`mcp_${expected.replace(/-/g, '_')}_`, normalizedName]
+    ];
+    for (const [prefix, target] of candidates) {
+      if (target.startsWith(prefix) && name.length > prefix.length && (!best || prefix.length > best.len)) {
+        best = { server: server.name, tool: name.slice(prefix.length), len: prefix.length };
+      }
+    }
+  }
+  return best ? { server: best.server, tool: best.tool } : null;
+}
+
 function allowsMcp(tool: Row): boolean {
   // The policy covers the whole session, including work agy does after a
   // prompt ends, so it never depends on whether a foreground turn is active.
@@ -293,6 +314,7 @@ function allowsMcp(tool: Row): boolean {
   if (nativeName && priorName && nativeName !== priorName && priorName !== 'other' && priorName !== 'Tool') return false;
   const name = nativeName ?? priorName;
   if (!name) return false;
+  if (matchConfiguredMcpTool(name)) return true;
   const servers = config.mcpServers as Array<{ name: string }>;
   const matchesServer = (candidate: string): boolean => {
     const lower = candidate.toLowerCase();
@@ -302,12 +324,6 @@ function allowsMcp(tool: Row): boolean {
       return lower === expected || normalized === expected.replace(/-/g, '_');
     });
   };
-  const lowerName = name.toLowerCase();
-  const normalizedName = lowerName.replace(/-/g, '_');
-  if (servers.some((server) => {
-    const expected = server.name.toLowerCase();
-    return lowerName.startsWith(`mcp_${expected}_`) || normalizedName.startsWith(`mcp_${expected.replace(/-/g, '_')}_`);
-  })) return true;
   // Lazy MCP dispatch uses the native call_mcp_tool wrapper instead.
   const input = tool.rawInput ?? previous?.input;
   return name === 'call_mcp_tool' && typeof input?.ToolName === 'string' && typeof input?.ServerName === 'string' && matchesServer(input.ServerName);
@@ -378,6 +394,7 @@ function admit(): void {
       const outOfOrder = insertAt < messages.length;
       if (outOfOrder) {
         messages.splice(insertAt, 0, userEcho);
+        liveWindowFloorId = userEcho.id;
         trimMessages();
         // Assistant rows for this turn already streamed to live subscribers;
         // ask them to refresh so the user prompt sits before its response.
@@ -612,7 +629,8 @@ function receive(frame: Row): void {
       const rawText = !replacesContent && !previous?.text && update.rawOutput !== undefined ? rawOutputText(update.rawOutput) : '';
       const rowText = replacesContent ? toolPreview(output) : previous?.text || (rawText ? toolPreview(rawText) : '');
       const toolName = update.name ?? previous?.tool?.name ?? update.kind ?? 'Tool';
-      replace({ id, role: 'assistant', kind: 'tool', text: rowText, createdAt: previous?.createdAt ?? new Date().toISOString(), ...(terminal ? { completedAt: previous?.completedAt ?? new Date().toISOString() } : {}), tool: { name: toolName, input, state: toolState } });
+      const mcpParts = matchConfiguredMcpTool(String(toolName));
+      replace({ id, role: 'assistant', kind: 'tool', text: rowText, createdAt: previous?.createdAt ?? new Date().toISOString(), ...(terminal ? { completedAt: previous?.completedAt ?? new Date().toISOString() } : {}), tool: { name: toolName, input, state: toolState, ...(mcpParts ? { server: mcpParts.server, tool: mcpParts.tool } : {}) } });
       subagents?.observeToolCall(id, String(toolName), input as Record<string, unknown>, rowText, update.rawOutput);
       break;
     }
@@ -709,9 +727,10 @@ function controlState(): Row {
 // pointing at different rows.
 const hostId = randomUUID();
 
-function pageStart(end: number): number {
+function pageStart(end: number, floor = Math.max(0, end - PAGE_MESSAGES)): number {
   let start = end, bytes = 2;
-  while (start > 0 && end - start < PAGE_MESSAGES) {
+  const minStart = Math.max(0, floor);
+  while (start > minStart) {
     const size = Buffer.byteLength(JSON.stringify(messages[start - 1])) + (start === end ? 0 : 1);
     if (start < end && bytes + size > PAGE_BYTES) break;
     bytes += size; start--;
@@ -734,7 +753,16 @@ function olderPage(cursor: unknown): Row {
 }
 
 function snapshot(): Row {
-  const start = pageStart(messages.length);
+  let start = pageStart(messages.length);
+  let splicedBeforeWindow: string | null = null;
+  if (liveWindowFloorId) {
+    const floor = messages.findIndex((row) => row.id === liveWindowFloorId);
+    if (floor < 0) liveWindowFloorId = null;
+    else if (floor < start) {
+      start = pageStart(messages.length, floor);
+      if (floor < start) splicedBeforeWindow = liveWindowFloorId;
+    }
+  }
   const cursor = pageCursor(start);
   const page = messages.slice(start);
   return {
@@ -744,6 +772,7 @@ function snapshot(): Row {
     messages: { data: [...page, ...childrenFor(page)] },
     history_truncated: cursor !== null,
     history_cursor: cursor ? { next: cursor } : null,
+    ...(splicedBeforeWindow ? { history_spliced_id: splicedBeforeWindow } : {}),
     permissions: { data: [...permissions.values()].map(({ rpcId: _rpcId, options: _options, ...permission }) => permission) },
     questions: { data: [] },
     tasks: subagents?.tasks() ?? [],
@@ -770,6 +799,7 @@ async function handle(method: string, params: Row): Promise<unknown> {
     if (busy() || configuring) throw new Error('ACP turn is busy');
     if (!Array.isArray(params.prompt) || !params.prompt.length) throw new Error('Message is empty');
     active = true; cancelling = false; statusDetail = ''; block = null; userConfirmed = false;
+    liveWindowFloorId = null;
     promptAnchorId = messages.length ? messages[messages.length - 1]!.id : null;
     userEcho = { id: params.clientMessageId ?? randomUUID(), ...(params.clientMessageId ? { clientMessageId: params.clientMessageId } : {}), role: 'user', kind: 'text', text: String(params.text ?? ''), createdAt: new Date().toISOString(), attachments: params.attachments ?? [] };
     const accepted = new Promise<void>((resolve, reject) => {

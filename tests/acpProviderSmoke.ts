@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { AcpProviderService } from '../app/Services/AcpProviderService';
+import { AntigravitySubagentTracker } from '../app/Runtime/AntigravitySubagents';
+import { antigravityTranscriptPath, readAntigravityTaskOutput } from '../app/Services/AntigravityTaskOutput';
 import { AntigravityHistoryAdapter } from '../app/Services/AgentHistory/AntigravityHistoryAdapter';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { TurnBusyError, UncertainDeliveryError } from '../app/Services/IntegratedDelivery';
@@ -713,6 +715,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     fs.writeFileSync(log, nativeRows.map((row) => JSON.stringify(row)).join('\n') + '\n');
     fs.copyFileSync(log, path.join(logDirectory, 'transcript_full.jsonl'));
     const adapter = new AntigravityHistoryAdapter();
+    assert.equal(adapter.parserVersion, 'agy-jsonl-v2');
     assert.deepEqual(adapter.discoverFiles(path.join(directory, 'native-history')), [log]);
     const history = adapter.parseFile(log).conversations[0]!;
     assert.equal(history.providerConversationId, 'native-history');
@@ -730,6 +733,82 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     assert.equal(history.messages[6]?.text, 'Internal reasoning');
     assert.equal(history.usage?.[0]?.inputTokens, 10);
     assert(!JSON.stringify(history).includes('hidden'));
+
+    // Edge cases for subagent pairing, mid-turn progress updates, multi-chunk
+    // resume, oversized JSONL records, and drawer page boundaries.
+    const trackerHome = path.join(directory, 'tracker-edge-cases');
+    const trackerEnv = { HOME: trackerHome };
+    const appendLog = (id: string, ...rows: unknown[]) => {
+      const target = antigravityTranscriptPath(id, trackerEnv)!;
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.appendFileSync(target, rows.map((row) => JSON.stringify(row)).join('\n') + '\n');
+    };
+    const modelRow = (step_index: number, fields: Record<string, unknown>) => ({ step_index, source: 'MODEL', type: 'PLANNER_RESPONSE', ...fields });
+    const invokeCall = (role: string) => ({ name: 'invoke_subagent', args: { Role: JSON.stringify(role) } });
+    const invokeResult = (step_index: number, id: string) => ({ step_index, source: 'MODEL', type: 'GENERIC', status: 'DONE', content: `Created the following subagent:\n${JSON.stringify({ conversationId: id })}` });
+    const edgeTrackers: AntigravitySubagentTracker[] = [];
+    try {
+      // Direct ACP link must clear pending unlinked invoke so the next log-first child keeps its own row.
+      const linkRows = new Map<string, any>();
+      const linkTracker = new AntigravitySubagentTracker({ sessionId: 'edge-parent-a', hostEnv: trackerEnv, pollMs: 25, onMessage: (row) => linkRows.set(row.id, row), onTasksChanged: () => {} });
+      edgeTrackers.push(linkTracker);
+      appendLog('edge-child-a', modelRow(0, { content: 'Alpha output' }));
+      appendLog('edge-child-b', modelRow(0, { content: 'Beta output' }));
+      linkTracker.observeToolCall('tool:alpha', 'invoke_subagent', { Role: 'Alpha' }, '', null);
+      linkTracker.observeToolCall('tool:alpha', 'invoke_subagent', { Role: 'Alpha' }, '', { conversationId: 'edge-child-a' });
+      appendLog('edge-parent-a', modelRow(0, { tool_calls: [invokeCall('Alpha'), invokeCall('Beta')] }), invokeResult(1, 'edge-child-a'), invokeResult(2, 'edge-child-b'));
+      linkTracker.syncNow();
+      linkTracker.observeToolCall('tool:beta', 'invoke_subagent', { Role: 'Beta' }, '', null);
+      assert.equal([...linkRows.values()].find((row) => row.text === 'Alpha output')?.parentId, 'tool:alpha');
+      assert.equal([...linkRows.values()].find((row) => row.text === 'Beta output')?.parentId, 'tool:beta');
+
+      // A mid-turn send_message progress update must not mark the child done or stop tailing.
+      const progressRows = new Map<string, any>();
+      const progressTracker = new AntigravitySubagentTracker({ sessionId: 'edge-parent-b', hostEnv: trackerEnv, pollMs: 25, onMessage: (row) => progressRows.set(row.id, row), onTasksChanged: () => {} });
+      edgeTrackers.push(progressTracker);
+      appendLog('edge-working-child', modelRow(0, { tool_calls: [{ name: 'send_message', args: {} }] }));
+      progressTracker.observeToolCall('tool:worker', 'invoke_subagent', { Role: 'Worker' }, '', { conversationId: 'edge-working-child' });
+      appendLog('edge-parent-b', { step_index: 0, type: 'SYSTEM_MESSAGE', source: 'SYSTEM', content: '<SYSTEM_MESSAGE>\n[Message] sender=edge-working-child content=Still working\n</SYSTEM_MESSAGE>' });
+      progressTracker.syncNow();
+      appendLog('edge-working-child', modelRow(1, { content: 'More work after update' }));
+      progressTracker.syncNow();
+      assert.equal(progressTracker.tasks()[0]?.status, 'running');
+      assert.equal(progressRows.has('sub:edge-working-child:1:text'), true);
+
+      // Resumed transcripts larger than 1 MiB drain past the first chunk automatically.
+      const resumeTracker = new AntigravitySubagentTracker({ sessionId: 'edge-resumed-parent', hostEnv: trackerEnv, pollMs: 25, onMessage: () => {}, onTasksChanged: () => {} });
+      edgeTrackers.push(resumeTracker);
+      appendLog('edge-resumed-parent', modelRow(0, { thinking: 'a'.repeat(550_000) }), modelRow(1, { thinking: 'b'.repeat(550_000) }), modelRow(2, { tool_calls: [invokeCall('Resumed')] }), invokeResult(3, 'edge-resumed-child'));
+      resumeTracker.syncNow(true);
+      assert.deepEqual(resumeTracker.tasks().map((task) => task.id), ['edge-resumed-child']);
+
+      // A single JSONL record larger than 1 MiB still completes its tool call and advances past it.
+      const largeRows = new Map<string, any>();
+      const largeTracker = new AntigravitySubagentTracker({ sessionId: 'edge-parent-d', hostEnv: trackerEnv, pollMs: 25, onMessage: (row) => largeRows.set(row.id, row), onTasksChanged: () => {} });
+      edgeTrackers.push(largeTracker);
+      appendLog('edge-large-child', modelRow(0, { tool_calls: [{ name: 'read_file', args: {} }] }));
+      largeTracker.observeToolCall('tool:large', 'invoke_subagent', {}, '', { conversationId: 'edge-large-child' });
+      appendLog('edge-large-child', { step_index: 1, type: 'GENERIC', source: 'MODEL', status: 'DONE', content: 'x'.repeat(1024 * 1024) }, modelRow(2, { content: 'Later row' }));
+      largeTracker.syncNow();
+      assert.equal(largeRows.get('sub:edge-large-child:0:tool:0')?.tool?.state?.status, 'completed');
+      assert.equal(largeRows.has('sub:edge-large-child:2:text'), true);
+
+      // Drawer pagination keeps a tool_call and its tool_result in the same page.
+      appendLog(
+        'edge-drawer-child',
+        modelRow(0, { status: 'DONE', tool_calls: [{ name: 'read_file', args: { Path: '"probe.txt"' } }] }),
+        { step_index: 1, source: 'MODEL', type: 'GENERIC', status: 'DONE', content: 'Probe result' },
+        ...Array.from({ length: 199 }, (_, index) => modelRow(index + 2, { content: `Child reply ${index}` }))
+      );
+      const drawerPage = readAntigravityTaskOutput('edge-drawer-child', trackerEnv);
+      assert.equal(drawerPage.format, 'transcript');
+      if (drawerPage.format === 'transcript') {
+        assert.equal(drawerPage.cursor, null);
+        assert.equal(drawerPage.archived_messages.length, 201);
+      }
+    } finally {
+      edgeTrackers.forEach((tracker) => tracker.stop());
+    }
   } finally {
     release?.();
     await hosts.stopAll();

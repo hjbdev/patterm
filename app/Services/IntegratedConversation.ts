@@ -13,6 +13,9 @@ export interface IntegratedConversationTool {
   name: string;
   input?: unknown;
   state?: unknown;
+  // Resolved MCP server/tool names when the host knows the configured servers.
+  server?: string | undefined;
+  tool?: string | undefined;
   // Stored images the tool returned, shown by hash (see TranscriptImageStore).
   images?: TranscriptImageRef[] | undefined;
 }
