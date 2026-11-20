@@ -154,8 +154,10 @@ async function main(): Promise<void> {
       onRealtime: (_processId: string, listener: (event: CodexRealtimeEvent) => void) => { realtimeListeners.add(listener); return () => realtimeListeners.delete(listener); }
     };
     let promptResult: unknown = {};
+    const routineDigests: string[] = [];
     const integrated = {
       prompt: async (_processId: string, input: unknown) => { prompts.push(String(input)); return promptResult; },
+      routineNotificationDigest: async (_processId: string, text: string) => { routineDigests.push(text); return promptResult; },
       conversation: async () => ({ messages: { data: conversation } })
     };
     const stops: string[] = [];
@@ -235,6 +237,11 @@ async function main(): Promise<void> {
     assert.match(prompts[0]!, /\[permission\] Project p \/ Reviewer — Reviewer: Waiting for your permission \(process proc-x\)/);
     assert.match(prompts[0]!, /\[turn_finished\]/);
     assert.equal(prompts[0]!.split('\n').length, 3, 'parent-audience, bell, assistant, and update changes are not forwarded');
+    assert.deepEqual(routineDigests, [], 'a batch containing a permission request is not quiet');
+    assistant.handleNotification({ type: 'raised', notification: notification('n7', { kind: 'turn_finished', urgency: 'normal', body: 'Finished its turn' }) });
+    await wait(40);
+    assert.equal(routineDigests.length, 1);
+    assert.match(routineDigests[0]!, /Finished its turn/);
 
     // Voice answers the offer with the configured voice and speaks digests.
     compacting = true;

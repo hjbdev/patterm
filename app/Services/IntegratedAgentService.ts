@@ -50,6 +50,7 @@ export interface IntegratedLaunchInput {
   restoreSavedSettings?: boolean;
   // The assistant and bots: Patterm keeps their saved memory current.
   memoryPush?: boolean;
+  quietNotificationReplies?: boolean;
 }
 
 // Launch settings a running agent reports. A missing key is one it does not
@@ -389,6 +390,11 @@ export class IntegratedAgentService {
     return this.whileSending(processId, () => this.submit(processId, input));
   }
 
+  routineNotificationDigest(processId: string, text: string): Promise<unknown> {
+    if (this.forProcess(processId) !== this.providers.claude) return this.prompt(processId, text);
+    return this.whileSending(processId, () => this.submit(processId, text, true));
+  }
+
   // Expiring offers must not get stuck in Patterm's durable held prompt queue.
   reviewPrompt(processId: string, text: string, review: ReviewPrompt): Promise<unknown> {
     const key = this.ledgerKey(processId);
@@ -424,7 +430,7 @@ export class IntegratedAgentService {
     }
   }
 
-  private async submit(processId: string, input: IntegratedPromptInput | string): Promise<unknown> {
+  private async submit(processId: string, input: IntegratedPromptInput | string, routineDigest?: true): Promise<unknown> {
     const request: IntegratedPromptInput = typeof input === 'string' ? { text: input } : input;
     const hasContent = Boolean(request.text.trim() || request.references?.length || request.attachments?.length);
     if (!hasContent) throw new Error('Message is empty');
@@ -433,7 +439,8 @@ export class IntegratedAgentService {
     }
     const key = this.ledgerKey(processId);
     const arrived = await this.serially(this.arrivals, key, async () => {
-      const resolved = this.inputs ? await this.inputs.resolve(processId, request) : { ...request, references: [], attachments: [] };
+      const resolved = this.inputs ? await this.inputs.resolve(processId, request) : { text: request.text, messageId: request.messageId, references: [], attachments: [] };
+      if (routineDigest) resolved.routineDigest = routineDigest;
       // Wrapped so the arrival chain waits for the prompt's place, not its
       // native call.
       const result = this.accept(processId, key, resolved);

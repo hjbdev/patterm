@@ -1,11 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { isQuietReply, QUIET_DIGEST_INSTRUCTION, QUIET_REPLY } from '../ClaudeQuietReplies';
 import type { HistoryFileFingerprint, HistorySourceCandidate, ParsedConversation, ParsedHistoryFile, ParsedMedia, ParsedMessage, ParsedSkillUse, ParsedUsage, ProviderHistoryAdapter } from './AgentHistoryTypes';
 import { defaultFileFingerprint, digestJson, isoFromString, nonNegative, parsedImage, readJsonl, statOnlyFingerprint, stringValue, textFromUnknown, walkFiles } from './HistoryAdapterUtils';
 
 export class ClaudeHistoryAdapter implements ProviderHistoryAdapter {
   readonly provider = 'claude' as const;
-  readonly parserVersion = 'claude-jsonl-v13';
+  readonly parserVersion = 'claude-jsonl-v14';
+
+  constructor(private readonly quietReplies?: string) {}
 
   defaultSources(homeDir: string): HistorySourceCandidate[] {
     const projects = path.join(homeDir, '.claude', 'projects');
@@ -109,9 +112,16 @@ export class ClaudeHistoryAdapter implements ProviderHistoryAdapter {
       // A queued prompt keeps the ID it was submitted with, which Integrated
       // sessions also use for the prompt's own row.
       const rowId = (queued ? queued.sourceUuid : null) ?? stringValue(row.uuid) ?? stringValue(row.messageId) ?? `${conversationId}:${seq}`;
+      const nativeMessageId = type === 'assistant' ? stringValue(message?.id) : null;
       for (const item of extracted) {
-        const text = item.text;
         const itemRole = item.role ?? role;
+        let text = item.text;
+        if (item.kind === 'message' && itemRole === 'assistant' && text === QUIET_REPLY && nativeMessageId
+          && isQuietReply(this.quietReplies, conversationId, nativeMessageId)) continue;
+        if (itemRole === 'user' && text.endsWith(QUIET_DIGEST_INSTRUCTION)
+          && isQuietReply(this.quietReplies, conversationId, `prompt_${rowId}`)) {
+          text = text.slice(0, -QUIET_DIGEST_INSTRUCTION.length);
+        }
         if (item.kind.includes('tool') && !text && !item.toolName && !item.toolInputSummary && !item.toolOutputSummary) continue;
         title ??= itemRole === 'user' && item.kind === 'message' && text && !command ? firstLine(text) : null;
         messages.push({
@@ -128,7 +138,8 @@ export class ClaudeHistoryAdapter implements ProviderHistoryAdapter {
           toolOutputSummary: item.toolOutputSummary,
           providerCreatedAt: createdAt,
           tokenCount: null,
-          metadata: { type, contentType: item.contentType, isSidechain: row.isSidechain ?? null, toolUseId: item.toolUseId ?? null, source: 'claude-jsonl', ...(queued ? { queued: true } : {}) }
+          metadata: { type, contentType: item.contentType, isSidechain: row.isSidechain ?? null, toolUseId: item.toolUseId ?? null, source: 'claude-jsonl',
+            ...(nativeMessageId && text === QUIET_REPLY ? { nativeMessageId } : {}), ...(queued ? { queued: true } : {}) }
         });
       }
       const messageSeq = seq > rowSeq ? rowSeq : seq ? seq - 1 : null;
