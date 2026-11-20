@@ -409,7 +409,7 @@ watch([messages, queue, () => outgoingFor(props.processId).map((entry) => entry.
 // The drawer keeps the last known state of its task after Claude drops a
 // finished one from the snapshot.
 const openedTask = shallowRef<IntegratedTask | null>(null);
-const canOpenTasks = computed(() => provider.value === 'claude' || provider.value === 'codex' || provider.value === 'opencode');
+const canOpenTasks = computed(() => provider.value === 'claude' || provider.value === 'codex' || provider.value === 'opencode' || provider.value === 'agy');
 watch(tasks, (current) => {
   const task = openedTask.value && current.find((item) => item.id === openedTask.value!.id);
   if (task) openedTask.value = task;

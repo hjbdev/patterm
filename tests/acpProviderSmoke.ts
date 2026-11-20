@@ -139,6 +139,21 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
    for(const [messageId,text] of [['a','first'],['a',' chunk'],['b','second']]) update({sessionUpdate:'agent_message_chunk',messageId,content:{type:'text',text}});
    result(q.id,{stopReason:'max_tokens'});prompt=null;return;
   }
+  if(text==='invoke-subagents') {
+   update({sessionUpdate:'tool_call',toolCallId:'sub-direct',name:'invoke_subagent',status:'in_progress',rawInput:{Role:'Direct Researcher',TypeName:'research',Model:'flash_lite',Prompt:'Check package version'}});
+   update({sessionUpdate:'tool_call_update',toolCallId:'sub-direct',status:'completed',rawOutput:{output:'Created the following subagent:\n{"conversationId":"sub-direct-1"}'}});
+   update({sessionUpdate:'tool_call',toolCallId:'sub-log',name:'invoke_subagent',status:'completed',rawInput:{Role:'Log Researcher',TypeName:'self',Prompt:'Inspect transcript'}});
+   say('Spawned two subagents.');
+   result(q.id,{stopReason:'end_turn'});prompt=null;return;
+  }
+  if(text==='message-subagent') {
+   update({sessionUpdate:'tool_call',toolCallId:'msg-sub',name:'send_message',status:'completed',rawInput:{Recipient:'sub-direct-1',Message:'Follow up'}});
+   result(q.id,{stopReason:'end_turn'});prompt=null;return;
+  }
+  if(text==='kill-subagent') {
+   update({sessionUpdate:'tool_call',toolCallId:'kill-sub',name:'manage_subagents',status:'completed',rawInput:{Action:'kill',ConversationIds:['sub-direct-1']}});
+   result(q.id,{stopReason:'end_turn'});prompt=null;return;
+  }
   if(text==='failure-after-echo') return out({id:q.id,error:{code:-32000,message:'Native acknowledged turn failed'}});
    if(text==='read-permission') {
     out({id:41,method:'session/request_permission',params:{sessionId:'native-session',toolCall:{toolCallId:'read',kind:'read',title:'Read file',rawInput:{Path:'probe.txt'}},options:[{optionId:'allow',kind:'allow_once',name:'Allow'}]}});
@@ -197,7 +212,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
 `);
   const database = new DatabaseService(directory);
   const hosts = new IntegratedTestHosts();
-  const env = { ...process.env, HOME: directory, USERPROFILE: directory, ACP_TRACE: trace, PATTERM_ACP_BACKGROUND_QUIET_MS: '1000', PATTERM_ACP_CANCEL_TIMEOUT_MS: '700' };
+  const env = { ...process.env, HOME: directory, USERPROFILE: directory, ACP_TRACE: trace, PATTERM_ACP_BACKGROUND_QUIET_MS: '1000', PATTERM_ACP_CANCEL_TIMEOUT_MS: '700', PATTERM_ACP_SUBAGENT_POLL_MS: '40' };
   const images = new TranscriptImageStore(path.join(directory, 'images'));
   const service = () => new AcpProviderService(database, directory, process.execPath, env, undefined, hosts, images);
   const provider = service();
@@ -265,7 +280,13 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       await pdfSend;
     }
     assert.equal(await provider.reconcile('process', 'pdf-id'), 'accepted');
-    await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    state = await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    {
+      const rows = state.messages.data as Array<{ clientMessageId?: string; text?: string }>;
+      const promptIndex = rows.findIndex((row) => row.clientMessageId === 'pdf-id');
+      const replyIndex = rows.findIndex((row) => row.text === 'staged-file');
+      assert(promptIndex >= 0 && replyIndex > promptIndex, 'a late-admitted attachment prompt stays before the response it caused');
+    }
     assert.deepEqual(frames().filter((frame) => frame.method === 'session/prompt').at(-1).params.prompt[1], { type: 'resource_link', uri: pathToFileURL(path.join(directory, 'a #.pdf')).href, name: 'a #.pdf', mimeType: 'application/pdf' }, 'PDFs use native file reading, not silently ignored binary blobs');
 
     const ask = (text: string) => provider.prompt('process', { text, references: [], attachments: [] });
@@ -451,8 +472,75 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     state = await provider.conversation('process');
     assert.equal(state.status, 'working', 'delivery does not finish the turn');
     assert.equal(state.messages.data.filter((row: any) => row.clientMessageId === 'logged-id').length, 1);
+    {
+      const rows = state.messages.data as Array<{ id?: string; clientMessageId?: string; text?: string }>;
+      const promptIndex = rows.findIndex((row) => row.clientMessageId === 'logged-id');
+      const replyIndex = rows.findIndex((row) => row.text === 'Working before the prompt response');
+      const toolIndex = rows.findIndex((row) => row.id === 'tool:no-echo-read');
+      assert(promptIndex >= 0 && replyIndex > promptIndex && toolIndex > promptIndex, 'a prompt confirmed from its native receipt stays before assistant output that streamed first');
+    }
     fs.writeFileSync(trace + '.no-echo-done', '');
     await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+
+    // Antigravity native subagents: discovered from ACP output or parent
+    // transcript.jsonl, tailed for nested child rows, surfaced in snapshot
+    // tasks, and readable through taskOutput with session ownership checks.
+    const subDirectLog = path.join(directory, '.gemini', 'antigravity-cli', 'brain', 'sub-direct-1', '.system_generated', 'logs', 'transcript.jsonl');
+    const subLogLog = path.join(directory, '.gemini', 'antigravity-cli', 'brain', 'sub-log-2', '.system_generated', 'logs', 'transcript.jsonl');
+    fs.mkdirSync(path.dirname(subDirectLog), { recursive: true });
+    fs.mkdirSync(path.dirname(subLogLog), { recursive: true });
+    fs.writeFileSync(subDirectLog, [
+      { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', created_at: now, content: '<USER_REQUEST>\nCheck package version\n</USER_REQUEST>\n' },
+      { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: now, thinking: 'Reading package.json', tool_calls: [{ name: 'read_file', args: { Path: '"package.json"' } }] },
+      { step_index: 2, source: 'MODEL', type: 'GENERIC', created_at: now, content: 'Created At: 2026-11-20T19:00:00+01:00\nCompleted At: 2026-11-20T19:00:01+01:00\n{"version":"0.5.0"}', status: 'DONE' }
+    ].map((row) => JSON.stringify(row)).join('\n') + '\n');
+    fs.writeFileSync(subLogLog, [
+      { step_index: 0, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: now, content: 'Transcript looks clean.' }
+    ].map((row) => JSON.stringify(row)).join('\n') + '\n');
+    fs.appendFileSync(nativeLog, [
+      { step_index: 10, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: now, tool_calls: [
+        { name: 'invoke_subagent', args: { Role: '"Direct Researcher"', TypeName: '"research"', Prompt: '"Check package version"' } },
+        { name: 'invoke_subagent', args: { Role: '"Log Researcher"', TypeName: '"self"', Prompt: '"Inspect transcript"' } }
+      ] },
+      { step_index: 11, source: 'MODEL', type: 'GENERIC', created_at: now, content: 'Created the following subagent:\n{"conversationId":"sub-direct-1"}', status: 'DONE' },
+      { step_index: 12, source: 'MODEL', type: 'GENERIC', created_at: now, content: 'Created the following subagent:\n{"conversationId":"sub-log-2"}', status: 'DONE' }
+    ].map((row) => JSON.stringify(row)).join('\n') + '\n');
+    await ask('invoke-subagents');
+    state = await waitFor(provider, (snapshot) =>
+      snapshot.status === 'idle'
+      && (snapshot.tasks ?? []).some((task: any) => task.id === 'sub-direct-1')
+      && (snapshot.tasks ?? []).some((task: any) => task.id === 'sub-log-2')
+      && snapshot.messages.data.some((row: any) => row.parentId === 'tool:sub-direct' && row.kind === 'tool')
+      && snapshot.messages.data.some((row: any) => row.parentId === 'tool:sub-log' && row.text === 'Transcript looks clean.')
+    );
+    const directTask = state.tasks.find((task: any) => task.id === 'sub-direct-1');
+    assert.equal(directTask.label, 'Direct Researcher');
+    assert.equal(directTask.kind, 'research');
+    assert.equal(directTask.status, 'running');
+    assert.equal(directTask.stoppable, false);
+    const nestedRead = state.messages.data.find((row: any) => row.parentId === 'tool:sub-direct' && row.kind === 'tool');
+    assert.equal(nestedRead.tool.name, 'read_file');
+    assert.equal(nestedRead.text, '{"version":"0.5.0"}');
+    assert.equal(nestedRead.tool.state.status, 'completed');
+
+    // A parent SYSTEM_MESSAGE from the subagent marks it completed; send_message
+    // re-opens it to running; manage_subagents kill marks it stopped.
+    fs.appendFileSync(nativeLog, JSON.stringify({
+      step_index: 13, source: 'SYSTEM', type: 'SYSTEM_MESSAGE', created_at: now,
+      content: '<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-20T19:00:02Z sender=sub-direct-1 priority=MESSAGE_PRIORITY_HIGH content=Version is 0.5.0\n</SYSTEM_MESSAGE>'
+    }) + '\n');
+    state = await waitFor(provider, (snapshot) => snapshot.tasks.find((task: any) => task.id === 'sub-direct-1')?.status === 'completed');
+    assert.equal(state.tasks.find((task: any) => task.id === 'sub-direct-1').detail, 'Version is 0.5.0');
+    await ask('message-subagent');
+    state = await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.tasks.find((task: any) => task.id === 'sub-direct-1')?.status === 'running');
+    await ask('kill-subagent');
+    state = await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.tasks.find((task: any) => task.id === 'sub-direct-1')?.status === 'stopped');
+
+    const subOutput = await provider.taskOutput('process', 'sub-direct-1');
+    assert.equal(subOutput.format, 'transcript');
+    assert(subOutput.format === 'transcript' && subOutput.archived_messages.length >= 3);
+    assert.equal((await provider.taskOutput('process', 'sub-direct-1', subOutput.format === 'transcript' ? subOutput.version : null)).format, 'unchanged');
+    await assert.rejects(provider.taskOutput('process', 'other-session-subagent'), /does not belong/);
 
     // A file that appears after dispatch can contain historical input.
     fs.unlinkSync(nativeLog);
@@ -610,8 +698,10 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     const nativeRows = [
       { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', created_at: now, content: '<USER_REQUEST>\nHello\n</USER_REQUEST>\n<ADDITIONAL_METADATA>hidden</ADDITIONAL_METADATA>' },
       { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: now, content: 'Reply', input_tokens: 10, output_tokens: 2 },
-      { step_index: 2, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: now, tool_calls: [{ name: 'write_file', args: { Path: '"a.txt"', Content: '"new"' } }] },
-      { step_index: 3, source: 'MODEL', type: 'GENERIC', created_at: now, content: 'Created file.', status: 'DONE' }
+      { step_index: 2, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: now, tool_calls: [{ name: 'write_file', args: { Path: '"a.txt"', Content: '"new"' } }, { name: 'read_file', args: { Path: '"b.txt"' } }] },
+      { step_index: 3, source: 'MODEL', type: 'GENERIC', created_at: now, content: 'Created file.', status: 'DONE' },
+      { step_index: 4, source: 'MODEL', type: 'GENERIC', created_at: now, content: 'Read b.txt.', status: 'DONE' },
+      { step_index: 5, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: now, thinking: 'Internal reasoning', content: 'Done.' }
     ];
     fs.writeFileSync(log, nativeRows.map((row) => JSON.stringify(row)).join('\n') + '\n');
     fs.copyFileSync(log, path.join(logDirectory, 'transcript_full.jsonl'));
@@ -622,7 +712,15 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     assert.equal(history.messages[0]?.text, 'Hello');
     assert.equal(history.messages[2]?.kind, 'tool_call');
     assert.equal(history.messages[2]?.toolInputSummary, '{"Path":"a.txt","Content":"new"}');
-    assert.equal(history.messages[3]?.kind, 'tool_result');
+    assert.equal(history.messages[3]?.toolName, 'read_file');
+    assert.equal(history.messages[4]?.kind, 'tool_result');
+    assert.equal(history.messages[4]?.toolName, 'write_file');
+    assert.equal(history.messages[4]?.metadata?.callId, history.messages[2]?.metadata?.callId);
+    assert.equal(history.messages[5]?.kind, 'tool_result');
+    assert.equal(history.messages[5]?.toolName, 'read_file');
+    assert.equal(history.messages[5]?.metadata?.callId, history.messages[3]?.metadata?.callId);
+    assert.equal(history.messages[6]?.metadata?.type, 'reasoning');
+    assert.equal(history.messages[6]?.text, 'Internal reasoning');
     assert.equal(history.usage?.[0]?.inputTokens, 10);
     assert(!JSON.stringify(history).includes('hidden'));
   } finally {

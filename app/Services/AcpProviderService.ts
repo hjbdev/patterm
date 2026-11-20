@@ -11,6 +11,7 @@ import { TurnBusyError, UncertainDeliveryError } from './IntegratedDelivery';
 import { callIntegratedHost, detachedHostLauncher, integratedHostReady, IntegratedHostTransportError, stopHostProcess, stopRecordedHostProcess, type IntegratedHostLauncher } from './IntegratedHostLauncher';
 import { ipcPath } from '../Platform/Ipc';
 import { claudeMcpServers } from '../Harness/McpDelivery';
+import { antigravityParentSubagentIds, readAntigravityTaskOutput, type AntigravityTaskOutput } from './AntigravityTaskOutput';
 import type { TranscriptImageStore } from './TranscriptImageStore';
 
 type Row = Record<string, any>;
@@ -119,6 +120,20 @@ export class AcpProviderService implements IntegratedProviderService {
     }
   }
   async interrupt(processId: string): Promise<void> { await callIntegratedHost(this.runtime(processId).socketPath, 'interrupt', {}); }
+  async taskOutput(processId: string, taskId: string, since?: string | null, cursor?: string | null): Promise<AntigravityTaskOutput> {
+    const runtime = this.runtime(processId);
+    let owned = false;
+    try {
+      const reply = await callIntegratedHost(runtime.socketPath, 'hasTask', { taskId }) as Row;
+      owned = reply?.owned === true;
+    } catch {
+      // Older hosts without hasTask fall back to the parent session transcript.
+    }
+    if (!owned && (!runtime.resumeId || !antigravityParentSubagentIds(runtime.resumeId, this.env).has(taskId))) {
+      throw new Error('That subagent does not belong to this session');
+    }
+    return readAntigravityTaskOutput(taskId, this.env, since, cursor);
+  }
   async replyPermission(processId: string, requestId: string, reply: 'once' | 'always' | 'reject'): Promise<void> { await callIntegratedHost(this.runtime(processId).socketPath, 'permission', { requestId, reply }); }
   async replyQuestion(): Promise<void> { throw new Error('Antigravity questions are answered in the conversation'); }
   async reconcile(processId: string, messageId: string) {
@@ -210,10 +225,10 @@ export class AcpProviderService implements IntegratedProviderService {
     if (failures.length) throw new AggregateError(failures.map((failure) => failure.reason), 'Could not stop every ACP host');
   }
   private runtime(processId: string) {
-    const row = this.database.connection.prepare("select processes.argv, sessions.id as session_id from sessions join processes on processes.id = sessions.process_id where (sessions.process_id = ? or sessions.id = ?) and sessions.harness = 'agy' and sessions.interface_mode = 'integrated' order by sessions.exited_at is null desc, sessions.started_at desc limit 1").get(processId, processId) as { argv: string; session_id: string } | undefined;
+    const row = this.database.connection.prepare("select processes.argv, sessions.id as session_id, sessions.resume_id from sessions join processes on processes.id = sessions.process_id where (sessions.process_id = ? or sessions.id = ?) and sessions.harness = 'agy' and sessions.interface_mode = 'integrated' order by sessions.exited_at is null desc, sessions.started_at desc limit 1").get(processId, processId) as { argv: string; session_id: string; resume_id: string | null } | undefined;
     if (!row) throw new Error('Antigravity Integrated session not found');
     const argv = JSON.parse(row.argv) as unknown[];
     if (argv[1] !== 'acp-host' || typeof argv[2] !== 'string') throw new Error('ACP runtime metadata is invalid');
-    return { socketPath: argv[2], pid: Number(argv[3]) || null, sessionId: row.session_id };
+    return { socketPath: argv[2], pid: Number(argv[3]) || null, sessionId: row.session_id, resumeId: row.resume_id };
   }
 }

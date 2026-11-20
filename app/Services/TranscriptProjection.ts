@@ -921,7 +921,7 @@ function toolMessage(id: string, name: string, output: unknown, row: Record<stri
 }
 
 const TOOL_FAMILY_BY_NAME: Record<string, TranscriptToolFamily> = {
-  commandexecution: 'shell', bash: 'shell', shell: 'shell', exec: 'shell', command: 'shell', run: 'shell', terminal: 'shell', shellcommand: 'shell',
+  commandexecution: 'shell', bash: 'shell', shell: 'shell', exec: 'shell', command: 'shell', run: 'shell', runcommand: 'shell', terminal: 'shell', shellcommand: 'shell',
   read: 'read', readfile: 'read', fileread: 'read', cat: 'read', view: 'read',
   list: 'list', ls: 'list', listdir: 'list', listfiles: 'list', listdirectory: 'list',
   glob: 'glob', findfiles: 'glob', fileglob: 'glob',
@@ -929,11 +929,11 @@ const TOOL_FAMILY_BY_NAME: Record<string, TranscriptToolFamily> = {
   edit: 'edit', editfile: 'edit', strreplace: 'edit', multiedit: 'edit', replace: 'edit',
   write: 'write', writefile: 'write', createfile: 'write', create: 'write', save: 'write',
   patch: 'patch', applypatch: 'patch', filechange: 'patch', diff: 'patch',
-  webfetch: 'web', websearch: 'web', fetch: 'web', browse: 'web', readwebpage: 'web',
-  task: 'task', agent: 'task', subagent: 'task', delegate: 'task', subagentactivity: 'task',
+  webfetch: 'web', websearch: 'web', searchweb: 'web', fetch: 'web', browse: 'web', readwebpage: 'web',
+  task: 'task', agent: 'task', subagent: 'task', invokesubagent: 'task', runworkflow: 'task', delegate: 'task', subagentactivity: 'task',
   todowrite: 'todo', todoread: 'todo', todo: 'todo', updateplan: 'todo', taskcreate: 'todo', taskupdate: 'todo', tasklist: 'todo', taskget: 'todo',
   skill: 'skill', useskill: 'skill',
-  mcptoolcall: 'mcp', dynamictoolcall: 'mcp'
+  mcptoolcall: 'mcp', dynamictoolcall: 'mcp', callmcptool: 'mcp'
 };
 
 const TOOL_TITLES: Record<TranscriptToolFamily, string> = {
@@ -952,7 +952,7 @@ export function buildTranscriptTool(name: string, detail: { input?: unknown; sta
   const changeSet = toolChangeSet(family, input, state, detail.result);
   const target = toolTarget(family, name, input, row, detail.result);
   const args = toolArgs(family, input);
-  const command = family === 'shell' ? firstString(input.command, input.cmd, row.command) : undefined;
+  const command = family === 'shell' ? firstString(input.command, input.cmd, input.CommandLine, row.command) : undefined;
   const error = toolError(state, row, output);
   const title = family === 'generic' && name ? name : TOOL_TITLES[family];
   const checklist = family === 'todo' ? toolChecklist(input) : [];
@@ -1036,44 +1036,50 @@ function toolStatus(state: unknown, output: string): TranscriptToolStatus {
   return output ? 'completed' : 'pending';
 }
 
-// Claude names MCP tools mcp__<server>__<tool>; OpenCode prefixes Patterm's
-// bridge as patterm_<socket hash>_<tool>.
+// Claude names MCP tools mcp__<server>__<tool>; Antigravity uses single
+// underscores mcp_<server>_<tool>; OpenCode prefixes Patterm's bridge as
+// patterm_<socket hash>_<tool>.
 const CLAUDE_MCP = /^mcp__(.+?)__(.+)$/;
+const AGY_MCP = /^mcp_([^_]+)_(.+)$/;
 const OPENCODE_BRIDGE = /^patterm_[0-9a-f]{12}_(.+)$/;
 
 function mcpNameParts(name: string): { server?: string | undefined; tool?: string | undefined } {
   const claude = CLAUDE_MCP.exec(name);
   if (claude) return { server: claude[1], tool: claude[2] };
+  const agy = AGY_MCP.exec(name);
+  if (agy) return { server: agy[1], tool: agy[2] };
   const bridge = OPENCODE_BRIDGE.exec(name);
   return bridge ? { server: 'patterm', tool: bridge[1] } : {};
 }
 
 function toolTarget(family: TranscriptToolFamily, name: string, input: Record<string, unknown>, row: Record<string, unknown>, result?: unknown): string | undefined {
   const resultRow = record(result);
-  if (family === 'shell') return firstString(input.command, input.cmd, row.command);
+  if (family === 'shell') return firstString(input.command, input.cmd, input.CommandLine, row.command);
   if (family === 'read' || family === 'list' || family === 'edit' || family === 'write' || family === 'patch') {
-    return firstString(input.file_path, input.filePath, input.path, input.file, input.target_file, resultRow.filePath, row.path);
+    return firstString(input.file_path, input.filePath, input.path, input.Path, input.file, input.target_file, resultRow.filePath, row.path);
   }
   if (family === 'glob' || family === 'grep') return firstString(input.pattern, input.query, input.glob, input.regex);
   if (family === 'web') return firstString(input.url, input.query);
-  if (family === 'task') return firstString(input.description, input.prompt, input.task);
+  if (family === 'task') return firstString(input.description, input.Role, input.role, input.Description, input.prompt, input.Prompt, input.task);
   if (family === 'skill') return firstString(input.skill, input.name, input.id);
   if (family === 'mcp') {
     const parts = mcpNameParts(name);
-    const server = firstString(input.server, row.server, parts.server);
-    const tool = firstString(input.tool, row.tool, parts.tool, input.name);
+    const server = firstString(input.server, input.ServerName, row.server, parts.server);
+    const tool = firstString(input.tool, input.ToolName, row.tool, parts.tool, input.name);
     return [server, tool].filter(Boolean).join(': ') || undefined;
   }
-  return firstString(input.path, input.name, input.query, input.command, input.description, input.target, input.reason, input.task_id)
+  return firstString(input.path, input.Path, input.name, input.query, input.command, input.CommandLine, input.description, input.Description, input.Role, input.target, input.reason, input.task_id)
     ?? firstString(record(Array.isArray(input.questions) ? input.questions[0] : undefined).question);
 }
 
 function toolArgs(family: TranscriptToolFamily, input: Record<string, unknown>): string[] {
   const args: string[] = [];
   if (family === 'read') {
-    const offset = typeof input.offset === 'number' ? input.offset : typeof input.line === 'number' ? input.line : undefined;
+    const offset = typeof input.offset === 'number' ? input.offset : typeof input.line === 'number' ? input.line : typeof input.StartLine === 'number' ? input.StartLine : undefined;
     const limit = typeof input.limit === 'number' ? input.limit : undefined;
-    if (offset !== undefined && limit !== undefined) args.push(`lines ${offset}-${offset + limit}`);
+    const endLine = typeof input.EndLine === 'number' ? input.EndLine : undefined;
+    if (offset !== undefined && endLine !== undefined) args.push(`lines ${offset}-${endLine}`);
+    else if (offset !== undefined && limit !== undefined) args.push(`lines ${offset}-${offset + limit}`);
     else if (offset !== undefined) args.push(`from line ${offset}`);
   }
   if (family === 'grep' || family === 'glob') {
@@ -1081,8 +1087,10 @@ function toolArgs(family: TranscriptToolFamily, input: Record<string, unknown>):
     if (include) args.push(include);
   }
   if (family === 'task') {
-    const agent = firstString(input.agent, input.subagent_type);
+    const agent = firstString(input.agent, input.subagent_type, input.TypeName, input.typeName);
     if (agent) args.push(agent);
+    const model = firstString(input.Model, input.model);
+    if (model && model !== 'inherit') args.push(model);
   }
   return args;
 }

@@ -25,7 +25,7 @@ export class AntigravityHistoryAdapter implements ProviderHistoryAdapter {
     let updatedAt: string | null = null;
     let title: string | null = null;
     let turnId: string | null = null;
-    let lastTool: string | null = null;
+    const pendingTools: Array<{ callId: string; name: string | null }> = [];
     const seen = new Set<number>();
     const add = (row: Record<string, unknown>, suffix: string, message: Partial<ParsedMessage>) => {
       messages.push({ providerMessageId: `${id}:${row.step_index}:${suffix}`, parentProviderMessageId: null, turnId, seq: messages.length, role: 'unknown', kind: 'event', text: '', toolName: null, toolStatus: null, toolInputSummary: null, toolOutputSummary: null, providerCreatedAt: isoFromString(row.created_at), tokenCount: null, metadata: { source: 'agy-jsonl', type: row.type }, ...message });
@@ -43,25 +43,29 @@ export class AntigravityHistoryAdapter implements ProviderHistoryAdapter {
         const match = /^<USER_REQUEST>\n([\s\S]*?)\n<\/USER_REQUEST>(?:\n|$)/.exec(content);
         if (!match) continue;
         const text = match[1]!;
-        turnId = `${id}:${row.step_index}`; lastTool = null;
+        turnId = `${id}:${row.step_index}`; pendingTools.length = 0;
         title ??= text.split('\n')[0]!.slice(0, 160);
         add(row, 'user', { role: 'user', kind: 'message', text });
       } else if (row.type === 'PLANNER_RESPONSE' && row.source === 'MODEL') {
+        const thinking = stringValue(row.thinking) ?? '';
+        if (thinking.trim()) add(row, 'thinking', { role: 'assistant', kind: 'message', text: thinking, metadata: { source: 'agy-jsonl', type: 'reasoning' } });
         if (content) add(row, 'text', { role: 'assistant', kind: 'message', text: content });
         if (Array.isArray(row.tool_calls)) for (const [index, value] of row.tool_calls.entries()) {
           if (!value || typeof value !== 'object') continue;
           const tool = value as Record<string, unknown>;
-          lastTool = stringValue(tool.name);
+          const toolName = stringValue(tool.name);
+          const callId = `${id}:${row.step_index}:tool:${index}`;
+          pendingTools.push({ callId, name: toolName });
           const args = tool.args && typeof tool.args === 'object' ? Object.fromEntries(Object.entries(tool.args).map(([key, value]) => {
             if (typeof value !== 'string') return [key, value];
             try { return [key, JSON.parse(value) as unknown]; } catch { return [key, value]; }
           })) : {};
-          add(row, `tool:${index}`, { role: 'assistant', kind: 'tool_call', toolName: lastTool, toolInputSummary: JSON.stringify(args), toolStatus: String(row.status ?? '') });
+          add(row, `tool:${index}`, { role: 'assistant', kind: 'tool_call', toolName, toolInputSummary: JSON.stringify(args), toolStatus: String(row.status ?? ''), metadata: { source: 'agy-jsonl', type: row.type, callId } });
         }
         if (nonNegative(row.input_tokens) + nonNegative(row.output_tokens) + nonNegative(row.cache_read_tokens)) usage.push({ model: null, occurredAt: time, inputTokens: nonNegative(row.input_tokens), cacheReadTokens: nonNegative(row.cache_read_tokens), cacheWriteTokens: 0, cacheWrite1hTokens: 0, outputTokens: nonNegative(row.output_tokens), reasoningTokens: 0, costUsd: null, subagent: false });
-      } else if (row.type === 'GENERIC' && row.source === 'MODEL' && lastTool && content) {
-        add(row, 'result', { role: 'tool', kind: 'tool_result', toolName: lastTool, text: content, toolOutputSummary: content, toolStatus: String(row.status ?? '') });
-        lastTool = null;
+      } else if (row.type === 'GENERIC' && row.source === 'MODEL' && pendingTools.length) {
+        const tool = pendingTools.shift()!;
+        if (content) add(row, 'result', { role: 'tool', kind: 'tool_result', toolName: tool.name, text: content, toolOutputSummary: content, toolStatus: String(row.status ?? ''), metadata: { source: 'agy-jsonl', type: row.type, callId: tool.callId } });
       } else if (row.type === 'ERROR_MESSAGE') {
         add(row, 'error', { role: 'system', kind: 'event', text: content });
       }
