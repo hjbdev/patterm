@@ -128,8 +128,15 @@ const MAX_QUEUED_TERMINAL_FRAMES = 12;
 const MAX_QUEUED_TERMINAL_FRAME_BYTES = 750_000;
 let cadenceFrame: number | null = null;
 let lastCadenceTimestamp: number | null = null;
+let lastFrameActivityAt = 0;
+const CADENCE_IDLE_TIMEOUT_MS = 500;
 let estimatedFrameIntervalMs = 8;
 let lastSentFrameIntervalMs: number | null = null;
+let cachedCanvasRect: { left: number; top: number; width: number; height: number } | null = null;
+let cachedGridMetrics: TerminalGridSize | null = null;
+let cachedTerminalDebug = readLocalStorageFlag('patterm.terminal.debug');
+let cachedInputTrace = readLocalStorageFlag('patterm.terminal.inputTrace');
+let cachedRawInputTrace = readLocalStorageFlag('patterm.terminal.inputTraceRaw');
 let terminalFramesSubscribed = false;
 // Browser subscriptions produce a snapshot, so the first control event after
 // subscribing does not need to request another one.
@@ -287,7 +294,7 @@ onMounted(async () => {
   });
   unsubscribeControl = window.patterm.onTerminalControl?.(handleTerminalControl);
   window.addEventListener('patterm:connection-error', handleConnectionError);
-  debugLog('terminal-pane', 'mounted', { title: props.title, canvas: canvasMetrics() });
+  if (terminalDebugEnabled()) debugLog('terminal-pane', 'mounted', { title: props.title, canvas: canvasMetrics() });
 
   unsubscribeFrames = window.patterm.onTerminalFrame((payload) => {
     enqueueTerminalFrame(payload);
@@ -313,12 +320,21 @@ onMounted(async () => {
   canvas.value.addEventListener('wheel', handleWheel, { passive: false });
   window.addEventListener('focus', handleWindowFocus);
   window.addEventListener('blur', handleWindowBlur);
+  window.addEventListener('resize', invalidateCanvasRect, { passive: true });
+  window.addEventListener('scroll', invalidateCanvasRect, { capture: true, passive: true });
+  window.addEventListener('storage', handleStorageEvent);
   window.addEventListener(APPEARANCE_SETTINGS_CHANGED_EVENT, handleAppearanceSettingsChanged);
   document.addEventListener('visibilitychange', handleVisibilityChange);
 
-  resizeObserver = new ResizeObserver(scheduleResize);
+  const workbenchMain = document.getElementById('workbench-main');
+  resizeObserver = new ResizeObserver((entries) => {
+    invalidateCanvasRect();
+    if (entries.some((entry) => entry.target === canvas.value)) {
+      scheduleResize();
+    }
+  });
   resizeObserver.observe(canvas.value);
-  startCadenceSampler();
+  if (workbenchMain) resizeObserver.observe(workbenchMain);
 
   // Attach to the initially-selected terminal, if any; otherwise show the empty
   // placeholder until the layout selects a tab.
@@ -332,6 +348,8 @@ onMounted(async () => {
 function detach(): void {
   if (processId) renderer?.stashGrid(processId);
   unsubscribeCurrentProcess();
+  stopCadenceSampler();
+  invalidateCanvasRect();
   processId = null;
   hasActiveTerminal.value = false;
   awaitingSnapshot.value = false;
@@ -371,6 +389,7 @@ function applyTarget(next: string): void {
   clearLocalSelection();
 
   // Paint the last grid seen for this PTY while its snapshot is on the way.
+  invalidateCanvasRect();
   const measured = renderer.resizeSurface(false);
   if (!renderer.restoreGrid(next)) renderer.clear();
 
@@ -393,7 +412,7 @@ function applyTarget(next: string): void {
   subscribeCurrentProcess(browserRuntime ? { size: measured, key } : null);
   configureTerminalFrameInterval(next);
   refreshTerminalStatus(next);
-  debugLog('terminal-pane', 'attach', { next, measured });
+  if (terminalDebugEnabled()) debugLog('terminal-pane', 'attach', { next, measured });
   // Touch screens focus the terminal on a tap, so switching to it doesn't
   // reopen the keyboard.
   if (!touchScreen()) focusInputSink();
@@ -444,11 +463,16 @@ onBeforeUnmount(() => {
   }
   window.removeEventListener('focus', handleWindowFocus);
   window.removeEventListener('blur', handleWindowBlur);
+  window.removeEventListener('resize', invalidateCanvasRect);
+  window.removeEventListener('scroll', invalidateCanvasRect, true);
+  window.removeEventListener('storage', handleStorageEvent);
   window.removeEventListener(APPEARANCE_SETTINGS_CHANGED_EVENT, handleAppearanceSettingsChanged);
   document.removeEventListener('visibilitychange', handleVisibilityChange);
 
   if (processId) renderer?.stashGrid(processId);
   unsubscribeCurrentProcess();
+  stopCadenceSampler();
+  invalidateCanvasRect();
   resizeObserver?.disconnect();
   if (resizeFrame !== null) {
     cancelAnimationFrame(resizeFrame);
@@ -462,10 +486,6 @@ onBeforeUnmount(() => {
     cancelAnimationFrame(debugFlushFrame);
     debugFlushFrame = null;
   }
-  if (cadenceFrame !== null) {
-    cancelAnimationFrame(cadenceFrame);
-    cadenceFrame = null;
-  }
   if (mouseMoveFrame !== null) {
     cancelAnimationFrame(mouseMoveFrame);
     mouseMoveFrame = null;
@@ -473,7 +493,7 @@ onBeforeUnmount(() => {
   unsubscribeFrames?.();
   unsubscribeLifecycle?.();
   renderer?.dispose();
-  debugLog('terminal-pane', 'unmounted', { processId });
+  if (terminalDebugEnabled()) debugLog('terminal-pane', 'unmounted', { processId });
 });
 
 function handleKeydown(event: KeyboardEvent): void {
@@ -538,11 +558,12 @@ async function applyTerminalAppearanceSettings(settings: AppearanceSettings): Pr
   if (revision !== fontChangeRevision) return;
   if (!renderer) return;
   renderer.setFontSettings({ fontSize: settings.terminalFontSizePx, fontFamily: resolveTerminalFontFamily(settings) });
+  invalidateCanvasRect();
   clearLocalSelection();
   const resized = renderer.resizeSurface(false);
   const resizedKey = `${resized.cols}:${resized.rows}:${resized.cellWidth}:${resized.cellHeight}`;
   lastResizeKey = resizedKey;
-  debugLog('terminal-pane', 'font-settings.changed', { processId, settings, resized, resizedKey, renderer: renderer.debugState() });
+  if (terminalDebugEnabled()) debugLog('terminal-pane', 'font-settings.changed', { processId, settings, resized, resizedKey, renderer: renderer.debugState() });
   if (processId) {
     sendTerminalResize(resized, resizedKey);
   } else {
@@ -551,15 +572,16 @@ async function applyTerminalAppearanceSettings(settings: AppearanceSettings): Pr
 }
 
 function handleMouseDown(event: MouseEvent): void {
+  invalidateCanvasRect();
   if (!processId) return;
   focusInputSink();
   const point = eventToCell(event);
-  const link = event.button === 0 ? terminalLinkAt(event) : null;
+  const link = event.button === 0 ? terminalLinkAt(event, point) : null;
   if (!link) {
     if (!canControl()) return;
     if (shouldForwardTerminalMouse(event)) {
       clearLocalSelection();
-      dispatchTerminalMouse('down', event);
+      dispatchTerminalMouse('down', event, point);
       event.preventDefault();
       return;
     }
@@ -573,12 +595,14 @@ function handleMouseDown(event: MouseEvent): void {
 }
 
 function handlePointerEnter(): void {
+  invalidateCanvasRect();
   if (!processId) return;
   focusInputSink();
 }
 
 function handleMouseMove(event: MouseEvent): void {
-  const link = !draggingSelection && processId ? terminalLinkAt(event) : null;
+  const point = processId ? eventToCell(event) : null;
+  const link = !draggingSelection && point ? terminalLinkAt(event, point) : null;
   if (canvas.value) {
     canvas.value.style.cursor = link ? 'pointer' : '';
     canvas.value.title = link ?? '';
@@ -587,8 +611,8 @@ function handleMouseMove(event: MouseEvent): void {
     pendingSelection.link = null;
   }
   if (!canControl()) return;
-  if (!pendingSelection && processId && shouldForwardTerminalMouse(event)) {
-    scheduleTerminalMouseMove(event);
+  if (!pendingSelection && point && shouldForwardTerminalMouse(event)) {
+    scheduleTerminalMouseMove(event, point);
     event.preventDefault();
     return;
   }
@@ -598,20 +622,21 @@ function handleMouseMove(event: MouseEvent): void {
     const dy = event.clientY - pendingSelection.clientY;
     if (Math.hypot(dx, dy) < SELECTION_DRAG_THRESHOLD_PX) return;
     draggingSelection = true;
-    selection.value = { start: pendingSelection.start, end: eventToCell(event) };
+    selection.value = { start: pendingSelection.start, end: point ?? eventToCell(event) };
   }
 
   if (!draggingSelection || !selection.value) return;
-  selection.value = { ...selection.value, end: eventToCell(event) };
+  selection.value = { ...selection.value, end: point ?? eventToCell(event) };
   event.preventDefault();
 }
 
 function handleMouseUp(event: MouseEvent): void {
   if (!processId || (event.button !== 0 && pendingSelection)) return;
   const pending = pendingSelection;
+  const point = eventToCell(event);
   if (pending?.link && !draggingSelection
     && Math.hypot(event.clientX - pending.clientX, event.clientY - pending.clientY) < SELECTION_DRAG_THRESHOLD_PX
-    && terminalLinkAt(event) === pending.link) {
+    && terminalLinkAt(event, point) === pending.link) {
     clearLocalSelection();
     window.open(pending.link, '_blank', 'noopener,noreferrer');
     event.preventDefault();
@@ -624,7 +649,7 @@ function handleMouseUp(event: MouseEvent): void {
   if (!pendingSelection && shouldForwardTerminalMouse(event)) {
     pendingSelection = null;
     draggingSelection = false;
-    dispatchTerminalMouse('up', event);
+    dispatchTerminalMouse('up', event, point);
     event.preventDefault();
     return;
   }
@@ -632,7 +657,7 @@ function handleMouseUp(event: MouseEvent): void {
   pendingSelection = null;
   if (!draggingSelection || !selection.value) return;
   draggingSelection = false;
-  selection.value = { ...selection.value, end: eventToCell(event) };
+  selection.value = { ...selection.value, end: point };
   const normalized = normalizeSelection(selection.value);
   void window.patterm.terminalSelect({
     process_id: processId,
@@ -653,11 +678,11 @@ function handleMouseLeave(): void {
   }
 }
 
-function terminalLinkAt(event: MouseEvent): string | null {
+function terminalLinkAt(event: MouseEvent, point?: CellPoint): string | null {
   // Shift keeps selection available; Ctrl/Cmd bypasses a CLI's mouse capture.
   if (event.shiftKey || (terminalMouseModeActive() && !event.ctrlKey && !event.metaKey)) return null;
-  const point = eventToCell(event);
-  return renderer?.linkAt(point.col, point.row) ?? null;
+  const resolved = point ?? eventToCell(event);
+  return renderer?.linkAt(resolved.col, resolved.row) ?? null;
 }
 
 function handleContextMenu(event: MouseEvent): void {
@@ -666,6 +691,7 @@ function handleContextMenu(event: MouseEvent): void {
 }
 
 function handleWheel(event: WheelEvent): void {
+  invalidateCanvasRect();
   if (!canControl()) return;
   if (!processId || !renderer) return;
   const grid = renderer.gridSize();
@@ -684,15 +710,15 @@ function terminalMouseModeActive(): boolean {
   return terminalMouseMode.click || terminalMouseMode.drag || terminalMouseMode.motion;
 }
 
-function dispatchTerminalMouse(kind: TerminalMouseDispatch['event'], event: MouseEvent): void {
-  const payload = terminalMousePayload(kind, event);
+function dispatchTerminalMouse(kind: TerminalMouseDispatch['event'], event: MouseEvent, point?: CellPoint): void {
+  const payload = terminalMousePayload(kind, event, point);
   if (!payload) return;
-  debugLog('terminal-pane', 'mouse.send', { kind, processId: payload.process_id, col: payload.col, row: payload.row, button: payload.button, buttons: payload.buttons });
+  if (terminalDebugEnabled()) debugLog('terminal-pane', 'mouse.send', { kind, processId: payload.process_id, col: payload.col, row: payload.row, button: payload.button, buttons: payload.buttons });
   void window.patterm.terminalMouse(payload);
 }
 
-function scheduleTerminalMouseMove(event: MouseEvent): void {
-  const payload = terminalMousePayload('move', event);
+function scheduleTerminalMouseMove(event: MouseEvent, point?: CellPoint): void {
+  const payload = terminalMousePayload('move', event, point);
   if (!payload) return;
   if (
     pendingMouseMove &&
@@ -712,21 +738,21 @@ function scheduleTerminalMouseMove(event: MouseEvent): void {
     const next = pendingMouseMove;
     pendingMouseMove = null;
     if (!next || next.process_id !== processId) return;
-    debugLog('terminal-pane', 'mouse.send', { kind: next.event, processId: next.process_id, col: next.col, row: next.row, button: next.button, buttons: next.buttons });
+    if (terminalDebugEnabled()) debugLog('terminal-pane', 'mouse.send', { kind: next.event, processId: next.process_id, col: next.col, row: next.row, button: next.button, buttons: next.buttons });
     void window.patterm.terminalMouse(next);
   });
 }
 
-function terminalMousePayload(kind: TerminalMouseDispatch['event'], event: MouseEvent): TerminalMouseDispatch | null {
+function terminalMousePayload(kind: TerminalMouseDispatch['event'], event: MouseEvent, point?: CellPoint): TerminalMouseDispatch | null {
   if (!processId) return null;
-  const point = eventToCell(event);
+  const resolved = point ?? eventToCell(event);
   return {
     process_id: processId,
     event: kind,
     button: event.button,
     buttons: event.buttons,
-    col: point.col,
-    row: point.row,
+    col: resolved.col,
+    row: resolved.row,
     alt: event.altKey,
     ctrl: event.ctrlKey,
     meta: event.metaKey
@@ -784,7 +810,7 @@ function handleTerminalLifecycle(payload: unknown): void {
   const frame = payload as TerminalLifecycleFrame | null;
   if (!frame || frame.processId !== processId || frame.event !== 'mouse_mode') return;
   terminalMouseMode = normalizeTerminalMouseMode(frame.mouse);
-  debugLog('terminal-pane', 'mouse.mode', { processId, terminalMouseMode });
+  if (terminalDebugEnabled()) debugLog('terminal-pane', 'mouse.mode', { processId, terminalMouseMode });
 }
 
 // Status reports the mouse mode without building the screen text that the
@@ -793,14 +819,39 @@ function refreshTerminalStatus(targetProcessId: string): void {
   void window.patterm.terminalStatus({ process_id: targetProcessId }).then((result) => {
     if (targetProcessId !== processId) return;
     terminalMouseMode = normalizeTerminalMouseMode((result as TerminalStatusResult | null)?.mouse);
-    debugLog('terminal-pane', 'mouse.mode.status', { processId, terminalMouseMode });
+    if (terminalDebugEnabled()) debugLog('terminal-pane', 'mouse.mode.status', { processId, terminalMouseMode });
   });
 }
 
-function eventToCell(event: MouseEvent): CellPoint {
+function invalidateCanvasRect(): void {
+  cachedCanvasRect = null;
+  cachedGridMetrics = null;
+}
+
+function getCanvasRectAndGrid(): { rect: { left: number; top: number; width: number; height: number } | null; grid: TerminalGridSize } {
   const element = canvas.value;
-  const grid = renderer?.gridSize() ?? { cols: 2, rows: 1, cellWidth: 9, cellHeight: 18 };
-  const rect = element?.getBoundingClientRect();
+  if (!element) {
+    return { rect: null, grid: { cols: 2, rows: 1, cellWidth: 9, cellHeight: 18 } };
+  }
+  if (!cachedCanvasRect || !cachedGridMetrics) {
+    cachedCanvasRect = element.getBoundingClientRect();
+    if (renderer) {
+      const metrics = renderer.cellMetrics();
+      cachedGridMetrics = {
+        cols: Math.max(2, Math.floor(cachedCanvasRect.width / metrics.cellWidth)),
+        rows: Math.max(1, Math.floor(cachedCanvasRect.height / metrics.cellHeight)),
+        cellWidth: metrics.cellWidth,
+        cellHeight: metrics.cellHeight
+      };
+    } else {
+      cachedGridMetrics = { cols: 2, rows: 1, cellWidth: 9, cellHeight: 18 };
+    }
+  }
+  return { rect: cachedCanvasRect, grid: cachedGridMetrics };
+}
+
+function eventToCell(event: MouseEvent): CellPoint {
+  const { rect, grid } = getCanvasRectAndGrid();
   const x = Math.max(0, event.clientX - (rect?.left ?? 0));
   const y = Math.max(0, event.clientY - (rect?.top ?? 0));
   return {
@@ -820,7 +871,8 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function scheduleResize(): void {
-  debugLog('terminal-pane', 'resize-observer', { processId, resizeFramePending: resizeFrame !== null, canvas: canvasMetrics(), renderer: renderer?.debugState() });
+  invalidateCanvasRect();
+  if (terminalDebugEnabled()) debugLog('terminal-pane', 'resize-observer', { processId, resizeFramePending: resizeFrame !== null, canvas: canvasMetrics(), renderer: renderer?.debugState() });
   if (resizeFrame !== null) {
     return;
   }
@@ -831,6 +883,7 @@ function scheduleResize(): void {
       return;
     }
 
+    invalidateCanvasRect();
     if (!processId) {
       renderer.resizeSurface(false);
       renderer.clear();
@@ -843,11 +896,11 @@ function scheduleResize(): void {
     const resized = renderer.resizeSurface(false);
     if (!canControl()) { renderer.renderCurrentState(); return; }
     const resizedKey = `${resized.cols}:${resized.rows}:${resized.cellWidth}:${resized.cellHeight}`;
-    debugLog('terminal-pane', 'resize-raf', { measured, measuredKey, gridChanged, resized, resizedKey, lastResizeKey, lastSentResizeKey, resizeSeq, canvas: canvasMetrics(), renderer: renderer.debugState() });
+    if (terminalDebugEnabled()) debugLog('terminal-pane', 'resize-raf', { measured, measuredKey, gridChanged, resized, resizedKey, lastResizeKey, lastSentResizeKey, resizeSeq, canvas: canvasMetrics(), renderer: renderer.debugState() });
 
     if (!gridChanged && resizedKey === lastResizeKey) {
       renderer.renderCurrentState();
-      debugLog('terminal-pane', 'resize-raf.repaint-only', { resizedKey, renderer: renderer.debugState() });
+      if (terminalDebugEnabled()) debugLog('terminal-pane', 'resize-raf.repaint-only', { resizedKey, renderer: renderer.debugState() });
       return;
     }
 
@@ -862,7 +915,7 @@ function sendTerminalResize(size: { cols: number; rows: number; cellWidth: numbe
 
   if (resizeInFlight) {
     pendingResize = { size, resizeKey };
-    debugLog('terminal-pane', 'resize.pending', { processId, size, resizeKey, lastSentResizeKey, resizeSeq, renderer: renderer?.debugState() });
+    if (terminalDebugEnabled()) debugLog('terminal-pane', 'resize.pending', { processId, size, resizeKey, lastSentResizeKey, resizeSeq, renderer: renderer?.debugState() });
     return;
   }
 
@@ -879,7 +932,7 @@ async function dispatchTerminalResize(size: { cols: number; rows: number; cellWi
   resizeSeq += 1;
   const sentSeq = resizeSeq;
   renderer?.setResizeTarget(size, resizeSeq);
-  debugLog('terminal-pane', 'resize.send', { processId, size, resizeKey, resizeSeq: sentSeq, canvas: canvasMetrics(), renderer: renderer?.debugState() });
+  if (terminalDebugEnabled()) debugLog('terminal-pane', 'resize.send', { processId, size, resizeKey, resizeSeq: sentSeq, canvas: canvasMetrics(), renderer: renderer?.debugState() });
 
   try {
     await window.patterm.terminalResize({
@@ -911,7 +964,11 @@ function enqueueTerminalFrame(payload: Uint8Array): void {
     void window.patterm.terminalRefresh({ process_id: processId });
     return;
   }
-  debugLog('terminal-pane', 'frame.queued', { payloadLength: payload.byteLength, queueLength: queuedFrames.length, processId, canvas: canvasMetrics() });
+  if (terminalDebugEnabled()) {
+    debugLog('terminal-pane', 'frame.queued', { payloadLength: payload.byteLength, queueLength: queuedFrames.length, processId, canvas: canvasMetrics() });
+  }
+  lastFrameActivityAt = performance.now();
+  if (cadenceFrame === null) startCadenceSampler();
   if (frameFlushFrame !== null) return;
 
   frameFlushFrame = requestAnimationFrame(() => {
@@ -921,7 +978,13 @@ function enqueueTerminalFrame(payload: Uint8Array): void {
 }
 
 function startCadenceSampler(): void {
+  if (cadenceFrame !== null || !processId || !shouldReceiveTerminalFrames()) return;
+  lastCadenceTimestamp = null;
   const sample = (timestamp: number) => {
+    if (!processId || !shouldReceiveTerminalFrames() || performance.now() - lastFrameActivityAt > CADENCE_IDLE_TIMEOUT_MS) {
+      stopCadenceSampler();
+      return;
+    }
     if (lastCadenceTimestamp !== null) {
       const delta = timestamp - lastCadenceTimestamp;
       if (delta >= 2 && delta <= 100) {
@@ -934,6 +997,14 @@ function startCadenceSampler(): void {
   };
 
   cadenceFrame = requestAnimationFrame(sample);
+}
+
+function stopCadenceSampler(): void {
+  if (cadenceFrame !== null) {
+    cancelAnimationFrame(cadenceFrame);
+    cadenceFrame = null;
+  }
+  lastCadenceTimestamp = null;
 }
 
 function configureTerminalFrameInterval(targetProcessId: string | null): void {
@@ -960,28 +1031,31 @@ function flushTerminalFrames(): void {
 
   const { frames, byteLength } = coalesceTerminalFrames(queuedFrames.splice(0, queuedFrames.length), processId, frameDecoder);
   if (frames.length > MAX_QUEUED_TERMINAL_FRAMES || byteLength > MAX_QUEUED_TERMINAL_FRAME_BYTES) {
-    debugLog('terminal-pane', 'frame.backpressure-refresh', {
-      frameCount: frames.length,
-      byteLength,
-      processId,
-      renderer: renderer.debugState()
-    });
+    if (terminalDebugEnabled()) {
+      debugLog('terminal-pane', 'frame.backpressure-refresh', {
+        frameCount: frames.length,
+        byteLength,
+        processId,
+        renderer: renderer.debugState()
+      });
+    }
     void window.patterm.terminalRefresh({ process_id: processId });
     return;
   }
 
   const appliedProcessId = renderer.applyParsedDamageFrames(frames, processId ?? undefined);
   if (frames.some((frame) => frame?.frameKind === 'snapshot' && frame.processId === processId)) awaitingSnapshot.value = false;
-  debugLog('terminal-pane', 'frame.batch-applied-result', {
-    frameCount: frames.length,
-    byteLength,
-    appliedProcessId,
-    processId,
-    renderer: renderer.debugState()
-  });
-
-  if (processId && appliedProcessId === processId) {
-    debugLog('terminal-pane', 'frame.applied-active', { processId });
+  if (terminalDebugEnabled()) {
+    debugLog('terminal-pane', 'frame.batch-applied-result', {
+      frameCount: frames.length,
+      byteLength,
+      appliedProcessId,
+      processId,
+      renderer: renderer.debugState()
+    });
+    if (processId && appliedProcessId === processId) {
+      debugLog('terminal-pane', 'frame.applied-active', { processId });
+    }
   }
 }
 
@@ -1108,6 +1182,7 @@ function unsubscribeCurrentProcess(): void {
   const targetProcessId = processId;
   if (!targetProcessId) return;
   releaseTerminalFocus();
+  stopCadenceSampler();
   queuedFrames.length = 0;
   if (frameFlushFrame !== null) {
     cancelAnimationFrame(frameFlushFrame);
@@ -1146,7 +1221,7 @@ function syncCurrentProcessFrameSubscription(refresh: boolean): void {
   const previousMode = lastTerminalFrameMode;
   lastTerminalFrameMode = mode;
   configureTerminalFrameInterval(processId);
-  debugLog('terminal-pane', 'frame.mode', { processId, mode, previousMode, refresh });
+  if (terminalDebugEnabled()) debugLog('terminal-pane', 'frame.mode', { processId, mode, previousMode, refresh });
   if (refresh) {
     void window.patterm.terminalRefresh({ process_id: processId });
   }
@@ -1171,8 +1246,29 @@ function debugLog(source: string, event: string, data?: unknown): void {
   });
 }
 
+function readLocalStorageFlag(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function handleStorageEvent(event: StorageEvent): void {
+  if (
+    event.key === null
+    || event.key === 'patterm.terminal.debug'
+    || event.key === 'patterm.terminal.inputTrace'
+    || event.key === 'patterm.terminal.inputTraceRaw'
+  ) {
+    cachedTerminalDebug = readLocalStorageFlag('patterm.terminal.debug');
+    cachedInputTrace = readLocalStorageFlag('patterm.terminal.inputTrace');
+    cachedRawInputTrace = readLocalStorageFlag('patterm.terminal.inputTraceRaw');
+  }
+}
+
 function terminalDebugEnabled(): boolean {
-  return localStorage.getItem('patterm.terminal.debug') === '1';
+  return cachedTerminalDebug;
 }
 
 function canvasMetrics(): unknown {
@@ -1317,11 +1413,11 @@ function traceDispatchedInput(input: TerminalInputDispatch): void {
 }
 
 function terminalInputTraceEnabled(): boolean {
-  return localStorage.getItem('patterm.terminal.inputTrace') === '1';
+  return cachedInputTrace;
 }
 
 function terminalRawInputTraceEnabled(): boolean {
-  return localStorage.getItem('patterm.terminal.inputTraceRaw') === '1';
+  return cachedRawInputTrace;
 }
 
 function eventTargetLabel(target: EventTarget | null | undefined): string | null {

@@ -106,6 +106,8 @@ try {
   fs.copyFileSync(path.join(stage, 'electron', 'electron.exe'), path.join(stage, 'electron', 'Patterm.exe'));
 
   fs.copyFileSync(options.sidecar, path.join(stage, 'resources', 'native', 'patterm-terminal-core.exe'));
+  const nativeMcp = path.join(path.dirname(options.sidecar), 'patterm-mcp.exe');
+  if (fs.existsSync(nativeMcp)) fs.copyFileSync(nativeMcp, path.join(stage, 'resources', 'native', 'patterm-mcp.exe'));
   fs.copyFileSync(path.join(ROOT, 'dist', 'mcp', 'patterm-mcp.js'), path.join(stage, 'resources', 'mcp', 'patterm-mcp.js'));
   fs.writeFileSync(path.join(stage, 'Patterm.cmd'), launcher());
   // The in-app updater checks releases with this key and installs through the helper.

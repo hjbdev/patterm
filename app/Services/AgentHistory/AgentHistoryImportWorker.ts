@@ -37,30 +37,122 @@ interface ParentPort {
 type WorkerResult = { ok: boolean; result?: unknown; error?: string };
 type ProgressReporter = (progress: HistoryImportProgress) => void;
 
+// Strictly longer than the queue's 45s warm idle retirement timeout so the
+// parent retires the worker cleanly instead of racing with child self-exit.
+const WARM_IDLE_EXIT_MS = 60_000;
+const MAX_WARM_JOBS = 50;
+
 if (require.main === module) startWorker();
 
 function startWorker(): void {
   lowerWorkerPriority();
   const parentPort = (process as NodeJS.Process & { parentPort?: ParentPort }).parentPort;
   if (parentPort) {
-    parentPort.once('message', (event) => {
-      const heartbeat = setInterval(() => parentPort.postMessage({ type: 'heartbeat' }), 5_000);
-      void runHistoryImportWorker(event.data, (progress) => parentPort.postMessage({ type: 'progress', progress }))
-        .then((result) => parentPort.postMessage(resultMessage(result)))
-        .finally(() => {
-          clearInterval(heartbeat);
-          waitForAck(parentPort);
-        });
-    });
+    runWarmLoop(
+      (handler) => parentPort.on('message', (event) => handler(event.data)),
+      (message) => parentPort.postMessage(message),
+      (message) => {
+        parentPort.postMessage(message);
+        waitForAck(parentPort);
+      }
+    );
     return;
   }
-  process.once('message', (message) => {
-    const heartbeat = setInterval(() => process.send?.({ type: 'heartbeat' }), 5_000);
-    void runHistoryImportWorker(message, (progress) => process.send?.({ type: 'progress', progress }))
-      .then((result) => process.send?.(resultMessage(result)))
-      .finally(() => {
-        clearInterval(heartbeat);
+  runWarmLoop(
+    (handler) => process.on('message', handler),
+    (message) => process.send?.(message),
+    (message) => sendFinalAndDisconnect(message)
+  );
+}
+
+function sendFinalAndDisconnect(message: unknown): void {
+  const disconnect = () => {
+    if (process.connected) {
+      process.once('disconnect', () => process.exit(0));
+      try {
         process.disconnect?.();
+      } catch {
+        process.exit(0);
+      }
+      const safety = setTimeout(() => process.exit(0), 5_000);
+      safety.unref?.();
+    } else {
+      process.exit(0);
+    }
+  };
+  if (!process.send || !process.connected) {
+    disconnect();
+    return;
+  }
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    disconnect();
+  };
+  const safety = setTimeout(finish, 5_000);
+  safety.unref?.();
+  try {
+    process.send(message, undefined, undefined, () => {
+      clearTimeout(safety);
+      finish();
+    });
+  } catch {
+    clearTimeout(safety);
+    finish();
+  }
+}
+
+function runWarmLoop(
+  onMessage: (handler: (message: unknown) => void) => void,
+  send: (message: unknown) => void,
+  finishWithMessage: (message: unknown) => void
+): void {
+  let jobsHandled = 0;
+  let busy = false;
+  let idleTimer: NodeJS.Timeout | null = null;
+  const clearIdle = () => {
+    if (!idleTimer) return;
+    clearTimeout(idleTimer);
+    idleTimer = null;
+  };
+  const armIdle = () => {
+    clearIdle();
+    idleTimer = setTimeout(() => process.exit(0), WARM_IDLE_EXIT_MS);
+    idleTimer.unref?.();
+  };
+  armIdle();
+
+  onMessage((message) => {
+    if (message && typeof message === 'object') {
+      const type = (message as { type?: unknown }).type;
+      if (type === 'result_ack') return;
+      if (type === 'shutdown') {
+        clearIdle();
+        process.exit(0);
+      }
+    }
+    if (busy) return;
+    busy = true;
+    clearIdle();
+    const heartbeat = setInterval(() => send({ type: 'heartbeat' }), 5_000);
+    void runHistoryImportWorker(message, (progress) => send({ type: 'progress', progress }))
+      .then((result) => {
+        jobsHandled += 1;
+        const keepAlive = result.ok && jobsHandled < MAX_WARM_JOBS;
+        clearInterval(heartbeat);
+        busy = false;
+        if (keepAlive) {
+          send(resultMessage(result, true));
+          armIdle();
+        } else {
+          finishWithMessage(resultMessage(result, false));
+        }
+      })
+      .catch((error) => {
+        clearInterval(heartbeat);
+        busy = false;
+        finishWithMessage(resultMessage({ ok: false, error: error instanceof Error ? error.message : String(error) }, false));
       });
   });
 }
@@ -154,8 +246,8 @@ function localParseFile(discovery: ProviderHistoryDiscoveryService): HistoryFile
   };
 }
 
-function resultMessage(result: WorkerResult): WorkerResult & { type: 'result' } {
-  return { type: 'result', ...result };
+function resultMessage(result: WorkerResult, keepAlive = false): WorkerResult & { type: 'result'; keepAlive?: boolean } {
+  return keepAlive ? { type: 'result', ...result, keepAlive: true } : { type: 'result', ...result };
 }
 
 function waitForAck(parentPort: ParentPort): void {

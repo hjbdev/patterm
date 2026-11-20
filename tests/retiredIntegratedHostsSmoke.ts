@@ -134,11 +134,27 @@ async function main(): Promise<void> {
 // no live user manager is touched.
 async function systemdLauncherSmoke(): Promise<void> {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-systemd-hosts-'));
+  const pidFile = path.join(directory, 'stub.pid');
   try {
     const bin = path.join(directory, 'bin');
     const log = path.join(directory, 'calls.log');
+    const runner = path.join(directory, 'systemd-run.js');
     fs.mkdirSync(bin);
-    fs.writeFileSync(path.join(bin, 'systemd-run'), `#!/bin/sh\nprintf '%s\\n' "$@" >> '${log}'\n`, { mode: 0o755 });
+    // Start a tiny listening socket on the supervisor path when systemd-run is
+    // invoked so launch()'s waitForSupervisorSocket check succeeds without
+    // touching the live user manager.
+    fs.writeFileSync(runner, [
+      "const fs = require('node:fs');",
+      "const { spawn } = require('node:child_process');",
+      `fs.appendFileSync(${JSON.stringify(log)}, process.argv.slice(2).join('\\n') + '\\n');`,
+      "const sock = process.argv.at(-1);",
+      "const child = spawn(process.execPath, ['-e', `const net=require('node:net');const s=net.createServer();s.listen(${JSON.stringify(sock)},()=>{process.stdout.write('ok\\\\n');});setTimeout(()=>process.exit(0),10000).unref();`], { detached: true, stdio: ['ignore', 'pipe', 'ignore'] });",
+      `if (child.pid) fs.writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));`,
+      "child.stdout.once('data', () => { child.unref(); process.exit(0); });",
+      "child.once('error', () => process.exit(1));",
+      ''
+    ].join('\n'));
+    fs.writeFileSync(path.join(bin, 'systemd-run'), `#!/bin/sh\nexec '${process.execPath}' '${runner}' "$@"\n`, { mode: 0o755 });
     fs.writeFileSync(path.join(bin, 'systemctl'), '#!/bin/sh\necho 4242\n', { mode: 0o755 });
     const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}` };
     const configPath = path.join(directory, 'host.json');
@@ -151,6 +167,10 @@ async function systemdLauncherSmoke(): Promise<void> {
     assert.ok(args.includes('--property=OOMPolicy=continue'), args.join(' '));
     assert.ok(args.includes('--property=KillMode=control-group'));
   } finally {
+    try {
+      const stubPid = Number(fs.readFileSync(pidFile, 'utf8').trim());
+      if (Number.isInteger(stubPid) && stubPid > 0) process.kill(stubPid, 'SIGTERM');
+    } catch {}
     fs.rmSync(directory, { recursive: true, force: true });
   }
 }

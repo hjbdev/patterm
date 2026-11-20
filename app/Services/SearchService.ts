@@ -58,10 +58,81 @@ interface ArtifactRow {
 }
 
 export class SearchService {
+  private ftsRowsLookupAvailable: boolean | null = null;
   private readonly visibility: HistoryMessageVisibility;
 
   constructor(private readonly database: DatabaseService, private readonly historyDatabase: AgentHistoryDb | null = null, quietReplies?: string) {
     this.visibility = new HistoryMessageVisibility(quietReplies);
+  }
+
+  private hasFtsRowsLookup(): boolean {
+    if (this.ftsRowsLookupAvailable === null) {
+      this.ftsRowsLookupAvailable = Boolean(
+        this.database.connection.prepare(`select 1 from sqlite_master where type = 'table' and name = 'app_artifacts_fts_rows'`).get()
+      );
+    }
+    return this.ftsRowsLookupAvailable;
+  }
+
+  private insertArtifactRow(row: ArtifactRow): void {
+    const db = this.database.connection;
+    const result = db.prepare(
+      `insert into app_artifacts_fts (kind, owner_id, project_id, title, body)
+       values (@kind, @owner_id, @project_id, @title, @body)`
+    ).run(row);
+    if (this.hasFtsRowsLookup()) {
+      db.prepare(
+        `insert or ignore into app_artifacts_fts_rows (kind, owner_id, fts_rowid) values (?, ?, ?)`
+      ).run(row.kind, row.owner_id, result.lastInsertRowid);
+    }
+  }
+
+  private deleteArtifactsByFilter(kind: string | null, ownerId: string | null): void {
+    const db = this.database.connection;
+    if (!this.hasFtsRowsLookup()) {
+      if (kind && ownerId) db.prepare(`delete from app_artifacts_fts where kind = ? and owner_id = ?`).run(kind, ownerId);
+      else if (ownerId) db.prepare(`delete from app_artifacts_fts where owner_id = ?`).run(ownerId);
+      else if (kind) db.prepare(`delete from app_artifacts_fts where kind = ?`).run(kind);
+      return;
+    }
+    const deleteByRowid = db.prepare(`delete from app_artifacts_fts where rowid = ?`);
+    if (kind && ownerId) {
+      const existing = db.prepare(`select fts_rowid from app_artifacts_fts_rows where kind = ? and owner_id = ?`).all(kind, ownerId) as Array<{ fts_rowid: number | bigint }>;
+      for (const row of existing) deleteByRowid.run(row.fts_rowid);
+      if (existing.length > 0) db.prepare(`delete from app_artifacts_fts_rows where kind = ? and owner_id = ?`).run(kind, ownerId);
+    } else if (ownerId) {
+      const existing = db.prepare(`select fts_rowid from app_artifacts_fts_rows where owner_id = ?`).all(ownerId) as Array<{ fts_rowid: number | bigint }>;
+      for (const row of existing) deleteByRowid.run(row.fts_rowid);
+      if (existing.length > 0) db.prepare(`delete from app_artifacts_fts_rows where owner_id = ?`).run(ownerId);
+    } else if (kind) {
+      const existing = db.prepare(`select fts_rowid from app_artifacts_fts_rows where kind = ?`).all(kind) as Array<{ fts_rowid: number | bigint }>;
+      for (const row of existing) deleteByRowid.run(row.fts_rowid);
+      if (existing.length > 0) db.prepare(`delete from app_artifacts_fts_rows where kind = ?`).run(kind);
+    }
+  }
+
+  private deleteConversationFtsRows(conversationId: string): void {
+    const db = this.database.connection;
+    if (!this.hasFtsRowsLookup()) {
+      db.prepare(`delete from app_artifacts_fts where kind = 'conversation' and owner_id = ?`).run(conversationId);
+      db.prepare(`delete from app_artifacts_fts where kind = 'conversation_message' and owner_id in (select id from conversation_messages where conversation_id = ?)`).run(conversationId);
+      return;
+    }
+    const deleteByRowid = db.prepare(`delete from app_artifacts_fts where rowid = ?`);
+    const convRows = db.prepare(`select fts_rowid from app_artifacts_fts_rows where kind = 'conversation' and owner_id = ?`).all(conversationId) as Array<{ fts_rowid: number | bigint }>;
+    for (const row of convRows) deleteByRowid.run(row.fts_rowid);
+    if (convRows.length > 0) {
+      db.prepare(`delete from app_artifacts_fts_rows where kind = 'conversation' and owner_id = ?`).run(conversationId);
+    }
+    const msgRows = db.prepare(
+      `select fts_rowid from app_artifacts_fts_rows where kind = 'conversation_message' and owner_id in (select id from conversation_messages where conversation_id = ?)`
+    ).all(conversationId) as Array<{ fts_rowid: number | bigint }>;
+    for (const row of msgRows) deleteByRowid.run(row.fts_rowid);
+    if (msgRows.length > 0) {
+      db.prepare(
+        `delete from app_artifacts_fts_rows where kind = 'conversation_message' and owner_id in (select id from conversation_messages where conversation_id = ?)`
+      ).run(conversationId);
+    }
   }
 
   search(input: SearchInput): SearchResponse {
@@ -131,17 +202,12 @@ export class SearchService {
     const db = this.database.connection;
     const rebuild = db.transaction(() => {
       db.prepare(`delete from app_artifacts_fts`).run();
-      const insert = db.prepare(
-        `
-        insert into app_artifacts_fts (kind, owner_id, project_id, title, body)
-        values (@kind, @owner_id, @project_id, @title, @body)
-      `
-      );
+      if (this.hasFtsRowsLookup()) db.prepare(`delete from app_artifacts_fts_rows`).run();
       for (const row of this.artifacts()) {
         if (row.title.trim().length === 0 && row.body.trim().length === 0) {
           continue;
         }
-        insert.run(row);
+        this.insertArtifactRow(row);
       }
       db.prepare(`
         insert into settings (key, value, updated_at) values (?, '1', ?)
@@ -175,9 +241,10 @@ export class SearchService {
   }
 
   removeConversation(conversationId: string): void {
-    this.database.connection
-      .prepare(`delete from app_artifacts_fts where (kind = 'conversation' and owner_id = ?) or (kind = 'conversation_message' and owner_id in (select id from conversation_messages where conversation_id = ?))`)
-      .run(conversationId, conversationId);
+    const db = this.database.connection;
+    db.transaction(() => {
+      this.deleteConversationFtsRows(conversationId);
+    })();
   }
 
   private artifacts(): ArtifactRow[] {
@@ -317,20 +384,10 @@ export class SearchService {
   private replaceArtifacts(kind: string | null, ownerId: string | null, rows: ArtifactRow[]): void {
     const db = this.database.connection;
     const replace = db.transaction(() => {
-      if (kind && ownerId) {
-        db.prepare(`delete from app_artifacts_fts where kind = ? and owner_id = ?`).run(kind, ownerId);
-      } else if (ownerId) {
-        db.prepare(`delete from app_artifacts_fts where owner_id = ?`).run(ownerId);
-      } else if (kind) {
-        db.prepare(`delete from app_artifacts_fts where kind = ?`).run(kind);
-      }
-      const insert = db.prepare(
-        `insert into app_artifacts_fts (kind, owner_id, project_id, title, body)
-         values (@kind, @owner_id, @project_id, @title, @body)`
-      );
+      this.deleteArtifactsByFilter(kind, ownerId);
       for (const row of rows) {
         if (row.title.trim().length === 0 && row.body.trim().length === 0) continue;
-        insert.run(row);
+        this.insertArtifactRow(row);
       }
     });
     replace();
@@ -339,15 +396,10 @@ export class SearchService {
   private replaceConversationArtifacts(conversationId: string, rows: ArtifactRow[]): void {
     const db = this.database.connection;
     const replace = db.transaction(() => {
-      db.prepare(`delete from app_artifacts_fts where kind = 'conversation' and owner_id = ?`).run(conversationId);
-      db.prepare(`delete from app_artifacts_fts where kind = 'conversation_message' and owner_id in (select id from conversation_messages where conversation_id = ?)`).run(conversationId);
-      const insert = db.prepare(
-        `insert into app_artifacts_fts (kind, owner_id, project_id, title, body)
-         values (@kind, @owner_id, @project_id, @title, @body)`
-      );
+      this.deleteConversationFtsRows(conversationId);
       for (const row of rows) {
         if (row.title.trim().length === 0 && row.body.trim().length === 0) continue;
-        insert.run(row);
+        this.insertArtifactRow(row);
       }
     });
     replace();
@@ -355,10 +407,6 @@ export class SearchService {
 
   private async replaceConversationArtifactsForConversationAsync(conversationId: string): Promise<void> {
     const db = this.database.connection;
-    const insert = db.prepare(
-      `insert into app_artifacts_fts (kind, owner_id, project_id, title, body)
-       values (@kind, @owner_id, @project_id, @title, @body)`
-    );
     const conversationRows = db
       .prepare(
         `select id, provider, provider_conversation_id, project_id, title, cwd, provider_version, status, link_reason, metadata
@@ -385,11 +433,10 @@ export class SearchService {
     }));
 
     db.transaction(() => {
-      db.prepare(`delete from app_artifacts_fts where kind = 'conversation' and owner_id = ?`).run(conversationId);
-      db.prepare(`delete from app_artifacts_fts where kind = 'conversation_message' and owner_id in (select id from conversation_messages where conversation_id = ?)`).run(conversationId);
+      this.deleteConversationFtsRows(conversationId);
       for (const row of conversationArtifacts) {
         if (row.title.trim().length === 0 && row.body.trim().length === 0) continue;
-        insert.run(row);
+        this.insertArtifactRow(row);
       }
     })();
 
@@ -432,7 +479,7 @@ export class SearchService {
       db.transaction(() => {
         for (const row of chunk) {
           if (row.title.trim().length === 0 && row.body.trim().length === 0) continue;
-          insert.run(row);
+          this.insertArtifactRow(row);
         }
       })();
       offset += messageRows.length;

@@ -32,7 +32,22 @@ interface HostConfig {
 
 type JsonRecord = Record<string, unknown>;
 
-const config = JSON.parse(fs.readFileSync(process.argv[2]!, 'utf8')) as HostConfig;
+export interface ClaudeHostSession {
+  socketPath: string;
+  stop(): Promise<void>;
+  cleanup(): void;
+}
+
+export interface ClaudeHostSessionOptions {
+  onExit?: (code: number) => void;
+}
+
+export function startClaudeHostSession(
+  configPath: string,
+  hostEnv: NodeJS.ProcessEnv = process.env,
+  options: ClaudeHostSessionOptions = {}
+): ClaudeHostSession {
+const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as HostConfig;
 // Windows caps a command line at 32767 characters, which a large assistant
 // context can approach, so Claude reads it from a file there (as in terminal mode).
 const contextPath = config.mcpConfigPath.replace(/-mcp\.json$/, '-context.md');
@@ -141,6 +156,7 @@ const ambientTasks = new Set<string>();
 // Native message types this host does not project, counted so protocol drift
 // shows up in the debug log instead of being silently dropped.
 const unhandled: Record<string, number> = {};
+let shutdownPromise: Promise<void> | null = null;
 
 function countUnhandled(type: string): void {
   if (Object.keys(unhandled).length < 100 || unhandled[type] !== undefined) unhandled[type] = (unhandled[type] ?? 0) + 1;
@@ -415,7 +431,7 @@ function leaveMemory(text: string, replace: boolean): void {
     try { earlier = String(record(record(JSON.parse(fs.readFileSync(config.memoryHookPath, 'utf8'))).hookSpecificOutput).additionalContext ?? ''); } catch { /* none waiting */ }
   }
   const additionalContext = earlier ? `${earlier}\n\n${text}` : text;
-  const staging = `${config.memoryHookPath}.${process.pid}`;
+  const staging = `${config.memoryHookPath}.${process.pid}.${randomUUID().slice(0, 8)}`;
   fs.writeFileSync(staging, JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext } }), { mode: 0o600 });
   fs.renameSync(staging, config.memoryHookPath);
 }
@@ -453,7 +469,7 @@ function startClaude(forceResume = false): void {
     ...(effort ? ['--effort', effort] : []),
     ...(config.resume || forceResume ? ['--resume', config.sessionId] : ['--session-id', config.sessionId])
   ];
-  const env = claudeEnvironment(process.env);
+  const env = claudeEnvironment(hostEnv);
   // npm installs Claude Code as a .cmd shim on Windows, which Node cannot spawn.
   const command = resolveCommand(config.executable, args, env);
   // A new process starts with nothing of its predecessor's, even one whose
@@ -1509,29 +1525,35 @@ function record(value: unknown): JsonRecord {
 }
 
 function cleanup(): void {
-  for (const filename of [config.socketPath, config.mcpConfigPath, contextPath, process.argv[2]!, config.memoryHookPath, config.settingsPath]) {
+  for (const filename of [config.socketPath, config.mcpConfigPath, contextPath, configPath, config.memoryHookPath, config.settingsPath]) {
     if (!filename) continue;
     try { fs.unlinkSync(filename); } catch {}
   }
 }
-process.on('exit', cleanup);
-process.on('SIGTERM', shutdown);
-// Windows never delivers SIGTERM; Ctrl+Break is its console stop request. A
-// host ended outright takes claude.exe with it through Node's job object.
-if (process.platform === 'win32') process.on('SIGBREAK', shutdown);
 
-function shutdown(): void {
-  for (const subscriber of subscribers) subscriber.destroy();
-  subscribers.clear();
-  const stopped = stopClaude();
-  server.close(() => void stopped.then(() => process.exit(0)));
+function shutdown(): Promise<void> {
+  if (shutdownPromise) return shutdownPromise;
+  shutdownPromise = (async () => {
+    if (appendTimer) { clearTimeout(appendTimer); appendTimer = null; }
+    appends = [];
+    for (const resolve of [...titleRequests.values()]) resolve(null);
+    titleRequests.clear();
+    for (const subscriber of subscribers) subscriber.destroy();
+    subscribers.clear();
+    const stopped = stopClaude();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await stopped;
+    cleanup();
+    options.onExit?.(0);
+  })();
+  return shutdownPromise;
 }
 
 // Windows has no SIGTERM, and ending claude.exe alone would orphan its MCP
 // servers and tool shells, so its whole tree ends there.
 function stopClaude(): Promise<void> {
   if (process.platform !== 'win32') {
-    child?.kill('SIGTERM');
+    try { child?.kill('SIGTERM'); } catch {}
     return Promise.resolve();
   }
   return child?.pid ? killProcessTree(child.pid) : Promise.resolve();
@@ -1540,4 +1562,20 @@ function stopClaude(): Promise<void> {
 function uploadLabel(images: number, documents: number): string {
   const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
   return [images ? count(images, 'image') : '', documents ? count(documents, 'file') : ''].filter(Boolean).join(', ');
+}
+
+return {
+  socketPath: config.socketPath,
+  stop: () => shutdown(),
+  cleanup
+};
+}
+
+if (require.main === module) {
+  const session = startClaudeHostSession(process.argv[2]!, process.env, { onExit: (code) => process.exit(code) });
+  process.on('exit', () => session.cleanup());
+  process.on('SIGTERM', () => { void session.stop(); });
+  // Windows never delivers SIGTERM; Ctrl+Break is its console stop request. A
+  // host ended outright takes claude.exe with it through Node's job object.
+  if (process.platform === 'win32') process.on('SIGBREAK', () => { void session.stop(); });
 }

@@ -2,6 +2,7 @@ import type { z } from 'zod';
 import type { SqliteConnection } from '../../Database/SqliteConnection';
 import { AgentHistoryReadService, conversationHistorySearchInput, conversationSearchInput, type ConversationSessionState } from '../AgentHistory/AgentHistoryReadService';
 import { blobToVector, EMBEDDING_DIMENSIONS, EMBEDDING_MODEL_KEY } from './EmbeddingModel';
+import type { SemanticPassageHit } from './EmbeddingWorkerProtocol';
 import { messagePassages } from './HistoryPassages';
 import { HistoryEmbeddingIndexer } from './HistoryEmbeddingIndexer';
 
@@ -17,18 +18,31 @@ const RRF_K = 60;
 export const MIN_SIMILARITY = 0.65;
 // Bounds the cached search matrix, about 2 KB per passage.
 const MAX_CACHED_PASSAGES = 250_000;
+const MATRIX_IDLE_EVICT_MS = 5 * 60_000;
 
-export interface QueryEmbedding { embedQuery(text: string): Promise<Float32Array | null>; readonly active: boolean; }
+export interface QueryEmbedding {
+  embedQuery(text: string): Promise<Float32Array | null>;
+  searchPassages?(input: {
+    text: string;
+    projectId: string | null;
+    provider?: string | null | undefined;
+    hiddenSessions?: readonly string[] | undefined;
+    limit: number;
+    minScore: number;
+  }): Promise<SemanticPassageHit[] | null>;
+  readonly active: boolean;
+}
 
 interface Scope { projectId: string; provider?: string | undefined; hiddenSessions?: readonly string[] | undefined; }
-interface PassageHit { conversationId: string; messageId: string; chunk: number; score: number; }
-interface CachedMatrix { key: string; revision: string; conversationIds: string[]; messageIds: string[]; chunks: number[]; vectors: Float32Array; }
+type PassageHit = SemanticPassageHit;
+interface CachedMatrix { key: string; revision: string; conversationIds: string[]; sessionIds: Array<string | null>; messageIds: string[]; chunks: number[]; vectors: Float32Array; }
 
 // Hybrid conversation-history search: the existing FTS/BM25 ranking fused
 // with nearest passages by reciprocal rank. Keyword results are returned
 // unchanged whenever semantic search is off, still loading, or failing.
 export class HybridHistorySearchService {
   private cache: CachedMatrix | null = null;
+  private evictTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly read: AgentHistoryReadService,
@@ -36,18 +50,26 @@ export class HybridHistorySearchService {
     private readonly semantic: QueryEmbedding | null
   ) {}
 
+  dispose(): void {
+    if (this.evictTimer) {
+      clearTimeout(this.evictTimer);
+      this.evictTimer = null;
+    }
+    this.cache = null;
+  }
+
   // One row per conversation for the resume picker.
   async searchConversations(raw: z.input<typeof conversationSearchInput>, sessions: readonly ConversationSessionState[] = []) {
     const input = conversationSearchInput.parse(raw);
+    const hidden = input.resumable ? sessions.filter((session) => session.role === 'child' || session.role === 'routine').map((session) => session.id) : undefined;
+    const scope: Scope = { projectId: input.project_id, provider: input.provider, hiddenSessions: hidden };
     // Keyword rows are read after the wait so they reflect the same moment
     // as the live checks below; a conversation can move while a query embeds.
-    const vector = await this.queryVector(input.query);
+    const hits = await this.semanticPassages(input.query, scope, PASSAGE_CANDIDATES);
     const keyword = this.read.searchConversations({ ...input, limit: Math.max(input.limit, CANDIDATES) }, sessions).conversations;
-    if (!vector) return { conversations: keyword.slice(0, input.limit), semantic: false };
-    const hidden = input.resumable ? sessions.filter((session) => session.role === 'child' || session.role === 'routine').map((session) => session.id) : undefined;
-    const scope = { projectId: input.project_id, provider: input.provider, hiddenSessions: hidden };
+    if (!hits) return { conversations: keyword.slice(0, input.limit), semantic: false };
     const best = new Map<string, PassageHit>();
-    for (const hit of this.nearest(vector, scope, PASSAGE_CANDIDATES)) if (!best.has(hit.conversationId)) best.set(hit.conversationId, hit);
+    for (const hit of hits) if (!best.has(hit.conversationId)) best.set(hit.conversationId, hit);
     const semanticIds = [...best.keys()].slice(0, CANDIDATES);
     const fused = fuse([keyword.map((row) => row.id), semanticIds]).slice(0, input.limit);
     const byKeyword = new Map(keyword.map((row) => [row.id, row]));
@@ -73,11 +95,12 @@ export class HybridHistorySearchService {
   // Message-level results for the search_conversation_history agent tool.
   async search(raw: z.input<typeof conversationHistorySearchInput>) {
     const input = conversationHistorySearchInput.parse(raw);
-    const vector = await this.queryVector(input.query);
+    const scope: Scope = { projectId: input.project_id, provider: input.provider };
+    const hits = await this.semanticPassages(input.query, scope, PASSAGE_CANDIDATES);
     const keyword = this.read.search({ ...input, limit: Math.max(input.limit, CANDIDATES) });
-    if (!vector) return { query: input.query, semantic: false, results: keyword.results.slice(0, input.limit).map((row) => ({ ...row, match: 'keyword' })) };
+    if (!hits) return { query: input.query, semantic: false, results: keyword.results.slice(0, input.limit).map((row) => ({ ...row, match: 'keyword' })) };
     const best = new Map<string, PassageHit>();
-    for (const hit of this.nearest(vector, { projectId: input.project_id, provider: input.provider }, PASSAGE_CANDIDATES)) if (!best.has(hit.messageId)) best.set(hit.messageId, hit);
+    for (const hit of hits) if (!best.has(hit.messageId)) best.set(hit.messageId, hit);
     const keyOf = (row: { kind: string; conversationId: string; messageId: string | null }) => row.messageId ?? `conversation:${row.conversationId}`;
     const fused = fuse([keyword.results.map(keyOf), [...best.keys()].slice(0, CANDIDATES)]).slice(0, input.limit);
     const byKeyword = new Map(keyword.results.map((row) => [keyOf(row), row]));
@@ -101,9 +124,21 @@ export class HybridHistorySearchService {
     };
   }
 
-  private async queryVector(query: string): Promise<Float32Array | null> {
+  private async semanticPassages(query: string, scope: Scope, limit: number): Promise<PassageHit[] | null> {
     if (!this.semantic?.active || !this.indexAvailable()) return null;
-    return await this.semantic.embedQuery(query);
+    if (this.semantic.searchPassages) {
+      return await this.semantic.searchPassages({
+        text: query,
+        projectId: scope.projectId,
+        provider: scope.provider ?? null,
+        hiddenSessions: scope.hiddenSessions,
+        limit,
+        minScore: MIN_SIMILARITY
+      });
+    }
+    const vector = await this.semantic.embedQuery(query);
+    if (!vector) return null;
+    return this.nearest(vector, scope, limit);
   }
 
   private indexAvailable(): boolean {
@@ -119,9 +154,14 @@ export class HybridHistorySearchService {
   // project's vectors: tens of milliseconds at the sizes real history reaches.
   private nearest(vector: Float32Array, scope: Scope, limit: number): PassageHit[] {
     const matrix = this.matrix(scope);
+    const hidden = scope.hiddenSessions?.length ? new Set(scope.hiddenSessions) : null;
     const hits: PassageHit[] = [];
     const count = matrix.conversationIds.length;
     for (let row = 0; row < count; row++) {
+      if (hidden) {
+        const sessionId = matrix.sessionIds[row];
+        if (sessionId && hidden.has(sessionId)) continue;
+      }
       let score = 0;
       const offset = row * EMBEDDING_DIMENSIONS;
       for (let index = 0; index < EMBEDDING_DIMENSIONS; index++) score += vector[index]! * matrix.vectors[offset + index]!;
@@ -130,48 +170,63 @@ export class HybridHistorySearchService {
     return hits.sort((a, b) => b.score - a.score).slice(0, limit);
   }
 
+  private scheduleEviction(): void {
+    if (this.evictTimer) clearTimeout(this.evictTimer);
+    if (!this.cache) {
+      this.evictTimer = null;
+      return;
+    }
+    this.evictTimer = setTimeout(() => {
+      this.evictTimer = null;
+      this.cache = null;
+    }, MATRIX_IDLE_EVICT_MS);
+    this.evictTimer.unref?.();
+  }
+
   private matrix(scope: Scope): CachedMatrix {
     const db = this.history!.connection;
-    const key = JSON.stringify([scope.projectId, scope.provider ?? null, scope.hiddenSessions ?? null]);
+    // Key excludes hiddenSessions so spawning subagents never busts the matrix.
+    const key = JSON.stringify([scope.projectId, scope.provider ?? null]);
     const revision = JSON.stringify(db.prepare(`
       select (select count(*) from history_embedding_passages) as passages, (select max(id) from history_embedding_passages) as last_passage,
         (select max(indexed_at) from history_embedding_state) as indexed_at,
         (select count(*) from conversations where project_id = @project_id) as conversations,
         (select max(imported_at) from conversations where project_id = @project_id) as imported_at
     `).get({ project_id: scope.projectId }));
-    if (this.cache?.key === key && this.cache.revision === revision) return this.cache;
+    if (this.cache?.key === key && this.cache.revision === revision) {
+      this.scheduleEviction();
+      return this.cache;
+    }
     const filters = ['history_embedding_passages.model_key = @model_key', 'conversations.project_id = @project_id'];
     const params: Record<string, unknown> = { model_key: EMBEDDING_MODEL_KEY, project_id: scope.projectId };
     if (scope.provider) {
       filters.push('conversations.provider = @provider');
       params.provider = scope.provider;
     }
-    if (scope.hiddenSessions) {
-      filters.push(`coalesce(conversations.session_id, '') not in (select value from json_each(@hidden_sessions))`);
-      params.hidden_sessions = JSON.stringify(scope.hiddenSessions);
-    }
     const rows = db.prepare(`
-      select history_embedding_passages.conversation_id, history_embedding_passages.message_id, history_embedding_passages.chunk, history_embedding_vectors.vector
+      select history_embedding_passages.conversation_id, conversations.session_id, history_embedding_passages.message_id, history_embedding_passages.chunk, history_embedding_vectors.vector
       from history_embedding_passages
       join history_embedding_vectors on history_embedding_vectors.model_key = history_embedding_passages.model_key
         and history_embedding_vectors.content_hash = history_embedding_passages.content_hash
       join conversations on conversations.id = history_embedding_passages.conversation_id
       where ${filters.join(' and ')}
-    `).all(params) as Array<{ conversation_id: string; message_id: string; chunk: number; vector: Uint8Array }>;
+    `).all(params) as Array<{ conversation_id: string; session_id: string | null; message_id: string; chunk: number; vector: Uint8Array }>;
     const vectors = new Float32Array(rows.length * EMBEDDING_DIMENSIONS);
-    const matrix: CachedMatrix = { key, revision, conversationIds: [], messageIds: [], chunks: [], vectors };
+    const matrix: CachedMatrix = { key, revision, conversationIds: [], sessionIds: [], messageIds: [], chunks: [], vectors };
     let used = 0;
     for (const row of rows) {
       const vector = blobToVector(row.vector);
       if (vector.length !== EMBEDDING_DIMENSIONS) continue;
       vectors.set(vector, used * EMBEDDING_DIMENSIONS);
       matrix.conversationIds.push(row.conversation_id);
+      matrix.sessionIds.push(row.session_id);
       matrix.messageIds.push(row.message_id);
       matrix.chunks.push(row.chunk);
       used++;
     }
     matrix.vectors = vectors.subarray(0, used * EMBEDDING_DIMENSIONS);
     this.cache = used <= MAX_CACHED_PASSAGES ? matrix : null;
+    this.scheduleEviction();
     return matrix;
   }
 }

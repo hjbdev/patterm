@@ -16,6 +16,7 @@ import { snapshotWithGoal, type IntegratedGoalAction } from './IntegratedGoal';
 import { containsReferenceToken, referenceToken } from './PromptReferences';
 import type { TranscriptImageStore } from './TranscriptImageStore';
 import { claudeMcpServers } from '../Harness/McpDelivery';
+import { parseClaudeCatalog, type HarnessModel } from '../Harness/ModelCatalog';
 import { ipcPath } from '../Platform/Ipc';
 
 const CLAUDE_RECONNECT_ATTEMPTS = 8;
@@ -55,7 +56,9 @@ export class ClaudeStreamService {
     const key = randomUUID();
     const sessionId = input.resumeId ?? randomUUID();
     if (input.resumeId) {
-      const attached = this.database.connection.prepare('select id from sessions where harness = ? and resume_id = ? and exited_at is null').get('claude', input.resumeId);
+      const attached = input.wakingSessionId
+        ? this.database.connection.prepare('select id from sessions where harness = ? and resume_id = ? and exited_at is null and id != ?').get('claude', input.resumeId, input.wakingSessionId)
+        : this.database.connection.prepare('select id from sessions where harness = ? and resume_id = ? and exited_at is null').get('claude', input.resumeId);
       if (attached) throw new Error('Claude session is already attached to Patterm');
     }
     const socketPath = path.join(directory, `${key}.sock`);
@@ -102,7 +105,8 @@ export class ClaudeStreamService {
       }
       return { resumeId: sessionId, argv: [input.executable, 'claude-host', socketPath, String(pid ?? ''), configPath] };
     } catch (error) {
-      await stopHostProcess(pid);
+      if (this.launcher.stop) await this.launcher.stop(socketPath, pid).catch(() => undefined);
+      else await stopHostProcess(pid);
       throw error;
     }
   }
@@ -114,7 +118,7 @@ export class ClaudeStreamService {
     // The model and command lists, tens of kilobytes, belong to the controls,
     // which clients read once and again only when their revision changes.
     const { models: _models, commands: _commands, ...state } = result;
-    const { goal, markers } = this.goals.read({ cwd: runtime.cwd, sessionId: runtime.sessionId, env: this.env });
+    const { goal, markers } = await this.goals.read({ cwd: runtime.cwd, sessionId: runtime.sessionId, env: this.env });
     return snapshotWithGoal({
       process_id: processId, session_id: runtime.pattermSessionId, provider_session_id: runtime.sessionId, provider: 'claude',
       ...state,
@@ -214,10 +218,10 @@ export class ClaudeStreamService {
     const text = [input.text.trim(), ...references.map((reference) => referenceToken(reference.relativePath))].filter(Boolean).join(' ');
     // Inline the exact bytes validated by UploadService rather than re-reading.
     // Images become image blocks; PDFs and text become document blocks.
-    const uploads = input.attachments.map((attachment) => ({
+    const uploads = await Promise.all(input.attachments.map(async (attachment) => ({
       attachment,
-      data: attachment.data ?? fs.readFileSync(attachment.path).toString('base64')
-    }));
+      data: attachment.data ?? (await fs.promises.readFile(attachment.path)).toString('base64')
+    })));
     const images = uploads.filter(({ attachment }) => attachment.mime.startsWith('image/'))
       .map(({ attachment, data }) => ({ media_type: attachment.mime, data }));
     const documents = uploads.filter(({ attachment }) => !attachment.mime.startsWith('image/'))
@@ -295,6 +299,37 @@ export class ClaudeStreamService {
     };
   }
 
+  // Reads the model catalog from an already-running Claude host without
+  // spawning a cold `claude -p` process. Returns null when no live host has a
+  // selectable model list.
+  async liveModels(): Promise<HarnessModel[] | null> {
+    const rows = this.database.connection.prepare(`
+      select processes.argv from processes join sessions on sessions.process_id = processes.id
+      where sessions.harness = 'claude' and sessions.interface_mode = 'integrated' and sessions.exited_at is null
+      order by sessions.started_at desc
+    `).all() as Array<{ argv: string }>;
+    for (const row of rows) {
+      let argv: unknown;
+      try { argv = JSON.parse(row.argv); } catch { continue; }
+      if (!Array.isArray(argv) || argv[1] !== 'claude-host' || typeof argv[2] !== 'string') continue;
+      const socketPath = argv[2];
+      const cached = this.catalogs.get(socketPath);
+      if (cached?.models.length) {
+        try { return parseClaudeCatalog({ models: cached.models }); } catch { /* try live read */ }
+      }
+      try {
+        const state = await readControls(socketPath);
+        const models = nativeModels(state);
+        if (!models.length) continue;
+        this.catalogs.set(socketPath, { models, commands: Array.isArray(state.commands) ? state.commands : [] });
+        return parseClaudeCatalog({ models });
+      } catch {
+        // Try the next live host, or fall back to CLI discovery.
+      }
+    }
+    return null;
+  }
+
   goal(processId: string, action: IntegratedGoalAction, objective?: string): Promise<unknown> {
     if (action === 'pause' || action === 'resume') throw new Error('Claude Code goals cannot be paused');
     if (action === 'set' && !objective) throw new Error('Describe the goal after /goal');
@@ -363,13 +398,21 @@ export class ClaudeStreamService {
     // interrupt, but the host stop below still runs and cleans it up. A
     // failure of the host stop itself still propagates.
     try { await this.interrupt(processId); } catch { /* the host stop decides */ }
-    try { await callHost(runtime.socketPath, 'stop', {}); } catch { await stopRecordedHostProcess(runtime.pid, runtime.socketPath); }
+    try {
+      await callHost(runtime.socketPath, 'stop', {});
+    } catch {
+      if (this.launcher.stop) await this.launcher.stop(runtime.socketPath, runtime.pid);
+      else await stopRecordedHostProcess(runtime.pid, runtime.socketPath);
+    }
     this.catalogs.delete(runtime.socketPath);
+    this.goals.forget(runtime.sessionId);
   }
 
   async cleanupLaunch(_input: IntegratedLaunchInput, result: IntegratedLaunchResult): Promise<void> {
+    const socketPath = typeof result.argv[2] === 'string' ? result.argv[2] : '';
     const pid = typeof result.argv[3] === 'string' && /^\d+$/.test(result.argv[3]) ? Number(result.argv[3]) : null;
-    await stopHostProcess(pid);
+    if (this.launcher.stop && socketPath) await this.launcher.stop(socketPath, pid);
+    else await stopHostProcess(pid);
   }
 
   async stopAll(): Promise<void> {

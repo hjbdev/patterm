@@ -4,7 +4,7 @@ use std::env;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 #[cfg(test)]
 use std::thread;
 use std::time::{Duration, Instant};
@@ -21,18 +21,21 @@ use alacritty_terminal::term::{viewport_to_point, Config, Term, TermDamage, Term
 use alacritty_terminal::tty::{self, Options, Shell};
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Rgb};
 use anyhow::{Context, Result};
+use polling::Poller;
 use serde_json::Value;
 
 use crate::notify_scan::ScanningPty;
 use crate::protocol::{write_frame, FRAME_TERMINAL_DAMAGE, FRAME_TERMINAL_LIFECYCLE};
 
 const TERMINAL_FRAME_VERSION: u16 = 3;
+const DEFAULT_SCROLLING_HISTORY: usize = 4_000;
 const AGENT_SUBMIT_SETTLE_DELAY: Duration = Duration::from_millis(100);
 const MAX_QUEUED_INPUT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_QUEUED_INPUT_CHUNKS: usize = 1024;
 const MAX_CLIPBOARD_BYTES: usize = 1024 * 1024;
 const BELL_THROTTLE: Duration = Duration::from_millis(2_000);
 const ACTIVITY_IDLE_DELAY: Duration = Duration::from_millis(2_000);
+const FOCUS_SYNC_INTERVAL: Duration = Duration::from_millis(100);
 const DEFAULT_FRAME_INTERVAL: Duration = Duration::from_millis(8);
 const MIN_FRAME_INTERVAL: Duration = Duration::from_millis(2);
 const MAX_FRAME_INTERVAL: Duration = Duration::from_millis(200);
@@ -83,6 +86,7 @@ pub struct TerminalManager {
     next_id: u64,
     id_prefix: String,
     tx: Sender<SidecarMessage>,
+    wake: Option<Arc<Poller>>,
     #[cfg(target_os = "linux")]
     process_cleanup: crate::process_cleanup::ProcessCleanup,
 }
@@ -117,6 +121,8 @@ struct TerminalSession {
     // had focus reporting (DECSET 1004) on at the last wakeup.
     focused: bool,
     focus_reporting: bool,
+    last_focus_sync: Option<Instant>,
+    focus_sync_pending: bool,
 }
 
 impl Drop for TerminalManager {
@@ -164,6 +170,7 @@ enum MouseEventKind {
 struct SidecarEventProxy {
     process_id: String,
     tx: Sender<SidecarMessage>,
+    wake: Option<Arc<Poller>>,
 }
 
 #[derive(Clone, Copy)]
@@ -172,10 +179,17 @@ struct TerminalSize {
     rows: usize,
 }
 
+#[cfg(test)]
 struct DamageRun {
     row: u16,
     start_col: u16,
     cells: Vec<EncodedCell>,
+}
+
+struct DamageRunSlice<'a> {
+    row: u16,
+    start_col: u16,
+    cells: &'a [EncodedCell],
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -222,9 +236,21 @@ impl TerminalManager {
             next_id: 0,
             id_prefix,
             tx,
+            wake: None,
             #[cfg(target_os = "linux")]
             process_cleanup: crate::process_cleanup::ProcessCleanup::new(),
         }
+    }
+
+    #[cfg(unix)]
+    pub fn with_id_prefix_and_poller(
+        tx: Sender<SidecarMessage>,
+        id_prefix: String,
+        poller: Arc<Poller>,
+    ) -> Self {
+        let mut manager = Self::with_id_prefix(tx, id_prefix);
+        manager.wake = Some(poller);
+        manager
     }
 
     pub fn spawn(&mut self, params: Value) -> Result<Value> {
@@ -291,9 +317,14 @@ impl TerminalManager {
         let event_proxy = SidecarEventProxy {
             process_id: process_id.clone(),
             tx: self.tx.clone(),
+            wake: self.wake.clone(),
+        };
+        let term_config = Config {
+            scrolling_history: DEFAULT_SCROLLING_HISTORY,
+            ..Config::default()
         };
         let terminal = Arc::new(FairMutex::new(Term::new(
-            Config::default(),
+            term_config,
             &term_size,
             event_proxy.clone(),
         )));
@@ -352,6 +383,8 @@ impl TerminalManager {
                 last_bell: None,
                 focused: false,
                 focus_reporting: false,
+                last_focus_sync: None,
+                focus_sync_pending: false,
             },
         );
 
@@ -408,8 +441,6 @@ impl TerminalManager {
         let cell_width = optional_u16(&params, "cell_width", 8).max(1);
         let cell_height = optional_u16(&params, "cell_height", 16).max(1);
         let resize_seq = optional_u32(&params, "resize_seq", 0);
-        let tx = self.tx.clone();
-        let process_id_owned = process_id.to_string();
         let session = self.session(process_id)?;
         if session.cols == cols
             && session.rows == rows
@@ -421,11 +452,10 @@ impl TerminalManager {
             if session.resize_seq != resize_seq {
                 session.resize_seq = resize_seq;
                 session.next_frame_kind = TerminalFrameKind::Snapshot;
-                let _ = tx.send(SidecarMessage::TerminalEvent(TerminalEvent {
-                    process_id: process_id_owned,
-                    event: Event::Wakeup,
-                    activity_source: false,
-                }));
+                if session.damage_subscribed {
+                    session.frame_dirty = true;
+                    session.frame_deadline = Some(Instant::now());
+                }
             }
             debug_log(|| {
                 serde_json::json!({
@@ -493,11 +523,12 @@ impl TerminalManager {
             .event_loop
             .send(Msg::Resize(window_size))
             .context("failed to resize terminal")?;
-        let _ = tx.send(SidecarMessage::TerminalEvent(TerminalEvent {
-            process_id: process_id_owned,
-            event: Event::Wakeup,
-            activity_source: false,
-        }));
+        if session.damage_subscribed {
+            // Flush the post-resize snapshot immediately on the current tick
+            // instead of delaying by frame_interval.
+            session.frame_dirty = true;
+            session.frame_deadline = Some(Instant::now());
+        }
         debug_log(|| {
             serde_json::json!({
                 "source": "terminal-sidecar",
@@ -515,18 +546,13 @@ impl TerminalManager {
     // a view attaches to an already-running PTY (e.g. switching terminal tabs).
     pub fn refresh(&mut self, params: Value) -> Result<Value> {
         let process_id = required_string(&params, "process_id")?;
-        let tx = self.tx.clone();
-        let process_id_owned = process_id.to_string();
         let session = self.session(process_id)?;
         if !session.damage_subscribed {
             return Ok(serde_json::json!({ "ok": true, "subscribed": false }));
         }
         session.next_frame_kind = TerminalFrameKind::Snapshot;
-        let _ = tx.send(SidecarMessage::TerminalEvent(TerminalEvent {
-            process_id: process_id_owned,
-            event: Event::Wakeup,
-            activity_source: false,
-        }));
+        session.frame_dirty = true;
+        session.frame_deadline = Some(Instant::now());
         Ok(serde_json::json!({ "ok": true }))
     }
 
@@ -549,6 +575,7 @@ impl TerminalManager {
             // Flush the attach snapshot on the next loop iteration. The frame
             // interval may still hold a slow cadence from when the view was
             // hidden, and the client reconfigures it after subscribing.
+            session.sync_focus_reporting();
             session.next_frame_kind = TerminalFrameKind::Snapshot;
             session.frame_dirty = true;
             session.frame_deadline = Some(Instant::now());
@@ -741,30 +768,8 @@ impl TerminalManager {
     pub fn scroll(&mut self, params: Value) -> Result<Value> {
         let process_id = required_string(&params, "process_id")?;
         let lines = params.get("lines").and_then(Value::as_i64).unwrap_or(0);
-        let tx = self.tx.clone();
-        let process_id_owned = process_id.to_string();
         let session = self.session(process_id)?;
-        let scroll = if lines < 0 {
-            Some(Scroll::Delta(
-                lines.unsigned_abs().min(i32::MAX as u64) as i32
-            ))
-        } else if lines > 0 {
-            Some(Scroll::Delta(
-                -(lines.unsigned_abs().min(i32::MAX as u64) as i32),
-            ))
-        } else {
-            None
-        };
-
-        if let Some(scroll) = scroll {
-            session.terminal.lock().scroll_display(scroll);
-            session.next_frame_kind = TerminalFrameKind::Snapshot;
-            let _ = tx.send(SidecarMessage::TerminalEvent(TerminalEvent {
-                process_id: process_id_owned,
-                event: Event::Wakeup,
-                activity_source: false,
-            }));
-        }
+        scroll_session(session, lines);
 
         Ok(serde_json::json!({ "ok": true, "display_offset": session.display_offset() }))
     }
@@ -774,8 +779,6 @@ impl TerminalManager {
         let lines = params.get("lines").and_then(Value::as_i64).unwrap_or(0);
         let col = optional_u16(&params, "col", 0);
         let row = optional_u16(&params, "row", 0);
-        let tx = self.tx.clone();
-        let process_id_owned = process_id.to_string();
         let session = self.session(process_id)?;
 
         let mode = *session.terminal.lock().mode();
@@ -797,7 +800,7 @@ impl TerminalManager {
                 session.queue_input(text.into_bytes(), false, Duration::ZERO)?;
             }
         } else {
-            scroll_session(session, lines, tx, process_id_owned);
+            scroll_session(session, lines);
         }
 
         Ok(serde_json::json!({ "ok": true, "display_offset": session.display_offset() }))
@@ -937,7 +940,9 @@ impl TerminalManager {
                     if event.activity_source {
                         session.mark_activity(writer, &event.process_id)?;
                     }
-                    session.sync_focus_reporting();
+                    if !session.damage_subscribed {
+                        session.sync_focus_reporting_throttled();
+                    }
                     session.mark_frame_dirty();
                 }
             }
@@ -1147,6 +1152,9 @@ impl TerminalManager {
                 .is_some_and(|deadline| deadline <= now)
             {
                 session.activity_deadline = None;
+                if !session.damage_subscribed && session.focus_sync_pending {
+                    session.sync_focus_reporting();
+                }
                 if session.status == TerminalStatus::Running
                     && session.activity == ActivityState::Working
                 {
@@ -1204,12 +1212,7 @@ impl ActivityState {
     }
 }
 
-fn scroll_session(
-    session: &mut TerminalSession,
-    lines: i64,
-    tx: Sender<SidecarMessage>,
-    process_id: String,
-) {
+fn scroll_session(session: &mut TerminalSession, lines: i64) {
     let scroll = if lines < 0 {
         Some(Scroll::Delta(
             lines.unsigned_abs().min(i32::MAX as u64) as i32
@@ -1224,12 +1227,12 @@ fn scroll_session(
 
     if let Some(scroll) = scroll {
         session.terminal.lock().scroll_display(scroll);
-        session.next_frame_kind = TerminalFrameKind::Snapshot;
-        let _ = tx.send(SidecarMessage::TerminalEvent(TerminalEvent {
-            process_id,
-            event: Event::Wakeup,
-            activity_source: false,
-        }));
+        if session.visible_grid.len() != usize::from(session.rows)
+            || session.visible_grid.first().map(Vec::len) != Some(usize::from(session.cols))
+        {
+            session.next_frame_kind = TerminalFrameKind::Snapshot;
+        }
+        session.mark_frame_dirty();
     }
 }
 
@@ -1371,6 +1374,34 @@ impl TerminalSession {
     // learns it is unfocused, as it would in a background terminal window.
     fn sync_focus_reporting(&mut self) {
         let reporting = self.terminal.lock().mode().contains(TermMode::FOCUS_IN_OUT);
+        self.last_focus_sync = Some(Instant::now());
+        self.focus_sync_pending = false;
+        self.apply_focus_reporting(reporting);
+    }
+
+    // Non-blocking, throttled focus-mode check for unsubscribed terminals so
+    // heavy background PTY output never contends on the FairMutex per wakeup.
+    fn sync_focus_reporting_throttled(&mut self) {
+        let now = Instant::now();
+        if self
+            .last_focus_sync
+            .is_some_and(|last| now.duration_since(last) < FOCUS_SYNC_INTERVAL)
+        {
+            self.focus_sync_pending = true;
+            return;
+        }
+        let Some(terminal) = self.terminal.try_lock_unfair() else {
+            self.focus_sync_pending = true;
+            return;
+        };
+        let reporting = terminal.mode().contains(TermMode::FOCUS_IN_OUT);
+        drop(terminal);
+        self.last_focus_sync = Some(now);
+        self.focus_sync_pending = false;
+        self.apply_focus_reporting(reporting);
+    }
+
+    fn apply_focus_reporting(&mut self, reporting: bool) {
         if reporting
             && !self.focus_reporting
             && !self.focused
@@ -1478,87 +1509,90 @@ impl TerminalSession {
     }
 
     fn damage_payload(&mut self, process_id: &str) -> Result<Vec<u8>> {
-        let mut terminal = self.terminal.lock();
         let frame_kind = self.next_frame_kind;
-        let damaged_rows = if frame_kind == TerminalFrameKind::Snapshot {
-            (0..self.rows).collect()
-        } else {
-            collect_damage_rows(&mut terminal, self.rows)
-        };
+        let mut damage_ranges: Vec<(u16, u16, u16)> = Vec::new();
+        let (cursor, damaged_row_count, reporting) = {
+            let mut terminal = self.terminal.lock();
+            let reporting = terminal.mode().contains(TermMode::FOCUS_IN_OUT);
+            let damaged_rows = if frame_kind == TerminalFrameKind::Snapshot {
+                (0..self.rows).collect()
+            } else {
+                collect_damage_rows(&mut terminal, self.rows)
+            };
+            let damaged_row_count = damaged_rows.len();
 
-        let renderable = terminal.renderable_content();
-        let cursor = CursorPosition {
-            col: u16::try_from(renderable.cursor.point.column.0)
-                .unwrap_or(0)
-                .min(self.cols.saturating_sub(1)),
-            row: u16::try_from(renderable.cursor.point.line.0)
-                .unwrap_or(0)
-                .min(self.rows.saturating_sub(1)),
-            visible: renderable.cursor.shape != CursorShape::Hidden,
-            shape: EncodedCursorShape::from_shape(renderable.cursor.shape),
-            resize_seq: self.resize_seq,
-        };
-        let previous_cursor = self.last_cursor;
-        if self.visible_grid.len() != usize::from(self.rows)
-            || self.visible_grid.first().map(Vec::len) != Some(usize::from(self.cols))
-        {
-            self.visible_grid = blank_encoded_grid(self.cols, self.rows);
-        }
+            let renderable = terminal.renderable_content();
+            let cursor = CursorPosition {
+                col: u16::try_from(renderable.cursor.point.column.0)
+                    .unwrap_or(0)
+                    .min(self.cols.saturating_sub(1)),
+                row: u16::try_from(renderable.cursor.point.line.0)
+                    .unwrap_or(0)
+                    .min(self.rows.saturating_sub(1)),
+                visible: renderable.cursor.shape != CursorShape::Hidden,
+                shape: EncodedCursorShape::from_shape(renderable.cursor.shape),
+                resize_seq: self.resize_seq,
+            };
+            if self.visible_grid.len() != usize::from(self.rows)
+                || self.visible_grid.first().map(Vec::len) != Some(usize::from(self.cols))
+            {
+                self.visible_grid = blank_encoded_grid(self.cols, self.rows);
+            }
 
-        // Damage rows are viewport coordinates, including when viewing scrollback.
-        // Update the retained grid in place instead of rebuilding every visible cell.
-        let mut runs = Vec::new();
-        for &row in &damaged_rows {
-            let point = viewport_to_point(
-                renderable.display_offset,
-                Point::new(usize::from(row), Column(0)),
-            );
-            let line = &terminal.grid()[point.line];
-            let cached = &mut self.visible_grid[usize::from(row)];
+            // Damage rows are viewport coordinates, including when viewing scrollback.
+            // Update the retained grid in place instead of cloning cells into separate runs.
             if frame_kind == TerminalFrameKind::Snapshot {
-                for (col, cell) in cached.iter_mut().enumerate() {
-                    *cell = EncodedCell::from_cell(&line[Column(col)]);
-                }
-                runs.push(DamageRun {
-                    row,
-                    start_col: 0,
-                    cells: cached.clone(),
-                });
-                continue;
-            }
-
-            let mut start_col = 0;
-            let mut cells = Vec::new();
-            for col in 0..usize::from(self.cols) {
-                let cell = EncodedCell::from_cell(&line[Column(col)]);
-                if cached[col] != cell {
-                    if cells.is_empty() {
-                        start_col = col as u16;
+                for &row in &damaged_rows {
+                    let point = viewport_to_point(
+                        renderable.display_offset,
+                        Point::new(usize::from(row), Column(0)),
+                    );
+                    let line = &terminal.grid()[point.line];
+                    let cached = &mut self.visible_grid[usize::from(row)];
+                    for (col, cell) in cached.iter_mut().enumerate() {
+                        *cell = EncodedCell::from_cell(&line[Column(col)]);
                     }
-                    cached[col] = cell.clone();
-                    cells.push(cell);
-                } else if !cells.is_empty() {
-                    runs.push(DamageRun {
-                        row,
-                        start_col,
-                        cells,
-                    });
-                    cells = Vec::new();
+                }
+            } else {
+                for &row in &damaged_rows {
+                    let point = viewport_to_point(
+                        renderable.display_offset,
+                        Point::new(usize::from(row), Column(0)),
+                    );
+                    let line = &terminal.grid()[point.line];
+                    let cached = &mut self.visible_grid[usize::from(row)];
+                    let mut run_start: Option<u16> = None;
+                    for col in 0..usize::from(self.cols) {
+                        let cell = EncodedCell::from_cell(&line[Column(col)]);
+                        if cached[col] != cell {
+                            if run_start.is_none() {
+                                run_start = Some(col as u16);
+                            }
+                            cached[col] = cell;
+                        } else if let Some(start_col) = run_start.take() {
+                            damage_ranges.push((row, start_col, col as u16));
+                        }
+                    }
+                    if let Some(start_col) = run_start {
+                        damage_ranges.push((row, start_col, self.cols));
+                    }
                 }
             }
-            if !cells.is_empty() {
-                runs.push(DamageRun {
-                    row,
-                    start_col,
-                    cells,
-                });
-            }
-        }
-        let cursor_changed = previous_cursor != Some(cursor);
-
-        if runs.is_empty() && !cursor_changed {
-            self.last_cursor = Some(cursor);
             terminal.reset_damage();
+            (cursor, damaged_row_count, reporting)
+        }; // Drop FairMutex guard before serialization and debug logging.
+
+        self.last_focus_sync = Some(Instant::now());
+        self.focus_sync_pending = false;
+        self.apply_focus_reporting(reporting);
+
+        let previous_cursor = self.last_cursor;
+        let cursor_changed = previous_cursor != Some(cursor);
+        let has_runs = (frame_kind == TerminalFrameKind::Snapshot && self.rows > 0)
+            || !damage_ranges.is_empty();
+
+        if !has_runs && !cursor_changed {
+            self.last_cursor = Some(cursor);
             debug_log(|| {
                 serde_json::json!({
                     "source": "terminal-sidecar",
@@ -1569,7 +1603,7 @@ impl TerminalSession {
                     "resize_seq": self.resize_seq,
                     "cols": self.cols,
                     "rows": self.rows,
-                    "damaged_rows": damaged_rows.len()
+                    "damaged_rows": damaged_row_count
                 })
             });
             return Ok(Vec::new());
@@ -1580,7 +1614,26 @@ impl TerminalSession {
         self.next_frame_seq = self.next_frame_seq.wrapping_add(1);
         self.next_frame_kind = TerminalFrameKind::Damage;
 
-        terminal.reset_damage();
+        let runs: Vec<DamageRunSlice<'_>> = if frame_kind == TerminalFrameKind::Snapshot {
+            (0..self.rows)
+                .map(|row| DamageRunSlice {
+                    row,
+                    start_col: 0,
+                    cells: &self.visible_grid[usize::from(row)],
+                })
+                .collect()
+        } else {
+            damage_ranges
+                .into_iter()
+                .map(|(row, start_col, end_col)| DamageRunSlice {
+                    row,
+                    start_col,
+                    cells: &self.visible_grid[usize::from(row)]
+                        [usize::from(start_col)..usize::from(end_col)],
+                })
+                .collect()
+        };
+
         debug_log(|| {
             serde_json::json!({
                 "source": "terminal-sidecar",
@@ -1594,7 +1647,7 @@ impl TerminalSession {
                 "rows": self.rows,
                 "run_count": runs.len(),
                 "cell_count": runs.iter().map(|run| run.cells.len()).sum::<usize>(),
-                "damaged_rows": damaged_rows.len(),
+                "damaged_rows": damaged_row_count,
                 "cursor": {
                     "col": cursor.col,
                     "row": cursor.row,
@@ -1603,7 +1656,7 @@ impl TerminalSession {
                 }
             })
         });
-        encode_damage_payload(
+        encode_damage_slices(
             process_id, self.cols, self.rows, cursor, frame_kind, frame_seq, self.epoch, &runs,
         )
     }
@@ -1787,6 +1840,9 @@ impl EventListener for SidecarEventProxy {
             event,
             activity_source: true,
         }));
+        if let Some(poller) = &self.wake {
+            let _ = poller.notify();
+        }
     }
 }
 
@@ -1828,6 +1884,8 @@ fn find_all(haystack: &str, needle: &str) -> Vec<usize> {
         .collect()
 }
 
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
 fn encode_damage_payload(
     process_id: &str,
     cols: u16,
@@ -1837,6 +1895,30 @@ fn encode_damage_payload(
     frame_seq: u32,
     epoch: u32,
     runs: &[DamageRun],
+) -> Result<Vec<u8>> {
+    let slices: Vec<DamageRunSlice<'_>> = runs
+        .iter()
+        .map(|run| DamageRunSlice {
+            row: run.row,
+            start_col: run.start_col,
+            cells: &run.cells,
+        })
+        .collect();
+    encode_damage_slices(
+        process_id, cols, rows, cursor, frame_kind, frame_seq, epoch, &slices,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_damage_slices(
+    process_id: &str,
+    cols: u16,
+    rows: u16,
+    cursor: CursorPosition,
+    frame_kind: TerminalFrameKind,
+    frame_seq: u32,
+    epoch: u32,
+    runs: &[DamageRunSlice<'_>],
 ) -> Result<Vec<u8>> {
     let process_id_bytes = process_id.as_bytes();
     let process_id_len = u16::try_from(process_id_bytes.len())
@@ -1907,7 +1989,7 @@ fn encode_damage_payload(
         payload.extend_from_slice(&run.row.to_le_bytes());
         payload.extend_from_slice(&run.start_col.to_le_bytes());
         payload.extend_from_slice(&cell_count.to_le_bytes());
-        for cell in &run.cells {
+        for cell in run.cells {
             payload.extend_from_slice(&cell.codepoint.to_le_bytes());
             payload.extend_from_slice(&cell.flags.to_le_bytes());
             payload.push(cell.fg.kind);
@@ -1945,8 +2027,13 @@ impl TerminalFrameKind {
     }
 }
 
+fn debug_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| env::var_os("PATTERM_DEBUG_TERMINAL").is_some())
+}
+
 fn debug_log(value: impl FnOnce() -> serde_json::Value) {
-    if env::var_os("PATTERM_DEBUG_TERMINAL").is_some() {
+    if debug_enabled() {
         eprintln!("{}", value());
     }
 }

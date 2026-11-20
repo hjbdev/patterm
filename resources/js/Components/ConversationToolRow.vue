@@ -37,8 +37,8 @@
     <span v-if="toolProcess" class="min-w-0 max-w-[60%] shrink-0 truncate"><ProcessMention :process-id="toolProcess" /></span>
     </div>
 
-    <div v-if="tool.images?.length" class="mt-1 flex flex-wrap gap-2" data-component="transcript-tool-images">
-      <TranscriptImage v-for="image in tool.images" :key="image.sha256" :image="{ ...image, name: image.name ?? tool.target }" :gallery="tool.images.map((item) => ({ ...item, name: item.name ?? tool.target }))" />
+    <div v-if="toolImages.length" class="mt-1 flex flex-wrap gap-2" data-component="transcript-tool-images">
+      <TranscriptImage v-for="image in toolImages" :key="image.sha256" :image="image" :gallery="toolImages" />
     </div>
 
     <div v-if="open && expandable" class="mb-1 mt-0.5 min-w-0 space-y-2 pl-3">
@@ -117,7 +117,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from 'vue';
 import { Check, ChevronRight, Circle, Copy, Loader2, X } from 'lucide-vue-next';
 import TranscriptImage from './TranscriptImage.vue';
 import { isSavedFigure, subagentSummary, toggleTranscriptRow, transcriptRowOpen, type TranscriptMessage } from '../lib/integratedConversation';
@@ -154,6 +154,7 @@ const target = computed(() => {
   if (!value || !PATH_FAMILIES.has(tool.value.family)) return value ?? '';
   return value.replace(/[\\/]+$/, '').split(/[\\/]/).at(-1) || value;
 });
+const toolImages = computed(() => (tool.value.images ?? []).map((item) => ({ ...item, name: item.name ?? tool.value.target })));
 const patchLines = computed(() => tool.value.patch ? tool.value.patch.split('\n') : []);
 const inputText = computed(() => {
   const input = tool.value.input;
@@ -181,6 +182,10 @@ function diffLineClass(line: string): string {
 }
 
 let copyTimer: ReturnType<typeof setTimeout> | undefined;
+
+onBeforeUnmount(() => {
+  clearTimeout(copyTimer);
+});
 
 function copy(value: string | undefined): void {
   if (!value || typeof navigator === 'undefined' || !navigator.clipboard) return;

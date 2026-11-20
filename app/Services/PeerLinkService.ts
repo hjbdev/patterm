@@ -1,7 +1,15 @@
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
+import zlib from 'node:zlib';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import { PEER_PROTOCOL_VERSION, type HostService } from './HostService';
+
+const PEER_DEFLATE = {
+  serverNoContextTakeover: true,
+  clientNoContextTakeover: true,
+  threshold: 1024,
+  zlibDeflateOptions: { level: zlib.constants.Z_BEST_SPEED }
+};
 
 export const PEER_LINK_PATH = '/api/peer/link';
 
@@ -29,7 +37,7 @@ export type PeerHandler = (params: unknown, peer: PeerIdentity) => unknown;
 export interface PeerEvent { host_id: string; event: string; payload: unknown }
 
 type Frame =
-  | { type: 'hello'; protocol_version: number; host_id: string; name: string }
+  | { type: 'hello'; protocol_version: number; host_id: string; name: string; binary_frames?: boolean; workbench_patches?: boolean }
   | { type: 'request'; id: number; method: string; params?: unknown }
   | { type: 'response'; id: number; result?: unknown; error?: string }
   | { type: 'event'; event: string; payload?: unknown };
@@ -43,6 +51,8 @@ interface Link {
   pending: Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>;
   nextId: number;
   alive: boolean;
+  binaryFrames: boolean;
+  workbenchPatches: boolean;
 }
 
 interface Dialer { attempt: number; socket: WebSocket | null; timer: ReturnType<typeof setTimeout> | null; error: string | null; lastRefusal?: string | undefined }
@@ -69,9 +79,10 @@ export class PeerLinkService {
   private readonly status = new Map<string, PeerLinkStatus>();
   private readonly handlers = new Map<string, PeerHandler>();
   private readonly listeners = new Set<(event: PeerEvent) => void>();
+  private readonly binaryListeners = new Set<(hostId: string, payload: Buffer) => void>();
   private readonly connectListeners = new Set<(hostId: string) => void>();
   private readonly disconnectListeners = new Set<(hostId: string) => void>();
-  private readonly server = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
+  private readonly server = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES, perMessageDeflate: PEER_DEFLATE });
   // Every socket another host opened, from acceptance until it closes, even
   // before its hello.
   private readonly inbound = new Set<WebSocket>();
@@ -124,6 +135,14 @@ export class PeerLinkService {
     return this.links.has(hostId);
   }
 
+  supportsBinary(hostId: string): boolean {
+    return this.links.get(hostId)?.binaryFrames === true;
+  }
+
+  supportsWorkbenchPatches(hostId: string): boolean {
+    return this.links.get(hostId)?.workbenchPatches === true;
+  }
+
   handle(method: string, handler: PeerHandler): void {
     this.handlers.set(method, handler);
   }
@@ -143,6 +162,11 @@ export class PeerLinkService {
   onEvent(listener: (event: PeerEvent) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  onBinary(listener: (hostId: string, payload: Buffer) => void): () => void {
+    this.binaryListeners.add(listener);
+    return () => this.binaryListeners.delete(listener);
   }
 
   // Asks a connected peer to run one of its handlers.
@@ -167,6 +191,14 @@ export class PeerLinkService {
   emit(hostId: string, event: string, payload?: unknown): boolean {
     const link = this.links.get(hostId);
     return Boolean(link && this.send(link.socket, { type: 'event', event, ...(payload === undefined ? {} : { payload }) }));
+  }
+
+  emitBinary(hostId: string, payload: Buffer | Uint8Array): boolean {
+    const link = this.links.get(hostId);
+    if (!link || link.socket.readyState !== WebSocket.OPEN) return false;
+    if (link.socket.bufferedAmount > MAX_FRAME_BYTES * 2) { link.socket.terminate(); return false; }
+    link.socket.send(payload, { binary: true });
+    return true;
   }
 
   // Accepts a link from an inbound peer. The caller has already checked the
@@ -219,7 +251,7 @@ export class PeerLinkService {
     }
     this.setStatus(hostId, 'connecting', dialer.error);
     const url = `${target.url.replace(/^http/, 'ws')}${PEER_LINK_PATH}`;
-    const socket = new WebSocket(url, { headers: { Authorization: `Bearer ${target.credential}` }, maxPayload: MAX_FRAME_BYTES, handshakeTimeout: HELLO_TIMEOUT_MS, followRedirects: false });
+    const socket = new WebSocket(url, { headers: { Authorization: `Bearer ${target.credential}` }, maxPayload: MAX_FRAME_BYTES, handshakeTimeout: HELLO_TIMEOUT_MS, followRedirects: false, perMessageDeflate: PEER_DEFLATE });
     dialer.socket = socket;
     let error: string | null = null;
     let refused = false;
@@ -260,18 +292,40 @@ export class PeerLinkService {
   // Exchanges hellos, then serves frames until the socket closes.
   private attach(hostId: string, socket: WebSocket, outbound: boolean): void {
     const self = this.hosts.identity();
-    this.send(socket, { type: 'hello', protocol_version: PEER_PROTOCOL_VERSION, host_id: self.host_id, name: self.name });
+    this.send(socket, {
+      type: 'hello',
+      protocol_version: PEER_PROTOCOL_VERSION,
+      host_id: self.host_id,
+      name: self.name,
+      binary_frames: true,
+      workbench_patches: true
+    });
     let link: Link | null = null;
     const helloTimer = setTimeout(() => socket.close(CLOSE_PROTOCOL, 'No hello'), HELLO_TIMEOUT_MS);
     socket.on('message', (data, binary) => {
-      const frame = binary ? null : parseFrame(data);
+      if (binary) {
+        if (!link) { socket.close(CLOSE_PROTOCOL, 'Expected hello'); return; }
+        const payload = rawDataToBuffer(data);
+        for (const listener of this.binaryListeners) listener(link.hostId, payload);
+        return;
+      }
+      const frame = parseFrame(data);
       if (!frame) { socket.close(CLOSE_PROTOCOL, 'Invalid frame'); return; }
       if (!link) {
         if (frame.type !== 'hello') { socket.close(CLOSE_PROTOCOL, 'Expected hello'); return; }
         clearTimeout(helloTimer);
         if (frame.protocol_version !== PEER_PROTOCOL_VERSION) { socket.close(CLOSE_INCOMPATIBLE, 'Incompatible Patterm version'); return; }
         if (frame.host_id !== hostId || !this.hosts.peer(hostId)) { socket.close(CLOSE_UNPAIRED, 'Not paired'); return; }
-        const candidate: Link = { hostId, dialedBy: outbound ? self.host_id : hostId, socket, pending: new Map(), nextId: 0, alive: true };
+        const candidate: Link = {
+          hostId,
+          dialedBy: outbound ? self.host_id : hostId,
+          socket,
+          pending: new Map(),
+          nextId: 0,
+          alive: true,
+          binaryFrames: frame.binary_frames === true,
+          workbenchPatches: frame.workbench_patches === true
+        };
         const existing = this.links.get(hostId);
         // A host reconnecting replaces its own earlier link. Links opened
         // from both ends keep the one the lower host ID opened.
@@ -367,6 +421,12 @@ function closeReason(code: number, reason: string): string | null {
   if (code === CLOSE_UNPAIRED) return 'The other host no longer has this host paired. Pair again.';
   if (code === CLOSE_PROTOCOL) return `The link failed: ${reason || 'protocol error'}.`;
   return null;
+}
+
+function rawDataToBuffer(data: RawData): Buffer {
+  if (Buffer.isBuffer(data)) return data;
+  if (Array.isArray(data)) return Buffer.concat(data);
+  return Buffer.from(data);
 }
 
 function parseFrame(data: RawData): Frame | null {

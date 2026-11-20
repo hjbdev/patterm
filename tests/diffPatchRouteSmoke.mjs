@@ -32,7 +32,7 @@ test('the diff renderer uses the library-managed container route', async () => {
   const props = { patch: 'diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-old\n+new', cacheKey: 'a' };
   const setup = new Function(
     'computed', 'nextTick', 'onBeforeUnmount', 'onMounted', 'ref', 'watch',
-    'FileDiff', 'parsePatchFiles', 'document', 'requestAnimationFrame', 'defineProps',
+    'FileDiff', 'parsePatchFiles', 'diffHighlighterPool', 'document', 'requestAnimationFrame', 'defineProps',
     `${outputText}
 return { container, renderPatch, isEmpty, isDeferred, isRendering };`
   );
@@ -40,6 +40,7 @@ return { container, renderPatch, isEmpty, isDeferred, isRendering };`
     computed, nextTick, () => {}, () => {}, ref, watch,
     FileDiffStub,
     () => [{ files: [{ name: 'a.ts' }, { name: 'b.ts' }] }],
+    () => undefined,
     documentStub,
     (callback) => { callback(); return 1; },
     () => props

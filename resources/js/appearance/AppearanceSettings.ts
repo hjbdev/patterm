@@ -1,4 +1,5 @@
 import { resolveTerminalFontFamily, resolveUiFontFamily, TERMINAL_FONT_OPTIONS, UI_FONT_OPTIONS, type TerminalFontPreset, type UiFontPreset } from '../../../app/Services/FontFamilies';
+import { ensureBundledFontStyles } from './FontLoading';
 
 export { resolveTerminalFontFamily, resolveUiFontFamily, TERMINAL_FONT_OPTIONS, UI_FONT_OPTIONS, type TerminalFontPreset, type UiFontPreset };
 
@@ -63,6 +64,7 @@ export function normalizeAppearanceSettings(value: Partial<AppearanceSettings> |
 
 export function applyUiFont(settings: AppearanceSettings): void {
   const fontFamily = resolveUiFontFamily(settings);
+  void ensureBundledFontStyles(fontFamily);
   document.documentElement.style.setProperty('--patterm-ui-font-family', fontFamily);
   document.documentElement.style.setProperty('--patterm-terminal-max-width', settings.terminalContainer ? '960px' : 'none');
   document.body.style.fontFamily = fontFamily;
@@ -76,14 +78,26 @@ export function lastKnownAppearanceSettings(): AppearanceSettings | null {
   return lastKnownSettings;
 }
 
+const UI_FONT_HINT_KEY = 'patterm.appearance.uiFont';
+
 export function rememberAppearanceSettings(settings: AppearanceSettings): AppearanceSettings {
   lastKnownSettings = settings;
   try {
     localStorage.setItem(NAVIGATION_HINT_KEY, settings.navigation);
+    localStorage.setItem(UI_FONT_HINT_KEY, resolveUiFontFamily(settings));
   } catch {
-    // The hint only saves a flash of the other layout at startup.
+    // The hint only saves a flash of the other layout or font at startup.
   }
   return settings;
+}
+
+export function uiFontFamilyHint(): string {
+  if (lastKnownSettings) return resolveUiFontFamily(lastKnownSettings);
+  try {
+    return localStorage.getItem(UI_FONT_HINT_KEY) || resolveUiFontFamily(DEFAULT_APPEARANCE_SETTINGS);
+  } catch {
+    return resolveUiFontFamily(DEFAULT_APPEARANCE_SETTINGS);
+  }
 }
 
 const NAVIGATION_HINT_KEY = 'patterm.appearance.navigation';

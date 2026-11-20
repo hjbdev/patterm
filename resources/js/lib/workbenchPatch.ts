@@ -60,15 +60,31 @@ export function applyKeyed<T>(items: readonly T[], patch: KeyedPatch<T> | undefi
   if (patch.replace) return patch.replace;
   const removed = new Set(patch.remove ?? []);
   let next = removed.size ? items.filter((item) => !removed.has(key(item))) : [...items];
-  const positions = new Map(next.map((item, index) => [key(item), index]));
-  for (const { item, after } of patch.upsert ?? []) {
-    const index = positions.get(key(item));
-    if (index === undefined) {
-      insertAfter(next, item, after, key);
-      positions.clear();
-      next.forEach((entry, position) => positions.set(key(entry), position));
-    } else {
-      next[index] = item;
+  const upserts = patch.upsert ?? [];
+  if (upserts.length) {
+    const positions = new Map<string, number>();
+    for (let index = 0; index < next.length; index++) positions.set(key(next[index]!), index);
+    for (let upsertIndex = 0; upsertIndex < upserts.length; upsertIndex++) {
+      const { item, after } = upserts[upsertIndex]!;
+      const itemKey = key(item);
+      const index = positions.get(itemKey);
+      if (index === undefined) {
+        const afterIndex = after === null ? -1 : (positions.get(after) ?? -1);
+        const insertAt = afterIndex + 1;
+        if (insertAt === next.length) {
+          next.push(item);
+          positions.set(itemKey, insertAt);
+        } else {
+          next.splice(insertAt, 0, item);
+          if (upsertIndex + 1 < upserts.length) {
+            for (let position = insertAt; position < next.length; position++) {
+              positions.set(key(next[position]!), position);
+            }
+          }
+        }
+      } else {
+        next[index] = item;
+      }
     }
   }
   if (patch.order) next = reorder(next, patch.order, key);

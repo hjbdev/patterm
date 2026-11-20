@@ -81,7 +81,11 @@
         <template v-else>
           <PhonePageHeader v-if="mobile && phonePage" :project-id="activeProject.project.id" :title="phonePage.title" :up="phonePage.up" />
           <div class="relative min-h-0 flex-1">
-            <RouterView />
+            <RouterView v-slot="{ Component }">
+              <KeepAlive :include="['TerminalPage', 'BotPage', 'ProjectPage']" :max="4">
+                <component :is="Component" />
+              </KeepAlive>
+            </RouterView>
           </div>
         </template>
         <div

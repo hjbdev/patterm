@@ -87,6 +87,14 @@ interface OpenCodeStream {
   serial: Promise<void>;
 }
 
+interface SharedOpenCodeSubscriber {
+  processId: string;
+  sessionId: string;
+  runtime: { executable: string; cwd: string; resumeId: string };
+  stream: OpenCodeStream;
+  activity: OpenCodeActivity;
+}
+
 // One projected transcript row, keyed by its native identity: a tool call id,
 // or the assistant message plus the family-specific ordinal for text and
 // reasoning. The index is the native content position, which is the same key
@@ -210,6 +218,17 @@ export class OpenCodeServerService {
   private readonly activity = new Map<string, OpenCodeActivity>();
   // Inbox prompts Patterm is cancelling, by native session and message id.
   private readonly cancelling = new Set<string>();
+  // One shared SSE connection per daemon, demultiplexed by sessionID so N
+  // OpenCode agents use O(1) connections and parse each SSE frame once.
+  private readonly sharedSubscribers = new Set<SharedOpenCodeSubscriber>();
+  private readonly subscribersBySession = new Map<string, Set<SharedOpenCodeSubscriber>>();
+  private sharedController: AbortController | null = null;
+  private sharedRetry: NodeJS.Timeout | null = null;
+  private sharedAttempts = 0;
+  private sharedConnected = false;
+  private sharedOpening: Promise<void> | null = null;
+  // Cache `opencode --version` keyed by (resolvedPath, ino, size, mtimeNs, ctimeNs).
+  private readonly cliVersionCache = new Map<string, { stamp: string; version: string | null }>();
 
   private readonly images: TranscriptImageStore | null;
   private readonly streamIdleMs: number;
@@ -506,8 +525,9 @@ export class OpenCodeServerService {
 
   // Installed OpenCode exposes one global event stream. Patterm discovers the
   // running daemon the same way the CLI does (its state-directory registration
-  // plus a Basic health check) and keeps that connection only for events;
-  // closing it never stops the daemon or the agent.
+  // plus a Basic health check) and keeps ONE shared SSE connection across all
+  // active sessions, demultiplexing events by sessionID; closing it never stops
+  // the daemon or the agents.
   async subscribe(processId: string, listener: IntegratedConversationListener): Promise<() => void> {
     const runtime = this.runtime(processId);
     await this.daemon();
@@ -515,10 +535,6 @@ export class OpenCodeServerService {
     // Seed part identity from the authoritative snapshot once per session;
     // events after this update rows without another full-snapshot cycle.
     await this.seedProjection(sessionId, runtime);
-    let stopped = false;
-    let controller: AbortController | null = null;
-    let retry: NodeJS.Timeout | null = null;
-    let attempts = 0;
     const emit: OpenCodeEmit = (event) => {
       const revision = (this.revisions.get(processId) ?? 0) + 1;
       this.revisions.set(processId, revision);
@@ -527,88 +543,279 @@ export class OpenCodeServerService {
     const stream: OpenCodeStream = { emit, runtime, serial: Promise.resolve() };
     const activity = this.activityState(sessionId);
     activity.emitters.add(emit);
-    const schedule = (): void => {
-      if (stopped) return;
-      emit({ kind: 'reconnecting' });
-      attempts += 1;
-      if (attempts > OPENCODE_RECONNECT_ATTEMPTS) {
-        emit({ kind: 'error', id: 'connection_error', delta: 'Could not reconnect to the OpenCode event stream; check the shared server.' });
-        return;
-      }
-      retry = setTimeout(() => void open(false), Math.min(250 * 2 ** (attempts - 1), 5_000));
-    };
-    const pump = async (body: ReadableStream<Uint8Array>, connection: AbortController): Promise<void> => {
-      const reader = body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      // Heartbeats count as traffic; a connection silent for longer is dead
-      // even when the socket never closes, so it is dropped and reopened.
-      const watchdog = setTimeout(() => connection.abort(), this.streamIdleMs);
-      watchdog.unref?.();
-      try {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) return;
-          watchdog.refresh();
-          buffer += decoder.decode(value, { stream: true });
-          for (let boundary = buffer.indexOf('\n\n'); boundary >= 0; boundary = buffer.indexOf('\n\n')) {
-            const block = buffer.slice(0, boundary);
-            buffer = buffer.slice(boundary + 2);
-            const payload = block.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('');
-            if (!payload) continue;
-            let envelope: unknown;
-            try { envelope = JSON.parse(payload); } catch { continue; }
-            // One event that cannot be applied must not drop the rest of the
-            // chunk or end the stream.
-            try { this.handleEvent(sessionId, envelope, stream); } catch { /* the next snapshot covers it */ }
-          }
-        }
-      } finally {
-        clearTimeout(watchdog);
-        // Release the socket however the read ended.
-        connection.abort();
-      }
-    };
-    const open = async (first: boolean): Promise<void> => {
-      const connection = new AbortController();
-      try {
-        controller = connection;
-        const daemon = await this.daemon();
-        const response = await fetch(`${daemon.url}/api/event`, {
-          headers: { Authorization: daemon.auth, Accept: 'text/event-stream' },
-          signal: connection.signal
-        }).catch((error: unknown) => {
-          if (connectionRefused(error) || connectionClosed(error)) this.forgetDaemon();
-          throw error;
-        });
-        if (response.status === 401) this.forgetDaemon();
-        if (!response.ok || !response.body) throw new Error(`OpenCode event stream failed (${response.status})`);
-        attempts = 0;
-        // Backfill handoff: the snapshot is re-read after every (re)connect,
-        // and the projection merges parts created while disconnected so their
-        // native content index stays aligned with the refreshed snapshot.
-        if (!first) await this.seedProjection(sessionId, runtime);
-        emit({ kind: 'pending' });
-        void pump(response.body, connection).catch(() => {}).finally(() => { if (!stopped && controller === connection) schedule(); });
-      } catch (error) {
-        connection.abort();
-        if (stopped) return;
-        if (first) throw error;
-        schedule();
-      }
-    };
+    const subscriber: SharedOpenCodeSubscriber = { processId, sessionId, runtime, stream, activity };
+    this.addSharedSubscriber(subscriber);
     try {
-      await open(true);
+      await this.ensureSharedStream();
     } catch (error) {
+      this.removeSharedSubscriber(subscriber);
       this.releaseActivity(sessionId, activity, emit);
       throw error;
     }
+    // Backfill handoff for this subscriber once the shared stream is live.
+    emit({ kind: 'pending' });
+    let unsubscribed = false;
     return () => {
-      stopped = true;
-      controller?.abort();
-      if (retry) clearTimeout(retry);
+      if (unsubscribed) return;
+      unsubscribed = true;
+      this.removeSharedSubscriber(subscriber);
       this.releaseActivity(sessionId, activity, emit);
     };
+  }
+
+  private addSharedSubscriber(subscriber: SharedOpenCodeSubscriber): void {
+    this.sharedSubscribers.add(subscriber);
+    let bucket = this.subscribersBySession.get(subscriber.sessionId);
+    if (!bucket) {
+      bucket = new Set();
+      this.subscribersBySession.set(subscriber.sessionId, bucket);
+    }
+    bucket.add(subscriber);
+  }
+
+  private removeSharedSubscriber(subscriber: SharedOpenCodeSubscriber): void {
+    this.sharedSubscribers.delete(subscriber);
+    const bucket = this.subscribersBySession.get(subscriber.sessionId);
+    if (bucket) {
+      bucket.delete(subscriber);
+      if (!bucket.size) this.subscribersBySession.delete(subscriber.sessionId);
+    }
+    if (!this.sharedSubscribers.size) this.closeSharedStream();
+  }
+
+  private closeSharedStream(): void {
+    this.sharedConnected = false;
+    this.sharedAttempts = 0;
+    if (this.sharedRetry) { clearTimeout(this.sharedRetry); this.sharedRetry = null; }
+    if (this.sharedController) { this.sharedController.abort(); this.sharedController = null; }
+  }
+
+  private ensureSharedStream(): Promise<void> {
+    if (this.sharedConnected) return Promise.resolve();
+    if (this.sharedOpening) return this.sharedOpening;
+    return this.startSharedOpen(true);
+  }
+
+  private startSharedOpen(first: boolean): Promise<void> {
+    if (this.sharedRetry) { clearTimeout(this.sharedRetry); this.sharedRetry = null; }
+    const opening = this.openSharedStream(first).finally(() => {
+      if (this.sharedOpening === opening) this.sharedOpening = null;
+    });
+    this.sharedOpening = opening;
+    return opening;
+  }
+
+  private scheduleSharedReconnect(): void {
+    if (!this.sharedSubscribers.size || this.sharedRetry) return;
+    for (const sub of this.sharedSubscribers) sub.stream.emit({ kind: 'reconnecting' });
+    this.sharedAttempts += 1;
+    if (this.sharedAttempts > OPENCODE_RECONNECT_ATTEMPTS) {
+      for (const sub of this.sharedSubscribers) {
+        sub.stream.emit({ kind: 'error', id: 'connection_error', delta: 'Could not reconnect to the OpenCode event stream; check the shared server.' });
+      }
+      return;
+    }
+    this.sharedRetry = setTimeout(() => {
+      this.sharedRetry = null;
+      if (!this.sharedSubscribers.size || this.sharedConnected || this.sharedOpening) return;
+      void this.startSharedOpen(false).catch(() => {});
+    }, Math.min(250 * 2 ** (this.sharedAttempts - 1), 5_000));
+  }
+
+  private async openSharedStream(first: boolean): Promise<void> {
+    if (!this.sharedSubscribers.size) return;
+    const previous = this.sharedController;
+    const connection = new AbortController();
+    this.sharedController = connection;
+    previous?.abort();
+    try {
+      const daemon = await this.daemon();
+      const response = await fetch(`${daemon.url}/api/event`, {
+        headers: { Authorization: daemon.auth, Accept: 'text/event-stream' },
+        signal: connection.signal
+      }).catch((error: unknown) => {
+        if (connectionRefused(error) || connectionClosed(error)) this.forgetDaemon();
+        throw error;
+      });
+      if (response.status === 401) this.forgetDaemon();
+      if (!response.ok || !response.body) throw new Error(`OpenCode event stream failed (${response.status})`);
+      if (!this.sharedSubscribers.size || this.sharedController !== connection) {
+        connection.abort();
+        return;
+      }
+      this.sharedAttempts = 0;
+      // Backfill handoff after a reconnect: re-seed every active session's
+      // projection and notify all subscribers to refresh their snapshots.
+      // Per-session failures must not abort the shared stream for healthy agents.
+      if (!first) {
+        const current = [...this.sharedSubscribers];
+        const bySession = new Map<string, SharedOpenCodeSubscriber[]>();
+        for (const sub of current) {
+          let list = bySession.get(sub.sessionId);
+          if (!list) {
+            list = [];
+            bySession.set(sub.sessionId, list);
+          }
+          list.push(sub);
+        }
+        await Promise.allSettled([...bySession.entries()].map(async ([sessionId, subs]) => {
+          try {
+            await this.seedProjection(sessionId, subs[0]!.runtime);
+            for (const sub of subs) {
+              if (this.sharedSubscribers.has(sub)) sub.stream.emit({ kind: 'pending' });
+            }
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            for (const sub of subs) {
+              if (this.sharedSubscribers.has(sub)) {
+                sub.stream.emit({ kind: 'error', id: 'connection_error', delta: `Could not refresh OpenCode session after reconnect: ${detail}` });
+              }
+            }
+          }
+        }));
+      }
+      if (!this.sharedSubscribers.size || this.sharedController !== connection) {
+        connection.abort();
+        return;
+      }
+      this.sharedConnected = true;
+      void this.pumpSharedStream(response.body, connection).catch(() => {}).finally(() => {
+        if (this.sharedController === connection) {
+          this.sharedController = null;
+          this.sharedConnected = false;
+          if (this.sharedSubscribers.size) this.scheduleSharedReconnect();
+        }
+      });
+    } catch (error) {
+      connection.abort();
+      if (this.sharedController === connection) {
+        this.sharedController = null;
+        this.sharedConnected = false;
+      }
+      if (!this.sharedSubscribers.size) return;
+      if (first) {
+        // Other subscribers may remain even after this subscribe() fails and
+        // removes itself; ensure they still get a reconnect attempt.
+        queueMicrotask(() => {
+          if (this.sharedSubscribers.size && !this.sharedConnected && !this.sharedOpening) {
+            this.scheduleSharedReconnect();
+          }
+        });
+        throw error;
+      }
+      this.scheduleSharedReconnect();
+    }
+  }
+
+  private async pumpSharedStream(body: ReadableStream<Uint8Array>, connection: AbortController): Promise<void> {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    // Heartbeats count as traffic; a connection silent for longer is dead
+    // even when the socket never closes, so it is dropped and reopened.
+    const watchdog = setTimeout(() => connection.abort(), this.streamIdleMs);
+    watchdog.unref?.();
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) return;
+        watchdog.refresh();
+        buffer += decoder.decode(value, { stream: true });
+        for (let boundary = buffer.indexOf('\n\n'); boundary >= 0; boundary = buffer.indexOf('\n\n')) {
+          const block = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          const payload = block.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('');
+          if (!payload) continue;
+          let envelope: unknown;
+          try { envelope = JSON.parse(payload); } catch { continue; }
+          this.dispatchSharedEnvelope(envelope);
+        }
+      }
+    } finally {
+      clearTimeout(watchdog);
+      connection.abort();
+    }
+  }
+
+  // Demultiplexes one parsed SSE envelope to only the interested subscribers.
+  private dispatchSharedEnvelope(envelope: unknown): void {
+    if (!this.sharedSubscribers.size) return;
+    const event = record(envelope);
+    const type = typeof event.type === 'string' ? event.type : '';
+    const data = record(event.data);
+    const form = record(data.form);
+    const eventSession = typeof data.sessionID === 'string' ? data.sessionID : typeof form.sessionID === 'string' ? form.sessionID : null;
+
+    if (type === 'session.created') {
+      const info = record(data.info);
+      const created = typeof data.sessionID === 'string' ? data.sessionID : typeof info.id === 'string' ? info.id : null;
+      const parent = typeof data.parentID === 'string' ? data.parentID : typeof info.parentID === 'string' ? info.parentID : null;
+      if (created && parent) bounded(this.sessionParents, created, parent);
+    }
+
+    if (type === 'shell.created' || type === 'shell.exited' || type === 'shell.deleted') {
+      const info = record(data.info);
+      const shellId = typeof info.id === 'string' ? info.id : typeof data.id === 'string' ? data.id : '';
+      const named = record(info.metadata).sessionID ?? record(data.metadata).sessionID;
+      if (shellId && typeof named === 'string') bounded(this.shellOwners, shellId, named);
+      const owner = typeof named === 'string' ? named : this.shellOwners.get(shellId);
+      if (owner) {
+        const targets = this.subscribersBySession.get(owner);
+        if (targets) {
+          for (const sub of [...targets]) {
+            try { this.handleEvent(sub.sessionId, envelope, sub.stream); } catch { /* the next snapshot covers it */ }
+          }
+        }
+      } else if (shellId && type !== 'shell.created') {
+        bounded(this.unownedShellEnds, shellId, true);
+      }
+      return;
+    }
+
+    if (!eventSession) return;
+    const targets = new Set<SharedOpenCodeSubscriber>();
+    const direct = this.subscribersBySession.get(eventSession);
+    if (direct) for (const sub of direct) targets.add(sub);
+
+    const mayInterestParent = isRequestEvent(type) || Boolean(executionEvent(type, data)) || this.childRows.has(eventSession);
+    if (mayInterestParent) {
+      let current: string = eventSession;
+      let matchedAncestor = false;
+      let unknownLineage = false;
+      for (let depth = 0; depth < 8; depth++) {
+        if (!this.sessionParents.has(current)) {
+          unknownLineage = true;
+          break;
+        }
+        const parent = this.sessionParents.get(current);
+        if (parent === null) {
+          // Known root session: stop walking without broadcasting.
+          break;
+        }
+        if (parent === undefined) {
+          unknownLineage = true;
+          break;
+        }
+        const parentSubs = this.subscribersBySession.get(parent);
+        if (parentSubs) {
+          matchedAncestor = true;
+          for (const sub of parentSubs) targets.add(sub);
+        }
+        current = parent;
+      }
+      if (unknownLineage && !matchedAncestor) {
+        // Parentage not fully cached yet; let active subscribers resolve descendsFrom once.
+        for (const sub of this.sharedSubscribers) {
+          if (sub.sessionId !== eventSession) targets.add(sub);
+        }
+      }
+    }
+
+    for (const sub of targets) {
+      // One event that cannot be applied must not drop the rest of the chunk or
+      // end the shared stream.
+      try { this.handleEvent(sub.sessionId, envelope, sub.stream); } catch { /* the next snapshot covers it */ }
+    }
   }
 
   // Only events scoped to this native session are surfaced; the stream is
@@ -2086,8 +2293,27 @@ export class OpenCodeServerService {
     return this.installGlobalMcpServers(executable, cwd, location, openCodeMcpConfigs(servers, helpers), daemonRestarted, reconnect);
   }
 
+  private async cliVersion(executable: string, cwd: string): Promise<string | null> {
+    const resolved = resolveService(executable, ['--version'], this.env).command;
+    let stamp: string | null = null;
+    try {
+      const stat = await fs.promises.stat(resolved, { bigint: true });
+      stamp = `${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+      const cached = this.cliVersionCache.get(resolved);
+      if (cached && cached.stamp === stamp) return cached.version;
+    } catch {
+      // Un-statable command name (resolved via PATH); skip cache.
+    }
+    const version = firstSemver(await this.runCli(executable, cwd, ['--version']));
+    if (stamp) {
+      this.cliVersionCache.set(resolved, { stamp, version });
+      if (this.cliVersionCache.size > 32) this.cliVersionCache.delete(this.cliVersionCache.keys().next().value!);
+    }
+    return version;
+  }
+
   private async versions(executable: string, cwd: string): Promise<{ matched: boolean; cli: string | null; server: string | null }> {
-    const cli = firstSemver(await this.runCli(executable, cwd, ['--version']));
+    const cli = await this.cliVersion(executable, cwd);
     const identity = record(await this.api(executable, cwd, 'GET', '/api/info'));
     const server = typeof identity.version === 'string' ? identity.version : null;
     return { matched: Boolean(cli) && identity.healthy !== false && server === cli, cli, server };
@@ -2148,7 +2374,21 @@ export class OpenCodeServerService {
   // turn: a failure propagates so a possibly-running turn is not reported as
   // closed. A session that is already gone has nothing to interrupt.
   async stop(processId: string): Promise<void> {
-    await this.interrupt(processId);
+    const row = this.database.connection.prepare(`
+      select resume_id from sessions where process_id = ? and harness = 'opencode' order by started_at desc limit 1
+    `).get(processId) as { resume_id: string | null } | undefined;
+    try {
+      await this.interrupt(processId);
+    } finally {
+      this.selections.delete(processId);
+      this.revisions.delete(processId);
+      this.memoryChanges.delete(processId);
+      if (row?.resume_id) {
+        this.projections.delete(row.resume_id);
+        this.unhandled.delete(row.resume_id);
+        this.goals.forget(row.resume_id);
+      }
+    }
   }
 
   async cleanupLaunch(input: IntegratedLaunchInput, result: IntegratedLaunchResult): Promise<void> {
@@ -2166,6 +2406,57 @@ export class OpenCodeServerService {
 
   async listProviders(executable: string): Promise<unknown> {
     return this.api(executable, os.homedir(), 'GET', '/api/provider');
+  }
+
+  // Stateless text generation over an already-running OpenCode daemon.
+  // Returns null when no daemon is registered or reachable so callers can fall
+  // back to the CLI without spawning a daemon solely for summaries.
+  async generate(
+    _executable: string,
+    payload: { model: { providerID: string; id: string }; prompt: string },
+    signal: AbortSignal
+  ): Promise<string | null> {
+    if (signal.aborted) throw new Error('Summary cancelled.');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const daemon = await this.daemon().catch(() => null);
+      if (signal.aborted) throw new Error('Summary cancelled.');
+      if (!daemon) return null;
+      let response: Response;
+      let text: string;
+      try {
+        response = await fetch(`${daemon.url}/api/generate`, {
+          method: 'POST',
+          headers: { Authorization: daemon.auth, 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+        });
+        if (response.status === 401) {
+          this.forgetDaemon();
+          continue;
+        }
+        text = await response.text();
+      } catch (error) {
+        if (signal.aborted) throw new Error('Summary cancelled.');
+        this.forgetDaemon();
+        if (connectionRefused(error)) continue;
+        return null;
+      }
+      if (Buffer.byteLength(text) > MAX_RESPONSE_BYTES) {
+        throw new Error('Summary output exceeded the limit.');
+      }
+      if (!response.ok) {
+        if (response.status === 404 || response.status === 405) return null;
+        throw new Error('Summary failed. Update OpenCode and check its OpenAI login and model access.');
+      }
+      try {
+        const envelope = JSON.parse(text) as { data?: { text?: unknown } };
+        if (typeof envelope.data?.text !== 'string') throw new Error();
+        return envelope.data.text;
+      } catch {
+        throw new Error('Summary failed. Update OpenCode and check its OpenAI login and model access.');
+      }
+    }
+    return null;
   }
 
   // The verified background service is called over HTTP exactly as

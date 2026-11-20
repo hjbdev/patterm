@@ -4,6 +4,7 @@ import { resolveService } from '../Platform/ServiceProcess';
 
 const execFileAsync = promisify(execFile);
 const MAX_OUTPUT_BYTES = 32 * 1024 * 1024;
+const DEFAULT_GIT_TIMEOUT_MS = 30_000;
 
 export interface GitResult {
   stdout: string;
@@ -18,13 +19,14 @@ export class GitError extends Error {
 }
 
 export class GitService {
-  async run(cwd: string, args: string[]): Promise<GitResult> {
+  async run(cwd: string, args: string[], timeoutMs = DEFAULT_GIT_TIMEOUT_MS): Promise<GitResult> {
     try {
       const git = resolveService('git', args);
       const { stdout, stderr } = await execFileAsync(git.command, git.args, {
         cwd,
         encoding: 'utf8',
         maxBuffer: MAX_OUTPUT_BYTES,
+        timeout: timeoutMs,
         windowsHide: true,
         windowsVerbatimArguments: git.verbatim
       });
@@ -46,10 +48,17 @@ export class GitService {
   }
 
   // Raw bytes, for blob contents that may not be text.
-  async buffer(cwd: string, args: string[], maxBuffer = MAX_OUTPUT_BYTES): Promise<Buffer> {
+  async buffer(cwd: string, args: string[], maxBuffer = MAX_OUTPUT_BYTES, timeoutMs = DEFAULT_GIT_TIMEOUT_MS): Promise<Buffer> {
     try {
       const git = resolveService('git', args);
-      const { stdout } = await execFileAsync(git.command, git.args, { cwd, encoding: 'buffer', maxBuffer, windowsHide: true, windowsVerbatimArguments: git.verbatim });
+      const { stdout } = await execFileAsync(git.command, git.args, {
+        cwd,
+        encoding: 'buffer',
+        maxBuffer,
+        timeout: timeoutMs,
+        windowsHide: true,
+        windowsVerbatimArguments: git.verbatim
+      });
       return stdout;
     } catch (error) {
       // Never echo partial file contents into an error message.

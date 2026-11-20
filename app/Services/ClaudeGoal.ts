@@ -11,25 +11,32 @@ const CHUNK_BYTES = 1024 * 1024;
 
 interface GoalScan {
   file: string;
+  ino: number;
   offset: number;
   log: GoalLog;
+  inFlight: Promise<void> | null;
 }
 
 export class ClaudeGoalReader {
   private readonly scans = new Map<string, GoalScan>();
 
-  read(location: ClaudeTaskLocation): { goal: IntegratedGoal | null; markers: ReturnType<GoalLog['list']> } {
+  async read(location: ClaudeTaskLocation): Promise<{ goal: IntegratedGoal | null; markers: ReturnType<GoalLog['list']> }> {
     const key = location.sessionId;
     let scan = this.scans.get(key);
     if (!scan) {
       const file = claudeSessionTranscript(location);
       if (!file) return { goal: null, markers: [] };
-      scan = { file, offset: 0, log: new GoalLog() };
+      scan = { file, ino: 0, offset: 0, log: new GoalLog(), inFlight: null };
       this.scans.set(key, scan);
       if (this.scans.size > 100) this.scans.delete(this.scans.keys().next().value!);
     }
     try {
-      this.advance(scan, key);
+      // Serialize concurrent readers for the same session so offset never
+      // advances twice over the same bytes.
+      const run = (scan.inFlight ?? Promise.resolve()).then(() => this.advance(scan!, key));
+      const next = run.catch(() => undefined).finally(() => { if (scan?.inFlight === next) scan.inFlight = null; });
+      scan.inFlight = next;
+      await run;
     } catch {
       // An unreadable transcript keeps the last state read.
     }
@@ -40,34 +47,36 @@ export class ClaudeGoalReader {
     this.scans.delete(sessionId);
   }
 
-  private advance(scan: GoalScan, key: string): void {
-    const size = fs.statSync(scan.file).size;
-    // A shorter file is a rewritten one; read it again from the start.
-    if (size < scan.offset) {
+  private async advance(scan: GoalScan, key: string): Promise<void> {
+    const stat = await fs.promises.stat(scan.file);
+    const size = stat.size;
+    // A shorter or replaced file is read again from the start.
+    if (size < scan.offset || (scan.ino !== 0 && stat.ino !== scan.ino)) {
       scan.offset = 0;
       scan.log.forget(key);
     }
+    scan.ino = stat.ino;
     if (size === scan.offset) return;
-    const handle = fs.openSync(scan.file, 'r');
+    const handle = await fs.promises.open(scan.file, 'r');
     let position = scan.offset;
     let carry = Buffer.alloc(0);
     try {
       while (position < size) {
-        const buffer = Buffer.alloc(Math.min(CHUNK_BYTES, size - position));
-        const read = fs.readSync(handle, buffer, 0, buffer.length, position);
-        if (!read) break;
-        position += read;
-        const data = Buffer.concat([carry, buffer.subarray(0, read)]);
+        const buffer = Buffer.allocUnsafe(Math.min(CHUNK_BYTES, size - position));
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
+        if (!bytesRead) break;
+        position += bytesRead;
+        const data = carry.length ? Buffer.concat([carry, buffer.subarray(0, bytesRead)]) : buffer.subarray(0, bytesRead);
         const end = data.lastIndexOf(0x0a);
         // A line still being written waits for the next read.
-        if (end < 0) { carry = data; continue; }
+        if (end < 0) { carry = Buffer.from(data); continue; }
         for (const line of data.subarray(0, end).toString('utf8').split('\n')) {
           if (line.includes('"goal_status"') || line.includes('"command":"goal"')) this.apply(scan.log, key, line);
         }
-        carry = data.subarray(end + 1);
+        carry = Buffer.from(data.subarray(end + 1));
       }
     } finally {
-      fs.closeSync(handle);
+      await handle.close();
     }
     scan.offset = position - carry.length;
   }

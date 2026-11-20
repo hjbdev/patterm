@@ -1,6 +1,6 @@
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { FIGURE_FRAME_HTML, FIGURE_FRAME_PATH, figureFrameCsp } from '../Services/HtmlFigure';
-import { createReadStream, readFileSync } from 'node:fs';
+import { createReadStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import type { Socket } from 'node:net';
 import { randomUUID } from 'node:crypto';
@@ -99,6 +99,7 @@ export class WebServer {
   private readonly requests = new Set<Promise<unknown>>();
   private apiRequests = 0;
   private readonly queues = new Map<WebSocket, Promise<unknown>>();
+  private readonly peerChecks = new WeakMap<Socket, Promise<boolean>>();
   private heartbeat: ReturnType<typeof setInterval> | undefined;
   private stopping = false;
 
@@ -125,8 +126,15 @@ export class WebServer {
         // Browsers use mouse modes, and only for terminals they show. Title
         // spinners would otherwise reach every browser about ten times a second.
         if (frame.event !== 'mouse_mode') return;
+        let serialized: string | null = null;
         for (const client of this.terminals.clients) {
-          if (client.subscriptions.has(frame.processId)) client.sendEvent('terminal-lifecycle', frame);
+          if (!client.subscriptions.has(frame.processId)) continue;
+          if (client.sendRaw) {
+            serialized ??= JSON.stringify({ event: 'terminal-lifecycle', payload: frame });
+            client.sendRaw(serialized);
+          } else {
+            client.sendEvent('terminal-lifecycle', frame);
+          }
         }
       } else if (frame.type === 'terminal-damage') {
         for (const client of this.terminals.clients) {
@@ -151,7 +159,7 @@ export class WebServer {
       if (pending >= (api ? MAX_API_REQUESTS : MAX_FILE_REQUESTS)) { response.writeHead(503); response.end(); return; }
       if (api) this.apiRequests++;
       const handling = this.handleHttp(request, response).catch(async (error) => {
-        if (!response.headersSent) await this.json(request, response, 400, { error: errorMessage(error) });
+        if (!response.headersSent && !request.socket.destroyed) await this.json(request, response, 400, { error: errorMessage(error) });
         else response.destroy();
       });
       this.requests.add(handling);
@@ -163,21 +171,32 @@ export class WebServer {
     // Other accounts on this machine can reach the loopback listener, so only
     // this user and root (tailscaled, for Tailscale Serve) may connect.
     server.on('connection', (socket: Socket) => {
-      if (!this.allowedLocalPeer(socket)) socket.destroy();
+      void this.checkLocalPeer(socket);
     });
     server.requestTimeout = 30_000;
     server.headersTimeout = 10_000;
     server.on('upgrade', (request, socket, head) => {
-      if (request.url === PEER_LINK_PATH) {
-        if (this.stopping || !this.allowedPeer(request)) socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
-        else this.application.peers.handleUpgrade(request, socket, head);
-        return;
-      }
-      if (this.stopping || request.url !== '/api/events' || !this.allowed(request, true) || !this.access.allows(request.headers.cookie) || this.sockets.clients.size >= 32) {
-        socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
-        return;
-      }
-      this.sockets.handleUpgrade(request, socket, head, (ws) => this.connect(ws));
+      const handling = (async () => {
+        if (!await this.checkLocalPeer(request.socket)) {
+          if (!socket.destroyed) socket.destroy();
+          return;
+        }
+        if (socket.destroyed) return;
+        if (request.url === PEER_LINK_PATH) {
+          if (this.stopping || !this.allowedPeer(request)) socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+          else this.application.peers.handleUpgrade(request, socket, head);
+          return;
+        }
+        if (this.stopping || request.url !== '/api/events' || !this.allowed(request, true) || !this.access.allows(request.headers.cookie) || this.sockets.clients.size >= 32) {
+          socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+          return;
+        }
+        this.sockets.handleUpgrade(request, socket, head, (ws) => this.connect(ws));
+      })().catch(() => {
+        if (!socket.destroyed) socket.destroy();
+      });
+      this.requests.add(handling);
+      void handling.finally(() => this.requests.delete(handling));
     });
     return server;
   }
@@ -252,12 +271,53 @@ export class WebServer {
   // A local process can connect from any address on this machine, to the
   // loopback listener or a network one, so every connection to the loopback
   // listener and every connection from this machine is checked.
-  private allowedLocalPeer(socket: Socket): boolean {
-    if (!isLoopback(socket.localAddress) && !isLoopback(socket.remoteAddress) && !isMachineAddress(socket.remoteAddress)) return true;
-    const lookup = this.options.loopbackPeerUid ?? (process.platform === 'linux' ? procLoopbackPeerUid : null);
-    if (!lookup || !process.getuid) return true;
-    const uid = lookup({ clientAddress: socket.remoteAddress ?? '', clientPort: socket.remotePort ?? 0, serverAddress: socket.localAddress ?? '', serverPort: socket.localPort ?? 0 });
-    return uid !== null && (uid === process.getuid() || uid === 0);
+  private checkLocalPeer(socket: Socket): Promise<boolean> {
+    const existing = this.peerChecks.get(socket);
+    if (existing) return existing;
+    const check = this.verifyLocalPeer(socket);
+    this.peerChecks.set(socket, check);
+    return check;
+  }
+
+  private verifyLocalPeer(socket: Socket): Promise<boolean> {
+    if (!isLoopback(socket.localAddress) && !isLoopback(socket.remoteAddress) && !isMachineAddress(socket.remoteAddress)) {
+      return Promise.resolve(true);
+    }
+    if (!process.getuid) return Promise.resolve(true);
+    const ends: ConnectionEnds = {
+      clientAddress: socket.remoteAddress ?? '',
+      clientPort: socket.remotePort ?? 0,
+      serverAddress: socket.localAddress ?? '',
+      serverPort: socket.localPort ?? 0
+    };
+    const expectedUid = process.getuid();
+    if (this.options.loopbackPeerUid) {
+      const uid = this.options.loopbackPeerUid(ends);
+      if (uid === null || (uid !== expectedUid && uid !== 0)) {
+        socket.destroy();
+        return Promise.resolve(false);
+      }
+      return Promise.resolve(true);
+    }
+    if (process.platform !== 'linux') return Promise.resolve(true);
+    // Pause until the async /proc/net/tcp{,6} lookup completes; request and
+    // upgrade handlers also await this promise before handling anything.
+    socket.pause();
+    return procLoopbackPeerUidAsync(ends).then(
+      (uid) => {
+        if (socket.destroyed) return false;
+        if (uid !== null && (uid === expectedUid || uid === 0)) {
+          socket.resume();
+          return true;
+        }
+        socket.destroy();
+        return false;
+      },
+      () => {
+        if (!socket.destroyed) socket.destroy();
+        return false;
+      }
+    );
   }
 
   // Another Patterm host, not a browser: no Origin and no fetch metadata.
@@ -273,6 +333,10 @@ export class WebServer {
   }
 
   private async handleHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    if (!await this.checkLocalPeer(request.socket)) {
+      if (!request.socket.destroyed) request.socket.destroy();
+      return;
+    }
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Referrer-Policy', 'no-referrer');
     response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; frame-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
@@ -419,6 +483,7 @@ export class WebServer {
     const client: BrowserTerminalClient = {
       subscriptions: new Set(),
       sendEvent: (event, payload) => send(event === 'terminal-frame' ? payload as Uint8Array : JSON.stringify({ event, payload })),
+      sendRaw: send,
       conversations: new ClientConversationSubscriptions(
         (processId, listener) => this.application.subscribeConversation(processId, listener),
         (payload) => send(JSON.stringify({ event: 'conversation-event', payload }))
@@ -538,7 +603,12 @@ export class WebServer {
   }
 
   private broadcast(event: string, payload: unknown): void {
-    for (const client of this.terminals.clients) client.sendEvent(event, payload);
+    if (this.terminals.clients.size === 0) return;
+    const serialized = event === 'terminal-frame' ? payload as Uint8Array : JSON.stringify({ event, payload });
+    for (const client of this.terminals.clients) {
+      if (client.sendRaw) client.sendRaw(serialized);
+      else client.sendEvent(event, payload);
+    }
   }
 
   private sessionState(request: IncomingMessage): { password_set: boolean; signed_in: boolean; tailnet: boolean } {
@@ -668,9 +738,25 @@ export function boundedReply(id: number | undefined, result: unknown): string {
   return JSON.stringify({ id, error: 'The reply is too large for the live connection' });
 }
 
-function procLoopbackPeerUid(ends: ConnectionEnds): number | null {
-  const tables = ['/proc/net/tcp', '/proc/net/tcp6'].map((file) => {
-    try { return readFileSync(file, 'utf8'); } catch { return ''; }
-  });
-  return loopbackPeerUid(tables, ends);
+let inflightProcTables: Promise<string[]> | null = null;
+
+function readProcNetTables(): Promise<string[]> {
+  if (!inflightProcTables) {
+    inflightProcTables = Promise.all(
+      ['/proc/net/tcp', '/proc/net/tcp6'].map((file) => fs.readFile(file, 'utf8').catch(() => ''))
+    ).finally(() => {
+      inflightProcTables = null;
+    });
+  }
+  return inflightProcTables;
+}
+
+async function procLoopbackPeerUidAsync(ends: ConnectionEnds): Promise<number | null> {
+  const shared = Boolean(inflightProcTables);
+  const tables = await readProcNetTables();
+  const uid = loopbackPeerUid(tables, ends);
+  if (uid !== null || !shared) return uid;
+  // A connection accepted while an earlier read was in flight may not appear
+  // in that snapshot; re-read once with a fresh table.
+  return loopbackPeerUid(await readProcNetTables(), ends);
 }

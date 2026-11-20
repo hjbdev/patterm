@@ -1,4 +1,4 @@
-import { ref, watch } from 'vue';
+import { computed, ref, shallowRef, watch } from 'vue';
 import type { Router } from 'vue-router';
 import { toast } from 'vue-sonner';
 import { startPushAvatars } from '../lib/pushAvatars';
@@ -48,7 +48,7 @@ export type NotificationChange =
 const RANK: Record<NotificationUrgency, number> = { low: 0, normal: 1, high: 2 };
 const PRESENCE_HEARTBEAT_MS = 30_000;
 
-const unread = ref<Unread[]>([]);
+const unread = shallowRef<Unread[]>([]);
 const toastsEnabled = ref(true);
 // New notifications appear at the top of an open tray, so it replaces toasts.
 const trayOpen = ref(false);
@@ -61,6 +61,22 @@ const quietDismissals = new Set<string | number>();
 let releasingPointer = false;
 let started = false;
 
+const unreadIndex = computed(() => {
+  const byProcess = new Map<string, NotificationUrgency>();
+  const byProject = new Map<string, number>();
+  let total = 0;
+  let highest: NotificationUrgency | null = null;
+  for (const row of unread.value) {
+    if (row.process_id && !byProcess.has(row.process_id)) byProcess.set(row.process_id, row.urgency);
+    if (row.project_id) byProject.set(row.project_id, (byProject.get(row.project_id) ?? 0) + row.count);
+    if (!row.snoozed) {
+      total += row.count;
+      if (!highest || RANK[row.urgency] > RANK[highest]) highest = row.urgency;
+    }
+  }
+  return { byProcess, byProject, total, highest };
+});
+
 function dismissQuietly(id?: string): void {
   for (const shown of toast.getToasts()) if (id === undefined || shown.id === id) quietDismissals.add(shown.id);
   toast.dismiss(id);
@@ -69,17 +85,13 @@ function dismissQuietly(id?: string): void {
 // Highest unread urgency for a process, for the dot beside its tab.
 export function unreadUrgency(processId: string | null | undefined): NotificationUrgency | null {
   if (!processId) return null;
-  return unread.value.find((row) => row.process_id === processId)?.urgency ?? null;
+  return unreadIndex.value.byProcess.get(processId) ?? null;
 }
 
 // Snoozed projects' notifications stay in the tray's list but out of its
 // count, the window title, and the app badge.
-function counted(rows: Unread[]): Unread[] {
-  return rows.filter((row) => !row.snoozed);
-}
-
 export function totalUnread(): number {
-  return counted(unread.value).reduce((total, row) => total + row.count, 0);
+  return unreadIndex.value.total;
 }
 
 // Any unread notification, snoozed projects' included, for Mark all read.
@@ -88,11 +100,11 @@ export function anyUnread(): boolean {
 }
 
 export function highestUnread(): NotificationUrgency | null {
-  return counted(unread.value).reduce<NotificationUrgency | null>((top, row) => !top || RANK[row.urgency] > RANK[top] ? row.urgency : top, null);
+  return unreadIndex.value.highest;
 }
 
 export function projectUnread(projectId: string): number {
-  return unread.value.filter((row) => row.project_id === projectId).reduce((total, row) => total + row.count, 0);
+  return unreadIndex.value.byProject.get(projectId) ?? 0;
 }
 
 export function setNotificationTrayOpen(open: boolean): void {

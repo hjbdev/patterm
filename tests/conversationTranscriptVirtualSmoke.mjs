@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import ts from 'typescript';
 import { computed, reactive, ref } from 'vue';
 import { elementScroll, measureElement } from '@tanstack/vue-virtual';
-import { elapsedLabel, groupTranscriptMessages, toggleTranscriptRow, transcriptRowIndexForMessage, transcriptRowOpen, transcriptThoughtDurations, transcriptToolGroupSummary, transcriptTurnDurations } from '../dist/tests/resources/js/lib/integratedConversation.js';
+import { elapsedLabel, groupTranscriptMessages, normaliseTranscriptAttachments, toggleTranscriptRow, transcriptRowIndexForMessage, transcriptRowOpen, transcriptThoughtDurations, transcriptToolGroupSummary, transcriptTurnDurations } from '../dist/tests/resources/js/lib/integratedConversation.js';
 
 const page = fs.readFileSync(new URL('../resources/js/Components/ConversationTranscript.vue', import.meta.url), 'utf8');
 const source = page.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)?.[1];
@@ -33,14 +33,14 @@ function mountTranscript() {
     measureElement() {}
   });
   const setup = new Function(
-    'computed', 'ref', 'watch', 'onMounted', 'nextTick', 'useVirtualizer',
-    'elapsedLabel', 'groupTranscriptMessages', 'toggleTranscriptRow', 'transcriptRowIndexForMessage', 'transcriptRowOpen', 'transcriptThoughtDurations', 'transcriptToolGroupSummary', 'transcriptTurnDurations', 'defineProps', 'defineEmits', 'defineExpose', 'withDefaults', 'measureElement', 'elementScroll', 'provide', 'figureAnsweredKey', 'figureAnswers', 'isSavedFigure', 'figureId', 'figuresKey',
+    'computed', 'ref', 'watch', 'onMounted', 'onBeforeUnmount', 'nextTick', 'useVirtualizer',
+    'elapsedLabel', 'groupTranscriptMessages', 'normaliseTranscriptAttachments', 'toggleTranscriptRow', 'transcriptRowIndexForMessage', 'transcriptRowOpen', 'transcriptThoughtDurations', 'transcriptToolGroupSummary', 'transcriptTurnDurations', 'defineProps', 'defineEmits', 'defineExpose', 'withDefaults', 'measureElement', 'elementScroll', 'provide', 'figureAnsweredKey', 'figureAnswers', 'isSavedFigure', 'figureId', 'figuresKey',
     `${outputText}\nreturn { rows, renderedRows, totalSize, rowOpen, toggleRow, sizerRef, scrollerRef };`
   );
   const pane = setup(
-    computed, ref, () => {}, () => {}, () => Promise.resolve(),
+    computed, ref, () => {}, () => {}, () => {}, () => Promise.resolve(),
     (value) => { options = value; return virtual; },
-    elapsedLabel, groupTranscriptMessages, toggleTranscriptRow, transcriptRowIndexForMessage, transcriptRowOpen, transcriptThoughtDurations, transcriptToolGroupSummary, transcriptTurnDurations, () => props, () => () => {}, () => {}, (value) => value,
+    elapsedLabel, groupTranscriptMessages, normaliseTranscriptAttachments, toggleTranscriptRow, transcriptRowIndexForMessage, transcriptRowOpen, transcriptThoughtDurations, transcriptToolGroupSummary, transcriptTurnDurations, () => props, () => () => {}, () => {}, (value) => value,
     measureElement, elementScroll, () => {}, Symbol('figureAnswered'), () => new Map(), () => false, () => null, Symbol('figures')
   );
   return { pane, props, options, virtual };
@@ -63,19 +63,21 @@ test('the live transcript mounts only virtual rows and keys them by native ident
 
   const adjust = virtual.value.shouldAdjustScrollPositionOnItemSizeChange;
   const adjustments = [];
+  const readingKey = options.value.getItemKey(1000);
+  assert.equal(readingKey, 'process_test:native-950');
   const instance = {
     range: { startIndex: 1000, endIndex: 1011 },
     scrollOffset: 120_100,
-    itemSizeCache: new Map([['native-950', 400]]),
+    itemSizeCache: new Map([[readingKey, 400]]),
     options: options.value,
     indexFromElement: (row) => row.index,
     applyScrollAdjustment: (delta) => adjustments.push(delta)
   };
-  const reading = { index: 1000, key: 'native-950', start: 120_000, size: 400 };
-  assert.equal(adjust({ index: 999, key: 'native-949', start: 119_880, size: 120 }, 40, instance), true, 'a row wholly above the viewport keeps the visible rows in place');
+  const reading = { index: 1000, key: readingKey, start: 120_000, size: 400 };
+  assert.equal(adjust({ index: 999, key: 'process_test:native-949', start: 119_880, size: 120 }, 40, instance), true, 'a row wholly above the viewport keeps the visible rows in place');
   assert.equal(adjust(reading, 40, instance), false, 'the row being read does not move the view as its reply streams in');
-  assert.equal(adjust({ index: 1011, key: 'native-961', start: 121_320, size: 120 }, 40, instance), false, 'rows below the top never move the view');
-  assert.equal(adjust({ ...reading, key: 'native-unmeasured' }, 280, instance), true, 'the first measurement of the row across the top replaces its whole estimate');
+  assert.equal(adjust({ index: 1011, key: 'process_test:native-961', start: 121_320, size: 120 }, 40, instance), false, 'rows below the top never move the view');
+  assert.equal(adjust({ ...reading, key: 'process_test:native-unmeasured' }, 280, instance), true, 'the first measurement of the row across the top replaces its whole estimate');
 
   // The column narrows: the row across the top rewraps 200px taller, and the
   // quarter of it that was above the edge grows with it.

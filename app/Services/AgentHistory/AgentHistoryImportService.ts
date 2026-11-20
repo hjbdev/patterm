@@ -1,7 +1,7 @@
 import { SummaryProseIndex } from './SummaryProseIndex';
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { AgentHistoryDb } from './AgentHistoryDb';
 import type { HistorySearchIndexService } from './HistorySearchIndexService';
@@ -18,6 +18,62 @@ import { AgentHistorySourceService, historyConfigureInput } from './AgentHistory
 export { historyConfigureInput } from './AgentHistorySourceService';
 
 const IMPORT_MESSAGE_CHUNK_SIZE = 500;
+const PREFIX_CACHE_LIMIT = 256;
+
+interface CachedPrefixState {
+  count: number;
+  lastRowId: string | null;
+  secretRevision: number;
+  rawPrefixHash: string;
+}
+
+// Memoizes raw parsed message prefix hashes per conversation so append-only
+// turns skip O(N) SQLite reads and O(N) regex secret redaction across the prefix.
+const prefixStateCache = new Map<string, CachedPrefixState>();
+
+function rememberPrefixState(conversationId: string, entry: CachedPrefixState): void {
+  prefixStateCache.delete(conversationId);
+  prefixStateCache.set(conversationId, entry);
+  while (prefixStateCache.size > PREFIX_CACHE_LIMIT) {
+    prefixStateCache.delete(prefixStateCache.keys().next().value!);
+  }
+}
+
+function hashRawMessages(messages: readonly ParsedMessage[], count: number): string {
+  const hash = createHash('sha256');
+  for (let index = 0; index < count; index += 1) {
+    const message = messages[index]!;
+    hash.update(String(message.seq));
+    hash.update('\0');
+    hash.update(message.providerMessageId ?? '');
+    hash.update('\0');
+    hash.update(message.parentProviderMessageId ?? '');
+    hash.update('\0');
+    hash.update(message.turnId ?? '');
+    hash.update('\0');
+    hash.update(message.role);
+    hash.update('\0');
+    hash.update(message.kind);
+    hash.update('\0');
+    hash.update(message.text);
+    hash.update('\0');
+    hash.update(message.toolName ?? '');
+    hash.update('\0');
+    hash.update(message.toolStatus ?? '');
+    hash.update('\0');
+    hash.update(message.toolInputSummary ?? '');
+    hash.update('\0');
+    hash.update(message.toolOutputSummary ?? '');
+    hash.update('\0');
+    hash.update(message.tokenCount === null ? '' : String(message.tokenCount));
+    hash.update('\0');
+    hash.update(message.providerCreatedAt ?? '');
+    hash.update('\0');
+    hash.update(JSON.stringify(message.metadata));
+    hash.update('\u0001');
+  }
+  return hash.digest('hex');
+}
 
 export const historyImportInput = z.object({
   provider: z.enum(['claude', 'codex', 'opencode', 'agy']).optional(),
@@ -421,12 +477,12 @@ export class AgentHistoryImportService {
 
   private isConversationUnchanged(conversation: ParsedConversation, link: ConversationLink): boolean {
     const row = this.database.connection.prepare(`
-      select project_id, session_id, process_id, worktree_id, title, cwd, provider_version, updated_at, ended_at, status, link_confidence, link_reason, metadata,
+      select id, project_id, session_id, process_id, worktree_id, title, cwd, provider_version, updated_at, ended_at, status, link_confidence, link_reason, metadata,
         (select count(*) from conversation_messages where conversation_id = conversations.id) as message_count,
         (select max(seq) from conversation_messages where conversation_id = conversations.id) as max_seq
       from conversations
       where provider = ? and provider_conversation_id = ?
-    `).get(conversation.provider, conversation.providerConversationId) as ConversationState | undefined;
+    `).get(conversation.provider, conversation.providerConversationId) as (ConversationState & { id: string }) | undefined;
     if (!row) return false;
     const metadataMatches = row.project_id === link.project_id &&
       row.session_id === link.session_id &&
@@ -444,7 +500,10 @@ export class AgentHistoryImportService {
       row.message_count === conversation.messages.length &&
       row.max_seq === conversation.messages.length - 1;
     if (!metadataMatches) return false;
-    return this.storedMessagesDigest(conversation.provider, conversation.providerConversationId) === this.parsedStoredMessagesDigest(conversation.messages);
+    if (this.prefixMatchesCache(row.id, conversation.messages, row.message_count)) return true;
+    const unchanged = this.storedMessagesDigest(conversation.provider, conversation.providerConversationId) === this.parsedStoredMessagesDigest(conversation.messages);
+    if (unchanged) this.recordPrefixCache(row.id, conversation.messages, row.message_count);
+    return unchanged;
   }
 
   private fingerprintFile(adapter: ProviderHistoryAdapter, filePath: string): HistoryFileFingerprint {
@@ -479,11 +538,15 @@ export class AgentHistoryImportService {
         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       let count = 0;
+      let lastRowId: string | null = null;
       for (const message of conversation.messages) {
         const redacted = this.redactMessage(message);
-        insert.run(randomUUID(), id, message.providerMessageId, message.parentProviderMessageId, message.turnId, message.seq, message.role, message.kind, redacted.text, message.toolName, message.toolStatus, redacted.toolInputSummary, redacted.toolOutputSummary, redacted.redactionCount, message.tokenCount, message.providerCreatedAt, stableJson(this.redactor.maskKnown(message.metadata)), now);
+        const rowId = randomUUID();
+        lastRowId = rowId;
+        insert.run(rowId, id, message.providerMessageId, message.parentProviderMessageId, message.turnId, message.seq, message.role, message.kind, redacted.text, message.toolName, message.toolStatus, redacted.toolInputSummary, redacted.toolOutputSummary, redacted.redactionCount, message.tokenCount, message.providerCreatedAt, stableJson(this.redactor.maskKnown(message.metadata)), now);
         count += 1;
       }
+      rememberPrefixState(id, { count, lastRowId, secretRevision: SecretRedactor.knownValuesRevision(), rawPrefixHash: hashRawMessages(conversation.messages, count) });
       return count;
     })();
     new SummaryProseIndex(this.database.connection).publish(id);
@@ -567,14 +630,45 @@ export class AgentHistoryImportService {
 
     this.search?.removeConversation(id);
     await this.replaceConversationMessagesChunked(id, rows);
+    rememberPrefixState(id, {
+      count: rows.length,
+      lastRowId: rows.length > 0 ? rows[rows.length - 1]!.id : null,
+      secretRevision: SecretRedactor.knownValuesRevision(),
+      rawPrefixHash: hashRawMessages(conversation.messages, rows.length)
+    });
     return { messages: rows.length, appendedFrom: null };
+  }
+
+  private lastStoredMessageId(conversationId: string): string | null {
+    const row = this.database.connection
+      .prepare(`select id from conversation_messages where conversation_id = ? order by seq desc limit 1`)
+      .get(conversationId) as { id: string } | undefined;
+    return row?.id ?? null;
+  }
+
+  private prefixMatchesCache(conversationId: string, messages: readonly ParsedMessage[], count: number): boolean {
+    const cached = prefixStateCache.get(conversationId);
+    if (!cached || cached.count !== count || cached.secretRevision !== SecretRedactor.knownValuesRevision()) return false;
+    if (this.lastStoredMessageId(conversationId) !== cached.lastRowId) return false;
+    return hashRawMessages(messages, count) === cached.rawPrefixHash;
+  }
+
+  private recordPrefixCache(conversationId: string, messages: readonly ParsedMessage[], count: number, lastRowId?: string | null): void {
+    rememberPrefixState(conversationId, {
+      count,
+      lastRowId: lastRowId !== undefined ? lastRowId : this.lastStoredMessageId(conversationId),
+      secretRevision: SecretRedactor.knownValuesRevision(),
+      rawPrefixHash: hashRawMessages(messages, count)
+    });
   }
 
   private async tryAppendConversationMessages(conversationId: string, conversation: ParsedConversation, now: string): Promise<{ messages: number; appendedFrom: number } | null> {
     const state = this.database.connection.prepare(`select count(*) as count, max(seq) as max_seq from conversation_messages where conversation_id = ?`).get(conversationId) as { count: number; max_seq: number | null };
     if (state.count === 0 || state.max_seq !== state.count - 1 || conversation.messages.length <= state.count) return null;
-    const prefix = conversation.messages.slice(0, state.count);
-    if (this.storedMessagesDigest(conversation.provider, conversation.providerConversationId, state.count) !== this.parsedStoredMessagesDigest(prefix)) return null;
+    if (!this.prefixMatchesCache(conversationId, conversation.messages, state.count)) {
+      const prefix = conversation.messages.slice(0, state.count);
+      if (this.storedMessagesDigest(conversation.provider, conversation.providerConversationId, state.count) !== this.parsedStoredMessagesDigest(prefix)) return null;
+    }
     const rows = conversation.messages.slice(state.count).map((message) => {
       const redacted = this.redactMessage(message);
       return {
@@ -611,6 +705,7 @@ export class AgentHistoryImportService {
       })();
       await yieldToMain();
     }
+    this.recordPrefixCache(conversationId, conversation.messages, conversation.messages.length, rows[rows.length - 1]!.id);
     return { messages: rows.length, appendedFrom: state.count };
   }
 

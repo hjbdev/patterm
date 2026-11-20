@@ -159,8 +159,47 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
+const MAX_DRAFTS = 100;
 const drafts = reactive(new Map<string, ComposerDraft>());
 const files = new Map<string, File>();
+
+function releaseDraft(processId: string): void {
+  const draft = drafts.get(processId);
+  if (draft) {
+    for (const attachment of draft.attachments) {
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+      files.delete(attachment.id);
+    }
+    drafts.delete(processId);
+  }
+  const entries = outgoing.get(processId);
+  if (entries) {
+    for (const entry of entries) for (const url of entry.previewUrls) URL.revokeObjectURL(url);
+    outgoing.delete(processId);
+  }
+}
+
+export function pruneDraft(processId: string): void {
+  const draft = drafts.get(processId);
+  if (!draft || draft.submission || outgoing.has(processId)) return;
+  if (draft.text.trim() || draft.attachments.length || draft.chips.length) return;
+  releaseDraft(processId);
+}
+
+function trimDrafts(keepProcessId: string): void {
+  if (drafts.size <= MAX_DRAFTS) return;
+  // First drop oldest empty idle drafts, then oldest idle drafts without pending submissions.
+  for (const [id, draft] of drafts) {
+    if (drafts.size <= MAX_DRAFTS) return;
+    if (id === keepProcessId || draft.submission || outgoing.has(id)) continue;
+    if (!draft.text.trim() && !draft.attachments.length && !draft.chips.length) releaseDraft(id);
+  }
+  for (const [id, draft] of drafts) {
+    if (drafts.size <= MAX_DRAFTS) return;
+    if (id === keepProcessId || draft.submission || outgoing.has(id)) continue;
+    releaseDraft(id);
+  }
+}
 
 interface OutgoingMessage {
   payload: ComposerSendPayload & { hash: string };
@@ -328,6 +367,7 @@ export function draftFor(processId: string): ComposerDraft {
   if (!draft) {
     draft = reactive({ text: '', references: [], chips: [], attachments: [] }) as ComposerDraft;
     drafts.set(processId, draft);
+    trimDrafts(processId);
   }
   return draft;
 }

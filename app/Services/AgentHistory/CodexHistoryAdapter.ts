@@ -46,21 +46,15 @@ export class CodexHistoryAdapter implements ProviderHistoryAdapter {
     // Modern rollouts mirror chat in event_msg, sometimes without block separators.
     // Read the response transcript once; retain event-only legacy transcripts.
     let hasResponseMessages = false;
+    let bufferedEventMessages = 0;
+    const messageIsEvent: boolean[] = [];
+    const messageHasExplicitId: boolean[] = [];
     const usage = new CodexUsageReader();
     // Tool calls carry no turn_id; the turn_context before them names the turn.
     let currentTurnId: string | null = null;
     const media: ParsedMedia[] = [];
     // Each tool call's input, to name the images its output returns.
     const callInputs = new Map<string, string>();
-    for (const record of readJsonl(filePath).records) {
-      if (!record || typeof record !== 'object') continue;
-      const row = record as Record<string, unknown>;
-      if (row.type === 'response_item' && row.payload && typeof row.payload === 'object'
-        && (row.payload as Record<string, unknown>).type === 'message') {
-        hasResponseMessages = true;
-        break;
-      }
-    }
 
     for (const record of parsed.records) {
       if (!record || typeof record !== 'object') {
@@ -70,6 +64,10 @@ export class CodexHistoryAdapter implements ProviderHistoryAdapter {
       const row = record as Record<string, unknown>;
       const payload = row.payload && typeof row.payload === 'object' ? row.payload as Record<string, unknown> : row;
       const rowType = stringValue(row.type) ?? stringValue(payload.type) ?? 'event';
+      if (row.type === 'response_item' && row.payload && typeof row.payload === 'object'
+        && (row.payload as Record<string, unknown>).type === 'message') {
+        hasResponseMessages = true;
+      }
       // A subagent or reviewer rollout opens with its own session_meta, then
       // repeats its parent's. Only the first one names this file's thread.
       if (rowType === 'session_meta' && stringValue(payload.id) && !hasSessionId) {
@@ -90,7 +88,10 @@ export class CodexHistoryAdapter implements ProviderHistoryAdapter {
       for (const item of extracted) {
         if (rowType === 'event_msg' && hasResponseMessages) continue;
         if (!item.text && !item.toolName && !item.toolInputSummary && !item.toolOutputSummary) continue;
+        if (rowType === 'event_msg') bufferedEventMessages += 1;
         title ??= item.role === 'user' && item.kind === 'message' && item.text ? firstLine(item.text) : null;
+        messageIsEvent.push(rowType === 'event_msg');
+        messageHasExplicitId.push(item.providerMessageId !== null);
         messages.push({
           providerMessageId: item.providerMessageId ?? `${conversationId}:${seq}`,
           parentProviderMessageId: item.parentProviderMessageId,
@@ -111,6 +112,42 @@ export class CodexHistoryAdapter implements ProviderHistoryAdapter {
       if (rowType === 'response_item') {
         const messageSeq = seq > rowSeq ? rowSeq : seq ? seq - 1 : null;
         media.push(...codexImages(payload, callInputs, { messageSeq, occurredAt: createdAt, position: parsed.position }));
+      }
+    }
+
+    // Drop any event_msg entries seen before the first response_item message
+    // in a modern rollout, re-indexing sequences to match a two-pass parse.
+    if (hasResponseMessages && bufferedEventMessages > 0) {
+      const seqMap = new Map<number, number>();
+      const filtered: ParsedMessage[] = [];
+      let nextSeq = 0;
+      title = null;
+      for (let index = 0; index < messages.length; index += 1) {
+        if (messageIsEvent[index]) continue;
+        const message = messages[index]!;
+        seqMap.set(message.seq, nextSeq);
+        title ??= message.role === 'user' && message.kind === 'message' && message.text ? firstLine(message.text) : null;
+        filtered.push({
+          ...message,
+          seq: nextSeq,
+          providerMessageId: messageHasExplicitId[index] ? message.providerMessageId : `${conversationId}:${nextSeq}`
+        });
+        nextSeq += 1;
+      }
+      messages.length = 0;
+      messages.push(...filtered);
+      for (const item of media) {
+        if (item.messageSeq === null) continue;
+        const mapped = seqMap.get(item.messageSeq);
+        if (mapped !== undefined) item.messageSeq = mapped;
+        else {
+          let fallback: number | null = null;
+          for (let candidate = item.messageSeq - 1; candidate >= 0; candidate -= 1) {
+            const hit = seqMap.get(candidate);
+            if (hit !== undefined) { fallback = hit; break; }
+          }
+          item.messageSeq = fallback;
+        }
       }
     }
 

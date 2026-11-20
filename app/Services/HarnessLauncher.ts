@@ -96,6 +96,8 @@ export interface HarnessLauncherDeps {
   // Electron binary plus ELECTRON_RUN_AS_NODE=1.
   nodePath: string;
   shimPath: string;
+  // Optional compiled native Rust `patterm-mcp` binary; preferred over Node+JS shim when present.
+  nativeMcpPath?: string | null;
   socketPath: string;
   runtimeDir: string;
   // PATH the terminal sidecar passes to children; the xdg-open shim goes first.
@@ -127,8 +129,28 @@ export class HarnessLauncher {
   private readonly attachingNativeSession = new Set<string>();
   constructor(private readonly deps: HarnessLauncherDeps) {}
 
+  private nativeMcpBinary(): string | null {
+    const candidate = this.deps.nativeMcpPath;
+    if (candidate && fs.existsSync(candidate)) return candidate;
+    return null;
+  }
+
   // Patterm's MCP shim; shared OpenCode clients run it without an identity.
   private mcpSpec(identity: string | null): McpServerSpec {
+    const native = this.nativeMcpBinary();
+    if (native) {
+      return {
+        ...(this.deps.mcpHttpProxyUrl ? { httpProxyUrl: this.deps.mcpHttpProxyUrl } : {}),
+        command: native,
+        args: [],
+        env: {
+          PATTERM_MCP_SOCKET: this.deps.socketPath,
+          ...(this.deps.shimPath ? { PATTERM_MCP_JS_SHIM: this.deps.shimPath } : {}),
+          ...(this.deps.nodePath ? { PATTERM_NODE: this.deps.nodePath } : {}),
+          ...(identity ? { PATTERM_MCP_IDENTITY: identity } : {})
+        }
+      };
+    }
     return {
       ...(this.deps.mcpHttpProxyUrl ? { httpProxyUrl: this.deps.mcpHttpProxyUrl } : {}),
       command: this.deps.nodePath,
@@ -141,6 +163,66 @@ export class HarnessLauncher {
   // them, read fresh at each restore.
   openCodeMcpSource(): OpenCodeMcpSource {
     return { spec: () => this.mcpSpec(null), servers: () => this.deps.mcpServers?.forHarness('opencode') ?? [] };
+  }
+
+  // Transparently wakes a hibernated Integrated host in place, preserving its
+  // process_id, session_id, mcp_identity, resume_id, todos, worktrees, and timers.
+  async wakeIntegrated(processId: string): Promise<void> {
+    if (!this.deps.integrated) throw new Error('Integrated conversations are unavailable');
+    const row = this.deps.database.connection.prepare(`
+      select sessions.id as session_id, sessions.project_id, sessions.harness, sessions.resume_id,
+        sessions.mcp_identity, sessions.session_role, sessions.bot_id, sessions.model, sessions.reasoning,
+        sessions.service_tier, sessions.display_name, coalesce(sessions.cwd, processes.cwd) as cwd
+      from sessions join processes on processes.id = sessions.process_id
+      where sessions.process_id = ? and sessions.interface_mode = 'integrated' and sessions.exited_at is null
+      order by sessions.started_at desc limit 1
+    `).get(processId) as {
+      session_id: string; project_id: string; harness: string; resume_id: string | null;
+      mcp_identity: string | null; session_role: string; bot_id: string | null;
+      model: string | null; reasoning: string | null; service_tier: string | null;
+      display_name: string | null; cwd: string | null;
+    } | undefined;
+    if (!row || !row.resume_id || !row.mcp_identity) throw new Error('Hibernated Integrated session cannot be woken');
+    if (row.harness !== 'claude' && row.harness !== 'codex' && row.harness !== 'agy') {
+      throw new Error(`Cannot wake ${row.harness} session`);
+    }
+    const install = this.deps.workbench.listHarnesses().find((entry) => entry.harness === row.harness);
+    if (!install || install.status !== 'available' || !install.executablePath) {
+      throw new Error(`harness not available: ${row.harness}`);
+    }
+    const mcp = this.mcpSpec(row.mcp_identity);
+    const mcpServers = this.deps.mcpServers?.forHarness(row.harness) ?? [];
+    const contextService = new AgentContextService();
+    const agentContext = row.session_role === 'assistant'
+      ? (this.deps.botContext?.(row.bot_id ?? ASSISTANT_BOT_ID) || contextService.buildAssistant(this.deps.assistantMemory?.snapshot())).trim()
+      : row.session_role === 'routine'
+        ? contextService.buildRoutine((limit) => this.deps.assistantMemory?.snapshot(limit, { role: 'routine' }) ?? '').trim()
+        : row.session_role === 'bot'
+          ? (this.deps.botContext?.(row.bot_id!) ?? '').trim()
+          : contextService.build(row.project_id, {
+            figures: this.deps.settings?.figuresEnabled() !== false,
+            memory: (limit) => this.deps.assistantMemory?.snapshot(limit, { role: 'agent', projectId: row.project_id }) ?? ''
+          }).trim();
+    const cwd = storedPath(row.cwd ?? process.cwd());
+    const prepared = await this.deps.integrated.prepare(row.harness, {
+      executable: install.executablePath,
+      cwd,
+      name: row.display_name,
+      context: agentContext,
+      mcp,
+      mcpServers,
+      resumeId: row.resume_id,
+      model: row.model,
+      reasoning: row.reasoning,
+      serviceTier: row.service_tier,
+      restoreSavedSettings: true,
+      memoryPush: row.session_role === 'assistant' || row.session_role === 'bot',
+      quietNotificationReplies: row.session_role === 'assistant' && row.bot_id === ASSISTANT_BOT_ID,
+      wakingSessionId: row.session_id
+    });
+    const now = new Date().toISOString();
+    this.deps.database.connection.prepare('update processes set argv = ?, updated_at = ? where id = ?')
+      .run(JSON.stringify(prepared.argv), now, processId);
   }
 
   async launch(raw: LaunchHarnessInput): Promise<LaunchHarnessResult> {
@@ -202,7 +284,7 @@ export class HarnessLauncher {
     if (interfaceMode === 'integrated' && harness === 'rawpty') throw new Error('Raw terminal does not support Integrated conversations');
     if (selection.serviceTier && harness !== 'codex') throw new Error(`${providerName(harness)} does not support service tier overrides`);
     timing.mark('input.parsed', { harness, preset: selection.presetName, model: selection.model, interface_mode: interfaceMode });
-    if (!fs.existsSync(this.deps.shimPath)) {
+    if (!this.nativeMcpBinary() && !fs.existsSync(this.deps.shimPath)) {
       throw new Error(`Patterm MCP shim is missing at ${this.deps.shimPath}; run pnpm run build:mcp`);
     }
     timing.mark('shim.checked');
@@ -483,11 +565,15 @@ export class HarnessLauncher {
     const opener = path.join(binDir, 'xdg-open');
     const inheritedPath = (this.deps.inheritedPath ?? process.env.PATH ?? '')
       .split(path.delimiter).filter((entry) => entry && path.resolve(entry) !== binDir).join(path.delimiter);
+    const native = this.nativeMcpBinary();
+    const openerExec = native
+      ? `exec ${shellQuote(native)} --open "$@" ;;`
+      : `ELECTRON_RUN_AS_NODE=1 exec ${shellQuote(this.deps.nodePath)} ${shellQuote(this.deps.shimPath)} --open "$@" ;;`;
     const script = [
       '#!/bin/sh',
       'case "$1" in',
       `  http://*|https://*|mailto:*) PATTERM_MCP_SOCKET=${shellQuote(this.deps.socketPath)} PATTERM_MCP_IDENTITY="$PATTERM_TERMINAL_IDENTITY" \\`,
-      `    ELECTRON_RUN_AS_NODE=1 exec ${shellQuote(this.deps.nodePath)} ${shellQuote(this.deps.shimPath)} --open "$@" ;;`,
+      `    ${openerExec}`,
       'esac',
       `PATH=${shellQuote(inheritedPath)} exec xdg-open "$@"`,
       ''

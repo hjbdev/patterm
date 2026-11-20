@@ -1509,18 +1509,26 @@ export function subagentSummary(children: TranscriptMessage[]): string {
 
 // Tool-row and tool-group expansion is keyed by process and row id so it
 // survives transcript refreshes and process switches instead of resetting on
-// every delta.
-const rowExpansion = new Map<string, boolean>();
+// every delta. Bounded as an LRU so long-lived sessions never leak entries.
+const ROW_EXPANSION_LIMIT = 2_000;
+const rowExpansion = new Map<string, true>();
 
 export function transcriptRowOpen(processId: string, id: string): boolean {
-  return rowExpansion.get(`${processId}:${id}`) === true;
+  const key = `${processId}:${id}`;
+  if (!rowExpansion.has(key)) return false;
+  rowExpansion.delete(key);
+  rowExpansion.set(key, true);
+  return true;
 }
 
 export function toggleTranscriptRow(processId: string, id: string): boolean {
   const key = `${processId}:${id}`;
-  const next = !rowExpansion.get(key);
-  rowExpansion.set(key, next);
-  return next;
+  if (rowExpansion.delete(key)) return false;
+  rowExpansion.set(key, true);
+  while (rowExpansion.size > ROW_EXPANSION_LIMIT) {
+    rowExpansion.delete(rowExpansion.keys().next().value!);
+  }
+  return true;
 }
 
 // User attachments become safe chips: names, sizes, and an image preview when

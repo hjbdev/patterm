@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { DatabaseService } from './DatabaseService';
+import type { OpenCodeServerService } from './OpenCodeServerService';
 import { envValue } from '../Platform/Environment';
 import { linkOrCopy } from '../Platform/LinkedEntries';
 import { spawnResolved, stopChild, userHome } from '../Platform/ServiceProcess';
@@ -106,13 +107,19 @@ export function codexSummaryOutput(output: string): string {
   return text;
 }
 
-// Takes the JSON input document, as the other providers read it from stdin.
-export function openCodeSummaryArgs(model: string, input: string, mode: 'summary' | 'test'): string[] {
+function openCodeSummaryPayload(model: string, input: string, mode: 'summary' | 'test'): { model: { providerID: string; id: string }; prompt: string } {
   const id = model.startsWith('openai/') ? model.slice('openai/'.length) : model;
   if (!id || /[/#]/.test(id)) throw new Error('Summary requires an OpenCode OpenAI model ID, for example gpt-5.6-luna.');
+  return {
+    model: { providerID: 'openai', id },
+    prompt: `${mode === 'test' ? SUMMARY_TEST_SYSTEM_PROMPT : SUMMARY_SYSTEM_PROMPT}\n\n${input}`
+  };
+}
+
+// Takes the JSON input document, as the other providers read it from stdin.
+export function openCodeSummaryArgs(model: string, input: string, mode: 'summary' | 'test'): string[] {
   // The native stateless endpoint has no tools, session history, or project instructions.
-  return ['api', 'POST', '/api/generate', '--data', JSON.stringify({ model: { providerID: 'openai', id },
-    prompt: `${mode === 'test' ? SUMMARY_TEST_SYSTEM_PROMPT : SUMMARY_SYSTEM_PROMPT}\n\n${input}` })];
+  return ['api', 'POST', '/api/generate', '--data', JSON.stringify(openCodeSummaryPayload(model, input, mode))];
 }
 
 export function claudeSummaryArgs(model: string, mode: 'summary' | 'test' = 'summary', reasoning: string | null = null): string[] {
@@ -122,8 +129,37 @@ export function claudeSummaryArgs(model: string, mode: 'summary' | 'test' = 'sum
     '--no-chrome', '--system-prompt', mode === 'test' ? SUMMARY_TEST_SYSTEM_PROMPT : SUMMARY_SYSTEM_PROMPT];
 }
 
+// Capability and catalog outputs cached by (executable, mtimeMs, size) so each
+// summary invocation spawns one CLI instead of re-checking --help and models.
+const PROBE_CACHE_LIMIT = 32;
+const REFRESHED_CATALOG_TTL_MS = 5 * 60_000;
+const claudeHelpCache = new Map<string, string>();
+const codexHelpCache = new Map<string, string>();
+const codexBundledCatalogCache = new Map<string, string>();
+const codexRefreshedCatalogCache = new Map<string, { raw: string; expiresAt: number }>();
+
+async function binaryCacheKey(executable: string): Promise<string | null> {
+  try {
+    const stat = await fs.stat(executable);
+    return `${executable}\0${stat.mtimeMs}\0${stat.size}`;
+  } catch {
+    return null;
+  }
+}
+
+function setBoundedCache<V>(cache: Map<string, V>, key: string, value: V): void {
+  if (cache.size >= PROBE_CACHE_LIMIT && !cache.has(key)) {
+    cache.delete(cache.keys().next().value!);
+  }
+  cache.set(key, value);
+}
+
 export class AutoSummaryRunner {
-  constructor(private readonly database: DatabaseService, private readonly env: NodeJS.ProcessEnv) {}
+  constructor(
+    private readonly database: DatabaseService,
+    private readonly env: NodeJS.ProcessEnv,
+    private readonly openCodeServer?: Pick<OpenCodeServerService, 'generate'>
+  ) {}
 
   availability(provider: AutoSummarySettings['provider']): { available: boolean; reason: string | null } {
     const names = { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' };
@@ -138,15 +174,33 @@ export class AutoSummaryRunner {
     const available = this.availability(settings.provider);
     if (!available.available) throw new Error(available.reason!);
     const executable = this.executable(settings.provider)!;
+    if (settings.provider === 'opencode' && this.openCodeServer) {
+      const payload = openCodeSummaryPayload(settings.models.opencode, input, mode);
+      const direct = await this.openCodeServer.generate(executable, payload, signal);
+      if (direct !== null) {
+        try {
+          const parsed = summaryResult.parse(JSON.parse(direct));
+          if (context.memory && !parsed.memory) throw new Error();
+          return parsed;
+        } catch {
+          throw new Error('Summariser did not return a short summary in the required format.');
+        }
+      }
+    }
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'patterm-summary-'));
     try {
       const env = summaryEnvironment(this.env);
+      const binKey = await binaryCacheKey(executable);
       let result: string;
       const recordUsage = (output: string) => new AutoSummaryUsageService(this.database)
         .record(settings.provider, settings.models[settings.provider], output, projectId);
       if (settings.provider === 'codex') {
         const codexEnv = await codexSummaryEnvironment(directory, env);
-        const help = await runSummaryCommand(executable, ['exec', '--help'], '', directory, codexEnv, signal, 64 * 1024);
+        let help = binKey ? codexHelpCache.get(binKey) : undefined;
+        if (help === undefined) {
+          help = await runSummaryCommand(executable, ['exec', '--help'], '', directory, codexEnv, signal, 64 * 1024);
+          if (binKey) setBoundedCache(codexHelpCache, binKey, help);
+        }
         if (!['--ignore-user-config', '--ignore-rules', '--strict-config', '--ephemeral'].every((flag) => help.includes(flag))) {
           throw new Error('Summary requires a newer Codex CLI with isolated ephemeral execution. Update Codex.');
         }
@@ -154,8 +208,23 @@ export class AutoSummaryRunner {
         let models: string;
         // The bundled catalogue needs no network. Settings list the refreshed
         // catalogue, so a newer model is looked up there, inside this private home.
-        try { models = codexSummaryCatalog(await catalog(['debug', 'models', '--bundled']), settings.models.codex); }
-        catch { models = codexSummaryCatalog(await catalog(['debug', 'models']), settings.models.codex); }
+        try {
+          let bundledRaw = binKey ? codexBundledCatalogCache.get(binKey) : undefined;
+          if (bundledRaw === undefined) {
+            bundledRaw = await catalog(['debug', 'models', '--bundled']);
+            if (binKey) setBoundedCache(codexBundledCatalogCache, binKey, bundledRaw);
+          }
+          models = codexSummaryCatalog(bundledRaw, settings.models.codex);
+        } catch {
+          const refreshedKey = binKey ? `${binKey}\0${this.env.CODEX_HOME ?? ''}` : null;
+          const cachedRefreshed = refreshedKey ? codexRefreshedCatalogCache.get(refreshedKey) : undefined;
+          let refreshedRaw = cachedRefreshed && cachedRefreshed.expiresAt > Date.now() ? cachedRefreshed.raw : undefined;
+          if (refreshedRaw === undefined) {
+            refreshedRaw = await catalog(['debug', 'models']);
+            if (refreshedKey) setBoundedCache(codexRefreshedCatalogCache, refreshedKey, { raw: refreshedRaw, expiresAt: Date.now() + REFRESHED_CATALOG_TTL_MS });
+          }
+          models = codexSummaryCatalog(refreshedRaw, settings.models.codex);
+        }
         await fs.writeFile(path.join(directory, 'models.json'), models, { mode: 0o600 });
         await fs.writeFile(path.join(directory, 'instructions.txt'), mode === 'test' ? SUMMARY_TEST_SYSTEM_PROMPT : SUMMARY_SYSTEM_PROMPT, { mode: 0o600 });
         const output = await runSummaryCommand(executable, codexSummaryArgs(settings.models.codex, directory, settings.reasoning.codex), input, directory, codexEnv, signal, 16 * 1024, recordUsage);
@@ -169,7 +238,11 @@ export class AutoSummaryRunner {
           result = envelope.data.text;
         } catch { throw new Error('Summary failed. Update OpenCode and check its OpenAI login and model access.'); }
       } else {
-        const help = await runSummaryCommand(executable, ['--help'], '', directory, env, signal, 64 * 1024);
+        let help = binKey ? claudeHelpCache.get(binKey) : undefined;
+        if (help === undefined) {
+          help = await runSummaryCommand(executable, ['--help'], '', directory, env, signal, 64 * 1024);
+          if (binKey) setBoundedCache(claudeHelpCache, binKey, help);
+        }
         if (!REQUIRED_FLAGS.every((flag) => help.includes(flag))) throw new Error('This Claude CLI lacks required summary isolation flags. Update Claude Code.');
         if (settings.reasoning.claude && !help.includes('--effort')) throw new Error('Summary reasoning requires a newer Claude Code. Update it or use the model default.');
         const output = await runSummaryCommand(executable, claudeSummaryArgs(settings.models.claude, mode, settings.reasoning.claude),

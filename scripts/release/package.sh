@@ -97,6 +97,11 @@ mv "$DOWNLOADS/node-v$NODE_VERSION-linux-$ARCH/LICENSE" "$STAGE/runtime/LICENSE"
 # One sidecar serves both apps; the service finds it at its source-tree path.
 install -m 0755 "$SIDECAR" "$STAGE/resources/native/patterm-terminal-core"
 ln -s ../../../../resources/native/patterm-terminal-core "$STAGE/native/terminal-core/target/release/patterm-terminal-core"
+NATIVE_MCP="$(dirname "$SIDECAR")/patterm-mcp"
+if [[ -f "$NATIVE_MCP" ]]; then
+  install -m 0755 "$NATIVE_MCP" "$STAGE/resources/native/patterm-mcp"
+  ln -s ../../../../resources/native/patterm-mcp "$STAGE/native/terminal-core/target/release/patterm-mcp"
+fi
 cp "$ROOT/dist/mcp/patterm-mcp.js" "$STAGE/resources/mcp/patterm-mcp.js"
 install -m 0755 "$ROOT/scripts/patterm.sh" "$STAGE/scripts/patterm.sh"
 cp "$ROOT/scripts/install-service.mjs" "$ROOT/scripts/start-tailscale-service.mjs" "$ROOT/scripts/release/verify-minisign.mjs" "$STAGE/scripts/"

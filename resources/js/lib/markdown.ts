@@ -1,6 +1,6 @@
 import MarkdownIt from 'markdown-it';
 import { splitProcessMentions } from './agentMentions';
-import { highlightCodeBlocks, type CodeBlock } from './codeHighlight';
+import type { CodeBlock } from './codeHighlight';
 
 // html:false keeps raw HTML in source inert (rendered as escaped text), and
 // markdown-it's default link validation rejects dangerous URL schemes.
@@ -100,27 +100,134 @@ export function renderPlainMarkdown(source: string, options: MarkdownOptions = {
 // Highlighted Markdown for recently shown messages, so a message that
 // mounts again (switching conversations, virtual rows scrolling back) shows
 // its colours at once instead of plain code first.
-const highlightedCache = new Map<string, string>();
+const highlightedCache = new Map<string, { html: string; bytes: number }>();
 const HIGHLIGHTED_CACHE_SIZE = 200;
+const HIGHLIGHTED_CACHE_BYTES = 8 * 1024 * 1024;
+let highlightedCacheBytes = 0;
 const cacheKey = (source: string, options: MarkdownOptions) => `${options.mentions ? 1 : 0}${options.holdTrailing ? 1 : 0}${source}`;
 
 export function cachedMarkdown(source: string, options: MarkdownOptions = {}): string | undefined {
   const key = cacheKey(source, options);
-  const html = highlightedCache.get(key);
-  if (html === undefined) return undefined;
+  const entry = highlightedCache.get(key);
+  if (entry === undefined) return undefined;
   highlightedCache.delete(key);
-  highlightedCache.set(key, html);
-  return html;
+  highlightedCache.set(key, entry);
+  return entry.html;
 }
 
-export async function renderMarkdown(source: string, options: MarkdownOptions = {}, highlight: (blocks: CodeBlock[]) => Promise<(string | null)[]> = highlightCodeBlocks): Promise<string> {
+function rememberMarkdown(key: string, html: string): void {
+  const bytes = 2 * (key.length + html.length);
+  if (bytes > HIGHLIGHTED_CACHE_BYTES) return;
+  const previous = highlightedCache.get(key);
+  if (previous) {
+    highlightedCache.delete(key);
+    highlightedCacheBytes -= previous.bytes;
+  }
+  while (highlightedCache.size >= HIGHLIGHTED_CACHE_SIZE || highlightedCacheBytes + bytes > HIGHLIGHTED_CACHE_BYTES) {
+    const oldest = highlightedCache.keys().next().value!;
+    const entry = highlightedCache.get(oldest)!;
+    highlightedCache.delete(oldest);
+    highlightedCacheBytes -= entry.bytes;
+  }
+  highlightedCache.set(key, { html, bytes });
+  highlightedCacheBytes += bytes;
+}
+
+const REFERENCE_LINK_DEF = /^\s{0,3}\[[^\]\n]+\]:/m;
+const LIST_ITEM_START = /^\s{0,3}(?:[-*+]|\d{1,9}[.)])\s/;
+const BLOCKQUOTE_START = /^\s{0,3}>/;
+const FENCE_OPEN = /^\s{0,3}(`{3,}|~{3,})/;
+
+// Splits a streaming Markdown document into completed top-level leading blocks
+// and a live tail block, only at safe blank-line boundaries outside open code
+// fences, lists, blockquotes, and reference-link documents. Completed blocks
+// can be parsed and highlighted once and never re-parsed as new tokens stream.
+export function splitStableMarkdownBlocks(source: string): { stable: string[]; tail: string } {
+  if (!source || !source.includes('\n\n') && !source.includes('\r\n\r\n')) {
+    return { stable: [], tail: source };
+  }
+  if (REFERENCE_LINK_DEF.test(source)) {
+    return { stable: [], tail: source };
+  }
+  const lines = source.split('\n');
+  const stable: string[] = [];
+  let blockStart = 0;
+  let fenceChar = '';
+  let fenceLen = 0;
+  let lastNonBlank = '';
+  let inList = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i]!;
+    const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
+    const trimmed = line.trim();
+
+    if (fenceChar) {
+      const closeMatch = line.match(/^\s{0,3}(`{3,}|~{3,})\s*$/);
+      if (closeMatch && closeMatch[1]![0] === fenceChar && closeMatch[1]!.length >= fenceLen) {
+        fenceChar = '';
+        fenceLen = 0;
+      }
+      if (trimmed) lastNonBlank = line;
+      continue;
+    }
+
+    const openMatch = line.match(FENCE_OPEN);
+    if (openMatch) {
+      const marker = openMatch[1]!;
+      // Backtick info strings cannot contain backticks per CommonMark.
+      if (marker[0] !== '`' || !line.slice(line.indexOf(marker) + marker.length).includes('`')) {
+        fenceChar = marker[0]!;
+        fenceLen = marker.length;
+        lastNonBlank = line;
+        continue;
+      }
+    }
+
+    if (trimmed === '') {
+      // Find the next non-blank line to decide if this blank line is a safe
+      // top-level block boundary.
+      let nextIdx = i + 1;
+      while (nextIdx < lines.length && lines[nextIdx]!.trim() === '') nextIdx++;
+      if (nextIdx >= lines.length) {
+        // Trailing blank lines stay attached to the tail block so nothing is
+        // split until content actually follows.
+        break;
+      }
+      const nextRaw = lines[nextIdx]!;
+      const nextLine = nextRaw.endsWith('\r') ? nextRaw.slice(0, -1) : nextRaw;
+      const indented = nextLine.startsWith(' ') || nextLine.startsWith('\t');
+      const continuesList = inList && LIST_ITEM_START.test(nextLine);
+      const continuesQuote = BLOCKQUOTE_START.test(lastNonBlank) && BLOCKQUOTE_START.test(nextLine);
+      if (!indented && !continuesList && !continuesQuote && i > blockStart) {
+        const chunk = lines.slice(blockStart, i).join('\n');
+        if (chunk.trim()) stable.push(chunk);
+        blockStart = nextIdx;
+        lastNonBlank = '';
+        inList = false;
+        i = nextIdx - 1;
+      }
+      continue;
+    }
+
+    if (!inList && LIST_ITEM_START.test(line)) inList = true;
+    lastNonBlank = line;
+  }
+
+  if (!stable.length) return { stable: [], tail: source };
+  const tail = lines.slice(blockStart).join('\n');
+  return { stable, tail };
+}
+
+export async function renderMarkdown(source: string, options: MarkdownOptions = {}, highlight?: (blocks: CodeBlock[]) => Promise<(string | null)[]>): Promise<string> {
   const env = { ...options };
   const tokens = md.parse(source, env);
   let complete = true;
   // Keep large pasted files readable without running a grammar over them.
   const fences = tokens.filter((token) => token.type === 'fence' && token.info.trim() && token.content.length <= 20_000);
   if (fences.length) {
-    const html = await highlight(fences.map((token) => ({
+    const runHighlight = highlight ?? (await import('./codeHighlight.js')).highlightCodeBlocks;
+    const html = await runHighlight(fences.map((token) => ({
       code: token.content.replace(/\n$/, ''),
       lang: token.info.trim().split(/\s+/)[0]!.toLowerCase()
     })));
@@ -133,9 +240,6 @@ export async function renderMarkdown(source: string, options: MarkdownOptions = 
   }
   const rendered = md.renderer.render(tokens, md.options, env);
   if (!complete) return rendered;
-  const key = cacheKey(source, options);
-  highlightedCache.delete(key);
-  highlightedCache.set(key, rendered);
-  if (highlightedCache.size > HIGHLIGHTED_CACHE_SIZE) highlightedCache.delete(highlightedCache.keys().next().value!);
+  rememberMarkdown(cacheKey(source, options), rendered);
   return rendered;
 }

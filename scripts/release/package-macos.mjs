@@ -82,6 +82,13 @@ try {
   fs.chmodSync(sidecar, 0o755);
   // Refuse a sidecar from the wrong architecture before signing the bundle.
   execFileSync('lipo', [sidecar, '-verify_arch', ARCH === 'arm64' ? 'arm64' : 'x86_64'], { stdio: 'inherit' });
+  const nativeMcpSource = path.join(path.dirname(options.sidecar), 'patterm-mcp');
+  if (fs.existsSync(nativeMcpSource)) {
+    const nativeMcp = path.join(resources, 'native', 'patterm-mcp');
+    fs.copyFileSync(nativeMcpSource, nativeMcp);
+    fs.chmodSync(nativeMcp, 0o755);
+    execFileSync('lipo', [nativeMcp, '-verify_arch', ARCH === 'arm64' ? 'arm64' : 'x86_64'], { stdio: 'inherit' });
+  }
   fs.copyFileSync(path.join(ROOT, 'dist', 'mcp', 'patterm-mcp.js'), path.join(resources, 'mcp', 'patterm-mcp.js'));
   // The in-app updater checks releases with this key and installs through the helper.
   fs.mkdirSync(path.join(app, 'scripts'));

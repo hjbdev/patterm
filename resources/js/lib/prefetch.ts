@@ -204,6 +204,9 @@ async function readTranscript(processId: string): Promise<void> {
 
 // At most this many sessions per project are read in the background.
 const SESSIONS_PER_PROJECT = 12;
+// Matches CONVERSATION_CACHE_LIMIT so background sweeps never fetch more
+// conversations than the client cache can hold and silently discard them.
+const TRANSCRIPTS_PER_SWEEP = 8;
 
 function runningSessions(project: ProjectWorkbench): SessionRecord[] {
   return project.projectSessions.filter((session) => !session.exitedAt && session.processId).slice(-SESSIONS_PER_PROJECT);
@@ -218,10 +221,11 @@ function stillRunning(projectId: string, sessionId: string): boolean {
 
 // Reads one session's context panel, and its conversation if allowed. The
 // context read uses the panel's own arguments, so the panel finds it cached.
-export function prefetchSession(projectId: string, session: SessionRecord, tier: Tier, delay = 0): void {
+export function prefetchSession(projectId: string, session: SessionRecord, tier: Tier, delay = 0, options: { transcript?: boolean } = {}): void {
   const notBefore = Date.now() + delay;
   const live = () => stillRunning(projectId, session.id);
   enqueue({ key: `context\0${projectId}\0${session.id}`, tier, notBefore, eligible: live, run: () => contextRead('session_context', projectId, { session_id: session.id, limit: 100 }).then(() => undefined) });
+  if (options.transcript === false) return;
   const processId = session.processId;
   // A paired host's agent, as in `workstation:process_7`, is never read ahead:
   // an older host would treat transcript_only as an ordinary read, which can
@@ -240,12 +244,27 @@ export function prefetchTab(session: SessionRecord): void {
   if (project) prefetchSession(project.project.id, session, Tier.Intent);
 }
 
-export function prefetchProject(projectId: string, tier: Tier, delay = 0): void {
+export function prefetchProject(projectId: string, tier: Tier, delay = 0, transcriptBudget = TRANSCRIPTS_PER_SWEEP): number {
   const project = useWorkbench().projects.value.find((item) => item.project.id === projectId);
   // A slow link reads only the open project ahead, unless set to Always.
-  if (!project) return;
-  if (linkClass() === 'slow' && prefetchPreference() !== 'always' && tier !== Tier.Intent && projectId !== prefetchState.activeProjectId) return;
-  for (const session of runningSessions(project)) prefetchSession(projectId, session, tier, delay);
+  if (!project) return transcriptBudget;
+  if (linkClass() === 'slow' && prefetchPreference() !== 'always' && tier !== Tier.Intent && projectId !== prefetchState.activeProjectId) return transcriptBudget;
+  const sessions = runningSessions(project);
+  // Newest sessions are most likely to be opened next, so allocate the
+  // transcript cache budget from the end backwards.
+  const transcriptIds = new Set<string>();
+  let remaining = transcriptBudget;
+  for (let index = sessions.length - 1; index >= 0 && remaining > 0; index--) {
+    const candidate = sessions[index]!;
+    if (candidate.interfaceMode === 'integrated' && candidate.processId && !candidate.processId.includes(':')) {
+      transcriptIds.add(candidate.id);
+      remaining -= 1;
+    }
+  }
+  for (const session of sessions) {
+    prefetchSession(projectId, session, tier, delay, { transcript: tier === Tier.Intent || transcriptIds.has(session.id) });
+  }
+  return remaining;
 }
 
 // --- When to read --------------------------------------------------------
@@ -274,10 +293,11 @@ export function startPrefetch(activeProjectId: () => string | null): void {
     if (disposed) return;
     prune();
     const active = prefetchState.activeProjectId;
+    let remaining = TRANSCRIPTS_PER_SWEEP;
+    if (active) remaining = prefetchProject(active, Tier.Current, 0, remaining);
     for (const project of projects.value) {
       const id = project.project.id;
-      if (id === active) prefetchProject(id, Tier.Current);
-      else prefetchProject(id, Tier.Other, OTHER_PROJECT_DELAY_MS);
+      if (id !== active) remaining = prefetchProject(id, Tier.Other, OTHER_PROJECT_DELAY_MS, remaining);
     }
   });
   watch(activeProjectId, (id) => { prefetchState.activeProjectId = id; plan(); }, { immediate: true });

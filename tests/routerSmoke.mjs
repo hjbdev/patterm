@@ -90,21 +90,33 @@ test('saved IDs drive navigation, delayed snapshots, history queries, and Back/F
     await navigation.selectTerminal('p1', 'reused-pty');
     assert.equal(router.currentRoute.value.fullPath, '/projects/p1/agents/fresh', 'a historical PTY match must not suppress refresh or select the exited session');
     assert.equal(navigation.activeTerminalId.value, 'reused-pty');
-    fixture.useWorkbench().projects.value[0].projectSessions = beforeLaunch.projectSessions;
-    const project = fixture.useWorkbench().projects.value[0];
+    const workbench = fixture.useWorkbench();
+    const bumpProjects = () => {
+      workbench.projects.value = workbench.projects.value.map((p) => ({
+        ...p,
+        projectSessions: p.projectSessions.map((s) => ({ ...s })),
+        processes: p.processes.map((proc) => ({ ...proc }))
+      }));
+    };
+    workbench.projects.value[0].projectSessions = beforeLaunch.projectSessions;
+    bumpProjects();
     await router.push('/projects/p1/agents/s1');
-    project.projectSessions[0].exitedAt = '2026-09-08';
+    workbench.projects.value[0].projectSessions[0].exitedAt = '2026-09-08';
+    bumpProjects();
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(router.currentRoute.value.fullPath, '/projects/p1/processes/p2', 'agent exit selects another live terminal');
-    project.processes[0].status = 'exited';
+    workbench.projects.value[0].processes[0].status = 'exited';
+    bumpProjects();
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(router.currentRoute.value.fullPath, '/projects/p1', 'last terminal exit returns to the empty project page');
-    project.projectSessions.push({ id: 'integrated', processId: 'process-integrated', interfaceMode: 'integrated', ptyProcessId: null });
+    workbench.projects.value[0].projectSessions.push({ id: 'integrated', processId: 'process-integrated', interfaceMode: 'integrated', ptyProcessId: null });
+    bumpProjects();
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(router.currentRoute.value.fullPath, '/projects/p1/agents/integrated', 'an agent launched from the empty project page opens');
     assert.equal(navigation.activeTerminalId.value, null, 'an Integrated agent has no PTY terminal ID');
-    project.projectSessions.at(-1).exitedAt = '2026-09-22';
-    project.projectSessions.at(-1).processStatus = 'failed';
+    workbench.projects.value[0].projectSessions.at(-1).exitedAt = '2026-09-22';
+    workbench.projects.value[0].projectSessions.at(-1).processStatus = 'failed';
+    bumpProjects();
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(router.currentRoute.value.fullPath, '/projects/p1/agents/integrated', 'a failed Integrated agent stays open for /restart');
     // Exercise the actual layout handler used by sidebar families and tabs,
@@ -116,10 +128,11 @@ test('saved IDs drive navigation, delayed snapshots, history queries, and Back/F
     const compiled = ts.transpileModule(handler.getFullText(parsed), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
     const ownerProjectId = () => navigation.activeProject.value?.project.id ?? null;
     const clickSession = new Function('ownerProjectId', 'router', 'selectTerminal', `${compiled}; return selectAgentSession;`)(ownerProjectId, router, navigation.selectTerminal);
-    clickSession(project.projectSessions.at(-1));
+    clickSession(workbench.projects.value[0].projectSessions.at(-1));
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(router.currentRoute.value.fullPath, '/projects/p1/agents/integrated', 'clicking the failed parent in the sidebar opens its conversation');
-    project.projectSessions.at(-1).processStatus = 'closed';
+    workbench.projects.value[0].projectSessions.at(-1).processStatus = 'closed';
+    bumpProjects();
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(router.currentRoute.value.fullPath, '/projects/p1', 'explicitly closing the Integrated tab returns to the empty project page');
   } finally {

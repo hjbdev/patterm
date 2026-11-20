@@ -36,6 +36,7 @@ import type { TranscriptImageStore } from './TranscriptImageStore';
 import { GoalLog, goalCommand, snapshotWithGoal, type IntegratedGoal, type IntegratedGoalAction } from './IntegratedGoal';
 import type { RealtimeVoiceOptions } from './AssistantVoiceProfile';
 import { CODEX_MCP_PROXY_ENV, codexMcpOverrides as globalCodexMcpOverrides } from '../Harness/McpDelivery';
+import type { HarnessModel } from '../Harness/ModelCatalog';
 import { ipcPath } from '../Platform/Ipc';
 
 type JsonRecord = Record<string, unknown>;
@@ -205,10 +206,14 @@ export class CodexAppServerService {
         argv: [input.executable, 'app-server', socketPath, String(pid ?? ''), configPath]
       };
     } catch (error) {
-      await stopHostProcess(pid);
+      const detail = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8').trim().slice(-4_000) : '';
+      const launcher = this.options.launcher ?? detachedHostLauncher;
+      if (launcher.stop) await launcher.stop(socketPath, pid).catch(() => undefined);
+      else await stopHostProcess(pid);
       this.clients.get(socketPath)?.close();
       this.clients.delete(socketPath);
-      const detail = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8').trim().slice(-4_000) : '';
+      fs.rmSync(logPath, { force: true });
+      fs.rmSync(configPath, { force: true });
       throw new Error(`${error instanceof Error ? error.message : String(error)}${detail ? `: ${detail}` : ''}`);
     }
   }
@@ -952,6 +957,52 @@ export class CodexAppServerService {
     return list;
   }
 
+  // Reads the model catalog from an already-connected Codex app-server client
+  // without spawning `codex debug models`. Returns null when no connected
+  // client is available.
+  async liveModels(): Promise<HarnessModel[] | null> {
+    for (const client of this.clients.values()) {
+      if (!client.connected) continue;
+      try {
+        const response = await this.modelList(client);
+        const rows = Array.isArray(response.data) ? response.data : [];
+        const parsed: HarnessModel[] = [];
+        for (const value of rows) {
+          const model = record(value);
+          if (model.hidden === true) continue;
+          const id = typeof model.id === 'string' && model.id.trim()
+            ? model.id.trim()
+            : typeof model.model === 'string' && model.model.trim()
+              ? model.model.trim()
+              : '';
+          if (!id) continue;
+          const label = typeof model.displayName === 'string' && model.displayName.trim() ? model.displayName.trim() : id;
+          const reasoning = Array.isArray(model.supportedReasoningEfforts)
+            ? model.supportedReasoningEfforts.map(record)
+                .map((option) => typeof option.reasoningEffort === 'string' ? option.reasoningEffort.trim() : '')
+                .filter((effort) => effort.length > 0)
+            : [];
+          const defaultReasoning = typeof model.defaultReasoningEffort === 'string' && model.defaultReasoningEffort.trim()
+            ? model.defaultReasoningEffort.trim()
+            : null;
+          const serviceTiers = Array.isArray(model.serviceTiers)
+            ? model.serviceTiers.map(record).flatMap((tier) => {
+                const tierId = typeof tier.id === 'string' ? tier.id.trim() : '';
+                if (!tierId || tierId === 'default') return [];
+                const tierLabel = typeof tier.name === 'string' && tier.name.trim() ? tier.name.trim() : tierId;
+                return [{ id: tierId, label: tierLabel }];
+              })
+            : [];
+          parsed.push({ id, label, reasoning, defaultReasoning, serviceTiers });
+        }
+        if (parsed.length) return parsed;
+      } catch {
+        // Try the next connected client, or fall back to CLI discovery.
+      }
+    }
+    return null;
+  }
+
   // The model a turn runs on when none was chosen; a collaboration mode must
   // name one.
   private async defaultModel(client: CodexRpcClient): Promise<string | null> {
@@ -1286,13 +1337,28 @@ export class CodexAppServerService {
     const runtime = this.runtime(processId);
     this.clients.get(runtime.socketPath)?.close();
     this.clients.delete(runtime.socketPath);
-    await stopRecordedHostProcess(runtime.pid, runtime.socketPath);
+    const launcher = this.options.launcher ?? detachedHostLauncher;
+    if (launcher.stop) await launcher.stop(runtime.socketPath, runtime.pid);
+    else await stopRecordedHostProcess(runtime.pid, runtime.socketPath);
     try { fs.unlinkSync(runtime.socketPath); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     removeForcedHostConfig(runtime.configPath);
+    this.models.delete(processId);
+    this.efforts.delete(processId);
+    this.tiers.delete(processId);
+    this.collaborationModes.delete(processId);
+    this.answeredPlans.delete(processId);
+    this.revisions.delete(processId);
+    this.connectedSockets.delete(runtime.socketPath);
+    this.reconnectedSockets.delete(runtime.socketPath);
+    this.compactedThreads.delete(runtime.threadId);
+    this.realtimeListeners.delete(runtime.threadId);
+    for (const key of this.reportedMcpFailures) {
+      if (key.startsWith(`${processId}\0`)) this.reportedMcpFailures.delete(key);
+    }
   }
 
   async cleanupLaunch(_input: IntegratedLaunchInput, result: IntegratedLaunchResult): Promise<void> {
-    await stopRuntime(result.argv);
+    await stopRuntime(result.argv, this.options.launcher);
   }
 
   async stopAll(): Promise<void> {
@@ -2075,11 +2141,13 @@ async function waitForSocket(socketPath: string, pid: number | null): Promise<vo
   throw new Error('Codex app-server did not create its control socket');
 }
 
-async function stopRuntime(argv: string[]): Promise<void> {
+async function stopRuntime(argv: string[], launcher?: IntegratedHostLauncher): Promise<void> {
+  const socketPath = typeof argv[2] === 'string' ? argv[2] : '';
   const pid = typeof argv[3] === 'string' && /^\d+$/.test(argv[3]) ? Number(argv[3]) : null;
-  await stopHostProcess(pid);
-  if (typeof argv[2] === 'string') {
-    try { fs.unlinkSync(argv[2]); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  if (launcher?.stop && socketPath) await launcher.stop(socketPath, pid);
+  else await stopHostProcess(pid);
+  if (socketPath) {
+    try { fs.unlinkSync(socketPath); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   }
   removeForcedHostConfig(typeof argv[4] === 'string' ? argv[4] : null);
 }

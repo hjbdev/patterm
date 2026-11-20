@@ -13,8 +13,6 @@ import { watchAntigravityPrompt } from './AntigravityPromptReceipt';
 
 type Row = Record<string, any>;
 class NativeAcpTransportError extends Error {}
-const BACKGROUND_QUIET_MS = Number(process.env.PATTERM_ACP_BACKGROUND_QUIET_MS) || 10_000;
-const CANCEL_TIMEOUT_MS = Number(process.env.PATTERM_ACP_CANCEL_TIMEOUT_MS) || 15_000;
 const TOOL_FIELD_BYTES = 96 * 1024;
 const STOP_REASONS: Record<string, string> = {
   max_tokens: 'Antigravity stopped at its token limit.',
@@ -35,14 +33,35 @@ interface Config {
   imageDirectory?: string;
 }
 
+export interface AcpHostSession {
+  socketPath: string;
+  stop(): Promise<void>;
+}
+
+export interface AcpHostSessionOptions {
+  onExit?: (code: number) => void;
+}
+
 // ACP is a native CLI transport, not a model API. This host advertises no
 // filesystem or terminal capabilities: the agent owns its tools and sandbox.
-const config = JSON.parse(fs.readFileSync(process.argv[2]!, 'utf8')) as Config;
+export function startAcpHostSession(
+  configPath: string,
+  hostEnv: NodeJS.ProcessEnv = process.env,
+  sessionOptions: AcpHostSessionOptions = {}
+): AcpHostSession {
+const BACKGROUND_QUIET_MS = Number(hostEnv.PATTERM_ACP_BACKGROUND_QUIET_MS) || 10_000;
+const CANCEL_TIMEOUT_MS = Number(hostEnv.PATTERM_ACP_CANCEL_TIMEOUT_MS) || 15_000;
+const PAGE_MESSAGES = 200;
+const PAGE_BYTES = 1024 * 1024;
+const MAX_MESSAGES = Math.max(PAGE_MESSAGES, Number(hostEnv.PATTERM_ACP_MAX_MESSAGES) || 1000);
+const MAX_TRACKED_IDS = 1000;
+const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Config;
 const images = config.imageDirectory ? new TranscriptImageStore(config.imageDirectory) : null;
 const subscribers = new Set<net.Socket>();
 const requests = new Map<string, { resolve: (result: Row) => void; reject: (error: Error) => void; timer: NodeJS.Timeout | null }>();
 const permissions = new Map<string, Row>();
 const messages: IntegratedConversationMessage[] = [];
+let droppedMessages = 0;
 const deliveries = new Set<string>();
 let sessionId = config.resumeId ?? '';
 let status = 'starting';
@@ -59,6 +78,7 @@ let cancelWatchingTools = false;
 let nativeClose = false;
 let stopping = false;
 let shutdown: Promise<void> | null = null;
+let exitPromise: Promise<void> | null = null;
 let loaded = false;
 let failed = false;
 let block: IntegratedConversationMessage | null = null;
@@ -78,8 +98,8 @@ let configuring = false;
 let savedSettings = '';
 let saveWarning = false;
 const usage: Row = {};
-const native = resolveCommand(config.executable, ['acp']);
-const child = spawn(native.command, native.args, { cwd: config.cwd, env: process.env, stdio: 'pipe', windowsHide: true, windowsVerbatimArguments: native.verbatim });
+const native = resolveCommand(config.executable, ['acp'], hostEnv);
+const child = spawn(native.command, native.args, { cwd: config.cwd, env: hostEnv, stdio: 'pipe', windowsHide: true, windowsVerbatimArguments: native.verbatim });
 let stderr = '';
 child.stderr.setEncoding('utf8');
 child.stderr.on('data', (chunk: string) => { stderr = (stderr + chunk).slice(-8192); });
@@ -204,7 +224,7 @@ function finishTools(reason: string, pendingOnly = false): void {
     if (!tool || (pendingOnly ? status !== 'pending' || runningTools.has(message.id)
       : status !== 'pending' && status !== 'in_progress')) continue;
     runningTools.delete(message.id);
-    backgroundToolIds.add(message.id);
+    addBounded(backgroundToolIds, message.id);
     replace({ ...message, completedAt: new Date().toISOString(), tool: { ...tool, state: { ...(tool.state as Row), status: 'failed', error: reason } } });
   }
 }
@@ -267,13 +287,29 @@ function allowsMcp(tool: Row): boolean {
   const input = tool.rawInput ?? previous?.input;
   return name === 'call_mcp_tool' && typeof input?.ToolName === 'string' && servers.some((server) => input?.ServerName === server.name);
 }
+function addBounded(set: Set<string>, value: string): void {
+  if (set.has(value)) set.delete(value);
+  set.add(value);
+  while (set.size > MAX_TRACKED_IDS) set.delete(set.values().next().value!);
+}
+function setNativeBlock(key: string, row: IntegratedConversationMessage): void {
+  if (nativeBlocks.has(key)) nativeBlocks.delete(key);
+  nativeBlocks.set(key, row);
+  while (nativeBlocks.size > MAX_TRACKED_IDS) nativeBlocks.delete(nativeBlocks.keys().next().value!);
+}
+function trimMessages(): void {
+  if (messages.length <= MAX_MESSAGES) return;
+  const excess = messages.length - MAX_MESSAGES;
+  messages.splice(0, excess);
+  droppedMessages += excess;
+}
 function admit(): void {
   // Assistant output and tool requests can belong to background work. Only
   // evidence tied to this input (or its own RPC response) confirms delivery.
   clearPromptWatch();
   if (userEcho && !userConfirmed) {
     userConfirmed = true;
-    if (userEcho.clientMessageId) deliveries.add(userEcho.clientMessageId);
+    if (userEcho.clientMessageId) addBounded(deliveries, userEcho.clientMessageId);
     replace(userEcho);
   }
   if (!admission) return;
@@ -285,7 +321,7 @@ function clearPromptWatch(): void {
 }
 function replace(message: IntegratedConversationMessage): void {
   const index = messages.findIndex((row) => row.id === message.id);
-  if (index < 0) messages.push(message); else messages[index] = message;
+  if (index < 0) { messages.push(message); trimMessages(); } else messages[index] = message;
   publish({ kind: 'replace', message });
 }
 function nativeMessageKey(role: string, kind: string, id: string): string {
@@ -302,7 +338,8 @@ function chunk(kind: 'text' | 'reasoning', text: string, role: 'user' | 'assista
   if (!row || row.kind !== kind || row.role !== role) {
     row = { id: randomUUID(), role, kind, text: '', createdAt: new Date().toISOString() };
     messages.push(row);
-    if (key !== null) nativeBlocks.set(key, row);
+    trimMessages();
+    if (key !== null) setNativeBlock(key, row);
   }
   block = key === null ? row : null;
   row.text += text;
@@ -320,7 +357,7 @@ function contentChunk(content: Row, kind: 'text' | 'reasoning', role: 'user' | '
     const key = nativeId === undefined ? null : nativeMessageKey(role, kind, nativeId);
     const row = (key && nativeBlocks.get(key)) || { id: randomUUID(), role, kind, text: '', createdAt: new Date().toISOString() };
     const message = { ...row, attachments: [...(row.attachments ?? []), { type: 'image', mime: content.mimeType, ...(stored ? { sha256: stored.sha256 } : {}) }] };
-    if (key !== null) nativeBlocks.set(key, message);
+    if (key !== null) setNativeBlock(key, message);
     replace(message);
     block = null;
   }
@@ -438,7 +475,7 @@ function receive(frame: Row): void {
     if (frame.params?.sessionId !== sessionId || !loaded || cancelling || failed || stopping) { write({ id: frame.id, result: { outcome: { outcome: 'cancelled' } } }); return; }
     const params = frame.params as Row;
     const tool = params.toolCall ?? {};
-    if (!active && typeof tool.toolCallId === 'string') backgroundToolIds.add(`tool:${tool.toolCallId}`);
+    if (!active && typeof tool.toolCallId === 'string') addBounded(backgroundToolIds, `tool:${tool.toolCallId}`);
     const approval = (params.options ?? []).find((option: Row) => option.kind === 'allow_once');
     if (approval && allowsMcp(tool)) {
       write({ id: frame.id, result: { outcome: { outcome: 'selected', optionId: approval.optionId } } });
@@ -488,7 +525,7 @@ function receive(frame: Row): void {
       const toolState = { ...(previous?.tool?.state as Row | undefined), status: update.status ?? (previous?.tool?.state as Row | undefined)?.status ?? 'pending', ...(update.rawOutput !== undefined ? { output: toolOutput(update.rawOutput) } : {}) };
       const terminal = toolState.status === 'completed' || toolState.status === 'failed';
       if (loaded && !failed && !stopping) {
-        if (!active) backgroundToolIds.add(id);
+        if (!active) addBounded(backgroundToolIds, id);
         if (toolState.status === 'in_progress') runningTools.add(id);
         else if (terminal && runningTools.delete(id) && !runningTools.size && cancelWatchingTools) finishCancellation();
         backgroundActivity();
@@ -574,8 +611,6 @@ function controlState(): Row {
 // `messages` stays valid for this host's lifetime. The host id makes a cursor
 // from an earlier host, before a restart replayed the session, fail instead of
 // pointing at different rows.
-const PAGE_MESSAGES = 200;
-const PAGE_BYTES = 1024 * 1024;
 const hostId = randomUUID();
 
 function pageStart(end: number): number {
@@ -589,13 +624,14 @@ function pageStart(end: number): number {
 }
 
 function pageCursor(start: number): string | null {
-  return start > 0 ? `${hostId}:${start}` : null;
+  return start > 0 ? `${hostId}:${start + droppedMessages}` : null;
 }
 
 function olderPage(cursor: unknown): Row {
   const match = typeof cursor === 'string' ? /^([0-9a-f-]+):(\d+)$/.exec(cursor) : null;
-  const end = match ? Number(match[2]) : Number.NaN;
-  if (!match || match[1] !== hostId || !Number.isSafeInteger(end) || end < 1 || end > messages.length) throw new Error('This history cursor is no longer valid; reopen the conversation');
+  const globalEnd = match ? Number(match[2]) : Number.NaN;
+  const end = globalEnd - droppedMessages;
+  if (!match || match[1] !== hostId || !Number.isSafeInteger(globalEnd) || end < 1 || end > messages.length) throw new Error('This history cursor is no longer valid; reopen the conversation');
   const start = pageStart(end);
   return { messages: { data: messages.slice(start, end) }, cursor: pageCursor(start) };
 }
@@ -653,7 +689,7 @@ async function handle(method: string, params: Row): Promise<unknown> {
     void turn.then((result) => {
       if (failed || stopping) return;
       admit();
-      for (const id of runningTools) backgroundToolIds.add(id);
+      for (const id of runningTools) addBounded(backgroundToolIds, id);
       if (result.stopReason === 'cancelled') finishTools('Response stopped');
       else finishTools('Antigravity ended the turn before this tool started', true);
       if (result.stopReason !== 'cancelled' && cancelling && runningTools.size) {
@@ -754,8 +790,12 @@ server.listen(ipcPath(config.socketPath), () => restrictIpc(config.socketPath));
 void start().catch(fail);
 
 async function stop(): Promise<void> {
-  await stopNative();
-  exitHost();
+  if (exitPromise) return exitPromise;
+  exitPromise = (async () => {
+    await stopNative();
+    await exitHost();
+  })();
+  return exitPromise;
 }
 
 function stopNative(): Promise<void> {
@@ -763,6 +803,9 @@ function stopNative(): Promise<void> {
   stopping = true;
   clearPromptWatch();
   finishCancellation();
+  if (backgroundQuiet) { clearTimeout(backgroundQuiet); backgroundQuiet = null; }
+  if (admission) { clearTimeout(admission.timer); admission.reject(new NativeAcpTransportError('ACP host stopped')); admission = null; }
+  for (const request of requests.values()) { if (request.timer) clearTimeout(request.timer); }
   shutdown = (async () => {
     if (nativeClose && loaded && child.exitCode === null && child.signalCode === null) {
       try { cancelPermissions(); } catch { /* the native pipe may already be closed */ }
@@ -773,12 +816,24 @@ function stopNative(): Promise<void> {
   return shutdown;
 }
 
-function exitHost(): never {
+async function exitHost(): Promise<void> {
   for (const socket of subscribers) socket.destroy();
-  server.close();
+  subscribers.clear();
+  await new Promise<void>((resolve) => server.close(() => resolve()));
   removeStaleIpc(config.socketPath);
-  fs.rmSync(process.argv[2]!, { force: true });
-  process.exit(0);
+  fs.rmSync(configPath, { force: true });
+  sessionOptions.onExit?.(0);
 }
-process.on('SIGTERM', () => void stop());
-process.on('SIGINT', () => void stop());
+
+return {
+  socketPath: config.socketPath,
+  stop
+};
+}
+
+if (require.main === module) {
+  const session = startAcpHostSession(process.argv[2]!, process.env, { onExit: (code) => process.exit(code) });
+  process.on('SIGTERM', () => void session.stop());
+  process.on('SIGINT', () => void session.stop());
+  if (process.platform === 'win32') process.on('SIGBREAK', () => void session.stop());
+}

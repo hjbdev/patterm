@@ -10,6 +10,7 @@ APPLICATIONS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 LAUNCHER="$BIN_DIR/patterm"
 DESKTOP_FILE="$APPLICATIONS_DIR/patterm.desktop"
 SIDECAR_BINARY="patterm-terminal-core"
+MCP_BINARY="patterm-mcp"
 UPDATE=false
 # --debug installs the debug sidecar for the desktop app, as earlier builds did.
 DEBUG=false
@@ -101,14 +102,21 @@ cp "$SCRIPT_DIR/package.json" "$SCRIPT_DIR/LICENSE" "$SCRIPT_DIR/THIRD_PARTY_NOT
   printf 'built_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } > "$STAGING_ROOT/BUILD"
 cp "$SCRIPT_DIR/native/terminal-core/target/$SIDECAR_PROFILE/$SIDECAR_BINARY" "$STAGING_ROOT/resources/native/$SIDECAR_BINARY"
+if [[ -x "$SCRIPT_DIR/native/terminal-core/target/$SIDECAR_PROFILE/$MCP_BINARY" ]]; then
+  cp "$SCRIPT_DIR/native/terminal-core/target/$SIDECAR_PROFILE/$MCP_BINARY" "$STAGING_ROOT/resources/native/$MCP_BINARY"
+fi
 cp "$SCRIPT_DIR/dist/mcp/patterm-mcp.js" "$STAGING_ROOT/resources/mcp/patterm-mcp.js"
 
 mkdir -p "$STAGING_ROOT/scripts" "$STAGING_ROOT/deploy" "$STAGING_ROOT/native/terminal-core/target/release"
 cp "$SCRIPT_DIR/scripts/patterm.sh" "$STAGING_ROOT/scripts/patterm.sh"
 cp "$SCRIPT_DIR/scripts/install-service.mjs" "$STAGING_ROOT/scripts/install-service.mjs"
 cp "$SCRIPT_DIR/scripts/start-tailscale-service.mjs" "$STAGING_ROOT/scripts/start-tailscale-service.mjs"
-cp "$SCRIPT_DIR/deploy/patterm.service" "$SCRIPT_DIR/deploy/patterm-terminal@.service" "$STAGING_ROOT/deploy/"
+cp "$SCRIPT_DIR/deploy/patterm.service" "$STAGING_ROOT/deploy/"
+cp "$SCRIPT_DIR/deploy/patterm-terminal@.service" "$STAGING_ROOT/deploy/"
 cp "$SCRIPT_DIR/native/terminal-core/target/release/$SIDECAR_BINARY" "$STAGING_ROOT/native/terminal-core/target/release/$SIDECAR_BINARY"
+if [[ -x "$SCRIPT_DIR/native/terminal-core/target/release/$MCP_BINARY" ]]; then
+  cp "$SCRIPT_DIR/native/terminal-core/target/release/$MCP_BINARY" "$STAGING_ROOT/native/terminal-core/target/release/$MCP_BINARY"
+fi
 chmod +x "$STAGING_ROOT/scripts/patterm.sh"
 if $UPDATE; then
   node "$STAGING_ROOT/scripts/install-service.mjs" --update --output-dir "$STAGING_ROOT/service-preview"
@@ -127,6 +135,12 @@ ln -sfn "$INSTALL_ROOT/scripts/patterm.sh" "$LAUNCHER"
 rm -f "$BIN_DIR/patterm-desktop" "$APPLICATIONS_DIR/patterm-desktop.desktop"
 
 chmod +x "$LAUNCHER" "$INSTALL_ROOT/resources/native/$SIDECAR_BINARY"
+if [[ -f "$INSTALL_ROOT/resources/native/$MCP_BINARY" ]]; then
+  chmod +x "$INSTALL_ROOT/resources/native/$MCP_BINARY"
+fi
+if [[ -f "$INSTALL_ROOT/native/terminal-core/target/release/$MCP_BINARY" ]]; then
+  chmod +x "$INSTALL_ROOT/native/terminal-core/target/release/$MCP_BINARY"
+fi
 
 cat > "$DESKTOP_FILE" <<EOF
 [Desktop Entry]

@@ -41,6 +41,7 @@ export class DatabaseService {
       this.db.exec(`pragma busy_timeout = ${busyTimeoutMs(this.options.busyTimeoutMs)}`);
       this.db.exec('pragma cache_size = -32000');
       this.db.exec('pragma mmap_size = 134217728');
+      this.db.exec('pragma temp_store = MEMORY');
     } else {
       this.db.exec('pragma journal_mode = WAL');
       this.db.exec('pragma synchronous = NORMAL');
@@ -60,6 +61,13 @@ export class DatabaseService {
   }
 
   dispose(): void {
+    if (this.db && this.options.readOnly !== true) {
+      try {
+        this.db.exec('pragma optimize');
+      } catch {
+        // Best-effort planner statistics refresh before close.
+      }
+    }
     this.db?.close();
     this.db = null;
     this.currentDbPath = null;

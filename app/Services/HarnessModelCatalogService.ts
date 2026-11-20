@@ -6,6 +6,7 @@ import {
   parseClaudeCatalog,
   parseCodexCatalog,
   parseOpenCodeCatalog,
+  type HarnessModel,
   type HarnessModelCatalog,
   type HarnessProviderCatalog
 } from '../Harness/ModelCatalog';
@@ -23,6 +24,8 @@ export interface HarnessModelCatalogOptions {
   settings: SettingsService;
   env: NodeJS.ProcessEnv;
   openCodeServer?: Pick<OpenCodeServerService, 'listModels' | 'listProviders'>;
+  liveClaudeModels?: () => Promise<HarnessModel[] | null>;
+  liveCodexModels?: () => Promise<HarnessModel[] | null>;
   debugLog?: Pick<DebugLogService, 'write'>;
   now?: () => string;
   codexTimeoutMs?: number;
@@ -38,6 +41,7 @@ export interface HarnessModelCatalogOptions {
 // error; the UI shows stale options instead of losing them.
 export class HarnessModelCatalogService {
   private refreshPromise: Promise<HarnessModelCatalog> | null = null;
+  private staleRefreshPromise: Promise<HarnessModelCatalog> | null = null;
   private refreshTimer: ReturnType<typeof setInterval> | undefined;
   private readonly now: () => string;
   private readonly codexTimeoutMs: number;
@@ -73,16 +77,42 @@ export class HarnessModelCatalogService {
   }
 
   async refresh(): Promise<HarnessModelCatalog> {
-    this.refreshPromise ??= this.runRefresh().finally(() => {
+    this.refreshPromise ??= (async () => {
+      await this.staleRefreshPromise?.catch(() => undefined);
+      return this.runRefresh(CATALOG_HARNESSES);
+    })().finally(() => {
       this.refreshPromise = null;
     });
     return this.refreshPromise;
   }
 
-  private async runRefresh(): Promise<HarnessModelCatalog> {
+  // Skips providers whose cached catalog is fresh and error-free; still
+  // refreshes any missing, stale, or errored provider.
+  async refreshIfStale(): Promise<HarnessModelCatalog> {
+    if (this.refreshPromise) return this.refreshPromise;
+    const current = this.read();
+    const stale = CATALOG_HARNESSES.filter((harness) => this.isStale(harness, current.providers[harness]));
+    if (!stale.length) return current;
+    this.staleRefreshPromise ??= this.runRefresh(stale).finally(() => {
+      this.staleRefreshPromise = null;
+    });
+    return this.staleRefreshPromise;
+  }
+
+  private isStale(harness: (typeof CATALOG_HARNESSES)[number], previous: HarnessProviderCatalog | null): boolean {
+    if (!previous || previous.error !== null || !previous.refreshedAt || !previous.models.length) return true;
+    if (harness === 'claude' && previous.source === 'builtin' && this.executableFor('claude')) return true;
+    const refreshedAtMs = Date.parse(previous.refreshedAt);
+    const nowMs = Date.parse(this.now());
+    if (!Number.isFinite(refreshedAtMs) || !Number.isFinite(nowMs)) return true;
+    const ageMs = nowMs - refreshedAtMs;
+    return ageMs < 0 || ageMs >= this.refreshIntervalMs;
+  }
+
+  private async runRefresh(targets: readonly (typeof CATALOG_HARNESSES)[number][]): Promise<HarnessModelCatalog> {
     const current = this.read();
     const providers = { ...current.providers };
-    for (const harness of CATALOG_HARNESSES) {
+    await Promise.allSettled(targets.map(async (harness) => {
       const previous = current.providers[harness];
       const startedAt = Date.now();
       try {
@@ -106,7 +136,7 @@ export class HarnessModelCatalogService {
           message: providers[harness]?.error ?? null
         });
       }
-    }
+    }));
     const catalog = this.deps.settings.updateHarnessModelCatalog({ providers });
     this.deps.onChanged?.();
     return catalog;
@@ -118,6 +148,10 @@ export class HarnessModelCatalogService {
       // names the account's models. The built-in aliases cover a missing CLI.
       const executable = this.executableFor(harness);
       if (!executable) return builtinClaudeCatalog(this.now());
+      const live = await this.deps.liveClaudeModels?.().catch(() => null);
+      if (live?.length) {
+        return { harness, source: 'cli', refreshedAt: this.now(), error: null, models: live };
+      }
       return {
         harness,
         source: 'cli',
@@ -131,6 +165,10 @@ export class HarnessModelCatalogService {
       throw new Error(`${harness} was not discovered.`);
     }
     if (harness === 'codex') {
+      const live = await this.deps.liveCodexModels?.().catch(() => null);
+      if (live?.length) {
+        return { harness, source: 'cli', refreshedAt: this.now(), error: null, models: live };
+      }
       const output = await this.run(executable, ['debug', 'models'], this.codexTimeoutMs);
       return {
         harness,

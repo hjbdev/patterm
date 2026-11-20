@@ -634,9 +634,15 @@ function attach(files: File[]): void {
   else void addFiles(props.processId, files);
 }
 
+let blurTimer: ReturnType<typeof setTimeout> | null = null;
+
 function onBlur(): void {
   // Let a menu click land before closing; mousedown handlers run first.
-  setTimeout(() => closeMenus(), 0);
+  if (blurTimer !== null) clearTimeout(blurTimer);
+  blurTimer = setTimeout(() => {
+    blurTimer = null;
+    closeMenus();
+  }, 0);
 }
 
 // The editor's edits. Mention chips arrive as CHIP characters, with the
@@ -691,7 +697,8 @@ watch(() => props.processId, () => {
   // The stashed draft belongs to the agent being left.
   if (goalMode.value) leaveGoalMode();
   closeMenus();
-  mountEditor();
+  if (editor.value && typeof editor.value.reset === 'function') editor.value.reset(draft.value.text, draft.value.chips);
+  else mountEditor();
   void nextTick(focusOnArrival);
 });
 watch(previewSessionId, (sessionId) => { mentionPreview.value = sessionId; });
@@ -700,6 +707,10 @@ watch(previewSessionId, (sessionId) => { mentionPreview.value = sessionId; });
 mountEditor();
 onMounted(() => void nextTick(focusOnArrival));
 onBeforeUnmount(() => {
+  if (blurTimer !== null) {
+    clearTimeout(blurTimer);
+    blurTimer = null;
+  }
   leaveGoalMode();
   mentionPreview.value = null;
   editor.value?.destroy();
