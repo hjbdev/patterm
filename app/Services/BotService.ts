@@ -104,6 +104,12 @@ export class BotService {
     return purviewAllows(this.purview(botId), projectId);
   }
 
+  // Whether the owner lets a bot answer agents' requests waiting for them.
+  handlesRequests(botId: string | null): boolean {
+    const bot = botId ? this.bot(botId) : null;
+    return Boolean(bot?.enabled && bot.requests);
+  }
+
   // The system context a bot's session launches with.
   context(botId: string): string {
     const bot = this.bot(botId);
