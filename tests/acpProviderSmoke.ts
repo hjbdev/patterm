@@ -891,6 +891,39 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       assert.equal(settledRows.has('sub:edge-settled-child:2:text'), true);
       assert.equal(settledTracker.tasks()[0]?.status, 'completed');
 
+      // Detaching a provisionally linked log-only sibling reconciles it immediately
+      // with its already-queued pending ACP invoke without needing another update.
+      const mixedRows = new Map<string, any>();
+      const mixedTracker = new AntigravitySubagentTracker({
+        sessionId: 'edge-mixed-reconcile',
+        hostEnv: trackerEnv,
+        pollMs: 25,
+        onMessage: (row) => mixedRows.set(row.id, row),
+        onSubagentDetached: (id) => {
+          for (const key of [...mixedRows.keys()]) {
+            if (key.startsWith(`sub:${id}:`)) mixedRows.delete(key);
+          }
+        },
+        onTasksChanged: () => {}
+      });
+      edgeTrackers.push(mixedTracker);
+      appendLog('edge-mr-alpha', modelRow(0, { content: 'Alpha reply' }));
+      appendLog('edge-mr-beta', modelRow(0, { content: 'Beta reply' }));
+      appendLog(
+        'edge-mixed-reconcile',
+        modelRow(0, { tool_calls: [
+          { name: 'invoke_subagent', args: { Role: '"Alpha"', Prompt: '"Check alpha"' } },
+          { name: 'invoke_subagent', args: { Role: '"Beta"', Prompt: '"Check beta"' } }
+        ] }),
+        invokeResult(1, 'edge-mr-alpha')
+      );
+      mixedTracker.syncNow();
+      mixedTracker.observeToolCall('tool:mr-beta', 'invoke_subagent', {}, '', null);
+      mixedTracker.observeToolCall('tool:mr-alpha', 'invoke_subagent', { Role: 'Alpha', Prompt: 'Check alpha' }, '', null);
+      mixedTracker.observeToolCall('tool:mr-beta', 'invoke_subagent', { Role: 'Beta', Prompt: 'Check beta' }, '', { conversationId: 'edge-mr-beta' });
+      assert.equal([...mixedRows.values()].find((row) => row.text === 'Alpha reply')?.parentId, 'tool:mr-alpha');
+      assert.equal([...mixedRows.values()].find((row) => row.text === 'Beta reply')?.parentId, 'tool:mr-beta');
+
       // Drawer pagination keeps a tool_call and its tool_result in the same page.
       appendLog(
         'edge-drawer-child',

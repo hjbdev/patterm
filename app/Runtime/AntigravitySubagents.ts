@@ -66,6 +66,7 @@ export class AntigravitySubagentTracker {
   private readonly parentTail: FileTail | null;
   private readonly parentSeenSteps = new Set<number>();
   private readonly parentPendingTools: Array<{ name: string; args: Record<string, unknown> }> = [];
+  private readonly observedInvokes = new Map<string, PendingInvoke>();
   private readonly unlinkedInvokes: PendingInvoke[] = [];
   private readonly subagents = new Map<string, TrackedSubagent>();
   private readonly toolRowToSubagent = new Map<string, string>();
@@ -87,47 +88,60 @@ export class AntigravitySubagentTracker {
       const kind = invokeKind(input);
       const role = typeof input.Role === 'string' ? input.Role : typeof input.role === 'string' ? input.role : '';
       const prompt = typeof input.Prompt === 'string' ? input.Prompt : typeof input.prompt === 'string' ? input.prompt : '';
+      const priorInvoke = this.observedInvokes.get(toolRowId);
+      const invokeMeta: PendingInvoke = {
+        toolRowId,
+        label: label !== 'Subagent' ? label : priorInvoke?.label ?? label,
+        kind: kind !== 'subagent' ? kind : priorInvoke?.kind ?? kind,
+        role: role || priorInvoke?.role || '',
+        prompt: prompt || priorInvoke?.prompt || ''
+      };
+      this.observedInvokes.set(toolRowId, invokeMeta);
+      if (this.observedInvokes.size > 200) {
+        const oldest = this.observedInvokes.keys().next().value;
+        if (oldest !== undefined) this.observedInvokes.delete(oldest);
+      }
       const existingId = this.toolRowToSubagent.get(toolRowId);
       const directId = extractAntigravitySubagentId(rawOutput) ?? extractAntigravitySubagentId(outputText);
       if (existingId) {
         if (directId && directId !== this.options.sessionId && directId !== existingId) {
           const previous = this.subagents.get(existingId);
-          if (previous) this.detachParentToolRow(previous);
+          if (previous) this.detachParentToolRow(previous, false);
           else this.toolRowToSubagent.delete(toolRowId);
-          this.registerSubagent(directId, toolRowId, label, kind, role, prompt, true);
+          this.registerSubagent(directId, toolRowId, invokeMeta.label, invokeMeta.kind, invokeMeta.role, invokeMeta.prompt, true);
           this.syncNow();
           return;
         }
         const subagent = this.subagents.get(existingId);
         if (subagent) {
           if (directId === existingId) subagent.authoritativeLink = true;
-          if (label && subagent.label === 'Subagent') subagent.label = label;
-          if (kind && subagent.kind === 'subagent') subagent.kind = kind;
-          if (role && !subagent.role) subagent.role = role;
-          if (prompt && !subagent.prompt) subagent.prompt = prompt;
+          if (invokeMeta.label && subagent.label === 'Subagent') subagent.label = invokeMeta.label;
+          if (invokeMeta.kind && subagent.kind === 'subagent') subagent.kind = invokeMeta.kind;
+          if (invokeMeta.role && !subagent.role) subagent.role = invokeMeta.role;
+          if (invokeMeta.prompt && !subagent.prompt) subagent.prompt = invokeMeta.prompt;
           this.notifyTasksIfChanged();
         }
         return;
       }
       if (directId && directId !== this.options.sessionId) {
-        this.registerSubagent(directId, toolRowId, label, kind, role, prompt, true);
+        this.registerSubagent(directId, toolRowId, invokeMeta.label, invokeMeta.kind, invokeMeta.role, invokeMeta.prompt, true);
         this.syncNow();
         return;
       }
-      const unlinkedSubagent = this.matchUnlinkedSubagent(role, prompt);
+      const unlinkedSubagent = this.matchUnlinkedSubagent(invokeMeta.role, invokeMeta.prompt);
       if (unlinkedSubagent) {
-        this.attachParentToolRow(unlinkedSubagent, toolRowId, label, kind);
+        this.attachParentToolRow(unlinkedSubagent, toolRowId, invokeMeta.label, invokeMeta.kind);
         this.syncNow();
         return;
       }
       const pending = this.unlinkedInvokes.find((item) => item.toolRowId === toolRowId);
       if (pending) {
-        if (label !== 'Subagent') pending.label = label;
-        if (kind !== 'subagent') pending.kind = kind;
-        if (role) pending.role = role;
-        if (prompt) pending.prompt = prompt;
+        pending.label = invokeMeta.label;
+        pending.kind = invokeMeta.kind;
+        pending.role = invokeMeta.role;
+        pending.prompt = invokeMeta.prompt;
       } else {
-        this.unlinkedInvokes.push({ toolRowId, label, kind, role, prompt });
+        this.unlinkedInvokes.push({ ...invokeMeta });
       }
       this.syncNow();
       return;
@@ -168,6 +182,7 @@ export class AntigravitySubagentTracker {
   syncNow(initialLoad = false): void {
     if (this.stopped) return;
     this.pollParent();
+    this.reconcileUnlinked();
     for (const subagent of this.subagents.values()) {
       if (subagent.status !== 'stopped' || !subagent.hasRows) {
         this.pollSubagent(subagent, initialLoad);
@@ -224,7 +239,7 @@ export class AntigravitySubagentTracker {
     if (index >= 0) this.unlinkedInvokes.splice(index, 1);
   }
 
-  private detachParentToolRow(subagent: TrackedSubagent): void {
+  private detachParentToolRow(subagent: TrackedSubagent, requeueOldRow = false): void {
     const oldRowId = subagent.parentToolRowId;
     if (oldRowId && this.toolRowToSubagent.get(oldRowId) === subagent.id) {
       this.toolRowToSubagent.delete(oldRowId);
@@ -233,17 +248,21 @@ export class AntigravitySubagentTracker {
     subagent.authoritativeLink = false;
     subagent.hasRows = false;
     this.options.onSubagentDetached?.(subagent.id);
+    if (requeueOldRow && oldRowId && !this.unlinkedInvokes.some((item) => item.toolRowId === oldRowId)) {
+      const observed = this.observedInvokes.get(oldRowId);
+      if (observed) this.unlinkedInvokes.push({ ...observed });
+    }
   }
 
   private attachParentToolRow(subagent: TrackedSubagent, toolRowId: string, label: string, kind: string, authoritative = false): void {
     this.dropUnlinkedInvoke(toolRowId);
     if (subagent.parentToolRowId && subagent.parentToolRowId !== toolRowId) {
-      this.detachParentToolRow(subagent);
+      this.detachParentToolRow(subagent, true);
     }
     const existingOwnerId = this.toolRowToSubagent.get(toolRowId);
     if (existingOwnerId && existingOwnerId !== subagent.id) {
       const existingOwner = this.subagents.get(existingOwnerId);
-      if (existingOwner) this.detachParentToolRow(existingOwner);
+      if (existingOwner) this.detachParentToolRow(existingOwner, false);
     }
     subagent.parentToolRowId = toolRowId;
     subagent.authoritativeLink = authoritative;
@@ -327,7 +346,7 @@ export class AntigravitySubagentTracker {
     return subagent;
   }
 
-  private matchUnlinkedInvoke(args: Record<string, unknown>): PendingInvoke | null {
+  private matchUnlinkedInvoke(args: Record<string, unknown>, specificOnly = false): PendingInvoke | null {
     if (!this.unlinkedInvokes.length) return null;
     const role = typeof args.Role === 'string' ? args.Role : '';
     const prompt = typeof args.Prompt === 'string' ? args.Prompt : '';
@@ -337,9 +356,20 @@ export class AntigravitySubagentTracker {
     let index = role && prompt ? this.unlinkedInvokes.findIndex((item) => compatible(item) && item.role === role && item.prompt === prompt) : -1;
     if (index < 0 && prompt) index = this.unlinkedInvokes.findIndex((item) => compatible(item) && item.prompt === prompt);
     if (index < 0 && role) index = this.unlinkedInvokes.findIndex((item) => compatible(item) && item.role === role);
-    if (index < 0) index = this.unlinkedInvokes.findIndex(compatible);
+    if (index < 0 && !specificOnly) index = this.unlinkedInvokes.findIndex(compatible);
     if (index < 0) return null;
     return this.unlinkedInvokes.splice(index, 1)[0] ?? null;
+  }
+
+  private reconcileUnlinked(): void {
+    if (!this.unlinkedInvokes.length) return;
+    for (const specificOnly of [true, false]) {
+      for (const subagent of this.subagents.values()) {
+        if (subagent.parentToolRowId !== null || !this.unlinkedInvokes.length) continue;
+        const matched = this.matchUnlinkedInvoke({ Role: subagent.role, Prompt: subagent.prompt }, specificOnly);
+        if (matched) this.attachParentToolRow(subagent, matched.toolRowId, matched.label, matched.kind);
+      }
+    }
   }
 
   private pollParent(): void {
