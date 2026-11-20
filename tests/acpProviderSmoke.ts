@@ -139,6 +139,9 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
    for(const [messageId,text] of [['a','first'],['a',' chunk'],['b','second']]) update({sessionUpdate:'agent_message_chunk',messageId,content:{type:'text',text}});
    result(q.id,{stopReason:'max_tokens'});prompt=null;return;
   }
+  if(text==='mcp-before-tool-call') {
+   out({id:45,method:'session/request_permission',params:{sessionId:'native-session',toolCall:{toolCallId:'early-mcp',name:'mcp_extra_one_mutate',title:'Run mcp_extra_one_mutate'},options:[{optionId:'allow',kind:'allow_once',name:'Allow'}]}});return;
+  }
   if(text==='invoke-subagents') {
    update({sessionUpdate:'tool_call',toolCallId:'sub-direct',name:'invoke_subagent',status:'in_progress',rawInput:{Role:'Direct Researcher',TypeName:'research',Model:'flash_lite',Prompt:'Check package version'}});
    update({sessionUpdate:'tool_call_update',toolCallId:'sub-direct',status:'completed',rawOutput:{output:'Created the following subagent:\n{"conversationId":"sub-direct-1"}'}});
@@ -204,6 +207,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   say('Background work done');return;
  }
  if(q.id===44 && prompt){result(prompt,{stopReason:'end_turn'});prompt=null;}
+ if(q.id===45 && prompt){result(prompt,{stopReason:'end_turn'});prompt=null;}
  if(q.id===41 && prompt){
   update({sessionUpdate:'tool_call_update',toolCallId:'edit',status:q.result?.outcome?.optionId==='deny'?'failed':'completed'});
   say(JSON.stringify(q.result));result(prompt,{stopReason:'end_turn'});prompt=null;
@@ -228,7 +232,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     };
     const prepared = await provider.prepare({
       ...input,
-      mcpServers: [{ id: 'extra', name: 'extra', transport: 'stdio', command: process.execPath, args: ['extra.js'], env: {} }]
+      mcpServers: [{ id: 'extra', name: 'Extra-One', transport: 'stdio', command: process.execPath, args: ['extra.js'], env: {} }]
     });
     assert.equal(prepared.resumeId, 'native-session');
     assert(!JSON.stringify(prepared.argv).includes('private-identity'));
@@ -237,7 +241,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     const frames = () => fs.readFileSync(trace, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
     const creation = frames().find((frame) => frame.method === 'session/new');
     assert.equal(creation.params._meta.antigravity.systemPrompt.append, input.context);
-    assert.deepEqual(creation.params.mcpServers.map((server: any) => server.name).sort(), ['extra', 'patterm'], 'all configured servers are delivered');
+    assert.deepEqual(creation.params.mcpServers.map((server: any) => server.name).sort(), ['Extra-One', 'patterm'], 'all configured servers are delivered');
     assert.deepEqual(creation.params.mcpServers.find((server: any) => server.name === 'patterm').env, [{ name: 'PATTERM_MCP_IDENTITY', value: 'private-identity' }, { name: 'PATTERM_MCP_COMPACT', value: '1' }], 'agy gets the compact Patterm catalogue');
     assert.deepEqual(frames()[0].params.clientCapabilities, {}, 'unimplemented filesystem and terminal capabilities are not advertised');
     if (process.platform !== 'win32') assert.equal(fs.statSync(prepared.argv[4]!).mode & 0o777, 0o600);
@@ -364,6 +368,9 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     await ask('mcp');
     await waitFor(provider, (snapshot) => snapshot.status === 'idle');
     assert(frames().some((frame) => frame.id === 41 && frame.result?.outcome?.optionId === 'allow'), 'Auto approves native MCP write requests without a card');
+    await ask('mcp-before-tool-call');
+    await waitFor(provider, (snapshot) => snapshot.status === 'idle' && frames().some((frame) => frame.id === 45));
+    assert.deepEqual(frames().find((frame) => frame.id === 45)?.result, { outcome: { outcome: 'selected', optionId: 'allow' } }, 'Auto approves MCP requests arriving before tool_call and with normalised server names');
     for (const text of ['unknown-mcp', 'spoof-mcp']) {
       await ask(text);
       await waitFor(provider, (snapshot) => snapshot.status === 'permission');

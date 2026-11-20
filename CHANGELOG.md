@@ -49,6 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Antigravity's "Allow MCP tools" now also matches supplied MCP servers when
+  `agy` requests permission before emitting `tool_call`, normalises server name
+  casing/hyphens, or truncates large `call_mcp_tool` inputs.
 - Antigravity user messages admitted after assistant output has already started
   streaming (such as receipt-confirmed turns or prompts with references and
   attachments) now stay positioned before the response they caused instead of

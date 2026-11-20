@@ -286,15 +286,31 @@ function allowsMcp(tool: Row): boolean {
   if (cancelling || mcpPolicy !== 'allow' || options.find((option) => option.id === 'mode')?.currentValue !== 'auto') return false;
   if (typeof tool.toolCallId !== 'string' || abandonedToolIds.has(`tool:${tool.toolCallId}`)) return false;
   const previous = messages.find((message) => message.id === `tool:${tool.toolCallId}`)?.tool;
-  if (!previous) return false;
   // Only native tool identifiers count, never a title, reason or argument
   // claiming to be MCP. agy namespaces direct MCP calls with mcp_<server>_.
-  const name = typeof tool.name === 'string' ? tool.name : previous?.name;
+  const nativeName = typeof tool.name === 'string' && tool.name ? tool.name : undefined;
+  const priorName = typeof previous?.name === 'string' && previous.name ? previous.name : undefined;
+  if (nativeName && priorName && nativeName !== priorName && priorName !== 'other' && priorName !== 'Tool') return false;
+  const name = nativeName ?? priorName;
+  if (!name) return false;
   const servers = config.mcpServers as Array<{ name: string }>;
-  if (servers.some((server) => name?.startsWith(`mcp_${server.name}_`))) return true;
+  const matchesServer = (candidate: string): boolean => {
+    const lower = candidate.toLowerCase();
+    const normalized = lower.replace(/-/g, '_');
+    return servers.some((server) => {
+      const expected = server.name.toLowerCase();
+      return lower === expected || normalized === expected.replace(/-/g, '_');
+    });
+  };
+  const lowerName = name.toLowerCase();
+  const normalizedName = lowerName.replace(/-/g, '_');
+  if (servers.some((server) => {
+    const expected = server.name.toLowerCase();
+    return lowerName.startsWith(`mcp_${expected}_`) || normalizedName.startsWith(`mcp_${expected.replace(/-/g, '_')}_`);
+  })) return true;
   // Lazy MCP dispatch uses the native call_mcp_tool wrapper instead.
   const input = tool.rawInput ?? previous?.input;
-  return name === 'call_mcp_tool' && typeof input?.ToolName === 'string' && servers.some((server) => input?.ServerName === server.name);
+  return name === 'call_mcp_tool' && typeof input?.ToolName === 'string' && typeof input?.ServerName === 'string' && matchesServer(input.ServerName);
 }
 function addBounded(set: Set<string>, value: string): void {
   if (set.has(value)) set.delete(value);
@@ -578,7 +594,12 @@ function receive(frame: Row): void {
       const patch = replacesContent ? diffPreview(update.content) : priorPatch;
       const inputPath = rawInput.Path ?? rawInput.path;
       const preview = Buffer.byteLength(JSON.stringify(rawInput)) > TOOL_FIELD_BYTES
-        ? { truncated: true, ...(typeof inputPath === 'string' ? { path: toolPreview(inputPath) } : {}) } : rawInput;
+        ? {
+          truncated: true,
+          ...(typeof inputPath === 'string' ? { path: toolPreview(inputPath) } : {}),
+          ...(typeof rawInput.ServerName === 'string' ? { ServerName: toolPreview(rawInput.ServerName) } : {}),
+          ...(typeof rawInput.ToolName === 'string' ? { ToolName: toolPreview(rawInput.ToolName) } : {})
+        } : rawInput;
       const input = { ...(update.rawInput == null ? prior : preview), ...(typeof rawInput.Path === 'string' ? { path: toolPreview(rawInput.Path) } : {}), ...(patch ? { patch } : {}) };
       const toolState = { ...(previous?.tool?.state as Row | undefined), status: update.status ?? (previous?.tool?.state as Row | undefined)?.status ?? 'pending', ...(update.rawOutput !== undefined ? { output: toolOutput(update.rawOutput) } : {}) };
       const terminal = toolState.status === 'completed' || toolState.status === 'failed';
