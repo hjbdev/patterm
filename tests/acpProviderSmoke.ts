@@ -26,6 +26,7 @@ const fs = require('node:fs');
 const out = frame => process.stdout.write(JSON.stringify({jsonrpc:'2.0',...frame})+'\n');
 const result = (id,value={}) => out({id,result:value});
 let prompt = null;
+let stopAcrossPromptEnd = false;
 const update = value => out({method:'session/update',params:{sessionId:'native-session',update:value}});
 const options = [
  {id:'model',name:'Model',type:'select',currentValue:'flash',options:[{value:'flash',name:'Flash'}]},
@@ -75,7 +76,6 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   }
   if(text==='crash') {fs.writeFileSync(process.env.ACP_TRACE+'.side-effect','executed');process.exit(17);}
    echo(text);
-   if(text==='no-cancel-ack') return;
    if(text==='pdf-attachment') {
     const file = require('node:url').fileURLToPath(q.params.prompt[1].uri);
     say(fs.readFileSync(file,'utf8'));
@@ -85,8 +85,10 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     },5);
     return;
    }
-   if(text==='stop-background') {
+   if(text==='stop-background'||text==='stop-across-prompt-end') {
     update({sessionUpdate:'tool_call',toolCallId:'stopping-tool',status:'in_progress'});
+    stopAcrossPromptEnd = text==='stop-across-prompt-end';
+    if(stopAcrossPromptEnd) return;
     result(q.id,{stopReason:'end_turn'});prompt=null;return;
    }
   if(text==='delayed-approval') {
@@ -161,6 +163,12 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   result(q.id,{stopReason:'end_turn',usage:{inputTokens:20,outputTokens:5}});prompt=null;return;
  }
   if(q.method==='session/cancel') {
+    if(stopAcrossPromptEnd) {
+     update({sessionUpdate:'tool_call_update',toolCallId:'stopping-tool',status:'pending'});
+     result(prompt,{stopReason:'end_turn'});prompt=null;stopAcrossPromptEnd=false;
+     update({sessionUpdate:'usage_update',used:2718,size:5000});
+     return;
+    }
     if(process.env.ACP_IGNORE_CANCEL) return;
     if(!prompt) {
      update({sessionUpdate:'tool_call_update',toolCallId:'stopping-tool',status:'pending'});
@@ -189,7 +197,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
 `);
   const database = new DatabaseService(directory);
   const hosts = new IntegratedTestHosts();
-  const env = { ...process.env, HOME: directory, USERPROFILE: directory, ACP_TRACE: trace, PATTERM_ACP_BACKGROUND_QUIET_MS: '1000', PATTERM_ACP_CANCEL_TIMEOUT_MS: '250' };
+  const env = { ...process.env, HOME: directory, USERPROFILE: directory, ACP_TRACE: trace, PATTERM_ACP_BACKGROUND_QUIET_MS: '1000', PATTERM_ACP_CANCEL_TIMEOUT_MS: '700' };
   const images = new TranscriptImageStore(path.join(directory, 'images'));
   const service = () => new AcpProviderService(database, directory, process.execPath, env, undefined, hosts, images);
   const provider = service();
@@ -528,8 +536,10 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     const stuck = await stuckProvider.prepare(input);
     database.connection.prepare("update processes set argv = ? where id = 'process'").run(JSON.stringify(stuck.argv));
     database.connection.prepare("update sessions set exited_at = null where id = 'session'").run();
-    await stuckProvider.prompt('process', { text: 'no-cancel-ack', references: [], attachments: [] });
+    await stuckProvider.prompt('process', { text: 'stop-across-prompt-end', references: [], attachments: [] });
     await stuckProvider.interrupt('process');
+    const stopping = await waitFor(stuckProvider, (snapshot) => snapshot.usage.contextTokens === 2718);
+    assert.equal(stopping.status_detail, 'Stopping…', 'the natural end of the prompt does not acknowledge cancellation of a still-running tool');
     const stalled = await waitFor(stuckProvider, (snapshot) => snapshot.status === 'error');
     assert.match(stalled.status_detail, /did not confirm cancellation/i);
     await assert.rejects(stuckProvider.prompt('process', { text: 'do-not-dispatch', references: [], attachments: [] }), /did not confirm cancellation/i);
@@ -566,8 +576,10 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     database.connection.prepare("update processes set argv = ?, activity = 'idle' where id = 'process'").run(JSON.stringify(acknowledgedFailure.argv));
     database.connection.prepare("update sessions set exited_at = null where id = 'session'").run();
     const failedTurn = new IntegratedAgentService(database, { agy: provider });
+    let releaseFailedTurn: (() => void) | undefined;
     try {
       failedTurn.observe('process');
+      releaseFailedTurn = await failedTurn.subscribeConversation('process', () => {});
       await failedTurn.prompt('process', { text: 'failure-after-echo', messageId: 'acknowledged-failure' });
       await waitFor(provider, (state) => state.status === 'error' && (database.connection.prepare("select activity from processes where id = 'process'").get() as any).activity === 'error');
       await failedTurn.conversation('process');
@@ -575,6 +587,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       await failedTurn.prompt('process', { text: 'hello-after-acknowledged-error', messageId: 'recovery' });
       await waitFor(provider, (snapshot) => snapshot.status === 'idle');
     } finally {
+      releaseFailedTurn?.();
       failedTurn.dispose();
       await provider.stop('process');
       await hosts.waitForExit(Number(acknowledgedFailure.argv[3]));

@@ -656,7 +656,11 @@ async function handle(method: string, params: Row): Promise<unknown> {
       for (const id of runningTools) backgroundToolIds.add(id);
       if (result.stopReason === 'cancelled') finishTools('Response stopped');
       else finishTools('Antigravity ended the turn before this tool started', true);
-      finishCancellation();
+      if (result.stopReason !== 'cancelled' && cancelling && runningTools.size) {
+        // A natural prompt end is not an acknowledgement of Stop for tools
+        // still running. Watch those tools without resetting the deadline.
+        cancelWatchingTools = true;
+      } else finishCancellation();
       const stopped = Object.hasOwn(STOP_REASONS, result.stopReason) ? STOP_REASONS[result.stopReason] : null;
       if (stopped) replace({ id: randomUUID(), role: 'assistant', kind: 'notice', level: 'warning', text: stopped });
       if (result.usage) {

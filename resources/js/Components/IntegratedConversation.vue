@@ -790,12 +790,14 @@ async function applySnapshot(load: () => Promise<Record<string, unknown>>, reque
     if (status === 'working') {
       streamStatus.value = 'working';
       statusDetail.value = result.status === 'working' && typeof result.status_detail === 'string' ? result.status_detail : '';
-    }
-    else if (status === 'error') {
-      streamStatus.value = 'error';
+    } else if (status === 'error') {
       if (typeof result.status_detail === 'string') statusDetail.value = result.status_detail;
+      else if (streamStatus.value !== 'error') statusDetail.value = '';
+      streamStatus.value = 'error';
+    } else if (status === 'idle' && streamStatus.value !== 'error') {
+      streamStatus.value = 'idle';
+      statusDetail.value = '';
     }
-    else if (status === 'idle' && streamStatus.value !== 'error') streamStatus.value = 'idle';
     // The 750ms poll mostly re-reads an unchanged conversation, so polled
     // payloads are compared before re-projecting. No cheaper exact signal
     // exists: polled providers carry no revision, and a snapshot revision is
