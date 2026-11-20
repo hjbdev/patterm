@@ -924,6 +924,40 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       assert.equal([...mixedRows.values()].find((row) => row.text === 'Alpha reply')?.parentId, 'tool:mr-alpha');
       assert.equal([...mixedRows.values()].find((row) => row.text === 'Beta reply')?.parentId, 'tool:mr-beta');
 
+      // Log-only IDs with an initially argument-less ACP frame must re-pair when
+      // contradictory Role/Prompt metadata arrives later without any ACP conversationId.
+      const logOnlyRows = new Map<string, any>();
+      const logOnlyTracker = new AntigravitySubagentTracker({
+        sessionId: 'edge-log-only-reconcile',
+        hostEnv: trackerEnv,
+        pollMs: 25,
+        onMessage: (row) => logOnlyRows.set(row.id, row),
+        onSubagentDetached: (id) => {
+          for (const key of [...logOnlyRows.keys()]) {
+            if (key.startsWith(`sub:${id}:`)) logOnlyRows.delete(key);
+          }
+        },
+        onTasksChanged: () => {}
+      });
+      edgeTrackers.push(logOnlyTracker);
+      appendLog('edge-lo-alpha', modelRow(0, { content: 'Alpha reply' }));
+      appendLog('edge-lo-beta', modelRow(0, { content: 'Beta reply' }));
+      appendLog(
+        'edge-log-only-reconcile',
+        modelRow(0, { tool_calls: [
+          { name: 'invoke_subagent', args: { Role: '"Researcher"', Prompt: '"Review alpha"' } },
+          { name: 'invoke_subagent', args: { Role: '"Reviewer"', Prompt: '"Review beta"' } }
+        ] }),
+        invokeResult(1, 'edge-lo-alpha'),
+        invokeResult(2, 'edge-lo-beta')
+      );
+      logOnlyTracker.syncNow();
+      logOnlyTracker.observeToolCall('tool:lo-beta', 'invoke_subagent', {}, '', null);
+      logOnlyTracker.observeToolCall('tool:lo-alpha', 'invoke_subagent', { Role: 'Researcher', Prompt: 'Review alpha' }, '', null);
+      logOnlyTracker.observeToolCall('tool:lo-beta', 'invoke_subagent', { Role: 'Reviewer', Prompt: 'Review beta' }, '', null);
+      assert.equal([...logOnlyRows.values()].find((row) => row.text === 'Alpha reply')?.parentId, 'tool:lo-alpha');
+      assert.equal([...logOnlyRows.values()].find((row) => row.text === 'Beta reply')?.parentId, 'tool:lo-beta');
+
       // Drawer pagination keeps a tool_call and its tool_result in the same page.
       appendLog(
         'edge-drawer-child',

@@ -115,6 +115,11 @@ export class AntigravitySubagentTracker {
         const subagent = this.subagents.get(existingId);
         if (subagent) {
           if (directId === existingId) subagent.authoritativeLink = true;
+          else if (!subagent.authoritativeLink && invokeMatchScore(invokeMeta, subagent) < 0) {
+            this.detachParentToolRow(subagent, true);
+            this.syncNow();
+            return;
+          }
           if (invokeMeta.label && subagent.label === 'Subagent') subagent.label = invokeMeta.label;
           if (invokeMeta.kind && subagent.kind === 'subagent') subagent.kind = invokeMeta.kind;
           if (invokeMeta.role && !subagent.role) subagent.role = invokeMeta.role;
@@ -346,27 +351,53 @@ export class AntigravitySubagentTracker {
     return subagent;
   }
 
-  private matchUnlinkedInvoke(args: Record<string, unknown>, specificOnly = false): PendingInvoke | null {
+  private matchUnlinkedInvoke(args: Record<string, unknown>, minScore = 0): PendingInvoke | null {
     if (!this.unlinkedInvokes.length) return null;
     const role = typeof args.Role === 'string' ? args.Role : '';
     const prompt = typeof args.Prompt === 'string' ? args.Prompt : '';
-    const compatible = (item: PendingInvoke) =>
-      (!role || !item.role || item.role === role)
-      && (!prompt || !item.prompt || item.prompt === prompt);
-    let index = role && prompt ? this.unlinkedInvokes.findIndex((item) => compatible(item) && item.role === role && item.prompt === prompt) : -1;
-    if (index < 0 && prompt) index = this.unlinkedInvokes.findIndex((item) => compatible(item) && item.prompt === prompt);
-    if (index < 0 && role) index = this.unlinkedInvokes.findIndex((item) => compatible(item) && item.role === role);
-    if (index < 0 && !specificOnly) index = this.unlinkedInvokes.findIndex(compatible);
-    if (index < 0) return null;
-    return this.unlinkedInvokes.splice(index, 1)[0] ?? null;
+    let bestIndex = -1;
+    let bestScore = minScore - 1;
+    for (let index = 0; index < this.unlinkedInvokes.length; index++) {
+      const score = invokeMatchScore(this.unlinkedInvokes[index]!, { role, prompt });
+      if (score > bestScore) {
+        bestScore = score;
+        bestIndex = index;
+      }
+    }
+    if (bestIndex < 0) return null;
+    return this.unlinkedInvokes.splice(bestIndex, 1)[0] ?? null;
   }
 
   private reconcileUnlinked(): void {
+    // 1. Detach any non-authoritative link whose metadata now contradicts its
+    //    latest observed ACP invoke (e.g. an empty initial frame later updated
+    //    with a different Role or Prompt).
+    for (const subagent of this.subagents.values()) {
+      if (!subagent.parentToolRowId || subagent.authoritativeLink) continue;
+      const current = this.observedInvokes.get(subagent.parentToolRowId);
+      if (current && invokeMatchScore(current, subagent) < 0) {
+        this.detachParentToolRow(subagent, true);
+      }
+    }
+    // 2. If a queued ACP invoke is a strictly stronger match for a provisionally
+    //    linked child than its current link (e.g. exact Role/Prompt vs empty
+    //    initial frame), release the weaker provisional link so both re-pair.
+    if (this.unlinkedInvokes.length) {
+      for (const subagent of this.subagents.values()) {
+        if (!subagent.parentToolRowId || subagent.authoritativeLink) continue;
+        const current = this.observedInvokes.get(subagent.parentToolRowId);
+        const currentScore = current ? invokeMatchScore(current, subagent) : 0;
+        if (this.unlinkedInvokes.some((item) => invokeMatchScore(item, subagent) > currentScore)) {
+          this.detachParentToolRow(subagent, true);
+        }
+      }
+    }
+    // 3. Pair unlinked children and invokes in descending match specificity.
     if (!this.unlinkedInvokes.length) return;
-    for (const specificOnly of [true, false]) {
+    for (const minScore of [3, 2, 1, 0]) {
       for (const subagent of this.subagents.values()) {
         if (subagent.parentToolRowId !== null || !this.unlinkedInvokes.length) continue;
-        const matched = this.matchUnlinkedInvoke({ Role: subagent.role, Prompt: subagent.prompt }, specificOnly);
+        const matched = this.matchUnlinkedInvoke({ Role: subagent.role, Prompt: subagent.prompt }, minScore);
         if (matched) this.attachParentToolRow(subagent, matched.toolRowId, matched.label, matched.kind);
       }
     }
@@ -601,6 +632,15 @@ export class AntigravitySubagentTracker {
     this.lastTasksDigest = digest;
     this.options.onTasksChanged();
   }
+}
+
+function invokeMatchScore(invoke: { role: string; prompt: string }, subagent: { role: string; prompt: string }): number {
+  if (invoke.role && subagent.role && invoke.role !== subagent.role) return -1;
+  if (invoke.prompt && subagent.prompt && invoke.prompt !== subagent.prompt) return -1;
+  if (invoke.role && subagent.role && invoke.prompt && subagent.prompt) return 3;
+  if (invoke.prompt && subagent.prompt) return 2;
+  if (invoke.role && subagent.role) return 1;
+  return 0;
 }
 
 function createTail(filePath: string): FileTail {
