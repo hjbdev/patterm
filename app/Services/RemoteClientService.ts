@@ -7,6 +7,8 @@ import type { ProjectLinkService } from './ProjectLinkService';
 import { renameDamageFrame, type TerminalFrame, type TerminalService } from './TerminalService';
 import type { TerminalSubscriptions } from './TerminalSubscriptions';
 import type { TimerRecord } from './TimerService';
+import type { KeyedPatch, ProjectPatch, WorkbenchChanges, WorkbenchPatch } from './WorkbenchPatch';
+import type { WorkbenchRead, WorkbenchSince, WorkbenchSyncService } from './WorkbenchSyncService';
 import { CONTROL_OPERATIONS, INTEGRATED_CONTROL_TOOLS } from '../Http/BrowserTools';
 import type { IntegratedConversationEvent } from './IntegratedConversation';
 import type { TerminalClientRequest, TerminalClientRequestService } from './TerminalClientRequestService';
@@ -51,9 +53,19 @@ export const RELAY_CHANNELS = new Set([
 const MAX_DEPTH = 12;
 const RELAY_TIMEOUT_MS = 30_000;
 const ANNOUNCE_DELAY_MS = 100;
+// Raw binary peer WebSocket frame header: 'P', 'T', 0x01 (terminal-damage),
+// uint16BE processId byte length, UTF-8 processId, raw damage payload.
+const BINARY_TERMINAL_MAGIC_0 = 0x50;
+const BINARY_TERMINAL_MAGIC_1 = 0x54;
+const BINARY_TERMINAL_FRAME_DAMAGE = 0x01;
 // Change topics hosts announce to each other.
 const SHARED_TOPICS = ['context', 'history'] as const;
 type SharedTopic = typeof SHARED_TOPICS[number];
+
+type RemoteWorkbenchRead =
+  | { epoch: string; version: number; current: true }
+  | { epoch: string; version: number; patches: WorkbenchPatch[] }
+  | { epoch: string; version: number; projects: ProjectWorkbenchDto[] };
 
 const rpcRequest = z.object({ channel: z.string().max(100), args: z.unknown().optional() }).strict();
 const uploadRequest = z.object({ name: z.string().min(1).max(255), data: z.string().max(15 * 1024 * 1024) }).strict();
@@ -74,6 +86,8 @@ type ConversationListener = (event: IntegratedConversationEvent) => void;
 export interface RemoteClientOptions {
   // This host's own records, without any paired host's.
   localWorkbench: () => WorkbenchSnapshotDto;
+  // Optional versioned local workbench sync for incremental paired-host patches.
+  localWorkbenchSync?: Pick<WorkbenchSyncService, 'read'>;
   // A paired host's records changed; rebuild the published workbench.
   invalidate: () => void;
   terminal: Pick<TerminalService, 'onFrame' | 'emitRelayedFrame'>;
@@ -101,8 +115,10 @@ export interface RemoteClientOptions {
 // routes, which only the UI calls.
 export class RemoteClientService {
   private readonly workbenches = new Map<string, ProjectWorkbenchDto[]>();
+  private readonly peerVersions = new Map<string, { epoch: string; version: number }>();
   private readonly bots = new Map<string, Bot[]>();
   private readonly fetching = new Map<string, Promise<void>>();
+  private readonly refetchPending = new Set<string>();
   private readonly peerTerminals = new Map<string, Set<string>>();
   // Processes of this host that a paired host controls, by PTY or Integrated
   // process ID.
@@ -130,10 +146,14 @@ export class RemoteClientService {
     // assistant's projects go only to a host that asks for them, which lists
     // this host's bots; an older host would mistake them for its own.
     peers.handle('workbench.read', (raw) => {
-      const withBots = (raw as { bots?: unknown } | null | undefined)?.bots === true;
+      const request = raw && typeof raw === 'object' ? raw as { bots?: unknown; since?: unknown } : null;
+      const withBots = request?.bots === true;
+      if (this.options.localWorkbenchSync && request && 'since' in request) {
+        return formatRemoteWorkbenchRead(this.options.localWorkbenchSync, parseWorkbenchSince(request.since), withBots);
+      }
       return this.options.localWorkbench().projects
         .filter((project) => withBots || listedProject(project))
-        .map((project) => ({ ...project, project: { ...project.project, sharesHistory: true } }));
+        .map(withSharesHistory);
     });
     // Who the bots are and where they work. Their instructions stay here.
     peers.handle('bots.read', () => (this.options.localBots?.() ?? []).filter((bot) => bot.enabled).map((bot) => ({ ...bot, instructions: '' })));
@@ -149,6 +169,7 @@ export class RemoteClientService {
       this.options.notifyRemoteTopics(['history']);
     });
     peers.onDisconnected((hostId) => this.dropHost(hostId));
+    peers.onBinary?.((hostId, payload) => this.receiveBinaryFrame(hostId, payload));
     peers.onEvent((event) => {
       if (event.event === 'workbench.changed') void this.refresh(event.host_id);
       else if (event.event === 'terminal.frame') this.receiveFrame(event.host_id, event.payload);
@@ -313,28 +334,90 @@ export class RemoteClientService {
 
   private async refresh(hostId: string): Promise<void> {
     const running = this.fetching.get(hostId);
-    if (running) return running;
+    if (running) {
+      this.refetchPending.add(hostId);
+      return running;
+    }
     const task = (async () => {
+      let workbenchChanged = false;
       try {
-        const [projects, bots] = await Promise.all([
-          this.peers.request(hostId, 'workbench.read', { bots: true }) as Promise<ProjectWorkbenchDto[]>,
+        const supportsPatches = this.peers.supportsWorkbenchPatches?.(hostId) === true;
+        const knownVersion = supportsPatches ? (this.peerVersions.get(hostId) ?? null) : null;
+        const params = supportsPatches ? { bots: true, since: knownVersion } : { bots: true };
+        const [workbenchResponse, bots] = await Promise.all([
+          this.peers.request(hostId, 'workbench.read', params),
           // An older host has no bots to share.
           this.peers.request(hostId, 'bots.read').catch(() => [])
         ]);
-        if (Array.isArray(projects)) this.workbenches.set(hostId, projects);
-        this.setBots(hostId, Array.isArray(bots) ? bots.flatMap((bot) => {
-          const parsed = botInput.safeParse(bot);
-          return parsed.success ? [parsed.data] : [];
-        }) : []);
+        if (this.peers.connected(hostId)) {
+          const applied = this.applyRemoteWorkbench(hostId, workbenchResponse, knownVersion);
+          if (applied === 'resync') {
+            this.peerVersions.delete(hostId);
+            const full = await this.peers.request(hostId, 'workbench.read', { bots: true, since: null });
+            if (this.peers.connected(hostId)) {
+              workbenchChanged = this.applyRemoteWorkbench(hostId, full, null) === 'changed';
+            }
+          } else {
+            workbenchChanged = applied === 'changed';
+          }
+          this.setBots(hostId, Array.isArray(bots) ? bots.flatMap((bot) => {
+            const parsed = botInput.safeParse(bot);
+            return parsed.success ? [parsed.data] : [];
+          }) : []);
+        }
       } catch {
         // The next change or reconnect fetches again.
       } finally {
         this.fetching.delete(hostId);
       }
-      this.options.invalidate();
+      if (workbenchChanged) this.options.invalidate();
+      if (this.refetchPending.delete(hostId) && !this.disposed && this.peers.connected(hostId)) {
+        void this.refresh(hostId);
+      }
     })();
     this.fetching.set(hostId, task);
     return task;
+  }
+
+  private applyRemoteWorkbench(
+    hostId: string,
+    raw: unknown,
+    expected: { epoch: string; version: number } | null
+  ): 'changed' | 'unchanged' | 'resync' {
+    if (Array.isArray(raw)) {
+      this.workbenches.set(hostId, raw as ProjectWorkbenchDto[]);
+      this.peerVersions.delete(hostId);
+      return 'changed';
+    }
+    if (!raw || typeof raw !== 'object') return 'unchanged';
+    const response = raw as Partial<RemoteWorkbenchRead> & { epoch?: unknown; version?: unknown };
+    if (typeof response.epoch !== 'string' || typeof response.version !== 'number') return 'unchanged';
+    if ('current' in response && response.current === true) {
+      if (!this.workbenches.has(hostId)) return 'resync';
+      this.peerVersions.set(hostId, { epoch: response.epoch, version: response.version });
+      return 'unchanged';
+    }
+    if ('projects' in response && Array.isArray(response.projects)) {
+      this.workbenches.set(hostId, response.projects);
+      this.peerVersions.set(hostId, { epoch: response.epoch, version: response.version });
+      return 'changed';
+    }
+    if ('patches' in response && Array.isArray(response.patches)) {
+      const base = this.workbenches.get(hostId);
+      if (!base || !expected || expected.epoch !== response.epoch) return 'resync';
+      let currentVersion = expected.version;
+      let projects = base;
+      for (const patch of response.patches) {
+        if (!patch || patch.epoch !== response.epoch || patch.from !== currentVersion) return 'resync';
+        projects = applyRemoteProjectChanges(projects, patch.changes);
+        currentVersion = patch.to;
+      }
+      if (currentVersion !== response.version) return 'resync';
+      this.workbenches.set(hostId, projects);
+      this.peerVersions.set(hostId, { epoch: response.epoch, version: response.version });
+      return 'changed';
+    }
+    return 'unchanged';
   }
 
   private setBots(hostId: string, bots: Bot[]): void {
@@ -346,6 +429,8 @@ export class RemoteClientService {
 
   private dropHost(hostId: string): void {
     this.workbenches.delete(hostId);
+    this.peerVersions.delete(hostId);
+    this.refetchPending.delete(hostId);
     this.setBots(hostId, []);
     this.options.invalidate();
     const subscriber = `peer:${hostId}`;
@@ -480,17 +565,48 @@ export class RemoteClientService {
 
   private forwardFrame(frame: TerminalFrame): void {
     if (this.peerTerminals.size === 0 || !frame.processId) return;
+    let binaryPacket: Buffer | null = null;
+    let base64Payload: string | null = null;
     for (const [hostId, subscribed] of this.peerTerminals) {
       if (!subscribed.has(frame.processId)) continue;
       if (frame.type === 'terminal-damage') {
+        if (this.peers.supportsBinary?.(hostId)) {
+          binaryPacket ??= encodeBinaryDamageFrame(frame.processId, frame.payload);
+          if (binaryPacket) {
+            this.peers.emitBinary(hostId, binaryPacket);
+            continue;
+          }
+        }
+        base64Payload ??= Buffer.from(frame.payload).toString('base64');
         this.peers.emit(hostId, 'terminal.frame', {
-          process_id: frame.processId, payload: Buffer.from(frame.payload).toString('base64'),
+          process_id: frame.processId, payload: base64Payload,
           frame_kind: frame.frameKind, frame_seq: frame.frameSeq, resize_seq: frame.resizeSeq
         });
       } else if (frame.type === 'terminal-lifecycle' && frame.event === 'mouse_mode') {
         this.peers.emit(hostId, 'terminal.lifecycle', frame);
       }
     }
+  }
+
+  private receiveBinaryFrame(hostId: string, data: Buffer): void {
+    if (data.byteLength < 5 || data[0] !== BINARY_TERMINAL_MAGIC_0 || data[1] !== BINARY_TERMINAL_MAGIC_1 || data[2] !== BINARY_TERMINAL_FRAME_DAMAGE) return;
+    const idLen = data.readUInt16BE(3);
+    if (idLen === 0 || idLen > 200 || 5 + idLen > data.byteLength) return;
+    const peer = this.hosts.peer(hostId);
+    if (!peer) return;
+    const rawProcessId = data.subarray(5, 5 + idLen).toString('utf8');
+    const rawDamage = data.subarray(5 + idLen);
+    const processId = `${peer.name}:${rawProcessId}`;
+    const payload = renameDamageFrame(rawDamage, processId);
+    if (!payload) return;
+    const rawKind = rawDamage.readUInt8(2);
+    const frameKind = rawKind === 0 ? 'snapshot' : rawKind === 1 ? 'damage' : null;
+    const frameSeq = rawDamage.readUInt32LE(3);
+    const resizeSeq = rawDamage.readUInt32LE(11);
+    this.options.terminal.emitRelayedFrame({
+      type: 'terminal-damage', payload, processId,
+      frameKind, frameSeq, resizeSeq
+    });
   }
 
   private receiveFrame(hostId: string, raw: unknown): void {
@@ -627,4 +743,172 @@ function collectPrefixes(value: unknown, names: Set<string>, depth: number): voi
       collectPrefixes(item, names, depth + 1);
     }
   }
+}
+
+function encodeBinaryDamageFrame(processId: string, payload: Uint8Array): Buffer | null {
+  const idBytes = Buffer.from(processId, 'utf8');
+  if (idBytes.byteLength === 0 || idBytes.byteLength > 0xffff) return null;
+  const out = Buffer.allocUnsafe(5 + idBytes.byteLength + payload.byteLength);
+  out[0] = BINARY_TERMINAL_MAGIC_0;
+  out[1] = BINARY_TERMINAL_MAGIC_1;
+  out[2] = BINARY_TERMINAL_FRAME_DAMAGE;
+  out.writeUInt16BE(idBytes.byteLength, 3);
+  idBytes.copy(out, 5);
+  Buffer.from(payload.buffer, payload.byteOffset, payload.byteLength).copy(out, 5 + idBytes.byteLength);
+  return out;
+}
+
+function withSharesHistory(project: ProjectWorkbenchDto): ProjectWorkbenchDto {
+  return { ...project, project: { ...project.project, sharesHistory: true } };
+}
+
+function parseWorkbenchSince(raw: unknown): WorkbenchSince | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const candidate = raw as { epoch?: unknown; version?: unknown };
+  if (typeof candidate.epoch !== 'string' || typeof candidate.version !== 'number' || !Number.isInteger(candidate.version)) return null;
+  return { epoch: candidate.epoch, version: candidate.version };
+}
+
+function formatRemoteWorkbenchRead(
+  sync: Pick<WorkbenchSyncService, 'read'>,
+  since: WorkbenchSince | null,
+  withBots: boolean
+): RemoteWorkbenchRead {
+  const read: WorkbenchRead = sync.read(since);
+  if ('current' in read) {
+    return { epoch: read.epoch, version: read.version, current: true };
+  }
+  if ('patches' in read) {
+    let hiddenIds: Set<string> | null = null;
+    let listedOrder: string[] | null = null;
+    if (!withBots) {
+      const current = sync.read(null);
+      if ('projects' in current) {
+        hiddenIds = new Set(current.projects.filter((entry) => !listedProject(entry)).map((entry) => entry.project.id));
+        listedOrder = current.projects.filter(listedProject).map((entry) => entry.project.id);
+      }
+    }
+    let anyChanged = false;
+    const patches: WorkbenchPatch[] = read.patches.map((patch) => {
+      const filtered = filterRemoteProjectChanges(patch.changes, withBots, hiddenIds, listedOrder);
+      if (filtered) anyChanged = true;
+      return { epoch: patch.epoch, from: patch.from, to: patch.to, changes: filtered ?? {} };
+    });
+    if (!anyChanged) return { epoch: read.epoch, version: read.version, current: true };
+    return { epoch: read.epoch, version: read.version, patches };
+  }
+  return {
+    epoch: read.epoch,
+    version: read.version,
+    projects: read.projects.filter((project) => withBots || listedProject(project)).map(withSharesHistory)
+  };
+}
+
+function filterRemoteProjectChanges(
+  changes: WorkbenchChanges,
+  withBots: boolean,
+  hiddenIds: Set<string> | null,
+  listedOrder: string[] | null
+): WorkbenchChanges | null {
+  const projects = changes.projects;
+  if (!projects) return null;
+  const remove = projects.remove?.filter((id) => !hiddenIds?.has(id));
+  const add = projects.add
+    ?.filter(({ item }) => withBots || listedProject(item))
+    .map(({ item, after }) => {
+      let resolvedAfter = after;
+      if (!withBots && resolvedAfter && hiddenIds?.has(resolvedAfter) && listedOrder) {
+        const index = listedOrder.indexOf(item.project.id);
+        resolvedAfter = index > 0 ? listedOrder[index - 1]! : null;
+      }
+      return { item: withSharesHistory(item), after: resolvedAfter };
+    });
+  const change = projects.change
+    ?.filter((patch) => {
+      if (withBots) return true;
+      if (hiddenIds?.has(patch.id)) return false;
+      if (patch.project && (patch.project.kind === 'bots' || patch.project.kind === 'assistant')) return false;
+      return true;
+    })
+    .map((patch): ProjectPatch => patch.project ? { ...patch, project: { ...patch.project, sharesHistory: true } } : patch);
+  const order = projects.order?.filter((id) => !hiddenIds?.has(id));
+  const next: NonNullable<WorkbenchChanges['projects']> = {
+    ...(remove?.length ? { remove } : {}),
+    ...(add?.length ? { add } : {}),
+    ...(change?.length ? { change } : {}),
+    ...(order ? { order } : {})
+  };
+  return Object.keys(next).length ? { projects: next } : null;
+}
+
+const REMOTE_PROJECT_LISTS = ['projectSessions', 'processes', 'worktrees', 'timers'] as const;
+
+function applyRemoteKeyed<T>(items: readonly T[], patch: KeyedPatch<T> | undefined, key: (item: T) => string): T[] {
+  if (!patch) return items as T[];
+  if (patch.replace) return patch.replace;
+  const removed = new Set(patch.remove ?? []);
+  let next = removed.size ? items.filter((item) => !removed.has(key(item))) : [...items];
+  const upserts = patch.upsert ?? [];
+  if (upserts.length) {
+    const positions = new Map<string, number>();
+    for (let index = 0; index < next.length; index++) positions.set(key(next[index]!), index);
+    for (let upsertIndex = 0; upsertIndex < upserts.length; upsertIndex++) {
+      const { item, after } = upserts[upsertIndex]!;
+      const itemKey = key(item);
+      const index = positions.get(itemKey);
+      if (index === undefined) {
+        const afterIndex = after === null ? -1 : (positions.get(after) ?? -1);
+        const insertAt = afterIndex + 1;
+        if (insertAt === next.length) {
+          next.push(item);
+          positions.set(itemKey, insertAt);
+        } else {
+          next.splice(insertAt, 0, item);
+          if (upsertIndex + 1 < upserts.length) {
+            for (let position = insertAt; position < next.length; position++) positions.set(key(next[position]!), position);
+          }
+        }
+      } else {
+        next[index] = item;
+      }
+    }
+  }
+  if (patch.order) {
+    const byKey = new Map(next.map((item) => [key(item), item]));
+    next = patch.order.map((id) => byKey.get(id)).filter((item): item is T => item !== undefined);
+  }
+  return next;
+}
+
+function applyRemoteProjectChanges(current: ProjectWorkbenchDto[], changes: WorkbenchChanges): ProjectWorkbenchDto[] {
+  const projectChanges = changes.projects;
+  if (!projectChanges) return current;
+  const byId = (item: { id: string }) => item.id;
+  const byProjectId = (item: ProjectWorkbenchDto) => item.project.id;
+  const removed = new Set(projectChanges.remove ?? []);
+  const patches = new Map((projectChanges.change ?? []).map((patch) => [patch.id, patch]));
+  let projects = current
+    .filter((entry) => !removed.has(entry.project.id))
+    .map((entry) => {
+      const patch = patches.get(entry.project.id);
+      if (!patch) return entry;
+      const next: ProjectWorkbenchDto = { ...entry, project: patch.project ?? entry.project };
+      for (const list of REMOTE_PROJECT_LISTS) {
+        (next as unknown as Record<string, unknown>)[list] = applyRemoteKeyed(
+          entry[list] as Array<{ id: string }>,
+          patch[list] as KeyedPatch<{ id: string }> | undefined,
+          byId
+        );
+      }
+      return next;
+    });
+  for (const { item, after } of projectChanges.add ?? []) {
+    const index = after === null ? -1 : projects.findIndex((candidate) => byProjectId(candidate) === after);
+    projects.splice(index + 1, 0, item);
+  }
+  if (projectChanges.order) {
+    const byKey = new Map(projects.map((item) => [byProjectId(item), item]));
+    projects = projectChanges.order.map((id) => byKey.get(id)).filter((item): item is ProjectWorkbenchDto => item !== undefined);
+  }
+  return projects;
 }

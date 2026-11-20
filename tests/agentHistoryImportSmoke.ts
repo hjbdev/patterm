@@ -1409,7 +1409,7 @@ async function runLargeWatcherStart(appDataPath: string): Promise<void> {
     assert.equal(watcher.status().sourceCount, 1, 'large watcher source is tracked immediately');
     await waitFor(() => {
       const status = watcher.status();
-      return status.sources[0]?.scanning === false && status.watchedPathCount > 1;
+      return status.sources[0]?.scanning === false && status.sources[0]?.lastScanFinishedAt !== null && status.watchedPathCount >= 1;
     });
   } finally {
     watcher.stop();

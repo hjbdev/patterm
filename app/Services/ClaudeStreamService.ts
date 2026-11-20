@@ -15,6 +15,7 @@ import { snapshotWithGoal, type IntegratedGoalAction } from './IntegratedGoal';
 import { containsReferenceToken, referenceToken } from './PromptReferences';
 import type { TranscriptImageStore } from './TranscriptImageStore';
 import { claudeMcpServers } from '../Harness/McpDelivery';
+import { parseClaudeCatalog, type HarnessModel } from '../Harness/ModelCatalog';
 import { ipcPath } from '../Platform/Ipc';
 
 const CLAUDE_RECONNECT_ATTEMPTS = 8;
@@ -293,6 +294,37 @@ export class ClaudeStreamService {
       // never paused.
       ...(commands.some((command) => command.name === 'goal') ? { goals: { canPause: false, canResume: false, canEdit: true, canBudget: false } } : {})
     };
+  }
+
+  // Reads the model catalog from an already-running Claude host without
+  // spawning a cold `claude -p` process. Returns null when no live host has a
+  // selectable model list.
+  async liveModels(): Promise<HarnessModel[] | null> {
+    const rows = this.database.connection.prepare(`
+      select processes.argv from processes join sessions on sessions.process_id = processes.id
+      where sessions.harness = 'claude' and sessions.interface_mode = 'integrated' and sessions.exited_at is null
+      order by sessions.started_at desc
+    `).all() as Array<{ argv: string }>;
+    for (const row of rows) {
+      let argv: unknown;
+      try { argv = JSON.parse(row.argv); } catch { continue; }
+      if (!Array.isArray(argv) || argv[1] !== 'claude-host' || typeof argv[2] !== 'string') continue;
+      const socketPath = argv[2];
+      const cached = this.catalogs.get(socketPath);
+      if (cached?.models.length) {
+        try { return parseClaudeCatalog({ models: cached.models }); } catch { /* try live read */ }
+      }
+      try {
+        const state = await readControls(socketPath);
+        const models = nativeModels(state);
+        if (!models.length) continue;
+        this.catalogs.set(socketPath, { models, commands: Array.isArray(state.commands) ? state.commands : [] });
+        return parseClaudeCatalog({ models });
+      } catch {
+        // Try the next live host, or fall back to CLI discovery.
+      }
+    }
+    return null;
   }
 
   goal(processId: string, action: IntegratedGoalAction, objective?: string): Promise<unknown> {

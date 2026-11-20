@@ -36,6 +36,7 @@ import type { TranscriptImageStore } from './TranscriptImageStore';
 import { GoalLog, goalCommand, snapshotWithGoal, type IntegratedGoal, type IntegratedGoalAction } from './IntegratedGoal';
 import type { RealtimeVoiceOptions } from './AssistantVoiceProfile';
 import { CODEX_MCP_PROXY_ENV, codexMcpOverrides as globalCodexMcpOverrides } from '../Harness/McpDelivery';
+import type { HarnessModel } from '../Harness/ModelCatalog';
 import { ipcPath } from '../Platform/Ipc';
 
 type JsonRecord = Record<string, unknown>;
@@ -954,6 +955,52 @@ export class CodexAppServerService {
       list.catch(() => { if (this.modelLists.get(client) === list) this.modelLists.delete(client); });
     }
     return list;
+  }
+
+  // Reads the model catalog from an already-connected Codex app-server client
+  // without spawning `codex debug models`. Returns null when no connected
+  // client is available.
+  async liveModels(): Promise<HarnessModel[] | null> {
+    for (const client of this.clients.values()) {
+      if (!client.connected) continue;
+      try {
+        const response = await this.modelList(client);
+        const rows = Array.isArray(response.data) ? response.data : [];
+        const parsed: HarnessModel[] = [];
+        for (const value of rows) {
+          const model = record(value);
+          if (model.hidden === true) continue;
+          const id = typeof model.id === 'string' && model.id.trim()
+            ? model.id.trim()
+            : typeof model.model === 'string' && model.model.trim()
+              ? model.model.trim()
+              : '';
+          if (!id) continue;
+          const label = typeof model.displayName === 'string' && model.displayName.trim() ? model.displayName.trim() : id;
+          const reasoning = Array.isArray(model.supportedReasoningEfforts)
+            ? model.supportedReasoningEfforts.map(record)
+                .map((option) => typeof option.reasoningEffort === 'string' ? option.reasoningEffort.trim() : '')
+                .filter((effort) => effort.length > 0)
+            : [];
+          const defaultReasoning = typeof model.defaultReasoningEffort === 'string' && model.defaultReasoningEffort.trim()
+            ? model.defaultReasoningEffort.trim()
+            : null;
+          const serviceTiers = Array.isArray(model.serviceTiers)
+            ? model.serviceTiers.map(record).flatMap((tier) => {
+                const tierId = typeof tier.id === 'string' ? tier.id.trim() : '';
+                if (!tierId || tierId === 'default') return [];
+                const tierLabel = typeof tier.name === 'string' && tier.name.trim() ? tier.name.trim() : tierId;
+                return [{ id: tierId, label: tierLabel }];
+              })
+            : [];
+          parsed.push({ id, label, reasoning, defaultReasoning, serviceTiers });
+        }
+        if (parsed.length) return parsed;
+      } catch {
+        // Try the next connected client, or fall back to CLI discovery.
+      }
+    }
+    return null;
   }
 
   // The model a turn runs on when none was chosen; a collaboration mode must

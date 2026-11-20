@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { DatabaseService } from './DatabaseService';
+import type { OpenCodeServerService } from './OpenCodeServerService';
 import { envValue } from '../Platform/Environment';
 import { linkOrCopy } from '../Platform/LinkedEntries';
 import { spawnResolved, stopChild, userHome } from '../Platform/ServiceProcess';
@@ -106,13 +107,19 @@ export function codexSummaryOutput(output: string): string {
   return text;
 }
 
-// Takes the JSON input document, as the other providers read it from stdin.
-export function openCodeSummaryArgs(model: string, input: string, mode: 'summary' | 'test'): string[] {
+function openCodeSummaryPayload(model: string, input: string, mode: 'summary' | 'test'): { model: { providerID: string; id: string }; prompt: string } {
   const id = model.startsWith('openai/') ? model.slice('openai/'.length) : model;
   if (!id || /[/#]/.test(id)) throw new Error('Summary requires an OpenCode OpenAI model ID, for example gpt-5.6-luna.');
+  return {
+    model: { providerID: 'openai', id },
+    prompt: `${mode === 'test' ? SUMMARY_TEST_SYSTEM_PROMPT : SUMMARY_SYSTEM_PROMPT}\n\n${input}`
+  };
+}
+
+// Takes the JSON input document, as the other providers read it from stdin.
+export function openCodeSummaryArgs(model: string, input: string, mode: 'summary' | 'test'): string[] {
   // The native stateless endpoint has no tools, session history, or project instructions.
-  return ['api', 'POST', '/api/generate', '--data', JSON.stringify({ model: { providerID: 'openai', id },
-    prompt: `${mode === 'test' ? SUMMARY_TEST_SYSTEM_PROMPT : SUMMARY_SYSTEM_PROMPT}\n\n${input}` })];
+  return ['api', 'POST', '/api/generate', '--data', JSON.stringify(openCodeSummaryPayload(model, input, mode))];
 }
 
 export function claudeSummaryArgs(model: string, mode: 'summary' | 'test' = 'summary', reasoning: string | null = null): string[] {
@@ -148,7 +155,11 @@ function setBoundedCache<V>(cache: Map<string, V>, key: string, value: V): void 
 }
 
 export class AutoSummaryRunner {
-  constructor(private readonly database: DatabaseService, private readonly env: NodeJS.ProcessEnv) {}
+  constructor(
+    private readonly database: DatabaseService,
+    private readonly env: NodeJS.ProcessEnv,
+    private readonly openCodeServer?: Pick<OpenCodeServerService, 'generate'>
+  ) {}
 
   availability(provider: AutoSummarySettings['provider']): { available: boolean; reason: string | null } {
     const names = { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' };
@@ -163,6 +174,19 @@ export class AutoSummaryRunner {
     const available = this.availability(settings.provider);
     if (!available.available) throw new Error(available.reason!);
     const executable = this.executable(settings.provider)!;
+    if (settings.provider === 'opencode' && this.openCodeServer) {
+      const payload = openCodeSummaryPayload(settings.models.opencode, input, mode);
+      const direct = await this.openCodeServer.generate(executable, payload, signal);
+      if (direct !== null) {
+        try {
+          const parsed = summaryResult.parse(JSON.parse(direct));
+          if (context.memory && !parsed.memory) throw new Error();
+          return parsed;
+        } catch {
+          throw new Error('Summariser did not return a short summary in the required format.');
+        }
+      }
+    }
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'patterm-summary-'));
     try {
       const env = summaryEnvironment(this.env);

@@ -80,7 +80,9 @@ interface LoadedDiff {
 // worktree, so they must never take index.lock.
 const GIT_READ = ['--no-optional-locks', '-c', 'core.quotepath=off'];
 const SUMMARY_TTL_MS = 2_000;
+const BRANCH_BASE_TTL_MS = 10_000;
 const MAX_LOADED_ENTRIES = 64;
+const MAX_BRANCH_BASE_ENTRIES = 64;
 const UNTRACKED_CACHE_LIMIT = 2_000;
 const UNTRACKED_LIMIT = 500;
 const UNTRACKED_READ_CONCURRENCY = 16;
@@ -104,6 +106,16 @@ export class DiffService {
   private readonly git: GitService;
   // Overlapping polls for the same worktree and scope share one computation.
   private readonly loaded = new Map<string, { promise: Promise<LoadedDiff>; expiresAt: number }>();
+  // Cached branch base resolution per (root, headCommit), invalidated on head
+  // change, ref mtime/inode changes, or TTL expiry.
+  private readonly branchBaseCache = new Map<string, {
+    headCommit: string;
+    remoteDefault: string | null;
+    refFingerprint: string;
+    base: { ref: string; commit: string };
+    expiresAt: number;
+  }>();
+  private readonly gitCommonDirCache = new Map<string, string>();
   // Untracked file line counts cached by absolute path + (size:mtimeMs).
   private readonly untrackedCache = new Map<string, { version: string; additions: number; binary: boolean }>();
 
@@ -216,15 +228,12 @@ export class DiffService {
   private async compute(worktree: WorktreeRecord, scope: DiffScope): Promise<LoadedDiff> {
     const cwd = worktree.worktree_path;
     if (!existsSync(cwd)) throw new Error(`worktree path does not exist: ${cwd}`);
-    const [{ root, headCommit, branch }, originHead] = await Promise.all([
-      this.resolveRepoHead(cwd),
-      scope === 'branch' ? this.query(cwd, ['symbolic-ref', '-q', 'refs/remotes/origin/HEAD']) : null
-    ]);
+    const { root, headCommit, branch } = await this.resolveRepoHead(cwd);
     const base = !headCommit
       ? { ref: null, commit: await this.emptyTree(root) }
       : scope === 'uncommitted'
         ? { ref: 'HEAD', commit: headCommit }
-        : await this.branchBase(root, headCommit, originHead?.trim() || null);
+        : await this.resolveBranchBase(root, headCommit);
 
     const [diff, others] = await Promise.all([
       this.read(root, ['diff', '--raw', '--numstat', '-z', '--find-renames', '--no-abbrev', '--no-ext-diff', '--no-textconv', '--no-color', base.commit, '--']),
@@ -274,6 +283,64 @@ export class DiffService {
         truncated: untrackedPaths.length > UNTRACKED_LIMIT
       }
     };
+  }
+
+  // Resolves the branch base with a bounded short-TTL cache keyed by root and
+  // head commit, invalidated immediately when head or default-branch refs move.
+  private async resolveBranchBase(root: string, head: string): Promise<{ ref: string; commit: string }> {
+    const now = this.now();
+    const commonDir = await this.resolveGitCommonDir(root);
+    const cached = this.branchBaseCache.get(root);
+    if (cached && cached.headCommit === head && cached.expiresAt > now && commonDir) {
+      const fingerprint = await refFingerprint(commonDir, cached.remoteDefault);
+      if (fingerprint === cached.refFingerprint) {
+        return cached.base;
+      }
+    }
+    const originHead = (await this.query(root, ['symbolic-ref', '-q', 'refs/remotes/origin/HEAD']))?.trim() || null;
+    const remoteDefault = originHead?.startsWith('refs/remotes/origin/') ? originHead.slice('refs/remotes/origin/'.length) : null;
+    const fingerprint = commonDir ? await refFingerprint(commonDir, remoteDefault) : null;
+    const base = await this.branchBase(root, head, originHead);
+    if (fingerprint !== null) {
+      if (this.branchBaseCache.size >= MAX_BRANCH_BASE_ENTRIES && !this.branchBaseCache.has(root)) {
+        this.branchBaseCache.delete(this.branchBaseCache.keys().next().value!);
+      }
+      this.branchBaseCache.set(root, {
+        headCommit: head,
+        remoteDefault,
+        refFingerprint: fingerprint,
+        base,
+        expiresAt: this.now() + BRANCH_BASE_TTL_MS
+      });
+    }
+    return base;
+  }
+
+  private async resolveGitCommonDir(root: string): Promise<string | null> {
+    const cached = this.gitCommonDirCache.get(root);
+    if (cached) return cached;
+    const dotGit = path.join(root, '.git');
+    const stat = await lstatIfExists(dotGit).catch(() => null);
+    if (!stat) return null;
+    let commonDir: string | null = null;
+    if (stat.isDirectory()) {
+      commonDir = dotGit;
+    } else if (stat.isFile()) {
+      const content = await fs.readFile(dotGit, 'utf8').catch(() => '');
+      const match = /^gitdir:\s*(.+)$/m.exec(content);
+      if (match?.[1]) {
+        const gitDir = path.resolve(root, match[1].trim());
+        const commonPointer = await fs.readFile(path.join(gitDir, 'commondir'), 'utf8').catch(() => null);
+        commonDir = commonPointer?.trim() ? path.resolve(gitDir, commonPointer.trim()) : gitDir;
+      }
+    }
+    if (commonDir) {
+      if (this.gitCommonDirCache.size >= MAX_BRANCH_BASE_ENTRIES && !this.gitCommonDirCache.has(root)) {
+        this.gitCommonDirCache.delete(this.gitCommonDirCache.keys().next().value!);
+      }
+      this.gitCommonDirCache.set(root, commonDir);
+    }
+    return commonDir;
   }
 
   // The default branch is origin/HEAD's branch, else main, else master. Its
@@ -517,6 +584,32 @@ function countLines(bytes: Buffer): number {
 function isMissing(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException | undefined)?.code;
   return code === 'ENOENT' || code === 'ENOTDIR';
+}
+
+async function refFingerprint(commonDir: string, remoteDefault: string | null): Promise<string> {
+  const candidates = [
+    'packed-refs',
+    'reftable/tables.list',
+    'refs/heads',
+    'refs/remotes/origin',
+    'refs/remotes/origin/HEAD',
+    'refs/heads/main',
+    'refs/remotes/origin/main',
+    'refs/heads/master',
+    'refs/remotes/origin/master'
+  ];
+  if (remoteDefault && remoteDefault !== 'main' && remoteDefault !== 'master') {
+    candidates.push(`refs/heads/${remoteDefault}`, `refs/remotes/origin/${remoteDefault}`);
+  }
+  const parts = await Promise.all(candidates.map(async (rel) => {
+    try {
+      const stat = await fs.stat(path.join(commonDir, rel), { bigint: true });
+      return `${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+    } catch {
+      return '-';
+    }
+  }));
+  return parts.join('|');
 }
 
 async function mapLimit<T, R>(items: T[], limit: number, map: (item: T) => Promise<R>): Promise<R[]> {

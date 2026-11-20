@@ -7,7 +7,12 @@ import { HistoryDatabaseService } from '../HistoryDatabaseService';
 import type { SettingsService } from '../SettingsService';
 import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, EMBEDDING_MODEL_KEY } from './EmbeddingModel';
 import { EmbeddingModelInstaller, type ModelInstallState } from './EmbeddingModelInstaller';
-import { decodeVector, type EmbeddingWorkerEvent, type EmbeddingWorkerRequest } from './EmbeddingWorkerProtocol';
+import {
+  decodeVector,
+  type EmbeddingWorkerEvent,
+  type EmbeddingWorkerRequest,
+  type SemanticPassageHit
+} from './EmbeddingWorkerProtocol';
 import { embeddingCounts, HistoryEmbeddingIndexer, type HistoryEmbeddingCounts } from './HistoryEmbeddingIndexer';
 
 export type SemanticIndexState = 'off' | 'starting' | 'loading' | 'indexing' | 'waiting' | 'idle' | 'schema_missing' | 'error';
@@ -39,6 +44,16 @@ export interface SemanticSearchServiceOptions {
   installer?: EmbeddingModelInstaller;
   threads?: number;
   workerPath?: string;
+}
+
+export interface SemanticPassageSearchInput {
+  text: string;
+  projectId: string | null;
+  provider?: string | null | undefined;
+  hiddenSessions?: readonly string[] | undefined;
+  limit: number;
+  minScore: number;
+  timeoutMs?: number | undefined;
 }
 
 const QUERY_TIMEOUT_MS = 4_000;
@@ -164,6 +179,28 @@ export class SemanticSearchService {
     return vector.length === EMBEDDING_DIMENSIONS ? vector : null;
   }
 
+  // Embeds the query and scores passages off the main thread against the
+  // worker's Int8-quantized matrix. Returns null when unavailable or timed out.
+  async searchPassages(input: SemanticPassageSearchInput): Promise<SemanticPassageHit[] | null> {
+    if (!this.active) return null;
+    const event = await this.request({
+      type: 'search',
+      id: this.nextRequestId++,
+      text: input.text,
+      projectId: input.projectId,
+      provider: input.provider ?? null,
+      hiddenSessions: input.hiddenSessions ? [...input.hiddenSessions] : [],
+      limit: input.limit,
+      minScore: input.minScore
+    }, input.timeoutMs ?? QUERY_TIMEOUT_MS);
+    if (!event || event.type !== 'search_result') return null;
+    if (event.error || !event.hits) {
+      this.options.debugLog?.write('semantic', 'search.failed', { error: event.error ?? 'empty result' });
+      return null;
+    }
+    return event.hits;
+  }
+
   async dispose(): Promise<void> {
     this.disposed = true;
     this.installer.cancel();
@@ -235,7 +272,7 @@ export class SemanticSearchService {
 
   private onWorkerEvent(event: EmbeddingWorkerEvent): void {
     if (!event || typeof event !== 'object') return;
-    if (event.type === 'query_result' || event.type === 'maintain_result') {
+    if (event.type === 'query_result' || event.type === 'search_result' || event.type === 'maintain_result') {
       const waiter = this.pending.get(event.id);
       if (waiter) {
         clearTimeout(waiter.timer);

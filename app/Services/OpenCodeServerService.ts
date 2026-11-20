@@ -2408,6 +2408,57 @@ export class OpenCodeServerService {
     return this.api(executable, os.homedir(), 'GET', '/api/provider');
   }
 
+  // Stateless text generation over an already-running OpenCode daemon.
+  // Returns null when no daemon is registered or reachable so callers can fall
+  // back to the CLI without spawning a daemon solely for summaries.
+  async generate(
+    _executable: string,
+    payload: { model: { providerID: string; id: string }; prompt: string },
+    signal: AbortSignal
+  ): Promise<string | null> {
+    if (signal.aborted) throw new Error('Summary cancelled.');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const daemon = await this.daemon().catch(() => null);
+      if (signal.aborted) throw new Error('Summary cancelled.');
+      if (!daemon) return null;
+      let response: Response;
+      let text: string;
+      try {
+        response = await fetch(`${daemon.url}/api/generate`, {
+          method: 'POST',
+          headers: { Authorization: daemon.auth, 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+        });
+        if (response.status === 401) {
+          this.forgetDaemon();
+          continue;
+        }
+        text = await response.text();
+      } catch (error) {
+        if (signal.aborted) throw new Error('Summary cancelled.');
+        this.forgetDaemon();
+        if (connectionRefused(error)) continue;
+        return null;
+      }
+      if (Buffer.byteLength(text) > MAX_RESPONSE_BYTES) {
+        throw new Error('Summary output exceeded the limit.');
+      }
+      if (!response.ok) {
+        if (response.status === 404 || response.status === 405) return null;
+        throw new Error('Summary failed. Update OpenCode and check its OpenAI login and model access.');
+      }
+      try {
+        const envelope = JSON.parse(text) as { data?: { text?: unknown } };
+        if (typeof envelope.data?.text !== 'string') throw new Error();
+        return envelope.data.text;
+      } catch {
+        throw new Error('Summary failed. Update OpenCode and check its OpenAI login and model access.');
+      }
+    }
+    return null;
+  }
+
   // The verified background service is called over HTTP exactly as
   // `opencode api` does (same route, Basic credential, and JSON body) without
   // starting a CLI process per request. The CLI remains the transport when

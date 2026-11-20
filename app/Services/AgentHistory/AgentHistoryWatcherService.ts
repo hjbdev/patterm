@@ -9,6 +9,7 @@ interface WatchedPath {
   sourceKey: string;
   path: string;
   watcher: fs.FSWatcher;
+  recursive: boolean;
 }
 
 interface WatchSourceStatus {
@@ -85,15 +86,14 @@ export class AgentHistoryWatcherService {
     this.sources.set(sourceKey, source);
     const exists = fs.existsSync(source.path);
     this.updateStatus(source, { exists, watchedPaths: [], missing: !exists, degraded: false, lastError: null });
-    const watchPaths = this.immediateWatchPaths(source);
-    for (const watchPath of watchPaths) {
-      this.installWatcher(source, watchPath);
+    for (const target of this.immediateWatchPaths(source)) {
+      this.installWatcher(source, target.path, target.preferRecursive);
     }
     this.updateStatus(source, { watchedPaths: this.watchedPathsFor(sourceKey), exists, missing: !exists });
     this.scheduleScan(source, 0);
   }
 
-  private immediateWatchPaths(source: HistorySourceCandidate): string[] {
+  private immediateWatchPaths(source: HistorySourceCandidate): Array<{ path: string; preferRecursive: boolean }> {
     const existing = nearestExistingPath(source.path);
     if (!existing) return [];
     let stat: fs.Stats;
@@ -102,9 +102,9 @@ export class AgentHistoryWatcherService {
     } catch {
       return [];
     }
-    if (stat.isFile()) return [path.dirname(existing)];
-    if (existing !== source.path) return [existing];
-    return [existing];
+    if (stat.isFile()) return [{ path: path.dirname(existing), preferRecursive: false }];
+    if (existing !== source.path) return [{ path: existing, preferRecursive: false }];
+    return [{ path: existing, preferRecursive: stat.isDirectory() }];
   }
 
   private async watchPaths(source: HistorySourceCandidate): Promise<string[]> {
@@ -118,6 +118,15 @@ export class AgentHistoryWatcherService {
     }
     if (stat.isFile()) return [path.dirname(existing)];
     if (existing !== source.path) return [existing];
+    if (stat.isDirectory()) {
+      const sourceKey = keyFor(source);
+      const rootWatcherKey = `${sourceKey}:${existing}`;
+      const current = this.watchers.get(rootWatcherKey);
+      if (current?.recursive) return [existing];
+      if (!current && this.installWatcher(source, existing, true) && this.watchers.get(rootWatcherKey)?.recursive) {
+        return [existing];
+      }
+    }
     const directories = new Set<string>([existing]);
     for (const filePath of await walkFilesAsync(existing, (candidate) => watchedFile(source.provider, candidate))) {
       directories.add(path.dirname(filePath));
@@ -125,17 +134,43 @@ export class AgentHistoryWatcherService {
     return Array.from(directories);
   }
 
-  private installWatcher(source: HistorySourceCandidate, watchPath: string): boolean {
+  private installWatcher(source: HistorySourceCandidate, watchPath: string, preferRecursive = false): boolean {
     const sourceKey = keyFor(source);
     const watcherKey = `${sourceKey}:${watchPath}`;
     if (this.watchers.has(watcherKey)) return true;
     try {
-      const watcher = fs.watch(watchPath, { persistent: false }, () => {
+      const onChange = () => {
         const current = this.sources.get(sourceKey) ?? source;
-        this.scheduleScan(current);
+        const watched = this.watchers.get(watcherKey);
+        // Recursive root watchers observe all subdirectories without re-walking;
+        // only rescan if the root itself disappeared or watching non-recursively.
+        if (!watched?.recursive || !fs.existsSync(current.path)) {
+          this.scheduleScan(current);
+        }
         this.schedule(current, true);
+      };
+      let watcher: fs.FSWatcher;
+      let recursive = false;
+      if (preferRecursive) {
+        try {
+          watcher = fs.watch(watchPath, { persistent: false, recursive: true }, onChange);
+          recursive = true;
+        } catch {
+          watcher = fs.watch(watchPath, { persistent: false }, onChange);
+        }
+      } else {
+        watcher = fs.watch(watchPath, { persistent: false }, onChange);
+      }
+      watcher.on('error', (error) => {
+        const current = this.sources.get(sourceKey) ?? source;
+        if (this.watchers.get(watcherKey)?.watcher === watcher) {
+          watcher.close();
+          this.watchers.delete(watcherKey);
+        }
+        this.updateStatus(current, { degraded: true, lastError: error instanceof Error ? error.message : String(error) });
+        this.scheduleScan(current);
       });
-      this.watchers.set(watcherKey, { sourceKey, path: watchPath, watcher });
+      this.watchers.set(watcherKey, { sourceKey, path: watchPath, watcher, recursive });
       return true;
     } catch (error) {
       // Native watching is best-effort; manual import and startup scan remain available.

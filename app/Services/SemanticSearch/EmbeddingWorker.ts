@@ -1,8 +1,17 @@
 import os from 'node:os';
+import type { SqliteConnection } from '../../Database/SqliteConnection';
 import { HistoryDatabaseService } from '../HistoryDatabaseService';
+import { blobToVector, EMBEDDING_DIMENSIONS } from './EmbeddingModel';
 import { HistoryEmbeddingIndexer, isBusy, type DocumentEmbedder, type IndexStep } from './HistoryEmbeddingIndexer';
 import { LlamaEmbedder } from './LlamaEmbedder';
-import { encodeVector, type EmbeddingWorkerEvent, type EmbeddingWorkerRequest, type EmbeddingWorkerStart } from './EmbeddingWorkerProtocol';
+import {
+  encodeVector,
+  type EmbeddingWorkerEvent,
+  type EmbeddingWorkerRequest,
+  type EmbeddingWorkerSearchRequest,
+  type EmbeddingWorkerStart,
+  type SemanticPassageHit
+} from './EmbeddingWorkerProtocol';
 
 export interface QueryEmbedder extends DocumentEmbedder {
   readonly loaded: boolean;
@@ -24,6 +33,23 @@ const STATUS_INTERVAL_MS = 1_000;
 // The model holds several hundred MB. With no backfill or query for this
 // long it is released and loaded again on the next one.
 const UNLOAD_AFTER_MS = 10 * 60_000;
+// Bounds the cached Int8-quantized search matrix (~516 bytes per passage,
+// 4x less RAM than Float32: ~129 MB at 250k passages).
+const MAX_CACHED_PASSAGES = 250_000;
+const SEARCH_CACHE_IDLE_EVICT_MS = 5 * 60_000;
+
+interface QuantizedSearchMatrix {
+  key: string;
+  indexRevision: number;
+  dataVersion: number;
+  dbRevision: string;
+  conversationIds: string[];
+  sessionIds: Array<string | null>;
+  messageIds: string[];
+  chunks: number[];
+  vectors: Int8Array;
+  scales: Float32Array;
+}
 
 function startWorker(): void {
   try {
@@ -62,6 +88,9 @@ export class EmbeddingWorkerRuntime {
   private lastUse = Date.now();
   private lastStatus = 0;
   private loadError: string | null = null;
+  private indexRevision = 0;
+  private searchCache: QuantizedSearchMatrix | null = null;
+  private searchCacheEvictTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly send: (event: EmbeddingWorkerEvent) => void,
@@ -79,6 +108,7 @@ export class EmbeddingWorkerRuntime {
       return;
     }
     if (message.type === 'query') void this.query(message.id, message.text);
+    else if (message.type === 'search') void this.search(message);
     else if (message.type === 'maintain') this.maintain(message.id, message.operation);
     else if (message.type === 'wake') this.wakeUp();
     else if (message.type === 'stop') void this.stop();
@@ -86,6 +116,7 @@ export class EmbeddingWorkerRuntime {
 
   async stop(): Promise<void> {
     this.stopping = true;
+    this.clearSearchCache();
     this.wakeUp();
     await this.loop?.catch(() => undefined);
     await this.embedder?.dispose().catch(() => undefined);
@@ -108,6 +139,46 @@ export class EmbeddingWorkerRuntime {
     }
   }
 
+  private async search(request: EmbeddingWorkerSearchRequest): Promise<void> {
+    this.lastUse = Date.now();
+    try {
+      if (!this.embedder) throw new Error('semantic search is not running');
+      const vector = await (await this.loadedEmbedder()).embedQuery(request.text);
+      if (!vector) throw new Error('the model returned no usable vector for this query');
+      if (vector.length !== EMBEDDING_DIMENSIONS) throw new Error('unexpected query embedding dimensions');
+      if (this.stopping) throw new Error('semantic search is stopping');
+      if (!this.ensureIndexer() || !this.database) throw new Error('semantic search index is not ready');
+      const matrix = this.loadSearchMatrix(this.database.connection, request.projectId, request.provider);
+      const hidden = request.hiddenSessions.length > 0 ? new Set(request.hiddenSessions) : null;
+      const hits: SemanticPassageHit[] = [];
+      const count = matrix.conversationIds.length;
+      for (let row = 0; row < count; row++) {
+        if (hidden) {
+          const sessionId = matrix.sessionIds[row];
+          if (sessionId && hidden.has(sessionId)) continue;
+        }
+        let dot = 0;
+        const offset = row * EMBEDDING_DIMENSIONS;
+        for (let index = 0; index < EMBEDDING_DIMENSIONS; index++) {
+          dot += vector[index]! * matrix.vectors[offset + index]!;
+        }
+        const score = dot * matrix.scales[row]!;
+        if (score >= request.minScore) {
+          hits.push({
+            conversationId: matrix.conversationIds[row]!,
+            messageId: matrix.messageIds[row]!,
+            chunk: matrix.chunks[row]!,
+            score
+          });
+        }
+      }
+      hits.sort((a, b) => b.score - a.score);
+      this.send({ type: 'search_result', id: request.id, hits: hits.slice(0, Math.max(0, request.limit)) });
+    } catch (error) {
+      this.send({ type: 'search_result', id: request.id, error: errorMessage(error) });
+    }
+  }
+
   private maintain(id: number, operation: 'reconcile' | 'rebuild' | 'clear'): void {
     try {
       const indexer = this.ensureIndexer();
@@ -115,6 +186,7 @@ export class EmbeddingWorkerRuntime {
       if (operation === 'rebuild') indexer.rebuild();
       else if (operation === 'clear') indexer.clear();
       else indexer.reconcile();
+      this.invalidateSearchCache();
       this.send({ type: 'maintain_result', id });
       this.lastStatus = 0;
       this.wakeUp();
@@ -153,8 +225,9 @@ export class EmbeddingWorkerRuntime {
         continue;
       }
       if (this.loadError) continue;
+      if (step === 'indexed' || step === 'removed') this.invalidateSearchCache();
       if (step === 'idle' || step === 'waiting') {
-        if (step === 'idle') indexer.collectGarbage();
+        if (step === 'idle' && indexer.collectGarbage() > 0) this.invalidateSearchCache();
         this.status(step, true);
         await this.unloadWhenIdle();
         await this.sleep(step === 'idle' ? IDLE_POLL_MS : WAITING_POLL_MS);
@@ -163,6 +236,142 @@ export class EmbeddingWorkerRuntime {
       this.lastUse = Date.now();
       this.status('indexing');
     }
+  }
+
+  private invalidateSearchCache(): void {
+    this.indexRevision += 1;
+    this.clearSearchCache();
+  }
+
+  private clearSearchCache(): void {
+    if (this.searchCacheEvictTimer) {
+      clearTimeout(this.searchCacheEvictTimer);
+      this.searchCacheEvictTimer = null;
+    }
+    this.searchCache = null;
+  }
+
+  private scheduleSearchCacheEviction(): void {
+    if (this.searchCacheEvictTimer) clearTimeout(this.searchCacheEvictTimer);
+    if (!this.searchCache) {
+      this.searchCacheEvictTimer = null;
+      return;
+    }
+    this.searchCacheEvictTimer = setTimeout(() => {
+      this.searchCacheEvictTimer = null;
+      this.searchCache = null;
+    }, SEARCH_CACHE_IDLE_EVICT_MS);
+    this.searchCacheEvictTimer.unref?.();
+  }
+
+  private loadSearchMatrix(db: SqliteConnection, projectId: string | null, provider: string | null): QuantizedSearchMatrix {
+    const key = JSON.stringify([projectId, provider]);
+    const dataVersion = (db.prepare('pragma data_version').get() as { data_version: number } | undefined)?.data_version ?? 0;
+    if (
+      this.searchCache
+      && this.searchCache.key === key
+      && this.searchCache.indexRevision === this.indexRevision
+      && this.searchCache.dataVersion === dataVersion
+    ) {
+      this.scheduleSearchCacheEviction();
+      return this.searchCache;
+    }
+    const dbRevision = JSON.stringify(
+      projectId !== null
+        ? db.prepare(`
+            select (select count(*) from history_embedding_passages) as passages,
+              (select max(id) from history_embedding_passages) as last_passage,
+              (select max(indexed_at) from history_embedding_state) as indexed_at,
+              (select count(*) from conversations where project_id = @project_id) as conversations,
+              (select max(imported_at) from conversations where project_id = @project_id) as imported_at
+          `).get({ project_id: projectId })
+        : db.prepare(`
+            select (select count(*) from history_embedding_passages) as passages,
+              (select max(id) from history_embedding_passages) as last_passage,
+              (select max(indexed_at) from history_embedding_state) as indexed_at,
+              (select count(*) from conversations) as conversations,
+              (select max(imported_at) from conversations) as imported_at
+          `).get()
+    );
+    if (
+      this.searchCache
+      && this.searchCache.key === key
+      && this.searchCache.indexRevision === this.indexRevision
+      && this.searchCache.dbRevision === dbRevision
+    ) {
+      this.searchCache.dataVersion = dataVersion;
+      this.scheduleSearchCacheEviction();
+      return this.searchCache;
+    }
+    const modelKey = this.config!.modelKey;
+    const filters = ['history_embedding_passages.model_key = @model_key'];
+    const params: Record<string, unknown> = { model_key: modelKey };
+    if (projectId !== null) {
+      filters.push('conversations.project_id = @project_id');
+      params.project_id = projectId;
+    }
+    if (provider !== null) {
+      filters.push('conversations.provider = @provider');
+      params.provider = provider;
+    }
+    const rows = db.prepare(`
+      select history_embedding_passages.conversation_id, conversations.session_id, history_embedding_passages.message_id, history_embedding_passages.chunk, history_embedding_vectors.vector
+      from history_embedding_passages
+      join history_embedding_vectors on history_embedding_vectors.model_key = history_embedding_passages.model_key
+        and history_embedding_vectors.content_hash = history_embedding_passages.content_hash
+      join conversations on conversations.id = history_embedding_passages.conversation_id
+      where ${filters.join(' and ')}
+    `).all(params) as Array<{ conversation_id: string; session_id: string | null; message_id: string; chunk: number; vector: Uint8Array }>;
+
+    const vectors = new Int8Array(rows.length * EMBEDDING_DIMENSIONS);
+    const scales = new Float32Array(rows.length);
+    const matrix: QuantizedSearchMatrix = {
+      key,
+      indexRevision: this.indexRevision,
+      dataVersion,
+      dbRevision,
+      conversationIds: [],
+      sessionIds: [],
+      messageIds: [],
+      chunks: [],
+      vectors,
+      scales
+    };
+    let used = 0;
+    for (const row of rows) {
+      const raw = blobToVector(row.vector);
+      if (raw.length !== EMBEDDING_DIMENSIONS) continue;
+      let maxAbs = 0;
+      for (let index = 0; index < EMBEDDING_DIMENSIONS; index++) {
+        const abs = Math.abs(raw[index]!);
+        if (abs > maxAbs) maxAbs = abs;
+      }
+      const offset = used * EMBEDDING_DIMENSIONS;
+      if (maxAbs > 0) {
+        const invScale = 127 / maxAbs;
+        for (let index = 0; index < EMBEDDING_DIMENSIONS; index++) {
+          const quantized = Math.round(raw[index]! * invScale);
+          vectors[offset + index] = quantized > 127 ? 127 : quantized < -127 ? -127 : quantized;
+        }
+        scales[used] = maxAbs / 127;
+      } else {
+        scales[used] = 0;
+      }
+      matrix.conversationIds.push(row.conversation_id);
+      matrix.sessionIds.push(row.session_id);
+      matrix.messageIds.push(row.message_id);
+      matrix.chunks.push(row.chunk);
+      used++;
+    }
+    matrix.vectors = vectors.subarray(0, used * EMBEDDING_DIMENSIONS);
+    matrix.scales = scales.subarray(0, used);
+    if (used <= MAX_CACHED_PASSAGES) {
+      this.searchCache = matrix;
+      this.scheduleSearchCacheEviction();
+    } else {
+      this.clearSearchCache();
+    }
+    return matrix;
   }
 
   private ensureIndexer(): HistoryEmbeddingIndexer | null {

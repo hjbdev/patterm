@@ -2,6 +2,7 @@ import type { z } from 'zod';
 import type { SqliteConnection } from '../../Database/SqliteConnection';
 import { AgentHistoryReadService, conversationHistorySearchInput, conversationSearchInput, type ConversationSessionState } from '../AgentHistory/AgentHistoryReadService';
 import { blobToVector, EMBEDDING_DIMENSIONS, EMBEDDING_MODEL_KEY } from './EmbeddingModel';
+import type { SemanticPassageHit } from './EmbeddingWorkerProtocol';
 import { messagePassages } from './HistoryPassages';
 import { HistoryEmbeddingIndexer } from './HistoryEmbeddingIndexer';
 
@@ -19,10 +20,21 @@ export const MIN_SIMILARITY = 0.65;
 const MAX_CACHED_PASSAGES = 250_000;
 const MATRIX_IDLE_EVICT_MS = 5 * 60_000;
 
-export interface QueryEmbedding { embedQuery(text: string): Promise<Float32Array | null>; readonly active: boolean; }
+export interface QueryEmbedding {
+  embedQuery(text: string): Promise<Float32Array | null>;
+  searchPassages?(input: {
+    text: string;
+    projectId: string | null;
+    provider?: string | null | undefined;
+    hiddenSessions?: readonly string[] | undefined;
+    limit: number;
+    minScore: number;
+  }): Promise<SemanticPassageHit[] | null>;
+  readonly active: boolean;
+}
 
 interface Scope { projectId: string; provider?: string | undefined; hiddenSessions?: readonly string[] | undefined; }
-interface PassageHit { conversationId: string; messageId: string; chunk: number; score: number; }
+type PassageHit = SemanticPassageHit;
 interface CachedMatrix { key: string; revision: string; conversationIds: string[]; sessionIds: Array<string | null>; messageIds: string[]; chunks: number[]; vectors: Float32Array; }
 
 // Hybrid conversation-history search: the existing FTS/BM25 ranking fused
@@ -49,15 +61,15 @@ export class HybridHistorySearchService {
   // One row per conversation for the resume picker.
   async searchConversations(raw: z.input<typeof conversationSearchInput>, sessions: readonly ConversationSessionState[] = []) {
     const input = conversationSearchInput.parse(raw);
+    const hidden = input.resumable ? sessions.filter((session) => session.role === 'child' || session.role === 'routine').map((session) => session.id) : undefined;
+    const scope: Scope = { projectId: input.project_id, provider: input.provider, hiddenSessions: hidden };
     // Keyword rows are read after the wait so they reflect the same moment
     // as the live checks below; a conversation can move while a query embeds.
-    const vector = await this.queryVector(input.query);
+    const hits = await this.semanticPassages(input.query, scope, PASSAGE_CANDIDATES);
     const keyword = this.read.searchConversations({ ...input, limit: Math.max(input.limit, CANDIDATES) }, sessions).conversations;
-    if (!vector) return { conversations: keyword.slice(0, input.limit), semantic: false };
-    const hidden = input.resumable ? sessions.filter((session) => session.role === 'child' || session.role === 'routine').map((session) => session.id) : undefined;
-    const scope = { projectId: input.project_id, provider: input.provider, hiddenSessions: hidden };
+    if (!hits) return { conversations: keyword.slice(0, input.limit), semantic: false };
     const best = new Map<string, PassageHit>();
-    for (const hit of this.nearest(vector, scope, PASSAGE_CANDIDATES)) if (!best.has(hit.conversationId)) best.set(hit.conversationId, hit);
+    for (const hit of hits) if (!best.has(hit.conversationId)) best.set(hit.conversationId, hit);
     const semanticIds = [...best.keys()].slice(0, CANDIDATES);
     const fused = fuse([keyword.map((row) => row.id), semanticIds]).slice(0, input.limit);
     const byKeyword = new Map(keyword.map((row) => [row.id, row]));
@@ -83,11 +95,12 @@ export class HybridHistorySearchService {
   // Message-level results for the search_conversation_history agent tool.
   async search(raw: z.input<typeof conversationHistorySearchInput>) {
     const input = conversationHistorySearchInput.parse(raw);
-    const vector = await this.queryVector(input.query);
+    const scope: Scope = { projectId: input.project_id, provider: input.provider };
+    const hits = await this.semanticPassages(input.query, scope, PASSAGE_CANDIDATES);
     const keyword = this.read.search({ ...input, limit: Math.max(input.limit, CANDIDATES) });
-    if (!vector) return { query: input.query, semantic: false, results: keyword.results.slice(0, input.limit).map((row) => ({ ...row, match: 'keyword' })) };
+    if (!hits) return { query: input.query, semantic: false, results: keyword.results.slice(0, input.limit).map((row) => ({ ...row, match: 'keyword' })) };
     const best = new Map<string, PassageHit>();
-    for (const hit of this.nearest(vector, { projectId: input.project_id, provider: input.provider }, PASSAGE_CANDIDATES)) if (!best.has(hit.messageId)) best.set(hit.messageId, hit);
+    for (const hit of hits) if (!best.has(hit.messageId)) best.set(hit.messageId, hit);
     const keyOf = (row: { kind: string; conversationId: string; messageId: string | null }) => row.messageId ?? `conversation:${row.conversationId}`;
     const fused = fuse([keyword.results.map(keyOf), [...best.keys()].slice(0, CANDIDATES)]).slice(0, input.limit);
     const byKeyword = new Map(keyword.results.map((row) => [keyOf(row), row]));
@@ -111,9 +124,21 @@ export class HybridHistorySearchService {
     };
   }
 
-  private async queryVector(query: string): Promise<Float32Array | null> {
+  private async semanticPassages(query: string, scope: Scope, limit: number): Promise<PassageHit[] | null> {
     if (!this.semantic?.active || !this.indexAvailable()) return null;
-    return await this.semantic.embedQuery(query);
+    if (this.semantic.searchPassages) {
+      return await this.semantic.searchPassages({
+        text: query,
+        projectId: scope.projectId,
+        provider: scope.provider ?? null,
+        hiddenSessions: scope.hiddenSessions,
+        limit,
+        minScore: MIN_SIMILARITY
+      });
+    }
+    const vector = await this.semantic.embedQuery(query);
+    if (!vector) return null;
+    return this.nearest(vector, scope, limit);
   }
 
   private indexAvailable(): boolean {
