@@ -835,6 +835,62 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       assert.equal(coalescedTracker.tasks()[0]?.status, 'running');
       assert.equal(coalescedRows.has('sub:edge-coalesced-child:4:text'), true);
 
+      // Crossed optimistic links (same role, no prompt on first ACP frame) repair
+      // cleanly when authoritative conversationIds arrive on both tool rows.
+      const crossedRows = new Map<string, any>();
+      const crossedTracker = new AntigravitySubagentTracker({
+        sessionId: 'edge-crossed',
+        hostEnv: trackerEnv,
+        pollMs: 25,
+        onMessage: (row) => crossedRows.set(row.id, row),
+        onSubagentDetached: (id) => {
+          for (const key of [...crossedRows.keys()]) {
+            if (key.startsWith(`sub:${id}:`)) crossedRows.delete(key);
+          }
+        },
+        onTasksChanged: () => {}
+      });
+      edgeTrackers.push(crossedTracker);
+      appendLog('edge-cr-alpha', modelRow(0, { content: 'Alpha reply' }));
+      appendLog('edge-cr-beta', modelRow(0, { content: 'Beta reply' }));
+      appendLog(
+        'edge-crossed',
+        modelRow(0, { tool_calls: [
+          { name: 'invoke_subagent', args: { Role: '"Reviewer"', Prompt: '"Review alpha"' } },
+          { name: 'invoke_subagent', args: { Role: '"Reviewer"', Prompt: '"Review beta"' } }
+        ] }),
+        invokeResult(1, 'edge-cr-alpha'),
+        invokeResult(2, 'edge-cr-beta')
+      );
+      crossedTracker.syncNow();
+      crossedTracker.observeToolCall('tool:cr-beta', 'invoke_subagent', { Role: 'Reviewer' }, '', null);
+      crossedTracker.observeToolCall('tool:cr-alpha', 'invoke_subagent', { Role: 'Reviewer' }, '', null);
+      crossedTracker.observeToolCall('tool:cr-beta', 'invoke_subagent', { Role: 'Reviewer', Prompt: 'Review beta' }, '', { conversationId: 'edge-cr-beta' });
+      crossedTracker.observeToolCall('tool:cr-alpha', 'invoke_subagent', { Role: 'Reviewer', Prompt: 'Review alpha' }, '', { conversationId: 'edge-cr-alpha' });
+      assert.equal([...crossedRows.values()].find((row) => row.text === 'Alpha reply')?.parentId, 'tool:cr-alpha');
+      assert.equal([...crossedRows.values()].find((row) => row.text === 'Beta reply')?.parentId, 'tool:cr-beta');
+
+      // Live child that sends a native send_message and finishes with a tool-free
+      // DONE response settles to completed once quiet without needing a second delivery.
+      const settledRows = new Map<string, any>();
+      const settledTracker = new AntigravitySubagentTracker({ sessionId: 'edge-settled', hostEnv: trackerEnv, pollMs: 25, onMessage: (row) => settledRows.set(row.id, row), onTasksChanged: () => {} });
+      edgeTrackers.push(settledTracker);
+      const settledChildFile = antigravityTranscriptPath('edge-settled-child', trackerEnv)!;
+      appendLog(
+        'edge-settled-child',
+        modelRow(0, { tool_calls: [{ name: 'send_message', args: {} }] }),
+        { step_index: 1, type: 'GENERIC', source: 'MODEL', status: 'DONE', content: 'Message sent' }
+      );
+      settledTracker.observeToolCall('tool:settled', 'invoke_subagent', {}, '', { conversationId: 'edge-settled-child' });
+      appendLog('edge-settled', { step_index: 0, type: 'SYSTEM_MESSAGE', source: 'SYSTEM', content: '<SYSTEM_MESSAGE>\n[Message] sender=edge-settled-child content=Done\n</SYSTEM_MESSAGE>' });
+      settledTracker.syncNow();
+      appendLog('edge-settled-child', modelRow(2, { status: 'DONE', content: 'Review finished.' }));
+      const past = new Date(Date.now() - 6_000);
+      fs.utimesSync(settledChildFile, past, past);
+      settledTracker.syncNow();
+      assert.equal(settledRows.has('sub:edge-settled-child:2:text'), true);
+      assert.equal(settledTracker.tasks()[0]?.status, 'completed');
+
       // Drawer pagination keeps a tool_call and its tool_result in the same page.
       appendLog(
         'edge-drawer-child',

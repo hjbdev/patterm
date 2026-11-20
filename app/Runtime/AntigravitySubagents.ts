@@ -47,6 +47,7 @@ interface TrackedSubagent {
   sendMessageCount: number;
   consumedSendMessages: number;
   lastStepWasFinal: boolean;
+  authoritativeLink: boolean;
   hasRows: boolean;
 }
 
@@ -55,6 +56,7 @@ export interface AntigravitySubagentTrackerOptions {
   hostEnv: NodeJS.ProcessEnv;
   pollMs?: number;
   onMessage(message: IntegratedConversationMessage): void;
+  onSubagentDetached?(subagentId: string): void;
   onTasksChanged(): void;
 }
 
@@ -90,22 +92,25 @@ export class AntigravitySubagentTracker {
       if (existingId) {
         if (directId && directId !== this.options.sessionId && directId !== existingId) {
           const previous = this.subagents.get(existingId);
-          if (previous && previous.parentToolRowId === toolRowId) previous.parentToolRowId = null;
-          this.toolRowToSubagent.delete(toolRowId);
-          this.registerSubagent(directId, toolRowId, label, kind, role, prompt);
+          if (previous) this.detachParentToolRow(previous);
+          else this.toolRowToSubagent.delete(toolRowId);
+          this.registerSubagent(directId, toolRowId, label, kind, role, prompt, true);
           this.syncNow();
           return;
         }
         const subagent = this.subagents.get(existingId);
         if (subagent) {
+          if (directId === existingId) subagent.authoritativeLink = true;
           if (label && subagent.label === 'Subagent') subagent.label = label;
           if (kind && subagent.kind === 'subagent') subagent.kind = kind;
+          if (role && !subagent.role) subagent.role = role;
+          if (prompt && !subagent.prompt) subagent.prompt = prompt;
           this.notifyTasksIfChanged();
         }
         return;
       }
       if (directId && directId !== this.options.sessionId) {
-        this.registerSubagent(directId, toolRowId, label, kind, role, prompt);
+        this.registerSubagent(directId, toolRowId, label, kind, role, prompt, true);
         this.syncNow();
         return;
       }
@@ -219,9 +224,29 @@ export class AntigravitySubagentTracker {
     if (index >= 0) this.unlinkedInvokes.splice(index, 1);
   }
 
-  private attachParentToolRow(subagent: TrackedSubagent, toolRowId: string, label: string, kind: string): void {
+  private detachParentToolRow(subagent: TrackedSubagent): void {
+    const oldRowId = subagent.parentToolRowId;
+    if (oldRowId && this.toolRowToSubagent.get(oldRowId) === subagent.id) {
+      this.toolRowToSubagent.delete(oldRowId);
+    }
+    subagent.parentToolRowId = null;
+    subagent.authoritativeLink = false;
+    subagent.hasRows = false;
+    this.options.onSubagentDetached?.(subagent.id);
+  }
+
+  private attachParentToolRow(subagent: TrackedSubagent, toolRowId: string, label: string, kind: string, authoritative = false): void {
     this.dropUnlinkedInvoke(toolRowId);
+    if (subagent.parentToolRowId && subagent.parentToolRowId !== toolRowId) {
+      this.detachParentToolRow(subagent);
+    }
+    const existingOwnerId = this.toolRowToSubagent.get(toolRowId);
+    if (existingOwnerId && existingOwnerId !== subagent.id) {
+      const existingOwner = this.subagents.get(existingOwnerId);
+      if (existingOwner) this.detachParentToolRow(existingOwner);
+    }
     subagent.parentToolRowId = toolRowId;
+    subagent.authoritativeLink = authoritative;
     this.toolRowToSubagent.set(toolRowId, subagent.id);
     if (label && subagent.label === 'Subagent') subagent.label = label;
     if (kind && subagent.kind === 'subagent') subagent.kind = kind;
@@ -257,18 +282,27 @@ export class AntigravitySubagentTracker {
     return candidates[0] ?? null;
   }
 
-  private registerSubagent(id: string, toolRowId: string | null, label: string, kind: string, role = '', prompt = ''): TrackedSubagent {
+  private registerSubagent(id: string, toolRowId: string | null, label: string, kind: string, role = '', prompt = '', authoritative = false): TrackedSubagent {
     if (toolRowId) this.dropUnlinkedInvoke(toolRowId);
     const existing = this.subagents.get(id);
     if (existing) {
-      if (role && !existing.role) existing.role = role;
-      if (prompt && !existing.prompt) existing.prompt = prompt;
-      if (toolRowId && !existing.parentToolRowId) this.attachParentToolRow(existing, toolRowId, label, kind);
-      else {
+      if (role && (!existing.role || authoritative)) existing.role = role;
+      if (prompt && (!existing.prompt || authoritative)) existing.prompt = prompt;
+      if (toolRowId && (!existing.parentToolRowId || (authoritative && existing.parentToolRowId !== toolRowId))) {
+        this.attachParentToolRow(existing, toolRowId, label, kind, authoritative);
+      } else {
+        if (authoritative && toolRowId && existing.parentToolRowId === toolRowId) existing.authoritativeLink = true;
         if (label && existing.label === 'Subagent') existing.label = label;
         if (kind && existing.kind === 'subagent') existing.kind = kind;
       }
       return existing;
+    }
+    if (toolRowId) {
+      const existingOwnerId = this.toolRowToSubagent.get(toolRowId);
+      if (existingOwnerId && existingOwnerId !== id) {
+        const existingOwner = this.subagents.get(existingOwnerId);
+        if (existingOwner) this.detachParentToolRow(existingOwner);
+      }
     }
     const transcriptPath = antigravityTranscriptPath(id, this.options.hostEnv);
     const subagent: TrackedSubagent = {
@@ -285,6 +319,7 @@ export class AntigravitySubagentTracker {
       sendMessageCount: 0,
       consumedSendMessages: 0,
       lastStepWasFinal: false,
+      authoritativeLink: Boolean(toolRowId && authoritative),
       hasRows: false
     };
     this.subagents.set(id, subagent);
@@ -519,10 +554,11 @@ export class AntigravitySubagentTracker {
       if (!subagent.tail.hasMore) break;
     }
 
-    // On a resumed session, a subagent whose transcript already ended cleanly
-    // and has been quiet is finished even if the parent's completion message
-    // wasn't in the newly scanned window.
-    if (initialLoad && subagent.status === 'running' && subagent.lastStepWasFinal
+    // A subagent whose transcript ended with a tool-free DONE response and has
+    // gone quiet is settled (both live and resumed). Native Antigravity sends
+    // all parent [Message] rows via send_message tool calls rather than a
+    // separate harness completion message.
+    if (subagent.status === 'running' && subagent.lastStepWasFinal
       && subagent.pendingTools.length === 0 && subagent.tail.mtimeMs > 0
       && Date.now() - subagent.tail.mtimeMs > SETTLED_IDLE_MS) {
       subagent.status = 'completed';

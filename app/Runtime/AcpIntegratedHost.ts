@@ -370,6 +370,14 @@ function upsertSubagentMessage(message: IntegratedConversationMessage): void {
   }
   publish({ kind: 'replace', message });
 }
+function removeSubagentMessages(subagentId: string): void {
+  const prefix = `sub:${subagentId}:`;
+  const kept = subagentMessages.filter((row) => !row.id.startsWith(prefix));
+  if (kept.length !== subagentMessages.length) {
+    subagentMessages.splice(0, subagentMessages.length, ...kept);
+    publish({ kind: 'pending' });
+  }
+}
 function childrenFor(page: IntegratedConversationMessage[]): IntegratedConversationMessage[] {
   if (!subagentMessages.length || !page.length) return [];
   const ids = new Set(page.map((row) => row.id));
@@ -714,6 +722,7 @@ async function start(): Promise<void> {
     hostEnv,
     ...(Number.isFinite(pollMs) && pollMs > 0 ? { pollMs } : {}),
     onMessage: upsertSubagentMessage,
+    onSubagentDetached: removeSubagentMessages,
     onTasksChanged: () => publish({ kind: 'pending' })
   });
   for (const row of messages) {
