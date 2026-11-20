@@ -42,6 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Antigravity's "Allow MCP tools" again approves supplied MCP tools that agy
+  calls after a prompt ends, such as while it watches CI in the background.
+  Other background tool requests, tools Patterm has already marked as failed,
+  and requests made while stopping still ask.
 - Routine completion digests can stay quiet in The Guy’s native Claude Code
   conversation. The digest remains visible, as do alerts and direct replies.
 

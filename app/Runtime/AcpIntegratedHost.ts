@@ -72,7 +72,8 @@ let controlsRevision = 0;
 let active = false;
 let backgroundQuiet: NodeJS.Timeout | null = null;
 const runningTools = new Set<string>();
-const backgroundToolIds = new Set<string>();
+// Tools Patterm has already reported as failed: never auto-approve them later.
+const abandonedToolIds = new Set<string>();
 let cancelDeadline: NodeJS.Timeout | null = null;
 let cancelWatchingTools = false;
 let nativeClose = false;
@@ -224,7 +225,7 @@ function finishTools(reason: string, pendingOnly = false): void {
     if (!tool || (pendingOnly ? status !== 'pending' || runningTools.has(message.id)
       : status !== 'pending' && status !== 'in_progress')) continue;
     runningTools.delete(message.id);
-    addBounded(backgroundToolIds, message.id);
+    addBounded(abandonedToolIds, message.id);
     replace({ ...message, completedAt: new Date().toISOString(), tool: { ...tool, state: { ...(tool.state as Row), status: 'failed', error: reason } } });
   }
 }
@@ -274,8 +275,10 @@ function saveSettings(): void {
 }
 
 function allowsMcp(tool: Row): boolean {
-  if (!active || cancelling || mcpPolicy !== 'allow' || options.find((option) => option.id === 'mode')?.currentValue !== 'auto') return false;
-  if (typeof tool.toolCallId !== 'string' || backgroundToolIds.has(`tool:${tool.toolCallId}`)) return false;
+  // The policy covers the whole session, including work agy does after a
+  // prompt ends, so it never depends on whether a foreground turn is active.
+  if (cancelling || mcpPolicy !== 'allow' || options.find((option) => option.id === 'mode')?.currentValue !== 'auto') return false;
+  if (typeof tool.toolCallId !== 'string' || abandonedToolIds.has(`tool:${tool.toolCallId}`)) return false;
   const previous = messages.find((message) => message.id === `tool:${tool.toolCallId}`)?.tool;
   if (!previous) return false;
   // Only native tool identifiers count, never a title, reason or argument
@@ -475,7 +478,6 @@ function receive(frame: Row): void {
     if (frame.params?.sessionId !== sessionId || !loaded || cancelling || failed || stopping) { write({ id: frame.id, result: { outcome: { outcome: 'cancelled' } } }); return; }
     const params = frame.params as Row;
     const tool = params.toolCall ?? {};
-    if (!active && typeof tool.toolCallId === 'string') addBounded(backgroundToolIds, `tool:${tool.toolCallId}`);
     const approval = (params.options ?? []).find((option: Row) => option.kind === 'allow_once');
     if (approval && allowsMcp(tool)) {
       write({ id: frame.id, result: { outcome: { outcome: 'selected', optionId: approval.optionId } } });
@@ -525,7 +527,6 @@ function receive(frame: Row): void {
       const toolState = { ...(previous?.tool?.state as Row | undefined), status: update.status ?? (previous?.tool?.state as Row | undefined)?.status ?? 'pending', ...(update.rawOutput !== undefined ? { output: toolOutput(update.rawOutput) } : {}) };
       const terminal = toolState.status === 'completed' || toolState.status === 'failed';
       if (loaded && !failed && !stopping) {
-        if (!active) addBounded(backgroundToolIds, id);
         if (toolState.status === 'in_progress') runningTools.add(id);
         else if (terminal && runningTools.delete(id) && !runningTools.size && cancelWatchingTools) finishCancellation();
         backgroundActivity();
@@ -689,7 +690,6 @@ async function handle(method: string, params: Row): Promise<unknown> {
     void turn.then((result) => {
       if (failed || stopping) return;
       admit();
-      for (const id of runningTools) addBounded(backgroundToolIds, id);
       if (result.stopReason === 'cancelled') finishTools('Response stopped');
       else finishTools('Antigravity ended the turn before this tool started', true);
       if (result.stopReason !== 'cancelled' && cancelling && runningTools.size) {
