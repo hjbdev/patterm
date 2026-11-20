@@ -742,7 +742,8 @@ function finishQuietTurn(result: JsonRecord): void {
   const turn = quietTurn;
   if (!turn) return;
   if (turn.messageId && turn.finalText === QUIET_REPLY && result.result === QUIET_REPLY
-    && result.user_message_uuid === turn.promptId && result.subtype === 'success' && result.is_error === false && !interrupted
+    && result.user_message_uuid === turn.promptId && result.subtype === 'success'
+    && result.stop_reason === 'end_turn' && result.is_error === false && !interrupted
     && (!turn.streamedText || turn.streamedText === QUIET_REPLY)
     && config.quietReplyDirectory && recordQuietReply(config.quietReplyDirectory, config.sessionId, turn.messageId)) {
     quietTurn = null;

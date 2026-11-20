@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import type { SqliteConnection } from '../../Database/SqliteConnection';
-import { isQuietReply, QUIET_REPLY } from '../ClaudeQuietReplies';
+import { HistoryMessageVisibility } from './HistoryMessageVisibility';
 import { HISTORY_IMPORT_STALE_MS } from './AgentHistoryTypes';
 import type { AgentHistoryDb } from './AgentHistoryDb';
 import { proseLabel, proseText, type ProseMessage } from './SummaryProseIndex';
@@ -68,25 +67,14 @@ function resumeParams(sessions: readonly ConversationSessionState[]) {
 }
 
 export class AgentHistoryReadService {
-  private readonly quietConnections = new WeakSet<SqliteConnection>();
+  private readonly visibility: HistoryMessageVisibility;
 
-  constructor(private readonly database: AgentHistoryDb | null, private readonly quietReplies?: string) {}
+  constructor(private readonly database: AgentHistoryDb | null, quietReplies?: string) {
+    this.visibility = new HistoryMessageVisibility(quietReplies);
+  }
 
-  // A history import can read the native text before the host gets the final
-  // result. Re-check at read time so that race never restores a hidden reply.
-  private visibleMessages(table = 'conversation_messages'): string {
-    if (!this.database || !this.quietReplies) return '1';
-    const connection = this.database.connection;
-    if (!this.quietConnections.has(connection)) {
-      connection.registerFunction('patterm_quiet_reply', (sessionId, messageId) =>
-        Number(typeof sessionId === 'string' && typeof messageId === 'string' && isQuietReply(this.quietReplies, sessionId, messageId)));
-      this.quietConnections.add(connection);
-    }
-    return `(case when ${table}.role = 'assistant' and ${table}.kind = 'message' and ${table}.text = '${QUIET_REPLY}'
-      and json_extract(${table}.metadata, '$.source') = 'claude-jsonl' then not patterm_quiet_reply(
-        (select provider_conversation_id from conversations where id = ${table}.conversation_id),
-        json_extract(${table}.metadata, '$.nativeMessageId')
-      ) else 1 end)`;
+  private visibleMessages(): string {
+    return this.visibility.predicate(this.database!.connection);
   }
 
   // The imported conversation for a Patterm session, matched by the session
@@ -143,8 +131,7 @@ export class AgentHistoryReadService {
         join conversations on conversations.id = conversation_history_fts.conversation_id
         where conversation_history_fts match @query and conversations.project_id = @project_id ${provider} ${notHidden}
           and exists (select 1 from conversation_messages where conversation_id = conversations.id)
-          and not exists (select 1 from conversation_messages where id = conversation_history_fts.owner_id
-            and conversation_history_fts.kind = 'conversation_message' and not ${this.visibleMessages()})
+          and ${this.visibility.searchPredicate(this.database.connection)}
       )
       select conversation_id, min(score) as score, kind, owner_id from hits
       group by conversation_id
@@ -154,7 +141,7 @@ export class AgentHistoryReadService {
     if (!hits.length) return { conversations: [] };
     const rows = this.database.connection.prepare(`
       select conversations.*,
-        (select count(*) from conversation_messages where conversation_id = conversations.id) as message_count
+        (select count(*) from conversation_messages where conversation_id = conversations.id and ${this.visibleMessages()}) as message_count
       from conversations where id in (${hits.map(() => '?').join(', ')})
     `).all(...hits.map((hit) => hit.conversation_id)) as ConversationRow[];
     const byId = new Map(rows.map((row) => [row.id, row]));
@@ -181,7 +168,7 @@ export class AgentHistoryReadService {
     if (!ids.length || !this.database || !databaseAvailable(this.database)) return [];
     const rows = this.database.connection.prepare(`
       select conversations.*,
-        (select count(*) from conversation_messages where conversation_id = conversations.id) as message_count
+        (select count(*) from conversation_messages where conversation_id = conversations.id and ${this.visibleMessages()}) as message_count
       from conversations where id in (${ids.map(() => '?').join(', ')})
     `).all(...ids) as ConversationRow[];
     return rows.map(mapConversation);
@@ -199,7 +186,7 @@ export class AgentHistoryReadService {
     if (!this.database) return null;
     if (!databaseAvailable(this.database)) return null;
     const conversation = this.database.connection
-      .prepare(`select *, (select count(*) from conversation_messages where conversation_id = conversations.id) as message_count from conversations where id = ?`)
+      .prepare(`select *, (select count(*) from conversation_messages where conversation_id = conversations.id and ${this.visibleMessages()}) as message_count from conversations where id = ?`)
       .get(conversationId) as ConversationRow | undefined;
     return conversation ? mapConversation(conversation) : null;
   }
@@ -234,7 +221,7 @@ export class AgentHistoryReadService {
     const rows = this.database.connection.prepare(`
       ${input.resumable ? `with ${SESSION_CLOSED_CTE}` : ''}
       select conversations.*,
-        (select count(*) from conversation_messages where conversation_id = conversations.id) as message_count
+        (select count(*) from conversation_messages where conversation_id = conversations.id and ${this.visibleMessages()}) as message_count
         ${input.resumable ? ', session_closed.exited_at as session_closed_at' : ''}
       from conversations
       ${join}
@@ -322,7 +309,8 @@ export class AgentHistoryReadService {
     if (!databaseAvailable(this.database)) return { query: input.query, results: [] };
     const query = buildFtsQuery(input.query);
     if (!query) return { query: input.query, results: [] };
-    const filters = ['conversation_history_fts match @query', 'conversations.project_id = @project_id'];
+    const filters = ['conversation_history_fts match @query', 'conversations.project_id = @project_id',
+      this.visibility.searchPredicate(this.database.connection)];
     const params: Record<string, unknown> = { query, project_id: input.project_id, limit: input.limit };
     if (input.provider) {
       filters.push('conversations.provider = @provider');

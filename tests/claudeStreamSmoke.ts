@@ -124,7 +124,8 @@ process.stdin.on('data', (chunk) => {
           stream({type:'content_block_stop',index:0});
           frame({type:'assistant',user_message_uuid:uuid,message:{id,content:[{type:'text',text:reply}]}});
           stream({type:'message_stop'});
-          end(text.startsWith('quiet test: uncertain') ? null : uuid, {result:reply});
+          const stop_reason = text.startsWith('quiet test: paused') ? 'pause_turn' : 'end_turn';
+          end(text.startsWith('quiet test: uncertain') ? null : uuid, {result:reply, stop_reason});
           state('idle');
         };
         if (text.startsWith('quiet test: mixed')) globalThis.finishQuiet = finish;
@@ -1097,13 +1098,16 @@ process.stdin.on('data', (chunk) => {
     await quiet.until(6);
     await quiet.digest('quiet test: uncertain');
     await quiet.until(8);
-    await quiet.digest('quiet test: mixed');
-    await quiet.until(9);
-    assert.equal((await quiet.snapshot()).messages.data.filter((message) => message.text === 'NO_REPLY').length, 2);
-    await quiet.prompt('overlap now');
+    await quiet.digest('quiet test: paused');
     await quiet.until(10);
+    assert.equal((await quiet.snapshot()).messages.data.at(-1)?.text, 'NO_REPLY', 'a successful but paused turn is visible');
+    await quiet.digest('quiet test: mixed');
+    await quiet.until(11);
+    assert.equal((await quiet.snapshot()).messages.data.filter((message) => message.text === 'NO_REPLY').length, 3);
+    await quiet.prompt('overlap now');
+    await quiet.until(12);
     assert.deepEqual((await quiet.snapshot()).messages.data.filter((message) => message.kind === 'text' && message.text.startsWith('NO_REPLY'))
-      .map((message) => message.text), ['NO_REPLY', 'NO_REPLY is not the whole answer', 'NO_REPLY', 'NO_REPLY']);
+      .map((message) => message.text), ['NO_REPLY', 'NO_REPLY is not the whole answer', 'NO_REPLY', 'NO_REPLY', 'NO_REPLY']);
     await quiet.close();
 
     const other = await launchActivity('not_quiet', false);

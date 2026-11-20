@@ -74,8 +74,16 @@ function verifyConversationSearch(): void {
     assert.equal(archive.count, 1);
     assert.deepEqual(archive.messages.map((message) => message.text), ['An unrelated note']);
     const imported = read.list({ project_id: 'search_project' }).conversations.find((conversation) => conversation.providerConversationId === 'search_plain')!;
+    assert.equal(imported.messageCount, 1, 'pagination counts only visible rows');
+    assert.deepEqual(read.get({ conversation_id: imported.id, limit: 1, offset: Math.max(0, imported.messageCount - 1) })
+      .messages.map((message) => message.text), ['An unrelated note']);
     assert.deepEqual(read.tail(imported.id, 2).messages.map((message) => message.text), ['An unrelated note']);
-    assert.deepEqual(read.searchConversations({ query: 'NO_REPLY', project_id: 'search_project' }).conversations.map((conversation) => conversation.providerConversationId), ['search_needle']);
+    const markerQuery = { query: 'NO_REPLY', project_id: 'search_project', limit: 20 };
+    const [directHit] = read.searchConversations(markerQuery).conversations;
+    assert.equal(directHit?.providerConversationId, 'search_needle');
+    assert.deepEqual(read.search(markerQuery).results.map((result) => result.messageId), [directHit.match.messageId]);
+    assert.deepEqual(new SearchService(appDatabase, historyDatabase, quietReplies).search({ ...markerQuery, kinds: ['conversation_message'] })
+      .results.map((result) => result.owner_id), [directHit.match.messageId]);
 
     const needle = read.searchConversations({ query: 'sapphire-history-need', project_id: 'search_project' }).conversations;
     assert.deepEqual(needle.map((conversation) => conversation.providerConversationId), ['search_needle'], 'two matching messages give one row, and the last term matches as a prefix');

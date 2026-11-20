@@ -357,6 +357,7 @@ async function createApplicationResources(
   void figureVideos.prune();
   const openCodeServer = new OpenCodeServerService(database, resolvedEnv, { persistent, images: transcriptImages });
   const harnessRuntimeDir = path.join(options.appDataPath, 'harness');
+  const quietReplies = quietReplyDirectory(harnessRuntimeDir);
   // Installed services run Integrated hosts in their own systemd units so a
   // service restart reconnects to them instead of killing them.
   const hostLauncher = persistent ? systemdHostLauncher(options.appDataPath, resolvedEnv) : detachedHostLauncher;
@@ -377,7 +378,7 @@ async function createApplicationResources(
   const historyDatabase = new HistoryDatabaseService(options.appDataPath, { mode: 'read', busyTimeoutMs: 250 });
   defer(() => historyDatabase.dispose());
   historyDatabase.initialize({ migrate: false });
-  const searchService = new SearchService(database, historyDatabase);
+  const searchService = new SearchService(database, historyDatabase, quietReplies);
   const searchIndexStartedAt = Date.now();
   const searchIndexRebuilt = searchService.ensureIndex();
   debugLog.write('startup', 'search-index.ready', { elapsed_ms: Date.now() - searchIndexStartedAt, rebuilt: searchIndexRebuilt });
@@ -488,7 +489,6 @@ async function createApplicationResources(
   const worktreeService = new WorktreeService({ database, timeline, workbench, git });
   const diffService = new DiffService({ worktrees: worktreeService, git });
   const summaryService = new SummaryService(database, timeline, searchService);
-  const quietReplies = quietReplyDirectory(harnessRuntimeDir);
   const historyDiscovery = new ProviderHistoryDiscoveryService(undefined, quietReplies);
   const historySourceService = new AgentHistorySourceService(database, historyDiscovery);
   const historyImportService = new AgentHistoryImportService(database, historyDiscovery, timeline, undefined, database, historySourceService);
