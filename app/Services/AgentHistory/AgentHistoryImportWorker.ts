@@ -8,6 +8,8 @@ import { HistoryDatabaseService } from '../HistoryDatabaseService';
 import { HistorySearchIndexService } from './HistorySearchIndexService';
 import { ConversationTitleSync } from './ConversationTitleSync';
 import os from 'node:os';
+import path from 'node:path';
+import { quietReplyDirectory } from '../ClaudeQuietReplies';
 import { SecretRedactor } from './SecretRedactor';
 
 interface WorkerInput {
@@ -202,7 +204,7 @@ async function runQueuedHistoryImport(payload: WorkerInput, reportProgress?: Pro
     copyLegacyHistoryIfNeeded(appDatabase, historyDatabase);
     if (payload.action === 'migrate') return { migrated: true };
     const search = new HistorySearchIndexService(historyDatabase);
-    const discovery = new ProviderHistoryDiscoveryService();
+    const discovery = new ProviderHistoryDiscoveryService(undefined, quietReplyDirectory(path.join(payload.appDataPath, 'harness')));
     const imports = new AgentHistoryImportService(historyDatabase, discovery, null, search, appDatabase);
     if (payload.action === 'reset_imports') {
       const deleted = new AgentHistoryDeleteService(historyDatabase, search).resetImportedHistory();

@@ -21,6 +21,7 @@ export interface SqliteConnection {
   close(): void;
   exec(statement: string): void;
   prepare(statement: string): SqliteStatement;
+  registerFunction(name: string, fn: (...values: unknown[]) => unknown): void;
   transaction<Args extends unknown[], Result>(callback: (...args: Args) => Result): (...args: Args) => Result;
 }
 
@@ -28,7 +29,7 @@ interface NativeSqliteConnection {
   close(): void;
   exec(statement: string): void;
   prepare(statement: string): SqliteStatement;
-  function(name: string, options: { deterministic?: boolean }, fn: (value: unknown) => unknown): void;
+  function(name: string, options: { deterministic?: boolean }, fn: (...values: unknown[]) => unknown): void;
 }
 
 export function openSqliteConnection(path: string, options: { readOnly?: boolean } = {}): SqliteConnection {
@@ -73,6 +74,10 @@ class PattermSqliteConnection implements SqliteConnection {
     }
     this.statementCache.set(statement, prepared);
     return prepared;
+  }
+
+  registerFunction(name: string, fn: (...values: unknown[]) => unknown): void {
+    this.db.function(name, {}, fn);
   }
 
   transaction<Args extends unknown[], Result>(callback: (...args: Args) => Result): (...args: Args) => Result {

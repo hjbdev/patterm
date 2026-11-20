@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { DatabaseService } from './DatabaseService';
 import type { AgentHistoryDb } from './AgentHistory/AgentHistoryDb';
+import { HistoryMessageVisibility } from './AgentHistory/HistoryMessageVisibility';
 
 const SEARCH_INDEX_CHUNK_SIZE = 500;
 const APP_SEARCH_INDEX_VERSION_KEY = 'search.app_artifacts_fts.version';
@@ -58,8 +59,11 @@ interface ArtifactRow {
 
 export class SearchService {
   private ftsRowsLookupAvailable: boolean | null = null;
+  private readonly visibility: HistoryMessageVisibility;
 
-  constructor(private readonly database: DatabaseService, private readonly historyDatabase: AgentHistoryDb | null = null) {}
+  constructor(private readonly database: DatabaseService, private readonly historyDatabase: AgentHistoryDb | null = null, quietReplies?: string) {
+    this.visibility = new HistoryMessageVisibility(quietReplies);
+  }
 
   private hasFtsRowsLookup(): boolean {
     if (this.ftsRowsLookupAvailable === null) {
@@ -500,6 +504,7 @@ export class SearchService {
       });
     }
     try {
+      filters.push(this.visibility.searchPredicate(this.historyDatabase.connection));
       return this.historyDatabase.connection.prepare(`
         select
           kind,

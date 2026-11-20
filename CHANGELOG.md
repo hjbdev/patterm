@@ -42,6 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Routine completion digests can stay quiet in The Guy’s native Claude Code
+  conversation. The digest remains visible, as do alerts and direct replies.
+
 - Antigravity keeps follow-ups queued and Stop pending when a running tool is
   briefly reported as pending. The conversation distinguishes observed
   background work, recent activity, and stopping. In the browser, Stop can

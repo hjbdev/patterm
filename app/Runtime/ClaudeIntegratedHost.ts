@@ -10,6 +10,7 @@ import { resolveCommand } from '../Platform/Executable';
 import { ipcPath, removeStaleIpc, restrictIpc } from '../Platform/Ipc';
 import { killProcessTree } from '../Platform/ProcessTree';
 import { isTranscriptImageHash, TranscriptImageStore, type TranscriptImageRef } from '../Services/TranscriptImageStore';
+import { QUIET_DIGEST_INSTRUCTION, QUIET_REPLY, recordQuietReply } from '../Services/ClaudeQuietReplies';
 
 interface HostConfig {
   socketPath: string;
@@ -26,6 +27,7 @@ interface HostConfig {
   // The assistant and bots: memory the prompt hook in `settingsPath` takes.
   memoryHookPath?: string;
   settingsPath?: string;
+  quietReplyDirectory?: string;
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -132,6 +134,16 @@ let statusDetail: string | null = null;
 // or tool call. Its result ends it; a session-level idle report does not. Prompts
 // waiting for their turn are tracked in `prompts`.
 let turnActive = false;
+let quietTurn: {
+  promptId: string;
+  started: boolean;
+  replayed: boolean;
+  streamedText: string;
+  messageId?: string;
+  finalText?: string;
+  frames: JsonRecord[];
+  bytes: number;
+} | null = null;
 // Background work Claude reports: background shells, workflows, monitors, and
 // background agents. The newest few finished tasks stay visible.
 const tasks = new Map<string, JsonRecord>();
@@ -287,6 +299,11 @@ async function handle(socket: net.Socket, request: JsonRecord): Promise<void> {
     const clientMessageId = typeof params.clientMessageId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(params.clientMessageId)
       ? params.clientMessageId
       : randomUUID();
+    const quiet = params.routineDigest === true && !busy() && !quietTurn && !pending.size
+      && !userMessages.has(clientMessageId) && !images.length && !documents.length && config.quietReplyDirectory
+      && recordQuietReply(config.quietReplyDirectory, config.sessionId, `prompt_${clientMessageId}`);
+    flushQuietTurn();
+    if (quiet) quietTurn = { promptId: clientMessageId, started: false, replayed: false, streamedText: '', frames: [], bytes: 0 };
     const messageId = `user_${clientMessageId}`;
     // A retried uuid must not add a second local transcript row.
     if (!messages.some((message) => message.id === messageId)) {
@@ -296,7 +313,7 @@ async function handle(socket: net.Socket, request: JsonRecord): Promise<void> {
     if (!userMessages.has(clientMessageId)) userMessages.set(clientMessageId, false);
     writeClaude({
       type: 'user',
-      message: { role: 'user', content: [...(text ? [{ type: 'text', text }] : []), ...images, ...documents] },
+      message: { role: 'user', content: [...(text ? [{ type: 'text', text: quiet ? text + QUIET_DIGEST_INSTRUCTION : text }] : []), ...images, ...documents] },
       parent_tool_use_id: null,
       session_id: config.sessionId,
       uuid: clientMessageId
@@ -317,6 +334,7 @@ async function handle(socket: net.Socket, request: JsonRecord): Promise<void> {
     return;
   }
   if (request.method === 'interrupt') {
+    flushQuietTurn();
     interrupted = turnActive || prompts.size > 0;
     writeClaude({ type: 'control_request', request_id: randomUUID(), request: { subtype: 'interrupt' } });
     respond(socket, id, {});
@@ -497,6 +515,7 @@ function endProcess(failure: boolean): void {
 // its background tasks, and requests it can no longer receive an answer for.
 // A restart resumes the session afresh.
 function forgetProcess(): void {
+  flushQuietTurn();
   turnActive = false;
   interrupted = false;
   prompts.clear();
@@ -551,7 +570,7 @@ function receiveClaude(chunk: string): void {
     childBuffer = childBuffer.slice(newline + 1);
     if (!line) continue;
     let event: JsonRecord;
-    try { event = record(JSON.parse(line)); } catch { continue; }
+    try { event = record(JSON.parse(line)); } catch { flushQuietTurn(); continue; }
     if (event.type === 'assistant') {
       acknowledgeUserMessage(event.user_message_uuid);
       if (!parentOf(event)) {
@@ -559,7 +578,7 @@ function receiveClaude(chunk: string): void {
         if (Array.isArray(content) && content.some((block) => record(block).type === 'tool_use')) markMainTurnRunning();
         recordContext(record(record(event.message).usage));
       }
-      applyAssistantMessage(event, parentOf(event));
+      if (!bufferQuietFrame(event, line.length)) applyAssistantMessage(event, parentOf(event));
       // /goal answers locally; the goal it set or cleared is in the
       // transcript, which only a snapshot reads.
       if (record(event.local_command_run).command === 'goal') publish({ kind: 'pending' });
@@ -567,6 +586,10 @@ function receiveClaude(chunk: string): void {
       // --replay-user-messages echoes an accepted client uuid; tool_result
       // blocks pair with their streamed or final tool_use row.
       acknowledgeUserMessage(event.uuid);
+      if (quietTurn && !parentOf(event)) {
+        if (event.uuid === quietTurn.promptId && event.isReplay === true) quietTurn.replayed = true;
+        else flushQuietTurn();
+      }
       // The echo shows Claude read the prompt; a duplicate it drops gets no
       // lifecycle frame, only the echo and an idle report.
       if (typeof event.uuid === 'string' && prompts.get(event.uuid) === 'written') prompts.set(event.uuid, 'queued');
@@ -574,7 +597,7 @@ function receiveClaude(chunk: string): void {
       applySubagentPrompt(event, parentOf(event));
     } else if (event.type === 'stream_event') {
       acknowledgeUserMessage(event.user_message_uuid);
-      applyStreamEvent(record(event.event), parentOf(event));
+      if (!bufferQuietFrame(event, line.length)) applyStreamEvent(record(event.event), parentOf(event));
     } else if (event.type === 'control_response') {
       const response = record(event.response);
       const titleRequest = typeof response.request_id === 'string' ? titleRequests.get(response.request_id) : undefined;
@@ -600,6 +623,7 @@ function receiveClaude(chunk: string): void {
       // its prompt must not linger or accept a late answer.
       if (pending.has(String(event.request_id))) settlePending(String(event.request_id));
     } else if (event.type === 'control_request' && (typeof event.request_id === 'string' || typeof event.request_id === 'number')) {
+      flushQuietTurn();
       receiveControlRequest(String(event.request_id), event);
     } else if (event.type === 'rate_limit_event') {
       recordRateLimit(record(event.rate_limit_info));
@@ -609,6 +633,7 @@ function receiveClaude(chunk: string): void {
     } else if (event.type !== 'result') {
       countUnhandled(String(event.type ?? 'unknown'));
     } else {
+      finishQuietTurn(event);
       acknowledgeUserMessage(event.user_message_uuid);
       recordResultUsage(event);
       // `is_error` decides the state; a `success` subtype with is_error set is
@@ -647,6 +672,10 @@ function receiveClaude(chunk: string): void {
 function receiveLifecycle(event: JsonRecord): void {
   const id = typeof event.command_uuid === 'string' ? event.command_uuid : '';
   if (!id) return;
+  if (quietTurn) {
+    if (id !== quietTurn.promptId || event.state === 'completed') flushQuietTurn();
+    else if (event.state === 'started') quietTurn.started = true;
+  }
   lifecycleReported = true;
   if (event.state === 'started') turnActive = true;
   if (prompts.has(id)) {
@@ -672,6 +701,8 @@ function receiveSessionState(state: unknown): void {
   if (typeof state !== 'string') return;
   sessionState = state;
   if (state === 'idle') {
+    // An idle report after a command started but without a result is not proof.
+    if (quietTurn?.started) flushQuietTurn();
     // Session state is a level signal for background activity. Only a result
     // or process exit ends a main turn that has actually started.
     // A prompt Claude has not read yet is newer than this report; one it
@@ -679,6 +710,71 @@ function receiveSessionState(state: unknown): void {
     for (const [id, fate] of prompts) if (fate !== 'written') prompts.delete(id);
   }
   updateStatus();
+}
+
+// Only an isolated command with the native start, replay, reply and result
+// all tied to its prompt can consume the marker. Preserve partial output if
+// the protocol drifts, the turn grows beyond the cap, or there is other input.
+function bufferQuietFrame(frame: JsonRecord, length: number): boolean {
+  const turn = quietTurn;
+  if (!turn) return false;
+  const stream = record(frame.event);
+  const start = stream.type === 'message_start';
+  const final = frame.type === 'assistant';
+  const message = record(final ? frame.message : stream.message);
+  const delta = record(stream.delta);
+  const block = record(stream.content_block);
+  if (block.type === 'text') turn.streamedText += String(block.text ?? '');
+  if (delta.type === 'text_delta') turn.streamedText += String(delta.text ?? '');
+  if (parentOf(frame) || !turn.started || !turn.replayed || turn.bytes + length > 65_536
+    || !QUIET_REPLY.startsWith(turn.streamedText)
+    || (frame.user_message_uuid !== undefined && frame.user_message_uuid !== turn.promptId)
+    || ((start || final) && (frame.user_message_uuid !== turn.promptId || typeof message.id !== 'string'
+      || (turn.messageId !== undefined && turn.messageId !== message.id)))
+    || (start && turn.messageId !== undefined)
+    || (block.type !== undefined && !['text', 'thinking', 'redacted_thinking'].includes(String(block.type)))) {
+    flushQuietTurn();
+    return false;
+  }
+  if (start || final) turn.messageId = message.id as string;
+  if (final) {
+    const content = (Array.isArray(message.content) ? message.content : []).map(record);
+    for (const item of content) {
+      if (item.type === 'thinking' || item.type === 'redacted_thinking') continue;
+      if (item.type !== 'text' || item.text !== QUIET_REPLY || turn.finalText !== undefined) {
+        flushQuietTurn();
+        return false;
+      }
+      turn.finalText = QUIET_REPLY;
+    }
+  }
+  if (start) markMainTurnRunning();
+  turn.bytes += length;
+  turn.frames.push(frame);
+  return true;
+}
+
+function finishQuietTurn(result: JsonRecord): void {
+  const turn = quietTurn;
+  if (!turn) return;
+  if (turn.messageId && turn.finalText === QUIET_REPLY && result.result === QUIET_REPLY
+    && result.user_message_uuid === turn.promptId && result.subtype === 'success'
+    && result.stop_reason === 'end_turn' && result.is_error === false && !interrupted
+    && (!turn.streamedText || turn.streamedText === QUIET_REPLY)
+    && config.quietReplyDirectory && recordQuietReply(config.quietReplyDirectory, config.sessionId, turn.messageId)) {
+    quietTurn = null;
+  } else {
+    flushQuietTurn();
+  }
+}
+
+function flushQuietTurn(): void {
+  const turn = quietTurn;
+  quietTurn = null;
+  for (const frame of turn?.frames ?? []) {
+    if (frame.type === 'assistant') applyAssistantMessage(frame, null);
+    else applyStreamEvent(record(frame.event), null);
+  }
 }
 
 // Tasks shown as background work: neither a foreground tool nor ambient.
@@ -1011,6 +1107,7 @@ function receiveSystem(event: JsonRecord): void {
     publish({ kind: 'pending' });
   }
   if (event.subtype === 'task_started' || event.subtype === 'task_progress' || event.subtype === 'task_updated' || event.subtype === 'task_notification') {
+    flushQuietTurn();
     receiveTask(event);
     return;
   }
@@ -1066,6 +1163,7 @@ function receiveSystem(event: JsonRecord): void {
     return;
   }
   if (event.subtype === 'notification' && typeof event.text === 'string' && event.text.trim()) {
+    flushQuietTurn();
     upsertMessage({ id: `notification_${typeof event.uuid === 'string' ? event.uuid : randomUUID()}`, role: 'assistant', kind: 'notice', level: event.priority === 'high' || event.priority === 'immediate' ? 'warning' : 'info', text: event.text }, true, true);
     return;
   }

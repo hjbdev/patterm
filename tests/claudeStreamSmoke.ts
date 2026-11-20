@@ -8,6 +8,8 @@ import path from 'node:path';
 import { CloseProcessAction } from '../app/Actions/CloseProcessAction';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { ClaudeStreamService } from '../app/Services/ClaudeStreamService';
+import { ClaudeHistoryAdapter } from '../app/Services/AgentHistory/ClaudeHistoryAdapter';
+import { quietReplyDirectory } from '../app/Services/ClaudeQuietReplies';
 import { TranscriptImageStore } from '../app/Services/TranscriptImageStore';
 import { IntegratedAgentService } from '../app/Services/IntegratedAgentService';
 import { integratedHostListening } from '../app/Services/IntegratedHostLauncher';
@@ -105,6 +107,36 @@ process.stdin.on('data', (chunk) => {
     if (process.env.ACTIVITY && event.type === 'user') {
       const uuid = event.uuid;
       const text = event.message.content[0].text;
+      if (text.startsWith('quiet test:')) {
+        const id = 'msg_' + uuid;
+        const reply = text.startsWith('quiet test: substantive') ? 'NO_REPLY is not the whole answer' : 'NO_REPLY';
+        globalThis.quietUuid = uuid;
+        state('running');
+        lifecycle(uuid, 'queued');
+        lifecycle(uuid, 'started');
+        frame({type:'user',uuid,isReplay:true,message:event.message});
+        const stream = (event) => frame({type:'stream_event',user_message_uuid:uuid,event});
+        stream({type:'message_start',message:{id}});
+        stream({type:'content_block_start',index:0,content_block:{type:'text',text:''}});
+        stream({type:'content_block_delta',index:0,delta:{type:'text_delta',text:'NO_'}});
+        const finish = () => {
+          stream({type:'content_block_delta',index:0,delta:{type:'text_delta',text:reply.slice(3)}});
+          stream({type:'content_block_stop',index:0});
+          frame({type:'assistant',user_message_uuid:uuid,message:{id,content:[{type:'text',text:reply}]}});
+          stream({type:'message_stop'});
+          const stop_reason = text.startsWith('quiet test: paused') ? 'pause_turn' : 'end_turn';
+          end(text.startsWith('quiet test: uncertain') ? null : uuid, {result:reply, stop_reason});
+          state('idle');
+        };
+        if (text.startsWith('quiet test: mixed')) globalThis.finishQuiet = finish;
+        else finish();
+        continue;
+      }
+      if (text === 'overlap now') {
+        frame({type:'user',uuid,isReplay:true,message:event.message});
+        globalThis.finishQuiet();
+        continue;
+      }
       if (text === 'wake') {
         begin(uuid); say('msg_started', 'started'); end(uuid); state('idle');
         setTimeout(() => wake('woken', true), 60);
@@ -999,14 +1031,14 @@ process.stdin.on('data', (chunk) => {
     // to report it exercises the fallback.
     const { CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: _inherited, ...baseEnv } = process.env;
     const envPath = path.join(directory, 'claude-env.json');
-    const launchActivity = async (name: string, legacy: boolean) => {
+    const launchActivity = async (name: string, legacy: boolean, quietNotificationReplies = false) => {
       const activityService = new ClaudeStreamService(database, runtimeDirectory, process.execPath, {
         ...baseEnv, STREAM_FRAMES: '', ACTIVITY: '1', ENV_FILE: envPath, ...(legacy ? { CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '0' } : {})
       }, undefined, hosts);
       const launched = await activityService.prepare({
         executable, cwd: directory, name, context: 'Project context',
         mcp: { command: process.execPath, args: ['shim.js'], env: { PATTERM_MCP_SOCKET: '/tmp/mcp.sock', PATTERM_MCP_IDENTITY: `identity_activity_${name}` } },
-        resumeId: null
+        resumeId: null, quietNotificationReplies
       });
       const processId = `process_activity_${name}`;
       database.connection.prepare(`insert into processes (id,project_id,kind,name,status,cwd,argv,created_at,updated_at) values (?,'project_test','agent',?,'running',?,?,?,?)`)
@@ -1035,8 +1067,9 @@ process.stdin.on('data', (chunk) => {
         };
       };
       return {
-        processId, statuses, published, statusAt, observeActivity,
+        processId, statuses, published, statusAt, observeActivity, resumeId: launched.resumeId, activityEvents,
         prompt: (text: string) => activityService.prompt(processId, { text, references: [], attachments: [] }),
+        digest: async (text: string, messageId?: string) => activityService.prompt(processId, { text, references: [], attachments: [], routineDigest: true, messageId }),
         snapshot: async () => await activityService.conversation(processId) as { status?: string; tasks: Array<{ id: string; status: string }>; messages: { data: Array<{ id: string; text: string; kind: string }> } },
         until: (count: number) => waitFor(() => statuses().length >= count, 5_000),
         interrupt: () => activityService.interrupt(processId),
@@ -1045,6 +1078,43 @@ process.stdin.on('data', (chunk) => {
         close: async () => { releaseActivity(); await activityService.stop(processId); }
       };
     };
+
+    const quiet = await launchActivity('quiet', false, true);
+    const digestId = '02aca441-b65b-45cd-9adc-8021ba049fc9';
+    await quiet.digest('quiet test: routine receipt', digestId);
+    await quiet.until(2);
+    assert.deepEqual((await quiet.snapshot()).messages.data.map((message) => message.text), ['quiet test: routine receipt']);
+    assert.doesNotMatch(JSON.stringify(quiet.activityEvents), /NO_REPLY|NO_/);
+    const receiptFile = path.join(directory, `${quiet.resumeId}.jsonl`);
+    fs.writeFileSync(receiptFile, [
+      { type: 'user', sessionId: quiet.resumeId, uuid: digestId, message: { role: 'user', content: 'quiet test: routine receipt\n\nIf this routine notification needs no action or user-facing reply, respond with exactly NO_REPLY and do not call tools. Otherwise respond normally.' } },
+      { type: 'assistant', sessionId: quiet.resumeId, uuid: 'assistant-uuid', message: { id: `msg_${digestId}`, role: 'assistant', content: [{ type: 'text', text: 'NO_REPLY' }] } }
+    ].map((row) => JSON.stringify(row)).join('\n') + '\n');
+    assert.deepEqual(new ClaudeHistoryAdapter(quietReplyDirectory(runtimeDirectory)).parseFile(receiptFile).conversations[0]?.messages.map((message) => message.text), ['quiet test: routine receipt']);
+
+    await quiet.prompt('quiet test: direct');
+    await quiet.until(4);
+    await quiet.digest('quiet test: substantive');
+    await quiet.until(6);
+    await quiet.digest('quiet test: uncertain');
+    await quiet.until(8);
+    await quiet.digest('quiet test: paused');
+    await quiet.until(10);
+    assert.equal((await quiet.snapshot()).messages.data.at(-1)?.text, 'NO_REPLY', 'a successful but paused turn is visible');
+    await quiet.digest('quiet test: mixed');
+    await quiet.until(11);
+    assert.equal((await quiet.snapshot()).messages.data.filter((message) => message.text === 'NO_REPLY').length, 3);
+    await quiet.prompt('overlap now');
+    await quiet.until(12);
+    assert.deepEqual((await quiet.snapshot()).messages.data.filter((message) => message.kind === 'text' && message.text.startsWith('NO_REPLY'))
+      .map((message) => message.text), ['NO_REPLY', 'NO_REPLY is not the whole answer', 'NO_REPLY', 'NO_REPLY', 'NO_REPLY']);
+    await quiet.close();
+
+    const other = await launchActivity('not_quiet', false);
+    await other.digest('quiet test: other bot');
+    await other.until(2);
+    assert.equal((await other.snapshot()).messages.data.at(-1)?.text, 'NO_REPLY');
+    await other.close();
 
     for (const legacy of [false, true]) {
       const mode = legacy ? 'without session state' : 'with session state';

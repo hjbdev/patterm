@@ -29,6 +29,7 @@ import { SearchService } from '../app/Services/SearchService';
 import { TimelineService } from '../app/Services/TimelineService';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import { integratedHistoryCheckpoints } from '../app/Listeners/IntegratedHistoryCheckpoints';
+import { recordQuietReply } from '../app/Services/ClaudeQuietReplies';
 import { WorkbenchSeeder } from './fixtures/WorkbenchSeeder';
 
 // The /resume picker searches whole conversations: one ranked row each,
@@ -45,19 +46,44 @@ function verifyConversationSearch(): void {
     appDatabase.connection.prepare('insert into projects (id, name, path, created_at, updated_at) values (?, ?, ?, ?, ?)').run('search_project', 'Search', projectPath, now, now);
     const claudeDir = path.join(directory, 'claude');
     fs.mkdirSync(claudeDir);
-    const row = (sessionId: string, uuid: string, role: 'user' | 'assistant', content: string) => JSON.stringify({ type: role, uuid, message: { role, content }, cwd: projectPath, sessionId, timestamp: now });
+    const row = (sessionId: string, uuid: string, role: 'user' | 'assistant', content: string, messageId?: string) =>
+      JSON.stringify({ type: role, uuid, message: { role, content, id: messageId }, cwd: projectPath, sessionId, timestamp: now });
     fs.writeFileSync(path.join(claudeDir, 'needle.jsonl'), [
       row('search_needle', 'n1', 'user', 'Where is the sapphire-history-needle?'),
-      row('search_needle', 'n2', 'assistant', 'The sapphire-history-needle is in the parser.')
+      row('search_needle', 'n2', 'assistant', 'The sapphire-history-needle is in the parser.'),
+      row('search_needle', 'n3', 'assistant', 'NO_REPLY', 'msg_direct')
     ].join('\n') + '\n');
     fs.writeFileSync(path.join(claudeDir, 'titled.jsonl'), `${row('search_titled', 't1', 'user', 'Refactor the sapphire renderer')}\n`);
-    fs.writeFileSync(path.join(claudeDir, 'plain.jsonl'), `${row('search_plain', 'p1', 'user', 'An unrelated note')}\n`);
+    fs.writeFileSync(path.join(claudeDir, 'plain.jsonl'), [
+      row('search_plain', 'p1', 'user', 'An unrelated note'),
+      row('search_plain', 'p2', 'assistant', 'NO_REPLY', 'msg_quiet')
+    ].join('\n') + '\n');
     fs.writeFileSync(path.join(claudeDir, 'routine.jsonl'), `${row('search_routine', 'r1', 'user', 'Morning sapphire digest')}\n`);
     const search = new HistorySearchIndexService(historyDatabase);
     const imports = new AgentHistoryImportService(historyDatabase, new ProviderHistoryDiscoveryService(), null, search, appDatabase);
     imports.configure({ provider: 'claude', path: claudeDir, enabled: true, watch_enabled: false });
     imports.import({ provider: 'claude', trigger: 'manual' });
-    const read = new AgentHistoryReadService(historyDatabase);
+    const quietReplies = path.join(directory, 'quiet');
+    const read = new AgentHistoryReadService(historyDatabase, quietReplies);
+
+    // The native log can be imported before the host sees the result.
+    const before = '9999-12-31T23:59:59.999Z';
+    assert.equal(read.archive('claude', 'search_plain', 'search_project', before, 0, 80).count, 2);
+    assert.ok(recordQuietReply(quietReplies, 'search_plain', 'msg_quiet'));
+    const archive = read.archive('claude', 'search_plain', 'search_project', before, 0, 80);
+    assert.equal(archive.count, 1);
+    assert.deepEqual(archive.messages.map((message) => message.text), ['An unrelated note']);
+    const imported = read.list({ project_id: 'search_project' }).conversations.find((conversation) => conversation.providerConversationId === 'search_plain')!;
+    assert.equal(imported.messageCount, 1, 'pagination counts only visible rows');
+    assert.deepEqual(read.get({ conversation_id: imported.id, limit: 1, offset: Math.max(0, imported.messageCount - 1) })
+      .messages.map((message) => message.text), ['An unrelated note']);
+    assert.deepEqual(read.tail(imported.id, 2).messages.map((message) => message.text), ['An unrelated note']);
+    const markerQuery = { query: 'NO_REPLY', project_id: 'search_project', limit: 20 };
+    const [directHit] = read.searchConversations(markerQuery).conversations;
+    assert.equal(directHit?.providerConversationId, 'search_needle');
+    assert.deepEqual(read.search(markerQuery).results.map((result) => result.messageId), [directHit.match.messageId]);
+    assert.deepEqual(new SearchService(appDatabase, historyDatabase, quietReplies).search({ ...markerQuery, kinds: ['conversation_message'] })
+      .results.map((result) => result.owner_id), [directHit.match.messageId]);
 
     const needle = read.searchConversations({ query: 'sapphire-history-need', project_id: 'search_project' }).conversations;
     assert.deepEqual(needle.map((conversation) => conversation.providerConversationId), ['search_needle'], 'two matching messages give one row, and the last term matches as a prefix');

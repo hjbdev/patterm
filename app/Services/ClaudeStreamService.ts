@@ -8,6 +8,7 @@ import type { IntegratedControlSelector, IntegratedControls, IntegratedFormActio
 import { UncertainDeliveryError, type IntegratedDeliveryState } from './IntegratedDelivery';
 import type { IntegratedConversationEvent, IntegratedConversationListener } from './IntegratedConversation';
 import type { ResolvedIntegratedPrompt } from './IntegratedInput';
+import { quietReplyDirectory } from './ClaudeQuietReplies';
 import { memoryPushSupported, type MemoryUpdate } from './MemoryPushService';
 import { readClaudeTaskOutput, type ClaudeTaskOutput } from './ClaudeTaskOutput';
 import { ClaudeGoalReader } from './ClaudeGoal';
@@ -76,6 +77,7 @@ export class ClaudeStreamService {
     fs.writeFileSync(configPath, JSON.stringify({
       socketPath, executable: input.executable, cwd: input.cwd, sessionId,
       resume: Boolean(input.resumeId), context: input.context, mcpConfigPath, ...memory,
+      ...(input.quietNotificationReplies ? { quietReplyDirectory: quietReplyDirectory(this.runtimeDir) } : {}),
       model: input.model ?? null, reasoning: input.reasoning ?? null,
       ...(this.images ? { imageDirectory: this.images.directory } : {})
     }), { mode: 0o600 });
@@ -246,6 +248,7 @@ export class ClaudeStreamService {
         images,
         ...(documents.length ? { documents } : {}),
         attachments: displayAttachments,
+        ...(input.routineDigest ? { routineDigest: true } : {}),
         ...(input.messageId ? { clientMessageId: input.messageId } : {})
       });
     } catch (error) {
