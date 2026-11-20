@@ -44,6 +44,7 @@ export function createTestMcpRegistry(input: {
   closeRequests?: Parameters<typeof createMcpRegistry>[0]['closeRequests'];
   statusLabels?: Parameters<typeof createMcpRegistry>[0]['statusLabels'];
   bots?: NonNullable<Parameters<typeof createMcpRegistry>[0]['bots']>;
+  parentRequests?: Parameters<typeof createMcpRegistry>[0]['parentRequests'];
 }): McpToolRegistry {
   const harnessDiscovery = input.harnessDiscovery ?? new HarnessDiscoveryService(harnessProviders);
   const harnessLauncher =
@@ -97,6 +98,7 @@ export function createTestMcpRegistry(input: {
     ...(input.timers ? { timers: input.timers } : {}),
     ...(input.closeRequests ? { closeRequests: input.closeRequests } : {}),
     ...(input.statusLabels ? { statusLabels: input.statusLabels } : {}),
-    ...(input.bots ? { bots: input.bots } : {})
+    ...(input.bots ? { bots: input.bots } : {}),
+    ...(input.parentRequests ? { parentRequests: input.parentRequests } : {})
   });
 }

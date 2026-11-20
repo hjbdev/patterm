@@ -43,6 +43,7 @@ export interface Bot {
   voice: BotVoice;
   digests: boolean;
   focus: boolean;
+  requests: boolean;
   // A paired host's bot: its ID is qualified with the host's name, such as
   // `workstation:assistant`, and it is set up on that host.
   host?: string;

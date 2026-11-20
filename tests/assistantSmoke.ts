@@ -236,7 +236,9 @@ async function main(): Promise<void> {
     assert.match(prompts[0]!, /^\[Patterm notifications\]/);
     assert.match(prompts[0]!, /\[permission\] Project p \/ Reviewer — Reviewer: Waiting for your permission \(process proc-x\)/);
     assert.match(prompts[0]!, /\[turn_finished\]/);
-    assert.equal(prompts[0]!.split('\n').length, 3, 'parent-audience, bell, assistant, and update changes are not forwarded');
+    // A waiting request says how to read it; the user answers unless they let the bot.
+    assert.match(prompts[0]!.split('\n').at(-1)!, /pending_requests with get_conversation_output\. The user answers these\.$/);
+    assert.equal(prompts[0]!.split('\n').length, 4, 'parent-audience, bell, assistant, and update changes are not forwarded');
     assert.deepEqual(routineDigests, [], 'a batch containing a permission request is not quiet');
     assistant.handleNotification({ type: 'raised', notification: notification('n7', { kind: 'turn_finished', urgency: 'normal', body: 'Finished its turn' }) });
     await wait(40);

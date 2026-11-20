@@ -364,6 +364,21 @@ async function main(): Promise<void> {
     await assert.rejects(registry.callPublic('list_processes', { project_id: botProjectId('other') }, fable), /outside this bot's projects/);
     await assert.rejects(registry.callPublic('todo_list', { project_id: 'project_assistant' }, fable), /outside this bot's projects/);
 
+    // A bot answers agents' requests only once the user lets it, and only in its projects.
+    const overseen: unknown[][] = [];
+    const requestRegistry = createTestMcpRegistry({ tempDir: dir, database, timeline, terminal: { request: async () => ({}) } as unknown as TerminalService, workbench, bots,
+      parentRequests: { reply: async () => ({ status: 'resolved' }), overseerReply: async (...args) => { overseen.push(args); return { status: 'resolved', kind: 'permission' }; } } });
+    await assert.rejects(requestRegistry.callPublic('agent_request_reply', { process_id: 'proc-q', request_id: 'read-1', decision: 'once' }, fable), /hasn't let this bot/);
+    settings.updateBots({ bots: [{ ...settings.bots().bots[1]!, requests: true }] });
+    await assert.rejects(requestRegistry.callPublic('agent_request_reply', { process_id: 'proc-assistant', request_id: 'read-1', decision: 'once' }, fable), /outside the current caller scope/);
+    await assert.rejects(requestRegistry.callPublic('agent_request_reply', { process_id: 'proc-q', request_id: 'read-1', decision: 'always' }, fable));
+    await requestRegistry.callPublic('agent_request_reply', { process_id: 'proc-q', request_id: 'read-1', decision: 'once' }, fable);
+    assert.deepEqual(overseen, [['proc-q', 'read-1', { decision: 'once' }, bots.state('fable').process_id]]);
+    assert.ok(db.prepare(`select 1 from timeline_events where event_type = 'agent.request_answered_by_bot' and process_id = 'proc-q'`).get(), 'the user can see which bot answered');
+    settings.updateBots({ bots: [{ ...settings.bots().bots[1]!, purview: { kind: 'projects', projectIds: ['p'] } }] });
+    await assert.rejects(requestRegistry.callPublic('agent_request_reply', { process_id: 'proc-q', request_id: 'read-1', decision: 'reject' }, fable), /outside the current caller scope/);
+    settings.updateBots({ bots: [{ ...settings.bots().bots[1]!, purview: { kind: 'all' }, requests: false }] });
+
     // The assistant does not start at boot until its first conversation.
     const launchesBefore = launches.length;
     await bots.ensureAll();

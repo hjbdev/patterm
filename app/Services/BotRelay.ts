@@ -314,6 +314,13 @@ export class BotRelay {
         await this.codex.realtimeAppendText(processId,
           `[System notification, not from the user. Briefly tell the user what needs their attention.]\n${lines.join('\n')}`);
       } else {
+        // Waiting requests say how to read them, and how to answer when the
+        // user lets this bot.
+        if (batch.some((item) => item.kind === 'permission' && item.process_id)) {
+          lines.push(bot.requests
+            ? '- To see what an agent waits on, read pending_requests with get_conversation_output. You may answer within your limits with agent_request_reply, or leave it for the user.'
+            : '- To see what an agent waits on, read pending_requests with get_conversation_output. The user answers these.');
+        }
         const text = `[Patterm notifications]\n${lines.join('\n')}`;
         if (botId === ASSISTANT_BOT_ID && batch.every((item) =>
           item.source === 'integrated' && item.kind === 'turn_finished' && item.urgency === 'normal')) {

@@ -10,7 +10,7 @@ import { IDLE_COMPACTION_AFTER_MS, IdleCompactionService, type IdleCompactionSou
 import { IntegratedAgentService, type CompactionSignal, type IntegratedActivityChange, type IntegratedProviderService } from '../app/Services/IntegratedAgentService';
 import type { IntegratedConversationListener } from '../app/Services/IntegratedConversation';
 import { NotificationService } from '../app/Services/NotificationService';
-import { ParentRequestService } from '../app/Services/ParentRequestService';
+import { ParentRequestService, pendingRequestSummary } from '../app/Services/ParentRequestService';
 import { SettingsService } from '../app/Services/SettingsService';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { removeTree } from './fixtures/TempTree';
@@ -377,6 +377,42 @@ async function main(): Promise<void> {
       await permissions.reply('session_root', reviews[8]!.offerId, { decision: 'escalate' });
       await Promise.all(permissionNotices);
       assert.ok(notices.list({ process_id: 'agent' }).items.some((item) => item.kind === 'permission' && item.audience === 'user'));
+
+      // A bot overseeing the agent answers what waits for the user, with a
+      // parent's limits and nothing more.
+      const summary = pendingRequestSummary({ harness: 'agy', cwd: directory }, await agy.peekConversation('agent'));
+      assert.deepEqual(summary.map((item) => [item.request_id, item.can_approve_once]), [['sensitive-read', false]]);
+      await assert.rejects(permissions.overseerReply('agent', 'sensitive-read', { decision: 'once' }, 'bot'), /only a one-time read/i);
+      await assert.rejects(permissions.overseerReply('agent', 'sensitive-read', { decision: 'answer', answers: [['Yes']] }, 'bot'), /once or reject/);
+      await assert.rejects(permissions.overseerReply('agent', 'gone', { decision: 'reject' }, 'bot'), /no longer pending/);
+      await assert.rejects(permissions.overseerReply('agent', 'sensitive-read', { decision: 'reject' }, 'agent'), /own requests/);
+      // A request still offered to a parent is the parent's to answer.
+      nativePermissions.push({ id: 'read-3', tool_kind: 'read', once: true, action: 'Read README', resources: ['README.md'] });
+      stream!({ processId: 'agent', revision: 13, kind: 'pending' });
+      await settle();
+      assert.equal(reviews[9]!.target, 'root');
+      await assert.rejects(permissions.overseerReply('agent', 'read-3', { decision: 'once' }, 'bot'), /with the agent's parent/);
+      await permissions.overseerReply('agent', 'sensitive-read', { decision: 'reject' }, 'bot');
+      assert.deepEqual(replies.at(-1), ['agent', 'sensitive-read', 'reject', undefined]);
+      // A top-level agent's requests go straight to the user, and its overseer may answer them.
+      db.prepare(`update processes set parent_process_id = null where id = 'agent'`).run();
+      stream!({ processId: 'agent', revision: 14, kind: 'pending' });
+      await settle();
+      await assert.rejects(permissions.reply('session_root', reviews[9]!.offerId, { decision: 'once' }), /no longer pending for you/);
+      const reviewCount = reviews.length;
+      assert.equal((await permissions.overseerReply('agent', 'read-3', { decision: 'once' }, 'bot')).status, 'resolved');
+      assert.deepEqual(replies.at(-1), ['agent', 'read-3', 'once', undefined]);
+      assert.equal(reviews.length, reviewCount, 'an overseer reply offers nothing to parents');
+      db.prepare(`update sessions set harness = 'claude' where id = 'session_agent'`).run();
+      nativeQuestions = [{ id: 'question-3', questions: [question] }];
+      stream!({ processId: 'agent', revision: 15, kind: 'pending' });
+      await settle();
+      const asked = pendingRequestSummary({ harness: 'claude', cwd: directory }, await agy.peekConversation('agent'));
+      assert.equal(asked[0]!.answerable, true);
+      await assert.rejects(permissions.overseerReply('agent', 'question-3', { decision: 'reject' }, 'bot'), /use answer/i);
+      await assert.rejects(permissions.overseerReply('agent', 'question-3', { decision: 'answer', answers: [['Unknown']] }, 'bot'), /invalid answer/i);
+      await permissions.overseerReply('agent', 'question-3', { decision: 'answer', answers: [['Browser']] }, 'bot');
+      assert.deepEqual(replies.at(-1), ['agent', 'question-3', [['Browser']]]);
     } finally {
       agy.dispose();
       permissions.dispose();
