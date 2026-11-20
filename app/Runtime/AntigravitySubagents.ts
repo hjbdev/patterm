@@ -44,7 +44,8 @@ interface TrackedSubagent {
   tail: FileTail;
   seenSteps: Set<number>;
   pendingTools: Array<{ rowId: string; name: string; input: Record<string, unknown>; createdAt?: string }>;
-  lastToolName: string | null;
+  sendMessageCount: number;
+  consumedSendMessages: number;
   lastStepWasFinal: boolean;
   hasRows: boolean;
 }
@@ -85,7 +86,16 @@ export class AntigravitySubagentTracker {
       const role = typeof input.Role === 'string' ? input.Role : typeof input.role === 'string' ? input.role : '';
       const prompt = typeof input.Prompt === 'string' ? input.Prompt : typeof input.prompt === 'string' ? input.prompt : '';
       const existingId = this.toolRowToSubagent.get(toolRowId);
+      const directId = extractAntigravitySubagentId(rawOutput) ?? extractAntigravitySubagentId(outputText);
       if (existingId) {
+        if (directId && directId !== this.options.sessionId && directId !== existingId) {
+          const previous = this.subagents.get(existingId);
+          if (previous && previous.parentToolRowId === toolRowId) previous.parentToolRowId = null;
+          this.toolRowToSubagent.delete(toolRowId);
+          this.registerSubagent(directId, toolRowId, label, kind, role, prompt);
+          this.syncNow();
+          return;
+        }
         const subagent = this.subagents.get(existingId);
         if (subagent) {
           if (label && subagent.label === 'Subagent') subagent.label = label;
@@ -94,7 +104,6 @@ export class AntigravitySubagentTracker {
         }
         return;
       }
-      const directId = extractAntigravitySubagentId(rawOutput) ?? extractAntigravitySubagentId(outputText);
       if (directId && directId !== this.options.sessionId) {
         this.registerSubagent(directId, toolRowId, label, kind, role, prompt);
         this.syncNow();
@@ -222,29 +231,30 @@ export class AntigravitySubagentTracker {
     subagent.tail.hasMore = false;
     subagent.seenSteps.clear();
     subagent.pendingTools.length = 0;
-    subagent.lastToolName = null;
+    subagent.sendMessageCount = 0;
     subagent.hasRows = false;
   }
 
   private matchUnlinkedSubagent(role: string, prompt: string): TrackedSubagent | null {
-    const candidates = [...this.subagents.values()].filter((subagent) => subagent.parentToolRowId === null);
+    const candidates = [...this.subagents.values()].filter((subagent) =>
+      subagent.parentToolRowId === null
+      && (!role || !subagent.role || subagent.role === role)
+      && (!prompt || !subagent.prompt || subagent.prompt === prompt)
+    );
     if (!candidates.length) return null;
     if (role && prompt) {
       const exact = candidates.find((subagent) => subagent.role === role && subagent.prompt === prompt);
       if (exact) return exact;
     }
-    if (role) {
-      const byRole = candidates.find((subagent) => subagent.role === role);
-      if (byRole) return byRole;
-    }
     if (prompt) {
       const byPrompt = candidates.find((subagent) => subagent.prompt === prompt);
       if (byPrompt) return byPrompt;
     }
-    return candidates.find((subagent) =>
-      (!role || !subagent.role || subagent.role === role)
-      && (!prompt || !subagent.prompt || subagent.prompt === prompt)
-    ) ?? null;
+    if (role) {
+      const byRole = candidates.find((subagent) => subagent.role === role);
+      if (byRole) return byRole;
+    }
+    return candidates[0] ?? null;
   }
 
   private registerSubagent(id: string, toolRowId: string | null, label: string, kind: string, role = '', prompt = ''): TrackedSubagent {
@@ -272,7 +282,8 @@ export class AntigravitySubagentTracker {
       tail: createTail(transcriptPath ?? ''),
       seenSteps: new Set(),
       pendingTools: [],
-      lastToolName: null,
+      sendMessageCount: 0,
+      consumedSendMessages: 0,
       lastStepWasFinal: false,
       hasRows: false
     };
@@ -285,15 +296,13 @@ export class AntigravitySubagentTracker {
     if (!this.unlinkedInvokes.length) return null;
     const role = typeof args.Role === 'string' ? args.Role : '';
     const prompt = typeof args.Prompt === 'string' ? args.Prompt : '';
-    let index = role && prompt ? this.unlinkedInvokes.findIndex((item) => item.role === role && item.prompt === prompt) : -1;
-    if (index < 0 && role) index = this.unlinkedInvokes.findIndex((item) => item.role === role);
-    if (index < 0 && prompt) index = this.unlinkedInvokes.findIndex((item) => item.prompt === prompt);
-    if (index < 0) {
-      index = this.unlinkedInvokes.findIndex((item) =>
-        (!role || !item.role || item.role === role)
-        && (!prompt || !item.prompt || item.prompt === prompt)
-      );
-    }
+    const compatible = (item: PendingInvoke) =>
+      (!role || !item.role || item.role === role)
+      && (!prompt || !item.prompt || item.prompt === prompt);
+    let index = role && prompt ? this.unlinkedInvokes.findIndex((item) => compatible(item) && item.role === role && item.prompt === prompt) : -1;
+    if (index < 0 && prompt) index = this.unlinkedInvokes.findIndex((item) => compatible(item) && item.prompt === prompt);
+    if (index < 0 && role) index = this.unlinkedInvokes.findIndex((item) => compatible(item) && item.role === role);
+    if (index < 0) index = this.unlinkedInvokes.findIndex(compatible);
     if (index < 0) return null;
     return this.unlinkedInvokes.splice(index, 1)[0] ?? null;
   }
@@ -370,13 +379,17 @@ export class AntigravitySubagentTracker {
           if (!match?.[1]) continue;
           const subagent = this.subagents.get(match[1]);
           if (!subagent) continue;
-          // Tail the child first so we know whether it sent a mid-turn update
-          // via send_message or finished its turn.
+          // Tail the child first so we know whether this parent message came
+          // from one of the child's own send_message tool calls (progress) or
+          // from the harness reporting turn completion.
           this.pollSubagent(subagent, false);
           const replyLine = firstLine(match[2] ?? '');
           if (replyLine && subagent.status !== 'failed') subagent.detail = replyLine;
-          const midTurn = subagent.pendingTools.length > 0 || subagent.lastToolName === 'send_message';
-          if (!midTurn && (subagent.status === 'running' || subagent.status === 'pending')) subagent.status = 'completed';
+          if (subagent.sendMessageCount > subagent.consumedSendMessages) {
+            subagent.consumedSendMessages++;
+          } else if (subagent.pendingTools.length === 0 && (subagent.status === 'running' || subagent.status === 'pending')) {
+            subagent.status = 'completed';
+          }
         }
       }
       if (!this.parentTail.hasMore) break;
@@ -431,12 +444,11 @@ export class AntigravitySubagentTracker {
               });
             }
           }
-          if (calls.length === 0) subagent.lastToolName = null;
           for (const [index, rawCall] of calls.entries()) {
             if (!rawCall || typeof rawCall !== 'object') continue;
             const call = rawCall as Row;
             const name = typeof call.name === 'string' && call.name ? call.name : 'Tool';
-            subagent.lastToolName = name;
+            if (name === 'send_message') subagent.sendMessageCount++;
             const input = parseToolArgs(call.args);
             const rowId = `sub:${subagent.id}:${row.step_index}:tool:${index}`;
             subagent.pendingTools.push({ rowId, name, input, ...(createdAt ? { createdAt } : {}) });

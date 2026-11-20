@@ -338,11 +338,20 @@ function setNativeBlock(key: string, row: IntegratedConversationMessage): void {
   nativeBlocks.set(key, row);
   while (nativeBlocks.size > MAX_TRACKED_IDS) nativeBlocks.delete(nativeBlocks.keys().next().value!);
 }
-function trimMessages(): void {
+function trimMessages(preserveId?: string): void {
   if (messages.length <= MAX_MESSAGES) return;
   const excess = messages.length - MAX_MESSAGES;
-  const removed = messages.splice(0, excess);
-  droppedMessages += excess;
+  const preserveIndex = preserveId ? messages.findIndex((row) => row.id === preserveId) : -1;
+  let removed: IntegratedConversationMessage[];
+  if (preserveIndex >= 0 && preserveIndex < excess) {
+    // Keep a newly admitted prompt when trimming its own oversized turn.
+    const before = messages.splice(0, preserveIndex);
+    const after = messages.splice(1, excess - preserveIndex);
+    removed = [...before, ...after];
+  } else {
+    removed = messages.splice(0, excess);
+  }
+  droppedMessages += removed.length;
   if (subagentMessages.length) {
     const droppedIds = new Set(removed.map((row) => row.id));
     const kept = subagentMessages.filter((row) => !row.parentId || !droppedIds.has(row.parentId));
@@ -368,10 +377,14 @@ function childrenFor(page: IntegratedConversationMessage[]): IntegratedConversat
 }
 function rawOutputText(value: unknown): string {
   if (typeof value === 'string') return value;
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
+  if (Array.isArray(value)) return value.map((item) => rawOutputText(item)).filter(Boolean).join('\n');
+  if (!value || typeof value !== 'object') return '';
   const row = value as Row;
-  for (const key of ['output', 'text', 'content']) {
-    if (typeof row[key] === 'string' && row[key]) return row[key];
+  for (const key of ['output', 'text', 'content', 'result']) {
+    if (row[key] !== undefined) {
+      const nested = rawOutputText(row[key]);
+      if (nested) return nested;
+    }
   }
   return '';
 }
@@ -395,7 +408,7 @@ function admit(): void {
       if (outOfOrder) {
         messages.splice(insertAt, 0, userEcho);
         liveWindowFloorId = userEcho.id;
-        trimMessages();
+        trimMessages(userEcho.id);
         // Assistant rows for this turn already streamed to live subscribers;
         // ask them to refresh so the user prompt sits before its response.
         publish({ kind: 'pending' });
@@ -626,8 +639,10 @@ function receive(frame: Row): void {
         backgroundActivity();
         state();
       }
-      const rawText = !replacesContent && !previous?.text && update.rawOutput !== undefined ? rawOutputText(update.rawOutput) : '';
-      const rowText = replacesContent ? toolPreview(output) : previous?.text || (rawText ? toolPreview(rawText) : '');
+      const rawText = !output && (replacesContent || !previous?.text) && update.rawOutput !== undefined ? rawOutputText(update.rawOutput) : '';
+      const rowText = replacesContent
+        ? (output ? toolPreview(output) : rawText ? toolPreview(rawText) : '')
+        : previous?.text || (rawText ? toolPreview(rawText) : '');
       const toolName = update.name ?? previous?.tool?.name ?? update.kind ?? 'Tool';
       const mcpParts = matchConfiguredMcpTool(String(toolName));
       replace({ id, role: 'assistant', kind: 'tool', text: rowText, createdAt: previous?.createdAt ?? new Date().toISOString(), ...(terminal ? { completedAt: previous?.completedAt ?? new Date().toISOString() } : {}), tool: { name: toolName, input, state: toolState, ...(mcpParts ? { server: mcpParts.server, tool: mcpParts.tool } : {}) } });

@@ -793,6 +793,48 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       assert.equal(largeRows.get('sub:edge-large-child:0:tool:0')?.tool?.state?.status, 'completed');
       assert.equal(largeRows.has('sub:edge-large-child:2:text'), true);
 
+      // Same-role parallel children with distinct prompts must never cross-link.
+      const sameRoleRows = new Map<string, any>();
+      const sameRoleTracker = new AntigravitySubagentTracker({ sessionId: 'edge-same-role', hostEnv: trackerEnv, pollMs: 25, onMessage: (row) => sameRoleRows.set(row.id, row), onTasksChanged: () => {} });
+      edgeTrackers.push(sameRoleTracker);
+      appendLog('edge-sr-alpha', modelRow(0, { content: 'Alpha reply' }));
+      appendLog('edge-sr-beta', modelRow(0, { content: 'Beta reply' }));
+      appendLog(
+        'edge-same-role',
+        modelRow(0, { tool_calls: [
+          { name: 'invoke_subagent', args: { Role: '"Reviewer"', Prompt: '"Review alpha"' } },
+          { name: 'invoke_subagent', args: { Role: '"Reviewer"', Prompt: '"Review beta"' } }
+        ] }),
+        invokeResult(1, 'edge-sr-alpha')
+      );
+      sameRoleTracker.syncNow();
+      sameRoleTracker.observeToolCall('tool:sr-beta', 'invoke_subagent', { Role: 'Reviewer', Prompt: 'Review beta' }, '', null);
+      sameRoleTracker.observeToolCall('tool:sr-beta', 'invoke_subagent', { Role: 'Reviewer', Prompt: 'Review beta' }, '', { conversationId: 'edge-sr-beta' });
+      sameRoleTracker.observeToolCall('tool:sr-alpha', 'invoke_subagent', { Role: 'Reviewer', Prompt: 'Review alpha' }, '', { conversationId: 'edge-sr-alpha' });
+      appendLog('edge-same-role', invokeResult(2, 'edge-sr-beta'));
+      sameRoleTracker.syncNow();
+      assert.equal([...sameRoleRows.values()].find((row) => row.text === 'Alpha reply')?.parentId, 'tool:sr-alpha');
+      assert.equal([...sameRoleRows.values()].find((row) => row.text === 'Beta reply')?.parentId, 'tool:sr-beta');
+
+      // Coalesced send_message + subsequent short tool before poll must stay running and stream later replies.
+      const coalescedRows = new Map<string, any>();
+      const coalescedTracker = new AntigravitySubagentTracker({ sessionId: 'edge-coalesced', hostEnv: trackerEnv, pollMs: 25, onMessage: (row) => coalescedRows.set(row.id, row), onTasksChanged: () => {} });
+      edgeTrackers.push(coalescedTracker);
+      appendLog(
+        'edge-coalesced-child',
+        modelRow(0, { tool_calls: [{ name: 'send_message', args: {} }] }),
+        { step_index: 1, type: 'GENERIC', source: 'MODEL', status: 'DONE', content: 'Message sent' },
+        modelRow(2, { tool_calls: [{ name: 'read_file', args: {} }] }),
+        { step_index: 3, type: 'GENERIC', source: 'MODEL', status: 'DONE', content: 'File read' }
+      );
+      coalescedTracker.observeToolCall('tool:coalesced', 'invoke_subagent', {}, '', { conversationId: 'edge-coalesced-child' });
+      appendLog('edge-coalesced', { step_index: 0, type: 'SYSTEM_MESSAGE', source: 'SYSTEM', content: '<SYSTEM_MESSAGE>\n[Message] sender=edge-coalesced-child content=Still inspecting\n</SYSTEM_MESSAGE>' });
+      coalescedTracker.syncNow();
+      appendLog('edge-coalesced-child', modelRow(4, { content: 'Final reply' }));
+      await new Promise((resolve) => setTimeout(resolve, 125));
+      assert.equal(coalescedTracker.tasks()[0]?.status, 'running');
+      assert.equal(coalescedRows.has('sub:edge-coalesced-child:4:text'), true);
+
       // Drawer pagination keeps a tool_call and its tool_result in the same page.
       appendLog(
         'edge-drawer-child',

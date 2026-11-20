@@ -18,9 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   transcript as rich task rows with role, type, model, and live inline nested
   steps, appear in the Background Tasks shelf with live status updates, and
   open in the full task transcript drawer. Antigravity's `run_command`,
-  `read_file` line ranges, and `mcp_<server>_<tool>` / `call_mcp_tool` calls
-  also project into Patterm's standard tool rows, and `AntigravityHistoryAdapter`
-  now preserves reasoning blocks and pairs parallel tool results cleanly.
+  `read_file` line ranges, `mcp_<server>_<tool>` / `call_mcp_tool` calls, and
+  Patterm `html_render` figures also project cleanly, and
+  `AntigravityHistoryAdapter` preserves reasoning blocks and pairs parallel tool
+  results.
 - Antigravity CLI (`agy`) in Integrated mode through its native ACP server:
   streamed replies and tools, permissions, cancellation, session loading,
   model and thinking controls, presets, bots and routines. Sign in with

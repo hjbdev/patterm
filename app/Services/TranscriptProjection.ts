@@ -1346,12 +1346,22 @@ export function isQuietMemoryRead(tool: TranscriptTool | undefined): boolean {
   return /"enabled"\s*:\s*false/.test(output) || /\[Memory changes (\d+) → \1\./.test(output);
 }
 
-// The page an agent sent. Codex nests MCP arguments, sometimes as JSON text.
+// The page an agent sent. Codex nests MCP arguments (sometimes as JSON text),
+// Antigravity wraps lazy calls in call_mcp_tool { ServerName, Arguments }, and
+// Antigravity injects a harness-only toolSummary field on every MCP call.
 export function figureToolInput(tool: TranscriptTool): unknown {
   const input = tool.input && typeof tool.input === 'object' ? tool.input as Record<string, unknown> : null;
-  const args = input && typeof input.server === 'string' && 'arguments' in input ? input.arguments : tool.input;
-  if (typeof args !== 'string') return args;
-  try { return JSON.parse(args); } catch { return null; }
+  let args: unknown = tool.input;
+  if (input && typeof input.server === 'string' && 'arguments' in input) args = input.arguments;
+  else if (input && typeof input.ServerName === 'string' && 'Arguments' in input) args = input.Arguments;
+  if (typeof args === 'string') {
+    try { args = JSON.parse(args); } catch { return null; }
+  }
+  if (args && typeof args === 'object' && !Array.isArray(args) && 'toolSummary' in args) {
+    const { toolSummary: _summary, ...rest } = args as Record<string, unknown>;
+    return rest;
+  }
+  return args;
 }
 
 // Figure and answer ids: letters, digits, _ and -.
@@ -1378,7 +1388,7 @@ export function figureId(tool: TranscriptTool): string | null {
   let id: string | null = null;
   const input = figureToolInput(tool);
   if (input && typeof input === 'object' && typeof (input as Record<string, unknown>).id === 'string') id = (input as Record<string, string>).id!;
-  for (const reply of [tool.result, tool.output]) {
+  for (const reply of [tool.result, tool.output, tool.state]) {
     if (id || reply === undefined || reply === null) continue;
     id = FIGURE_TOKEN.exec(typeof reply === 'string' ? reply : JSON.stringify(reply))?.[1] ?? null;
   }

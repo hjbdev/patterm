@@ -65,7 +65,8 @@ export class AntigravityHistoryAdapter implements ProviderHistoryAdapter {
         if (nonNegative(row.input_tokens) + nonNegative(row.output_tokens) + nonNegative(row.cache_read_tokens)) usage.push({ model: null, occurredAt: time, inputTokens: nonNegative(row.input_tokens), cacheReadTokens: nonNegative(row.cache_read_tokens), cacheWriteTokens: 0, cacheWrite1hTokens: 0, outputTokens: nonNegative(row.output_tokens), reasoningTokens: 0, costUsd: null, subagent: false });
       } else if (row.type === 'GENERIC' && row.source === 'MODEL' && pendingTools.length) {
         const tool = pendingTools.shift()!;
-        if (content) add(row, 'result', { role: 'tool', kind: 'tool_result', toolName: tool.name, text: content, toolOutputSummary: content, toolStatus: String(row.status ?? ''), metadata: { source: 'agy-jsonl', type: row.type, callId: tool.callId } });
+        const cleaned = content.replace(/^(?:(?:Created At|Completed At): [^\n]*\n)+/, '').trimStart();
+        if (cleaned) add(row, 'result', { role: 'tool', kind: 'tool_result', toolName: tool.name, text: cleaned, toolOutputSummary: cleaned, toolStatus: String(row.status ?? ''), metadata: { source: 'agy-jsonl', type: row.type, callId: tool.callId } });
       } else if (row.type === 'ERROR_MESSAGE') {
         add(row, 'error', { role: 'system', kind: 'event', text: content });
       }

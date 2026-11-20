@@ -98,12 +98,16 @@ test('local images are found and swapped for their stored copies', () => {
 test('every harness spelling of html_render is a figure; the reply maps its images', () => {
   const codex = { ...claude, name: 'patterm', target: 'patterm: html_render', input: { server: 'patterm', tool: 'html_render', arguments: JSON.stringify(claude.input) } };
   const opencode = { ...claude, name: 'patterm_ab12_html_render', target: 'patterm_ab12: html_render' };
+  const agyDirect = { ...claude, name: 'mcp_patterm_html_render', target: 'patterm: html_render', input: { ...claude.input, toolSummary: 'Render pipeline figure' } };
+  const agyLazy = { ...claude, name: 'call_mcp_tool', target: 'patterm: html_render', input: { ServerName: 'patterm', ToolName: 'html_render', Arguments: claude.input, toolSummary: 'Render via lazy MCP' } };
   const other = { ...claude, name: 'mcp__other__html_render', target: 'other: html_render' };
-  assert.ok(ui.isFigureTool(claude) && ui.isFigureTool(codex) && ui.isFigureTool(opencode));
+  assert.ok(ui.isFigureTool(claude) && ui.isFigureTool(codex) && ui.isFigureTool(opencode) && ui.isFigureTool(agyDirect) && ui.isFigureTool(agyLazy));
   assert.ok(!ui.isFigureTool(other) && !ui.isFigureTool({ ...claude, family: 'generic' }));
   assert.ok(!ui.isFigureTool({ ...claude, target: 'patterm: ui_save' }), 'retired ui_save calls are ordinary tool rows');
   assert.deepEqual(ui.figureToolInput(codex), claude.input);
   assert.deepEqual(ui.figurePage(ui.figureToolInput(codex)), claude.input);
+  assert.deepEqual(ui.figurePage(ui.figureToolInput(agyDirect)), claude.input, 'Antigravity toolSummary metadata does not break strict figure parsing');
+  assert.deepEqual(ui.figurePage(ui.figureToolInput(agyLazy)), claude.input, 'Antigravity call_mcp_tool Arguments unwrap cleanly');
   assert.equal(ui.figurePage({ title: 'x' }), null, 'a call without a page shows nothing');
   assert.deepEqual(ui.figureImages({ ...claude, output: JSON.stringify({ ok: true, images: { 'shot.png': 'a'.repeat(64), bad: 'x' } }) }), { 'shot.png': 'a'.repeat(64) });
   const row = (id, tool) => ({ id, role: 'assistant', kind: 'tool', text: '', tool });
@@ -113,8 +117,11 @@ test('every harness spelling of html_render is a figure; the reply maps its imag
 
 test('a reply places a page with its token', () => {
   const unnamed = { ...claude, input: { title: 'x', html: '<p>x</p>' }, output: JSON.stringify({ ok: true, ref: '[patterm_figure:fig_a1b2c3]' }) };
+  const stateOutput = { ...claude, name: 'mcp_patterm_html_render', input: { title: 'x', template: 'status-cards/round', data: { summary: 'ok' }, toolSummary: 'Render card' }, output: '', state: { status: 'completed', output: { content: [{ type: 'text', text: JSON.stringify({ ok: true, ref: '[patterm_figure:fig_0cc281]', template: { name: 'status-cards/round', version: 1 } }) }] } } };
   assert.equal(ui.figureId(claude), 'pipeline');
   assert.equal(ui.figureId(unnamed), 'fig_a1b2c3', 'a generated id comes back in the reply');
+  assert.equal(ui.figureId(stateOutput), 'fig_0cc281', 'ACP tool.state.output resolves generated figure ids even when output text is empty');
+  assert.deepEqual(ui.figureTemplate(stateOutput), { name: 'status-cards/round', version: 1 });
   assert.deepEqual(ui.splitProcessMentions('see [patterm_figure:pipeline] here').map((part) => part.figure ?? null), [null, 'pipeline', null]);
   assert.match(ui.renderPlainMarkdown('Before\n\n[patterm_figure:pipeline]\n\nAfter', { mentions: true }), /<p>Before<\/p>\n<p><span data-mention="\[patterm_figure:pipeline\]"><\/span><\/p>\n<p>After<\/p>/);
 });
