@@ -37,6 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Antigravity keeps follow-ups queued and Stop pending when a running tool is
+  briefly reported as pending. The conversation distinguishes observed
+  background work, recent activity, and stopping.
+- Antigravity warns when extra MCP servers could make tools unavailable and
+  rejects missing or unreadable PDF attachments before sending the prompt.
+  Attachment sends are not confirmed from a text-only echo.
 - Integrated Antigravity confirms plain-text prompts from their native receipt
   when the CLI starts a turn without echoing the message over ACP.
 - Integrated Antigravity shows work and asks for approval when a background

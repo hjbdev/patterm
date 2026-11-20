@@ -47,6 +47,7 @@ const deliveries = new Set<string>();
 let sessionId = config.resumeId ?? '';
 let status = 'starting';
 let statusDetail = '';
+let workingDetail = '';
 let revision = 0;
 let controlsRevision = 0;
 let active = false;
@@ -64,6 +65,7 @@ let block: IntegratedConversationMessage | null = null;
 const nativeBlocks = new Map<string, IntegratedConversationMessage>();
 let userEcho: IntegratedConversationMessage | null = null;
 let userConfirmed = false;
+let plainTextPrompt = false;
 let stopWatchingPrompt: (() => void) | null = null;
 let admission: { resolve: () => void; reject: (error: Error) => void; timer: NodeJS.Timeout } | null = null;
 let model: string | null = null;
@@ -147,9 +149,12 @@ function busy(): boolean {
 }
 function state(): void {
   const next = failed ? 'error' : permissions.size ? 'permission' : busy() ? 'working' : loaded ? 'idle' : status;
-  if (next === status) return;
+  const detail = next !== 'working' ? '' : cancelling ? 'Stopping…' : active ? ''
+    : runningTools.size ? 'Background tools running…' : 'Recent background activity';
+  if (next === status && detail === workingDetail) return;
   status = next;
-  publish({ kind: 'status', status });
+  workingDetail = detail;
+  publish({ kind: 'status', status, detail: detail || undefined });
 }
 function backgroundActivity(): void {
   if (!loaded || active || failed || cancelling || stopping) return;
@@ -186,6 +191,7 @@ function fail(error: Error, fatal = true): void {
   finishCancellation();
   if (backgroundQuiet) clearTimeout(backgroundQuiet);
   backgroundQuiet = null;
+  workingDetail = '';
   failed = fatal;
   permissions.clear();
   finishTools(error.message);
@@ -195,7 +201,8 @@ function finishTools(reason: string, pendingOnly = false): void {
   for (const message of [...messages]) {
     const tool = message.tool;
     const status = (tool?.state as Row | undefined)?.status;
-    if (!tool || (status !== 'pending' && (pendingOnly || status !== 'in_progress'))) continue;
+    if (!tool || (pendingOnly ? status !== 'pending' || runningTools.has(message.id)
+      : status !== 'pending' && status !== 'in_progress')) continue;
     runningTools.delete(message.id);
     backgroundToolIds.add(message.id);
     replace({ ...message, completedAt: new Date().toISOString(), tool: { ...tool, state: { ...(tool.state as Row), status: 'failed', error: reason } } });
@@ -285,7 +292,11 @@ function nativeMessageKey(role: string, kind: string, id: string): string {
   return JSON.stringify([role, kind, id]);
 }
 function chunk(kind: 'text' | 'reasoning', text: string, role: 'user' | 'assistant', nativeId?: string): void {
-  if (role === 'user' && userEcho) { admit(); block = null; return; }
+  if (role === 'user' && userEcho) {
+    if (plainTextPrompt && text === userEcho.text) admit();
+    block = null;
+    return;
+  }
   const key = nativeId === undefined ? null : nativeMessageKey(role, kind, nativeId);
   let row = key === null ? block : nativeBlocks.get(key);
   if (!row || row.kind !== kind || row.role !== role) {
@@ -303,7 +314,7 @@ function contentChunk(content: Row, kind: 'text' | 'reasoning', role: 'user' | '
     backgroundActivity();
   }
   if (content.type === 'text') { chunk(kind, String(content.text ?? ''), role, nativeId); return; }
-  if (role === 'user' && userEcho) { admit(); return; }
+  if (role === 'user' && userEcho) return;
   if (content.type === 'image' && typeof content.data === 'string') {
     const stored = images?.fromBase64(content.data);
     const key = nativeId === undefined ? null : nativeMessageKey(role, kind, nativeId);
@@ -475,13 +486,15 @@ function receive(frame: Row): void {
         ? { truncated: true, ...(typeof inputPath === 'string' ? { path: toolPreview(inputPath) } : {}) } : rawInput;
       const input = { ...(update.rawInput == null ? prior : preview), ...(typeof rawInput.Path === 'string' ? { path: toolPreview(rawInput.Path) } : {}), ...(patch ? { patch } : {}) };
       const toolState = { ...(previous?.tool?.state as Row | undefined), status: update.status ?? (previous?.tool?.state as Row | undefined)?.status ?? 'pending', ...(update.rawOutput !== undefined ? { output: toolOutput(update.rawOutput) } : {}) };
+      const terminal = toolState.status === 'completed' || toolState.status === 'failed';
       if (loaded && !failed && !stopping) {
         if (!active) backgroundToolIds.add(id);
         if (toolState.status === 'in_progress') runningTools.add(id);
-        else if (runningTools.delete(id) && !runningTools.size && cancelWatchingTools) finishCancellation();
+        else if (terminal && runningTools.delete(id) && !runningTools.size && cancelWatchingTools) finishCancellation();
         backgroundActivity();
+        state();
       }
-      replace({ id, role: 'assistant', kind: 'tool', text: replacesContent ? toolPreview(output) : previous?.text ?? '', createdAt: previous?.createdAt ?? new Date().toISOString(), ...(['completed', 'failed'].includes(toolState.status) ? { completedAt: previous?.completedAt ?? new Date().toISOString() } : {}), tool: { name: update.name ?? previous?.tool?.name ?? update.kind ?? 'Tool', input, state: toolState } });
+      replace({ id, role: 'assistant', kind: 'tool', text: replacesContent ? toolPreview(output) : previous?.text ?? '', createdAt: previous?.createdAt ?? new Date().toISOString(), ...(terminal ? { completedAt: previous?.completedAt ?? new Date().toISOString() } : {}), tool: { name: update.name ?? previous?.tool?.name ?? update.kind ?? 'Tool', input, state: toolState } });
       break;
     }
     case 'available_commands_update': commands = update.availableCommands ?? []; controlsRevision++; publish({ kind: 'pending' }); break;
@@ -538,6 +551,10 @@ async function start(): Promise<void> {
   } else {
     replace({ id: randomUUID(), role: 'assistant', kind: 'notice', level: 'warning', text: `Antigravity does not offer ${wantedMode} mode for this account or platform. Its native mode is unchanged; MCP requests still ask for approval.` });
   }
+  if (config.mcpServers.length > 1) replace({
+    id: randomUUID(), role: 'assistant', kind: 'notice', level: 'warning',
+    text: 'Antigravity may omit MCP tools when the combined catalogue is large. Patterm sent all configured servers but cannot tell which tools Antigravity makes available.'
+  });
   saveSettings();
   controlsRevision++; loaded = true; block = null; state();
 }
@@ -589,7 +606,7 @@ function snapshot(): Row {
   return {
     provider_session_id: sessionId,
     status,
-    ...(statusDetail ? { status_detail: statusDetail } : {}),
+    ...(status === 'working' && workingDetail ? { status_detail: workingDetail } : status === 'error' && statusDetail ? { status_detail: statusDetail } : {}),
     messages: { data: messages.slice(start) },
     history_truncated: cursor !== null,
     history_cursor: cursor ? { next: cursor } : null,
@@ -624,7 +641,8 @@ async function handle(method: string, params: Row): Promise<unknown> {
     });
     // Text alone cannot confirm references or attachments. Leave those on
     // the ACP acknowledgement path.
-    if (params.prompt.length === 1 && params.prompt[0]?.type === 'text' && params.prompt[0].text === userEcho.text) {
+    plainTextPrompt = params.prompt.length === 1 && params.prompt[0]?.type === 'text' && params.prompt[0].text === userEcho.text;
+    if (plainTextPrompt) {
       stopWatchingPrompt = watchAntigravityPrompt(sessionId, userEcho.text, admit);
     }
     state();

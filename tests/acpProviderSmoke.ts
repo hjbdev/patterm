@@ -74,8 +74,21 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
    out({id:q.id,error:{code:-32000,message:'Native rejected without accepting'}});prompt=null;return;
   }
   if(text==='crash') {fs.writeFileSync(process.env.ACP_TRACE+'.side-effect','executed');process.exit(17);}
-  echo(text);
-  if(text==='no-cancel-ack') return;
+   echo(text);
+   if(text==='no-cancel-ack') return;
+   if(text==='pdf-attachment') {
+    const file = require('node:url').fileURLToPath(q.params.prompt[1].uri);
+    say(fs.readFileSync(file,'utf8'));
+    const timer = setInterval(() => {
+     if(!fs.existsSync(process.env.ACP_TRACE+'.pdf-done')) return;
+     clearInterval(timer);result(q.id,{stopReason:'end_turn'});prompt=null;
+    },5);
+    return;
+   }
+   if(text==='stop-background') {
+    update({sessionUpdate:'tool_call',toolCallId:'stopping-tool',status:'in_progress'});
+    result(q.id,{stopReason:'end_turn'});prompt=null;return;
+   }
   if(text==='delayed-approval') {
    result(q.id,{stopReason:'end_turn'});prompt=null;
    update({sessionUpdate:'tool_call',toolCallId:'deferred',name:'mcp_patterm_mutate',status:'pending'});return;
@@ -91,7 +104,10 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     const timer = setInterval(() => {
      if(!fs.existsSync(file)) return;
      clearInterval(timer);
-     if(suffix==='.end-turn') {result(q.id,{stopReason:started?'end_turn':'max_tokens'});prompt=null;update({sessionUpdate:'usage_update',used:314,size:1000});}
+      if(suffix==='.end-turn') {
+       if(started) update({sessionUpdate:'tool_call_update',toolCallId:'outlives',status:'pending'});
+       result(q.id,{stopReason:started?'end_turn':'max_tokens'});prompt=null;update({sessionUpdate:'usage_update',used:314,size:1000});
+      }
      else update({sessionUpdate:'tool_call_update',toolCallId:'outlives',status:'completed'});
     },5);
    };
@@ -144,8 +160,18 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   update({sessionUpdate:'usage_update',used:42,size:1000});
   result(q.id,{stopReason:'end_turn',usage:{inputTokens:20,outputTokens:5}});prompt=null;return;
  }
- if(q.method==='session/cancel') {
-   if(process.env.ACP_IGNORE_CANCEL) return;
+  if(q.method==='session/cancel') {
+    if(process.env.ACP_IGNORE_CANCEL) return;
+    if(!prompt) {
+     update({sessionUpdate:'tool_call_update',toolCallId:'stopping-tool',status:'pending'});
+     const timer=setInterval(()=>{
+      if(!fs.existsSync(process.env.ACP_TRACE+'.cancel-tool-done')) return;
+      clearInterval(timer);
+      update({sessionUpdate:'tool_call_update',toolCallId:'stopping-tool',status:'in_progress'});
+      update({sessionUpdate:'tool_call_update',toolCallId:'stopping-tool',status:'failed'});
+     },5);
+     return;
+    }
    // A late request must not re-open a permission card or be auto-approved.
    out({id:42,method:'session/request_permission',params:{sessionId:'native-session',toolCall:{name:'mcp_patterm_mutate'},options:[{optionId:'allow',kind:'allow_once',name:'Allow'}]}});
   if(prompt) result(prompt,{stopReason:'cancelled'});prompt=null;return;
@@ -177,7 +203,10 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       model: 'flash-low', reasoning: 'low',
       mcp: { command: process.execPath, args: ['shim.js'], env: { PATTERM_MCP_IDENTITY: 'private-identity' } }
     };
-    const prepared = await provider.prepare(input);
+    const prepared = await provider.prepare({
+      ...input,
+      mcpServers: [{ id: 'extra', name: 'extra', transport: 'stdio', command: process.execPath, args: ['extra.js'], env: {} }]
+    });
     assert.equal(prepared.resumeId, 'native-session');
     assert(!JSON.stringify(prepared.argv).includes('private-identity'));
     database.connection.prepare(`insert into processes (id,project_id,kind,name,status,cwd,argv,created_at,updated_at) values ('process','project','agent','Agy','running',?,?,?,?)`).run(directory, JSON.stringify(prepared.argv), now, now);
@@ -185,7 +214,8 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     const frames = () => fs.readFileSync(trace, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
     const creation = frames().find((frame) => frame.method === 'session/new');
     assert.equal(creation.params._meta.antigravity.systemPrompt.append, input.context);
-    assert.deepEqual(creation.params.mcpServers[0].env, [{ name: 'PATTERM_MCP_IDENTITY', value: 'private-identity' }, { name: 'PATTERM_MCP_COMPACT', value: '1' }], 'agy gets the compact Patterm catalogue');
+    assert.deepEqual(creation.params.mcpServers.map((server: any) => server.name).sort(), ['extra', 'patterm'], 'all configured servers are delivered');
+    assert.deepEqual(creation.params.mcpServers.find((server: any) => server.name === 'patterm').env, [{ name: 'PATTERM_MCP_IDENTITY', value: 'private-identity' }, { name: 'PATTERM_MCP_COMPACT', value: '1' }], 'agy gets the compact Patterm catalogue');
     assert.deepEqual(frames()[0].params.clientCapabilities, {}, 'unimplemented filesystem and terminal capabilities are not advertised');
     if (process.platform !== 'win32') assert.equal(fs.statSync(prepared.argv[4]!).mode & 0o777, 0o600);
     await assert.rejects(provider.prepare({ ...input, resumeId: prepared.resumeId }), /already attached/);
@@ -198,6 +228,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     await provider.prompt('process', { text: 'hello', references: [{ path: path.join(directory, 'a #.txt'), name: 'a #.txt', relativePath: 'a #.txt' }], attachments: [], messageId: 'hello-id' });
     let state = await waitFor(provider, (state) => state.status === 'idle');
     assert.equal(state.provider, 'agy');
+    assert(state.messages.data.some((row: any) => row.kind === 'notice' && row.text.includes('may omit MCP tools')));
     assert.equal(state.messages.data.find((row: any) => row.role === 'user').clientMessageId, 'hello-id');
     assert(state.messages.data.some((row: any) => row.kind === 'reasoning' && row.text === 'Thinking'));
     assert(state.messages.data.some((row: any) => row.text === 'Hello Flash'));
@@ -213,7 +244,19 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     const count = frames().filter((frame) => frame.method === 'session/prompt').length;
     await provider.prompt('process', { text: 'hello', references: [], attachments: [], messageId: 'hello-id' });
     assert.equal(frames().filter((frame) => frame.method === 'session/prompt').length, count, 'an acknowledged message is never resubmitted');
-    await provider.prompt('process', { text: 'pdf-attachment', references: [], attachments: [{ path: path.join(directory, 'a #.pdf'), name: 'a #.pdf', mime: 'application/pdf', size: 3, data: Buffer.from('pdf').toString('base64') }] });
+    const pdf = { text: 'pdf-attachment', references: [], messageId: 'pdf-id', attachments: [{ path: path.join(directory, 'a #.pdf'), name: 'a #.pdf', mime: 'application/pdf', size: 11 }] };
+    await assert.rejects(provider.prompt('process', pdf), /cannot read.*Attach the PDF again/);
+    assert.equal(frames().filter((frame) => frame.method === 'session/prompt').length, count, 'a missing PDF is rejected before dispatch');
+    fs.writeFileSync(pdf.attachments[0]!.path, 'staged-file');
+    const pdfSend = provider.prompt('process', pdf);
+    try {
+      await waitFor(provider, (snapshot) => snapshot.messages.data.some((row: any) => row.text === 'staged-file'));
+      assert.equal(await provider.reconcile('process', 'pdf-id'), 'unknown', 'text echo and output cannot confirm an attachment send');
+    } finally {
+      fs.writeFileSync(trace + '.pdf-done', '');
+      await pdfSend;
+    }
+    assert.equal(await provider.reconcile('process', 'pdf-id'), 'accepted');
     await waitFor(provider, (snapshot) => snapshot.status === 'idle');
     assert.deepEqual(frames().filter((frame) => frame.method === 'session/prompt').at(-1).params.prompt[1], { type: 'resource_link', uri: pathToFileURL(path.join(directory, 'a #.pdf')).href, name: 'a #.pdf', mimeType: 'application/pdf' }, 'PDFs use native file reading, not silently ignored binary blobs');
 
@@ -227,8 +270,18 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     await provider.replyPermission('process', '43', 'once');
     state = await waitFor(provider, (snapshot) => snapshot.messages.data.some((row: any) => row.text === 'Background work done'));
     assert.equal(state.status, 'working', 'background output keeps the session active');
+    assert.equal(state.status_detail, 'Recent background activity');
     await assert.rejects(ask('follow-up'), TurnBusyError);
     await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    await ask('stop-background');
+    await waitFor(provider, (snapshot) => snapshot.status_detail === 'Background tools running…');
+    await provider.interrupt('process');
+    state = await waitFor(provider, (snapshot) => snapshot.messages.data.some((row: any) => row.id === 'tool:stopping-tool' && row.tool.state.status === 'pending'));
+    assert.equal(state.status_detail, 'Stopping…', 'a pending update cannot acknowledge Stop');
+    await assert.rejects(ask('not-during-stop'), TurnBusyError);
+    fs.writeFileSync(trace + '.cancel-tool-done', '');
+    await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    assert(events.some((event) => event.kind === 'status' && event.detail === 'Background tools running…'), 'background status reaches live subscribers');
     await ask('delayed-approval');
     await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.id === 'tool:deferred'));
     await ask('overlapping-follow-up');
@@ -244,7 +297,9 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       assert.equal((await queue.prompt('process', { text: 'after-outliving-tool', messageId: 'held-after-tool' }) as any).delivery, 'queued');
       fs.writeFileSync(trace + '.end-turn', '');
       await waitFor(provider, (snapshot) => snapshot.usage.contextTokens === 314);
-      assert.equal((await provider.conversation('process') as any).status, 'working');
+      state = await provider.conversation('process');
+      assert.equal(state.status_detail, 'Background tools running…');
+      assert.equal(state.messages.data.find((row: any) => row.id === 'tool:outlives').tool.state.status, 'pending', 're-announcing a known running tool as pending does not abandon it');
       assert(!frames().some((frame) => frame.method === 'session/prompt' && frame.params.prompt[0].text === 'after-outliving-tool'));
       fs.writeFileSync(trace + '.complete-tool', '');
       await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.clientMessageId === 'held-after-tool'));
