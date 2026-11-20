@@ -48,6 +48,7 @@ interface TrackedSubagent {
   consumedSendMessages: number;
   lastStepWasFinal: boolean;
   authoritativeLink: boolean;
+  historicalUnlinked: boolean;
   hasRows: boolean;
 }
 
@@ -73,6 +74,7 @@ export class AntigravitySubagentTracker {
   private readonly pollMs: number;
   private timer: NodeJS.Timeout | null = null;
   private stopped = false;
+  private initialLoadPending = false;
   private lastTasksDigest = '';
 
   constructor(private readonly options: AntigravitySubagentTrackerOptions) {
@@ -186,11 +188,20 @@ export class AntigravitySubagentTracker {
 
   syncNow(initialLoad = false): void {
     if (this.stopped) return;
+    if (initialLoad) this.initialLoadPending = true;
     this.pollParent();
     this.reconcileUnlinked();
     for (const subagent of this.subagents.values()) {
       if (subagent.status !== 'stopped' || !subagent.hasRows) {
         this.pollSubagent(subagent, initialLoad);
+      }
+    }
+    if (this.initialLoadPending && !this.parentTail?.hasMore) {
+      this.initialLoadPending = false;
+      for (const subagent of this.subagents.values()) {
+        if (subagent.parentToolRowId === null && subagent.status !== 'running' && subagent.status !== 'pending') {
+          subagent.historicalUnlinked = true;
+        }
       }
     }
     this.notifyTasksIfChanged();
@@ -271,6 +282,7 @@ export class AntigravitySubagentTracker {
     }
     subagent.parentToolRowId = toolRowId;
     subagent.authoritativeLink = authoritative;
+    subagent.historicalUnlinked = false;
     this.toolRowToSubagent.set(toolRowId, subagent.id);
     if (label && subagent.label === 'Subagent') subagent.label = label;
     if (kind && subagent.kind === 'subagent') subagent.kind = kind;
@@ -287,6 +299,7 @@ export class AntigravitySubagentTracker {
   private matchUnlinkedSubagent(role: string, prompt: string): TrackedSubagent | null {
     const candidates = [...this.subagents.values()].filter((subagent) =>
       subagent.parentToolRowId === null
+      && !subagent.historicalUnlinked
       && (!role || !subagent.role || subagent.role === role)
       && (!prompt || !subagent.prompt || subagent.prompt === prompt)
     );
@@ -344,6 +357,7 @@ export class AntigravitySubagentTracker {
       consumedSendMessages: 0,
       lastStepWasFinal: false,
       authoritativeLink: Boolean(toolRowId && authoritative),
+      historicalUnlinked: false,
       hasRows: false
     };
     this.subagents.set(id, subagent);
@@ -396,7 +410,7 @@ export class AntigravitySubagentTracker {
     if (!this.unlinkedInvokes.length) return;
     for (const minScore of [3, 2, 1, 0]) {
       for (const subagent of this.subagents.values()) {
-        if (subagent.parentToolRowId !== null || !this.unlinkedInvokes.length) continue;
+        if (subagent.parentToolRowId !== null || subagent.historicalUnlinked || !this.unlinkedInvokes.length) continue;
         const matched = this.matchUnlinkedInvoke({ Role: subagent.role, Prompt: subagent.prompt }, minScore);
         if (matched) this.attachParentToolRow(subagent, matched.toolRowId, matched.label, matched.kind);
       }
@@ -429,7 +443,7 @@ export class AntigravitySubagentTracker {
             if (!rawCall || typeof rawCall !== 'object') continue;
             const call = rawCall as Row;
             const name = typeof call.name === 'string' ? call.name : '';
-            const args = parseToolArgs(call.args);
+            const args = parseToolArgs(call.args, 0);
             this.parentPendingTools.push({ name, args });
             if (name === 'send_message') {
               const recipient = typeof args.Recipient === 'string' ? args.Recipient : '';
@@ -747,14 +761,14 @@ function summarizeOversizedJsonlLine(head: string, tailText: string): string | n
   return JSON.stringify(row);
 }
 
-function parseToolArgs(value: unknown): Record<string, unknown> {
+function parseToolArgs(value: unknown, maxStringChars = 4_000): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => {
     let parsed: unknown = item;
     if (typeof item === 'string') {
       try { parsed = JSON.parse(item) as unknown; } catch { parsed = item; }
     }
-    return [key, typeof parsed === 'string' ? clip(parsed, 4_000) : parsed];
+    return [key, typeof parsed === 'string' && maxStringChars > 0 ? clip(parsed, maxStringChars) : parsed];
   }));
 }
 

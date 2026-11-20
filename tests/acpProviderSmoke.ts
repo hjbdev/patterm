@@ -958,6 +958,34 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       assert.equal([...logOnlyRows.values()].find((row) => row.text === 'Alpha reply')?.parentId, 'tool:lo-alpha');
       assert.equal([...logOnlyRows.values()].find((row) => row.text === 'Beta reply')?.parentId, 'tool:lo-beta');
 
+      // After resume, a pre-resume unlinked child must not be claimed by a fresh
+      // invocation with the same Role/Prompt, and prompts > 4,000 chars pair losslessly.
+      const resumeRepeatRows = new Map<string, any>();
+      const resumeRepeatTracker = new AntigravitySubagentTracker({ sessionId: 'edge-resume-repeat', hostEnv: trackerEnv, pollMs: 25, onMessage: (row) => resumeRepeatRows.set(row.id, row), onTasksChanged: () => {} });
+      edgeTrackers.push(resumeRepeatTracker);
+      const longPrompt = 'P'.repeat(4_001);
+      appendLog('edge-old-child', modelRow(0, { status: 'DONE', content: 'Prior turn reply' }));
+      const oldChildPath = antigravityTranscriptPath('edge-old-child', trackerEnv)!;
+      const oldPast = new Date(Date.now() - 6_000);
+      fs.utimesSync(oldChildPath, oldPast, oldPast);
+      appendLog(
+        'edge-resume-repeat',
+        modelRow(0, { tool_calls: [{ name: 'invoke_subagent', args: { Role: '"Reviewer"', Prompt: JSON.stringify(longPrompt) } }] }),
+        invokeResult(1, 'edge-old-child')
+      );
+      resumeRepeatTracker.syncNow(true);
+      assert.equal(resumeRepeatTracker.tasks()[0]?.id, 'edge-old-child');
+      assert.equal(resumeRepeatTracker.tasks()[0]?.status, 'completed');
+      resumeRepeatTracker.observeToolCall('tool:repeat-new', 'invoke_subagent', { Role: 'Reviewer', Prompt: longPrompt }, '', null);
+      appendLog('edge-new-child', modelRow(0, { status: 'DONE', content: 'New turn reply' }));
+      appendLog(
+        'edge-resume-repeat',
+        modelRow(2, { tool_calls: [{ name: 'invoke_subagent', args: { Role: '"Reviewer"', Prompt: JSON.stringify(longPrompt) } }] }),
+        invokeResult(3, 'edge-new-child')
+      );
+      resumeRepeatTracker.syncNow();
+      assert.deepEqual([...resumeRepeatRows.values()].map((row) => [row.text, row.parentId]), [['New turn reply', 'tool:repeat-new']]);
+
       // Drawer pagination keeps a tool_call and its tool_result in the same page.
       appendLog(
         'edge-drawer-child',
