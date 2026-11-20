@@ -51,6 +51,7 @@ function openCodeSessionId(meta?: Record<string, unknown>): unknown {
 const DISCONNECTED_ERROR = 'Patterm disconnected before responding. The command may have run and was not retried.';
 
 interface PendingSocketRequest {
+  owner: net.Socket;
   resolve(value: { result: unknown; push: boolean }): void;
   reject(error: Error): void;
 }
@@ -64,15 +65,18 @@ const pendingRequests = new Map<number, PendingSocketRequest>();
 const pendingOrder: number[] = [];
 let onCatalogChanged: (() => void) | null = null;
 
-function failPendingRequests(error: Error): void {
-  const entries = [...pendingRequests.values()];
-  pendingRequests.clear();
-  pendingOrder.length = 0;
-  for (const entry of entries) entry.reject(error);
+function failPendingRequests(error: Error, owner?: net.Socket): void {
+  for (const [id, entry] of [...pendingRequests.entries()]) {
+    if (owner && entry.owner !== owner) continue;
+    pendingRequests.delete(id);
+    const idx = pendingOrder.indexOf(id);
+    if (idx >= 0) pendingOrder.splice(idx, 1);
+    entry.reject(error);
+  }
 }
 
 function getPersistentSocket(): Promise<net.Socket> {
-  if (persistentSocket && !persistentSocket.destroyed && persistentSocket.writable) {
+  if (persistentSocket && !persistentSocket.destroyed && !persistentSocket.readableEnded && !persistentSocket.writableEnded && persistentSocket.writable) {
     return Promise.resolve(persistentSocket);
   }
   if (persistentConnecting) return persistentConnecting;
@@ -131,21 +135,31 @@ function getPersistentSocket(): Promise<net.Socket> {
       if (!connected) {
         persistentConnecting = null;
         reject(error);
-      } else if (persistentSocket === client) {
+      } else {
+        if (persistentSocket === client) {
+          persistentSocket = null;
+          persistentSubscribed = false;
+        }
+        failPendingRequests(error, client);
+      }
+    });
+    client.once('end', () => {
+      if (persistentSocket === client) {
         persistentSocket = null;
         persistentSubscribed = false;
-        failPendingRequests(error);
       }
     });
     client.once('close', () => {
       if (!connected) {
         persistentConnecting = null;
         reject(new Error(DISCONNECTED_ERROR));
-      } else if (persistentSocket === client) {
-        persistentSocket = null;
-        persistentSubscribed = false;
+      } else {
+        if (persistentSocket === client) {
+          persistentSocket = null;
+          persistentSubscribed = false;
+        }
         // An interrupted mutating command must never be retried implicitly.
-        failPendingRequests(new Error(DISCONNECTED_ERROR));
+        failPendingRequests(new Error(DISCONNECTED_ERROR), client);
       }
     });
   });
@@ -163,7 +177,7 @@ async function registryRequestRaw(request: ShimRequest, meta?: Record<string, un
     : bridge && 'server' in request ? { opencodeBridge: bridge }
       : { identity: process.env.PATTERM_MCP_IDENTITY ?? null }) })}\n`;
   return new Promise((resolve, reject) => {
-    pendingRequests.set(id, { resolve, reject });
+    pendingRequests.set(id, { owner: client, resolve, reject });
     pendingOrder.push(id);
     client.ref();
     client.write(payload, (error) => {
@@ -176,8 +190,18 @@ async function registryRequestRaw(request: ShimRequest, meta?: Record<string, un
       }
     });
   }).then((value) => {
-    if (!pendingRequests.size && !client.destroyed) client.unref();
-    return value as { result: unknown; push: boolean };
+    const reply = value as { result: unknown; push: boolean };
+    if (reply.push) persistentPushSupported = true;
+    if (!persistentPushSupported && !pendingRequests.size) {
+      if (persistentSocket === client) {
+        persistentSocket = null;
+        persistentSubscribed = false;
+      }
+      client.end();
+    } else if (!pendingRequests.size && !client.destroyed) {
+      client.unref();
+    }
+    return reply;
   }, (error) => {
     if (!pendingRequests.size && !client.destroyed) client.unref();
     throw error;
