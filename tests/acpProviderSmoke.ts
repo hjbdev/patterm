@@ -125,8 +125,8 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   if(text==='post-prompt') {
    const frames = [
     {id:q.id,result:{stopReason:'end_turn'}},
-    {method:'session/update',params:{sessionId:'native-session',update:{sessionUpdate:'tool_call',toolCallId:'background',name:'mcp_patterm_mutate',status:'in_progress'}}},
-    {id:43,method:'session/request_permission',params:{sessionId:'native-session',toolCall:{toolCallId:'background',name:'mcp_patterm_mutate',title:'Background approval'},options:[{optionId:'allow',kind:'allow_once',name:'Allow'}]}}
+    {method:'session/update',params:{sessionId:'native-session',update:{sessionUpdate:'tool_call',toolCallId:'background',name:'run_command',status:'in_progress'}}},
+    {id:43,method:'session/request_permission',params:{sessionId:'native-session',toolCall:{toolCallId:'background',name:'run_command',title:'Background approval'},options:[{optionId:'allow',kind:'allow_once',name:'Allow'}]}}
    ];
    prompt=null;process.stdout.write(frames.map(frame=>JSON.stringify({jsonrpc:'2.0',...frame})+'\n').join(''));return;
   }
@@ -273,7 +273,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     state = await waitFor(provider, (snapshot) => snapshot.messages.data.some((row: any) => row.id === 'tool:background') && snapshot.status !== 'starting');
     assert.equal(state.status, 'permission', 'a background approval after the prompt response still reaches the user');
     assert.equal(state.permissions.data[0]?.action, 'Background approval');
-    assert(!frames().some((frame) => frame.id === 43), 'a background MCP permission is not auto-approved or cancelled');
+    assert(!frames().some((frame) => frame.id === 43), 'a background non-MCP permission is not auto-approved or cancelled');
     await assert.rejects(ask('follow-up'), TurnBusyError);
     await provider.replyPermission('process', '43', 'once');
     state = await waitFor(provider, (snapshot) => snapshot.messages.data.some((row: any) => row.text === 'Background work done'));
@@ -293,11 +293,9 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     await ask('delayed-approval');
     await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.id === 'tool:deferred'));
     await ask('overlapping-follow-up');
-    state = await waitFor(provider, (snapshot) => snapshot.status === 'permission');
-    assert.equal(state.permissions.data[0]?.id, '44', 'background permissions remain manual during a later foreground prompt');
-    assert(!frames().some((frame) => frame.id === 44));
-    await provider.replyPermission('process', '44', 'reject');
-    await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    state = await waitFor(provider, (snapshot) => snapshot.status === 'idle' && frames().some((frame) => frame.id === 44));
+    assert.deepEqual(frames().find((frame) => frame.id === 44)?.result, { outcome: { outcome: 'selected', optionId: 'allow' } }, 'Allow MCP tools covers work agy does after a prompt ends');
+    assert.equal(state.permissions.data.length, 0);
     const queue = new IntegratedAgentService(database, { agy: provider });
     try {
       queue.observe('process');
