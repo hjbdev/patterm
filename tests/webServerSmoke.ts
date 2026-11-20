@@ -422,6 +422,52 @@ async function main(): Promise<void> {
       integrated.mcp.call = originalCall;
     }
 
+    // Browser Stop must reach the agent even while its send awaits acceptance.
+    const held: { send?: () => void; stop?: () => void } = {};
+    const calls: string[] = [];
+    integrated.mcp.call = async (tool, args, context) => {
+      if (tool === 'integrated_send') return new Promise((resolve) => {
+        held.send = () => resolve({ ok: true });
+      });
+      if (tool === 'integrated_interrupt') return new Promise((resolve) => {
+        calls.push('stop');
+        held.stop = () => resolve({ ok: true });
+      });
+      if (tool === 'integrated_configure') { calls.push('configure'); return { ok: true }; }
+      return originalCall.call(app.mcp, tool, args, context);
+    };
+    const operation = (tool: string) => a.call('patterm:integrated:call', { tool, arguments: { process_id: firstId } });
+    try {
+      const send = operation('integrated_send');
+      await until(() => Boolean(held.send), 'the send to reach the provider');
+      const stop = operation('integrated_interrupt');
+      await until(() => Boolean(held.stop), 'Stop to reach the provider before the send settles');
+      const configure = operation('integrated_configure');
+      held.send!();
+      await b.request('refresh', { process_id: secondId });
+      assert.deepEqual(calls, ['stop']);
+      held.stop!();
+      await Promise.all([send, stop, configure]);
+      assert.deepEqual(calls, ['stop', 'configure']);
+
+      delete held.send;
+      const interrupted = operation('integrated_send');
+      await until(() => Boolean(held.send), 'the next send to reach the provider');
+      const controller = await connect();
+      await controller.request('subscribe', { process_id: firstId, subscribed: true });
+      await controller.request('take-control', { process_id: firstId });
+      await assert.rejects(operation('integrated_interrupt'), /Take control/);
+      assert.deepEqual(calls, ['stop', 'configure'], 'the old owner cannot bypass the control check');
+      held.send!();
+      await interrupted;
+      await a.request('take-control', { process_id: firstId });
+      await controller.close();
+    } finally {
+      held.send?.();
+      held.stop?.();
+      integrated.mcp.call = originalCall;
+    }
+
     // A failed Integrated parent can be recovered only by the controlling
     // browser. Ended-session control grants no prompt/configure permissions.
     const crashAt = new Date().toISOString();

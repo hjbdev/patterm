@@ -39,7 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Antigravity keeps follow-ups queued and Stop pending when a running tool is
   briefly reported as pending. The conversation distinguishes observed
-  background work, recent activity, and stopping.
+  background work, recent activity, and stopping. In the browser, Stop can
+  reach a turn even while its send is waiting for a delivery receipt.
 - Antigravity warns when extra MCP servers could make tools unavailable and
   rejects missing or unreadable PDF attachments before sending the prompt.
   Attachment sends are not confirmed from a text-only echo.
