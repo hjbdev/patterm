@@ -216,6 +216,8 @@ function stopBackground(): void {
     cancelDeadline = setTimeout(() => {
       for (const id of runningTools) addBounded(stoppedToolIds, id);
       finishTools('Stopped');
+      // finishTools reaches only rows still in the transcript.
+      runningTools.clear();
       finishCancellation();
       state(); publish({ kind: 'pending' });
     }, CANCEL_TIMEOUT_MS);
@@ -244,7 +246,7 @@ function backgroundTasks(): Row[] {
   const running = [...backgroundCommands.keys()].filter((id) => runningTools.has(id)).length;
   return [...backgroundCommands].map(([id, command]) => {
     if (runningTools.has(id)) {
-      return { id, label: command.label, kind: 'local_bash', status: 'running', stoppable: !cancelling,
+      return { id, label: command.label, kind: 'local_bash', status: 'running', stoppable: !cancelling && !active,
         ...(running > 1 ? { detail: 'Stop ends every background command: ACP cannot stop one alone' } : {}) };
     }
     const state = messages.find((message) => message.id === id)?.tool?.state as Row | undefined;
@@ -908,6 +910,8 @@ async function handle(method: string, params: Row): Promise<unknown> {
       stopWatchingPrompt = watchAntigravityPrompt(sessionId, userEcho.text, admit);
     }
     state();
+    // Background command tasks can't be stopped during a turn.
+    if (runningTools.size) publish({ kind: 'pending' });
     // The result arrives only at turn end. Keep the host socket responsive to
     // permissions and cancellation instead of awaiting it in this handler.
     const turn = rpc('session/prompt', { sessionId, prompt: params.prompt }, 0);
@@ -930,7 +934,7 @@ async function handle(method: string, params: Row): Promise<unknown> {
       }
       active = false; userEcho = null; promptAnchorId = null; block = null; cancelPermissions();
       subagents?.syncNow();
-      setImmediate(() => { if (!stopping && status !== 'error') state(); });
+      setImmediate(() => { if (!stopping && status !== 'error') { state(); if (runningTools.size) publish({ kind: 'pending' }); } });
       saveSettings();
     }, (error: Error) => {
       active = false; userEcho = null; promptAnchorId = null;
