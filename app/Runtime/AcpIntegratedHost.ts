@@ -171,8 +171,16 @@ function publish(event: Row): void {
     else socket.write(frame);
   }
 }
+// agy takes a prompt while its own background tools run (dev servers, long
+// tests) and queues one sent during an unsolicited reply. Only a foreground
+// turn, a pending approval or an unconfirmed Stop keeps input out.
+function acceptsPrompt(): boolean {
+  return !active && !cancelling && permissions.size === 0 && !configuring;
+}
+// A tool left running after its turn is not model work: a daemon can outlive
+// the session. Only fresh output or an approval keeps the agent working.
 function busy(): boolean {
-  return active || backgroundQuiet !== null || runningTools.size > 0 || permissions.size > 0 || cancelling;
+  return active || backgroundQuiet !== null || permissions.size > 0 || cancelling;
 }
 function state(): void {
   const next = failed ? 'error' : permissions.size ? 'permission' : busy() ? 'working' : loaded ? 'idle' : status;
@@ -642,9 +650,10 @@ function receive(frame: Row): void {
       const toolState = { ...(previous?.tool?.state as Row | undefined), status: update.status ?? (previous?.tool?.state as Row | undefined)?.status ?? 'pending', ...(update.rawOutput !== undefined ? { output: toolOutput(update.rawOutput) } : {}) };
       const terminal = toolState.status === 'completed' || toolState.status === 'failed';
       if (loaded && !failed && !stopping) {
-        if (toolState.status === 'in_progress') runningTools.add(id);
+        // The update that confirms Stop is not fresh work.
+        if (toolState.status === 'in_progress') { runningTools.add(id); backgroundActivity(); }
         else if (terminal && runningTools.delete(id) && !runningTools.size && cancelWatchingTools) finishCancellation();
-        backgroundActivity();
+        else backgroundActivity();
         state();
       }
       const rawText = !output && (replacesContent || !previous?.text) && update.rawOutput !== undefined ? rawOutputText(update.rawOutput) : '';
@@ -820,8 +829,9 @@ async function handle(method: string, params: Row): Promise<unknown> {
   if (!loaded || failed || stopping) throw new Error(statusDetail || 'ACP agent is not ready');
   if (method === 'prompt') {
     if (params.clientMessageId && deliveries.has(params.clientMessageId)) return { accepted: true };
-    if (busy() || configuring) throw new Error('ACP turn is busy');
+    if (!acceptsPrompt()) throw new Error('ACP turn is busy');
     if (!Array.isArray(params.prompt) || !params.prompt.length) throw new Error('Message is empty');
+    if (backgroundQuiet) { clearTimeout(backgroundQuiet); backgroundQuiet = null; }
     active = true; cancelling = false; statusDetail = ''; block = null; userConfirmed = false;
     liveWindowFloorId = null;
     promptAnchorId = messages.length ? messages[messages.length - 1]!.id : null;
@@ -869,11 +879,27 @@ async function handle(method: string, params: Row): Promise<unknown> {
     return { accepted: true };
   }
   if (method === 'interrupt') {
-    if (!busy() || cancelling) return {};
-    cancelling = true;
-    cancelWatchingTools = !active && runningTools.size > 0;
+    if ((!busy() && !runningTools.size) || cancelling) return {};
     write({ method: 'session/cancel', params: { sessionId } });
     cancelPermissions();
+    if (!active) {
+      // Without a foreground turn ACP has no reply to confirm Stop. agy fails
+      // each background tool it kills; an unsolicited reply has no signal at
+      // all. Neither can leave a turn stuck, so never fail the session here.
+      if (backgroundQuiet) { clearTimeout(backgroundQuiet); backgroundQuiet = null; }
+      if (runningTools.size) {
+        cancelling = true;
+        cancelWatchingTools = true;
+        cancelDeadline = setTimeout(() => {
+          finishTools('Stopped');
+          finishCancellation();
+          state(); publish({ kind: 'pending' });
+        }, CANCEL_TIMEOUT_MS);
+      }
+      state(); publish({ kind: 'pending' }); return {};
+    }
+    cancelling = true;
+    cancelWatchingTools = false;
     cancelDeadline = setTimeout(() => {
       fail(new NativeAcpTransportError('Antigravity did not confirm cancellation. Restart the agent before sending another message.'));
       publish({ kind: 'pending' });

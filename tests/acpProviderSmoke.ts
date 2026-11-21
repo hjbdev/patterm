@@ -306,17 +306,17 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     state = await waitFor(provider, (snapshot) => snapshot.messages.data.some((row: any) => row.text === 'Background work done'));
     assert.equal(state.status, 'working', 'background output keeps the session active');
     assert.equal(state.status_detail, 'Recent background activity');
-    await assert.rejects(ask('follow-up'), TurnBusyError);
     await waitFor(provider, (snapshot) => snapshot.status === 'idle');
     await ask('stop-background');
-    await waitFor(provider, (snapshot) => snapshot.status_detail === 'Background tools running…');
+    state = await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.id === 'tool:stopping-tool'));
+    assert.equal(state.messages.data.find((row: any) => row.id === 'tool:stopping-tool').tool.state.status, 'in_progress', 'a tool left running after its turn does not keep the agent working');
     await provider.interrupt('process');
     state = await waitFor(provider, (snapshot) => snapshot.messages.data.some((row: any) => row.id === 'tool:stopping-tool' && row.tool.state.status === 'pending'));
     assert.equal(state.status_detail, 'Stopping…', 'a pending update cannot acknowledge Stop');
     await assert.rejects(ask('not-during-stop'), TurnBusyError);
     fs.writeFileSync(trace + '.cancel-tool-done', '');
     await waitFor(provider, (snapshot) => snapshot.status === 'idle');
-    assert(events.some((event) => event.kind === 'status' && event.detail === 'Background tools running…'), 'background status reaches live subscribers');
+    assert(events.some((event) => event.kind === 'status' && event.detail === 'Stopping…'), 'background Stop reaches live subscribers');
     await ask('delayed-approval');
     await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.id === 'tool:deferred'));
     await ask('overlapping-follow-up');
@@ -329,13 +329,11 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       await ask('tool-outlives-prompt');
       assert.equal((await queue.prompt('process', { text: 'after-outliving-tool', messageId: 'held-after-tool' }) as any).delivery, 'queued');
       fs.writeFileSync(trace + '.end-turn', '');
-      await waitFor(provider, (snapshot) => snapshot.usage.contextTokens === 314);
-      state = await provider.conversation('process');
-      assert.equal(state.status_detail, 'Background tools running…');
-      assert.equal(state.messages.data.find((row: any) => row.id === 'tool:outlives').tool.state.status, 'pending', 're-announcing a known running tool as pending does not abandon it');
-      assert(!frames().some((frame) => frame.method === 'session/prompt' && frame.params.prompt[0].text === 'after-outliving-tool'));
+      state = await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.clientMessageId === 'held-after-tool'));
+      // Pending, not failed: re-announcing a known running tool does not abandon it.
+      assert.equal(state.messages.data.find((row: any) => row.id === 'tool:outlives').tool.state.status, 'pending', 'a held follow-up does not wait for a tool that outlives its turn');
       fs.writeFileSync(trace + '.complete-tool', '');
-      await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.clientMessageId === 'held-after-tool'));
+      await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.find((row: any) => row.id === 'tool:outlives')?.tool.state.status === 'completed');
       fs.unlinkSync(trace + '.end-turn');
       await ask('tool-never-starts');
       assert.equal((await queue.prompt('process', { text: 'after-unstarted-tool', messageId: 'held-after-unstarted' }) as any).delivery, 'queued');

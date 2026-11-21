@@ -50,6 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Antigravity agents no longer hold messages while a background command, such
+  as a dev server, outlives its turn. A tool left running reads as idle, follow-ups
+  go straight to agy, and Stop after the turn has ended settles without a
+  "did not confirm cancellation" error.
 - Integrated host supervisors (`IntegratedHostSupervisor`) now run in versioned
   generations keyed by their runtime module hash. Rebuilding and restarting
   Patterm immediately launches new Claude, Codex, and Antigravity Integrated
