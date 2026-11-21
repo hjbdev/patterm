@@ -105,9 +105,33 @@ function cleanupDeadSupervisorFiles(socketPath: string): void {
   fs.rmSync(`${socketPath}.pid`, { force: true });
 }
 
+// Process-wide counter of launcher-initiated stops currently in flight per
+// supervisor socket. Shared across launcher instances so a background legacy
+// reaper never sends `shutdown` while another stop/stopAll is awaiting cleanup.
+const activeSupervisorStops = new Map<string, number>();
+
+function stopKey(socketPath: string): string {
+  return path.resolve(socketPath);
+}
+
+function hasActiveStop(socketPath: string): boolean {
+  return (activeSupervisorStops.get(stopKey(socketPath)) ?? 0) > 0;
+}
+
+function withActiveStop<T>(socketPath: string, fn: () => Promise<T>): Promise<T> {
+  const key = stopKey(socketPath);
+  activeSupervisorStops.set(key, (activeSupervisorStops.get(key) ?? 0) + 1);
+  return fn().finally(() => {
+    const remaining = (activeSupervisorStops.get(key) ?? 1) - 1;
+    if (remaining > 0) activeSupervisorStops.set(key, remaining);
+    else activeSupervisorStops.delete(key);
+  });
+}
+
 async function drainOlderSupervisor(socketPath: string): Promise<'done' | 'legacy-busy'> {
+  if (hasActiveStop(socketPath)) return 'legacy-busy';
   if (!await integratedHostListening(socketPath, 200)) {
-    cleanupDeadSupervisorFiles(socketPath);
+    if (!hasActiveStop(socketPath)) cleanupDeadSupervisorFiles(socketPath);
     return 'done';
   }
   try {
@@ -116,8 +140,13 @@ async function drainOlderSupervisor(socketPath: string): Promise<'done' | 'legac
   } catch {
     // Older supervisors predating `drain` still support `ping` and `shutdown`.
   }
+  // Never probe or shut down a legacy supervisor while a launcher-initiated
+  // stop or stopAll is in flight on it: pre-versioning supervisors remove
+  // sessions from their map before awaiting native cleanup.
+  if (hasActiveStop(socketPath)) return 'legacy-busy';
   try {
     const ping = await callSupervisor(socketPath, { op: 'ping' }, 2_000);
+    if (hasActiveStop(socketPath)) return 'legacy-busy';
     const active = Number(ping.sessions);
     if (active === 0) {
       await callSupervisor(socketPath, { op: 'shutdown' }, 2_000);
@@ -168,6 +197,19 @@ async function waitForSupervisorExit(socketPath: string, timeoutMs = 5_000): Pro
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   return !await integratedHostListening(socketPath, 200);
+}
+
+async function waitForSystemdUnitInactive(unit: string, env: NodeJS.ProcessEnv, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const state = (await systemctl('systemctl', ['--user', 'show', '--property=ActiveState', '--value', unit], env)).trim();
+      if (!state || state === 'inactive' || state === 'failed') return;
+    } catch {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
 }
 
 export function callSupervisor(socketPath: string, payload: Record<string, unknown>, timeoutMs = 15_000): Promise<Record<string, unknown>> {
@@ -240,23 +282,25 @@ async function stopSupervisedSession(
   let sawReachableWithoutPid = false;
   for (const candidate of candidates) {
     if (!await integratedHostListening(candidate, 300)) {
-      if (candidate !== currentSocket) cleanupDeadSupervisorFiles(candidate);
+      if (candidate !== currentSocket && !hasActiveStop(candidate)) cleanupDeadSupervisorFiles(candidate);
       continue;
     }
     let reportedPid: number | null = null;
+    let stopped = false;
     try {
-      const result = await callSupervisor(candidate, { op: 'stop', socketPath });
+      const result = await withActiveStop(candidate, () => callSupervisor(candidate, { op: 'stop', socketPath }));
       const candidatePid = Number(result.pid);
       if (Number.isInteger(candidatePid) && candidatePid > 0) {
         reportedPid = candidatePid;
         knownSupervisorPids.add(candidatePid);
       }
-      if (result.stopped) {
-        if (candidate !== currentSocket) await drainOlderSupervisor(candidate);
-        return;
-      }
+      stopped = Boolean(result.stopped);
     } catch {
       // Fall through to ping check before considering legacy fallback.
+    }
+    if (stopped) {
+      if (candidate !== currentSocket) await drainOlderSupervisor(candidate);
+      return;
     }
     if (reportedPid === null) {
       try {
@@ -297,14 +341,18 @@ async function stopSupervisorHarness(supervisorSocket: string, harness: string):
   }
 }
 
-async function stopSupervisorHarnessAll(runtimeDir: string, currentSocket: string, harness: string): Promise<void> {
+async function stopSupervisorHarnessAll(
+  runtimeDir: string,
+  currentSocket: string,
+  harness: string
+): Promise<void> {
   const candidates = discoverSupervisorSockets(runtimeDir, currentSocket);
   const results = await Promise.allSettled(candidates.map(async (candidate) => {
     if (!await integratedHostListening(candidate, 300)) {
-      if (candidate !== currentSocket) cleanupDeadSupervisorFiles(candidate);
+      if (candidate !== currentSocket && !hasActiveStop(candidate)) cleanupDeadSupervisorFiles(candidate);
       return;
     }
-    await stopSupervisorHarness(candidate, harness);
+    await withActiveStop(candidate, () => stopSupervisorHarness(candidate, harness));
   }));
   const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
   if (failures.length === 1) throw failures[0]!.reason;
@@ -420,6 +468,7 @@ export function systemdHostLauncher(appDataPath: string, env: NodeJS.ProcessEnv,
           } catch (error) {
             if (!isSupervisorGoneError(error)) throw error;
             if (!await waitForSupervisorExit(supervisorSocket)) throw error;
+            await waitForSystemdUnitInactive(supervisorUnit, env);
           }
         }
         fs.mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });

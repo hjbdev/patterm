@@ -284,6 +284,41 @@ async function versionedSupervisorSmoke(): Promise<void> {
     }
     assert.ok(legacyOps.includes('shutdown'), 'empty legacy supervisor retires automatically after its last session ends');
 
+    // A slow legacy stopHarness clears its session map before native cleanup
+    // finishes; the 50 ms legacy reaper must not send `shutdown` while that
+    // launcher-initiated stop is still in flight.
+    const slowLegacyOps: string[] = [];
+    const slowLegacySessions = new Set(['slow-legacy.sock']);
+    let slowStopFinished = false;
+    const slowLegacyServer = net.createServer((socket) => {
+      let buf = ''; socket.setEncoding('utf8');
+      socket.on('data', (chunk) => {
+        buf += chunk;
+        for (;;) {
+          const nl = buf.indexOf('\n'); if (nl < 0) return;
+          const req = JSON.parse(buf.slice(0, nl)) as { id: string; op: string };
+          buf = buf.slice(nl + 1);
+          slowLegacyOps.push(req.op);
+          if (req.op === 'drain') socket.write(`${JSON.stringify({ id: req.id, error: 'Unknown supervisor op: drain' })}\n`);
+          else if (req.op === 'ping') socket.write(`${JSON.stringify({ id: req.id, result: { pid: 999993, sessions: slowLegacySessions.size } })}\n`);
+          else if (req.op === 'shutdown') {
+            assert.equal(slowStopFinished, true, 'legacy reaper must not shut down a supervisor during an in-flight stopHarness');
+            socket.write(`${JSON.stringify({ id: req.id, result: { ok: true } })}\n`);
+            slowLegacyServer.close();
+          } else if (req.op === 'stopHarness') {
+            slowLegacySessions.clear();
+            setTimeout(() => {
+              slowStopFinished = true;
+              socket.write(`${JSON.stringify({ id: req.id, result: { stopped: 1, remaining: 0 } })}\n`);
+              slowLegacyServer.close();
+            }, 250);
+          }
+        }
+      });
+    });
+    servers.push(slowLegacyServer);
+    await new Promise<void>((resolve, reject) => { slowLegacyServer.once('error', reject); slowLegacyServer.listen(ipcPath(legacySocket), resolve); });
+
     // Rolling back to gen2 while gen2 was drained must reuse the live gen2
     // supervisor (same PID) rather than spawning a second process over its socket.
     fs.writeFileSync(depPath, 'module.exports = { version: 3 };\n');
@@ -301,6 +336,8 @@ async function versionedSupervisorSmoke(): Promise<void> {
     assert.equal(rollbackPid, gen2Pid, 'rolling back to a drained generation reuses its live supervisor');
 
     await launcher3.stopAll('agy');
+    assert.equal(slowStopFinished, true, 'slow legacy stopHarness completed without premature reaper shutdown');
+    assert.equal(slowLegacyOps.includes('shutdown'), false, 'reaper did not send shutdown during in-flight stopHarness');
     for (const pid of pidsToKill) await waitForPidExit(pid);
   } finally {
     if (previousPoll === undefined) delete process.env.PATTERM_LEGACY_SUPERVISOR_POLL_MS;
