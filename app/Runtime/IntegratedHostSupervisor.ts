@@ -39,7 +39,16 @@ removeStaleIpc(supervisorSocket);
 
 const sessions = new Map<string, SessionHandle>();
 const sockets = new Set<net.Socket>();
+let draining = false;
 let shuttingDown = false;
+const pidMarkerPath = process.platform === 'win32' ? `${supervisorSocket}.pid` : null;
+
+function maybeExitIfDrained(): void {
+  if (!draining || shuttingDown || sessions.size > 0) return;
+  setImmediate(() => {
+    if (draining && !shuttingDown && sessions.size === 0) void shutdown();
+  });
+}
 
 function startSession(input: StartParams): SessionHandle {
   const existing = sessions.get(input.key);
@@ -48,6 +57,7 @@ function startSession(input: StartParams): SessionHandle {
   const onExit = () => {
     const current = sessions.get(input.key);
     if (current === entry) sessions.delete(input.key);
+    maybeExitIfDrained();
   };
   let started: { socketPath: string; stop(): Promise<void> };
   if (input.harness === 'codex') started = startCodexHostSession(input.configPath, env, { onExit });
@@ -97,7 +107,7 @@ async function handle(socket: net.Socket, request: SupervisorRequest): Promise<v
     return;
   }
   if (op === 'start') {
-    if (shuttingDown) throw new Error('Integrated host supervisor is shutting down');
+    if (shuttingDown || draining) throw new Error('Integrated host supervisor is shutting down');
     const harness = String(request.harness ?? '');
     const key = String(request.key ?? '');
     const configPath = String(request.configPath ?? '');
@@ -112,12 +122,20 @@ async function handle(socket: net.Socket, request: SupervisorRequest): Promise<v
     const socketPath = typeof request.socketPath === 'string' ? request.socketPath : undefined;
     const session = findSession(key, socketPath);
     if (!session) {
-      respond(socket, id, { pid: process.pid, stopped: false });
+      respond(socket, id, { pid: process.pid, stopped: false, remaining: sessions.size });
+      maybeExitIfDrained();
       return;
     }
     sessions.delete(session.key);
     await session.stop();
-    respond(socket, id, { pid: process.pid, stopped: true });
+    respond(socket, id, { pid: process.pid, stopped: true, remaining: sessions.size });
+    if (request.exitIfEmpty === true && sessions.size === 0) {
+      setImmediate(() => {
+        if (sessions.size === 0) void shutdown();
+      });
+    } else {
+      maybeExitIfDrained();
+    }
     return;
   }
   if (op === 'stopHarness') {
@@ -126,11 +144,17 @@ async function handle(socket: net.Socket, request: SupervisorRequest): Promise<v
     for (const session of matches) sessions.delete(session.key);
     await Promise.allSettled(matches.map((session) => session.stop()));
     respond(socket, id, { stopped: matches.length, remaining: sessions.size });
-    if (request.exitIfEmpty === true && sessions.size === 0) {
+    if ((request.exitIfEmpty === true || draining) && sessions.size === 0) {
       setImmediate(() => {
         if (sessions.size === 0) void shutdown();
       });
     }
+    return;
+  }
+  if (op === 'drain') {
+    draining = true;
+    respond(socket, id, { pid: process.pid, draining: true, sessions: sessions.size });
+    maybeExitIfDrained();
     return;
   }
   if (op === 'shutdown') {
@@ -166,6 +190,9 @@ const server = net.createServer((socket) => {
 
 server.listen(ipcPath(supervisorSocket), () => {
   restrictIpc(supervisorSocket);
+  if (pidMarkerPath) {
+    try { fs.writeFileSync(pidMarkerPath, String(process.pid), { mode: 0o600 }); } catch {}
+  }
   // Start the initial session from the private boot file (never in argv).
   const bootFile = process.env.PATTERM_SUPERVISOR_BOOT_FILE;
   if (bootFile) {
@@ -192,6 +219,7 @@ function shutdown(): Promise<void> {
     sockets.clear();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     removeStaleIpc(supervisorSocket);
+    if (pidMarkerPath) fs.rmSync(pidMarkerPath, { force: true });
     process.exit(0);
   })();
   return shutdownPromise;

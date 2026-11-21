@@ -7,7 +7,7 @@ import { CloseProcessAction } from '../app/Actions/CloseProcessAction';
 import { ipcPath } from '../app/Platform/Ipc';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { IntegratedAgentService, type IntegratedProviderService } from '../app/Services/IntegratedAgentService';
-import { systemdHostLauncher, type IntegratedHostLauncher } from '../app/Services/IntegratedHostLauncher';
+import { supervisedHostLauncher, supervisorGeneration, systemdHostLauncher, type IntegratedHostLauncher } from '../app/Services/IntegratedHostLauncher';
 import type { TerminalService } from '../app/Services/TerminalService';
 
 async function main(): Promise<void> {
@@ -126,8 +126,139 @@ async function main(): Promise<void> {
     database.dispose();
     fs.rmSync(directory, { recursive: true, force: true });
   }
+  await versionedSupervisorSmoke();
   if (process.platform === 'linux') await systemdLauncherSmoke();
   console.log('retired Integrated hosts smoke ok');
+}
+
+async function versionedSupervisorSmoke(): Promise<void> {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-versioned-sup-'));
+  const runtimeDir = path.join(directory, 'runtime');
+  fs.mkdirSync(runtimeDir, { recursive: true });
+  const depPath = path.join(directory, 'dep.js');
+  const scriptPath = path.join(directory, 'sup.js');
+  fs.writeFileSync(depPath, 'module.exports = { version: 1 };\n');
+  const ipcModule = path.resolve(__dirname, '../app/Platform/Ipc');
+  fs.writeFileSync(scriptPath, [
+    "const fs = require('node:fs');",
+    "const net = require('node:net');",
+    `const { ipcPath } = require(${JSON.stringify(ipcModule)});`,
+    "const dep = require('./dep');",
+    "const sock = process.argv[2];",
+    "const pidMarker = process.platform === 'win32' ? sock + '.pid' : null;",
+    "const sessions = new Map();",
+    "const server = net.createServer((socket) => {",
+    "  let buf = ''; socket.setEncoding('utf8');",
+    "  socket.on('data', (chunk) => {",
+    "    buf += chunk;",
+    "    for (;;) {",
+    "      const nl = buf.indexOf('\\n'); if (nl < 0) return;",
+    "      const req = JSON.parse(buf.slice(0, nl)); buf = buf.slice(nl + 1);",
+    "      if (req.op === 'start') { sessions.set(req.key, { harness: req.harness, socketPath: req.configPath }); socket.write(JSON.stringify({ id: req.id, result: { pid: process.pid, socketPath: req.configPath, version: dep.version } }) + '\\n'); }",
+    "      else if (req.op === 'stop') { let stopped = false; for (const [k, v] of sessions) { if (v.socketPath === req.socketPath) { sessions.delete(k); stopped = true; break; } } socket.write(JSON.stringify({ id: req.id, result: { pid: process.pid, stopped } }) + '\\n'); }",
+    "      else if (req.op === 'stopHarness') { for (const [k, v] of [...sessions]) { if (v.harness === req.harness) sessions.delete(k); } socket.write(JSON.stringify({ id: req.id, result: { stopped: 1, remaining: sessions.size } }) + '\\n'); if (req.exitIfEmpty && sessions.size === 0) setImmediate(() => { server.close(() => { if (process.platform !== 'win32') { try { fs.rmSync(sock, { force: true }); } catch {} } if (pidMarker) { try { fs.rmSync(pidMarker, { force: true }); } catch {} } process.exit(0); }); }); }",
+    "      else if (req.op === 'ping') { socket.write(JSON.stringify({ id: req.id, result: { pid: process.pid, sessions: sessions.size } }) + '\\n'); }",
+    "      else if (req.op === 'shutdown') { socket.write(JSON.stringify({ id: req.id, result: { ok: true } }) + '\\n'); setImmediate(() => { server.close(() => { if (process.platform !== 'win32') { try { fs.rmSync(sock, { force: true }); } catch {} } if (pidMarker) { try { fs.rmSync(pidMarker, { force: true }); } catch {} } process.exit(0); }); }); }",
+    "    }",
+    "  });",
+    "});",
+    "server.listen(ipcPath(sock), () => { if (pidMarker) { try { fs.writeFileSync(pidMarker, String(process.pid)); } catch {} } const boot = process.env.PATTERM_SUPERVISOR_BOOT_FILE; if (boot) { try { const b = JSON.parse(fs.readFileSync(boot, 'utf8')); fs.rmSync(boot, { force: true }); sessions.set(b.key, { harness: b.harness, socketPath: b.configPath }); } catch {} } });",
+    "setTimeout(() => process.exit(0), 15000).unref();"
+  ].join('\n'));
+
+  const servers: net.Server[] = [];
+  const pidsToKill: number[] = [];
+  try {
+    const gen1 = supervisorGeneration(scriptPath);
+    fs.writeFileSync(depPath, 'module.exports = { version: 2 };\n');
+    const gen2 = supervisorGeneration(scriptPath);
+    assert.notEqual(gen1, gen2, 'changing a transitive runtime module must change the supervisor generation');
+
+    // Simulate a running pre-versioning (legacy) supervisor with one active session
+    // and no `drain` op, plus an older versioned supervisor with one active session.
+    const legacyOps: string[] = [];
+    const legacySessions = new Set(['legacy-session.sock']);
+    const legacySocket = path.join(runtimeDir, 'integrated-supervisor.sock');
+    const legacyServer = net.createServer((socket) => {
+      let buf = ''; socket.setEncoding('utf8');
+      socket.on('data', (chunk) => {
+        buf += chunk;
+        for (;;) {
+          const nl = buf.indexOf('\n'); if (nl < 0) return;
+          const req = JSON.parse(buf.slice(0, nl)) as { id: string; op: string; socketPath?: string };
+          buf = buf.slice(nl + 1);
+          legacyOps.push(req.op);
+          if (req.op === 'drain') socket.write(`${JSON.stringify({ id: req.id, error: 'Unknown supervisor op: drain' })}\n`);
+          else if (req.op === 'ping') socket.write(`${JSON.stringify({ id: req.id, result: { pid: 999991, sessions: legacySessions.size } })}\n`);
+          else if (req.op === 'stop') {
+            const stopped = Boolean(req.socketPath && legacySessions.delete(req.socketPath));
+            socket.write(`${JSON.stringify({ id: req.id, result: { pid: 999991, stopped } })}\n`);
+          } else if (req.op === 'shutdown') {
+            socket.write(`${JSON.stringify({ id: req.id, result: { ok: true } })}\n`);
+            legacyServer.close();
+          } else if (req.op === 'stopHarness') {
+            legacySessions.clear();
+            socket.write(`${JSON.stringify({ id: req.id, result: { stopped: 1, remaining: 0 } })}\n`);
+            legacyServer.close();
+          }
+        }
+      });
+    });
+    servers.push(legacyServer);
+    await new Promise<void>((resolve, reject) => { legacyServer.once('error', reject); legacyServer.listen(ipcPath(legacySocket), resolve); });
+
+    const oldOps: string[] = [];
+    const oldSocket = path.join(runtimeDir, `integrated-supervisor-${gen1}.sock`);
+    if (process.platform === 'win32') fs.writeFileSync(`${oldSocket}.pid`, '999992');
+    const oldServer = net.createServer((socket) => {
+      let buf = ''; socket.setEncoding('utf8');
+      socket.on('data', (chunk) => {
+        buf += chunk;
+        for (;;) {
+          const nl = buf.indexOf('\n'); if (nl < 0) return;
+          const req = JSON.parse(buf.slice(0, nl)) as { id: string; op: string };
+          buf = buf.slice(nl + 1);
+          oldOps.push(req.op);
+          if (req.op === 'drain') { socket.write(`${JSON.stringify({ id: req.id, result: { pid: 999992, draining: true, sessions: 0 } })}\n`); oldServer.close(); }
+          else if (req.op === 'ping') socket.write(`${JSON.stringify({ id: req.id, result: { pid: 999992, sessions: 0 } })}\n`);
+          else if (req.op === 'stop') socket.write(`${JSON.stringify({ id: req.id, result: { pid: 999992, stopped: false } })}\n`);
+          else if (req.op === 'stopHarness') { socket.write(`${JSON.stringify({ id: req.id, result: { stopped: 0, remaining: 0 } })}\n`); oldServer.close(); }
+        }
+      });
+    });
+    servers.push(oldServer);
+    await new Promise<void>((resolve, reject) => { oldServer.once('error', reject); oldServer.listen(ipcPath(oldSocket), resolve); });
+
+    // Launch on generation 2: must spawn a fresh supervisor on gen2's socket
+    // instead of reusing the legacy or gen1 supervisors.
+    const launcher = supervisedHostLauncher(directory, scriptPath);
+    const gen2Pid = await launcher.launch({
+      harness: 'agy', key: 'new-session', nodePath: process.execPath, script: 'host.js', configPath: 'new-session.sock', cwd: directory, env: {}
+    });
+    assert.ok(gen2Pid && gen2Pid > 0, 'new generation supervisor starts');
+    pidsToKill.push(gen2Pid);
+    if (process.platform !== 'win32') {
+      assert.ok(fs.existsSync(path.join(runtimeDir, `integrated-supervisor-${gen2}.sock`)), 'new generation uses its own versioned socket');
+    }
+    // Give fire-and-forget drain a moment to reach old/legacy supervisors.
+    const deadline = Date.now() + 2_000;
+    while (Date.now() < deadline && (!oldOps.includes('drain') || !legacyOps.includes('ping'))) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.ok(oldOps.includes('drain'), 'older versioned supervisor receives drain');
+    assert.equal(legacyServer.listening, true, 'legacy supervisor with an active session stays alive');
+
+    // Stopping the legacy session through the new launcher finds it on the
+    // legacy supervisor and shuts that supervisor down once empty.
+    await launcher.stop!('legacy-session.sock', 999991);
+    assert.ok(legacyOps.includes('shutdown'), 'empty legacy supervisor shuts down after its last session stops');
+
+    await launcher.stopAll('agy');
+  } finally {
+    for (const server of servers) if (server.listening) server.close();
+    for (const pid of pidsToKill) { try { process.kill(pid, 'SIGTERM'); } catch {} }
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 // Records the transient unit's arguments with stand-in systemd commands, so
@@ -166,6 +297,8 @@ async function systemdLauncherSmoke(): Promise<void> {
     // A child killed for memory must not stop the host and its conversation.
     assert.ok(args.includes('--property=OOMPolicy=continue'), args.join(' '));
     assert.ok(args.includes('--property=KillMode=control-group'));
+    assert.ok(args.some((arg) => /^--unit=patterm-integrated-supervisor-[0-9a-f]{8}-[0-9a-f]{12}\.service$/.test(arg)), args.join(' '));
+    assert.ok(args.some((arg) => /integrated-supervisor-[0-9a-f]{12}\.sock$/.test(arg)), args.join(' '));
   } finally {
     try {
       const stubPid = Number(fs.readFileSync(pidFile, 'utf8').trim());

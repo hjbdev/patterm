@@ -50,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Integrated host supervisors (`IntegratedHostSupervisor`) now run in versioned
+  generations keyed by their runtime module hash. Rebuilding and restarting
+  Patterm immediately launches new Claude, Codex, and Antigravity Integrated
+  agents on the updated runtime without disturbing live agents on older
+  supervisors, which drain and exit once their remaining sessions finish.
 - Antigravity's "Allow MCP tools" now also matches supplied MCP servers when
   `agy` requests permission before emitting `tool_call`, normalises server name
   casing/hyphens, or truncates large `call_mcp_tool` inputs.
