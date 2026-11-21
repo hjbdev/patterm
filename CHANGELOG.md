@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once, deny a permission, or pass a request up the chain. If no parent can
   handle it, the user gets a notification linked to the original subagent.
 
+- Antigravity (`agy`) native subagents (`invoke_subagent`) now surface in the
+  transcript as rich task rows with role, type, model, and live inline nested
+  steps, appear in the Background Tasks shelf with live status updates, and
+  open in the full task transcript drawer. Antigravity's `run_command`,
+  `read_file` line ranges, `mcp_<server>_<tool>` / `call_mcp_tool` calls, and
+  Patterm `html_render` figures also project cleanly, and
+  `AntigravityHistoryAdapter` preserves reasoning blocks and pairs parallel tool
+  results.
 - Antigravity CLI (`agy`) in Integrated mode through its native ACP server:
   streamed replies and tools, permissions, cancellation, session loading,
   model and thinking controls, presets, bots and routines. Sign in with
@@ -42,6 +50,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Antigravity's "Allow MCP tools" now also matches supplied MCP servers when
+  `agy` requests permission before emitting `tool_call`, normalises server name
+  casing/hyphens, or truncates large `call_mcp_tool` inputs.
+- Antigravity user messages admitted after assistant output has already started
+  streaming (such as receipt-confirmed turns or prompts with references and
+  attachments) now stay positioned before the response they caused instead of
+  jumping below it.
 - Antigravity's "Allow MCP tools" again approves supplied MCP tools that agy
   calls after a prompt ends, such as while it watches CI in the background.
   Other background tool requests, tools Patterm has already marked as failed,

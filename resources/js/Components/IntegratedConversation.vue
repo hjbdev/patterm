@@ -409,7 +409,7 @@ watch([messages, queue, () => outgoingFor(props.processId).map((entry) => entry.
 // The drawer keeps the last known state of its task after Claude drops a
 // finished one from the snapshot.
 const openedTask = shallowRef<IntegratedTask | null>(null);
-const canOpenTasks = computed(() => provider.value === 'claude' || provider.value === 'codex' || provider.value === 'opencode');
+const canOpenTasks = computed(() => provider.value === 'claude' || provider.value === 'codex' || provider.value === 'opencode' || provider.value === 'agy');
 watch(tasks, (current) => {
   const task = openedTask.value && current.find((item) => item.id === openedTask.value!.id);
   if (task) openedTask.value = task;
@@ -821,7 +821,8 @@ async function applySnapshot(load: () => Promise<Record<string, unknown>>, reque
       // a reconnect that missed more than a page, would leave a gap nothing can
       // load. Start again from this window and its own cursor.
       const shownIds = new Set(messages.value.map((message) => message.id));
-      if (historyLoaded && result.history_truncated === true && !rows.some((message) => shownIds.has(message.id))) {
+      const splicedBeforeWindow = typeof result.history_spliced_id === 'string' && !shownIds.has(result.history_spliced_id);
+      if (historyLoaded && result.history_truncated === true && (!rows.some((message) => shownIds.has(message.id)) || splicedBeforeWindow)) {
         historyLoaded = false;
         const cursor = result.history_cursor as Record<string, unknown> | null | undefined;
         historyCursor.value = typeof cursor?.next === 'string' ? cursor.next : null;

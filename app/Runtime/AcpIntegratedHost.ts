@@ -10,6 +10,7 @@ import type { IntegratedConversationMessage } from '../Services/IntegratedConver
 import { TranscriptImageStore } from '../Services/TranscriptImageStore';
 import { readAcpSettings, writeAcpSettings } from '../Services/AcpSessionSettings';
 import { watchAntigravityPrompt } from './AntigravityPromptReceipt';
+import { AntigravitySubagentTracker } from './AntigravitySubagents';
 
 type Row = Record<string, any>;
 class NativeAcpTransportError extends Error {}
@@ -54,6 +55,7 @@ const CANCEL_TIMEOUT_MS = Number(hostEnv.PATTERM_ACP_CANCEL_TIMEOUT_MS) || 15_00
 const PAGE_MESSAGES = 200;
 const PAGE_BYTES = 1024 * 1024;
 const MAX_MESSAGES = Math.max(PAGE_MESSAGES, Number(hostEnv.PATTERM_ACP_MAX_MESSAGES) || 1000);
+const MAX_SUBAGENT_MESSAGES = Math.max(100, Number(hostEnv.PATTERM_ACP_MAX_SUBAGENT_MESSAGES) || 400);
 const MAX_TRACKED_IDS = 1000;
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Config;
 const images = config.imageDirectory ? new TranscriptImageStore(config.imageDirectory) : null;
@@ -61,9 +63,11 @@ const subscribers = new Set<net.Socket>();
 const requests = new Map<string, { resolve: (result: Row) => void; reject: (error: Error) => void; timer: NodeJS.Timeout | null }>();
 const permissions = new Map<string, Row>();
 const messages: IntegratedConversationMessage[] = [];
+const subagentMessages: IntegratedConversationMessage[] = [];
 let droppedMessages = 0;
 const deliveries = new Set<string>();
 let sessionId = config.resumeId ?? '';
+let subagents: AntigravitySubagentTracker | null = null;
 let status = 'starting';
 let statusDetail = '';
 let workingDetail = '';
@@ -86,6 +90,8 @@ let block: IntegratedConversationMessage | null = null;
 const nativeBlocks = new Map<string, IntegratedConversationMessage>();
 let userEcho: IntegratedConversationMessage | null = null;
 let userConfirmed = false;
+let promptAnchorId: string | null = null;
+let liveWindowFloorId: string | null = null;
 let plainTextPrompt = false;
 let stopWatchingPrompt: (() => void) | null = null;
 let admission: { resolve: () => void; reject: (error: Error) => void; timer: NodeJS.Timeout } | null = null;
@@ -200,6 +206,7 @@ function cancelPermissions(): void {
 }
 function fail(error: Error, fatal = true): void {
   clearPromptWatch();
+  promptAnchorId = null;
   if (admission) {
     clearTimeout(admission.timer);
     // A native RPC error is a definitive rejection. Losing the native pipe
@@ -274,21 +281,52 @@ function saveSettings(): void {
   try { rememberSettings(); } catch (error) { warnSettings(error); }
 }
 
+function matchConfiguredMcpTool(name: string): { server: string; tool: string } | null {
+  const servers = (config.mcpServers as Array<{ name: string }>).filter((server) => typeof server?.name === 'string' && server.name);
+  const lowerName = name.toLowerCase();
+  const normalizedName = lowerName.replace(/-/g, '_');
+  let best: { server: string; tool: string; len: number } | null = null;
+  for (const server of servers) {
+    const expected = server.name.toLowerCase();
+    const candidates: Array<[string, string]> = [
+      [`mcp_${expected}_`, lowerName],
+      [`mcp_${expected.replace(/-/g, '_')}_`, normalizedName]
+    ];
+    for (const [prefix, target] of candidates) {
+      if (target.startsWith(prefix) && name.length > prefix.length && (!best || prefix.length > best.len)) {
+        best = { server: server.name, tool: name.slice(prefix.length), len: prefix.length };
+      }
+    }
+  }
+  return best ? { server: best.server, tool: best.tool } : null;
+}
+
 function allowsMcp(tool: Row): boolean {
   // The policy covers the whole session, including work agy does after a
   // prompt ends, so it never depends on whether a foreground turn is active.
   if (cancelling || mcpPolicy !== 'allow' || options.find((option) => option.id === 'mode')?.currentValue !== 'auto') return false;
   if (typeof tool.toolCallId !== 'string' || abandonedToolIds.has(`tool:${tool.toolCallId}`)) return false;
   const previous = messages.find((message) => message.id === `tool:${tool.toolCallId}`)?.tool;
-  if (!previous) return false;
   // Only native tool identifiers count, never a title, reason or argument
   // claiming to be MCP. agy namespaces direct MCP calls with mcp_<server>_.
-  const name = typeof tool.name === 'string' ? tool.name : previous?.name;
+  const nativeName = typeof tool.name === 'string' && tool.name ? tool.name : undefined;
+  const priorName = typeof previous?.name === 'string' && previous.name ? previous.name : undefined;
+  if (nativeName && priorName && nativeName !== priorName && priorName !== 'other' && priorName !== 'Tool') return false;
+  const name = nativeName ?? priorName;
+  if (!name) return false;
+  if (matchConfiguredMcpTool(name)) return true;
   const servers = config.mcpServers as Array<{ name: string }>;
-  if (servers.some((server) => name?.startsWith(`mcp_${server.name}_`))) return true;
+  const matchesServer = (candidate: string): boolean => {
+    const lower = candidate.toLowerCase();
+    const normalized = lower.replace(/-/g, '_');
+    return servers.some((server) => {
+      const expected = server.name.toLowerCase();
+      return lower === expected || normalized === expected.replace(/-/g, '_');
+    });
+  };
   // Lazy MCP dispatch uses the native call_mcp_tool wrapper instead.
   const input = tool.rawInput ?? previous?.input;
-  return name === 'call_mcp_tool' && typeof input?.ToolName === 'string' && servers.some((server) => input?.ServerName === server.name);
+  return name === 'call_mcp_tool' && typeof input?.ToolName === 'string' && typeof input?.ServerName === 'string' && matchesServer(input.ServerName);
 }
 function addBounded(set: Set<string>, value: string): void {
   if (set.has(value)) set.delete(value);
@@ -300,11 +338,63 @@ function setNativeBlock(key: string, row: IntegratedConversationMessage): void {
   nativeBlocks.set(key, row);
   while (nativeBlocks.size > MAX_TRACKED_IDS) nativeBlocks.delete(nativeBlocks.keys().next().value!);
 }
-function trimMessages(): void {
+function trimMessages(preserveId?: string): void {
   if (messages.length <= MAX_MESSAGES) return;
   const excess = messages.length - MAX_MESSAGES;
-  messages.splice(0, excess);
-  droppedMessages += excess;
+  const preserveIndex = preserveId ? messages.findIndex((row) => row.id === preserveId) : -1;
+  let removed: IntegratedConversationMessage[];
+  if (preserveIndex >= 0 && preserveIndex < excess) {
+    // Keep a newly admitted prompt when trimming its own oversized turn.
+    const before = messages.splice(0, preserveIndex);
+    const after = messages.splice(1, excess - preserveIndex);
+    removed = [...before, ...after];
+  } else {
+    removed = messages.splice(0, excess);
+  }
+  droppedMessages += removed.length;
+  if (subagentMessages.length) {
+    const droppedIds = new Set(removed.map((row) => row.id));
+    const kept = subagentMessages.filter((row) => !row.parentId || !droppedIds.has(row.parentId));
+    if (kept.length !== subagentMessages.length) subagentMessages.splice(0, subagentMessages.length, ...kept);
+  }
+}
+function upsertSubagentMessage(message: IntegratedConversationMessage): void {
+  const index = subagentMessages.findIndex((row) => row.id === message.id);
+  if (index < 0) {
+    subagentMessages.push(message);
+    if (subagentMessages.length > MAX_SUBAGENT_MESSAGES) {
+      subagentMessages.splice(0, subagentMessages.length - MAX_SUBAGENT_MESSAGES);
+    }
+  } else {
+    subagentMessages[index] = message;
+  }
+  publish({ kind: 'replace', message });
+}
+function removeSubagentMessages(subagentId: string): void {
+  const prefix = `sub:${subagentId}:`;
+  const kept = subagentMessages.filter((row) => !row.id.startsWith(prefix));
+  if (kept.length !== subagentMessages.length) {
+    subagentMessages.splice(0, subagentMessages.length, ...kept);
+    publish({ kind: 'pending' });
+  }
+}
+function childrenFor(page: IntegratedConversationMessage[]): IntegratedConversationMessage[] {
+  if (!subagentMessages.length || !page.length) return [];
+  const ids = new Set(page.map((row) => row.id));
+  return subagentMessages.filter((row) => row.parentId !== undefined && ids.has(row.parentId));
+}
+function rawOutputText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map((item) => rawOutputText(item)).filter(Boolean).join('\n');
+  if (!value || typeof value !== 'object') return '';
+  const row = value as Row;
+  for (const key of ['output', 'text', 'content', 'result']) {
+    if (row[key] !== undefined) {
+      const nested = rawOutputText(row[key]);
+      if (nested) return nested;
+    }
+  }
+  return '';
 }
 function admit(): void {
   // Assistant output and tool requests can belong to background work. Only
@@ -313,7 +403,27 @@ function admit(): void {
   if (userEcho && !userConfirmed) {
     userConfirmed = true;
     if (userEcho.clientMessageId) addBounded(deliveries, userEcho.clientMessageId);
-    replace(userEcho);
+    const existing = messages.findIndex((row) => row.id === userEcho!.id);
+    if (existing >= 0) {
+      messages[existing] = userEcho;
+      publish({ kind: 'replace', message: userEcho });
+    } else {
+      const insertAt = promptAnchorId === null ? 0 : (() => {
+        const anchor = messages.findIndex((row) => row.id === promptAnchorId);
+        return anchor >= 0 ? anchor + 1 : 0;
+      })();
+      const outOfOrder = insertAt < messages.length;
+      if (outOfOrder) {
+        messages.splice(insertAt, 0, userEcho);
+        liveWindowFloorId = userEcho.id;
+        trimMessages(userEcho.id);
+        // Assistant rows for this turn already streamed to live subscribers;
+        // ask them to refresh so the user prompt sits before its response.
+        publish({ kind: 'pending' });
+      } else {
+        replace(userEcho);
+      }
+    }
   }
   if (!admission) return;
   clearTimeout(admission.timer); admission.resolve(); admission = null;
@@ -522,7 +632,12 @@ function receive(frame: Row): void {
       const patch = replacesContent ? diffPreview(update.content) : priorPatch;
       const inputPath = rawInput.Path ?? rawInput.path;
       const preview = Buffer.byteLength(JSON.stringify(rawInput)) > TOOL_FIELD_BYTES
-        ? { truncated: true, ...(typeof inputPath === 'string' ? { path: toolPreview(inputPath) } : {}) } : rawInput;
+        ? {
+          truncated: true,
+          ...(typeof inputPath === 'string' ? { path: toolPreview(inputPath) } : {}),
+          ...(typeof rawInput.ServerName === 'string' ? { ServerName: toolPreview(rawInput.ServerName) } : {}),
+          ...(typeof rawInput.ToolName === 'string' ? { ToolName: toolPreview(rawInput.ToolName) } : {})
+        } : rawInput;
       const input = { ...(update.rawInput == null ? prior : preview), ...(typeof rawInput.Path === 'string' ? { path: toolPreview(rawInput.Path) } : {}), ...(patch ? { patch } : {}) };
       const toolState = { ...(previous?.tool?.state as Row | undefined), status: update.status ?? (previous?.tool?.state as Row | undefined)?.status ?? 'pending', ...(update.rawOutput !== undefined ? { output: toolOutput(update.rawOutput) } : {}) };
       const terminal = toolState.status === 'completed' || toolState.status === 'failed';
@@ -532,7 +647,14 @@ function receive(frame: Row): void {
         backgroundActivity();
         state();
       }
-      replace({ id, role: 'assistant', kind: 'tool', text: replacesContent ? toolPreview(output) : previous?.text ?? '', createdAt: previous?.createdAt ?? new Date().toISOString(), ...(terminal ? { completedAt: previous?.completedAt ?? new Date().toISOString() } : {}), tool: { name: update.name ?? previous?.tool?.name ?? update.kind ?? 'Tool', input, state: toolState } });
+      const rawText = !output && (replacesContent || !previous?.text) && update.rawOutput !== undefined ? rawOutputText(update.rawOutput) : '';
+      const rowText = replacesContent
+        ? (output ? toolPreview(output) : rawText ? toolPreview(rawText) : '')
+        : previous?.text || (rawText ? toolPreview(rawText) : '');
+      const toolName = update.name ?? previous?.tool?.name ?? update.kind ?? 'Tool';
+      const mcpParts = matchConfiguredMcpTool(String(toolName));
+      replace({ id, role: 'assistant', kind: 'tool', text: rowText, createdAt: previous?.createdAt ?? new Date().toISOString(), ...(terminal ? { completedAt: previous?.completedAt ?? new Date().toISOString() } : {}), tool: { name: toolName, input, state: toolState, ...(mcpParts ? { server: mcpParts.server, tool: mcpParts.tool } : {}) } });
+      subagents?.observeToolCall(id, String(toolName), input as Record<string, unknown>, rowText, update.rawOutput);
       break;
     }
     case 'available_commands_update': commands = update.availableCommands ?? []; controlsRevision++; publish({ kind: 'pending' }); break;
@@ -594,6 +716,21 @@ async function start(): Promise<void> {
     text: 'Antigravity may omit MCP tools when the combined catalogue is large. Patterm sent all configured servers but cannot tell which tools Antigravity makes available.'
   });
   saveSettings();
+  const pollMs = Number(hostEnv.PATTERM_ACP_SUBAGENT_POLL_MS);
+  subagents = new AntigravitySubagentTracker({
+    sessionId,
+    hostEnv,
+    ...(Number.isFinite(pollMs) && pollMs > 0 ? { pollMs } : {}),
+    onMessage: upsertSubagentMessage,
+    onSubagentDetached: removeSubagentMessages,
+    onTasksChanged: () => publish({ kind: 'pending' })
+  });
+  for (const row of messages) {
+    if (row.kind === 'tool' && row.tool) {
+      subagents.observeToolCall(row.id, row.tool.name, (row.tool.input ?? {}) as Record<string, unknown>, row.text, (row.tool.state as Row | undefined)?.output);
+    }
+  }
+  subagents.syncNow(true);
   controlsRevision++; loaded = true; block = null; state();
 }
 
@@ -614,9 +751,10 @@ function controlState(): Row {
 // pointing at different rows.
 const hostId = randomUUID();
 
-function pageStart(end: number): number {
+function pageStart(end: number, floor = Math.max(0, end - PAGE_MESSAGES)): number {
   let start = end, bytes = 2;
-  while (start > 0 && end - start < PAGE_MESSAGES) {
+  const minStart = Math.max(0, floor);
+  while (start > minStart) {
     const size = Buffer.byteLength(JSON.stringify(messages[start - 1])) + (start === end ? 0 : 1);
     if (start < end && bytes + size > PAGE_BYTES) break;
     bytes += size; start--;
@@ -634,21 +772,34 @@ function olderPage(cursor: unknown): Row {
   const end = globalEnd - droppedMessages;
   if (!match || match[1] !== hostId || !Number.isSafeInteger(globalEnd) || end < 1 || end > messages.length) throw new Error('This history cursor is no longer valid; reopen the conversation');
   const start = pageStart(end);
-  return { messages: { data: messages.slice(start, end) }, cursor: pageCursor(start) };
+  const page = messages.slice(start, end);
+  return { messages: { data: [...page, ...childrenFor(page)] }, cursor: pageCursor(start) };
 }
 
 function snapshot(): Row {
-  const start = pageStart(messages.length);
+  let start = pageStart(messages.length);
+  let splicedBeforeWindow: string | null = null;
+  if (liveWindowFloorId) {
+    const floor = messages.findIndex((row) => row.id === liveWindowFloorId);
+    if (floor < 0) liveWindowFloorId = null;
+    else if (floor < start) {
+      start = pageStart(messages.length, floor);
+      if (floor < start) splicedBeforeWindow = liveWindowFloorId;
+    }
+  }
   const cursor = pageCursor(start);
+  const page = messages.slice(start);
   return {
     provider_session_id: sessionId,
     status,
     ...(status === 'working' && workingDetail ? { status_detail: workingDetail } : status === 'error' && statusDetail ? { status_detail: statusDetail } : {}),
-    messages: { data: messages.slice(start) },
+    messages: { data: [...page, ...childrenFor(page)] },
     history_truncated: cursor !== null,
     history_cursor: cursor ? { next: cursor } : null,
+    ...(splicedBeforeWindow ? { history_spliced_id: splicedBeforeWindow } : {}),
     permissions: { data: [...permissions.values()].map(({ rpcId: _rpcId, options: _options, ...permission }) => permission) },
     questions: { data: [] },
+    tasks: subagents?.tasks() ?? [],
     usage,
     revision,
     ...controlState()
@@ -659,6 +810,7 @@ async function handle(method: string, params: Row): Promise<unknown> {
   if (method === 'conversation') return snapshot();
   if (method === 'older') return olderPage(params.cursor);
   if (method === 'controls') return controlState();
+  if (method === 'hasTask') return { owned: Boolean(subagents?.hasTask(String(params.taskId ?? ''))) };
   if (method === 'delivery') return { state: deliveries.has(params.clientMessageId) ? 'accepted' : 'unknown' };
   if (method === 'stop') {
     await stopNative();
@@ -671,6 +823,8 @@ async function handle(method: string, params: Row): Promise<unknown> {
     if (busy() || configuring) throw new Error('ACP turn is busy');
     if (!Array.isArray(params.prompt) || !params.prompt.length) throw new Error('Message is empty');
     active = true; cancelling = false; statusDetail = ''; block = null; userConfirmed = false;
+    liveWindowFloorId = null;
+    promptAnchorId = messages.length ? messages[messages.length - 1]!.id : null;
     userEcho = { id: params.clientMessageId ?? randomUUID(), ...(params.clientMessageId ? { clientMessageId: params.clientMessageId } : {}), role: 'user', kind: 'text', text: String(params.text ?? ''), createdAt: new Date().toISOString(), attachments: params.attachments ?? [] };
     const accepted = new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => { admission = null; reject(new Error('ACP prompt delivery is uncertain')); }, 8_000);
@@ -703,11 +857,12 @@ async function handle(method: string, params: Row): Promise<unknown> {
         usage.inputTokens = (usage.inputTokens ?? 0) + (result.usage.inputTokens ?? 0);
         usage.outputTokens = (usage.outputTokens ?? 0) + (result.usage.outputTokens ?? 0);
       }
-      active = false; userEcho = null; block = null; cancelPermissions();
+      active = false; userEcho = null; promptAnchorId = null; block = null; cancelPermissions();
+      subagents?.syncNow();
       setImmediate(() => { if (!stopping && status !== 'error') state(); });
       saveSettings();
     }, (error: Error) => {
-      active = false; userEcho = null;
+      active = false; userEcho = null; promptAnchorId = null;
       if (!failed && !stopping) { cancelPermissions(); fail(error, error instanceof NativeAcpTransportError); publish({ kind: 'pending' }); }
     }).catch(fail);
     await accepted;
@@ -802,6 +957,7 @@ function stopNative(): Promise<void> {
   if (shutdown) return shutdown;
   stopping = true;
   clearPromptWatch();
+  subagents?.stop();
   finishCancellation();
   if (backgroundQuiet) { clearTimeout(backgroundQuiet); backgroundQuiet = null; }
   if (admission) { clearTimeout(admission.timer); admission.reject(new NativeAcpTransportError('ACP host stopped')); admission = null; }
