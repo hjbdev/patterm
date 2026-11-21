@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
 import { withEnv } from '../Platform/Environment';
-import { ipcPath } from '../Platform/Ipc';
+import { ipcPath, removeStaleIpc } from '../Platform/Ipc';
 import { killProcessTree } from '../Platform/ProcessTree';
 
 export interface IntegratedHostSpawn {
@@ -29,6 +29,209 @@ export interface IntegratedHostLauncher {
 }
 
 const SUPERVISOR_SCRIPT = path.resolve(__dirname, '../Runtime/IntegratedHostSupervisor.js');
+const SUPERVISOR_SOCKET_PATTERN = /^integrated-supervisor(?:-[0-9a-f]{12})?\.sock$/;
+const SUPERVISOR_PID_PATTERN = /^(integrated-supervisor(?:-[0-9a-f]{12})?\.sock)\.pid$/;
+const LOCAL_MODULE_IMPORT = /(?:require\(\s*|from\s+)(['"])(\.\.?\/[^'"]+)\1/g;
+
+function resolveLocalModule(fromFile: string, specifier: string): string | null {
+  const base = path.resolve(path.dirname(fromFile), specifier);
+  for (const candidate of [base, `${base}.js`, `${base}.cjs`, `${base}.mjs`, path.join(base, 'index.js')]) {
+    try {
+      if (fs.statSync(candidate).isFile()) return candidate;
+    } catch {}
+  }
+  return null;
+}
+
+// Hashes the supervisor entrypoint and every local module it loads so a rebuilt
+// Integrated host runtime launches a fresh supervisor generation without
+// disturbing live sessions on older generations.
+export function supervisorGeneration(supervisorScript = SUPERVISOR_SCRIPT): string {
+  const entry = path.resolve(supervisorScript);
+  const visited = new Map<string, Buffer>();
+  const queue = [entry];
+  while (queue.length) {
+    const file = queue.shift()!;
+    if (visited.has(file)) continue;
+    let content: Buffer;
+    try {
+      if (!fs.statSync(file).isFile()) continue;
+      content = fs.readFileSync(file);
+    } catch {
+      continue;
+    }
+    visited.set(file, content);
+    const source = content.toString('utf8');
+    for (const match of source.matchAll(LOCAL_MODULE_IMPORT)) {
+      const target = resolveLocalModule(file, match[2]!);
+      if (target && !visited.has(target)) queue.push(target);
+    }
+  }
+  const hash = createHash('sha256');
+  if (!visited.size) {
+    hash.update(entry);
+    return hash.digest('hex').slice(0, 12);
+  }
+  const rootDir = path.dirname(entry);
+  for (const file of [...visited.keys()].sort()) {
+    hash.update(path.relative(rootDir, file));
+    hash.update('\0');
+    hash.update(visited.get(file)!);
+    hash.update('\0');
+  }
+  return hash.digest('hex').slice(0, 12);
+}
+
+function discoverSupervisorSockets(runtimeDir: string, currentSocket: string): string[] {
+  const found = new Set<string>([currentSocket]);
+  try {
+    for (const entry of fs.readdirSync(runtimeDir)) {
+      if (SUPERVISOR_SOCKET_PATTERN.test(entry)) {
+        found.add(path.join(runtimeDir, entry));
+      } else {
+        const pidMatch = SUPERVISOR_PID_PATTERN.exec(entry);
+        if (pidMatch) found.add(path.join(runtimeDir, pidMatch[1]!));
+      }
+    }
+  } catch {}
+  // Include the legacy unversioned socket so sessions started before generation
+  // versioning remain stoppable on Windows too, where named pipes have no .sock file.
+  found.add(path.join(runtimeDir, 'integrated-supervisor.sock'));
+  return [...found];
+}
+
+function cleanupDeadSupervisorFiles(socketPath: string): void {
+  removeStaleIpc(socketPath);
+  fs.rmSync(`${socketPath}.pid`, { force: true });
+}
+
+// Process-wide counter of launcher-initiated stops currently in flight per
+// supervisor socket. Shared across launcher instances so a background legacy
+// reaper never sends `shutdown` while another stop/stopAll is awaiting cleanup.
+const activeSupervisorStops = new Map<string, number>();
+// Serialises stop/stopHarness RPCs targeting a pre-versioning legacy supervisor
+// (which deletes sessions from its map before awaiting native cleanup, so a
+// concurrent `stopHarness(..., exitIfEmpty: true)` for another harness would
+// otherwise shut it down mid-cleanup).
+const legacyStopQueues = new Map<string, Promise<void>>();
+
+function stopKey(socketPath: string): string {
+  return path.resolve(socketPath);
+}
+
+function isLegacySupervisorSocket(socketPath: string): boolean {
+  return path.basename(socketPath) === 'integrated-supervisor.sock';
+}
+
+function hasActiveStop(socketPath: string): boolean {
+  return (activeSupervisorStops.get(stopKey(socketPath)) ?? 0) > 0;
+}
+
+function withActiveStop<T>(socketPath: string, fn: () => Promise<T>): Promise<T> {
+  const key = stopKey(socketPath);
+  activeSupervisorStops.set(key, (activeSupervisorStops.get(key) ?? 0) + 1);
+  const run = isLegacySupervisorSocket(socketPath)
+    ? (() => {
+      const previous = legacyStopQueues.get(key) ?? Promise.resolve();
+      const current = previous.catch(() => undefined).then(fn);
+      const tail = current.then(() => undefined, () => undefined);
+      legacyStopQueues.set(key, tail);
+      void tail.finally(() => {
+        if (legacyStopQueues.get(key) === tail) legacyStopQueues.delete(key);
+      });
+      return current;
+    })()
+    : fn();
+  return run.finally(() => {
+    const remaining = (activeSupervisorStops.get(key) ?? 1) - 1;
+    if (remaining > 0) activeSupervisorStops.set(key, remaining);
+    else activeSupervisorStops.delete(key);
+  });
+}
+
+async function drainOlderSupervisor(socketPath: string): Promise<'done' | 'legacy-busy'> {
+  if (hasActiveStop(socketPath)) return 'legacy-busy';
+  if (!await integratedHostListening(socketPath, 200)) {
+    if (!hasActiveStop(socketPath)) cleanupDeadSupervisorFiles(socketPath);
+    return 'done';
+  }
+  try {
+    await callSupervisor(socketPath, { op: 'drain' }, 2_000);
+    return 'done';
+  } catch {
+    // Older supervisors predating `drain` still support `ping` and `shutdown`.
+  }
+  // Never probe or shut down a legacy supervisor while a launcher-initiated
+  // stop or stopAll is in flight on it: pre-versioning supervisors remove
+  // sessions from their map before awaiting native cleanup.
+  if (hasActiveStop(socketPath)) return 'legacy-busy';
+  try {
+    const ping = await callSupervisor(socketPath, { op: 'ping' }, 2_000);
+    if (hasActiveStop(socketPath)) return 'legacy-busy';
+    const active = Number(ping.sessions);
+    if (active === 0) {
+      await callSupervisor(socketPath, { op: 'shutdown' }, 2_000);
+      return 'done';
+    }
+    if (Number.isFinite(active) && active > 0) return 'legacy-busy';
+  } catch {}
+  return 'done';
+}
+
+function createOldSupervisorDrainer(runtimeDir: string, currentSocket: string): () => void {
+  const configured = Number(process.env.PATTERM_LEGACY_SUPERVISOR_POLL_MS);
+  const pollMs = Number.isFinite(configured) && configured > 0 ? configured : 5_000;
+  let timer: NodeJS.Timeout | null = null;
+  let running = false;
+  const run = async (): Promise<void> => {
+    if (running) return;
+    running = true;
+    try {
+      const candidates = discoverSupervisorSockets(runtimeDir, currentSocket).filter((socket) => socket !== currentSocket);
+      const results = await Promise.allSettled(candidates.map((socket) => drainOlderSupervisor(socket)));
+      const hasLegacyBusy = results.some((result) => result.status === 'fulfilled' && result.value === 'legacy-busy');
+      if (hasLegacyBusy && !timer) {
+        timer = setTimeout(() => {
+          timer = null;
+          void run();
+        }, pollMs);
+        timer.unref();
+      }
+    } finally {
+      running = false;
+    }
+  };
+  return () => { void run().catch(() => undefined); };
+}
+
+function isSupervisorGoneError(error: unknown): boolean {
+  if (error instanceof IntegratedHostTransportError) return true;
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  if (code === 'ENOENT' || code === 'ECONNREFUSED' || code === 'ECONNRESET' || code === 'EPIPE') return true;
+  return error instanceof Error && error.message === 'Integrated host supervisor is shutting down';
+}
+
+async function waitForSupervisorExit(socketPath: string, timeoutMs = 5_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!await integratedHostListening(socketPath, 200)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return !await integratedHostListening(socketPath, 200);
+}
+
+async function waitForSystemdUnitInactive(unit: string, env: NodeJS.ProcessEnv, timeoutMs = 26_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const state = (await systemctl('systemctl', ['--user', 'show', '--property=ActiveState', '--value', unit], env)).trim();
+      if (state !== 'active' && state !== 'deactivating' && state !== 'reloading' && state !== 'activating') return;
+    } catch {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
 
 export function callSupervisor(socketPath: string, payload: Record<string, unknown>, timeoutMs = 15_000): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
@@ -90,38 +293,54 @@ export const detachedHostLauncher: IntegratedHostLauncher = {
 };
 
 async function stopSupervisedSession(
-  supervisorSocket: string,
-  getSupervisorPid: () => number | null,
-  setSupervisorPid: (pid: number) => void,
+  runtimeDir: string,
+  currentSocket: string,
+  knownSupervisorPids: Set<number>,
   socketPath: string,
   pid: number | null
 ): Promise<void> {
-  const reachable = await integratedHostListening(supervisorSocket, 300);
-  if (reachable) {
+  const candidates = discoverSupervisorSockets(runtimeDir, currentSocket);
+  let sawReachableWithoutPid = false;
+  for (const candidate of candidates) {
+    if (!await integratedHostListening(candidate, 300)) {
+      if (candidate !== currentSocket && !hasActiveStop(candidate)) cleanupDeadSupervisorFiles(candidate);
+      continue;
+    }
+    let reportedPid: number | null = null;
+    let stopped = false;
     try {
-      const result = await callSupervisor(supervisorSocket, { op: 'stop', socketPath });
-      const reportedPid = Number(result.pid);
-      if (Number.isInteger(reportedPid) && reportedPid > 0) setSupervisorPid(reportedPid);
-      if (result.stopped) return;
+      const result = await withActiveStop(candidate, () => callSupervisor(candidate, { op: 'stop', socketPath }));
+      const candidatePid = Number(result.pid);
+      if (Number.isInteger(candidatePid) && candidatePid > 0) {
+        reportedPid = candidatePid;
+        knownSupervisorPids.add(candidatePid);
+      }
+      stopped = Boolean(result.stopped);
     } catch {
       // Fall through to ping check before considering legacy fallback.
     }
-    if (getSupervisorPid() === null) {
+    if (stopped) {
+      if (candidate !== currentSocket) await drainOlderSupervisor(candidate);
+      return;
+    }
+    if (reportedPid === null) {
       try {
-        const ping = await callSupervisor(supervisorSocket, { op: 'ping' });
-        const reportedPid = Number(ping.pid);
-        if (Number.isInteger(reportedPid) && reportedPid > 0) setSupervisorPid(reportedPid);
+        const ping = await callSupervisor(candidate, { op: 'ping' });
+        const candidatePid = Number(ping.pid);
+        if (Number.isInteger(candidatePid) && candidatePid > 0) {
+          reportedPid = candidatePid;
+          knownSupervisorPids.add(candidatePid);
+        } else {
+          sawReachableWithoutPid = true;
+        }
       } catch {
         // Supervisor socket was reachable; never risk killing an unknown supervisor PID.
+        sawReachableWithoutPid = true;
       }
     }
-    const knownSupervisorPid = getSupervisorPid();
-    if (!pid || knownSupervisorPid === null || pid === knownSupervisorPid) return;
-    if (!await integratedHostListening(socketPath, 300)) return;
-    await stopRecordedHostProcess(pid, socketPath);
-    return;
   }
-  if (pid && pid !== getSupervisorPid() && await integratedHostListening(socketPath, 300)) {
+  if (!pid || sawReachableWithoutPid || knownSupervisorPids.has(pid)) return;
+  if (await integratedHostListening(socketPath, 300)) {
     await stopRecordedHostProcess(pid, socketPath);
   }
 }
@@ -143,14 +362,34 @@ async function stopSupervisorHarness(supervisorSocket: string, harness: string):
   }
 }
 
+async function stopSupervisorHarnessAll(
+  runtimeDir: string,
+  currentSocket: string,
+  harness: string
+): Promise<void> {
+  const candidates = discoverSupervisorSockets(runtimeDir, currentSocket);
+  const results = await Promise.allSettled(candidates.map(async (candidate) => {
+    if (!await integratedHostListening(candidate, 300)) {
+      if (candidate !== currentSocket && !hasActiveStop(candidate)) cleanupDeadSupervisorFiles(candidate);
+      return;
+    }
+    await withActiveStop(candidate, () => stopSupervisorHarness(candidate, harness));
+  }));
+  const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+  if (failures.length === 1) throw failures[0]!.reason;
+  if (failures.length > 1) throw new AggregateError(failures.map((failure) => failure.reason), 'Could not stop every Integrated host supervisor');
+}
+
 // Multiplexed desktop launcher: runs all Codex, Claude, and ACP Integrated
-// hosts inside ONE persistent supervisor process, saving ~50-80 MB RSS per
-// additional agent and launching agent #2..#N in ~1 ms.
+// hosts of one build generation inside a shared supervisor process, saving
+// ~50-80 MB RSS per additional agent and launching agent #2..#N in ~1 ms.
 export function supervisedHostLauncher(appDataPath: string, supervisorScript = SUPERVISOR_SCRIPT): IntegratedHostLauncher {
   const runtimeDir = path.join(appDataPath, 'runtime');
-  const supervisorSocket = path.join(runtimeDir, 'integrated-supervisor.sock');
+  const generation = supervisorGeneration(supervisorScript);
+  const supervisorSocket = path.join(runtimeDir, `integrated-supervisor-${generation}.sock`);
+  const drainOlder = createOldSupervisorDrainer(runtimeDir, supervisorSocket);
   let booting: Promise<void> | null = null;
-  let supervisorPid: number | null = null;
+  const knownSupervisorPids = new Set<number>();
 
   return {
     async launch(input) {
@@ -165,10 +404,14 @@ export function supervisedHostLauncher(appDataPath: string, supervisorScript = S
               op: 'start', harness: input.harness, key: input.key, configPath: input.configPath, env: input.env
             });
             const pid = Number(result.pid);
-            if (Number.isInteger(pid) && pid > 0) supervisorPid = pid;
+            if (Number.isInteger(pid) && pid > 0) knownSupervisorPids.add(pid);
+            drainOlder();
             return Number.isInteger(pid) && pid > 0 ? pid : null;
-          } catch {
-            // Supervisor exited right as we connected; fall through to spawn a fresh one.
+          } catch (error) {
+            if (!isSupervisorGoneError(error)) throw error;
+            // Wait for a shutting-down supervisor to finish releasing its
+            // socket so a new process never unlinks a live supervisor's path.
+            if (!await waitForSupervisorExit(supervisorSocket)) throw error;
           }
         }
         fs.mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
@@ -186,10 +429,11 @@ export function supervisedHostLauncher(appDataPath: string, supervisorScript = S
           });
           child.unref();
           const spawnedPid = child.pid ?? null;
-          supervisorPid = spawnedPid;
+          if (spawnedPid) knownSupervisorPids.add(spawnedPid);
           if (!await waitForSupervisorSocket(supervisorSocket, spawnedPid)) {
             throw new Error('Integrated host supervisor did not start in time');
           }
+          drainOlder();
           return spawnedPid;
         } catch (error) {
           fs.rmSync(bootFile, { force: true });
@@ -201,34 +445,30 @@ export function supervisedHostLauncher(appDataPath: string, supervisorScript = S
       }
     },
     async stop(socketPath, pid) {
-      await stopSupervisedSession(
-        supervisorSocket,
-        () => supervisorPid,
-        (reported) => { supervisorPid = reported; },
-        socketPath,
-        pid
-      );
+      await stopSupervisedSession(runtimeDir, supervisorSocket, knownSupervisorPids, socketPath, pid);
     },
     async stopAll(harness) {
-      await stopSupervisorHarness(supervisorSocket, harness);
+      await stopSupervisorHarnessAll(runtimeDir, supervisorSocket, harness);
     }
   };
 }
 
-// Service mode: all Integrated hosts run inside ONE transient systemd user unit
-// (the supervisor), so a restart of the web service's control group does not
-// kill Integrated agents, and agent #2..#N launch in ~1 ms with 0 extra
-// systemd-run/systemctl spawns. The unit name includes a data directory hash so
-// an isolated server never stops another server's hosts. OOMPolicy=continue
-// keeps the supervisor running when the kernel kills one of its children.
+// Service mode: all Integrated hosts of one build generation run inside a
+// versioned transient systemd user unit, so a restart of the web service does
+// not kill live Integrated agents while newly launched agents immediately run
+// on the rebuilt runtime. The unit name includes a data directory hash so an
+// isolated server never stops another server's hosts. OOMPolicy=continue keeps
+// the supervisor running when the kernel kills one of its children.
 export function systemdHostLauncher(appDataPath: string, env: NodeJS.ProcessEnv, supervisorScript = SUPERVISOR_SCRIPT): IntegratedHostLauncher {
   const scope = createHash('sha256').update(path.resolve(appDataPath)).digest('hex').slice(0, 8);
-  const supervisorUnit = `patterm-integrated-supervisor-${scope}.service`;
+  const generation = supervisorGeneration(supervisorScript);
+  const supervisorUnit = `patterm-integrated-supervisor-${scope}-${generation}.service`;
   const legacyPrefix = (harness: string) => `patterm-integrated-${scope}-${harness}`;
   const runtimeDir = path.join(appDataPath, 'runtime');
-  const supervisorSocket = path.join(runtimeDir, 'integrated-supervisor.sock');
+  const supervisorSocket = path.join(runtimeDir, `integrated-supervisor-${generation}.sock`);
+  const drainOlder = createOldSupervisorDrainer(runtimeDir, supervisorSocket);
   let booting: Promise<void> | null = null;
-  let supervisorPid: number | null = null;
+  const knownSupervisorPids = new Set<number>();
 
   return {
     async launch(input) {
@@ -243,12 +483,15 @@ export function systemdHostLauncher(appDataPath: string, env: NodeJS.ProcessEnv,
               op: 'start', harness: input.harness, key: input.key, configPath: input.configPath, env: input.env
             });
             const pid = Number(result.pid);
-            if (Number.isInteger(pid) && pid > 0) supervisorPid = pid;
+            if (Number.isInteger(pid) && pid > 0) knownSupervisorPids.add(pid);
+            drainOlder();
             return Number.isInteger(pid) && pid > 0 ? pid : null;
-          } catch {
-            // Supervisor exited; fall through to start a fresh unit.
+          } catch (error) {
+            if (!isSupervisorGoneError(error)) throw error;
+            if (!await waitForSupervisorExit(supervisorSocket)) throw error;
           }
         }
+        await waitForSystemdUnitInactive(supervisorUnit, env);
         fs.mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
         // The supervisor reads and deletes this file; secrets never reach argv.
         const bootFile = path.join(runtimeDir, `supervisor-boot-${randomUUID()}.json`);
@@ -265,10 +508,11 @@ export function systemdHostLauncher(appDataPath: string, env: NodeJS.ProcessEnv,
           ], env);
           const rawPid = Number((await systemctl('systemctl', ['--user', 'show', '--property=MainPID', '--value', supervisorUnit], env)).trim());
           const pid = Number.isInteger(rawPid) && rawPid > 0 ? rawPid : null;
-          supervisorPid = pid;
+          if (pid) knownSupervisorPids.add(pid);
           if (!await waitForSupervisorSocket(supervisorSocket, pid)) {
             throw new Error('Integrated host supervisor did not start in time');
           }
+          drainOlder();
           return pid;
         } catch (error) {
           fs.rmSync(bootFile, { force: true });
@@ -280,16 +524,10 @@ export function systemdHostLauncher(appDataPath: string, env: NodeJS.ProcessEnv,
       }
     },
     async stop(socketPath, pid) {
-      await stopSupervisedSession(
-        supervisorSocket,
-        () => supervisorPid,
-        (reported) => { supervisorPid = reported; },
-        socketPath,
-        pid
-      );
+      await stopSupervisedSession(runtimeDir, supervisorSocket, knownSupervisorPids, socketPath, pid);
     },
     async stopAll(harness) {
-      await stopSupervisorHarness(supervisorSocket, harness);
+      await stopSupervisorHarnessAll(runtimeDir, supervisorSocket, harness);
       // Clean up any legacy per-agent transient units from older generations.
       await systemctl('systemctl', ['--user', 'stop', `${legacyPrefix(harness)}-*.service`], env);
     }
