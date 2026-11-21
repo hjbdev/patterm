@@ -328,6 +328,8 @@ async function versionedSupervisorSmoke(): Promise<void> {
     const ops: string[] = [];
     const sessions = new Set(['slow-agy.sock']);
     let agyStopFinished = false;
+    let agyStopPending!: () => void;
+    const agyPending = new Promise<void>((resolve) => { agyStopPending = resolve; });
     slowLegacyServer = net.createServer((socket) => {
       let buf = ''; socket.setEncoding('utf8');
       socket.on('data', (chunk) => {
@@ -346,6 +348,7 @@ async function versionedSupervisorSmoke(): Promise<void> {
           } else if (req.op === 'stopHarness') {
             if (req.harness === 'agy') {
               sessions.clear();
+              agyStopPending();
               setTimeout(() => {
                 agyStopFinished = true;
                 socket.write(`${JSON.stringify({ id: req.id, result: { stopped: 1, remaining: 0 } })}\n`);
@@ -362,7 +365,10 @@ async function versionedSupervisorSmoke(): Promise<void> {
     await new Promise<void>((resolve, reject) => { slowLegacyServer!.once('error', reject); slowLegacyServer!.listen(ipcPath(legacySocket), resolve); });
 
     const quitLauncher = supervisedHostLauncher(quitDir, path.join(quitDir, 'unused-supervisor.js'));
-    await Promise.all([quitLauncher.stopAll('agy'), quitLauncher.stopAll('codex')]);
+    const agyStop = quitLauncher.stopAll('agy');
+    await agyPending;
+    const codexStop = quitLauncher.stopAll('codex');
+    await Promise.all([agyStop, codexStop]);
     assert.equal(agyStopFinished, true, 'slow legacy stopHarness completed before concurrent harness sweep');
     assert.equal(ops.some((entry) => entry.startsWith('shutdown:')), false, 'reaper did not send shutdown during in-flight stopHarness');
   } finally {
