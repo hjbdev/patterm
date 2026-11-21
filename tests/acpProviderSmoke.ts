@@ -306,16 +306,25 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     state = await waitFor(provider, (snapshot) => snapshot.messages.data.some((row: any) => row.text === 'Background work done'));
     assert.equal(state.status, 'working', 'background output keeps the session active');
     assert.equal(state.status_detail, 'Recent background activity');
-    await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    await ask('during-background-output');
+    state = await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.text === 'during-background-output'));
+    assert(frames().some((frame) => frame.method === 'session/prompt' && frame.params.prompt[0].text === 'during-background-output'), 'agy queues a prompt sent during its unsolicited output');
     await ask('stop-background');
     state = await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.id === 'tool:stopping-tool'));
     assert.equal(state.messages.data.find((row: any) => row.id === 'tool:stopping-tool').tool.state.status, 'in_progress', 'a tool left running after its turn does not keep the agent working');
-    await provider.interrupt('process');
+    assert.deepEqual(state.tasks.find((task: any) => task.id === 'tool:stopping-tool'), { id: 'tool:stopping-tool', label: 'Tool', kind: 'local_bash', status: 'running', stoppable: true }, 'a command outliving its turn is a stoppable task, so hibernation leaves it alone');
+    await provider.stopTask('process', 'tool:stopping-tool');
     state = await waitFor(provider, (snapshot) => snapshot.messages.data.some((row: any) => row.id === 'tool:stopping-tool' && row.tool.state.status === 'pending'));
     assert.equal(state.status_detail, 'Stopping…', 'a pending update cannot acknowledge Stop');
     await assert.rejects(ask('not-during-stop'), TurnBusyError);
+    // agy never confirms this Stop: it settles locally instead of failing the session.
+    state = await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.find((row: any) => row.id === 'tool:stopping-tool')?.tool.state.status === 'failed');
+    assert.equal(state.messages.data.find((row: any) => row.id === 'tool:stopping-tool').tool.state.error, 'Stopped');
+    assert.equal(state.tasks.some((task: any) => task.id === 'tool:stopping-tool'), false);
     fs.writeFileSync(trace + '.cancel-tool-done', '');
-    await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    state = await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    assert.equal(state.messages.data.find((row: any) => row.id === 'tool:stopping-tool').tool.state.status, 'failed', 'a late in_progress update does not revive a stopped tool');
     assert(events.some((event) => event.kind === 'status' && event.detail === 'Stopping…'), 'background Stop reaches live subscribers');
     await ask('delayed-approval');
     await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.id === 'tool:deferred'));
