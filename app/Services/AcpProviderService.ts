@@ -120,7 +120,12 @@ export class AcpProviderService implements IntegratedProviderService {
     }
   }
   async interrupt(processId: string): Promise<void> { await callIntegratedHost(this.runtime(processId).socketPath, 'interrupt', {}); }
+  // Background commands stop through session/cancel, which ends all of agy's
+  // background work: ACP has no per-task cancel.
+  async stopTask(processId: string, taskId: string): Promise<void> { await callIntegratedHost(this.runtime(processId).socketPath, 'stopTask', { taskId }); }
   async taskOutput(processId: string, taskId: string, since?: string | null, cursor?: string | null): Promise<AntigravityTaskOutput> {
+    // A background command's output arrives on its tool row when it ends.
+    if (taskId.startsWith('tool:')) return { format: 'missing', version: null };
     const runtime = this.runtime(processId);
     let owned = false;
     try {

@@ -41,9 +41,9 @@
                 variant="ghost"
                 class="h-6 shrink-0 px-2 text-xs text-muted-foreground opacity-0 focus-visible:opacity-100 group-hover/task:opacity-100 [@media(hover:none)]:opacity-100"
                 :disabled="!canStop || stopping(task.id)"
-                :aria-label="`Stop ${task.label}`"
+                :aria-label="task.stopsAll ? `Stop all background commands, including ${task.label}` : `Stop ${task.label}`"
                 @click="emit('stop', task.id)"
-              >Stop</Button>
+              >{{ task.stopsAll ? 'Stop all' : 'Stop' }}</Button>
               <ChevronRight v-else-if="canOpen" class="h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 group-hover/task:opacity-100" aria-hidden="true" />
             </li>
           </ul>

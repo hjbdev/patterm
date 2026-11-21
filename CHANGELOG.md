@@ -50,6 +50,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Antigravity agents no longer hold messages while a background command, such
+  as a dev server, outlives its turn. The agent reads as idle, follow-ups go
+  straight to agy, and the command appears in Background Tasks with a Stop
+  (which ends all of agy's background work, as ACP has no per-task cancel).
+  Idle hibernation leaves such agents running. Stop after the turn has ended
+  settles without a "did not confirm cancellation" error.
 - Integrated host supervisors (`IntegratedHostSupervisor`) now run in versioned
   generations keyed by their runtime module hash. Rebuilding and restarting
   Patterm immediately launches new Claude, Codex, and Antigravity Integrated
@@ -69,8 +75,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Routine completion digests can stay quiet in The Guy’s native Claude Code
   conversation. The digest remains visible, as do alerts and direct replies.
 
-- Antigravity keeps follow-ups queued and Stop pending when a running tool is
-  briefly reported as pending. The conversation distinguishes observed
+- Antigravity keeps Stop pending when a running tool is briefly reported as
+  pending. The conversation distinguishes observed
   background work, recent activity, and stopping. In the browser, Stop can
   reach a turn even while its send is waiting for a delivery receipt.
 - Antigravity warns when extra MCP servers could make tools unavailable and
@@ -79,9 +85,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Integrated Antigravity confirms plain-text prompts from their native receipt
   when the CLI starts a turn without echoing the message over ACP.
 - Integrated Antigravity shows work and asks for approval when a background
-  task wakes the agent after a prompt ends. New prompts wait behind observed
-  activity. If Antigravity doesn't confirm cancellation, Patterm shows a
-  restart prompt rather than leaving the turn spinning.
+  task wakes the agent after a prompt ends. If Antigravity doesn't confirm
+  cancellation of a turn, Patterm shows a restart prompt rather than leaving
+  the turn spinning.
 - Integrated Antigravity keeps distinct native messages separate, explains
   token and request limits or refusals, and previews oversized tool data
   instead of sending it all to the conversation pane.

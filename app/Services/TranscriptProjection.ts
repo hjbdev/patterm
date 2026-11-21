@@ -212,6 +212,8 @@ export interface IntegratedTask {
   status: 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'stopped';
   detail?: string;
   stoppable: boolean;
+  // Stopping it also stops the agent's other background tasks.
+  stopsAll?: boolean;
 }
 
 // A prompt the harness accepted but has not started yet. Providers report
@@ -340,7 +342,8 @@ export function normaliseTasks(value: unknown): IntegratedTask[] {
       ...(kind ? { kind } : {}),
       status,
       ...(detail ? { detail } : {}),
-      stoppable: row.stoppable === true && (status === 'running' || status === 'pending' || status === 'paused')
+      stoppable: row.stoppable === true && (status === 'running' || status === 'pending' || status === 'paused'),
+      ...(row.stopsAll === true ? { stopsAll: true } : {})
     }];
   });
 }

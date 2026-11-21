@@ -78,6 +78,9 @@ let backgroundQuiet: NodeJS.Timeout | null = null;
 const runningTools = new Set<string>();
 // Tools Patterm has already reported as failed: never auto-approve them later.
 const abandonedToolIds = new Set<string>();
+const stoppedToolIds = new Set<string>();
+const backgroundCommands = new Map<string, { label: string; stopRequested: boolean }>();
+const MAX_FINISHED_COMMANDS = 20;
 let cancelDeadline: NodeJS.Timeout | null = null;
 let cancelWatchingTools = false;
 let nativeClose = false;
@@ -171,8 +174,16 @@ function publish(event: Row): void {
     else socket.write(frame);
   }
 }
+// agy takes a prompt while its own background tools run (dev servers, long
+// tests) and queues one sent during an unsolicited reply. Only a foreground
+// turn, a pending approval or an unconfirmed Stop keeps input out.
+function acceptsPrompt(): boolean {
+  return !active && !cancelling && permissions.size === 0 && !configuring;
+}
+// A tool left running after its turn is not model work: a daemon can outlive
+// the session. Only fresh output or an approval keeps the agent working.
 function busy(): boolean {
-  return active || backgroundQuiet !== null || runningTools.size > 0 || permissions.size > 0 || cancelling;
+  return active || backgroundQuiet !== null || permissions.size > 0 || cancelling;
 }
 function state(): void {
   const next = failed ? 'error' : permissions.size ? 'permission' : busy() ? 'working' : loaded ? 'idle' : status;
@@ -190,6 +201,58 @@ function backgroundActivity(): void {
   // and open approvals outlive the quiet window; silence covers text alone.
   backgroundQuiet = setTimeout(() => { backgroundQuiet = null; state(); }, BACKGROUND_QUIET_MS);
   state();
+}
+// Without a foreground turn ACP has no reply to confirm Stop. agy fails each
+// background tool it kills; an unsolicited reply has no signal at all. Neither
+// can leave a turn stuck, so this never fails the session.
+function stopBackground(): void {
+  write({ method: 'session/cancel', params: { sessionId } });
+  cancelPermissions();
+  if (backgroundQuiet) { clearTimeout(backgroundQuiet); backgroundQuiet = null; }
+  for (const id of runningTools) { const command = backgroundCommands.get(id); if (command) command.stopRequested = true; }
+  if (runningTools.size) {
+    cancelling = true;
+    cancelWatchingTools = true;
+    cancelDeadline = setTimeout(() => {
+      for (const id of runningTools) addBounded(stoppedToolIds, id);
+      finishTools('Stopped');
+      // finishTools reaches only rows still in the transcript.
+      runningTools.clear();
+      finishCancellation();
+      state(); publish({ kind: 'pending' });
+    }, CANCEL_TIMEOUT_MS);
+  }
+  state(); publish({ kind: 'pending' });
+}
+// Commands that outlive their turn, such as dev servers. Listing them as
+// tasks keeps an idle agent from hibernating (which would kill them) and
+// gives the task shelf a Stop.
+// Kept apart from the transcript, whose oldest rows are evicted while a
+// daemon can run for the life of the session. A finished command keeps its
+// final state so an open task drawer settles.
+function backgroundTasks(): Row[] {
+  if (!active) {
+    for (const id of runningTools) {
+      if (backgroundCommands.has(id)) continue;
+      const row = messages.find((message) => message.id === id);
+      const input = (row?.tool?.input ?? {}) as Row;
+      const command = input.CommandLine ?? input.command;
+      const label = typeof command === 'string' && command ? command : String(row?.tool?.name ?? 'Background command');
+      backgroundCommands.set(id, { label: label.slice(0, 200), stopRequested: false });
+    }
+  }
+  const finished = [...backgroundCommands.keys()].filter((id) => !runningTools.has(id));
+  for (const id of finished.slice(0, Math.max(0, finished.length - MAX_FINISHED_COMMANDS))) backgroundCommands.delete(id);
+  const running = [...backgroundCommands.keys()].filter((id) => runningTools.has(id)).length;
+  return [...backgroundCommands].map(([id, command]) => {
+    if (runningTools.has(id)) {
+      return { id, label: command.label, kind: 'local_bash', status: 'running', stoppable: !cancelling && !active,
+        ...(running > 1 ? { detail: 'Stop ends every background command', stopsAll: true } : {}) };
+    }
+    const state = messages.find((message) => message.id === id)?.tool?.state as Row | undefined;
+    const status = command.stopRequested || stoppedToolIds.has(id) ? 'stopped' : state?.status === 'failed' ? 'failed' : 'completed';
+    return { id, label: command.label, kind: 'local_bash', status, stoppable: false };
+  });
 }
 function noteModelActivity(): void {
   if (loaded && !failed && !stopping) usage.lastModelActivityAt = new Date().toISOString();
@@ -641,10 +704,19 @@ function receive(frame: Row): void {
       const input = { ...(update.rawInput == null ? prior : preview), ...(typeof rawInput.Path === 'string' ? { path: toolPreview(rawInput.Path) } : {}), ...(patch ? { patch } : {}) };
       const toolState = { ...(previous?.tool?.state as Row | undefined), status: update.status ?? (previous?.tool?.state as Row | undefined)?.status ?? 'pending', ...(update.rawOutput !== undefined ? { output: toolOutput(update.rawOutput) } : {}) };
       const terminal = toolState.status === 'completed' || toolState.status === 'failed';
+      // A late update cannot revive a tool Patterm settled after an
+      // unanswered background Stop.
+      if (stoppedToolIds.has(id) && !terminal) break;
       if (loaded && !failed && !stopping) {
-        if (toolState.status === 'in_progress') runningTools.add(id);
+        const tracked = runningTools.size;
+        // The update that confirms Stop is not fresh work, and a tool Patterm
+        // already settled as stopped stays stopped.
+        if (toolState.status === 'in_progress') { runningTools.add(id); backgroundActivity(); }
         else if (terminal && runningTools.delete(id) && !runningTools.size && cancelWatchingTools) finishCancellation();
-        backgroundActivity();
+        else backgroundActivity();
+        // Running tools are tasks: observers re-read the count that keeps
+        // idle hibernation from killing a daemon.
+        if (runningTools.size !== tracked) publish({ kind: 'pending' });
         state();
       }
       const rawText = !output && (replacesContent || !previous?.text) && update.rawOutput !== undefined ? rawOutputText(update.rawOutput) : '';
@@ -799,7 +871,7 @@ function snapshot(): Row {
     ...(splicedBeforeWindow ? { history_spliced_id: splicedBeforeWindow } : {}),
     permissions: { data: [...permissions.values()].map(({ rpcId: _rpcId, options: _options, ...permission }) => permission) },
     questions: { data: [] },
-    tasks: subagents?.tasks() ?? [],
+    tasks: [...(subagents?.tasks() ?? []), ...backgroundTasks()],
     usage,
     revision,
     ...controlState()
@@ -820,8 +892,9 @@ async function handle(method: string, params: Row): Promise<unknown> {
   if (!loaded || failed || stopping) throw new Error(statusDetail || 'ACP agent is not ready');
   if (method === 'prompt') {
     if (params.clientMessageId && deliveries.has(params.clientMessageId)) return { accepted: true };
-    if (busy() || configuring) throw new Error('ACP turn is busy');
+    if (!acceptsPrompt()) throw new Error('ACP turn is busy');
     if (!Array.isArray(params.prompt) || !params.prompt.length) throw new Error('Message is empty');
+    if (backgroundQuiet) { clearTimeout(backgroundQuiet); backgroundQuiet = null; }
     active = true; cancelling = false; statusDetail = ''; block = null; userConfirmed = false;
     liveWindowFloorId = null;
     promptAnchorId = messages.length ? messages[messages.length - 1]!.id : null;
@@ -837,6 +910,8 @@ async function handle(method: string, params: Row): Promise<unknown> {
       stopWatchingPrompt = watchAntigravityPrompt(sessionId, userEcho.text, admit);
     }
     state();
+    // Background command tasks can't be stopped during a turn.
+    if (runningTools.size) publish({ kind: 'pending' });
     // The result arrives only at turn end. Keep the host socket responsive to
     // permissions and cancellation instead of awaiting it in this handler.
     const turn = rpc('session/prompt', { sessionId, prompt: params.prompt }, 0);
@@ -859,7 +934,7 @@ async function handle(method: string, params: Row): Promise<unknown> {
       }
       active = false; userEcho = null; promptAnchorId = null; block = null; cancelPermissions();
       subagents?.syncNow();
-      setImmediate(() => { if (!stopping && status !== 'error') state(); });
+      setImmediate(() => { if (!stopping && status !== 'error') { state(); if (runningTools.size) publish({ kind: 'pending' }); } });
       saveSettings();
     }, (error: Error) => {
       active = false; userEcho = null; promptAnchorId = null;
@@ -869,16 +944,23 @@ async function handle(method: string, params: Row): Promise<unknown> {
     return { accepted: true };
   }
   if (method === 'interrupt') {
-    if (!busy() || cancelling) return {};
-    cancelling = true;
-    cancelWatchingTools = !active && runningTools.size > 0;
+    if ((!busy() && !runningTools.size) || cancelling) return {};
+    if (!active) { stopBackground(); return {}; }
     write({ method: 'session/cancel', params: { sessionId } });
     cancelPermissions();
+    cancelling = true;
+    cancelWatchingTools = false;
     cancelDeadline = setTimeout(() => {
       fail(new NativeAcpTransportError('Antigravity did not confirm cancellation. Restart the agent before sending another message.'));
       publish({ kind: 'pending' });
     }, CANCEL_TIMEOUT_MS);
     state(); publish({ kind: 'pending' }); return {};
+  }
+  if (method === 'stopTask') {
+    // ACP has no per-task cancel: session/cancel ends all background work.
+    if (active || cancelling || !runningTools.has(String(params.taskId ?? ''))) throw new Error('That background command is not running');
+    stopBackground();
+    return {};
   }
   if (method === 'permission') {
     const request = permissions.get(String(params.requestId));
