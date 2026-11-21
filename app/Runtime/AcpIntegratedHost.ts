@@ -79,6 +79,8 @@ const runningTools = new Set<string>();
 // Tools Patterm has already reported as failed: never auto-approve them later.
 const abandonedToolIds = new Set<string>();
 const stoppedToolIds = new Set<string>();
+const backgroundCommands = new Map<string, { label: string; stopRequested: boolean }>();
+const MAX_FINISHED_COMMANDS = 20;
 let cancelDeadline: NodeJS.Timeout | null = null;
 let cancelWatchingTools = false;
 let nativeClose = false;
@@ -207,6 +209,7 @@ function stopBackground(): void {
   write({ method: 'session/cancel', params: { sessionId } });
   cancelPermissions();
   if (backgroundQuiet) { clearTimeout(backgroundQuiet); backgroundQuiet = null; }
+  for (const id of runningTools) { const command = backgroundCommands.get(id); if (command) command.stopRequested = true; }
   if (runningTools.size) {
     cancelling = true;
     cancelWatchingTools = true;
@@ -222,14 +225,31 @@ function stopBackground(): void {
 // Commands that outlive their turn, such as dev servers. Listing them as
 // tasks keeps an idle agent from hibernating (which would kill them) and
 // gives the task shelf a Stop.
+// Kept apart from the transcript, whose oldest rows are evicted while a
+// daemon can run for the life of the session. A finished command keeps its
+// final state so an open task drawer settles.
 function backgroundTasks(): Row[] {
-  if (active) return [];
-  return [...runningTools].flatMap((id) => {
-    const row = messages.find((message) => message.id === id);
-    if (!row?.tool) return [];
-    const input = (row.tool.input ?? {}) as Row;
-    const command = input.CommandLine ?? input.command;
-    return [{ id, label: toolPreview(typeof command === 'string' && command ? command : String(row.tool.name)).slice(0, 200), kind: 'local_bash', status: 'running', stoppable: !cancelling }];
+  if (!active) {
+    for (const id of runningTools) {
+      if (backgroundCommands.has(id)) continue;
+      const row = messages.find((message) => message.id === id);
+      const input = (row?.tool?.input ?? {}) as Row;
+      const command = input.CommandLine ?? input.command;
+      const label = typeof command === 'string' && command ? command : String(row?.tool?.name ?? 'Background command');
+      backgroundCommands.set(id, { label: label.slice(0, 200), stopRequested: false });
+    }
+  }
+  const finished = [...backgroundCommands.keys()].filter((id) => !runningTools.has(id));
+  for (const id of finished.slice(0, Math.max(0, finished.length - MAX_FINISHED_COMMANDS))) backgroundCommands.delete(id);
+  const running = [...backgroundCommands.keys()].filter((id) => runningTools.has(id)).length;
+  return [...backgroundCommands].map(([id, command]) => {
+    if (runningTools.has(id)) {
+      return { id, label: command.label, kind: 'local_bash', status: 'running', stoppable: !cancelling,
+        ...(running > 1 ? { detail: 'Stop ends every background command: ACP cannot stop one alone' } : {}) };
+    }
+    const state = messages.find((message) => message.id === id)?.tool?.state as Row | undefined;
+    const status = command.stopRequested || stoppedToolIds.has(id) ? 'stopped' : state?.status === 'failed' ? 'failed' : 'completed';
+    return { id, label: command.label, kind: 'local_bash', status, stoppable: false };
   });
 }
 function noteModelActivity(): void {

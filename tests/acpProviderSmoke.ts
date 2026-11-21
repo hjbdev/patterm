@@ -320,7 +320,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     // agy never confirms this Stop: it settles locally instead of failing the session.
     state = await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.find((row: any) => row.id === 'tool:stopping-tool')?.tool.state.status === 'failed');
     assert.equal(state.messages.data.find((row: any) => row.id === 'tool:stopping-tool').tool.state.error, 'Stopped');
-    assert.equal(state.tasks.some((task: any) => task.id === 'tool:stopping-tool'), false);
+    assert.deepEqual(state.tasks.find((task: any) => task.id === 'tool:stopping-tool'), { id: 'tool:stopping-tool', label: 'Tool', kind: 'local_bash', status: 'stopped', stoppable: false }, 'an open task drawer sees the command settle');
     fs.writeFileSync(trace + '.cancel-tool-done', '');
     await new Promise((resolve) => setTimeout(resolve, 100));
     state = await waitFor(provider, (snapshot) => snapshot.status === 'idle');
