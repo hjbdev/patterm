@@ -131,8 +131,29 @@ async function main(): Promise<void> {
   console.log('retired Integrated hosts smoke ok');
 }
 
+async function waitForPidExit(pid: number, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try { process.kill(pid, 0); } catch { return; }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+async function removeTempDir(directory: string): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    try {
+      fs.rmSync(directory, { recursive: true, force: true });
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+}
+
 async function versionedSupervisorSmoke(): Promise<void> {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-versioned-sup-'));
+  // Keep POSIX socket paths well under macOS's 103-byte sun_path limit.
+  const tempRoot = process.platform === 'win32' ? os.tmpdir() : '/tmp';
+  const directory = fs.mkdtempSync(path.join(tempRoot, 'p-sup-'));
   const runtimeDir = path.join(directory, 'runtime');
   fs.mkdirSync(runtimeDir, { recursive: true });
   const depPath = path.join(directory, 'dep.js');
@@ -147,6 +168,8 @@ async function versionedSupervisorSmoke(): Promise<void> {
     "const sock = process.argv[2];",
     "const pidMarker = process.platform === 'win32' ? sock + '.pid' : null;",
     "const sessions = new Map();",
+    "let draining = false;",
+    "const closeAll = () => { server.close(() => { if (process.platform !== 'win32') { try { fs.rmSync(sock, { force: true }); } catch {} } if (pidMarker) { try { fs.rmSync(pidMarker, { force: true }); } catch {} } process.exit(0); }); };",
     "const server = net.createServer((socket) => {",
     "  let buf = ''; socket.setEncoding('utf8');",
     "  socket.on('data', (chunk) => {",
@@ -154,11 +177,12 @@ async function versionedSupervisorSmoke(): Promise<void> {
     "    for (;;) {",
     "      const nl = buf.indexOf('\\n'); if (nl < 0) return;",
     "      const req = JSON.parse(buf.slice(0, nl)); buf = buf.slice(nl + 1);",
-    "      if (req.op === 'start') { sessions.set(req.key, { harness: req.harness, socketPath: req.configPath }); socket.write(JSON.stringify({ id: req.id, result: { pid: process.pid, socketPath: req.configPath, version: dep.version } }) + '\\n'); }",
-    "      else if (req.op === 'stop') { let stopped = false; for (const [k, v] of sessions) { if (v.socketPath === req.socketPath) { sessions.delete(k); stopped = true; break; } } socket.write(JSON.stringify({ id: req.id, result: { pid: process.pid, stopped } }) + '\\n'); }",
-    "      else if (req.op === 'stopHarness') { for (const [k, v] of [...sessions]) { if (v.harness === req.harness) sessions.delete(k); } socket.write(JSON.stringify({ id: req.id, result: { stopped: 1, remaining: sessions.size } }) + '\\n'); if (req.exitIfEmpty && sessions.size === 0) setImmediate(() => { server.close(() => { if (process.platform !== 'win32') { try { fs.rmSync(sock, { force: true }); } catch {} } if (pidMarker) { try { fs.rmSync(pidMarker, { force: true }); } catch {} } process.exit(0); }); }); }",
+    "      if (req.op === 'start') { draining = false; sessions.set(req.key, { harness: req.harness, socketPath: req.configPath }); socket.write(JSON.stringify({ id: req.id, result: { pid: process.pid, socketPath: req.configPath, version: dep.version } }) + '\\n'); }",
+    "      else if (req.op === 'stop') { let stopped = false; for (const [k, v] of sessions) { if (v.socketPath === req.socketPath) { sessions.delete(k); stopped = true; break; } } socket.write(JSON.stringify({ id: req.id, result: { pid: process.pid, stopped } }) + '\\n'); if (draining && sessions.size === 0) setImmediate(closeAll); }",
+    "      else if (req.op === 'drain') { draining = true; socket.write(JSON.stringify({ id: req.id, result: { pid: process.pid, draining: true, sessions: sessions.size } }) + '\\n'); if (sessions.size === 0) setImmediate(closeAll); }",
+    "      else if (req.op === 'stopHarness') { for (const [k, v] of [...sessions]) { if (v.harness === req.harness) sessions.delete(k); } socket.write(JSON.stringify({ id: req.id, result: { stopped: 1, remaining: sessions.size } }) + '\\n'); if ((req.exitIfEmpty || draining) && sessions.size === 0) setImmediate(closeAll); }",
     "      else if (req.op === 'ping') { socket.write(JSON.stringify({ id: req.id, result: { pid: process.pid, sessions: sessions.size } }) + '\\n'); }",
-    "      else if (req.op === 'shutdown') { socket.write(JSON.stringify({ id: req.id, result: { ok: true } }) + '\\n'); setImmediate(() => { server.close(() => { if (process.platform !== 'win32') { try { fs.rmSync(sock, { force: true }); } catch {} } if (pidMarker) { try { fs.rmSync(pidMarker, { force: true }); } catch {} } process.exit(0); }); }); }",
+    "      else if (req.op === 'shutdown') { socket.write(JSON.stringify({ id: req.id, result: { ok: true } }) + '\\n'); setImmediate(closeAll); }",
     "    }",
     "  });",
     "});",
@@ -168,6 +192,8 @@ async function versionedSupervisorSmoke(): Promise<void> {
 
   const servers: net.Server[] = [];
   const pidsToKill: number[] = [];
+  const previousPoll = process.env.PATTERM_LEGACY_SUPERVISOR_POLL_MS;
+  process.env.PATTERM_LEGACY_SUPERVISOR_POLL_MS = '50';
   try {
     const gen1 = supervisorGeneration(scriptPath);
     fs.writeFileSync(depPath, 'module.exports = { version: 2 };\n');
@@ -248,16 +274,43 @@ async function versionedSupervisorSmoke(): Promise<void> {
     assert.ok(oldOps.includes('drain'), 'older versioned supervisor receives drain');
     assert.equal(legacyServer.listening, true, 'legacy supervisor with an active session stays alive');
 
-    // Stopping the legacy session through the new launcher finds it on the
-    // legacy supervisor and shuts that supervisor down once empty.
-    await launcher.stop!('legacy-session.sock', 999991);
-    assert.ok(legacyOps.includes('shutdown'), 'empty legacy supervisor shuts down after its last session stops');
+    // When the last session on a pre-versioning legacy supervisor ends on its
+    // own (e.g. via a Claude/ACP session stop RPC), the background reaper shuts
+    // the empty legacy supervisor down automatically.
+    legacySessions.clear();
+    const retireDeadline = Date.now() + 2_000;
+    while (Date.now() < retireDeadline && !legacyOps.includes('shutdown')) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.ok(legacyOps.includes('shutdown'), 'empty legacy supervisor retires automatically after its last session ends');
 
-    await launcher.stopAll('agy');
+    // Rolling back to gen2 while gen2 was drained must reuse the live gen2
+    // supervisor (same PID) rather than spawning a second process over its socket.
+    fs.writeFileSync(depPath, 'module.exports = { version: 3 };\n');
+    const launcher3 = supervisedHostLauncher(directory, scriptPath);
+    const gen3Pid = await launcher3.launch({
+      harness: 'agy', key: 'gen3-session', nodePath: process.execPath, script: 'host.js', configPath: 'gen3-session.sock', cwd: directory, env: {}
+    });
+    assert.ok(gen3Pid && gen3Pid !== gen2Pid, 'gen3 starts its own supervisor');
+    pidsToKill.push(gen3Pid);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    fs.writeFileSync(depPath, 'module.exports = { version: 2 };\n');
+    const rollbackPid = await supervisedHostLauncher(directory, scriptPath).launch({
+      harness: 'agy', key: 'rollback-session', nodePath: process.execPath, script: 'host.js', configPath: 'rollback-session.sock', cwd: directory, env: {}
+    });
+    assert.equal(rollbackPid, gen2Pid, 'rolling back to a drained generation reuses its live supervisor');
+
+    await launcher3.stopAll('agy');
+    for (const pid of pidsToKill) await waitForPidExit(pid);
   } finally {
+    if (previousPoll === undefined) delete process.env.PATTERM_LEGACY_SUPERVISOR_POLL_MS;
+    else process.env.PATTERM_LEGACY_SUPERVISOR_POLL_MS = previousPoll;
     for (const server of servers) if (server.listening) server.close();
-    for (const pid of pidsToKill) { try { process.kill(pid, 'SIGTERM'); } catch {} }
-    fs.rmSync(directory, { recursive: true, force: true });
+    for (const pid of pidsToKill) {
+      try { process.kill(pid, 'SIGTERM'); } catch {}
+      await waitForPidExit(pid, 2_000);
+    }
+    await removeTempDir(directory);
   }
 }
 

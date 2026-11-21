@@ -105,28 +105,69 @@ function cleanupDeadSupervisorFiles(socketPath: string): void {
   fs.rmSync(`${socketPath}.pid`, { force: true });
 }
 
-async function drainOlderSupervisor(socketPath: string): Promise<void> {
+async function drainOlderSupervisor(socketPath: string): Promise<'done' | 'legacy-busy'> {
   if (!await integratedHostListening(socketPath, 200)) {
     cleanupDeadSupervisorFiles(socketPath);
-    return;
+    return 'done';
   }
   try {
     await callSupervisor(socketPath, { op: 'drain' }, 2_000);
-    return;
+    return 'done';
   } catch {
     // Older supervisors predating `drain` still support `ping` and `shutdown`.
   }
   try {
     const ping = await callSupervisor(socketPath, { op: 'ping' }, 2_000);
-    if (Number(ping.sessions) === 0) {
+    const active = Number(ping.sessions);
+    if (active === 0) {
       await callSupervisor(socketPath, { op: 'shutdown' }, 2_000);
+      return 'done';
     }
+    if (Number.isFinite(active) && active > 0) return 'legacy-busy';
   } catch {}
+  return 'done';
 }
 
-async function drainOldSupervisors(runtimeDir: string, currentSocket: string): Promise<void> {
-  const candidates = discoverSupervisorSockets(runtimeDir, currentSocket).filter((socket) => socket !== currentSocket);
-  await Promise.allSettled(candidates.map((socket) => drainOlderSupervisor(socket)));
+function createOldSupervisorDrainer(runtimeDir: string, currentSocket: string): () => void {
+  const configured = Number(process.env.PATTERM_LEGACY_SUPERVISOR_POLL_MS);
+  const pollMs = Number.isFinite(configured) && configured > 0 ? configured : 5_000;
+  let timer: NodeJS.Timeout | null = null;
+  let running = false;
+  const run = async (): Promise<void> => {
+    if (running) return;
+    running = true;
+    try {
+      const candidates = discoverSupervisorSockets(runtimeDir, currentSocket).filter((socket) => socket !== currentSocket);
+      const results = await Promise.allSettled(candidates.map((socket) => drainOlderSupervisor(socket)));
+      const hasLegacyBusy = results.some((result) => result.status === 'fulfilled' && result.value === 'legacy-busy');
+      if (hasLegacyBusy && !timer) {
+        timer = setTimeout(() => {
+          timer = null;
+          void run();
+        }, pollMs);
+        timer.unref();
+      }
+    } finally {
+      running = false;
+    }
+  };
+  return () => { void run().catch(() => undefined); };
+}
+
+function isSupervisorGoneError(error: unknown): boolean {
+  if (error instanceof IntegratedHostTransportError) return true;
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  if (code === 'ENOENT' || code === 'ECONNREFUSED' || code === 'ECONNRESET' || code === 'EPIPE') return true;
+  return error instanceof Error && error.message === 'Integrated host supervisor is shutting down';
+}
+
+async function waitForSupervisorExit(socketPath: string, timeoutMs = 5_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!await integratedHostListening(socketPath, 200)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return !await integratedHostListening(socketPath, 200);
 }
 
 export function callSupervisor(socketPath: string, payload: Record<string, unknown>, timeoutMs = 15_000): Promise<Record<string, unknown>> {
@@ -277,6 +318,7 @@ export function supervisedHostLauncher(appDataPath: string, supervisorScript = S
   const runtimeDir = path.join(appDataPath, 'runtime');
   const generation = supervisorGeneration(supervisorScript);
   const supervisorSocket = path.join(runtimeDir, `integrated-supervisor-${generation}.sock`);
+  const drainOlder = createOldSupervisorDrainer(runtimeDir, supervisorSocket);
   let booting: Promise<void> | null = null;
   const knownSupervisorPids = new Set<number>();
 
@@ -294,9 +336,13 @@ export function supervisedHostLauncher(appDataPath: string, supervisorScript = S
             });
             const pid = Number(result.pid);
             if (Number.isInteger(pid) && pid > 0) knownSupervisorPids.add(pid);
+            drainOlder();
             return Number.isInteger(pid) && pid > 0 ? pid : null;
-          } catch {
-            // Supervisor exited right as we connected; fall through to spawn a fresh one.
+          } catch (error) {
+            if (!isSupervisorGoneError(error)) throw error;
+            // Wait for a shutting-down supervisor to finish releasing its
+            // socket so a new process never unlinks a live supervisor's path.
+            if (!await waitForSupervisorExit(supervisorSocket)) throw error;
           }
         }
         fs.mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
@@ -318,7 +364,7 @@ export function supervisedHostLauncher(appDataPath: string, supervisorScript = S
           if (!await waitForSupervisorSocket(supervisorSocket, spawnedPid)) {
             throw new Error('Integrated host supervisor did not start in time');
           }
-          void drainOldSupervisors(runtimeDir, supervisorSocket).catch(() => undefined);
+          drainOlder();
           return spawnedPid;
         } catch (error) {
           fs.rmSync(bootFile, { force: true });
@@ -351,6 +397,7 @@ export function systemdHostLauncher(appDataPath: string, env: NodeJS.ProcessEnv,
   const legacyPrefix = (harness: string) => `patterm-integrated-${scope}-${harness}`;
   const runtimeDir = path.join(appDataPath, 'runtime');
   const supervisorSocket = path.join(runtimeDir, `integrated-supervisor-${generation}.sock`);
+  const drainOlder = createOldSupervisorDrainer(runtimeDir, supervisorSocket);
   let booting: Promise<void> | null = null;
   const knownSupervisorPids = new Set<number>();
 
@@ -368,9 +415,11 @@ export function systemdHostLauncher(appDataPath: string, env: NodeJS.ProcessEnv,
             });
             const pid = Number(result.pid);
             if (Number.isInteger(pid) && pid > 0) knownSupervisorPids.add(pid);
+            drainOlder();
             return Number.isInteger(pid) && pid > 0 ? pid : null;
-          } catch {
-            // Supervisor exited; fall through to start a fresh unit.
+          } catch (error) {
+            if (!isSupervisorGoneError(error)) throw error;
+            if (!await waitForSupervisorExit(supervisorSocket)) throw error;
           }
         }
         fs.mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
@@ -393,7 +442,7 @@ export function systemdHostLauncher(appDataPath: string, env: NodeJS.ProcessEnv,
           if (!await waitForSupervisorSocket(supervisorSocket, pid)) {
             throw new Error('Integrated host supervisor did not start in time');
           }
-          void drainOldSupervisors(runtimeDir, supervisorSocket).catch(() => undefined);
+          drainOlder();
           return pid;
         } catch (error) {
           fs.rmSync(bootFile, { force: true });

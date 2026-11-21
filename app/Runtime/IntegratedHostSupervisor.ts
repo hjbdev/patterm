@@ -38,15 +38,26 @@ fs.mkdirSync(path.dirname(supervisorSocket), { recursive: true, mode: 0o700 });
 removeStaleIpc(supervisorSocket);
 
 const sessions = new Map<string, SessionHandle>();
+const stopping = new Set<Promise<void>>();
 const sockets = new Set<net.Socket>();
 let draining = false;
 let shuttingDown = false;
 const pidMarkerPath = process.platform === 'win32' ? `${supervisorSocket}.pid` : null;
 
+function trackStop(promise: Promise<void>): Promise<void> {
+  const tracked = promise.then(() => undefined, () => undefined);
+  stopping.add(tracked);
+  void tracked.finally(() => {
+    stopping.delete(tracked);
+    maybeExitIfDrained();
+  });
+  return promise;
+}
+
 function maybeExitIfDrained(): void {
-  if (!draining || shuttingDown || sessions.size > 0) return;
+  if (!draining || shuttingDown || sessions.size > 0 || stopping.size > 0) return;
   setImmediate(() => {
-    if (draining && !shuttingDown && sessions.size === 0) void shutdown();
+    if (draining && !shuttingDown && sessions.size === 0 && stopping.size === 0) void shutdown();
   });
 }
 
@@ -107,7 +118,11 @@ async function handle(socket: net.Socket, request: SupervisorRequest): Promise<v
     return;
   }
   if (op === 'start') {
-    if (shuttingDown || draining) throw new Error('Integrated host supervisor is shutting down');
+    if (shuttingDown) throw new Error('Integrated host supervisor is shutting down');
+    // A launcher targeting this exact generation hash means this runtime is
+    // active again (e.g. after rolling back a build); cancel draining so we
+    // reuse this live supervisor instead of colliding on its socket or unit.
+    draining = false;
     const harness = String(request.harness ?? '');
     const key = String(request.key ?? '');
     const configPath = String(request.configPath ?? '');
@@ -127,11 +142,11 @@ async function handle(socket: net.Socket, request: SupervisorRequest): Promise<v
       return;
     }
     sessions.delete(session.key);
-    await session.stop();
+    await trackStop(session.stop());
     respond(socket, id, { pid: process.pid, stopped: true, remaining: sessions.size });
-    if (request.exitIfEmpty === true && sessions.size === 0) {
+    if (request.exitIfEmpty === true && sessions.size === 0 && stopping.size === 0) {
       setImmediate(() => {
-        if (sessions.size === 0) void shutdown();
+        if (sessions.size === 0 && stopping.size === 0) void shutdown();
       });
     } else {
       maybeExitIfDrained();
@@ -142,11 +157,11 @@ async function handle(socket: net.Socket, request: SupervisorRequest): Promise<v
     const harness = String(request.harness ?? '');
     const matches = [...sessions.values()].filter((session) => session.harness === harness);
     for (const session of matches) sessions.delete(session.key);
-    await Promise.allSettled(matches.map((session) => session.stop()));
+    await Promise.allSettled(matches.map((session) => trackStop(session.stop())));
     respond(socket, id, { stopped: matches.length, remaining: sessions.size });
-    if ((request.exitIfEmpty === true || draining) && sessions.size === 0) {
+    if ((request.exitIfEmpty === true || draining) && sessions.size === 0 && stopping.size === 0) {
       setImmediate(() => {
-        if (sessions.size === 0) void shutdown();
+        if (sessions.size === 0 && stopping.size === 0) void shutdown();
       });
     }
     return;
@@ -214,7 +229,10 @@ function shutdown(): Promise<void> {
   shutdownPromise = (async () => {
     const active = [...sessions.values()];
     sessions.clear();
-    await Promise.allSettled(active.map((session) => session.stop()));
+    await Promise.allSettled([
+      ...active.map((session) => trackStop(session.stop())),
+      ...stopping
+    ]);
     for (const socket of sockets) socket.destroy();
     sockets.clear();
     await new Promise<void>((resolve) => server.close(() => resolve()));
