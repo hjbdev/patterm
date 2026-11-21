@@ -247,7 +247,7 @@ function backgroundTasks(): Row[] {
   return [...backgroundCommands].map(([id, command]) => {
     if (runningTools.has(id)) {
       return { id, label: command.label, kind: 'local_bash', status: 'running', stoppable: !cancelling && !active,
-        ...(running > 1 ? { detail: 'Stop ends every background command: ACP cannot stop one alone' } : {}) };
+        ...(running > 1 ? { detail: 'Stop ends every background command', stopsAll: true } : {}) };
     }
     const state = messages.find((message) => message.id === id)?.tool?.state as Row | undefined;
     const status = command.stopRequested || stoppedToolIds.has(id) ? 'stopped' : state?.status === 'failed' ? 'failed' : 'completed';

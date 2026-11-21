@@ -22,8 +22,7 @@
         <h2 class="min-w-0 truncate text-sm font-[440]">{{ task.label }}</h2>
         <span v-if="task.kind" class="shrink-0 text-xs text-muted-foreground">{{ task.kind }}</span>
         <span class="sr-only">{{ task.status }}</span>
-        <span v-if="task.stoppable && task.detail" class="ml-auto min-w-0 truncate text-xs text-muted-foreground">{{ task.detail }}</span>
-        <Button v-if="task.stoppable" size="sm" variant="ghost" :class="task.detail ? 'h-7 shrink-0 px-2 text-xs' : 'ml-auto h-7 shrink-0 px-2 text-xs'" :disabled="!canStop || stopping" @click="emit('stop')">Stop</Button>
+        <Button v-if="task.stoppable" size="sm" variant="ghost" class="ml-auto h-7 shrink-0 px-2 text-xs" :title="task.stopsAll ? 'Stops every background command' : undefined" :disabled="!canStop || stopping" @click="emit('stop')">{{ task.stopsAll ? 'Stop all' : 'Stop' }}</Button>
       </div>
     </header>
     <div class="relative flex min-h-0 flex-1 flex-col">
