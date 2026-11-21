@@ -109,9 +109,18 @@ function cleanupDeadSupervisorFiles(socketPath: string): void {
 // supervisor socket. Shared across launcher instances so a background legacy
 // reaper never sends `shutdown` while another stop/stopAll is awaiting cleanup.
 const activeSupervisorStops = new Map<string, number>();
+// Serialises stop/stopHarness RPCs targeting a pre-versioning legacy supervisor
+// (which deletes sessions from its map before awaiting native cleanup, so a
+// concurrent `stopHarness(..., exitIfEmpty: true)` for another harness would
+// otherwise shut it down mid-cleanup).
+const legacyStopQueues = new Map<string, Promise<void>>();
 
 function stopKey(socketPath: string): string {
   return path.resolve(socketPath);
+}
+
+function isLegacySupervisorSocket(socketPath: string): boolean {
+  return path.basename(socketPath) === 'integrated-supervisor.sock';
 }
 
 function hasActiveStop(socketPath: string): boolean {
@@ -121,7 +130,19 @@ function hasActiveStop(socketPath: string): boolean {
 function withActiveStop<T>(socketPath: string, fn: () => Promise<T>): Promise<T> {
   const key = stopKey(socketPath);
   activeSupervisorStops.set(key, (activeSupervisorStops.get(key) ?? 0) + 1);
-  return fn().finally(() => {
+  const run = isLegacySupervisorSocket(socketPath)
+    ? (() => {
+      const previous = legacyStopQueues.get(key) ?? Promise.resolve();
+      const current = previous.catch(() => undefined).then(fn);
+      const tail = current.then(() => undefined, () => undefined);
+      legacyStopQueues.set(key, tail);
+      void tail.finally(() => {
+        if (legacyStopQueues.get(key) === tail) legacyStopQueues.delete(key);
+      });
+      return current;
+    })()
+    : fn();
+  return run.finally(() => {
     const remaining = (activeSupervisorStops.get(key) ?? 1) - 1;
     if (remaining > 0) activeSupervisorStops.set(key, remaining);
     else activeSupervisorStops.delete(key);
@@ -199,12 +220,12 @@ async function waitForSupervisorExit(socketPath: string, timeoutMs = 5_000): Pro
   return !await integratedHostListening(socketPath, 200);
 }
 
-async function waitForSystemdUnitInactive(unit: string, env: NodeJS.ProcessEnv, timeoutMs = 5_000): Promise<void> {
+async function waitForSystemdUnitInactive(unit: string, env: NodeJS.ProcessEnv, timeoutMs = 26_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
       const state = (await systemctl('systemctl', ['--user', 'show', '--property=ActiveState', '--value', unit], env)).trim();
-      if (!state || state === 'inactive' || state === 'failed') return;
+      if (state !== 'active' && state !== 'deactivating' && state !== 'reloading' && state !== 'activating') return;
     } catch {
       return;
     }
@@ -468,9 +489,9 @@ export function systemdHostLauncher(appDataPath: string, env: NodeJS.ProcessEnv,
           } catch (error) {
             if (!isSupervisorGoneError(error)) throw error;
             if (!await waitForSupervisorExit(supervisorSocket)) throw error;
-            await waitForSystemdUnitInactive(supervisorUnit, env);
           }
         }
+        await waitForSystemdUnitInactive(supervisorUnit, env);
         fs.mkdirSync(runtimeDir, { recursive: true, mode: 0o700 });
         // The supervisor reads and deletes this file; secrets never reach argv.
         const bootFile = path.join(runtimeDir, `supervisor-boot-${randomUUID()}.json`);
