@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `delivery_bot_id`) in addition to the global assistant, enforcing the target
   bot's purview at configuration and report time.
 
+- Bots that start a fresh CLI session after a failed resume or harness switch
+  now receive a bounded conversation handoff from imported history (`history.db`)
+  along with any running adopted helpers, instead of starting blank. Explicit
+  `/new` conversations still start clean.
+
 - Unreported Integrated agent turn completions now include a bounded 280-character
   plain-text preview of the agent's final reply in user notifications and bot
   updates instead of bare `"Finished its turn"`, child agents that exit cleanly
