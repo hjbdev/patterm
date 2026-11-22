@@ -509,21 +509,40 @@ async function main(): Promise<void> {
     };
     agent('worker-p', 'p', 'orchestrator');
     agent('worker-q', 'q', 'orchestrator');
+    const turnStarted = '2026-11-22T19:00:00.000Z';
+    db.prepare(`update processes set activity = 'permission', asking = 'Allow read_file?', turn_started_at = ?, updated_at = ? where id = 'proc-worker-p'`).run(turnStarted, now);
+    db.prepare(`update processes set activity = 'working', turn_started_at = ?, updated_at = ? where id = 'proc-worker-q'`).run(turnStarted, now);
     const timeline = new TimelineService(database);
     const registry = createTestMcpRegistry({ tempDir: dir, database, timeline, terminal: { request: async () => ({}) } as unknown as TerminalService, workbench });
     const assistantIdentity = { identity: liveIdentity.mcp_identity };
 
-    const overview = await registry.callPublic('assistant_overview', {}, assistantIdentity) as { projects: Array<{ project_id: string; processes: Array<{ process_id: string }> }> };
+    const overview = await registry.callPublic('assistant_overview', {}, assistantIdentity) as {
+      projects: Array<{ project_id: string; processes: Array<{ process_id: string; activity?: string; waiting_for?: string; turn_started_at?: string; updated_at?: string }> }>;
+    };
     assert.deepEqual(overview.projects.map((project) => project.project_id), ['p', 'q']);
-    assert.ok(overview.projects[0]!.processes.some((process) => process.process_id === 'proc-worker-p'));
+    const workerP = overview.projects[0]!.processes.find((process) => process.process_id === 'proc-worker-p');
+    assert.equal(workerP?.activity, 'permission');
+    assert.equal(workerP?.waiting_for, 'Allow read_file?');
+    assert.equal(workerP?.turn_started_at, turnStarted);
+    assert.equal(workerP?.updated_at, now);
     await assert.rejects(registry.callPublic('assistant_overview', {}, { identity: 'mcp-worker-p' }), /only the assistant/);
 
-    const listed = await registry.callPublic('list_processes', { project_id: 'q' }, assistantIdentity) as { processes: Array<{ process_id: string }> };
-    assert.ok(listed.processes.some((process) => process.process_id === 'proc-worker-q'));
+    const listed = await registry.callPublic('list_processes', { project_id: 'q' }, assistantIdentity) as {
+      processes: Array<{ process_id: string; activity?: string; turn_started_at?: string; updated_at?: string }>;
+    };
+    const workerQ = listed.processes.find((process) => process.process_id === 'proc-worker-q');
+    assert.equal(workerQ?.activity, 'working');
+    assert.equal(workerQ?.turn_started_at, turnStarted);
+    assert.equal(workerQ?.updated_at, now);
     await assert.rejects(registry.callPublic('list_processes', {}, assistantIdentity), /pass a project_id/);
     await assert.rejects(registry.callPublic('list_processes', { project_id: ASSISTANT_PROJECT_ID }, assistantIdentity), /not a workspace project/);
-    const status = await registry.callPublic('get_process_status', { process_id: 'proc-worker-q' }, assistantIdentity) as { process_id: string };
+    const status = await registry.callPublic('get_process_status', { process_id: 'proc-worker-q' }, assistantIdentity) as {
+      process_id: string; activity?: string; turn_started_at?: string; updated_at?: string;
+    };
     assert.equal(status.process_id, 'proc-worker-q');
+    assert.equal(status.activity, 'working');
+    assert.equal(status.turn_started_at, turnStarted);
+    assert.equal(status.updated_at, now);
     const projectStatus = await registry.callPublic('get_project_status', {}, assistantIdentity) as { projects?: unknown[] };
     assert.equal(projectStatus.projects?.length, 2, 'get_project_status without a project is the overview');
     await assert.rejects(registry.callPublic('spawn_agent', { agent: 'claude' }, assistantIdentity), /pass the project_id/);
