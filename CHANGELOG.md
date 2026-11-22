@@ -50,6 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `send_input` now clears a process's pending permission/attention notices only
+  when called by the user or the process's parent agent (matching
+  `send_message`), so unrelated agents typing into another agent no longer
+  dismiss the user's notifications.
 - Messages to Antigravity agents that pair text with inline images no longer
   show "Delivery uncertain". Patterm now confirms them from agy's own
   transcript, as it already did for text-only messages. Image-only messages
