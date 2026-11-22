@@ -291,8 +291,12 @@ async function main(): Promise<void> {
     // A cursor whose row has left the live window has expired.
     liveSnapshot = snapshot(liveRows.slice(6));
     await assert.rejects(read({ process_id: 'proc-live', limit: 3, before: first.next_before }), /cursor expired/);
-    liveSnapshot = snapshot(liveRows, { permissions: { data: [{ id: 'perm' }] } });
-    assert.equal((await read({ process_id: 'proc-live' })).turn.state, 'awaiting_permission');
+    liveSnapshot = snapshot(liveRows, { permissions: { data: [{ id: 'perm', action: 'Run tests', tool_kind: 'execute', command: 'pnpm test', resources: [] }] } });
+    const waiting = await read({ process_id: 'proc-live' }) as Page & { pending_requests?: Array<Record<string, unknown>> };
+    assert.equal(waiting.turn.state, 'awaiting_permission');
+    // Readers see what the agent waits on, and that no agent may approve it.
+    assert.deepEqual(waiting.pending_requests?.map(({ request_id, kind, command, can_approve_once }) => ({ request_id, kind, command, can_approve_once })),
+      [{ request_id: 'perm', kind: 'permission', command: 'pnpm test', can_approve_once: false }]);
     // Codex reports a pending question as permission activity.
     liveSnapshot = snapshot(liveRows, { status: 'permission', questions: { data: [{ id: 'q1' }] } });
     const question = await read({ process_id: 'proc-live', limit: 3 });
