@@ -88,9 +88,21 @@ export class RemoveProjectAction {
 
       // Everything else cascades from the project row, including the
       // timeline, so the removal itself is recorded without a project.
+      const sourceScope = `project:${input.project_id}`;
       db.transaction(() => {
         recordProcessIdHighWater(this.deps.database);
         for (const sql of UNLINKED_ROWS) db.prepare(sql).run(input.project_id);
+        db.prepare(`delete from assistant_inbox where source_scope = ?`).run(sourceScope);
+        const held = db.prepare(`select process_id, message_id, payload from integrated_held_prompts`)
+          .all() as Array<{ process_id: string; message_id: string; payload: string }>;
+        for (const row of held) {
+          try {
+            const parsed = JSON.parse(row.payload) as { sourceScope?: unknown };
+            if (parsed.sourceScope === sourceScope) {
+              db.prepare(`delete from integrated_held_prompts where process_id = ? and message_id = ?`).run(row.process_id, row.message_id);
+            }
+          } catch { /* ignore malformed payload */ }
+        }
         db.prepare(`delete from projects where id = ?`).run(input.project_id);
       })();
       this.deps.timeline.append({

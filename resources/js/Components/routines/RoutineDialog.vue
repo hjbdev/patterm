@@ -20,7 +20,7 @@
         </header>
 
         <div class="px-5 pb-5 pt-3">
-          <RoutineSentenceEditor :routine="draft" :harnesses="harnesses" :projects="projects" :presets="presets" :models="models" @change="change" />
+          <RoutineSentenceEditor :routine="draft" :harnesses="harnesses" :projects="projects" :bots="bots" :presets="presets" :models="models" @change="change" />
           <p v-if="draft.created_by.type === 'agent'" class="mt-2 text-xs text-muted-foreground">Created by {{ draft.created_by.name ?? 'an agent' }}.</p>
           <section aria-label="Recent runs" class="mt-5 border-t border-white/[0.06] pt-4">
             <p class="mb-1 text-xs text-muted-foreground">Recent runs</p>
@@ -61,7 +61,7 @@ import RoutineSentenceEditor from './RoutineSentenceEditor.vue';
 import { useRoutineAutosave } from '../../Composables/useRoutineAutosave';
 import {
   deleteRoutine, nextRunLabel, routineRuns, runRoutineNow, updateRoutine,
-  type RoutineModelOption, type RoutinePatch, type RoutinePresetOption, type RoutineRecord, type RoutineRunRecord
+  type RoutineDeliveryBot, type RoutineModelOption, type RoutinePatch, type RoutinePresetOption, type RoutineRecord, type RoutineRunRecord
 } from '../../lib/routines';
 
 const props = defineProps<{
@@ -69,6 +69,7 @@ const props = defineProps<{
   now: number;
   harnesses: readonly string[];
   projects: ReadonlyArray<{ id: string; name: string }>;
+  bots?: readonly RoutineDeliveryBot[] | undefined;
   presets: RoutinePresetOption[];
   models: Record<string, RoutineModelOption[]>;
   // Bumped by the page when routine data changes, so open runs refresh.

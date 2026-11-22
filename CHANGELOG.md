@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Routine launches now include a bounded summary of up to two prior finished
+  runs from the same project scope for continuity, and routines can deliver
+  reports directly to a specific project bot (`delivery: "bot"` with
+  `delivery_bot_id`) in addition to the global assistant, enforcing the target
+  bot's purview at configuration and report time.
+
 - Bots that start a fresh CLI session after a failed resume or harness switch
   now receive a bounded conversation handoff from imported history (`history.db`)
   along with any running adopted helpers, instead of starting blank. Explicit

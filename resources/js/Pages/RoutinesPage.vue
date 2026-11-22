@@ -109,6 +109,7 @@
       :now="now"
       :harnesses="installedHarnesses"
       :projects="projectList"
+      :bots="localBots"
       :presets="presets"
       :models="models"
       :revision="revision"
@@ -135,6 +136,7 @@ import RoutineReportDialog from '../Components/routines/RoutineReportDialog.vue'
 import RoutineRunDialog from '../Components/routines/RoutineRunDialog.vue';
 import { Button } from '../Components/ui/button';
 import { Switch } from '../Components/ui/switch';
+import { useBots } from '../Composables/useBots';
 import { useRoutineRunViewer } from '../Composables/useRoutineRunViewer';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { harnessLabel } from '../lib/harnesses';
@@ -151,6 +153,8 @@ const ATTENTION_MS = DAY_MS;
 const router = useRouter();
 const route = useRoute();
 const workbench = useWorkbench();
+const { settings: botSettings } = useBots();
+const localBots = computed(() => botSettings.value.bots);
 const routines = ref<RoutineRecord[]>([]);
 const presets = ref<RoutinePresetOption[]>([]);
 const models = ref<Record<string, RoutineModelOption[]>>({});
@@ -261,14 +265,28 @@ async function create(from?: RoutineRecord): Promise<void> {
   creating.value = true;
   try {
     const harness = installedHarnesses.value.includes('claude') ? 'claude' : installedHarnesses.value[0] ?? 'claude';
-    // New routines start paused, so nothing runs before it has a prompt.
-    const routine = await createRoutine(from ? {
+    // Always let the server validate the copied delivery target; only fall back
+    // to notification when the server rejects a removed or narrowed bot.
+    const payload = from ? {
       name: `${from.name} copy`, enabled: false, project_id: from.project_id, days: from.days, time: from.time, timezone: from.timezone, prompt: from.prompt,
-      harness: from.harness, preset: from.preset, model: from.model, reasoning: from.reasoning, service_tier: from.service_tier, delivery: from.delivery,
+      harness: from.harness, preset: from.preset, model: from.model, reasoning: from.reasoning, service_tier: from.service_tier,
+      delivery: from.delivery,
+      delivery_bot_id: from.delivery_bot_id,
       // A copy of a one-off whose time has passed runs a day from now.
       worktree_id: from.worktree_id,
       run_at: from.run_at ? new Date(Math.max(Date.parse(from.run_at), Date.now() + DAY_MS)).toISOString() : null
-    } : { name: 'New routine', enabled: false, harness, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
+    } : { name: 'New routine', enabled: false, harness, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };
+    let routine: RoutineRecord;
+    try {
+      routine = await createRoutine(payload);
+    } catch (cause) {
+      const msg = cause instanceof Error ? cause.message : String(cause);
+      if (from?.delivery === 'bot' && (/unknown bot:/i.test(msg) || /cannot access this routine's project/i.test(msg))) {
+        routine = await createRoutine({ ...payload, delivery: 'notification', delivery_bot_id: null });
+      } else {
+        throw cause;
+      }
+    }
     routines.value = [...routines.value, routine];
     selectedId.value = routine.routine_id;
   } catch (cause) {
