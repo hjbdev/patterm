@@ -375,8 +375,8 @@ export class BotRelay {
       return { ...prompt, text };
     }
     if (!prompt.sourceScope) return prompt;
-    if (bot?.enabled && scopeInPurview(bot, prompt.sourceScope)) return prompt;
-    if (prompt.routineFallback) {
+    if (bot?.enabled && this.scopeAllowed(bot, prompt.sourceScope)) return prompt;
+    if (prompt.routineFallback && this.scopeProjectExists(prompt.sourceScope)) {
       this.notifyFallbackRun(prompt.routineFallback.runId, prompt.routineFallback.processId, prompt.routineFallback.title, prompt.routineFallback.body);
     }
     return null;
@@ -498,15 +498,26 @@ export class BotRelay {
     }
   }
 
+  private scopeProjectExists(scope: string): boolean {
+    if (!scope.startsWith('project:')) return true;
+    const projectId = scope.slice(8);
+    return Boolean(this.database.connection.prepare(`select 1 from projects where id = ?`).get(projectId));
+  }
+
+  private scopeAllowed(bot: Bot, scope: string): boolean {
+    if (!this.scopeProjectExists(scope)) return false;
+    return scopeInPurview(bot, scope);
+  }
+
   private itemInPurview(bot: Bot, item: BotInboxItem): boolean {
-    if (item.source_scope) return scopeInPurview(bot, item.source_scope);
+    if (item.source_scope) return this.scopeAllowed(bot, item.source_scope);
     if (!item.source_process_id) {
       if (item.kind === 'notification' && item.dedupe_key?.startsWith('notification:')) {
         const rest = item.dedupe_key.slice('notification:'.length);
         const sep = rest.lastIndexOf(':');
         if (sep > 0) {
           const target = rest.slice(0, sep);
-          return target === 'patterm' ? bot.purview.kind === 'all' : purviewAllows(bot.purview, target);
+          return target === 'patterm' ? bot.purview.kind === 'all' : this.scopeAllowed(bot, `project:${target}`);
         }
       }
       return true;
@@ -514,21 +525,22 @@ export class BotRelay {
     const run = this.database.connection.prepare(`select project_id from routine_runs where process_id = ? order by created_at desc limit 1`)
       .get(item.source_process_id) as { project_id: string | null } | undefined;
     if (run) {
-      return run.project_id === null ? bot.purview.kind === 'all' : purviewAllows(bot.purview, run.project_id);
+      return run.project_id === null ? bot.purview.kind === 'all' : this.scopeAllowed(bot, `project:${run.project_id}`);
     }
     const proc = this.database.connection.prepare(`select processes.project_id, projects.kind from processes left join projects on projects.id = processes.project_id where processes.id = ?`)
       .get(item.source_process_id) as { project_id: string | null; kind: string | null } | undefined;
     if (proc?.kind === 'assistant') return bot.purview.kind === 'all';
     if (proc?.project_id && proc.kind !== 'bots') {
-      return purviewAllows(bot.purview, proc.project_id);
+      return this.scopeAllowed(bot, `project:${proc.project_id}`);
     }
     return true;
   }
 
   private fallbackUndeliverableRoutine(item: BotInboxItem): void {
-    // Only fall back for actual undelivered routine report items, never for
-    // notification digest copies (e.g. an already-sent failure notification).
+    // Only fall back for actual undelivered routine report items whose project
+    // still exists, never for notification digest copies or removed projects.
     if (item.kind !== 'report' || !item.dedupe_key?.startsWith('routine-report:') || !this.options.notify) return;
+    if (item.source_scope && !this.scopeProjectExists(item.source_scope)) return;
     const runId = item.dedupe_key.slice('routine-report:'.length);
     this.notifyFallbackRun(runId, item.source_process_id, item.title || 'Routine: done', item.body);
   }

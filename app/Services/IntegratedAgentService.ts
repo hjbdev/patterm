@@ -733,6 +733,7 @@ export class IntegratedAgentService {
         const checked = this.heldPromptGuard(key, resolved);
         if (!checked) return Promise.resolve({ delivery: 'dropped' });
         next = checked;
+        resolved.text = checked.text;
       }
       for (const listener of this.promptDispatchListeners) {
         try { listener(key); } catch { /* listeners own their failures */ }
@@ -803,6 +804,12 @@ export class IntegratedAgentService {
         return held;
       }
       throw error;
+    }
+    if ((result as { delivery?: unknown } | null | undefined)?.delivery === 'dropped') {
+      if (identity) {
+        try { this.removeSubmission(identity.key, identity.messageId); } catch { /* ignore */ }
+      }
+      return result;
     }
     this.admitted(processId, activityKey, sequence, resolved, identity, result);
     return result;
@@ -879,9 +886,10 @@ export class IntegratedAgentService {
       this.dispatching.set(key, row);
       const sequence = this.sequence(key);
       let result: unknown;
+      const sendInput: ResolvedIntegratedPrompt = { ...resolved, messageId: row.message_id };
       try {
         // The held id lets the transcript confirm an unconfirmed send.
-        result = await this.sendPrompt(key, { ...resolved, messageId: row.message_id });
+        result = await this.sendPrompt(key, sendInput);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         // It may be running, so it is never sent again. It stays visible as
@@ -902,7 +910,8 @@ export class IntegratedAgentService {
       } finally {
         this.dispatching.delete(key);
       }
-      this.admitted(key, key, sequence, resolved, identity, result);
+      if ((result as { delivery?: unknown } | null | undefined)?.delivery === 'dropped') continue;
+      this.admitted(key, key, sequence, sendInput, identity, result);
     }
   }
 
