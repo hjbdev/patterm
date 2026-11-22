@@ -399,11 +399,18 @@ async function main(): Promise<void> {
     const peerTimeline = new TimelineService(database);
     const peerNotices = new NotificationService(database, settings, peerTimeline, async () => {}, () => {});
     const peerNotificationActions = new NotificationActions(peerNotices, settings, new PresenceService(), undefined as unknown as PushService);
+    let peerStream: IntegratedConversationListener | undefined;
+    let peerStatus = 'idle';
+    let onPeerPrompt: (() => void) | null = null;
     const peerIntegrated = new IntegratedAgentService(database, {
       codex: {
         ...provider,
-        conversation: async () => ({ status: 'idle', messages: [] }),
-        prompt: async () => ({ turnId: 'turn-peer' })
+        subscribe: async (_processId, listener) => { peerStream = listener; return () => { peerStream = undefined; }; },
+        conversation: async () => ({ status: peerStatus, messages: [] }),
+        prompt: async () => {
+          onPeerPrompt?.();
+          return { turnId: 'turn-peer' };
+        }
       }
     });
     peerIntegrated.onActivityChange(integratedActivityNotifications({
@@ -432,8 +439,27 @@ async function main(): Promise<void> {
       await peerIntegrated.conversation('peer_target');
       await peerRegistry.callPublic('send_message', { target_process_id: 'peer_target', message: 'Peer msg' }, { identity: 'id_peer_caller' });
       assert.equal(peerNotices.get(noticeId)?.resolved_at, null, 'peer send_message leaves open user attention notice intact');
+      // Turn handoff: agent is already working when it calls notify_user, then
+      // its previous turn completes (idle) while a peer prompt is in flight and
+      // the peer turn starts (working). The attention notice must stay open.
+      peerIntegrated.observe('peer_target');
+      await wait(10);
+      peerStatus = 'working';
+      peerStream?.({ processId: 'peer_target', revision: 1, kind: 'status', status: 'working' });
+      const { notification_id: handoffNoticeId } = await peerRegistry.callPublic('notify_user', { title: 'Handoff decision needed' }, { identity: 'id_peer_target' }) as { notification_id: string };
+      onPeerPrompt = () => {
+        peerStatus = 'idle';
+        peerStream?.({ processId: 'peer_target', revision: 2, kind: 'status', status: 'idle' });
+        peerStatus = 'working';
+        peerStream?.({ processId: 'peer_target', revision: 3, kind: 'status', status: 'working' });
+      };
+      await peerRegistry.callPublic('send_input', { process_id: 'peer_target', kind: 'text', text: 'Peer handoff', submit: true }, { identity: 'id_peer_caller' });
+      onPeerPrompt = null;
+      assert.equal(peerNotices.get(handoffNoticeId)?.resolved_at, null, 'peer send_input preserves open attention across an in-flight turn handoff');
+      peerStatus = 'idle';
+      peerStream?.({ processId: 'peer_target', revision: 4, kind: 'status', status: 'idle' });
       await peerRegistry.call('send_input', { process_id: 'peer_target', kind: 'text', text: 'User answer', submit: true });
-      assert.notEqual(peerNotices.get(noticeId)?.resolved_at, null, 'user send_input clears open user attention notice');
+      assert.notEqual(peerNotices.get(handoffNoticeId)?.resolved_at, null, 'user send_input clears open user attention notice');
     } finally {
       peerIntegrated.dispose();
     }

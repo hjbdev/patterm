@@ -219,6 +219,9 @@ export class IntegratedAgentService {
   // Processes whose current turn was started by a non-parent agent prompt, so
   // activity transitions to working leave open user attention notices intact.
   private readonly preservedAttention = new Set<string>();
+  // In-flight non-parent prompts keep the flag alive across an older turn's
+  // completion arriving during provider preflight.
+  private readonly preservedAttentionInFlight = new Map<string, number>();
   private history: AgentHistoryReadService | null = null;
   // Debug log sink for native events a provider did not project. Each type is
   // logged once per agent so protocol drift is visible without flooding.
@@ -707,12 +710,21 @@ export class IntegratedAgentService {
     const provider = this.forProcess(processId);
     const send = () => {
       if (review && !review.current()) throw new Error('This request is no longer waiting for this parent');
-      if (resolved.preserveAttention) this.preservedAttention.add(key);
-      else this.preservedAttention.delete(key);
+      if (resolved.preserveAttention) {
+        this.preservedAttentionInFlight.set(key, (this.preservedAttentionInFlight.get(key) ?? 0) + 1);
+        this.preservedAttention.add(key);
+      } else {
+        this.preservedAttention.delete(key);
+      }
       for (const listener of this.promptDispatchListeners) {
         try { listener(key); } catch { /* listeners own their failures */ }
       }
-      return provider.prompt(processId, resolved, review);
+      if (!resolved.preserveAttention) return provider.prompt(processId, resolved, review);
+      return Promise.resolve(provider.prompt(processId, resolved, review)).finally(() => {
+        const remaining = (this.preservedAttentionInFlight.get(key) ?? 1) - 1;
+        if (remaining > 0) this.preservedAttentionInFlight.set(key, remaining);
+        else this.preservedAttentionInFlight.delete(key);
+      });
     };
     if (!this.memory || !provider.updateMemory) return send();
     return this.memory.deliver(key, (update) => provider.updateMemory!(processId, update))
@@ -1733,8 +1745,10 @@ export class IntegratedAgentService {
   private markActivity(processId: string, activity: string, snapshot = false): void {
     const previous = this.updateActivity(processId, activity);
     if (previous === null) return;
-    const preserveAttention = this.preservedAttention.has(processId);
-    if (activity === 'idle' || activity === 'error') this.preservedAttention.delete(processId);
+    const preserveAttention = this.preservedAttention.has(processId) || this.preservedAttentionInFlight.has(processId);
+    if ((activity === 'idle' || activity === 'error') && !this.preservedAttentionInFlight.has(processId)) {
+      this.preservedAttention.delete(processId);
+    }
     this.debugLog?.write('integrated', 'activity', { processId, previous, activity, snapshot });
     if (activity === 'idle' || activity === 'error') this.flushHeld(processId);
     this.onWorkbenchChange?.();
