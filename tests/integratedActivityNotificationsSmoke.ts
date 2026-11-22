@@ -11,7 +11,7 @@ import { DatabaseService } from '../app/Services/DatabaseService';
 import { IDLE_COMPACTION_AFTER_MS, IdleCompactionService, type IdleCompactionSource } from '../app/Services/IdleCompactionService';
 import { IntegratedAgentService, type CompactionSignal, type IntegratedActivityChange, type IntegratedProviderService } from '../app/Services/IntegratedAgentService';
 import type { IntegratedConversationListener } from '../app/Services/IntegratedConversation';
-import { TurnBusyError } from '../app/Services/IntegratedDelivery';
+import { TurnBusyError, UncertainDeliveryError } from '../app/Services/IntegratedDelivery';
 import { NotificationService } from '../app/Services/NotificationService';
 import { ParentRequestService, pendingRequestSummary } from '../app/Services/ParentRequestService';
 import { PresenceService } from '../app/Services/PresenceService';
@@ -680,6 +680,20 @@ async function main(): Promise<void> {
       peerStatus = 'working';
       peerStream?.({ processId: 'peer_target', revision: 19, kind: 'status', status: 'working' });
       assert.equal(peerNotices.get(ownerToPeerNoticeId)?.resolved_at, null, 'owner turn during peer preflight does not consume the peer turn protection');
+      // An uncertain owner send that never started a native turn must not leave
+      // a phantom owner token in front of the next peer prompt.
+      peerStatus = 'idle';
+      peerStream?.({ processId: 'peer_target', revision: 20, kind: 'status', status: 'idle' });
+      const { notification_id: uncertainOwnerNoticeId } = await peerRegistry.callPublic('notify_user', { title: 'Uncertain owner decision needed' }, { identity: 'id_peer_target' }) as { notification_id: string };
+      onPeerPrompt = () => { throw new UncertainDeliveryError('Codex app-server disconnected'); };
+      await peerIntegrated.prompt('peer_target', { text: 'Uncertain owner prompt' });
+      onPeerPrompt = () => {
+        peerStatus = 'working';
+        peerStream?.({ processId: 'peer_target', revision: 21, kind: 'status', status: 'working' });
+      };
+      await peerRegistry.callPublic('send_input', { process_id: 'peer_target', kind: 'text', text: 'Peer after uncertain owner', submit: true }, { identity: 'id_peer_caller' });
+      onPeerPrompt = null;
+      assert.equal(peerNotices.get(uncertainOwnerNoticeId)?.resolved_at, null, 'uncertain owner send that never ran does not consume next peer turn protection');
     } finally {
       peerIntegrated.dispose();
     }

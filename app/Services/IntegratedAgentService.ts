@@ -858,7 +858,7 @@ export class IntegratedAgentService {
           if (identity && id) {
             try { this.recordSubmission(identity.key, id, identity.hash, 'uncertain', null, error.message); } catch { /* the reservation already exists */ }
           }
-          return { value: { delivery: 'uncertain', message_id: id ?? null, error: error.message }, keep: true };
+          return { value: { delivery: 'uncertain', message_id: id ?? null, error: error.message }, keep: Boolean(resolved.preserveAttention) };
         }
         // The provider classified this as a definitive pre-admission rejection.
         if (identity) {
@@ -967,7 +967,7 @@ export class IntegratedAgentService {
           if (error instanceof UncertainDeliveryError) {
             this.debugLog?.write('integrated', 'prompt.held_failed', { processId: key, messageId: row.message_id, uncertain: true, message });
             this.releaseHeld(key, row, identity.hash, message, 'unconfirmed');
-            return { value: 'continue', keep: true };
+            return { value: 'continue', keep: Boolean(resolved.preserveAttention) };
           }
           // Still busy, for example a second compaction, it waits for that turn
           // to end. Definitively rejected, it shows why and is tried again when
