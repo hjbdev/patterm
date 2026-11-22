@@ -915,6 +915,9 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     ],
     unavailable: (context) => {
       if (context.remote) return 'Only local bots and the assistant can call bot_stay_quiet';
+      // Shared bridges (such as OpenCode) list tools without a per-session identity
+      // and attach session metadata on tool calls; enforce role at dispatch there.
+      if (!context.identity) return null;
       const role = sessionRole(context);
       return role === 'bot' || role === 'assistant' ? null : 'Only bots and the assistant can call bot_stay_quiet';
     }
