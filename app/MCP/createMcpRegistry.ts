@@ -900,6 +900,46 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     const input = assistantFocusItemsInput.parse(args ?? {});
     return focusOwner(context, 'assistant_focus').focusItems({ digestId: input.digest_id, limit: input.limit, offset: input.offset });
   });
+  const botStayQuietInput = z.object({
+    reason: z.string().trim().min(1).max(200).optional()
+  }).strict();
+  registry.register({
+    name: 'bot_stay_quiet',
+    namespace: 'assistant',
+    description: 'Bots and assistant only: mark this turn as handled silently with no user-facing notification. Call this when an incoming notification digest, helper report, agent message, timer callback, or routine report needs no update to the user.',
+    inputSchema: { type: 'object', properties: { reason: { type: 'string', maxLength: 200, description: 'Optional brief note on why no user update is needed.' } } },
+    changes: [],
+    usageNotes: [
+      'Call this only on unsolicited wakeups (digests, reports, agent messages, timer callbacks, routine reports) that need no user-facing update, then end your turn without prose.',
+      'Never use this to ignore a direct message from the user or to suppress important failures or decisions.'
+    ],
+    unavailable: (context) => {
+      if (context.remote) return 'Only local bots and the assistant can call bot_stay_quiet';
+      // Shared bridges (such as OpenCode) list tools without a per-session identity
+      // and attach session metadata on tool calls; enforce role at dispatch there.
+      if (!context.identity) return null;
+      const role = sessionRole(context);
+      return role === 'bot' || role === 'assistant' ? null : 'Only bots and the assistant can call bot_stay_quiet';
+    }
+  }, (args, context) => {
+    const current = caller(context);
+    if (!current?.process_id || context.remote || (current.session_role !== 'bot' && current.session_role !== 'assistant')) {
+      throw new Error('bot_stay_quiet: only local bots and the assistant can call this');
+    }
+    const input = botStayQuietInput.parse(args ?? {});
+    services.timeline.append({
+      event_type: 'bot.stayed_quiet',
+      project_id: current.project_id,
+      session_id: current.session_id,
+      process_id: current.process_id,
+      actor_type: 'agent',
+      actor_id: current.session_id,
+      metadata: { ...(input.reason ? { reason: input.reason } : {}) }
+    });
+    if (services.notifications?.quiet) services.notifications.quiet(current.process_id);
+    else services.notifications?.reported(current.process_id);
+    return { ok: true, quiet: true };
+  });
 
   const projectManager = (context: McpCallContext, tool: string) => {
     const current = context.remote ? null : caller(context);

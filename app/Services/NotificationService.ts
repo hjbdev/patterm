@@ -329,8 +329,39 @@ export class NotificationService {
     }
     if ((activity !== 'idle' && activity !== 'error') || snapshot || !row.turn_started_at) return false;
     db.prepare(`update processes set turn_started_at = null where id = ?`).run(processId);
-    return Boolean(db.prepare(`select 1 from timeline_events
+    const reported = Boolean(db.prepare(`select 1 from timeline_events
       where event_type = 'agent.reported' and process_id = ? and created_at >= ? limit 1`).get(processId, row.turn_started_at));
+    if (reported) return true;
+    const latestQuiet = db.prepare(`select event_type from timeline_events
+      where event_type in ('bot.stayed_quiet', 'bot.quiet_cleared') and process_id = ? and created_at >= ?
+      order by created_at desc, rowid desc limit 1`).get(processId, row.turn_started_at) as { event_type: string } | undefined;
+    return latestQuiet?.event_type === 'bot.stayed_quiet';
+  }
+
+  // Clears any stale turn_finished notice when a bot marks its turn quiet.
+  quiet(processId: string): number {
+    return this.reported(processId);
+  }
+
+  // A native turn boundary inside a continuous working stretch (such as a
+  // queued user prompt starting right after a quiet digest turn's result, or a
+  // successor OpenCode execution inside the settle window) durably clears any
+  // active bot_stay_quiet mark without touching turn_started_at.
+  noteTurnBoundary(processId: string, at?: string): void {
+    const db = this.database.connection;
+    const row = db.prepare(`select project_id, turn_started_at from processes where id = ?`).get(processId) as { project_id: string | null; turn_started_at: string | null } | undefined;
+    if (!row?.turn_started_at) return;
+    const latest = db.prepare(`select event_type, created_at from timeline_events
+      where event_type in ('bot.stayed_quiet', 'bot.quiet_cleared') and process_id = ? and created_at >= ?
+      order by created_at desc, rowid desc limit 1`).get(processId, row.turn_started_at) as { event_type: string; created_at: string } | undefined;
+    if (latest?.event_type !== 'bot.stayed_quiet') return;
+    const latestMs = Date.parse(latest.created_at);
+    const atMs = at ? Date.parse(at) : Number.NaN;
+    // A replayed snapshot carrying an earlier boundary never clears a newer quiet mark.
+    if (Number.isFinite(atMs) && Number.isFinite(latestMs) && atMs < latestMs) return;
+    const createdAt = new Date(Math.max(this.now(), Number.isFinite(latestMs) ? latestMs : 0, Number.isFinite(atMs) ? atMs : 0)).toISOString();
+    db.prepare(`insert into timeline_events (id, event_type, project_id, session_id, process_id, actor_type, actor_id, metadata, created_at)
+      values (?, 'bot.quiet_cleared', ?, null, ?, 'system', null, '{}', ?)`).run(`event_${randomUUID()}`, row.project_id, processId, createdAt);
   }
 
   // Turns already running when this build first starts have no stored start;

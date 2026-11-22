@@ -261,9 +261,27 @@ async function main(): Promise<void> {
     assert.equal(service.turnActivity('root', 'idle', 'working'), false);
     database.connection.prepare(`insert into timeline_events (id, event_type, project_id, process_id, actor_type, metadata, created_at) values ('report-root', 'agent.reported', 'project_a', 'root', 'agent', '{}', ?)`).run(new Date(now + 1000).toISOString());
     assert.equal(service.turnActivity('root', 'working', 'idle'), true, 'a turn that reported is not announced');
+    database.connection.prepare(`update timeline_events set created_at = ? where id = 'report-root'`).run(new Date(now - 60_000).toISOString());
+    service.turnActivity('root', 'idle', 'working');
+    database.connection.prepare(`insert into timeline_events (id, event_type, project_id, process_id, actor_type, metadata, created_at) values ('quiet-root', 'bot.stayed_quiet', 'project_a', 'root', 'agent', '{}', ?)`).run(new Date(now + 1500).toISOString());
+    assert.equal(service.turnActivity('root', 'working', 'idle'), true, 'a turn marked quiet with bot_stay_quiet is not announced');
+    // A native turn boundary inside the same working stretch (such as a queued
+    // user turn starting after a quiet digest) supersedes the quiet marker
+    // without altering turn_started_at or agent.reported.
+    service.turnActivity('root', 'idle', 'working');
+    const startedBefore = (database.connection.prepare(`select turn_started_at from processes where id = 'root'`).get() as { turn_started_at: string | null }).turn_started_at;
+    database.connection.prepare(`update timeline_events set created_at = ? where id = 'quiet-root'`).run(new Date(now + 1600).toISOString());
+    // An older replayed snapshot boundary does not clear a newer quiet mark.
+    service.noteTurnBoundary('root', new Date(now + 1500).toISOString());
+    assert.equal(database.connection.prepare(`select 1 from timeline_events where event_type = 'bot.quiet_cleared' and process_id = 'root'`).get(), undefined, 'older boundary does not clear newer quiet mark');
+    service.noteTurnBoundary('root', new Date(now + 1700).toISOString());
+    assert.equal((database.connection.prepare(`select turn_started_at from processes where id = 'root'`).get() as { turn_started_at: string | null }).turn_started_at, startedBefore, 'noteTurnBoundary preserves turn_started_at');
+    // A fresh NotificationService instance (simulating app restart) still sees the cleared quiet mark.
+    const restarted = new NotificationService(database, settings, { append: () => '' }, async () => undefined, () => undefined, () => now);
+    assert.equal(restarted.turnActivity('root', 'working', 'idle'), false, 'a subsequent native turn after bot_stay_quiet is not silenced even after restart');
+    database.connection.prepare(`delete from timeline_events where id = 'quiet-root' or event_type = 'bot.quiet_cleared'`).run();
     service.turnActivity('root', 'idle', 'working');
     service.turnActivity('root', 'working', 'error');
-    database.connection.prepare(`update timeline_events set created_at = ? where id = 'report-root'`).run(new Date(now - 60_000).toISOString());
     service.turnActivity('root', 'error', 'working');
     assert.equal(service.turnActivity('root', 'working', 'idle'), false, 'an error ends the turn, so an earlier report does not cover the next one');
     // A turn already running at startup emits no activity change; it counts

@@ -848,6 +848,8 @@ function olderPage(cursor: unknown): Row {
   return { messages: { data: [...page, ...childrenFor(page)] }, cursor: pageCursor(start) };
 }
 
+let lastTurnBoundaryAt: string | null = null;
+
 function snapshot(): Row {
   let start = pageStart(messages.length);
   let splicedBeforeWindow: string | null = null;
@@ -865,6 +867,7 @@ function snapshot(): Row {
     provider_session_id: sessionId,
     status,
     ...(status === 'working' && workingDetail ? { status_detail: workingDetail } : status === 'error' && statusDetail ? { status_detail: statusDetail } : {}),
+    ...(lastTurnBoundaryAt ? { last_turn_boundary_at: lastTurnBoundaryAt } : {}),
     messages: { data: [...page, ...childrenFor(page)] },
     history_truncated: cursor !== null,
     history_cursor: cursor ? { next: cursor } : null,
@@ -894,6 +897,7 @@ async function handle(method: string, params: Row): Promise<unknown> {
     if (params.clientMessageId && deliveries.has(params.clientMessageId)) return { accepted: true };
     if (!acceptsPrompt()) throw new Error('ACP turn is busy');
     if (!Array.isArray(params.prompt) || !params.prompt.length) throw new Error('Message is empty');
+    const wasWorking = status === 'working';
     if (backgroundQuiet) { clearTimeout(backgroundQuiet); backgroundQuiet = null; }
     active = true; cancelling = false; statusDetail = ''; block = null; userConfirmed = false;
     liveWindowFloorId = null;
@@ -913,6 +917,10 @@ async function handle(method: string, params: Row): Promise<unknown> {
       stopWatchingPrompt = watchAntigravityPrompt(sessionId, userEcho.text, rest.map((part) => part.mimeType as string), admit);
     }
     state();
+    if (wasWorking) {
+      lastTurnBoundaryAt = new Date().toISOString();
+      publish({ kind: 'turn_boundary', detail: lastTurnBoundaryAt });
+    }
     // Background command tasks can't be stopped during a turn.
     if (runningTools.size) publish({ kind: 'pending' });
     // The result arrives only at turn end. Keep the host socket responsive to

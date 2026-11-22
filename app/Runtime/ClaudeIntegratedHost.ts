@@ -213,6 +213,7 @@ async function handle(socket: net.Socket, request: JsonRecord): Promise<void> {
       tasks: backgroundTasks(),
       diagnostics: { unhandled },
       ...(status === 'failed' && statusDetail ? { status_detail: statusDetail } : {}),
+      ...(lastTurnBoundaryAt ? { last_turn_boundary_at: lastTurnBoundaryAt } : {}),
       status, model, mode, effort, appliedEffort, models, commands, revision
     });
     return;
@@ -665,9 +666,17 @@ function receiveClaude(chunk: string): void {
       // A background agent still running or waiting on a prompt keeps the
       // agent working or waiting; there is no idle in between.
       updateStatus();
+      if (status !== 'idle' && status !== 'failed' && prompts.size > 0) emitTurnBoundary();
       settleRetryNotice(!event.is_error);
     }
   }
+}
+
+let lastTurnBoundaryAt: string | null = null;
+
+function emitTurnBoundary(): void {
+  lastTurnBoundaryAt = new Date().toISOString();
+  publish({ kind: 'turn_boundary', detail: lastTurnBoundaryAt });
 }
 
 // The fate of a prompt this host sent: queued, started into a turn, then
@@ -681,12 +690,15 @@ function receiveLifecycle(event: JsonRecord): void {
     else if (event.state === 'started') quietTurn.started = true;
   }
   lifecycleReported = true;
+  const starting = event.state === 'started' && !turnActive;
   if (event.state === 'started') turnActive = true;
   if (prompts.has(id)) {
     if (event.state === 'queued' || event.state === 'started') prompts.set(id, event.state);
     else prompts.delete(id);
   }
+  const wasWorking = status === 'working';
   updateStatus();
+  if (starting && wasWorking) emitTurnBoundary();
 }
 
 // The main agent only starts a model request during a turn. While a session
@@ -694,8 +706,10 @@ function receiveLifecycle(event: JsonRecord): void {
 // wakes, so interrupting it is not reported as a failure.
 function markMainTurnRunning(): void {
   if (turnActive) return;
+  const wasWorking = status === 'working';
   turnActive = true;
   updateStatus();
+  if (wasWorking) emitTurnBoundary();
 }
 
 // Claude's report of what runs: a turn it starts on its own (for example when

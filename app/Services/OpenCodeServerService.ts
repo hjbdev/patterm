@@ -1009,9 +1009,11 @@ export class OpenCodeServerService {
 
   private applyRootExecution(sessionId: string, state: OpenCodeActivity, execution: OpenCodeExecutionEvent, failure: string): void {
     if (execution === 'started') {
+      const successor = state.emitted === 'working' || state.settling !== null;
       state.execution = 'running';
       state.detail = '';
       this.publishActivity(state);
+      if (successor) this.broadcast(state, { kind: 'turn_boundary', detail: new Date().toISOString() });
       return;
     }
     // A request cannot outlive the execution waiting on it; an interrupted

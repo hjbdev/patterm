@@ -1753,8 +1753,15 @@ export class IntegratedAgentService {
   }
 
   private markSnapshot(key: string, conversation: unknown, since: number): void {
-    const status = record(conversation).status;
+    const snap = record(conversation);
+    const status = snap.status;
     if (isActivityState(status)) this.markActivitySince(key, status, since, true);
+    if (typeof snap.last_turn_boundary_at === 'string' && snap.last_turn_boundary_at) {
+      const event: IntegratedConversationEvent = { processId: key, revision: 0, kind: 'turn_boundary', detail: snap.last_turn_boundary_at };
+      for (const listener of this.eventListeners) {
+        try { listener(key, event); } catch { /* a listener must not break observation */ }
+      }
+    }
   }
 
   // Background tasks only change how rows look, so activity, and the queues,

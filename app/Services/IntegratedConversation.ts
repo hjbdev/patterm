@@ -110,7 +110,7 @@ export { HELD_QUEUE_EVENT_ID, type IntegratedDeliveryStatus, type IntegratedQueu
 export interface IntegratedConversationEvent {
   processId: string;
   revision: number;
-  kind: 'replace' | 'append' | 'status' | 'pending' | 'error' | 'reconnecting';
+  kind: 'replace' | 'append' | 'status' | 'pending' | 'turn_boundary' | 'error' | 'reconnecting';
   message?: IntegratedConversationMessage | undefined;
   id?: string | undefined;
   delta?: string | undefined;

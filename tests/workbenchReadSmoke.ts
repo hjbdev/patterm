@@ -583,7 +583,7 @@ async function main(): Promise<void> {
     const agentNames = publicNames.filter((name) => !name.startsWith('assistant_project_') && !name.startsWith('memory_review_'));
     assert.deepEqual(catalog.result.map(({ name }) => name), agentNames, 'the shim receives the canonical public catalogue');
     const tuiCatalog = (await callOverSocket(socketPath, { id: 1, version: 2, op: 'catalog', identity: 'identity_test' })) as { result: Array<{ name: string }> };
-    assert.deepEqual(tuiCatalog.result.map(({ name }) => name), agentNames.filter((name) => !FIGURE_TOOLS.includes(name)), 'TUI agents are not offered figures');
+    assert.deepEqual(tuiCatalog.result.map(({ name }) => name), agentNames.filter((name) => !FIGURE_TOOLS.includes(name) && name !== 'bot_stay_quiet'), 'TUI agents are not offered figures or bot-only tools');
     const tuiFigure = (await callOverSocket(socketPath, { id: 2, version: 2, tool: 'html_render', args: {}, identity: 'identity_test' })) as { error: string };
     assert.match(tuiFigure.error, /only in Integrated mode/, 'TUI agents cannot save figures');
     database.connection.prepare(`update sessions set interface_mode = 'integrated' where mcp_identity = 'identity_test'`).run();
@@ -607,7 +607,7 @@ async function main(): Promise<void> {
     try {
       await client.connect(new StdioClientTransport({ command: process.execPath, args: [shimPath], env: { PATTERM_MCP_SOCKET: socketPath, PATTERM_MCP_IDENTITY: 'identity_test' }, stderr: 'pipe' }));
       const listed = await client.listTools();
-      assert.deepEqual(listed.tools.map(({ name }) => name), agentNames.filter((name) => !FIGURE_TOOLS.includes(name)), 'the catalogue a TUI agent lists is valid over modern MCP tools/list');
+      assert.deepEqual(listed.tools.map(({ name }) => name), agentNames.filter((name) => !FIGURE_TOOLS.includes(name) && name !== 'bot_stay_quiet'), 'the catalogue a TUI agent lists is valid over modern MCP tools/list');
       assert.match(JSON.stringify(await client.callTool({ name: 'list_processes', arguments: {} })), /proc_identity/, 'new clients call the backend directly with caller identity');
       assert.equal((await client.callTool({ name: 'spawn_agent', arguments: {} })).isError, true, 'agent launch validates its cross-field requirement before forwarding');
       assert.match(JSON.stringify(await client.callTool({ name: 'help', arguments: { tool: 'todo_create' } })), /title/, 'help reads the public catalogue');
