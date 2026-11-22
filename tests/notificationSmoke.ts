@@ -126,9 +126,10 @@ async function main(): Promise<void> {
     assert.equal(botRecord.routed_to_process_id, 'bot');
     await service.raise({ processId: 'bot-child', source: 'integrated', kind: 'failure', body: 'The agent reported an error' });
     assert.equal(messages.length, beforeBot + 1, 'duplicate failure events do not interrupt the bot again');
-    await service.raise({ processId: 'bot-child', source: 'integrated', kind: 'turn_finished', body: 'Finished its turn' });
+    await service.raise({ processId: 'bot-child', source: 'integrated', kind: 'turn_finished', body: `**Done**: ${'detail '.repeat(80)}TAIL`, bodyLimit: 280, dedupeKey: 'test:preview' });
     assert.equal(messages.length, beforeBot + 2, 'a bot receives child turn updates');
     assert.match(messages.at(-1)!.text, /Notification from bot-child/);
+    assert.ok(!messages.at(-1)!.text.includes('**Done**') && !messages.at(-1)!.text.includes('TAIL'), 'bot parent receives the bounded plain-text preview when bodyLimit is set');
     assert.equal((await service.raise({ processId: 'detached', source: 'integrated', kind: 'failure', body: 'error' })).status, 'suppressed');
     assert.equal(messages.length, beforeBot + 2, 'a detached agent has no parent to notify');
     // Every category bypasses user settings only for the bot's own agents.

@@ -65,7 +65,9 @@ export class RuntimeReconciler {
     // reach this: the sidecar reports no exit after a stop request.
     private readonly onProcessFailed: (processId: string, exitCode: number) => void = () => {},
     // Called after a PTY agent's activity changes, with the state it left.
-    private readonly onActivityChanged: (processId: string, previous: string, activity: string) => void = () => {}
+    private readonly onActivityChanged: (processId: string, previous: string, activity: string) => void = () => {},
+    // Called when a running child agent exits cleanly without reporting.
+    private readonly onChildExitedWithoutReport: (processId: string) => void = () => {}
   ) {
     this.unsubscribe = terminal.onFrame((frame) => {
       this.dispatchLifecycleFrame(frame);
@@ -202,13 +204,20 @@ export class RuntimeReconciler {
 
     const now = new Date().toISOString();
     const previous = this.database.connection
-      .prepare(`select id, activity from processes where pty_process_id = ? and activity != ?`)
-      .all(ptyId, activity) as Array<{ id: string; activity: string }>;
+      .prepare(`select id, activity, turn_started_at from processes where pty_process_id = ? and activity != ?`)
+      .all(ptyId, activity) as Array<{ id: string; activity: string; turn_started_at: string | null }>;
     const changed = this.database.connection
       .prepare(`update processes set activity = ?, updated_at = ? where pty_process_id = ? and activity != ?`)
       .run(activity, now, ptyId, activity).changes;
 
     if (changed > 0) {
+      for (const row of previous) {
+        if ((activity === 'working' || activity === 'thinking') && !['working', 'thinking', 'permission', 'question'].includes(row.activity)) {
+          this.database.connection.prepare(`update processes set turn_started_at = ? where id = ?`).run(now, row.id);
+        } else if (activity === 'idle' || activity === 'error') {
+          this.database.connection.prepare(`update processes set turn_started_at = null where id = ?`).run(row.id);
+        }
+      }
       this.notifyChanged(['workbench']);
       for (const row of previous) this.onActivityChanged(row.id, row.activity, activity);
     }
@@ -223,7 +232,9 @@ export class RuntimeReconciler {
 
   private markExited(processId: string, now: string, exitCode: number | null): void {
     const status = exitCode === null || exitCode === 0 ? 'exited' : 'failed';
-    const running = this.database.connection.prepare(`select 1 from processes where id = ? and status = 'running'`).get(processId);
+    const running = this.database.connection
+      .prepare(`select kind, parent_process_id from processes where id = ? and status = 'running'`)
+      .get(processId) as { kind: string; parent_process_id: string | null } | undefined;
     this.database.connection
       .prepare(`update processes set status = ?, exited_at = ?, exit_code = ?, updated_at = ? where id = ?`)
       .run(status, now, exitCode, now, processId);
@@ -231,6 +242,13 @@ export class RuntimeReconciler {
     this.notifyChanged(['workbench']);
     if (running && status === 'failed') {
       try { this.onProcessFailed(processId, exitCode!); } catch { /* notifications are best effort */ }
+    } else if (running && status === 'exited' && running.kind === 'agent' && running.parent_process_id) {
+      const reported = this.database.connection
+        .prepare(`select 1 from timeline_events where process_id = ? and event_type = 'agent.reported' limit 1`)
+        .get(processId);
+      if (!reported) {
+        try { this.onChildExitedWithoutReport(processId); } catch { /* notifications are best effort */ }
+      }
     }
   }
 
