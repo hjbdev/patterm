@@ -791,9 +791,10 @@ export class IntegratedAgentService {
     }
     if (identity) this.recordSubmission(identity.key, identity.messageId, identity.hash, 'uncertain', null, null);
     const sequence = this.sequence(activityKey);
+    const sendInput: ResolvedIntegratedPrompt = { ...resolved };
     let result: unknown;
     try {
-      result = await this.sendPrompt(processId, resolved);
+      result = await this.sendPrompt(processId, sendInput);
     } catch (error) {
       if (error instanceof UncertainDeliveryError) {
         // An ambiguous submission may already be running natively. Return a
@@ -823,7 +824,7 @@ export class IntegratedAgentService {
       }
       return result;
     }
-    this.admitted(processId, activityKey, sequence, resolved, identity, result);
+    this.admitted(processId, activityKey, sequence, sendInput, identity, result);
     return result;
   }
 
