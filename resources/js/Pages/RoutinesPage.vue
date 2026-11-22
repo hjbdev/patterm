@@ -153,7 +153,7 @@ const ATTENTION_MS = DAY_MS;
 const router = useRouter();
 const route = useRoute();
 const workbench = useWorkbench();
-const { settings: botSettings, loaded: botsLoaded } = useBots();
+const { settings: botSettings } = useBots();
 const localBots = computed(() => botSettings.value.bots);
 const routines = ref<RoutineRecord[]>([]);
 const presets = ref<RoutinePresetOption[]>([]);
@@ -265,17 +265,13 @@ async function create(from?: RoutineRecord): Promise<void> {
   creating.value = true;
   try {
     const harness = installedHarnesses.value.includes('claude') ? 'claude' : installedHarnesses.value[0] ?? 'claude';
-    // Only pre-fallback to notification once bot settings have loaded; while
-    // loading or on a stale snapshot, let the server validate and fall back on
-    // bot-scope rejection.
-    const dropBot = Boolean(from?.delivery === 'bot' && botsLoaded.value && (!from.delivery_bot_id || !localBots.value.some((bot) => bot.id === from.delivery_bot_id && (from.project_id === null
-      ? bot.purview.kind === 'all'
-      : bot.purview.kind === 'all' || (bot.purview.kind === 'projects' && bot.purview.projectIds.includes(from.project_id))))));
+    // Always let the server validate the copied delivery target; only fall back
+    // to notification when the server rejects a removed or narrowed bot.
     const payload = from ? {
       name: `${from.name} copy`, enabled: false, project_id: from.project_id, days: from.days, time: from.time, timezone: from.timezone, prompt: from.prompt,
       harness: from.harness, preset: from.preset, model: from.model, reasoning: from.reasoning, service_tier: from.service_tier,
-      delivery: dropBot ? 'notification' as const : from.delivery,
-      delivery_bot_id: dropBot ? null : from.delivery_bot_id,
+      delivery: from.delivery,
+      delivery_bot_id: from.delivery_bot_id,
       // A copy of a one-off whose time has passed runs a day from now.
       worktree_id: from.worktree_id,
       run_at: from.run_at ? new Date(Math.max(Date.parse(from.run_at), Date.now() + DAY_MS)).toISOString() : null
@@ -285,7 +281,7 @@ async function create(from?: RoutineRecord): Promise<void> {
       routine = await createRoutine(payload);
     } catch (cause) {
       const msg = cause instanceof Error ? cause.message : String(cause);
-      if (from?.delivery === 'bot' && !dropBot && (/unknown bot:/i.test(msg) || /cannot access this routine's project/i.test(msg))) {
+      if (from?.delivery === 'bot' && (/unknown bot:/i.test(msg) || /cannot access this routine's project/i.test(msg))) {
         routine = await createRoutine({ ...payload, delivery: 'notification', delivery_bot_id: null });
       } else {
         throw cause;

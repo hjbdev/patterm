@@ -574,9 +574,9 @@ export class IntegratedAgentService {
     return this.whileSending(processId, () => this.submit(processId, input));
   }
 
-  private heldPromptGuard: ((processId: string, prompt: ResolvedIntegratedPrompt) => boolean) | null = null;
+  private heldPromptGuard: ((processId: string, prompt: ResolvedIntegratedPrompt) => ResolvedIntegratedPrompt | null) | null = null;
 
-  setHeldPromptGuard(guard: (processId: string, prompt: ResolvedIntegratedPrompt) => boolean): void {
+  setHeldPromptGuard(guard: (processId: string, prompt: ResolvedIntegratedPrompt) => ResolvedIntegratedPrompt | null): void {
     this.heldPromptGuard = guard;
   }
 
@@ -585,10 +585,14 @@ export class IntegratedAgentService {
     return this.whileSending(processId, () => this.submit(processId, text, true));
   }
 
-  // Sends a bot-bound prompt carrying its source scope (and optional fallback)
-  // so held-queue replay rechecks purview before native admission.
-  scopedPrompt(processId: string, text: string, sourceScope: string, routineFallback?: ResolvedIntegratedPrompt['routineFallback']): Promise<unknown> {
-    return this.whileSending(processId, () => this.submit(processId, text, undefined, { sourceScope, routineFallback }));
+  // Sends a bot-bound prompt carrying its source scope (or Focus digest ID)
+  // so admission rechecks purview after wake/memory and on held-queue replay.
+  scopedPrompt(
+    processId: string,
+    text: string,
+    options: { sourceScope?: string | undefined; routineFallback?: ResolvedIntegratedPrompt['routineFallback']; focusDigestId?: string | undefined }
+  ): Promise<unknown> {
+    return this.whileSending(processId, () => this.submit(processId, text, undefined, options));
   }
 
   // Expiring offers must not get stuck in Patterm's durable held prompt queue.
@@ -630,7 +634,7 @@ export class IntegratedAgentService {
     processId: string,
     input: IntegratedPromptInput | string,
     routineDigest?: true,
-    scope?: { sourceScope: string; routineFallback?: ResolvedIntegratedPrompt['routineFallback'] }
+    scope?: { sourceScope?: string | undefined; routineFallback?: ResolvedIntegratedPrompt['routineFallback']; focusDigestId?: string | undefined }
   ): Promise<unknown> {
     const request: IntegratedPromptInput = typeof input === 'string' ? { text: input } : input;
     const hasContent = Boolean(request.text.trim() || request.references?.length || request.attachments?.length);
@@ -643,8 +647,9 @@ export class IntegratedAgentService {
       const resolved = this.inputs ? await this.inputs.resolve(processId, request) : { text: request.text, messageId: request.messageId, references: [], attachments: [] };
       if (routineDigest) resolved.routineDigest = routineDigest;
       if (scope) {
-        resolved.sourceScope = scope.sourceScope;
+        if (scope.sourceScope) resolved.sourceScope = scope.sourceScope;
         if (scope.routineFallback) resolved.routineFallback = scope.routineFallback;
+        if (scope.focusDigestId) resolved.focusDigestId = scope.focusDigestId;
       }
       // Wrapped so the arrival chain waits for the prompt's place, not its
       // native call.
@@ -723,10 +728,16 @@ export class IntegratedAgentService {
     const provider = this.forProcess(processId);
     const send = () => {
       if (review && !review.current()) throw new Error('This request is no longer waiting for this parent');
+      let next = resolved;
+      if ((resolved.sourceScope || resolved.focusDigestId) && this.heldPromptGuard) {
+        const checked = this.heldPromptGuard(key, resolved);
+        if (!checked) return Promise.resolve({ delivery: 'dropped' });
+        next = checked;
+      }
       for (const listener of this.promptDispatchListeners) {
         try { listener(key); } catch { /* listeners own their failures */ }
       }
-      return provider.prompt(processId, resolved, review);
+      return provider.prompt(processId, next, review);
     };
     if (!this.memory || !provider.updateMemory) return send();
     return this.memory.deliver(key, (update) => provider.updateMemory!(processId, update))
@@ -858,7 +869,7 @@ export class IntegratedAgentService {
       retryRejected = false;
       const resolved = JSON.parse(row.payload) as ResolvedIntegratedPrompt;
       const identity = { key, messageId: row.message_id, hash: row.payload_hash ?? submissionHash(resolved) };
-      if (resolved.sourceScope && this.heldPromptGuard && !this.heldPromptGuard(key, resolved)) {
+      if ((resolved.sourceScope || resolved.focusDigestId) && this.heldPromptGuard && !this.heldPromptGuard(key, resolved)) {
         this.claimHeld(key, row, identity.hash);
         continue;
       }

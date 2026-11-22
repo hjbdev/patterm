@@ -48,9 +48,12 @@ export interface ResolvedIntegratedPrompt {
   // Set only by BotRelay's internal dispatch, never by a composer request.
   routineDigest?: true;
   // Snapshotted source scope ('workspace' or 'project:<id>') for bot-bound
-  // prompts held in integrated_held_prompts, rechecked before native admission.
+  // prompts, rechecked right before native admission (including after wake or replay).
   sourceScope?: string | undefined;
   routineFallback?: { runId: string; processId: string; title: string; body: string } | undefined;
+  // Set by BotRelay when dispatching a Focus digest so admission re-filters
+  // items against the bot's current purview even if held during compaction.
+  focusDigestId?: string | undefined;
 }
 
 export interface IntegratedWorktreeFile {
