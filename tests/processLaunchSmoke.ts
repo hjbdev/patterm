@@ -216,11 +216,13 @@ async function main(): Promise<void> {
     database.connection.prepare(`insert into processes (id, project_id, parent_process_id, kind, name, status, pty_process_id, created_at, updated_at)
       values ('child_startup_unreported', ?, ?, 'agent', 'Startup child', 'running', 'pty_child_startup', ?, ?)`)
       .run(projectId, created.process_id, now, now);
+    database.connection.prepare(`update processes set activity = 'working', turn_started_at = ? where id = ?`).run(now, created.process_id);
     const startupReconciled = new ReconcileRuntimeAction(database).execute([
       { process_id: created.pty_process_id, status: 'running', exit_code: null, activity: 'idle', title: 'dev' },
       { process_id: 'pty_child_startup', status: 'exited', exit_code: 0, activity: 'idle', title: 'Startup child' }
     ]);
     assert.ok(startupReconciled.unreportedChildExits.includes('child_startup_unreported'), 'startup reconciliation reports unreported clean child exits');
+    assert.equal((database.connection.prepare(`select turn_started_at from processes where id = ?`).get(created.process_id) as { turn_started_at: string | null }).turn_started_at, null, 'startup reconciliation clears turn_started_at when a PTY is idle');
     reconciler.dispose();
 
     // Relaunch re-attaches a fresh PTY reusing the stored argv.

@@ -52,7 +52,18 @@ export class ReconcileRuntimeAction {
     for (const row of rows) {
       const terminal = row.pty_process_id ? terminals.get(row.pty_process_id) : undefined;
       if (terminal?.status === 'running') {
-        db.prepare(`update processes set activity = ?, updated_at = ? where id = ? and activity != ?`).run(terminal.activity, now, row.id, terminal.activity);
+        const turnStarted = terminal.activity === 'idle' || terminal.activity === 'error'
+          ? null
+          : terminal.activity === 'working' || terminal.activity === 'thinking'
+            ? now
+            : undefined;
+        if (turnStarted === null) {
+          db.prepare(`update processes set activity = ?, turn_started_at = null, updated_at = ? where id = ? and (activity != ? or turn_started_at is not null)`).run(terminal.activity, now, row.id, terminal.activity);
+        } else if (turnStarted !== undefined) {
+          db.prepare(`update processes set activity = ?, turn_started_at = coalesce(turn_started_at, ?), updated_at = ? where id = ? and (activity != ? or turn_started_at is null)`).run(terminal.activity, turnStarted, now, row.id, terminal.activity);
+        } else {
+          db.prepare(`update processes set activity = ?, updated_at = ? where id = ? and activity != ?`).run(terminal.activity, now, row.id, terminal.activity);
+        }
         db.prepare(`update sessions set last_title = ? where process_id = ? and exited_at is null`).run(terminal.title, row.id);
         continue;
       }
