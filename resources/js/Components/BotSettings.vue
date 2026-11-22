@@ -99,6 +99,11 @@
                 <Switch id="bot-focus" v-model="editor.focus" />
                 <span class="text-xs text-muted-foreground">Lets it hold notifications, messages and reports until you're done focusing.</span>
               </div>
+              <label class="text-xs text-muted-foreground" for="bot-requests">Agent requests</label>
+              <div class="flex items-center gap-2">
+                <Switch id="bot-requests" v-model="editor.requests" />
+                <span class="text-xs text-muted-foreground">Lets it reject permission requests and answer questions waiting for you in its projects, and approve one-time reads of ordinary workspace and skill files. You're still notified.</span>
+              </div>
               <label class="text-xs text-muted-foreground" for="bot-voice">Voice</label>
               <div class="flex items-center gap-2">
                 <Switch id="bot-voice" v-model="editor.voice.enabled" />
@@ -205,6 +210,7 @@ interface EditorState {
   voice: BotVoice;
   digests: boolean;
   focus: boolean;
+  requests: boolean;
 }
 
 const AVATAR_KINDS = [
@@ -343,7 +349,7 @@ function addBot(): void {
   editorError.value = '';
   editor.value = {
     id: `bot_${randomId()}`, isNew: true, name: '', fields: newBotFields(), avatar: { kind: 'face', look: newFace(), emoji: null, picture: null }, purviewKind: 'none', projectIds: [], instructions: '',
-    enabled: true, memory: true, memoryBudgetTokens: 4000, voice: { enabled: false, voice: null, profile: 'codex', acknowledgements: 'default' }, digests: false, focus: false
+    enabled: true, memory: true, memoryBudgetTokens: 4000, voice: { enabled: false, voice: null, profile: 'codex', acknowledgements: 'default' }, digests: false, focus: false, requests: false
   };
   editorOpen.value = true;
 }
@@ -356,7 +362,7 @@ function editBot(bot: Bot): void {
     avatar: { ...bot.avatar, look: { ...bot.avatar.look } },
     purviewKind: bot.purview.kind, projectIds: bot.purview.kind === 'projects' ? [...bot.purview.projectIds] : [],
     instructions: bot.instructions, enabled: bot.enabled, memory: bot.memory, memoryBudgetTokens: bot.memoryBudgetTokens,
-    voice: { ...bot.voice }, digests: bot.digests, focus: bot.focus
+    voice: { ...bot.voice }, digests: bot.digests, focus: bot.focus, requests: bot.requests
   };
   editorOpen.value = true;
 }
@@ -419,7 +425,7 @@ async function applyEditor(): Promise<void> {
   const purview: BotPurview = editorIsAssistant.value ? { kind: 'all' } : current.purviewKind === 'projects' ? { kind: 'projects', projectIds: current.projectIds } : { kind: current.purviewKind };
   const bot: Bot = {
     id: current.id, name, harness: current.fields.harness, ...profile, avatar: current.avatar, purview, instructions: current.instructions.trim(),
-    enabled: current.enabled, memory: current.memory, memoryBudgetTokens: current.memoryBudgetTokens, voice: { ...current.voice }, digests: current.digests, focus: current.focus
+    enabled: current.enabled, memory: current.memory, memoryBudgetTokens: current.memoryBudgetTokens, voice: { ...current.voice }, digests: current.digests, focus: current.focus, requests: current.requests
   };
   const before = bots.value.find((candidate) => candidate.id === bot.id);
   const next = current.isNew ? [...bots.value, bot] : bots.value.map((candidate) => candidate.id === bot.id ? bot : candidate);

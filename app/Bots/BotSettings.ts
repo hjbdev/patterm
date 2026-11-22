@@ -70,7 +70,11 @@ export const botInput = z.object({
   digests: z.boolean().default(false),
   // The bot may turn on Focus mode, which holds notifications, agent
   // messages, reports and timer callbacks until it ends.
-  focus: z.boolean().default(false)
+  focus: z.boolean().default(false),
+  // The bot may answer agents' permission requests and questions that are
+  // waiting for the user, in its purview, within the limits a parent agent
+  // has. The user is still notified and can answer first.
+  requests: z.boolean().default(false)
 }).superRefine((value, context) => {
   if (value.model === null && value.reasoning !== null) context.addIssue({ code: z.ZodIssueCode.custom, path: ['reasoning'], message: 'reasoning requires a model' });
   if (value.harness !== 'codex' && value.serviceTier !== null) context.addIssue({ code: z.ZodIssueCode.custom, path: ['serviceTier'], message: 'only Codex bots select a service tier' });
