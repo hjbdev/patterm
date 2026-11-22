@@ -845,6 +845,8 @@ async function createApplicationResources(
     stopProcess: (processId) => actions.stopProcess.execute(processId),
     presets: () => settings.harnessPresets(),
     notify: raiseNotification,
+    bots: () => settings.bots().bots,
+    toBot: (botId, processId, message) => botRelay.deliverAgentMessage(botId, processId, message),
     toAssistant: (processId, message) => botRelay.deliverAgentMessage(ASSISTANT_BOT_ID, processId, message),
     onChanged: (workbench) => notifyChanged(workbench ? ['routines', 'workbench'] : ['routines']),
     appDataPath: options.appDataPath,

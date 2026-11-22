@@ -24,13 +24,13 @@
         </template>
       </template>
       in
-      <InlineChoice :model-value="routine.project_id" :options="projectOptions(projects)" label="Project" @update:model-value="emit('change', { project_id: $event })" />
+      <InlineChoice :model-value="routine.project_id" :options="projectOptions(projects)" label="Project" @update:model-value="setProject($event)" />
       and ask it to:
     </p>
     <RoutinePromptField :model-value="routine.prompt" field-class="min-h-24 text-foreground" @update:model-value="emit('change', { prompt: $event })" />
     <p>
       When it reports,
-      <InlineChoice :model-value="routine.delivery" :options="DELIVERY_OPTIONS" label="When it reports" @update:model-value="emit('change', { delivery: $event === 'none' || $event === 'assistant' ? $event : 'notification' })" />
+      <InlineChoice :model-value="deliveryChoiceKey(routine)" :options="deliveryChoices" label="When it reports" @update:model-value="emit('change', deliveryChoicePatch($event))" />
     </p>
   </div>
 </template>
@@ -44,14 +44,15 @@ import { zonedInstant } from '../../../../app/Services/RoutineSchedule';
 import RoutinePromptField from './RoutinePromptField.vue';
 import { harnessLabel } from '../../lib/harnesses';
 import {
-  DELIVERY_OPTIONS, harnessPatch, launchChoiceKey, launchChoiceOptions, launchChoicePatch, modelFor, onceDate, projectOptions, reasoningOptions, speedOptions,
-  type RoutineModelOption, type RoutinePatch, type RoutinePresetOption, type RoutineRecord
+  deliveryChoiceKey, deliveryChoicePatch, deliveryOptions, harnessPatch, launchChoiceKey, launchChoiceOptions, launchChoicePatch, modelFor, onceDate, projectOptions, reasoningOptions, speedOptions,
+  type RoutineDeliveryBot, type RoutineModelOption, type RoutinePatch, type RoutinePresetOption, type RoutineRecord
 } from '../../lib/routines';
 
 const props = defineProps<{
   routine: RoutineRecord;
   harnesses: readonly string[];
   projects: ReadonlyArray<{ id: string; name: string }>;
+  bots?: readonly RoutineDeliveryBot[] | undefined;
   presets: RoutinePresetOption[];
   models: Record<string, RoutineModelOption[]>;
 }>();
@@ -62,8 +63,25 @@ const harnessOptions = computed(() => [...new Set([...props.harnesses, props.rou
 const model = computed(() => modelFor(props.routine.harness, props.routine.model, props.models));
 const reasoning = computed(() => reasoningOptions(model.value));
 const speed = computed(() => speedOptions(model.value));
+const deliveryChoices = computed(() => deliveryOptions(props.routine, props.bots ?? []));
 
 const REPEAT_OPTIONS = [{ value: 'repeat', label: 'every week' }, { value: 'once', label: 'once' }];
+
+// Moving a routine to a project outside its delivery bot's purview resets
+// delivery to notify me instead of failing validation.
+function setProject(projectId: string | null): void {
+  if (props.routine.delivery === 'bot' && props.routine.delivery_bot_id) {
+    const bot = (props.bots ?? []).find((candidate) => candidate.id === props.routine.delivery_bot_id);
+    const allowed = bot && (projectId === null
+      ? bot.purview.kind === 'all'
+      : bot.purview.kind === 'all' || (bot.purview.kind === 'projects' && bot.purview.projectIds.includes(projectId)));
+    if (!allowed) {
+      emit('change', { project_id: projectId, delivery: 'notification', delivery_bot_id: null });
+      return;
+    }
+  }
+  emit('change', { project_id: projectId });
+}
 
 // Once starts tomorrow at the routine's time; repeating again keeps its days, or weekdays if it had none.
 function setRepeat(value: string | null): void {

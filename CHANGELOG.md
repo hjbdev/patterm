@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Routine launches now include a bounded summary of up to two prior finished
+  runs from the same project scope for continuity, and routines can deliver
+  reports directly to a specific project bot (`delivery: "bot"` with
+  `delivery_bot_id`) in addition to the global assistant, enforcing the target
+  bot's purview at configuration and report time.
+
 - Unreported Integrated agent turn completions now include a bounded 280-character
   plain-text preview of the agent's final reply in user notifications and bot
   updates instead of bare `"Finished its turn"`, child agents that exit cleanly
