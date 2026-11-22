@@ -132,8 +132,11 @@ async function main(): Promise<void> {
       }
     };
     let changedCount = 0;
+    const unreportedChildExits: string[] = [];
     const reconciler = new RuntimeReconciler(database, timeline, launcher, null, lifecycleSource, () => {
       changedCount += 1;
+    }, null, null, [], () => {}, () => {}, (processId) => {
+      unreportedChildExits.push(processId);
     });
     for (const listener of lifecycleListeners) {
       listener({ type: 'terminal-lifecycle', processId: created.pty_process_id, event: 'activity', activity: 'working' });
@@ -196,6 +199,18 @@ async function main(): Promise<void> {
     assert.equal(failedWorktreeProcess.status, 'failed', 'non-zero process exits are marked failed');
     assert.equal(failedWorktreeProcess.exit_code, 127, 'process exit code is stored');
     assert.ok(failedWorktreeProcess.exited_at, 'process exit timestamp is stored');
+    // A child agent that exits cleanly without reporting notifies its parent,
+    // while a child that already reported stays quiet.
+    database.connection.prepare(`insert into processes (id, project_id, parent_process_id, kind, name, status, pty_process_id, created_at, updated_at)
+      values ('child_unreported', ?, ?, 'agent', 'Unreported child', 'running', 'pty_child_unreported', ?, ?),
+             ('child_reported', ?, ?, 'agent', 'Reported child', 'running', 'pty_child_reported', ?, ?)`)
+      .run(projectId, created.process_id, now, now, projectId, created.process_id, now, now);
+    timeline.append({ event_type: 'agent.reported', project_id: projectId, process_id: 'child_reported', actor_type: 'agent', metadata: { status: 'completed', body: 'done' } });
+    for (const listener of lifecycleListeners) {
+      listener({ type: 'terminal-lifecycle', processId: 'pty_child_unreported', event: 'exit', exitCode: 0 });
+      listener({ type: 'terminal-lifecycle', processId: 'pty_child_reported', event: 'exit', exitCode: 0 });
+    }
+    assert.deepEqual(unreportedChildExits, ['child_unreported'], 'clean exit without report notifies parent');
     reconciler.dispose();
 
     // Relaunch re-attaches a fresh PTY reusing the stored argv.

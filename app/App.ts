@@ -476,7 +476,7 @@ async function createApplicationResources(
     wokeFromSnooze: (processId) => snoozes.announcedWake(processId),
     compacting: (processId) => idleCompaction.compacting(processId),
     triage: (processId) => triage.decide(processId),
-    botReply: (processId) => assistantInbox.botFor(processId) ? turnDigests.reply(processId) : null,
+    botReply: (processId) => turnDigests.reply(processId),
     log: (event, data) => debugLog.write('notifications', event, data)
   })));
 
@@ -966,7 +966,8 @@ async function createApplicationResources(
     searchService,
     startupFrames.values(),
     (processId, exitCode) => raiseNotification({ processId, source: 'runtime', kind: 'failure', body: `Exited with code ${exitCode}` }),
-    (processId, previous, activity) => snoozes.activity(processId, previous, activity)
+    (processId, previous, activity) => snoozes.activity(processId, previous, activity),
+    (processId) => raiseNotification({ processId, source: 'runtime', kind: 'failure', body: 'Exited without reporting', dedupeKey: 'child:exited_without_report' })
   );
   stopBuffering();
   startupFrames.clear();
