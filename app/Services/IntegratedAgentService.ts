@@ -216,11 +216,10 @@ export class IntegratedAgentService {
   private readonly dispatching = new Map<string, HeldPromptRow>();
   // One pending title refresh per agent; a newer prompt replaces it.
   private readonly titleRefreshes = new Map<string, { timer: NodeJS.Timeout | null }>();
-  // Pending non-parent agent prompts whose turns should leave open user
-  // attention notices intact. `active` tracks whether the currently running
-  // turn is one of those peer turns so an older non-peer turn finishing during
-  // preflight does not consume the new peer prompt's protection.
-  private readonly preservedAttentionPending = new Map<string, { pending: number; active: boolean }>();
+  // FIFO queue of admitted/in-flight turn origins ('owner' | 'peer') per
+  // process plus the active turn's origin so native working/thinking/idle
+  // transitions attribute to the right prompt even across preflight races.
+  private readonly turnOrigins = new Map<string, { queue: Array<{ origin: 'owner' | 'peer' }>; active: 'owner' | 'peer' | null }>();
   private history: AgentHistoryReadService | null = null;
   // Debug log sink for native events a provider did not project. Each type is
   // logged once per agent so protocol drift is visible without flooding.
@@ -739,8 +738,10 @@ export class IntegratedAgentService {
     }
     const provider = this.forProcess(processId);
     const send = () => {
-      if (review && !review.current()) throw new Error('This request is no longer waiting for this parent');
-      if (!resolved.preserveAttention) this.preservedAttentionPending.delete(key);
+      if (review) {
+        if (!review.current()) throw new Error('This request is no longer waiting for this parent');
+        this.turnOrigins.delete(key);
+      }
       let next = resolved;
       if ((resolved.sourceScope || resolved.focusDigestId) && this.heldPromptGuard) {
         const checked = this.heldPromptGuard(key, resolved);
@@ -790,24 +791,45 @@ export class IntegratedAgentService {
   }
 
   private async withPreservedAttention<T>(key: string, resolved: ResolvedIntegratedPrompt, run: () => Promise<{ value: T; keep: boolean }>): Promise<T> {
+    const busyNow = () => {
+      const current = this.activity(key);
+      return current === 'working' || current === 'thinking';
+    };
+    const push = (origin: 'owner' | 'peer') => {
+      const token = { origin };
+      let state = this.turnOrigins.get(key);
+      if (!state) {
+        state = { queue: [], active: null };
+        this.turnOrigins.set(key, state);
+      }
+      state.queue.push(token);
+      return token;
+    };
+    let token: { origin: 'owner' | 'peer' } | null = null;
     if (!resolved.preserveAttention) {
-      this.preservedAttentionPending.delete(key);
-      return (await run()).value;
+      this.turnOrigins.delete(key);
+      if (!busyNow()) token = push('owner');
+    } else {
+      token = push('peer');
     }
-    const entry = this.preservedAttentionPending.get(key) ?? { pending: 0, active: false };
-    entry.pending += 1;
-    this.preservedAttentionPending.set(key, entry);
     let keep = false;
     try {
       const outcome = await run();
       keep = outcome.keep;
+      if (keep && !resolved.preserveAttention && !token && !busyNow()) {
+        // The pre-existing turn ended during preflight while synthetic working
+        // was skipped; record the pending owner turn so a following peer prompt
+        // does not claim its delayed native working event.
+        token = push('owner');
+      }
       return outcome.value;
     } finally {
-      if (!keep) {
-        const current = this.preservedAttentionPending.get(key);
-        if (current) {
-          current.pending = Math.max(0, current.pending - 1);
-          if (current.pending === 0 && !current.active) this.preservedAttentionPending.delete(key);
+      if (!keep && token) {
+        const state = this.turnOrigins.get(key);
+        if (state) {
+          const index = state.queue.indexOf(token);
+          if (index !== -1) state.queue.splice(index, 1);
+          if (!state.queue.length && state.active === null) this.turnOrigins.delete(key);
         }
       }
     }
@@ -1326,7 +1348,7 @@ export class IntegratedAgentService {
 
   private async runCommand(processId: string, name: string, text: string): Promise<unknown> {
     const key = this.ledgerKey(processId);
-    this.preservedAttentionPending.delete(key);
+    this.turnOrigins.delete(key);
     if (this.hibernated.has(key)) await this.ensureAwake(key);
     const provider = this.forProcess(processId);
     const command = provider.command;
@@ -1835,16 +1857,18 @@ export class IntegratedAgentService {
   private markActivity(processId: string, activity: string, snapshot = false): void {
     const previous = this.updateActivity(processId, activity);
     if (previous === null) return;
-    const state = this.preservedAttentionPending.get(processId);
-    const preserveAttention = (state?.pending ?? 0) > 0;
+    let preserveAttention = false;
+    const state = this.turnOrigins.get(processId);
     if (state) {
-      if ((activity === 'working' || activity === 'thinking') && state.pending > 0) {
-        state.active = true;
-      } else if ((activity === 'idle' || activity === 'error') && state.active) {
-        state.active = false;
-        state.pending = Math.max(0, state.pending - 1);
-        if (state.pending === 0) this.preservedAttentionPending.delete(processId);
+      if (activity === 'working' || activity === 'thinking') {
+        if (previous !== 'working' && previous !== 'thinking') {
+          state.active = state.queue.shift()?.origin ?? null;
+        }
+        preserveAttention = state.active === 'peer';
+      } else if (activity === 'idle' || activity === 'error') {
+        state.active = null;
       }
+      if (!state.queue.length && state.active === null) this.turnOrigins.delete(processId);
     }
     this.debugLog?.write('integrated', 'activity', { processId, previous, activity, snapshot });
     if (activity === 'idle' || activity === 'error') this.flushHeld(processId);

@@ -540,14 +540,14 @@ async function main(): Promise<void> {
     const peerNotificationActions = new NotificationActions(peerNotices, settings, new PresenceService(), undefined as unknown as PushService);
     let peerStream: IntegratedConversationListener | undefined;
     let peerStatus = 'idle';
-    let onPeerPrompt: (() => void) | null = null;
+    let onPeerPrompt: (() => void | Promise<void>) | null = null;
     const peerIntegrated = new IntegratedAgentService(database, {
       codex: {
         ...provider,
         subscribe: async (_processId, listener) => { peerStream = listener; return () => { peerStream = undefined; }; },
         conversation: async () => ({ status: peerStatus, messages: [] }),
         prompt: async () => {
-          onPeerPrompt?.();
+          await onPeerPrompt?.();
           return { turnId: 'turn-peer' };
         }
       }
@@ -654,6 +654,32 @@ async function main(): Promise<void> {
       peerStatus = 'working';
       peerStream?.({ processId: 'peer_target', revision: 14, kind: 'status', status: 'working' });
       assert.equal(peerNotices.get(backToBackNoticeId)?.resolved_at, null, 'second peer turn still preserves open attention after first peer turn finished during preflight');
+      // Owner-to-peer OpenCode race: an owner prompt is acknowledged before its
+      // working event arrives, then a peer prompt starts preflight while the
+      // owner turn runs, calls notify_user, and finishes. The owner's working
+      // event must not consume the peer prompt's protection.
+      peerStatus = 'idle';
+      peerStream?.({ processId: 'peer_target', revision: 15, kind: 'status', status: 'idle' });
+      onPeerPrompt = () => {
+        // Owner prompt: previous idle arrives during preflight so synthetic
+        // working is skipped; owner turn runs during the following peer preflight.
+        peerStatus = 'idle';
+        peerStream?.({ processId: 'peer_target', revision: 16, kind: 'status', status: 'idle' });
+      };
+      await peerIntegrated.prompt('peer_target', { text: 'Owner turn' });
+      let ownerToPeerNoticeId = '';
+      onPeerPrompt = async () => {
+        peerStatus = 'working';
+        peerStream?.({ processId: 'peer_target', revision: 17, kind: 'status', status: 'working' });
+        ownerToPeerNoticeId = (await peerRegistry.callPublic('notify_user', { title: 'Owner turn requested user attention' }, { identity: 'id_peer_target' }) as { notification_id: string }).notification_id;
+        peerStatus = 'idle';
+        peerStream?.({ processId: 'peer_target', revision: 18, kind: 'status', status: 'idle' });
+      };
+      await peerRegistry.callPublic('send_input', { process_id: 'peer_target', kind: 'text', text: 'Peer after owner', submit: true }, { identity: 'id_peer_caller' });
+      onPeerPrompt = null;
+      peerStatus = 'working';
+      peerStream?.({ processId: 'peer_target', revision: 19, kind: 'status', status: 'working' });
+      assert.equal(peerNotices.get(ownerToPeerNoticeId)?.resolved_at, null, 'owner turn during peer preflight does not consume the peer turn protection');
     } finally {
       peerIntegrated.dispose();
     }
