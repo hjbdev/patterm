@@ -261,18 +261,22 @@ async function main(): Promise<void> {
     assert.equal(service.turnActivity('root', 'idle', 'working'), false);
     database.connection.prepare(`insert into timeline_events (id, event_type, project_id, process_id, actor_type, metadata, created_at) values ('report-root', 'agent.reported', 'project_a', 'root', 'agent', '{}', ?)`).run(new Date(now + 1000).toISOString());
     assert.equal(service.turnActivity('root', 'working', 'idle'), true, 'a turn that reported is not announced');
+    database.connection.prepare(`update timeline_events set created_at = ? where id = 'report-root'`).run(new Date(now - 60_000).toISOString());
     service.turnActivity('root', 'idle', 'working');
     database.connection.prepare(`insert into timeline_events (id, event_type, project_id, process_id, actor_type, metadata, created_at) values ('quiet-root', 'bot.stayed_quiet', 'project_a', 'root', 'agent', '{}', ?)`).run(new Date(now + 1500).toISOString());
     assert.equal(service.turnActivity('root', 'working', 'idle'), true, 'a turn marked quiet with bot_stay_quiet is not announced');
-    // A queued user turn starting during the same working stretch advances the turn boundary so the prior quiet marker cannot silence it.
+    // A native turn boundary inside the same working stretch (such as a queued
+    // user turn starting after a quiet digest) supersedes the quiet marker
+    // without altering turn_started_at or agent.reported.
     service.turnActivity('root', 'idle', 'working');
+    const startedBefore = (database.connection.prepare(`select turn_started_at from processes where id = 'root'`).get() as { turn_started_at: string | null }).turn_started_at;
     database.connection.prepare(`update timeline_events set created_at = ? where id = 'quiet-root'`).run(new Date(now + 1600).toISOString());
-    service.noteUserTurn('root', 'user-queued-turn');
-    assert.equal(service.turnActivity('root', 'working', 'idle'), false, 'a new user turn during the same working stretch is not silenced by an earlier bot_stay_quiet');
+    service.noteTurnBoundary('root');
+    assert.equal((database.connection.prepare(`select turn_started_at from processes where id = 'root'`).get() as { turn_started_at: string | null }).turn_started_at, startedBefore, 'noteTurnBoundary preserves turn_started_at');
+    assert.equal(service.turnActivity('root', 'working', 'idle'), false, 'a subsequent native turn after bot_stay_quiet is not silenced');
     database.connection.prepare(`delete from timeline_events where id = 'quiet-root'`).run();
     service.turnActivity('root', 'idle', 'working');
     service.turnActivity('root', 'working', 'error');
-    database.connection.prepare(`update timeline_events set created_at = ? where id = 'report-root'`).run(new Date(now - 60_000).toISOString());
     service.turnActivity('root', 'error', 'working');
     assert.equal(service.turnActivity('root', 'working', 'idle'), false, 'an error ends the turn, so an earlier report does not cover the next one');
     // A turn already running at startup emits no activity change; it counts

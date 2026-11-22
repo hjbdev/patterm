@@ -936,7 +936,8 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
       actor_id: current.session_id,
       metadata: { ...(input.reason ? { reason: input.reason } : {}) }
     });
-    services.notifications?.reported(current.process_id);
+    if (services.notifications?.quiet) services.notifications.quiet(current.process_id);
+    else services.notifications?.reported(current.process_id);
     return { ok: true, quiet: true };
   });
 

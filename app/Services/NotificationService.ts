@@ -116,7 +116,7 @@ const DEFAULT_URGENCY: Record<NotificationKind, NotificationUrgency> = {
 // Owns notification records and routing. Delivery (toasts, desktop, push) is
 // a listener on the changes this service emits.
 export class NotificationService {
-  private readonly lastUserMessage = new Map<string, string>();
+  private readonly quietInvalidatedAt = new Map<string, string>();
   constructor(
     private readonly database: DatabaseService,
     private readonly settings: Pick<SettingsService, 'notificationSettings'>,
@@ -330,24 +330,33 @@ export class NotificationService {
     }
     if ((activity !== 'idle' && activity !== 'error') || snapshot || !row.turn_started_at) return false;
     db.prepare(`update processes set turn_started_at = null where id = ?`).run(processId);
+    const invalidatedAt = this.quietInvalidatedAt.get(processId);
+    this.quietInvalidatedAt.delete(processId);
+    const reported = Boolean(db.prepare(`select 1 from timeline_events
+      where event_type = 'agent.reported' and process_id = ? and created_at >= ? limit 1`).get(processId, row.turn_started_at));
+    if (reported) return true;
+    const quietSince = invalidatedAt && invalidatedAt > row.turn_started_at ? invalidatedAt : row.turn_started_at;
     return Boolean(db.prepare(`select 1 from timeline_events
-      where event_type in ('agent.reported', 'bot.stayed_quiet') and process_id = ? and created_at >= ? limit 1`).get(processId, row.turn_started_at));
+      where event_type = 'bot.stayed_quiet' and process_id = ? and created_at >= ? limit 1`).get(processId, quietSince));
   }
 
-  // A new non-queued user message starting while the agent stays continuously
-  // working (for example a user prompt queued behind a quiet digest turn)
-  // begins a fresh turn boundary so an earlier bot_stay_quiet cannot silence it.
-  noteUserTurn(processId: string, messageId: string): void {
-    if (!messageId || this.lastUserMessage.get(processId) === messageId) return;
-    this.lastUserMessage.set(processId, messageId);
+  // Marks the current bot turn quiet and clears any stale turn_finished notice.
+  quiet(processId: string): number {
+    this.quietInvalidatedAt.delete(processId);
+    return this.reported(processId);
+  }
+
+  // A native turn boundary inside a continuous working stretch (such as a
+  // queued user prompt starting right after a quiet digest turn's result)
+  // supersedes any earlier bot_stay_quiet mark without touching turn_started_at.
+  noteTurnBoundary(processId: string): void {
     const db = this.database.connection;
-    const row = db.prepare(`select turn_started_at from processes where id = ?`).get(processId) as { turn_started_at: string | null } | undefined;
-    if (!row?.turn_started_at) return;
     const lastQuiet = db.prepare(`select max(created_at) as at from timeline_events
       where event_type = 'bot.stayed_quiet' and process_id = ?`).get(processId) as { at: string | null } | undefined;
-    const minMs = lastQuiet?.at ? Date.parse(lastQuiet.at) + 1 : 0;
+    if (!lastQuiet?.at) return;
+    const minMs = Date.parse(lastQuiet.at) + 1;
     const nextAt = new Date(Math.max(this.now(), Number.isFinite(minMs) ? minMs : 0)).toISOString();
-    db.prepare(`update processes set turn_started_at = ? where id = ?`).run(nextAt, processId);
+    this.quietInvalidatedAt.set(processId, nextAt);
   }
 
   // Turns already running when this build first starts have no stored start;

@@ -661,6 +661,7 @@ function receiveClaude(chunk: string): void {
       // A background agent still running or waiting on a prompt keeps the
       // agent working or waiting; there is no idle in between.
       updateStatus();
+      if (status !== 'idle' && status !== 'failed' && prompts.size > 0) publish({ kind: 'turn_boundary' });
       settleRetryNotice(!event.is_error);
     }
   }
@@ -677,12 +678,15 @@ function receiveLifecycle(event: JsonRecord): void {
     else if (event.state === 'started') quietTurn.started = true;
   }
   lifecycleReported = true;
+  const starting = event.state === 'started' && !turnActive;
   if (event.state === 'started') turnActive = true;
   if (prompts.has(id)) {
     if (event.state === 'queued' || event.state === 'started') prompts.set(id, event.state);
     else prompts.delete(id);
   }
+  const wasWorking = status === 'working';
   updateStatus();
+  if (starting && wasWorking) publish({ kind: 'turn_boundary' });
 }
 
 // The main agent only starts a model request during a turn. While a session
@@ -690,8 +694,10 @@ function receiveLifecycle(event: JsonRecord): void {
 // wakes, so interrupting it is not reported as a failure.
 function markMainTurnRunning(): void {
   if (turnActive) return;
+  const wasWorking = status === 'working';
   turnActive = true;
   updateStatus();
+  if (wasWorking) publish({ kind: 'turn_boundary' });
 }
 
 // Claude's report of what runs: a turn it starts on its own (for example when
