@@ -206,7 +206,7 @@ async function main(): Promise<void> {
         id: `mid-${index}`, conversationId: 'conv-fable-1', seq: 2 + index, role: 'assistant', kind: 'message', text: `MID_TURN_${index} ${'B'.repeat(1100)}`, toolName: null, toolCallId: null, toolInputSummary: null, toolOutputSummary: null, providerCreatedAt: null, createdAt: now, metadata: null, media: []
       })),
       { id: 'm-report', conversationId: 'conv-fable-1', seq: 9, role: 'user', kind: 'message', text: '[report from process_9: completed]\nHelper finished review.', toolName: null, toolCallId: null, toolInputSummary: null, toolOutputSummary: null, providerCreatedAt: null, createdAt: now, metadata: null, media: [] },
-      { id: 'm-surrogate', conversationId: 'conv-fable-1', seq: 9.5, role: 'user', kind: 'message', text: `${'S'.repeat(1198)}🙂`, toolName: null, toolCallId: null, toolInputSummary: null, toolOutputSummary: null, providerCreatedAt: null, createdAt: now, metadata: null, media: [] },
+      { id: 'm-surrogate', conversationId: 'conv-fable-1', seq: 9.5, role: 'user', kind: 'message', text: `${'S'.repeat(1198)}🙂_TAIL`, toolName: null, toolCallId: null, toolInputSummary: null, toolOutputSummary: null, providerCreatedAt: null, createdAt: now, metadata: null, media: [] },
       { id: 'm1', conversationId: 'conv-fable-1', seq: 10, role: 'user', kind: 'message', text: 'Keep an eye\0 on PR 240.', toolName: null, toolCallId: null, toolInputSummary: null, toolOutputSummary: null, providerCreatedAt: null, createdAt: now, metadata: null, media: [] },
       { id: 'm2', conversationId: 'conv-fable-1', seq: 11, role: 'assistant', kind: 'message', text: 'Watching PR 240 and its helper.', toolName: null, toolCallId: null, toolInputSummary: null, toolOutputSummary: null, providerCreatedAt: null, createdAt: now, metadata: null, media: [] },
       // Tool-heavy tail that would crowd out conversational messages without backwards paging.
@@ -298,7 +298,8 @@ async function main(): Promise<void> {
     assert.equal(launches.at(-1)!.resume, null);
     assert.doesNotMatch(launchedContexts.at(-1)?.context ?? '', /\[Conversation handoff/, '/new starts clean without handoff');
     assert.equal(stopped.at(-1), 'proc-bot-5');
-    // Switching a bot to OpenCode trims oldest turns first to stay within BOT_CONTEXT_BYTES.
+    // Switching a bot to OpenCode trims oldest turns first to stay within BOT_CONTEXT_BYTES,
+    // and clips the single newest turn when the remaining budget is tight.
     const savedBots = settings.bots().bots.slice(1);
     settings.updateBots({ bots: savedBots.map((entry) => entry.id === 'fable' ? { ...entry, harness: 'opencode', model: null, reasoning: null, serviceTier: null } : entry) });
     await stop(bots.state('fable').process_id!);
@@ -307,6 +308,18 @@ async function main(): Promise<void> {
     assert.ok(Buffer.byteLength(JSON.stringify(openCodeCtx), 'utf8') <= BOT_CONTEXT_BYTES, 'OpenCode handoff stays within BOT_CONTEXT_BYTES');
     assert.match(openCodeCtx, /Assistant: Watching PR 240 and its helper\./, 'OpenCode trimming preserves newest turns');
     assert.doesNotMatch(openCodeCtx, /OLDEST_TURN/, 'OpenCode trimming drops oldest turns first');
+    // Tight budget: base + JSON-escaped bot instructions leaves room only for a clipped newest turn.
+    historyRows.push({ id: 'm-tight', conversationId: 'conv-fable-1', seq: 100, role: 'assistant', kind: 'message', text: `NEWEST_TIGHT_MARKER ${'Z'.repeat(1150)}`, toolName: null, toolCallId: null, toolInputSummary: null, toolOutputSummary: null, providerCreatedAt: null, createdAt: now, metadata: null, media: [] });
+    settings.updateBots({ bots: savedBots.map((entry) => entry.id === 'fable' ? { ...entry, harness: 'opencode', digests: true, focus: true, instructions: `x${'\n'.repeat(1500)}x`, model: null, reasoning: null, serviceTier: null } : entry) });
+    resumeFails = true;
+    await stop(bots.state('fable').process_id!);
+    await bots.ensure('fable');
+    resumeFails = false;
+    const tightCtx = launchedContexts.at(-1)?.context ?? '';
+    assert.ok(Buffer.byteLength(JSON.stringify(tightCtx), 'utf8') <= BOT_CONTEXT_BYTES, 'tight OpenCode handoff stays within BOT_CONTEXT_BYTES');
+    assert.match(tightCtx, /Assistant: NEWEST_TIGHT_MARKER Z+…/, 'tight OpenCode budget clips the newest turn instead of dropping all turn text');
+    assert.doesNotMatch(tightCtx, new RegExp(`Z{1150}`), 'tight OpenCode budget actually clipped the newest turn');
+    historyRows.pop();
     settings.updateBots({ bots: savedBots });
     await stop(bots.state('fable').process_id!);
     await bots.ensure('fable');
