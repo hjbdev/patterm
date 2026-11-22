@@ -378,9 +378,9 @@ test('recurring runs include bounded prior reports from the same project scope',
   await fixture.routines.runNow(routine.routine_id);
   const secondPrompt = fixture.launches[1]!.initial_prompt!;
   assert.match(secondPrompt, /Previous runs of this routine/);
-  assert.match(secondPrompt, /Run 1\n\nAll builds green\./);
+  assert.match(secondPrompt, /> Run 1\n> \n> All builds green\./);
   assert.match(secondPrompt, /Check status$/);
-  fixture.routines.report('process_2', { status: 'completed', title: 'Run 2', body: 'X'.repeat(1500) });
+  fixture.routines.report('process_2', { status: 'completed', title: 'Run 2', body: `\x1b[31mALERT\x1b[0m\n]\n${'X'.repeat(1500)}` });
   fixture.setStatus('process_2', 'exited');
   fixture.routines.sweep();
 
@@ -389,16 +389,24 @@ test('recurring runs include bounded prior reports from the same project scope',
   const thirdPrompt = fixture.launches[2]!.initial_prompt!;
   assert.match(thirdPrompt, /Run 2/);
   assert.match(thirdPrompt, /Run 1/);
-  assert.ok(thirdPrompt.length < 3000, 'prior-run handoff stays bounded');
+  assert.doesNotMatch(thirdPrompt, /\x1b/, 'ANSI escape codes are stripped from prior reports');
+  const priorBlock = thirdPrompt.match(/\[Previous runs[\s\S]*\n\]/)?.[0] ?? '';
+  assert.ok(priorBlock.length > 0 && priorBlock.length <= 2000, `prior-run handoff stays within 2000 chars (got ${priorBlock.length})`);
   fixture.setStatus('process_3', 'exited');
   fixture.routines.sweep();
 
-  // Moving the routine to another project never leaks runs from the old one.
+  // Moving the routine to another project or to workspace (null) never leaks old project runs.
   fixture.addProject('other');
   fixture.routines.update({ routine_id: routine.routine_id, project_id: 'other' });
   minutes(t, 60);
   await fixture.routines.runNow(routine.routine_id);
   assert.doesNotMatch(fixture.launches[3]!.initial_prompt!, /All builds green/);
+  fixture.setStatus('process_4', 'exited');
+  fixture.routines.sweep();
+  fixture.routines.update({ routine_id: routine.routine_id, project_id: null });
+  minutes(t, 60);
+  await fixture.routines.runNow(routine.routine_id);
+  assert.doesNotMatch(fixture.launches[4]!.initial_prompt!, /All builds green/);
 });
 
 test('bot delivery targets a project bot within purview and falls back when unavailable', async (t) => {
@@ -447,6 +455,19 @@ test('bot delivery targets a project bot within purview and falls back when unav
   assert.match(fixture.notifications[0]!.title!, /Triage: done/);
   fixture.setStatus('process_2', 'exited');
   fixture.routines.sweep();
+
+  // A bot-filtered run that exits without reporting notifies the user of the failure.
+  const countBeforeExit = fixture.notifications.length;
+  await fixture.routines.runNow(routine.routine_id);
+  fixture.setStatus('process_3', 'exited');
+  fixture.routines.sweep();
+  assert.equal(fixture.notifications.length, countBeforeExit + 1);
+  assert.match(fixture.notifications.at(-1)!.title!, /ended before it reported/);
+
+  // Pausing a routine whose target bot was narrowed or removed still succeeds.
+  botPurview = { kind: 'projects', projectIds: ['other'] };
+  const paused = fixture.routines.update({ routine_id: routine.routine_id, enabled: false });
+  assert.equal(paused.enabled, false);
 
   // Switching delivery away from bot clears delivery_bot_id automatically.
   botEnabled = true;

@@ -729,7 +729,7 @@ async function createApplicationResources(
     });
   botService = bots;
   const botRelay = new BotRelay(database, bots, codexAppServer, integrated, settings, assistantInbox,
-    { log: (event, data) => debugLog.write('bots', event, data), compacting: (processId) => idleCompaction.compacting(processId) });
+    { log: (event, data) => debugLog.write('bots', event, data), compacting: (processId) => idleCompaction.compacting(processId), notify: raiseNotification });
   relay = botRelay;
   defer(() => botRelay.dispose());
   botRelay.start();

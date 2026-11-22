@@ -184,6 +184,20 @@ export class BotInbox {
     return { items, total };
   }
 
+  // Every pending item, or every item in one digest, oldest first.
+  listAll(botId: string, digestId?: string): BotInboxItem[] {
+    const where = digestId ? 'bot_id = ? and digest_id = ?' : 'bot_id = ? and delivered_at is null';
+    const params = digestId ? [botId, digestId] : [botId];
+    return this.database.connection.prepare(`${ITEM_SELECT} where ${where} order by seq`).all(...params) as BotInboxItem[];
+  }
+
+  // Permanently removes inbox items that are no longer within a bot's purview.
+  drop(ids: readonly string[]): void {
+    if (!ids.length) return;
+    const placeholders = ids.map(() => '?').join(', ');
+    this.database.connection.prepare(`delete from assistant_inbox where id in (${placeholders})`).run(...ids);
+  }
+
   liveSession(botId: string): string | null {
     return (this.database.connection.prepare(`select sessions.process_id from sessions join processes on processes.id = sessions.process_id
       where sessions.bot_id = ? and sessions.session_role in ('assistant', 'bot') and sessions.exited_at is null and processes.status = 'running'

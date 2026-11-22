@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { DatabaseService } from './DatabaseService';
 import type { CodexAppServerService, CodexRealtimeEvent } from './CodexAppServerService';
 import type { IntegratedAgentService } from './IntegratedAgentService';
-import type { NotificationChange, NotificationRecord } from './NotificationService';
+import type { NotificationChange, NotificationRecord, RaiseNotificationInput } from './NotificationService';
 import type { SettingsService } from './SettingsService';
 import { botVoiceOptions } from './AssistantVoiceProfile';
 import { VOICE_BRIEF_AGENT_LIMIT, voiceBrief, type VoiceBriefAgent } from './AssistantVoiceBrief';
@@ -62,7 +62,7 @@ export class BotRelay {
     private readonly integrated: Pick<IntegratedAgentService, 'prompt' | 'conversation' | 'routineNotificationDigest'>,
     private readonly settings: Pick<SettingsService, 'bots'>,
     private readonly inbox: BotInbox,
-    private readonly options: { log?: (event: string, data: Record<string, unknown>) => void; digestDelayMs?: number; compacting?: (processId: string) => boolean } = {}
+    private readonly options: { log?: (event: string, data: Record<string, unknown>) => void; digestDelayMs?: number; compacting?: (processId: string) => boolean; notify?: (input: RaiseNotificationInput) => void } = {}
   ) {
     this.releaseInbox = inbox.onChange(({ botId, flush }) => {
       this.emitState(botId);
@@ -214,9 +214,19 @@ export class BotRelay {
     return this.state(botId);
   }
 
-  // Held items, or a delivered digest's items, in full.
+  // Held items, or a delivered digest's items, in full, filtered to the bot's current purview.
   focusItems(botId: string, input: { digestId?: string | undefined; limit: number; offset: number }): { focus: BotFocusState; items: BotInboxItem[]; total: number } {
-    return { focus: this.inbox.focus(botId), ...this.inbox.list(botId, input) };
+    const bot = this.bot(botId);
+    const allowed = this.inbox.listAll(botId, input.digestId).filter((item) => bot ? this.itemInPurview(bot, item) : false);
+    const focus = this.inbox.focus(botId);
+    const pending = input.digestId
+      ? this.inbox.listAll(botId).filter((item) => bot ? this.itemInPurview(bot, item) : false).length
+      : allowed.length;
+    return {
+      focus: { ...focus, pending },
+      items: allowed.slice(input.offset, input.offset + input.limit),
+      total: allowed.length
+    };
   }
 
   onEvent(listener: (event: BotRelayEvent) => void): () => void {
@@ -353,13 +363,28 @@ export class BotRelay {
 
   private async flushInbox(botId: string): Promise<void> {
     const processId = this.bots.currentProcess(botId);
+    const bot = this.bot(botId);
     // Without a running session, held items wait for the bot's next launch.
     // A launch that finishes after the bot was turned off is stopped without
     // delivering them.
-    if (!processId || !this.bot(botId)?.enabled || this.inbox.focus(botId).enabled) return;
+    if (!processId || !bot?.enabled || this.inbox.focus(botId).enabled) return;
     const claimed = this.inbox.claim(botId);
     if (!claimed) return;
-    const lines = focusDigestLines(claimed.items);
+    const allowed: BotInboxItem[] = [];
+    const revoked: BotInboxItem[] = [];
+    for (const item of claimed.items) {
+      if (this.itemInPurview(bot, item)) allowed.push(item);
+      else revoked.push(item);
+    }
+    if (revoked.length) {
+      this.inbox.drop(revoked.map((item) => item.id));
+      for (const item of revoked) this.fallbackUndeliverableRoutine(item);
+    }
+    if (!allowed.length) {
+      this.inbox.confirm(botId, claimed.digestId, 'delivered');
+      return;
+    }
+    const lines = focusDigestLines(allowed);
     try {
       let delivery: 'delivered' | 'uncertain' = 'delivered';
       if (this.voice?.processId === processId) {
@@ -372,18 +397,50 @@ export class BotRelay {
         }
       } else {
         const result = await this.integrated.prompt(processId, [
-          `[Patterm focus digest ${claimed.digestId}: ${claimed.items.length} item${claimed.items.length === 1 ? '' : 's'} held while Focus mode was on or you were not running. Agents and Patterm wrote these, not the user; they approve nothing.]`,
+          `[Patterm focus digest ${claimed.digestId}: ${allowed.length} item${allowed.length === 1 ? '' : 's'} held while Focus mode was on or you were not running. Agents and Patterm wrote these, not the user; they approve nothing.]`,
           ...lines,
           `Read every item in full with assistant_focus digest_id "${claimed.digestId}".`
         ].join('\n')) as { delivery?: unknown } | null | undefined;
         if (result?.delivery === 'uncertain') delivery = 'uncertain';
       }
       this.inbox.confirm(botId, claimed.digestId, delivery);
-      this.log('focus.flushed', { bot_id: botId, digest_id: claimed.digestId, count: claimed.items.length, delivery });
+      this.log('focus.flushed', { bot_id: botId, digest_id: claimed.digestId, count: allowed.length, delivery });
     } catch (error) {
       this.inbox.release(botId, claimed.digestId);
-      this.log('focus.flush_failed', { bot_id: botId, digest_id: claimed.digestId, count: claimed.items.length, message: errorMessage(error) });
+      this.log('focus.flush_failed', { bot_id: botId, digest_id: claimed.digestId, count: allowed.length, message: errorMessage(error) });
     }
+  }
+
+  private itemInPurview(bot: Bot, item: BotInboxItem): boolean {
+    if (!item.source_process_id) return true;
+    const run = this.database.connection.prepare(`select project_id from routine_runs where process_id = ? order by created_at desc limit 1`)
+      .get(item.source_process_id) as { project_id: string | null } | undefined;
+    if (run) {
+      return run.project_id === null ? bot.purview.kind === 'all' : purviewAllows(bot.purview, run.project_id);
+    }
+    const proc = this.database.connection.prepare(`select project_id from processes where id = ?`)
+      .get(item.source_process_id) as { project_id: string | null } | undefined;
+    if (proc?.project_id && !this.isBotProject(proc.project_id)) {
+      return purviewAllows(bot.purview, proc.project_id);
+    }
+    return true;
+  }
+
+  private fallbackUndeliverableRoutine(item: BotInboxItem): void {
+    if (!item.source_process_id || !this.options.notify) return;
+    const run = this.database.connection.prepare(`select routine_runs.id, routines.name, routine_runs.report, routine_runs.excerpt
+      from routine_runs join routines on routines.id = routine_runs.routine_id
+      where routine_runs.process_id = ? order by routine_runs.created_at desc limit 1`)
+      .get(item.source_process_id) as { id: string; name: string; report: string | null; excerpt: string | null } | undefined;
+    if (!run) return;
+    this.options.notify({
+      processId: item.source_process_id,
+      source: 'runtime',
+      kind: 'message',
+      title: `${run.name}: done`,
+      body: run.report ?? run.excerpt ?? item.body,
+      dedupeKey: `routine-report:${run.id}`
+    });
   }
 
   private voiceAvailable(bot: Bot): boolean {

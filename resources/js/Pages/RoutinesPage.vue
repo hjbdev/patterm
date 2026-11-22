@@ -265,10 +265,17 @@ async function create(from?: RoutineRecord): Promise<void> {
   creating.value = true;
   try {
     const harness = installedHarnesses.value.includes('claude') ? 'claude' : installedHarnesses.value[0] ?? 'claude';
+    const validDeliveryBot = from?.delivery === 'bot' && from.delivery_bot_id
+      ? localBots.value.some((bot) => bot.id === from.delivery_bot_id && (from.project_id === null
+        ? bot.purview.kind === 'all'
+        : bot.purview.kind === 'all' || (bot.purview.kind === 'projects' && bot.purview.projectIds.includes(from.project_id))))
+      : false;
     // New routines start paused, so nothing runs before it has a prompt.
     const routine = await createRoutine(from ? {
       name: `${from.name} copy`, enabled: false, project_id: from.project_id, days: from.days, time: from.time, timezone: from.timezone, prompt: from.prompt,
-      harness: from.harness, preset: from.preset, model: from.model, reasoning: from.reasoning, service_tier: from.service_tier, delivery: from.delivery, delivery_bot_id: from.delivery_bot_id,
+      harness: from.harness, preset: from.preset, model: from.model, reasoning: from.reasoning, service_tier: from.service_tier,
+      delivery: from.delivery === 'bot' && !validDeliveryBot ? 'notification' : from.delivery,
+      delivery_bot_id: from.delivery === 'bot' && !validDeliveryBot ? null : from.delivery_bot_id,
       // A copy of a one-off whose time has passed runs a day from now.
       worktree_id: from.worktree_id,
       run_at: from.run_at ? new Date(Math.max(Date.parse(from.run_at), Date.now() + DAY_MS)).toISOString() : null

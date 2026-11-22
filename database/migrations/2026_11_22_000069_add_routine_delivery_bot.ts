@@ -7,6 +7,7 @@ export default {
     schema.sql('alter table routines add column delivery_bot_id text');
   },
   down(schema) {
+    schema.sql("update routines set delivery = 'notification' where delivery = 'bot'");
     schema.sql('alter table routines drop column delivery_bot_id');
   }
 } satisfies Migration;
