@@ -11,6 +11,7 @@ import { DatabaseService } from '../app/Services/DatabaseService';
 import { IDLE_COMPACTION_AFTER_MS, IdleCompactionService, type IdleCompactionSource } from '../app/Services/IdleCompactionService';
 import { IntegratedAgentService, type CompactionSignal, type IntegratedActivityChange, type IntegratedProviderService } from '../app/Services/IntegratedAgentService';
 import type { IntegratedConversationListener } from '../app/Services/IntegratedConversation';
+import { TurnBusyError } from '../app/Services/IntegratedDelivery';
 import { NotificationService } from '../app/Services/NotificationService';
 import { ParentRequestService } from '../app/Services/ParentRequestService';
 import { PresenceService } from '../app/Services/PresenceService';
@@ -472,6 +473,22 @@ async function main(): Promise<void> {
       peerStatus = 'working';
       peerStream?.({ processId: 'peer_target', revision: 7, kind: 'status', status: 'working' });
       assert.notEqual(peerNotices.get(handoffNoticeId)?.resolved_at, null, 'next owner working transition after fast peer turn clears open attention');
+      // A held peer prompt (e.g. queued during compaction) must also preserve
+      // open attention when it later flushes through deliverHeld.
+      const { notification_id: heldNoticeId } = await peerRegistry.callPublic('notify_user', { title: 'Held decision needed' }, { identity: 'id_peer_target' }) as { notification_id: string };
+      let rejectBusy = true;
+      onPeerPrompt = () => {
+        if (rejectBusy) throw new TurnBusyError('Busy compacting', 'Compact');
+        peerStatus = 'working';
+        peerStream?.({ processId: 'peer_target', revision: 8, kind: 'status', status: 'working' });
+      };
+      await peerRegistry.callPublic('send_input', { process_id: 'peer_target', kind: 'text', text: 'Held peer note', submit: true }, { identity: 'id_peer_caller' });
+      rejectBusy = false;
+      peerStatus = 'idle';
+      peerStream?.({ processId: 'peer_target', revision: 9, kind: 'status', status: 'idle' });
+      await wait(25);
+      onPeerPrompt = null;
+      assert.equal(peerNotices.get(heldNoticeId)?.resolved_at, null, 'held peer prompt preserves open attention when flushed');
     } finally {
       peerIntegrated.dispose();
     }

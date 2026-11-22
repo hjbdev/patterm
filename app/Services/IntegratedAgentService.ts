@@ -745,6 +745,23 @@ export class IntegratedAgentService {
     });
   }
 
+  private async withPreservedAttention<T>(key: string, resolved: ResolvedIntegratedPrompt, run: () => Promise<T>): Promise<T> {
+    if (!resolved.preserveAttention) return run();
+    this.preservedAttentionInFlight.set(key, (this.preservedAttentionInFlight.get(key) ?? 0) + 1);
+    this.preservedAttention.add(key);
+    try {
+      return await run();
+    } finally {
+      const remaining = (this.preservedAttentionInFlight.get(key) ?? 1) - 1;
+      if (remaining > 0) this.preservedAttentionInFlight.set(key, remaining);
+      else {
+        this.preservedAttentionInFlight.delete(key);
+        const current = this.activity(key);
+        if (current === 'idle' || current === 'error') this.preservedAttention.delete(key);
+      }
+    }
+  }
+
   private async dispatchPrompt(processId: string, activityKey: string, resolved: ResolvedIntegratedPrompt, identity: SubmissionIdentity | null): Promise<unknown> {
     // Later prompts wait behind held ones so the agent reads them in order.
     const backlog = this.nextHeld(activityKey);
@@ -755,12 +772,8 @@ export class IntegratedAgentService {
     }
     if (identity) this.recordSubmission(identity.key, identity.messageId, identity.hash, 'uncertain', null, null);
     const sequence = this.sequence(activityKey);
-    if (resolved.preserveAttention) {
-      this.preservedAttentionInFlight.set(activityKey, (this.preservedAttentionInFlight.get(activityKey) ?? 0) + 1);
-      this.preservedAttention.add(activityKey);
-    }
-    let result: unknown;
-    try {
+    return this.withPreservedAttention(activityKey, resolved, async () => {
+      let result: unknown;
       try {
         result = await this.sendPrompt(processId, resolved);
       } catch (error) {
@@ -788,17 +801,7 @@ export class IntegratedAgentService {
       }
       this.admitted(processId, activityKey, sequence, resolved, identity, result);
       return result;
-    } finally {
-      if (resolved.preserveAttention) {
-        const remaining = (this.preservedAttentionInFlight.get(activityKey) ?? 1) - 1;
-        if (remaining > 0) this.preservedAttentionInFlight.set(activityKey, remaining);
-        else {
-          this.preservedAttentionInFlight.delete(activityKey);
-          const current = this.activity(activityKey);
-          if (current === 'idle' || current === 'error') this.preservedAttention.delete(activityKey);
-        }
-      }
-    }
+    });
   }
 
   // The native provider admitted the prompt. Activity and result bookkeeping
@@ -867,31 +870,35 @@ export class IntegratedAgentService {
       this.claimHeld(key, row, identity.hash);
       this.dispatching.set(key, row);
       const sequence = this.sequence(key);
-      let result: unknown;
-      try {
-        // The held id lets the transcript confirm an unconfirmed send.
-        result = await this.sendPrompt(key, { ...resolved, messageId: row.message_id });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        // It may be running, so it is never sent again. It stays visible as
-        // unconfirmed until the transcript shows it or the user dismisses it.
-        if (error instanceof UncertainDeliveryError) {
-          this.debugLog?.write('integrated', 'prompt.held_failed', { processId: key, messageId: row.message_id, uncertain: true, message });
-          this.releaseHeld(key, row, identity.hash, message, 'unconfirmed');
-          continue;
+      const outcome = await this.withPreservedAttention(key, resolved, async (): Promise<'continue' | 'return'> => {
+        let result: unknown;
+        try {
+          // The held id lets the transcript confirm an unconfirmed send.
+          result = await this.sendPrompt(key, { ...resolved, messageId: row.message_id });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          // It may be running, so it is never sent again. It stays visible as
+          // unconfirmed until the transcript shows it or the user dismisses it.
+          if (error instanceof UncertainDeliveryError) {
+            this.debugLog?.write('integrated', 'prompt.held_failed', { processId: key, messageId: row.message_id, uncertain: true, message });
+            this.releaseHeld(key, row, identity.hash, message, 'unconfirmed');
+            return 'continue';
+          }
+          // Still busy, for example a second compaction, it waits for that turn
+          // to end. Definitively rejected, it shows why and is tried again when
+          // the agent next goes idle or the user sends it now. Either way it
+          // keeps its place.
+          const busy = error instanceof TurnBusyError;
+          if (!busy) this.debugLog?.write('integrated', 'prompt.held_failed', { processId: key, messageId: row.message_id, uncertain: false, message });
+          this.releaseHeld(key, row, identity.hash, busy ? row.error : message, 'held');
+          return 'return';
+        } finally {
+          this.dispatching.delete(key);
         }
-        // Still busy, for example a second compaction, it waits for that turn
-        // to end. Definitively rejected, it shows why and is tried again when
-        // the agent next goes idle or the user sends it now. Either way it
-        // keeps its place.
-        const busy = error instanceof TurnBusyError;
-        if (!busy) this.debugLog?.write('integrated', 'prompt.held_failed', { processId: key, messageId: row.message_id, uncertain: false, message });
-        this.releaseHeld(key, row, identity.hash, busy ? row.error : message, 'held');
-        return;
-      } finally {
-        this.dispatching.delete(key);
-      }
-      this.admitted(key, key, sequence, resolved, identity, result);
+        this.admitted(key, key, sequence, resolved, identity, result);
+        return 'continue';
+      });
+      if (outcome === 'return') return;
     }
   }
 
