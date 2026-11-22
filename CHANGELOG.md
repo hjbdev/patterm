@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Bots and the assistant can call `bot_stay_quiet` to handle unsolicited wakeups
+  (digests, helper reports, agent messages, timer callbacks, routine reports)
+  silently without raising a `turn_finished` notification across any harness.
+
 - Bots can see what agents in their projects are waiting on:
   `get_conversation_output` lists pending permissions and questions, and
   notification digests point to them. A new Agent requests switch in

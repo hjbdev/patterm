@@ -328,7 +328,7 @@ export class NotificationService {
     if ((activity !== 'idle' && activity !== 'error') || snapshot || !row.turn_started_at) return false;
     db.prepare(`update processes set turn_started_at = null where id = ?`).run(processId);
     return Boolean(db.prepare(`select 1 from timeline_events
-      where event_type = 'agent.reported' and process_id = ? and created_at >= ? limit 1`).get(processId, row.turn_started_at));
+      where event_type in ('agent.reported', 'bot.stayed_quiet') and process_id = ? and created_at >= ? limit 1`).get(processId, row.turn_started_at));
   }
 
   // Turns already running when this build first starts have no stored start;
