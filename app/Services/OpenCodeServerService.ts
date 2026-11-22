@@ -169,6 +169,7 @@ export function openCodeBridgeName(mcp: McpServerSpec): string {
 // and durable per-session context; it never edits the user's OpenCode config.
 export class OpenCodeServerService {
   readonly signalsNativeSend = true as const;
+  readonly asyncAdmission = true as const;
   private readonly token: string;
   private readonly selections = new Map<string, { agent?: string; model?: string; variant?: string }>();
   // Digests of the server configs installed per directory, never the configs:

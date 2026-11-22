@@ -119,6 +119,7 @@ export interface ReviewPrompt {
 
 export interface IntegratedProviderService {
   readonly signalsNativeSend?: true;
+  readonly asyncAdmission?: true;
   prepare(input: IntegratedLaunchInput): Promise<IntegratedLaunchResult>;
   conversation(processId: string): Promise<unknown>;
   olderMessages?(processId: string, cursor: string): Promise<unknown>;
@@ -794,7 +795,7 @@ export class IntegratedAgentService {
     });
   }
 
-  private async withPreservedAttention<T>(key: string, resolved: ResolvedIntegratedPrompt, run: (onNativeSend: () => void) => Promise<{ value: T; keep: boolean }>): Promise<T> {
+  private async withPreservedAttention<T>(key: string, resolved: ResolvedIntegratedPrompt, run: (onNativeSend: () => void) => Promise<{ value: T; keep: boolean }>, asyncAdmission = false): Promise<T> {
     const busyNow = () => {
       const current = this.activity(key);
       return current === 'working' || current === 'thinking';
@@ -830,6 +831,10 @@ export class IntegratedAgentService {
         // was skipped; record the pending owner turn so a following peer prompt
         // does not claim its delayed native working event.
         token = push('owner');
+      } else if (keep && resolved.preserveAttention && asyncAdmission && token && !busyNow() && !this.turnOrigins.get(key)?.queue.includes(token)) {
+        // An earlier turn ran to completion while an async-admission peer POST
+        // was in flight and consumed this token; re-queue it for the peer turn.
+        token = push('peer');
       }
       return outcome.value;
     } finally {
@@ -854,6 +859,7 @@ export class IntegratedAgentService {
     }
     if (identity) this.recordSubmission(identity.key, identity.messageId, identity.hash, 'uncertain', null, null);
     const sequence = this.sequence(activityKey);
+    const asyncAdmission = Boolean(this.forProcess(processId).asyncAdmission);
     return this.withPreservedAttention(activityKey, resolved, async (onNativeSend) => {
       const sendInput: ResolvedIntegratedPrompt = { ...resolved, onNativeSend };
       let result: unknown;
@@ -890,7 +896,7 @@ export class IntegratedAgentService {
       }
       this.admitted(processId, activityKey, sequence, sendInput, identity, result);
       return { value: result, keep: true };
-    });
+    }, asyncAdmission);
   }
 
   // The native provider admitted the prompt. Activity and result bookkeeping
@@ -963,6 +969,7 @@ export class IntegratedAgentService {
       this.claimHeld(key, row, identity.hash);
       this.dispatching.set(key, row);
       const sequence = this.sequence(key);
+      const asyncAdmission = Boolean(this.forProcess(key).asyncAdmission);
       const outcome = await this.withPreservedAttention(key, resolved, async (onNativeSend): Promise<{ value: 'continue' | 'return'; keep: boolean }> => {
         let result: unknown;
         const sendInput: ResolvedIntegratedPrompt = { ...resolved, messageId: row.message_id, onNativeSend };
@@ -994,7 +1001,7 @@ export class IntegratedAgentService {
         }
         this.admitted(key, key, sequence, sendInput, identity, result);
         return { value: 'continue', keep: true };
-      });
+      }, asyncAdmission);
       if (outcome === 'return') return;
     }
   }
