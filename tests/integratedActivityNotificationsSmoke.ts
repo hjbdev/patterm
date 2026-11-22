@@ -412,48 +412,68 @@ async function main(): Promise<void> {
         process.env.HOME = fakeHome;
         process.env.USERPROFILE = fakeHome;
         const skillDir = path.join(fakeHome, '.config', 'opencode', 'skills', 'review-loop');
+        const claudeSkillsRoot = path.join(fakeHome, '.claude', 'skills');
         const codexSkillDir = path.join(fakeHome, '.codex', 'skills', 'example');
         const agySkillDir = path.join(fakeHome, '.gemini', 'config', 'skills', 'example');
+        const projectSkillDir = path.join(directory, '.claude', 'skills', 'local');
         fs.mkdirSync(skillDir, { recursive: true });
+        fs.mkdirSync(claudeSkillsRoot, { recursive: true });
         fs.mkdirSync(codexSkillDir, { recursive: true });
         fs.mkdirSync(agySkillDir, { recursive: true });
+        fs.mkdirSync(projectSkillDir, { recursive: true });
         fs.mkdirSync(path.join(directory, '.codex'), { recursive: true });
         const skillFile = path.join(skillDir, 'SKILL.md');
         const codexSkillFile = path.join(codexSkillDir, 'SKILL.md');
         const agySkillFile = path.join(agySkillDir, 'SKILL.md');
+        const projectSkillFile = path.join(projectSkillDir, 'SKILL.md');
         const skillSecret = path.join(skillDir, '.env');
         const otherHome = path.join(fakeHome, 'notes.txt');
         const codexAuth = path.join(directory, '.codex', 'auth.json');
         const oauthCreds = path.join(directory, '.credentials.json');
         fs.writeFileSync(skillFile, '# skill');
+        fs.symlinkSync(skillDir, path.join(claudeSkillsRoot, 'review-loop'), 'dir');
         fs.writeFileSync(codexSkillFile, '# codex skill');
         fs.writeFileSync(agySkillFile, '# agy skill');
+        fs.writeFileSync(projectSkillFile, '# local skill');
         fs.writeFileSync(skillSecret, 'SECRET=1');
         fs.writeFileSync(otherHome, 'private');
         fs.writeFileSync(codexAuth, '{}');
         fs.writeFileSync(oauthCreds, '{}');
         nativePermissions = [
           { id: 'skill-read', tool_kind: 'read', once: true, action: 'Read skill', resources: ['~/.config/opencode/skills/review-loop/SKILL.md'] },
+          { id: 'symlink-skill-read', tool_kind: 'read', once: true, action: 'Read symlinked skill', resources: ['~/.claude/skills/review-loop/SKILL.md'] },
+          { id: 'project-skill-read', tool_kind: 'read', once: true, action: 'Read project skill', resources: ['.claude/skills/local/SKILL.md'] },
           { id: 'codex-skill-read', tool_kind: 'read', once: true, action: 'Read codex skill', resources: [codexSkillFile] },
-          { id: 'agy-skill-read', tool_kind: 'read', once: true, action: 'Read agy skill', resources: [agySkillFile] },
-          { id: 'skill-secret', tool_kind: 'read', once: true, action: 'Read secret', resources: [skillSecret] },
-          { id: 'home-other', tool_kind: 'read', once: true, action: 'Read home', resources: [otherHome] },
-          { id: 'codex-auth', tool_kind: 'read', once: true, action: 'Read codex auth', resources: ['.codex/auth.json'] },
-          { id: 'oauth-creds', tool_kind: 'read', once: true, action: 'Read oauth creds', resources: ['.credentials.json'] }
+          { id: 'agy-skill-read', tool_kind: 'read', once: true, action: 'Read agy skill', resources: [agySkillFile] }
         ];
         stream!({ processId: 'agent', revision: 145, kind: 'pending' });
         await settle();
         const skillSummary = pendingRequestSummary({ harness: 'agy', cwd: directory }, await agy.peekConversation('agent'));
         assert.deepEqual(skillSummary.map((item) => [item.request_id, item.can_approve_once]), [
           ['skill-read', true],
+          ['symlink-skill-read', true],
+          ['project-skill-read', true],
           ['codex-skill-read', true],
-          ['agy-skill-read', true],
+          ['agy-skill-read', true]
+        ]);
+        assert.equal((await permissions.overseerReply('agent', 'skill-read', { decision: 'once' }, 'bot')).status, 'resolved');
+        assert.equal((await permissions.overseerReply('agent', 'symlink-skill-read', { decision: 'once' }, 'bot')).status, 'resolved');
+        assert.equal((await permissions.overseerReply('agent', 'project-skill-read', { decision: 'once' }, 'bot')).status, 'resolved');
+        nativePermissions = [
+          { id: 'skill-secret', tool_kind: 'read', once: true, action: 'Read secret', resources: [skillSecret] },
+          { id: 'home-other', tool_kind: 'read', once: true, action: 'Read home', resources: [otherHome] },
+          { id: 'codex-auth', tool_kind: 'read', once: true, action: 'Read codex auth', resources: ['.codex/auth.json'] },
+          { id: 'oauth-creds', tool_kind: 'read', once: true, action: 'Read oauth creds', resources: ['.credentials.json'] }
+        ];
+        stream!({ processId: 'agent', revision: 146, kind: 'pending' });
+        await settle();
+        const deniedSummary = pendingRequestSummary({ harness: 'agy', cwd: directory }, await agy.peekConversation('agent'));
+        assert.deepEqual(deniedSummary.map((item) => [item.request_id, item.can_approve_once]), [
           ['skill-secret', false],
           ['home-other', false],
           ['codex-auth', false],
           ['oauth-creds', false]
         ]);
-        assert.equal((await permissions.overseerReply('agent', 'skill-read', { decision: 'once' }, 'bot')).status, 'resolved');
         await assert.rejects(permissions.overseerReply('agent', 'skill-secret', { decision: 'once' }, 'bot'), /only a one-time read/i);
         await assert.rejects(permissions.overseerReply('agent', 'home-other', { decision: 'once' }, 'bot'), /only a one-time read/i);
         await assert.rejects(permissions.overseerReply('agent', 'codex-auth', { decision: 'once' }, 'bot'), /only a one-time read/i);

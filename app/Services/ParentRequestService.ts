@@ -347,10 +347,14 @@ function sameRequest(a: NativeRequest, b: NativeRequest): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-function allowedReadRoots(cwd: string): string[] {
+function allowedReadRoots(cwd: string): Array<{ canonical: string; logical: string }> {
   const home = os.homedir();
   const candidates = [
     cwd,
+    path.join(cwd, '.claude', 'skills'),
+    path.join(cwd, '.codex', 'skills'),
+    path.join(cwd, '.agents', 'skills'),
+    path.join(cwd, '.gemini', 'skills'),
     ...(home ? [
       path.join(home, '.config', 'opencode', 'skills'),
       path.join(home, '.claude', 'skills'),
@@ -360,11 +364,17 @@ function allowedReadRoots(cwd: string): string[] {
       path.join(home, '.gemini', 'antigravity-cli', 'builtin', 'skills')
     ] : [])
   ];
-  const roots: string[] = [];
+  const roots: Array<{ canonical: string; logical: string }> = [];
   for (const candidate of candidates) {
-    try { roots.push(realpathSync(candidate)); } catch { /* ignore missing roots */ }
+    try { roots.push({ canonical: realpathSync(candidate), logical: path.resolve(candidate) }); } catch { /* ignore missing roots */ }
   }
   return roots;
+}
+
+function insideNonSensitive(root: string, target: string): boolean {
+  const relative = path.relative(root, target);
+  return Boolean(relative) && !path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`)
+    && !sensitivePath(relative);
 }
 
 function expandHome(resource: string): string {
@@ -384,11 +394,10 @@ function canApprove(source: Pick<Process, 'harness' | 'cwd'>, permission: Integr
     const requested = path.resolve(cwd, expandHome(permission.resources[0]!));
     const file = realpathSync(requested);
     if (!statSync(file).isFile()) return false;
-    return allowedReadRoots(cwd).some((root) => {
-      const relative = path.relative(root, file);
-      return Boolean(relative) && !path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`)
-        && !sensitivePath(path.relative(root, requested)) && !sensitivePath(relative);
-    });
+    const roots = allowedReadRoots(cwd);
+    const resolvedAllowed = roots.some(({ canonical }) => insideNonSensitive(canonical, file));
+    const requestedAllowed = roots.some(({ canonical, logical }) => insideNonSensitive(logical, requested) || insideNonSensitive(canonical, requested));
+    return resolvedAllowed && requestedAllowed;
   } catch { return false; }
 }
 
