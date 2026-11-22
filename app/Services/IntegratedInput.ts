@@ -47,6 +47,10 @@ export interface ResolvedIntegratedPrompt {
   messageId?: string | undefined;
   // Set only by BotRelay's internal dispatch, never by a composer request.
   routineDigest?: true;
+  // Snapshotted source scope ('workspace' or 'project:<id>') for bot-bound
+  // prompts held in integrated_held_prompts, rechecked before native admission.
+  sourceScope?: string | undefined;
+  routineFallback?: { runId: string; processId: string; title: string; body: string } | undefined;
 }
 
 export interface IntegratedWorktreeFile {

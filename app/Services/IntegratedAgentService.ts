@@ -574,9 +574,21 @@ export class IntegratedAgentService {
     return this.whileSending(processId, () => this.submit(processId, input));
   }
 
+  private heldPromptGuard: ((processId: string, prompt: ResolvedIntegratedPrompt) => boolean) | null = null;
+
+  setHeldPromptGuard(guard: (processId: string, prompt: ResolvedIntegratedPrompt) => boolean): void {
+    this.heldPromptGuard = guard;
+  }
+
   routineNotificationDigest(processId: string, text: string): Promise<unknown> {
     if (this.forProcess(processId) !== this.providers.claude) return this.prompt(processId, text);
     return this.whileSending(processId, () => this.submit(processId, text, true));
+  }
+
+  // Sends a bot-bound prompt carrying its source scope (and optional fallback)
+  // so held-queue replay rechecks purview before native admission.
+  scopedPrompt(processId: string, text: string, sourceScope: string, routineFallback?: ResolvedIntegratedPrompt['routineFallback']): Promise<unknown> {
+    return this.whileSending(processId, () => this.submit(processId, text, undefined, { sourceScope, routineFallback }));
   }
 
   // Expiring offers must not get stuck in Patterm's durable held prompt queue.
@@ -614,7 +626,12 @@ export class IntegratedAgentService {
     }
   }
 
-  private async submit(processId: string, input: IntegratedPromptInput | string, routineDigest?: true): Promise<unknown> {
+  private async submit(
+    processId: string,
+    input: IntegratedPromptInput | string,
+    routineDigest?: true,
+    scope?: { sourceScope: string; routineFallback?: ResolvedIntegratedPrompt['routineFallback'] }
+  ): Promise<unknown> {
     const request: IntegratedPromptInput = typeof input === 'string' ? { text: input } : input;
     const hasContent = Boolean(request.text.trim() || request.references?.length || request.attachments?.length);
     if (!hasContent) throw new Error('Message is empty');
@@ -625,6 +642,10 @@ export class IntegratedAgentService {
     const arrived = await this.serially(this.arrivals, key, async () => {
       const resolved = this.inputs ? await this.inputs.resolve(processId, request) : { text: request.text, messageId: request.messageId, references: [], attachments: [] };
       if (routineDigest) resolved.routineDigest = routineDigest;
+      if (scope) {
+        resolved.sourceScope = scope.sourceScope;
+        if (scope.routineFallback) resolved.routineFallback = scope.routineFallback;
+      }
       // Wrapped so the arrival chain waits for the prompt's place, not its
       // native call.
       const result = this.accept(processId, key, resolved);
@@ -837,6 +858,10 @@ export class IntegratedAgentService {
       retryRejected = false;
       const resolved = JSON.parse(row.payload) as ResolvedIntegratedPrompt;
       const identity = { key, messageId: row.message_id, hash: row.payload_hash ?? submissionHash(resolved) };
+      if (resolved.sourceScope && this.heldPromptGuard && !this.heldPromptGuard(key, resolved)) {
+        this.claimHeld(key, row, identity.hash);
+        continue;
+      }
       // Claimed before the call, as a first send reserves its id: a restart
       // after native admission leaves an uncertain id, never a second send.
       this.claimHeld(key, row, identity.hash);

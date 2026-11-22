@@ -7,6 +7,7 @@ import type { SettingsService } from './SettingsService';
 import { botVoiceOptions } from './AssistantVoiceProfile';
 import { VOICE_BRIEF_AGENT_LIMIT, voiceBrief, type VoiceBriefAgent } from './AssistantVoiceBrief';
 import type { IntegratedConversationMessage } from './IntegratedConversation';
+import type { ResolvedIntegratedPrompt } from './IntegratedInput';
 import type { BotFocusState, BotInbox, BotInboxItem } from './BotInbox';
 import { AssistantMemoryService } from './AssistantMemoryService';
 import { ASSISTANT_BOT_ID, purviewAllows, type Bot } from '../Bots/BotSettings';
@@ -59,7 +60,7 @@ export class BotRelay {
     private readonly database: DatabaseService,
     private readonly bots: Pick<BotService, 'harness' | 'currentProcess'>,
     private readonly codex: Pick<CodexAppServerService, 'realtimeStart' | 'realtimeStop' | 'realtimeAppendText' | 'onRealtime'>,
-    private readonly integrated: Pick<IntegratedAgentService, 'prompt' | 'conversation' | 'routineNotificationDigest'>,
+    private readonly integrated: Pick<IntegratedAgentService, 'prompt' | 'conversation' | 'routineNotificationDigest'> & { scopedPrompt?: IntegratedAgentService['scopedPrompt'] },
     private readonly settings: Pick<SettingsService, 'bots'>,
     private readonly inbox: BotInbox,
     private readonly options: { log?: (event: string, data: Record<string, unknown>) => void; digestDelayMs?: number; compacting?: (processId: string) => boolean; notify?: (input: RaiseNotificationInput) => void } = {}
@@ -269,13 +270,18 @@ export class BotRelay {
     const processId = this.bots.currentProcess(botId);
     if (!processId) throw new Error(`send_message: ${botId === ASSISTANT_BOT_ID ? 'the assistant' : name} is not running`);
     if (processId === fromProcessId) throw new Error(`send_message: ${botId === ASSISTANT_BOT_ID ? 'the assistant' : name} cannot message itself`);
-    const sender = this.database.connection.prepare(`select coalesce(sessions.title, processes.name) as name, projects.name as project_name
+    const sender = this.database.connection.prepare(`select coalesce(sessions.title, processes.name) as name, projects.name as project_name, processes.project_id, projects.kind as project_kind
       from processes left join projects on projects.id = processes.project_id
       left join sessions on sessions.process_id = processes.id
-      where processes.id = ? order by sessions.started_at desc limit 1`).get(fromProcessId) as { name: string | null; project_name: string | null } | undefined;
+      where processes.id = ? order by sessions.started_at desc limit 1`).get(fromProcessId) as { name: string | null; project_name: string | null; project_id: string | null; project_kind: string | null } | undefined;
     const where = [sender?.project_name, sender?.name].filter(Boolean).join(' / ');
     const heading = `[agent message from ${fromProcessId}${where ? ` (${where})` : ''}, not the user]`;
-    if (this.inbox.holdFor(botId, { kind: 'agent_message', sourceProcessId: fromProcessId, title: `Message from ${where || fromProcessId}`, body: message })) {
+    const sourceScope = sender?.project_id
+      ? sender.project_kind === 'assistant' ? 'workspace'
+        : sender.project_kind === 'bots' ? null
+        : `project:${sender.project_id}`
+      : null;
+    if (this.inbox.holdFor(botId, { kind: 'agent_message', sourceProcessId: fromProcessId, sourceScope, title: `Message from ${where || fromProcessId}`, body: message })) {
       return { process_id: processId, delivery: 'queued' };
     }
     if (this.voice?.processId === processId) {
@@ -292,6 +298,78 @@ export class BotRelay {
     // Held until a compaction or review ends.
     if (result?.delivery === 'queued') return { process_id: processId, delivery: 'queued', ...(typeof result.detail === 'string' ? { detail: result.detail } : {}) };
     return { process_id: processId, delivery: result?.delivery === 'uncertain' ? 'uncertain' : 'delivered' };
+  }
+
+  // Delivers a completed routine report to a bot with its immutable source
+  // scope attached, so both Focus mode and Integrated's held-prompt queue
+  // recheck purview before delivering and fall back to the user if revoked.
+  async deliverRoutineReport(botId: string, input: {
+    runId: string;
+    processId: string;
+    routineName: string;
+    projectId: string | null;
+    report: string;
+    message: string;
+  }): Promise<Delivery> {
+    const name = this.bot(botId)?.name ?? botId;
+    const processId = this.bots.currentProcess(botId);
+    if (!processId) throw new Error(`send_message: ${botId === ASSISTANT_BOT_ID ? 'the assistant' : name} is not running`);
+    if (processId === input.processId) throw new Error(`send_message: ${botId === ASSISTANT_BOT_ID ? 'the assistant' : name} cannot message itself`);
+    const sourceScope = input.projectId === null ? 'workspace' : `project:${input.projectId}`;
+    const sender = this.database.connection.prepare(`select coalesce(sessions.title, processes.name) as name, projects.name as project_name
+      from processes left join projects on projects.id = processes.project_id
+      left join sessions on sessions.process_id = processes.id
+      where processes.id = ? order by sessions.started_at desc limit 1`).get(input.processId) as { name: string | null; project_name: string | null } | undefined;
+    const where = [sender?.project_name, sender?.name].filter(Boolean).join(' / ');
+    const heading = `[agent message from ${input.processId}${where ? ` (${where})` : ''}, not the user]`;
+    if (this.inbox.holdFor(botId, {
+      kind: 'report',
+      sourceProcessId: input.processId,
+      sourceScope,
+      title: `${input.routineName}: done`,
+      body: input.message,
+      dedupeKey: `routine-report:${input.runId}`
+    })) {
+      return { process_id: processId, delivery: 'queued' };
+    }
+    if (this.voice?.processId === processId) {
+      try {
+        await this.codex.realtimeAppendText(processId, `[System notification, not from the user. Briefly tell the user what this agent says.]\n${heading}\n${input.message}`);
+      } catch (error) {
+        if ((error as { definitive?: unknown } | null)?.definitive === false) return { process_id: processId, delivery: 'uncertain' };
+        throw error;
+      }
+      return { process_id: processId, delivery: 'delivered' };
+    }
+    const payload = `${heading}\n${input.message}`;
+    const fallback = { runId: input.runId, processId: input.processId, title: `${input.routineName}: done`, body: input.report };
+    const result = (this.integrated.scopedPrompt
+      ? await this.integrated.scopedPrompt(processId, payload, sourceScope, fallback)
+      : await this.integrated.prompt(processId, payload)) as { delivery?: unknown; detail?: unknown } | null | undefined;
+    if (result?.delivery === 'queued') return { process_id: processId, delivery: 'queued', ...(typeof result.detail === 'string' ? { detail: result.detail } : {}) };
+    return { process_id: processId, delivery: result?.delivery === 'uncertain' ? 'uncertain' : 'delivered' };
+  }
+
+  // Rechecks a held Integrated prompt's source scope before native admission;
+  // when a bot lost purview while the prompt waited (e.g. during compaction),
+  // routes any routine report fallback directly to the user instead.
+  allowHeldPrompt(processId: string, prompt: ResolvedIntegratedPrompt): boolean {
+    if (!prompt.sourceScope) return true;
+    const botId = this.inbox.botFor(processId);
+    if (!botId) return true;
+    const bot = this.bot(botId);
+    if (bot?.enabled && scopeInPurview(bot, prompt.sourceScope)) return true;
+    if (prompt.routineFallback) {
+      this.options.notify?.({
+        processId: prompt.routineFallback.processId,
+        source: 'runtime',
+        kind: 'message',
+        title: prompt.routineFallback.title,
+        body: prompt.routineFallback.body,
+        dedupeKey: `routine-report:${prompt.routineFallback.runId}`
+      });
+    }
+    return false;
   }
 
   dispose(): void {
@@ -412,34 +490,37 @@ export class BotRelay {
   }
 
   private itemInPurview(bot: Bot, item: BotInboxItem): boolean {
+    if (item.source_scope) return scopeInPurview(bot, item.source_scope);
     if (!item.source_process_id) return true;
     const run = this.database.connection.prepare(`select project_id from routine_runs where process_id = ? order by created_at desc limit 1`)
       .get(item.source_process_id) as { project_id: string | null } | undefined;
     if (run) {
       return run.project_id === null ? bot.purview.kind === 'all' : purviewAllows(bot.purview, run.project_id);
     }
-    const proc = this.database.connection.prepare(`select project_id from processes where id = ?`)
-      .get(item.source_process_id) as { project_id: string | null } | undefined;
-    if (proc?.project_id && !this.isBotProject(proc.project_id)) {
+    const proc = this.database.connection.prepare(`select processes.project_id, projects.kind from processes left join projects on projects.id = processes.project_id where processes.id = ?`)
+      .get(item.source_process_id) as { project_id: string | null; kind: string | null } | undefined;
+    if (proc?.kind === 'assistant') return bot.purview.kind === 'all';
+    if (proc?.project_id && proc.kind !== 'bots') {
       return purviewAllows(bot.purview, proc.project_id);
     }
     return true;
   }
 
   private fallbackUndeliverableRoutine(item: BotInboxItem): void {
-    if (!item.source_process_id || !this.options.notify) return;
-    const run = this.database.connection.prepare(`select routine_runs.id, routines.name, routine_runs.report, routine_runs.excerpt
+    // Only fall back for actual undelivered routine report items, never for
+    // notification digest copies (e.g. an already-sent failure notification).
+    if (item.kind !== 'report' || !item.dedupe_key?.startsWith('routine-report:') || !this.options.notify) return;
+    const runId = item.dedupe_key.slice('routine-report:'.length);
+    const run = this.database.connection.prepare(`select routine_runs.id, routine_runs.process_id, routines.name, routine_runs.report, routine_runs.excerpt
       from routine_runs join routines on routines.id = routine_runs.routine_id
-      where routine_runs.process_id = ? order by routine_runs.created_at desc limit 1`)
-      .get(item.source_process_id) as { id: string; name: string; report: string | null; excerpt: string | null } | undefined;
-    if (!run) return;
+      where routine_runs.id = ?`).get(runId) as { id: string; process_id: string | null; name: string; report: string | null; excerpt: string | null } | undefined;
     this.options.notify({
-      processId: item.source_process_id,
+      processId: run?.process_id ?? item.source_process_id,
       source: 'runtime',
       kind: 'message',
-      title: `${run.name}: done`,
-      body: run.report ?? run.excerpt ?? item.body,
-      dedupeKey: `routine-report:${run.id}`
+      title: run ? `${run.name}: done` : item.title || 'Routine: done',
+      body: run?.report ?? run?.excerpt ?? item.body,
+      dedupeKey: item.dedupe_key
     });
   }
 
@@ -503,11 +584,18 @@ function describeNotification(notification: NotificationRecord): string {
   return `- [${notification.kind}] ${where || 'Patterm'} — ${notification.title}${body}${process}`;
 }
 
+function scopeInPurview(bot: Bot, scope: string): boolean {
+  if (scope === 'workspace') return bot.purview.kind === 'all';
+  if (scope.startsWith('project:')) return purviewAllows(bot.purview, scope.slice(8));
+  return true;
+}
+
 function notificationItem(notification: NotificationRecord) {
   const where = [notification.project_name, notification.process_name].filter(Boolean).join(' / ');
   return {
     kind: 'notification' as const,
     sourceProcessId: notification.process_id,
+    sourceScope: notification.project_id ? `project:${notification.project_id}` : 'workspace',
     title: `[${notification.kind}] ${where || 'Patterm'} — ${notification.title}`,
     body: notification.body,
     // Repeats from one source collapse into its latest notification.

@@ -6,6 +6,9 @@ export type BotInboxKind = 'notification' | 'agent_message' | 'report' | 'timer'
 export interface BotInboxInput {
   kind: BotInboxKind;
   sourceProcessId?: string | null | undefined;
+  // Immutable enqueue-time scope ('workspace' or 'project:<id>'), used to
+  // enforce purview on read and flush even if the source routine/run is deleted.
+  sourceScope?: string | null | undefined;
   title?: string | undefined;
   body: string;
   // Pending items with the same key coalesce: the latest text wins and the
@@ -17,6 +20,8 @@ export interface BotInboxItem {
   id: string;
   kind: BotInboxKind;
   source_process_id: string | null;
+  source_scope: string | null;
+  dedupe_key: string | null;
   title: string;
   body: string;
   occurrences: number;
@@ -222,12 +227,13 @@ export class BotInbox {
   private enqueue(botId: string, input: BotInboxInput): void {
     const at = new Date(this.now()).toISOString();
     const body = input.body.length > BODY_LIMIT ? `${input.body.slice(0, BODY_LIMIT)}\n[truncated]` : input.body;
-    this.database.connection.prepare(`insert into assistant_inbox (id, bot_id, kind, source_process_id, title, body, dedupe_key, created_at, updated_at)
-      values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    this.database.connection.prepare(`insert into assistant_inbox (id, bot_id, kind, source_process_id, source_scope, title, body, dedupe_key, created_at, updated_at)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       on conflict (bot_id, dedupe_key) where dedupe_key is not null and digest_id is null
       do update set title = excluded.title, body = excluded.body, source_process_id = excluded.source_process_id,
+        source_scope = coalesce(excluded.source_scope, assistant_inbox.source_scope),
         occurrences = occurrences + 1, updated_at = excluded.updated_at`)
-      .run(`inbox_${randomUUID()}`, botId, input.kind, input.sourceProcessId ?? null, input.title ?? '', body, input.dedupeKey ?? null, at, at);
+      .run(`inbox_${randomUUID()}`, botId, input.kind, input.sourceProcessId ?? null, input.sourceScope ?? null, input.title ?? '', body, input.dedupeKey ?? null, at, at);
   }
 
   // Returns claimed items to the queue. A newer pending repeat folds into the
@@ -271,7 +277,7 @@ export class BotInbox {
   }
 }
 
-const ITEM_SELECT = `select id, kind, source_process_id, title, body, occurrences, created_at, updated_at, digest_id, delivered_at, delivery from assistant_inbox`;
+const ITEM_SELECT = `select id, kind, source_process_id, source_scope, dedupe_key, title, body, occurrences, created_at, updated_at, digest_id, delivered_at, delivery from assistant_inbox`;
 
 function focusKey(botId: string): string {
   return `${FOCUS_KEY}:${botId}`;

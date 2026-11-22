@@ -168,7 +168,7 @@ export interface RoutineServiceDeps {
   bots?: () => readonly Bot[];
   // Gives a run's report to a bot (or the assistant) as an agent message.
   // Throws when the target bot is not running.
-  toBot?: (botId: string, processId: string, message: string) => Promise<unknown>;
+  toBot?: (botId: string, processId: string, message: string, meta?: { runId: string; routineName: string; projectId: string | null; report: string }) => Promise<unknown>;
   // Legacy fallback for delivering to the assistant.
   toAssistant?: (processId: string, message: string) => Promise<unknown>;
   onChanged: (workbench: boolean) => void;
@@ -366,7 +366,7 @@ export class RoutineService {
           notify();
         } else {
           const deliver = this.deps.toBot
-            ? this.deps.toBot(targetBotId, processId, text)
+            ? this.deps.toBot(targetBotId, processId, text, { runId: run.id, routineName: run.name, projectId: run.project_id, report })
             : targetBotId === ASSISTANT_BOT_ID && this.deps.toAssistant
               ? this.deps.toAssistant(processId, text)
               : Promise.reject(new Error('the target bot is unavailable'));
