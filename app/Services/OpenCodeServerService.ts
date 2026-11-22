@@ -1009,7 +1009,7 @@ export class OpenCodeServerService {
 
   private applyRootExecution(sessionId: string, state: OpenCodeActivity, execution: OpenCodeExecutionEvent, failure: string): void {
     if (execution === 'started') {
-      const successor = state.emitted === 'working';
+      const successor = state.emitted === 'working' || state.settling !== null;
       state.execution = 'running';
       state.detail = '';
       this.publishActivity(state);
