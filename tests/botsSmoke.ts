@@ -7,7 +7,7 @@ import { ASSISTANT_BOT_ID, botInput, botSettingsInput, parseBotSettings, purview
 import type { HarnessPreset } from '../app/Harness/HarnessPresets';
 import { restartBotFromSettings, restartNeed } from '../resources/js/lib/bots';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
-import { AgentContextService } from '../app/Services/AgentContextService';
+import { AgentContextService, BOT_CONTEXT_BYTES } from '../app/Services/AgentContextService';
 import { BotService, botProjectId } from '../app/Services/BotService';
 import { BROWSER_TOOLS, INTEGRATED_CONTROL_TOOLS } from '../app/Http/BrowserTools';
 import type { AgentHistoryReadService } from '../app/Services/AgentHistory/AgentHistoryReadService';
@@ -200,18 +200,26 @@ async function main(): Promise<void> {
       return Promise.resolve();
     };
     const unsaved = new Set<string>();
+    const historyRows = [
+      { id: 'm0', conversationId: 'conv-fable-1', seq: 1, role: 'user', kind: 'message', text: `OLDEST_TURN ${'A'.repeat(1100)}`, toolName: null, toolCallId: null, toolInputSummary: null, toolOutputSummary: null, providerCreatedAt: null, createdAt: now, metadata: null, media: [] },
+      ...Array.from({ length: 6 }, (_, index) => ({
+        id: `mid-${index}`, conversationId: 'conv-fable-1', seq: 2 + index, role: 'assistant', kind: 'message', text: `MID_TURN_${index} ${'B'.repeat(1100)}`, toolName: null, toolCallId: null, toolInputSummary: null, toolOutputSummary: null, providerCreatedAt: null, createdAt: now, metadata: null, media: []
+      })),
+      { id: 'm1', conversationId: 'conv-fable-1', seq: 10, role: 'user', kind: 'message', text: 'Keep an eye\0 on PR 240.', toolName: null, toolCallId: null, toolInputSummary: null, toolOutputSummary: null, providerCreatedAt: null, createdAt: now, metadata: null, media: [] },
+      { id: 'm2', conversationId: 'conv-fable-1', seq: 11, role: 'assistant', kind: 'message', text: 'Watching PR 240 and its helper.', toolName: null, toolCallId: null, toolInputSummary: null, toolOutputSummary: null, providerCreatedAt: null, createdAt: now, metadata: null, media: [] },
+      // Tool-heavy tail that would crowd out conversational messages without backwards paging.
+      ...Array.from({ length: 80 }, (_, index) => ({
+        id: `tool-${index}`, conversationId: 'conv-fable-1', seq: 12 + index, role: 'assistant', kind: 'tool_call', text: '', toolName: 'read_file', toolCallId: `tc-${index}`, toolInputSummary: null, toolOutputSummary: null, providerCreatedAt: null, createdAt: now, metadata: null, media: []
+      }))
+    ];
     const history = {
       conversationIdForSession: ({ projectId }: { projectId: string }) => projectId === botProjectId('fable') ? 'conv-fable-1' : null,
-      tail: (conversationId: string) => conversationId === 'conv-fable-1'
-        ? {
-            conversation: null,
-            has_more: false,
-            messages: [
-              { id: 'm1', conversationId, seq: 1, role: 'user', kind: 'message', text: 'Keep an eye on PR 240.', toolName: null, toolCallId: null, toolInputSummary: null, toolOutputSummary: null, providerCreatedAt: null, createdAt: now, metadata: null, media: [] },
-              { id: 'm2', conversationId, seq: 2, role: 'assistant', kind: 'message', text: 'Watching PR 240 and its helper.', toolName: null, toolCallId: null, toolInputSummary: null, toolOutputSummary: null, providerCreatedAt: null, createdAt: now, metadata: null, media: [] }
-            ]
-          }
-        : { conversation: null, has_more: false, messages: [] }
+      tail: (conversationId: string, limit: number, beforeSeq?: number) => {
+        if (conversationId !== 'conv-fable-1') return { conversation: null, has_more: false, messages: [] };
+        const filtered = beforeSeq === undefined ? historyRows : historyRows.filter((row) => row.seq < beforeSeq);
+        const slice = filtered.slice(-limit);
+        return { conversation: null, has_more: filtered.length > slice.length, messages: slice };
+      }
     } as unknown as NonNullable<NonNullable<ConstructorParameters<typeof BotService>[6]>['history']>;
     const bots = new BotService(database, dir, launcher, settings, workbench, {
       stop,
@@ -272,6 +280,7 @@ async function main(): Promise<void> {
     assert.match(handoffCtx, /Helper \(proc-helper,/);
     assert.match(handoffCtx, /User: Keep an eye on PR 240\./);
     assert.match(handoffCtx, /Assistant: Watching PR 240 and its helper\./);
+    assert.equal(handoffCtx.includes('\0'), false, 'handoff strips NUL bytes that break argv-based CLIs');
     assert.doesNotMatch(bots.context('fable'), /\[Conversation handoff/, 'handoff is cleared after launch');
     resumeFails = false;
     // A bot nobody messaged has no saved conversation, so it starts fresh.
@@ -284,6 +293,18 @@ async function main(): Promise<void> {
     assert.equal(launches.at(-1)!.resume, null);
     assert.doesNotMatch(launchedContexts.at(-1)?.context ?? '', /\[Conversation handoff/, '/new starts clean without handoff');
     assert.equal(stopped.at(-1), 'proc-bot-5');
+    // Switching a bot to OpenCode trims oldest turns first to stay within BOT_CONTEXT_BYTES.
+    const savedBots = settings.bots().bots.slice(1);
+    settings.updateBots({ bots: savedBots.map((entry) => entry.id === 'fable' ? { ...entry, harness: 'opencode', model: null, reasoning: null, serviceTier: null } : entry) });
+    await stop(bots.state('fable').process_id!);
+    await bots.ensure('fable');
+    const openCodeCtx = launchedContexts.at(-1)?.context ?? '';
+    assert.ok(Buffer.byteLength(JSON.stringify(openCodeCtx), 'utf8') <= BOT_CONTEXT_BYTES, 'OpenCode handoff stays within BOT_CONTEXT_BYTES');
+    assert.match(openCodeCtx, /Assistant: Watching PR 240 and its helper\./, 'OpenCode trimming preserves newest turns');
+    assert.doesNotMatch(openCodeCtx, /OLDEST_TURN/, 'OpenCode trimming drops oldest turns first');
+    settings.updateBots({ bots: savedBots });
+    await stop(bots.state('fable').process_id!);
+    await bots.ensure('fable');
     // Removing a bot stops its session.
     settings.updateBots({ bots: [settings.bots().bots[1]!] });
     await bots.reconcile();

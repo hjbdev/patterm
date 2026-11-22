@@ -37,7 +37,15 @@ interface BotRow { process_id: string; session_id: string; resume_id: string | n
 
 const HANDOFF_CHAR_BUDGET = 16_000;
 const HANDOFF_TURN_LIMIT = 40;
+const HANDOFF_PAGE_SIZE = 64;
+const HANDOFF_MAX_PAGES = 5;
 const HANDOFF_MESSAGE_CLIP = 1_200;
+
+interface PendingHandoff {
+  conversationId: string | null;
+  helpers: string[];
+  turns: string[];
+}
 
 // Runs each bot, the assistant included, as one persistent Integrated
 // session: ensure() reuses the live session, otherwise resumes the bot's latest
@@ -46,7 +54,7 @@ const HANDOFF_MESSAGE_CLIP = 1_200;
 // one at a time, so a bot never ends up with two sessions.
 export class BotService {
   private readonly queue = new Map<string, Promise<unknown>>();
-  private readonly pendingHandoff = new Map<string, string>();
+  private readonly pendingHandoff = new Map<string, PendingHandoff>();
 
   constructor(
     private readonly database: DatabaseService,
@@ -288,36 +296,49 @@ export class BotService {
 
   // Builds a bounded continuity handoff from imported history and live helpers
   // when a bot starts a fresh CLI session after a failed resume or harness change.
-  private buildHandoff(bot: Bot): string | null {
+  private buildHandoff(bot: Bot): PendingHandoff | null {
     const role = botRole(bot.id);
     const prior = this.previousAny(bot.id);
-    const helpers = this.database.connection.prepare(
+    const helpers = (this.database.connection.prepare(
       `select processes.id, processes.name, processes.activity, coalesce(projects.name, processes.project_id) as project
        from processes left join projects on projects.id = processes.project_id
        where processes.status = 'running' and processes.kind = 'agent'
          and processes.parent_process_id in (select process_id from sessions where session_role = ? and bot_id = ? and process_id is not null)
        order by processes.updated_at desc limit 12`
-    ).all(role, bot.id) as Array<{ id: string; name: string; activity: string | null; project: string }>;
+    ).all(role, bot.id) as Array<{ id: string; name: string; activity: string | null; project: string }>)
+      .map((h) => `- ${cleanHandoffText(h.name)} (${cleanHandoffText(h.id)}, ${cleanHandoffText(h.project)}, ${cleanHandoffText(h.activity ?? 'unknown')})`);
 
     let conversationId: string | null = null;
     const turns: string[] = [];
     if (prior && this.options.history) {
-      conversationId = this.options.history.conversationIdForSession({
+      const foundId = this.options.history.conversationIdForSession({
         sessionId: prior.session_id,
         provider: prior.harness ?? null,
         resumeId: prior.resume_id,
         projectId: botProjectId(bot.id)
       });
-      if (conversationId) {
-        const tail = this.options.history.tail(conversationId, HANDOFF_TURN_LIMIT);
-        const lines = tail.messages
-          .filter((msg) => msg.kind === 'message' && (msg.role === 'user' || msg.role === 'assistant') && msg.text.trim())
-          .map((msg) => {
+      conversationId = foundId ? cleanHandoffText(foundId) : null;
+      if (foundId) {
+        // Page backwards past tool-heavy turns so conversational messages are not crowded out.
+        const lines: string[] = [];
+        let beforeSeq: number | undefined;
+        for (let page = 0; page < HANDOFF_MAX_PAGES && lines.length < HANDOFF_TURN_LIMIT; page++) {
+          const tail = this.options.history.tail(foundId, HANDOFF_PAGE_SIZE, beforeSeq);
+          if (!tail.messages.length) break;
+          for (let i = tail.messages.length - 1; i >= 0 && lines.length < HANDOFF_TURN_LIMIT; i--) {
+            const msg = tail.messages[i]!;
+            if (msg.kind !== 'message' || (msg.role !== 'user' && msg.role !== 'assistant')) continue;
+            const cleaned = cleanHandoffText(msg.text);
+            if (!cleaned) continue;
             const label = msg.role === 'user' ? 'User' : 'Assistant';
-            const cleaned = msg.text.trim().replace(/\s+/g, ' ');
             const clipped = cleaned.length > HANDOFF_MESSAGE_CLIP ? `${cleaned.slice(0, HANDOFF_MESSAGE_CLIP - 1)}…` : cleaned;
-            return `${label}: ${clipped}`;
-          });
+            lines.unshift(`${label}: ${clipped}`);
+          }
+          if (!tail.has_more) break;
+          const oldestSeq = tail.messages[0]?.seq;
+          if (typeof oldestSeq !== 'number' || (beforeSeq !== undefined && oldestSeq >= beforeSeq)) break;
+          beforeSeq = oldestSeq;
+        }
         let used = 0;
         for (let i = lines.length - 1; i >= 0; i--) {
           const line = lines[i]!;
@@ -328,19 +349,7 @@ export class BotService {
       }
     }
     if (!turns.length && !helpers.length) return null;
-    const sections = [
-      '[Conversation handoff — your prior CLI session could not be resumed or switched harness; this fresh session continues the same conversation.]'
-    ];
-    if (conversationId) {
-      sections.push(`Earlier transcript ID: ${conversationId} (use history_get or search_conversation_history if you need older details).`);
-    }
-    if (helpers.length) {
-      sections.push(`Running helpers adopted from your prior session:\n${helpers.map((h) => `- ${h.name} (${h.id}, ${h.project}, ${h.activity ?? 'unknown'})`).join('\n')}`);
-    }
-    if (turns.length) {
-      sections.push(`Recent turns (oldest first):\n${turns.join('\n')}`);
-    }
-    return sections.join('\n\n');
+    return { conversationId, helpers, turns };
   }
 
   private launched(botId: string): BotState {
@@ -409,16 +418,56 @@ export class BotService {
   }
 }
 
-function appendHandoff(base: string, handoff: string, limitBytes: number | null): string {
-  const combined = `${base}\n\n${handoff}`;
+// Strips NUL bytes (which break argv-based CLI launches such as Claude) and collapses whitespace.
+function cleanHandoffText(text: string): string {
+  return text.replace(/\0/g, '').trim().replace(/\s+/g, ' ');
+}
+
+function renderHandoff(handoff: PendingHandoff): string | null {
+  if (!handoff.turns.length && !handoff.helpers.length && !handoff.conversationId) return null;
+  const sections = [
+    '[Conversation handoff — your prior CLI session could not be resumed or switched harness; this fresh session continues the same conversation.]'
+  ];
+  if (handoff.conversationId) {
+    sections.push(`Earlier transcript ID: ${handoff.conversationId} (use history_get or search_conversation_history if you need older details).`);
+  }
+  if (handoff.helpers.length) {
+    sections.push(`Running helpers adopted from your prior session:\n${handoff.helpers.join('\n')}`);
+  }
+  if (handoff.turns.length) {
+    sections.push(`Recent turns (oldest first):\n${handoff.turns.join('\n')}`);
+  }
+  return sections.join('\n\n');
+}
+
+function appendHandoff(base: string, handoff: PendingHandoff, limitBytes: number | null): string {
+  const full = renderHandoff(handoff);
+  if (!full) return base;
+  const combined = `${base}\n\n${full}`;
   if (!limitBytes) return combined;
   const fits = (value: string) => Buffer.byteLength(JSON.stringify(value), 'utf8') <= limitBytes;
   if (fits(combined)) return combined;
-  let chars = [...handoff];
-  while (chars.length > 0) {
-    chars = chars.slice(0, Math.max(0, chars.length - Math.max(1, Math.ceil(chars.length / 8))));
-    const candidate = chars.length ? `${base}\n\n${chars.join('')}…` : base;
-    if (fits(candidate)) return candidate;
+  // Drop oldest turns first so OpenCode keeps the most recent context.
+  let turns = [...handoff.turns];
+  while (turns.length > 0) {
+    turns = turns.slice(1);
+    const rendered = renderHandoff({ ...handoff, turns });
+    if (rendered && fits(`${base}\n\n${rendered}`)) return `${base}\n\n${rendered}`;
+  }
+  // If a single newest turn was too big, keep a clipped version of it when room remains.
+  if (handoff.turns.length) {
+    let newest = [...handoff.turns[handoff.turns.length - 1]!];
+    while (newest.length > 32) {
+      newest = newest.slice(0, Math.max(0, newest.length - Math.max(1, Math.ceil(newest.length / 8))));
+      const rendered = renderHandoff({ ...handoff, turns: [`${newest.join('')}…`] });
+      if (rendered && fits(`${base}\n\n${rendered}`)) return `${base}\n\n${rendered}`;
+    }
+  }
+  let helpers = [...handoff.helpers];
+  while (helpers.length > 0) {
+    helpers = helpers.slice(0, -1);
+    const rendered = renderHandoff({ ...handoff, helpers, turns: [] });
+    if (rendered && fits(`${base}\n\n${rendered}`)) return `${base}\n\n${rendered}`;
   }
   return base;
 }
