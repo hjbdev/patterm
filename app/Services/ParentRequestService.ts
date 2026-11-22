@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type { DatabaseService } from './DatabaseService';
 import type { IntegratedAgentService, ReviewPrompt } from './IntegratedAgentService';
@@ -346,17 +347,46 @@ function sameRequest(a: NativeRequest, b: NativeRequest): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+function allowedReadRoots(cwd: string): string[] {
+  const home = os.homedir();
+  const candidates = [
+    cwd,
+    ...(home ? [
+      path.join(home, '.config', 'opencode', 'skills'),
+      path.join(home, '.claude', 'skills'),
+      path.join(home, '.agents', 'skills'),
+      path.join(home, '.gemini', 'antigravity-cli', 'builtin', 'skills')
+    ] : [])
+  ];
+  const roots: string[] = [];
+  for (const candidate of candidates) {
+    try { roots.push(realpathSync(candidate)); } catch { /* ignore missing roots */ }
+  }
+  return roots;
+}
+
+function expandHome(resource: string): string {
+  if (resource === '~' || resource.startsWith('~/') || resource.startsWith('~\\')) {
+    const home = os.homedir();
+    if (home) return path.join(home, resource.slice(2));
+  }
+  return resource;
+}
+
 function canApprove(source: Pick<Process, 'harness' | 'cwd'>, permission: IntegratedPermission): boolean {
   if (source.harness !== 'agy' || permission.once !== true || permission.toolKind !== 'read' || !source.cwd
     || permission.command || permission.patch || permission.plan || permission.resources.length !== 1
     || permission.resources[0]!.length > 1_000 || source.cwd.length > 1_000) return false;
   try {
     const cwd = realpathSync(source.cwd);
-    const requested = path.resolve(cwd, permission.resources[0]!);
+    const requested = path.resolve(cwd, expandHome(permission.resources[0]!));
     const file = realpathSync(requested);
-    const relative = path.relative(cwd, file);
-    return Boolean(relative) && !path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`)
-      && !sensitivePath(path.relative(cwd, requested)) && !sensitivePath(relative) && statSync(file).isFile();
+    if (!statSync(file).isFile()) return false;
+    return allowedReadRoots(cwd).some((root) => {
+      const relative = path.relative(root, file);
+      return Boolean(relative) && !path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`)
+        && !sensitivePath(path.relative(root, requested)) && !sensitivePath(relative);
+    });
   } catch { return false; }
 }
 

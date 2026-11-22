@@ -403,6 +403,44 @@ async function main(): Promise<void> {
       assert.equal((await permissions.overseerReply('agent', 'read-3', { decision: 'once' }, 'bot')).status, 'resolved');
       assert.deepEqual(replies.at(-1), ['agent', 'read-3', 'once', undefined]);
       assert.equal(reviews.length, reviewCount, 'an overseer reply offers nothing to parents');
+      // Skill files in standard user skill directories are also safe one-time reads,
+      // while unrelated home files and sensitive files inside skill dirs stay denied.
+      const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-skill-home-'));
+      const priorHome = process.env.HOME;
+      const priorProfile = process.env.USERPROFILE;
+      try {
+        process.env.HOME = fakeHome;
+        process.env.USERPROFILE = fakeHome;
+        const skillDir = path.join(fakeHome, '.config', 'opencode', 'skills', 'review-loop');
+        fs.mkdirSync(skillDir, { recursive: true });
+        const skillFile = path.join(skillDir, 'SKILL.md');
+        const skillSecret = path.join(skillDir, '.env');
+        const otherHome = path.join(fakeHome, 'notes.txt');
+        fs.writeFileSync(skillFile, '# skill');
+        fs.writeFileSync(skillSecret, 'SECRET=1');
+        fs.writeFileSync(otherHome, 'private');
+        nativePermissions = [
+          { id: 'skill-read', tool_kind: 'read', once: true, action: 'Read skill', resources: ['~/.config/opencode/skills/review-loop/SKILL.md'] },
+          { id: 'skill-secret', tool_kind: 'read', once: true, action: 'Read secret', resources: [skillSecret] },
+          { id: 'home-other', tool_kind: 'read', once: true, action: 'Read home', resources: [otherHome] }
+        ];
+        stream!({ processId: 'agent', revision: 145, kind: 'pending' });
+        await settle();
+        const skillSummary = pendingRequestSummary({ harness: 'agy', cwd: directory }, await agy.peekConversation('agent'));
+        assert.deepEqual(skillSummary.map((item) => [item.request_id, item.can_approve_once]), [
+          ['skill-read', true],
+          ['skill-secret', false],
+          ['home-other', false]
+        ]);
+        assert.equal((await permissions.overseerReply('agent', 'skill-read', { decision: 'once' }, 'bot')).status, 'resolved');
+        await assert.rejects(permissions.overseerReply('agent', 'skill-secret', { decision: 'once' }, 'bot'), /only a one-time read/i);
+        await assert.rejects(permissions.overseerReply('agent', 'home-other', { decision: 'once' }, 'bot'), /only a one-time read/i);
+        nativePermissions = [];
+      } finally {
+        if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+        if (priorProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = priorProfile;
+        removeTree(fakeHome);
+      }
       db.prepare(`update sessions set harness = 'claude' where id = 'session_agent'`).run();
       nativeQuestions = [{ id: 'question-3', questions: [question] }];
       stream!({ processId: 'agent', revision: 15, kind: 'pending' });
