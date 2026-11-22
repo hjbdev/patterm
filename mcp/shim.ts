@@ -56,10 +56,10 @@ interface PendingSocketRequest {
   reject(error: Error): void;
 }
 
+// The connection shared between requests. Only a connection whose own reply
+// said the registry pushes, and so keeps it open between replies, becomes it.
 let persistentSocket: net.Socket | null = null;
-let persistentConnecting: Promise<net.Socket> | null = null;
 let persistentSubscribed = false;
-let persistentPushSupported = false;
 let nextRequestId = 1;
 const pendingRequests = new Map<number, PendingSocketRequest>();
 const pendingOrder: number[] = [];
@@ -75,22 +75,40 @@ function failPendingRequests(error: Error, owner?: net.Socket): void {
   }
 }
 
+function ownsPending(client: net.Socket): boolean {
+  for (const entry of pendingRequests.values()) if (entry.owner === client) return true;
+  return false;
+}
+
+function firstPendingOn(client: net.Socket): number | undefined {
+  return pendingOrder.find((id) => pendingRequests.get(id)?.owner === client);
+}
+
+function isLive(socket: net.Socket | null): socket is net.Socket {
+  return Boolean(socket && !socket.destroyed && !socket.readableEnded && !socket.writableEnded && socket.writable);
+}
+
+// Once a connection has no requests left, keep it only if it is the shared
+// one; close any other, whether its last reply succeeded or failed.
+function settle(client: net.Socket): void {
+  if (ownsPending(client) || client.destroyed) return;
+  if (client === persistentSocket) client.unref();
+  else client.end();
+}
+
+// A registry that doesn't push closes each connection after its reply, so it
+// answers one request per connection. A new connection carries one request
+// until its own reply says the registry pushes: a restarted registry may not.
 function getPersistentSocket(): Promise<net.Socket> {
-  if (persistentSocket && !persistentSocket.destroyed && !persistentSocket.readableEnded && !persistentSocket.writableEnded && persistentSocket.writable) {
-    return Promise.resolve(persistentSocket);
-  }
-  if (persistentConnecting) return persistentConnecting;
-  persistentConnecting = new Promise<net.Socket>((resolve, reject) => {
+  if (isLive(persistentSocket)) return Promise.resolve(persistentSocket);
+  return new Promise<net.Socket>((resolve, reject) => {
     const client = net.createConnection(resolveSocketPath());
     let connected = false;
     let buffer = '';
     client.setEncoding('utf8');
     client.once('connect', () => {
       connected = true;
-      persistentSocket = client;
-      persistentSubscribed = false;
-      persistentConnecting = null;
-      // Don't keep one-shot CLI invocations alive on an idle persistent socket.
+      // Don't keep one-shot CLI invocations alive on an idle socket.
       client.unref();
       resolve(client);
     });
@@ -106,8 +124,9 @@ function getPersistentSocket(): Promise<net.Socket> {
         try {
           message = JSON.parse(line) as { id?: unknown; event?: unknown; result?: unknown; error?: string; push?: boolean };
         } catch (error) {
-          const firstId = pendingOrder.shift();
+          const firstId = firstPendingOn(client);
           if (firstId !== undefined) {
+            pendingOrder.splice(pendingOrder.indexOf(firstId), 1);
             const pending = pendingRequests.get(firstId);
             pendingRequests.delete(firstId);
             pending?.reject(error instanceof Error ? error : new Error(String(error)));
@@ -118,9 +137,9 @@ function getPersistentSocket(): Promise<net.Socket> {
           onCatalogChanged?.();
           continue;
         }
-        const matchedId = typeof message.id === 'number' && pendingRequests.has(message.id)
+        const matchedId = typeof message.id === 'number' && pendingRequests.get(message.id)?.owner === client
           ? message.id
-          : pendingOrder[0];
+          : firstPendingOn(client);
         if (matchedId === undefined) continue;
         const idx = pendingOrder.indexOf(matchedId);
         if (idx >= 0) pendingOrder.splice(idx, 1);
@@ -133,7 +152,6 @@ function getPersistentSocket(): Promise<net.Socket> {
     });
     client.on('error', (error) => {
       if (!connected) {
-        persistentConnecting = null;
         reject(error);
       } else {
         if (persistentSocket === client) {
@@ -151,7 +169,6 @@ function getPersistentSocket(): Promise<net.Socket> {
     });
     client.once('close', () => {
       if (!connected) {
-        persistentConnecting = null;
         reject(new Error(DISCONNECTED_ERROR));
       } else {
         if (persistentSocket === client) {
@@ -163,7 +180,6 @@ function getPersistentSocket(): Promise<net.Socket> {
       }
     });
   });
-  return persistentConnecting;
 }
 
 async function registryRequestRaw(request: ShimRequest, meta?: Record<string, unknown>): Promise<{ result: unknown; push: boolean }> {
@@ -185,25 +201,20 @@ async function registryRequestRaw(request: ShimRequest, meta?: Record<string, un
         const idx = pendingOrder.indexOf(id);
         if (idx >= 0) pendingOrder.splice(idx, 1);
         pendingRequests.delete(id);
-        if (!pendingRequests.size) client.unref();
+        settle(client);
         reject(error);
       }
     });
   }).then((value) => {
     const reply = value as { result: unknown; push: boolean };
-    if (reply.push) persistentPushSupported = true;
-    if (!persistentPushSupported && !pendingRequests.size) {
-      if (persistentSocket === client) {
-        persistentSocket = null;
-        persistentSubscribed = false;
-      }
-      client.end();
-    } else if (!pendingRequests.size && !client.destroyed) {
-      client.unref();
+    if (reply.push && !isLive(persistentSocket) && isLive(client)) {
+      persistentSocket = client;
+      persistentSubscribed = false;
     }
+    settle(client);
     return reply;
   }, (error) => {
-    if (!pendingRequests.size && !client.destroyed) client.unref();
+    settle(client);
     throw error;
   });
 }
@@ -215,15 +226,14 @@ async function registryRequest(request: ShimRequest, meta?: Record<string, unkno
 type Signatures = Map<string, string>;
 
 function subscribeCatalogIfNeeded(): void {
-  if (!persistentPushSupported || !onCatalogChanged || persistentSubscribed) return;
+  if (!isLive(persistentSocket) || !onCatalogChanged || persistentSubscribed) return;
   persistentSubscribed = true;
   void registryRequest({ op: 'catalog-subscribe' }).catch(() => { persistentSubscribed = false; });
 }
 
 async function fetchCatalogue(): Promise<McpToolDescriptor[]> {
-  const { result: tools, push } = await registryRequestRaw({ op: 'catalog' });
+  const { result: tools } = await registryRequestRaw({ op: 'catalog' });
   if (!Array.isArray(tools)) throw new Error('Patterm returned an invalid MCP tool catalogue');
-  if (push) persistentPushSupported = true;
   subscribeCatalogIfNeeded();
   return tools as McpToolDescriptor[];
 }

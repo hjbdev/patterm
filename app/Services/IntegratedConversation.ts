@@ -13,6 +13,9 @@ export interface IntegratedConversationTool {
   name: string;
   input?: unknown;
   state?: unknown;
+  // Resolved MCP server/tool names when the host knows the configured servers.
+  server?: string | undefined;
+  tool?: string | undefined;
   // Stored images the tool returned, shown by hash (see TranscriptImageStore).
   images?: TranscriptImageRef[] | undefined;
 }
@@ -72,6 +75,8 @@ export interface IntegratedTask {
   detail?: string;
   // The provider can stop it through stopTask.
   stoppable?: boolean;
+  // Stopping it also stops the agent's other background tasks.
+  stopsAll?: boolean;
 }
 
 // Output of one background task, read on demand by the task drawer. A

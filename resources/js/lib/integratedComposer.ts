@@ -229,9 +229,10 @@ export function beginOutgoingMessage(processId: string, payload: ComposerSendPay
       const preview = draft.attachments.find((item) => item.serverPath === attachment.path)?.previewUrl;
       return { name: attachment.name, mime: attachment.mime, ...(preview ? { url: preview } : {}) };
     });
+    const anchor = [...messages].reverse().find((message) => !message.parentId);
     entry = {
       payload,
-      afterId: messages.length ? transcriptMessageKey(messages.at(-1)!) : null,
+      afterId: anchor ? transcriptMessageKey(anchor) : null,
       previewUrls: attachments.flatMap((attachment) => attachment.url ? [attachment.url] : []),
       row: {
         id: `${provider === 'opencode' ? 'msg_' : 'user_'}${payload.messageId}`,

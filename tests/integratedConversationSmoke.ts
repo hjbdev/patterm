@@ -467,4 +467,35 @@ assert.equal(normaliseUsage({ lastModelActivityAt: 'yesterday' }), null);
   assert.equal(row?.kind === 'message' ? row.origin?.kind : null, 'agent');
 }
 
+// Antigravity tool shapes: invoke_subagent, run_command, read_file ranges, and
+// single-underscore / lazy MCP calls project into the shared tool families.
+{
+  const sub = buildTranscriptTool('invoke_subagent', { input: { Role: 'Codebase Researcher', TypeName: 'research', Model: 'flash_lite', Prompt: 'Inspect ACP' }, state: { status: 'completed' } }, '');
+  assert.equal(sub.family, 'task');
+  assert.equal(sub.title, 'Task');
+  assert.equal(sub.target, 'Codebase Researcher');
+  assert.deepEqual(sub.args, ['research', 'flash_lite']);
+  const cmd = buildTranscriptTool('run_command', { input: { CommandLine: 'git status' }, state: { status: 'completed' } }, 'clean');
+  assert.equal(cmd.family, 'shell');
+  assert.equal(cmd.title, 'Bash');
+  assert.equal(cmd.command, 'git status');
+  assert.equal(cmd.target, 'git status');
+  const read = buildTranscriptTool('read_file', { input: { Path: '/repo/app.ts', StartLine: 10, EndLine: 40 }, state: { status: 'completed' } }, '');
+  assert.equal(read.family, 'read');
+  assert.equal(read.target, '/repo/app.ts');
+  assert.deepEqual(read.args, ['lines 10-40']);
+  const mcp = buildTranscriptTool('mcp_patterm_get_project_status', { input: {}, state: { status: 'completed' } }, '');
+  assert.equal(mcp.family, 'mcp');
+  assert.equal(mcp.target, 'patterm: get_project_status');
+  const bareUnderscoreMcp = buildTranscriptTool('mcp_extra_one_calculate', { input: {}, state: { status: 'completed' } }, '');
+  assert.equal(bareUnderscoreMcp.family, 'mcp');
+  assert.equal(bareUnderscoreMcp.target, 'extra_one_calculate');
+  const [attributedMcp] = normaliseMessages([{ id: 'mcp_extra', role: 'assistant', kind: 'tool', text: '', tool: { name: 'mcp_extra_one_calculate', server: 'extra_one', tool: 'calculate', input: {}, state: { status: 'completed' } } }]);
+  assert.equal(attributedMcp?.tool?.family, 'mcp');
+  assert.equal(attributedMcp?.tool?.target, 'extra_one: calculate');
+  const lazyMcp = buildTranscriptTool('call_mcp_tool', { input: { ServerName: 'patterm', ToolName: 'todo_list' }, state: { status: 'completed' } }, '');
+  assert.equal(lazyMcp.family, 'mcp');
+  assert.equal(lazyMcp.target, 'patterm: todo_list');
+}
+
 console.log('integrated conversation smoke passed');

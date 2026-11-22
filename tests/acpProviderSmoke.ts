@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { AcpProviderService } from '../app/Services/AcpProviderService';
+import { AntigravitySubagentTracker } from '../app/Runtime/AntigravitySubagents';
+import { antigravityTranscriptPath, readAntigravityTaskOutput } from '../app/Services/AntigravityTaskOutput';
 import { AntigravityHistoryAdapter } from '../app/Services/AgentHistory/AntigravityHistoryAdapter';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { TurnBusyError, UncertainDeliveryError } from '../app/Services/IntegratedDelivery';
@@ -139,6 +141,24 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
    for(const [messageId,text] of [['a','first'],['a',' chunk'],['b','second']]) update({sessionUpdate:'agent_message_chunk',messageId,content:{type:'text',text}});
    result(q.id,{stopReason:'max_tokens'});prompt=null;return;
   }
+  if(text==='mcp-before-tool-call') {
+   out({id:45,method:'session/request_permission',params:{sessionId:'native-session',toolCall:{toolCallId:'early-mcp',name:'mcp_extra_one_mutate',title:'Run mcp_extra_one_mutate'},options:[{optionId:'allow',kind:'allow_once',name:'Allow'}]}});return;
+  }
+  if(text==='invoke-subagents') {
+   update({sessionUpdate:'tool_call',toolCallId:'sub-direct',name:'invoke_subagent',status:'in_progress',rawInput:{Role:'Direct Researcher',TypeName:'research',Model:'flash_lite',Prompt:'Check package version'}});
+   update({sessionUpdate:'tool_call_update',toolCallId:'sub-direct',status:'completed',rawOutput:{output:'Created the following subagent:\n{"conversationId":"sub-direct-1"}'}});
+   update({sessionUpdate:'tool_call',toolCallId:'sub-log',name:'invoke_subagent',status:'completed',rawInput:{Role:'Log Researcher',TypeName:'self',Prompt:'Inspect transcript'}});
+   say('Spawned two subagents.');
+   result(q.id,{stopReason:'end_turn'});prompt=null;return;
+  }
+  if(text==='message-subagent') {
+   update({sessionUpdate:'tool_call',toolCallId:'msg-sub',name:'send_message',status:'completed',rawInput:{Recipient:'sub-direct-1',Message:'Follow up'}});
+   result(q.id,{stopReason:'end_turn'});prompt=null;return;
+  }
+  if(text==='kill-subagent') {
+   update({sessionUpdate:'tool_call',toolCallId:'kill-sub',name:'manage_subagents',status:'completed',rawInput:{Action:'kill',ConversationIds:['sub-direct-1']}});
+   result(q.id,{stopReason:'end_turn'});prompt=null;return;
+  }
   if(text==='failure-after-echo') return out({id:q.id,error:{code:-32000,message:'Native acknowledged turn failed'}});
    if(text==='read-permission') {
     out({id:41,method:'session/request_permission',params:{sessionId:'native-session',toolCall:{toolCallId:'read',kind:'read',title:'Read file',rawInput:{Path:'probe.txt'}},options:[{optionId:'allow',kind:'allow_once',name:'Allow'}]}});
@@ -189,6 +209,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
   say('Background work done');return;
  }
  if(q.id===44 && prompt){result(prompt,{stopReason:'end_turn'});prompt=null;}
+ if(q.id===45 && prompt){result(prompt,{stopReason:'end_turn'});prompt=null;}
  if(q.id===41 && prompt){
   update({sessionUpdate:'tool_call_update',toolCallId:'edit',status:q.result?.outcome?.optionId==='deny'?'failed':'completed'});
   say(JSON.stringify(q.result));result(prompt,{stopReason:'end_turn'});prompt=null;
@@ -197,7 +218,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
 `);
   const database = new DatabaseService(directory);
   const hosts = new IntegratedTestHosts();
-  const env = { ...process.env, HOME: directory, USERPROFILE: directory, ACP_TRACE: trace, PATTERM_ACP_BACKGROUND_QUIET_MS: '1000', PATTERM_ACP_CANCEL_TIMEOUT_MS: '700' };
+  const env = { ...process.env, HOME: directory, USERPROFILE: directory, ACP_TRACE: trace, PATTERM_ACP_BACKGROUND_QUIET_MS: '1000', PATTERM_ACP_CANCEL_TIMEOUT_MS: '700', PATTERM_ACP_SUBAGENT_POLL_MS: '40' };
   const images = new TranscriptImageStore(path.join(directory, 'images'));
   const service = () => new AcpProviderService(database, directory, process.execPath, env, undefined, hosts, images);
   const provider = service();
@@ -213,7 +234,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     };
     const prepared = await provider.prepare({
       ...input,
-      mcpServers: [{ id: 'extra', name: 'extra', transport: 'stdio', command: process.execPath, args: ['extra.js'], env: {} }]
+      mcpServers: [{ id: 'extra', name: 'Extra-One', transport: 'stdio', command: process.execPath, args: ['extra.js'], env: {} }]
     });
     assert.equal(prepared.resumeId, 'native-session');
     assert(!JSON.stringify(prepared.argv).includes('private-identity'));
@@ -222,7 +243,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     const frames = () => fs.readFileSync(trace, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
     const creation = frames().find((frame) => frame.method === 'session/new');
     assert.equal(creation.params._meta.antigravity.systemPrompt.append, input.context);
-    assert.deepEqual(creation.params.mcpServers.map((server: any) => server.name).sort(), ['extra', 'patterm'], 'all configured servers are delivered');
+    assert.deepEqual(creation.params.mcpServers.map((server: any) => server.name).sort(), ['Extra-One', 'patterm'], 'all configured servers are delivered');
     assert.deepEqual(creation.params.mcpServers.find((server: any) => server.name === 'patterm').env, [{ name: 'PATTERM_MCP_IDENTITY', value: 'private-identity' }, { name: 'PATTERM_MCP_COMPACT', value: '1' }], 'agy gets the compact Patterm catalogue');
     assert.deepEqual(frames()[0].params.clientCapabilities, {}, 'unimplemented filesystem and terminal capabilities are not advertised');
     if (process.platform !== 'win32') assert.equal(fs.statSync(prepared.argv[4]!).mode & 0o777, 0o600);
@@ -265,7 +286,13 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       await pdfSend;
     }
     assert.equal(await provider.reconcile('process', 'pdf-id'), 'accepted');
-    await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    state = await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    {
+      const rows = state.messages.data as Array<{ clientMessageId?: string; text?: string }>;
+      const promptIndex = rows.findIndex((row) => row.clientMessageId === 'pdf-id');
+      const replyIndex = rows.findIndex((row) => row.text === 'staged-file');
+      assert(promptIndex >= 0 && replyIndex > promptIndex, 'a late-admitted attachment prompt stays before the response it caused');
+    }
     assert.deepEqual(frames().filter((frame) => frame.method === 'session/prompt').at(-1).params.prompt[1], { type: 'resource_link', uri: pathToFileURL(path.join(directory, 'a #.pdf')).href, name: 'a #.pdf', mimeType: 'application/pdf' }, 'PDFs use native file reading, not silently ignored binary blobs');
 
     const ask = (text: string) => provider.prompt('process', { text, references: [], attachments: [] });
@@ -279,17 +306,26 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     state = await waitFor(provider, (snapshot) => snapshot.messages.data.some((row: any) => row.text === 'Background work done'));
     assert.equal(state.status, 'working', 'background output keeps the session active');
     assert.equal(state.status_detail, 'Recent background activity');
-    await assert.rejects(ask('follow-up'), TurnBusyError);
-    await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    await ask('during-background-output');
+    state = await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.text === 'during-background-output'));
+    assert(frames().some((frame) => frame.method === 'session/prompt' && frame.params.prompt[0].text === 'during-background-output'), 'agy queues a prompt sent during its unsolicited output');
     await ask('stop-background');
-    await waitFor(provider, (snapshot) => snapshot.status_detail === 'Background tools running…');
-    await provider.interrupt('process');
+    state = await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.id === 'tool:stopping-tool'));
+    assert.equal(state.messages.data.find((row: any) => row.id === 'tool:stopping-tool').tool.state.status, 'in_progress', 'a tool left running after its turn does not keep the agent working');
+    assert.deepEqual(state.tasks.find((task: any) => task.id === 'tool:stopping-tool'), { id: 'tool:stopping-tool', label: 'Tool', kind: 'local_bash', status: 'running', stoppable: true }, 'a command outliving its turn is a stoppable task, so hibernation leaves it alone');
+    await provider.stopTask('process', 'tool:stopping-tool');
     state = await waitFor(provider, (snapshot) => snapshot.messages.data.some((row: any) => row.id === 'tool:stopping-tool' && row.tool.state.status === 'pending'));
     assert.equal(state.status_detail, 'Stopping…', 'a pending update cannot acknowledge Stop');
     await assert.rejects(ask('not-during-stop'), TurnBusyError);
+    // agy never confirms this Stop: it settles locally instead of failing the session.
+    state = await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.find((row: any) => row.id === 'tool:stopping-tool')?.tool.state.status === 'failed');
+    assert.equal(state.messages.data.find((row: any) => row.id === 'tool:stopping-tool').tool.state.error, 'Stopped');
+    assert.deepEqual(state.tasks.find((task: any) => task.id === 'tool:stopping-tool'), { id: 'tool:stopping-tool', label: 'Tool', kind: 'local_bash', status: 'stopped', stoppable: false }, 'an open task drawer sees the command settle');
     fs.writeFileSync(trace + '.cancel-tool-done', '');
-    await waitFor(provider, (snapshot) => snapshot.status === 'idle');
-    assert(events.some((event) => event.kind === 'status' && event.detail === 'Background tools running…'), 'background status reaches live subscribers');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    state = await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    assert.equal(state.messages.data.find((row: any) => row.id === 'tool:stopping-tool').tool.state.status, 'failed', 'a late in_progress update does not revive a stopped tool');
+    assert(events.some((event) => event.kind === 'status' && event.detail === 'Stopping…'), 'background Stop reaches live subscribers');
     await ask('delayed-approval');
     await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.id === 'tool:deferred'));
     await ask('overlapping-follow-up');
@@ -302,13 +338,11 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       await ask('tool-outlives-prompt');
       assert.equal((await queue.prompt('process', { text: 'after-outliving-tool', messageId: 'held-after-tool' }) as any).delivery, 'queued');
       fs.writeFileSync(trace + '.end-turn', '');
-      await waitFor(provider, (snapshot) => snapshot.usage.contextTokens === 314);
-      state = await provider.conversation('process');
-      assert.equal(state.status_detail, 'Background tools running…');
-      assert.equal(state.messages.data.find((row: any) => row.id === 'tool:outlives').tool.state.status, 'pending', 're-announcing a known running tool as pending does not abandon it');
-      assert(!frames().some((frame) => frame.method === 'session/prompt' && frame.params.prompt[0].text === 'after-outliving-tool'));
+      state = await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.clientMessageId === 'held-after-tool'));
+      // Pending, not failed: re-announcing a known running tool does not abandon it.
+      assert.equal(state.messages.data.find((row: any) => row.id === 'tool:outlives').tool.state.status, 'pending', 'a held follow-up does not wait for a tool that outlives its turn');
       fs.writeFileSync(trace + '.complete-tool', '');
-      await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.some((row: any) => row.clientMessageId === 'held-after-tool'));
+      await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.messages.data.find((row: any) => row.id === 'tool:outlives')?.tool.state.status === 'completed');
       fs.unlinkSync(trace + '.end-turn');
       await ask('tool-never-starts');
       assert.equal((await queue.prompt('process', { text: 'after-unstarted-tool', messageId: 'held-after-unstarted' }) as any).delivery, 'queued');
@@ -343,6 +377,9 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     await ask('mcp');
     await waitFor(provider, (snapshot) => snapshot.status === 'idle');
     assert(frames().some((frame) => frame.id === 41 && frame.result?.outcome?.optionId === 'allow'), 'Auto approves native MCP write requests without a card');
+    await ask('mcp-before-tool-call');
+    await waitFor(provider, (snapshot) => snapshot.status === 'idle' && frames().some((frame) => frame.id === 45));
+    assert.deepEqual(frames().find((frame) => frame.id === 45)?.result, { outcome: { outcome: 'selected', optionId: 'allow' } }, 'Auto approves MCP requests arriving before tool_call and with normalised server names');
     for (const text of ['unknown-mcp', 'spoof-mcp']) {
       await ask(text);
       await waitFor(provider, (snapshot) => snapshot.status === 'permission');
@@ -451,15 +488,111 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     state = await provider.conversation('process');
     assert.equal(state.status, 'working', 'delivery does not finish the turn');
     assert.equal(state.messages.data.filter((row: any) => row.clientMessageId === 'logged-id').length, 1);
+    {
+      const rows = state.messages.data as Array<{ id?: string; clientMessageId?: string; text?: string }>;
+      const promptIndex = rows.findIndex((row) => row.clientMessageId === 'logged-id');
+      const replyIndex = rows.findIndex((row) => row.text === 'Working before the prompt response');
+      const toolIndex = rows.findIndex((row) => row.id === 'tool:no-echo-read');
+      assert(promptIndex >= 0 && replyIndex > promptIndex && toolIndex > promptIndex, 'a prompt confirmed from its native receipt stays before assistant output that streamed first');
+    }
     fs.writeFileSync(trace + '.no-echo-done', '');
     await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+
+    // Inline images are confirmed by the same receipt only when its media list
+    // has the same image types in the same order.
+    const pixel = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+    const imageAttachments = [{ name: 'shot.png', mime: 'image/png' }, { name: 'shot.jpg', mime: 'image/jpeg' }]
+      .map((image) => ({ ...image, path: path.join(directory, image.name), size: 68, data: pixel }));
+    const imageReceipt = (step: number, types: string[]) => JSON.stringify({ ...JSON.parse(inputRow(step)), media: types.map((mime_type, index) => ({ mime_type, uri: `/uploaded_media_${index}` })) }) + '\n';
+    let imagePrompts = 0;
+    const sendImages = async (messageId: string) => {
+      fs.rmSync(trace + '.no-echo-done', { force: true });
+      const sent = provider.prompt('process', { text: 'no-live-echo', references: [], messageId, attachments: imageAttachments });
+      void sent.catch(() => {});
+      imagePrompts += 1;
+      await waitFor(provider, () => frames().filter((frame) => frame.method === 'session/prompt' && frame.params.prompt[2]?.type === 'image').length === imagePrompts);
+      return { sent };
+    };
+    const reordered = (await sendImages('reordered-image-id')).sent;
+    fs.appendFileSync(nativeLog, imageReceipt(3, ['image/jpeg', 'image/png']));
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    assert.equal(await provider.reconcile('process', 'reordered-image-id'), 'unknown', 'a receipt with reordered media does not confirm delivery');
+    fs.writeFileSync(trace + '.no-echo-done', '');
+    await reordered;
+    await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    const matching = (await sendImages('logged-image-id')).sent;
+    fs.appendFileSync(nativeLog, imageReceipt(4, ['image/png', 'image/jpeg']));
+    await matching;
+    assert.equal(await provider.reconcile('process', 'logged-image-id'), 'accepted');
+    fs.writeFileSync(trace + '.no-echo-done', '');
+    await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+
+    // Antigravity native subagents: discovered from ACP output or parent
+    // transcript.jsonl, tailed for nested child rows, surfaced in snapshot
+    // tasks, and readable through taskOutput with session ownership checks.
+    const subDirectLog = path.join(directory, '.gemini', 'antigravity-cli', 'brain', 'sub-direct-1', '.system_generated', 'logs', 'transcript.jsonl');
+    const subLogLog = path.join(directory, '.gemini', 'antigravity-cli', 'brain', 'sub-log-2', '.system_generated', 'logs', 'transcript.jsonl');
+    fs.mkdirSync(path.dirname(subDirectLog), { recursive: true });
+    fs.mkdirSync(path.dirname(subLogLog), { recursive: true });
+    fs.writeFileSync(subDirectLog, [
+      { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', created_at: now, content: '<USER_REQUEST>\nCheck package version\n</USER_REQUEST>\n' },
+      { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: now, thinking: 'Reading package.json', tool_calls: [{ name: 'read_file', args: { Path: '"package.json"' } }] },
+      { step_index: 2, source: 'MODEL', type: 'GENERIC', created_at: now, content: 'Created At: 2026-11-20T19:00:00+01:00\nCompleted At: 2026-11-20T19:00:01+01:00\n{"version":"0.5.0"}', status: 'DONE' }
+    ].map((row) => JSON.stringify(row)).join('\n') + '\n');
+    fs.writeFileSync(subLogLog, [
+      { step_index: 0, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: now, content: 'Transcript looks clean.' }
+    ].map((row) => JSON.stringify(row)).join('\n') + '\n');
+    fs.appendFileSync(nativeLog, [
+      { step_index: 10, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: now, tool_calls: [
+        { name: 'invoke_subagent', args: { Role: '"Direct Researcher"', TypeName: '"research"', Prompt: '"Check package version"' } },
+        { name: 'invoke_subagent', args: { Role: '"Log Researcher"', TypeName: '"self"', Prompt: '"Inspect transcript"' } }
+      ] },
+      { step_index: 11, source: 'MODEL', type: 'GENERIC', created_at: now, content: 'Created the following subagent:\n{"conversationId":"sub-direct-1"}', status: 'DONE' },
+      { step_index: 12, source: 'MODEL', type: 'GENERIC', created_at: now, content: 'Created the following subagent:\n{"conversationId":"sub-log-2"}', status: 'DONE' }
+    ].map((row) => JSON.stringify(row)).join('\n') + '\n');
+    await ask('invoke-subagents');
+    state = await waitFor(provider, (snapshot) =>
+      snapshot.status === 'idle'
+      && (snapshot.tasks ?? []).some((task: any) => task.id === 'sub-direct-1')
+      && (snapshot.tasks ?? []).some((task: any) => task.id === 'sub-log-2')
+      && snapshot.messages.data.some((row: any) => row.parentId === 'tool:sub-direct' && row.kind === 'tool')
+      && snapshot.messages.data.some((row: any) => row.parentId === 'tool:sub-log' && row.text === 'Transcript looks clean.')
+    );
+    const directTask = state.tasks.find((task: any) => task.id === 'sub-direct-1');
+    assert.equal(directTask.label, 'Direct Researcher');
+    assert.equal(directTask.kind, 'research');
+    assert.equal(directTask.status, 'running');
+    assert.equal(directTask.stoppable, false);
+    const nestedRead = state.messages.data.find((row: any) => row.parentId === 'tool:sub-direct' && row.kind === 'tool');
+    assert.equal(nestedRead.tool.name, 'read_file');
+    assert.equal(nestedRead.text, '{"version":"0.5.0"}');
+    assert.equal(nestedRead.tool.state.status, 'completed');
+
+    // A parent SYSTEM_MESSAGE from the subagent marks it completed; send_message
+    // re-opens it to running; manage_subagents kill marks it stopped.
+    fs.appendFileSync(nativeLog, JSON.stringify({
+      step_index: 13, source: 'SYSTEM', type: 'SYSTEM_MESSAGE', created_at: now,
+      content: '<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-20T19:00:02Z sender=sub-direct-1 priority=MESSAGE_PRIORITY_HIGH content=Version is 0.5.0\n</SYSTEM_MESSAGE>'
+    }) + '\n');
+    state = await waitFor(provider, (snapshot) => snapshot.tasks.find((task: any) => task.id === 'sub-direct-1')?.status === 'completed');
+    assert.equal(state.tasks.find((task: any) => task.id === 'sub-direct-1').detail, 'Version is 0.5.0');
+    await ask('message-subagent');
+    state = await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.tasks.find((task: any) => task.id === 'sub-direct-1')?.status === 'running');
+    await ask('kill-subagent');
+    state = await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.tasks.find((task: any) => task.id === 'sub-direct-1')?.status === 'stopped');
+
+    const subOutput = await provider.taskOutput('process', 'sub-direct-1');
+    assert.equal(subOutput.format, 'transcript');
+    assert(subOutput.format === 'transcript' && subOutput.archived_messages.length >= 3);
+    assert.equal((await provider.taskOutput('process', 'sub-direct-1', subOutput.format === 'transcript' ? subOutput.version : null)).format, 'unchanged');
+    await assert.rejects(provider.taskOutput('process', 'other-session-subagent'), /does not belong/);
 
     // A file that appears after dispatch can contain historical input.
     fs.unlinkSync(nativeLog);
     fs.unlinkSync(trace + '.no-echo-done');
     const replayed = provider.prompt('process', { text: 'no-live-echo', references: [], attachments: [], messageId: 'replayed-log-id' });
     void replayed.catch(() => {});
-    await waitFor(provider, () => frames().filter((frame) => frame.method === 'session/prompt' && frame.params.prompt[0].text === 'no-live-echo').length === 2);
+    await waitFor(provider, () => frames().filter((frame) => frame.method === 'session/prompt' && frame.params.prompt[0].text === 'no-live-echo').length === 4);
     fs.writeFileSync(nativeLog, inputRow(1, '2024-01-01T00:00:00Z') + '\n');
     await assert.rejects(replayed, UncertainDeliveryError, 'a historical row in a newly created file does not confirm delivery');
     fs.writeFileSync(trace + '.no-echo-done', '');
@@ -610,21 +743,301 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     const nativeRows = [
       { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', created_at: now, content: '<USER_REQUEST>\nHello\n</USER_REQUEST>\n<ADDITIONAL_METADATA>hidden</ADDITIONAL_METADATA>' },
       { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: now, content: 'Reply', input_tokens: 10, output_tokens: 2 },
-      { step_index: 2, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: now, tool_calls: [{ name: 'write_file', args: { Path: '"a.txt"', Content: '"new"' } }] },
-      { step_index: 3, source: 'MODEL', type: 'GENERIC', created_at: now, content: 'Created file.', status: 'DONE' }
+      { step_index: 2, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: now, tool_calls: [{ name: 'write_file', args: { Path: '"a.txt"', Content: '"new"' } }, { name: 'read_file', args: { Path: '"b.txt"' } }] },
+      { step_index: 3, source: 'MODEL', type: 'GENERIC', created_at: now, content: 'Created file.', status: 'DONE' },
+      { step_index: 4, source: 'MODEL', type: 'GENERIC', created_at: now, content: 'Read b.txt.', status: 'DONE' },
+      { step_index: 5, source: 'MODEL', type: 'PLANNER_RESPONSE', created_at: now, thinking: 'Internal reasoning', content: 'Done.' }
     ];
     fs.writeFileSync(log, nativeRows.map((row) => JSON.stringify(row)).join('\n') + '\n');
     fs.copyFileSync(log, path.join(logDirectory, 'transcript_full.jsonl'));
     const adapter = new AntigravityHistoryAdapter();
+    assert.equal(adapter.parserVersion, 'agy-jsonl-v2');
     assert.deepEqual(adapter.discoverFiles(path.join(directory, 'native-history')), [log]);
     const history = adapter.parseFile(log).conversations[0]!;
     assert.equal(history.providerConversationId, 'native-history');
     assert.equal(history.messages[0]?.text, 'Hello');
     assert.equal(history.messages[2]?.kind, 'tool_call');
     assert.equal(history.messages[2]?.toolInputSummary, '{"Path":"a.txt","Content":"new"}');
-    assert.equal(history.messages[3]?.kind, 'tool_result');
+    assert.equal(history.messages[3]?.toolName, 'read_file');
+    assert.equal(history.messages[4]?.kind, 'tool_result');
+    assert.equal(history.messages[4]?.toolName, 'write_file');
+    assert.equal(history.messages[4]?.metadata?.callId, history.messages[2]?.metadata?.callId);
+    assert.equal(history.messages[5]?.kind, 'tool_result');
+    assert.equal(history.messages[5]?.toolName, 'read_file');
+    assert.equal(history.messages[5]?.metadata?.callId, history.messages[3]?.metadata?.callId);
+    assert.equal(history.messages[6]?.metadata?.type, 'reasoning');
+    assert.equal(history.messages[6]?.text, 'Internal reasoning');
     assert.equal(history.usage?.[0]?.inputTokens, 10);
     assert(!JSON.stringify(history).includes('hidden'));
+
+    // Edge cases for subagent pairing, mid-turn progress updates, multi-chunk
+    // resume, oversized JSONL records, and drawer page boundaries.
+    const trackerHome = path.join(directory, 'tracker-edge-cases');
+    const trackerEnv = { HOME: trackerHome };
+    const appendLog = (id: string, ...rows: unknown[]) => {
+      const target = antigravityTranscriptPath(id, trackerEnv)!;
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.appendFileSync(target, rows.map((row) => JSON.stringify(row)).join('\n') + '\n');
+    };
+    const modelRow = (step_index: number, fields: Record<string, unknown>) => ({ step_index, source: 'MODEL', type: 'PLANNER_RESPONSE', ...fields });
+    const invokeCall = (role: string) => ({ name: 'invoke_subagent', args: { Role: JSON.stringify(role) } });
+    const invokeResult = (step_index: number, id: string) => ({ step_index, source: 'MODEL', type: 'GENERIC', status: 'DONE', content: `Created the following subagent:\n${JSON.stringify({ conversationId: id })}` });
+    const edgeTrackers: AntigravitySubagentTracker[] = [];
+    try {
+      // Direct ACP link must clear pending unlinked invoke so the next log-first child keeps its own row.
+      const linkRows = new Map<string, any>();
+      const linkTracker = new AntigravitySubagentTracker({ sessionId: 'edge-parent-a', hostEnv: trackerEnv, pollMs: 25, onMessage: (row) => linkRows.set(row.id, row), onTasksChanged: () => {} });
+      edgeTrackers.push(linkTracker);
+      appendLog('edge-child-a', modelRow(0, { content: 'Alpha output' }));
+      appendLog('edge-child-b', modelRow(0, { content: 'Beta output' }));
+      linkTracker.observeToolCall('tool:alpha', 'invoke_subagent', { Role: 'Alpha' }, '', null);
+      linkTracker.observeToolCall('tool:alpha', 'invoke_subagent', { Role: 'Alpha' }, '', { conversationId: 'edge-child-a' });
+      appendLog('edge-parent-a', modelRow(0, { tool_calls: [invokeCall('Alpha'), invokeCall('Beta')] }), invokeResult(1, 'edge-child-a'), invokeResult(2, 'edge-child-b'));
+      linkTracker.syncNow();
+      linkTracker.observeToolCall('tool:beta', 'invoke_subagent', { Role: 'Beta' }, '', null);
+      assert.equal([...linkRows.values()].find((row) => row.text === 'Alpha output')?.parentId, 'tool:alpha');
+      assert.equal([...linkRows.values()].find((row) => row.text === 'Beta output')?.parentId, 'tool:beta');
+
+      // A mid-turn send_message progress update must not mark the child done or stop tailing.
+      const progressRows = new Map<string, any>();
+      const progressTracker = new AntigravitySubagentTracker({ sessionId: 'edge-parent-b', hostEnv: trackerEnv, pollMs: 25, onMessage: (row) => progressRows.set(row.id, row), onTasksChanged: () => {} });
+      edgeTrackers.push(progressTracker);
+      appendLog('edge-working-child', modelRow(0, { tool_calls: [{ name: 'send_message', args: {} }] }));
+      progressTracker.observeToolCall('tool:worker', 'invoke_subagent', { Role: 'Worker' }, '', { conversationId: 'edge-working-child' });
+      appendLog('edge-parent-b', { step_index: 0, type: 'SYSTEM_MESSAGE', source: 'SYSTEM', content: '<SYSTEM_MESSAGE>\n[Message] sender=edge-working-child content=Still working\n</SYSTEM_MESSAGE>' });
+      progressTracker.syncNow();
+      appendLog('edge-working-child', modelRow(1, { content: 'More work after update' }));
+      progressTracker.syncNow();
+      assert.equal(progressTracker.tasks()[0]?.status, 'running');
+      assert.equal(progressRows.has('sub:edge-working-child:1:text'), true);
+
+      // Resumed transcripts larger than 1 MiB drain past the first chunk automatically.
+      const resumeTracker = new AntigravitySubagentTracker({ sessionId: 'edge-resumed-parent', hostEnv: trackerEnv, pollMs: 25, onMessage: () => {}, onTasksChanged: () => {} });
+      edgeTrackers.push(resumeTracker);
+      appendLog('edge-resumed-parent', modelRow(0, { thinking: 'a'.repeat(550_000) }), modelRow(1, { thinking: 'b'.repeat(550_000) }), modelRow(2, { tool_calls: [invokeCall('Resumed')] }), invokeResult(3, 'edge-resumed-child'));
+      resumeTracker.syncNow(true);
+      assert.deepEqual(resumeTracker.tasks().map((task) => task.id), ['edge-resumed-child']);
+
+      // A single JSONL record larger than 1 MiB still completes its tool call and advances past it.
+      const largeRows = new Map<string, any>();
+      const largeTracker = new AntigravitySubagentTracker({ sessionId: 'edge-parent-d', hostEnv: trackerEnv, pollMs: 25, onMessage: (row) => largeRows.set(row.id, row), onTasksChanged: () => {} });
+      edgeTrackers.push(largeTracker);
+      appendLog('edge-large-child', modelRow(0, { tool_calls: [{ name: 'read_file', args: {} }] }));
+      largeTracker.observeToolCall('tool:large', 'invoke_subagent', {}, '', { conversationId: 'edge-large-child' });
+      appendLog('edge-large-child', { step_index: 1, type: 'GENERIC', source: 'MODEL', status: 'DONE', content: 'x'.repeat(1024 * 1024) }, modelRow(2, { content: 'Later row' }));
+      largeTracker.syncNow();
+      assert.equal(largeRows.get('sub:edge-large-child:0:tool:0')?.tool?.state?.status, 'completed');
+      assert.equal(largeRows.has('sub:edge-large-child:2:text'), true);
+
+      // Same-role parallel children with distinct prompts must never cross-link.
+      const sameRoleRows = new Map<string, any>();
+      const sameRoleTracker = new AntigravitySubagentTracker({ sessionId: 'edge-same-role', hostEnv: trackerEnv, pollMs: 25, onMessage: (row) => sameRoleRows.set(row.id, row), onTasksChanged: () => {} });
+      edgeTrackers.push(sameRoleTracker);
+      appendLog('edge-sr-alpha', modelRow(0, { content: 'Alpha reply' }));
+      appendLog('edge-sr-beta', modelRow(0, { content: 'Beta reply' }));
+      appendLog(
+        'edge-same-role',
+        modelRow(0, { tool_calls: [
+          { name: 'invoke_subagent', args: { Role: '"Reviewer"', Prompt: '"Review alpha"' } },
+          { name: 'invoke_subagent', args: { Role: '"Reviewer"', Prompt: '"Review beta"' } }
+        ] }),
+        invokeResult(1, 'edge-sr-alpha')
+      );
+      sameRoleTracker.syncNow();
+      sameRoleTracker.observeToolCall('tool:sr-beta', 'invoke_subagent', { Role: 'Reviewer', Prompt: 'Review beta' }, '', null);
+      sameRoleTracker.observeToolCall('tool:sr-beta', 'invoke_subagent', { Role: 'Reviewer', Prompt: 'Review beta' }, '', { conversationId: 'edge-sr-beta' });
+      sameRoleTracker.observeToolCall('tool:sr-alpha', 'invoke_subagent', { Role: 'Reviewer', Prompt: 'Review alpha' }, '', { conversationId: 'edge-sr-alpha' });
+      appendLog('edge-same-role', invokeResult(2, 'edge-sr-beta'));
+      sameRoleTracker.syncNow();
+      assert.equal([...sameRoleRows.values()].find((row) => row.text === 'Alpha reply')?.parentId, 'tool:sr-alpha');
+      assert.equal([...sameRoleRows.values()].find((row) => row.text === 'Beta reply')?.parentId, 'tool:sr-beta');
+
+      // Coalesced send_message + subsequent short tool before poll must stay running and stream later replies.
+      const coalescedRows = new Map<string, any>();
+      const coalescedTracker = new AntigravitySubagentTracker({ sessionId: 'edge-coalesced', hostEnv: trackerEnv, pollMs: 25, onMessage: (row) => coalescedRows.set(row.id, row), onTasksChanged: () => {} });
+      edgeTrackers.push(coalescedTracker);
+      appendLog(
+        'edge-coalesced-child',
+        modelRow(0, { tool_calls: [{ name: 'send_message', args: {} }] }),
+        { step_index: 1, type: 'GENERIC', source: 'MODEL', status: 'DONE', content: 'Message sent' },
+        modelRow(2, { tool_calls: [{ name: 'read_file', args: {} }] }),
+        { step_index: 3, type: 'GENERIC', source: 'MODEL', status: 'DONE', content: 'File read' }
+      );
+      coalescedTracker.observeToolCall('tool:coalesced', 'invoke_subagent', {}, '', { conversationId: 'edge-coalesced-child' });
+      appendLog('edge-coalesced', { step_index: 0, type: 'SYSTEM_MESSAGE', source: 'SYSTEM', content: '<SYSTEM_MESSAGE>\n[Message] sender=edge-coalesced-child content=Still inspecting\n</SYSTEM_MESSAGE>' });
+      coalescedTracker.syncNow();
+      appendLog('edge-coalesced-child', modelRow(4, { content: 'Final reply' }));
+      await new Promise((resolve) => setTimeout(resolve, 125));
+      assert.equal(coalescedTracker.tasks()[0]?.status, 'running');
+      assert.equal(coalescedRows.has('sub:edge-coalesced-child:4:text'), true);
+
+      // Crossed optimistic links (same role, no prompt on first ACP frame) repair
+      // cleanly when authoritative conversationIds arrive on both tool rows.
+      const crossedRows = new Map<string, any>();
+      const crossedTracker = new AntigravitySubagentTracker({
+        sessionId: 'edge-crossed',
+        hostEnv: trackerEnv,
+        pollMs: 25,
+        onMessage: (row) => crossedRows.set(row.id, row),
+        onSubagentDetached: (id) => {
+          for (const key of [...crossedRows.keys()]) {
+            if (key.startsWith(`sub:${id}:`)) crossedRows.delete(key);
+          }
+        },
+        onTasksChanged: () => {}
+      });
+      edgeTrackers.push(crossedTracker);
+      appendLog('edge-cr-alpha', modelRow(0, { content: 'Alpha reply' }));
+      appendLog('edge-cr-beta', modelRow(0, { content: 'Beta reply' }));
+      appendLog(
+        'edge-crossed',
+        modelRow(0, { tool_calls: [
+          { name: 'invoke_subagent', args: { Role: '"Reviewer"', Prompt: '"Review alpha"' } },
+          { name: 'invoke_subagent', args: { Role: '"Reviewer"', Prompt: '"Review beta"' } }
+        ] }),
+        invokeResult(1, 'edge-cr-alpha'),
+        invokeResult(2, 'edge-cr-beta')
+      );
+      crossedTracker.syncNow();
+      crossedTracker.observeToolCall('tool:cr-beta', 'invoke_subagent', { Role: 'Reviewer' }, '', null);
+      crossedTracker.observeToolCall('tool:cr-alpha', 'invoke_subagent', { Role: 'Reviewer' }, '', null);
+      crossedTracker.observeToolCall('tool:cr-beta', 'invoke_subagent', { Role: 'Reviewer', Prompt: 'Review beta' }, '', { conversationId: 'edge-cr-beta' });
+      crossedTracker.observeToolCall('tool:cr-alpha', 'invoke_subagent', { Role: 'Reviewer', Prompt: 'Review alpha' }, '', { conversationId: 'edge-cr-alpha' });
+      assert.equal([...crossedRows.values()].find((row) => row.text === 'Alpha reply')?.parentId, 'tool:cr-alpha');
+      assert.equal([...crossedRows.values()].find((row) => row.text === 'Beta reply')?.parentId, 'tool:cr-beta');
+
+      // Live child that sends a native send_message and finishes with a tool-free
+      // DONE response settles to completed once quiet without needing a second delivery.
+      const settledRows = new Map<string, any>();
+      const settledTracker = new AntigravitySubagentTracker({ sessionId: 'edge-settled', hostEnv: trackerEnv, pollMs: 25, onMessage: (row) => settledRows.set(row.id, row), onTasksChanged: () => {} });
+      edgeTrackers.push(settledTracker);
+      const settledChildFile = antigravityTranscriptPath('edge-settled-child', trackerEnv)!;
+      appendLog(
+        'edge-settled-child',
+        modelRow(0, { tool_calls: [{ name: 'send_message', args: {} }] }),
+        { step_index: 1, type: 'GENERIC', source: 'MODEL', status: 'DONE', content: 'Message sent' }
+      );
+      settledTracker.observeToolCall('tool:settled', 'invoke_subagent', {}, '', { conversationId: 'edge-settled-child' });
+      appendLog('edge-settled', { step_index: 0, type: 'SYSTEM_MESSAGE', source: 'SYSTEM', content: '<SYSTEM_MESSAGE>\n[Message] sender=edge-settled-child content=Done\n</SYSTEM_MESSAGE>' });
+      settledTracker.syncNow();
+      appendLog('edge-settled-child', modelRow(2, { status: 'DONE', content: 'Review finished.' }));
+      const past = new Date(Date.now() - 6_000);
+      fs.utimesSync(settledChildFile, past, past);
+      settledTracker.syncNow();
+      assert.equal(settledRows.has('sub:edge-settled-child:2:text'), true);
+      assert.equal(settledTracker.tasks()[0]?.status, 'completed');
+
+      // Detaching a provisionally linked log-only sibling reconciles it immediately
+      // with its already-queued pending ACP invoke without needing another update.
+      const mixedRows = new Map<string, any>();
+      const mixedTracker = new AntigravitySubagentTracker({
+        sessionId: 'edge-mixed-reconcile',
+        hostEnv: trackerEnv,
+        pollMs: 25,
+        onMessage: (row) => mixedRows.set(row.id, row),
+        onSubagentDetached: (id) => {
+          for (const key of [...mixedRows.keys()]) {
+            if (key.startsWith(`sub:${id}:`)) mixedRows.delete(key);
+          }
+        },
+        onTasksChanged: () => {}
+      });
+      edgeTrackers.push(mixedTracker);
+      appendLog('edge-mr-alpha', modelRow(0, { content: 'Alpha reply' }));
+      appendLog('edge-mr-beta', modelRow(0, { content: 'Beta reply' }));
+      appendLog(
+        'edge-mixed-reconcile',
+        modelRow(0, { tool_calls: [
+          { name: 'invoke_subagent', args: { Role: '"Alpha"', Prompt: '"Check alpha"' } },
+          { name: 'invoke_subagent', args: { Role: '"Beta"', Prompt: '"Check beta"' } }
+        ] }),
+        invokeResult(1, 'edge-mr-alpha')
+      );
+      mixedTracker.syncNow();
+      mixedTracker.observeToolCall('tool:mr-beta', 'invoke_subagent', {}, '', null);
+      mixedTracker.observeToolCall('tool:mr-alpha', 'invoke_subagent', { Role: 'Alpha', Prompt: 'Check alpha' }, '', null);
+      mixedTracker.observeToolCall('tool:mr-beta', 'invoke_subagent', { Role: 'Beta', Prompt: 'Check beta' }, '', { conversationId: 'edge-mr-beta' });
+      assert.equal([...mixedRows.values()].find((row) => row.text === 'Alpha reply')?.parentId, 'tool:mr-alpha');
+      assert.equal([...mixedRows.values()].find((row) => row.text === 'Beta reply')?.parentId, 'tool:mr-beta');
+
+      // Log-only IDs with an initially argument-less ACP frame must re-pair when
+      // contradictory Role/Prompt metadata arrives later without any ACP conversationId.
+      const logOnlyRows = new Map<string, any>();
+      const logOnlyTracker = new AntigravitySubagentTracker({
+        sessionId: 'edge-log-only-reconcile',
+        hostEnv: trackerEnv,
+        pollMs: 25,
+        onMessage: (row) => logOnlyRows.set(row.id, row),
+        onSubagentDetached: (id) => {
+          for (const key of [...logOnlyRows.keys()]) {
+            if (key.startsWith(`sub:${id}:`)) logOnlyRows.delete(key);
+          }
+        },
+        onTasksChanged: () => {}
+      });
+      edgeTrackers.push(logOnlyTracker);
+      appendLog('edge-lo-alpha', modelRow(0, { content: 'Alpha reply' }));
+      appendLog('edge-lo-beta', modelRow(0, { content: 'Beta reply' }));
+      appendLog(
+        'edge-log-only-reconcile',
+        modelRow(0, { tool_calls: [
+          { name: 'invoke_subagent', args: { Role: '"Researcher"', Prompt: '"Review alpha"' } },
+          { name: 'invoke_subagent', args: { Role: '"Reviewer"', Prompt: '"Review beta"' } }
+        ] }),
+        invokeResult(1, 'edge-lo-alpha'),
+        invokeResult(2, 'edge-lo-beta')
+      );
+      logOnlyTracker.syncNow();
+      logOnlyTracker.observeToolCall('tool:lo-beta', 'invoke_subagent', {}, '', null);
+      logOnlyTracker.observeToolCall('tool:lo-alpha', 'invoke_subagent', { Role: 'Researcher', Prompt: 'Review alpha' }, '', null);
+      logOnlyTracker.observeToolCall('tool:lo-beta', 'invoke_subagent', { Role: 'Reviewer', Prompt: 'Review beta' }, '', null);
+      assert.equal([...logOnlyRows.values()].find((row) => row.text === 'Alpha reply')?.parentId, 'tool:lo-alpha');
+      assert.equal([...logOnlyRows.values()].find((row) => row.text === 'Beta reply')?.parentId, 'tool:lo-beta');
+
+      // After resume, a pre-resume unlinked child must not be claimed by a fresh
+      // invocation with the same Role/Prompt, and prompts > 4,000 chars pair losslessly.
+      const resumeRepeatRows = new Map<string, any>();
+      const resumeRepeatTracker = new AntigravitySubagentTracker({ sessionId: 'edge-resume-repeat', hostEnv: trackerEnv, pollMs: 25, onMessage: (row) => resumeRepeatRows.set(row.id, row), onTasksChanged: () => {} });
+      edgeTrackers.push(resumeRepeatTracker);
+      const longPrompt = 'P'.repeat(4_001);
+      appendLog('edge-old-child', modelRow(0, { status: 'DONE', content: 'Prior turn reply' }));
+      const oldChildPath = antigravityTranscriptPath('edge-old-child', trackerEnv)!;
+      const oldPast = new Date(Date.now() - 6_000);
+      fs.utimesSync(oldChildPath, oldPast, oldPast);
+      appendLog(
+        'edge-resume-repeat',
+        modelRow(0, { tool_calls: [{ name: 'invoke_subagent', args: { Role: '"Reviewer"', Prompt: JSON.stringify(longPrompt) } }] }),
+        invokeResult(1, 'edge-old-child')
+      );
+      resumeRepeatTracker.syncNow(true);
+      assert.equal(resumeRepeatTracker.tasks()[0]?.id, 'edge-old-child');
+      assert.equal(resumeRepeatTracker.tasks()[0]?.status, 'completed');
+      resumeRepeatTracker.observeToolCall('tool:repeat-new', 'invoke_subagent', { Role: 'Reviewer', Prompt: longPrompt }, '', null);
+      appendLog('edge-new-child', modelRow(0, { status: 'DONE', content: 'New turn reply' }));
+      appendLog(
+        'edge-resume-repeat',
+        modelRow(2, { tool_calls: [{ name: 'invoke_subagent', args: { Role: '"Reviewer"', Prompt: JSON.stringify(longPrompt) } }] }),
+        invokeResult(3, 'edge-new-child')
+      );
+      resumeRepeatTracker.syncNow();
+      assert.deepEqual([...resumeRepeatRows.values()].map((row) => [row.text, row.parentId]), [['New turn reply', 'tool:repeat-new']]);
+
+      // Drawer pagination keeps a tool_call and its tool_result in the same page.
+      appendLog(
+        'edge-drawer-child',
+        modelRow(0, { status: 'DONE', tool_calls: [{ name: 'read_file', args: { Path: '"probe.txt"' } }] }),
+        { step_index: 1, source: 'MODEL', type: 'GENERIC', status: 'DONE', content: 'Probe result' },
+        ...Array.from({ length: 199 }, (_, index) => modelRow(index + 2, { content: `Child reply ${index}` }))
+      );
+      const drawerPage = readAntigravityTaskOutput('edge-drawer-child', trackerEnv);
+      assert.equal(drawerPage.format, 'transcript');
+      if (drawerPage.format === 'transcript') {
+        assert.equal(drawerPage.cursor, null);
+        assert.equal(drawerPage.archived_messages.length, 201);
+      }
+    } finally {
+      edgeTrackers.forEach((tracker) => tracker.stop());
+    }
   } finally {
     release?.();
     await hosts.stopAll();
