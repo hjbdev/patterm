@@ -56,10 +56,10 @@ interface PendingSocketRequest {
   reject(error: Error): void;
 }
 
+// The connection shared between requests. Only a connection whose own reply
+// said the registry pushes, and so keeps it open between replies, becomes it.
 let persistentSocket: net.Socket | null = null;
 let persistentSubscribed = false;
-// Connections whose registry pushes, and so keeps them open between replies.
-const pushSockets = new WeakSet<net.Socket>();
 let nextRequestId = 1;
 const pendingRequests = new Map<number, PendingSocketRequest>();
 const pendingOrder: number[] = [];
@@ -84,13 +84,23 @@ function firstPendingOn(client: net.Socket): number | undefined {
   return pendingOrder.find((id) => pendingRequests.get(id)?.owner === client);
 }
 
+function isLive(socket: net.Socket | null): socket is net.Socket {
+  return Boolean(socket && !socket.destroyed && !socket.readableEnded && !socket.writableEnded && socket.writable);
+}
+
+// Once a connection has no requests left, keep it only if it is the shared
+// one; close any other, whether its last reply succeeded or failed.
+function settle(client: net.Socket): void {
+  if (ownsPending(client) || client.destroyed) return;
+  if (client === persistentSocket) client.unref();
+  else client.end();
+}
+
 // A registry that doesn't push closes each connection after its reply, so it
-// answers one request per connection. Share a connection only once its own
-// registry has said it pushes: a restarted registry may not.
+// answers one request per connection. A new connection carries one request
+// until its own reply says the registry pushes: a restarted registry may not.
 function getPersistentSocket(): Promise<net.Socket> {
-  if (persistentSocket && pushSockets.has(persistentSocket) && !persistentSocket.destroyed && !persistentSocket.readableEnded && !persistentSocket.writableEnded && persistentSocket.writable) {
-    return Promise.resolve(persistentSocket);
-  }
+  if (isLive(persistentSocket)) return Promise.resolve(persistentSocket);
   return new Promise<net.Socket>((resolve, reject) => {
     const client = net.createConnection(resolveSocketPath());
     let connected = false;
@@ -98,9 +108,7 @@ function getPersistentSocket(): Promise<net.Socket> {
     client.setEncoding('utf8');
     client.once('connect', () => {
       connected = true;
-      persistentSocket = client;
-      persistentSubscribed = false;
-      // Don't keep one-shot CLI invocations alive on an idle persistent socket.
+      // Don't keep one-shot CLI invocations alive on an idle socket.
       client.unref();
       resolve(client);
     });
@@ -193,27 +201,20 @@ async function registryRequestRaw(request: ShimRequest, meta?: Record<string, un
         const idx = pendingOrder.indexOf(id);
         if (idx >= 0) pendingOrder.splice(idx, 1);
         pendingRequests.delete(id);
-        if (!ownsPending(client)) client.unref();
+        settle(client);
         reject(error);
       }
     });
   }).then((value) => {
     const reply = value as { result: unknown; push: boolean };
-    if (reply.push) pushSockets.add(client);
-    const idle = !ownsPending(client);
-    // Close an idle connection unless it is the one a pushing registry shares.
-    if (idle && (!pushSockets.has(client) || persistentSocket !== client)) {
-      if (persistentSocket === client) {
-        persistentSocket = null;
-        persistentSubscribed = false;
-      }
-      client.end();
-    } else if (idle && !client.destroyed) {
-      client.unref();
+    if (reply.push && !isLive(persistentSocket) && isLive(client)) {
+      persistentSocket = client;
+      persistentSubscribed = false;
     }
+    settle(client);
     return reply;
   }, (error) => {
-    if (!ownsPending(client) && !client.destroyed) client.unref();
+    settle(client);
     throw error;
   });
 }
@@ -225,7 +226,7 @@ async function registryRequest(request: ShimRequest, meta?: Record<string, unkno
 type Signatures = Map<string, string>;
 
 function subscribeCatalogIfNeeded(): void {
-  if (!persistentSocket || !pushSockets.has(persistentSocket) || !onCatalogChanged || persistentSubscribed) return;
+  if (!isLive(persistentSocket) || !onCatalogChanged || persistentSubscribed) return;
   persistentSubscribed = true;
   void registryRequest({ op: 'catalog-subscribe' }).catch(() => { persistentSubscribed = false; });
 }
