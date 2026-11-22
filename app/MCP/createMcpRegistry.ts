@@ -2681,21 +2681,44 @@ function assistantOverview(services: RegistryServices, current: CallerRow) {
   return { current_process_id: current.process_id ?? '', projects, open_notifications: open?.items ?? [] };
 }
 
+function livenessFields(row: { activity: string | null; asking: string | null; turn_started_at: string | null; updated_at: string | null }, running: boolean) {
+  if (!running) return {};
+  const waitingFor = row.activity === 'permission' || row.activity === 'question'
+    ? (row.asking?.trim() || row.activity)
+    : null;
+  return {
+    ...(row.activity ? { activity: row.activity } : {}),
+    ...(waitingFor ? { waiting_for: waitingFor } : {}),
+    ...(row.turn_started_at ? { turn_started_at: row.turn_started_at } : {}),
+    ...(row.updated_at ? { updated_at: row.updated_at } : {})
+  };
+}
+
 // Running agents and processes only; the assistant asks for history explicitly.
 function listActiveProcesses(database: DatabaseService, projectId: string) {
   const agents = database.connection.prepare(
     `select sessions.process_id, coalesce(sessions.title, sessions.harness) as name, sessions.harness,
-            sessions.session_role, processes.parent_process_id, processes.activity, processes.status_label_id
+            sessions.session_role, processes.parent_process_id, processes.activity, processes.asking,
+            processes.turn_started_at, processes.updated_at, processes.status_label_id
      from sessions join processes on processes.id = sessions.process_id
      where sessions.project_id = ? and sessions.exited_at is null and processes.status = 'running' and processes.kind = 'agent'
      order by sessions.started_at asc`
-  ).all(projectId) as Array<{ process_id: string; name: string; harness: string; session_role: string; parent_process_id: string | null; activity: string; status_label_id: string | null }>;
+  ).all(projectId) as Array<{ process_id: string; name: string; harness: string; session_role: string; parent_process_id: string | null; activity: string | null; asking: string | null; turn_started_at: string | null; updated_at: string | null; status_label_id: string | null }>;
   const labels = statusLabelNames(database);
   const processes = database.connection.prepare(
     `select id as process_id, name, kind, parent_process_id from processes where project_id = ? and kind != 'agent' and status = 'running' order by created_at asc`
   ).all(projectId) as Array<{ process_id: string; name: string; kind: string; parent_process_id: string | null }>;
   return [
-    ...agents.map((row) => ({ process_id: row.process_id, name: row.name, kind: 'agent', harness: row.harness, activity: row.activity, ...(row.status_label_id && labels.has(row.status_label_id) ? { status_label: labels.get(row.status_label_id) } : {}), ...(row.parent_process_id ? { parent_process_id: row.parent_process_id } : {}) })),
+    ...agents.map((row) => ({
+      process_id: row.process_id,
+      name: row.name,
+      kind: 'agent',
+      harness: row.harness,
+      activity: row.activity,
+      ...livenessFields(row, true),
+      ...(row.status_label_id && labels.has(row.status_label_id) ? { status_label: labels.get(row.status_label_id) } : {}),
+      ...(row.parent_process_id ? { parent_process_id: row.parent_process_id } : {})
+    })),
     ...processes.map((row) => ({ process_id: row.process_id, name: row.name, kind: row.kind, ...(row.parent_process_id ? { parent_process_id: row.parent_process_id } : {}) }))
   ];
 }
@@ -2753,6 +2776,10 @@ type CliProcessRow = {
   status: string;
   is_current?: boolean;
   parent_process_id?: string;
+  activity?: string;
+  waiting_for?: string;
+  turn_started_at?: string;
+  updated_at?: string;
   status_label?: string;
   exit_code?: number;
 };
@@ -2766,6 +2793,10 @@ interface CliSessionRow {
   exit_code: number | null;
   parent_process_id: string | null;
   process_status: string | null;
+  activity: string | null;
+  asking: string | null;
+  turn_started_at: string | null;
+  updated_at: string | null;
   status_label_id: string | null;
 }
 
@@ -2778,14 +2809,17 @@ interface CliNonAgentProcessRow {
 }
 
 function mapCliSessionRow(row: CliSessionRow, currentProcessId: string | null | undefined, labels: Map<string, string>): CliProcessRow {
-  const statusLabel = row.status_label_id && row.process_status === 'running' ? labels.get(row.status_label_id) : undefined;
+  const status = row.process_status && row.process_status !== 'running' ? row.process_status : row.exited_at ? 'exited' : 'running';
+  const running = status === 'running';
+  const statusLabel = row.status_label_id && running ? labels.get(row.status_label_id) : undefined;
   return {
     process_id: row.process_id,
     name: row.title ?? row.harness ?? 'agent',
     kind: 'agent',
-    status: row.process_status && row.process_status !== 'running' ? row.process_status : row.exited_at ? 'exited' : 'running',
+    status,
     ...(row.process_id === currentProcessId ? { is_current: true } : {}),
     ...(row.parent_process_id ? { parent_process_id: row.parent_process_id } : {}),
+    ...livenessFields(row, running),
     ...(statusLabel !== undefined ? { status_label: statusLabel } : {}),
     ...(row.exit_code === null ? {} : { exit_code: row.exit_code })
   };
@@ -2858,7 +2892,8 @@ function listCliProcessesPage(
     sessions = database.connection
       .prepare(
         `select sessions.process_id, sessions.title, sessions.harness, sessions.session_role, sessions.exited_at, sessions.exit_code,
-                processes.parent_process_id, processes.status as process_status, processes.status_label_id
+                processes.parent_process_id, processes.status as process_status, processes.activity, processes.asking,
+                processes.turn_started_at, processes.updated_at, processes.status_label_id
          from sessions left join processes on processes.id = sessions.process_id
          where ${sessionWhere}
          order by sessions.started_at desc${limitClause}`
@@ -2938,7 +2973,8 @@ function listProjectStatusProcesses(database: DatabaseService, projectId: string
   const endedSessions = database.connection
     .prepare(
       `select sessions.process_id, sessions.title, sessions.harness, sessions.session_role, sessions.exited_at, sessions.exit_code,
-              processes.parent_process_id, processes.status as process_status, processes.status_label_id
+              processes.parent_process_id, processes.status as process_status, processes.activity, processes.asking,
+              processes.turn_started_at, processes.updated_at, processes.status_label_id
        from sessions left join processes on processes.id = sessions.process_id
        where ${endedSessionWhere.join(' and ')}
        order by sessions.started_at desc
@@ -2984,7 +3020,8 @@ function findCliProcess(database: DatabaseService, processId: string) {
   const session = database.connection
     .prepare(
       `select sessions.process_id, sessions.title, sessions.harness, sessions.session_role, sessions.exited_at, sessions.exit_code,
-              processes.parent_process_id, processes.status as process_status, processes.status_label_id
+              processes.parent_process_id, processes.status as process_status, processes.activity, processes.asking,
+              processes.turn_started_at, processes.updated_at, processes.status_label_id
        from sessions left join processes on processes.id = sessions.process_id
        where sessions.process_id = ?
        order by sessions.started_at desc
