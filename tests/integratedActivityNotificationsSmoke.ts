@@ -13,7 +13,7 @@ import { IntegratedAgentService, type CompactionSignal, type IntegratedActivityC
 import type { IntegratedConversationListener } from '../app/Services/IntegratedConversation';
 import { TurnBusyError } from '../app/Services/IntegratedDelivery';
 import { NotificationService } from '../app/Services/NotificationService';
-import { ParentRequestService } from '../app/Services/ParentRequestService';
+import { ParentRequestService, pendingRequestSummary } from '../app/Services/ParentRequestService';
 import { PresenceService } from '../app/Services/PresenceService';
 import type { PushService } from '../app/Services/PushService';
 import { SettingsService } from '../app/Services/SettingsService';
@@ -384,6 +384,144 @@ async function main(): Promise<void> {
       await permissions.reply('session_root', reviews[8]!.offerId, { decision: 'escalate' });
       await Promise.all(permissionNotices);
       assert.ok(notices.list({ process_id: 'agent' }).items.some((item) => item.kind === 'permission' && item.audience === 'user'));
+
+      // A bot overseeing the agent answers what waits for the user, with a
+      // parent's limits and nothing more.
+      const summary = pendingRequestSummary({ harness: 'agy', cwd: directory }, await agy.peekConversation('agent'));
+      assert.deepEqual(summary.map((item) => [item.request_id, item.can_approve_once]), [['sensitive-read', false]]);
+      await assert.rejects(permissions.overseerReply('agent', 'sensitive-read', { decision: 'once' }, 'bot'), /only a one-time read/i);
+      await assert.rejects(permissions.overseerReply('agent', 'sensitive-read', { decision: 'answer', answers: [['Yes']] }, 'bot'), /once or reject/);
+      await assert.rejects(permissions.overseerReply('agent', 'gone', { decision: 'reject' }, 'bot'), /no longer pending/);
+      await assert.rejects(permissions.overseerReply('agent', 'sensitive-read', { decision: 'reject' }, 'agent'), /own requests/);
+      // A request still offered to a parent is the parent's to answer.
+      nativePermissions.push({ id: 'read-3', tool_kind: 'read', once: true, action: 'Read README', resources: ['README.md'] });
+      stream!({ processId: 'agent', revision: 13, kind: 'pending' });
+      await settle();
+      assert.equal(reviews[9]!.target, 'root');
+      await assert.rejects(permissions.overseerReply('agent', 'read-3', { decision: 'once' }, 'bot'), /with the agent's parent/);
+      await permissions.overseerReply('agent', 'sensitive-read', { decision: 'reject' }, 'bot');
+      assert.deepEqual(replies.at(-1), ['agent', 'sensitive-read', 'reject', undefined]);
+      // A top-level agent's requests go straight to the user, and its overseer may answer them.
+      db.prepare(`update processes set parent_process_id = null where id = 'agent'`).run();
+      stream!({ processId: 'agent', revision: 14, kind: 'pending' });
+      await settle();
+      await assert.rejects(permissions.reply('session_root', reviews[9]!.offerId, { decision: 'once' }), /no longer pending for you/);
+      const reviewCount = reviews.length;
+      assert.equal((await permissions.overseerReply('agent', 'read-3', { decision: 'once' }, 'bot')).status, 'resolved');
+      assert.deepEqual(replies.at(-1), ['agent', 'read-3', 'once', undefined]);
+      assert.equal(reviews.length, reviewCount, 'an overseer reply offers nothing to parents');
+      // Skill files in standard user skill directories are also safe one-time reads,
+      // while unrelated home files and sensitive files inside skill dirs stay denied.
+      const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-skill-home-'));
+      const priorHome = process.env.HOME;
+      const priorProfile = process.env.USERPROFILE;
+      try {
+        process.env.HOME = fakeHome;
+        process.env.USERPROFILE = fakeHome;
+        const skillDir = path.join(fakeHome, '.config', 'opencode', 'skills', 'review-loop');
+        const claudeSkillsRoot = path.join(fakeHome, '.claude', 'skills');
+        const codexSkillDir = path.join(fakeHome, '.codex', 'skills', 'example');
+        const agySkillDir = path.join(fakeHome, '.gemini', 'config', 'skills', 'example');
+        const projectSkillDir = path.join(directory, '.claude', 'skills', 'local');
+        fs.mkdirSync(skillDir, { recursive: true });
+        fs.mkdirSync(claudeSkillsRoot, { recursive: true });
+        fs.mkdirSync(codexSkillDir, { recursive: true });
+        fs.mkdirSync(agySkillDir, { recursive: true });
+        fs.mkdirSync(projectSkillDir, { recursive: true });
+        fs.mkdirSync(path.join(directory, '.codex'), { recursive: true });
+        const skillFile = path.join(skillDir, 'SKILL.md');
+        const codexSkillFile = path.join(codexSkillDir, 'SKILL.md');
+        const agySkillFile = path.join(agySkillDir, 'SKILL.md');
+        const projectSkillFile = path.join(projectSkillDir, 'SKILL.md');
+        const skillSecret = path.join(skillDir, '.env');
+        const otherHome = path.join(fakeHome, 'notes.txt');
+        const codexAuth = path.join(directory, '.codex', 'auth.json');
+        const oauthCreds = path.join(directory, '.credentials.json');
+        fs.writeFileSync(skillFile, '# skill');
+        fs.symlinkSync(skillDir, path.join(claudeSkillsRoot, 'review-loop'), 'dir');
+        fs.writeFileSync(codexSkillFile, '# codex skill');
+        fs.writeFileSync(agySkillFile, '# agy skill');
+        fs.writeFileSync(projectSkillFile, '# local skill');
+        fs.writeFileSync(skillSecret, 'SECRET=1');
+        fs.writeFileSync(otherHome, 'private');
+        fs.writeFileSync(codexAuth, '{}');
+        fs.writeFileSync(oauthCreds, '{}');
+        nativePermissions = [
+          { id: 'skill-read', tool_kind: 'read', once: true, action: 'Read skill', resources: ['~/.config/opencode/skills/review-loop/SKILL.md'] },
+          { id: 'symlink-skill-read', tool_kind: 'read', once: true, action: 'Read symlinked skill', resources: ['~/.claude/skills/review-loop/SKILL.md'] },
+          { id: 'project-skill-read', tool_kind: 'read', once: true, action: 'Read project skill', resources: ['.claude/skills/local/SKILL.md'] },
+          { id: 'codex-skill-read', tool_kind: 'read', once: true, action: 'Read codex skill', resources: [codexSkillFile] },
+          { id: 'agy-skill-read', tool_kind: 'read', once: true, action: 'Read agy skill', resources: [agySkillFile] }
+        ];
+        stream!({ processId: 'agent', revision: 145, kind: 'pending' });
+        await settle();
+        const skillSummary = pendingRequestSummary({ harness: 'agy', cwd: directory }, await agy.peekConversation('agent'));
+        assert.deepEqual(skillSummary.map((item) => [item.request_id, item.can_approve_once]), [
+          ['skill-read', true],
+          ['symlink-skill-read', true],
+          ['project-skill-read', true],
+          ['codex-skill-read', true],
+          ['agy-skill-read', true]
+        ]);
+        assert.equal((await permissions.overseerReply('agent', 'skill-read', { decision: 'once' }, 'bot')).status, 'resolved');
+        assert.equal((await permissions.overseerReply('agent', 'symlink-skill-read', { decision: 'once' }, 'bot')).status, 'resolved');
+        assert.equal((await permissions.overseerReply('agent', 'project-skill-read', { decision: 'once' }, 'bot')).status, 'resolved');
+        nativePermissions = [
+          { id: 'skill-secret', tool_kind: 'read', once: true, action: 'Read secret', resources: [skillSecret] },
+          { id: 'home-other', tool_kind: 'read', once: true, action: 'Read home', resources: [otherHome] },
+          { id: 'codex-auth', tool_kind: 'read', once: true, action: 'Read codex auth', resources: ['.codex/auth.json'] },
+          { id: 'oauth-creds', tool_kind: 'read', once: true, action: 'Read oauth creds', resources: ['.credentials.json'] }
+        ];
+        stream!({ processId: 'agent', revision: 146, kind: 'pending' });
+        await settle();
+        const deniedSummary = pendingRequestSummary({ harness: 'agy', cwd: directory }, await agy.peekConversation('agent'));
+        assert.deepEqual(deniedSummary.map((item) => [item.request_id, item.can_approve_once]), [
+          ['skill-secret', false],
+          ['home-other', false],
+          ['codex-auth', false],
+          ['oauth-creds', false]
+        ]);
+        await assert.rejects(permissions.overseerReply('agent', 'skill-secret', { decision: 'once' }, 'bot'), /only a one-time read/i);
+        await assert.rejects(permissions.overseerReply('agent', 'home-other', { decision: 'once' }, 'bot'), /only a one-time read/i);
+        await assert.rejects(permissions.overseerReply('agent', 'codex-auth', { decision: 'once' }, 'bot'), /only a one-time read/i);
+        await assert.rejects(permissions.overseerReply('agent', 'oauth-creds', { decision: 'once' }, 'bot'), /only a one-time read/i);
+        // A repo-controlled skill symlink pointing outside the workspace is denied,
+        // while an ordinary file accessed via a symlinked workspace cwd alias passes.
+        const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-outside-'));
+        const aliasCwd = path.join(outsideDir, 'workspace-alias');
+        try {
+          const outsideFile = path.join(outsideDir, 'outside-note.txt');
+          fs.writeFileSync(outsideFile, 'outside');
+          fs.mkdirSync(path.join(directory, '.agents'), { recursive: true });
+          fs.symlinkSync(outsideDir, path.join(directory, '.agents', 'skills'), 'dir');
+          fs.symlinkSync(directory, aliasCwd, 'dir');
+          const escaped = pendingRequestSummary({ harness: 'agy', cwd: directory }, {
+            permissions: { data: [{ id: 'escape', tool_kind: 'read', once: true, resources: ['.agents/skills/outside-note.txt'] }] }
+          });
+          assert.equal(escaped[0]!.can_approve_once, false, 'a repo skill symlink cannot widen the read boundary');
+          const aliased = pendingRequestSummary({ harness: 'agy', cwd: aliasCwd }, {
+            permissions: { data: [{ id: 'alias', tool_kind: 'read', once: true, resources: [path.join(aliasCwd, 'README.md')] }] }
+          });
+          assert.equal(aliased[0]!.can_approve_once, true, 'ordinary files under a symlinked workspace cwd alias remain allowed');
+        } finally {
+          removeTree(outsideDir);
+        }
+        nativePermissions = [];
+      } finally {
+        if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
+        if (priorProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = priorProfile;
+        removeTree(fakeHome);
+      }
+      db.prepare(`update sessions set harness = 'claude' where id = 'session_agent'`).run();
+      nativeQuestions = [{ id: 'question-3', questions: [question] }];
+      stream!({ processId: 'agent', revision: 15, kind: 'pending' });
+      await settle();
+      const asked = pendingRequestSummary({ harness: 'claude', cwd: directory }, await agy.peekConversation('agent'));
+      assert.equal(asked[0]!.answerable, true);
+      await assert.rejects(permissions.overseerReply('agent', 'question-3', { decision: 'reject' }, 'bot'), /use answer/i);
+      await assert.rejects(permissions.overseerReply('agent', 'question-3', { decision: 'answer', answers: [['Unknown']] }, 'bot'), /invalid answer/i);
+      await permissions.overseerReply('agent', 'question-3', { decision: 'answer', answers: [['Browser']] }, 'bot');
+      assert.deepEqual(replies.at(-1), ['agent', 'question-3', [['Browser']]]);
     } finally {
       agy.dispose();
       permissions.dispose();

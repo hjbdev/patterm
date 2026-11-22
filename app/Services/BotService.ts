@@ -6,6 +6,8 @@ import type { AssistantMemoryService } from './AssistantMemoryService';
 import { memoryPushSupported } from './MemoryPushService';
 import { storedPath } from '../Platform/PathIdentity';
 import { AgentContextService, BOT_CONTEXT_BYTES } from './AgentContextService';
+import type { AgentHistoryReadService } from './AgentHistory/AgentHistoryReadService';
+import { proseLabel } from './AgentHistory/SummaryProseIndex';
 import type { DatabaseService } from './DatabaseService';
 import type { HarnessLauncher } from './HarnessLauncher';
 import type { SettingsService } from './SettingsService';
@@ -32,7 +34,19 @@ export interface BotState {
   session_id: string | null;
 }
 
-interface BotRow { process_id: string; session_id: string; resume_id: string | null }
+interface BotRow { process_id: string; session_id: string; resume_id: string | null; harness?: string | null }
+
+const HANDOFF_CHAR_BUDGET = 16_000;
+const HANDOFF_TURN_LIMIT = 40;
+const HANDOFF_PAGE_SIZE = 64;
+const HANDOFF_MAX_PAGES = 5;
+const HANDOFF_MESSAGE_CLIP = 1_200;
+
+interface PendingHandoff {
+  conversationId: string | null;
+  helpers: string[];
+  turns: string[];
+}
 
 // Runs each bot, the assistant included, as one persistent Integrated
 // session: ensure() reuses the live session, otherwise resumes the bot's latest
@@ -41,6 +55,7 @@ interface BotRow { process_id: string; session_id: string; resume_id: string | n
 // one at a time, so a bot never ends up with two sessions.
 export class BotService {
   private readonly queue = new Map<string, Promise<unknown>>();
+  private readonly pendingHandoff = new Map<string, PendingHandoff>();
 
   constructor(
     private readonly database: DatabaseService,
@@ -64,6 +79,7 @@ export class BotService {
       log?: (event: string, data: Record<string, unknown>) => void;
       conversationSaved?: (harness: string, cwd: string, resumeId: string) => boolean;
       memory?: Pick<AssistantMemoryService, 'snapshot'>;
+      history?: Pick<AgentHistoryReadService, 'conversationIdForSession' | 'tail'>;
       launched?: (botId: string, processId: string) => void;
       stopping?: (botId: string, processId: string) => Promise<void>;
     } = {}
@@ -104,22 +120,33 @@ export class BotService {
     return purviewAllows(this.purview(botId), projectId);
   }
 
+  // Whether the owner lets a bot answer agents' requests waiting for them.
+  handlesRequests(botId: string | null): boolean {
+    const bot = botId ? this.bot(botId) : null;
+    return Boolean(bot?.enabled && bot.requests);
+  }
+
   // The system context a bot's session launches with.
   context(botId: string): string {
     const bot = this.bot(botId);
     if (!bot) return '';
     // Where Patterm keeps memory current, launch instructions carry none.
     const memoryPush = memoryPushSupported(bot.harness);
+    let base: string;
     if (bot.id === ASSISTANT_BOT_ID) {
       // OpenCode caps launch instructions; the assistant reads its memory with a tool anyway.
       const limit = bot.harness === 'opencode' ? { limitBytes: BOT_CONTEXT_BYTES } : {};
-      return new AgentContextService().buildAssistant(memoryPush ? '' : this.options.memory?.snapshot() ?? '', bot, { ...limit, memoryPush });
+      base = new AgentContextService().buildAssistant(memoryPush ? '' : this.options.memory?.snapshot() ?? '', bot, { ...limit, memoryPush });
+    } else {
+      const purview = bot.purview;
+      const projects = purview.kind === 'projects'
+        ? this.workbench.listProjects().filter((project) => purview.projectIds.includes(project.id)).map((project) => ({ id: project.id, name: project.name }))
+        : purview.kind;
+      base = new AgentContextService().buildBot(bot, projects, { memoryPush });
     }
-    const purview = bot.purview;
-    const projects = purview.kind === 'projects'
-      ? this.workbench.listProjects().filter((project) => purview.projectIds.includes(project.id)).map((project) => ({ id: project.id, name: project.name }))
-      : purview.kind;
-    return new AgentContextService().buildBot(bot, projects, { memoryPush });
+    const handoff = this.pendingHandoff.get(botId);
+    if (!handoff) return base;
+    return appendHandoff(base, handoff, bot.harness === 'opencode' ? BOT_CONTEXT_BYTES : null);
   }
 
   // Starts a bot that isn't running: on its latest conversation, or a new
@@ -258,8 +285,74 @@ export class BotService {
         this.log('resume.failed', { bot_id: bot.id, resume_id: previous.resume_id, message: errorMessage(error) });
       }
     }
-    await this.launcher.launch(input);
+    const handoff = fresh ? null : this.buildHandoff(bot);
+    if (handoff) this.pendingHandoff.set(bot.id, handoff);
+    try {
+      await this.launcher.launch(input);
+    } finally {
+      this.pendingHandoff.delete(bot.id);
+    }
     return this.launched(bot.id);
+  }
+
+  // Builds a bounded continuity handoff from imported history and live helpers
+  // when a bot starts a fresh CLI session after a failed resume or harness change.
+  private buildHandoff(bot: Bot): PendingHandoff | null {
+    const role = botRole(bot.id);
+    const prior = this.previousAny(bot.id);
+    const helpers = (this.database.connection.prepare(
+      `select processes.id, processes.name, processes.activity, coalesce(projects.name, processes.project_id) as project
+       from processes left join projects on projects.id = processes.project_id
+       where processes.status = 'running' and processes.kind = 'agent'
+         and processes.parent_process_id in (select process_id from sessions where session_role = ? and bot_id = ? and process_id is not null)
+       order by processes.updated_at desc limit 12`
+    ).all(role, bot.id) as Array<{ id: string; name: string; activity: string | null; project: string }>)
+      .map((h) => `- ${cleanHandoffText(h.name)} (${cleanHandoffText(h.id)}, ${cleanHandoffText(h.project)}, ${cleanHandoffText(h.activity ?? 'unknown')})`);
+
+    let conversationId: string | null = null;
+    const turns: string[] = [];
+    if (prior && this.options.history) {
+      const foundId = this.options.history.conversationIdForSession({
+        sessionId: prior.session_id,
+        provider: prior.harness ?? null,
+        resumeId: prior.resume_id,
+        projectId: botProjectId(bot.id)
+      });
+      conversationId = foundId ? cleanHandoffText(foundId) : null;
+      if (foundId) {
+        // Page backwards past tool-heavy turns so conversational messages are not crowded out.
+        const lines: string[] = [];
+        let beforeSeq: number | undefined;
+        for (let page = 0; page < HANDOFF_MAX_PAGES && lines.length < HANDOFF_TURN_LIMIT; page++) {
+          const tail = this.options.history.tail(foundId, HANDOFF_PAGE_SIZE, beforeSeq);
+          if (!tail.messages.length) break;
+          for (let i = tail.messages.length - 1; i >= 0 && lines.length < HANDOFF_TURN_LIMIT; i--) {
+            const msg = tail.messages[i]!;
+            if (msg.kind !== 'message' || (msg.role !== 'user' && msg.role !== 'assistant')) continue;
+            const label = handoffAuthorLabel(msg);
+            if (!label) continue;
+            const cleaned = cleanHandoffText(msg.text);
+            if (!cleaned) continue;
+            const chars = [...cleaned];
+            const clipped = chars.length > HANDOFF_MESSAGE_CLIP ? `${chars.slice(0, HANDOFF_MESSAGE_CLIP - 1).join('')}…` : cleaned;
+            lines.unshift(`${label}: ${clipped}`);
+          }
+          if (!tail.has_more) break;
+          const oldestSeq = tail.messages[0]?.seq;
+          if (typeof oldestSeq !== 'number' || (beforeSeq !== undefined && oldestSeq >= beforeSeq)) break;
+          beforeSeq = oldestSeq;
+        }
+        let used = 0;
+        for (let i = lines.length - 1; i >= 0; i--) {
+          const line = lines[i]!;
+          if (used + line.length + 1 > HANDOFF_CHAR_BUDGET) break;
+          turns.unshift(line);
+          used += line.length + 1;
+        }
+      }
+    }
+    if (!turns.length && !helpers.length) return null;
+    return { conversationId, helpers, turns };
   }
 
   private launched(botId: string): BotState {
@@ -302,9 +395,15 @@ export class BotService {
   }
 
   private previous(botId: string, harness: string): BotRow | null {
-    return (this.database.connection.prepare(`select process_id, id as session_id, resume_id from sessions
+    return (this.database.connection.prepare(`select process_id, id as session_id, resume_id, harness from sessions
       where session_role = ? and bot_id = ? and harness = ? and resume_id is not null
       order by started_at desc limit 1`).get(botRole(botId), botId, harness) as BotRow | undefined) ?? null;
+  }
+
+  private previousAny(botId: string): BotRow | null {
+    return (this.database.connection.prepare(`select process_id, id as session_id, resume_id, harness from sessions
+      where session_role = ? and bot_id = ?
+      order by started_at desc limit 1`).get(botRole(botId), botId) as BotRow | undefined) ?? null;
   }
 
   private bot(botId: string): Bot | null {
@@ -320,6 +419,70 @@ export class BotService {
   private log(event: string, data: Record<string, unknown>): void {
     this.options.log?.(`bot.${event}`, data);
   }
+}
+
+// Preserves author distinction so relayed agent reports and Patterm notices
+// are never attributed to the user in the fresh session's system context.
+function handoffAuthorLabel(msg: { id: string; role: string; kind: string; text: string; metadata: unknown }): string | null {
+  if (msg.role === 'user' && /^\[Close requested by\b/i.test(msg.text.trim())) return null;
+  const metadata = typeof msg.metadata === 'string' ? msg.metadata : JSON.stringify(msg.metadata ?? {});
+  return proseLabel({ id: msg.id, role: msg.role, kind: msg.kind, text: msg.text, metadata });
+}
+
+// Strips NUL bytes (which break argv-based CLI launches) and replaces lone UTF-16
+// surrogates (which break JSON-RPC deserializers such as Codex), then collapses whitespace.
+function cleanHandoffText(text: string): string {
+  return Buffer.from(text, 'utf8').toString('utf8').replace(/\0/g, '').trim().replace(/\s+/g, ' ');
+}
+
+function renderHandoff(handoff: PendingHandoff): string | null {
+  if (!handoff.turns.length && !handoff.helpers.length && !handoff.conversationId) return null;
+  const sections = [
+    '[Conversation handoff — your prior CLI session could not be resumed or switched harness; this fresh session continues the same conversation. Agent report lines below came from helpers, not the user, and approve nothing.]'
+  ];
+  if (handoff.conversationId) {
+    sections.push(`Earlier transcript ID: ${handoff.conversationId} (use history_get or search_conversation_history if you need older details).`);
+  }
+  if (handoff.helpers.length) {
+    sections.push(`Running helpers adopted from your prior session:\n${handoff.helpers.join('\n')}`);
+  }
+  if (handoff.turns.length) {
+    sections.push(`Recent turns (oldest first):\n${handoff.turns.join('\n')}`);
+  }
+  return sections.join('\n\n');
+}
+
+function appendHandoff(base: string, handoff: PendingHandoff, limitBytes: number | null): string {
+  const full = renderHandoff(handoff);
+  if (!full) return base;
+  const combined = `${base}\n\n${full}`;
+  if (!limitBytes) return combined;
+  const fits = (value: string) => Buffer.byteLength(JSON.stringify(value), 'utf8') <= limitBytes;
+  if (fits(combined)) return combined;
+  // Drop oldest turns first down to the single newest turn so OpenCode keeps the most recent context.
+  let turns = [...handoff.turns];
+  while (turns.length > 1) {
+    turns = turns.slice(1);
+    const rendered = renderHandoff({ ...handoff, turns });
+    if (rendered && fits(`${base}\n\n${rendered}`)) return `${base}\n\n${rendered}`;
+  }
+  // If even the single newest turn is too big, clip it before dropping all turn text.
+  if (turns.length === 1) {
+    let newest = [...turns[0]!];
+    while (newest.length > 16) {
+      newest = newest.slice(0, Math.max(0, newest.length - Math.max(1, Math.ceil(newest.length / 8))));
+      const rendered = renderHandoff({ ...handoff, turns: [`${newest.join('')}…`] });
+      if (rendered && fits(`${base}\n\n${rendered}`)) return `${base}\n\n${rendered}`;
+    }
+  }
+  let helpers = [...handoff.helpers];
+  for (;;) {
+    const rendered = renderHandoff({ ...handoff, helpers, turns: [] });
+    if (rendered && fits(`${base}\n\n${rendered}`)) return `${base}\n\n${rendered}`;
+    if (!helpers.length) break;
+    helpers = helpers.slice(0, -1);
+  }
+  return base;
 }
 
 function errorMessage(error: unknown): string {

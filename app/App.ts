@@ -476,7 +476,7 @@ async function createApplicationResources(
     wokeFromSnooze: (processId) => snoozes.announcedWake(processId),
     compacting: (processId) => idleCompaction.compacting(processId),
     triage: (processId) => triage.decide(processId),
-    botReply: (processId) => assistantInbox.botFor(processId) ? turnDigests.reply(processId) : null,
+    botReply: (processId) => turnDigests.reply(processId),
     log: (event, data) => debugLog.write('notifications', event, data)
   })));
 
@@ -724,6 +724,7 @@ async function createApplicationResources(
       log: (event, data) => debugLog.write('bots', event, data),
       conversationSaved: (harness, cwd, resumeId) => harness !== 'claude' || claudeConversationSaved({ cwd, sessionId: resumeId, env: process.env }),
       memory: assistantMemory,
+      history: historyReadService,
       launched: (botId) => botRelay.launched(botId),
       stopping: (botId, processId) => botRelay.stopping(botId, processId)
     });
@@ -966,7 +967,8 @@ async function createApplicationResources(
     searchService,
     startupFrames.values(),
     (processId, exitCode) => raiseNotification({ processId, source: 'runtime', kind: 'failure', body: `Exited with code ${exitCode}` }),
-    (processId, previous, activity) => snoozes.activity(processId, previous, activity)
+    (processId, previous, activity) => snoozes.activity(processId, previous, activity),
+    (processId) => raiseNotification({ processId, source: 'runtime', kind: 'failure', body: 'Exited without reporting', dedupeKey: 'child:exited_without_report' })
   );
   stopBuffering();
   startupFrames.clear();
@@ -1004,6 +1006,9 @@ async function createApplicationResources(
   timers.activate();
   routines.activate();
   projectSnoozes.activate();
+  for (const processId of reconciled.unreportedChildExits) {
+    raiseNotification({ processId, source: 'runtime', kind: 'failure', body: 'Exited without reporting', dedupeKey: 'child:exited_without_report' });
+  }
   debugLog.write('mcp', 'socket.listening', { address: mcpSocket.address, elapsed_ms: Date.now() - mcpStartedAt });
   debugLog.write('startup', 'critical.ready', { elapsed_ms: Date.now() - startupStartedAt });
 
