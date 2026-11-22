@@ -273,8 +273,10 @@ async function main(): Promise<void> {
     database.connection.prepare(`update timeline_events set created_at = ? where id = 'quiet-root'`).run(new Date(now + 1600).toISOString());
     service.noteTurnBoundary('root');
     assert.equal((database.connection.prepare(`select turn_started_at from processes where id = 'root'`).get() as { turn_started_at: string | null }).turn_started_at, startedBefore, 'noteTurnBoundary preserves turn_started_at');
-    assert.equal(service.turnActivity('root', 'working', 'idle'), false, 'a subsequent native turn after bot_stay_quiet is not silenced');
-    database.connection.prepare(`delete from timeline_events where id = 'quiet-root'`).run();
+    // A fresh NotificationService instance (simulating app restart) still sees the cleared quiet mark.
+    const restarted = new NotificationService(database, settings, { append: () => '' }, async () => undefined, () => undefined, () => now);
+    assert.equal(restarted.turnActivity('root', 'working', 'idle'), false, 'a subsequent native turn after bot_stay_quiet is not silenced even after restart');
+    database.connection.prepare(`delete from timeline_events where id = 'quiet-root' or event_type = 'bot.quiet_cleared'`).run();
     service.turnActivity('root', 'idle', 'working');
     service.turnActivity('root', 'working', 'error');
     service.turnActivity('root', 'error', 'working');
