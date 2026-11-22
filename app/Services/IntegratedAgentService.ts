@@ -710,21 +710,11 @@ export class IntegratedAgentService {
     const provider = this.forProcess(processId);
     const send = () => {
       if (review && !review.current()) throw new Error('This request is no longer waiting for this parent');
-      if (resolved.preserveAttention) {
-        this.preservedAttentionInFlight.set(key, (this.preservedAttentionInFlight.get(key) ?? 0) + 1);
-        this.preservedAttention.add(key);
-      } else {
-        this.preservedAttention.delete(key);
-      }
+      if (!resolved.preserveAttention) this.preservedAttention.delete(key);
       for (const listener of this.promptDispatchListeners) {
         try { listener(key); } catch { /* listeners own their failures */ }
       }
-      if (!resolved.preserveAttention) return provider.prompt(processId, resolved, review);
-      return Promise.resolve(provider.prompt(processId, resolved, review)).finally(() => {
-        const remaining = (this.preservedAttentionInFlight.get(key) ?? 1) - 1;
-        if (remaining > 0) this.preservedAttentionInFlight.set(key, remaining);
-        else this.preservedAttentionInFlight.delete(key);
-      });
+      return provider.prompt(processId, resolved, review);
     };
     if (!this.memory || !provider.updateMemory) return send();
     return this.memory.deliver(key, (update) => provider.updateMemory!(processId, update))
@@ -765,34 +755,50 @@ export class IntegratedAgentService {
     }
     if (identity) this.recordSubmission(identity.key, identity.messageId, identity.hash, 'uncertain', null, null);
     const sequence = this.sequence(activityKey);
+    if (resolved.preserveAttention) {
+      this.preservedAttentionInFlight.set(activityKey, (this.preservedAttentionInFlight.get(activityKey) ?? 0) + 1);
+      this.preservedAttention.add(activityKey);
+    }
     let result: unknown;
     try {
-      result = await this.sendPrompt(processId, resolved);
-    } catch (error) {
-      if (error instanceof UncertainDeliveryError) {
-        // An ambiguous submission may already be running natively. Return a
-        // visible uncertain state instead of throwing or retrying.
-        const id = error.messageId ?? identity?.messageId;
-        if (identity && id) {
-          try { this.recordSubmission(identity.key, id, identity.hash, 'uncertain', null, error.message); } catch { /* the reservation already exists */ }
+      try {
+        result = await this.sendPrompt(processId, resolved);
+      } catch (error) {
+        if (error instanceof UncertainDeliveryError) {
+          // An ambiguous submission may already be running natively. Return a
+          // visible uncertain state instead of throwing or retrying.
+          const id = error.messageId ?? identity?.messageId;
+          if (identity && id) {
+            try { this.recordSubmission(identity.key, id, identity.hash, 'uncertain', null, error.message); } catch { /* the reservation already exists */ }
+          }
+          return { delivery: 'uncertain', message_id: id ?? null, error: error.message };
         }
-        return { delivery: 'uncertain', message_id: id ?? null, error: error.message };
+        // The provider classified this as a definitive pre-admission rejection.
+        if (identity) {
+          try { this.removeSubmission(identity.key, identity.messageId); } catch { /* fail closed: the row stays uncertain */ }
+        }
+        // A turn that takes no input is running; send the prompt after it. Try
+        // once now in case that turn ended before the prompt was stored.
+        if (error instanceof TurnBusyError) {
+          const held = this.hold(activityKey, resolved, identity, error.turnKind);
+          this.flushHeld(activityKey);
+          return held;
+        }
+        throw error;
       }
-      // The provider classified this as a definitive pre-admission rejection.
-      if (identity) {
-        try { this.removeSubmission(identity.key, identity.messageId); } catch { /* fail closed: the row stays uncertain */ }
+      this.admitted(processId, activityKey, sequence, resolved, identity, result);
+      return result;
+    } finally {
+      if (resolved.preserveAttention) {
+        const remaining = (this.preservedAttentionInFlight.get(activityKey) ?? 1) - 1;
+        if (remaining > 0) this.preservedAttentionInFlight.set(activityKey, remaining);
+        else {
+          this.preservedAttentionInFlight.delete(activityKey);
+          const current = this.activity(activityKey);
+          if (current === 'idle' || current === 'error') this.preservedAttention.delete(activityKey);
+        }
       }
-      // A turn that takes no input is running; send the prompt after it. Try
-      // once now in case that turn ended before the prompt was stored.
-      if (error instanceof TurnBusyError) {
-        const held = this.hold(activityKey, resolved, identity, error.turnKind);
-        this.flushHeld(activityKey);
-        return held;
-      }
-      throw error;
     }
-    this.admitted(processId, activityKey, sequence, resolved, identity, result);
-    return result;
   }
 
   // The native provider admitted the prompt. Activity and result bookkeeping
@@ -1243,6 +1249,7 @@ export class IntegratedAgentService {
     if (!command) throw new Error('This agent does not support slash commands');
     const compacting = name === 'compact';
     if (compacting) this.signal(key, 'compact');
+    else this.preservedAttention.delete(key);
     let result: unknown;
     try {
       result = await command.call(provider, processId, name, text);

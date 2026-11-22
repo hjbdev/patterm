@@ -458,8 +458,20 @@ async function main(): Promise<void> {
       assert.equal(peerNotices.get(handoffNoticeId)?.resolved_at, null, 'peer send_input preserves open attention across an in-flight turn handoff');
       peerStatus = 'idle';
       peerStream?.({ processId: 'peer_target', revision: 4, kind: 'status', status: 'idle' });
-      await peerRegistry.call('send_input', { process_id: 'peer_target', kind: 'text', text: 'User answer', submit: true });
-      assert.notEqual(peerNotices.get(handoffNoticeId)?.resolved_at, null, 'user send_input clears open user attention notice');
+      // Fast peer turn that starts and completes before prompt() resolves must
+      // not leak preserveAttention into a subsequent owner turn/command.
+      onPeerPrompt = () => {
+        peerStatus = 'working';
+        peerStream?.({ processId: 'peer_target', revision: 5, kind: 'status', status: 'working' });
+        peerStatus = 'idle';
+        peerStream?.({ processId: 'peer_target', revision: 6, kind: 'status', status: 'idle' });
+      };
+      await peerRegistry.callPublic('send_input', { process_id: 'peer_target', kind: 'text', text: 'Fast peer turn', submit: true }, { identity: 'id_peer_caller' });
+      onPeerPrompt = null;
+      assert.equal(peerNotices.get(handoffNoticeId)?.resolved_at, null, 'fast peer turn still leaves attention open');
+      peerStatus = 'working';
+      peerStream?.({ processId: 'peer_target', revision: 7, kind: 'status', status: 'working' });
+      assert.notEqual(peerNotices.get(handoffNoticeId)?.resolved_at, null, 'next owner working transition after fast peer turn clears open attention');
     } finally {
       peerIntegrated.dispose();
     }
