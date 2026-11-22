@@ -271,7 +271,10 @@ async function main(): Promise<void> {
     service.turnActivity('root', 'idle', 'working');
     const startedBefore = (database.connection.prepare(`select turn_started_at from processes where id = 'root'`).get() as { turn_started_at: string | null }).turn_started_at;
     database.connection.prepare(`update timeline_events set created_at = ? where id = 'quiet-root'`).run(new Date(now + 1600).toISOString());
-    service.noteTurnBoundary('root');
+    // An older replayed snapshot boundary does not clear a newer quiet mark.
+    service.noteTurnBoundary('root', new Date(now + 1500).toISOString());
+    assert.equal(database.connection.prepare(`select 1 from timeline_events where event_type = 'bot.quiet_cleared' and process_id = 'root'`).get(), undefined, 'older boundary does not clear newer quiet mark');
+    service.noteTurnBoundary('root', new Date(now + 1700).toISOString());
     assert.equal((database.connection.prepare(`select turn_started_at from processes where id = 'root'`).get() as { turn_started_at: string | null }).turn_started_at, startedBefore, 'noteTurnBoundary preserves turn_started_at');
     // A fresh NotificationService instance (simulating app restart) still sees the cleared quiet mark.
     const restarted = new NotificationService(database, settings, { append: () => '' }, async () => undefined, () => undefined, () => now);

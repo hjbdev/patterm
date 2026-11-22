@@ -347,7 +347,7 @@ export class NotificationService {
   // queued user prompt starting right after a quiet digest turn's result, or a
   // successor OpenCode execution inside the settle window) durably clears any
   // active bot_stay_quiet mark without touching turn_started_at.
-  noteTurnBoundary(processId: string): void {
+  noteTurnBoundary(processId: string, at?: string): void {
     const db = this.database.connection;
     const row = db.prepare(`select project_id, turn_started_at from processes where id = ?`).get(processId) as { project_id: string | null; turn_started_at: string | null } | undefined;
     if (!row?.turn_started_at) return;
@@ -356,7 +356,10 @@ export class NotificationService {
       order by created_at desc, rowid desc limit 1`).get(processId, row.turn_started_at) as { event_type: string; created_at: string } | undefined;
     if (latest?.event_type !== 'bot.stayed_quiet') return;
     const latestMs = Date.parse(latest.created_at);
-    const createdAt = new Date(Math.max(this.now(), Number.isFinite(latestMs) ? latestMs : 0)).toISOString();
+    const atMs = at ? Date.parse(at) : Number.NaN;
+    // A replayed snapshot carrying an earlier boundary never clears a newer quiet mark.
+    if (Number.isFinite(atMs) && Number.isFinite(latestMs) && atMs < latestMs) return;
+    const createdAt = new Date(Math.max(this.now(), Number.isFinite(latestMs) ? latestMs : 0, Number.isFinite(atMs) ? atMs : 0)).toISOString();
     db.prepare(`insert into timeline_events (id, event_type, project_id, session_id, process_id, actor_type, actor_id, metadata, created_at)
       values (?, 'bot.quiet_cleared', ?, null, ?, 'system', null, '{}', ?)`).run(`event_${randomUUID()}`, row.project_id, processId, createdAt);
   }

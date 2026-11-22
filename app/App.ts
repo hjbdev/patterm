@@ -448,7 +448,7 @@ async function createApplicationResources(
   const turnDigests = new TurnDigests();
   defer(integrated.onConversationEvent((processId, event) => {
     turnDigests.observe(processId, event);
-    if (event.kind === 'turn_boundary') notificationService.noteTurnBoundary(processId);
+    if (event.kind === 'turn_boundary') notificationService.noteTurnBoundary(processId, event.detail);
   }));
   // A bot's turn notification shows only a reply from that turn.
   defer(integrated.onActivityChange(({ processId, previous, activity }) => turnDigests.activity(processId, previous, activity)));

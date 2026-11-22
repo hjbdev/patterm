@@ -753,12 +753,14 @@ export class CodexAppServerService {
       // A thread-level idle report cannot complete a known active turn.
       // Keep the projected snapshot consistent with the RPC client's state.
       if (method === 'thread/status/changed' && status.status === 'idle' && channel.client?.activeTurn(channel.threadId)) status.status = 'working';
+      const successorTurn = method === 'turn/started' && channel.emitted?.status === 'working';
       channel.own = status;
       channel.liveOwn = true;
       // A turn's end is announced even while running subagents keep the
       // status unchanged: held prompts wait for it, and the snapshot (its
       // tasks, a proposed plan) is read again.
       this.updateStatus(channel, status.status === 'idle' || status.status === 'error');
+      if (successorTurn) this.enqueue(channel, { revision: 0, kind: 'turn_boundary', detail: new Date().toISOString() });
       if (status.status !== 'working') this.enqueue(channel, { revision: 0, kind: 'pending' });
       return;
     }

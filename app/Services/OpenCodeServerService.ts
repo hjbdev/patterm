@@ -1013,7 +1013,7 @@ export class OpenCodeServerService {
       state.execution = 'running';
       state.detail = '';
       this.publishActivity(state);
-      if (successor) this.broadcast(state, { kind: 'turn_boundary' });
+      if (successor) this.broadcast(state, { kind: 'turn_boundary', detail: new Date().toISOString() });
       return;
     }
     // A request cannot outlive the execution waiting on it; an interrupted
