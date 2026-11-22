@@ -126,8 +126,8 @@ async function main(): Promise<void> {
   assert.match(brief, /Close a helper with close_process once its work is truly finished/);
   assert.match(brief, /ready to merge or waiting for review is not finished/);
   assert.match(brief, /Follow through on delegated work instead of leaving loops dangling/);
-  assert.match(brief, /turn_started_at/);
-  assert.match(brief, /parent_request_reply or agent_request_reply/);
+  assert.match(brief, /max_wait_seconds/);
+  assert.match(brief, /offered by Patterm via parent_request_reply or when agent_request_reply is enabled/);
   assert.ok(Buffer.byteLength(JSON.stringify(brief), 'utf8') < BOT_CONTEXT_BYTES - 1500, 'default bot context leaves comfortable OpenCode headroom');
   assert.match(brief, /About you, from the user:\nLooks after the website\./);
   assert.match(context.buildBot({ name: 'Pal', instructions: '' }, 'none'), /no projects to work in/);
@@ -314,7 +314,7 @@ async function main(): Promise<void> {
     assert.doesNotMatch(openCodeCtx, /OLDEST_TURN/, 'OpenCode trimming drops oldest turns first');
     // Tight budget: base + JSON-escaped bot instructions leaves room only for a clipped newest turn.
     historyRows.push({ id: 'm-tight', conversationId: 'conv-fable-1', seq: 100, role: 'assistant', kind: 'message', text: `NEWEST_TIGHT_MARKER ${'Z'.repeat(1150)}`, toolName: null, toolCallId: null, toolInputSummary: null, toolOutputSummary: null, providerCreatedAt: null, createdAt: now, metadata: null, media: [] });
-    settings.updateBots({ bots: savedBots.map((entry) => entry.id === 'fable' ? { ...entry, harness: 'opencode', digests: true, focus: true, instructions: `x${'\n'.repeat(1300)}x`, model: null, reasoning: null, serviceTier: null } : entry) });
+    settings.updateBots({ bots: savedBots.map((entry) => entry.id === 'fable' ? { ...entry, harness: 'opencode', digests: true, focus: true, instructions: `x${'\n'.repeat(1500)}x`, model: null, reasoning: null, serviceTier: null } : entry) });
     resumeFails = true;
     await stop(bots.state('fable').process_id!);
     await bots.ensure('fable');

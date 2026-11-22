@@ -132,19 +132,23 @@ export class BotService {
     if (!bot) return '';
     // Where Patterm keeps memory current, launch instructions carry none.
     const memoryPush = memoryPushSupported(bot.harness);
+    const handoff = this.pendingHandoff.get(botId);
+    // Reserve room in OpenCode's 8 KiB launch cap when a conversation handoff
+    // is pending so long About notes do not crowd out the newest turn.
+    const openCodeBaseLimit = handoff ? BOT_CONTEXT_BYTES - 1024 : BOT_CONTEXT_BYTES;
     let base: string;
     if (bot.id === ASSISTANT_BOT_ID) {
       // OpenCode caps launch instructions; the assistant reads its memory with a tool anyway.
-      const limit = bot.harness === 'opencode' ? { limitBytes: BOT_CONTEXT_BYTES } : {};
+      const limit = bot.harness === 'opencode' ? { limitBytes: openCodeBaseLimit } : {};
       base = new AgentContextService().buildAssistant(memoryPush ? '' : this.options.memory?.snapshot() ?? '', bot, { ...limit, memoryPush });
     } else {
       const purview = bot.purview;
       const projects = purview.kind === 'projects'
         ? this.workbench.listProjects().filter((project) => purview.projectIds.includes(project.id)).map((project) => ({ id: project.id, name: project.name }))
         : purview.kind;
-      base = new AgentContextService().buildBot(bot, projects, { memoryPush });
+      const limit = bot.harness === 'opencode' ? { limitBytes: openCodeBaseLimit } : {};
+      base = new AgentContextService().buildBot(bot, projects, { ...limit, memoryPush });
     }
-    const handoff = this.pendingHandoff.get(botId);
     if (!handoff) return base;
     return appendHandoff(base, handoff, bot.harness === 'opencode' ? BOT_CONTEXT_BYTES : null);
   }

@@ -501,8 +501,8 @@ async function main(): Promise<void> {
     assert.match(assistantContext, /assistant_overview/);
     assert.match(assistantContext, /never invent labels from IDs/);
     assert.match(assistantContext, /Follow through on delegated work instead of leaving loops dangling/);
-    assert.match(assistantContext, /turn_started_at/);
-    assert.match(assistantContext, /parent_request_reply or agent_request_reply/);
+    assert.match(assistantContext, /max_wait_seconds/);
+    assert.match(assistantContext, /offered by Patterm via parent_request_reply or when agent_request_reply is enabled/);
     assert.ok(Buffer.byteLength(JSON.stringify(assistantContext), 'utf8') < 7900 - 1500, 'default assistant context leaves comfortable OpenCode headroom');
 
     // MCP: the assistant is scoped like the owner across workspace projects,
