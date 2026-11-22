@@ -730,7 +730,11 @@ async function createApplicationResources(
     });
   botService = bots;
   const botRelay = new BotRelay(database, bots, codexAppServer, integrated, settings, assistantInbox,
-    { log: (event, data) => debugLog.write('bots', event, data), compacting: (processId) => idleCompaction.compacting(processId) });
+    { log: (event, data) => debugLog.write('bots', event, data), compacting: (processId) => idleCompaction.compacting(processId), notify: raiseNotification });
+  integrated.setHeldPromptGuard(
+    (processId, prompt) => botRelay.allowHeldPrompt(processId, prompt),
+    (processId, digestId) => botRelay.previewFocusDigest(processId, digestId)
+  );
   relay = botRelay;
   defer(() => botRelay.dispose());
   botRelay.start();
@@ -846,6 +850,10 @@ async function createApplicationResources(
     stopProcess: (processId) => actions.stopProcess.execute(processId),
     presets: () => settings.harnessPresets(),
     notify: raiseNotification,
+    bots: () => settings.bots().bots,
+    toBot: (botId, processId, message, meta) => meta
+      ? botRelay.deliverRoutineReport(botId, { runId: meta.runId, processId, routineName: meta.routineName, projectId: meta.projectId, report: meta.report, message })
+      : botRelay.deliverAgentMessage(botId, processId, message),
     toAssistant: (processId, message) => botRelay.deliverAgentMessage(ASSISTANT_BOT_ID, processId, message),
     onChanged: (workbench) => notifyChanged(workbench ? ['routines', 'workbench'] : ['routines']),
     appDataPath: options.appDataPath,

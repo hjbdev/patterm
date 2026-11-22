@@ -580,9 +580,30 @@ export class IntegratedAgentService {
     return this.whileSending(processId, () => this.submit(processId, input));
   }
 
+  private heldPromptGuard: ((processId: string, prompt: ResolvedIntegratedPrompt) => ResolvedIntegratedPrompt | null) | null = null;
+  private focusDigestPreview: ((processId: string, digestId: string) => string | null) | null = null;
+
+  setHeldPromptGuard(
+    guard: (processId: string, prompt: ResolvedIntegratedPrompt) => ResolvedIntegratedPrompt | null,
+    previewFocusDigest?: (processId: string, digestId: string) => string | null
+  ): void {
+    this.heldPromptGuard = guard;
+    this.focusDigestPreview = previewFocusDigest ?? null;
+  }
+
   routineNotificationDigest(processId: string, text: string): Promise<unknown> {
     if (this.forProcess(processId) !== this.providers.claude) return this.prompt(processId, text);
     return this.whileSending(processId, () => this.submit(processId, text, true));
+  }
+
+  // Sends a bot-bound prompt carrying its source scope (or Focus digest ID)
+  // so admission rechecks purview after wake/memory and on held-queue replay.
+  scopedPrompt(
+    processId: string,
+    text: string,
+    options: { sourceScope?: string | undefined; routineFallback?: ResolvedIntegratedPrompt['routineFallback']; focusDigestId?: string | undefined }
+  ): Promise<unknown> {
+    return this.whileSending(processId, () => this.submit(processId, text, undefined, options));
   }
 
   // Expiring offers must not get stuck in Patterm's durable held prompt queue.
@@ -620,7 +641,12 @@ export class IntegratedAgentService {
     }
   }
 
-  private async submit(processId: string, input: IntegratedPromptInput | string, routineDigest?: true): Promise<unknown> {
+  private async submit(
+    processId: string,
+    input: IntegratedPromptInput | string,
+    routineDigest?: true,
+    scope?: { sourceScope?: string | undefined; routineFallback?: ResolvedIntegratedPrompt['routineFallback']; focusDigestId?: string | undefined }
+  ): Promise<unknown> {
     const request: IntegratedPromptInput = typeof input === 'string' ? { text: input } : input;
     const hasContent = Boolean(request.text.trim() || request.references?.length || request.attachments?.length);
     if (!hasContent) throw new Error('Message is empty');
@@ -632,6 +658,11 @@ export class IntegratedAgentService {
       const resolved = this.inputs ? await this.inputs.resolve(processId, request) : { text: request.text, messageId: request.messageId, references: [], attachments: [] };
       if (routineDigest) resolved.routineDigest = routineDigest;
       if (request.preserveAttention) resolved.preserveAttention = true;
+      if (scope) {
+        if (scope.sourceScope) resolved.sourceScope = scope.sourceScope;
+        if (scope.routineFallback) resolved.routineFallback = scope.routineFallback;
+        if (scope.focusDigestId) resolved.focusDigestId = scope.focusDigestId;
+      }
       // Wrapped so the arrival chain waits for the prompt's place, not its
       // native call.
       const result = this.accept(processId, key, resolved);
@@ -710,10 +741,24 @@ export class IntegratedAgentService {
     const send = () => {
       if (review && !review.current()) throw new Error('This request is no longer waiting for this parent');
       if (!resolved.preserveAttention) this.preservedAttentionPending.delete(key);
+      let next = resolved;
+      if ((resolved.sourceScope || resolved.focusDigestId) && this.heldPromptGuard) {
+        const checked = this.heldPromptGuard(key, resolved);
+        if (!checked) return Promise.resolve({ delivery: 'dropped' });
+        next = {
+          ...checked,
+          admitGuard: () => {
+            const rechecked = this.heldPromptGuard!(key, checked);
+            if (rechecked) resolved.text = rechecked.text;
+            return rechecked;
+          }
+        };
+        resolved.text = checked.text;
+      }
       for (const listener of this.promptDispatchListeners) {
         try { listener(key); } catch { /* listeners own their failures */ }
       }
-      return provider.prompt(processId, resolved, review);
+      return provider.prompt(processId, next, review);
     };
     if (!this.memory || !provider.updateMemory) return send();
     return this.memory.deliver(key, (update) => provider.updateMemory!(processId, update))
@@ -779,9 +824,10 @@ export class IntegratedAgentService {
     if (identity) this.recordSubmission(identity.key, identity.messageId, identity.hash, 'uncertain', null, null);
     const sequence = this.sequence(activityKey);
     return this.withPreservedAttention(activityKey, resolved, async () => {
+      const sendInput: ResolvedIntegratedPrompt = { ...resolved };
       let result: unknown;
       try {
-        result = await this.sendPrompt(processId, resolved);
+        result = await this.sendPrompt(processId, sendInput);
       } catch (error) {
         if (error instanceof UncertainDeliveryError) {
           // An ambiguous submission may already be running natively. Return a
@@ -805,7 +851,13 @@ export class IntegratedAgentService {
         }
         throw error;
       }
-      this.admitted(processId, activityKey, sequence, resolved, identity, result);
+      if ((result as { delivery?: unknown } | null | undefined)?.delivery === 'dropped') {
+        if (identity) {
+          try { this.removeSubmission(identity.key, identity.messageId); } catch { /* ignore */ }
+        }
+        return { value: result, keep: false };
+      }
+      this.admitted(processId, activityKey, sequence, sendInput, identity, result);
       return { value: result, keep: true };
     });
   }
@@ -871,6 +923,10 @@ export class IntegratedAgentService {
       retryRejected = false;
       const resolved = JSON.parse(row.payload) as ResolvedIntegratedPrompt;
       const identity = { key, messageId: row.message_id, hash: row.payload_hash ?? submissionHash(resolved) };
+      if ((resolved.sourceScope || resolved.focusDigestId) && this.heldPromptGuard && !this.heldPromptGuard(key, resolved)) {
+        this.claimHeld(key, row, identity.hash);
+        continue;
+      }
       // Claimed before the call, as a first send reserves its id: a restart
       // after native admission leaves an uncertain id, never a second send.
       this.claimHeld(key, row, identity.hash);
@@ -878,9 +934,10 @@ export class IntegratedAgentService {
       const sequence = this.sequence(key);
       const outcome = await this.withPreservedAttention(key, resolved, async (): Promise<{ value: 'continue' | 'return'; keep: boolean }> => {
         let result: unknown;
+        const sendInput: ResolvedIntegratedPrompt = { ...resolved, messageId: row.message_id };
         try {
           // The held id lets the transcript confirm an unconfirmed send.
-          result = await this.sendPrompt(key, { ...resolved, messageId: row.message_id });
+          result = await this.sendPrompt(key, sendInput);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           // It may be running, so it is never sent again. It stays visible as
@@ -901,7 +958,10 @@ export class IntegratedAgentService {
         } finally {
           this.dispatching.delete(key);
         }
-        this.admitted(key, key, sequence, resolved, identity, result);
+        if ((result as { delivery?: unknown } | null | undefined)?.delivery === 'dropped') {
+          return { value: 'continue', keep: false };
+        }
+        this.admitted(key, key, sequence, sendInput, identity, result);
         return { value: 'continue', keep: true };
       });
       if (outcome === 'return') return;
@@ -1004,10 +1064,20 @@ export class IntegratedAgentService {
 
   private heldQueue(key: string): IntegratedQueuedMessage[] {
     const rows = this.database.connection.prepare(`${HELD_SELECT} where process_id = ? order by seq`).all(key) as HeldPromptRow[];
-    return rows.map((row) => ({
-      id: row.message_id, text: String(record(JSON.parse(row.payload)).text ?? ''), delivery: row.state, reason: row.turn_kind,
-      ...(row.error ? { error: row.error } : {})
-    }));
+    return rows.flatMap((row) => {
+      const parsed = record(JSON.parse(row.payload));
+      const digestId = typeof parsed.focusDigestId === 'string' ? parsed.focusDigestId : null;
+      let text = String(parsed.text ?? '');
+      if (digestId && this.focusDigestPreview) {
+        const rendered = this.focusDigestPreview(key, digestId);
+        if (rendered === null) return [];
+        text = rendered;
+      }
+      return [{
+        id: row.message_id, text, delivery: row.state, reason: row.turn_kind,
+        ...(row.error ? { error: row.error } : {})
+      }];
+    });
   }
 
   private removeHeld(key: string, messageId: string): void {

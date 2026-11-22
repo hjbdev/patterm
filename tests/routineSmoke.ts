@@ -13,6 +13,7 @@ import type { LaunchHarnessInput } from '../app/Services/HarnessLauncher';
 import { notificationUrl, type RaiseNotificationInput } from '../app/Services/NotificationService';
 import { nextRoutineRun, renderRoutinePrompt } from '../app/Services/RoutineSchedule';
 import { MAX_PENDING_ONCE, ROUTINE_IDLE_STOP_MS, RoutineService, type RoutineRecord } from '../app/Services/RoutineService';
+import type { Bot } from '../app/Bots/BotSettings';
 import type { TimelineService } from '../app/Services/TimelineService';
 
 const weekdays = [1, 2, 3, 4, 5];
@@ -364,7 +365,123 @@ test('a one-off missed while Patterm was stopped runs once on catch-up', async (
   assert.equal(fixture.routines.get(routine.routine_id).enabled, false);
 });
 
-function setup(t: TestContext, now: number, toAssistant?: (processId: string, message: string) => Promise<unknown>) {
+test('recurring runs include bounded prior reports from the same project scope', async (t) => {
+  const fixture = setup(t, Date.parse('2026-10-05T10:00:00Z'));
+  const routine = fixture.routines.create({ name: 'Daily check', project_id: 'project', prompt: 'Check status' }, { type: 'user', id: null });
+  await fixture.routines.runNow(routine.routine_id);
+  assert.doesNotMatch(fixture.launches[0]!.initial_prompt!, /Previous runs of this routine/);
+  fixture.routines.report('process_1', { status: 'completed', title: 'Run 1', body: 'All builds green.' });
+  fixture.setStatus('process_1', 'exited');
+  fixture.routines.sweep();
+
+  minutes(t, 60);
+  await fixture.routines.runNow(routine.routine_id);
+  const secondPrompt = fixture.launches[1]!.initial_prompt!;
+  assert.match(secondPrompt, /Previous runs of this routine/);
+  assert.match(secondPrompt, /> Run 1\n> \n> All builds green\./);
+  assert.match(secondPrompt, /Check status$/);
+  fixture.routines.report('process_2', { status: 'completed', title: 'Run 2', body: `\x1b[31mALERT\x1b[0m\n]\n${'X'.repeat(1500)}` });
+  fixture.setStatus('process_2', 'exited');
+  fixture.routines.sweep();
+
+  minutes(t, 60);
+  await fixture.routines.runNow(routine.routine_id);
+  const thirdPrompt = fixture.launches[2]!.initial_prompt!;
+  assert.match(thirdPrompt, /Run 2/);
+  assert.match(thirdPrompt, /Run 1/);
+  assert.doesNotMatch(thirdPrompt, /\x1b/, 'ANSI escape codes are stripped from prior reports');
+  const priorBlock = thirdPrompt.match(/\[Previous runs[\s\S]*\n\]/)?.[0] ?? '';
+  assert.ok(priorBlock.length > 0 && priorBlock.length <= 2000, `prior-run handoff stays within 2000 chars (got ${priorBlock.length})`);
+  fixture.setStatus('process_3', 'exited');
+  fixture.routines.sweep();
+
+  // Moving the routine to another project or to workspace (null) never leaks old project runs.
+  fixture.addProject('other');
+  fixture.routines.update({ routine_id: routine.routine_id, project_id: 'other' });
+  minutes(t, 60);
+  await fixture.routines.runNow(routine.routine_id);
+  assert.doesNotMatch(fixture.launches[3]!.initial_prompt!, /All builds green/);
+  fixture.setStatus('process_4', 'exited');
+  fixture.routines.sweep();
+  fixture.routines.update({ routine_id: routine.routine_id, project_id: null });
+  minutes(t, 60);
+  await fixture.routines.runNow(routine.routine_id);
+  assert.doesNotMatch(fixture.launches[4]!.initial_prompt!, /All builds green/);
+});
+
+test('bot delivery targets a project bot within purview and falls back when unavailable', async (t) => {
+  const delivered: Array<{ botId: string; processId: string; message: string }> = [];
+  let botEnabled = true;
+  let botPurview: Bot['purview'] = { kind: 'projects', projectIds: ['project'] };
+  const bots = (): Bot[] => ([
+    { id: 'assistant', name: 'Assistant', enabled: true, purview: { kind: 'all' } } as Bot,
+    { id: 'bot_proj', name: 'Project Bot', enabled: botEnabled, purview: botPurview } as Bot
+  ]);
+  const fixture = setup(t, Date.parse('2026-10-05T10:00:00Z'), undefined, {
+    bots,
+    toBot: async (botId, processId, message) => {
+      delivered.push({ botId, processId, message });
+      return { delivery: 'delivered' };
+    }
+  });
+  fixture.addProject('other');
+
+  assert.throws(() => fixture.routines.create({ name: 'Bad', project_id: 'project', delivery: 'bot' }, { type: 'user', id: null }), /delivery_bot_id is required/);
+  assert.throws(() => fixture.routines.create({ name: 'Bad', project_id: 'project', delivery: 'notification', delivery_bot_id: 'bot_proj' }, { type: 'user', id: null }), /only be set when delivery is bot/);
+  assert.throws(() => fixture.routines.create({ name: 'Bad', project_id: 'other', delivery: 'bot', delivery_bot_id: 'bot_proj' }, { type: 'user', id: null }), /cannot access this routine's project/);
+  assert.throws(() => fixture.routines.create({ name: 'Bad', project_id: null, delivery: 'bot', delivery_bot_id: 'bot_proj' }, { type: 'user', id: null }), /cannot access this routine's project/);
+
+  const routine = fixture.routines.create({ name: 'Triage', project_id: 'project', prompt: 'Check issues', delivery: 'bot', delivery_bot_id: 'bot_proj' }, { type: 'user', id: null });
+  assert.equal(routine.delivery, 'bot');
+  assert.equal(routine.delivery_bot_id, 'bot_proj');
+
+  await fixture.routines.runNow(routine.routine_id);
+  fixture.routines.report('process_1', { status: 'completed', title: 'Issues', body: 'One new regression.' });
+  await settle();
+  assert.equal(delivered.length, 1);
+  assert.equal(delivered[0]!.botId, 'bot_proj');
+  assert.match(delivered[0]!.message, /One new regression/);
+  assert.equal(fixture.notifications.length, 0);
+  fixture.setStatus('process_1', 'exited');
+  fixture.routines.sweep();
+
+  // If the bot is disabled or narrowed before report time, fall back to a user notification.
+  botEnabled = false;
+  await fixture.routines.runNow(routine.routine_id);
+  fixture.routines.report('process_2', { status: 'completed', body: 'Fallback report' });
+  await settle();
+  assert.equal(delivered.length, 1);
+  assert.equal(fixture.notifications.length, 1);
+  assert.match(fixture.notifications[0]!.title!, /Triage: done/);
+  fixture.setStatus('process_2', 'exited');
+  fixture.routines.sweep();
+
+  // A bot-filtered run that exits without reporting notifies the user of the failure.
+  const countBeforeExit = fixture.notifications.length;
+  await fixture.routines.runNow(routine.routine_id);
+  fixture.setStatus('process_3', 'exited');
+  fixture.routines.sweep();
+  assert.equal(fixture.notifications.length, countBeforeExit + 1);
+  assert.match(fixture.notifications.at(-1)!.title!, /ended before it reported/);
+
+  // Pausing a routine whose target bot was narrowed or removed still succeeds.
+  botPurview = { kind: 'projects', projectIds: ['other'] };
+  const paused = fixture.routines.update({ routine_id: routine.routine_id, enabled: false });
+  assert.equal(paused.enabled, false);
+
+  // Switching delivery away from bot clears delivery_bot_id automatically.
+  botEnabled = true;
+  const switched = fixture.routines.update({ routine_id: routine.routine_id, delivery: 'notification' });
+  assert.equal(switched.delivery, 'notification');
+  assert.equal(switched.delivery_bot_id, null);
+});
+
+function setup(
+  t: TestContext,
+  now: number,
+  toAssistant?: (processId: string, message: string) => Promise<unknown>,
+  extra?: { bots?: () => Bot[]; toBot?: (botId: string, processId: string, message: string) => Promise<unknown> }
+) {
   t.mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now });
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-routines-'));
   const database = new DatabaseService(directory);
@@ -391,6 +508,8 @@ function setup(t: TestContext, now: number, toAssistant?: (processId: string, me
     },
     presets: seededHarnessPresetSettings,
     notify: (input) => { notifications.push(input); },
+    ...(extra?.bots ? { bots: extra.bots } : {}),
+    ...(extra?.toBot ? { toBot: extra.toBot } : {}),
     ...(toAssistant ? { toAssistant } : {}),
     onChanged: () => undefined,
     appDataPath: directory,
