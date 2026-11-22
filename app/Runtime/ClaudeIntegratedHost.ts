@@ -449,7 +449,11 @@ function refreshMemory(fromUpdate = false): void {
 }
 
 function contextArgs(): string[] {
-  if (process.platform !== 'win32') return ['--append-system-prompt', config.context];
+  // Use an owner-only file on Windows and whenever context carries a
+  // conversation handoff, so private history never appears in process args.
+  if (process.platform !== 'win32' && !config.context.includes('[Conversation handoff')) {
+    return ['--append-system-prompt', config.context];
+  }
   fs.writeFileSync(contextPath, config.context, { mode: 0o600 });
   return ['--append-system-prompt-file', contextPath];
 }
