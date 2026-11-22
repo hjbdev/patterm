@@ -498,14 +498,31 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     fs.writeFileSync(trace + '.no-echo-done', '');
     await waitFor(provider, (snapshot) => snapshot.status === 'idle');
 
-    // An inline image is confirmed by the same receipt, through its media list.
-    fs.unlinkSync(trace + '.no-echo-done');
+    // Inline images are confirmed by the same receipt only when its media list
+    // has the same image types in the same order.
     const pixel = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
-    const withImage = provider.prompt('process', { text: 'no-live-echo', references: [], messageId: 'logged-image-id', attachments: [{ path: path.join(directory, 'shot.png'), name: 'shot.png', mime: 'image/png', size: 68, data: pixel }] });
-    void withImage.catch(() => {});
-    await waitFor(provider, () => frames().some((frame) => frame.method === 'session/prompt' && frame.params.prompt[1]?.type === 'image'));
-    fs.appendFileSync(nativeLog, JSON.stringify({ ...JSON.parse(inputRow(3)), media: [{ mime_type: 'image/png', uri: '/uploaded_media_1.png' }] }) + '\n');
-    await withImage;
+    const imageAttachments = [{ name: 'shot.png', mime: 'image/png' }, { name: 'shot.jpg', mime: 'image/jpeg' }]
+      .map((image) => ({ ...image, path: path.join(directory, image.name), size: 68, data: pixel }));
+    const imageReceipt = (step: number, types: string[]) => JSON.stringify({ ...JSON.parse(inputRow(step)), media: types.map((mime_type, index) => ({ mime_type, uri: `/uploaded_media_${index}` })) }) + '\n';
+    let imagePrompts = 0;
+    const sendImages = async (messageId: string) => {
+      fs.rmSync(trace + '.no-echo-done', { force: true });
+      const sent = provider.prompt('process', { text: 'no-live-echo', references: [], messageId, attachments: imageAttachments });
+      void sent.catch(() => {});
+      imagePrompts += 1;
+      await waitFor(provider, () => frames().filter((frame) => frame.method === 'session/prompt' && frame.params.prompt[2]?.type === 'image').length === imagePrompts);
+      return { sent };
+    };
+    const reordered = (await sendImages('reordered-image-id')).sent;
+    fs.appendFileSync(nativeLog, imageReceipt(3, ['image/jpeg', 'image/png']));
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    assert.equal(await provider.reconcile('process', 'reordered-image-id'), 'unknown', 'a receipt with reordered media does not confirm delivery');
+    fs.writeFileSync(trace + '.no-echo-done', '');
+    await reordered;
+    await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+    const matching = (await sendImages('logged-image-id')).sent;
+    fs.appendFileSync(nativeLog, imageReceipt(4, ['image/png', 'image/jpeg']));
+    await matching;
     assert.equal(await provider.reconcile('process', 'logged-image-id'), 'accepted');
     fs.writeFileSync(trace + '.no-echo-done', '');
     await waitFor(provider, (snapshot) => snapshot.status === 'idle');
@@ -575,7 +592,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     fs.unlinkSync(trace + '.no-echo-done');
     const replayed = provider.prompt('process', { text: 'no-live-echo', references: [], attachments: [], messageId: 'replayed-log-id' });
     void replayed.catch(() => {});
-    await waitFor(provider, () => frames().filter((frame) => frame.method === 'session/prompt' && frame.params.prompt[0].text === 'no-live-echo').length === 3);
+    await waitFor(provider, () => frames().filter((frame) => frame.method === 'session/prompt' && frame.params.prompt[0].text === 'no-live-echo').length === 4);
     fs.writeFileSync(nativeLog, inputRow(1, '2024-01-01T00:00:00Z') + '\n');
     await assert.rejects(replayed, UncertainDeliveryError, 'a historical row in a newly created file does not confirm delivery');
     fs.writeFileSync(trace + '.no-echo-done', '');
