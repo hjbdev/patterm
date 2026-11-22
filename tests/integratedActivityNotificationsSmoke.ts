@@ -483,13 +483,13 @@ async function main(): Promise<void> {
         const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-outside-'));
         const aliasCwd = path.join(outsideDir, 'workspace-alias');
         try {
-          const outsideFile = path.join(outsideDir, 'secret-note.txt');
+          const outsideFile = path.join(outsideDir, 'outside-note.txt');
           fs.writeFileSync(outsideFile, 'outside');
           fs.mkdirSync(path.join(directory, '.agents'), { recursive: true });
           fs.symlinkSync(outsideDir, path.join(directory, '.agents', 'skills'), 'dir');
           fs.symlinkSync(directory, aliasCwd, 'dir');
           const escaped = pendingRequestSummary({ harness: 'agy', cwd: directory }, {
-            permissions: { data: [{ id: 'escape', tool_kind: 'read', once: true, resources: ['.agents/skills/secret-note.txt'] }] }
+            permissions: { data: [{ id: 'escape', tool_kind: 'read', once: true, resources: ['.agents/skills/outside-note.txt'] }] }
           });
           assert.equal(escaped[0]!.can_approve_once, false, 'a repo skill symlink cannot widen the read boundary');
           const aliased = pendingRequestSummary({ harness: 'agy', cwd: aliasCwd }, {
