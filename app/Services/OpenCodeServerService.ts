@@ -168,6 +168,7 @@ export function openCodeBridgeName(mcp: McpServerSpec): string {
 // OpenCode owns its shared daemon. Patterm registers a runtime-only MCP bridge
 // and durable per-session context; it never edits the user's OpenCode config.
 export class OpenCodeServerService {
+  readonly signalsNativeSend = true as const;
   private readonly token: string;
   private readonly selections = new Map<string, { agent?: string; model?: string; variant?: string }>();
   // Digests of the server configs installed per directory, never the configs:
@@ -461,6 +462,7 @@ export class OpenCodeServerService {
         delivery: 'steer', resume: true
       };
       const route = `/api/session/${encodeURIComponent(runtime.resumeId)}/prompt`;
+      input.onNativeSend?.();
       const response = (input.attachments.length
         ? await this.inlinePrompt(route, body)
         : await this.api(runtime.executable, runtime.cwd, 'POST', route, body, review?.current)) as { data?: { id?: unknown } };

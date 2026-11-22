@@ -117,7 +117,9 @@ export interface ReviewPrompt {
   current(): boolean;
 }
 
-export interface IntegratedProviderService {  prepare(input: IntegratedLaunchInput): Promise<IntegratedLaunchResult>;
+export interface IntegratedProviderService {
+  readonly signalsNativeSend?: true;
+  prepare(input: IntegratedLaunchInput): Promise<IntegratedLaunchResult>;
   conversation(processId: string): Promise<unknown>;
   olderMessages?(processId: string, cursor: string): Promise<unknown>;
   prompt(processId: string, input: ResolvedIntegratedPrompt, review?: ReviewPrompt): Promise<unknown>;
@@ -748,6 +750,7 @@ export class IntegratedAgentService {
         if (!checked) return Promise.resolve({ delivery: 'dropped' });
         next = {
           ...checked,
+          onNativeSend: resolved.onNativeSend,
           admitGuard: () => {
             const rechecked = this.heldPromptGuard!(key, checked);
             if (rechecked) resolved.text = rechecked.text;
@@ -756,6 +759,7 @@ export class IntegratedAgentService {
         };
         resolved.text = checked.text;
       }
+      if (!provider.signalsNativeSend) next.onNativeSend?.();
       for (const listener of this.promptDispatchListeners) {
         try { listener(key); } catch { /* listeners own their failures */ }
       }
@@ -790,7 +794,7 @@ export class IntegratedAgentService {
     });
   }
 
-  private async withPreservedAttention<T>(key: string, resolved: ResolvedIntegratedPrompt, run: () => Promise<{ value: T; keep: boolean }>): Promise<T> {
+  private async withPreservedAttention<T>(key: string, resolved: ResolvedIntegratedPrompt, run: (onNativeSend: () => void) => Promise<{ value: T; keep: boolean }>): Promise<T> {
     const busyNow = () => {
       const current = this.activity(key);
       return current === 'working' || current === 'thinking';
@@ -806,15 +810,20 @@ export class IntegratedAgentService {
       return token;
     };
     let token: { origin: 'owner' | 'peer' } | null = null;
-    if (!resolved.preserveAttention) {
-      this.turnOrigins.delete(key);
-      if (!busyNow()) token = push('owner');
-    } else {
-      token = push('peer');
-    }
+    let signaled = false;
+    const onNativeSend = () => {
+      if (signaled) return;
+      signaled = true;
+      if (!resolved.preserveAttention) {
+        this.turnOrigins.delete(key);
+        if (!busyNow()) token = push('owner');
+      } else {
+        token = push('peer');
+      }
+    };
     let keep = false;
     try {
-      const outcome = await run();
+      const outcome = await run(onNativeSend);
       keep = outcome.keep;
       if (keep && !resolved.preserveAttention && !token && !busyNow()) {
         // The pre-existing turn ended during preflight while synthetic working
@@ -845,8 +854,8 @@ export class IntegratedAgentService {
     }
     if (identity) this.recordSubmission(identity.key, identity.messageId, identity.hash, 'uncertain', null, null);
     const sequence = this.sequence(activityKey);
-    return this.withPreservedAttention(activityKey, resolved, async () => {
-      const sendInput: ResolvedIntegratedPrompt = { ...resolved };
+    return this.withPreservedAttention(activityKey, resolved, async (onNativeSend) => {
+      const sendInput: ResolvedIntegratedPrompt = { ...resolved, onNativeSend };
       let result: unknown;
       try {
         result = await this.sendPrompt(processId, sendInput);
@@ -954,9 +963,9 @@ export class IntegratedAgentService {
       this.claimHeld(key, row, identity.hash);
       this.dispatching.set(key, row);
       const sequence = this.sequence(key);
-      const outcome = await this.withPreservedAttention(key, resolved, async (): Promise<{ value: 'continue' | 'return'; keep: boolean }> => {
+      const outcome = await this.withPreservedAttention(key, resolved, async (onNativeSend): Promise<{ value: 'continue' | 'return'; keep: boolean }> => {
         let result: unknown;
-        const sendInput: ResolvedIntegratedPrompt = { ...resolved, messageId: row.message_id };
+        const sendInput: ResolvedIntegratedPrompt = { ...resolved, messageId: row.message_id, onNativeSend };
         try {
           // The held id lets the transcript confirm an unconfirmed send.
           result = await this.sendPrompt(key, sendInput);

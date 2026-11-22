@@ -540,13 +540,17 @@ async function main(): Promise<void> {
     const peerNotificationActions = new NotificationActions(peerNotices, settings, new PresenceService(), undefined as unknown as PushService);
     let peerStream: IntegratedConversationListener | undefined;
     let peerStatus = 'idle';
+    let beforeNativeSend: (() => void | Promise<void>) | null = null;
     let onPeerPrompt: (() => void | Promise<void>) | null = null;
     const peerIntegrated = new IntegratedAgentService(database, {
       codex: {
         ...provider,
+        signalsNativeSend: true,
         subscribe: async (_processId, listener) => { peerStream = listener; return () => { peerStream = undefined; }; },
         conversation: async () => ({ status: peerStatus, messages: [] }),
-        prompt: async () => {
+        prompt: async (_processId, input) => {
+          await beforeNativeSend?.();
+          input.onNativeSend?.();
           await onPeerPrompt?.();
           return { turnId: 'turn-peer' };
         }
@@ -694,6 +698,30 @@ async function main(): Promise<void> {
       await peerRegistry.callPublic('send_input', { process_id: 'peer_target', kind: 'text', text: 'Peer after uncertain owner', submit: true }, { identity: 'id_peer_caller' });
       onPeerPrompt = null;
       assert.equal(peerNotices.get(uncertainOwnerNoticeId)?.resolved_at, null, 'uncertain owner send that never ran does not consume next peer turn protection');
+      // Uncertain owner send whose ack was lost, followed by a peer send whose
+      // preflight runs while the admitted owner turn starts, calls notify_user,
+      // and finishes. Because onNativeSend fires after preflight, the owner
+      // turn never consumes the peer prompt's protection.
+      db.prepare(`delete from notifications where process_id = 'peer_target'`).run();
+      peerStatus = 'idle';
+      peerStream?.({ processId: 'peer_target', revision: 22, kind: 'status', status: 'idle' });
+      onPeerPrompt = () => { throw new UncertainDeliveryError('OpenCode HTTP ack lost'); };
+      await peerIntegrated.prompt('peer_target', { text: 'Owner lost ack' });
+      onPeerPrompt = null;
+      let lostAckNoticeId = '';
+      beforeNativeSend = async () => {
+        // Owner's delayed native turn runs during peer preflight (before onNativeSend).
+        peerStatus = 'working';
+        peerStream?.({ processId: 'peer_target', revision: 23, kind: 'status', status: 'working' });
+        lostAckNoticeId = (await peerRegistry.callPublic('notify_user', { title: 'Lost-ack owner attention' }, { identity: 'id_peer_target' }) as { notification_id: string }).notification_id;
+        peerStatus = 'idle';
+        peerStream?.({ processId: 'peer_target', revision: 24, kind: 'status', status: 'idle' });
+      };
+      await peerRegistry.callPublic('send_input', { process_id: 'peer_target', kind: 'text', text: 'Peer after lost-ack owner', submit: true }, { identity: 'id_peer_caller' });
+      beforeNativeSend = null;
+      peerStatus = 'working';
+      peerStream?.({ processId: 'peer_target', revision: 25, kind: 'status', status: 'working' });
+      assert.equal(peerNotices.get(lostAckNoticeId)?.resolved_at, null, 'admitted owner turn with lost ack running during peer preflight does not consume peer protection');
     } finally {
       peerIntegrated.dispose();
     }

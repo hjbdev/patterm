@@ -65,6 +65,9 @@ export interface ResolvedIntegratedPrompt {
   // with async pre-admission waits (e.g. Codex thread/read) recheck right
   // before the native request.
   admitGuard?: (() => ResolvedIntegratedPrompt | null) | undefined;
+  // In-memory hook called by providers with async preflight immediately before
+  // their native prompt request so turn-origin tracking starts after preflight.
+  onNativeSend?: (() => void) | undefined;
 }
 
 export interface IntegratedWorktreeFile {
