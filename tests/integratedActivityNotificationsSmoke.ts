@@ -627,6 +627,33 @@ async function main(): Promise<void> {
       await wait(25);
       onPeerPrompt = null;
       assert.equal(peerNotices.get(heldNoticeId)?.resolved_at, null, 'held peer prompt preserves open attention when flushed');
+      // Back-to-back OpenCode-style peer prompts: Turn 1 is acknowledged before
+      // its working event arrives, then Turn 1 starts and finishes during Turn 2's
+      // preflight before Turn 2's own working event arrives. Turn 2 must still
+      // preserve open user attention.
+      peerStatus = 'idle';
+      peerStream?.({ processId: 'peer_target', revision: 10, kind: 'status', status: 'idle' });
+      const { notification_id: backToBackNoticeId } = await peerRegistry.callPublic('notify_user', { title: 'Back-to-back decision needed' }, { identity: 'id_peer_target' }) as { notification_id: string };
+      onPeerPrompt = () => {
+        // Turn 1: previous idle arrives during preflight so synthetic working
+        // is skipped; Turn 1's own SSE working/idle arrives during Turn 2.
+        peerStatus = 'idle';
+        peerStream?.({ processId: 'peer_target', revision: 11, kind: 'status', status: 'idle' });
+      };
+      await peerRegistry.callPublic('send_input', { process_id: 'peer_target', kind: 'text', text: 'Peer turn 1', submit: true }, { identity: 'id_peer_caller' });
+      onPeerPrompt = () => {
+        // Turn 1 starts and completes over SSE while Turn 2 is in preflight.
+        peerStatus = 'working';
+        peerStream?.({ processId: 'peer_target', revision: 12, kind: 'status', status: 'working' });
+        peerStatus = 'idle';
+        peerStream?.({ processId: 'peer_target', revision: 13, kind: 'status', status: 'idle' });
+      };
+      await peerRegistry.callPublic('send_input', { process_id: 'peer_target', kind: 'text', text: 'Peer turn 2', submit: true }, { identity: 'id_peer_caller' });
+      onPeerPrompt = null;
+      // Turn 2's native working event now arrives after acknowledgement.
+      peerStatus = 'working';
+      peerStream?.({ processId: 'peer_target', revision: 14, kind: 'status', status: 'working' });
+      assert.equal(peerNotices.get(backToBackNoticeId)?.resolved_at, null, 'second peer turn still preserves open attention after first peer turn finished during preflight');
     } finally {
       peerIntegrated.dispose();
     }

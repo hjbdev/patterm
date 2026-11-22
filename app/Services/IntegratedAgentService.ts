@@ -216,12 +216,11 @@ export class IntegratedAgentService {
   private readonly dispatching = new Map<string, HeldPromptRow>();
   // One pending title refresh per agent; a newer prompt replaces it.
   private readonly titleRefreshes = new Map<string, { timer: NodeJS.Timeout | null }>();
-  // Processes whose current turn was started by a non-parent agent prompt, so
-  // activity transitions to working leave open user attention notices intact.
-  private readonly preservedAttention = new Set<string>();
-  // In-flight non-parent prompts keep the flag alive across an older turn's
-  // completion arriving during provider preflight.
-  private readonly preservedAttentionInFlight = new Map<string, { count: number; sawWorking: boolean; sawEnded: boolean }>();
+  // Pending non-parent agent prompts whose turns should leave open user
+  // attention notices intact. `active` tracks whether the currently running
+  // turn is one of those peer turns so an older non-peer turn finishing during
+  // preflight does not consume the new peer prompt's protection.
+  private readonly preservedAttentionPending = new Map<string, { pending: number; active: boolean }>();
   private history: AgentHistoryReadService | null = null;
   // Debug log sink for native events a provider did not project. Each type is
   // logged once per agent so protocol drift is visible without flooding.
@@ -710,7 +709,7 @@ export class IntegratedAgentService {
     const provider = this.forProcess(processId);
     const send = () => {
       if (review && !review.current()) throw new Error('This request is no longer waiting for this parent');
-      if (!resolved.preserveAttention) this.preservedAttention.delete(key);
+      if (!resolved.preserveAttention) this.preservedAttentionPending.delete(key);
       for (const listener of this.promptDispatchListeners) {
         try { listener(key); } catch { /* listeners own their failures */ }
       }
@@ -747,27 +746,24 @@ export class IntegratedAgentService {
 
   private async withPreservedAttention<T>(key: string, resolved: ResolvedIntegratedPrompt, run: () => Promise<{ value: T; keep: boolean }>): Promise<T> {
     if (!resolved.preserveAttention) {
-      this.preservedAttention.delete(key);
+      this.preservedAttentionPending.delete(key);
       return (await run()).value;
     }
-    const existing = this.preservedAttentionInFlight.get(key);
-    const entry = existing ? { ...existing, count: existing.count + 1 } : { count: 1, sawWorking: false, sawEnded: false };
-    this.preservedAttentionInFlight.set(key, entry);
-    this.preservedAttention.add(key);
+    const entry = this.preservedAttentionPending.get(key) ?? { pending: 0, active: false };
+    entry.pending += 1;
+    this.preservedAttentionPending.set(key, entry);
     let keep = false;
     try {
       const outcome = await run();
       keep = outcome.keep;
       return outcome.value;
     } finally {
-      const current = this.preservedAttentionInFlight.get(key);
-      if (current && current.count > 1) {
-        current.count -= 1;
-      } else {
-        this.preservedAttentionInFlight.delete(key);
-        // Clear protection if the send did not admit/uncertain-deliver, or if
-        // the peer turn already completed (working -> idle/error) while in flight.
-        if (!keep || current?.sawEnded) this.preservedAttention.delete(key);
+      if (!keep) {
+        const current = this.preservedAttentionPending.get(key);
+        if (current) {
+          current.pending = Math.max(0, current.pending - 1);
+          if (current.pending === 0 && !current.active) this.preservedAttentionPending.delete(key);
+        }
       }
     }
   }
@@ -1260,13 +1256,13 @@ export class IntegratedAgentService {
 
   private async runCommand(processId: string, name: string, text: string): Promise<unknown> {
     const key = this.ledgerKey(processId);
+    this.preservedAttentionPending.delete(key);
     if (this.hibernated.has(key)) await this.ensureAwake(key);
     const provider = this.forProcess(processId);
     const command = provider.command;
     if (!command) throw new Error('This agent does not support slash commands');
     const compacting = name === 'compact';
     if (compacting) this.signal(key, 'compact');
-    else this.preservedAttention.delete(key);
     let result: unknown;
     try {
       result = await command.call(provider, processId, name, text);
@@ -1769,14 +1765,16 @@ export class IntegratedAgentService {
   private markActivity(processId: string, activity: string, snapshot = false): void {
     const previous = this.updateActivity(processId, activity);
     if (previous === null) return;
-    const inFlight = this.preservedAttentionInFlight.get(processId);
-    if (inFlight) {
-      if (activity === 'working' || activity === 'thinking') inFlight.sawWorking = true;
-      else if ((activity === 'idle' || activity === 'error') && inFlight.sawWorking) inFlight.sawEnded = true;
-    }
-    const preserveAttention = this.preservedAttention.has(processId) || Boolean(inFlight);
-    if ((activity === 'idle' || activity === 'error') && !inFlight) {
-      this.preservedAttention.delete(processId);
+    const state = this.preservedAttentionPending.get(processId);
+    const preserveAttention = (state?.pending ?? 0) > 0;
+    if (state) {
+      if ((activity === 'working' || activity === 'thinking') && state.pending > 0) {
+        state.active = true;
+      } else if ((activity === 'idle' || activity === 'error') && state.active) {
+        state.active = false;
+        state.pending = Math.max(0, state.pending - 1);
+        if (state.pending === 0) this.preservedAttentionPending.delete(processId);
+      }
     }
     this.debugLog?.write('integrated', 'activity', { processId, previous, activity, snapshot });
     if (activity === 'idle' || activity === 'error') this.flushHeld(processId);
