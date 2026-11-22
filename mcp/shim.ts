@@ -57,9 +57,9 @@ interface PendingSocketRequest {
 }
 
 let persistentSocket: net.Socket | null = null;
-let persistentConnecting: Promise<net.Socket> | null = null;
 let persistentSubscribed = false;
-let persistentPushSupported = false;
+// Connections whose registry pushes, and so keeps them open between replies.
+const pushSockets = new WeakSet<net.Socket>();
 let nextRequestId = 1;
 const pendingRequests = new Map<number, PendingSocketRequest>();
 const pendingOrder: number[] = [];
@@ -85,13 +85,13 @@ function firstPendingOn(client: net.Socket): number | undefined {
 }
 
 // A registry that doesn't push closes each connection after its reply, so it
-// answers one request per connection. Only a pushing registry shares one.
+// answers one request per connection. Share a connection only once its own
+// registry has said it pushes: a restarted registry may not.
 function getPersistentSocket(): Promise<net.Socket> {
-  if (persistentPushSupported && persistentSocket && !persistentSocket.destroyed && !persistentSocket.readableEnded && !persistentSocket.writableEnded && persistentSocket.writable) {
+  if (persistentSocket && pushSockets.has(persistentSocket) && !persistentSocket.destroyed && !persistentSocket.readableEnded && !persistentSocket.writableEnded && persistentSocket.writable) {
     return Promise.resolve(persistentSocket);
   }
-  if (persistentPushSupported && persistentConnecting) return persistentConnecting;
-  const connecting: Promise<net.Socket> = new Promise<net.Socket>((resolve, reject) => {
+  return new Promise<net.Socket>((resolve, reject) => {
     const client = net.createConnection(resolveSocketPath());
     let connected = false;
     let buffer = '';
@@ -100,7 +100,6 @@ function getPersistentSocket(): Promise<net.Socket> {
       connected = true;
       persistentSocket = client;
       persistentSubscribed = false;
-      if (persistentConnecting === connecting) persistentConnecting = null;
       // Don't keep one-shot CLI invocations alive on an idle persistent socket.
       client.unref();
       resolve(client);
@@ -145,7 +144,6 @@ function getPersistentSocket(): Promise<net.Socket> {
     });
     client.on('error', (error) => {
       if (!connected) {
-        if (persistentConnecting === connecting) persistentConnecting = null;
         reject(error);
       } else {
         if (persistentSocket === client) {
@@ -163,7 +161,6 @@ function getPersistentSocket(): Promise<net.Socket> {
     });
     client.once('close', () => {
       if (!connected) {
-        if (persistentConnecting === connecting) persistentConnecting = null;
         reject(new Error(DISCONNECTED_ERROR));
       } else {
         if (persistentSocket === client) {
@@ -175,8 +172,6 @@ function getPersistentSocket(): Promise<net.Socket> {
       }
     });
   });
-  persistentConnecting = connecting;
-  return connecting;
 }
 
 async function registryRequestRaw(request: ShimRequest, meta?: Record<string, unknown>): Promise<{ result: unknown; push: boolean }> {
@@ -204,10 +199,10 @@ async function registryRequestRaw(request: ShimRequest, meta?: Record<string, un
     });
   }).then((value) => {
     const reply = value as { result: unknown; push: boolean };
-    if (reply.push) persistentPushSupported = true;
+    if (reply.push) pushSockets.add(client);
     const idle = !ownsPending(client);
     // Close an idle connection unless it is the one a pushing registry shares.
-    if (idle && (!persistentPushSupported || persistentSocket !== client)) {
+    if (idle && (!pushSockets.has(client) || persistentSocket !== client)) {
       if (persistentSocket === client) {
         persistentSocket = null;
         persistentSubscribed = false;
@@ -230,15 +225,14 @@ async function registryRequest(request: ShimRequest, meta?: Record<string, unkno
 type Signatures = Map<string, string>;
 
 function subscribeCatalogIfNeeded(): void {
-  if (!persistentPushSupported || !onCatalogChanged || persistentSubscribed) return;
+  if (!persistentSocket || !pushSockets.has(persistentSocket) || !onCatalogChanged || persistentSubscribed) return;
   persistentSubscribed = true;
   void registryRequest({ op: 'catalog-subscribe' }).catch(() => { persistentSubscribed = false; });
 }
 
 async function fetchCatalogue(): Promise<McpToolDescriptor[]> {
-  const { result: tools, push } = await registryRequestRaw({ op: 'catalog' });
+  const { result: tools } = await registryRequestRaw({ op: 'catalog' });
   if (!Array.isArray(tools)) throw new Error('Patterm returned an invalid MCP tool catalogue');
-  if (push) persistentPushSupported = true;
   subscribeCatalogIfNeeded();
   return tools as McpToolDescriptor[];
 }
