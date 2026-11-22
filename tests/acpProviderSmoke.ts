@@ -498,6 +498,18 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     fs.writeFileSync(trace + '.no-echo-done', '');
     await waitFor(provider, (snapshot) => snapshot.status === 'idle');
 
+    // An inline image is confirmed by the same receipt, through its media list.
+    fs.unlinkSync(trace + '.no-echo-done');
+    const pixel = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+    const withImage = provider.prompt('process', { text: 'no-live-echo', references: [], messageId: 'logged-image-id', attachments: [{ path: path.join(directory, 'shot.png'), name: 'shot.png', mime: 'image/png', size: 68, data: pixel }] });
+    void withImage.catch(() => {});
+    await waitFor(provider, () => frames().some((frame) => frame.method === 'session/prompt' && frame.params.prompt[1]?.type === 'image'));
+    fs.appendFileSync(nativeLog, JSON.stringify({ ...JSON.parse(inputRow(3)), media: [{ mime_type: 'image/png', uri: '/uploaded_media_1.png' }] }) + '\n');
+    await withImage;
+    assert.equal(await provider.reconcile('process', 'logged-image-id'), 'accepted');
+    fs.writeFileSync(trace + '.no-echo-done', '');
+    await waitFor(provider, (snapshot) => snapshot.status === 'idle');
+
     // Antigravity native subagents: discovered from ACP output or parent
     // transcript.jsonl, tailed for nested child rows, surfaced in snapshot
     // tasks, and readable through taskOutput with session ownership checks.
@@ -563,7 +575,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     fs.unlinkSync(trace + '.no-echo-done');
     const replayed = provider.prompt('process', { text: 'no-live-echo', references: [], attachments: [], messageId: 'replayed-log-id' });
     void replayed.catch(() => {});
-    await waitFor(provider, () => frames().filter((frame) => frame.method === 'session/prompt' && frame.params.prompt[0].text === 'no-live-echo').length === 2);
+    await waitFor(provider, () => frames().filter((frame) => frame.method === 'session/prompt' && frame.params.prompt[0].text === 'no-live-echo').length === 3);
     fs.writeFileSync(nativeLog, inputRow(1, '2024-01-01T00:00:00Z') + '\n');
     await assert.rejects(replayed, UncertainDeliveryError, 'a historical row in a newly created file does not confirm delivery');
     fs.writeFileSync(trace + '.no-echo-done', '');

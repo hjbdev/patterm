@@ -7,7 +7,8 @@ const POLL_MS = 250;
 
 // agy streams output without a live user_message_chunk. Its native transcript
 // records explicit input as soon as it receives it, before the model responds.
-export function watchAntigravityPrompt(sessionId: string, text: string, received: () => void): (() => void) | null {
+// Inline images land in the record's media list, one entry each, in order.
+export function watchAntigravityPrompt(sessionId: string, text: string, imageTypes: readonly string[], received: () => void): (() => void) | null {
   if (!/^[A-Za-z0-9_-]+$/.test(sessionId) || !text) return null;
   const file = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'brain', sessionId, '.system_generated', 'logs', 'transcript.jsonl');
   const open = () => fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
@@ -67,7 +68,8 @@ export function watchAntigravityPrompt(sessionId: string, text: string, received
           const end = '\n</USER_REQUEST>';
           if (typeof content === 'string' && content.startsWith(start) && content.lastIndexOf(end) === start.length + text.length
             && content.slice(start.length, start.length + text.length) === text
-            && (content.endsWith(end) || content[start.length + text.length + end.length] === '\n')) received();
+            && (content.endsWith(end) || content[start.length + text.length + end.length] === '\n')
+            && sameMedia(row.media, imageTypes)) received();
           return;
         }
       } finally { fs.closeSync(fd); }
@@ -77,4 +79,10 @@ export function watchAntigravityPrompt(sessionId: string, text: string, received
     }
   }, POLL_MS);
   return () => clearInterval(timer);
+}
+
+function sameMedia(media: unknown, imageTypes: readonly string[]): boolean {
+  const entries = media === undefined || media === null ? [] : media;
+  return Array.isArray(entries) && entries.length === imageTypes.length
+    && entries.every((entry, index) => entry?.mime_type === imageTypes[index]);
 }

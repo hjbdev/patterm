@@ -903,11 +903,14 @@ async function handle(method: string, params: Row): Promise<unknown> {
       const timer = setTimeout(() => { admission = null; reject(new Error('ACP prompt delivery is uncertain')); }, 8_000);
       admission = { resolve, reject, timer };
     });
-    // Text alone cannot confirm references or attachments. Leave those on
-    // the ACP acknowledgement path.
-    plainTextPrompt = params.prompt.length === 1 && params.prompt[0]?.type === 'text' && params.prompt[0].text === userEcho.text;
-    if (plainTextPrompt) {
-      stopWatchingPrompt = watchAntigravityPrompt(sessionId, userEcho.text, admit);
+    // Text alone cannot confirm references or attachments. Inline images are
+    // recorded in agy's transcript receipt; references and text files are not,
+    // so leave those on the ACP acknowledgement path.
+    const leadsWithText = params.prompt[0]?.type === 'text' && params.prompt[0].text === userEcho.text;
+    const rest: Row[] = params.prompt.slice(1);
+    plainTextPrompt = leadsWithText && !rest.length;
+    if (leadsWithText && rest.every((part) => part?.type === 'image' && typeof part.mimeType === 'string')) {
+      stopWatchingPrompt = watchAntigravityPrompt(sessionId, userEcho.text, rest.map((part) => part.mimeType as string), admit);
     }
     state();
     // Background command tasks can't be stopped during a turn.

@@ -50,6 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Messages to Antigravity agents with images attached no longer show "Delivery
+  uncertain". Patterm now confirms them from agy's own transcript, as it
+  already did for text-only messages.
 - Antigravity agents no longer hold messages while a background command, such
   as a dev server, outlives its turn. The agent reads as idle, follow-ups go
   straight to agy, and the command appears in Background Tasks with a Stop
