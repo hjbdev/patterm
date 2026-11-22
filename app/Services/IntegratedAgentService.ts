@@ -221,7 +221,7 @@ export class IntegratedAgentService {
   private readonly preservedAttention = new Set<string>();
   // In-flight non-parent prompts keep the flag alive across an older turn's
   // completion arriving during provider preflight.
-  private readonly preservedAttentionInFlight = new Map<string, number>();
+  private readonly preservedAttentionInFlight = new Map<string, { count: number; sawWorking: boolean; sawEnded: boolean }>();
   private history: AgentHistoryReadService | null = null;
   // Debug log sink for native events a provider did not project. Each type is
   // logged once per agent so protocol drift is visible without flooding.
@@ -745,27 +745,29 @@ export class IntegratedAgentService {
     });
   }
 
-  private async withPreservedAttention<T>(key: string, resolved: ResolvedIntegratedPrompt, run: () => Promise<T>): Promise<T> {
+  private async withPreservedAttention<T>(key: string, resolved: ResolvedIntegratedPrompt, run: () => Promise<{ value: T; keep: boolean }>): Promise<T> {
     if (!resolved.preserveAttention) {
       this.preservedAttention.delete(key);
-      return run();
+      return (await run()).value;
     }
-    this.preservedAttentionInFlight.set(key, (this.preservedAttentionInFlight.get(key) ?? 0) + 1);
+    const existing = this.preservedAttentionInFlight.get(key);
+    const entry = existing ? { ...existing, count: existing.count + 1 } : { count: 1, sawWorking: false, sawEnded: false };
+    this.preservedAttentionInFlight.set(key, entry);
     this.preservedAttention.add(key);
-    let uncertain = false;
+    let keep = false;
     try {
-      const result = await run();
-      uncertain = (result as { delivery?: unknown } | null | undefined)?.delivery === 'uncertain';
-      return result;
+      const outcome = await run();
+      keep = outcome.keep;
+      return outcome.value;
     } finally {
-      const remaining = (this.preservedAttentionInFlight.get(key) ?? 1) - 1;
-      if (remaining > 0) this.preservedAttentionInFlight.set(key, remaining);
-      else {
+      const current = this.preservedAttentionInFlight.get(key);
+      if (current && current.count > 1) {
+        current.count -= 1;
+      } else {
         this.preservedAttentionInFlight.delete(key);
-        const current = this.activity(key);
-        // Keep protection across an uncertain delivery so a reconnect reading
-        // the already-admitted peer turn does not dismiss the user's notice.
-        if (!uncertain && (current === 'idle' || current === 'error')) this.preservedAttention.delete(key);
+        // Clear protection if the send did not admit/uncertain-deliver, or if
+        // the peer turn already completed (working -> idle/error) while in flight.
+        if (!keep || current?.sawEnded) this.preservedAttention.delete(key);
       }
     }
   }
@@ -792,7 +794,7 @@ export class IntegratedAgentService {
           if (identity && id) {
             try { this.recordSubmission(identity.key, id, identity.hash, 'uncertain', null, error.message); } catch { /* the reservation already exists */ }
           }
-          return { delivery: 'uncertain', message_id: id ?? null, error: error.message };
+          return { value: { delivery: 'uncertain', message_id: id ?? null, error: error.message }, keep: true };
         }
         // The provider classified this as a definitive pre-admission rejection.
         if (identity) {
@@ -803,12 +805,12 @@ export class IntegratedAgentService {
         if (error instanceof TurnBusyError) {
           const held = this.hold(activityKey, resolved, identity, error.turnKind);
           this.flushHeld(activityKey);
-          return held;
+          return { value: held, keep: false };
         }
         throw error;
       }
       this.admitted(processId, activityKey, sequence, resolved, identity, result);
-      return result;
+      return { value: result, keep: true };
     });
   }
 
@@ -878,7 +880,7 @@ export class IntegratedAgentService {
       this.claimHeld(key, row, identity.hash);
       this.dispatching.set(key, row);
       const sequence = this.sequence(key);
-      const outcome = await this.withPreservedAttention(key, resolved, async (): Promise<'continue' | 'return'> => {
+      const outcome = await this.withPreservedAttention(key, resolved, async (): Promise<{ value: 'continue' | 'return'; keep: boolean }> => {
         let result: unknown;
         try {
           // The held id lets the transcript confirm an unconfirmed send.
@@ -890,7 +892,7 @@ export class IntegratedAgentService {
           if (error instanceof UncertainDeliveryError) {
             this.debugLog?.write('integrated', 'prompt.held_failed', { processId: key, messageId: row.message_id, uncertain: true, message });
             this.releaseHeld(key, row, identity.hash, message, 'unconfirmed');
-            return 'continue';
+            return { value: 'continue', keep: true };
           }
           // Still busy, for example a second compaction, it waits for that turn
           // to end. Definitively rejected, it shows why and is tried again when
@@ -899,12 +901,12 @@ export class IntegratedAgentService {
           const busy = error instanceof TurnBusyError;
           if (!busy) this.debugLog?.write('integrated', 'prompt.held_failed', { processId: key, messageId: row.message_id, uncertain: false, message });
           this.releaseHeld(key, row, identity.hash, busy ? row.error : message, 'held');
-          return 'return';
+          return { value: 'return', keep: false };
         } finally {
           this.dispatching.delete(key);
         }
         this.admitted(key, key, sequence, resolved, identity, result);
-        return 'continue';
+        return { value: 'continue', keep: true };
       });
       if (outcome === 'return') return;
     }
@@ -1767,8 +1769,13 @@ export class IntegratedAgentService {
   private markActivity(processId: string, activity: string, snapshot = false): void {
     const previous = this.updateActivity(processId, activity);
     if (previous === null) return;
-    const preserveAttention = this.preservedAttention.has(processId) || this.preservedAttentionInFlight.has(processId);
-    if ((activity === 'idle' || activity === 'error') && !this.preservedAttentionInFlight.has(processId)) {
+    const inFlight = this.preservedAttentionInFlight.get(processId);
+    if (inFlight) {
+      if (activity === 'working' || activity === 'thinking') inFlight.sawWorking = true;
+      else if ((activity === 'idle' || activity === 'error') && inFlight.sawWorking) inFlight.sawEnded = true;
+    }
+    const preserveAttention = this.preservedAttention.has(processId) || Boolean(inFlight);
+    if ((activity === 'idle' || activity === 'error') && !inFlight) {
       this.preservedAttention.delete(processId);
     }
     this.debugLog?.write('integrated', 'activity', { processId, previous, activity, snapshot });

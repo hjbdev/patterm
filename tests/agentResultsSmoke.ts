@@ -118,7 +118,7 @@ async function main(): Promise<void> {
 
     let liveSnapshot: Record<string, unknown> = snapshot(liveRows);
     const integrated = {
-      prompt: async (_processId: string, text: string) => text.includes('maybe') ? { delivery: 'uncertain', message_id: null } : {},
+      prompt: async (_processId: string, input: string | { text: string }) => (typeof input === 'string' ? input : input.text).includes('maybe') ? { delivery: 'uncertain', message_id: null } : {},
       conversation: async (processId: string) => processId === 'proc-oc' ? openCodeSnapshot : liveSnapshot,
       olderMessages: async (_processId: string, cursor: string) => {
         if (cursor === 'native-1') return { messages: { data: nativeRows }, cursor: 'archive:1' };
