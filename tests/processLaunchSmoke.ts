@@ -143,6 +143,7 @@ async function main(): Promise<void> {
     }
     const activeProcess = repo.snapshot().projects[0]?.processes.find((process) => process.id === created.process_id);
     assert.equal(activeProcess?.activity, 'working', 'activity frame updates process snapshot');
+    assert.ok((database.connection.prepare(`select turn_started_at from processes where id = ?`).get(created.process_id) as { turn_started_at: string | null }).turn_started_at, 'PTY working frame sets turn_started_at');
     assert.equal(activeProcess?.command, 'npm run dev', 'process snapshot exposes editable command text');
     assert.equal(activeProcess?.cwd, projectPath, 'process snapshot exposes editable cwd');
     assert.deepEqual(activeProcess?.argv, [SHELL, ...shellArgs('npm run dev')], 'process snapshot exposes stored argv');
@@ -156,9 +157,9 @@ async function main(): Promise<void> {
         }, 'transient DB locks from background import do not crash lifecycle reconciliation');
       });
       await waitFor(() => {
-        const row = database.connection.prepare(`select activity from processes where id = ?`).get(created.process_id) as { activity: string } | undefined;
-        return row?.activity === 'idle';
-      }, 'locked activity frame is applied after the DB lock clears');
+        const row = database.connection.prepare(`select activity, turn_started_at from processes where id = ?`).get(created.process_id) as { activity: string; turn_started_at: string | null } | undefined;
+        return row?.activity === 'idle' && row.turn_started_at === null;
+      }, 'locked activity frame is applied after the DB lock clears and clears turn_started_at');
 
       withWriterLock(database.dbPath, () => {
         for (const listener of lifecycleListeners) {
@@ -211,6 +212,15 @@ async function main(): Promise<void> {
       listener({ type: 'terminal-lifecycle', processId: 'pty_child_reported', event: 'exit', exitCode: 0 });
     }
     assert.deepEqual(unreportedChildExits, ['child_unreported'], 'clean exit without report notifies parent');
+    // Startup inventory reconciliation also detects clean unreported child exits.
+    database.connection.prepare(`insert into processes (id, project_id, parent_process_id, kind, name, status, pty_process_id, created_at, updated_at)
+      values ('child_startup_unreported', ?, ?, 'agent', 'Startup child', 'running', 'pty_child_startup', ?, ?)`)
+      .run(projectId, created.process_id, now, now);
+    const startupReconciled = new ReconcileRuntimeAction(database).execute([
+      { process_id: created.pty_process_id, status: 'running', exit_code: null, activity: 'idle', title: 'dev' },
+      { process_id: 'pty_child_startup', status: 'exited', exit_code: 0, activity: 'idle', title: 'Startup child' }
+    ]);
+    assert.ok(startupReconciled.unreportedChildExits.includes('child_startup_unreported'), 'startup reconciliation reports unreported clean child exits');
     reconciler.dispose();
 
     // Relaunch re-attaches a fresh PTY reusing the stored argv.

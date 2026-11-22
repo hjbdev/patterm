@@ -204,13 +204,20 @@ export class RuntimeReconciler {
 
     const now = new Date().toISOString();
     const previous = this.database.connection
-      .prepare(`select id, activity from processes where pty_process_id = ? and activity != ?`)
-      .all(ptyId, activity) as Array<{ id: string; activity: string }>;
+      .prepare(`select id, activity, turn_started_at from processes where pty_process_id = ? and activity != ?`)
+      .all(ptyId, activity) as Array<{ id: string; activity: string; turn_started_at: string | null }>;
     const changed = this.database.connection
       .prepare(`update processes set activity = ?, updated_at = ? where pty_process_id = ? and activity != ?`)
       .run(activity, now, ptyId, activity).changes;
 
     if (changed > 0) {
+      for (const row of previous) {
+        if ((activity === 'working' || activity === 'thinking') && !['working', 'thinking', 'permission', 'question'].includes(row.activity)) {
+          this.database.connection.prepare(`update processes set turn_started_at = ? where id = ?`).run(now, row.id);
+        } else if (activity === 'idle' || activity === 'error') {
+          this.database.connection.prepare(`update processes set turn_started_at = null where id = ?`).run(row.id);
+        }
+      }
       this.notifyChanged(['workbench']);
       for (const row of previous) this.onActivityChanged(row.id, row.activity, activity);
     }

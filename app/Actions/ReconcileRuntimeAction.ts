@@ -7,10 +7,19 @@ import type { TerminalInventoryProcess } from '../Services/TerminalHostService';
 export class ReconcileRuntimeAction {
   constructor(private readonly database: DatabaseService) {}
 
-  execute(inventory?: TerminalInventoryProcess[]): { sessions: number; processes: number } {
+  execute(inventory?: TerminalInventoryProcess[]): { sessions: number; processes: number; unreportedChildExits: string[] } {
     if (inventory) return this.reconnect(inventory);
     const now = new Date().toISOString();
     const db = this.database.connection;
+
+    const unreportedChildExits = (db.prepare(`select processes.id from processes
+      where processes.status = 'running' and processes.kind = 'agent' and processes.parent_process_id is not null
+        and not exists (
+          select 1 from sessions where sessions.process_id = processes.id and sessions.interface_mode = 'integrated' and sessions.exited_at is null
+        )
+        and not exists (
+          select 1 from timeline_events where timeline_events.process_id = processes.id and timeline_events.event_type = 'agent.reported'
+        )`).all() as Array<{ id: string }>).map((row) => row.id);
 
     const sessions = db
       .prepare(`update sessions set exited_at = ? where exited_at is null and interface_mode = 'tui'`)
@@ -26,19 +35,20 @@ export class ReconcileRuntimeAction {
     db.prepare(`update processes set pty_process_id = null where pty_process_id is not null`).run();
 
     new SessionContextService(this.database).reconcileLeases();
-    return { sessions, processes };
+    return { sessions, processes, unreportedChildExits };
   }
 
-  private reconnect(inventory: TerminalInventoryProcess[]): { sessions: number; processes: number } {
+  private reconnect(inventory: TerminalInventoryProcess[]): { sessions: number; processes: number; unreportedChildExits: string[] } {
     const db = this.database.connection;
     const terminals = new Map(inventory.map((process) => [process.process_id, process]));
     const now = new Date().toISOString();
     let sessions = 0;
     let processes = 0;
-    const rows = db.prepare(`select processes.id, processes.pty_process_id from processes
+    const unreportedChildExits: string[] = [];
+    const rows = db.prepare(`select processes.id, processes.pty_process_id, processes.kind, processes.parent_process_id from processes
       where processes.status = 'running' and not exists (
         select 1 from sessions where sessions.process_id = processes.id and sessions.interface_mode = 'integrated' and sessions.exited_at is null
-      )`).all() as Array<{ id: string; pty_process_id: string | null }>;
+      )`).all() as Array<{ id: string; pty_process_id: string | null; kind: string; parent_process_id: string | null }>;
     for (const row of rows) {
       const terminal = row.pty_process_id ? terminals.get(row.pty_process_id) : undefined;
       if (terminal?.status === 'running') {
@@ -47,12 +57,17 @@ export class ReconcileRuntimeAction {
         continue;
       }
       const code = terminal?.exit_code ?? null;
+      const status = code !== null && code !== 0 ? 'failed' : 'exited';
       processes += db.prepare(`update processes set status = ?, pty_process_id = null, exited_at = ?, exit_code = ?, updated_at = ? where id = ?`)
-        .run(code !== null && code !== 0 ? 'failed' : 'exited', now, code, now, row.id).changes;
+        .run(status, now, code, now, row.id).changes;
       sessions += db.prepare(`update sessions set exited_at = ?, exit_code = ? where process_id = ? and exited_at is null`).run(now, code, row.id).changes;
+      if (status === 'exited' && row.kind === 'agent' && row.parent_process_id) {
+        const reported = db.prepare(`select 1 from timeline_events where process_id = ? and event_type = 'agent.reported' limit 1`).get(row.id);
+        if (!reported) unreportedChildExits.push(row.id);
+      }
     }
     sessions += db.prepare(`update sessions set exited_at = ? where exited_at is null and not exists (select 1 from processes where processes.id = sessions.process_id and processes.status = 'running')`).run(now).changes;
     new SessionContextService(this.database).reconcileLeases();
-    return { sessions, processes };
+    return { sessions, processes, unreportedChildExits };
   }
 }

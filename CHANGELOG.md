@@ -9,12 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Unreported Integrated agent turn completions now include a bounded preview of
-  the agent's final reply instead of bare `"Finished its turn"`, child agents
-  that exit cleanly without reporting notify their parent, and running agent
-  entries in `list_processes`, `get_process_status`, `get_project_status`, and
-  `assistant_overview` now include liveness fields (`activity`, `waiting_for`,
-  `turn_started_at`, `last_activity_at`).
+- Unreported Integrated agent turn completions now include a bounded 280-character
+  plain-text preview of the agent's final reply in user notifications and bot
+  updates instead of bare `"Finished its turn"`, child agents that exit cleanly
+  without reporting notify their parent (both live and across restarts), and
+  running agent entries in `list_processes`, `get_process_status`,
+  `get_project_status`, and `assistant_overview` now include liveness fields
+  (`activity`, `waiting_for`, `turn_started_at`, `updated_at`).
 - Integrated subagent permissions and questions go to their parent first.
   Parents can answer native questions, approve Antigravity workspace file reads
   once, deny a permission, or pass a request up the chain. If no parent can

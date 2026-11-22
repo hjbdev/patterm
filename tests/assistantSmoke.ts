@@ -515,32 +515,32 @@ async function main(): Promise<void> {
     const assistantIdentity = { identity: liveIdentity.mcp_identity };
 
     const overview = await registry.callPublic('assistant_overview', {}, assistantIdentity) as {
-      projects: Array<{ project_id: string; processes: Array<{ process_id: string; activity?: string; waiting_for?: string; turn_started_at?: string; last_activity_at?: string }> }>;
+      projects: Array<{ project_id: string; processes: Array<{ process_id: string; activity?: string; waiting_for?: string; turn_started_at?: string; updated_at?: string }> }>;
     };
     assert.deepEqual(overview.projects.map((project) => project.project_id), ['p', 'q']);
     const workerP = overview.projects[0]!.processes.find((process) => process.process_id === 'proc-worker-p');
     assert.equal(workerP?.activity, 'permission');
     assert.equal(workerP?.waiting_for, 'Allow read_file?');
     assert.equal(workerP?.turn_started_at, turnStarted);
-    assert.equal(workerP?.last_activity_at, now);
+    assert.equal(workerP?.updated_at, now);
     await assert.rejects(registry.callPublic('assistant_overview', {}, { identity: 'mcp-worker-p' }), /only the assistant/);
 
     const listed = await registry.callPublic('list_processes', { project_id: 'q' }, assistantIdentity) as {
-      processes: Array<{ process_id: string; activity?: string; turn_started_at?: string; last_activity_at?: string }>;
+      processes: Array<{ process_id: string; activity?: string; turn_started_at?: string; updated_at?: string }>;
     };
     const workerQ = listed.processes.find((process) => process.process_id === 'proc-worker-q');
     assert.equal(workerQ?.activity, 'working');
     assert.equal(workerQ?.turn_started_at, turnStarted);
-    assert.equal(workerQ?.last_activity_at, now);
+    assert.equal(workerQ?.updated_at, now);
     await assert.rejects(registry.callPublic('list_processes', {}, assistantIdentity), /pass a project_id/);
     await assert.rejects(registry.callPublic('list_processes', { project_id: ASSISTANT_PROJECT_ID }, assistantIdentity), /not a workspace project/);
     const status = await registry.callPublic('get_process_status', { process_id: 'proc-worker-q' }, assistantIdentity) as {
-      process_id: string; activity?: string; turn_started_at?: string; last_activity_at?: string;
+      process_id: string; activity?: string; turn_started_at?: string; updated_at?: string;
     };
     assert.equal(status.process_id, 'proc-worker-q');
     assert.equal(status.activity, 'working');
     assert.equal(status.turn_started_at, turnStarted);
-    assert.equal(status.last_activity_at, now);
+    assert.equal(status.updated_at, now);
     const projectStatus = await registry.callPublic('get_project_status', {}, assistantIdentity) as { projects?: unknown[] };
     assert.equal(projectStatus.projects?.length, 2, 'get_project_status without a project is the overview');
     await assert.rejects(registry.callPublic('spawn_agent', { agent: 'claude' }, assistantIdentity), /pass the project_id/);

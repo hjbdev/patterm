@@ -488,6 +488,9 @@ async function createApplicationResources(
   const inventory = persistentTerminals ? terminalInventory.parse(await terminal.request('terminal.process.list')).processes : undefined;
   const reconciled = new ReconcileRuntimeAction(database).execute(inventory);
   debugLog.write('runtime', 'reconciled', reconciled);
+  for (const processId of reconciled.unreportedChildExits) {
+    raiseNotification({ processId, source: 'runtime', kind: 'failure', body: 'Exited without reporting', dedupeKey: 'child:exited_without_report' });
+  }
   const integratedReconciled = await integrated.reconcile();
   notificationService.resumeTurns();
   debugLog.write('runtime', 'integrated.reconciled', integratedReconciled);

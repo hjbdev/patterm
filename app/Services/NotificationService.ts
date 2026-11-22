@@ -178,7 +178,8 @@ export class NotificationService {
         // Repeated events in one episode stay silent. A retry ends the old
         // failure episode when the agent resumes work.
         const changed = existing.title !== title || existing.body !== text;
-        if (child && (botChild || isBlocking(input.kind)) && changed) await this.messageProcess(process.parent_process_id!, parentMessage(process, parentHeading(input.kind), title, body), process.id);
+        const routedBody = input.bodyLimit ? text : body;
+        if (child && (botChild || isBlocking(input.kind)) && changed) await this.messageProcess(process.parent_process_id!, parentMessage(process, parentHeading(input.kind), title, routedBody), process.id);
         return { status: 'updated', notification };
       }
     }
@@ -199,7 +200,8 @@ export class NotificationService {
     const notification = this.get(id)!;
     this.onChange({ type: 'raised', notification });
     // Bots hear all child notices; other parents hear blocking ones.
-    if (routedTo) await this.messageProcess(routedTo, parentMessage(process!, parentHeading(input.kind), title, body), process!.id);
+    const routedBody = input.bodyLimit ? text : body;
+    if (routedTo) await this.messageProcess(routedTo, parentMessage(process!, parentHeading(input.kind), title, routedBody), process!.id);
     return { status: 'raised', notification };
   }
 

@@ -2640,7 +2640,7 @@ function livenessFields(row: { activity: string | null; asking: string | null; t
     ...(row.activity ? { activity: row.activity } : {}),
     ...(waitingFor ? { waiting_for: waitingFor } : {}),
     ...(row.turn_started_at ? { turn_started_at: row.turn_started_at } : {}),
-    ...(row.updated_at ? { last_activity_at: row.updated_at } : {})
+    ...(row.updated_at ? { updated_at: row.updated_at } : {})
   };
 }
 
@@ -2729,7 +2729,7 @@ type CliProcessRow = {
   activity?: string;
   waiting_for?: string;
   turn_started_at?: string;
-  last_activity_at?: string;
+  updated_at?: string;
   status_label?: string;
   exit_code?: number;
 };
