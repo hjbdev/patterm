@@ -176,6 +176,7 @@ export interface IntegratedActivityChange {
   previous: string;
   activity: string;
   snapshot: boolean;
+  preserveAttention?: boolean;
 }
 
 export class IntegratedAgentService {
@@ -215,6 +216,9 @@ export class IntegratedAgentService {
   private readonly dispatching = new Map<string, HeldPromptRow>();
   // One pending title refresh per agent; a newer prompt replaces it.
   private readonly titleRefreshes = new Map<string, { timer: NodeJS.Timeout | null }>();
+  // Processes whose current turn was started by a non-parent agent prompt, so
+  // activity transitions to working leave open user attention notices intact.
+  private readonly preservedAttention = new Set<string>();
   private history: AgentHistoryReadService | null = null;
   // Debug log sink for native events a provider did not project. Each type is
   // logged once per agent so protocol drift is visible without flooding.
@@ -625,6 +629,7 @@ export class IntegratedAgentService {
     const arrived = await this.serially(this.arrivals, key, async () => {
       const resolved = this.inputs ? await this.inputs.resolve(processId, request) : { text: request.text, messageId: request.messageId, references: [], attachments: [] };
       if (routineDigest) resolved.routineDigest = routineDigest;
+      if (request.preserveAttention) resolved.preserveAttention = true;
       // Wrapped so the arrival chain waits for the prompt's place, not its
       // native call.
       const result = this.accept(processId, key, resolved);
@@ -702,6 +707,8 @@ export class IntegratedAgentService {
     const provider = this.forProcess(processId);
     const send = () => {
       if (review && !review.current()) throw new Error('This request is no longer waiting for this parent');
+      if (resolved.preserveAttention) this.preservedAttention.add(key);
+      else this.preservedAttention.delete(key);
       for (const listener of this.promptDispatchListeners) {
         try { listener(key); } catch { /* listeners own their failures */ }
       }
@@ -1726,11 +1733,13 @@ export class IntegratedAgentService {
   private markActivity(processId: string, activity: string, snapshot = false): void {
     const previous = this.updateActivity(processId, activity);
     if (previous === null) return;
+    const preserveAttention = this.preservedAttention.has(processId);
+    if (activity === 'idle' || activity === 'error') this.preservedAttention.delete(processId);
     this.debugLog?.write('integrated', 'activity', { processId, previous, activity, snapshot });
     if (activity === 'idle' || activity === 'error') this.flushHeld(processId);
     this.onWorkbenchChange?.();
     for (const listener of this.activityListeners) {
-      try { listener({ processId, previous, activity, snapshot }); } catch { /* a listener must not break observation */ }
+      try { listener({ processId, previous, activity, snapshot, ...(preserveAttention ? { preserveAttention: true } : {}) }); } catch { /* a listener must not break observation */ }
     }
   }
 

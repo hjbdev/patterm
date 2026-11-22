@@ -20,6 +20,9 @@ export interface IntegratedPromptInput {
   attachments?: IntegratedPromptAttachment[] | undefined;
   // Client-generated idempotency id, reused when retrying the same payload.
   messageId?: string | undefined;
+  // Set for non-parent agent messages/inputs so admitting a prompt does not
+  // clear the target's open user attention notices.
+  preserveAttention?: true | undefined;
 }
 
 export interface ResolvedIntegratedReference {
@@ -47,6 +50,9 @@ export interface ResolvedIntegratedPrompt {
   messageId?: string | undefined;
   // Set only by BotRelay's internal dispatch, never by a composer request.
   routineDigest?: true;
+  // Set for non-parent agent prompts so working transitions preserve open
+  // user attention notices.
+  preserveAttention?: true | undefined;
 }
 
 export interface IntegratedWorktreeFile {

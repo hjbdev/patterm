@@ -29,7 +29,7 @@ export const REPLY_PREVIEW_LIMIT = 280;
 
 // Notifications and close requests follow an Integrated agent's activity.
 export function integratedActivityNotifications(context: IntegratedActivityNotificationContext): (change: IntegratedActivityChange) => void {
-  return ({ processId, previous, activity, snapshot }) => {
+  return ({ processId, previous, activity, snapshot, preserveAttention }) => {
     const reportedThisTurn = context.notifications.turnActivity(processId, previous, activity, snapshot);
     // An automatic compaction is not work for the user: it leaves their open
     // requests alone, and its end or failure is not announced.
@@ -47,9 +47,13 @@ export function integratedActivityNotifications(context: IntegratedActivityNotif
     }
     else if (activity === 'working') {
       if (compacting) return;
-      context.notifications.resolveHandled(processId);
-      // New work makes an earlier close request stale.
-      if (!snapshot && (previous === 'idle' || previous === 'error')) context.closeRequests()?.clear(processId);
+      if (preserveAttention) {
+        context.notifications.resolve({ process_id: processId, kinds: ['permission', 'turn_finished', 'bell', 'message'] });
+      } else {
+        context.notifications.resolveHandled(processId);
+        // New work makes an earlier close request stale.
+        if (!snapshot && (previous === 'idle' || previous === 'error')) context.closeRequests()?.clear(processId);
+      }
     }
     else if (activity === 'error') {
       if (!compacting) context.raise({ processId, source: 'integrated', kind: 'failure', body: 'The agent reported an error' });

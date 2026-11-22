@@ -89,7 +89,8 @@ export class SendMessageAction {
     if (sender && this.options.inbox?.hold(targetId, { kind: 'agent_message', sourceProcessId: sender.process_id, title: `Message from ${sender.process_id ?? 'unknown'}`, body: message })) {
       return { ok: true, delivery: 'queued', event_id: this.record(sender, targetId, message), detail: BOT_FOCUS_DETAIL };
     }
-    const result = await sendAgentInput(this.database, this.terminal, { process_id: targetId, kind: 'text', text: `[message from ${sender?.process_id ?? 'unknown'}]\n${message}${hint}`, submit: true }, this.options.integrated);
+    const clearsNotice = !sender || this.parentOf(targetId) === sender.process_id;
+    const result = await sendAgentInput(this.database, this.terminal, { process_id: targetId, kind: 'text', text: `[message from ${sender?.process_id ?? 'unknown'}]\n${message}${hint}`, submit: true, preserve_attention: !clearsNotice }, this.options.integrated);
     // An Integrated agent may or may not have received an ambiguous
     // submission. It is reported as uncertain, never resent, and does not
     // count as answering the agent.
@@ -102,7 +103,7 @@ export class SendMessageAction {
     const queued = queuedDetail(result);
     // A parent's reply ends its child's blocked episode, so the next request
     // reaches the parent again. Other senders leave the target's requests open.
-    if (!sender || this.parentOf(targetId) === sender.process_id) this.options.notifications?.userInput(targetId);
+    if (clearsNotice) this.options.notifications?.userInput(targetId);
     if (queued) return { ok: true, delivery: 'queued', event_id: sender ? this.record(sender, targetId, message) : '', detail: queued };
     return senderIsAssistant && sender ? { ok: true, event_id: this.record(sender, targetId, message) } : 'ok';
   }
