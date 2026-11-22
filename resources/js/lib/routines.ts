@@ -5,7 +5,7 @@ import { topicChanged, topicRead } from './serverQuery';
 
 export type RoutineRunStatus = 'running' | 'reported' | 'failed' | 'skipped';
 export type RoutineReportStatus = 'completed' | 'blocked' | 'failed' | 'no_findings';
-export type RoutineDelivery = 'notification' | 'assistant' | 'none';
+export type RoutineDelivery = 'notification' | 'assistant' | 'bot' | 'none';
 
 export interface RoutineRunRecord {
   run_id: string;
@@ -45,6 +45,7 @@ export interface RoutineRecord {
   reasoning: string | null;
   service_tier: string | null;
   delivery: RoutineDelivery;
+  delivery_bot_id: string | null;
   // Set for a one-off: it runs once at this instant, then turns itself off.
   run_at: string | null;
   worktree_id: string | null;
@@ -57,7 +58,7 @@ export interface RoutineRecord {
   updated_at: string;
 }
 
-export type RoutinePatch = Partial<Pick<RoutineRecord, 'name' | 'enabled' | 'project_id' | 'days' | 'time' | 'timezone' | 'prompt' | 'harness' | 'preset' | 'model' | 'reasoning' | 'service_tier' | 'delivery' | 'run_at' | 'worktree_id'>>;
+export type RoutinePatch = Partial<Pick<RoutineRecord, 'name' | 'enabled' | 'project_id' | 'days' | 'time' | 'timezone' | 'prompt' | 'harness' | 'preset' | 'model' | 'reasoning' | 'service_tier' | 'delivery' | 'delivery_bot_id' | 'run_at' | 'worktree_id'>>;
 
 export interface RoutineModelOption {
   id: string;
@@ -277,11 +278,47 @@ export function describeLaunch(routine: RoutineRecord, models: Record<string, Ro
   return `${[model ? modelDisplayName(model) : routine.model, routine.reasoning].filter(Boolean).join(' ')}${tier ? `, ${tier}` : ''}`;
 }
 
+export interface RoutineDeliveryBot {
+  id: string;
+  name: string;
+  enabled: boolean;
+  purview: { kind: 'none' } | { kind: 'all' } | { kind: 'projects'; projectIds: string[] };
+}
+
 export const DELIVERY_OPTIONS: RoutineChoiceOption[] = [
   { value: 'notification', label: 'notify me' },
   { value: 'assistant', label: 'tell the assistant' },
   { value: 'none', label: 'do nothing' }
 ];
+
+export function deliveryChoiceKey(routine: Pick<RoutineRecord, 'delivery' | 'delivery_bot_id'>): string {
+  return routine.delivery === 'bot' && routine.delivery_bot_id ? `bot:${routine.delivery_bot_id}` : routine.delivery;
+}
+
+export function deliveryOptions(routine: Pick<RoutineRecord, 'project_id' | 'delivery' | 'delivery_bot_id'>, bots: readonly RoutineDeliveryBot[]): RoutineChoiceOption[] {
+  const allowed = bots.filter((bot) => {
+    if (bot.id === 'assistant' || !bot.enabled) return false;
+    return routine.project_id === null
+      ? bot.purview.kind === 'all'
+      : bot.purview.kind === 'all' || (bot.purview.kind === 'projects' && bot.purview.projectIds.includes(routine.project_id));
+  });
+  const botChoices: RoutineChoiceOption[] = allowed.map((bot) => ({ value: `bot:${bot.id}`, label: `tell ${bot.name}` }));
+  if (routine.delivery === 'bot' && routine.delivery_bot_id && !allowed.some((bot) => bot.id === routine.delivery_bot_id)) {
+    const current = bots.find((bot) => bot.id === routine.delivery_bot_id);
+    botChoices.push({ value: `bot:${routine.delivery_bot_id}`, label: `tell ${current?.name ?? routine.delivery_bot_id}` });
+  }
+  return [
+    { value: 'notification', label: 'notify me' },
+    { value: 'assistant', label: 'tell the assistant' },
+    ...botChoices,
+    { value: 'none', label: 'do nothing' }
+  ];
+}
+
+export function deliveryChoicePatch(value: string | null): RoutinePatch {
+  if (value?.startsWith('bot:')) return { delivery: 'bot', delivery_bot_id: value.slice(4) || null };
+  return { delivery: value === 'none' || value === 'assistant' ? value : 'notification', delivery_bot_id: null };
+}
 
 export function projectOptions(projects: ReadonlyArray<{ id: string; name: string }>): RoutineChoiceOption[] {
   return [{ value: null, label: 'all projects' }, ...projects.map((project) => ({ value: project.id, label: project.name }))];
