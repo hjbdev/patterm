@@ -102,7 +102,7 @@
               <label class="text-xs text-muted-foreground" for="bot-requests">Agent requests</label>
               <div class="flex items-center gap-2">
                 <Switch id="bot-requests" v-model="editor.requests" />
-                <span class="text-xs text-muted-foreground">Lets it reject permission requests and answer questions waiting for you in its projects, and approve one-time reads of ordinary workspace files. You're still notified.</span>
+                <span class="text-xs text-muted-foreground">Lets it reject permission requests and answer questions waiting for you in its projects, and approve one-time reads of ordinary workspace and skill files. You're still notified.</span>
               </div>
               <label class="text-xs text-muted-foreground" for="bot-voice">Voice</label>
               <div class="flex items-center gap-2">
