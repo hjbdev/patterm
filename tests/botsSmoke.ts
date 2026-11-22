@@ -205,6 +205,8 @@ async function main(): Promise<void> {
       ...Array.from({ length: 6 }, (_, index) => ({
         id: `mid-${index}`, conversationId: 'conv-fable-1', seq: 2 + index, role: 'assistant', kind: 'message', text: `MID_TURN_${index} ${'B'.repeat(1100)}`, toolName: null, toolCallId: null, toolInputSummary: null, toolOutputSummary: null, providerCreatedAt: null, createdAt: now, metadata: null, media: []
       })),
+      { id: 'm-report', conversationId: 'conv-fable-1', seq: 9, role: 'user', kind: 'message', text: '[report from process_9: completed]\nHelper finished review.', toolName: null, toolCallId: null, toolInputSummary: null, toolOutputSummary: null, providerCreatedAt: null, createdAt: now, metadata: null, media: [] },
+      { id: 'm-surrogate', conversationId: 'conv-fable-1', seq: 9.5, role: 'user', kind: 'message', text: `${'S'.repeat(1198)}🙂`, toolName: null, toolCallId: null, toolInputSummary: null, toolOutputSummary: null, providerCreatedAt: null, createdAt: now, metadata: null, media: [] },
       { id: 'm1', conversationId: 'conv-fable-1', seq: 10, role: 'user', kind: 'message', text: 'Keep an eye\0 on PR 240.', toolName: null, toolCallId: null, toolInputSummary: null, toolOutputSummary: null, providerCreatedAt: null, createdAt: now, metadata: null, media: [] },
       { id: 'm2', conversationId: 'conv-fable-1', seq: 11, role: 'assistant', kind: 'message', text: 'Watching PR 240 and its helper.', toolName: null, toolCallId: null, toolInputSummary: null, toolOutputSummary: null, providerCreatedAt: null, createdAt: now, metadata: null, media: [] },
       // Tool-heavy tail that would crowd out conversational messages without backwards paging.
@@ -278,6 +280,9 @@ async function main(): Promise<void> {
     assert.match(handoffCtx, /\[Conversation handoff/);
     assert.match(handoffCtx, /Earlier transcript ID: conv-fable-1/);
     assert.match(handoffCtx, /Helper \(proc-helper,/);
+    assert.match(handoffCtx, /Agent report: \[report from process_9: completed\] Helper finished review\./, 'relayed reports are never attributed to the user');
+    assert.doesNotMatch(handoffCtx, /User: \[report from process_9/);
+    assert.equal(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(handoffCtx), false, 'clipped emoji messages never leave lone UTF-16 surrogates');
     assert.match(handoffCtx, /User: Keep an eye on PR 240\./);
     assert.match(handoffCtx, /Assistant: Watching PR 240 and its helper\./);
     assert.equal(handoffCtx.includes('\0'), false, 'handoff strips NUL bytes that break argv-based CLIs');
