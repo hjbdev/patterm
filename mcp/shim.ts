@@ -75,12 +75,23 @@ function failPendingRequests(error: Error, owner?: net.Socket): void {
   }
 }
 
+function ownsPending(client: net.Socket): boolean {
+  for (const entry of pendingRequests.values()) if (entry.owner === client) return true;
+  return false;
+}
+
+function firstPendingOn(client: net.Socket): number | undefined {
+  return pendingOrder.find((id) => pendingRequests.get(id)?.owner === client);
+}
+
+// A registry that doesn't push closes each connection after its reply, so it
+// answers one request per connection. Only a pushing registry shares one.
 function getPersistentSocket(): Promise<net.Socket> {
-  if (persistentSocket && !persistentSocket.destroyed && !persistentSocket.readableEnded && !persistentSocket.writableEnded && persistentSocket.writable) {
+  if (persistentPushSupported && persistentSocket && !persistentSocket.destroyed && !persistentSocket.readableEnded && !persistentSocket.writableEnded && persistentSocket.writable) {
     return Promise.resolve(persistentSocket);
   }
-  if (persistentConnecting) return persistentConnecting;
-  persistentConnecting = new Promise<net.Socket>((resolve, reject) => {
+  if (persistentPushSupported && persistentConnecting) return persistentConnecting;
+  const connecting: Promise<net.Socket> = new Promise<net.Socket>((resolve, reject) => {
     const client = net.createConnection(resolveSocketPath());
     let connected = false;
     let buffer = '';
@@ -89,7 +100,7 @@ function getPersistentSocket(): Promise<net.Socket> {
       connected = true;
       persistentSocket = client;
       persistentSubscribed = false;
-      persistentConnecting = null;
+      if (persistentConnecting === connecting) persistentConnecting = null;
       // Don't keep one-shot CLI invocations alive on an idle persistent socket.
       client.unref();
       resolve(client);
@@ -106,8 +117,9 @@ function getPersistentSocket(): Promise<net.Socket> {
         try {
           message = JSON.parse(line) as { id?: unknown; event?: unknown; result?: unknown; error?: string; push?: boolean };
         } catch (error) {
-          const firstId = pendingOrder.shift();
+          const firstId = firstPendingOn(client);
           if (firstId !== undefined) {
+            pendingOrder.splice(pendingOrder.indexOf(firstId), 1);
             const pending = pendingRequests.get(firstId);
             pendingRequests.delete(firstId);
             pending?.reject(error instanceof Error ? error : new Error(String(error)));
@@ -118,9 +130,9 @@ function getPersistentSocket(): Promise<net.Socket> {
           onCatalogChanged?.();
           continue;
         }
-        const matchedId = typeof message.id === 'number' && pendingRequests.has(message.id)
+        const matchedId = typeof message.id === 'number' && pendingRequests.get(message.id)?.owner === client
           ? message.id
-          : pendingOrder[0];
+          : firstPendingOn(client);
         if (matchedId === undefined) continue;
         const idx = pendingOrder.indexOf(matchedId);
         if (idx >= 0) pendingOrder.splice(idx, 1);
@@ -133,7 +145,7 @@ function getPersistentSocket(): Promise<net.Socket> {
     });
     client.on('error', (error) => {
       if (!connected) {
-        persistentConnecting = null;
+        if (persistentConnecting === connecting) persistentConnecting = null;
         reject(error);
       } else {
         if (persistentSocket === client) {
@@ -151,7 +163,7 @@ function getPersistentSocket(): Promise<net.Socket> {
     });
     client.once('close', () => {
       if (!connected) {
-        persistentConnecting = null;
+        if (persistentConnecting === connecting) persistentConnecting = null;
         reject(new Error(DISCONNECTED_ERROR));
       } else {
         if (persistentSocket === client) {
@@ -163,7 +175,8 @@ function getPersistentSocket(): Promise<net.Socket> {
       }
     });
   });
-  return persistentConnecting;
+  persistentConnecting = connecting;
+  return connecting;
 }
 
 async function registryRequestRaw(request: ShimRequest, meta?: Record<string, unknown>): Promise<{ result: unknown; push: boolean }> {
@@ -185,25 +198,27 @@ async function registryRequestRaw(request: ShimRequest, meta?: Record<string, un
         const idx = pendingOrder.indexOf(id);
         if (idx >= 0) pendingOrder.splice(idx, 1);
         pendingRequests.delete(id);
-        if (!pendingRequests.size) client.unref();
+        if (!ownsPending(client)) client.unref();
         reject(error);
       }
     });
   }).then((value) => {
     const reply = value as { result: unknown; push: boolean };
     if (reply.push) persistentPushSupported = true;
-    if (!persistentPushSupported && !pendingRequests.size) {
+    const idle = !ownsPending(client);
+    // Close an idle connection unless it is the one a pushing registry shares.
+    if (idle && (!persistentPushSupported || persistentSocket !== client)) {
       if (persistentSocket === client) {
         persistentSocket = null;
         persistentSubscribed = false;
       }
       client.end();
-    } else if (!pendingRequests.size && !client.destroyed) {
+    } else if (idle && !client.destroyed) {
       client.unref();
     }
     return reply;
   }, (error) => {
-    if (!pendingRequests.size && !client.destroyed) client.unref();
+    if (!ownsPending(client) && !client.destroyed) client.unref();
     throw error;
   });
 }
