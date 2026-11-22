@@ -104,6 +104,11 @@ export class NotificationActions {
     this.notifications.reported(processId);
   }
 
+  // Marks the current bot turn quiet and clears any stale turn-ended notice.
+  quiet(processId: string): void {
+    this.notifications.quiet(processId);
+  }
+
   readSettings(): NotificationSettings {
     return this.settings.notificationSettings();
   }

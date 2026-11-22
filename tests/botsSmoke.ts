@@ -446,6 +446,14 @@ async function main(): Promise<void> {
     settings.updateBots({ bots: [{ ...settings.bots().bots[1]!, purview: { kind: 'projects', projectIds: ['p'] } }] });
     await assert.rejects(requestRegistry.callPublic('agent_request_reply', { process_id: 'proc-q', request_id: 'read-1', decision: 'reject' }, fable), /outside the current caller scope/);
     settings.updateBots({ bots: [{ ...settings.bots().bots[1]!, purview: { kind: 'all' }, requests: false }] });
+    // Bots can mark unsolicited turns silent with bot_stay_quiet; shared bridges (null identity) can discover it, while ordinary agents and remote callers cannot invoke it.
+    assert.ok(registry.publicTools(fable).some((tool) => tool.name === 'bot_stay_quiet'));
+    assert.ok(registry.publicTools({ identity: null }).some((tool) => tool.name === 'bot_stay_quiet'), 'shared MCP bridge discovers bot_stay_quiet');
+    assert.ok(!registry.publicTools({ identity: 'mcp-q' }).some((tool) => tool.name === 'bot_stay_quiet'), 'ordinary identified agents do not see bot_stay_quiet');
+    assert.deepEqual(await registry.callPublic('bot_stay_quiet', { reason: 'Routine digest needed no user ping' }, fable), { ok: true, quiet: true });
+    assert.ok(db.prepare(`select 1 from timeline_events where event_type = 'bot.stayed_quiet' and process_id = ?`).get(bots.state('fable').process_id));
+    await assert.rejects(registry.callPublic('bot_stay_quiet', {}, { identity: 'mcp-q' }), /Only bots and the assistant/);
+    await assert.rejects(registry.callPublic('bot_stay_quiet', {}, { remote: { host_id: 'h', host_name: 'peer', project_id: 'p' } }), /Only local bots/);
 
     // The assistant does not start at boot until its first conversation.
     const launchesBefore = launches.length;

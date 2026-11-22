@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Bots and the assistant can call `bot_stay_quiet` to handle unsolicited wakeups
+  (digests, helper reports, agent messages, timer callbacks, routine reports)
+  silently without raising a `turn_finished` notification across any harness.
+
 - Routine launches now include a bounded summary of up to two prior finished
   runs from the same project scope for continuity, and routines can deliver
   reports directly to a specific project bot (`delivery: "bot"` with
