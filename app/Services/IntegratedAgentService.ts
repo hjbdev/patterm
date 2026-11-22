@@ -746,18 +746,26 @@ export class IntegratedAgentService {
   }
 
   private async withPreservedAttention<T>(key: string, resolved: ResolvedIntegratedPrompt, run: () => Promise<T>): Promise<T> {
-    if (!resolved.preserveAttention) return run();
+    if (!resolved.preserveAttention) {
+      this.preservedAttention.delete(key);
+      return run();
+    }
     this.preservedAttentionInFlight.set(key, (this.preservedAttentionInFlight.get(key) ?? 0) + 1);
     this.preservedAttention.add(key);
+    let uncertain = false;
     try {
-      return await run();
+      const result = await run();
+      uncertain = (result as { delivery?: unknown } | null | undefined)?.delivery === 'uncertain';
+      return result;
     } finally {
       const remaining = (this.preservedAttentionInFlight.get(key) ?? 1) - 1;
       if (remaining > 0) this.preservedAttentionInFlight.set(key, remaining);
       else {
         this.preservedAttentionInFlight.delete(key);
         const current = this.activity(key);
-        if (current === 'idle' || current === 'error') this.preservedAttention.delete(key);
+        // Keep protection across an uncertain delivery so a reconnect reading
+        // the already-admitted peer turn does not dismiss the user's notice.
+        if (!uncertain && (current === 'idle' || current === 'error')) this.preservedAttention.delete(key);
       }
     }
   }
