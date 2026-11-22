@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Bots that start a fresh CLI session after a failed resume or harness switch
+  now receive a bounded conversation handoff from imported history (`history.db`)
+  along with any running adopted helpers, instead of starting blank. Explicit
+  `/new` conversations still start clean.
+
 - Bots can see what agents in their projects are waiting on:
   `get_conversation_output` lists pending permissions and questions, and
   notification digests point to them. A new Agent requests switch in

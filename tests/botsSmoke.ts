@@ -175,8 +175,15 @@ async function main(): Promise<void> {
     // A test can hold launches back.
     let gate: Promise<void> = Promise.resolve();
     let gateReached = false;
+    const launchedContexts: Array<{ bot_id: string | undefined; context: string }> = [];
+    let botsRef: BotService | null = null;
     const launcher = {
-      launch: async (input: LaunchHarnessInput) => { gateReached = true; await gate; return register(input, null); },
+      launch: async (input: LaunchHarnessInput) => {
+        gateReached = true;
+        await gate;
+        if (botsRef && input.bot_id) launchedContexts.push({ bot_id: input.bot_id, context: botsRef.context(input.bot_id) });
+        return register(input, null);
+      },
       resume: async (input: LaunchHarnessInput, resume: HarnessResume) => { await gate; if (resumeFails) throw new Error('thread is gone'); return register(input, resume); }
     };
     const stopped: string[] = [];
@@ -193,6 +200,19 @@ async function main(): Promise<void> {
       return Promise.resolve();
     };
     const unsaved = new Set<string>();
+    const history = {
+      conversationIdForSession: ({ projectId }: { projectId: string }) => projectId === botProjectId('fable') ? 'conv-fable-1' : null,
+      tail: (conversationId: string) => conversationId === 'conv-fable-1'
+        ? {
+            conversation: null,
+            has_more: false,
+            messages: [
+              { id: 'm1', conversationId, seq: 1, role: 'user', kind: 'message', text: 'Keep an eye on PR 240.', toolName: null, toolCallId: null, toolInputSummary: null, toolOutputSummary: null, providerCreatedAt: null, createdAt: now, metadata: null, media: [] },
+              { id: 'm2', conversationId, seq: 2, role: 'assistant', kind: 'message', text: 'Watching PR 240 and its helper.', toolName: null, toolCallId: null, toolInputSummary: null, toolOutputSummary: null, providerCreatedAt: null, createdAt: now, metadata: null, media: [] }
+            ]
+          }
+        : { conversation: null, has_more: false, messages: [] }
+    } as unknown as NonNullable<NonNullable<ConstructorParameters<typeof BotService>[6]>['history']>;
     const bots = new BotService(database, dir, launcher, settings, workbench, {
       stop,
       transferTimers: (from, to) => {
@@ -206,7 +226,8 @@ async function main(): Promise<void> {
       },
       releaseTimers: (ids) => { for (const id of ids) { paused.delete(id); events.push(`release ${id} to ${timerOwners.get(id)}`); } }
     },
-      { conversationSaved: (_harness, _cwd, resumeId) => !unsaved.has(resumeId) });
+      { conversationSaved: (_harness, _cwd, resumeId) => !unsaved.has(resumeId), history });
+    botsRef = bots;
 
     // Every bot starts once, in its own folder in the hidden bots project.
     await Promise.all([bots.ensure('fable'), bots.ensure('fable')]);
@@ -240,20 +261,28 @@ async function main(): Promise<void> {
     assert.equal(launches.at(-1)!.resume?.resume_id, 'thread-1');
     assert.equal((db.prepare(`select parent_process_id from processes where id = 'proc-helper'`).get() as { parent_process_id: string }).parent_process_id, 'proc-bot-3');
     assert.deepEqual(transferred.at(-1), { from: ['proc-bot-1'], to: 'proc-bot-3' });
-    // A conversation the CLI can't resume starts over.
+    // A conversation the CLI can't resume starts over with a history handoff.
     resumeFails = true;
     await stop('proc-bot-3');
     await bots.ensure('fable');
     assert.equal(launches.at(-1)!.resume, null);
+    const handoffCtx = launchedContexts.at(-1)?.context ?? '';
+    assert.match(handoffCtx, /\[Conversation handoff/);
+    assert.match(handoffCtx, /Earlier transcript ID: conv-fable-1/);
+    assert.match(handoffCtx, /Helper \(proc-helper,/);
+    assert.match(handoffCtx, /User: Keep an eye on PR 240\./);
+    assert.match(handoffCtx, /Assistant: Watching PR 240 and its helper\./);
+    assert.doesNotMatch(bots.context('fable'), /\[Conversation handoff/, 'handoff is cleared after launch');
     resumeFails = false;
     // A bot nobody messaged has no saved conversation, so it starts fresh.
     unsaved.add('thread-4');
     await stop('proc-bot-4');
     await bots.ensure('fable');
     assert.equal(launches.at(-1)!.resume, null);
-    // A new conversation skips resuming.
+    // A new conversation skips resuming and skips history handoff.
     await bots.restart('fable', true);
     assert.equal(launches.at(-1)!.resume, null);
+    assert.doesNotMatch(launchedContexts.at(-1)?.context ?? '', /\[Conversation handoff/, '/new starts clean without handoff');
     assert.equal(stopped.at(-1), 'proc-bot-5');
     // Removing a bot stops its session.
     settings.updateBots({ bots: [settings.bots().bots[1]!] });

@@ -6,6 +6,7 @@ import type { AssistantMemoryService } from './AssistantMemoryService';
 import { memoryPushSupported } from './MemoryPushService';
 import { storedPath } from '../Platform/PathIdentity';
 import { AgentContextService, BOT_CONTEXT_BYTES } from './AgentContextService';
+import type { AgentHistoryReadService } from './AgentHistory/AgentHistoryReadService';
 import type { DatabaseService } from './DatabaseService';
 import type { HarnessLauncher } from './HarnessLauncher';
 import type { SettingsService } from './SettingsService';
@@ -32,7 +33,11 @@ export interface BotState {
   session_id: string | null;
 }
 
-interface BotRow { process_id: string; session_id: string; resume_id: string | null }
+interface BotRow { process_id: string; session_id: string; resume_id: string | null; harness?: string | null }
+
+const HANDOFF_CHAR_BUDGET = 16_000;
+const HANDOFF_TURN_LIMIT = 40;
+const HANDOFF_MESSAGE_CLIP = 1_200;
 
 // Runs each bot, the assistant included, as one persistent Integrated
 // session: ensure() reuses the live session, otherwise resumes the bot's latest
@@ -41,6 +46,7 @@ interface BotRow { process_id: string; session_id: string; resume_id: string | n
 // one at a time, so a bot never ends up with two sessions.
 export class BotService {
   private readonly queue = new Map<string, Promise<unknown>>();
+  private readonly pendingHandoff = new Map<string, string>();
 
   constructor(
     private readonly database: DatabaseService,
@@ -64,6 +70,7 @@ export class BotService {
       log?: (event: string, data: Record<string, unknown>) => void;
       conversationSaved?: (harness: string, cwd: string, resumeId: string) => boolean;
       memory?: Pick<AssistantMemoryService, 'snapshot'>;
+      history?: Pick<AgentHistoryReadService, 'conversationIdForSession' | 'tail'>;
       launched?: (botId: string, processId: string) => void;
       stopping?: (botId: string, processId: string) => Promise<void>;
     } = {}
@@ -116,16 +123,21 @@ export class BotService {
     if (!bot) return '';
     // Where Patterm keeps memory current, launch instructions carry none.
     const memoryPush = memoryPushSupported(bot.harness);
+    let base: string;
     if (bot.id === ASSISTANT_BOT_ID) {
       // OpenCode caps launch instructions; the assistant reads its memory with a tool anyway.
       const limit = bot.harness === 'opencode' ? { limitBytes: BOT_CONTEXT_BYTES } : {};
-      return new AgentContextService().buildAssistant(memoryPush ? '' : this.options.memory?.snapshot() ?? '', bot, { ...limit, memoryPush });
+      base = new AgentContextService().buildAssistant(memoryPush ? '' : this.options.memory?.snapshot() ?? '', bot, { ...limit, memoryPush });
+    } else {
+      const purview = bot.purview;
+      const projects = purview.kind === 'projects'
+        ? this.workbench.listProjects().filter((project) => purview.projectIds.includes(project.id)).map((project) => ({ id: project.id, name: project.name }))
+        : purview.kind;
+      base = new AgentContextService().buildBot(bot, projects, { memoryPush });
     }
-    const purview = bot.purview;
-    const projects = purview.kind === 'projects'
-      ? this.workbench.listProjects().filter((project) => purview.projectIds.includes(project.id)).map((project) => ({ id: project.id, name: project.name }))
-      : purview.kind;
-    return new AgentContextService().buildBot(bot, projects, { memoryPush });
+    const handoff = this.pendingHandoff.get(botId);
+    if (!handoff) return base;
+    return appendHandoff(base, handoff, bot.harness === 'opencode' ? BOT_CONTEXT_BYTES : null);
   }
 
   // Starts a bot that isn't running: on its latest conversation, or a new
@@ -264,8 +276,71 @@ export class BotService {
         this.log('resume.failed', { bot_id: bot.id, resume_id: previous.resume_id, message: errorMessage(error) });
       }
     }
-    await this.launcher.launch(input);
+    const handoff = fresh ? null : this.buildHandoff(bot);
+    if (handoff) this.pendingHandoff.set(bot.id, handoff);
+    try {
+      await this.launcher.launch(input);
+    } finally {
+      this.pendingHandoff.delete(bot.id);
+    }
     return this.launched(bot.id);
+  }
+
+  // Builds a bounded continuity handoff from imported history and live helpers
+  // when a bot starts a fresh CLI session after a failed resume or harness change.
+  private buildHandoff(bot: Bot): string | null {
+    const role = botRole(bot.id);
+    const prior = this.previousAny(bot.id);
+    const helpers = this.database.connection.prepare(
+      `select processes.id, processes.name, processes.activity, coalesce(projects.name, processes.project_id) as project
+       from processes left join projects on projects.id = processes.project_id
+       where processes.status = 'running' and processes.kind = 'agent'
+         and processes.parent_process_id in (select process_id from sessions where session_role = ? and bot_id = ? and process_id is not null)
+       order by processes.updated_at desc limit 12`
+    ).all(role, bot.id) as Array<{ id: string; name: string; activity: string | null; project: string }>;
+
+    let conversationId: string | null = null;
+    const turns: string[] = [];
+    if (prior && this.options.history) {
+      conversationId = this.options.history.conversationIdForSession({
+        sessionId: prior.session_id,
+        provider: prior.harness ?? null,
+        resumeId: prior.resume_id,
+        projectId: botProjectId(bot.id)
+      });
+      if (conversationId) {
+        const tail = this.options.history.tail(conversationId, HANDOFF_TURN_LIMIT);
+        const lines = tail.messages
+          .filter((msg) => msg.kind === 'message' && (msg.role === 'user' || msg.role === 'assistant') && msg.text.trim())
+          .map((msg) => {
+            const label = msg.role === 'user' ? 'User' : 'Assistant';
+            const cleaned = msg.text.trim().replace(/\s+/g, ' ');
+            const clipped = cleaned.length > HANDOFF_MESSAGE_CLIP ? `${cleaned.slice(0, HANDOFF_MESSAGE_CLIP - 1)}…` : cleaned;
+            return `${label}: ${clipped}`;
+          });
+        let used = 0;
+        for (let i = lines.length - 1; i >= 0; i--) {
+          const line = lines[i]!;
+          if (used + line.length + 1 > HANDOFF_CHAR_BUDGET) break;
+          turns.unshift(line);
+          used += line.length + 1;
+        }
+      }
+    }
+    if (!turns.length && !helpers.length) return null;
+    const sections = [
+      '[Conversation handoff — your prior CLI session could not be resumed or switched harness; this fresh session continues the same conversation.]'
+    ];
+    if (conversationId) {
+      sections.push(`Earlier transcript ID: ${conversationId} (use history_get or search_conversation_history if you need older details).`);
+    }
+    if (helpers.length) {
+      sections.push(`Running helpers adopted from your prior session:\n${helpers.map((h) => `- ${h.name} (${h.id}, ${h.project}, ${h.activity ?? 'unknown'})`).join('\n')}`);
+    }
+    if (turns.length) {
+      sections.push(`Recent turns (oldest first):\n${turns.join('\n')}`);
+    }
+    return sections.join('\n\n');
   }
 
   private launched(botId: string): BotState {
@@ -308,9 +383,15 @@ export class BotService {
   }
 
   private previous(botId: string, harness: string): BotRow | null {
-    return (this.database.connection.prepare(`select process_id, id as session_id, resume_id from sessions
+    return (this.database.connection.prepare(`select process_id, id as session_id, resume_id, harness from sessions
       where session_role = ? and bot_id = ? and harness = ? and resume_id is not null
       order by started_at desc limit 1`).get(botRole(botId), botId, harness) as BotRow | undefined) ?? null;
+  }
+
+  private previousAny(botId: string): BotRow | null {
+    return (this.database.connection.prepare(`select process_id, id as session_id, resume_id, harness from sessions
+      where session_role = ? and bot_id = ?
+      order by started_at desc limit 1`).get(botRole(botId), botId) as BotRow | undefined) ?? null;
   }
 
   private bot(botId: string): Bot | null {
@@ -326,6 +407,20 @@ export class BotService {
   private log(event: string, data: Record<string, unknown>): void {
     this.options.log?.(`bot.${event}`, data);
   }
+}
+
+function appendHandoff(base: string, handoff: string, limitBytes: number | null): string {
+  const combined = `${base}\n\n${handoff}`;
+  if (!limitBytes) return combined;
+  const fits = (value: string) => Buffer.byteLength(JSON.stringify(value), 'utf8') <= limitBytes;
+  if (fits(combined)) return combined;
+  let chars = [...handoff];
+  while (chars.length > 0) {
+    chars = chars.slice(0, Math.max(0, chars.length - Math.max(1, Math.ceil(chars.length / 8))));
+    const candidate = chars.length ? `${base}\n\n${chars.join('')}…` : base;
+    if (fits(candidate)) return candidate;
+  }
+  return base;
 }
 
 function errorMessage(error: unknown): string {
