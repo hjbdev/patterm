@@ -347,34 +347,38 @@ function sameRequest(a: NativeRequest, b: NativeRequest): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-function allowedReadRoots(cwd: string): Array<{ canonical: string; logical: string }> {
+const PROJECT_SKILL_PREFIXES = [
+  path.join('.claude', 'skills') + path.sep,
+  path.join('.codex', 'skills') + path.sep,
+  path.join('.agents', 'skills') + path.sep,
+  path.join('.gemini', 'skills') + path.sep
+];
+
+function allowedReadRoots(logicalCwd: string, canonicalCwd: string): Array<{ canonical: string; logical: string; workspace?: true }> {
   const home = os.homedir();
-  const candidates = [
-    cwd,
-    path.join(cwd, '.claude', 'skills'),
-    path.join(cwd, '.codex', 'skills'),
-    path.join(cwd, '.agents', 'skills'),
-    path.join(cwd, '.gemini', 'skills'),
-    ...(home ? [
+  const roots: Array<{ canonical: string; logical: string; workspace?: true }> = [
+    { logical: logicalCwd, canonical: canonicalCwd, workspace: true }
+  ];
+  if (home) {
+    for (const candidate of [
       path.join(home, '.config', 'opencode', 'skills'),
       path.join(home, '.claude', 'skills'),
       path.join(home, '.codex', 'skills'),
       path.join(home, '.agents', 'skills'),
       path.join(home, '.gemini', 'config', 'skills'),
       path.join(home, '.gemini', 'antigravity-cli', 'builtin', 'skills')
-    ] : [])
-  ];
-  const roots: Array<{ canonical: string; logical: string }> = [];
-  for (const candidate of candidates) {
-    try { roots.push({ canonical: realpathSync(candidate), logical: path.resolve(candidate) }); } catch { /* ignore missing roots */ }
+    ]) {
+      try { roots.push({ canonical: realpathSync(candidate), logical: path.resolve(candidate) }); } catch { /* ignore missing roots */ }
+    }
   }
   return roots;
 }
 
-function insideNonSensitive(root: string, target: string): boolean {
+function insideNonSensitive(root: string, target: string, workspace = false): boolean {
   const relative = path.relative(root, target);
-  return Boolean(relative) && !path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`)
-    && !sensitivePath(relative);
+  if (!relative || path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)) return false;
+  const projectSkill = workspace ? PROJECT_SKILL_PREFIXES.find((prefix) => relative.startsWith(prefix)) : undefined;
+  return !sensitivePath(projectSkill ? relative.slice(projectSkill.length) : relative);
 }
 
 function expandHome(resource: string): string {
@@ -390,13 +394,15 @@ function canApprove(source: Pick<Process, 'harness' | 'cwd'>, permission: Integr
     || permission.command || permission.patch || permission.plan || permission.resources.length !== 1
     || permission.resources[0]!.length > 1_000 || source.cwd.length > 1_000) return false;
   try {
-    const cwd = realpathSync(source.cwd);
-    const requested = path.resolve(cwd, expandHome(permission.resources[0]!));
+    const logicalCwd = path.resolve(source.cwd);
+    const canonicalCwd = realpathSync(logicalCwd);
+    const requested = path.resolve(logicalCwd, expandHome(permission.resources[0]!));
     const file = realpathSync(requested);
     if (!statSync(file).isFile()) return false;
-    const roots = allowedReadRoots(cwd);
-    const resolvedAllowed = roots.some(({ canonical }) => insideNonSensitive(canonical, file));
-    const requestedAllowed = roots.some(({ canonical, logical }) => insideNonSensitive(logical, requested) || insideNonSensitive(canonical, requested));
+    const roots = allowedReadRoots(logicalCwd, canonicalCwd);
+    const resolvedAllowed = roots.some(({ canonical, workspace }) => insideNonSensitive(canonical, file, workspace));
+    const requestedAllowed = roots.some(({ canonical, logical, workspace }) =>
+      insideNonSensitive(logical, requested, workspace) || insideNonSensitive(canonical, requested, workspace));
     return resolvedAllowed && requestedAllowed;
   } catch { return false; }
 }

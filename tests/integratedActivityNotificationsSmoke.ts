@@ -478,6 +478,27 @@ async function main(): Promise<void> {
         await assert.rejects(permissions.overseerReply('agent', 'home-other', { decision: 'once' }, 'bot'), /only a one-time read/i);
         await assert.rejects(permissions.overseerReply('agent', 'codex-auth', { decision: 'once' }, 'bot'), /only a one-time read/i);
         await assert.rejects(permissions.overseerReply('agent', 'oauth-creds', { decision: 'once' }, 'bot'), /only a one-time read/i);
+        // A repo-controlled skill symlink pointing outside the workspace is denied,
+        // while an ordinary file accessed via a symlinked workspace cwd alias passes.
+        const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-outside-'));
+        const aliasCwd = path.join(outsideDir, 'workspace-alias');
+        try {
+          const outsideFile = path.join(outsideDir, 'secret-note.txt');
+          fs.writeFileSync(outsideFile, 'outside');
+          fs.mkdirSync(path.join(directory, '.agents'), { recursive: true });
+          fs.symlinkSync(outsideDir, path.join(directory, '.agents', 'skills'), 'dir');
+          fs.symlinkSync(directory, aliasCwd, 'dir');
+          const escaped = pendingRequestSummary({ harness: 'agy', cwd: directory }, {
+            permissions: { data: [{ id: 'escape', tool_kind: 'read', once: true, resources: ['.agents/skills/secret-note.txt'] }] }
+          });
+          assert.equal(escaped[0]!.can_approve_once, false, 'a repo skill symlink cannot widen the read boundary');
+          const aliased = pendingRequestSummary({ harness: 'agy', cwd: aliasCwd }, {
+            permissions: { data: [{ id: 'alias', tool_kind: 'read', once: true, resources: [path.join(aliasCwd, 'README.md')] }] }
+          });
+          assert.equal(aliased[0]!.can_approve_once, true, 'ordinary files under a symlinked workspace cwd alias remain allowed');
+        } finally {
+          removeTree(outsideDir);
+        }
         nativePermissions = [];
       } finally {
         if (priorHome === undefined) delete process.env.HOME; else process.env.HOME = priorHome;
