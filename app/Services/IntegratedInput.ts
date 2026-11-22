@@ -54,6 +54,11 @@ export interface ResolvedIntegratedPrompt {
   // Set by BotRelay when dispatching a Focus digest so admission re-filters
   // items against the bot's current purview even if held during compaction.
   focusDigestId?: string | undefined;
+  // In-memory admission guard attached by IntegratedAgentService right before
+  // invoking a provider (omitted by JSON.stringify when held), so providers
+  // with async pre-admission waits (e.g. Codex thread/read) recheck right
+  // before the native request.
+  admitGuard?: (() => ResolvedIntegratedPrompt | null) | undefined;
 }
 
 export interface IntegratedWorktreeFile {

@@ -382,6 +382,17 @@ export class BotRelay {
     return null;
   }
 
+  // Read-only rendering of a held Focus digest from surviving allowed inbox
+  // items, so the owner's held queue never displays removed-project text.
+  previewFocusDigest(processId: string, digestId: string): string | null {
+    const botId = this.inbox.botFor(processId);
+    if (!botId) return null;
+    const bot = this.bot(botId);
+    if (!bot?.enabled) return null;
+    const allowed = this.inbox.listAll(botId, digestId).filter((item) => this.itemInPurview(bot, item));
+    return allowed.length ? buildFocusDigestMessage(digestId, allowed) : null;
+  }
+
   dispose(): void {
     for (const digest of this.digests.values()) if (digest.timer) clearTimeout(digest.timer);
     this.digests.clear();
@@ -484,10 +495,12 @@ export class BotRelay {
           delivery = 'uncertain';
         }
       } else {
-        const text = buildFocusDigestMessage(claimed.digestId, allowed);
+        // Store only a neutral placeholder when using scopedPrompt so
+        // integrated_held_prompts never persists pre-rendered cross-project text;
+        // allowHeldPrompt renders the live digest from surviving inbox items.
         const result = (this.integrated.scopedPrompt
-          ? await this.integrated.scopedPrompt(processId, text, { focusDigestId: claimed.digestId })
-          : await this.integrated.prompt(processId, text)) as { delivery?: unknown } | null | undefined;
+          ? await this.integrated.scopedPrompt(processId, `[Patterm focus digest ${claimed.digestId}]`, { focusDigestId: claimed.digestId })
+          : await this.integrated.prompt(processId, buildFocusDigestMessage(claimed.digestId, allowed))) as { delivery?: unknown } | null | undefined;
         if (result?.delivery === 'uncertain') delivery = 'uncertain';
       }
       this.inbox.confirm(botId, claimed.digestId, delivery);

@@ -575,9 +575,14 @@ export class IntegratedAgentService {
   }
 
   private heldPromptGuard: ((processId: string, prompt: ResolvedIntegratedPrompt) => ResolvedIntegratedPrompt | null) | null = null;
+  private focusDigestPreview: ((processId: string, digestId: string) => string | null) | null = null;
 
-  setHeldPromptGuard(guard: (processId: string, prompt: ResolvedIntegratedPrompt) => ResolvedIntegratedPrompt | null): void {
+  setHeldPromptGuard(
+    guard: (processId: string, prompt: ResolvedIntegratedPrompt) => ResolvedIntegratedPrompt | null,
+    previewFocusDigest?: (processId: string, digestId: string) => string | null
+  ): void {
     this.heldPromptGuard = guard;
+    this.focusDigestPreview = previewFocusDigest ?? null;
   }
 
   routineNotificationDigest(processId: string, text: string): Promise<unknown> {
@@ -732,7 +737,14 @@ export class IntegratedAgentService {
       if ((resolved.sourceScope || resolved.focusDigestId) && this.heldPromptGuard) {
         const checked = this.heldPromptGuard(key, resolved);
         if (!checked) return Promise.resolve({ delivery: 'dropped' });
-        next = checked;
+        next = {
+          ...checked,
+          admitGuard: () => {
+            const rechecked = this.heldPromptGuard!(key, checked);
+            if (rechecked) resolved.text = rechecked.text;
+            return rechecked;
+          }
+        };
         resolved.text = checked.text;
       }
       for (const listener of this.promptDispatchListeners) {
@@ -1011,10 +1023,20 @@ export class IntegratedAgentService {
 
   private heldQueue(key: string): IntegratedQueuedMessage[] {
     const rows = this.database.connection.prepare(`${HELD_SELECT} where process_id = ? order by seq`).all(key) as HeldPromptRow[];
-    return rows.map((row) => ({
-      id: row.message_id, text: String(record(JSON.parse(row.payload)).text ?? ''), delivery: row.state, reason: row.turn_kind,
-      ...(row.error ? { error: row.error } : {})
-    }));
+    return rows.flatMap((row) => {
+      const parsed = record(JSON.parse(row.payload));
+      const digestId = typeof parsed.focusDigestId === 'string' ? parsed.focusDigestId : null;
+      let text = String(parsed.text ?? '');
+      if (digestId && this.focusDigestPreview) {
+        const rendered = this.focusDigestPreview(key, digestId);
+        if (rendered === null) return [];
+        text = rendered;
+      }
+      return [{
+        id: row.message_id, text, delivery: row.state, reason: row.turn_kind,
+        ...(row.error ? { error: row.error } : {})
+      }];
+    });
   }
 
   private removeHeld(key: string, messageId: string): void {

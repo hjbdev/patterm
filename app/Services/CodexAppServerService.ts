@@ -409,6 +409,16 @@ export class CodexAppServerService {
       settings: { model: model ?? await this.defaultModel(client), reasoning_effort: effort ?? null, developer_instructions: null }
     };
     if (review && !review.current()) throw new Error('This request is no longer waiting for this parent');
+    if (input.admitGuard) {
+      const checked = input.admitGuard();
+      if (!checked) return { delivery: 'dropped' } as unknown as { turnId: string };
+      const nextText = promptText(checked);
+      if (nextText !== text) {
+        if (!nextText && !items.some((item) => item.type !== 'text')) return { delivery: 'dropped' } as unknown as { turnId: string };
+        if (items[0]?.type === 'text') items[0].text = nextText;
+        else if (nextText) items.unshift({ type: 'text', text: nextText, text_elements: [] });
+      }
+    }
     try {
       // clientUserMessageId is correlation only; Codex does not deduplicate.
       const response = record(await client.request('turn/start', {
