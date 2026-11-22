@@ -45,10 +45,10 @@ export class ReconcileRuntimeAction {
     let sessions = 0;
     let processes = 0;
     const unreportedChildExits: string[] = [];
-    const rows = db.prepare(`select processes.id, processes.pty_process_id, processes.kind, processes.parent_process_id from processes
+    const rows = db.prepare(`select processes.id, processes.pty_process_id, processes.kind, processes.parent_process_id, processes.activity from processes
       where processes.status = 'running' and not exists (
         select 1 from sessions where sessions.process_id = processes.id and sessions.interface_mode = 'integrated' and sessions.exited_at is null
-      )`).all() as Array<{ id: string; pty_process_id: string | null; kind: string; parent_process_id: string | null }>;
+      )`).all() as Array<{ id: string; pty_process_id: string | null; kind: string; parent_process_id: string | null; activity: string | null }>;
     for (const row of rows) {
       const terminal = row.pty_process_id ? terminals.get(row.pty_process_id) : undefined;
       if (terminal?.status === 'running') {
@@ -60,7 +60,12 @@ export class ReconcileRuntimeAction {
         if (turnStarted === null) {
           db.prepare(`update processes set activity = ?, turn_started_at = null, updated_at = ? where id = ? and (activity != ? or turn_started_at is not null)`).run(terminal.activity, now, row.id, terminal.activity);
         } else if (turnStarted !== undefined) {
-          db.prepare(`update processes set activity = ?, turn_started_at = coalesce(turn_started_at, ?), updated_at = ? where id = ? and (activity != ? or turn_started_at is null)`).run(terminal.activity, turnStarted, now, row.id, terminal.activity);
+          const wasAtRest = row.activity === 'idle' || row.activity === 'error' || row.activity === null;
+          if (wasAtRest) {
+            db.prepare(`update processes set activity = ?, turn_started_at = ?, updated_at = ? where id = ?`).run(terminal.activity, turnStarted, now, row.id);
+          } else {
+            db.prepare(`update processes set activity = ?, turn_started_at = coalesce(turn_started_at, ?), updated_at = ? where id = ? and (activity != ? or turn_started_at is null)`).run(terminal.activity, turnStarted, now, row.id, terminal.activity);
+          }
         } else {
           db.prepare(`update processes set activity = ?, updated_at = ? where id = ? and activity != ?`).run(terminal.activity, now, row.id, terminal.activity);
         }

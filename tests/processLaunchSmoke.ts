@@ -223,6 +223,15 @@ async function main(): Promise<void> {
     ]);
     assert.ok(startupReconciled.unreportedChildExits.includes('child_startup_unreported'), 'startup reconciliation reports unreported clean child exits');
     assert.equal((database.connection.prepare(`select turn_started_at from processes where id = ?`).get(created.process_id) as { turn_started_at: string | null }).turn_started_at, null, 'startup reconciliation clears turn_started_at when a PTY is idle');
+    // Upgrade path: a persisted idle PTY with a stale turn_started_at that is
+    // now working gets a fresh turn_started_at instead of reusing the old one.
+    const staleTurnStart = '2026-01-01T00:00:00.000Z';
+    database.connection.prepare(`update processes set activity = 'idle', turn_started_at = ? where id = ?`).run(staleTurnStart, created.process_id);
+    new ReconcileRuntimeAction(database).execute([
+      { process_id: created.pty_process_id, status: 'running', exit_code: null, activity: 'working', title: 'dev' }
+    ]);
+    const refreshedTurn = (database.connection.prepare(`select turn_started_at from processes where id = ?`).get(created.process_id) as { turn_started_at: string | null }).turn_started_at;
+    assert.ok(refreshedTurn && refreshedTurn !== staleTurnStart, 'idle-to-working reconnect seeds a fresh turn_started_at');
     reconciler.dispose();
 
     // Relaunch re-attaches a fresh PTY reusing the stored argv.
