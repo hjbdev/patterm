@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (digests, helper reports, agent messages, timer callbacks, routine reports)
   silently without raising a `turn_finished` notification across any harness.
 
+- Bots that start a fresh CLI session after a failed resume or harness switch
+  now receive a bounded conversation handoff from imported history (`history.db`)
+  along with any running adopted helpers, instead of starting blank. Explicit
+  `/new` conversations still start clean.
+
 - Unreported Integrated agent turn completions now include a bounded 280-character
   plain-text preview of the agent's final reply in user notifications and bot
   updates instead of bare `"Finished its turn"`, child agents that exit cleanly

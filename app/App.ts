@@ -727,6 +727,7 @@ async function createApplicationResources(
       log: (event, data) => debugLog.write('bots', event, data),
       conversationSaved: (harness, cwd, resumeId) => harness !== 'claude' || claudeConversationSaved({ cwd, sessionId: resumeId, env: process.env }),
       memory: assistantMemory,
+      history: historyReadService,
       launched: (botId) => botRelay.launched(botId),
       stopping: (botId, processId) => botRelay.stopping(botId, processId)
     });
