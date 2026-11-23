@@ -7,7 +7,7 @@ import type { AgentHistoryDb } from './AgentHistoryDb';
 import type { HistorySearchIndexService } from './HistorySearchIndexService';
 import type { TimelineService } from '../TimelineService';
 import { pathIdentity } from '../../Platform/PathIdentity';
-import { ConversationLinker,type ConversationLink } from './ConversationLinker';
+import { ConversationLinker, OPENCODE_BACKING_REASON, type ConversationLink } from './ConversationLinker';
 import { MESSAGE_TEXT_CAP, RATE_LIMIT_READING_RETENTION_MS, TOOL_INPUT_CAP, TOOL_OUTPUT_CAP, type AgentHistoryProvider, type HistoryFileFingerprint, type HistorySourceCandidate, type ParseHistoryFileOptions, type ParsedConversation, type ParsedHistoryStream, type ParsedMessage, type ProviderHistoryAdapter } from './AgentHistoryTypes';
 import { defaultFileFingerprint, digestJson, stableJson, statDigest, statOnlyFingerprint } from './HistoryAdapterUtils';
 import { ProviderHistoryDiscoveryService } from './ProviderHistoryDiscoveryService';
@@ -113,7 +113,7 @@ export class AgentHistoryImportService {
     private readonly appDatabase: AgentHistoryDb = database,
     private readonly sourcesService = new AgentHistorySourceService(appDatabase, discovery)
   ) {
-    this.linker = new ConversationLinker(appDatabase);
+    this.linker = new ConversationLinker(appDatabase, database);
     this.watermarks = new AgentHistoryWatermarkService(database, sourcesService);
   }
 
@@ -176,13 +176,14 @@ export class AgentHistoryImportService {
             const importFileId = this.upsertImportFile(candidate, batchId, filePath, parsed.parserVersion, beforeFingerprint, warnings, null, false, 'importing');
             let importedFromFile = false;
             for (const parsedConversation of parsed.conversations) {
-              const conversation = withUniqueMessageIds(parsedConversation, warnings);
-              if (this.isDeleted(conversation)) {
+              const unique = withUniqueMessageIds(parsedConversation, warnings);
+              if (this.isDeleted(unique)) {
                 totals.skippedCount += 1;
                 continue;
               }
               const linkScope = this.linkScope(input);
-              const link = this.linker.link(conversation, linkScope);
+              const link = this.linker.link(unique, linkScope);
+              const conversation = withoutBackingTranscript(unique, link);
               if (!parserChanged && !recovering && this.isConversationUnchanged(conversation, link)) {
                 // Usage can grow without a new message, for example a late token count.
                 this.syncUsage(conversation);
@@ -190,7 +191,7 @@ export class AgentHistoryImportService {
                 totals.skippedCount += 1;
                 continue;
               }
-              const result = this.upsertConversation(conversation, importFileId, linkScope, true, link);
+              const result = this.upsertConversation(conversation, importFileId, linkScope, link.link_reason !== OPENCODE_BACKING_REASON, link);
               this.syncUsage(conversation);
               this.syncMedia(conversation);
               totals.conversationsImported += 1;
@@ -213,6 +214,7 @@ export class AgentHistoryImportService {
           }
         }
       }
+      this.retireOpenCodeBackingTranscripts();
     } catch (error) {
       failed = true;
       throw error;
@@ -296,24 +298,25 @@ export class AgentHistoryImportService {
             let conversationCount = 0;
             const repeatWarnings: string[] = [];
             for (const parsedConversation of parsed.conversations) {
-              const conversation = withUniqueMessageIds(parsedConversation, repeatWarnings);
+              const unique = withUniqueMessageIds(parsedConversation, repeatWarnings);
               conversationCount += 1;
-              if (candidate.provider === 'opencode') sourceWatermarkMs = maxWatermark(sourceWatermarkMs, millis(conversation.updatedAt));
+              if (candidate.provider === 'opencode') sourceWatermarkMs = maxWatermark(sourceWatermarkMs, millis(unique.updatedAt));
               reportProgress(report, batchId, totals, filePath);
               await yieldToMain();
-              if (this.isDeleted(conversation)) {
+              if (this.isDeleted(unique)) {
                 totals.skippedCount += 1;
                 continue;
               }
               const linkScope = this.linkScope(input);
-              const link = this.linker.link(conversation, linkScope);
+              const link = this.linker.link(unique, linkScope);
+              const conversation = withoutBackingTranscript(unique, link);
               if (!parserChanged && !recovering && this.isConversationUnchanged(conversation, link)) {
                 this.syncUsage(conversation);
                 this.syncMedia(conversation);
                 totals.skippedCount += 1;
                 continue;
               }
-              const result = await this.upsertConversationChunked(conversation, importFileId, linkScope, true, link);
+              const result = await this.upsertConversationChunked(conversation, importFileId, linkScope, link.link_reason !== OPENCODE_BACKING_REASON, link);
               this.syncUsage(conversation);
               this.syncMedia(conversation);
               totals.conversationsImported += 1;
@@ -351,6 +354,7 @@ export class AgentHistoryImportService {
           this.watermarks.advance({ candidate, sourceId: watermarkPlan.sourceId, parserVersion: adapter.parserVersion, kind: watermarkPlan.kind, valueMs: sourceWatermarkMs, batchId, metadata: { mode: watermarkPlan.mode } });
         }
       }
+      this.retireOpenCodeBackingTranscripts();
     } catch (error) {
       failed = true;
       throw error;
@@ -846,6 +850,37 @@ export class AgentHistoryImportService {
     })();
   }
 
+  // A Claude transcript can be imported before the OpenCode session that
+  // names it, or before this fix. Once claimed it keeps its usage but loses
+  // its messages, media, search rows and session link, so it is no longer
+  // listed or linked to an unrelated Claude agent in the same directory.
+  private retireOpenCodeBackingTranscripts(): void {
+    const db = this.database.connection;
+    this.usageTables ??= (db.prepare(`select count(*) as count from sqlite_master where type = 'table' and name in ('conversation_usage', 'provider_rate_limits', 'conversation_skill_uses')`).get() as { count: number }).count === 3;
+    if (!this.usageTables) return;
+    const claimed = db.prepare(`
+      select claude.id, (select conversations.project_id from conversation_usage join conversations on conversations.id = conversation_usage.conversation_id
+          where conversation_usage.claude_session_id = claude.provider_conversation_id and conversation_usage.provider = 'opencode' limit 1) as project_id
+      from conversations claude
+      where claude.provider = 'claude' and claude.link_reason not in (?, 'matched resume/session id')
+        and exists (select 1 from conversation_usage where conversation_usage.claude_session_id = claude.provider_conversation_id and conversation_usage.provider = 'opencode')
+    `).all(OPENCODE_BACKING_REASON) as Array<{ id: string; project_id: string | null }>;
+    if (!claimed.length) return;
+    this.mediaTable ??= Boolean(db.prepare(`select 1 from sqlite_master where type = 'table' and name = 'conversation_media'`).get());
+    const proseIndex = new SummaryProseIndex(db);
+    for (const row of claimed) {
+      this.search?.removeConversation(row.id);
+      db.transaction(() => {
+        db.prepare(`delete from conversation_messages where conversation_id = ?`).run(row.id);
+        if (this.mediaTable) db.prepare(`delete from conversation_media where conversation_id = ?`).run(row.id);
+        db.prepare(`update conversations set project_id = ?, session_id = null, process_id = null, worktree_id = null, link_confidence = 1, link_reason = ? where id = ?`)
+          .run(row.project_id, OPENCODE_BACKING_REASON, row.id);
+      })();
+      prefixStateCache.delete(row.id);
+      proseIndex.publish(row.id);
+    }
+  }
+
   private isDeleted(conversation: ParsedConversation): boolean {
     const row = this.database.connection.prepare(`select id from conversation_deletions where provider = ? and provider_conversation_id = ?`).get(conversation.provider, conversation.providerConversationId);
     return Boolean(row);
@@ -961,6 +996,11 @@ function millis(value: string | null): number | null {
 
 function missingFingerprint(filePath: string): HistoryFileFingerprint {
   return { sizeBytes: null, mtimeMs: null, contentHash: null, digest: 'missing', metadata: { files: [{ path: filePath, exists: false, sizeBytes: null, mtimeMs: null, contentHash: null }] } };
+}
+
+// Kept for its usage only: no messages or media to list, search or show.
+function withoutBackingTranscript(conversation: ParsedConversation, link: ConversationLink): ParsedConversation {
+  return link.link_reason === OPENCODE_BACKING_REASON ? { ...conversation, messages: [], media: [] } : conversation;
 }
 
 // A repeated provider message id would roll back the whole conversation on

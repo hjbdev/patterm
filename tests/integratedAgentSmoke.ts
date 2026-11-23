@@ -308,6 +308,15 @@ async function main(): Promise<void> {
     const oldestArchive = await resumed.olderMessages('process_claude', newestArchive.cursor!) as { archived_messages: Array<{ id: string }>; cursor: string | null };
     assert.deepEqual(oldestArchive.archived_messages.map((message) => message.id), archived.slice(0, 20).map((message) => message.id));
     assert.equal(oldestArchive.cursor, null);
+    // A host woken from hibernation starts empty while its session keeps the
+    // first start time, so every imported turn is older than the live window.
+    database.connection.prepare(`update sessions set started_at = '2020-01-01T00:00:00.000Z' where id = 'session_claude'`).run();
+    const woken = new IntegratedAgentService(database, { claude: { ...provider, conversation: async () => ({ status: 'idle', messages: { data: [] } }) } });
+    woken.setHistoryReadService(history);
+    const wokenSnapshot = await woken.conversation('process_claude') as { history_truncated: boolean };
+    assert.equal(wokenSnapshot.history_truncated, true);
+    assert.ok(Date.now() - Date.parse(archiveCalls.at(-1)!.before) < 60_000, 'an empty live window pages imported history up to now, not the session start');
+    database.connection.prepare(`update sessions set started_at = ? where id = 'session_claude'`).run(now);
 
     const nativeCodex = new IntegratedAgentService(database, { codex: { ...provider, conversation: async () => ({ status: 'idle', messages: { data: [] }, history_cursor: { next: 'native' }, history_truncated: true }), olderMessages: async (_id, cursor) => ({ native: cursor }) } });
     nativeCodex.setHistoryReadService(history);

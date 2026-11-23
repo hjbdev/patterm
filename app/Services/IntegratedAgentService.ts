@@ -1881,6 +1881,9 @@ function record(value: unknown): Record<string, unknown> {
 function archiveBoundary(conversation: unknown, startedAt: string): string {
   const data = record(record(conversation).messages).data;
   const messages = Array.isArray(data) ? data : [];
+  // A host woken from hibernation, or restarted, holds nothing yet, while the
+  // session keeps its first start time. Everything imported is older.
+  if (!messages.length) return new Date().toISOString();
   for (const item of messages) {
     const createdAt = record(item).created_at;
     if (typeof createdAt === 'string' && Number.isFinite(Date.parse(createdAt))) return createdAt;
