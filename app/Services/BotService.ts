@@ -133,9 +133,14 @@ export class BotService {
     // Where Patterm keeps memory current, launch instructions carry none.
     const memoryPush = memoryPushSupported(bot.harness);
     const handoff = this.pendingHandoff.get(botId);
-    // Reserve room in OpenCode's 8 KiB launch cap when a conversation handoff
-    // is pending so long About notes do not crowd out the newest turn.
-    const openCodeBaseLimit = handoff ? BOT_CONTEXT_BYTES - 1024 : BOT_CONTEXT_BYTES;
+    // Reserve only the room the pending OpenCode handoff actually needs (up to
+    // 1,024 JSON bytes) so short handoffs never trim saved About notes and
+    // longer handoffs keep room for the newest turn.
+    const handoffText = handoff ? renderHandoff(handoff) : '';
+    const handoffReserve = handoffText
+      ? Math.min(1024, Buffer.byteLength(JSON.stringify(`\n\n${handoffText}`), 'utf8') - 2)
+      : 0;
+    const openCodeBaseLimit = BOT_CONTEXT_BYTES - handoffReserve;
     let base: string;
     if (bot.id === ASSISTANT_BOT_ID) {
       // OpenCode caps launch instructions; the assistant reads its memory with a tool anyway.
@@ -470,13 +475,27 @@ function appendHandoff(base: string, handoff: PendingHandoff, limitBytes: number
     const rendered = renderHandoff({ ...handoff, turns });
     if (rendered && fits(`${base}\n\n${rendered}`)) return `${base}\n\n${rendered}`;
   }
-  // If even the single newest turn is too big, clip it before dropping all turn text.
+  // If even the single newest turn is too big, clip it before trimming helpers
+  // or dropping turn text. If many helpers still crowd it out, trim helpers
+  // while keeping a clipped newest turn before falling back to metadata-only.
   if (turns.length === 1) {
-    let newest = [...turns[0]!];
-    while (newest.length > 16) {
-      newest = newest.slice(0, Math.max(0, newest.length - Math.max(1, Math.ceil(newest.length / 8))));
-      const rendered = renderHandoff({ ...handoff, turns: [`${newest.join('')}…`] });
-      if (rendered && fits(`${base}\n\n${rendered}`)) return `${base}\n\n${rendered}`;
+    const clipTurnWith = (helpers: string[]): string | null => {
+      let newest = [...turns[0]!];
+      while (newest.length > 16) {
+        newest = newest.slice(0, Math.max(0, newest.length - Math.max(1, Math.ceil(newest.length / 8))));
+        const rendered = renderHandoff({ ...handoff, helpers, turns: [`${newest.join('')}…`] });
+        if (rendered && fits(`${base}\n\n${rendered}`)) return `${base}\n\n${rendered}`;
+      }
+      return null;
+    };
+    const withAllHelpers = clipTurnWith(handoff.helpers);
+    if (withAllHelpers) return withAllHelpers;
+    for (let count = handoff.helpers.length - 1; count >= 0; count -= 1) {
+      const candidate = handoff.helpers.slice(0, count);
+      const fullTurn = renderHandoff({ ...handoff, helpers: candidate, turns });
+      if (fullTurn && fits(`${base}\n\n${fullTurn}`)) return `${base}\n\n${fullTurn}`;
+      const clipped = clipTurnWith(candidate);
+      if (clipped) return clipped;
     }
   }
   let helpers = [...handoff.helpers];
