@@ -116,7 +116,6 @@ const REALTIME_ANSWER_MS = 20_000;
 const CODEX_TASK_ITEMS = 100;
 
 export class CodexAppServerService {
-  readonly signalsNativeSend = true as const;
   // Threads that compacted, and app-servers reconnected after a drop, since
   // memory last reached them: either may have lost memory Patterm injected,
   // so their next update is the whole memory. Kept here, not on the
@@ -421,7 +420,6 @@ export class CodexAppServerService {
       }
     }
     try {
-      input.onNativeSend?.();
       // clientUserMessageId is correlation only; Codex does not deduplicate.
       const response = record(await client.request('turn/start', {
         threadId: runtime.threadId,

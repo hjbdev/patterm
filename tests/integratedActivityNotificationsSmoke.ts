@@ -11,7 +11,7 @@ import { DatabaseService } from '../app/Services/DatabaseService';
 import { IDLE_COMPACTION_AFTER_MS, IdleCompactionService, type IdleCompactionSource } from '../app/Services/IdleCompactionService';
 import { IntegratedAgentService, type CompactionSignal, type IntegratedActivityChange, type IntegratedProviderService } from '../app/Services/IntegratedAgentService';
 import type { IntegratedConversationListener } from '../app/Services/IntegratedConversation';
-import { TurnBusyError, UncertainDeliveryError } from '../app/Services/IntegratedDelivery';
+import { TurnBusyError } from '../app/Services/IntegratedDelivery';
 import { NotificationService } from '../app/Services/NotificationService';
 import { ParentRequestService, pendingRequestSummary } from '../app/Services/ParentRequestService';
 import { PresenceService } from '../app/Services/PresenceService';
@@ -527,31 +527,26 @@ async function main(): Promise<void> {
       permissions.dispose();
     }
 
-    // A peer calling send_input or send_message on an idle Integrated agent
-    // starts a working turn without dismissing its open user attention notice.
-    db.prepare(`insert into processes (id, project_id, kind, name, status, activity, created_at, updated_at)
-      values ('peer_target', 'project_a', 'agent', 'Target', 'running', 'idle', ?, ?),
-             ('peer_caller', 'project_a', 'agent', 'Peer', 'running', 'working', ?, ?)`).run(at, at, at, at);
-    db.prepare(`insert into sessions (id, project_id, process_id, mcp_identity, harness, session_role, interface_mode, started_at)
-      values ('session_peer_target', 'project_a', 'peer_target', 'id_peer_target', 'codex', 'orchestrator', 'integrated', ?),
-             ('session_peer_caller', 'project_a', 'peer_caller', 'id_peer_caller', 'codex', 'orchestrator', 'tui', ?)`).run(at, at);
+    // Non-parent send_input / send_message (including held peer prompts) leave
+    // open user attention notices intact; owner prompts clear them.
+    const peerNow = new Date().toISOString();
+    db.prepare(`insert into processes (id, project_id, kind, name, status, activity, created_at, updated_at) values ('peer_target', 'project_a', 'agent', 'Target', 'running', 'idle', ?, ?)`).run(peerNow, peerNow);
+    db.prepare(`insert into sessions (id, project_id, process_id, harness, interface_mode, session_role, mcp_identity, started_at, cwd) values ('session_peer_target', 'project_a', 'peer_target', 'codex', 'integrated', 'orchestrator', 'id_peer_target', ?, ?)`).run(peerNow, directory);
+    db.prepare(`insert into processes (id, project_id, kind, name, status, activity, created_at, updated_at) values ('peer_caller', 'project_a', 'agent', 'Caller', 'running', 'working', ?, ?)`).run(peerNow, peerNow);
+    db.prepare(`insert into sessions (id, project_id, process_id, harness, interface_mode, session_role, mcp_identity, started_at, cwd) values ('session_peer_caller', 'project_a', 'peer_caller', 'codex', 'integrated', 'orchestrator', 'id_peer_caller', ?, ?)`).run(peerNow, directory);
     const peerTimeline = new TimelineService(database);
     const peerNotices = new NotificationService(database, settings, peerTimeline, async () => {}, () => {});
     const peerNotificationActions = new NotificationActions(peerNotices, settings, new PresenceService(), undefined as unknown as PushService);
     let peerStream: IntegratedConversationListener | undefined;
     let peerStatus = 'idle';
-    let beforeNativeSend: (() => void | Promise<void>) | null = null;
-    let onPeerPrompt: (() => void | Promise<void>) | null = null;
+    let rejectBusy = false;
     const peerIntegrated = new IntegratedAgentService(database, {
       codex: {
         ...provider,
-        signalsNativeSend: true,
         subscribe: async (_processId, listener) => { peerStream = listener; return () => { peerStream = undefined; }; },
         conversation: async () => ({ status: peerStatus, messages: [] }),
-        prompt: async (_processId, input) => {
-          await beforeNativeSend?.();
-          input.onNativeSend?.();
-          await onPeerPrompt?.();
+        prompt: async () => {
+          if (rejectBusy) throw new TurnBusyError('Busy compacting', 'Compact');
           return { turnId: 'turn-peer' };
         }
       }
@@ -574,154 +569,29 @@ async function main(): Promise<void> {
         workbench: new WorkbenchRepository(database),
         terminal: { request: async () => ({}) } as unknown as TerminalService
       });
+      peerIntegrated.observe('peer_target');
+      await wait(10);
       const { notification_id: noticeId } = await peerRegistry.callPublic('notify_user', { title: 'User decision needed' }, { identity: 'id_peer_target' }) as { notification_id: string };
-      await peerIntegrated.conversation('peer_target');
       assert.equal(peerNotices.get(noticeId)?.resolved_at, null);
       await peerRegistry.callPublic('send_input', { process_id: 'peer_target', kind: 'text', text: 'Peer note', submit: true }, { identity: 'id_peer_caller' });
       assert.equal(peerNotices.get(noticeId)?.resolved_at, null, 'peer send_input leaves open user attention notice intact');
-      await peerIntegrated.conversation('peer_target');
+      peerStatus = 'idle';
+      peerStream?.({ processId: 'peer_target', revision: 1, kind: 'status', status: 'idle' });
       await peerRegistry.callPublic('send_message', { target_process_id: 'peer_target', message: 'Peer msg' }, { identity: 'id_peer_caller' });
       assert.equal(peerNotices.get(noticeId)?.resolved_at, null, 'peer send_message leaves open user attention notice intact');
-      // Turn handoff: agent is already working when it calls notify_user, then
-      // its previous turn completes (idle) while a peer prompt is in flight and
-      // the peer turn starts (working). The attention notice must stay open.
-      peerIntegrated.observe('peer_target');
-      await wait(10);
-      peerStatus = 'working';
-      peerStream?.({ processId: 'peer_target', revision: 1, kind: 'status', status: 'working' });
-      const { notification_id: handoffNoticeId } = await peerRegistry.callPublic('notify_user', { title: 'Handoff decision needed' }, { identity: 'id_peer_target' }) as { notification_id: string };
-      onPeerPrompt = () => {
-        peerStatus = 'idle';
-        peerStream?.({ processId: 'peer_target', revision: 2, kind: 'status', status: 'idle' });
-        peerStatus = 'working';
-        peerStream?.({ processId: 'peer_target', revision: 3, kind: 'status', status: 'working' });
-      };
-      await peerRegistry.callPublic('send_input', { process_id: 'peer_target', kind: 'text', text: 'Peer handoff', submit: true }, { identity: 'id_peer_caller' });
-      onPeerPrompt = null;
-      assert.equal(peerNotices.get(handoffNoticeId)?.resolved_at, null, 'peer send_input preserves open attention across an in-flight turn handoff');
-      peerStatus = 'idle';
-      peerStream?.({ processId: 'peer_target', revision: 4, kind: 'status', status: 'idle' });
-      // Fast peer turn that starts and completes before prompt() resolves must
-      // not leak preserveAttention into a subsequent owner turn/command.
-      onPeerPrompt = () => {
-        peerStatus = 'working';
-        peerStream?.({ processId: 'peer_target', revision: 5, kind: 'status', status: 'working' });
-        peerStatus = 'idle';
-        peerStream?.({ processId: 'peer_target', revision: 6, kind: 'status', status: 'idle' });
-      };
-      await peerRegistry.callPublic('send_input', { process_id: 'peer_target', kind: 'text', text: 'Fast peer turn', submit: true }, { identity: 'id_peer_caller' });
-      onPeerPrompt = null;
-      assert.equal(peerNotices.get(handoffNoticeId)?.resolved_at, null, 'fast peer turn still leaves attention open');
-      peerStatus = 'working';
-      peerStream?.({ processId: 'peer_target', revision: 7, kind: 'status', status: 'working' });
-      assert.notEqual(peerNotices.get(handoffNoticeId)?.resolved_at, null, 'next owner working transition after fast peer turn clears open attention');
-      // A held peer prompt (e.g. queued during compaction) must also preserve
-      // open attention when it later flushes through deliverHeld.
-      const { notification_id: heldNoticeId } = await peerRegistry.callPublic('notify_user', { title: 'Held decision needed' }, { identity: 'id_peer_target' }) as { notification_id: string };
-      let rejectBusy = true;
-      onPeerPrompt = () => {
-        if (rejectBusy) throw new TurnBusyError('Busy compacting', 'Compact');
-        peerStatus = 'working';
-        peerStream?.({ processId: 'peer_target', revision: 8, kind: 'status', status: 'working' });
-      };
+      // Held peer prompt queued during compaction also preserves attention on flush.
+      rejectBusy = true;
       await peerRegistry.callPublic('send_input', { process_id: 'peer_target', kind: 'text', text: 'Held peer note', submit: true }, { identity: 'id_peer_caller' });
       rejectBusy = false;
       peerStatus = 'idle';
-      peerStream?.({ processId: 'peer_target', revision: 9, kind: 'status', status: 'idle' });
+      peerStream?.({ processId: 'peer_target', revision: 2, kind: 'status', status: 'idle' });
       await wait(25);
-      onPeerPrompt = null;
-      assert.equal(peerNotices.get(heldNoticeId)?.resolved_at, null, 'held peer prompt preserves open attention when flushed');
-      // Back-to-back OpenCode-style peer prompts: Turn 1 is acknowledged before
-      // its working event arrives, then Turn 1 starts and finishes during Turn 2's
-      // preflight before Turn 2's own working event arrives. Turn 2 must still
-      // preserve open user attention.
+      assert.equal(peerNotices.get(noticeId)?.resolved_at, null, 'held peer prompt preserves open attention when flushed');
+      // An owner prompt clears the open user attention notice.
       peerStatus = 'idle';
-      peerStream?.({ processId: 'peer_target', revision: 10, kind: 'status', status: 'idle' });
-      const { notification_id: backToBackNoticeId } = await peerRegistry.callPublic('notify_user', { title: 'Back-to-back decision needed' }, { identity: 'id_peer_target' }) as { notification_id: string };
-      onPeerPrompt = () => {
-        // Turn 1: previous idle arrives during preflight so synthetic working
-        // is skipped; Turn 1's own SSE working/idle arrives during Turn 2.
-        peerStatus = 'idle';
-        peerStream?.({ processId: 'peer_target', revision: 11, kind: 'status', status: 'idle' });
-      };
-      await peerRegistry.callPublic('send_input', { process_id: 'peer_target', kind: 'text', text: 'Peer turn 1', submit: true }, { identity: 'id_peer_caller' });
-      onPeerPrompt = () => {
-        // Turn 1 starts and completes over SSE while Turn 2 is in preflight.
-        peerStatus = 'working';
-        peerStream?.({ processId: 'peer_target', revision: 12, kind: 'status', status: 'working' });
-        peerStatus = 'idle';
-        peerStream?.({ processId: 'peer_target', revision: 13, kind: 'status', status: 'idle' });
-      };
-      await peerRegistry.callPublic('send_input', { process_id: 'peer_target', kind: 'text', text: 'Peer turn 2', submit: true }, { identity: 'id_peer_caller' });
-      onPeerPrompt = null;
-      // Turn 2's native working event now arrives after acknowledgement.
-      peerStatus = 'working';
-      peerStream?.({ processId: 'peer_target', revision: 14, kind: 'status', status: 'working' });
-      assert.equal(peerNotices.get(backToBackNoticeId)?.resolved_at, null, 'second peer turn still preserves open attention after first peer turn finished during preflight');
-      // Owner-to-peer OpenCode race: an owner prompt is acknowledged before its
-      // working event arrives, then a peer prompt starts preflight while the
-      // owner turn runs, calls notify_user, and finishes. The owner's working
-      // event must not consume the peer prompt's protection.
-      peerStatus = 'idle';
-      peerStream?.({ processId: 'peer_target', revision: 15, kind: 'status', status: 'idle' });
-      onPeerPrompt = () => {
-        // Owner prompt: previous idle arrives during preflight so synthetic
-        // working is skipped; owner turn runs during the following peer preflight.
-        peerStatus = 'idle';
-        peerStream?.({ processId: 'peer_target', revision: 16, kind: 'status', status: 'idle' });
-      };
-      await peerIntegrated.prompt('peer_target', { text: 'Owner turn' });
-      let ownerToPeerNoticeId = '';
-      onPeerPrompt = async () => {
-        peerStatus = 'working';
-        peerStream?.({ processId: 'peer_target', revision: 17, kind: 'status', status: 'working' });
-        ownerToPeerNoticeId = (await peerRegistry.callPublic('notify_user', { title: 'Owner turn requested user attention' }, { identity: 'id_peer_target' }) as { notification_id: string }).notification_id;
-        peerStatus = 'idle';
-        peerStream?.({ processId: 'peer_target', revision: 18, kind: 'status', status: 'idle' });
-      };
-      await peerRegistry.callPublic('send_input', { process_id: 'peer_target', kind: 'text', text: 'Peer after owner', submit: true }, { identity: 'id_peer_caller' });
-      onPeerPrompt = null;
-      peerStatus = 'working';
-      peerStream?.({ processId: 'peer_target', revision: 19, kind: 'status', status: 'working' });
-      assert.equal(peerNotices.get(ownerToPeerNoticeId)?.resolved_at, null, 'owner turn during peer preflight does not consume the peer turn protection');
-      // An uncertain owner send that never started a native turn must not leave
-      // a phantom owner token in front of the next peer prompt.
-      peerStatus = 'idle';
-      peerStream?.({ processId: 'peer_target', revision: 20, kind: 'status', status: 'idle' });
-      const { notification_id: uncertainOwnerNoticeId } = await peerRegistry.callPublic('notify_user', { title: 'Uncertain owner decision needed' }, { identity: 'id_peer_target' }) as { notification_id: string };
-      onPeerPrompt = () => { throw new UncertainDeliveryError('Codex app-server disconnected'); };
-      await peerIntegrated.prompt('peer_target', { text: 'Uncertain owner prompt' });
-      onPeerPrompt = () => {
-        peerStatus = 'working';
-        peerStream?.({ processId: 'peer_target', revision: 21, kind: 'status', status: 'working' });
-      };
-      await peerRegistry.callPublic('send_input', { process_id: 'peer_target', kind: 'text', text: 'Peer after uncertain owner', submit: true }, { identity: 'id_peer_caller' });
-      onPeerPrompt = null;
-      assert.equal(peerNotices.get(uncertainOwnerNoticeId)?.resolved_at, null, 'uncertain owner send that never ran does not consume next peer turn protection');
-      // Uncertain owner send whose ack was lost, followed by a peer send whose
-      // preflight runs while the admitted owner turn starts, calls notify_user,
-      // and finishes. Because onNativeSend fires after preflight, the owner
-      // turn never consumes the peer prompt's protection.
-      db.prepare(`delete from notifications where process_id = 'peer_target'`).run();
-      peerStatus = 'idle';
-      peerStream?.({ processId: 'peer_target', revision: 22, kind: 'status', status: 'idle' });
-      onPeerPrompt = () => { throw new UncertainDeliveryError('OpenCode HTTP ack lost'); };
-      await peerIntegrated.prompt('peer_target', { text: 'Owner lost ack' });
-      onPeerPrompt = null;
-      let lostAckNoticeId = '';
-      beforeNativeSend = async () => {
-        // Owner's delayed native turn runs during peer preflight (before onNativeSend).
-        peerStatus = 'working';
-        peerStream?.({ processId: 'peer_target', revision: 23, kind: 'status', status: 'working' });
-        lostAckNoticeId = (await peerRegistry.callPublic('notify_user', { title: 'Lost-ack owner attention' }, { identity: 'id_peer_target' }) as { notification_id: string }).notification_id;
-        peerStatus = 'idle';
-        peerStream?.({ processId: 'peer_target', revision: 24, kind: 'status', status: 'idle' });
-      };
-      await peerRegistry.callPublic('send_input', { process_id: 'peer_target', kind: 'text', text: 'Peer after lost-ack owner', submit: true }, { identity: 'id_peer_caller' });
-      beforeNativeSend = null;
-      peerStatus = 'working';
-      peerStream?.({ processId: 'peer_target', revision: 25, kind: 'status', status: 'working' });
-      assert.equal(peerNotices.get(lostAckNoticeId)?.resolved_at, null, 'admitted owner turn with lost ack running during peer preflight does not consume peer protection');
+      peerStream?.({ processId: 'peer_target', revision: 3, kind: 'status', status: 'idle' });
+      await peerIntegrated.prompt('peer_target', { text: 'Owner reply' });
+      assert.notEqual(peerNotices.get(noticeId)?.resolved_at, null, 'owner prompt clears open user attention notice');
     } finally {
       peerIntegrated.dispose();
     }

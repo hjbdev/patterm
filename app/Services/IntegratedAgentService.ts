@@ -117,10 +117,7 @@ export interface ReviewPrompt {
   current(): boolean;
 }
 
-export interface IntegratedProviderService {
-  readonly signalsNativeSend?: true;
-  readonly asyncAdmission?: true;
-  prepare(input: IntegratedLaunchInput): Promise<IntegratedLaunchResult>;
+export interface IntegratedProviderService {  prepare(input: IntegratedLaunchInput): Promise<IntegratedLaunchResult>;
   conversation(processId: string): Promise<unknown>;
   olderMessages?(processId: string, cursor: string): Promise<unknown>;
   prompt(processId: string, input: ResolvedIntegratedPrompt, review?: ReviewPrompt): Promise<unknown>;
@@ -219,10 +216,9 @@ export class IntegratedAgentService {
   private readonly dispatching = new Map<string, HeldPromptRow>();
   // One pending title refresh per agent; a newer prompt replaces it.
   private readonly titleRefreshes = new Map<string, { timer: NodeJS.Timeout | null }>();
-  // FIFO queue of admitted/in-flight turn origins ('owner' | 'peer') per
-  // process plus the active turn's origin so native working/thinking/idle
-  // transitions attribute to the right prompt even across preflight races.
-  private readonly turnOrigins = new Map<string, { queue: Array<{ origin: 'owner' | 'peer' }>; active: 'owner' | 'peer' | null }>();
+  // Processes whose active/pending prompt came from a non-parent agent, so
+  // working transitions leave open user attention notices intact.
+  private readonly preservedAttention = new Set<string>();
   private history: AgentHistoryReadService | null = null;
   // Debug log sink for native events a provider did not project. Each type is
   // logged once per agent so protocol drift is visible without flooding.
@@ -741,17 +737,15 @@ export class IntegratedAgentService {
     }
     const provider = this.forProcess(processId);
     const send = () => {
-      if (review) {
-        if (!review.current()) throw new Error('This request is no longer waiting for this parent');
-        this.turnOrigins.delete(key);
-      }
+      if (review && !review.current()) throw new Error('This request is no longer waiting for this parent');
+      if (resolved.preserveAttention) this.preservedAttention.add(key);
+      else this.preservedAttention.delete(key);
       let next = resolved;
       if ((resolved.sourceScope || resolved.focusDigestId) && this.heldPromptGuard) {
         const checked = this.heldPromptGuard(key, resolved);
         if (!checked) return Promise.resolve({ delivery: 'dropped' });
         next = {
           ...checked,
-          onNativeSend: resolved.onNativeSend,
           admitGuard: () => {
             const rechecked = this.heldPromptGuard!(key, checked);
             if (rechecked) resolved.text = rechecked.text;
@@ -760,7 +754,6 @@ export class IntegratedAgentService {
         };
         resolved.text = checked.text;
       }
-      if (!provider.signalsNativeSend) next.onNativeSend?.();
       for (const listener of this.promptDispatchListeners) {
         try { listener(key); } catch { /* listeners own their failures */ }
       }
@@ -795,63 +788,6 @@ export class IntegratedAgentService {
     });
   }
 
-  private async withPreservedAttention<T>(key: string, resolved: ResolvedIntegratedPrompt, run: (onNativeSend: () => void, beforeAdmit: () => void) => Promise<{ value: T; keep: boolean }>, asyncAdmission = false): Promise<T> {
-    const busyNow = () => {
-      const current = this.activity(key);
-      return current === 'working' || current === 'thinking';
-    };
-    const push = (origin: 'owner' | 'peer') => {
-      const token = { origin };
-      let state = this.turnOrigins.get(key);
-      if (!state) {
-        state = { queue: [], active: null };
-        this.turnOrigins.set(key, state);
-      }
-      state.queue.push(token);
-      return token;
-    };
-    let token: { origin: 'owner' | 'peer' } | null = null;
-    let signaled = false;
-    const onNativeSend = () => {
-      if (signaled) return;
-      signaled = true;
-      if (!resolved.preserveAttention) {
-        if (!busyNow()) token = push('owner');
-      } else {
-        token = push('peer');
-      }
-    };
-    const beforeAdmit = () => {
-      if (asyncAdmission && resolved.preserveAttention && token && !this.turnOrigins.get(key)?.queue.includes(token)) {
-        // An earlier turn consumed this peer token while an async-admission
-        // POST was in flight (whether that earlier turn already finished or is
-        // still working with this peer prompt queued in the native inbox).
-        token = push('peer');
-      }
-    };
-    let keep = false;
-    try {
-      const outcome = await run(onNativeSend, beforeAdmit);
-      keep = outcome.keep;
-      if (keep && !resolved.preserveAttention && !token && !busyNow()) {
-        // The pre-existing turn ended during preflight while synthetic working
-        // was skipped; record the pending owner turn so a following peer prompt
-        // does not claim its delayed native working event.
-        token = push('owner');
-      }
-      return outcome.value;
-    } finally {
-      if (!keep && token) {
-        const state = this.turnOrigins.get(key);
-        if (state) {
-          const index = state.queue.indexOf(token);
-          if (index !== -1) state.queue.splice(index, 1);
-          if (!state.queue.length && state.active === null) this.turnOrigins.delete(key);
-        }
-      }
-    }
-  }
-
   private async dispatchPrompt(processId: string, activityKey: string, resolved: ResolvedIntegratedPrompt, identity: SubmissionIdentity | null): Promise<unknown> {
     // Later prompts wait behind held ones so the agent reads them in order.
     const backlog = this.nextHeld(activityKey);
@@ -862,46 +798,43 @@ export class IntegratedAgentService {
     }
     if (identity) this.recordSubmission(identity.key, identity.messageId, identity.hash, 'uncertain', null, null);
     const sequence = this.sequence(activityKey);
-    const asyncAdmission = Boolean(this.forProcess(processId).asyncAdmission);
-    return this.withPreservedAttention(activityKey, resolved, async (onNativeSend, beforeAdmit) => {
-      const sendInput: ResolvedIntegratedPrompt = { ...resolved, onNativeSend };
-      let result: unknown;
-      try {
-        result = await this.sendPrompt(processId, sendInput);
-      } catch (error) {
-        if (error instanceof UncertainDeliveryError) {
-          // An ambiguous submission may already be running natively. Return a
-          // visible uncertain state instead of throwing or retrying.
-          const id = error.messageId ?? identity?.messageId;
-          if (identity && id) {
-            try { this.recordSubmission(identity.key, id, identity.hash, 'uncertain', null, error.message); } catch { /* the reservation already exists */ }
-          }
-          if (resolved.preserveAttention) beforeAdmit();
-          return { value: { delivery: 'uncertain', message_id: id ?? null, error: error.message }, keep: Boolean(resolved.preserveAttention) };
+    const sendInput: ResolvedIntegratedPrompt = { ...resolved };
+    let result: unknown;
+    try {
+      result = await this.sendPrompt(processId, sendInput);
+    } catch (error) {
+      if (error instanceof UncertainDeliveryError) {
+        // An ambiguous submission may already be running natively. Return a
+        // visible uncertain state instead of throwing or retrying.
+        const id = error.messageId ?? identity?.messageId;
+        if (identity && id) {
+          try { this.recordSubmission(identity.key, id, identity.hash, 'uncertain', null, error.message); } catch { /* the reservation already exists */ }
         }
-        // The provider classified this as a definitive pre-admission rejection.
-        if (identity) {
-          try { this.removeSubmission(identity.key, identity.messageId); } catch { /* fail closed: the row stays uncertain */ }
-        }
-        // A turn that takes no input is running; send the prompt after it. Try
-        // once now in case that turn ended before the prompt was stored.
-        if (error instanceof TurnBusyError) {
-          const held = this.hold(activityKey, resolved, identity, error.turnKind);
-          this.flushHeld(activityKey);
-          return { value: held, keep: false };
-        }
-        throw error;
+        return { delivery: 'uncertain', message_id: id ?? null, error: error.message };
       }
-      if ((result as { delivery?: unknown } | null | undefined)?.delivery === 'dropped') {
-        if (identity) {
-          try { this.removeSubmission(identity.key, identity.messageId); } catch { /* ignore */ }
-        }
-        return { value: result, keep: false };
+      // The provider classified this as a definitive pre-admission rejection.
+      if (resolved.preserveAttention) this.preservedAttention.delete(activityKey);
+      if (identity) {
+        try { this.removeSubmission(identity.key, identity.messageId); } catch { /* fail closed: the row stays uncertain */ }
       }
-      beforeAdmit();
-      this.admitted(processId, activityKey, sequence, sendInput, identity, result);
-      return { value: result, keep: true };
-    }, asyncAdmission);
+      // A turn that takes no input is running; send the prompt after it. Try
+      // once now in case that turn ended before the prompt was stored.
+      if (error instanceof TurnBusyError) {
+        const held = this.hold(activityKey, resolved, identity, error.turnKind);
+        this.flushHeld(activityKey);
+        return held;
+      }
+      throw error;
+    }
+    if ((result as { delivery?: unknown } | null | undefined)?.delivery === 'dropped') {
+      if (resolved.preserveAttention) this.preservedAttention.delete(activityKey);
+      if (identity) {
+        try { this.removeSubmission(identity.key, identity.messageId); } catch { /* ignore */ }
+      }
+      return result;
+    }
+    this.admitted(processId, activityKey, sequence, sendInput, identity, result);
+    return result;
   }
 
   // The native provider admitted the prompt. Activity and result bookkeeping
@@ -974,42 +907,37 @@ export class IntegratedAgentService {
       this.claimHeld(key, row, identity.hash);
       this.dispatching.set(key, row);
       const sequence = this.sequence(key);
-      const asyncAdmission = Boolean(this.forProcess(key).asyncAdmission);
-      const outcome = await this.withPreservedAttention(key, resolved, async (onNativeSend, beforeAdmit): Promise<{ value: 'continue' | 'return'; keep: boolean }> => {
-        let result: unknown;
-        const sendInput: ResolvedIntegratedPrompt = { ...resolved, messageId: row.message_id, onNativeSend };
-        try {
-          // The held id lets the transcript confirm an unconfirmed send.
-          result = await this.sendPrompt(key, sendInput);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          // It may be running, so it is never sent again. It stays visible as
-          // unconfirmed until the transcript shows it or the user dismisses it.
-          if (error instanceof UncertainDeliveryError) {
-            this.debugLog?.write('integrated', 'prompt.held_failed', { processId: key, messageId: row.message_id, uncertain: true, message });
-            this.releaseHeld(key, row, identity.hash, message, 'unconfirmed');
-            if (resolved.preserveAttention) beforeAdmit();
-            return { value: 'continue', keep: Boolean(resolved.preserveAttention) };
-          }
-          // Still busy, for example a second compaction, it waits for that turn
-          // to end. Definitively rejected, it shows why and is tried again when
-          // the agent next goes idle or the user sends it now. Either way it
-          // keeps its place.
-          const busy = error instanceof TurnBusyError;
-          if (!busy) this.debugLog?.write('integrated', 'prompt.held_failed', { processId: key, messageId: row.message_id, uncertain: false, message });
-          this.releaseHeld(key, row, identity.hash, busy ? row.error : message, 'held');
-          return { value: 'return', keep: false };
-        } finally {
-          this.dispatching.delete(key);
+      let result: unknown;
+      const sendInput: ResolvedIntegratedPrompt = { ...resolved, messageId: row.message_id };
+      try {
+        // The held id lets the transcript confirm an unconfirmed send.
+        result = await this.sendPrompt(key, sendInput);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // It may be running, so it is never sent again. It stays visible as
+        // unconfirmed until the transcript shows it or the user dismisses it.
+        if (error instanceof UncertainDeliveryError) {
+          this.debugLog?.write('integrated', 'prompt.held_failed', { processId: key, messageId: row.message_id, uncertain: true, message });
+          this.releaseHeld(key, row, identity.hash, message, 'unconfirmed');
+          continue;
         }
-        if ((result as { delivery?: unknown } | null | undefined)?.delivery === 'dropped') {
-          return { value: 'continue', keep: false };
-        }
-        beforeAdmit();
-        this.admitted(key, key, sequence, sendInput, identity, result);
-        return { value: 'continue', keep: true };
-      }, asyncAdmission);
-      if (outcome === 'return') return;
+        // Still busy, for example a second compaction, it waits for that turn
+        // to end. Definitively rejected, it shows why and is tried again when
+        // the agent next goes idle or the user sends it now. Either way it
+        // keeps its place.
+        const busy = error instanceof TurnBusyError;
+        if (resolved.preserveAttention) this.preservedAttention.delete(key);
+        if (!busy) this.debugLog?.write('integrated', 'prompt.held_failed', { processId: key, messageId: row.message_id, uncertain: false, message });
+        this.releaseHeld(key, row, identity.hash, busy ? row.error : message, 'held');
+        return;
+      } finally {
+        this.dispatching.delete(key);
+      }
+      if ((result as { delivery?: unknown } | null | undefined)?.delivery === 'dropped') {
+        if (resolved.preserveAttention) this.preservedAttention.delete(key);
+        continue;
+      }
+      this.admitted(key, key, sequence, sendInput, identity, result);
     }
   }
 
@@ -1371,7 +1299,7 @@ export class IntegratedAgentService {
 
   private async runCommand(processId: string, name: string, text: string): Promise<unknown> {
     const key = this.ledgerKey(processId);
-    this.turnOrigins.delete(key);
+    this.preservedAttention.delete(key);
     if (this.hibernated.has(key)) await this.ensureAwake(key);
     const provider = this.forProcess(processId);
     const command = provider.command;
@@ -1887,19 +1815,8 @@ export class IntegratedAgentService {
   private markActivity(processId: string, activity: string, snapshot = false): void {
     const previous = this.updateActivity(processId, activity);
     if (previous === null) return;
-    let preserveAttention = false;
-    const state = this.turnOrigins.get(processId);
-    if (state) {
-      if (activity === 'working' || activity === 'thinking') {
-        if (previous !== 'working' && previous !== 'thinking') {
-          state.active = state.queue.shift()?.origin ?? null;
-        }
-        preserveAttention = state.active === 'peer';
-      } else if (activity === 'idle' || activity === 'error') {
-        state.active = null;
-      }
-      if (!state.queue.length && state.active === null) this.turnOrigins.delete(processId);
-    }
+    const preserveAttention = this.preservedAttention.has(processId);
+    if (activity === 'idle' || activity === 'error') this.preservedAttention.delete(processId);
     this.debugLog?.write('integrated', 'activity', { processId, previous, activity, snapshot });
     if (activity === 'idle' || activity === 'error') this.flushHeld(processId);
     this.onWorkbenchChange?.();
