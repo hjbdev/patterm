@@ -135,6 +135,7 @@ export class AgentHistoryImportService {
 
     const totals = { filesSeen: 0, filesImported: 0, conversationsImported: 0, messagesImported: 0, skippedCount: 0, errorCount: 0, unstableFiles: 0 };
     let failed = false;
+    let conversationsRetired = 0;
     reportProgress(report, batchId, totals, null);
     try {
       for (const candidate of candidates) {
@@ -214,7 +215,7 @@ export class AgentHistoryImportService {
           }
         }
       }
-      this.retireOpenCodeBackingTranscripts();
+      conversationsRetired = this.retireOpenCodeBackingTranscripts();
     } catch (error) {
       failed = true;
       throw error;
@@ -231,7 +232,7 @@ export class AgentHistoryImportService {
       this.timeline?.append({ event_type: 'conversation_history.imported', project_id: input.project_id ?? null, actor_type: 'system', metadata: { batch_id: batchId, trigger: input.trigger, ...totals, status } });
       reportProgress(report, batchId, totals, null);
     }
-    return { batch_id: batchId, status: totals.errorCount > 0 ? 'completed_with_errors' : 'completed', retrySuggested: totals.unstableFiles > 0, resumeMarks: this.resumeMarks, timelineEvent: { event_type: 'conversation_history.imported', project_id: input.project_id ?? null, actor_type: 'system', metadata: { batch_id: batchId, trigger: input.trigger, ...totals, status: totals.errorCount > 0 ? 'completed_with_errors' : 'completed' } }, ...totals };
+    return { batch_id: batchId, status: totals.errorCount > 0 ? 'completed_with_errors' : 'completed', retrySuggested: totals.unstableFiles > 0, resumeMarks: this.resumeMarks, conversationsRetired, timelineEvent: { event_type: 'conversation_history.imported', project_id: input.project_id ?? null, actor_type: 'system', metadata: { batch_id: batchId, trigger: input.trigger, ...totals, status: totals.errorCount > 0 ? 'completed_with_errors' : 'completed' } }, ...totals };
   }
 
   async importWithParser(raw: z.input<typeof historyImportInput>, parseFile: HistoryFileParser, report?: HistoryImportProgressReporter) {
@@ -244,6 +245,7 @@ export class AgentHistoryImportService {
 
     const totals = { filesSeen: 0, filesImported: 0, conversationsImported: 0, messagesImported: 0, skippedCount: 0, errorCount: 0, unstableFiles: 0 };
     let failed = false;
+    let conversationsRetired = 0;
     reportProgress(report, batchId, totals, null);
     try {
       for (const candidate of candidates) {
@@ -354,7 +356,7 @@ export class AgentHistoryImportService {
           this.watermarks.advance({ candidate, sourceId: watermarkPlan.sourceId, parserVersion: adapter.parserVersion, kind: watermarkPlan.kind, valueMs: sourceWatermarkMs, batchId, metadata: { mode: watermarkPlan.mode } });
         }
       }
-      this.retireOpenCodeBackingTranscripts();
+      conversationsRetired = this.retireOpenCodeBackingTranscripts();
     } catch (error) {
       failed = true;
       throw error;
@@ -371,7 +373,7 @@ export class AgentHistoryImportService {
       this.timeline?.append({ event_type: 'conversation_history.imported', project_id: input.project_id ?? null, actor_type: 'system', metadata: { batch_id: batchId, trigger: input.trigger, ...totals, status } });
       reportProgress(report, batchId, totals, null);
     }
-    return { batch_id: batchId, status: totals.errorCount > 0 ? 'completed_with_errors' : 'completed', retrySuggested: totals.unstableFiles > 0, resumeMarks: this.resumeMarks, timelineEvent: { event_type: 'conversation_history.imported', project_id: input.project_id ?? null, actor_type: 'system', metadata: { batch_id: batchId, trigger: input.trigger, ...totals, status: totals.errorCount > 0 ? 'completed_with_errors' : 'completed' } }, ...totals };
+    return { batch_id: batchId, status: totals.errorCount > 0 ? 'completed_with_errors' : 'completed', retrySuggested: totals.unstableFiles > 0, resumeMarks: this.resumeMarks, conversationsRetired, timelineEvent: { event_type: 'conversation_history.imported', project_id: input.project_id ?? null, actor_type: 'system', metadata: { batch_id: batchId, trigger: input.trigger, ...totals, status: totals.errorCount > 0 ? 'completed_with_errors' : 'completed' } }, ...totals };
   }
 
   enabledWatchSources(): HistorySourceCandidate[] {
@@ -853,19 +855,21 @@ export class AgentHistoryImportService {
   // A Claude transcript can be imported before the OpenCode session that
   // names it, or before this fix. Once claimed it keeps its usage but loses
   // its messages, media, search rows and session link, so it is no longer
-  // listed or linked to an unrelated Claude agent in the same directory.
-  private retireOpenCodeBackingTranscripts(): void {
+  // listed or linked to an unrelated Claude agent in the same directory. A
+  // resume mark queued from its earlier cwd link is dropped too, or the app
+  // would give that agent the transcript's ID. Returns how many it cleared.
+  private retireOpenCodeBackingTranscripts(): number {
     const db = this.database.connection;
     this.usageTables ??= (db.prepare(`select count(*) as count from sqlite_master where type = 'table' and name in ('conversation_usage', 'provider_rate_limits', 'conversation_skill_uses')`).get() as { count: number }).count === 3;
-    if (!this.usageTables) return;
+    if (!this.usageTables) return 0;
     const claimed = db.prepare(`
-      select claude.id, (select conversations.project_id from conversation_usage join conversations on conversations.id = conversation_usage.conversation_id
+      select claude.id, claude.provider_conversation_id as resume_id, (select conversations.project_id from conversation_usage join conversations on conversations.id = conversation_usage.conversation_id
           where conversation_usage.claude_session_id = claude.provider_conversation_id and conversation_usage.provider = 'opencode' limit 1) as project_id
       from conversations claude
       where claude.provider = 'claude' and claude.link_reason not in (?, 'matched resume/session id')
         and exists (select 1 from conversation_usage where conversation_usage.claude_session_id = claude.provider_conversation_id and conversation_usage.provider = 'opencode')
-    `).all(OPENCODE_BACKING_REASON) as Array<{ id: string; project_id: string | null }>;
-    if (!claimed.length) return;
+    `).all(OPENCODE_BACKING_REASON) as Array<{ id: string; resume_id: string; project_id: string | null }>;
+    if (!claimed.length) return 0;
     this.mediaTable ??= Boolean(db.prepare(`select 1 from sqlite_master where type = 'table' and name = 'conversation_media'`).get());
     const proseIndex = new SummaryProseIndex(db);
     for (const row of claimed) {
@@ -879,6 +883,9 @@ export class AgentHistoryImportService {
       prefixStateCache.delete(row.id);
       proseIndex.publish(row.id);
     }
+    const retired = new Set(claimed.map((row) => row.resume_id));
+    this.resumeMarks = this.resumeMarks.filter((mark) => !retired.has(mark.resume_id));
+    return claimed.length;
   }
 
   private isDeleted(conversation: ParsedConversation): boolean {
