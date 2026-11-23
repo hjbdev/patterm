@@ -46,9 +46,6 @@ interface PendingHandoff {
   conversationId: string | null;
   helpers: string[];
   turns: string[];
-  // Code-point offset in turns.at(-1) where the actual message body starts
-  // (after `${label}: ` and any leading single-line [relay …] header).
-  newestBodyStart?: number;
 }
 
 // Runs each bot, the assistant included, as one persistent Integrated
@@ -135,28 +132,19 @@ export class BotService {
     if (!bot) return '';
     // Where Patterm keeps memory current, launch instructions carry none.
     const memoryPush = memoryPushSupported(bot.harness);
-    const handoff = this.pendingHandoff.get(botId);
-    // Reserve only the room the pending OpenCode handoff actually needs (up to
-    // 1,024 JSON bytes) so short handoffs never trim saved About notes and
-    // longer handoffs keep room for the newest turn.
-    const handoffText = handoff ? renderHandoff(handoff) : '';
-    const handoffReserve = handoffText
-      ? Math.min(1024, Buffer.byteLength(JSON.stringify(`\n\n${handoffText}`), 'utf8') - 2)
-      : 0;
-    const openCodeBaseLimit = BOT_CONTEXT_BYTES - handoffReserve;
     let base: string;
     if (bot.id === ASSISTANT_BOT_ID) {
       // OpenCode caps launch instructions; the assistant reads its memory with a tool anyway.
-      const limit = bot.harness === 'opencode' ? { limitBytes: openCodeBaseLimit } : {};
+      const limit = bot.harness === 'opencode' ? { limitBytes: BOT_CONTEXT_BYTES } : {};
       base = new AgentContextService().buildAssistant(memoryPush ? '' : this.options.memory?.snapshot() ?? '', bot, { ...limit, memoryPush });
     } else {
       const purview = bot.purview;
       const projects = purview.kind === 'projects'
         ? this.workbench.listProjects().filter((project) => purview.projectIds.includes(project.id)).map((project) => ({ id: project.id, name: project.name }))
         : purview.kind;
-      const limit = bot.harness === 'opencode' ? { limitBytes: openCodeBaseLimit } : {};
-      base = new AgentContextService().buildBot(bot, projects, { ...limit, memoryPush });
+      base = new AgentContextService().buildBot(bot, projects, { memoryPush });
     }
+    const handoff = this.pendingHandoff.get(botId);
     if (!handoff) return base;
     return appendHandoff(base, handoff, bot.harness === 'opencode' ? BOT_CONTEXT_BYTES : null);
   }
@@ -323,7 +311,6 @@ export class BotService {
 
     let conversationId: string | null = null;
     const turns: string[] = [];
-    let newestBodyStart: number | undefined;
     if (prior && this.options.history) {
       const foundId = this.options.history.conversationIdForSession({
         sessionId: prior.session_id,
@@ -348,11 +335,7 @@ export class BotService {
             if (!cleaned) continue;
             const chars = [...cleaned];
             const clipped = chars.length > HANDOFF_MESSAGE_CLIP ? `${chars.slice(0, HANDOFF_MESSAGE_CLIP - 1).join('')}…` : cleaned;
-            const entry = `${label}: ${clipped}`;
-            if (newestBodyStart === undefined) {
-              newestBodyStart = handoffBodyStart(label, msg.text);
-            }
-            lines.unshift(entry);
+            lines.unshift(`${label}: ${clipped}`);
           }
           if (!tail.has_more) break;
           const oldestSeq = tail.messages[0]?.seq;
@@ -369,7 +352,7 @@ export class BotService {
       }
     }
     if (!turns.length && !helpers.length) return null;
-    return { conversationId, helpers, turns, ...(newestBodyStart !== undefined ? { newestBodyStart } : {}) };
+    return { conversationId, helpers, turns };
   }
 
   private launched(botId: string): BotState {
@@ -446,20 +429,6 @@ function handoffAuthorLabel(msg: { id: string; role: string; kind: string; text:
   return proseLabel({ id: msg.id, role: msg.role, kind: msg.kind, text: msg.text, metadata });
 }
 
-// Measures the code-point offset in `${label}: ${cleaned}` where the actual
-// message body begins, skipping any single-line `[relay …]` header line even
-// when project or agent display names inside it contain brackets.
-function handoffBodyStart(label: string, rawText: string): number {
-  const baseOffset = [...`${label}: `].length;
-  const trimmed = rawText.trimStart();
-  const newline = trimmed.indexOf('\n');
-  if (trimmed.startsWith('[') && newline !== -1) {
-    const header = cleanHandoffText(trimmed.slice(0, newline));
-    if (header.endsWith(']')) return baseOffset + [...header].length + 1;
-  }
-  return baseOffset;
-}
-
 // Strips NUL bytes (which break argv-based CLI launches) and replaces lone UTF-16
 // surrogates (which break JSON-RPC deserializers such as Codex), then collapses whitespace.
 function cleanHandoffText(text: string): string {
@@ -497,32 +466,13 @@ function appendHandoff(base: string, handoff: PendingHandoff, limitBytes: number
     const rendered = renderHandoff({ ...handoff, turns });
     if (rendered && fits(`${base}\n\n${rendered}`)) return `${base}\n\n${rendered}`;
   }
-  // If even the single newest turn is too big, clip it before trimming helpers
-  // or dropping turn text. If many helpers still crowd it out, trim helpers
-  // while keeping a clipped newest turn before falling back to metadata-only.
+  // If even the single newest turn is too big, clip it before dropping all turn text.
   if (turns.length === 1) {
-    const turnChars = [...turns[0]!];
-    // Preserve the author label, any leading [relay …] header line, and at
-    // least 24 chars of actual message body before accepting a clipped preview
-    // while helpers can still be trimmed.
-    const bodyFloor = Math.min(turnChars.length, (handoff.newestBodyStart ?? 0) + 24);
-    const clipTurnWith = (helpers: string[], minLength: number): string | null => {
-      let newest = [...turnChars];
-      while (newest.length > minLength) {
-        newest = newest.slice(0, Math.max(minLength, newest.length - Math.max(1, Math.ceil(newest.length / 8))));
-        const rendered = renderHandoff({ ...handoff, helpers, turns: [`${newest.join('')}…`] });
-        if (rendered && fits(`${base}\n\n${rendered}`)) return `${base}\n\n${rendered}`;
-      }
-      return null;
-    };
-    const withAllHelpers = clipTurnWith(handoff.helpers, handoff.helpers.length ? bodyFloor : 16);
-    if (withAllHelpers) return withAllHelpers;
-    for (let count = handoff.helpers.length - 1; count >= 0; count -= 1) {
-      const candidate = handoff.helpers.slice(0, count);
-      const fullTurn = renderHandoff({ ...handoff, helpers: candidate, turns });
-      if (fullTurn && fits(`${base}\n\n${fullTurn}`)) return `${base}\n\n${fullTurn}`;
-      const clipped = clipTurnWith(candidate, count > 0 ? bodyFloor : 16);
-      if (clipped) return clipped;
+    let newest = [...turns[0]!];
+    while (newest.length > 16) {
+      newest = newest.slice(0, Math.max(0, newest.length - Math.max(1, Math.ceil(newest.length / 8))));
+      const rendered = renderHandoff({ ...handoff, turns: [`${newest.join('')}…`] });
+      if (rendered && fits(`${base}\n\n${rendered}`)) return `${base}\n\n${rendered}`;
     }
   }
   let helpers = [...handoff.helpers];
