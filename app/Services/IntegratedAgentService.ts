@@ -176,6 +176,7 @@ export interface IntegratedActivityChange {
   previous: string;
   activity: string;
   snapshot: boolean;
+  preserveAttention?: boolean;
 }
 
 export class IntegratedAgentService {
@@ -215,6 +216,9 @@ export class IntegratedAgentService {
   private readonly dispatching = new Map<string, HeldPromptRow>();
   // One pending title refresh per agent; a newer prompt replaces it.
   private readonly titleRefreshes = new Map<string, { timer: NodeJS.Timeout | null }>();
+  // Processes whose active/pending prompt came from a non-parent agent, so
+  // working transitions leave open user attention notices intact.
+  private readonly preservedAttention = new Set<string>();
   private history: AgentHistoryReadService | null = null;
   // Debug log sink for native events a provider did not project. Each type is
   // logged once per agent so protocol drift is visible without flooding.
@@ -651,6 +655,7 @@ export class IntegratedAgentService {
     const arrived = await this.serially(this.arrivals, key, async () => {
       const resolved = this.inputs ? await this.inputs.resolve(processId, request) : { text: request.text, messageId: request.messageId, references: [], attachments: [] };
       if (routineDigest) resolved.routineDigest = routineDigest;
+      if (request.preserveAttention) resolved.preserveAttention = true;
       if (scope) {
         if (scope.sourceScope) resolved.sourceScope = scope.sourceScope;
         if (scope.routineFallback) resolved.routineFallback = scope.routineFallback;
@@ -733,6 +738,8 @@ export class IntegratedAgentService {
     const provider = this.forProcess(processId);
     const send = () => {
       if (review && !review.current()) throw new Error('This request is no longer waiting for this parent');
+      if (resolved.preserveAttention) this.preservedAttention.add(key);
+      else this.preservedAttention.delete(key);
       let next = resolved;
       if ((resolved.sourceScope || resolved.focusDigestId) && this.heldPromptGuard) {
         const checked = this.heldPromptGuard(key, resolved);
@@ -806,6 +813,7 @@ export class IntegratedAgentService {
         return { delivery: 'uncertain', message_id: id ?? null, error: error.message };
       }
       // The provider classified this as a definitive pre-admission rejection.
+      if (resolved.preserveAttention) this.preservedAttention.delete(activityKey);
       if (identity) {
         try { this.removeSubmission(identity.key, identity.messageId); } catch { /* fail closed: the row stays uncertain */ }
       }
@@ -819,6 +827,7 @@ export class IntegratedAgentService {
       throw error;
     }
     if ((result as { delivery?: unknown } | null | undefined)?.delivery === 'dropped') {
+      if (resolved.preserveAttention) this.preservedAttention.delete(activityKey);
       if (identity) {
         try { this.removeSubmission(identity.key, identity.messageId); } catch { /* ignore */ }
       }
@@ -917,13 +926,17 @@ export class IntegratedAgentService {
         // the agent next goes idle or the user sends it now. Either way it
         // keeps its place.
         const busy = error instanceof TurnBusyError;
+        if (resolved.preserveAttention) this.preservedAttention.delete(key);
         if (!busy) this.debugLog?.write('integrated', 'prompt.held_failed', { processId: key, messageId: row.message_id, uncertain: false, message });
         this.releaseHeld(key, row, identity.hash, busy ? row.error : message, 'held');
         return;
       } finally {
         this.dispatching.delete(key);
       }
-      if ((result as { delivery?: unknown } | null | undefined)?.delivery === 'dropped') continue;
+      if ((result as { delivery?: unknown } | null | undefined)?.delivery === 'dropped') {
+        if (resolved.preserveAttention) this.preservedAttention.delete(key);
+        continue;
+      }
       this.admitted(key, key, sequence, sendInput, identity, result);
     }
   }
@@ -1286,6 +1299,7 @@ export class IntegratedAgentService {
 
   private async runCommand(processId: string, name: string, text: string): Promise<unknown> {
     const key = this.ledgerKey(processId);
+    this.preservedAttention.delete(key);
     if (this.hibernated.has(key)) await this.ensureAwake(key);
     const provider = this.forProcess(processId);
     const command = provider.command;
@@ -1801,11 +1815,13 @@ export class IntegratedAgentService {
   private markActivity(processId: string, activity: string, snapshot = false): void {
     const previous = this.updateActivity(processId, activity);
     if (previous === null) return;
+    const preserveAttention = this.preservedAttention.has(processId);
+    if (activity === 'idle' || activity === 'error') this.preservedAttention.delete(processId);
     this.debugLog?.write('integrated', 'activity', { processId, previous, activity, snapshot });
     if (activity === 'idle' || activity === 'error') this.flushHeld(processId);
     this.onWorkbenchChange?.();
     for (const listener of this.activityListeners) {
-      try { listener({ processId, previous, activity, snapshot }); } catch { /* a listener must not break observation */ }
+      try { listener({ processId, previous, activity, snapshot, ...(preserveAttention ? { preserveAttention: true } : {}) }); } catch { /* a listener must not break observation */ }
     }
   }
 

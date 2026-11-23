@@ -4,15 +4,22 @@ import os from 'node:os';
 import path from 'node:path';
 import { CloseProcessAction } from '../app/Actions/CloseProcessAction';
 import { CloseRequestActions } from '../app/Actions/CloseRequestActions';
+import { NotificationActions } from '../app/Actions/NotificationActions';
 import { integratedActivityNotifications, REPLY_PREVIEW_LIMIT, type IntegratedActivityNotificationContext } from '../app/Listeners/IntegratedActivityNotifications';
+import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { IDLE_COMPACTION_AFTER_MS, IdleCompactionService, type IdleCompactionSource } from '../app/Services/IdleCompactionService';
 import { IntegratedAgentService, type CompactionSignal, type IntegratedActivityChange, type IntegratedProviderService } from '../app/Services/IntegratedAgentService';
 import type { IntegratedConversationListener } from '../app/Services/IntegratedConversation';
+import { TurnBusyError } from '../app/Services/IntegratedDelivery';
 import { NotificationService } from '../app/Services/NotificationService';
 import { ParentRequestService, pendingRequestSummary } from '../app/Services/ParentRequestService';
+import { PresenceService } from '../app/Services/PresenceService';
+import type { PushService } from '../app/Services/PushService';
 import { SettingsService } from '../app/Services/SettingsService';
 import type { TerminalService } from '../app/Services/TerminalService';
+import { TimelineService } from '../app/Services/TimelineService';
+import { createTestMcpRegistry } from './fixtures/McpRegistryFixture';
 import { removeTree } from './fixtures/TempTree';
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -518,6 +525,75 @@ async function main(): Promise<void> {
     } finally {
       agy.dispose();
       permissions.dispose();
+    }
+
+    // Non-parent send_input / send_message (including held peer prompts) leave
+    // open user attention notices intact; owner prompts clear them.
+    const peerNow = new Date().toISOString();
+    db.prepare(`insert into processes (id, project_id, kind, name, status, activity, created_at, updated_at) values ('peer_target', 'project_a', 'agent', 'Target', 'running', 'idle', ?, ?)`).run(peerNow, peerNow);
+    db.prepare(`insert into sessions (id, project_id, process_id, harness, interface_mode, session_role, mcp_identity, started_at, cwd) values ('session_peer_target', 'project_a', 'peer_target', 'codex', 'integrated', 'orchestrator', 'id_peer_target', ?, ?)`).run(peerNow, directory);
+    db.prepare(`insert into processes (id, project_id, kind, name, status, activity, created_at, updated_at) values ('peer_caller', 'project_a', 'agent', 'Caller', 'running', 'working', ?, ?)`).run(peerNow, peerNow);
+    db.prepare(`insert into sessions (id, project_id, process_id, harness, interface_mode, session_role, mcp_identity, started_at, cwd) values ('session_peer_caller', 'project_a', 'peer_caller', 'codex', 'integrated', 'orchestrator', 'id_peer_caller', ?, ?)`).run(peerNow, directory);
+    const peerTimeline = new TimelineService(database);
+    const peerNotices = new NotificationService(database, settings, peerTimeline, async () => {}, () => {});
+    const peerNotificationActions = new NotificationActions(peerNotices, settings, new PresenceService(), undefined as unknown as PushService);
+    let peerStream: IntegratedConversationListener | undefined;
+    let peerStatus = 'idle';
+    let rejectBusy = false;
+    const peerIntegrated = new IntegratedAgentService(database, {
+      codex: {
+        ...provider,
+        subscribe: async (_processId, listener) => { peerStream = listener; return () => { peerStream = undefined; }; },
+        conversation: async () => ({ status: peerStatus, messages: [] }),
+        prompt: async () => {
+          if (rejectBusy) throw new TurnBusyError('Busy compacting', 'Compact');
+          return { turnId: 'turn-peer' };
+        }
+      }
+    });
+    peerIntegrated.onActivityChange(integratedActivityNotifications({
+      ...notificationContext,
+      notifications: peerNotices,
+      raise: (input) => { void peerNotices.raise(input); },
+      closeRequests: () => null,
+      compacting: () => false,
+      wokeFromSnooze: () => false
+    }));
+    try {
+      const peerRegistry = createTestMcpRegistry({
+        tempDir: directory,
+        database,
+        timeline: peerTimeline,
+        integrated: peerIntegrated,
+        notifications: peerNotificationActions,
+        workbench: new WorkbenchRepository(database),
+        terminal: { request: async () => ({}) } as unknown as TerminalService
+      });
+      peerIntegrated.observe('peer_target');
+      await wait(10);
+      const { notification_id: noticeId } = await peerRegistry.callPublic('notify_user', { title: 'User decision needed' }, { identity: 'id_peer_target' }) as { notification_id: string };
+      assert.equal(peerNotices.get(noticeId)?.resolved_at, null);
+      await peerRegistry.callPublic('send_input', { process_id: 'peer_target', kind: 'text', text: 'Peer note', submit: true }, { identity: 'id_peer_caller' });
+      assert.equal(peerNotices.get(noticeId)?.resolved_at, null, 'peer send_input leaves open user attention notice intact');
+      peerStatus = 'idle';
+      peerStream?.({ processId: 'peer_target', revision: 1, kind: 'status', status: 'idle' });
+      await peerRegistry.callPublic('send_message', { target_process_id: 'peer_target', message: 'Peer msg' }, { identity: 'id_peer_caller' });
+      assert.equal(peerNotices.get(noticeId)?.resolved_at, null, 'peer send_message leaves open user attention notice intact');
+      // Held peer prompt queued during compaction also preserves attention on flush.
+      rejectBusy = true;
+      await peerRegistry.callPublic('send_input', { process_id: 'peer_target', kind: 'text', text: 'Held peer note', submit: true }, { identity: 'id_peer_caller' });
+      rejectBusy = false;
+      peerStatus = 'idle';
+      peerStream?.({ processId: 'peer_target', revision: 2, kind: 'status', status: 'idle' });
+      await wait(25);
+      assert.equal(peerNotices.get(noticeId)?.resolved_at, null, 'held peer prompt preserves open attention when flushed');
+      // An owner prompt clears the open user attention notice.
+      peerStatus = 'idle';
+      peerStream?.({ processId: 'peer_target', revision: 3, kind: 'status', status: 'idle' });
+      await peerIntegrated.prompt('peer_target', { text: 'Owner reply' });
+      assert.notEqual(peerNotices.get(noticeId)?.resolved_at, null, 'owner prompt clears open user attention notice');
+    } finally {
+      peerIntegrated.dispose();
     }
   } finally {
     idleCompaction?.dispose();

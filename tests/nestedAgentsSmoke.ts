@@ -159,6 +159,12 @@ async function main(): Promise<void> {
     await registry.call('send_message', { target_process_id: 'parent', message: 'child reporting in' }, as('child'));
     assert.deepEqual(inputs.at(-1), { process_id: 'root', kind: 'paste', text: '[message from child]\nchild reporting in', submit: true });
     assert.deepEqual(handled.slice(inputStart), ['child'], 'only the parent message clears the child\'s blocked episode');
+    // send_input follows the same rule: user or parent input clears waiting notices, while a non-parent agent leaves them open.
+    const sendInputStart = handled.length;
+    await registry.call('send_input', { process_id: 'root', kind: 'text', text: 'peer poke', submit: true }, as('child'));
+    await registry.call('send_input', { process_id: 'child', kind: 'text', text: 'parent answer', submit: true }, as('root'));
+    await registry.call('send_input', { process_id: 'root', kind: 'text', text: 'user answer', submit: true });
+    assert.deepEqual(handled.slice(sendInputStart), ['child', 'root'], 'send_input clears notices only for user or parent callers');
     assert.equal(timelineCount(), beforeMessages, 'messages remain ephemeral');
     const noFindings = await registry.call('report_to_parent', { status: 'no_findings', title: 'Review complete', body: 'No findings.' }, as('child')) as { ok: boolean; event_id: string };
     assert.equal(noFindings.ok, true);

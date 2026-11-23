@@ -13,6 +13,7 @@ export interface AgentInputPayload {
   kind?: TerminalInputKind | undefined;
   text: string;
   submit?: boolean | undefined;
+  preserve_attention?: boolean | undefined;
 }
 
 export async function sendAgentInput(database: DatabaseService, terminal: TerminalInputSink, input: AgentInputPayload, integrated?: Pick<IntegratedAgentService, 'prompt'>): Promise<unknown> {
@@ -20,7 +21,7 @@ export async function sendAgentInput(database: DatabaseService, terminal: Termin
     .get(input.process_id, input.process_id) as { interface_mode: string } | undefined;
   if (session?.interface_mode === 'integrated') {
     if (!integrated) throw new Error('Integrated agent input is unavailable');
-    return integrated.prompt(input.process_id, input.text);
+    return integrated.prompt(input.process_id, input.preserve_attention ? { text: input.text, preserveAttention: true } : input.text);
   }
   return terminal.request('terminal.process.input', {
     process_id: resolvePtyProcessId(database, input.process_id),

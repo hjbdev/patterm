@@ -1087,18 +1087,25 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     const integrated = isIntegratedProcess(services.database, processId);
     const text = input.kind === 'key' ? keyText(input.key) : input.text ?? '';
     const kind = input.kind === 'paste' ? 'paste' : 'text';
+    const sender = caller(context)?.process_id;
+    const parentId = sender
+      ? (services.database.connection.prepare('select parent_process_id from processes where id = ?').get(processId) as { parent_process_id: string | null } | undefined)?.parent_process_id
+      : null;
+    const clearsNotice = !sender || parentId === sender;
+    let uncertain = false;
     if (input.kind === 'key') {
       if (integrated) throw new Error('Key input is not supported for Integrated conversations');
       const ptyId = ptyFor(processId);
       await services.terminal.request('terminal.process.input', { process_id: ptyId, kind, text, submit: input.submit });
     } else {
       // Noted before dispatch, as send_message does.
-      const sender = caller(context)?.process_id;
       if (sender) timerService.noteInstruction(sender, processId);
-      await sendAgentInput(services.database, services.terminal, { process_id: processId, kind, text, submit: input.submit }, services.integrated);
+      const sent = await sendAgentInput(services.database, services.terminal, { process_id: processId, kind, text, submit: input.submit, preserve_attention: !clearsNotice }, services.integrated);
+      uncertain = (sent as { delivery?: unknown } | null | undefined)?.delivery === 'uncertain';
     }
-    // Input answers whatever the process was waiting on, as typing does.
-    services.notifications?.userInput(processId);
+    // User input, or a parent answering its child, ends the waiting episode.
+    // Other agents typing into a process leave its pending user notices open.
+    if (!uncertain && clearsNotice) services.notifications?.userInput(processId);
     if (input.wait_ms > 0) {
       await new Promise((resolve) => setTimeout(resolve, input.wait_ms));
     }
