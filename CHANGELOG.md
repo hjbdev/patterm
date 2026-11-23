@@ -68,6 +68,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Updated bot and assistant system guidance (`AgentContextService`) to encourage
+  proactive follow-through on stalled, cleanly exited, or unreported helpers
+  using liveness fields and `get_conversation_output`, suggest concrete next
+  steps when reporting results or blockers, and align permission guidance with
+  `parent_request_reply` and `agent_request_reply` while staying well within
+  OpenCode's instruction byte budget.
 - **Native Rust `patterm-mcp` binary & direct HTTP MCP delivery**: Added a 1.0 MiB Rust `patterm-mcp` binary (`native/terminal-core/src/bin/patterm_mcp.rs`) with persistent Unix-socket/named-pipe connections, server-pushed `tools/list_changed` invalidation, and POSIX `execvp()` process replacement for `--mcp-exec` (zero lingering wrapper processes). Claude now connects to unauthenticated HTTP MCP servers directly and to managed HTTP MCP servers through Patterm's local HTTP proxy with `headersHelper`, eliminating per-agent `--mcp-bridge` Node processes.
 - **Single-process `IntegratedHostSupervisor` & idle hibernation**: Multiplexed Claude, Codex, and Antigravity Integrated hosts into one shared persistent supervisor daemon (one systemd user unit in service mode) instead of spawning one Node/Electron host process and unit per agent. Added safe idle host hibernation (90 min default) with transparent in-place resume on the next prompt/message, idle managed browser retirement (20 min default, preserving profiles on disk), and a single shared `Xvfb` display on Linux.
 - **Rust terminal sidecar & GPU renderer**: Replaced the 250 Hz idle polling loop in `socket.rs` with `polling::Poller` (0 Hz idle) and raised flush drain budget to 2 MiB; reduced vendored `alacritty_terminal` PTY read buffers from 1 MiB to 64 KiB and default scrollback to 4,000 lines; dropped `FairMutex` before damage encoding, flushed resize snapshots immediately, and diffed scrollback steps against `visible_grid`. Upgraded `TerminalRenderer` with a sparse per-row slab allocator (cutting character-insert GPU uploads from 3.64 MB to ~4 KB), packed numeric color decoding, ref-counted WebGPU atlas texture destruction, and eliminated per-frame `getBoundingClientRect()` forced reflows and unconditional idle rAF loops in `TerminalPane`.
