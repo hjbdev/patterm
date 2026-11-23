@@ -125,6 +125,10 @@ async function main(): Promise<void> {
   assert.match(brief, /doesn't read your helpers' reports/);
   assert.match(brief, /Close a helper with close_process once its work is truly finished/);
   assert.match(brief, /ready to merge or waiting for review is not finished/);
+  assert.match(brief, /Follow through on delegated work instead of leaving loops dangling/);
+  assert.match(brief, /max_wait_seconds/);
+  assert.match(brief, /offered via parent_request_reply or when agent_request_reply is enabled/);
+  assert.ok(Buffer.byteLength(JSON.stringify(brief), 'utf8') < BOT_CONTEXT_BYTES - 1500, 'default bot context leaves comfortable OpenCode headroom');
   assert.match(brief, /About you, from the user:\nLooks after the website\./);
   assert.match(context.buildBot({ name: 'Pal', instructions: '' }, 'none'), /no projects to work in/);
   assert.match(context.buildBot({ name: 'Pal', instructions: '' }, 'all'), /any of the user's workspace projects/);

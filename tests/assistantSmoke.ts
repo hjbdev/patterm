@@ -496,9 +496,14 @@ async function main(): Promise<void> {
     assistant.dispose();
     const liveIdentity = (db.prepare(`select mcp_identity, process_id from sessions where session_role = 'assistant' and exited_at is null order by started_at desc limit 1`).get() as { mcp_identity: string; process_id: string });
 
-    // The assistant's context names its cross-project role.
-    assert.match(new AgentContextService().buildAssistant(), /assistant_overview/);
-    assert.match(new AgentContextService().buildAssistant(), /never invent labels from IDs/);
+    // The assistant's context names its cross-project role and proactive follow-through.
+    const assistantContext = new AgentContextService().buildAssistant();
+    assert.match(assistantContext, /assistant_overview/);
+    assert.match(assistantContext, /never invent labels from IDs/);
+    assert.match(assistantContext, /Follow through on delegated work instead of leaving loops dangling/);
+    assert.match(assistantContext, /max_wait_seconds/);
+    assert.match(assistantContext, /offered via parent_request_reply or when agent_request_reply is enabled/);
+    assert.ok(Buffer.byteLength(JSON.stringify(assistantContext), 'utf8') < 7900 - 1500, 'default assistant context leaves comfortable OpenCode headroom');
 
     // MCP: the assistant is scoped like the owner across workspace projects,
     // and must name a project; other agents stay in their own.
