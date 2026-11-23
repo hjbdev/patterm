@@ -479,22 +479,28 @@ function appendHandoff(base: string, handoff: PendingHandoff, limitBytes: number
   // or dropping turn text. If many helpers still crowd it out, trim helpers
   // while keeping a clipped newest turn before falling back to metadata-only.
   if (turns.length === 1) {
-    const clipTurnWith = (helpers: string[]): string | null => {
-      let newest = [...turns[0]!];
-      while (newest.length > 16) {
-        newest = newest.slice(0, Math.max(0, newest.length - Math.max(1, Math.ceil(newest.length / 8))));
+    const turnChars = [...turns[0]!];
+    // Preserve the author label, any leading [relay] envelope, and at least 24
+    // chars of actual message body before accepting a clipped preview while
+    // helpers can still be trimmed.
+    const prefix = /^[^:\n]+:\s*(?:\[[^\]]+\]\s*)?/.exec(turns[0]!)?.[0] ?? '';
+    const bodyFloor = Math.min(turnChars.length, [...prefix].length + 24);
+    const clipTurnWith = (helpers: string[], minLength: number): string | null => {
+      let newest = [...turnChars];
+      while (newest.length > minLength) {
+        newest = newest.slice(0, Math.max(minLength, newest.length - Math.max(1, Math.ceil(newest.length / 8))));
         const rendered = renderHandoff({ ...handoff, helpers, turns: [`${newest.join('')}…`] });
         if (rendered && fits(`${base}\n\n${rendered}`)) return `${base}\n\n${rendered}`;
       }
       return null;
     };
-    const withAllHelpers = clipTurnWith(handoff.helpers);
+    const withAllHelpers = clipTurnWith(handoff.helpers, handoff.helpers.length ? bodyFloor : 16);
     if (withAllHelpers) return withAllHelpers;
     for (let count = handoff.helpers.length - 1; count >= 0; count -= 1) {
       const candidate = handoff.helpers.slice(0, count);
       const fullTurn = renderHandoff({ ...handoff, helpers: candidate, turns });
       if (fullTurn && fits(`${base}\n\n${fullTurn}`)) return `${base}\n\n${fullTurn}`;
-      const clipped = clipTurnWith(candidate);
+      const clipped = clipTurnWith(candidate, count > 0 ? bodyFloor : 16);
       if (clipped) return clipped;
     }
   }
