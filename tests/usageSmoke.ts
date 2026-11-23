@@ -311,6 +311,14 @@ async function main(): Promise<void> {
       assert.ok(Math.abs(summary.totals.costUsd - combined.totals.costUsd - (3 * 2 + 2 * 10) / 1_000_000) < 1e-12, `${label}: Claude pricing is kept`);
     };
     checkThroughOpenCode('imported');
+    // That Claude transcript duplicates the OpenCode conversation, so it keeps
+    // only its usage: no messages to list or search, and no Claude session link.
+    const backing = () => ({ ...historyDatabase.connection.prepare(`
+      select session_id, link_reason, project_id, (select count(*) from conversation_messages where conversation_id = conversations.id) as messages
+      from conversations where provider = 'claude' and provider_conversation_id = 'claude_usage'
+    `).get() as Record<string, unknown> });
+    const backingRow = { session_id: null, link_reason: 'opencode backing transcript', project_id: 'opencode_project', messages: 0 };
+    assert.deepEqual(backing(), backingRow, 'an imported Claude copy of an OpenCode session is cleared once OpenCode claims it');
     // An archived session imported by an older parser is re-read by a new one.
     historyDatabase.connection.prepare(`update conversation_import_files set parser_version = 'opencode-sqlite-old' where provider = 'opencode'`).run();
     historyDatabase.connection.prepare(`update conversation_usage set claude_session_id = null where provider = 'opencode'`).run();
@@ -328,6 +336,7 @@ async function main(): Promise<void> {
     fs.appendFileSync(subagentFile, `${JSON.stringify({ type: 'assistant', uuid: 's_late', sessionId: 'claude_usage', cwd: projectPath, timestamp: at(1), isSidechain: true, message: { id: 'msg_sub_late', role: 'assistant', model: 'claude-haiku-4-5', content: [], usage: { input_tokens: 4, output_tokens: 2 } } })}\n`);
     imports.import({ provider: 'claude', trigger: 'manual' });
     assert.equal(usage.summary(7, now).models.find((row) => row.provider === 'opencode' && row.model === 'opus')?.responses, 2, 'subagent activity does not hide the parent\'s newer reply');
+    assert.deepEqual(backing(), backingRow, 'reimporting the Claude copy keeps it out of history');
     paceSmoke();
     // Captured shape of agy --print /usage --output-format json. This is a
     // native quota command, with no conversation or model turn involved.

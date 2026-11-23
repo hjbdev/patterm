@@ -87,6 +87,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An Integrated agent woken from hibernation shows its earlier conversation
+  again. Its empty new host made the imported history stop at the session's
+  first start, which hid every turn.
+
+- The Claude Code transcripts that OpenCode's claude-agent provider writes for
+  each OpenCode session no longer appear as separate Claude conversations or
+  attach to an unrelated Claude agent in the same directory. They are kept
+  only for their usage figures, and copies already imported are cleared.
+
 - `send_input` now clears a process's pending permission/attention notices only
   when called by the user or the process's parent agent (matching
   `send_message`), so unrelated agents typing into another agent no longer

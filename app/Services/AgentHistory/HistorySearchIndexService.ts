@@ -1,4 +1,5 @@
 import type { AgentHistoryDb } from './AgentHistoryDb';
+import { OPENCODE_BACKING_REASON } from './ConversationLinker';
 
 const SEARCH_INDEX_CHUNK_SIZE = 500;
 
@@ -83,12 +84,14 @@ export class HistorySearchIndexService {
   // Conversations whose title changed since they were indexed, or whose
   // indexing never finished: a reindex clears the state row first and writes
   // it last. Read from the index rather than from what a sync changed, so an
-  // interrupted reindex is picked up again by the next sync.
+  // interrupted reindex is picked up again by the next sync. OpenCode's
+  // backing transcripts are kept for usage only and stay out of search.
   staleTitles(): string[] {
     const rows = this.database.connection.prepare(`
       select conversations.id, conversations.provider, conversations.title, conversations.session_title, conversation_history_index_state.title as indexed_title
       from conversations left join conversation_history_index_state on conversation_history_index_state.conversation_id = conversations.id
-    `).all() as Array<Pick<ConversationRow, 'id' | 'provider' | 'title' | 'session_title'> & { indexed_title: string | null }>;
+      where conversations.link_reason is not ?
+    `).all(OPENCODE_BACKING_REASON) as Array<Pick<ConversationRow, 'id' | 'provider' | 'title' | 'session_title'> & { indexed_title: string | null }>;
     return rows.filter((row) => headerTitle(row) !== row.indexed_title).map((row) => row.id);
   }
 

@@ -12,12 +12,24 @@ export interface ConversationLink {
   link_reason: string;
 }
 
+// OpenCode's claude-agent provider runs each OpenCode session through a
+// Claude Code session of its own. That transcript duplicates the OpenCode
+// conversation and is kept only for its usage, which has the real model and
+// cache detail.
+export const OPENCODE_BACKING_REASON = 'opencode backing transcript';
+
 export class ConversationLinker {
-  constructor(private readonly database: AgentHistoryDb) {}
+  private usageTable: boolean | null = null;
+
+  // Sessions live in the app database and usage in the history database.
+  constructor(private readonly database: AgentHistoryDb, private readonly history: AgentHistoryDb = database) {}
 
   link(conversation: ParsedConversation, scope: { project_id?: string | null } = {}): ConversationLink {
     const byResume = this.byResumeId(conversation.providerConversationId);
     if (byResume) return this.inDirectory(byResume, conversation.cwd);
+
+    const backing = conversation.provider === 'claude' ? this.openCodeBacking(conversation.providerConversationId) : null;
+    if (backing) return backing;
 
     const byCwd = conversation.cwd ? this.byCwd(conversation, scope) : null;
     if (byCwd) return byCwd;
@@ -43,6 +55,17 @@ export class ConversationLinker {
       .get(resumeId, resumeId) as { id: string; project_id: string; process_id: string | null; worktree_id: string | null } | undefined;
     if (!row) return null;
     return { project_id: row.project_id, session_id: row.id, process_id: row.process_id, worktree_id: row.worktree_id, link_confidence: 1, link_reason: 'matched resume/session id' };
+  }
+
+  private openCodeBacking(claudeSessionId: string): ConversationLink | null {
+    this.usageTable ??= Boolean(this.history.connection.prepare(`select 1 from sqlite_master where type = 'table' and name = 'conversation_usage'`).get());
+    if (!this.usageTable) return null;
+    const row = this.history.connection.prepare(`
+      select conversations.project_id from conversation_usage join conversations on conversations.id = conversation_usage.conversation_id
+      where conversation_usage.claude_session_id = ? and conversation_usage.provider = 'opencode' limit 1
+    `).get(claudeSessionId) as { project_id: string | null } | undefined;
+    if (!row) return null;
+    return { project_id: row.project_id, session_id: null, process_id: null, worktree_id: null, link_confidence: 1, link_reason: OPENCODE_BACKING_REASON };
   }
 
   private byCwd(conversation: ParsedConversation, scope: { project_id?: string | null }): ConversationLink | null {
