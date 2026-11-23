@@ -795,7 +795,7 @@ export class IntegratedAgentService {
     });
   }
 
-  private async withPreservedAttention<T>(key: string, resolved: ResolvedIntegratedPrompt, run: (onNativeSend: () => void) => Promise<{ value: T; keep: boolean }>, asyncAdmission = false): Promise<T> {
+  private async withPreservedAttention<T>(key: string, resolved: ResolvedIntegratedPrompt, run: (onNativeSend: () => void, beforeAdmit: () => void) => Promise<{ value: T; keep: boolean }>, asyncAdmission = false): Promise<T> {
     const busyNow = () => {
       const current = this.activity(key);
       return current === 'working' || current === 'thinking';
@@ -822,9 +822,17 @@ export class IntegratedAgentService {
         token = push('peer');
       }
     };
+    const beforeAdmit = () => {
+      if (asyncAdmission && resolved.preserveAttention && token && !this.turnOrigins.get(key)?.queue.includes(token)) {
+        // An earlier turn consumed this peer token while an async-admission
+        // POST was in flight (whether that earlier turn already finished or is
+        // still working with this peer prompt queued in the native inbox).
+        token = push('peer');
+      }
+    };
     let keep = false;
     try {
-      const outcome = await run(onNativeSend);
+      const outcome = await run(onNativeSend, beforeAdmit);
       keep = outcome.keep;
       if (keep && !resolved.preserveAttention && !token && !busyNow()) {
         // The pre-existing turn ended during preflight while synthetic working
@@ -832,8 +840,6 @@ export class IntegratedAgentService {
         // does not claim its delayed native working event.
         token = push('owner');
       } else if (keep && resolved.preserveAttention && asyncAdmission && token && !busyNow() && !this.turnOrigins.get(key)?.queue.includes(token)) {
-        // An earlier turn ran to completion while an async-admission peer POST
-        // was in flight and consumed this token; re-queue it for the peer turn.
         token = push('peer');
       }
       return outcome.value;
@@ -860,7 +866,7 @@ export class IntegratedAgentService {
     if (identity) this.recordSubmission(identity.key, identity.messageId, identity.hash, 'uncertain', null, null);
     const sequence = this.sequence(activityKey);
     const asyncAdmission = Boolean(this.forProcess(processId).asyncAdmission);
-    return this.withPreservedAttention(activityKey, resolved, async (onNativeSend) => {
+    return this.withPreservedAttention(activityKey, resolved, async (onNativeSend, beforeAdmit) => {
       const sendInput: ResolvedIntegratedPrompt = { ...resolved, onNativeSend };
       let result: unknown;
       try {
@@ -894,6 +900,7 @@ export class IntegratedAgentService {
         }
         return { value: result, keep: false };
       }
+      beforeAdmit();
       this.admitted(processId, activityKey, sequence, sendInput, identity, result);
       return { value: result, keep: true };
     }, asyncAdmission);
@@ -970,7 +977,7 @@ export class IntegratedAgentService {
       this.dispatching.set(key, row);
       const sequence = this.sequence(key);
       const asyncAdmission = Boolean(this.forProcess(key).asyncAdmission);
-      const outcome = await this.withPreservedAttention(key, resolved, async (onNativeSend): Promise<{ value: 'continue' | 'return'; keep: boolean }> => {
+      const outcome = await this.withPreservedAttention(key, resolved, async (onNativeSend, beforeAdmit): Promise<{ value: 'continue' | 'return'; keep: boolean }> => {
         let result: unknown;
         const sendInput: ResolvedIntegratedPrompt = { ...resolved, messageId: row.message_id, onNativeSend };
         try {
@@ -999,6 +1006,7 @@ export class IntegratedAgentService {
         if ((result as { delivery?: unknown } | null | undefined)?.delivery === 'dropped') {
           return { value: 'continue', keep: false };
         }
+        beforeAdmit();
         this.admitted(key, key, sequence, sendInput, identity, result);
         return { value: 'continue', keep: true };
       }, asyncAdmission);
