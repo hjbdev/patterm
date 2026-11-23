@@ -46,6 +46,9 @@ interface PendingHandoff {
   conversationId: string | null;
   helpers: string[];
   turns: string[];
+  // Code-point offset in turns.at(-1) where the actual message body starts
+  // (after `${label}: ` and any leading single-line [relay …] header).
+  newestBodyStart?: number;
 }
 
 // Runs each bot, the assistant included, as one persistent Integrated
@@ -320,6 +323,7 @@ export class BotService {
 
     let conversationId: string | null = null;
     const turns: string[] = [];
+    let newestBodyStart: number | undefined;
     if (prior && this.options.history) {
       const foundId = this.options.history.conversationIdForSession({
         sessionId: prior.session_id,
@@ -344,7 +348,11 @@ export class BotService {
             if (!cleaned) continue;
             const chars = [...cleaned];
             const clipped = chars.length > HANDOFF_MESSAGE_CLIP ? `${chars.slice(0, HANDOFF_MESSAGE_CLIP - 1).join('')}…` : cleaned;
-            lines.unshift(`${label}: ${clipped}`);
+            const entry = `${label}: ${clipped}`;
+            if (newestBodyStart === undefined) {
+              newestBodyStart = handoffBodyStart(label, msg.text);
+            }
+            lines.unshift(entry);
           }
           if (!tail.has_more) break;
           const oldestSeq = tail.messages[0]?.seq;
@@ -361,7 +369,7 @@ export class BotService {
       }
     }
     if (!turns.length && !helpers.length) return null;
-    return { conversationId, helpers, turns };
+    return { conversationId, helpers, turns, ...(newestBodyStart !== undefined ? { newestBodyStart } : {}) };
   }
 
   private launched(botId: string): BotState {
@@ -438,6 +446,20 @@ function handoffAuthorLabel(msg: { id: string; role: string; kind: string; text:
   return proseLabel({ id: msg.id, role: msg.role, kind: msg.kind, text: msg.text, metadata });
 }
 
+// Measures the code-point offset in `${label}: ${cleaned}` where the actual
+// message body begins, skipping any single-line `[relay …]` header line even
+// when project or agent display names inside it contain brackets.
+function handoffBodyStart(label: string, rawText: string): number {
+  const baseOffset = [...`${label}: `].length;
+  const trimmed = rawText.trimStart();
+  const newline = trimmed.indexOf('\n');
+  if (trimmed.startsWith('[') && newline !== -1) {
+    const header = cleanHandoffText(trimmed.slice(0, newline));
+    if (header.endsWith(']')) return baseOffset + [...header].length + 1;
+  }
+  return baseOffset;
+}
+
 // Strips NUL bytes (which break argv-based CLI launches) and replaces lone UTF-16
 // surrogates (which break JSON-RPC deserializers such as Codex), then collapses whitespace.
 function cleanHandoffText(text: string): string {
@@ -480,11 +502,10 @@ function appendHandoff(base: string, handoff: PendingHandoff, limitBytes: number
   // while keeping a clipped newest turn before falling back to metadata-only.
   if (turns.length === 1) {
     const turnChars = [...turns[0]!];
-    // Preserve the author label, any leading [relay] envelope, and at least 24
-    // chars of actual message body before accepting a clipped preview while
-    // helpers can still be trimmed.
-    const prefix = /^[^:\n]+:\s*(?:\[[^\]]+\]\s*)?/.exec(turns[0]!)?.[0] ?? '';
-    const bodyFloor = Math.min(turnChars.length, [...prefix].length + 24);
+    // Preserve the author label, any leading [relay …] header line, and at
+    // least 24 chars of actual message body before accepting a clipped preview
+    // while helpers can still be trimmed.
+    const bodyFloor = Math.min(turnChars.length, (handoff.newestBodyStart ?? 0) + 24);
     const clipTurnWith = (helpers: string[], minLength: number): string | null => {
       let newest = [...turnChars];
       while (newest.length > minLength) {
