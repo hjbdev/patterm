@@ -839,8 +839,6 @@ export class IntegratedAgentService {
         // was skipped; record the pending owner turn so a following peer prompt
         // does not claim its delayed native working event.
         token = push('owner');
-      } else if (keep && resolved.preserveAttention && asyncAdmission && token && !busyNow() && !this.turnOrigins.get(key)?.queue.includes(token)) {
-        token = push('peer');
       }
       return outcome.value;
     } finally {
@@ -879,6 +877,7 @@ export class IntegratedAgentService {
           if (identity && id) {
             try { this.recordSubmission(identity.key, id, identity.hash, 'uncertain', null, error.message); } catch { /* the reservation already exists */ }
           }
+          if (resolved.preserveAttention) beforeAdmit();
           return { value: { delivery: 'uncertain', message_id: id ?? null, error: error.message }, keep: Boolean(resolved.preserveAttention) };
         }
         // The provider classified this as a definitive pre-admission rejection.
@@ -990,6 +989,7 @@ export class IntegratedAgentService {
           if (error instanceof UncertainDeliveryError) {
             this.debugLog?.write('integrated', 'prompt.held_failed', { processId: key, messageId: row.message_id, uncertain: true, message });
             this.releaseHeld(key, row, identity.hash, message, 'unconfirmed');
+            if (resolved.preserveAttention) beforeAdmit();
             return { value: 'continue', keep: Boolean(resolved.preserveAttention) };
           }
           // Still busy, for example a second compaction, it waits for that turn
