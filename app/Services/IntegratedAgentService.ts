@@ -816,7 +816,6 @@ export class IntegratedAgentService {
       if (signaled) return;
       signaled = true;
       if (!resolved.preserveAttention) {
-        this.turnOrigins.delete(key);
         if (!busyNow()) token = push('owner');
       } else {
         token = push('peer');
