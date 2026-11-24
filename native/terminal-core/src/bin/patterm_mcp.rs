@@ -9,9 +9,9 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::env;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::{self, Command};
 #[cfg(windows)]
 use std::process::Stdio;
+use std::process::{self, Command};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -28,7 +28,7 @@ struct EnvConfig {
     socket_path: String,
     identity: Option<String>,
     opencode_bridge: Option<String>,
-    compact: bool,
+    gateway: bool,
     catalogue_refresh_ms: u64,
     relist_grace_ms: u64,
     js_shim: Option<String>,
@@ -47,7 +47,7 @@ impl EnvConfig {
         let opencode_bridge = env::var("PATTERM_OPENCODE_BRIDGE")
             .ok()
             .filter(|s| !s.is_empty());
-        let compact = env::var("PATTERM_MCP_COMPACT").ok().as_deref() == Some("1");
+        let gateway = env::var("PATTERM_MCP_GATEWAY").ok().as_deref() == Some("1");
         let catalogue_refresh_ms = env::var("PATTERM_MCP_CATALOGUE_REFRESH_MS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
@@ -65,7 +65,7 @@ impl EnvConfig {
             socket_path,
             identity,
             opencode_bridge,
-            compact,
+            gateway,
             catalogue_refresh_ms,
             relist_grace_ms,
             js_shim,
@@ -199,9 +199,9 @@ mod ipc {
         };
         let normalized = normalize_path(&abs);
         let lower = normalized.to_string_lossy().to_lowercase();
-        let dir = Path::new(&lower)
-            .parent()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "socket path needs a parent"))?;
+        let dir = Path::new(&lower).parent().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "socket path needs a parent")
+        })?;
         let key_path = dir.join(".ipc-key");
         let key = fs::read_to_string(&key_path)?.trim().to_string();
         let mut input = Vec::with_capacity(key.len() + lower.len());
@@ -412,8 +412,9 @@ mod ipc {
                 }
             }
             let mut transferred: u32 = 0;
-            if unsafe { GetOverlappedResult(self.handle.handle, &overlapped, &mut transferred, TRUE) }
-                == 0
+            if unsafe {
+                GetOverlappedResult(self.handle.handle, &overlapped, &mut transferred, TRUE)
+            } == 0
             {
                 let err = io::Error::last_os_error();
                 return if is_pipe_eof(&err) || self.handle.is_closed() {
@@ -455,8 +456,9 @@ mod ipc {
                 }
             }
             let mut transferred: u32 = 0;
-            if unsafe { GetOverlappedResult(self.handle.handle, &overlapped, &mut transferred, TRUE) }
-                == 0
+            if unsafe {
+                GetOverlappedResult(self.handle.handle, &overlapped, &mut transferred, TRUE)
+            } == 0
             {
                 return Err(io::Error::last_os_error());
             }
@@ -592,10 +594,8 @@ impl PersistentSocket {
                                                 .get("push")
                                                 .and_then(Value::as_bool)
                                                 .unwrap_or(false);
-                                            let result = value
-                                                .get("result")
-                                                .cloned()
-                                                .unwrap_or(Value::Null);
+                                            let result =
+                                                value.get("result").cloned().unwrap_or(Value::Null);
                                             let _ = tx.send(Ok(SocketResponse { result, push }));
                                         }
                                     }
@@ -686,16 +686,12 @@ impl PersistentSocket {
 }
 
 #[cfg(unix)]
-fn connect_ipc(
-    socket_path: &str,
-) -> io::Result<(Box<dyn io::Read + Send>, Box<dyn Write + Send>)> {
+fn connect_ipc(socket_path: &str) -> io::Result<(Box<dyn io::Read + Send>, Box<dyn Write + Send>)> {
     ipc::IpcReader::connect(socket_path)
 }
 
 #[cfg(windows)]
-fn connect_ipc(
-    socket_path: &str,
-) -> io::Result<(Box<dyn io::Read + Send>, Box<dyn Write + Send>)> {
+fn connect_ipc(socket_path: &str) -> io::Result<(Box<dyn io::Read + Send>, Box<dyn Write + Send>)> {
     ipc::connect(socket_path)
 }
 
@@ -739,7 +735,9 @@ fn attach_auth(
 // --- One-shot modes ---
 
 fn run_print_headers(cfg: &EnvConfig, op: &str, args: &[String]) -> Result<()> {
-    let server_id = args.first().ok_or_else(|| anyhow!("missing MCP server ID"))?;
+    let server_id = args
+        .first()
+        .ok_or_else(|| anyhow!("missing MCP server ID"))?;
     let sock = PersistentSocket::new(cfg.socket_path.clone(), None);
     let mut req = Map::new();
     req.insert("op".to_string(), json!(op));
@@ -795,7 +793,9 @@ fn enable_kill_on_exit_job() {
 }
 
 fn run_mcp_exec(cfg: &EnvConfig, args: &[String]) -> Result<()> {
-    let server_id = args.first().ok_or_else(|| anyhow!("missing MCP server ID"))?;
+    let server_id = args
+        .first()
+        .ok_or_else(|| anyhow!("missing MCP server ID"))?;
     let sock = PersistentSocket::new(cfg.socket_path.clone(), None);
     let mut req = Map::new();
     req.insert("op".to_string(), json!("mcp-exec"));
@@ -863,14 +863,22 @@ fn run_mcp_exec(cfg: &EnvConfig, args: &[String]) -> Result<()> {
 }
 
 fn run_mcp_bridge(cfg: &EnvConfig, args: &[String]) -> Result<()> {
-    let server_id = args.first().ok_or_else(|| anyhow!("missing MCP server ID"))?;
+    let server_id = args
+        .first()
+        .ok_or_else(|| anyhow!("missing MCP server ID"))?;
     let js_shim = cfg.js_shim.clone().or_else(|| {
         let exe = env::current_exe().ok()?;
         let dir = exe.parent()?;
         for candidate in [
             dir.join("patterm-mcp.js"),
             dir.join("..").join("mcp").join("patterm-mcp.js"),
-            dir.join("..").join("..").join("..").join("..").join("dist").join("mcp").join("patterm-mcp.js"),
+            dir.join("..")
+                .join("..")
+                .join("..")
+                .join("..")
+                .join("dist")
+                .join("mcp")
+                .join("patterm-mcp.js"),
         ] {
             if candidate.exists() {
                 return Some(candidate.to_string_lossy().into_owned());
@@ -968,22 +976,75 @@ fn parse_catalogue(value: Value) -> Result<Vec<ToolDescriptor>> {
     Ok(tools)
 }
 
-fn describe_tool(tool: &ToolDescriptor, compact: bool) -> String {
-    let notes: &[String] = if tool.namespace.starts_with("cli.") {
-        &tool.usage_notes
-    } else {
-        &[]
-    };
-    if compact && !notes.is_empty() {
-        return format!("{} See help for usage notes.", tool.description);
+// Antigravity declares MCP tools only up to a shared size budget, about
+// 60 KB across every server, then drops the largest, with no way to call
+// them. Patterm's full catalogue alone nearly fills it. Its sessions get a
+// gateway instead: the tools agents call most, declared in full, plus help
+// to list and explain the rest and call to run them. Keep in step with
+// mcp/shim.ts.
+const GATEWAY_TOOLS: &[&str] = &[
+    "help",
+    "whoami",
+    "get_project_status",
+    "session_context",
+    "list_processes",
+    "spawn_agent",
+    "spawn_process",
+    "send_message",
+    "report_to_parent",
+    "notify_user",
+    "request_close",
+    "close_process",
+    "get_conversation_output",
+    "get_process_output",
+    "timer_fire_when_reported_any",
+    "timer_fire_when_reported_all",
+    "status_set",
+    "reference_attach",
+    "worktree_create",
+    "assistant_memory_search",
+];
+const GATEWAY_CALL: &str = "call";
+
+fn gateway_call() -> ToolDescriptor {
+    ToolDescriptor {
+        name: GATEWAY_CALL.to_string(),
+        namespace: "meta".to_string(),
+        description: "Run any Patterm tool by name, including those this session does not declare directly. Call help first for the tool's schema and usage notes, then pass its arguments unchanged.".to_string(),
+        usage_notes: Vec::new(),
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "tool": { "type": "string", "minLength": 1, "description": "The Patterm tool name, such as todo_list." },
+                "arguments": { "type": "object", "description": "The tool's arguments, as its help schema describes." }
+            },
+            "required": ["tool"],
+            "additionalProperties": false
+        }),
+        annotations: None,
     }
-    if notes.is_empty() {
-        return tool.description.clone();
+}
+
+// The tools this session declares to its client.
+fn advertised(tools: Vec<ToolDescriptor>, gateway: bool) -> Vec<ToolDescriptor> {
+    if !gateway {
+        return tools;
     }
-    let mut parts = Vec::with_capacity(1 + notes.len());
-    parts.push(tool.description.as_str());
-    for note in notes {
-        parts.push(note.as_str());
+    let mut core: Vec<ToolDescriptor> = tools
+        .into_iter()
+        .filter(|tool| GATEWAY_TOOLS.contains(&tool.name.as_str()))
+        .collect();
+    core.push(gateway_call());
+    core
+}
+
+fn describe_tool(tool: &ToolDescriptor, gateway: bool) -> String {
+    let mut parts = vec![tool.description.as_str()];
+    if tool.namespace.starts_with("cli.") {
+        parts.extend(tool.usage_notes.iter().map(String::as_str));
+    }
+    if gateway && tool.name == "help" {
+        parts.push("This session declares only Patterm's most used tools: list the rest with help, then run them with call.");
     }
     parts.join(" ")
 }
@@ -1039,11 +1100,11 @@ fn advertised_schema(schema: &Value) -> Value {
 
 type Signatures = BTreeMap<String, String>;
 
-fn signatures_of(tools: &[ToolDescriptor], compact: bool) -> Signatures {
+fn signatures_of(tools: &[ToolDescriptor], gateway: bool) -> Signatures {
     let mut map = BTreeMap::new();
     for tool in tools {
         let sig = json!([
-            describe_tool(tool, compact),
+            describe_tool(tool, gateway),
             advertised_schema(&tool.input_schema),
             tool.annotations.clone().unwrap_or(Value::Null),
         ]);
@@ -1102,7 +1163,11 @@ fn validate_arguments(schema: &Value, args: &Value) -> std::result::Result<(), S
             }
         }
         let props = schema_obj.get("properties").and_then(Value::as_object);
-        if schema_obj.get("additionalProperties").and_then(Value::as_bool) == Some(false) {
+        if schema_obj
+            .get("additionalProperties")
+            .and_then(Value::as_bool)
+            == Some(false)
+        {
             for key in args_obj.keys() {
                 if !props.is_some_and(|p| p.contains_key(key)) {
                     return Err(format!("unexpected property '{key}'"));
@@ -1145,9 +1210,7 @@ fn validate_value(
         value.as_str(),
     ) {
         if (s.chars().count() as u64) < min_len {
-            return Err(format!(
-                "property '{key}' must have length >= {min_len}"
-            ));
+            return Err(format!("property '{key}' must have length >= {min_len}"));
         }
     }
     Ok(())
@@ -1163,8 +1226,9 @@ struct CatalogueState {
 }
 
 impl CatalogueState {
-    fn new(tools: Vec<ToolDescriptor>, compact: bool) -> Self {
-        let signatures = signatures_of(&tools, compact);
+    fn new(tools: Vec<ToolDescriptor>, gateway: bool) -> Self {
+        let tools = advertised(tools, gateway);
+        let signatures = signatures_of(&tools, gateway);
         let by_name = tools.iter().map(|t| (t.name.clone(), t.clone())).collect();
         Self {
             tools,
@@ -1176,8 +1240,9 @@ impl CatalogueState {
         }
     }
 
-    fn update(&mut self, next: Vec<ToolDescriptor>, compact: bool) -> bool {
-        let next_sigs = signatures_of(&next, compact);
+    fn update(&mut self, next: Vec<ToolDescriptor>, gateway: bool) -> bool {
+        let next = advertised(next, gateway);
+        let next_sigs = signatures_of(&next, gateway);
         if next_sigs == self.signatures {
             return false;
         }
@@ -1233,7 +1298,7 @@ fn run_stdio_server(cfg: EnvConfig) -> Result<()> {
         Some(catalog_tx),
     ));
     let initial_tools = fetch_catalogue(&sock, &cfg)?;
-    let catalogue = Arc::new(Mutex::new(CatalogueState::new(initial_tools, cfg.compact)));
+    let catalogue = Arc::new(Mutex::new(CatalogueState::new(initial_tools, cfg.gateway)));
     let stdout = Arc::new(Mutex::new(io::stdout()));
 
     // Background catalogue refresh thread (handles both push events and periodic polling).
@@ -1254,7 +1319,7 @@ fn run_stdio_server(cfg: EnvConfig) -> Result<()> {
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 }
                 if let Ok(next) = fetch_catalogue(&sock, &cfg) {
-                    let changed = catalogue.lock().unwrap().update(next, cfg.compact);
+                    let changed = catalogue.lock().unwrap().update(next, cfg.gateway);
                     if changed {
                         write_json_line(
                             &stdout,
@@ -1340,7 +1405,7 @@ fn run_stdio_server(cfg: EnvConfig) -> Result<()> {
                             entry.insert("name".to_string(), json!(tool.name));
                             entry.insert(
                                 "description".to_string(),
-                                json!(describe_tool(tool, cfg.compact)),
+                                json!(describe_tool(tool, cfg.gateway)),
                             );
                             entry.insert(
                                 "inputSchema".to_string(),
@@ -1415,7 +1480,10 @@ fn handle_tool_call(
     };
 
     let Some(tool) = tool else {
-        let notice = catalogue.lock().unwrap().pending_notice(cfg.relist_grace_ms);
+        let notice = catalogue
+            .lock()
+            .unwrap()
+            .pending_notice(cfg.relist_grace_ms);
         let mut message = format!("Tool {name} not found");
         if let Some(n) = notice {
             message.push_str("\n\n");
@@ -1441,7 +1509,11 @@ fn handle_tool_call(
             "type": "text",
             "text": format!("Invalid arguments for tool {name}: {reason}")
         })];
-        if let Some(notice) = catalogue.lock().unwrap().pending_notice(cfg.relist_grace_ms) {
+        if let Some(notice) = catalogue
+            .lock()
+            .unwrap()
+            .pending_notice(cfg.relist_grace_ms)
+        {
             content.push(json!({ "type": "text", "text": notice }));
         }
         write_json_line(
@@ -1458,6 +1530,22 @@ fn handle_tool_call(
         return;
     }
 
+    // call forwards the named tool; its handler validates the arguments.
+    let (name, arguments) = if cfg.gateway && name == GATEWAY_CALL {
+        let inner = arguments
+            .get("tool")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let inner_args = match arguments.get("arguments") {
+            None | Some(Value::Null) => json!({}),
+            Some(value) => value.clone(),
+        };
+        (inner, inner_args)
+    } else {
+        (name, arguments)
+    };
+
     let mut req = Map::new();
     req.insert("tool".to_string(), json!(name));
     req.insert("args".to_string(), arguments);
@@ -1469,7 +1557,11 @@ fn handle_tool_call(
     match sock.request(req) {
         Ok(resp) => {
             let mut content = format_tool_content(resp.result);
-            if let Some(notice) = catalogue.lock().unwrap().pending_notice(cfg.relist_grace_ms) {
+            if let Some(notice) = catalogue
+                .lock()
+                .unwrap()
+                .pending_notice(cfg.relist_grace_ms)
+            {
                 content.push(json!({ "type": "text", "text": notice }));
             }
             write_json_line(
@@ -1495,7 +1587,11 @@ fn send_tool_error(
     cfg: &EnvConfig,
 ) {
     let mut content = vec![json!({ "type": "text", "text": message })];
-    if let Some(notice) = catalogue.lock().unwrap().pending_notice(cfg.relist_grace_ms) {
+    if let Some(notice) = catalogue
+        .lock()
+        .unwrap()
+        .pending_notice(cfg.relist_grace_ms)
+    {
         content.push(json!({ "type": "text", "text": notice }));
     }
     write_json_line(
@@ -1534,8 +1630,8 @@ fn format_tool_content(result: Value) -> Vec<Value> {
             }
             return content;
         }
-        let text = serde_json::to_string_pretty(&Value::Object(obj))
-            .unwrap_or_else(|_| "{}".to_string());
+        let text =
+            serde_json::to_string_pretty(&Value::Object(obj)).unwrap_or_else(|_| "{}".to_string());
         return vec![json!({ "type": "text", "text": text })];
     }
     let text = serde_json::to_string_pretty(&result).unwrap_or_else(|_| "null".to_string());

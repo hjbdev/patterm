@@ -63,8 +63,6 @@ async function main(): Promise<void> {
   const modernTransport = new StdioClientTransport({ command: process.execPath, args: [executable], env: { PATTERM_MCP_SOCKET: socketPath, PATTERM_MCP_CATALOGUE_REFRESH_MS: '100' }, stderr: 'pipe' });
   const legacy = new LegacyClient({ name: 'shim-legacy-test', version: '1' });
   const legacyTransport = new LegacyTransport({ command: process.execPath, args: [executable], env: { PATTERM_MCP_SOCKET: socketPath, PATTERM_MCP_CATALOGUE_REFRESH_MS: '100' }, stderr: 'pipe' });
-  const gateway = new Client({ name: 'shim-gateway-test', version: '1' });
-  const gatewayTransport = new StdioClientTransport({ command: process.execPath, args: [executable], env: { PATTERM_MCP_SOCKET: socketPath, PATTERM_MCP_GATEWAY: '1' }, stderr: 'pipe' });
   try {
     buildSync({ entryPoints: ['mcp/shim.ts'], outfile: executable, bundle: true, platform: 'node', format: 'cjs' });
     await listen();
@@ -184,23 +182,33 @@ async function main(): Promise<void> {
     assert.deepEqual(calls.at(-1), { tool: 'routine_schedule_once', args: { at: 'tomorrow' }, version: 2 });
 
     // Antigravity's gateway declares the core tools in full, plus call to
-    // run any other by name.
+    // run any other by name. Packaged builds use the native shim, so it gets
+    // the same checks whenever it has been built.
     catalogue = descriptors.map((tool) => tool.name === 'whoami' ? { ...tool, usageNotes: ['Kept in full.'] } : tool);
-    await gateway.connect(gatewayTransport);
-    const gatewayList = await gateway.listTools();
-    assert.deepEqual(gatewayList.tools.map(({ name }) => name), ['whoami', 'spawn_process', 'help', 'call'], 'the gateway declares core tools, help and call');
-    assert.match(gatewayList.tools.find(({ name }) => name === 'whoami')!.description!, /Kept in full\./, 'core tools keep their usage notes');
-    assert.match(gatewayList.tools.find(({ name }) => name === 'help')!.description!, /run them with call/);
-    const viaCall = await gateway.callTool({ name: 'call', arguments: { tool: 'todo_create', arguments: { title: 'Through the gateway' } } });
-    assert.notEqual(viaCall.isError, true);
-    assert.deepEqual(calls.at(-1), { tool: 'todo_create', args: { title: 'Through the gateway' }, version: 2 }, 'call forwards the named tool and its arguments');
-    await gateway.callTool({ name: 'call', arguments: { tool: 'whoami' } });
-    assert.deepEqual(calls.at(-1), { tool: 'whoami', args: {}, version: 2 }, 'call without arguments sends an empty object');
-    assert.equal((await gateway.callTool({ name: 'call', arguments: {} })).isError, true, 'call requires a tool name');
+    const native = path.resolve('native/terminal-core/target', process.env.PATTERM_NATIVE_PROFILE ?? 'debug', process.platform === 'win32' ? 'patterm-mcp.exe' : 'patterm-mcp');
+    const shims: Array<[string, string, string[]]> = [['JS', process.execPath, [executable]], ...(fs.existsSync(native) ? [['native', native, []] as [string, string, string[]]] : [])];
+    if (shims.length === 1) console.log('mcp shim smoke: native shim not built, gateway checked on the JS shim only');
+    for (const [label, command, args] of shims) {
+      const gateway = new Client({ name: `shim-gateway-${label}`, version: '1' });
+      try {
+        await gateway.connect(new StdioClientTransport({ command, args, env: { PATTERM_MCP_SOCKET: socketPath, PATTERM_MCP_GATEWAY: '1' }, stderr: 'pipe' }));
+        const gatewayList = await gateway.listTools();
+        assert.deepEqual(gatewayList.tools.map(({ name }) => name), ['whoami', 'spawn_process', 'help', 'call'], `the ${label} gateway declares core tools, help and call`);
+        assert.match(gatewayList.tools.find(({ name }) => name === 'whoami')!.description!, /Kept in full\./, `${label} core tools keep their usage notes`);
+        assert.match(gatewayList.tools.find(({ name }) => name === 'help')!.description!, /run them with call/);
+        const viaCall = await gateway.callTool({ name: 'call', arguments: { tool: 'todo_create', arguments: { title: 'Through the gateway' } } });
+        assert.notEqual(viaCall.isError, true);
+        assert.deepEqual(calls.at(-1), { tool: 'todo_create', args: { title: 'Through the gateway' }, version: 2 }, `${label} call forwards the named tool and its arguments`);
+        await gateway.callTool({ name: 'call', arguments: { tool: 'whoami' } });
+        assert.deepEqual(calls.at(-1), { tool: 'whoami', args: {}, version: 2 }, `${label} call without arguments sends an empty object`);
+        assert.equal((await gateway.callTool({ name: 'call', arguments: {} })).isError, true, `${label} call requires a tool name`);
+      } finally {
+        await gateway.close();
+      }
+    }
   } finally {
     await modern.close();
     await legacy.close();
-    await gateway.close();
     if (registry.listening) await close();
     fs.rmSync(directory, { recursive: true, force: true });
   }
