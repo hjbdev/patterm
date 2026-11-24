@@ -18,6 +18,7 @@ export interface AppearanceSettings {
   conversationFontSizePx: number;
   conversationWidth: ConversationWidth;
   conversationBreakout: ConversationBreakout;
+  conversationToolNames: boolean;
   historyImportToasts: boolean;
   diffViewer: DiffViewerLayout;
   navigation: NavigationLayout;
@@ -33,6 +34,7 @@ export const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
   conversationFontSizePx: CONVERSATION_FONT_SIZE_RANGE.default,
   conversationWidth: 'default',
   conversationBreakout: 'off',
+  conversationToolNames: false,
   historyImportToasts: true,
   diffViewer: 'drawer',
   navigation: 'tabs',
@@ -99,6 +101,7 @@ export function normalizeAppearanceSettings(value: Partial<AppearanceSettings> |
     conversationFontSizePx: clampConversationFontSize(value?.conversationFontSizePx),
     conversationWidth: isConversationWidth(value?.conversationWidth) ? value.conversationWidth : DEFAULT_APPEARANCE_SETTINGS.conversationWidth,
     conversationBreakout: isConversationBreakout(value?.conversationBreakout) ? value.conversationBreakout : DEFAULT_APPEARANCE_SETTINGS.conversationBreakout,
+    conversationToolNames: typeof value?.conversationToolNames === 'boolean' ? value.conversationToolNames : DEFAULT_APPEARANCE_SETTINGS.conversationToolNames,
     historyImportToasts: typeof value?.historyImportToasts === 'boolean' ? value.historyImportToasts : DEFAULT_APPEARANCE_SETTINGS.historyImportToasts,
     diffViewer: value?.diffViewer === 'deck' ? 'deck' : DEFAULT_APPEARANCE_SETTINGS.diffViewer,
     navigation: value?.navigation === 'sidebar' ? 'sidebar' : DEFAULT_APPEARANCE_SETTINGS.navigation,
@@ -117,6 +120,7 @@ export function applyUiFont(settings: AppearanceSettings): void {
   style.setProperty('--patterm-conversation-max-width', resolveConversationMaxWidth(settings.conversationWidth));
   style.setProperty('--patterm-conversation-breakout-max-width', resolveConversationBreakoutMaxWidth(settings.conversationWidth, settings.conversationBreakout));
   style.setProperty('--patterm-conversation-breakout-justify', settings.conversationBreakout !== 'off' && settings.conversationWidth !== 'full' ? 'center' : 'flex-start');
+  style.setProperty('--patterm-tool-names-display', settings.conversationToolNames ? 'inline' : 'none');
   document.body.style.fontFamily = fontFamily;
 }
 

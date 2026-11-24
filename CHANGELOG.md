@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Collapsed tool calls, thoughts and tool groups in conversations sit at lower
+  opacity until hovered or focused, and their text now scales with the
+  conversation font size.
+- Tool group summaries no longer name their skills and MCP tools, as in
+  "MCP (notify_user)", unless Settings › Conversations › Tool names is on.
 - Settings pages are grouped into Workspace, Agents, Activity, Connections and
   System. Appearance is split into Look & feel, Conversations and Terminal,
   and the list shows short states such as how many MCP servers are on.
@@ -178,6 +183,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A failed Codex MCP tool call shows its error instead of `""`, and a
+  successful one shows its result text rather than the raw `{ "content": … }`
+  wrapper.
+- `bot_stay_quiet` now says plainly that it only ends the bot's own turn and
+  never hides other agents' notifications or permission prompts. Codex's
+  automatic reviewer had been rejecting it as suppressing notifications.
 - The usage page opens straight away instead of after several seconds. Its
   token figures come from a cache that is filled after startup and refreshed
   in the background, the usage query no longer rebuilds part of itself for
