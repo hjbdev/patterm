@@ -30,7 +30,7 @@ export const ACP_CAPABILITIES: AgentCapabilities = defaultAgentCapabilities({
   hostKind: 'supervised-socket',
   hibernation: { supported: true },
   archiveFallback: 'never',
-  input: { steering: false, nativeQueue: false, configureWhileBusy: false, routineDigest: false },
+  input: { steering: true, nativeQueue: false, configureWhileBusy: false, routineDigest: false },
   interactions: { permissions: true, questions: false, forms: false, parentReadAutoApprove: true, choiceFormsAsQuestions: false },
   features: {
     goals: false,
