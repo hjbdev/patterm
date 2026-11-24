@@ -183,10 +183,13 @@ async function main(): Promise<void> {
 
     // Antigravity's gateway declares the core tools in full, plus call to
     // run any other by name. Packaged builds use the native shim, so it gets
-    // the same checks whenever it has been built.
+    // the same checks whenever it has been built. Not on Windows: this test
+    // registry closes the pipe after each reply, which the native shim's
+    // second request there reports as a disconnect. Patterm's registry keeps
+    // the connection open.
     catalogue = descriptors.map((tool) => tool.name === 'whoami' ? { ...tool, usageNotes: ['Kept in full.'] } : tool);
     const native = path.resolve('native/terminal-core/target', process.env.PATTERM_NATIVE_PROFILE ?? 'debug', process.platform === 'win32' ? 'patterm-mcp.exe' : 'patterm-mcp');
-    const shims: Array<[string, string, string[]]> = [['JS', process.execPath, [executable]], ...(fs.existsSync(native) ? [['native', native, []] as [string, string, string[]]] : [])];
+    const shims: Array<[string, string, string[]]> = [['JS', process.execPath, [executable]], ...(process.platform !== 'win32' && fs.existsSync(native) ? [['native', native, []] as [string, string, string[]]] : [])];
     if (shims.length === 1) console.log('mcp shim smoke: native shim not built, gateway checked on the JS shim only');
     for (const [label, command, args] of shims) {
       const gateway = new Client({ name: `shim-gateway-${label}`, version: '1' });
