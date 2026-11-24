@@ -27,8 +27,8 @@ export function useProjectFirstTab(staysHome: Readonly<Ref<boolean>>) {
   const { route, router, activeProject } = useWorkbenchNavigation();
   const sidebar = inject(sidebarContextKey, null);
   const firstTab = computed(() => {
-    if (sidebar && activeProject.value) {
-      return firstDisplayedTabRoute(activeProject.value.project.id, sidebar.tabs.value, sidebar.allAgents.value ? sidebar.projectOf : undefined);
+    if (sidebar && activeProject.value && !sidebar.allAgents.value) {
+      return firstDisplayedTabRoute(activeProject.value.project.id, sidebar.tabs.value);
     }
     return projectFirstTab(activeProject.value);
   });

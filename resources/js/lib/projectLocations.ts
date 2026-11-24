@@ -56,17 +56,12 @@ export function resolveProjectReturnPath(project: ProjectWorkbench | undefined, 
 
 // The first displayed tab for a project's home redirect, honouring the strip's
 // awake/snoozed visibility and order so hidden snoozed agents are never picked.
-export function firstDisplayedTabRoute(
-  projectId: string,
-  tabs: readonly StripTab[],
-  projectOf?: (tab: StripTab) => { id: string } | null
-): ProjectTabRoute | null {
+export function firstDisplayedTabRoute(projectId: string, tabs: readonly StripTab[]): ProjectTabRoute | null {
   const first = tabs[0];
   if (!first) return null;
-  const targetProjectId = projectOf?.(first)?.id ?? projectId;
   return first.kind === 'agent'
-    ? { name: 'agent', params: { projectId: targetProjectId, sessionId: first.family.active.id } }
-    : { name: 'process', params: { projectId: targetProjectId, processId: first.process.id } };
+    ? { name: 'agent', params: { projectId, sessionId: first.family.active.id } }
+    : { name: 'process', params: { projectId, processId: first.process.id } };
 }
 
 // Where a project's own page goes on desktop when no displayed tab list is
