@@ -6,7 +6,7 @@ const COLLAPSED_KEY = 'patterm.sidebar.collapsed';
 const WIDTH_KEY = 'patterm.sidebar.width';
 
 // Resizable widths, in CSS pixels. Stored per device, like the session context panel.
-export const SIDEBAR_WIDTH = { min: 220, max: 440, default: 288 } as const;
+export const SIDEBAR_WIDTH = { min: 236, max: 460, default: 304 } as const;
 
 export function clampSidebarWidth(width: number): number {
   return Math.round(Math.min(SIDEBAR_WIDTH.max, Math.max(SIDEBAR_WIDTH.min, width)));

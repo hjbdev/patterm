@@ -4,8 +4,8 @@
        Their helpers list in their projects like any agent; one waiting on
        you shows here too. The global
        assistant leads them while it is on. -->
-  <div v-if="shownRows.length" class="mb-1 border-b border-white/[0.06] pb-1">
-    <div class="flex h-7 items-center gap-2 pl-2 pr-0.5 text-xs text-muted-foreground">
+  <div v-if="shownRows.length" class="mb-2 border-b border-white/[0.06] pb-2">
+    <div v-if="!compact" class="flex h-7 items-center gap-2 pl-2 pr-0.5 text-[12.5px] font-medium text-muted-foreground">
       <span class="flex-1">Bots</span>
     </div>
     <div v-for="row in shownRows" :key="row.bot.id" class="group/bot relative">
@@ -13,20 +13,26 @@
         type="button"
         data-sidebar-bot
         :aria-current="activeBotId === row.bot.id ? 'page' : undefined"
-        :class="cn(rowClass(activeBotId === row.bot.id), phone && 'min-h-14 py-2.5')"
+        :class="cn(rowClass(activeBotId === row.bot.id), compact && 'items-center py-2', phone && 'min-h-[58px] items-center gap-3 rounded-xl px-2.5 py-2.5 text-[15.5px]')"
         @click="open(row.bot.id)"
       >
-        <BotAvatar :avatar="row.bot.avatar" :size="phone ? 28 : 22" :activity="row.activity" class="mt-0.5" />
-        <span class="min-w-0 flex-1">
-          <span class="block truncate leading-5" :class="activeBotId === row.bot.id && 'font-medium'">{{ row.bot.name }}<span v-if="row.bot.host" class="ml-1.5 font-normal text-muted-foreground">{{ row.bot.host }}</span></span>
-          <span class="block truncate text-xs leading-4" :class="row.session?.asking || row.waitingHelper ? 'text-foreground/75' : 'text-muted-foreground'">{{ botLine(row) }}</span>
-        </span>
+        <BotAvatar :avatar="row.bot.avatar" :size="phone ? 32 : 24" :activity="row.activity" :class="!compact && !phone ? 'mt-0.5' : ''" />
+        <template v-if="compact">
+          <span class="min-w-0 flex-1 truncate text-[14px] leading-5" :class="activeBotId === row.bot.id && 'font-medium'">{{ row.bot.name }}<span v-if="row.bot.host" class="ml-1.5 font-normal text-muted-foreground">{{ row.bot.host }}</span></span>
+          <span v-if="row.waitingHelper" class="h-2 w-2 shrink-0 rounded-full bg-amber-400" :title="botLine(row)" aria-label="Helper waiting" />
+        </template>
+        <template v-else>
+          <span class="min-w-0 flex-1">
+            <span class="block truncate leading-5" :class="(activeBotId === row.bot.id || phone) && 'font-medium'">{{ row.bot.name }}<span v-if="row.bot.host" class="ml-1.5 font-normal text-muted-foreground">{{ row.bot.host }}</span></span>
+            <span class="mt-0.5 block truncate text-[13.5px] leading-[18px]" :class="row.session?.asking || row.waitingHelper ? 'text-amber-300/90' : 'text-muted-foreground'">{{ botLine(row) }}</span>
+          </span>
+        </template>
       </button>
       <Button
-        v-if="row.waitingHelper && row.waitingHelperProjectId"
+        v-if="!compact && row.waitingHelper && row.waitingHelperProjectId"
         variant="ghost"
         size="sm"
-        class="absolute right-1 top-1.5 h-5 px-1.5 text-[11px] text-warning hover:text-warning"
+        class="absolute right-1 top-2 h-6 px-2 text-[12px] text-warning hover:text-warning"
         @click="openHelper(row.waitingHelperProjectId, row.waitingHelper.id)"
       >
         Open helper
@@ -48,8 +54,8 @@ import { Button } from './ui/button';
 
 // projectId: the project whose bots list, which they open beside. Without
 // one, as on the projects page, only global bots list. all: every bot, as in
-// All agents mode.
-const props = defineProps<{ phone?: boolean; projectId?: string | null; all?: boolean }>();
+// All agents mode. compact: quiet single-line rows for the desktop sidebar.
+const props = defineProps<{ phone?: boolean; compact?: boolean; projectId?: string | null; all?: boolean }>();
 const route = useRoute();
 const router = useRouter();
 const { rows } = useBots();
@@ -65,7 +71,7 @@ const shownRows = computed(() => {
 });
 
 function rowClass(active: boolean): string {
-  return cn('flex w-full min-w-0 select-none items-start gap-2.5 rounded-tab px-2 py-1.5 text-left text-[13px] transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring', active ? 'bg-primary/10 text-foreground' : 'text-foreground/85');
+  return cn('flex w-full min-w-0 select-none items-start gap-2.5 rounded-tab px-2 py-2 text-left text-[14px] transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring', active ? 'bg-primary/10 text-foreground' : 'text-foreground/85');
 }
 
 // A bot opens beside the project you're in, or else one it lists in, or

@@ -75,6 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Readable UI typography, desktop project dock, and unified projects list**: Stepped up the workbench chrome type scale (`14px` / `34px` sidebar rows with aligned tree connectors, `13px` subtitles, `12px–12.5px` badges/section headings, `304px` default sidebar width). Desktop sidebar mode now replaces the top bar with a far-left project dock (`All agents` + live project status logos + Search, Notifications, and Settings) paired with a spacious agent list featuring a one-click `Needs you` filter and compact bot rows. The All Projects page now uses clean `PhoneHome`-style touch rows (`ProjectStatusLogo`, calm status summaries, hover desktop actions) and a mobile bottom thumb bar (`All agents`, `Settings`, and circular `+`).
 - Updated bot and assistant system guidance (`AgentContextService`) to encourage
   proactive follow-through on stalled, cleanly exited, or unreported helpers
   using liveness fields and `get_conversation_output`, suggest concrete next

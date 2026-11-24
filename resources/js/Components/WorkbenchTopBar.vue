@@ -1,11 +1,11 @@
 <template>
-  <header data-titlebar class="flex h-11 shrink-0 items-center gap-1.5 overflow-hidden bg-transparent px-2 [container-type:inline-size] sm:gap-2">
+  <header data-titlebar class="flex h-12 shrink-0 items-center gap-1.5 overflow-hidden bg-transparent px-2.5 [container-type:inline-size] sm:gap-2">
     <!-- Only when the bar is wide enough: narrower, as in a small window, the switcher and toolbar already fill it and the icons would push Settings out of view. -->
     <div v-if="showRecentProjects && recentProjects.length" class="hidden shrink-0 items-center [@container(min-width:46rem)]:flex">
       <Tooltip v-for="projectGroup in [...recentProjects].reverse()" :key="projectGroup.project.id">
         <TooltipTrigger as-child>
-          <Button variant="ghost" size="icon" class="group h-[26px] w-[26px] rounded-tab" :aria-label="`Switch to ${projectGroup.project.name}`" @click="emit('selectProject', projectGroup.project.id)" @pointerenter="prefetchProject(projectGroup.project.id, Tier.Intent)">
-            <ProjectStatusLogo :project="projectGroup.project" :states="agentStates(projectGroup.project.id)" dim />
+          <Button variant="ghost" size="icon" class="group h-8 w-8 rounded-tab" :aria-label="`Switch to ${projectGroup.project.name}`" @click="emit('selectProject', projectGroup.project.id)" @pointerenter="prefetchProject(projectGroup.project.id, Tier.Intent)">
+            <ProjectStatusLogo :project="projectGroup.project" :states="agentStates(projectGroup.project.id)" :size="15" dim />
           </Button>
         </TooltipTrigger>
         <TooltipContent class="bg-popover text-popover-foreground">
@@ -17,19 +17,19 @@
 
     <ResponsiveMenu v-model:open="projectMenuOpen" title="Projects" desktop-class="w-72" @content-pointer-enter="cancelProjectMenuClose" @content-pointer-leave="scheduleProjectMenuClose" @content-keydown="stopProjectMenuHover" @open-auto-focus="keepHoverFocus" @close-auto-focus="keepHoverFocus">
       <template #trigger>
-        <Button variant="ghost" size="sm" class="h-[26px] max-w-[60vw] shrink-0 justify-between gap-1 rounded-tab px-2 py-0.5 text-[13px] sm:max-w-64 sm:gap-2" @pointerenter="openProjectMenuOnHover" @pointerleave="scheduleProjectMenuClose" @pointerdown="stopProjectMenuHover" @keydown="stopProjectMenuHover">
+        <Button variant="ghost" size="sm" class="h-8 max-w-[60vw] shrink-0 justify-between gap-1.5 rounded-tab px-2.5 py-0.5 text-[14px] sm:max-w-64 sm:gap-2" @pointerenter="openProjectMenuOnHover" @pointerleave="scheduleProjectMenuClose" @pointerdown="stopProjectMenuHover" @keydown="stopProjectMenuHover">
           <template v-if="allAgents">
-            <Layers class="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <Layers class="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
             <span class="truncate">All agents</span>
           </template>
           <template v-else>
-            <ProjectStatusLogo v-if="activeProject" :project="activeProject.project" :states="agentStates(activeProject.project.id)" />
+            <ProjectStatusLogo v-if="activeProject" :project="activeProject.project" :states="agentStates(activeProject.project.id)" :size="15" />
             <span class="truncate">{{ activeProject?.project.name ?? 'Projects' }}</span>
             <HostBadge v-if="activeProject?.project.host" :host="activeProject.project.host" />
             <!-- A phone shows one project's list, so another waiting shows here. -->
             <span v-if="phoneLayout && elsewhereWaiting" class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" aria-label="An agent in another project is waiting" />
           </template>
-          <Badge v-if="shownAgentCount > 0" variant="secondary" class="ml-auto h-5 px-1.5 text-[10px] tabular-nums">
+          <Badge v-if="shownAgentCount > 0" variant="secondary" class="ml-auto h-5 px-1.5 text-[11px] tabular-nums">
             {{ shownAgentCount }}
           </Badge>
           <ChevronDown class="h-4 w-4 shrink-0 opacity-70" />
@@ -38,36 +38,36 @@
       <template #desktop>
         <!-- Every shown project's agents together, until you pick a project. -->
         <DropdownMenuItem
-          class="py-1 text-[13px] data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
+          class="py-1.5 text-[14px] data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
           :class="allAgents && 'bg-primary/10'"
           @select="emit('selectAllAgents')"
         >
-          <Layers class="mr-2 h-3.5 w-3.5 text-muted-foreground" />
+          <Layers class="mr-2 h-4 w-4 text-muted-foreground" />
           <span class="min-w-0 flex-1 truncate">All agents</span>
-          <Badge v-if="totalAgentCount > 0" variant="secondary" class="ml-2 h-5 px-1.5 text-[10px] tabular-nums">{{ totalAgentCount }}</Badge>
+          <Badge v-if="totalAgentCount > 0" variant="secondary" class="ml-2 h-5 px-1.5 text-[11px] tabular-nums">{{ totalAgentCount }}</Badge>
         </DropdownMenuItem>
         <DropdownMenuSeparator v-if="projects.length" />
         <DropdownMenuItem
           v-for="projectGroup in switcherProjects"
           :key="projectGroup.project.id"
-          class="py-1 text-[13px] data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
+          class="py-1.5 text-[14px] data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
           :class="projectSnoozed(projectGroup.project) && 'text-muted-foreground opacity-70'"
           @select="emit('selectProject', projectGroup.project.id)"
           @pointerenter="prefetchProject(projectGroup.project.id, Tier.Intent)"
           @focus="prefetchProject(projectGroup.project.id, Tier.Intent)"
         >
-          <ProjectStatusLogo :project="projectGroup.project" :states="agentStates(projectGroup.project.id)" class="mr-2" />
+          <ProjectStatusLogo :project="projectGroup.project" :states="agentStates(projectGroup.project.id)" :size="15" class="mr-2" />
           <span class="min-w-0 flex-1 truncate">{{ projectGroup.project.name }}</span>
           <SnoozeIcon v-if="projectSnoozed(projectGroup.project)" class="ml-1.5 h-3.5 w-3.5 shrink-0" />
           <HostBadge v-if="projectGroup.project.host" :host="projectGroup.project.host" class="ml-1.5" />
           <UnreadDot :urgency="projectUnread(projectGroup.project.id) ? 'normal' : null" />
-          <Badge v-if="openAgentCount(projectGroup, botHidden.sessions) > 0" variant="secondary" class="ml-2 h-5 px-1.5 text-[10px] tabular-nums">
+          <Badge v-if="openAgentCount(projectGroup, botHidden.sessions) > 0" variant="secondary" class="ml-2 h-5 px-1.5 text-[11px] tabular-nums">
             {{ openAgentCount(projectGroup, botHidden.sessions) }}
           </Badge>
         </DropdownMenuItem>
         <DropdownMenuSeparator v-if="projects.length" />
-        <DropdownMenuItem class="py-1 text-[13px] data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground" @select="emit('selectProject', null)">
-          <LayoutGrid class="mr-2 h-3.5 w-3.5" />
+        <DropdownMenuItem class="py-1.5 text-[14px] data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground" @select="emit('selectProject', null)">
+          <LayoutGrid class="mr-2 h-4 w-4" />
           Project selector
         </DropdownMenuItem>
       </template>
@@ -107,23 +107,23 @@
     <div class="ml-auto flex shrink-0 items-center gap-1.5">
       <!-- The app's own pages wait behind ⋯. A phone's Library has them
            instead. -->
-      <Button variant="ghost" size="sm" class="h-7 gap-2 rounded-tab px-2 text-xs text-muted-foreground" aria-label="Search or jump to" @click="emit('commandPalette')">
-        <Search class="h-4 w-4" /><span class="hidden sm:inline">Search or jump to…</span><kbd class="hidden rounded border border-border/70 px-1 text-[10px] sm:inline">Ctrl K</kbd>
+      <Button variant="ghost" size="sm" class="h-8 gap-2 rounded-tab px-2.5 text-[13px] text-muted-foreground" aria-label="Search or jump to" @click="emit('commandPalette')">
+        <Search class="h-4 w-4" /><span class="hidden sm:inline">Search…</span><kbd class="hidden rounded border border-border/70 px-1.5 text-[11px] sm:inline">Ctrl K</kbd>
       </Button>
       <NotificationTray />
       <template v-if="!phoneLayout">
         <DropdownMenu>
           <DropdownMenuTrigger as-child>
-            <Button variant="ghost" size="icon" class="relative h-7 w-7 rounded-tab text-muted-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground" :aria-label="menuLabel" :title="menuLabel">
+            <Button variant="ghost" size="icon" class="relative h-8 w-8 rounded-tab text-muted-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground" :aria-label="menuLabel" :title="menuLabel">
               <Ellipsis class="h-4 w-4" />
-              <span v-if="updateAvailable" class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
+              <span v-if="updateAvailable" class="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" class="w-56">
-            <DropdownMenuItem class="text-[13px]" @select="emit('routines')"><CalendarClock class="mr-2 h-4 w-4 text-muted-foreground" />Scheduled</DropdownMenuItem>
-            <DropdownMenuItem class="text-[13px]" @select="emit('usage')"><Gauge class="mr-2 h-4 w-4 text-muted-foreground" />Usage</DropdownMenuItem>
+            <DropdownMenuItem class="text-[14px]" @select="emit('routines')"><CalendarClock class="mr-2 h-4 w-4 text-muted-foreground" />Scheduled</DropdownMenuItem>
+            <DropdownMenuItem class="text-[14px]" @select="emit('usage')"><Gauge class="mr-2 h-4 w-4 text-muted-foreground" />Usage</DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem class="text-[13px]" @select="emit('settings')">
+            <DropdownMenuItem class="text-[14px]" @select="emit('settings')">
               <Settings class="mr-2 h-4 w-4 text-muted-foreground" /><span class="flex-1">Settings</span>
               <span v-if="updateAvailable" class="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
             </DropdownMenuItem>

@@ -1,49 +1,66 @@
 <template>
   <div v-if="route.name === 'not-found'" class="p-5 text-sm">Page not found. <RouterLink class="underline" to="/projects">View projects</RouterLink></div>
   <div v-else class="flex h-dvh min-h-0 flex-col overflow-hidden bg-[#080808] text-foreground">
-    <header data-titlebar class="flex h-11 shrink-0 items-center gap-3 px-3">
+    <header data-titlebar class="flex h-12 shrink-0 items-center gap-2 px-3">
       <div class="min-w-0 pl-1">
-        <h1 class="text-sm font-semibold">Patterm</h1>
-        <p class="truncate text-[11px] text-muted-foreground">{{ subtitle }}</p>
+        <h1 class="text-[16px] font-semibold tracking-[-0.01em]">Projects</h1>
       </div>
-      <div class="ml-auto flex shrink-0 items-center gap-1.5">
-        <Button variant="ghost" size="sm" class="h-7 gap-2 rounded-tab px-2 text-xs text-muted-foreground" aria-label="Search or jump to" @click="openCommandPalette">
-          <Search class="h-4 w-4" /><span class="hidden sm:inline">Search or jump to…</span><kbd class="hidden rounded border border-border/70 px-1 text-[10px] sm:inline">Ctrl K</kbd>
+      <div class="ml-auto flex shrink-0 items-center gap-1">
+        <Button variant="ghost" size="sm" class="h-9 gap-2 rounded-lg px-2.5 text-[14px] text-muted-foreground hover:bg-white/[0.06] hover:text-foreground" aria-label="Search or jump to" @click="openCommandPalette">
+          <Search class="h-[18px] w-[18px]" /><span class="hidden sm:inline">Search…</span><kbd class="hidden rounded border border-white/10 px-1.5 text-[11px] sm:inline">Ctrl K</kbd>
         </Button>
-        <Button variant="ghost" size="icon" class="h-7 w-7 rounded-tab text-muted-foreground" aria-label="Usage" title="Usage" @click="router.push({ name: 'usage' })">
-          <Gauge class="h-4 w-4" />
+        <NotificationTray trigger-class="h-9 w-9 rounded-lg hover:bg-white/[0.06] hover:text-foreground" />
+        <Button variant="ghost" size="icon" class="hidden h-9 w-9 rounded-lg text-muted-foreground hover:bg-white/[0.06] hover:text-foreground sm:inline-flex" aria-label="Usage" title="Usage" @click="router.push({ name: 'usage' })">
+          <Gauge class="h-[18px] w-[18px]" />
         </Button>
-        <NotificationTray />
-        <Button variant="ghost" size="icon" class="h-7 w-7 rounded-tab text-muted-foreground" aria-label="Settings" title="Settings" @click="router.push({ name: 'settings' })">
-          <Settings class="h-4 w-4" />
+        <Button variant="ghost" size="icon" class="hidden h-9 w-9 rounded-lg text-muted-foreground hover:bg-white/[0.06] hover:text-foreground sm:inline-flex" aria-label="Settings" title="Settings" @click="router.push({ name: 'settings' })">
+          <Settings class="h-[18px] w-[18px]" />
         </Button>
         <NewProjectDialog @created="selectCreatedProject">
           <template #trigger>
-            <Button variant="ghost" size="sm" class="h-7 gap-1.5 rounded-tab px-2 text-xs text-muted-foreground" aria-label="Add project" title="Add project">
-              <Plus class="h-4 w-4" /><span class="hidden sm:inline">Add project</span>
+            <Button variant="ghost" size="sm" class="ml-1 hidden h-9 gap-1.5 rounded-lg bg-white/[0.09] px-3 text-[13.5px] font-medium text-foreground hover:bg-white/[0.14] sm:inline-flex" aria-label="Add project" title="Add project">
+              <Plus class="h-4 w-4" /><span>Add project</span>
             </Button>
           </template>
         </NewProjectDialog>
       </div>
     </header>
 
-    <main class="mx-1.5 mb-1.5 flex min-h-0 flex-1 overflow-hidden rounded-xl border-t border-white/5 bg-background">
+    <main class="mx-1.5 mb-1.5 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border-t border-white/5 bg-background">
       <div class="min-w-0 flex-1 overflow-y-auto">
-        <div class="mx-auto w-full max-w-[46rem] px-4 pb-10 pt-8 sm:px-6 sm:pt-10">
-          <div class="-mx-2 mb-5"><BotList :phone="mobile" /></div>
-          <ProjectOverviewList :overviews="overviews" :now="now" :loaded="loaded" @open-project="pickProject" @open-session="openSession" />
+        <div class="mx-auto w-full px-2 pb-4 pt-2 sm:max-w-[48rem] sm:px-6 sm:pb-10 sm:pt-8">
+          <div class="mb-2"><BotList :phone="mobile" /></div>
+          <ProjectOverviewList :overviews="overviews" :now="now" :loaded="loaded" :mobile="mobile" @open-project="pickProject" />
         </div>
+      </div>
+
+      <!-- Mobile thumb bar, matching PhoneHome's left links + circular primary + button. -->
+      <div v-if="mobile" class="flex shrink-0 items-center gap-1 border-t border-white/5 px-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] pt-2">
+        <Button v-if="firstProjectId" variant="ghost" class="h-11 gap-2 rounded-lg px-3 text-[14.5px] text-muted-foreground hover:bg-white/[0.06] hover:text-foreground" @click="openAllAgents">
+          <Layers class="h-4 w-4" />All agents
+        </Button>
+        <Button variant="ghost" class="h-11 gap-2 rounded-lg px-3 text-[14.5px] text-muted-foreground hover:bg-white/[0.06] hover:text-foreground" @click="router.push({ name: 'settings' })">
+          <Settings class="h-4 w-4" />Settings
+        </Button>
+        <span class="flex-1" />
+        <NewProjectDialog @created="selectCreatedProject">
+          <template #trigger>
+            <Button size="icon" class="h-11 w-11 rounded-full bg-primary text-primary-foreground shadow-sm hover:bg-primary/90" aria-label="Add project" title="Add project">
+              <Plus class="h-5 w-5" />
+            </Button>
+          </template>
+        </NewProjectDialog>
       </div>
     </main>
   </div>
 </template>
 
 <script setup lang="ts">
-import { useBots } from '../Composables/useBots';
 import { computed, inject, onBeforeUnmount, ref } from 'vue';
 import { useMediaQuery } from '@vueuse/core';
 import { RouterLink } from 'vue-router';
-import { Gauge, Plus, Search, Settings } from 'lucide-vue-next';
+import { Gauge, Layers, Plus, Search, Settings } from 'lucide-vue-next';
+import { useBots } from '../Composables/useBots';
 import NewProjectDialog from '../Components/NewProjectDialog.vue';
 import NotificationTray from '../Components/NotificationTray.vue';
 import BotList from '../Components/BotList.vue';
@@ -51,12 +68,12 @@ import ProjectOverviewList from '../Components/ProjectOverviewList.vue';
 import { Button } from '../Components/ui/button';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { useWorkbenchNavigation } from '../Composables/useWorkbenchNavigation';
+import { allAgents, listedProjects } from '../lib/allAgents';
 import { openCommandPaletteKey } from '../lib/commandPalette';
 import { projectOverviews } from '../lib/projectOverview';
-import type { SessionRecord } from '../types';
 
-const { projects, loaded, sidecarAvailable, refresh } = useWorkbench();
-const { route, router, pickProject, selectTerminal } = useWorkbenchNavigation();
+const { projects, loaded, refresh } = useWorkbench();
+const { route, router, pickProject, selectProject } = useWorkbenchNavigation();
 const openCommandPalette = inject(openCommandPaletteKey, () => {});
 // Bots list as in the sidebar, which on phones is the agent list.
 const mobile = useMediaQuery('(max-width: 639px)');
@@ -69,21 +86,12 @@ onBeforeUnmount(() => clearInterval(clock));
 // A bot's own sessions never count as the project's agents; its helpers do.
 const { uncounted: botHidden } = useBots();
 const overviews = computed(() => projectOverviews(projects.value, botHidden.value.sessions));
-const subtitle = computed(() => {
-  if (!loaded.value) return 'Loading…';
-  const agents = overviews.value.reduce((total, overview) => total + overview.agents.length, 0);
-  const waiting = overviews.value.reduce((total, overview) => total + overview.waiting, 0);
-  return [
-    `${projects.value.length} ${projects.value.length === 1 ? 'project' : 'projects'}`,
-    agents ? `${agents} ${agents === 1 ? 'agent' : 'agents'} running` : null,
-    waiting ? `${waiting} ${waiting === 1 ? 'needs' : 'need'} you` : null,
-    sidecarAvailable.value ? null : 'terminal core not started'
-  ].filter(Boolean).join(' · ');
-});
+const firstProjectId = computed(() => overviews.value[0]?.project.id ?? listedProjects(projects.value)[0]?.project.id ?? null);
 
-function openSession(projectId: string, session: SessionRecord): void {
-  if (session.interfaceMode === 'integrated' || !session.ptyProcessId) void router.push({ name: 'agent', params: { projectId, sessionId: session.id } });
-  else void selectTerminal(projectId, session.ptyProcessId);
+function openAllAgents(): void {
+  if (!firstProjectId.value) return;
+  allAgents.active = true;
+  void selectProject(firstProjectId.value);
 }
 
 async function selectCreatedProject(projectId: string): Promise<void> {

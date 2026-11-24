@@ -17,12 +17,12 @@
   </DrawerRoot>
   <Popover v-else v-model:open="open">
     <PopoverTrigger as-child>
-      <Button variant="ghost" size="icon" class="relative h-7 w-7 rounded-tab text-muted-foreground" :aria-label="label" :title="label">
-        <Bell class="h-4 w-4" />
-        <span v-if="count" class="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-1 text-[9px] font-semibold tabular-nums text-background" :class="badgeTone">{{ badge }}</span>
+      <Button variant="ghost" size="icon" :class="cn('relative h-8 w-8 rounded-tab text-muted-foreground', triggerClass)" :aria-label="label" :title="label">
+        <Bell class="h-[18px] w-[18px]" />
+        <span v-if="count" class="absolute right-1 top-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-1 text-[9px] font-semibold tabular-nums text-background" :class="badgeTone">{{ badge }}</span>
       </Button>
     </PopoverTrigger>
-    <PopoverContent align="end" class="flex h-[min(560px,calc(100dvh-4rem))] w-[380px] flex-col p-0 shadow-lg">
+    <PopoverContent :side="side ?? 'bottom'" :align="align ?? 'end'" class="flex h-[min(560px,calc(100dvh-4rem))] w-[380px] flex-col p-0 shadow-lg">
       <NotificationHistory show-title class="min-h-0 flex-1" @navigate="open = false" />
     </PopoverContent>
   </Popover>
@@ -32,11 +32,18 @@
 import { computed, ref, watch } from 'vue';
 import { DrawerContent, DrawerHandle, DrawerOverlay, DrawerPortal, DrawerRoot, DrawerTitle, DrawerTrigger } from 'vaul-vue';
 import { Bell } from 'lucide-vue-next';
+import { cn } from '@/lib/utils';
 import { highestUnread, setNotificationTrayOpen, totalUnread } from '../Composables/useNotifications';
 import NotificationHistory from './NotificationHistory.vue';
 import { phoneLayout } from '../lib/phoneLayout';
 import { Button } from './ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
+
+withDefaults(defineProps<{
+  side?: 'top' | 'right' | 'bottom' | 'left';
+  align?: 'start' | 'center' | 'end';
+  triggerClass?: string;
+}>(), { side: 'bottom', align: 'end', triggerClass: '' });
 
 const open = ref(false);
 const mobile = phoneLayout;

@@ -15,7 +15,7 @@
           :aria-expanded="open"
           :aria-label="`${folder.name}, folder, ${tabs.length} ${tabs.length === 1 ? 'tab' : 'tabs'}`"
           :class="cn(
-            'relative isolate flex h-7 w-full min-w-0 select-none items-center gap-2 rounded-tab pl-2 text-left text-[13px] transition-[color,background-color,box-shadow] hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
+            'relative isolate flex h-[34px] w-full min-w-0 select-none items-center gap-2.5 rounded-tab pl-2 text-left text-[14px] transition-[color,background-color,box-shadow] hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
             holdsSelection ? 'bg-primary/10 text-foreground' : 'text-foreground/85',
             dropTarget && 'bg-primary/15 ring-1 ring-inset ring-primary/60'
           )"
@@ -23,8 +23,8 @@
           @click="emit('toggle')"
         >
           <span class="flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground">
-            <FolderOpen v-if="open" class="h-[15px] w-[15px]" :stroke-width="1.75" aria-hidden="true" />
-            <Folder v-else class="h-[15px] w-[15px]" :stroke-width="1.75" aria-hidden="true" />
+            <FolderOpen v-if="open" class="h-4 w-4" :stroke-width="1.75" aria-hidden="true" />
+            <Folder v-else class="h-4 w-4" :stroke-width="1.75" aria-hidden="true" />
           </span>
           <span class="min-w-0 truncate">{{ folder.name }}</span>
         </button>
@@ -42,7 +42,7 @@
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
-    <span class="pointer-events-none absolute right-2 top-1 flex h-5 items-center text-muted-foreground">
+    <span class="pointer-events-none absolute right-2 top-[7px] flex h-5 items-center text-muted-foreground">
       <FolderDots v-if="!open && tabs.length" :tabs="tabs" />
       <MemberCount v-else-if="tabs.length" :count="tabs.length" open />
     </span>

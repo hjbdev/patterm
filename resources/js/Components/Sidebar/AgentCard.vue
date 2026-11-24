@@ -6,12 +6,12 @@
   <div ref="scroller" class="overflow-y-auto overflow-x-hidden [scrollbar-width:thin]" :style="fade" @scroll.passive="measure">
     <div ref="content" class="px-3 pb-3 pt-2.5">
       <div class="flex items-start gap-2.5">
-        <span class="flex h-5 w-4 shrink-0 items-center justify-center text-foreground/80"><AgentIcon :harness="digest.harness" class="h-3.5 w-3.5" /></span>
-        <h2 class="min-w-0 flex-1 text-[13px] font-medium leading-5 text-foreground [overflow-wrap:anywhere]">{{ digest.name }}</h2>
+        <span class="flex h-5 w-4 shrink-0 items-center justify-center text-foreground/80"><AgentIcon :harness="digest.harness" class="h-4 w-4" /></span>
+        <h2 class="min-w-0 flex-1 text-[14px] font-medium leading-5 text-foreground [overflow-wrap:anywhere]">{{ digest.name }}</h2>
       </div>
       <!-- Each part leads with its separator, and the row is pulled left under a
            clip, so a part that wraps to a new line starts clean. -->
-      <p class="ml-[26px] mt-0.5 overflow-hidden text-[11px] leading-4 text-muted-foreground">
+      <p class="ml-[26px] mt-0.5 overflow-hidden text-[12px] leading-4 text-muted-foreground">
         <span class="-ml-3 flex flex-wrap">
           <span v-for="(part, index) in meta" :key="index" class="whitespace-nowrap before:inline-block before:w-3 before:text-center before:content-['·'_/_'']">{{ part }}</span>
         </span>
@@ -24,46 +24,46 @@
       <div v-if="digest.ask" class="mt-3 flex items-start gap-2.5">
         <span class="flex h-5 w-4 shrink-0 items-center justify-center">
           <UnreadDot v-if="digest.ask.kind === 'message'" :urgency="digest.unread ?? 'normal'" />
-          <StatusIcon v-else :spec="askMark" class="h-3.5 w-3.5" aria-hidden="true" />
+          <StatusIcon v-else :spec="askMark" class="h-4 w-4" aria-hidden="true" />
         </span>
         <div class="min-w-0 flex-1">
-          <p class="text-[13px] leading-5 text-foreground">{{ askHeadline }}</p>
-          <p v-if="digest.ask.kind === 'close'" class="mt-0.5 text-[13px] leading-relaxed text-foreground/85">{{ digest.ask.text }}</p>
-          <p v-if="digest.ask.from" class="mt-0.5 text-xs leading-5 text-muted-foreground">From {{ digest.ask.from }}</p>
+          <p class="text-[14px] leading-5 text-foreground">{{ askHeadline }}</p>
+          <p v-if="digest.ask.kind === 'close'" class="mt-0.5 text-[14px] leading-relaxed text-foreground/85">{{ digest.ask.text }}</p>
+          <p v-if="digest.ask.from" class="mt-0.5 text-[13px] leading-5 text-muted-foreground">From {{ digest.ask.from }}</p>
         </div>
       </div>
-      <p v-else class="mt-3 text-[13px] leading-5" :class="digest.state === 'idle' ? 'text-muted-foreground' : 'text-foreground/75'">
+      <p v-else class="mt-3 text-[14px] leading-5" :class="digest.state === 'idle' ? 'text-muted-foreground' : 'text-foreground/75'">
         <ShimmerText v-if="digest.activity.self === 'working'" :text="digest.status" />
         <template v-else>{{ digest.status }}</template>
       </p>
 
       <!-- What the thread is for, then where it stands. -->
-      <div v-if="digest.summary" class="mt-2.5 space-y-1.5 text-[13px] leading-relaxed">
+      <div v-if="digest.summary" class="mt-2.5 space-y-1.5 text-[13.5px] leading-relaxed">
         <p class="text-muted-foreground">{{ digest.summary.goal }}</p>
         <p v-if="digest.summary.now !== digest.summary.goal" class="text-foreground/85">{{ digest.summary.now }}</p>
       </div>
-      <p v-else class="mt-2.5 text-[13px] leading-relaxed text-muted-foreground/60">No summary yet</p>
+      <p v-else class="mt-2.5 text-[13.5px] leading-relaxed text-muted-foreground/60">No summary yet</p>
 
       <div v-if="digest.members.length" class="-mx-1.5 mt-4">
-        <p class="px-1.5 pb-1 text-[11px] leading-4 text-muted-foreground">{{ membersLabel(digest.counts, ' · ') }}</p>
+        <p class="px-1.5 pb-1 text-[12px] leading-4 text-muted-foreground">{{ membersLabel(digest.counts, ' · ') }}</p>
         <AgentCardMember v-for="member in digest.members" :key="member.key" :member="member" :root-id="digest.family.rootId" :parent-host="digest.session.host" />
       </div>
 
       <!-- Where its work lives, as quiet label and value rows. -->
-      <dl v-if="hasFacts" class="mt-4 grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-4 gap-y-1.5 text-xs leading-[18px]">
+      <dl v-if="hasFacts" class="mt-4 grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-4 gap-y-1.5 text-[13px] leading-5">
         <template v-if="digest.branch">
-          <dt class="text-[11px] text-muted-foreground">Branch</dt>
+          <dt class="text-[12px] text-muted-foreground">Branch</dt>
           <dd class="flex min-w-0 items-baseline gap-2">
             <span class="min-w-0 truncate text-foreground/80" :title="digest.branch">{{ digest.branch }}</span>
-            <DiffStat v-if="digest.diff" :additions="digest.diff.additions" :deletions="digest.diff.deletions" class="gap-1 font-sans text-[11px] [&>span]:text-muted-foreground" />
+            <DiffStat v-if="digest.diff" :additions="digest.diff.additions" :deletions="digest.diff.deletions" class="gap-1 font-sans text-[12px] [&>span]:text-muted-foreground" />
           </dd>
         </template>
         <template v-if="digest.todo">
-          <dt class="text-[11px] text-muted-foreground">Todo</dt>
+          <dt class="text-[12px] text-muted-foreground">Todo</dt>
           <dd class="min-w-0 text-foreground/80">{{ digest.todo }}</dd>
         </template>
         <template v-if="digest.links.length">
-          <dt class="text-[11px] text-muted-foreground">{{ digest.links.length === 1 ? 'Link' : 'Links' }}</dt>
+          <dt class="text-[12px] text-muted-foreground">{{ digest.links.length === 1 ? 'Link' : 'Links' }}</dt>
           <dd class="min-w-0 space-y-0.5">
             <a
               v-for="link in digest.links"
@@ -80,7 +80,7 @@
           </dd>
         </template>
         <template v-if="timers.length">
-          <dt class="text-[11px] text-muted-foreground">{{ timers.length === 1 ? 'Timer' : 'Timers' }}</dt>
+          <dt class="text-[12px] text-muted-foreground">{{ timers.length === 1 ? 'Timer' : 'Timers' }}</dt>
           <dd class="min-w-0 space-y-0.5">
             <p v-for="timer in timers" :key="timer.id" class="text-foreground/80">
               {{ timer.label }}<span v-if="timer.when" class="whitespace-nowrap tabular-nums text-muted-foreground"> · {{ timer.when }}</span>
@@ -88,7 +88,7 @@
           </dd>
         </template>
         <template v-if="digest.session.host">
-          <dt class="text-[11px] text-muted-foreground">Host</dt>
+          <dt class="text-[12px] text-muted-foreground">Host</dt>
           <dd class="min-w-0 text-foreground/80">{{ digest.session.host }}</dd>
         </template>
       </dl>

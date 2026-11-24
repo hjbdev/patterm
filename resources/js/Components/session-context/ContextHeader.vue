@@ -9,13 +9,13 @@
       <div class="flex items-center gap-1" :class="phoneLayout ? 'h-12 pl-1 pr-1.5' : ''">
         <slot name="leading" />
         <SidebarItemMenu :session="session" :tab="menuTab">
-          <h1 class="min-w-0 flex-1 select-none truncate font-medium [-webkit-touch-callout:none]" :class="phoneLayout ? 'text-[15px]' : 'text-[14.5px]'">
+          <h1 class="min-w-0 flex-1 select-none truncate font-medium [-webkit-touch-callout:none]" :class="phoneLayout ? 'text-[16px]' : 'text-[15.5px]'">
             {{ agentLabel(session) }}<HostBadge v-if="session.host" :host="session.host" class="ml-1.5" /><StatusLabelPill v-if="session.statusLabel" :label="session.statusLabel" class="ml-2 align-[1px]" />
           </h1>
         </SidebarItemMenu>
         <slot name="trailing" />
       </div>
-      <div v-if="summary && goal && !folded && !phoneLayout" class="mt-1 text-[12.5px] leading-5 text-muted-foreground">
+      <div v-if="summary && goal && !folded && !phoneLayout" class="mt-1 text-[13.5px] leading-5 text-muted-foreground">
         <button type="button" class="group/goal flex max-w-full items-start gap-1 rounded-sm text-left transition-colors hover:text-foreground/85 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" :aria-expanded="goalOpen" @click="goalOpen = !goalOpen">
           <span v-if="goalOpen" class="min-w-0 whitespace-pre-wrap break-words text-foreground/85">{{ summary.text }}</span>
           <span v-else class="min-w-0 truncate">{{ goal }}</span>

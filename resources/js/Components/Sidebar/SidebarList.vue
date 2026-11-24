@@ -1,30 +1,48 @@
 <template>
   <div class="flex h-full min-h-0 flex-col">
-    <!-- Bots come first: each is one persistent conversation. -->
-    <BotList :phone="placement === 'phone'" :project-id="sidebar.projectId.value" :all="sidebar.allAgents.value" class="shrink-0 px-1 pt-1" />
-    <!-- On a phone the list is the home screen, which gives these their own places. -->
-    <div v-if="placement !== 'phone'" class="flex h-8 shrink-0 items-center gap-0.5 pl-1.5 pr-1">
-      <span class="flex-1"><SidebarViewOptions :label="sidebar.allAgents.value ? 'All agents' : 'Agents'" /></span>
-      <LaunchAgentMenu :project-id="sidebar.projectId.value" :choose-project="sidebar.allAgents.value" />
+    <!-- Desktop header: project/All-agents title (opens view options), one-click
+         "Needs you" filter, and + launch button. On a phone the top bar and
+         footer own these instead. -->
+    <div v-if="placement !== 'phone'" class="flex h-11 shrink-0 items-center gap-1 px-1.5">
+      <div class="min-w-0 flex-1">
+        <SidebarViewOptions
+          :label="sidebar.allAgents.value ? 'All agents' : sidebar.projectName.value"
+          trigger-class="max-w-full h-8 px-2 text-[15px] font-semibold text-foreground hover:bg-white/[0.06]"
+        />
+      </div>
+      <button
+        type="button"
+        class="flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-[12.5px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        :class="onlyWaiting ? 'bg-amber-400/15 text-amber-300' : 'text-muted-foreground hover:bg-white/[0.06] hover:text-foreground'"
+        :aria-pressed="onlyWaiting"
+        title="Show only agents needing you"
+        @click="onlyWaiting = !onlyWaiting"
+      >
+        <span>Needs you</span>
+        <span v-if="waitingCount > 0" class="tabular-nums text-[12px]" :class="onlyWaiting ? 'text-amber-200' : 'text-amber-400'">{{ waitingCount }}</span>
+      </button>
+      <LaunchAgentMenu :project-id="sidebar.projectId.value" :choose-project="sidebar.allAgents.value" trigger-class="h-8 w-8 rounded-lg hover:bg-white/[0.06]" />
     </div>
-    <div ref="list" class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-1 pb-2 [scrollbar-width:thin]" @keydown="onKeydown">
+    <!-- Bots come first: each is one persistent conversation. -->
+    <BotList :phone="placement === 'phone'" :compact="placement !== 'phone'" :project-id="sidebar.projectId.value" :all="sidebar.allAgents.value" class="shrink-0 px-0.5 pt-0.5" />
+    <div ref="list" class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-0.5 pb-2 [scrollbar-width:thin]" @keydown="onKeydown">
       <HarnessLaunchTabs v-for="projectId in sidebar.shownProjectIds.value" :key="projectId" :project-id="projectId" vertical />
-      <p v-if="!sidebar.tabs.value.length && !pendingLaunches.length" class="px-2 py-1 text-[13px] text-muted-foreground">No agents running</p>
+      <p v-if="!entries.length && !pendingLaunches.length" class="px-2.5 py-2 text-[14px] text-muted-foreground">
+        {{ onlyWaiting ? 'Nothing needs you right now' : 'No agents running' }}
+      </p>
       <!-- One list, headings included, so a row that changes group keeps its
            element and slides there instead of leaving one group and entering another. -->
       <TransitionGroup tag="div" :css="false" @enter="expandIn" @leave="collapseOut">
         <template v-for="entry in entries" :key="entry.key">
           <div v-if="entry.kind === 'divider'" data-sidebar-slide class="mx-2 my-2 border-t border-white/[0.06]" />
-          <!-- Grouped by project, a hairline rule names each project. -->
-          <!-- Its + starts an agent in that project. -->
-          <div v-else-if="entry.kind === 'rule'" data-sidebar-slide class="flex h-6 items-center gap-1.5 pl-2 pr-0.5 text-[11px] text-muted-foreground" :class="entry.first ? '' : 'mt-2'">
-            <ProjectLogo :project="entry.project" :size="12" />
-            <span class="max-w-[60%] truncate">{{ entry.label }}</span>
+          <!-- Grouped by project, a calm heading names each project with its count and hover +. -->
+          <div v-else-if="entry.kind === 'rule'" data-sidebar-slide class="group/rule flex h-7 items-center gap-2 pl-2 pr-0.5 text-[12.5px] font-medium text-muted-foreground" :class="entry.first ? '' : 'mt-3'">
+            <span class="min-w-0 flex-1 truncate">{{ entry.label }}</span>
             <HostBadge v-if="entry.project.host" :host="entry.project.host" />
-            <span class="h-px flex-1 bg-white/[0.06]" />
-            <LaunchAgentMenu :project-id="entry.project.id" trigger-class="h-5 w-5 [&_svg]:h-3.5 [&_svg]:w-3.5" />
+            <span class="text-[12px] tabular-nums opacity-60 group-hover/rule:hidden">{{ entry.count }}</span>
+            <LaunchAgentMenu :project-id="entry.project.id" trigger-class="hidden h-6 w-6 group-hover/rule:inline-flex focus-visible:inline-flex [&_svg]:h-3.5 [&_svg]:w-3.5" />
           </div>
-          <div v-else-if="entry.kind === 'heading'" data-sidebar-slide class="flex h-7 items-center gap-2 px-2 text-xs text-muted-foreground" :class="entry.first ? '' : 'mt-3'">
+          <div v-else-if="entry.kind === 'heading'" data-sidebar-slide class="flex h-7 items-center gap-2 px-2 text-[12.5px] font-medium text-muted-foreground" :class="entry.first ? '' : 'mt-3'">
             <span class="flex-1">{{ entry.label }}</span>
             <span class="tabular-nums">{{ entry.count }}</span>
           </div>
@@ -78,13 +96,13 @@
       <template v-if="processTabs.length">
         <button
           type="button"
-          class="mt-2 flex h-6 w-full items-center gap-1.5 rounded-tab px-2 text-left text-[11px] transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          class="mt-2.5 flex h-7 w-full items-center gap-1.5 rounded-tab px-2 text-left text-[12.5px] font-medium transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
           :class="!processesOpen && processTabs.some((tab) => sidebar.processActive(tab.process)) ? 'bg-primary/10 text-foreground' : 'text-muted-foreground'"
           :aria-expanded="processesOpen"
           @click="expansion.state.value.processes = !processesOpen"
         >
           <!-- Ruled like a project's heading in All agents. -->
-          <ChevronRight class="h-3 w-3 shrink-0 transition-transform duration-200 motion-reduce:transition-none" :class="processesOpen && 'rotate-90'" />
+          <ChevronRight class="h-3.5 w-3.5 shrink-0 transition-transform duration-200 motion-reduce:transition-none" :class="processesOpen && 'rotate-90'" />
           <span>Processes</span>
           <span class="h-px flex-1 bg-white/[0.06]" />
           <span class="tabular-nums">{{ processTabs.length }}</span>
@@ -111,7 +129,7 @@
     </div>
     <slot v-if="placement === 'phone'" name="footer" />
     <!-- The project's pages and the canvas wait in the Library menu. -->
-    <div v-else class="flex shrink-0 items-center gap-0.5 px-1 pt-1.5">
+    <div v-else class="flex shrink-0 items-center gap-0.5 border-t border-white/[0.06] px-1 pt-2">
       <LibraryMenu v-if="!sidebar.allAgents.value" />
       <span class="flex-1" />
       <SidebarCollapseButton v-if="placement === 'docked'" />
@@ -151,7 +169,6 @@ import { tabSnoozed } from '../../lib/snooze';
 import { projectSnoozed } from '../../lib/projectSnooze';
 import SnoozedProjectHeader from '../SnoozedProjectHeader.vue';
 import HostBadge from '../HostBadge.vue';
-import ProjectLogo from '../ProjectLogo.vue';
 import type { ProjectSummary } from '../../types';
 
 // The sidebar's list. Subtitles show on every row or none, and which families
@@ -161,6 +178,8 @@ withDefaults(defineProps<{ placement?: 'docked' | 'drawer' | 'phone' }>(), { pla
 const sidebar = useSidebar();
 const pendingLaunches = useHarnessLaunchesFor(() => sidebar.shownProjectIds.value);
 const expansion = useSidebarExpansion(() => sidebar.expansionScope.value);
+const onlyWaiting = ref(false);
+const waitingCount = computed(() => sidebar.tabs.value.filter((tab) => !tabSnoozed(tab) && tab.kind === 'agent' && Boolean(sidebar.familyAttention(tab.family))).length);
 
 // Grouped by status, a family moves once its new status has lasted a moment,
 // so output blips don't bounce it between groups. Needing you moves at once.
@@ -198,7 +217,9 @@ function entryStatus(entry: LayoutEntry): SidebarStatus {
   return entry.tabs.map(of).reduce<SidebarStatus>((worst, next) => STATUS_RANK[next] > STATUS_RANK[worst] ? next : worst, 'idle');
 }
 const groups = computed<Group[]>(() => {
-  const listed = sidebar.tabs.value.filter((tab) => !tabSnoozed(tab) && (tab.kind === 'agent' || tab.folder));
+  const listed = sidebar.tabs.value.filter((tab) => !tabSnoozed(tab)
+    && (tab.kind === 'agent' || tab.folder)
+    && (!onlyWaiting.value || (tab.kind === 'agent' && Boolean(sidebar.familyAttention(tab.family)))));
   const placed = layoutEntries(listed, sidebar.layout.value);
   const open = sorted.value ? sortEntriesByActivity(placed) : placed;
   const item = (entry: LayoutEntry): Item => entry.kind === 'tab' ? entry.tab : entry;
@@ -207,14 +228,14 @@ const groups = computed<Group[]>(() => {
     : expansion.view.value.groupByStatus
     ? SIDEBAR_STATUSES.map(({ id, label }) => ({ id, label, items: open.filter((entry) => entryStatus(entry) === id).map(item), sortable: !sorted.value }))
     : [{ id: 'open', label: null, items: open.map(item), sortable: !sorted.value }];
-  const snoozed = { id: 'snoozed', label: 'Snoozed', items: sidebar.tabs.value.filter(tabSnoozed), sortable: false };
+  const snoozed = { id: 'snoozed', label: 'Snoozed', items: onlyWaiting.value ? [] : sidebar.tabs.value.filter(tabSnoozed), sortable: false };
   return [...rest, snoozed].filter((group) => group.items.length);
 });
 
 type Entry =
   | { kind: 'divider'; key: string }
   | { kind: 'heading'; key: string; label: string; count: number; first: boolean }
-  | { kind: 'rule'; key: string; label: string; first: boolean; project: ProjectSummary }
+  | { kind: 'rule'; key: string; label: string; count: number; first: boolean; project: ProjectSummary }
   | { kind: 'folder'; key: string; folder: TabFolder; tabs: StripTab[]; open: boolean; group: string; gap: string | false }
   | { kind: 'tab'; key: string; tab: StripTab; group: string; gap: string | false; member: boolean; last: boolean };
 // Open, a folder lists its agents under it. Folded, it still shows any that
@@ -226,7 +247,7 @@ function folderMembers(item: FolderItem, open: boolean): StripTab[] {
     : sidebar.processActive(tab.process));
 }
 const entries = computed<Entry[]>(() => groups.value.flatMap((group, groupIndex): Entry[] => [
-  ...(group.project ? [{ kind: 'rule' as const, key: `heading:${group.id}`, label: group.project.name, first: groupIndex === 0, project: group.project }]
+  ...(group.project ? [{ kind: 'rule' as const, key: `heading:${group.id}`, label: group.project.name, count: group.items.length, first: groupIndex === 0, project: group.project }]
     : group.label ? [{ kind: 'heading' as const, key: `heading:${group.id}`, label: group.label, count: group.items.length, first: groupIndex === 0 }]
       : groupIndex > 0 ? [{ kind: 'divider' as const, key: `divider:${group.id}` }] : []),
   ...group.items.flatMap((item, index): Entry[] => {
