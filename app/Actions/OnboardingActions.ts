@@ -49,8 +49,9 @@ export interface OnboardingDeps {
   settings: Pick<SettingsService, 'onboardingSettings' | 'saveOnboardingSettings'>;
   providers: HarnessProvider[];
   signIn: Pick<HarnessSignInService, 'check'>;
-  // Re-scans PATH for harness CLIs.
-  discover: () => Promise<unknown>;
+  // Re-scans PATH for harness CLIs, returning the environment it used so the
+  // sign-in checks run the same way.
+  discover: () => Promise<NodeJS.ProcessEnv | undefined>;
 }
 
 // Works out the Get started checklist from what is already true: an agent
@@ -66,8 +67,8 @@ export class GetOnboardingStatusAction {
       return { show: false, dismissed: saved.dismissed, completed: saved.completed, steps: { install: true, signIn: true, project: true, start: true }, harnesses: [] };
     }
 
-    if (refresh) await this.deps.discover();
-    const harnesses = await this.harnesses();
+    const env = refresh ? await this.deps.discover() : undefined;
+    const harnesses = await this.harnesses(env);
     const installed = harnesses.filter((harness) => harness.installed);
     const steps: OnboardingSteps = {
       install: installed.length > 0,
@@ -81,7 +82,7 @@ export class GetOnboardingStatusAction {
     return { show: !completed, dismissed: false, completed, steps, harnesses };
   }
 
-  private async harnesses(): Promise<OnboardingHarness[]> {
+  private async harnesses(env: NodeJS.ProcessEnv | undefined): Promise<OnboardingHarness[]> {
     const rows = this.deps.database.connection
       .prepare('select harness, executable_path, version, status from harness_installations')
       .all() as unknown as InstallationRow[];
@@ -93,7 +94,7 @@ export class GetOnboardingStatusAction {
         name: provider.displayName,
         installed,
         version: installed ? row?.version ?? null : null,
-        signIn: installed && row ? await this.deps.signIn.check(provider.id, row.executable_path) : null,
+        signIn: installed && row ? await this.deps.signIn.check(provider.id, row.executable_path, env) : null,
         signInOptional: provider.signInCheck?.optional === true,
         signInCommand: provider.signInCommand ?? null,
         installUrl: provider.installUrl ?? null
@@ -106,18 +107,15 @@ export class GetOnboardingStatusAction {
     return Boolean(this.deps.database.connection.prepare(`select 1 from projects where kind = 'workspace' limit 1`).get());
   }
 
-  // An agent the owner started, not a bot, the assistant or a routine, and
-  // not one that failed to launch.
+  // An agent the owner started, not a bot, the assistant or a routine.
   private hasStartedAgent(): boolean {
     return Boolean(this.deps.database.connection.prepare(
       `select 1 from sessions
        join projects on projects.id = sessions.project_id
-       left join processes on processes.id = sessions.process_id
        where projects.kind in ${USER_PROJECT_KINDS_SQL}
          and sessions.session_role not in ('assistant', 'bot', 'routine')
          and sessions.bot_id is null
          and sessions.id not in (select session_id from routine_runs where session_id is not null)
-         and (processes.status is null or processes.status != 'failed')
        limit 1`
     ).get());
   }

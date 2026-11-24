@@ -27,15 +27,16 @@ export class HarnessSignInService {
     this.signedInTtlMs = options.signedInTtlMs ?? 5 * 60_000;
   }
 
-  // Null when the harness has no check.
-  async check(harness: HarnessId, executablePath: string): Promise<HarnessSignIn | null> {
+  // Null when the harness has no check. env replaces the one given at
+  // construction, such as a shell environment read again after an install.
+  async check(harness: HarnessId, executablePath: string, env: NodeJS.ProcessEnv = this.env): Promise<HarnessSignIn | null> {
     const check = this.providers.find((provider) => provider.id === harness)?.signInCheck;
     if (!check) return null;
     const cached = this.cache.get(harness);
     if (cached?.state === 'signed_in' && cached.path === executablePath && Date.now() - cached.at < this.signedInTtlMs) return cached.state;
     const pending = this.running.get(harness);
     if (pending) return pending;
-    const run = this.run(executablePath, check.args)
+    const run = this.run(executablePath, check.args, env)
       .then((result) => result ? check.parse(result) : 'unknown' as const)
       .then((state) => {
         this.cache.set(harness, { state, at: Date.now(), path: executablePath });
@@ -46,15 +47,15 @@ export class HarnessSignInService {
     return run;
   }
 
-  private run(executablePath: string, args: string[]): Promise<SignInCheckResult | null> {
-    const command = resolveCommand(executablePath, args, this.env);
+  private run(executablePath: string, args: string[], env: NodeJS.ProcessEnv): Promise<SignInCheckResult | null> {
+    const command = resolveCommand(executablePath, args, env);
     return new Promise((resolve) => {
       let stdout = '';
       let stderr = '';
       let child: ReturnType<typeof spawn>;
       try {
         child = spawn(command.command, command.args, {
-          env: this.env,
+          env,
           stdio: ['ignore', 'pipe', 'pipe'],
           windowsHide: true,
           windowsVerbatimArguments: command.verbatim

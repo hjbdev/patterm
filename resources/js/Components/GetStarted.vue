@@ -67,6 +67,7 @@
                   :aria-label="`Install ${harness.name} (opens its website)`"
                 >Install <ArrowUpRight class="h-3 w-3" /></a>
               </li>
+              <li v-if="status.harnesses.some((harness) => !harness.installed)" class="pt-1">Not showing up? Restart Patterm.</li>
             </ul>
 
             <template v-else-if="step.id === 'signIn'">
