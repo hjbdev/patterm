@@ -29,6 +29,7 @@
     <main class="mx-1.5 mb-1.5 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border-t border-white/5 bg-background">
       <div class="min-w-0 flex-1 overflow-y-auto">
         <div class="mx-auto w-full px-2 pb-4 pt-2 sm:max-w-[48rem] sm:px-6 sm:pb-10 sm:pt-8">
+          <GetStarted placement="page" class="mb-4" />
           <div class="mb-2"><BotList :phone="mobile" /></div>
           <ProjectOverviewList :overviews="overviews" :now="now" :loaded="loaded" :mobile="mobile" @open-project="pickProject" />
         </div>
@@ -64,6 +65,7 @@ import { useBots } from '../Composables/useBots';
 import NewProjectDialog from '../Components/NewProjectDialog.vue';
 import NotificationTray from '../Components/NotificationTray.vue';
 import BotList from '../Components/BotList.vue';
+import GetStarted from '../Components/GetStarted.vue';
 import ProjectOverviewList from '../Components/ProjectOverviewList.vue';
 import { Button } from '../Components/ui/button';
 import { useWorkbench } from '../Composables/useWorkbench';

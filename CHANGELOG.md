@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A Get started checklist for new installs: install an agent, sign in to it,
+  add a project folder and start an agent. Each step ticks itself. Install
+  links go to each agent's official page, and sign-in is checked with the
+  agent's own command, keeping only whether you are signed in. It shows on the
+  Projects page, in the sidebar, over the workspace in tabs mode, and at the
+  top of a phone's list. It never shows when everything is already done, and
+  can be hidden and reopened from the ⋯ or settings menu, or Library on a phone.
+- Antigravity agents show its icon.
 - Settings search. Type in the box above the settings list, or press `/`, to
   filter every settings page at once. Matching settings keep their controls,
   so you can change them straight from the results.
@@ -23,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under the agent's logo, and slides it to the bottom on the first send.
   Conversations show the agent's icon beside the model picker, and the
   composer uses a lighter fill with a subtle border.
-
+- Harness discovery adds a timeline entry only when it finds a change.
 - Completed final Integrated-agent polish and archived-history parity pass:
   - Emitted `controls_revision` on Codex and OpenCode snapshots and `controls()`
     responses (and broadcast `pending` on control changes) so composer pickers
