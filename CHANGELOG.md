@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     fallback for corrupt/retired saved settings, tracked socket teardown,
     Windows config cleanup on forced kills, and subscribe handshake timeout with
     deduplicated reconnect error events.
+- Bot conversations no longer show the notification and Focus mode digests
+  Patterm sends the bot; only the bot's replies to them appear.
 - Replaced hardcoded provider-name feature switches across core backend services
   and the Vue renderer (idle compaction, parent request approval, launch/restart,
   bots, routines, composer selectors, control drawer, and settings forms) with
