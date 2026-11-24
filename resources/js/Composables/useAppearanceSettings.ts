@@ -37,6 +37,7 @@ function assignDraft(settings: AppearanceSettings): void {
   draft.conversationFontSizePx = settings.conversationFontSizePx;
   draft.conversationWidth = settings.conversationWidth;
   draft.conversationBreakout = settings.conversationBreakout;
+  draft.conversationToolNames = settings.conversationToolNames;
   draft.historyImportToasts = settings.historyImportToasts;
   draft.diffViewer = settings.diffViewer;
   draft.navigation = settings.navigation;

@@ -31,6 +31,9 @@
       >
         <SettingsChoice id="conversation-breakout" :model-value="draft.conversationBreakout" :options="CONVERSATION_BREAKOUT_OPTIONS" aria-label="Wide tables and media" :disabled="draft.conversationWidth === 'full'" segmented @update:model-value="(value) => { draft.conversationBreakout = value; void save('appearance.conversation.breakout'); }" />
       </SettingsRow>
+      <SettingsRow label="Tool names" keywords="tool calls mcp skills" description="Name the skills and MCP tools in a collapsed group of tool calls, such as MCP (notify_user)." html-for="conversation-tool-names" save-key="appearance.conversation.toolNames" toggle>
+        <Switch id="conversation-tool-names" :model-value="draft.conversationToolNames" @update:model-value="(value) => { draft.conversationToolNames = value; void save('appearance.conversation.toolNames'); }" />
+      </SettingsRow>
       <ConversationPreview
         :font-size-px="draft.conversationFontSizePx"
         :width="draft.conversationWidth"
@@ -53,6 +56,7 @@ import { CONVERSATION_BREAKOUT_OPTIONS, CONVERSATION_FONT_SIZE_RANGE, CONVERSATI
 import { useAppearanceSettings } from '../Composables/useAppearanceSettings';
 import { prefetchPreference, setPrefetchPreference, type PrefetchPreference } from '../lib/prefetch';
 import { Slider } from './ui/slider';
+import { Switch } from './ui/switch';
 import ConversationPreview from './settings/ConversationPreview.vue';
 import SettingsChoice from './settings/SettingsChoice.vue';
 import SettingsPanel from './settings/SettingsPanel.vue';

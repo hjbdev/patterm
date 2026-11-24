@@ -95,23 +95,24 @@
                     <ConversationMessageFooter v-if="item.hasFooter" :text="item.row.message.text" :created-at="item.row.message.createdAt" align="end" class="-mt-1 max-w-[min(82%,64ch)]" />
                   </div>
                 </template>
-                <div v-else-if="item.row.kind === 'tools'" class="w-full min-w-0 text-xs" data-component="transcript-tool-group">
+                <div v-else-if="item.row.kind === 'tools'" class="transcript-tool-text w-full min-w-0" data-component="transcript-tool-group">
                   <button
                     type="button"
                     class="group/tools flex max-w-full min-w-0 items-center gap-1 rounded-md py-1 pr-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                    :class="item.open ? '' : 'transcript-quiet'"
                     :aria-expanded="item.open"
                     @click="toggleRow(item.row.id)"
                   >
                     <template v-if="item.groupSummary?.count">
                       <span class="shrink-0 text-muted-foreground"><ShimmerText v-if="item.groupRunning" text="Using" /><template v-else>Used</template></span>
-                      <span class="min-w-0 truncate font-[440] text-foreground" :title="item.groupSummary.label"><template v-for="(tool, index) in item.groupSummary.tools" :key="tool.title">{{ index ? ', ' : '' }}<template v-if="tool.count > 1"><OdometerNumber :value="tool.count" />{{ ' ' }}</template>{{ tool.title }}</template></span>
+                      <span class="min-w-0 truncate font-[440] text-foreground" :title="item.groupSummary.label"><template v-for="(tool, index) in item.groupSummary.tools" :key="tool.title">{{ index ? ', ' : '' }}<template v-if="tool.count > 1"><OdometerNumber :value="tool.count" />{{ ' ' }}</template>{{ tool.base }}<span v-if="tool.names" class="transcript-tool-names">{{ ' ' }}{{ tool.names }}</span></template></span>
                     </template>
                     <template v-else>
                       <span class="shrink-0 font-[440] text-foreground"><ShimmerText v-if="item.groupRunning" text="Thinking" /><template v-else>Thought</template></span>
                       <span v-if="!item.groupRunning && item.groupThoughtTime" class="shrink-0 text-muted-foreground">{{ item.groupThoughtTime }}</span>
                     </template>
                     <ChevronDown
-                      class="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none"
+                      class="size-[1.1em] shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none"
                       :class="item.open ? 'rotate-180' : ''"
                       aria-hidden="true"
                     />
