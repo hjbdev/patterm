@@ -74,6 +74,10 @@ let workingDetail = '';
 let revision = 0;
 let controlsRevision = 0;
 let active = false;
+// A steer ends the session/prompt it joins; only the newest one ends the turn.
+let turnSeq = 0;
+let currentTurn = 0;
+const openTurns = new Set<number>();
 let backgroundQuiet: NodeJS.Timeout | null = null;
 const runningTools = new Set<string>();
 // Tools Patterm has already reported as failed: never auto-approve them later.
@@ -178,10 +182,13 @@ function publish(event: Row): void {
   }
 }
 // agy takes a prompt while its own background tools run (dev servers, long
-// tests) and queues one sent during an unsolicited reply. Only a foreground
-// turn, a pending approval or an unconfirmed Stop keeps input out.
+// tests) and queues one sent during an unsolicited reply. Since 1.5 it keeps a
+// turn open until its background tasks and subagents finish, and a prompt sent
+// into that turn steers it. It refuses one while an approval waits. A steer
+// waits for the earlier prompt's receipt, which must not be mistaken for its
+// own, and an unconfirmed Stop keeps input out.
 function acceptsPrompt(): boolean {
-  return !active && !cancelling && permissions.size === 0 && !configuring;
+  return !cancelling && permissions.size === 0 && !configuring && (!active || (userConfirmed && !admission));
 }
 // A tool left running after its turn is not model work: a daemon can outlive
 // the session. Only fresh output or an approval keeps the agent working.
@@ -233,24 +240,27 @@ function stopBackground(): void {
 // Kept apart from the transcript, whose oldest rows are evicted while a
 // daemon can run for the life of the session. A finished command keeps its
 // final state so an open task drawer settles.
+// agy keeps its turn open while they run, so a command its reply or later
+// tools have moved past is one too. Stopping it then ends that turn: ACP has no other way.
 function backgroundTasks(): Row[] {
-  if (!active) {
-    for (const id of runningTools) {
-      if (backgroundCommands.has(id)) continue;
-      const row = messages.find((message) => message.id === id);
-      const input = (row?.tool?.input ?? {}) as Row;
-      const command = input.CommandLine ?? input.command;
-      const label = typeof command === 'string' && command ? command : String(row?.tool?.name ?? 'Background command');
-      backgroundCommands.set(id, { label: label.slice(0, 200), stopRequested: false });
-    }
+  for (const id of runningTools) {
+    if (backgroundCommands.has(id)) continue;
+    const index = messages.findIndex((message) => message.id === id);
+    if (active && index >= 0 && !messages.slice(index + 1).some((message) => message.role === 'assistant')) continue;
+    const row = messages[index];
+    const input = (row?.tool?.input ?? {}) as Row;
+    const command = input.CommandLine ?? input.command;
+    const label = typeof command === 'string' && command ? command : String(row?.tool?.name ?? 'Background command');
+    backgroundCommands.set(id, { label: label.slice(0, 200), stopRequested: false });
   }
   const finished = [...backgroundCommands.keys()].filter((id) => !runningTools.has(id));
   for (const id of finished.slice(0, Math.max(0, finished.length - MAX_FINISHED_COMMANDS))) backgroundCommands.delete(id);
   const running = [...backgroundCommands.keys()].filter((id) => runningTools.has(id)).length;
   return [...backgroundCommands].map(([id, command]) => {
     if (runningTools.has(id)) {
-      return { id, label: command.label, kind: 'local_bash', status: 'running', stoppable: !cancelling && !active,
-        ...(running > 1 ? { detail: 'Stop ends every background command', stopsAll: true } : {}) };
+      return { id, label: command.label, kind: 'local_bash', status: 'running', stoppable: !cancelling,
+        ...(active ? { detail: 'Stop also ends the current turn', stopsAll: true }
+          : running > 1 ? { detail: 'Stop ends every background command', stopsAll: true } : {}) };
     }
     const state = messages.find((message) => message.id === id)?.tool?.state as Row | undefined;
     const status = command.stopRequested || stoppedToolIds.has(id) ? 'stopped' : state?.status === 'failed' ? 'failed' : 'completed';
@@ -265,6 +275,33 @@ function finishCancellation(): void {
   cancelDeadline = null;
   cancelWatchingTools = false;
   cancelling = false;
+}
+function endTurn(stopReason: string | null): void {
+  admit();
+  if (stopReason === 'cancelled') finishTools('Response stopped');
+  else finishTools('Antigravity ended the turn before this tool started', true);
+  if (stopReason !== 'cancelled' && cancelling && runningTools.size) {
+    // A natural prompt end is not an acknowledgement of Stop for tools
+    // still running. Watch those tools without resetting the deadline.
+    cancelWatchingTools = true;
+  } else finishCancellation();
+  const stopped = stopReason && Object.hasOwn(STOP_REASONS, stopReason) ? STOP_REASONS[stopReason] : null;
+  if (stopped) replace({ id: randomUUID(), role: 'assistant', kind: 'notice', level: 'warning', text: stopped });
+  active = false; userEcho = null; promptAnchorId = null; block = null; cancelPermissions();
+  subagents?.syncNow();
+  setImmediate(() => { if (!stopping && status !== 'error') { state(); if (runningTools.size) publish({ kind: 'pending' }); } });
+  saveSettings();
+}
+function cancelTurn(): void {
+  write({ method: 'session/cancel', params: { sessionId } });
+  cancelPermissions();
+  cancelling = true;
+  cancelWatchingTools = false;
+  cancelDeadline = setTimeout(() => {
+    fail(new NativeAcpTransportError('Antigravity did not confirm cancellation. Restart the agent before sending another message.'));
+    publish({ kind: 'pending' });
+  }, CANCEL_TIMEOUT_MS);
+  state(); publish({ kind: 'pending' });
 }
 function cancelPermissions(): void {
   for (const request of permissions.values()) {
@@ -493,6 +530,9 @@ function admit(): void {
         replace(userEcho);
       }
     }
+    // A late receipt opens the turn to steering. Every status retries held
+    // input, and nothing else announces this.
+    if (active && !admission) publish({ kind: 'status', status, detail: workingDetail || undefined });
   }
   if (!admission) return;
   clearTimeout(admission.timer); admission.resolve(); admission = null;
@@ -938,6 +978,10 @@ async function handle(method: string, params: Row): Promise<unknown> {
     if (!acceptsPrompt()) throw new Error('ACP turn is busy');
     if (!Array.isArray(params.prompt) || !params.prompt.length) throw new Error('Message is empty');
     const wasWorking = status === 'working';
+    const joined = active ? { turn: currentTurn, echo: userEcho, anchor: promptAnchorId, plain: plainTextPrompt } : null;
+    const turnId = ++turnSeq;
+    currentTurn = turnId;
+    openTurns.add(turnId);
     if (backgroundQuiet) { clearTimeout(backgroundQuiet); backgroundQuiet = null; }
     active = true; cancelling = false; statusDetail = ''; block = null; userConfirmed = false;
     liveWindowFloorId = null;
@@ -961,35 +1005,40 @@ async function handle(method: string, params: Row): Promise<unknown> {
       lastTurnBoundaryAt = new Date().toISOString();
       publish({ kind: 'turn_boundary', detail: lastTurnBoundaryAt });
     }
-    // Background command tasks can't be stopped during a turn.
+    // A turn changes what Stop on a background command task does.
     if (runningTools.size) publish({ kind: 'pending' });
     // The result arrives only at turn end. Keep the host socket responsive to
     // permissions and cancellation instead of awaiting it in this handler.
     const turn = rpc('session/prompt', { sessionId, prompt: params.prompt }, 0);
     usage.lastModelActivityAt = new Date().toISOString();
     void turn.then((result) => {
+      openTurns.delete(turnId);
       if (failed || stopping) return;
-      admit();
-      if (result.stopReason === 'cancelled') finishTools('Response stopped');
-      else finishTools('Antigravity ended the turn before this tool started', true);
-      if (result.stopReason !== 'cancelled' && cancelling && runningTools.size) {
-        // A natural prompt end is not an acknowledgement of Stop for tools
-        // still running. Watch those tools without resetting the deadline.
-        cancelWatchingTools = true;
-      } else finishCancellation();
-      const stopped = Object.hasOwn(STOP_REASONS, result.stopReason) ? STOP_REASONS[result.stopReason] : null;
-      if (stopped) replace({ id: randomUUID(), role: 'assistant', kind: 'notice', level: 'warning', text: stopped });
       if (result.usage) {
         usage.inputTokens = (usage.inputTokens ?? 0) + (result.usage.inputTokens ?? 0);
         usage.outputTokens = (usage.outputTokens ?? 0) + (result.usage.outputTokens ?? 0);
       }
-      active = false; userEcho = null; promptAnchorId = null; block = null; cancelPermissions();
-      subagents?.syncNow();
-      setImmediate(() => { if (!stopping && status !== 'error') { state(); if (runningTools.size) publish({ kind: 'pending' }); } });
-      saveSettings();
+      // A steer ends the prompt it joined with end_turn while the work goes on.
+      if (turnId !== currentTurn) return;
+      endTurn(result.stopReason);
     }, (error: Error) => {
+      openTurns.delete(turnId);
+      if (failed || stopping) {
+        if (turnId === currentTurn) { active = false; userEcho = null; promptAnchorId = null; }
+        return;
+      }
+      // agy refuses a steer that races an approval request. The turn it would
+      // have joined goes on, and the message waits like any other.
+      if (joined && turnId === currentTurn && admission && !(error instanceof NativeAcpTransportError)) {
+        clearPromptWatch();
+        clearTimeout(admission.timer); admission.reject(new Error('ACP turn is busy')); admission = null;
+        currentTurn = joined.turn; userEcho = joined.echo; userConfirmed = true; promptAnchorId = joined.anchor; plainTextPrompt = joined.plain;
+        if (!openTurns.has(joined.turn)) endTurn(null);
+        return;
+      }
+      if (turnId !== currentTurn) return;
       active = false; userEcho = null; promptAnchorId = null;
-      if (!failed && !stopping) { cancelPermissions(); fail(error, error instanceof NativeAcpTransportError); publish({ kind: 'pending' }); }
+      cancelPermissions(); fail(error, error instanceof NativeAcpTransportError); publish({ kind: 'pending' });
     }).catch(fail);
     await accepted;
     return { accepted: true };
@@ -997,20 +1046,16 @@ async function handle(method: string, params: Row): Promise<unknown> {
   if (method === 'interrupt') {
     if ((!busy() && !runningTools.size) || cancelling) return {};
     if (!active) { stopBackground(); return {}; }
-    write({ method: 'session/cancel', params: { sessionId } });
-    cancelPermissions();
-    cancelling = true;
-    cancelWatchingTools = false;
-    cancelDeadline = setTimeout(() => {
-      fail(new NativeAcpTransportError('Antigravity did not confirm cancellation. Restart the agent before sending another message.'));
-      publish({ kind: 'pending' });
-    }, CANCEL_TIMEOUT_MS);
-    state(); publish({ kind: 'pending' }); return {};
+    cancelTurn();
+    return {};
   }
   if (method === 'stopTask') {
-    // ACP has no per-task cancel: session/cancel ends all background work.
-    if (active || cancelling || !runningTools.has(String(params.taskId ?? ''))) throw new Error('That background command is not running');
-    stopBackground();
+    // ACP has no per-task cancel: session/cancel ends all background work,
+    // and the turn agy holds open for it.
+    if (cancelling || !runningTools.has(String(params.taskId ?? ''))) throw new Error('That background command is not running');
+    if (!active) { stopBackground(); return {}; }
+    for (const id of runningTools) { const command = backgroundCommands.get(id); if (command) command.stopRequested = true; }
+    cancelTurn();
     return {};
   }
   if (method === 'permission') {
