@@ -113,14 +113,13 @@ export async function restartBotFromSettings(processId: string, fresh = false): 
   }
 }
 
-// What a bot's conversation leaves out: its helpers' reports and messages and
-// Patterm's own notes to it. The bot relays what matters. Notification and
-// focus digests stay, as receipts of what the user was told about.
+// What a bot's conversation leaves out: its helpers' reports and messages,
+// notification and focus digests, and Patterm's other notes to it. The bot
+// relays what matters.
 const CLOSE_REQUEST = /^\[Close requested by /;
-const RECEIPT = /^\[Patterm (?:notifications|focus digest)\b/;
 export function hiddenFromBot(text: string): boolean {
   const start = text.trimStart();
-  return !RECEIPT.test(start) && (isBackgroundMessage(start) || CLOSE_REQUEST.test(start));
+  return isBackgroundMessage(start) || CLOSE_REQUEST.test(start);
 }
 
 // What agent lists leave out: everything in the bots' own projects, and with

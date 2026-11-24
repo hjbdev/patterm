@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Bot conversations no longer show the notification and Focus mode digests
+  Patterm sends the bot; only the bot's replies to them appear.
 - Introduced a typed `AgentAdapter` contract, declarative `AgentCapabilities`,
   and `AgentAdapterRegistry` wired through `IntegratedAgentService` and
   `HarnessModelCatalogService`, with a shared `SupervisedHostClient` across
