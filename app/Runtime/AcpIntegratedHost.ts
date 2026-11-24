@@ -271,6 +271,17 @@ function runningTaskCount(): number {
   return [...(subagents?.tasks() ?? []), ...backgroundTasks()]
     .filter((task) => task.status === 'running' || task.status === 'pending').length;
 }
+function noteBackgroundPromotion(): void {
+  if (!loaded || failed || stopping || !active || !runningTools.size) return;
+  let hasUnpromoted = false;
+  for (const id of runningTools) {
+    if (!backgroundCommands.has(id)) { hasUnpromoted = true; break; }
+  }
+  if (!hasUnpromoted) return;
+  const known = backgroundCommands.size;
+  const count = runningTaskCount();
+  if (backgroundCommands.size > known) publish({ kind: 'pending', backgroundTasks: count });
+}
 function noteModelActivity(): void {
   if (loaded && !failed && !stopping) usage.lastModelActivityAt = new Date().toISOString();
 }
@@ -549,6 +560,7 @@ function replace(message: IntegratedConversationMessage): void {
   const index = messages.findIndex((row) => row.id === message.id);
   if (index < 0) { messages.push(message); trimMessages(); } else messages[index] = message;
   publish({ kind: 'replace', message });
+  if (index < 0 && message.role === 'assistant') noteBackgroundPromotion();
 }
 function nativeMessageKey(role: string, kind: string, id: string): string {
   return JSON.stringify([role, kind, id]);
@@ -561,15 +573,18 @@ function chunk(kind: 'text' | 'reasoning', text: string, role: 'user' | 'assista
   }
   const key = nativeId === undefined ? null : nativeMessageKey(role, kind, nativeId);
   let row = key === null ? block : nativeBlocks.get(key);
+  let added = false;
   if (!row || row.kind !== kind || row.role !== role) {
     row = { id: randomUUID(), role, kind, text: '', createdAt: new Date().toISOString() };
     messages.push(row);
     trimMessages();
     if (key !== null) setNativeBlock(key, row);
+    added = true;
   }
   block = key === null ? row : null;
   row.text += text;
   publish({ kind: 'append', id: row.id, messageKind: kind, delta: text });
+  if (added && role === 'assistant') noteBackgroundPromotion();
 }
 function contentChunk(content: Row, kind: 'text' | 'reasoning', role: 'user' | 'assistant', nativeId?: string): void {
   if (role === 'assistant' && (content.type === 'text' || content.type === 'image')) {

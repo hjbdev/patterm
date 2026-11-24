@@ -1671,3 +1671,37 @@ test('a paired-host mismatch never restarts the local shared server', async () =
   assert.equal(pending(h, 'opencode_service_restart').length, 0);
   h.scope.stop();
 });
+
+test('archived pages fold cross-page out-of-order tool results in original call order without duplicating rows', async () => {
+  const h = createHarness({ processId: 'archived_fold', exited: true });
+  await flush();
+  await resolveGets(h, {
+    provider: 'claude',
+    status: 'idle',
+    streaming: false,
+    history_truncated: true,
+    history_cursor: { next: 'archive:page0' },
+    messages: { data: [] },
+    archived_messages: [
+      { id: 'r2', conversationId: 'conv', providerMessageId: 'r2', parentProviderMessageId: null, turnId: null, seq: 3, role: 'tool', kind: 'tool_result', text: '', toolName: 'Read', toolStatus: 'completed', toolInputSummary: null, toolOutputSummary: 'second-out', redactionCount: 0, tokenCount: null, providerCreatedAt: '2026-10-10T00:00:03.000Z', metadata: { toolUseId: 'call_2' }, createdAt: '2026-10-10T00:00:03.000Z', media: [{ kind: 'viewed', mime: 'image/png', sha256: 'sha-2', sizeBytes: 10, name: 'two.png' }] },
+      { id: 'r1', conversationId: 'conv', providerMessageId: 'r1', parentProviderMessageId: null, turnId: null, seq: 4, role: 'tool', kind: 'tool_result', text: '', toolName: 'Bash', toolStatus: 'completed', toolInputSummary: null, toolOutputSummary: 'first-out', redactionCount: 0, tokenCount: null, providerCreatedAt: '2026-10-10T00:00:04.000Z', metadata: { toolUseId: 'call_1' }, createdAt: '2026-10-10T00:00:04.000Z' }
+    ]
+  });
+  await flush();
+  const olderCall = pending(h, 'integrated_history')[0];
+  assert.ok(olderCall, 'resumed archived view loads older page');
+  olderCall.resolve({
+    messages: [],
+    cursor: null,
+    archived_messages: [
+      { id: 'c1', conversationId: 'conv', providerMessageId: 'c1', parentProviderMessageId: null, turnId: null, seq: 1, role: 'tool', kind: 'tool_call', text: '', toolName: 'Bash', toolStatus: null, toolInputSummary: '{"command":"echo 1"}', toolOutputSummary: null, redactionCount: 0, tokenCount: null, providerCreatedAt: '2026-10-10T00:00:01.000Z', metadata: { toolUseId: 'call_1' }, createdAt: '2026-10-10T00:00:01.000Z' },
+      { id: 'c2', conversationId: 'conv', providerMessageId: 'c2', parentProviderMessageId: null, turnId: null, seq: 2, role: 'tool', kind: 'tool_call', text: '', toolName: 'Read', toolStatus: null, toolInputSummary: '{"file_path":"two.png"}', toolOutputSummary: null, redactionCount: 0, tokenCount: null, providerCreatedAt: '2026-10-10T00:00:02.000Z', metadata: { toolUseId: 'call_2' }, createdAt: '2026-10-10T00:00:02.000Z' }
+    ]
+  });
+  await flush();
+  assert.deepEqual(h.pane.messages.value.map((m) => m.id), ['c1', 'c2'], 'parallel calls stay in original seq order with results folded in');
+  assert.equal(h.pane.messages.value[0].tool.output, 'first-out');
+  assert.equal(h.pane.messages.value[1].tool.output, 'second-out');
+  assert.equal(h.pane.messages.value[1].tool.images?.[0]?.sha256, 'sha-2', 'folded tool_result media survives cross-page merge');
+  h.scope.stop();
+});

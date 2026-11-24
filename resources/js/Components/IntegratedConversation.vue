@@ -519,6 +519,14 @@ let subscribedProcessId: string | null = null;
 let subscriptionSequence = 0;
 let reconciling = false;
 let lastConversation = '';
+let archivedRows: ConversationMessageRecord[] = [];
+
+function mergeArchivedRows(older: ConversationMessageRecord[], current: ConversationMessageRecord[]): ConversationMessageRecord[] {
+  const byId = new Map<string, ConversationMessageRecord>();
+  for (const row of older) byId.set(row.id, row);
+  for (const row of current) byId.set(row.id, row);
+  return [...byId.values()].sort((left, right) => left.seq - right.seq);
+}
 
 // Paint the last state shown for this process before the first render; the
 // snapshot that begin() takes replaces it.
@@ -686,6 +694,7 @@ function restoreState(processId: string): void {
 
 function resetState(): void {
   messages.value = [];
+  archivedRows = [];
   permissions.value = [];
   questions.value = [];
   forms.value = [];
@@ -807,9 +816,21 @@ async function applySnapshot(load: () => Promise<Record<string, unknown>>, reque
     if (!conversation || conversation !== lastConversation) {
       lastConversation = conversation;
       const projection = normaliseConversation(result);
-      const rows = Array.isArray(result.archived_messages)
-        ? archiveTranscript(result.archived_messages as ConversationMessageRecord[], { projectPath: props.projectPath ?? null, showReasoning: true })
-        : projection.messages;
+      const hasArchived = Array.isArray(result.archived_messages);
+      const incomingArchived = hasArchived ? result.archived_messages as ConversationMessageRecord[] : [];
+      let rows: TranscriptMessage[];
+      let mergedArchived = false;
+      if (hasArchived) {
+        if (historyLoaded && archivedRows.length) {
+          archivedRows = mergeArchivedRows(archivedRows, incomingArchived);
+          mergedArchived = true;
+        } else {
+          archivedRows = incomingArchived;
+        }
+        rows = archiveTranscript(archivedRows, { projectPath: props.projectPath ?? null, showReasoning: true });
+      } else {
+        rows = projection.messages;
+      }
       // A truncated window that shares no row with those shown, such as after
       // a reconnect that missed more than a page, would leave a gap nothing can
       // load. Start again from this window and its own cursor.
@@ -817,10 +838,13 @@ async function applySnapshot(load: () => Promise<Record<string, unknown>>, reque
       const splicedBeforeWindow = typeof result.history_spliced_id === 'string' && !shownIds.has(result.history_spliced_id);
       if (historyLoaded && result.history_truncated === true && (!rows.some((message) => shownIds.has(message.id)) || splicedBeforeWindow)) {
         historyLoaded = false;
+        archivedRows = incomingArchived;
+        mergedArchived = false;
+        if (hasArchived) rows = archiveTranscript(archivedRows, { projectPath: props.projectPath ?? null, showReasoning: true });
         historyCursor.value = snapshotHistoryCursor(result);
         historyTruncated.value = true;
       }
-      messages.value = historyLoaded ? replaceLiveWindow(messages.value, rows) : rows;
+      messages.value = mergedArchived ? rows : historyLoaded ? replaceLiveWindow(messages.value, rows) : rows;
       permissions.value = projection.permissions;
       applyQuestions(projection.questions);
       applyForms(projection.forms);
@@ -860,10 +884,16 @@ async function loadOlder(): Promise<void> {
   try {
     const page = await window.patterm.call('integrated_history', { process_id: props.processId, cursor }) as Record<string, unknown>;
     if (token !== generation || stopped || historyCursor.value !== cursor) return;
-    const older = Array.isArray(page.archived_messages)
-      ? archiveTranscript(page.archived_messages as ConversationMessageRecord[], { projectPath: props.projectPath ?? null, showReasoning: true })
-      : normaliseMessages(page.messages);
-    messages.value = mergeTranscriptWindows(older, messages.value);
+    if (Array.isArray(page.archived_messages)) {
+      const hadArchivedRows = archivedRows.length > 0;
+      archivedRows = mergeArchivedRows(page.archived_messages as ConversationMessageRecord[], archivedRows);
+      const older = archiveTranscript(archivedRows, { projectPath: props.projectPath ?? null, showReasoning: true });
+      messages.value = hadArchivedRows
+        ? mergeTranscriptWindows(older, messages.value.filter((message) => !message.archived))
+        : mergeTranscriptWindows(older, messages.value);
+    } else {
+      messages.value = mergeTranscriptWindows(normaliseMessages(page.messages), messages.value);
+    }
     historyLoaded = true;
     historyCursor.value = typeof page.cursor === 'string' ? page.cursor : null;
     historyTruncated.value = historyCursor.value !== null;

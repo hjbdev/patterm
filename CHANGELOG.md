@@ -16,11 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Pushed live `background_tasks` counts (with stale-snapshot sequence guards)
     from Claude, ACP/Antigravity, Codex, and OpenCode so idle hibernation tracks
     running subagents and background commands immediately without extra polls.
-  - Preserved non-empty Claude `thinking` blocks as reasoning rows on history
-    import (`claude-jsonl-v15`, omitting signatures and `redacted_thinking`),
-    paired page-boundary `tool_call`/`tool_result` rows in
-    `AgentHistoryReadService`, joined `conversation_media` onto archived
-    messages, and wired `projectId` into transcript image components.
+  - Preserved non-empty Claude `thinking` blocks as reasoning rows and
+    image-only Claude user prompts on history import (`claude-jsonl-v15`,
+    omitting signatures and `redacted_thinking`), folded cross-page archived
+    `tool_call`/`tool_result` pairs in `IntegratedConversation`, joined
+    `conversation_media` onto archived messages, and wired `projectId` into
+    transcript image components.
   - Updated `AGENTS.md` to reflect Integrated agent hosts and centralized the
     remaining static capability defaults (`harnessSupportsServiceTier`,
     `defaultReasoningLevelsFor`) in `AgentCapabilitiesDto`.

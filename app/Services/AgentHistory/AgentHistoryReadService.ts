@@ -86,54 +86,6 @@ export class AgentHistoryReadService {
     return this.mediaTable;
   }
 
-  private resolveBoundaryToolPairs(conversationId: string, rows: MessageRow[], before?: string): MessageRow[] {
-    if (!rows.length || !this.database) return rows;
-    const calls = new Set<string>();
-    const results = new Set<string>();
-    for (const row of rows) {
-      const key = messageToolKey(row.metadata);
-      if (!key) continue;
-      if (row.kind === 'tool_call') calls.add(key);
-      else if (row.kind === 'tool_result') results.add(key);
-    }
-    const missingCalls = new Set([...results].filter((key) => !calls.has(key)));
-    const missingResults = new Set([...calls].filter((key) => !results.has(key)));
-    if (!missingCalls.size && !missingResults.size) return rows;
-
-    const minSeq = rows[0]!.seq;
-    const maxSeq = rows[rows.length - 1]!.seq;
-    const extras: MessageRow[] = [];
-    const visible = this.visibleMessages();
-    if (missingCalls.size && minSeq > 0) {
-      const earlier = this.database.connection.prepare(`
-        select * from conversation_messages
-        where conversation_id = ? and kind = 'tool_call' and seq >= ? and seq < ? and ${visible}
-        order by seq asc
-      `).all(conversationId, Math.max(0, minSeq - 200), minSeq) as MessageRow[];
-      for (const candidate of earlier) {
-        const key = messageToolKey(candidate.metadata);
-        if (key && missingCalls.has(key)) extras.push(candidate);
-      }
-    }
-    if (missingResults.size) {
-      const beforeFilter = before ? 'and coalesce(provider_created_at, created_at) < ?' : '';
-      const params = before ? [conversationId, maxSeq, maxSeq + 200, before] : [conversationId, maxSeq, maxSeq + 200];
-      const later = this.database.connection.prepare(`
-        select * from conversation_messages
-        where conversation_id = ? and kind = 'tool_result' and seq > ? and seq <= ? ${beforeFilter} and ${visible}
-        order by seq asc
-      `).all(...params) as MessageRow[];
-      for (const candidate of later) {
-        const key = messageToolKey(candidate.metadata);
-        if (key && missingResults.has(key)) extras.push(candidate);
-      }
-    }
-    if (!extras.length) return rows;
-    const byId = new Map<string, MessageRow>();
-    for (const row of [...extras, ...rows]) byId.set(row.id, row);
-    return [...byId.values()].sort((left, right) => left.seq - right.seq);
-  }
-
   private attachMedia<T extends { seq: number }>(conversationId: string, messages: T[]): Array<T & { media?: ConversationMessageMedia[] }> {
     if (!messages.length || !this.database || !this.hasMediaTable()) return messages;
     const minSeq = messages[0]!.seq;
@@ -185,7 +137,7 @@ export class AgentHistoryReadService {
     const messages = this.database.connection.prepare(`
       select * from conversation_messages where ${predicate} order by seq asc limit ? offset ?
     `).all(conversation.id, before, limit, offset) as MessageRow[];
-    return { count, messages: this.attachMedia(conversation.id, this.resolveBoundaryToolPairs(conversation.id, messages, before).map(mapMessage)) };
+    return { count, messages: this.attachMedia(conversation.id, messages.map(mapMessage)) };
   }
 
   // One row per conversation, ranked by its best-matching title, path, or
@@ -332,7 +284,7 @@ export class AgentHistoryReadService {
     const messages = this.database.connection.prepare(`
       select * from conversation_messages where conversation_id = ? and ${this.visibleMessages()} order by seq asc limit ? offset ?
     `).all(input.conversation_id, input.limit, offset) as MessageRow[];
-    return { conversation, messages: this.attachMedia(input.conversation_id, this.resolveBoundaryToolPairs(input.conversation_id, messages).map(mapMessage)), offset };
+    return { conversation, messages: this.attachMedia(input.conversation_id, messages.map(mapMessage)), offset };
   }
 
   // The newest messages of a conversation, oldest first, before a sequence
@@ -438,11 +390,6 @@ function mapConversationSearchResult(row: ConversationSearchRow) { return { kind
 // column is optional so reads keep working before the worker migrates.
 function displayTitle(row: { title: string | null; session_title?: string | null }): string | null { return row.session_title || row.title; }
 function parseJson(value: string) { try { return JSON.parse(value) as Record<string, unknown>; } catch { return {}; } }
-function messageToolKey(metadata: string): string | null {
-  const parsed = parseJson(metadata);
-  const value = parsed.callId ?? parsed.toolUseId;
-  return typeof value === 'string' && value ? value : null;
-}
 function importBatchStatus(row: ImportBatchRow, activeBatchIds: Set<string>): string {
   if (row.status !== 'running' || activeBatchIds.has(row.id)) return row.status;
   const startedAt = Date.parse(row.started_at);

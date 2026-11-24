@@ -142,8 +142,29 @@ export class ClaudeHistoryAdapter implements ProviderHistoryAdapter {
             ...(nativeMessageId && text === QUIET_REPLY ? { nativeMessageId } : {}), ...(queued ? { queued: true } : {}) }
         });
       }
-      const messageSeq = seq > rowSeq ? rowSeq : seq ? seq - 1 : null;
-      media.push(...claudeImages(message?.content, readPaths, { messageSeq, occurredAt: createdAt, position: parsed.position }));
+      let messageSeq = seq > rowSeq ? rowSeq : seq ? seq - 1 : null;
+      const rowMedia = claudeImages(message?.content, readPaths, { messageSeq, occurredAt: createdAt, position: parsed.position });
+      if (seq === rowSeq && type === 'user' && rowMedia.some((item) => item.kind === 'pasted')) {
+        messageSeq = seq;
+        messages.push({
+          providerMessageId: rowId,
+          parentProviderMessageId: stringValue(row.parentUuid),
+          turnId: stringValue(row.promptId),
+          seq: seq++,
+          role: 'user',
+          kind: 'message',
+          text: '',
+          toolName: null,
+          toolStatus: null,
+          toolInputSummary: null,
+          toolOutputSummary: null,
+          providerCreatedAt: createdAt,
+          tokenCount: null,
+          metadata: { type, contentType: 'image', isSidechain: row.isSidechain ?? null, toolUseId: null, source: 'claude-jsonl', ...(queued ? { queued: true } : {}) }
+        });
+        for (const item of rowMedia) item.messageSeq = messageSeq;
+      }
+      media.push(...rowMedia);
     }
 
     warnings.push(...parsed.warnings);

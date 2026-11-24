@@ -369,17 +369,14 @@ async function main(): Promise<void> {
     const emptyClaudeToolResults = database.connection.prepare(`select count(*) as count from conversation_messages where metadata like '%toolu_history_2%' and kind = 'tool_result'`).get() as { count: number };
     assert.equal(emptyClaudeToolResults.count, 0, 'Claude empty successful tool results are not imported as empty bubbles');
 
-    // Cross-page tool_call / tool_result boundary pairing.
+    // Pagination limit is preserved strictly even when a tool_call / tool_result straddles a page boundary.
     const claudeMessages = read.get({ conversation_id: claudeConversationId, limit: 200 }).messages;
     const callIdx = claudeMessages.findIndex((message) => message.kind === 'tool_call' && message.metadata?.toolUseId === 'toolu_history_1');
     const resultIdx = claudeMessages.findIndex((message) => message.kind === 'tool_result' && message.metadata?.toolUseId === 'toolu_history_1');
     assert.equal(resultIdx, callIdx + 1, 'tool_call is followed by tool_result');
-    const callOnlyPage = read.get({ conversation_id: claudeConversationId, limit: callIdx + 1, offset: 0 }).messages;
-    assert.ok(callOnlyPage.some((message) => message.kind === 'tool_result' && message.metadata?.toolUseId === 'toolu_history_1'), 'trailing tool_call pulls its boundary tool_result');
-    const resultOnlyPage = read.get({ conversation_id: claudeConversationId, limit: 2, offset: resultIdx }).messages;
-    assert.ok(resultOnlyPage.some((message) => message.kind === 'tool_call' && message.metadata?.toolUseId === 'toolu_history_1'), 'leading tool_result pulls its boundary tool_call');
-    const archiveResultPage = read.archive('claude', 'claude_resume_1', project.id, '2026-07-02T00:00:00.000Z', resultIdx, 2).messages;
-    assert.ok(archiveResultPage.some((message) => message.kind === 'tool_call' && message.metadata?.toolUseId === 'toolu_history_1'), 'archive() pairs leading boundary tool_result with its tool_call');
+    assert.equal(read.get({ conversation_id: claudeConversationId, limit: 1, offset: callIdx }).messages.length, 1, 'history_get(limit=1) returns at most 1 row on a tool_call boundary');
+    assert.equal(read.get({ conversation_id: claudeConversationId, limit: 1, offset: resultIdx }).messages.length, 1, 'history_get(limit=1) returns at most 1 row on a tool_result boundary');
+    assert.equal(read.archive('claude', 'claude_resume_1', project.id, '2026-07-02T00:00:00.000Z', resultIdx, 1).messages.length, 1, 'archive(limit=1) returns at most 1 row on a tool_result boundary');
 
     const codexConversation = database.connection.prepare(`select provider_conversation_id from conversations where provider = 'codex' limit 1`).get() as { provider_conversation_id: string } | undefined;
     assert.equal(codexConversation?.provider_conversation_id, 'codex_resume_1', 'Codex response item ids do not replace the session id');
