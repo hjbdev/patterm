@@ -243,14 +243,60 @@ function isImage(value: unknown): value is { data: string; mimeType: string } {
 
 // Antigravity declares MCP tools only up to a shared size budget, about
 // 60 KB across every server, then drops the largest, with no way to call
-// them. Its sessions get descriptions without usage notes, which help
-// still returns.
-const COMPACT = process.env.PATTERM_MCP_COMPACT === '1';
+// them. Patterm's full catalogue alone nearly fills it. Its sessions get a
+// gateway instead: the tools agents call most, declared in full, plus help
+// to list and explain the rest and call to run them.
+const GATEWAY = process.env.PATTERM_MCP_GATEWAY === '1';
+// Chosen by how often agents across harnesses call them.
+const GATEWAY_TOOLS = new Set([
+  'help',
+  'whoami',
+  'get_project_status',
+  'session_context',
+  'list_processes',
+  'spawn_agent',
+  'spawn_process',
+  'send_message',
+  'report_to_parent',
+  'notify_user',
+  'request_close',
+  'close_process',
+  'get_conversation_output',
+  'get_process_output',
+  'timer_fire_when_reported_any',
+  'timer_fire_when_reported_all',
+  'status_set',
+  'reference_attach',
+  'worktree_create',
+  'assistant_memory_search'
+]);
+const GATEWAY_CALL = 'call';
+
+const gatewayCall: McpToolDescriptor = {
+  name: GATEWAY_CALL,
+  namespace: 'meta',
+  description: 'Run any Patterm tool by name, including those this session does not declare directly. Call help first for the tool\'s schema and usage notes, then pass its arguments unchanged.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      tool: { type: 'string', minLength: 1, description: 'The Patterm tool name, such as todo_list.' },
+      arguments: { type: 'object', description: 'The tool\'s arguments, as its help schema describes.' }
+    },
+    required: ['tool'],
+    additionalProperties: false
+  }
+};
+
+// The tools this session declares to its client.
+function advertised(catalogue: McpToolDescriptor[]): McpToolDescriptor[] {
+  if (!GATEWAY) return catalogue;
+  return [...catalogue.filter((tool) => GATEWAY_TOOLS.has(tool.name)), gatewayCall];
+}
 
 function describe(tool: McpToolDescriptor): string {
   const notes = tool.namespace.startsWith('cli.') ? tool.usageNotes ?? [] : [];
-  if (COMPACT && notes.length) return `${tool.description} See help for usage notes.`;
-  return [tool.description, ...notes].join(' ');
+  const gatewayNote = GATEWAY && tool.name === 'help' ? ['This session declares only Patterm\'s most used tools: list the rest with help, then run them with call.'] : [];
+  return [tool.description, ...notes, ...gatewayNote].join(' ');
 }
 
 const SCHEMA_MAPS = new Set(['properties', 'patternProperties', '$defs', 'definitions']);
@@ -305,7 +351,7 @@ function staleNotice(listed: Signatures, current: Signatures): string {
 }
 
 async function main(): Promise<void> {
-  let catalogue = await fetchCatalogue();
+  let catalogue = advertised(await fetchCatalogue());
   let signatures = signaturesOf(catalogue);
   let changedAt = 0;
   let listed: Signatures | null = null;
@@ -313,7 +359,10 @@ async function main(): Promise<void> {
   const servers: Array<{ server: McpServer; tools: Map<string, RegisteredTool> }> = [];
 
   const handler = (name: string) => async (args: Record<string, unknown>, context: { mcpReq: { _meta?: Record<string, unknown> } }) => {
-    const result = await registryRequest({ tool: name, args }, context.mcpReq._meta);
+    const request = name === GATEWAY_CALL && GATEWAY
+      ? { tool: String(args.tool), args: args.arguments ?? {} }
+      : { tool: name, args };
+    const result = await registryRequest(request, context.mcpReq._meta);
     // A result may carry screenshots for the agent to look at.
     const { mcp_images: images, ...rest } = result && typeof result === 'object' && !Array.isArray(result) ? result as { mcp_images?: unknown } : { mcp_images: undefined };
     const text = { type: 'text' as const, text: JSON.stringify(Array.isArray(images) ? rest : result, null, 2) };
@@ -335,7 +384,7 @@ async function main(): Promise<void> {
     if (refreshing) return;
     refreshing = true;
     try {
-      const next = await fetchCatalogue();
+      const next = advertised(await fetchCatalogue());
       const nextSignatures = signaturesOf(next);
       if (sameSignatures(signatures, nextSignatures)) return;
       for (const entry of servers) {

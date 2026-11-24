@@ -12,7 +12,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { buildSync } from 'esbuild';
 import { ipcPath } from '../app/Platform/Ipc';
 
-const descriptors: Array<{ name: string; namespace: string; description: string; inputSchema: Record<string, unknown>; changes?: string[] }> = [
+const descriptors: Array<{ name: string; namespace: string; description: string; inputSchema: Record<string, unknown>; changes?: string[]; usageNotes?: string[] }> = [
   { name: 'whoami', namespace: 'cli.meta', description: 'Return caller identity.', inputSchema: { $schema: 'http://json-schema.org/draft-07/schema#', type: 'object', additionalProperties: false, properties: {}, required: [] } },
   { name: 'spawn_process', namespace: 'cli.process', description: 'Start a process.', inputSchema: { type: 'object', properties: { argv: { type: 'array', items: { type: 'string' } } } } },
   { name: 'todo_create', namespace: 'todo', description: 'Create a todo.', inputSchema: { type: 'object', properties: { title: { type: 'string', minLength: 1 } }, required: ['title'] } },
@@ -63,6 +63,8 @@ async function main(): Promise<void> {
   const modernTransport = new StdioClientTransport({ command: process.execPath, args: [executable], env: { PATTERM_MCP_SOCKET: socketPath, PATTERM_MCP_CATALOGUE_REFRESH_MS: '100' }, stderr: 'pipe' });
   const legacy = new LegacyClient({ name: 'shim-legacy-test', version: '1' });
   const legacyTransport = new LegacyTransport({ command: process.execPath, args: [executable], env: { PATTERM_MCP_SOCKET: socketPath, PATTERM_MCP_CATALOGUE_REFRESH_MS: '100' }, stderr: 'pipe' });
+  const gateway = new Client({ name: 'shim-gateway-test', version: '1' });
+  const gatewayTransport = new StdioClientTransport({ command: process.execPath, args: [executable], env: { PATTERM_MCP_SOCKET: socketPath, PATTERM_MCP_GATEWAY: '1' }, stderr: 'pipe' });
   try {
     buildSync({ entryPoints: ['mcp/shim.ts'], outfile: executable, bundle: true, platform: 'node', format: 'cjs' });
     await listen();
@@ -180,9 +182,25 @@ async function main(): Promise<void> {
     assert.equal(texts(await modern.callTool({ name: 'routine_schedule_once', arguments: { at: 'tomorrow' } })).length, 1, 'a client that re-listed gets no note');
     assert.equal((await modern.callTool({ name: 'routine_schedule_once', arguments: {} })).isError, true, 'new tools validate against their schema');
     assert.deepEqual(calls.at(-1), { tool: 'routine_schedule_once', args: { at: 'tomorrow' }, version: 2 });
+
+    // Antigravity's gateway declares the core tools in full, plus call to
+    // run any other by name.
+    catalogue = descriptors.map((tool) => tool.name === 'whoami' ? { ...tool, usageNotes: ['Kept in full.'] } : tool);
+    await gateway.connect(gatewayTransport);
+    const gatewayList = await gateway.listTools();
+    assert.deepEqual(gatewayList.tools.map(({ name }) => name), ['whoami', 'spawn_process', 'help', 'call'], 'the gateway declares core tools, help and call');
+    assert.match(gatewayList.tools.find(({ name }) => name === 'whoami')!.description!, /Kept in full\./, 'core tools keep their usage notes');
+    assert.match(gatewayList.tools.find(({ name }) => name === 'help')!.description!, /run them with call/);
+    const viaCall = await gateway.callTool({ name: 'call', arguments: { tool: 'todo_create', arguments: { title: 'Through the gateway' } } });
+    assert.notEqual(viaCall.isError, true);
+    assert.deepEqual(calls.at(-1), { tool: 'todo_create', args: { title: 'Through the gateway' }, version: 2 }, 'call forwards the named tool and its arguments');
+    await gateway.callTool({ name: 'call', arguments: { tool: 'whoami' } });
+    assert.deepEqual(calls.at(-1), { tool: 'whoami', args: {}, version: 2 }, 'call without arguments sends an empty object');
+    assert.equal((await gateway.callTool({ name: 'call', arguments: {} })).isError, true, 'call requires a tool name');
   } finally {
     await modern.close();
     await legacy.close();
+    await gateway.close();
     if (registry.listening) await close();
     fs.rmSync(directory, { recursive: true, force: true });
   }

@@ -8,7 +8,7 @@ export class AgentContextService {
 
 Project: ${projectId}
 
-- Orient with get_project_status. Agent-facing tools are available directly; use help for detailed tool guidance.
+- Orient with get_project_status. Agent-facing tools are available directly; where only a core set is declared, list the rest with help and run them with call. Use help for detailed tool guidance.
 - Read session_context for assigned todos, scratchpads, and links. Read tool help for revision guards and lease renewal.
 - Link every git worktree you work in to your session (at most 10): worktree_create and worktree_link do this automatically; otherwise call worktree_attach.
 - After you open or find a PR or issue for this work, verify it through the provider MCP/CLI, then reference_attach its URL to your session (target_id is inferred) and related todos, setting provider and resource_type.
