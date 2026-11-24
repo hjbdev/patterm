@@ -195,6 +195,30 @@ async function main(): Promise<void> {
     assert.equal((database.connection.prepare(`select activity from processes where id = ?`).get(created.process_id) as { activity: string }).activity, 'working', 'live command PTY reconnects and syncs activity');
     assert.equal((database.connection.prepare(`select status from processes where id = 'legacy_tui_agent'`).get() as { status: string }).status, 'exited', 'legacy TUI agent process is reaped on startup');
     assert.ok((database.connection.prepare(`select exited_at from sessions where id = 'session_legacy_tui'`).get() as { exited_at: string | null }).exited_at, 'legacy TUI agent session is marked exited on startup');
+
+    // A legacy TUI agent whose background interrupt failed is held open for retry while its PTY is still reaped.
+    database.connection.prepare(`insert into processes (id, project_id, kind, name, status, pty_process_id, created_at, updated_at)
+      values ('legacy_opencode_agent', ?, 'agent', 'Legacy OpenCode', 'running', 'pty_legacy_opencode', ?, ?)`)
+      .run(projectId, now, now);
+    database.connection.prepare(`insert into sessions (id, project_id, session_role, harness, interface_mode, resume_status, resume_id, started_at, process_id)
+      values ('session_legacy_opencode', ?, 'orchestrator', 'opencode', 'tui', 'found', 'ses_legacy', ?, 'legacy_opencode_agent')`)
+      .run(projectId, now);
+    const heldOpen = new ReconcileRuntimeAction(database).execute([
+      { process_id: created.pty_process_id, status: 'running', exit_code: null, activity: 'working', title: 'dev' },
+      { process_id: 'pty_legacy_opencode', status: 'running', exit_code: null, activity: 'working', title: 'Legacy OpenCode' }
+    ], { keepOpenProcessIds: ['legacy_opencode_agent'] });
+    assert.deepEqual(heldOpen.reapedPtyIds, ['pty_legacy_opencode'], 'failed-interrupt legacy PTY is still returned for cleanup');
+    assert.equal((database.connection.prepare(`select status from processes where id = 'legacy_opencode_agent'`).get() as { status: string }).status, 'failed', 'failed-interrupt legacy process is marked failed');
+    assert.equal((database.connection.prepare(`select exited_at from sessions where id = 'session_legacy_opencode'`).get() as { exited_at: string | null }).exited_at, null, 'failed-interrupt legacy session stays open for Quit or next startup retry');
+    // Once a later startup interrupts it, reconciliation closes the session cleanly.
+    new ReconcileRuntimeAction(database).execute([
+      { process_id: created.pty_process_id, status: 'running', exit_code: null, activity: 'working', title: 'dev' }
+    ]);
+    assert.ok((database.connection.prepare(`select exited_at from sessions where id = 'session_legacy_opencode'`).get() as { exited_at: string | null }).exited_at, 'subsequent reconciliation marks the legacy session exited once interrupted');
+
+    // PTY relaunch and update reject agent processes so historical TUI agents cannot be respawned as unmanaged PTYs.
+    await assert.rejects(launcher.relaunch('legacy_tui_agent'), /is an agent; resume or restart its conversation/);
+    await assert.rejects(launcher.update({ process_id: 'legacy_tui_agent', name: 'Renamed', command: 'echo hi', auto_restart: false }), /is an agent; resume or restart its conversation/);
     reconciler.dispose();
 
     // Relaunch re-attaches a fresh PTY reusing the stored argv.

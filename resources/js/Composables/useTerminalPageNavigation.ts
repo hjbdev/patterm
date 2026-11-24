@@ -1,6 +1,7 @@
-import { computed, watch, type Ref } from 'vue';
+import { computed, inject, watch, type Ref } from 'vue';
 import { useWorkbenchNavigation } from './useWorkbenchNavigation';
-import { projectFirstTab } from '../lib/projectLocations';
+import { firstDisplayedTabRoute, projectFirstTab } from '../lib/projectLocations';
+import { sidebarContextKey } from '../Components/Sidebar/sidebarContext';
 
 export function useTerminalPageNavigation() {
   const navigation = useWorkbenchNavigation();
@@ -24,7 +25,13 @@ export function useTerminalPageNavigation() {
 // mounts there, which the tab would only replace.
 export function useProjectFirstTab(staysHome: Readonly<Ref<boolean>>) {
   const { route, router, activeProject } = useWorkbenchNavigation();
-  const firstTab = computed(() => projectFirstTab(activeProject.value));
+  const sidebar = inject(sidebarContextKey, null);
+  const firstTab = computed(() => {
+    if (sidebar && activeProject.value) {
+      return firstDisplayedTabRoute(activeProject.value.project.id, sidebar.tabs.value, sidebar.allAgents.value ? sidebar.projectOf : undefined);
+    }
+    return projectFirstTab(activeProject.value);
+  });
   watch([firstTab, staysHome, () => route.name], ([tab, home, name]) => {
     if (tab && !home && name === 'project') void router.replace(tab);
   }, { immediate: true });

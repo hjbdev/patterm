@@ -2080,6 +2080,31 @@ export class OpenCodeServerService {
     if (failures.length) throw new AggregateError(failures.map((failure) => failure.reason), 'Could not interrupt every OpenCode session');
   }
 
+  // Interrupts any legacy OpenCode TUI turns still running in the background
+  // daemon before startup reconciliation marks those sessions exited. Uses the
+  // already-running daemon only so a stopped daemon or reboot never spawns a
+  // CLI or blocks startup; 404 means the session is already gone.
+  async interruptLegacyTui(): Promise<{ interrupted: string[]; failed: Array<{ process_id: string; error: string }> }> {
+    const rows = this.database.connection.prepare(`
+      select process_id, resume_id from sessions
+      where harness = 'opencode' and interface_mode = 'tui'
+        and exited_at is null and process_id is not null and resume_id is not null
+    `).all() as Array<{ process_id: string; resume_id: string }>;
+    const interrupted: string[] = [];
+    const failed: Array<{ process_id: string; error: string }> = [];
+    if (rows.length === 0) return { interrupted, failed };
+    await Promise.all(rows.map(async ({ process_id, resume_id }) => {
+      try {
+        const response = await this.daemonRequest('POST', `/api/session/${encodeURIComponent(resume_id)}/interrupt`, undefined, false);
+        if (response) interrupted.push(process_id);
+      } catch (error) {
+        if (error instanceof ProviderCommandError && error.status === 404) return;
+        failed.push({ process_id, error: error instanceof Error ? error.message : String(error) });
+      }
+    }));
+    return { interrupted, failed };
+  }
+
   isBridgeToken(token: unknown): boolean {
     return token === this.token;
   }

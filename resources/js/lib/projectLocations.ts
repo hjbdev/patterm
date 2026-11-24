@@ -1,6 +1,12 @@
 import type { ProjectWorkbench } from '../types';
 import { activeAgentSessions } from './agentTabs';
 import { activeProcesses } from './processTabs';
+import { isSnoozed } from './snooze';
+import type { StripTab } from './tabStrip';
+
+export type ProjectTabRoute =
+  | { name: 'agent'; params: { projectId: string; sessionId: string } }
+  | { name: 'process'; params: { projectId: string; processId: string } };
 
 export interface ProjectLocation {
   name: string;
@@ -48,12 +54,27 @@ export function resolveProjectReturnPath(project: ProjectWorkbench | undefined, 
   return location.fullPath;
 }
 
-// Where a project's own page goes on desktop: its first
-// agent, or else its first process. Null when it has neither.
-export function projectFirstTab(project: ProjectWorkbench | null | undefined): { name: 'agent'; params: { projectId: string; sessionId: string } } | { name: 'process'; params: { projectId: string; processId: string } } | null {
+// The first displayed tab for a project's home redirect, honouring the strip's
+// awake/snoozed visibility and order so hidden snoozed agents are never picked.
+export function firstDisplayedTabRoute(
+  projectId: string,
+  tabs: readonly StripTab[],
+  projectOf?: (tab: StripTab) => { id: string } | null
+): ProjectTabRoute | null {
+  const first = tabs[0];
+  if (!first) return null;
+  const targetProjectId = projectOf?.(first)?.id ?? projectId;
+  return first.kind === 'agent'
+    ? { name: 'agent', params: { projectId: targetProjectId, sessionId: first.family.active.id } }
+    : { name: 'process', params: { projectId: targetProjectId, processId: first.process.id } };
+}
+
+// Where a project's own page goes on desktop when no displayed tab list is
+// available: its first awake agent, or else its first process.
+export function projectFirstTab(project: ProjectWorkbench | null | undefined): ProjectTabRoute | null {
   if (!project) return null;
   const projectId = project.project.id;
-  const session = activeAgentSessions(project.projectSessions)[0];
+  const session = activeAgentSessions(project.projectSessions).find((candidate) => !isSnoozed(candidate));
   if (session) return { name: 'agent', params: { projectId, sessionId: session.id } };
   const process = activeProcesses(project.processes)[0];
   return process ? { name: 'process', params: { projectId, processId: process.id } } : null;

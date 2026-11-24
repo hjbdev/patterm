@@ -486,7 +486,13 @@ async function createApplicationResources(
   defer(() => idleCompaction.dispose());
 
   const inventory = persistentTerminals ? terminalInventory.parse(await terminal.request('terminal.process.list')).processes : undefined;
-  const reconciled = new ReconcileRuntimeAction(database).execute(inventory);
+  const retiredOpenCode = await openCodeServer.interruptLegacyTui();
+  if (retiredOpenCode.interrupted.length || retiredOpenCode.failed.length) {
+    debugLog.write('runtime', 'retire-tui.opencode', retiredOpenCode);
+  }
+  const reconciled = new ReconcileRuntimeAction(database).execute(inventory, {
+    keepOpenProcessIds: retiredOpenCode.failed.map((item) => item.process_id)
+  });
   for (const ptyId of reconciled.reapedPtyIds) {
     await terminal.request('terminal.process.stop', { process_id: ptyId }).catch(() => undefined);
     await terminal.request('terminal.process.close', { process_id: ptyId }).catch(() => undefined);

@@ -1545,7 +1545,13 @@ export class IntegratedAgentService {
   // Stops the host of an agent that is no longer marked running, such as one
   // reconciled as failed, when that host is in fact still alive.
   async stopIfLive(processId: string): Promise<void> {
-    if (await this.hostListening(processId)) await this.stop(processId);
+    if (await this.hostListening(processId)) {
+      await this.stop(processId);
+      return;
+    }
+    if (this.sessionHarness(processId) === 'opencode') {
+      await this.providers.opencode?.interrupt?.(processId);
+    }
   }
 
   // A host is alive when its control socket accepts a connection. Unlike a PID

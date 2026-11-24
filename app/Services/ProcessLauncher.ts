@@ -43,6 +43,7 @@ export interface ProcessLauncherResult {
 interface ProcessRow {
   id: string;
   project_id: string;
+  kind: string;
   status: string;
   name: string;
   cwd: string | null;
@@ -74,12 +75,12 @@ export class ProcessLauncher {
 
   async update(raw: ProcessUpdateInput): Promise<{ process_id: string; pty_process_id: string | null; restarted: boolean }> {
     const input = processUpdateInput.parse(raw);
-    return this.fenced(this.process(input.process_id).project_id, () => this.updateInProject(input));
+    return this.fenced(this.requirePtyProcess(input.process_id).project_id, () => this.updateInProject(input));
   }
 
-  // Re-attach a fresh PTY to an existing (exited) process row, reusing its argv.
+  // Re-attach a fresh PTY to an existing (exited) non-agent process row, reusing its argv.
   async relaunch(processId: string): Promise<{ process_id: string; pty_process_id: string }> {
-    return this.fenced(this.process(processId).project_id, () => this.relaunchInProject(processId));
+    return this.fenced(this.requirePtyProcess(processId).project_id, () => this.relaunchInProject(processId));
   }
 
   private fenced<T>(projectId: string, launch: () => Promise<T>): Promise<T> {
@@ -123,7 +124,7 @@ export class ProcessLauncher {
   }
 
   private async updateInProject(input: z.output<typeof processUpdateInput>): Promise<{ process_id: string; pty_process_id: string | null; restarted: boolean }> {
-    const row = this.process(input.process_id);
+    const row = this.requirePtyProcess(input.process_id);
     const previousArgv = parseArgv(row.argv);
     const nextArgv = input.command === undefined ? previousArgv : argvFromCommand(input.command);
     const requestedCwd = normalizeNullable(input.cwd);
@@ -183,7 +184,7 @@ export class ProcessLauncher {
   }
 
   private async relaunchInProject(processId: string): Promise<{ process_id: string; pty_process_id: string }> {
-    const row = this.process(processId);
+    const row = this.requirePtyProcess(processId);
 
     const argv = parseArgv(row.argv);
     if (argv.length === 0) {
@@ -226,10 +227,18 @@ export class ProcessLauncher {
 
   private process(processId: string): ProcessRow {
     const row = this.deps.database.connection
-      .prepare(`select id, project_id, status, name, cwd, argv, worktree_id, pty_process_id from processes where id = ?`)
+      .prepare(`select id, project_id, kind, status, name, cwd, argv, worktree_id, pty_process_id from processes where id = ?`)
       .get(processId) as ProcessRow | undefined;
     if (!row) {
       throw new Error(`unknown process: ${processId}`);
+    }
+    return row;
+  }
+
+  private requirePtyProcess(processId: string): ProcessRow {
+    const row = this.process(processId);
+    if (row.kind === 'agent') {
+      throw new Error(`process ${processId} is an agent; resume or restart its conversation instead of restarting it as a PTY process`);
     }
     return row;
   }
