@@ -120,6 +120,9 @@ function grepReadings(line: string): GrepReading[] {
   if (bare) readings.push({ file: '', n: Number(bare[1]), text: bare[3]!, context: bare[2] === '-' });
   for (const match of line.matchAll(/([:-])(\d+)\1/g)) {
     if (!match.index) continue;
+    // A path with a colon past a drive letter is really text, such as a
+    // compiler's `server.c:1:25:` after a path-less hit.
+    if (line.slice(0, match.index).replace(/^[A-Za-z]:[\\/]/, '').includes(':')) continue;
     readings.push({ file: line.slice(0, match.index), n: Number(match[2]), text: line.slice(match.index + match[0].length), context: match[1] === '-' });
   }
   return readings;
