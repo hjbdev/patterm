@@ -13,9 +13,10 @@ import {
   type AgentConversationSnapshot,
   type AgentLaunchInput,
   type AgentLaunchResult,
-  type AgentOlderMessagesPage
+  type AgentOlderMessagesPage,
+  type AgentPromptResult
 } from '../Agents/AgentProtocol';
-import { resolveSessionRuntimeState } from '../Agents/SessionRuntimeState';
+import { resolveSessionRuntimeState, updateSessionRuntimeState } from '../Agents/SessionRuntimeState';
 import { HOST_RECONNECT_ATTEMPTS, HOST_RECONNECT_BASE_MS, HOST_RECONNECT_MAX_MS, waitForHostSocket } from '../Runtime/SupervisedHostClient';
 import type { IntegratedControls, IntegratedFormAction, ReviewPrompt } from './IntegratedAgentService';
 import { elicitationContent, elicitationForm, type ElicitationForm } from './McpElicitation';
@@ -64,6 +65,10 @@ interface CodexRuntime {
   model: string | null;
   reasoning: string | null;
   serviceTier: string | null;
+  serviceTierExplicit: boolean;
+  collaborationMode: CodexCollaborationMode;
+  answeredPlanId: string | null;
+  needsMemoryRefresh: boolean;
 }
 
 interface PendingServerRequest {
@@ -166,6 +171,7 @@ export class CodexAppServerService implements AgentAdapter {
   private readonly reconnectedSockets = new Set<string>();
   private readonly connectedSockets = new Set<string>();
   private readonly clients = new Map<string, CodexRpcClient>();
+  private readonly connecting = new Map<string, Promise<CodexRpcClient>>();
   private readonly models = new Map<string, string>();
   private readonly efforts = new Map<string, string>();
   // Speed chosen in the composer or with /fast; sent with every later turn.
@@ -209,6 +215,12 @@ export class CodexAppServerService implements AgentAdapter {
   };
 
   async prepare(input: AgentLaunchInput): Promise<AgentLaunchResult> {
+    if (input.resumeId) {
+      const attached = input.wakingSessionId
+        ? this.database.connection.prepare("select id from sessions where harness = 'codex' and resume_id = ? and exited_at is null and id != ?").get(input.resumeId, input.wakingSessionId)
+        : this.database.connection.prepare("select id from sessions where harness = 'codex' and resume_id = ? and exited_at is null").get(input.resumeId);
+      if (attached) throw new Error('Codex session is already attached to Patterm');
+    }
     const directory = path.join(this.runtimeDir, 'codex');
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     const key = randomUUID();
@@ -289,7 +301,7 @@ export class CodexAppServerService implements AgentAdapter {
       const tasks = codexTasks(messages, client, await this.trackBackgroundTerminals(client, runtime.threadId, messages));
       const goal = this.threadGoal(processId, client, runtime.threadId);
       const pending = client.pendingRequests();
-      const plan = this.planApproval(processId, messages, !pending.length && (status === 'idle' || status === 'error'));
+      const plan = this.planApproval(processId, runtime, messages, !pending.length && (status === 'idle' || status === 'error'));
       return snapshotWithGoal({
         process_id: processId,
         session_id: runtime.sessionId,
@@ -308,7 +320,7 @@ export class CodexAppServerService implements AgentAdapter {
         tasks,
         diagnostics: { unhandled: channel.unhandled },
         messages: { data: messages },
-        mode: this.collaborationModes.get(processId) ?? 'default'
+        mode: this.collaborationModes.get(processId) ?? runtime.collaborationMode
       }, goal, client.goals.list(runtime.threadId));
     }
     const { response, unavailable } = await this.listItems(client, runtime.threadId);
@@ -330,7 +342,7 @@ export class CodexAppServerService implements AgentAdapter {
     const goal = this.threadGoal(processId, client, runtime.threadId);
     const pending = client.pendingRequests();
     const { status } = effectiveStatus(own, client, spawned.keys());
-    const plan = this.planApproval(processId, messages, !pending.length && (status === 'idle' || status === 'error'));
+    const plan = this.planApproval(processId, runtime, messages, !pending.length && (status === 'idle' || status === 'error'));
     return snapshotWithGoal({
       process_id: processId,
       session_id: runtime.sessionId,
@@ -347,7 +359,7 @@ export class CodexAppServerService implements AgentAdapter {
       usage: client.usage(runtime.threadId),
       tasks: codexTasks(parentMessages, client, await this.trackBackgroundTerminals(client, runtime.threadId, parentMessages)),
       messages: { data: messages },
-      mode: this.collaborationModes.get(processId) ?? 'default',
+      mode: this.collaborationModes.get(processId) ?? runtime.collaborationMode,
       ...withPlan(pendingViews(pending, runtime.threadId, messages), plan)
     }, goal, client.goals.list(runtime.threadId));
   }
@@ -422,19 +434,23 @@ export class CodexAppServerService implements AgentAdapter {
     // A reconnect may have missed a compaction, so it refreshes too. The
     // markers are taken before the request, so a compaction reported while it
     // runs still refreshes the next update; a failed request puts them back.
-    const compacted = this.compactedThreads.delete(runtime.threadId);
+    const compacted = this.compactedThreads.delete(runtime.threadId) || runtime.needsMemoryRefresh;
     const reconnected = this.reconnectedSockets.delete(runtime.socketPath);
+    if (runtime.needsMemoryRefresh) this.persistAdapterData(processId, { needsMemoryRefresh: false });
     const text = compacted || reconnected ? update.snapshot() : update.changes;
     if (!text) return;
     try {
       await client.request('thread/inject_items', { threadId: runtime.threadId, items: [{ type: 'message', role: 'developer', content: [{ type: 'input_text', text }] }] });
     } catch (error) {
-      if (compacted || reconnected) this.compactedThreads.add(runtime.threadId);
+      if (compacted || reconnected) {
+        this.compactedThreads.add(runtime.threadId);
+        this.persistAdapterData(processId, { needsMemoryRefresh: true });
+      }
       throw error;
     }
   }
 
-  async prompt(processId: string, input: ResolvedIntegratedPrompt, review?: ReviewPrompt): Promise<{ turnId: string }> {
+  async prompt(processId: string, input: ResolvedIntegratedPrompt, review?: ReviewPrompt): Promise<AgentPromptResult> {
     const runtime = this.runtime(processId);
     const client = await this.client(runtime);
     const items: Array<Record<string, unknown>> = [];
@@ -446,21 +462,21 @@ export class CodexAppServerService implements AgentAdapter {
     if (!items.length) throw new Error('Message is empty');
     await this.adoptThreadSettings(processId, runtime, client);
     const model = this.models.get(processId) ?? runtime.model;
-    const effort = this.efforts.get(processId) ?? (this.models.has(processId) ? null : runtime.reasoning);
-    const serviceTier = this.tiers.get(processId);
+    const effort = this.efforts.get(processId) ?? runtime.reasoning;
+    const serviceTier = this.tiers.get(processId) ?? (runtime.serviceTierExplicit ? runtime.serviceTier ?? undefined : undefined);
     // The mode's settings take precedence over the turn's model and effort;
     // null instructions keep Codex's built-in ones for the mode.
     const collaborationMode = {
-      mode: this.collaborationModes.get(processId) ?? 'default',
+      mode: this.collaborationModes.get(processId) ?? runtime.collaborationMode,
       settings: { model: model ?? await this.defaultModel(client), reasoning_effort: effort ?? null, developer_instructions: null }
     };
     if (review && !review.current()) throw new Error('This request is no longer waiting for this parent');
     if (input.admitGuard) {
       const checked = input.admitGuard();
-      if (!checked) return { delivery: 'dropped' } as unknown as { turnId: string };
+      if (!checked) return { delivery: 'dropped' };
       const nextText = promptText(checked);
       if (nextText !== text) {
-        if (!nextText && !items.some((item) => item.type !== 'text')) return { delivery: 'dropped' } as unknown as { turnId: string };
+        if (!nextText && !items.some((item) => item.type !== 'text')) return { delivery: 'dropped' };
         if (items[0]?.type === 'text') items[0].text = nextText;
         else if (nextText) items.unshift({ type: 'text', text: nextText, text_elements: [] });
       }
@@ -970,11 +986,11 @@ export class CodexAppServerService implements AgentAdapter {
       selectors: [
         ...(models.length ? [{ id: 'model', label: 'Model', value: selectedModel, options: models }] : []),
         ...(efforts.length ? [{ id: 'effort', label: 'Thinking', value: this.efforts.get(processId)
-          ?? (this.models.has(processId) ? null : runtime.reasoning)
+          ?? runtime.reasoning
           ?? String(selectedMetadata?.defaultReasoningEffort ?? efforts[0]!.value), options: efforts }] : []),
         ...(speeds.length ? [{ id: 'speed', label: 'Speed', value: tierValue(this.tiers.get(processId)) ?? tierValue(runtime.serviceTier)
           ?? tierValue(configTier) ?? tierValue(selectedMetadata?.defaultServiceTier) ?? 'default', options: speeds }] : []),
-        { id: 'mode', label: 'Mode', value: this.collaborationModes.get(processId) ?? 'default', options: CODEX_MODES }
+        { id: 'mode', label: 'Mode', value: this.collaborationModes.get(processId) ?? runtime.collaborationMode, options: CODEX_MODES }
       ],
       commands: [
         { name: 'compact', description: 'Compact the current conversation' },
@@ -989,18 +1005,18 @@ export class CodexAppServerService implements AgentAdapter {
     };
   }
 
-  // Picks are kept in memory, so after a Patterm restart the picker would fall
-  // back to the launch or catalogue default, and the next turn would switch
-  // the thread to it. Codex keeps the model and effort the last turn ran with
-  // on the thread, so those are the starting point instead. A failed read
-  // keeps the launch settings.
+  // Saved picks in sessions.model / sessions.reasoning are authoritative when
+  // present. When a session launched on defaults (sessions.model is null),
+  // adopt the model and any unset effort from the thread's last turn on reconnect.
   private async adoptThreadSettings(processId: string, runtime: CodexRuntime, client: CodexRpcClient): Promise<void> {
-    if (this.models.has(processId)) return;
+    if (this.models.has(processId) || runtime.model) return;
     const response = await client.request('thread/read', { threadId: runtime.threadId, includeTurns: false }).catch(() => null);
     const thread = record(record(response).thread);
     if (this.models.has(processId) || typeof thread.model !== 'string' || !thread.model) return;
     this.models.set(processId, thread.model);
-    if (typeof thread.reasoningEffort === 'string' && thread.reasoningEffort && !this.efforts.has(processId)) this.efforts.set(processId, thread.reasoningEffort);
+    if (typeof thread.reasoningEffort === 'string' && thread.reasoningEffort && !this.efforts.has(processId) && !runtime.reasoning) {
+      this.efforts.set(processId, thread.reasoningEffort);
+    }
   }
 
   // The model catalogue is treated as fixed for one connection. A restarted
@@ -1089,16 +1105,25 @@ export class CodexAppServerService implements AgentAdapter {
     if (selector === 'mode') {
       if (value !== 'default' && value !== 'plan') throw new Error('Unknown Codex mode');
       this.collaborationModes.set(processId, value);
+      this.persistAdapterData(processId, { collaborationMode: value });
       return;
     }
     if (selector !== 'model' && selector !== 'effort' && selector !== 'speed') throw new Error('Unknown Codex setting');
     const option = (await this.controls(processId)).selectors.find((item) => item.id === selector);
     if (!option?.options.some((item) => item.value === value)) throw new Error(`Unknown Codex ${selector}`);
+    const runtime = this.runtime(processId);
     if (selector === 'model') {
       this.models.set(processId, value);
       this.efforts.delete(processId);
-    } else if (selector === 'speed') this.tiers.set(processId, value);
-    else this.efforts.set(processId, value);
+      this.database.connection.prepare('update sessions set model = ?, reasoning = null where id = ?').run(value, runtime.sessionId);
+    } else if (selector === 'speed') {
+      this.tiers.set(processId, value);
+      this.database.connection.prepare('update sessions set service_tier = ? where id = ?').run(value, runtime.sessionId);
+      this.persistAdapterData(processId, { serviceTierExplicit: true });
+    } else {
+      this.efforts.set(processId, value);
+      this.database.connection.prepare('update sessions set reasoning = ? where id = ?').run(value, runtime.sessionId);
+    }
   }
 
   async compact(processId: string): Promise<Record<string, unknown>> {
@@ -1133,8 +1158,11 @@ export class CodexAppServerService implements AgentAdapter {
       const mode = argument.toLowerCase();
       if (mode && mode !== 'on' && mode !== 'off') throw new Error('Use /fast, /fast on, or /fast off');
       const enable = mode ? mode === 'on' : speed.value === 'default';
-      this.tiers.set(processId, enable ? fast.value : 'default');
-      return { speed: enable ? fast.value : 'default' };
+      const nextTier = enable ? fast.value : 'default';
+      this.tiers.set(processId, nextTier);
+      this.database.connection.prepare('update sessions set service_tier = ? where id = ?').run(nextTier, runtime.sessionId);
+      this.persistAdapterData(processId, { serviceTierExplicit: true });
+      return { speed: nextTier };
     }
     if (name === 'review') return record(await client.request('review/start', { threadId: runtime.threadId, target: reviewTarget(argument), delivery: 'inline' }));
     if (name === 'rename') {
@@ -1337,8 +1365,10 @@ export class CodexAppServerService implements AgentAdapter {
   // Plan mode and asks Codex to implement it. Keeping planning sends the note,
   // if any, as the next Plan mode prompt.
   private async replyPlan(processId: string, planId: string, approved: boolean, note: string): Promise<void> {
-    if (this.answeredPlans.get(processId) === planId) throw new Error('This plan was already answered');
+    const runtime = this.runtime(processId);
+    if ((this.answeredPlans.get(processId) ?? runtime.answeredPlanId) === planId) throw new Error('This plan was already answered');
     this.answeredPlans.set(processId, planId);
+    this.persistAdapterData(processId, { answeredPlanId: planId, ...(approved ? { collaborationMode: 'default' } : {}) });
     const channel = this.channels.get(processId);
     if (channel) this.enqueue(channel, { revision: 0, kind: 'pending' });
     if (approved) {
@@ -1349,8 +1379,8 @@ export class CodexAppServerService implements AgentAdapter {
 
   // A plan proposed in Plan mode waits for an answer once its turn ends,
   // until a later prompt or a reply settles it.
-  private planApproval(processId: string, messages: IntegratedConversationMessage[], idle: boolean): JsonRecord[] {
-    if (!idle || this.collaborationModes.get(processId) !== 'plan') return [];
+  private planApproval(processId: string, runtime: CodexRuntime, messages: IntegratedConversationMessage[], idle: boolean): JsonRecord[] {
+    if (!idle || (this.collaborationModes.get(processId) ?? runtime.collaborationMode) !== 'plan') return [];
     let plan: IntegratedConversationMessage | undefined;
     for (let index = messages.length - 1; index >= 0 && messages[index]!.role !== 'user'; index -= 1) {
       const message = messages[index]!;
@@ -1359,7 +1389,7 @@ export class CodexAppServerService implements AgentAdapter {
         break;
       }
     }
-    if (!plan?.text.trim() || this.answeredPlans.get(processId) === plan.id) return [];
+    if (!plan?.text.trim() || (this.answeredPlans.get(processId) ?? runtime.answeredPlanId) === plan.id) return [];
     return [{
       id: `${PLAN_REQUEST_PREFIX}${plan.id}`, action: 'Implement this plan?', resources: [], plan: plan.text, feedback: true,
       always: false, once_label: 'Yes, implement it', reject_label: 'No, keep planning'
@@ -1475,6 +1505,7 @@ export class CodexAppServerService implements AgentAdapter {
     if (state.hostKind !== 'app-server' || !state.socketPath) {
       throw new Error('Codex Integrated runtime metadata is invalid');
     }
+    const adapter = record(state.adapterData);
     return {
       executable: state.executable ?? 'codex',
       socketPath: state.socketPath,
@@ -1484,8 +1515,28 @@ export class CodexAppServerService implements AgentAdapter {
       sessionId: row.session_id,
       model: row.model,
       reasoning: row.reasoning,
-      serviceTier: row.service_tier
+      serviceTier: row.service_tier,
+      serviceTierExplicit: adapter.serviceTierExplicit === true,
+      collaborationMode: adapter.collaborationMode === 'plan' ? 'plan' : 'default',
+      answeredPlanId: typeof adapter.answeredPlanId === 'string' ? adapter.answeredPlanId : null,
+      needsMemoryRefresh: adapter.needsMemoryRefresh === true
     };
+  }
+
+  private persistAdapterData(processId: string, patch: Record<string, unknown>): void {
+    updateSessionRuntimeState(this.database, processId, (current) => ({
+      ...current,
+      adapterData: { ...(current.adapterData ?? {}), ...patch }
+    }));
+  }
+
+  private markThreadMemoryRefresh(threadId: string): void {
+    const row = this.database.connection.prepare(`
+      select process_id from sessions
+      where harness = 'codex' and resume_id = ? and exited_at is null and process_id is not null
+      order by started_at desc limit 1
+    `).get(threadId) as { process_id: string } | undefined;
+    if (row) this.persistAdapterData(row.process_id, { needsMemoryRefresh: true });
   }
 
   private async client(runtime: CodexRuntime): Promise<CodexRpcClient> {
@@ -1497,36 +1548,54 @@ export class CodexAppServerService implements AgentAdapter {
   private async connect(socketPath: string): Promise<CodexRpcClient> {
     const existing = this.clients.get(socketPath);
     if (existing?.connected) return existing;
+    const inflight = this.connecting.get(socketPath);
+    if (inflight) return inflight;
     if (existing) this.clients.delete(socketPath);
-    let client: CodexRpcClient;
-    client = await CodexRpcClient.connect(socketPath, () => {
-      // Only retire this client; a reconnect may already have replaced it.
-      if (this.clients.get(socketPath) === client) this.clients.delete(socketPath);
-      this.onClientClosed(socketPath);
-    }, this.options.requestTimeoutMs ?? 15_000);
-    this.clients.set(socketPath, client);
-    if (this.connectedSockets.has(socketPath)) this.reconnectedSockets.add(socketPath);
-    this.connectedSockets.add(socketPath);
-    client.onNotification((notification) => {
-      const threadId = notification.params.threadId;
-      if (typeof threadId === 'string' && (notification.method === 'thread/compacted' || (notification.method === 'item/completed' && record(notification.params.item).type === 'contextCompaction'))) this.compactedThreads.add(threadId);
-      this.dispatchRealtime(notification);
-    });
-    await client.request('initialize', {
-      clientInfo: { name: 'patterm-desktop', title: 'Patterm', version: '1' },
-      capabilities: { experimentalApi: true, requestAttestation: false }
-    }).catch((error: unknown) => {
-      // The host keeps one app-server connection for its whole life, so after
-      // a server restart that connection is already initialised.
-      if (!(error instanceof Error && error.message === 'Already initialized')) throw error;
-    });
-    // A reconnected app-server has no knowledge of what was missed. Re-seed
-    // every channel bound to this socket so the projected state catches up, and
-    // let subscribers refresh from it.
-    for (const channel of this.channels.values()) {
-      if (channel.socketPath === socketPath) this.reattach(channel, client);
+    const pending = (async () => {
+      let client: CodexRpcClient;
+      client = await CodexRpcClient.connect(socketPath, () => {
+        // Only retire this client; a reconnect may already have replaced it.
+        if (this.clients.get(socketPath) === client) this.clients.delete(socketPath);
+        this.onClientClosed(socketPath);
+      }, this.options.requestTimeoutMs ?? 15_000);
+      client.onNotification((notification) => {
+        const threadId = notification.params.threadId;
+        if (typeof threadId === 'string' && (notification.method === 'thread/compacted' || (notification.method === 'item/completed' && record(notification.params.item).type === 'contextCompaction'))) {
+          this.compactedThreads.add(threadId);
+          this.markThreadMemoryRefresh(threadId);
+        }
+        this.dispatchRealtime(notification);
+      });
+      try {
+        await client.request('initialize', {
+          clientInfo: { name: 'patterm-desktop', title: 'Patterm', version: '1' },
+          capabilities: { experimentalApi: true, requestAttestation: false }
+        }).catch((error: unknown) => {
+          // The host keeps one app-server connection for its whole life, so after
+          // a server restart that connection is already initialised.
+          if (!(error instanceof Error && error.message === 'Already initialized')) throw error;
+        });
+      } catch (error) {
+        client.close();
+        throw error;
+      }
+      this.clients.set(socketPath, client);
+      if (this.connectedSockets.has(socketPath)) this.reconnectedSockets.add(socketPath);
+      this.connectedSockets.add(socketPath);
+      // A reconnected app-server has no knowledge of what was missed. Re-seed
+      // every channel bound to this socket so the projected state catches up, and
+      // let subscribers refresh from it.
+      for (const channel of this.channels.values()) {
+        if (channel.socketPath === socketPath) this.reattach(channel, client);
+      }
+      return client;
+    })();
+    this.connecting.set(socketPath, pending);
+    try {
+      return await pending;
+    } finally {
+      if (this.connecting.get(socketPath) === pending) this.connecting.delete(socketPath);
     }
-    return client;
   }
 
   private reattach(channel: CodexChannel, client: CodexRpcClient): void {

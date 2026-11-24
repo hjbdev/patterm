@@ -20,7 +20,7 @@ import { AgentContextService } from './AgentContextService';
 import type { TimelineService } from './TimelineService';
 import type { DebugLogService } from './DebugLogService';
 import type { IntegratedAgentService, IntegratedLaunchInput, IntegratedLaunchResult } from './IntegratedAgentService';
-import { serializeRuntimeState } from '../Agents/SessionRuntimeState';
+import { resolveSessionRuntimeState, serializeRuntimeState } from '../Agents/SessionRuntimeState';
 import { SettingsService } from './SettingsService';
 import type { OpenCodeMcpSource } from './OpenCodeServerService';
 import type { McpServerRegistry } from './McpServerRegistry';
@@ -159,7 +159,7 @@ export class HarnessLauncher {
     const row = this.deps.database.connection.prepare(`
       select sessions.id as session_id, sessions.project_id, sessions.harness, sessions.resume_id,
         sessions.mcp_identity, sessions.session_role, sessions.bot_id, sessions.model, sessions.reasoning,
-        sessions.service_tier, sessions.display_name, coalesce(sessions.cwd, processes.cwd) as cwd
+        sessions.service_tier, sessions.display_name, sessions.runtime_state, coalesce(sessions.cwd, processes.cwd) as cwd
       from sessions join processes on processes.id = sessions.process_id
       where sessions.process_id = ? and sessions.exited_at is null
       order by sessions.started_at desc limit 1
@@ -167,7 +167,7 @@ export class HarnessLauncher {
       session_id: string; project_id: string; harness: string; resume_id: string | null;
       mcp_identity: string | null; session_role: string; bot_id: string | null;
       model: string | null; reasoning: string | null; service_tier: string | null;
-      display_name: string | null; cwd: string | null;
+      display_name: string | null; runtime_state: string | null; cwd: string | null;
     } | undefined;
     if (!row || !row.resume_id || !row.mcp_identity) throw new Error('Hibernated Integrated session cannot be woken');
     const parsedHarness = presetHarnessInput.safeParse(row.harness);
@@ -212,12 +212,21 @@ export class HarnessLauncher {
       quietNotificationReplies: row.session_role === 'assistant' && row.bot_id === ASSISTANT_BOT_ID,
       wakingSessionId: row.session_id
     });
+    const previousState = resolveSessionRuntimeState(row.runtime_state, null);
+    const nextRuntimeState = prepared.runtimeState
+      ? {
+          ...prepared.runtimeState,
+          ...(previousState.adapterData || prepared.runtimeState.adapterData
+            ? { adapterData: { ...(previousState.adapterData ?? {}), ...(prepared.runtimeState.adapterData ?? {}) } }
+            : {})
+        }
+      : prepared.runtimeState;
     const now = new Date().toISOString();
     this.deps.database.connection.transaction(() => {
       this.deps.database.connection.prepare('update processes set argv = ?, updated_at = ? where id = ?')
         .run(JSON.stringify(prepared.argv), now, processId);
       this.deps.database.connection.prepare('update sessions set runtime_state = ? where id = ?')
-        .run(serializeRuntimeState(prepared.runtimeState), row.session_id);
+        .run(serializeRuntimeState(nextRuntimeState), row.session_id);
     })();
   }
 

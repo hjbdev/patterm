@@ -95,7 +95,17 @@ export class AcpProviderService implements AgentAdapter {
       while (Date.now() < deadline) {
         if (pid) { try { process.kill(pid, 0); } catch { throw new Error('ACP host exited during startup'); } }
         if (await integratedHostReady(socketPath)) {
-          const state = await this.host.call<Row>(socketPath, 'conversation', {});
+          let state: Row;
+          try {
+            state = await this.host.call<Row>(socketPath, 'conversation', {});
+          } catch (error) {
+            const code = (error as NodeJS.ErrnoException)?.code;
+            if (error instanceof IntegratedHostTransportError || code === 'ENOENT' || code === 'ECONNREFUSED') {
+              await new Promise((resolve) => setTimeout(resolve, 100));
+              continue;
+            }
+            throw error;
+          }
           if (state.status === 'error') throw new Error(String(state.status_detail ?? 'Antigravity could not start'));
           if (state.status !== 'starting' && state.provider_session_id) {
             return {
@@ -153,8 +163,16 @@ export class AcpProviderService implements AgentAdapter {
       const stored = attachment.mime.startsWith('image/') ? this.images?.fromBase64(data) : null;
       attachments.push({ type: stored ? 'image' : 'file', name: attachment.name, mime: attachment.mime, ...(stored ? { sha256: stored.sha256 } : {}) });
     }
+    let promptText = input.text;
+    if (input.admitGuard) {
+      const checked = input.admitGuard();
+      if (!checked) return { delivery: 'dropped' };
+      if (!checked.text.trim() && prompt.length === 1) return { delivery: 'dropped' };
+      promptText = checked.text;
+      prompt[0] = { type: 'text', text: promptText };
+    }
     try {
-      return await this.host.call<AgentPromptResult>(this.runtime(processId).socketPath, 'prompt', { prompt, text: input.text, clientMessageId: input.messageId, attachments });
+      return await this.host.call<AgentPromptResult>(this.runtime(processId).socketPath, 'prompt', { prompt, text: promptText, clientMessageId: input.messageId, attachments });
     } catch (error) {
       if (error instanceof Error && error.message === 'ACP turn is busy') throw new TurnBusyError(error.message, 'prompt');
       if (error instanceof Error && /^ACP prompt delivery is uncertain(?::|$)/.test(error.message)) throw new UncertainDeliveryError(error.message, input.messageId);
@@ -196,11 +214,14 @@ export class AcpProviderService implements AgentAdapter {
     };
   }
   async configure(processId: string, selector: string, value: string): Promise<void> {
-    await this.host.call(this.runtime(processId).socketPath, 'configure', { selector, value });
+    const runtime = this.runtime(processId);
+    const updated = await this.host.call<Row>(runtime.socketPath, 'configure', { selector, value });
     // Recovery of an ended host falls back to these columns. Do not leave its
     // original launch model/effort behind after the user changes the pickers.
-    const settings = await this.nativeSettings(processId);
-    this.database.connection.prepare('update sessions set model = ?, reasoning = ? where id = ?').run(settings.model ?? null, settings.reasoning ?? null, this.runtime(processId).sessionId);
+    const settings = updated && 'model' in updated
+      ? { model: (typeof updated.model === 'string' ? updated.model : null), reasoning: (typeof updated.reasoning === 'string' ? updated.reasoning : null) }
+      : await this.nativeSettings(processId);
+    this.database.connection.prepare('update sessions set model = ?, reasoning = ? where id = ?').run(settings.model ?? null, settings.reasoning ?? null, runtime.sessionId);
   }
   async command(processId: string, name: string, text: string): Promise<AgentPromptResult> {
     return this.prompt(processId, { text: `/${name}${text ? ` ${text}` : ''}`, attachments: [], references: [] });
@@ -228,12 +249,25 @@ export class AcpProviderService implements AgentAdapter {
   }
   async stop(processId: string): Promise<void> {
     const runtime = this.runtime(processId);
-    await this.host.stop(runtime.socketPath, runtime.pid, this.launcher);
+    try {
+      await this.host.stop(runtime.socketPath, runtime.pid, this.launcher);
+    } finally {
+      if (runtime.configPath) {
+        try { fs.rmSync(runtime.configPath, { force: true }); } catch { /* host may already have removed it */ }
+      }
+    }
   }
   async cleanupLaunch(_input: AgentLaunchInput, result: AgentLaunchResult): Promise<void> {
     const socketPath = result.runtimeState?.socketPath ?? (typeof result.argv[2] === 'string' ? result.argv[2] : undefined);
     const pid = result.runtimeState?.pid ?? (Number(result.argv[3]) || null);
-    await this.host.cleanupLaunch(socketPath, pid, this.launcher);
+    const configPath = result.runtimeState?.configPath ?? (typeof result.argv[4] === 'string' ? result.argv[4] : undefined);
+    try {
+      await this.host.cleanupLaunch(socketPath, pid, this.launcher);
+    } finally {
+      if (configPath) {
+        try { fs.rmSync(configPath, { force: true }); } catch { /* best-effort cleanup */ }
+      }
+    }
   }
   async stopAll(): Promise<void> {
     const rows = this.database.connection.prepare("select process_id as id from sessions where harness = 'agy' and exited_at is null and process_id is not null").all() as Array<{ id: string }>;
@@ -249,6 +283,6 @@ export class AcpProviderService implements AgentAdapter {
     if (!row) throw new Error('Antigravity Integrated session not found');
     const state = resolveSessionRuntimeState(row.runtime_state, row.argv);
     if (state.hostKind !== 'acp-host' || !state.socketPath) throw new Error('ACP runtime metadata is invalid');
-    return { socketPath: state.socketPath, pid: state.pid ?? null, sessionId: row.session_id, resumeId: row.resume_id };
+    return { socketPath: state.socketPath, pid: state.pid ?? null, configPath: state.configPath ?? null, sessionId: row.session_id, resumeId: row.resume_id };
   }
 }

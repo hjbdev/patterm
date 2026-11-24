@@ -14,6 +14,7 @@ import {
 export const HOST_RECONNECT_BASE_MS = 250;
 export const HOST_RECONNECT_MAX_MS = 5_000;
 export const HOST_RECONNECT_ATTEMPTS = 8;
+export const HOST_SUBSCRIBE_TIMEOUT_MS = 10_000;
 export const MAX_HOST_STREAM_BUFFER_BYTES = 32 * 1024 * 1024;
 
 export interface WaitForHostSocketOptions {
@@ -69,12 +70,14 @@ export class SupervisedHostClient {
     let socket: net.Socket | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let stopped = false;
+    let exhausted = false;
     let attempts = 0;
 
     const scheduleReconnect = () => {
-      if (stopped || retryTimer) return;
+      if (stopped || exhausted || retryTimer) return;
       attempts += 1;
       if (attempts > HOST_RECONNECT_ATTEMPTS) {
+        exhausted = true;
         listener({ processId, revision: 0, kind: 'error', id: 'connection_error', delta: reconnectErrorMessage });
         return;
       }
@@ -96,8 +99,15 @@ export class SupervisedHostClient {
       let buffer = '';
       let acknowledged = false;
       let rejected = false;
+      const handshakeTimer = setTimeout(() => {
+        fail(new Error(`${label} timed out subscribing to event stream`));
+        next.destroy();
+      }, HOST_SUBSCRIBE_TIMEOUT_MS);
+      handshakeTimer.unref?.();
+      const clearHandshake = () => clearTimeout(handshakeTimer);
       const fail = (error: Error) => {
         if (rejected || acknowledged) return;
+        clearHandshake();
         rejected = true;
         reject(error);
       };
@@ -132,6 +142,7 @@ export class SupervisedHostClient {
               next.destroy();
               return;
             }
+            clearHandshake();
             acknowledged = true;
             attempts = 0;
             resolve();
@@ -155,12 +166,12 @@ export class SupervisedHostClient {
       });
 
       next.once('close', () => {
+        clearHandshake();
         if (socket === next) socket = null;
         if (!acknowledged) {
-          fail(new Error(`${label} closed the event stream`));
           // Initial connect failure propagates to the caller; a failed retry
-          // keeps the bounded reconnect loop running until HOST_RECONNECT_ATTEMPTS.
-          if (!initial) scheduleReconnect();
+          // schedules the next attempt through connect(false).catch().
+          fail(new Error(`${label} closed the event stream`));
           return;
         }
         scheduleReconnect();

@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import { test } from 'node:test';
 import ts from 'typescript';
 import * as vue from 'vue';
-import { cachedConversation, forgetConversation, hasCachedConversation, rememberConversation } from '../dist/tests/app/Services/TranscriptProjection.js';
+import { cachedConversation, forgetConversation, hasCachedConversation, rememberConversation, snapshotHistoryCursor } from '../dist/tests/app/Services/TranscriptProjection.js';
+import { archiveTranscript } from '../dist/tests/resources/js/lib/historyTranscript.js';
 
 // Exercise the actual prefetch module with a stub workbench, browser and
 // network, and the real conversation cache.
@@ -27,7 +28,8 @@ function load({ connection = undefined, runtime = 'browser', touch = false, pref
   const modules = {
     vue,
     '../Composables/useWorkbench': { useWorkbench: () => ({ projects, lifecycleRevision: vue.ref(0), loaded: vue.ref(true) }) },
-    './integratedConversation': { hasCachedConversation, rememberConversation, normaliseConversation: (value) => ({ messages: value.messages ?? [], permissions: [], questions: [], forms: [], usage: null, tasks: [], queue: [] }) },
+    './historyTranscript': { archiveTranscript },
+    './integratedConversation': { hasCachedConversation, rememberConversation, snapshotHistoryCursor, normaliseConversation: (value) => ({ messages: value.messages ?? [], permissions: [], questions: [], forms: [], usage: null, tasks: [], queue: [] }) },
     './projectContext': {
       contextRead: (name, projectId, args) => new Promise((resolve) => contextReads.push({ name, projectId, args, resolve })),
       projectContextVersion: () => 'v'
@@ -151,6 +153,24 @@ test('a read-ahead conversation fills the cache without evicting opened ones', a
   assert.equal(cached?.provider, 'codex');
   assert.equal(cached?.historyCursor, 'c1');
   assert.equal(cached?.streaming, true);
+  // Hibernated sessions return archived_messages instead of live messages;
+  // prefetch must cache those rows rather than an empty transcript.
+  forgetConversation('process_z');
+  prefetch.prefetchSession('p', session('z'), prefetch.Tier.Other);
+  await settle();
+  calls[1].resolve({
+    messages: [],
+    archived_messages: [{ id: 'a1', role: 'assistant', kind: 'message', text: 'saved reply', createdAt: '2026-11-24T12:00:00.000Z', metadata: null, media: [] }],
+    provider: 'claude',
+    streaming: false,
+    history_truncated: true,
+    history_cursor: 'archive:1'
+  });
+  await settle();
+  const hibernated = cachedConversation('process_z');
+  assert.equal(hibernated?.messages.length, 1);
+  assert.equal(hibernated?.messages[0]?.text, 'saved reply');
+  assert.equal(hibernated?.historyCursor, 'archive:1');
   forgetConversation();
 });
 

@@ -1,7 +1,8 @@
 import { onScopeDispose, watch } from 'vue';
 import { useWorkbench } from '../Composables/useWorkbench';
-import type { ProjectWorkbench, SessionRecord } from '../types';
-import { hasCachedConversation, normaliseConversation, rememberConversation } from './integratedConversation';
+import type { ConversationMessageRecord, ProjectWorkbench, SessionRecord } from '../types';
+import { archiveTranscript } from './historyTranscript';
+import { hasCachedConversation, normaliseConversation, rememberConversation, snapshotHistoryCursor } from './integratedConversation';
 import { contextRead, projectContextVersion } from './projectContext';
 
 // Reads what the user is likely to open next into the client caches, within
@@ -189,15 +190,19 @@ async function readTranscript(processId: string): Promise<void> {
   }
   read.bytes = JSON.stringify(result).length;
   if (hasCachedConversation(processId)) return;
-  const cursor = result.history_cursor as Record<string, unknown> | null | undefined;
+  const projection = normaliseConversation(result);
+  const messages = Array.isArray(result.archived_messages)
+    ? archiveTranscript(result.archived_messages as ConversationMessageRecord[], { projectPath: null, showReasoning: true })
+    : projection.messages;
   rememberConversation(processId, {
-    ...normaliseConversation(result),
+    ...projection,
+    messages,
     controls: { selectors: [], commands: [] },
     provider: typeof result.provider === 'string' ? result.provider : null,
     streaming: result.streaming === true,
     historyTruncated: result.history_truncated === true,
     historyUnavailable: result.history_unavailable === true,
-    historyCursor: result.history_truncated === true && typeof cursor?.next === 'string' ? cursor.next : null,
+    historyCursor: result.history_truncated === true ? snapshotHistoryCursor(result) : null,
     historyLoaded: false
   }, { evict: false });
 }

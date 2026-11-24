@@ -295,9 +295,13 @@ export class BotRelay {
       }
       return { process_id: processId, delivery: 'delivered' };
     }
-    const result = await this.integrated.prompt(processId, `${heading}\n${message}`) as { delivery?: unknown; detail?: unknown } | null | undefined;
+    const text = `${heading}\n${message}`;
+    const result = (sourceScope && this.integrated.scopedPrompt
+      ? await this.integrated.scopedPrompt(processId, text, { sourceScope })
+      : await this.integrated.prompt(processId, text)) as { delivery?: unknown; detail?: unknown } | null | undefined;
     // Held until a compaction or review ends.
     if (result?.delivery === 'queued') return { process_id: processId, delivery: 'queued', ...(typeof result.detail === 'string' ? { detail: result.detail } : {}) };
+    if (result?.delivery === 'dropped') throw new Error(`send_message: ${botId === ASSISTANT_BOT_ID ? 'the assistant' : name} is no longer accepting messages from this project`);
     return { process_id: processId, delivery: result?.delivery === 'uncertain' ? 'uncertain' : 'delivered' };
   }
 

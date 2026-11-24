@@ -113,7 +113,10 @@ const child = spawn(native.command, native.args, { cwd: config.cwd, env: hostEnv
 let stderr = '';
 child.stderr.setEncoding('utf8');
 child.stderr.on('data', (chunk: string) => { stderr = (stderr + chunk).slice(-8192); });
-const transportFailed = (error: Error) => fail(new NativeAcpTransportError(error.message, { cause: error }));
+const transportFailed = (error: Error) => {
+  if (stopping) return;
+  fail(new NativeAcpTransportError(error.message, { cause: error }));
+};
 child.on('error', transportFailed);
 child.stdin.on('error', transportFailed);
 child.on('exit', (code) => {
@@ -264,7 +267,10 @@ function finishCancellation(): void {
   cancelling = false;
 }
 function cancelPermissions(): void {
-  for (const request of permissions.values()) write({ id: request.rpcId, result: { outcome: { outcome: 'cancelled' } } });
+  for (const request of permissions.values()) {
+    try { write({ id: request.rpcId, result: { outcome: { outcome: 'cancelled' } } }); }
+    catch { /* native stdin may already be closed */ }
+  }
   permissions.clear();
 }
 function fail(error: Error, fatal = true): void {
@@ -756,30 +762,64 @@ async function start(): Promise<void> {
   if (!sessionId) throw new Error('ACP agent returned no session id');
   options = session.configOptions ?? [];
   model = session.models?.currentModelId ?? null;
-  const saved = config.resumeId ? readAcpSettings(config.settingsDirectory, sessionId) : {};
+  let saved: ReturnType<typeof readAcpSettings> = {};
+  if (config.resumeId) {
+    try {
+      saved = readAcpSettings(config.settingsDirectory, sessionId);
+    } catch (error) {
+      // Fail closed on unreadable saved settings so a resumed Auto session
+      // cannot silently auto-approve MCP calls after an Ask policy was lost.
+      saved = { mcpPolicy: 'ask' };
+      replace({ id: randomUUID(), role: 'assistant', kind: 'notice', level: 'warning', text: `Saved Antigravity settings could not be read and were reset to ask for MCP approvals (${error instanceof Error ? error.message : String(error)}).` });
+    }
+  }
   savedSettings = JSON.stringify(saved);
   mcpPolicy = saved.mcpPolicy ?? 'allow';
+  const modelFromSaved = Boolean(config.restoreSavedSettings && saved.model !== undefined) || (!config.model && saved.model !== undefined);
   const wantedModel = config.restoreSavedSettings && saved.model !== undefined ? saved.model : config.model ?? saved.model;
   // A combined model id can select its own effort (flash-low, for example).
   // Saved effort must not undo that explicit choice at resume.
+  const reasoningFromSaved = Boolean(config.restoreSavedSettings && saved.reasoning !== undefined) || (!config.reasoning && !config.model && saved.reasoning !== undefined);
   const wantedReasoning = config.restoreSavedSettings && saved.reasoning !== undefined ? saved.reasoning : config.reasoning ?? (config.model ? undefined : saved.reasoning);
   if (wantedModel) {
     const option = options.find((option) => option.id === 'model');
-    if (optionValues(option).some((entry) => entry.value === wantedModel)) {
-      const result = await rpc('session/set_config_option', { sessionId, configId: 'model', value: wantedModel });
-      if (result.configOptions) options = result.configOptions;
-    } else await rpc('session/set_model', { sessionId, modelId: wantedModel });
-    model = wantedModel;
+    if ((option?.currentValue ?? model) !== wantedModel) {
+      try {
+        if (optionValues(option).some((entry) => entry.value === wantedModel)) {
+          const result = await rpc('session/set_config_option', { sessionId, configId: 'model', value: wantedModel });
+          if (result.configOptions) options = result.configOptions;
+        } else await rpc('session/set_model', { sessionId, modelId: wantedModel });
+        model = wantedModel;
+      } catch (error) {
+        if (!modelFromSaved) throw error;
+        replace({ id: randomUUID(), role: 'assistant', kind: 'notice', level: 'warning', text: `Saved Antigravity model “${wantedModel}” is no longer available; keeping its current model.` });
+      }
+    }
   }
   if (wantedReasoning) {
-    const result = await rpc('session/set_config_option', { sessionId, configId: 'thought_level', value: wantedReasoning });
-    if (result.configOptions) options = result.configOptions;
+    const thoughtOption = options.find((option) => option.id === 'thought_level');
+    if (thoughtOption?.currentValue !== wantedReasoning) {
+      const offered = !thoughtOption || optionValues(thoughtOption).some((entry) => entry.value === wantedReasoning);
+      if (offered) {
+        try {
+          const result = await rpc('session/set_config_option', { sessionId, configId: 'thought_level', value: wantedReasoning });
+          if (result.configOptions) options = result.configOptions;
+        } catch (error) {
+          if (!reasoningFromSaved) throw error;
+          replace({ id: randomUUID(), role: 'assistant', kind: 'notice', level: 'warning', text: `Saved Antigravity reasoning level “${wantedReasoning}” could not be restored; keeping its current setting.` });
+        }
+      } else if (reasoningFromSaved) {
+        replace({ id: randomUUID(), role: 'assistant', kind: 'notice', level: 'warning', text: `Saved Antigravity reasoning level “${wantedReasoning}” is no longer offered; keeping its current setting.` });
+      }
+    }
   }
   const wantedMode = saved.mode ?? 'auto';
   const mode = options.find((option) => option.id === 'mode');
   if (optionValues(mode).some((entry) => entry.value === wantedMode)) {
-    const result = await rpc('session/set_config_option', { sessionId, configId: 'mode', value: wantedMode });
-    if (result.configOptions) options = result.configOptions;
+    if (mode?.currentValue !== wantedMode) {
+      const result = await rpc('session/set_config_option', { sessionId, configId: 'mode', value: wantedMode });
+      if (result.configOptions) options = result.configOptions;
+    }
   } else {
     replace({ id: randomUUID(), role: 'assistant', kind: 'notice', level: 'warning', text: `Antigravity does not offer ${wantedMode} mode for this account or platform. Its native mode is unchanged; MCP requests still ask for approval.` });
   }
@@ -992,7 +1032,9 @@ async function handle(method: string, params: Row): Promise<unknown> {
       try { rememberSettings(params.value); }
       catch (error) { warnSettings(error); throw new Error('MCP policy was not changed because its settings could not be saved'); }
       mcpPolicy = params.value;
-      controlsRevision++; publish({ kind: 'pending' }); return {};
+      controlsRevision++; publish({ kind: 'pending' });
+      const current = controlState();
+      return { model: current.model ?? null, reasoning: options.find((entry) => entry.id === 'thought_level')?.currentValue ?? null };
     }
     const option = options.find((entry) => entry.id === params.selector);
     if (!option) throw new Error('Unknown ACP setting');
@@ -1000,22 +1042,27 @@ async function handle(method: string, params: Row): Promise<unknown> {
     if (!values.some((entry: Row) => entry.value === params.value)) throw new Error('Unknown ACP setting value');
     configuring = true;
     try {
-      const result = await rpc('session/set_config_option', { sessionId, configId: params.selector, value: params.value });
+      // Match the 10s host RPC timeout so a stalled configure releases the lock
+      // before the caller retries instead of wedging prompts for 60s.
+      const result = await rpc('session/set_config_option', { sessionId, configId: params.selector, value: params.value }, 8_500);
       if (result.configOptions) options = result.configOptions;
       if (params.selector === 'model') model = params.value;
       controlsRevision++; publish({ kind: 'pending' });
       try { rememberSettings(); }
       catch (error) { warnSettings(error); throw new Error('Antigravity applied the setting, but Patterm could not save it for resume'); }
-      return {};
+      const current = controlState();
+      return { model: current.model ?? null, reasoning: options.find((entry) => entry.id === 'thought_level')?.currentValue ?? null };
     } finally { configuring = false; }
   }
   throw new Error(`Unknown ACP host method: ${method}`);
 }
 
 removeStaleIpc(config.socketPath);
+const sockets = new Set<net.Socket>();
 const server = net.createServer((socket) => {
-  socket.on('error', () => { subscribers.delete(socket); socket.destroy(); });
-  socket.on('close', () => subscribers.delete(socket));
+  sockets.add(socket);
+  socket.on('error', () => { sockets.delete(socket); subscribers.delete(socket); socket.destroy(); });
+  socket.on('close', () => { sockets.delete(socket); subscribers.delete(socket); });
   let incoming = '';
   socket.setEncoding('utf8');
   socket.on('data', (chunk: string) => {
@@ -1054,7 +1101,9 @@ function stopNative(): Promise<void> {
   finishCancellation();
   if (backgroundQuiet) { clearTimeout(backgroundQuiet); backgroundQuiet = null; }
   if (admission) { clearTimeout(admission.timer); admission.reject(new NativeAcpTransportError('ACP host stopped')); admission = null; }
-  for (const request of requests.values()) { if (request.timer) clearTimeout(request.timer); }
+  const stopError = new NativeAcpTransportError('ACP host stopped');
+  for (const request of requests.values()) { if (request.timer) clearTimeout(request.timer); request.reject(stopError); }
+  requests.clear();
   shutdown = (async () => {
     if (nativeClose && loaded && child.exitCode === null && child.signalCode === null) {
       try { cancelPermissions(); } catch { /* the native pipe may already be closed */ }
@@ -1066,7 +1115,8 @@ function stopNative(): Promise<void> {
 }
 
 async function exitHost(): Promise<void> {
-  for (const socket of subscribers) socket.destroy();
+  for (const socket of sockets) socket.destroy();
+  sockets.clear();
   subscribers.clear();
   await new Promise<void>((resolve) => server.close(() => resolve()));
   removeStaleIpc(config.socketPath);
