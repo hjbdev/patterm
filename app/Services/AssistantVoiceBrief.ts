@@ -13,7 +13,7 @@ const BRIEF_CHARS = 6_000;
 
 // Headings Patterm puts on messages it sends the assistant for someone else,
 // as in resources/js/lib/assistantFocus.ts.
-const BACKGROUND_MESSAGE = /^\[(?:Patterm |System notification|system\]|message from |report from |agent message from |Attention requested by |Attention needed by |Failure reported by )/;
+const BACKGROUND_MESSAGE = /^\[(?:Patterm |System notification|system\]|message from |report from |agent message from |Attention requested by |Attention needed by |Failure reported by |Notification from |Routine "|delivery failed: )/;
 
 export interface VoiceBriefAgent {
   name: string;

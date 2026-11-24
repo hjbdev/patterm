@@ -6,7 +6,7 @@
 import type { TranscriptTool } from './integratedConversation';
 
 // Headings Patterm puts on messages it sends a bot for someone else.
-const BACKGROUND_MESSAGE = /^\[(?:Patterm |System notification|system\]|message from |report from |agent message from |Attention requested by |Attention needed by |Failure reported by )/;
+const BACKGROUND_MESSAGE = /^\[(?:Patterm |System notification|system\]|message from |report from |agent message from |Attention requested by |Attention needed by |Failure reported by |Notification from |Routine "|delivery failed: )/;
 const SPAWNED_PROCESS = /"process_id"\s*:\s*"(process_\d+)"/;
 // Tools that act on one process, and the argument naming it.
 const ACTION_TOOLS: Record<string, string> = {
