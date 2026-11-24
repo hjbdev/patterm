@@ -27,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Tool calls in a conversation are quieter and open into a richer view. Each
+  call is one line: its name, target and, on hover, how long it took, with its
+  result (a line range, `+6 −1`, `exit 1`) on the right. Opening a call slides
+  out one dark block: the command highlighted as shell, then its last output
+  lines; an edit as a Pierre diff with a split toggle, including Claude edits,
+  which used to show as plain hunks; a read file highlighted with its line
+  numbers; and grep results grouped by file, highlighted, with the matches
+  marked. Copy buttons appear on hover. Calls in a group are indented evenly on
+  both sides, and groups and calls open and close with an animation.
 - An agent with no messages yet shows its composer in the middle of the page,
   under the agent's logo, and slides it to the bottom on the first send.
   Conversations show the agent's icon beside the model picker, and the

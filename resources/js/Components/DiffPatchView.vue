@@ -12,7 +12,7 @@
     <p v-if="isRendering" class="rounded-md border border-border/60 bg-background/60 p-3 text-sm text-muted-foreground">
       Rendering diff...
     </p>
-    <div v-show="!isRendering" ref="container" class="overflow-hidden rounded-md border border-border/60 bg-background/60" />
+    <div v-show="!isRendering" ref="container" :class="bare ? 'overflow-hidden' : 'overflow-hidden rounded-md border border-border/60 bg-background/60'" />
   </div>
 </template>
 
@@ -22,13 +22,18 @@ import { FileDiff, parsePatchFiles, type FileDiffMetadata } from '@pierre/diffs'
 import '../lib/diffLanguages';
 import { diffHighlighterPool } from '../lib/diffHighlighter';
 
-const props = defineProps<{ patch: string; cacheKey: string }>();
+// A tool row shows a bare, unified diff; its row already names the file.
+// `onRendered` fires once the patch has drawn, or turned out empty or deferred,
+// so a parent can wait for the final height.
+const props = defineProps<{ patch: string; cacheKey: string; diffStyle?: 'split' | 'unified' | undefined; disableFileHeader?: boolean; bare?: boolean; onRendered?: (() => void) | undefined }>();
 const container = ref<HTMLElement | null>(null);
 const isEmpty = ref(false);
 const isDeferred = ref(false);
 const isRendering = ref(false);
 const renderRequested = ref(false);
 const instances: FileDiff[] = [];
+// One promise per file, settled when Pierre has put it on the page.
+const drawn: Promise<void>[] = [];
 let renderToken = 0;
 
 const LARGE_PATCH_BYTES = 1_000_000;
@@ -40,7 +45,7 @@ const deferredSummary = computed(() => {
 });
 
 onMounted(renderPatch);
-watch(() => [props.patch, props.cacheKey], () => {
+watch(() => [props.patch, props.cacheKey, props.diffStyle], () => {
   renderRequested.value = false;
   void renderPatch();
 });
@@ -51,6 +56,14 @@ onBeforeUnmount(() => {
 });
 
 async function renderPatch(): Promise<void> {
+  await drawPatch();
+  if (!props.onRendered) return;
+  // Pierre draws after its highlighter answers, not when render() returns.
+  await Promise.race([Promise.all(drawn.splice(0)), new Promise((resolve) => setTimeout(resolve, 1_000))]);
+  props.onRendered();
+}
+
+async function drawPatch(): Promise<void> {
   const token = ++renderToken;
   await nextTick();
   const root = container.value;
@@ -100,14 +113,18 @@ function renderFile(root: HTMLElement, fileDiff: FileDiffMetadata): void {
   const host = document.createElement('div');
   host.className = 'border-b border-border/50 last:border-b-0';
   root.appendChild(host);
+  let markDrawn = (): void => {};
+  if (props.onRendered) drawn.push(new Promise((resolve) => { markDrawn = resolve; }));
 
   const instance = new FileDiff({
     themeType: 'dark',
-    diffStyle: 'split',
+    diffStyle: props.diffStyle ?? 'split',
     overflow: 'scroll',
-    stickyHeader: true,
+    stickyHeader: !props.disableFileHeader,
+    disableFileHeader: Boolean(props.disableFileHeader),
     hunkSeparators: 'line-info-basic',
-    preferredHighlighter: 'shiki-wasm'
+    preferredHighlighter: 'shiki-wasm',
+    onPostRender: (_node: HTMLElement, _instance: FileDiff, phase: string) => { if (phase !== 'unmount') markDrawn(); }
   }, diffHighlighterPool());
   // The library creates and manages its own `diffs-container` custom element
   // (which adopts the base stylesheet) when given a wrapper. Passing a plain
