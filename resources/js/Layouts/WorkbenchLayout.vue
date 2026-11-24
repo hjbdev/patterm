@@ -41,8 +41,9 @@
       >
         <template v-if="activeProject" #terminal-tabs>
           <div v-if="sidebarMode || mobile" class="flex-1" />
-          <!-- The vertical padding leaves room for a tab's mention glow, which the scroller would clip. -->
-          <div v-else class="-my-2 hidden min-w-0 flex-1 items-center gap-1 overflow-x-auto py-2 [scrollbar-width:none] sm:flex" @wheel="scrollTabStrip">
+          <!-- The padding leaves room for a tab's mention glow and the +'s focus
+               ring and pulse, which the scroller would otherwise clip. -->
+          <div v-else class="-mx-2 -my-2 hidden min-w-0 flex-1 items-center gap-1 overflow-x-auto px-2 py-2 [scrollbar-width:none] sm:flex" @wheel="scrollTabStrip">
             <TabStrip
               v-if="currentStripTabs.length || snoozedProjectsShown.length"
               class="shrink-0"

@@ -3,7 +3,7 @@
        and then the app's. One flat list, so nothing needs a heading. A desktop
        opens the same rows as the sidebar's Library menu. -->
   <div class="h-full min-h-0 overflow-y-auto">
-    <nav aria-label="Library" class="mx-auto w-full max-w-xl px-2 pb-[calc(1.5rem+env(safe-area-inset-bottom))] sm:px-6 sm:pt-6">
+    <nav aria-label="Library" class="mx-auto w-full max-w-xl px-2 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-px sm:px-6 sm:pt-6">
       <h1 v-if="!phoneLayout" class="mb-2 px-3 text-[14.5px] font-medium">Library</h1>
       <LibraryRows />
       <!-- On a desktop these sit behind the bar's ⋯. -->
