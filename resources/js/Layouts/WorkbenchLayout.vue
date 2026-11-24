@@ -61,11 +61,13 @@
               @select-process="selectAgentProcess"
             />
             <HarnessLaunchTabs v-for="projectId in shownProjectIds" :key="projectId" :project-id="projectId" />
-            <div class="flex shrink-0 items-center">
+            <!-- A pixel in from the strip's edge, which would clip the +'s focus ring. -->
+            <div class="flex shrink-0 items-center pl-px">
               <AllAgentsOptions v-if="showingAll" />
               <LaunchAgentMenu
                 :project-id="activeProject.project.id"
                 :choose-project="showingAll"
+                pointable
               />
             </div>
           </div>
@@ -108,6 +110,8 @@
             </RouterView>
           </div>
         </template>
+        <!-- Tabs mode has no sidebar to dock Get started in. -->
+        <GetStarted v-if="loaded && !sidebarMode && !mobile" placement="floating" class="absolute bottom-3 left-3 z-40 w-[300px] max-w-[calc(100%-1.5rem)] shadow-lg shadow-black/40" />
         <div
           v-if="navigationMode"
           role="status"
@@ -152,6 +156,7 @@ import WorkspaceSearchDialog from '../Components/WorkspaceSearchDialog.vue';
 import SidebarDialogs from '../Components/Sidebar/SidebarDialogs.vue';
 import SidebarProjectDock from '../Components/Sidebar/SidebarProjectDock.vue';
 import WorkbenchSidebar from '../Components/Sidebar/WorkbenchSidebar.vue';
+import GetStarted from '../Components/GetStarted.vue';
 import { phoneLayout } from '../lib/phoneLayout';
 import { provideSidebarContext } from '../Components/Sidebar/sidebarContext';
 import { TooltipProvider } from '../Components/ui/tooltip';

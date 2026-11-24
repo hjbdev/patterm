@@ -21,11 +21,12 @@
         <span>Needs you</span>
         <span v-if="waitingCount > 0" class="tabular-nums text-[12px]" :class="onlyWaiting ? 'text-amber-200' : 'text-amber-400'">{{ waitingCount }}</span>
       </button>
-      <LaunchAgentMenu :project-id="sidebar.projectId.value" :choose-project="sidebar.allAgents.value" trigger-class="h-8 w-8 rounded-lg hover:bg-white/[0.06]" />
+      <LaunchAgentMenu :project-id="sidebar.projectId.value" :choose-project="sidebar.allAgents.value" pointable trigger-class="h-8 w-8 rounded-lg hover:bg-white/[0.06]" />
     </div>
     <!-- Bots come first: each is one persistent conversation. -->
     <BotList :phone="placement === 'phone'" :compact="placement !== 'phone'" :project-id="sidebar.projectId.value" :all="sidebar.allAgents.value" class="shrink-0 px-0.5 pt-0.5" />
     <div ref="list" class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-0.5 pb-2 [scrollbar-width:thin]" @keydown="onKeydown">
+      <GetStarted v-if="placement === 'phone'" placement="phone" class="mx-1.5 mb-2 mt-1" />
       <HarnessLaunchTabs v-for="projectId in sidebar.shownProjectIds.value" :key="projectId" :project-id="projectId" vertical />
       <p v-if="!entries.length && !pendingLaunches.length" class="px-2.5 py-2 text-[14px] text-muted-foreground">
         {{ onlyWaiting ? 'Nothing needs you right now' : 'No agents running' }}
@@ -127,6 +128,7 @@
         </Transition>
       </template>
     </div>
+    <GetStarted v-if="placement !== 'phone'" placement="docked" class="mx-0.5 mb-2" />
     <slot v-if="placement === 'phone'" name="footer" />
     <!-- The project's pages wait in the Library menu. -->
     <div v-else class="flex shrink-0 items-center gap-0.5 border-t border-white/[0.06] px-1 pt-2">
@@ -145,6 +147,7 @@ import { useHarnessLaunchesFor } from '../../Composables/useHarnessLaunch';
 import { ChevronRight } from 'lucide-vue-next';
 import { isFolderKey, layoutEntries, type LayoutEntry, type StripTab, type TabFolder } from '../../lib/tabStrip';
 import LaunchAgentMenu from '../LaunchAgentMenu.vue';
+import GetStarted from '../GetStarted.vue';
 import BotList from '../BotList.vue';
 import HarnessLaunchTabs from '../HarnessLaunchTabs.vue';
 import LibraryMenu from './LibraryMenu.vue';

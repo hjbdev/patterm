@@ -30,7 +30,8 @@
               <kbd v-else class="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 rounded border border-white/10 px-1.5 font-mono text-[10px] text-muted-foreground sm:block" aria-hidden="true">/</kbd>
             </div>
 
-            <div class="flex flex-row gap-1 overflow-x-auto pb-1 sm:flex-col sm:gap-0 sm:overflow-visible sm:pb-0">
+            <!-- On a phone the row scrolls, so it leaves a pixel for focus rings. -->
+            <div class="flex flex-row gap-1 overflow-x-auto p-px pb-1 sm:flex-col sm:gap-0 sm:overflow-visible sm:p-0">
               <template v-for="group in groups" :key="group.label">
                 <p class="hidden px-3 pb-1 pt-3 text-[11px] font-medium text-muted-foreground/70 first:pt-0 sm:block">{{ group.label }}</p>
                 <button

@@ -7,6 +7,9 @@ import { MemoryPushService } from './Services/MemoryPushService';
 import { AssistantMemoryService } from './Services/AssistantMemoryService';
 import { ASSISTANT_BOT_ID } from './Bots/BotIdentity';
 import { registerIdleCompactionTools } from './MCP/registerIdleCompactionTools';
+import { registerOnboardingTools } from './MCP/registerOnboardingTools';
+import { GetOnboardingStatusAction, UpdateOnboardingAction } from './Actions/OnboardingActions';
+import { HarnessSignInService } from './Services/HarnessSignInService';
 import { StatusLabelActions } from './Actions/StatusLabelActions';
 import { registerBotTools } from './MCP/registerBotTools';
 import { BotService } from './Services/BotService';
@@ -933,6 +936,24 @@ async function createApplicationResources(
   registerSecretTools(mcp, secretActions);
   registerMcpServerTools(mcp, mcpServers);
   registerIdleCompactionTools(mcp, settings, agentAdapters);
+  registerOnboardingTools(mcp, {
+    status: new GetOnboardingStatusAction({
+      database,
+      settings,
+      providers: harnessProviders,
+      signIn: new HarnessSignInService(harnessProviders, { env: resolvedEnv }),
+      // Reads the shell environment again, since an installer may have just
+      // added to PATH. A newly found agent also appears in the launch menus.
+      // Agents still launch with the startup environment, so one that needs
+      // something else newly on PATH, such as Node, needs a restart.
+      discover: async () => {
+        const env = await new ShellEnvironmentService().resolve();
+        if ((await actions.discoverHarnesses.execute(env)).changed) notifyWorkbenchChanged();
+        return env;
+      }
+    }),
+    update: new UpdateOnboardingAction(settings)
+  });
   registerBotTools(mcp, bots, botRelay, settings, (event, data) => debugLog.write('bots', event, data), () => remote.remoteBots());
   const releaseInstall = detectReleaseInstall(options.appRoot);
   const updateMode = options.runtime === 'node' ? 'server' : 'desktop';
