@@ -867,6 +867,14 @@ async function createApplicationResources(
   defer(() => routines.dispose());
 
   const usage = new UsageService(database, historyDatabase);
+  defer(() => usage.dispose());
+  // Summing transcript usage takes seconds on a large history; do it once
+  // after startup settles, so the usage page opens straight away.
+  const warmUsage = setTimeout(() => {
+    try { usage.warm(); } catch (error) { debugLog.write('usage', 'warm.failed', { error: error instanceof Error ? error.message : String(error) }); }
+  }, 30_000);
+  warmUsage.unref?.();
+  defer(() => clearTimeout(warmUsage));
   const antigravityQuotas = new AntigravityQuotaService({ database, usage, env: resolvedEnv, debugLog });
   defer(() => antigravityQuotas.dispose());
   integrated.setUsage(usage);

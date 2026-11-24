@@ -79,10 +79,48 @@ interface UsageGroup {
 
 type PricedGroup = UsageGroup & Pick<UsageTokens, 'costUsd' | 'unpricedTokens'>;
 
+type HistoryConnection = HistoryDatabaseService['connection'];
+
+interface UsageRange {
+  since: string;
+  days: number;
+  dayKeys: string[];
+}
+
+interface UsageCache {
+  since: string;
+  marker: number;
+  computedAt: number;
+  groups: UsageGroup[];
+}
+
+// The longest range the dashboard offers; shorter ones filter its groups.
+const CACHED_DAYS = 90;
+// Cached figures are recomputed at most this often while the dashboard polls,
+// and at least this often even without new usage rows.
+const MIN_REFRESH_MS = 2 * 60_000;
+const MAX_CACHE_AGE_MS = 15 * 60_000;
+
+// Days follow the server's local calendar; the range starts at local midnight.
+function usageRange(days: number, now: Date): UsageRange {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - (days - 1));
+  const dayKeys = Array.from({ length: days }, (_, index) => {
+    const day = new Date(start);
+    day.setDate(start.getDate() + index);
+    return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+  });
+  return { since: start.toISOString(), days, dayKeys };
+}
+
 // Token usage comes from imported transcripts and separate summary records; quota
 // windows come from both transcripts and live Integrated sessions.
 export class UsageService {
   private readonly written = new Map<string, string>();
+  private cache: UsageCache | null = null;
+  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private disposed = false;
 
   constructor(private readonly database: DatabaseService, private readonly history: HistoryDatabaseService | null) {}
 
@@ -116,54 +154,79 @@ export class UsageService {
     }
   }
 
+  // Reads every figure fresh. Can take seconds on a large history.
   summary(days: number, now = new Date()): UsageSummary {
-    const start = new Date(now);
-    start.setHours(0, 0, 0, 0);
-    start.setDate(start.getDate() - (days - 1));
-    const since = start.toISOString();
-    const dayKeys = Array.from({ length: days }, (_, index) => {
-      const day = new Date(start);
-      day.setDate(start.getDate() + index);
-      return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
-    });
+    const range = usageRange(days, now);
     const db = this.historyConnection();
+    return this.build(range, db, db ? this.historyGroups(db, range.since) : [], now);
+  }
 
-    // Days follow the server's local calendar, like the rest of the app.
-    // OpenCode's claude-agent responses are also in Claude Code's transcript,
-    // which has the real model and cache detail. That session's imported usage
-    // replaces OpenCode's rows up to its newest response in the session's own
-    // transcript (subagent files are read separately), and counts as
-    // OpenCode usage in the OpenCode conversation's project. OpenCode stamps a
-    // response when it starts and Claude when it is written, so a response
-    // Claude has not recorded yet is newer than everything it has.
-    const rows = db ? db.prepare(`
-      with replaced as (
-        select claude.id as conversationId, linked.claudeId, linked.projectId,
-          (select max(occurred_at) from conversation_usage where conversation_usage.conversation_id = claude.id and subagent = 0) as coveredUntil
-        from (
-          select claude_session_id as claudeId, min(conversations.project_id) as projectId
-          from conversation_usage join conversations on conversations.id = conversation_usage.conversation_id
-          where claude_session_id is not null and conversations.provider = 'opencode'
-          group by claude_session_id
-        ) linked
-        join conversations claude on claude.provider = 'claude' and claude.provider_conversation_id = linked.claudeId
-        where exists (select 1 from conversation_usage where conversation_usage.conversation_id = claude.id)
-      ),
-      attributed as (
-        select conversation_usage.*, case when replaced.conversationId is null then conversation_usage.provider else 'opencode' end as owner,
-          case when replaced.conversationId is null then conversations.project_id else coalesce(replaced.projectId, conversations.project_id) end as projectId
-        from conversation_usage join conversations on conversations.id = conversation_usage.conversation_id
-        left join replaced on replaced.conversationId = conversation_usage.conversation_id
-        where occurred_at >= ?
-          and not (claude_session_id is not null and exists (select 1 from replaced where replaced.claudeId = conversation_usage.claude_session_id and conversation_usage.occurred_at <= replaced.coveredUntil))
-      )
-      select date(occurred_at, 'localtime') as day, owner as provider, model, projectId,
-        sum(input_tokens) as inputTokens, sum(cache_read_tokens) as cacheReadTokens, sum(cache_write_tokens) as cacheWriteTokens,
-        sum(cache_write_1h_tokens) as cacheWrite1hTokens, sum(output_tokens) as outputTokens, sum(reasoning_tokens) as reasoningTokens,
-        count(*) as responses, sum(cost_usd) as reportedCost
-      from attributed
-      group by day, owner, model, projectId
-    `).all(since) as unknown as UsageGroup[] : [];
+  // The dashboard's read. Transcript usage comes from one cached set of daily
+  // groups covering the longest range, which every shorter range filters by
+  // day. A stale set is returned at once and replaced in the background;
+  // quota windows, skills and summary usage are cheap and always read fresh.
+  cachedSummary(days: number, now = new Date()): UsageSummary {
+    const range = usageRange(days, now);
+    const db = this.historyConnection();
+    if (!db || days > CACHED_DAYS) return this.summary(days, now);
+    const longest = usageRange(CACHED_DAYS, now).since;
+    if (!this.cache) this.cache = this.collect(db, longest, now);
+    else if (this.isStale(db, longest, now)) this.scheduleRefresh();
+    const first = range.dayKeys[0]!;
+    return this.build(range, db, this.cache.groups.filter((group) => group.day >= first), now);
+  }
+
+  // Fills the cache ahead of the first visit to the dashboard.
+  warm(now = new Date()): void {
+    if (this.cache) return;
+    const db = this.historyConnection();
+    if (db) this.cache = this.collect(db, usageRange(CACHED_DAYS, now).since, now);
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    this.refreshTimer = null;
+  }
+
+  private collect(db: HistoryConnection, since: string, now: Date): UsageCache {
+    // Read the marker first, so rows imported during the query mark it stale.
+    const marker = this.marker(db);
+    return { since, marker, computedAt: now.getTime(), groups: this.historyGroups(db, since) };
+  }
+
+  // Imports replace a conversation's rows rather than editing them, so a new
+  // highest id signals a change. Deletions and moved projects wait for the age limit.
+  private marker(db: HistoryConnection): number {
+    return (db.prepare(`select coalesce(max(id), 0) as id from conversation_usage`).get() as { id: number }).id;
+  }
+
+  private isStale(db: HistoryConnection, since: string, now: Date): boolean {
+    const cache = this.cache!;
+    const age = now.getTime() - cache.computedAt;
+    if (age < MIN_REFRESH_MS) return false;
+    return age >= MAX_CACHE_AGE_MS || cache.since !== since || cache.marker !== this.marker(db);
+  }
+
+  // The query blocks the event loop, so it runs after the current response is sent.
+  private scheduleRefresh(): void {
+    if (this.refreshTimer || this.disposed) return;
+    this.refreshTimer = setTimeout(() => {
+      this.refreshTimer = null;
+      if (this.disposed) return;
+      try {
+        const db = this.historyConnection();
+        const now = new Date();
+        if (db) this.cache = this.collect(db, usageRange(CACHED_DAYS, now).since, now);
+      } catch {
+        // Keep serving the previous figures; the next read tries again.
+      }
+    }, 50);
+    this.refreshTimer.unref?.();
+  }
+
+  private build(range: UsageRange, db: HistoryConnection | null, rows: UsageGroup[], now: Date): UsageSummary {
+    const { since, days, dayKeys } = range;
     const summaryRows = this.database.connection.prepare(`
       select date(occurred_at, 'localtime') as day, provider, model, project_id as projectId,
         sum(input_tokens) as inputTokens, sum(cache_read_tokens) as cacheReadTokens, sum(cache_write_tokens) as cacheWriteTokens,
@@ -189,7 +252,48 @@ export class UsageService {
     return { since, days, dayKeys, historyAvailable: Boolean(db), totals, autoSummaries, daily, models, projects, limits: this.limits(db, now), skills: db ? this.skills(db, since) : [] };
   }
 
-  private limits(history: ReturnType<UsageService['historyConnection']>, now: Date): UsageLimit[] {
+  private historyGroups(db: HistoryConnection, since: string): UsageGroup[] {
+    // Days follow the server's local calendar, like the rest of the app.
+    // OpenCode's claude-agent responses are also in Claude Code's transcript,
+    // which has the real model and cache detail. That session's imported usage
+    // replaces OpenCode's rows up to its newest response in the session's own
+    // transcript (subagent files are read separately), and counts as
+    // OpenCode usage in the OpenCode conversation's project. OpenCode stamps a
+    // response when it starts and Claude when it is written, so a response
+    // Claude has not recorded yet is newer than everything it has.
+    // Without "materialized", SQLite rebuilds "replaced" inside the exclusion
+    // check for every usage row, which took seconds on a large history.
+    return db.prepare(`
+      with replaced as materialized (
+        select claude.id as conversationId, linked.claudeId, linked.projectId,
+          (select max(occurred_at) from conversation_usage where conversation_usage.conversation_id = claude.id and subagent = 0) as coveredUntil
+        from (
+          select claude_session_id as claudeId, min(conversations.project_id) as projectId
+          from conversation_usage join conversations on conversations.id = conversation_usage.conversation_id
+          where claude_session_id is not null and conversations.provider = 'opencode'
+          group by claude_session_id
+        ) linked
+        join conversations claude on claude.provider = 'claude' and claude.provider_conversation_id = linked.claudeId
+        where exists (select 1 from conversation_usage where conversation_usage.conversation_id = claude.id)
+      ),
+      attributed as (
+        select conversation_usage.*, case when replaced.conversationId is null then conversation_usage.provider else 'opencode' end as owner,
+          case when replaced.conversationId is null then conversations.project_id else coalesce(replaced.projectId, conversations.project_id) end as projectId
+        from conversation_usage join conversations on conversations.id = conversation_usage.conversation_id
+        left join replaced on replaced.conversationId = conversation_usage.conversation_id
+        where occurred_at >= ?
+          and not (claude_session_id is not null and exists (select 1 from replaced where replaced.claudeId = conversation_usage.claude_session_id and conversation_usage.occurred_at <= replaced.coveredUntil))
+      )
+      select date(occurred_at, 'localtime') as day, owner as provider, model, projectId,
+        sum(input_tokens) as inputTokens, sum(cache_read_tokens) as cacheReadTokens, sum(cache_write_tokens) as cacheWriteTokens,
+        sum(cache_write_1h_tokens) as cacheWrite1hTokens, sum(output_tokens) as outputTokens, sum(reasoning_tokens) as reasoningTokens,
+        count(*) as responses, sum(cost_usd) as reportedCost
+      from attributed
+      group by day, owner, model, projectId
+    `).all(since) as unknown as UsageGroup[];
+  }
+
+  private limits(history: HistoryConnection | null, now: Date): UsageLimit[] {
     type Observation = Pick<UsageLimit, 'harness' | 'label' | 'usedPercent' | 'resetsAt' | 'observedAt'>;
     const live = this.database.connection.prepare(`select harness, label, used_percent as usedPercent, resets_at as resetsAt, observed_at as observedAt from harness_rate_limits`).all() as unknown as Observation[];
     const recorded = history
@@ -214,7 +318,7 @@ export class UsageService {
   }
 
   // Recent changes in each window's usage, from live sessions and transcripts.
-  private readings(history: ReturnType<UsageService['historyConnection']>, now: Date): Map<string, UsageReading[]> {
+  private readings(history: HistoryConnection | null, now: Date): Map<string, UsageReading[]> {
     const since = new Date(now.getTime() - RATE_LIMIT_READING_RETENTION_MS).toISOString();
     const rows = this.database.connection.prepare(`select harness, label, used_percent as usedPercent, observed_at as observedAt from harness_rate_limit_readings where observed_at >= ?`).all(since) as Array<UsageReading & { harness: string; label: string }>;
     if (history && history.prepare(`select 1 from sqlite_master where type = 'table' and name = 'provider_rate_limit_readings'`).get()) {
@@ -229,7 +333,7 @@ export class UsageService {
   }
 
   // Skills with the same name count together across harnesses.
-  private skills(db: NonNullable<ReturnType<UsageService['historyConnection']>>, since: string): UsageSkill[] {
+  private skills(db: HistoryConnection, since: string): UsageSkill[] {
     const rows = db.prepare(`
       select skill as name, sum(invoked_by = 'agent') as agentUses, sum(invoked_by = 'user') as userUses,
         group_concat(distinct provider) as providers, max(occurred_at) as lastUsedAt
@@ -247,7 +351,7 @@ export class UsageService {
 
   // The worker migrates history.db in the background, so the usage tables
   // may not exist yet when the main process reads it.
-  private historyConnection() {
+  private historyConnection(): HistoryConnection | null {
     if (!this.history?.ensureAvailable()) return null;
     const db = this.history.connection;
     const tables = db.prepare(`select count(*) as count from sqlite_master where type = 'table' and name in ('conversation_usage', 'provider_rate_limits', 'conversation_skill_uses')`).get() as { count: number };

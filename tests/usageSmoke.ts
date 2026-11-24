@@ -370,6 +370,9 @@ async function main(): Promise<void> {
       env: { ...process.env, HOME: directory, USERPROFILE: directory, PATTERM_TEST_QUOTA_TRACE: traceFile, PATTERM_TEST_QUOTA_REPLY: replyFile, PATTERM_TEST_QUOTA_PID: pidFile },
       now: () => quotaNow, timeoutMs: 1500 });
     const quotaAction = new GetUsageSummaryAction(quotaUsage, quotas);
+    // The action starts the native command without waiting for it, so read
+    // the summary once the refresh it started has settled.
+    const settled = async (days: number) => { await quotaAction.execute({ days }); await quotas.refresh(); return quotaUsage.summary(days); };
     const invocations = () => fs.existsSync(traceFile) ? fs.readFileSync(traceFile, 'utf8').trim().split('\n').map(line => JSON.parse(line)) : [];
     const onlyAgy = (summary: ReturnType<UsageService['summary']>) => summary.limits.filter(limit => limit.harness === 'agy');
     const helperExited = async () => {
@@ -385,7 +388,7 @@ async function main(): Promise<void> {
       await quotaAction.execute({ days: 1 });
       assert.equal(invocations().length, 0, 'an undiscovered Antigravity installation never runs a CLI');
       appDatabase.connection.prepare(`insert into harness_installations (id, harness, executable_path, version, status, discovered_at, last_checked_at) values ('agy_quota', 'agy', ?, '1.5.8', 'available', ?, ?)`).run(executable, stamp, stamp);
-      const [fresh] = await Promise.all([quotaAction.execute({ days: 1 }), quotaAction.execute({ days: 7 }), quotaAction.execute({ days: 30 })]);
+      const [fresh] = await Promise.all([settled(1), settled(7), settled(30)]);
       assert.equal(fresh!.historyAvailable, false, 'account quotas do not require history imports or an active agent');
       assert.deepEqual(onlyAgy(fresh!).map(limit => [limit.label, limit.usedPercent, limit.resetsAt, limit.observedAt]), [
         ['Claude and GPT models · 5h limit', 0, at(-60), stamp],
@@ -401,7 +404,7 @@ async function main(): Promise<void> {
       assert.equal(invocations().length, 1, 'invalid requests are rejected before starting the native CLI');
       quotaReport.command.data.groups[0]!.buckets[1]!.remaining_fraction = 0.5;
       fs.writeFileSync(replyFile, JSON.stringify(quotaReport));
-      const changed = onlyAgy(await quotaAction.execute({ days: 1 }));
+      const changed = onlyAgy(await settled(1));
       assert.equal(changed.find(limit => limit.label === 'Gemini Models · 5h limit')?.usedPercent, 50);
       assert.equal(invocations().length, 2, 'a later page read refreshes the native report');
       for (const response of ['FAIL', 'not JSON', JSON.stringify({ ...quotaReport, num_turns: 1 }),
@@ -413,7 +416,7 @@ async function main(): Promise<void> {
         let watchdog: ReturnType<typeof setTimeout> | undefined;
         let retained;
         try {
-          retained = onlyAgy(await Promise.race([quotaAction.execute({ days: 1 }), new Promise<never>((_resolve, reject) => {
+          retained = onlyAgy(await Promise.race([settled(1), new Promise<never>((_resolve, reject) => {
             watchdog = setTimeout(() => reject(new Error('quota deadline did not settle')), 6000);
           })]));
           if (response === 'HANG') await helperExited();
@@ -431,7 +434,7 @@ async function main(): Promise<void> {
       assert.equal(quotaUsage.summary(1).limits.filter(limit => limit.harness === 'claude').length, 2, 'Antigravity refresh never changes other harness windows');
       quotaNow += 61_000;
       fs.writeFileSync(replyFile, JSON.stringify(quotaReport));
-      const recovered = onlyAgy(await quotaAction.execute({ days: 1 }));
+      const recovered = onlyAgy(await settled(1));
       assert.equal(recovered[0]?.observedAt, new Date(quotaNow).toISOString(), 'a healthy refresh after timeout is not stuck on the cancelled promise');
       quotaNow += 61_000;
       fs.rmSync(pidFile, { force: true });
