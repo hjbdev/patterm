@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Introduced a typed `AgentAdapter` contract, declarative `AgentCapabilities`,
+  and `AgentAdapterRegistry` wired through `IntegratedAgentService` and
+  `HarnessModelCatalogService`, with a shared `SupervisedHostClient` across
+  Claude, Codex, and Antigravity hosts.
+- Persisted structured host runtime state (socket path, PID, config path, and
+  hibernation timestamp) in `sessions.runtime_state` instead of positional
+  `processes.argv` entries and `--patterm-hibernated`, keeping read fallback for
+  existing rows.
+- Moved OpenCode REST row projection and Claude/Antigravity subagent JSONL task
+  output projection into their adapters so every provider emits canonical
+  transcript messages.
 - Integrated mode is now the sole way Patterm runs coding agents (Claude Code,
   Codex, OpenCode, and Antigravity). User shells and command processes continue
   to run in the built-in PTY terminal.
@@ -16,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `ptyProcessId` from agent session snapshots.
 
 ### Removed
+
+- Removed remaining transitional TUI reaping and `interface_mode` query filters
+  from runtime reconciliation, restart handling, and backend services.
 
 - Retired TUI/PTY agent launching, the `rawpty` harness, the Terminal/Integrated
   interface mode toggle and `agents.interface.v1` setting, the OpenCode TUI

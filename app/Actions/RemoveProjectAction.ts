@@ -67,7 +67,7 @@ export class RemoveProjectAction {
     await this.deps.fence.close(input.project_id);
     try {
       const processes = db.prepare(`select processes.id, processes.status,
-          exists(select 1 from sessions where sessions.process_id = processes.id and sessions.interface_mode = 'integrated') as integrated
+          exists(select 1 from sessions where sessions.process_id = processes.id) as integrated
         from processes where project_id = ?`).all(input.project_id) as Array<{ id: string; status: string; integrated: number }>;
       // Closing stops live agents and frees their terminals, but treats a
       // stopped Integrated agent's host as best effort. Removal must know it

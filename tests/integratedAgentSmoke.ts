@@ -5,7 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { TurnBusyError, UncertainDeliveryError } from '../app/Services/IntegratedDelivery';
-import type { IntegratedConversationEvent, IntegratedConversationListener } from '../app/Services/IntegratedConversation';
+import type { IntegratedConversationEvent, IntegratedConversationListener, IntegratedConversationMessage } from '../app/Services/IntegratedConversation';
+import type { AgentConversationSnapshot, AgentPromptResult } from '../app/Agents/AgentProtocol';
 import type { AgentHistoryReadService } from '../app/Services/AgentHistory/AgentHistoryReadService';
 import { IntegratedAgentService, type IntegratedProviderService } from '../app/Services/IntegratedAgentService';
 import { ASKING_MAX_LENGTH, pendingAsk } from '../app/Services/IntegratedAsking';
@@ -140,11 +141,11 @@ async function main(): Promise<void> {
 
     // Simultaneous identical calls from separate clients share one native call.
     let slowCalls = 0;
-    let releaseSlow: ((value: unknown) => void) | undefined;
+    let releaseSlow: ((value: AgentPromptResult) => void) | undefined;
     const slow = new IntegratedAgentService(database, {
       codex: {
         ...provider,
-        prompt: () => { slowCalls++; return new Promise((resolve) => { releaseSlow = resolve; }); }
+        prompt: () => { slowCalls++; return new Promise<AgentPromptResult>((resolve) => { releaseSlow = resolve; }); }
       }
     });
     const inflightA = slow.prompt('process_test', { text: 'concurrent', messageId: 'ledger-2' });
@@ -274,7 +275,7 @@ async function main(): Promise<void> {
     assert.deepEqual((await service.controls('process_test')).commands.map((command) => command.name), ['new', 'resume', 'restart']);
 
     // Only a transcript with no messages and nothing older to page in is empty.
-    const withConversation = (conversation: unknown) => new IntegratedAgentService(database, { codex: { ...provider, conversation: async () => conversation } });
+    const withConversation = (conversation: unknown) => new IntegratedAgentService(database, { codex: { ...provider, conversation: async () => conversation as AgentConversationSnapshot } });
     assert.equal(await withConversation({ messages: [] }).isEmpty('process_test'), true);
     assert.equal(await withConversation({ messages: { data: [] } }).isEmpty('process_test'), true);
     assert.equal(await withConversation({ messages: [{ id: 'm1' }] }).isEmpty('process_test'), false);
@@ -297,7 +298,7 @@ async function main(): Promise<void> {
       }
     } as unknown as AgentHistoryReadService;
     const liveAt = '2026-09-28T12:00:00.000Z';
-    const claudeProvider: IntegratedProviderService = { ...provider, conversation: async () => ({ status: 'idle', messages: { data: [{ id: 'live', created_at: liveAt }] } }) };
+    const claudeProvider: IntegratedProviderService = { ...provider, conversation: async () => ({ status: 'idle', messages: { data: [{ id: 'live', role: 'assistant', kind: 'text', text: '', created_at: liveAt }] } }) };
     const resumed = new IntegratedAgentService(database, { claude: claudeProvider });
     resumed.setHistoryReadService(history);
     const claudeSnapshot = await resumed.conversation('process_claude') as { history_truncated: boolean; history_cursor: { next: string } };
@@ -387,13 +388,13 @@ async function observedActivity(database: DatabaseService): Promise<void> {
   let subscriptions = 0;
   let snapshot = 'idle';
   let conversation: (() => Promise<unknown>) = async () => ({ status: snapshot });
-  let prompt: () => Promise<unknown> = async () => ({ id: 'message_observed' });
+  let prompt: () => Promise<AgentPromptResult> = async () => ({ id: 'message_observed' });
   const emit = (event: Omit<IntegratedConversationEvent, 'processId' | 'revision'>) => {
     for (const listener of listeners) listener({ ...event, processId: 'process_observed', revision: 1 });
   };
   const provider: IntegratedProviderService = {
     prepare: async () => ({ resumeId: 'thread_observed', argv: [] }),
-    conversation: () => conversation(),
+    conversation: () => conversation() as Promise<AgentConversationSnapshot>,
     prompt: () => prompt(),
     interrupt: async () => {},
     replyPermission: async () => {},
@@ -623,7 +624,7 @@ async function activityContract(database: DatabaseService): Promise<void> {
   };
   const provider: IntegratedProviderService = {
     prepare: async () => ({ resumeId: 'thread_contract', argv: [] }),
-    conversation: async () => ({ status: snapshot }),
+    conversation: async () => ({ ...(snapshot !== undefined ? { status: snapshot } : {}) }),
     prompt: async (_processId, input) => {
       if (busy) throw new TurnBusyError('failed to submit turn input: ActiveTurnNotSteerable { turn_kind: Compact }', 'compact');
       sent.push(input.text);
@@ -708,7 +709,7 @@ async function heldPrompts(database: DatabaseService): Promise<void> {
   let gate: Promise<void> | null = null;
   let attempts = 0;
   let snapshot = 'working';
-  let messages: unknown[] = [];
+  let messages: IntegratedConversationMessage[] = [];
   const sent: string[] = [];
   const listeners = new Set<IntegratedConversationListener>();
   const provider: IntegratedProviderService = {

@@ -392,7 +392,7 @@ async function main(): Promise<void> {
     // actual Integrated dispatch queue and retain both before flushing.
     const orderedInbox = new BotInbox(database, () => false);
     let rejectFirst!: (error: Error) => void;
-    const firstAdmission = new Promise((_, reject) => { rejectFirst = reject; });
+    const firstAdmission = new Promise<Record<string, unknown>>((_, reject) => { rejectFirst = reject; });
     const submitted: string[] = [];
     const provider: IntegratedProviderService = {
       prepare: async () => ({ resumeId: 'ordered', argv: [] }),

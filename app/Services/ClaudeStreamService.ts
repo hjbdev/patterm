@@ -1,25 +1,34 @@
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
-import net from 'node:net';
 import path from 'node:path';
 import type { DatabaseService } from './DatabaseService';
-import { callIntegratedHost as callHost, IntegratedHostTransportError, detachedHostLauncher, hostConnectionError, integratedHostReady, stopHostProcess, stopRecordedHostProcess, type IntegratedHostLauncher } from './IntegratedHostLauncher';
-import type { IntegratedControlSelector, IntegratedControls, IntegratedFormAction, IntegratedLaunchInput, IntegratedLaunchResult } from './IntegratedAgentService';
+import { callIntegratedHost as callHost, IntegratedHostTransportError, detachedHostLauncher, stopHostProcess, type IntegratedHostLauncher } from './IntegratedHostLauncher';
+import {
+  defaultAgentCapabilities,
+  type AgentAdapter,
+  type AgentCapabilities,
+  type AgentConversationSnapshot,
+  type AgentLaunchInput,
+  type AgentLaunchResult,
+  type AgentPromptResult
+} from '../Agents/AgentProtocol';
+import { resolveSessionRuntimeState } from '../Agents/SessionRuntimeState';
+import { SupervisedHostClient, waitForHostSocket } from '../Runtime/SupervisedHostClient';
+import type { IntegratedControlSelector, IntegratedControls, IntegratedFormAction } from './IntegratedAgentService';
 import { UncertainDeliveryError, type IntegratedDeliveryState } from './IntegratedDelivery';
-import type { IntegratedConversationEvent, IntegratedConversationListener } from './IntegratedConversation';
+import type { IntegratedConversationListener, IntegratedConversationMessage } from './IntegratedConversation';
 import type { ResolvedIntegratedPrompt } from './IntegratedInput';
 import { quietReplyDirectory } from './ClaudeQuietReplies';
 import { memoryPushSupported, type MemoryUpdate } from './MemoryPushService';
-import { readClaudeTaskOutput, type ClaudeTaskOutput } from './ClaudeTaskOutput';
+import { claudeConversationSaved, readClaudeTaskOutput, type ClaudeTaskOutput } from './ClaudeTaskOutput';
 import { ClaudeGoalReader } from './ClaudeGoal';
 import { snapshotWithGoal, type IntegratedGoalAction } from './IntegratedGoal';
 import { containsReferenceToken, referenceToken } from './PromptReferences';
 import type { TranscriptImageStore } from './TranscriptImageStore';
 import { claudeMcpServers } from '../Harness/McpDelivery';
 import { parseClaudeCatalog, type HarnessModel } from '../Harness/ModelCatalog';
-import { ipcPath } from '../Platform/Ipc';
 
-const CLAUDE_RECONNECT_ATTEMPTS = 8;
+const CLAUDE_CACHE_TTL_MS = 57 * 60_000;
 
 interface ClaudeRuntime {
   executable: string;
@@ -30,7 +39,10 @@ interface ClaudeRuntime {
   pattermSessionId: string;
 }
 
-export class ClaudeStreamService {
+export class ClaudeStreamService implements AgentAdapter {
+  readonly id = 'claude';
+  readonly capabilities: AgentCapabilities;
+  private readonly host = new SupervisedHostClient();
   // Native model and command catalogue per host control socket. A relaunch
   // gets a new socket, so an entry never outlives the host it describes.
   private readonly catalogs = new Map<string, { models: unknown[]; commands: unknown[] }>();
@@ -46,11 +58,37 @@ export class ClaudeStreamService {
     private readonly hostScript = path.resolve(__dirname, '../Runtime/ClaudeIntegratedHost.js'),
     private readonly launcher: IntegratedHostLauncher = detachedHostLauncher,
     private readonly images: TranscriptImageStore | null = null
-  ) {}
+  ) {
+    this.capabilities = defaultAgentCapabilities({
+      hostKind: 'supervised-socket',
+      hibernation: {
+        supported: true,
+        canResume: (cwd, resumeId) => claudeConversationSaved({ cwd, sessionId: resumeId, env: this.env })
+      },
+      archiveFallback: 'always',
+      input: { steering: false, nativeQueue: true, configureWhileBusy: true, routineDigest: true },
+      interactions: { permissions: true, questions: true, forms: true, parentReadAutoApprove: false },
+      features: {
+        goals: true,
+        compact: true,
+        slashCommands: true,
+        memoryPush: true,
+        quietReplies: true,
+        voice: false,
+        statelessGenerate: false,
+        serviceTier: false,
+        liveModels: true,
+        sessionDirectory: false,
+        olderMessages: false
+      },
+      selectors: { reasoning: 'effort' },
+      compaction: { defaultCacheTtlMs: CLAUDE_CACHE_TTL_MS }
+    });
+  }
 
   private readonly goals = new ClaudeGoalReader();
 
-  async prepare(input: IntegratedLaunchInput): Promise<IntegratedLaunchResult> {
+  async prepare(input: AgentLaunchInput): Promise<AgentLaunchResult> {
     const directory = path.join(this.runtimeDir, 'claude');
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     const key = randomUUID();
@@ -83,7 +121,10 @@ export class ClaudeStreamService {
     }), { mode: 0o600 });
     const pid = await this.launcher.launch({ harness: 'claude', key, nodePath: this.nodePath, script: this.hostScript, configPath, cwd: input.cwd, env: this.env });
     try {
-      await waitForSocket(socketPath, pid);
+      await waitForHostSocket(socketPath, pid, {
+        exitedMessage: 'Claude Integrated host exited during startup',
+        timeoutMessage: 'Claude Integrated host did not create its control socket'
+      });
       // Wait briefly for the child spawn outcome so a missing executable fails
       // the launch instead of looking like a healthy idle host.
       let state: Record<string, unknown> = {};
@@ -103,7 +144,11 @@ export class ClaudeStreamService {
         }).at(-1);
         throw new Error(String(failure?.text ?? 'Claude Code could not start; check the executable and authentication'));
       }
-      return { resumeId: sessionId, argv: [input.executable, 'claude-host', socketPath, String(pid ?? ''), configPath] };
+      return {
+        resumeId: sessionId,
+        argv: [input.executable],
+        runtimeState: { hostKind: 'claude-host', executable: input.executable, socketPath, pid, configPath }
+      };
     } catch (error) {
       if (this.launcher.stop) await this.launcher.stop(socketPath, pid).catch(() => undefined);
       else await stopHostProcess(pid);
@@ -111,7 +156,7 @@ export class ClaudeStreamService {
     }
   }
 
-  async conversation(processId: string): Promise<unknown> {
+  async conversation(processId: string): Promise<AgentConversationSnapshot> {
     const runtime = this.runtime(processId);
     const result = record(await callHost(runtime.socketPath, 'conversation', {}));
     const messages = record(result.messages);
@@ -127,7 +172,7 @@ export class ClaudeStreamService {
       streaming: true,
       status: claudeActivity(result.status),
       questions: { data: claudeQuestionRequests(result.questions) }
-    }, goal, markers);
+    }, goal, markers) as unknown as AgentConversationSnapshot;
   }
 
   // The host streams targeted transcript events over a persistent connection.
@@ -137,83 +182,19 @@ export class ClaudeStreamService {
   // transcript content, so they never inflate the native revision domain.
   async subscribe(processId: string, listener: IntegratedConversationListener): Promise<() => void> {
     const runtime = this.runtime(processId);
-    let stopped = false;
-    let socket: net.Socket | null = null;
-    let retry: NodeJS.Timeout | null = null;
-    let attempts = 0;
-    const forward = (event: Record<string, unknown>, revision: number): void => {
-      const message = event.kind === 'replace' && event.message ? { message: withoutOriginalFile(event.message) } : {};
-      listener({ ...event, ...message, processId, revision } as IntegratedConversationEvent);
-    };
-    const schedule = (): void => {
-      if (stopped) return;
-      forward({ kind: 'reconnecting' }, 0);
-      attempts += 1;
-      if (attempts > CLAUDE_RECONNECT_ATTEMPTS) {
-        forward({ kind: 'error', id: 'connection_error', delta: 'Could not reconnect to the Claude host.' }, 0);
-        return;
-      }
-      retry = setTimeout(() => {
-        void connect().catch(() => {
-          // A failed attempt before acknowledgement must keep the bounded
-          // recovery alive instead of stopping after the first miss.
-          if (!stopped) schedule();
-        });
-      }, Math.min(250 * 2 ** (attempts - 1), 5_000));
-    };
-    const connect = (): Promise<void> => new Promise((resolve, reject) => {
-      const next = net.createConnection(ipcPath(runtime.socketPath));
-      socket = next;
-      let buffer = '';
-      let acknowledged = false;
-      let settled = false;
-      const fail = (error: Error): void => {
-        if (settled) return;
-        settled = true;
-        next.destroy();
-        reject(error);
-      };
-      next.setEncoding('utf8');
-      next.once('error', (error) => { if (!acknowledged) fail(error); });
-      next.once('close', () => {
-        if (!acknowledged) fail(new Error('Claude host closed before acknowledging the subscription'));
-        else if (!stopped) schedule();
-      });
-      next.once('connect', () => next.write(`${JSON.stringify({ id: randomUUID(), method: 'subscribe', params: {} })}\n`));
-      next.on('data', (chunk: string) => {
-        buffer += chunk;
-        for (;;) {
-          const newline = buffer.indexOf('\n');
-          if (newline < 0) break;
-          const line = buffer.slice(0, newline).trim();
-          buffer = buffer.slice(newline + 1);
-          if (!line) continue;
-          let frame: Record<string, unknown>;
-          try { frame = record(JSON.parse(line)); } catch { continue; }
-          if (!acknowledged) {
-            if (frame.error !== undefined) { fail(new Error(String(frame.error))); return; }
-            acknowledged = true;
-            settled = true;
-            attempts = 0;
-            resolve();
-            continue;
-          }
-          const event = record(frame.event);
-          if (typeof event.kind !== 'string') continue;
-          const revision = typeof event.revision === 'number' && Number.isFinite(event.revision) ? Number(event.revision) : 0;
-          forward(event, revision);
-        }
-      });
+    return this.host.subscribe({
+      processId,
+      socketPath: runtime.socketPath,
+      label: 'Claude host',
+      reconnectErrorMessage: 'Could not reconnect to the Claude host.',
+      listener,
+      transformEvent: (event) => event.kind === 'replace' && event.message
+        ? { ...event, message: withoutOriginalFile(event.message) as IntegratedConversationMessage }
+        : event
     });
-    await connect();
-    return () => {
-      stopped = true;
-      if (retry) clearTimeout(retry);
-      socket?.destroy();
-    };
   }
 
-  async prompt(processId: string, input: ResolvedIntegratedPrompt): Promise<unknown> {
+  async prompt(processId: string, input: ResolvedIntegratedPrompt): Promise<AgentPromptResult> {
     const references = input.references.filter((reference) => !containsReferenceToken(input.text, reference.relativePath));
     const text = [input.text.trim(), ...references.map((reference) => referenceToken(reference.relativePath))].filter(Boolean).join(' ');
     // Inline the exact bytes validated by UploadService rather than re-reading.
@@ -250,7 +231,7 @@ export class ClaudeStreamService {
         attachments: displayAttachments,
         ...(input.routineDigest ? { routineDigest: true } : {}),
         ...(input.messageId ? { clientMessageId: input.messageId } : {})
-      });
+      }) as AgentPromptResult;
     } catch (error) {
       if (isUncertainHostFailure(error)) {
         throw new UncertainDeliveryError(error instanceof Error ? error.message : String(error), input.messageId);
@@ -304,24 +285,23 @@ export class ClaudeStreamService {
   // selectable model list.
   async liveModels(): Promise<HarnessModel[] | null> {
     const rows = this.database.connection.prepare(`
-      select processes.argv from processes join sessions on sessions.process_id = processes.id
-      where sessions.harness = 'claude' and sessions.interface_mode = 'integrated' and sessions.exited_at is null
+      select processes.argv, sessions.runtime_state from processes join sessions on sessions.process_id = processes.id
+      where sessions.harness = 'claude' and sessions.exited_at is null
       order by sessions.started_at desc
-    `).all() as Array<{ argv: string }>;
+    `).all() as Array<{ argv: string | null; runtime_state: string | null }>;
     for (const row of rows) {
-      let argv: unknown;
-      try { argv = JSON.parse(row.argv); } catch { continue; }
-      if (!Array.isArray(argv) || argv[1] !== 'claude-host' || typeof argv[2] !== 'string') continue;
-      const socketPath = argv[2];
+      const state = resolveSessionRuntimeState(row.runtime_state, row.argv);
+      if (state.hostKind !== 'claude-host' || !state.socketPath) continue;
+      const socketPath = state.socketPath;
       const cached = this.catalogs.get(socketPath);
       if (cached?.models.length) {
         try { return parseClaudeCatalog({ models: cached.models }); } catch { /* try live read */ }
       }
       try {
-        const state = await readControls(socketPath);
-        const models = nativeModels(state);
+        const controlState = await readControls(socketPath);
+        const models = nativeModels(controlState);
         if (!models.length) continue;
-        this.catalogs.set(socketPath, { models, commands: Array.isArray(state.commands) ? state.commands : [] });
+        this.catalogs.set(socketPath, { models, commands: Array.isArray(controlState.commands) ? controlState.commands : [] });
         return parseClaudeCatalog({ models });
       } catch {
         // Try the next live host, or fall back to CLI discovery.
@@ -330,7 +310,7 @@ export class ClaudeStreamService {
     return null;
   }
 
-  goal(processId: string, action: IntegratedGoalAction, objective?: string): Promise<unknown> {
+  goal(processId: string, action: IntegratedGoalAction, objective?: string): Promise<AgentPromptResult> {
     if (action === 'pause' || action === 'resume') throw new Error('Claude Code goals cannot be paused');
     if (action === 'set' && !objective) throw new Error('Describe the goal after /goal');
     return this.command(processId, 'goal', action === 'set' ? objective! : 'clear');
@@ -346,12 +326,12 @@ export class ClaudeStreamService {
     await callHost(socketPath, 'configure', { selector, value });
   }
 
-  command(processId: string, name: string, text: string): Promise<unknown> {
+  command(processId: string, name: string, text: string): Promise<AgentPromptResult> {
     return this.prompt(processId, { text: `/${name}${text ? ` ${text}` : ''}`, references: [], attachments: [] });
   }
 
   // Claude Code's built-in /compact takes precedence over custom commands.
-  compact(processId: string): Promise<unknown> {
+  compact(processId: string): Promise<AgentPromptResult> {
     return this.command(processId, 'compact', '');
   }
 
@@ -397,37 +377,23 @@ export class ClaudeStreamService {
     // A host whose native CLI already failed or exited has nothing to
     // interrupt, but the host stop below still runs and cleans it up. A
     // failure of the host stop itself still propagates.
-    try { await this.interrupt(processId); } catch { /* the host stop decides */ }
-    try {
-      await callHost(runtime.socketPath, 'stop', {});
-    } catch {
-      if (this.launcher.stop) await this.launcher.stop(runtime.socketPath, runtime.pid);
-      else await stopRecordedHostProcess(runtime.pid, runtime.socketPath);
-    }
+    await this.host.stop(runtime.socketPath, runtime.pid, this.launcher, { interruptFirst: true });
     this.catalogs.delete(runtime.socketPath);
     this.goals.forget(runtime.sessionId);
   }
 
-  async cleanupLaunch(_input: IntegratedLaunchInput, result: IntegratedLaunchResult): Promise<void> {
-    const socketPath = typeof result.argv[2] === 'string' ? result.argv[2] : '';
-    const pid = typeof result.argv[3] === 'string' && /^\d+$/.test(result.argv[3]) ? Number(result.argv[3]) : null;
-    if (this.launcher.stop && socketPath) await this.launcher.stop(socketPath, pid);
-    else await stopHostProcess(pid);
+  async cleanupLaunch(_input: AgentLaunchInput, result: AgentLaunchResult): Promise<void> {
+    const socketPath = result.runtimeState?.socketPath ?? (typeof result.argv[2] === 'string' ? result.argv[2] : undefined);
+    const pid = result.runtimeState?.pid ?? (typeof result.argv[3] === 'string' && /^\d+$/.test(result.argv[3]) ? Number(result.argv[3]) : null);
+    await this.host.cleanupLaunch(socketPath, pid, this.launcher);
   }
 
   async stopAll(): Promise<void> {
     const rows = this.database.connection.prepare(`
       select processes.id from processes join sessions on sessions.process_id = processes.id
-      where sessions.harness = ? and sessions.interface_mode = 'integrated' and sessions.exited_at is null
+      where sessions.harness = ? and sessions.exited_at is null
     `).all('claude') as Array<{ id: string }>;
-    const results = await Promise.allSettled(rows.map(async (row) => {
-      // The Claude stop owns the best-effort interrupt and the host stop.
-      await this.stop(row.id);
-    }));
-    // Also stop hosts whose sessions were already reconciled as failed.
-    results.push(...await Promise.allSettled([this.launcher.stopAll('claude')]));
-    const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
-    if (failures.length) throw new AggregateError(failures.map((failure) => failure.reason), 'Could not stop every Claude host');
+    await this.host.stopAll('claude', rows.map((row) => row.id), (id) => this.stop(id), this.launcher, 'Could not stop every Claude host');
   }
 
   // Current settings are always read from the host; only the native model and
@@ -455,17 +421,16 @@ export class ClaudeStreamService {
 
   private runtime(processId: string): ClaudeRuntime {
     const row = this.database.connection.prepare(`
-      select processes.argv, sessions.resume_id, sessions.id as session_id, coalesce(sessions.cwd, processes.cwd) as cwd
+      select processes.argv, sessions.runtime_state, sessions.resume_id, sessions.id as session_id, coalesce(sessions.cwd, processes.cwd) as cwd
       from sessions join processes on processes.id = sessions.process_id
       where (sessions.process_id = ? or sessions.id = ?) and sessions.harness = ?
-        and sessions.interface_mode = 'integrated' and sessions.resume_id is not null
+        and sessions.resume_id is not null
       order by sessions.exited_at is null desc, sessions.started_at desc limit 1
-    `).get(processId, processId, 'claude') as { argv: string; resume_id: string; session_id: string; cwd: string | null } | undefined;
+    `).get(processId, processId, 'claude') as { argv: string | null; runtime_state: string | null; resume_id: string; session_id: string; cwd: string | null } | undefined;
     if (!row) throw new Error('Claude Integrated session not found');
-    const argv = JSON.parse(row.argv) as unknown;
-    if (!Array.isArray(argv) || argv[1] !== 'claude-host' || typeof argv[2] !== 'string') throw new Error('Integrated runtime metadata is invalid');
-    const pid = typeof argv[3] === 'string' && /^\d+$/.test(argv[3]) ? Number(argv[3]) : null;
-    return { executable: String(argv[0]), cwd: row.cwd ?? process.cwd(), socketPath: argv[2], pid, sessionId: row.resume_id, pattermSessionId: row.session_id };
+    const state = resolveSessionRuntimeState(row.runtime_state, row.argv);
+    if (state.hostKind !== 'claude-host' || !state.socketPath) throw new Error('Integrated runtime metadata is invalid');
+    return { executable: state.executable ?? 'claude', cwd: row.cwd ?? process.cwd(), socketPath: state.socketPath, pid: state.pid ?? null, sessionId: row.resume_id, pattermSessionId: row.session_id };
   }
 }
 
@@ -478,17 +443,6 @@ async function readControls(socketPath: string): Promise<Record<string, unknown>
     if (!(error instanceof Error) || !/^Unknown \w+ host method: controls$/.test(error.message)) throw error;
     return record(await callHost(socketPath, 'conversation', {}));
   }
-}
-
-async function waitForSocket(socketPath: string, pid: number | null): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if (await integratedHostReady(socketPath)) return;
-    if (pid) {
-      try { process.kill(pid, 0); } catch { throw new Error('Claude Integrated host exited during startup'); }
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error('Claude Integrated host did not create its control socket');
 }
 
 const FALLBACK_CLAUDE_MODELS = ['default', 'fable', 'opus', 'sonnet', 'haiku'];

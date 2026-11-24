@@ -48,9 +48,7 @@ import { ArrowLeft, Check, Circle, Loader2, X } from 'lucide-vue-next';
 import { Button } from './ui/button';
 import ConversationTranscript from './ConversationTranscript.vue';
 import LoadingBar from './LoadingBar.vue';
-import { archiveTranscript } from '../lib/historyTranscript';
 import { mergeTranscriptWindows, normaliseMessages, stripAnsi, taskIsActive, type IntegratedTask, type TranscriptMessage } from '../lib/integratedConversation';
-import type { ConversationMessageRecord } from '../types';
 
 // A running task's output file grows between reads; the service skips
 // unchanged files, so a short interval stays cheap.
@@ -131,12 +129,8 @@ async function loadOlder(): Promise<void> {
   }
 }
 
-// Claude transcripts arrive as archived records; Codex and OpenCode subagents
-// as rows in the provider's snapshot shape, which the main view reads too.
+// All providers project subagent task output into canonical messages.
 function pageMessages(result: Record<string, unknown>): TranscriptMessage[] | null {
-  if (result.format === 'transcript' && Array.isArray(result.archived_messages)) {
-    return archiveTranscript(result.archived_messages as ConversationMessageRecord[], { projectPath: props.projectPath ?? null, showReasoning: true });
-  }
   if (result.format === 'messages' && Array.isArray(result.messages)) return normaliseMessages(result.messages);
   return null;
 }

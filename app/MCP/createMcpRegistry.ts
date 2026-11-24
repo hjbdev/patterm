@@ -3264,7 +3264,7 @@ function requireSettings(services: RegistryServices): NonNullable<RegistryServic
 }
 
 function isIntegratedProcess(database: DatabaseService, processId: string): boolean {
-  return Boolean(database.connection.prepare(`select 1 from sessions where process_id = ? and interface_mode = 'integrated' and exited_at is null`).get(processId));
+  return Boolean(database.connection.prepare(`select 1 from sessions where process_id = ? and exited_at is null`).get(processId));
 }
 
 // inPurview: whether a bot caller works in a project, so it reads that

@@ -174,7 +174,7 @@ export class WorktreeFileService implements IntegratedInputResolver {
   private async scope(processId: string): Promise<string> {
     const row = this.database.connection.prepare(`
       select processes.cwd from processes join sessions on sessions.process_id = processes.id
-      where (sessions.process_id = ? or sessions.id = ?) and sessions.interface_mode = 'integrated' and processes.cwd is not null
+      where (sessions.process_id = ? or sessions.id = ?) and processes.cwd is not null
       order by sessions.exited_at is null desc, sessions.started_at desc limit 1
     `).get(processId, processId) as { cwd: string } | undefined;
     if (!row) throw new Error('Integrated agent session not found');

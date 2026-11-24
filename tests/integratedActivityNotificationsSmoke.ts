@@ -217,7 +217,7 @@ async function main(): Promise<void> {
     // activity -> notification listener -> parent, with a real prompt retry.
     let stream: IntegratedConversationListener | undefined;
     let nativeStatus = 'idle';
-    let admission: Promise<unknown> | null = null;
+    let admission: Promise<Record<string, unknown> | void> | null = null;
     const provider: IntegratedProviderService = {
       prepare: async () => ({ resumeId: 'test-thread', argv: [] }),
       conversation: async () => ({ status: nativeStatus }),
@@ -297,7 +297,7 @@ async function main(): Promise<void> {
     let nativeForms: unknown[] = [];
     const delegatedProvider: IntegratedProviderService = {
       ...provider,
-      conversation: async () => ({ status: nativePermissions.length ? 'permission' : nativeQuestions.length || nativeForms.length ? 'question' : 'working', permissions: { data: nativePermissions }, questions: nativeQuestions, forms: nativeForms }),
+      conversation: async () => ({ status: nativePermissions.length ? 'permission' : nativeQuestions.length || nativeForms.length ? 'question' : 'working', permissions: { data: nativePermissions }, questions: nativeQuestions, forms: nativeForms }) as never,
       replyPermission: async (...args) => { replies.push(args); nativePermissions = nativePermissions.filter((permission) => permission.id !== args[1]); },
       replyQuestion: async (...args) => { replies.push(args); nativeQuestions = nativeQuestions.filter((question) => question.id !== args[1]); },
       replyForm: async (...args) => { replies.push(args); nativeForms = []; }

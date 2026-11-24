@@ -11,6 +11,7 @@ import {
   type HarnessProviderCatalog
 } from '../Harness/ModelCatalog';
 import { execFileResolved, spawnResolved, stopChild } from '../Platform/ServiceProcess';
+import type { AgentAdapterRegistry } from '../Agents/AgentAdapterRegistry';
 import type { DatabaseService } from './DatabaseService';
 import type { DebugLogService } from './DebugLogService';
 import type { OpenCodeServerService } from './OpenCodeServerService';
@@ -23,6 +24,7 @@ export interface HarnessModelCatalogOptions {
   database: DatabaseService;
   settings: SettingsService;
   env: NodeJS.ProcessEnv;
+  adapters?: AgentAdapterRegistry;
   openCodeServer?: Pick<OpenCodeServerService, 'listModels' | 'listProviders'>;
   liveClaudeModels?: () => Promise<HarnessModel[] | null>;
   liveCodexModels?: () => Promise<HarnessModel[] | null>;
@@ -148,7 +150,7 @@ export class HarnessModelCatalogService {
       // names the account's models. The built-in aliases cover a missing CLI.
       const executable = this.executableFor(harness);
       if (!executable) return builtinClaudeCatalog(this.now());
-      const live = await this.deps.liveClaudeModels?.().catch(() => null);
+      const live = await this.liveModelsFor('claude');
       if (live?.length) {
         return { harness, source: 'cli', refreshedAt: this.now(), error: null, models: live };
       }
@@ -165,7 +167,7 @@ export class HarnessModelCatalogService {
       throw new Error(`${harness} was not discovered.`);
     }
     if (harness === 'codex') {
-      const live = await this.deps.liveCodexModels?.().catch(() => null);
+      const live = await this.liveModelsFor('codex');
       if (live?.length) {
         return { harness, source: 'cli', refreshedAt: this.now(), error: null, models: live };
       }
@@ -189,7 +191,7 @@ export class HarnessModelCatalogService {
       if (!models.length) throw new Error('Antigravity returned no selectable models');
       return { harness, source: 'cli', refreshedAt: this.now(), error: null, models };
     }
-    const server = this.deps.openCodeServer;
+    const server = this.deps.openCodeServer ?? this.openCodeAdapter();
     const [response, providers] = await Promise.all([
       server
         ? server.listModels(executable)
@@ -207,6 +209,22 @@ export class HarnessModelCatalogService {
       error: null,
       models: parseOpenCodeCatalog(response, providers)
     };
+  }
+
+  private async liveModelsFor(harness: 'claude' | 'codex'): Promise<HarnessModel[] | null> {
+    const callback = harness === 'claude' ? this.deps.liveClaudeModels : this.deps.liveCodexModels;
+    if (callback) return callback().catch(() => null);
+    const adapter = this.deps.adapters?.get(harness);
+    if (!adapter?.liveModels) return null;
+    const result = await adapter.liveModels().catch(() => null);
+    return Array.isArray(result) ? result as HarnessModel[] : null;
+  }
+
+  private openCodeAdapter(): Pick<OpenCodeServerService, 'listModels' | 'listProviders'> | undefined {
+    const adapter = this.deps.adapters?.get('opencode') as Partial<Pick<OpenCodeServerService, 'listModels' | 'listProviders'>> | undefined;
+    return adapter && typeof adapter.listModels === 'function' && typeof adapter.listProviders === 'function'
+      ? adapter as Pick<OpenCodeServerService, 'listModels' | 'listProviders'>
+      : undefined;
   }
 
   private executableFor(harness: string): string | null {

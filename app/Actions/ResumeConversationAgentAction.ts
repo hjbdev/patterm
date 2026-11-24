@@ -99,7 +99,7 @@ export class ResumeConversationAgentAction {
     const row = this.database.connection.prepare(`
       select 1 from sessions
       join processes on processes.id = sessions.process_id
-      where sessions.process_id = ? and sessions.project_id = ? and sessions.interface_mode = 'integrated' and processes.status = 'running'
+      where sessions.process_id = ? and sessions.project_id = ? and processes.status = 'running'
     `).get(processId, projectId);
     if (!row) return false;
     try {

@@ -485,14 +485,14 @@ async function integratedSignals(database: DatabaseService): Promise<void> {
   // on a transcript row. Notices and background agents' rows do not count.
   assert.equal(await integrated.lastActivity('oc'), null);
   provider.conversation = async () => ({ status: 'idle', messages: { data: [
-    { id: 'a', role: 'user', created_at: '2026-10-16T01:00:00.000Z' },
-    { id: 'b', role: 'assistant', createdAt: '2026-10-16T01:00:05.000Z', completedAt: '2026-10-16T01:00:09.000Z' },
-    { id: 'c', role: 'assistant', kind: 'notice', createdAt: '2026-10-16T02:00:00.000Z' },
-    { id: 'd', role: 'assistant', parentId: 'b', createdAt: '2026-10-16T03:00:00.000Z' }
+    { id: 'a', role: 'user', kind: 'text', text: '', created_at: '2026-10-16T01:00:00.000Z' },
+    { id: 'b', role: 'assistant', kind: 'text', text: '', createdAt: '2026-10-16T01:00:05.000Z', completedAt: '2026-10-16T01:00:09.000Z' },
+    { id: 'c', role: 'assistant', kind: 'notice', text: '', createdAt: '2026-10-16T02:00:00.000Z' },
+    { id: 'd', role: 'assistant', kind: 'text', text: '', parentId: 'b', createdAt: '2026-10-16T03:00:00.000Z' }
   ] } });
   assert.equal(await integrated.lastActivity('oc'), Date.parse('2026-10-16T01:00:09.000Z'));
   // An agent that is not idle is active now, whatever its rows say.
-  provider.conversation = async () => ({ status: 'working', messages: { data: [{ id: 'a', role: 'user', created_at: '2026-10-16T01:00:00.000Z' }] } });
+  provider.conversation = async () => ({ status: 'working', messages: { data: [{ id: 'a', role: 'user', kind: 'text', text: '', created_at: '2026-10-16T01:00:00.000Z' }] } });
   const now = Date.now();
   assert.ok((await integrated.lastActivity('oc'))! >= now, 'a busy agent counts as active now');
   provider.lastActivity = async () => 42;
@@ -521,7 +521,7 @@ async function restoredBusy(database: DatabaseService): Promise<void> {
   const compacts: string[] = [];
   const provider: IntegratedProviderService = {
     prepare: async () => ({ resumeId: 'session', argv: [] }),
-    conversation: async () => ({ status, messages: { data: [{ id: 'old', role: 'assistant', kind: 'text', created_at: new Date(idleSince - 5_000).toISOString() }] } }),
+    conversation: async () => ({ status, messages: { data: [{ id: 'old', role: 'assistant', kind: 'text', text: '', created_at: new Date(idleSince - 5_000).toISOString() }] } }),
     prompt: async () => ({}),
     interrupt: async () => {},
     replyPermission: async () => {},

@@ -7,16 +7,34 @@ import { TurnBusyError, UncertainDeliveryError, type IntegratedDeliveryState } f
 import { HELD_QUEUE_EVENT_ID, type IntegratedConversationEvent, type IntegratedConversationListener, type IntegratedQueuedMessage } from './IntegratedConversation';
 import { pendingAsk } from './IntegratedAsking';
 import type { AgentHistoryReadService } from './AgentHistory/AgentHistoryReadService';
-import type { McpLaunchServer } from './McpServerRegistry';
 import type { UsageService } from './UsageService';
-import type { MemoryPushService, MemoryUpdate } from './MemoryPushService';
+import type { MemoryPushService } from './MemoryPushService';
 import { callIntegratedHost, detachedHostLauncher, integratedHostListening, type IntegratedHostLauncher } from './IntegratedHostLauncher';
 import { presetHarnessInput } from '../Harness/HarnessPresets';
-import { goalIsOpen, normaliseGoal, type IntegratedGoalAction, type IntegratedGoalSupport } from './IntegratedGoal';
+import type { HarnessId } from '../Harness/HarnessProvider';
+import { goalIsOpen, normaliseGoal, type IntegratedGoalAction } from './IntegratedGoal';
+import { AgentAdapterRegistry } from '../Agents/AgentAdapterRegistry';
+import type {
+  AgentAdapter,
+  AgentCapabilities,
+  AgentCommand,
+  AgentControls,
+  AgentControlSelector,
+  AgentConversationSnapshot,
+  AgentFormAction,
+  AgentLaunchInput,
+  AgentLaunchResult,
+  AgentLiveSettings,
+  AgentOlderMessagesPage,
+  AgentPendingRequests,
+  AgentPromptResult,
+  AgentReviewPrompt,
+  AgentTaskOutput
+} from '../Agents/AgentProtocol';
+import { hostSocketPathFromRow, isHibernatedRuntimeState, parseArgvArray, updateSessionRuntimeState } from '../Agents/SessionRuntimeState';
 
 const ARCHIVE_PAGE_SIZE = 80;
 const ARCHIVE_CURSOR_PREFIX = 'archive:';
-const HIBERNATED_ARGV_MARKER = '--patterm-hibernated';
 // Native titles appear asynchronously: Claude generates one on request, while
 // OpenCode names the conversation during the first turn. Retry a few
 // times after each accepted prompt, then wait for the next one.
@@ -26,83 +44,22 @@ const TITLE_RETRY_DELAYS_MS = [1_000, 5_000, 15_000, 45_000, 120_000];
 // until then, so the first retry is quick and later ones back off.
 const RESUBSCRIBE_DELAYS_MS = [2_000, 5_000, 15_000, 30_000];
 
-export interface IntegratedLaunchInput {
-  executable: string;
-  cwd: string;
-  // The user's chosen name, or null to let the native agent title the session.
-  name: string | null;
-  context: string;
-  mcp: {
-    command: string;
-    args: string[];
-    env: Record<string, string>;
-  };
-  // The user's global MCP servers for this harness.
-  mcpServers?: McpLaunchServer[];
-  resumeId: string | null;
-  model?: string | null;
-  reasoning?: string | null;
-  serviceTier?: string | null;
-  // A restart reconnects MCP servers a shared daemon keeps across sessions,
-  // so their tool lists are fetched again.
-  reconnectMcp?: boolean;
-  // Recovery fallbacks are not explicit model/effort overrides. A provider's
-  // saved controls can be newer than the stopped session's launch columns.
-  restoreSavedSettings?: boolean;
-  // The assistant and bots: Patterm keeps their saved memory current.
-  memoryPush?: boolean;
-  // Set when transparently waking a hibernated session in place so duplicate-attach
-  // checks ignore the session's own live row.
-  wakingSessionId?: string;
-  quietNotificationReplies?: boolean;
-}
+export type IntegratedLaunchInput = AgentLaunchInput;
+export type IntegratedLaunchResult = AgentLaunchResult;
+export type LiveSettings = AgentLiveSettings;
+export type IntegratedFormAction = AgentFormAction;
+export type IntegratedControlSelector = AgentControlSelector;
+export type IntegratedCommand = AgentCommand;
+export type IntegratedControls = AgentControls;
+export type ReviewPrompt = AgentReviewPrompt;
+export type IntegratedProviderService = AgentAdapter;
 
 export interface IntegratedHibernationOptions {
   idleMs?: number;
   checkIntervalMs?: number;
   isBusy?: (processId: string) => boolean;
-  canResume?: (harness: 'claude' | 'codex' | 'agy', cwd: string, resumeId: string) => boolean;
+  canResume?: (harness: HarnessId, cwd: string, resumeId: string) => boolean;
   wake: (processId: string) => Promise<void>;
-}
-
-// Launch settings a running agent reports. A missing key is one it does not
-// report; null means the harness default.
-export interface LiveSettings {
-  model?: string | null;
-  reasoning?: string | null;
-  service_tier?: string | null;
-}
-
-export interface IntegratedLaunchResult {
-  resumeId: string;
-  argv: string[];
-}
-
-export type IntegratedFormAction = 'accept' | 'decline' | 'cancel';
-
-export interface IntegratedControlSelector {
-  id: string;
-  label: string;
-  value: string;
-  // `description` is secondary text, such as the provider that serves a model.
-  options: Array<{ value: string; label: string; description?: string }>;
-}
-
-export interface IntegratedCommand {
-  name: string;
-  description?: string;
-  // Patterm commands run in the renderer and never reach the native agent.
-  source?: 'patterm';
-}
-
-export interface IntegratedControls {
-  selectors: IntegratedControlSelector[];
-  commands: IntegratedCommand[];
-  // Set by providers whose conversation snapshots report `controls_revision`;
-  // equal values mean the controls haven't changed.
-  revision?: string;
-  // Present for harnesses with native goals.
-  goals?: IntegratedGoalSupport;
 }
 
 const PATTERM_COMMANDS: IntegratedCommand[] = [
@@ -110,64 +67,6 @@ const PATTERM_COMMANDS: IntegratedCommand[] = [
   { name: 'resume', description: 'Resume a previous conversation', source: 'patterm' },
   { name: 'restart', description: 'Restart the agent and resume this conversation, picking up MCP and settings changes', source: 'patterm' }
 ];
-
-export interface ReviewPrompt {
-  id: string;
-  revoked: AbortSignal;
-  current(): boolean;
-}
-
-export interface IntegratedProviderService {  prepare(input: IntegratedLaunchInput): Promise<IntegratedLaunchResult>;
-  conversation(processId: string): Promise<unknown>;
-  olderMessages?(processId: string, cursor: string): Promise<unknown>;
-  prompt(processId: string, input: ResolvedIntegratedPrompt, review?: ReviewPrompt): Promise<unknown>;
-  interrupt(processId: string, options?: { resume?: boolean }): Promise<void>;
-  // Stops one background task from the snapshot's `tasks`.
-  stopTask?(processId: string, taskId: string): Promise<void>;
-  // Reads one background task's output: a subagent transcript or shell text.
-  // `since` is the version from the previous read; an unchanged task skips it.
-  // A `cursor` from an earlier read returns the page of messages before it.
-  taskOutput?(processId: string, taskId: string, since?: string | null, cursor?: string | null): Promise<unknown>;
-  // Steers or cancels one prompt from the snapshot's `queue`.
-  updateQueued?(processId: string, messageId: string, action: 'steer' | 'cancel'): Promise<void>;
-  replyPermission(processId: string, requestId: string, reply: 'once' | 'always' | 'reject', message?: string): Promise<void>;
-  replyQuestion(processId: string, requestId: string, answers: string[][]): Promise<void>;
-  // Native typed forms (OpenCode forms, MCP elicitations). Answers are the
-  // field's native JSON value: string, number, boolean, or string[] for
-  // multiselect. Decline and cancel carry no answer.
-  replyForm?(processId: string, formId: string, answer: Record<string, unknown>, action?: IntegratedFormAction): Promise<void>;
-  controls?(processId: string): Promise<IntegratedControls>;
-  configure?(processId: string, selector: string, value: string): Promise<void>;
-  command?(processId: string, name: string, text: string): Promise<unknown>;
-  // Sets, pauses, resumes, or clears the native goal. Typing /goal reaches
-  // the same native operation through `command`.
-  goal?(processId: string, action: IntegratedGoalAction, objective?: string): Promise<unknown>;
-  // Native compaction, never a custom command of the same name.
-  compact?(processId: string): Promise<unknown>;
-  // The native session's current model, where Patterm's selection can be stale.
-  currentModel?(processId: string): Promise<string | null>;
-  // When the native agent last started work, in epoch milliseconds, for
-  // providers whose transcript rows can carry Patterm's clock instead.
-  lastActivity?(processId: string): Promise<number | null>;
-  // The native session's model and reasoning, read together for the same reason.
-  nativeSettings?(processId: string): Promise<LiveSettings>;
-  // The directory the native session records now, where it can move itself.
-  sessionDirectory?(processId: string): Promise<string | null>;
-  // Native evidence that a previously ambiguous prompt was admitted.
-  reconcile?(processId: string, messageId: string): Promise<IntegratedDeliveryState>;
-  // Event-driven conversation updates. Returned function releases the listener.
-  subscribe?(processId: string, listener: IntegratedConversationListener): Promise<() => void>;
-  // The native conversation title, or null while the agent has not named it.
-  // `prompt` is the latest accepted text, for providers that title on request.
-  title?(processId: string, prompt: string): Promise<string | null>;
-  stop?(processId: string): Promise<void>;
-  // Brings saved memory up to date in the agent's hidden native context,
-  // before a prompt. Providers without it leave the agent to read memory with
-  // tools.
-  updateMemory?(processId: string, update: MemoryUpdate): Promise<void>;
-  stopAll?(): Promise<void>;
-  cleanupLaunch?(input: IntegratedLaunchInput, result: IntegratedLaunchResult): Promise<void>;
-}
 
 export type CompactionSignal = 'turn' | 'compact' | 'compact_rejected' | 'model';
 
@@ -180,9 +79,11 @@ export interface IntegratedActivityChange {
 }
 
 export class IntegratedAgentService {
+  private readonly adapters: AgentAdapterRegistry;
+
   constructor(
     private readonly database: DatabaseService,
-    private readonly providers: Partial<Record<'claude' | 'codex' | 'opencode' | 'agy', IntegratedProviderService>>,
+    providers: AgentAdapterRegistry | Partial<Record<HarnessId, AgentAdapter>>,
     // Reading a conversation is not a workbench mutation, but providers report
     // activity and titles as a side effect. Notify only when either actually
     // changes so polling the transcript does not refetch the whole workspace.
@@ -191,7 +92,19 @@ export class IntegratedAgentService {
     // callers keep working without it.
     private readonly inputs?: IntegratedInputResolver,
     private readonly hostLauncher: IntegratedHostLauncher = detachedHostLauncher
-  ) {}
+  ) {
+    this.adapters = providers instanceof AgentAdapterRegistry ? providers : AgentAdapterRegistry.fromRecord(providers);
+  }
+
+  capabilities(harness: string): AgentCapabilities {
+    return this.adapters.capabilities(harness);
+  }
+
+  supportsHibernation(harness: string): boolean {
+    const adapter = this.adapters.get(harness);
+    if (adapter?.capabilities) return adapter.capabilities.hibernation.supported;
+    return harness === 'claude' || harness === 'codex' || harness === 'agy';
+  }
 
   private readonly conversationSubscriptions = new Map<string, ConversationSubscription>();
   // Concurrent identical submissions share one native call. Resolved outcomes
@@ -233,7 +146,7 @@ export class IntegratedAgentService {
   private readonly observeAttempts = new Map<string, number>();
   private readonly eventListeners = new Set<(processId: string, event: IntegratedConversationEvent) => void>();
   private readonly activityListeners = new Set<(change: IntegratedActivityChange) => void>();
-  private readonly requestListeners = new Set<(processId: string, pending: unknown) => void>();
+  private readonly requestListeners = new Set<(processId: string, pending: Partial<AgentPendingRequests> | null) => void>();
   private readonly promptDispatchListeners = new Set<(processId: string) => void>();
   private readonly compactionListeners = new Set<(processId: string, signal: CompactionSignal) => void>();
   // Stream events and synthetic marks bump the sequence. Snapshot reads and
@@ -268,28 +181,29 @@ export class IntegratedAgentService {
   }
 
   private isPersistedHibernated(processId: string): boolean {
-    const row = this.database.connection.prepare('select argv from processes where id = ?').get(processId) as { argv: string | null } | undefined;
-    if (!row?.argv) return false;
-    try {
-      const parsed = JSON.parse(row.argv) as unknown;
-      return Array.isArray(parsed) && parsed.includes(HIBERNATED_ARGV_MARKER);
-    } catch {
-      return false;
-    }
+    const row = this.database.connection.prepare(`
+      select sessions.runtime_state, processes.argv
+      from processes left join sessions on sessions.process_id = processes.id
+      where processes.id = ?
+      order by sessions.exited_at is null desc, sessions.started_at desc
+      limit 1
+    `).get(processId) as { runtime_state: string | null; argv: string | null } | undefined;
+    return isHibernatedRuntimeState(row?.runtime_state, row?.argv);
   }
 
   private setPersistedHibernated(processId: string, hibernated: boolean): void {
-    const row = this.database.connection.prepare('select argv from processes where id = ?').get(processId) as { argv: string | null } | undefined;
-    if (!row?.argv) return;
-    let parsed: unknown;
-    try { parsed = JSON.parse(row.argv); } catch { return; }
-    if (!Array.isArray(parsed)) return;
-    const hasMarker = parsed.includes(HIBERNATED_ARGV_MARKER);
-    if (hibernated === hasMarker) return;
-    const next = hibernated
-      ? [...parsed, HIBERNATED_ARGV_MARKER]
-      : parsed.filter((entry) => entry !== HIBERNATED_ARGV_MARKER);
-    this.database.connection.prepare('update processes set argv = ? where id = ?').run(JSON.stringify(next), processId);
+    updateSessionRuntimeState(this.database, processId, (current) => ({
+      ...current,
+      hibernatedAt: hibernated ? new Date().toISOString() : null
+    }));
+    if (!hibernated) {
+      const row = this.database.connection.prepare('select argv from processes where id = ?').get(processId) as { argv: string | null } | undefined;
+      const argv = parseArgvArray(row?.argv);
+      if (argv.includes('--patterm-hibernated')) {
+        const cleaned = argv.filter((entry) => entry !== '--patterm-hibernated');
+        this.database.connection.prepare('update processes set argv = ? where id = ?').run(JSON.stringify(cleaned), processId);
+      }
+    }
   }
 
   async ensureAwake(processId: string): Promise<void> {
@@ -354,13 +268,13 @@ export class IntegratedAgentService {
           and processes.background_tasks = 0
           and processes.goal_status is null
           and processes.asking is null
-          and sessions.interface_mode = 'integrated'
           and sessions.exited_at is null
           and sessions.resume_id is not null
-          and sessions.harness in ('claude', 'codex', 'agy')
-      `).all() as Array<{ process_id: string; updated_at: string; harness: 'claude' | 'codex' | 'agy'; cwd: string | null; resume_id: string }>;
+          and sessions.harness is not null
+      `).all() as Array<{ process_id: string; updated_at: string; harness: string; cwd: string | null; resume_id: string }>;
       for (const row of rows) {
         const key = row.process_id;
+        if (!this.supportsHibernation(row.harness)) continue;
         if (this.hibernated.has(key) || this.hibernating.has(key) || this.waking.has(key)) continue;
         if (this.sending.get(key) || this.waiting.get(key) || this.dispatching.has(key) || this.heldFlushes.has(key) || this.nextHeld(key)) continue;
         const sub = this.conversationSubscriptions.get(key);
@@ -369,9 +283,11 @@ export class IntegratedAgentService {
         if (options.isBusy?.(key)) continue;
         const last = Math.max(this.lastTouched.get(key) ?? 0, Date.parse(row.updated_at) || 0);
         if (now - last < idleMs) continue;
-        if (options.canResume && !options.canResume(row.harness, row.cwd ?? process.cwd(), row.resume_id)) continue;
-        const provider = this.providers[row.harness];
+        const provider = this.adapters.get(row.harness);
         if (!provider?.stop) continue;
+        const cwd = row.cwd ?? process.cwd();
+        if (provider.capabilities?.hibernation.canResume && !provider.capabilities.hibernation.canResume(cwd, row.resume_id)) continue;
+        if (options.canResume && !options.canResume(row.harness as HarnessId, cwd, row.resume_id)) continue;
         this.hibernated.add(key);
         this.setPersistedHibernated(key, true);
         this.unobserve(key);
@@ -421,12 +337,12 @@ export class IntegratedAgentService {
     return () => { this.activityListeners.delete(listener); };
   }
 
-  onPendingRequests(listener: (processId: string, pending: unknown) => void): () => void {
+  onPendingRequests(listener: (processId: string, pending: Partial<AgentPendingRequests> | null) => void): () => void {
     this.requestListeners.add(listener);
     return () => { this.requestListeners.delete(listener); };
   }
 
-  private emitRequests(processId: string, pending: unknown): void {
+  private emitRequests(processId: string, pending: Partial<AgentPendingRequests> | null): void {
     for (const listener of this.requestListeners) {
       try { listener(processId, pending); } catch { /* a listener must not break observation */ }
     }
@@ -487,11 +403,11 @@ export class IntegratedAgentService {
     await this.provider(harness).cleanupLaunch?.(input, result);
   }
 
-  async conversation(processId: string): Promise<unknown> {
+  async conversation(processId: string): Promise<AgentConversationSnapshot> {
     const key = this.ledgerKey(processId);
     this.lastTouched.set(key, Date.now());
     if (this.hibernated.has(key)) {
-      const saved = record(this.savedConversation(processId));
+      const saved = this.savedConversation(processId);
       return {
         ...saved,
         process_id: key,
@@ -512,15 +428,15 @@ export class IntegratedAgentService {
     this.confirmHeld(key, conversation);
     const held = this.heldQueue(key);
     if (held.length) {
-      const native = record(conversation).queue;
-      conversation = { ...record(conversation), queue: [...(Array.isArray(native) ? native : []), ...held] };
+      const native = conversation.queue;
+      conversation = { ...conversation, queue: [...(Array.isArray(native) ? native : []), ...held] };
     }
     const archive = this.archiveSession(processId, conversation);
     if (!archive || !this.history) return conversation;
     const before = archiveBoundary(conversation, archive.startedAt);
     const count = this.history.archive(archive.provider, archive.resumeId, archive.projectId, before, 0, 0).count;
     if (count === 0) return conversation;
-    return { ...record(conversation), history_truncated: true, history_unavailable: false, history_cursor: { next: archiveCursor(before, count) } };
+    return { ...conversation, history_truncated: true, history_unavailable: false, history_cursor: { next: archiveCursor(before, count) } };
   }
 
   // The transcript alone, for reading ahead of the user. Unlike
@@ -529,10 +445,10 @@ export class IntegratedAgentService {
   // opened changes nothing. It leaves out the command and model lists, which
   // the pane reads separately, and imported history, which the pane's own
   // snapshot adds. Ended sessions read only their imported history.
-  async peekConversation(processId: string): Promise<unknown> {
+  async peekConversation(processId: string): Promise<AgentConversationSnapshot> {
     const key = this.ledgerKey(processId);
     if (!this.isLive(key) || this.hibernated.has(key)) return this.savedConversation(processId);
-    const conversation = record(await this.forProcess(processId).conversation(processId));
+    const conversation = await this.forProcess(processId).conversation(processId);
     const { commands: _commands, models: _models, ...transcript } = conversation;
     const held = this.heldQueue(key);
     if (!held.length) return transcript;
@@ -542,11 +458,11 @@ export class IntegratedAgentService {
 
   // Ended agents have no host to read. Imported native history remains
   // available without restarting anything, using the same bounded archive pages.
-  private savedConversation(processId: string): unknown {
+  private savedConversation(processId: string): AgentConversationSnapshot {
     const archive = this.archiveSession(processId, null);
     const before = '9999-12-31T23:59:59.999Z';
     if (!archive) return { messages: [] };
-    const snapshot = { provider: archive.provider, resume_id: archive.resumeId, messages: [] };
+    const snapshot: AgentConversationSnapshot = { provider: archive.provider, resume_id: archive.resumeId, messages: [] };
     if (!this.history) return snapshot;
     const count = this.history.archive(archive.provider, archive.resumeId, archive.projectId, before, 0, 0).count;
     const offset = Math.max(0, count - ARCHIVE_PAGE_SIZE);
@@ -560,7 +476,7 @@ export class IntegratedAgentService {
 
   // Archive pages carry imported rows untouched. The renderer projects them
   // exactly as the History view does.
-  async olderMessages(processId: string, cursor: string): Promise<unknown> {
+  async olderMessages(processId: string, cursor: string): Promise<AgentOlderMessagesPage> {
     if (cursor.startsWith(ARCHIVE_CURSOR_PREFIX)) {
       const archive = this.archiveSession(processId, null);
       if (!archive || !this.history) throw new Error('Imported history is unavailable for this agent');
@@ -574,7 +490,7 @@ export class IntegratedAgentService {
     return provider.olderMessages(processId, cursor);
   }
 
-  prompt(processId: string, input: IntegratedPromptInput | string, _context?: string): Promise<unknown> {
+  prompt(processId: string, input: IntegratedPromptInput | string, _context?: string): Promise<AgentPromptResult | void> {
     return this.whileSending(processId, () => this.submit(processId, input));
   }
 
@@ -589,8 +505,11 @@ export class IntegratedAgentService {
     this.focusDigestPreview = previewFocusDigest ?? null;
   }
 
-  routineNotificationDigest(processId: string, text: string): Promise<unknown> {
-    if (this.forProcess(processId) !== this.providers.claude) return this.prompt(processId, text);
+  routineNotificationDigest(processId: string, text: string): Promise<AgentPromptResult | void> {
+    const harness = this.harness(processId);
+    const adapter = this.adapters.get(harness);
+    const supportsDigest = adapter?.capabilities ? adapter.capabilities.input.routineDigest : harness === 'claude';
+    if (!supportsDigest) return this.prompt(processId, text);
     return this.whileSending(processId, () => this.submit(processId, text, true));
   }
 
@@ -600,12 +519,12 @@ export class IntegratedAgentService {
     processId: string,
     text: string,
     options: { sourceScope?: string | undefined; routineFallback?: ResolvedIntegratedPrompt['routineFallback']; focusDigestId?: string | undefined }
-  ): Promise<unknown> {
+  ): Promise<AgentPromptResult | void> {
     return this.whileSending(processId, () => this.submit(processId, text, undefined, options));
   }
 
   // Expiring offers must not get stuck in Patterm's durable held prompt queue.
-  reviewPrompt(processId: string, text: string, review: ReviewPrompt): Promise<unknown> {
+  reviewPrompt(processId: string, text: string, review: ReviewPrompt): Promise<AgentPromptResult | void> {
     const key = this.ledgerKey(processId);
     return this.whileSending(processId, () => this.serially(this.dispatches, key, async () => {
       if (!review.current() || this.nextHeld(key) || this.dispatching.has(key) || awaitingUser(this.activity(key))) {
@@ -644,7 +563,7 @@ export class IntegratedAgentService {
     input: IntegratedPromptInput | string,
     routineDigest?: true,
     scope?: { sourceScope?: string | undefined; routineFallback?: ResolvedIntegratedPrompt['routineFallback']; focusDigestId?: string | undefined }
-  ): Promise<unknown> {
+  ): Promise<AgentPromptResult | void> {
     const request: IntegratedPromptInput = typeof input === 'string' ? { text: input } : input;
     const hasContent = Boolean(request.text.trim() || request.references?.length || request.attachments?.length);
     if (!hasContent) throw new Error('Message is empty');
@@ -671,7 +590,7 @@ export class IntegratedAgentService {
   }
 
   // Synchronous until the prompt is held or joins the dispatch chain.
-  private async accept(processId: string, key: string, resolved: ResolvedIntegratedPrompt): Promise<unknown> {
+  private async accept(processId: string, key: string, resolved: ResolvedIntegratedPrompt): Promise<AgentPromptResult | void> {
     const messageId = resolved.messageId;
     if (!messageId) return this.runPrompt(processId, resolved, null);
     const hash = submissionHash(resolved);
@@ -729,14 +648,14 @@ export class IntegratedAgentService {
   }
 
   // Memory goes first, so the agent reads the prompt with it current.
-  private sendPrompt(processId: string, resolved: ResolvedIntegratedPrompt, review?: ReviewPrompt): Promise<unknown> {
+  private sendPrompt(processId: string, resolved: ResolvedIntegratedPrompt, review?: ReviewPrompt): Promise<AgentPromptResult | void> {
     const key = this.ledgerKey(processId);
     this.lastTouched.set(key, Date.now());
     if (this.hibernated.has(key)) {
       return this.ensureAwake(key).then(() => this.sendPrompt(processId, resolved, review));
     }
     const provider = this.forProcess(processId);
-    const send = () => {
+    const send = (): Promise<AgentPromptResult | void> => {
       if (review && !review.current()) throw new Error('This request is no longer waiting for this parent');
       if (resolved.preserveAttention) this.preservedAttention.add(key);
       else this.preservedAttention.delete(key);
@@ -769,7 +688,7 @@ export class IntegratedAgentService {
   // acknowledgement leaves an uncertain row rather than an id that looks unused.
   // Outcome bookkeeping failures never turn an admitted prompt into a
   // definitive rejection.
-  private runPrompt(processId: string, resolved: ResolvedIntegratedPrompt, identity: SubmissionIdentity | null): Promise<unknown> {
+  private runPrompt(processId: string, resolved: ResolvedIntegratedPrompt, identity: SubmissionIdentity | null): Promise<AgentPromptResult | void> {
     const key = this.ledgerKey(processId);
     // Behind held prompts a new one is stored at once, rather than in memory
     // until their native calls settle.
@@ -788,7 +707,7 @@ export class IntegratedAgentService {
     });
   }
 
-  private async dispatchPrompt(processId: string, activityKey: string, resolved: ResolvedIntegratedPrompt, identity: SubmissionIdentity | null): Promise<unknown> {
+  private async dispatchPrompt(processId: string, activityKey: string, resolved: ResolvedIntegratedPrompt, identity: SubmissionIdentity | null): Promise<AgentPromptResult | void> {
     // Later prompts wait behind held ones so the agent reads them in order.
     const backlog = this.nextHeld(activityKey);
     if (backlog) {
@@ -799,7 +718,7 @@ export class IntegratedAgentService {
     if (identity) this.recordSubmission(identity.key, identity.messageId, identity.hash, 'uncertain', null, null);
     const sequence = this.sequence(activityKey);
     const sendInput: ResolvedIntegratedPrompt = { ...resolved };
-    let result: unknown;
+    let result: AgentPromptResult | void;
     try {
       result = await this.sendPrompt(processId, sendInput);
     } catch (error) {
@@ -855,7 +774,7 @@ export class IntegratedAgentService {
   // Stores a prompt the agent cannot take yet. It was definitively not
   // admitted, so sending it later cannot run it twice. Prompts without a
   // client id get one so the queue can show and cancel them.
-  private hold(key: string, resolved: ResolvedIntegratedPrompt, identity: SubmissionIdentity | null, turnKind: string): unknown {
+  private hold(key: string, resolved: ResolvedIntegratedPrompt, identity: SubmissionIdentity | null, turnKind: string): AgentPromptResult {
     const messageId = identity?.messageId ?? `held_${randomUUID()}`;
     this.database.connection.prepare(`insert into integrated_held_prompts (process_id, message_id, payload, payload_hash, turn_kind, created_at)
       values (?, ?, ?, ?, ?, ?) on conflict (process_id, message_id) do nothing`)
@@ -1072,7 +991,7 @@ export class IntegratedAgentService {
   private ledgerKey(processId: string): string {
     const row = this.database.connection.prepare(`
       select coalesce(process_id, id) as key from sessions
-      where (process_id = ? or id = ?) and interface_mode = 'integrated'
+      where (process_id = ? or id = ?)
       order by exited_at is null desc, started_at desc limit 1
     `).get(processId, processId) as { key: string } | undefined;
     return row?.key ?? processId;
@@ -1246,7 +1165,7 @@ export class IntegratedAgentService {
     return stop.call(provider, processId, taskId);
   }
 
-  taskOutput(processId: string, taskId: string, since?: string | null, cursor?: string | null): Promise<unknown> {
+  taskOutput(processId: string, taskId: string, since?: string | null, cursor?: string | null): Promise<AgentTaskOutput> {
     const provider = this.forProcess(processId);
     const read = provider.taskOutput;
     if (!read) throw new Error('This agent cannot show background task output');
@@ -1293,11 +1212,11 @@ export class IntegratedAgentService {
     if (selector === 'model') this.signal(key, 'model');
   }
 
-  command(processId: string, name: string, text: string): Promise<unknown> {
+  command(processId: string, name: string, text: string): Promise<Record<string, unknown> | void> {
     return this.whileSending(processId, () => this.runCommand(processId, name, text));
   }
 
-  private async runCommand(processId: string, name: string, text: string): Promise<unknown> {
+  private async runCommand(processId: string, name: string, text: string): Promise<Record<string, unknown> | void> {
     const key = this.ledgerKey(processId);
     this.preservedAttention.delete(key);
     if (this.hibernated.has(key)) await this.ensureAwake(key);
@@ -1306,7 +1225,7 @@ export class IntegratedAgentService {
     if (!command) throw new Error('This agent does not support slash commands');
     const compacting = name === 'compact';
     if (compacting) this.signal(key, 'compact');
-    let result: unknown;
+    let result: Record<string, unknown> | void;
     try {
       result = await command.call(provider, processId, name, text);
     } catch (error) {
@@ -1322,7 +1241,7 @@ export class IntegratedAgentService {
   }
 
   // A goal that starts work (set or resume) counts as a turn like a prompt.
-  goal(processId: string, action: IntegratedGoalAction, objective?: string): Promise<unknown> {
+  goal(processId: string, action: IntegratedGoalAction, objective?: string): Promise<Record<string, unknown> | void> {
     return this.whileSending(processId, async () => {
       const key = this.ledgerKey(processId);
       if (this.hibernated.has(key)) await this.ensureAwake(key);
@@ -1388,10 +1307,7 @@ export class IntegratedAgentService {
       // Notices can arrive between turns, and background agents keep the
       // agent working while their rows change.
       if (message.kind === 'notice' || typeof message.parentId === 'string') continue;
-      // Projected rows carry ISO times; OpenCode's native rows carry
-      // milliseconds under `time`.
-      const native = record(message.time);
-      for (const value of [message.createdAt, message.created_at, message.completedAt, message.completed_at, native.created, native.completed]) {
+      for (const value of [message.createdAt, message.created_at, message.completedAt, message.completed_at]) {
         const time = typeof value === 'string' ? Date.parse(value) : typeof value === 'number' ? value : Number.NaN;
         if (Number.isFinite(time) && (latest === null || time > latest)) latest = time;
       }
@@ -1414,8 +1330,10 @@ export class IntegratedAgentService {
       return selector ? { value: selector.value && (keepDefault || selector.value !== 'default') ? selector.value : null } : undefined;
     };
     const model = setting('model');
-    const reasoning = setting('effort') ?? setting('variant');
-    const tier = setting('speed', true);
+    const reasoningId = provider.capabilities?.selectors.reasoning;
+    const reasoning = (reasoningId ? setting(reasoningId) : undefined) ?? setting('effort') ?? setting('variant');
+    const speedId = provider.capabilities?.selectors.speed ?? 'speed';
+    const tier = setting(speedId, true);
     return {
       ...(model ? { model: model.value } : {}),
       ...(reasoning ? { reasoning: reasoning.value } : {}),
@@ -1469,14 +1387,14 @@ export class IntegratedAgentService {
     for (const refresh of this.titleRefreshes.values()) if (refresh.timer) clearTimeout(refresh.timer);
     this.titleRefreshes.clear();
     if (this.hibernating.size) await Promise.allSettled([...this.hibernating.values()]);
-    const rows = this.database.connection.prepare(`select process_id, harness from sessions
-      where interface_mode = 'integrated' and process_id is not null and harness is not null`).all() as Array<{ process_id: string; harness: string }>;
+    const rows = this.database.connection.prepare(`select process_id, harness, exited_at from sessions
+      where process_id is not null and harness is not null`).all() as Array<{ process_id: string; harness: string; exited_at: string | null }>;
     for (const key of this.hibernated) this.setPersistedHibernated(key, false);
-    for (const row of rows) this.setPersistedHibernated(row.process_id, false);
+    for (const row of rows) if (!row.exited_at) this.setPersistedHibernated(row.process_id, false);
     this.hibernated.clear();
     const unsupported = rows.filter((row) => !presetHarnessInput.safeParse(row.harness).success);
     const results = await Promise.allSettled([
-      ...Object.values(this.providers).map((provider) => provider?.stopAll?.()),
+      ...this.adapters.list().map(({ adapter }) => adapter.stopAll?.()),
       this.stopUnsupportedHosts(unsupported)
     ]);
     const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
@@ -1486,14 +1404,14 @@ export class IntegratedAgentService {
   async reconcile(): Promise<{ checked: number; failed: number; unreachable: number }> {
     const rows = this.database.connection.prepare(`
       select process_id, harness, resume_id from sessions
-      where interface_mode = 'integrated' and exited_at is null and process_id is not null
+      where exited_at is null and process_id is not null
     `).all() as Array<{ process_id: string; harness: string; resume_id: string | null }>;
     const results = await Promise.all(rows.map(async (row): Promise<'ok' | 'failed' | 'unreachable'> => {
       const unsupported = !presetHarnessInput.safeParse(row.harness).success;
       if (
         !unsupported
         && row.resume_id
-        && (row.harness === 'claude' || row.harness === 'codex' || row.harness === 'agy')
+        && this.supportsHibernation(row.harness)
         && this.isPersistedHibernated(row.process_id)
       ) {
         this.hibernated.add(row.process_id);
@@ -1551,10 +1469,14 @@ export class IntegratedAgentService {
   // A host is alive when its control socket accepts a connection. Unlike a PID
   // check, this cannot match an unrelated process after a reboot.
   private hostSocketPath(processId: string): string | null {
-    const row = this.database.connection.prepare(`select argv from processes where id = ?`).get(this.ledgerKey(processId)) as { argv: string | null } | undefined;
-    let socketPath: unknown;
-    try { socketPath = (JSON.parse(row?.argv ?? 'null') as unknown[] | null)?.[2]; } catch { return null; }
-    return typeof socketPath === 'string' && socketPath.endsWith('.sock') ? socketPath : null;
+    const row = this.database.connection.prepare(`
+      select sessions.runtime_state, processes.argv
+      from processes left join sessions on sessions.process_id = processes.id
+      where processes.id = ?
+      order by sessions.exited_at is null desc, sessions.started_at desc
+      limit 1
+    `).get(this.ledgerKey(processId)) as { runtime_state: string | null; argv: string | null } | undefined;
+    return hostSocketPathFromRow(row?.runtime_state, row?.argv);
   }
 
   private async hostListening(processId: string): Promise<boolean> {
@@ -1582,24 +1504,28 @@ export class IntegratedAgentService {
     return parsed.data;
   }
 
-  // Claude runtimes only hold turns from their own run, so earlier
-  // turns come from imported history. Codex pages natively and needs the
-  // archive only on builds that cannot list thread items.
+  // Runtimes with archiveFallback 'always' only hold turns from their own run,
+  // so earlier turns come from imported history. 'when-unavailable' adapters
+  // page natively and fall back only when the runtime reports history_unavailable.
   private archiveSession(processId: string, conversation: unknown): { provider: string; resumeId: string; projectId: string; startedAt: string } | null {
     const row = this.database.connection.prepare(`
       select harness, resume_id, project_id, started_at from sessions
-      where (process_id = ? or id = ?) and harness in ('claude', 'codex', 'opencode', 'agy') and resume_id is not null
+      where (process_id = ? or id = ?) and harness is not null and resume_id is not null
       order by exited_at is null desc, started_at desc limit 1
     `).get(processId, processId) as { harness: string; resume_id: string; project_id: string; started_at: string } | undefined;
-    if (!row) return null;
-    if (row.harness === 'opencode' && conversation !== null) return null;
-    if (row.harness === 'agy' && conversation !== null) return null;
-    if (row.harness === 'codex' && conversation !== null && record(conversation).history_unavailable !== true) return null;
+    if (!row || !presetHarnessInput.safeParse(row.harness).success) return null;
+    if (conversation !== null) {
+      const adapter = this.adapters.get(row.harness);
+      const fallback = adapter?.capabilities?.archiveFallback
+        ?? (row.harness === 'claude' ? 'always' : row.harness === 'codex' ? 'when-unavailable' : 'never');
+      if (fallback === 'never') return null;
+      if (fallback === 'when-unavailable' && record(conversation).history_unavailable !== true) return null;
+    }
     return { provider: row.harness, resumeId: row.resume_id, projectId: row.project_id, startedAt: row.started_at };
   }
 
-  private provider(harness: 'claude' | 'codex' | 'opencode' | 'agy'): IntegratedProviderService {
-    const provider = this.providers[harness];
+  private provider(harness: HarnessId): IntegratedProviderService {
+    const provider = this.adapters.get(harness);
     if (!provider) throw new Error(`${harness} Integrated conversations are unavailable`);
     return provider;
   }
@@ -1722,8 +1648,11 @@ export class IntegratedAgentService {
         this.markBackgroundTasks(key, runningTasks(record(conversation).tasks));
         this.markGoal(key, openGoalStatus(record(conversation).goal));
         this.markAsking(key, pendingAsk(conversation));
-        const { permissions, questions, forms } = record(conversation);
-        this.emitRequests(key, { permissions, questions, forms });
+        this.emitRequests(key, {
+          permissions: conversation.permissions as AgentPendingRequests['permissions'],
+          questions: conversation.questions as AgentPendingRequests['questions'],
+          forms: conversation.forms as AgentPendingRequests['forms']
+        });
       }
       // Covers prompts held before a restart, when no transition follows.
       const status = record(conversation).status;
@@ -1758,7 +1687,7 @@ export class IntegratedAgentService {
   private isLive(processId: string): boolean {
     return Boolean(this.database.connection.prepare(`
       select 1 from processes join sessions on sessions.process_id = processes.id
-      where processes.id = ? and processes.status = 'running' and sessions.interface_mode = 'integrated' and sessions.exited_at is null
+      where processes.id = ? and processes.status = 'running' and sessions.exited_at is null
     `).get(processId));
   }
 
@@ -1937,7 +1866,7 @@ interface ActivityObserver {
 interface InFlightSubmission {
   hash: string;
   legacy: string;
-  promise: Promise<unknown>;
+  promise: Promise<AgentPromptResult | void>;
 }
 
 interface HeldPromptRow {
@@ -1953,7 +1882,7 @@ interface HeldPromptRow {
 
 const HELD_SELECT = 'select seq, message_id, payload, payload_hash, turn_kind, error, state, created_at from integrated_held_prompts';
 
-function heldResult(messageId: string, turnKind: string): unknown {
+function heldResult(messageId: string, turnKind: string): AgentPromptResult {
   const turn = turnKind === 'review' ? 'review' : turnKind === 'compact' ? 'compaction' : `${turnKind} turn`;
   return { delivery: 'queued', message_id: messageId, reason: turnKind,
     detail: `The agent is running a ${turn} and cannot take messages yet. Patterm queued this one and sends it when the ${turn} ends; do not resend it.` };
@@ -1967,9 +1896,9 @@ interface SubmissionRow {
   error: string | null;
 }
 
-function replaySubmission(row: SubmissionRow): unknown {
+function replaySubmission(row: SubmissionRow): AgentPromptResult {
   if (row.result) {
-    try { return JSON.parse(row.result); } catch { /* fall through to a generic acknowledgement */ }
+    try { return JSON.parse(row.result) as AgentPromptResult; } catch { /* fall through to a generic acknowledgement */ }
   }
   return { delivery: 'accepted', message_id: row.message_id };
 }

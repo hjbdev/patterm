@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { AcpProviderService } from '../app/Services/AcpProviderService';
+import { serializeRuntimeState } from '../app/Agents/SessionRuntimeState';
 import { AntigravitySubagentTracker } from '../app/Runtime/AntigravitySubagents';
 import { antigravityTranscriptPath, readAntigravityTaskOutput } from '../app/Services/AntigravityTaskOutput';
 import { AntigravityHistoryAdapter } from '../app/Services/AgentHistory/AntigravityHistoryAdapter';
@@ -239,14 +240,14 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     assert.equal(prepared.resumeId, 'native-session');
     assert(!JSON.stringify(prepared.argv).includes('private-identity'));
     database.connection.prepare(`insert into processes (id,project_id,kind,name,status,cwd,argv,created_at,updated_at) values ('process','project','agent','Agy','running',?,?,?,?)`).run(directory, JSON.stringify(prepared.argv), now, now);
-    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor) values ('session','project','process','agy','integrated','identity',?,?,'orchestrator','found','user')`).run(prepared.resumeId, now);
+    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,runtime_state,started_at,session_role,resume_status,created_by_actor) values ('session','project','process','agy','integrated','identity',?,?,?,'orchestrator','found','user')`).run(prepared.resumeId, serializeRuntimeState(prepared.runtimeState), now);
     const frames = () => fs.readFileSync(trace, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
     const creation = frames().find((frame) => frame.method === 'session/new');
     assert.equal(creation.params._meta.antigravity.systemPrompt.append, input.context);
     assert.deepEqual(creation.params.mcpServers.map((server: any) => server.name).sort(), ['Extra-One', 'patterm'], 'all configured servers are delivered');
     assert.deepEqual(creation.params.mcpServers.find((server: any) => server.name === 'patterm').env, [{ name: 'PATTERM_MCP_IDENTITY', value: 'private-identity' }, { name: 'PATTERM_MCP_COMPACT', value: '1' }], 'agy gets the compact Patterm catalogue');
     assert.deepEqual(frames()[0].params.clientCapabilities, {}, 'unimplemented filesystem and terminal capabilities are not advertised');
-    if (process.platform !== 'win32') assert.equal(fs.statSync(prepared.argv[4]!).mode & 0o777, 0o600);
+    if (process.platform !== 'win32') assert.equal(fs.statSync(prepared.runtimeState!.configPath!).mode & 0o777, 0o600);
     await assert.rejects(provider.prepare({ ...input, resumeId: prepared.resumeId }), /already attached/);
     const selector = async (id: string) => (await provider.controls('process')).selectors.find((option) => option.id === id);
     assert.equal((await selector('mode'))?.value, 'auto', 'fresh sessions start in native Auto mode');
@@ -582,9 +583,9 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     state = await waitFor(provider, (snapshot) => snapshot.status === 'idle' && snapshot.tasks.find((task: any) => task.id === 'sub-direct-1')?.status === 'stopped');
 
     const subOutput = await provider.taskOutput('process', 'sub-direct-1');
-    assert.equal(subOutput.format, 'transcript');
-    assert(subOutput.format === 'transcript' && subOutput.archived_messages.length >= 3);
-    assert.equal((await provider.taskOutput('process', 'sub-direct-1', subOutput.format === 'transcript' ? subOutput.version : null)).format, 'unchanged');
+    assert.equal(subOutput.format, 'messages');
+    assert(subOutput.format === 'messages' && subOutput.messages.length >= 3);
+    assert.equal((await provider.taskOutput('process', 'sub-direct-1', subOutput.format === 'messages' ? subOutput.version : null)).format, 'unchanged');
     await assert.rejects(provider.taskOutput('process', 'other-session-subagent'), /does not belong/);
 
     // A file that appears after dispatch can contain historical input.
@@ -638,35 +639,35 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       stopAll: async () => assert(frames().some((frame) => frame.closeFinished), 'the final host sweep follows native session close')
     }, images);
     await shutdownProvider.stopAll();
-    await hosts.waitForExit(Number(prepared.argv[3]));
+    await hosts.waitForExit(Number(prepared.runtimeState!.pid));
     assert(frames().some((frame) => frame.method === 'session/close'), 'Stop gives the native session a chance to clean up');
     database.connection.prepare("update sessions set exited_at = ? where id = 'session'").run(now);
     const resumed = await provider.prepare({ ...input, model: null, reasoning: null, resumeId: prepared.resumeId });
     assert.equal(resumed.resumeId, prepared.resumeId);
     assert(frames().some((frame) => frame.method === 'session/load'));
-    const loaded = await callIntegratedHost(resumed.argv[2]!, 'conversation', {}) as any;
+    const loaded = await callIntegratedHost(resumed.runtimeState!.socketPath!, 'conversation', {}) as any;
     assert.deepEqual(loaded.messages.data.map((row: any) => row.text), ['Earlier user', 'Earlier assistant']);
     assert.equal(loaded.configOptions.find((option: any) => option.id === 'model').currentValue, 'flash');
     assert.equal(loaded.configOptions.find((option: any) => option.id === 'thought_level').currentValue, 'high');
     assert.equal(loaded.configOptions.find((option: any) => option.id === 'mode').currentValue, 'plan');
     assert.equal(loaded.configOptions.find((option: any) => option.id === 'patterm_mcp').currentValue, 'ask');
     await provider.cleanupLaunch(input, resumed);
-    await hosts.waitForExit(Number(resumed.argv[3]));
+    await hosts.waitForExit(Number(resumed.runtimeState!.pid));
     const recovery = await provider.prepare({ ...input, model: 'flash-low', reasoning: 'low', resumeId: prepared.resumeId, restoreSavedSettings: true });
-    const recoveredSettings = await callIntegratedHost(recovery.argv[2]!, 'conversation', {}) as any;
+    const recoveredSettings = await callIntegratedHost(recovery.runtimeState!.socketPath!, 'conversation', {}) as any;
     assert.equal(recoveredSettings.configOptions.find((option: any) => option.id === 'thought_level').currentValue, 'high', 'stopped-host recovery fallbacks must not undo newer saved native controls');
     await provider.cleanupLaunch(input, recovery);
-    await hosts.waitForExit(Number(recovery.argv[3]));
+    await hosts.waitForExit(Number(recovery.runtimeState!.pid));
     const override = await provider.prepare({ ...input, model: 'flash-low', reasoning: null, resumeId: prepared.resumeId });
-    const overridden = await callIntegratedHost(override.argv[2]!, 'conversation', {}) as any;
+    const overridden = await callIntegratedHost(override.runtimeState!.socketPath!, 'conversation', {}) as any;
     assert.equal(overridden.configOptions.find((option: any) => option.id === 'thought_level').currentValue, 'low', 'saved High thinking does not undo an explicit low-thinking model override');
     await provider.cleanupLaunch(input, override);
-    await hosts.waitForExit(Number(override.argv[3]));
+    await hosts.waitForExit(Number(override.runtimeState!.pid));
 
     const stuckProvider = new AcpProviderService(database, directory, process.execPath, { ...env, ACP_IGNORE_CANCEL: '1' }, undefined, hosts, images);
     const stuck = await stuckProvider.prepare(input);
     database.connection.prepare("update processes set argv = ? where id = 'process'").run(JSON.stringify(stuck.argv));
-    database.connection.prepare("update sessions set exited_at = null where id = 'session'").run();
+    database.connection.prepare("update sessions set exited_at = null, runtime_state = ? where id = 'session'").run(serializeRuntimeState(stuck.runtimeState));
     await stuckProvider.prompt('process', { text: 'stop-across-prompt-end', references: [], attachments: [] });
     await stuckProvider.interrupt('process');
     const stopping = await waitFor(stuckProvider, (snapshot) => snapshot.usage.contextTokens === 2718);
@@ -675,13 +676,13 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     assert.match(stalled.status_detail, /did not confirm cancellation/i);
     await assert.rejects(stuckProvider.prompt('process', { text: 'do-not-dispatch', references: [], attachments: [] }), /did not confirm cancellation/i);
     await stuckProvider.stop('process');
-    await hosts.waitForExit(Number(stuck.argv[3]));
+    await hosts.waitForExit(Number(stuck.runtimeState!.pid));
 
     // Check the real orchestration boundary, not just the provider's error
     // class: an executed-but-unacknowledged prompt must keep its reservation.
     const crashed = await provider.prepare(input);
     database.connection.prepare("update processes set argv = ?, activity = 'idle' where id = 'process'").run(JSON.stringify(crashed.argv));
-    database.connection.prepare("update sessions set exited_at = null where id = 'session'").run();
+    database.connection.prepare("update sessions set exited_at = null, runtime_state = ? where id = 'session'").run(serializeRuntimeState(crashed.runtimeState));
     const integrated = new IntegratedAgentService(database, { agy: provider });
     try {
       integrated.observe('process');
@@ -699,13 +700,13 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     } finally {
       integrated.dispose();
       await provider.stop('process');
-      await hosts.waitForExit(Number(crashed.argv[3]));
+      await hosts.waitForExit(Number(crashed.runtimeState!.pid));
       database.connection.prepare("update sessions set exited_at = ? where id = 'session'").run(now);
     }
 
     const acknowledgedFailure = await provider.prepare(input);
     database.connection.prepare("update processes set argv = ?, activity = 'idle' where id = 'process'").run(JSON.stringify(acknowledgedFailure.argv));
-    database.connection.prepare("update sessions set exited_at = null where id = 'session'").run();
+    database.connection.prepare("update sessions set exited_at = null, runtime_state = ? where id = 'session'").run(serializeRuntimeState(acknowledgedFailure.runtimeState));
     const failedTurn = new IntegratedAgentService(database, { agy: provider });
     let releaseFailedTurn: (() => void) | undefined;
     try {
@@ -721,7 +722,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
       releaseFailedTurn?.();
       failedTurn.dispose();
       await provider.stop('process');
-      await hosts.waitForExit(Number(acknowledgedFailure.argv[3]));
+      await hosts.waitForExit(Number(acknowledgedFailure.runtimeState!.pid));
       database.connection.prepare("update sessions set exited_at = ? where id = 'session'").run(now);
     }
 
@@ -729,11 +730,11 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     await assert.rejects(unauthenticated.prepare(input), /Authentication required/);
     const withoutAuto = new AcpProviderService(database, directory, process.execPath, { ...env, ACP_NO_AUTO: '1' }, undefined, hosts);
     const fallback = await withoutAuto.prepare(input);
-    const fallbackState = await callIntegratedHost(fallback.argv[2]!, 'conversation', {}) as any;
+    const fallbackState = await callIntegratedHost(fallback.runtimeState!.socketPath!, 'conversation', {}) as any;
     assert.equal(fallbackState.configOptions.find((option: any) => option.id === 'mode').currentValue, 'default');
     assert.match(fallbackState.messages.data[0].text, /does not offer auto mode/);
     await withoutAuto.cleanupLaunch(input, fallback);
-    await hosts.waitForExit(Number(fallback.argv[3]));
+    await hosts.waitForExit(Number(fallback.runtimeState!.pid));
 
     // Native JSONL history has the same session identity. Generated metadata
     // is not user text and sibling full logs must not create duplicate imports.
@@ -1030,10 +1031,11 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
         ...Array.from({ length: 199 }, (_, index) => modelRow(index + 2, { content: `Child reply ${index}` }))
       );
       const drawerPage = readAntigravityTaskOutput('edge-drawer-child', trackerEnv);
-      assert.equal(drawerPage.format, 'transcript');
-      if (drawerPage.format === 'transcript') {
+      assert.equal(drawerPage.format, 'messages');
+      if (drawerPage.format === 'messages') {
         assert.equal(drawerPage.cursor, null);
-        assert.equal(drawerPage.archived_messages.length, 201);
+        assert.equal(drawerPage.messages.length, 200);
+        assert.equal(drawerPage.messages[0]?.kind, 'tool');
       }
     } finally {
       edgeTrackers.forEach((tracker) => tracker.stop());

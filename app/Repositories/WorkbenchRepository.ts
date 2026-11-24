@@ -169,7 +169,6 @@ interface SessionRow {
   pty_process_id?: string | null;
   worktree_id: string | null;
   harness: string | null;
-  interface_mode: 'tui' | 'integrated';
   session_role: string;
   bot_id?: string | null;
   owner_bot_id?: string | null;

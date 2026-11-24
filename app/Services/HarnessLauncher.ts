@@ -18,6 +18,7 @@ import { AgentContextService } from './AgentContextService';
 import type { TimelineService } from './TimelineService';
 import type { DebugLogService } from './DebugLogService';
 import type { IntegratedAgentService, IntegratedLaunchInput, IntegratedLaunchResult } from './IntegratedAgentService';
+import { serializeRuntimeState } from '../Agents/SessionRuntimeState';
 import { SettingsService } from './SettingsService';
 import type { OpenCodeMcpSource } from './OpenCodeServerService';
 import type { McpServerRegistry } from './McpServerRegistry';
@@ -88,7 +89,9 @@ export interface HarnessLauncherDeps {
   runtimeDir: string;
   search?: SearchService;
   debugLog?: Pick<DebugLogService, 'write'>;
-  integrated?: Pick<IntegratedAgentService, 'prepare' | 'prompt' | 'stop' | 'cleanupLaunch' | 'observe'>;
+  integrated?: Pick<IntegratedAgentService, 'prepare' | 'prompt' | 'stop' | 'cleanupLaunch' | 'observe'> & {
+    supportsHibernation?: (harness: string) => boolean;
+  };
   settings?: Pick<SettingsService, 'figuresEnabled'>;
   // A bot session's system context: its SMS-style brief and purview, or the
   // assistant's brief.
@@ -155,7 +158,7 @@ export class HarnessLauncher {
         sessions.mcp_identity, sessions.session_role, sessions.bot_id, sessions.model, sessions.reasoning,
         sessions.service_tier, sessions.display_name, coalesce(sessions.cwd, processes.cwd) as cwd
       from sessions join processes on processes.id = sessions.process_id
-      where sessions.process_id = ? and sessions.interface_mode = 'integrated' and sessions.exited_at is null
+      where sessions.process_id = ? and sessions.exited_at is null
       order by sessions.started_at desc limit 1
     `).get(processId) as {
       session_id: string; project_id: string; harness: string; resume_id: string | null;
@@ -164,7 +167,10 @@ export class HarnessLauncher {
       display_name: string | null; cwd: string | null;
     } | undefined;
     if (!row || !row.resume_id || !row.mcp_identity) throw new Error('Hibernated Integrated session cannot be woken');
-    if (row.harness !== 'claude' && row.harness !== 'codex' && row.harness !== 'agy') {
+    const canWake = this.deps.integrated.supportsHibernation
+      ? this.deps.integrated.supportsHibernation(row.harness)
+      : (row.harness === 'claude' || row.harness === 'codex' || row.harness === 'agy');
+    if (!canWake || (row.harness !== 'claude' && row.harness !== 'codex' && row.harness !== 'opencode' && row.harness !== 'agy')) {
       throw new Error(`Cannot wake ${row.harness} session`);
     }
     const install = this.deps.workbench.listHarnesses().find((entry) => entry.harness === row.harness);
@@ -202,8 +208,12 @@ export class HarnessLauncher {
       wakingSessionId: row.session_id
     });
     const now = new Date().toISOString();
-    this.deps.database.connection.prepare('update processes set argv = ?, updated_at = ? where id = ?')
-      .run(JSON.stringify(prepared.argv), now, processId);
+    this.deps.database.connection.transaction(() => {
+      this.deps.database.connection.prepare('update processes set argv = ?, updated_at = ? where id = ?')
+        .run(JSON.stringify(prepared.argv), now, processId);
+      this.deps.database.connection.prepare('update sessions set runtime_state = ? where id = ?')
+        .run(serializeRuntimeState(prepared.runtimeState), row.session_id);
+    })();
   }
 
   async launch(raw: LaunchHarnessInput): Promise<LaunchHarnessResult> {
@@ -341,7 +351,8 @@ export class HarnessLauncher {
         session_role: input.session_role, bot_id: input.bot_id ?? null, mcp_identity: identity, cwd, worktree_id: input.worktree_id ?? null,
         last_title: displayName, display_name: input.name?.trim() || null, resume_id: providerSessionId,
         resume_status: resume ? 'imported' : 'found', model: selection.model, reasoning: selection.reasoning,
-        service_tier: selection.serviceTier, resumed_conversation_id: resume?.conversation_id ?? null,
+        service_tier: selection.serviceTier, runtime_state: serializeRuntimeState(launch.result.runtimeState),
+        resumed_conversation_id: resume?.conversation_id ?? null,
         resumed_from_session_id: resume?.source_session_id ?? null, created_by_actor: input.actor_id ?? 'user'
       });
       return { process_id, session_id };

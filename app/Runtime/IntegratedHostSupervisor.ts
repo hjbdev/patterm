@@ -61,20 +61,30 @@ function maybeExitIfDrained(): void {
   });
 }
 
+type HostFactory = (
+  configPath: string,
+  env: NodeJS.ProcessEnv,
+  hooks: { onExit: () => void }
+) => { socketPath: string; stop(): Promise<void> };
+
+const HOST_FACTORIES: Record<string, HostFactory> = {
+  codex: startCodexHostSession,
+  claude: startClaudeHostSession,
+  agy: startAcpHostSession
+};
+
 function startSession(input: StartParams): SessionHandle {
   const existing = sessions.get(input.key);
   if (existing) return existing;
+  const factory = HOST_FACTORIES[input.harness];
+  if (!factory) throw new Error(`Unsupported Integrated harness: ${input.harness}`);
   const env = input.env && typeof input.env === 'object' ? input.env : process.env;
   const onExit = () => {
     const current = sessions.get(input.key);
     if (current === entry) sessions.delete(input.key);
     maybeExitIfDrained();
   };
-  let started: { socketPath: string; stop(): Promise<void> };
-  if (input.harness === 'codex') started = startCodexHostSession(input.configPath, env, { onExit });
-  else if (input.harness === 'claude') started = startClaudeHostSession(input.configPath, env, { onExit });
-  else if (input.harness === 'agy') started = startAcpHostSession(input.configPath, env, { onExit });
-  else throw new Error(`Unsupported Integrated harness: ${input.harness}`);
+  const started = factory(input.configPath, env, { onExit });
   const entry: SessionHandle = {
     harness: input.harness,
     key: input.key,

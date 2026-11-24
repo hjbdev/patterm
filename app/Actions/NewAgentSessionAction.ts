@@ -40,7 +40,7 @@ export class NewAgentSessionAction {
       select sessions.harness, sessions.model, sessions.reasoning, sessions.service_tier, sessions.cwd, sessions.worktree_id, processes.status, processes.activity
       from sessions
       join processes on processes.id = sessions.process_id
-      where sessions.process_id = ? and sessions.project_id = ? and sessions.interface_mode = 'integrated'
+      where sessions.process_id = ? and sessions.project_id = ?
       order by sessions.started_at desc
       limit 1
     `).get(input.process_id, input.project_id) as SourceSession | undefined;

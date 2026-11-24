@@ -482,7 +482,11 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     assert.ok(!JSON.stringify(imageConversation).includes('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='), 'OpenCode image bytes never reach the renderer');
     const imageRows = normaliseMessages(imageConversation.messages);
     const uploaded = normaliseTranscriptAttachments(imageRows.find((message) => message.id === 'msg_upload')?.attachments);
-    const readImage = imageRows.find((message) => message.id === 'msg_read-0')?.tool?.images?.[0];
+    const readRow = imageRows.find((message) => message.id === 'msg_read-0');
+    const readImage = readRow?.tool?.images?.[0];
+    assert.equal(readRow?.text, 'Image read successfully', 'OpenCode tool text blocks survive projection and remain searchable');
+    assert.equal(readRow?.tool?.output, 'Image read successfully', 'OpenCode tool text blocks populate tool.output');
+    assert.equal(readRow?.tool?.images?.length, 1, 'stored OpenCode tool images are not duplicated');
     assert.equal(uploaded[0]?.name, 'shot.png');
     assert.equal(uploaded[0]?.sha256, readImage?.sha256, 'the uploaded and read copies share one stored image');
     assert.deepEqual(imageStore.read(String(readImage?.sha256)), { mime: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==' });
@@ -731,7 +735,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     // The task drawer reads the subagent's own messages, oldest first.
     const subOutput = await nestedService.taskOutput('process_0', 'ses_sub');
     assert.ok(subOutput.format === 'messages');
-    assert.deepEqual(subOutput.messages.map((row) => (row as { id: string }).id), ['msg_sub_1', 'msg_sub_2'], 'task output is the subagent session, oldest first');
+    assert.deepEqual(subOutput.messages.map((row) => (row as { id: string }).id), ['msg_sub_1', 'msg_sub_2-0'], 'task output is the subagent session, oldest first');
     assert.equal(subOutput.cursor, null, 'a short subagent has no earlier page');
     assert.equal((await nestedService.taskOutput('process_0', 'ses_sub', subOutput.version)).format, 'unchanged', 'an unchanged subagent skips its rows');
     await assert.rejects(nestedService.taskOutput('process_0', 'ses_foreign'), /does not belong/, 'another session is never read');
@@ -739,7 +743,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     const compactedView = await openCode(database, { ...env, SUBAGENT_SESSION: '1', COMPACTED: '1', SUBAGENT_ROOT: (database.connection.prepare(`select resume_id from sessions where process_id = 'process_0'`).get() as { resume_id: string }).resume_id }).conversation('process_0') as { usage: Record<string, unknown> };
     assert.equal(compactedView.usage.contextTokens, undefined, 'a newer compaction drops the stale context');
     assert.equal(compactedView.usage.contextWindow, 400_000, 'the window still comes from the compaction model');
-    assert.deepEqual(nestedView.messages.data.filter((row) => row.parentId).map((row) => [row.id, row.parentId]), [['msg_sub_1', 'msg_task-1'], ['msg_sub_2', 'msg_task-1']]);
+    assert.deepEqual(nestedView.messages.data.filter((row) => row.parentId).map((row) => [row.id, row.parentId]), [['msg_sub_1', 'msg_task-1'], ['msg_sub_2-0', 'msg_task-1']]);
     const nestedRoutes = fs.readFileSync(record, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as { route: string });
     assert.ok(!nestedRoutes.some((request) => request.route.startsWith(`/api/session/${(database.connection.prepare(`select resume_id from sessions where process_id = 'process_0'`).get() as { resume_id: string }).resume_id}/message?limit=40`)), 'a shell tool session is not read as a subagent');
 
@@ -952,8 +956,9 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     // wins once it exists.
     const liveMessage = (reasoning: string, text: string, completed?: number) => ({ id: 'msg_live', type: 'assistant', content: [{ type: 'reasoning', text: reasoning }, { type: 'text', text }], time: { created: 9, ...(completed ? { completed } : {}) } });
     const liveView = async (): Promise<{ revision: number; texts: string[] | undefined }> => {
-      const snapshot = await streamService.conversation('process_0') as { revision: number; messages: { data: Array<{ id: string; content?: Array<{ text: string }> }> } };
-      return { revision: snapshot.revision, texts: snapshot.messages.data.find((message) => message.id === 'msg_live')?.content?.map((part) => part.text) };
+      const snapshot = await streamService.conversation('process_0') as { revision: number; messages: { data: Array<{ id: string; text?: string }> } };
+      const parts = snapshot.messages.data.filter((message) => message.id.startsWith('msg_live-'));
+      return { revision: snapshot.revision, texts: parts.length ? parts.map((part) => part.text ?? '') : undefined };
     };
     daemonState.rows = [liveMessage('', '')];
     daemonState.emit('session.reasoning.started', { sessionID: first, assistantMessageID: 'msg_live', ordinal: 0 });
@@ -1011,7 +1016,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     ];
     daemonState.childRows = [{ id: 'msg_child', type: 'assistant', content: [{ type: 'text', text: 'child text' }], time: { created: 3 } }];
     const running = await streamService.conversation('process_0') as { messages: { data: Array<{ id: string; parentId?: string }> } };
-    assert.deepEqual(running.messages.data.filter((row) => row.parentId).map((row) => [row.id, row.parentId]), [['msg_child', subRow]], 'a running subagent known from the stream keeps its rows in the snapshot');
+    assert.deepEqual(running.messages.data.filter((row) => row.parentId).map((row) => [row.id, row.parentId]), [['msg_child-0', subRow]], 'a running subagent known from the stream keeps its rows in the snapshot');
     const afterRunning = streamed.length;
     daemonState.emit('session.reasoning.started', { sessionID: 'ses_live_child', assistantMessageID: 'msg_child2', ordinal: 0 });
     daemonState.emit('session.reasoning.delta', { sessionID: 'ses_live_child', assistantMessageID: 'msg_child2', ordinal: 0, delta: 'Child thinks' });
@@ -1045,7 +1050,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
     daemonState.active = {};
     const httpConversation = await streamService.conversation('process_0') as { status: string; messages: { data: Array<{ id: string }> } };
     assert.equal(httpConversation.status, 'idle');
-    assert.deepEqual(httpConversation.messages.data.map((message) => message.id), ['msg_seed', 'msg_v2']);
+    assert.deepEqual(httpConversation.messages.data.map((message) => message.id), ['msg_seed-0', 'msg_seed-1', 'msg_v2-0', 'msg_v2-1', 'msg_v2-2']);
     assert.equal(fs.readFileSync(record, 'utf8').trim().split('\n').length, cliCallsBefore, 'daemon reads do not spawn the CLI');
     await assert.rejects(
       streamService.configure('process_0', 'agent', 'missing'),

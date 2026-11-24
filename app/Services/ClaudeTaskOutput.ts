@@ -4,6 +4,8 @@ import path from 'node:path';
 import { envValue } from '../Platform/Environment';
 import { userHome } from '../Platform/ServiceProcess';
 import { ClaudeHistoryAdapter } from './AgentHistory/ClaudeHistoryAdapter';
+import { projectHistoryTaskMessages } from '../Agents/HistoryTaskProjection';
+import type { IntegratedTaskOutput } from './IntegratedConversation';
 
 // Claude writes every background task's output to
 // <tmp>/claude-<uid>/<project>/<session>/tasks/<task>.output, or on Windows to
@@ -23,11 +25,7 @@ export interface ClaudeTaskLocation {
   env: NodeJS.ProcessEnv;
 }
 
-export type ClaudeTaskOutput =
-  | { format: 'missing'; version: null }
-  | { format: 'unchanged'; version: string }
-  | { format: 'text'; version: string; text: string; truncated: boolean }
-  | { format: 'transcript'; version: string; archived_messages: unknown[]; cursor: string | null };
+export type ClaudeTaskOutput = IntegratedTaskOutput;
 
 // Without a cursor, reads the newest page. A transcript's cursor is the index
 // of the first message already shown: the file only grows at the end, so the
@@ -142,16 +140,9 @@ function transcript(file: string, taskId: string, version: string, before: numbe
   const start = Math.max(0, end - TRANSCRIPT_PAGE);
   const kept = messages.slice(start, end);
   return {
-    format: 'transcript',
+    format: 'messages',
     version,
     cursor: start > 0 ? String(start) : null,
-    // The renderer reads these as archived conversation records.
-    archived_messages: kept.map((message) => ({
-      ...message,
-      id: `${taskId}:${message.seq}`,
-      conversationId: taskId,
-      redactionCount: 0,
-      createdAt: message.providerCreatedAt ?? ''
-    }))
+    messages: projectHistoryTaskMessages(taskId, kept)
   };
 }

@@ -1,24 +1,60 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import net from 'node:net';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseService } from './DatabaseService';
-import type { IntegratedControls, IntegratedLaunchInput, IntegratedLaunchResult, IntegratedProviderService } from './IntegratedAgentService';
+import {
+  defaultAgentCapabilities,
+  type AgentAdapter,
+  type AgentCapabilities,
+  type AgentConversationSnapshot,
+  type AgentLaunchInput,
+  type AgentLaunchResult,
+  type AgentOlderMessagesPage,
+  type AgentPromptResult
+} from '../Agents/AgentProtocol';
+import { resolveSessionRuntimeState } from '../Agents/SessionRuntimeState';
+import { SupervisedHostClient } from '../Runtime/SupervisedHostClient';
+import type { IntegratedControls } from './IntegratedAgentService';
 import type { ResolvedIntegratedPrompt } from './IntegratedInput';
-import type { IntegratedConversationEvent, IntegratedConversationListener } from './IntegratedConversation';
+import type { IntegratedConversationListener } from './IntegratedConversation';
 import { TurnBusyError, UncertainDeliveryError } from './IntegratedDelivery';
-import { callIntegratedHost, detachedHostLauncher, integratedHostReady, IntegratedHostTransportError, stopHostProcess, stopRecordedHostProcess, type IntegratedHostLauncher } from './IntegratedHostLauncher';
-import { ipcPath } from '../Platform/Ipc';
+import { detachedHostLauncher, integratedHostReady, IntegratedHostTransportError, stopHostProcess, type IntegratedHostLauncher } from './IntegratedHostLauncher';
 import { claudeMcpServers } from '../Harness/McpDelivery';
 import { antigravityParentSubagentIds, readAntigravityTaskOutput, type AntigravityTaskOutput } from './AntigravityTaskOutput';
 import type { TranscriptImageStore } from './TranscriptImageStore';
 
 type Row = Record<string, any>;
 
+export const ACP_CAPABILITIES: AgentCapabilities = defaultAgentCapabilities({
+  hostKind: 'supervised-socket',
+  hibernation: { supported: true },
+  archiveFallback: 'never',
+  input: { steering: false, nativeQueue: false, configureWhileBusy: false, routineDigest: false },
+  interactions: { permissions: true, questions: false, forms: false, parentReadAutoApprove: true },
+  features: {
+    goals: false,
+    compact: true,
+    slashCommands: true,
+    memoryPush: false,
+    quietReplies: false,
+    voice: false,
+    statelessGenerate: false,
+    serviceTier: false,
+    liveModels: false,
+    sessionDirectory: false,
+    olderMessages: true
+  },
+  selectors: { reasoning: 'thought_level' }
+});
+
 // One ACP process per conversation. The durable control socket is independent
 // of browser connections and can be reattached after a Patterm server restart.
-export class AcpProviderService implements IntegratedProviderService {
+export class AcpProviderService implements AgentAdapter {
+  readonly id = 'agy';
+  readonly capabilities = ACP_CAPABILITIES;
+  private readonly host = new SupervisedHostClient();
+
   constructor(
     private readonly database: DatabaseService,
     private readonly runtimeDir: string,
@@ -29,7 +65,7 @@ export class AcpProviderService implements IntegratedProviderService {
     private readonly images: TranscriptImageStore | null = null
   ) {}
 
-  async prepare(input: IntegratedLaunchInput): Promise<IntegratedLaunchResult> {
+  async prepare(input: AgentLaunchInput): Promise<AgentLaunchResult> {
     if (input.serviceTier) throw new Error('Antigravity does not support Codex service tiers');
     if (input.resumeId) {
       const attached = input.wakingSessionId
@@ -58,9 +94,15 @@ export class AcpProviderService implements IntegratedProviderService {
       while (Date.now() < deadline) {
         if (pid) { try { process.kill(pid, 0); } catch { throw new Error('ACP host exited during startup'); } }
         if (await integratedHostReady(socketPath)) {
-          const state = await callIntegratedHost(socketPath, 'conversation', {}) as Row;
+          const state = await this.host.call<Row>(socketPath, 'conversation', {});
           if (state.status === 'error') throw new Error(String(state.status_detail ?? 'Antigravity could not start'));
-          if (state.status !== 'starting' && state.provider_session_id) return { resumeId: String(state.provider_session_id), argv: [input.executable, 'acp-host', socketPath, String(pid ?? ''), configPath] };
+          if (state.status !== 'starting' && state.provider_session_id) {
+            return {
+              resumeId: String(state.provider_session_id),
+              argv: [input.executable],
+              runtimeState: { hostKind: 'acp-host', executable: input.executable, socketPath, pid, configPath }
+            };
+          }
         }
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
@@ -73,19 +115,19 @@ export class AcpProviderService implements IntegratedProviderService {
     }
   }
 
-  async conversation(processId: string): Promise<unknown> {
+  async conversation(processId: string): Promise<AgentConversationSnapshot> {
     const runtime = this.runtime(processId);
-    const state = await callIntegratedHost(runtime.socketPath, 'conversation', {}) as Row;
+    const state = await this.host.call<Row>(runtime.socketPath, 'conversation', {});
     const { models: _models, modes: _modes, configOptions: _options, commands: _commands, ...snapshot } = state;
-    return { ...snapshot, process_id: processId, session_id: runtime.sessionId, provider: 'agy', streaming: true };
+    return { ...snapshot, process_id: processId, session_id: runtime.sessionId, provider: 'agy', streaming: true } as AgentConversationSnapshot;
   }
 
   // Pages backwards from a snapshot's history cursor, oldest page last.
-  async olderMessages(processId: string, cursor: string): Promise<unknown> {
-    return callIntegratedHost(this.runtime(processId).socketPath, 'older', { cursor });
+  async olderMessages(processId: string, cursor: string): Promise<AgentOlderMessagesPage> {
+    return this.host.call<AgentOlderMessagesPage>(this.runtime(processId).socketPath, 'older', { cursor });
   }
 
-  async prompt(processId: string, input: ResolvedIntegratedPrompt): Promise<unknown> {
+  async prompt(processId: string, input: ResolvedIntegratedPrompt): Promise<AgentPromptResult> {
     const prompt: Row[] = [{ type: 'text', text: input.text }];
     const attachments: Row[] = input.references.map((reference) => ({ type: 'reference', name: reference.name, detail: `@${reference.relativePath}` }));
     for (const reference of input.references) prompt.push({ type: 'resource_link', uri: pathToFileURL(reference.path).href, name: reference.name });
@@ -111,7 +153,7 @@ export class AcpProviderService implements IntegratedProviderService {
       attachments.push({ type: stored ? 'image' : 'file', name: attachment.name, mime: attachment.mime, ...(stored ? { sha256: stored.sha256 } : {}) });
     }
     try {
-      return await callIntegratedHost(this.runtime(processId).socketPath, 'prompt', { prompt, text: input.text, clientMessageId: input.messageId, attachments });
+      return await this.host.call<AgentPromptResult>(this.runtime(processId).socketPath, 'prompt', { prompt, text: input.text, clientMessageId: input.messageId, attachments });
     } catch (error) {
       if (error instanceof Error && error.message === 'ACP turn is busy') throw new TurnBusyError(error.message, 'prompt');
       if (error instanceof Error && /^ACP prompt delivery is uncertain(?::|$)/.test(error.message)) throw new UncertainDeliveryError(error.message, input.messageId);
@@ -119,17 +161,17 @@ export class AcpProviderService implements IntegratedProviderService {
       throw error;
     }
   }
-  async interrupt(processId: string): Promise<void> { await callIntegratedHost(this.runtime(processId).socketPath, 'interrupt', {}); }
+  async interrupt(processId: string): Promise<void> { await this.host.call(this.runtime(processId).socketPath, 'interrupt', {}); }
   // Background commands stop through session/cancel, which ends all of agy's
   // background work: ACP has no per-task cancel.
-  async stopTask(processId: string, taskId: string): Promise<void> { await callIntegratedHost(this.runtime(processId).socketPath, 'stopTask', { taskId }); }
+  async stopTask(processId: string, taskId: string): Promise<void> { await this.host.call(this.runtime(processId).socketPath, 'stopTask', { taskId }); }
   async taskOutput(processId: string, taskId: string, since?: string | null, cursor?: string | null): Promise<AntigravityTaskOutput> {
     // A background command's output arrives on its tool row when it ends.
     if (taskId.startsWith('tool:')) return { format: 'missing', version: null };
     const runtime = this.runtime(processId);
     let owned = false;
     try {
-      const reply = await callIntegratedHost(runtime.socketPath, 'hasTask', { taskId }) as Row;
+      const reply = await this.host.call<Row>(runtime.socketPath, 'hasTask', { taskId });
       owned = reply?.owned === true;
     } catch {
       // Older hosts without hasTask fall back to the parent session transcript.
@@ -139,101 +181,73 @@ export class AcpProviderService implements IntegratedProviderService {
     }
     return readAntigravityTaskOutput(taskId, this.env, since, cursor);
   }
-  async replyPermission(processId: string, requestId: string, reply: 'once' | 'always' | 'reject'): Promise<void> { await callIntegratedHost(this.runtime(processId).socketPath, 'permission', { requestId, reply }); }
+  async replyPermission(processId: string, requestId: string, reply: 'once' | 'always' | 'reject'): Promise<void> { await this.host.call(this.runtime(processId).socketPath, 'permission', { requestId, reply }); }
   async replyQuestion(): Promise<void> { throw new Error('Antigravity questions are answered in the conversation'); }
   async reconcile(processId: string, messageId: string) {
-    const result = await callIntegratedHost(this.runtime(processId).socketPath, 'delivery', { clientMessageId: messageId }) as Row;
+    const result = await this.host.call<Row>(this.runtime(processId).socketPath, 'delivery', { clientMessageId: messageId });
     return result.state === 'accepted' ? 'accepted' as const : 'unknown' as const;
   }
   async controls(processId: string): Promise<IntegratedControls> {
-    const state = await callIntegratedHost(this.runtime(processId).socketPath, 'controls', {}) as Row;
+    const state = await this.host.call<Row>(this.runtime(processId).socketPath, 'controls', {});
     return {
       selectors: (state.configOptions ?? []).filter((option: Row) => option.type === 'select').map((option: Row) => ({ id: String(option.id), label: String(option.name), value: String(option.currentValue), options: (option.options ?? []).flatMap((entry: Row) => entry.options ?? [entry]).map((entry: Row) => ({ value: String(entry.value), label: String(entry.name), ...(entry.description ? { description: String(entry.description) } : {}) })) })),
       commands: (state.commands ?? []).map((command: Row) => ({ name: String(command.name), description: String(command.description ?? '') })), revision: state.controls_revision
     };
   }
   async configure(processId: string, selector: string, value: string): Promise<void> {
-    await callIntegratedHost(this.runtime(processId).socketPath, 'configure', { selector, value });
+    await this.host.call(this.runtime(processId).socketPath, 'configure', { selector, value });
     // Recovery of an ended host falls back to these columns. Do not leave its
     // original launch model/effort behind after the user changes the pickers.
     const settings = await this.nativeSettings(processId);
     this.database.connection.prepare('update sessions set model = ?, reasoning = ? where id = ?').run(settings.model ?? null, settings.reasoning ?? null, this.runtime(processId).sessionId);
   }
-  async command(processId: string, name: string, text: string): Promise<unknown> {
+  async command(processId: string, name: string, text: string): Promise<AgentPromptResult> {
     return this.prompt(processId, { text: `/${name}${text ? ` ${text}` : ''}`, attachments: [], references: [] });
   }
-  async compact(processId: string): Promise<unknown> { return this.command(processId, 'compact', ''); }
+  async compact(processId: string): Promise<AgentPromptResult> { return this.command(processId, 'compact', ''); }
   async title(processId: string): Promise<string | null> {
-    const state = await callIntegratedHost(this.runtime(processId).socketPath, 'controls', {}) as Row;
+    const state = await this.host.call<Row>(this.runtime(processId).socketPath, 'controls', {});
     return typeof state.title === 'string' ? state.title : null;
   }
   async nativeSettings(processId: string) {
-    const state = await callIntegratedHost(this.runtime(processId).socketPath, 'controls', {}) as Row;
+    const state = await this.host.call<Row>(this.runtime(processId).socketPath, 'controls', {});
     const options: Row[] = state.configOptions ?? [];
     const reasoning = options.find((option) => option.id === 'thought_level')?.currentValue;
     return { model: state.model as string | null, ...(typeof reasoning === 'string' ? { reasoning } : {}) };
   }
   async subscribe(processId: string, listener: IntegratedConversationListener): Promise<() => void> {
     const { socketPath } = this.runtime(processId);
-    let stopped = false;
-    let socket: net.Socket | null = null;
-    let retry: NodeJS.Timeout | null = null;
-    let attempts = 0;
-    const connect = (): Promise<void> => new Promise((resolve, reject) => {
-      const next = net.createConnection(ipcPath(socketPath)); socket = next;
-      let buffer = ''; let acknowledged = false;
-      next.setEncoding('utf8');
-      next.once('connect', () => next.write(`${JSON.stringify({ id: randomUUID(), method: 'subscribe', params: {} })}\n`));
-      next.on('error', (error) => { if (!acknowledged) reject(error); next.destroy(); });
-      next.once('close', () => {
-        if (!acknowledged) reject(new Error('ACP host closed before subscription'));
-        if (stopped) return;
-        listener({ processId, revision: 0, kind: 'reconnecting' });
-        if (++attempts > 8) { listener({ processId, revision: 0, kind: 'error', id: 'connection_error', delta: 'Could not reconnect to the ACP host.' }); return; }
-        retry = setTimeout(() => { void connect().catch(() => undefined); }, Math.min(250 * 2 ** (attempts - 1), 5000));
-      });
-      next.on('data', (chunk: string) => {
-        buffer += chunk;
-        if (buffer.length > 32 * 1024 * 1024) { next.destroy(); return; }
-        for (;;) {
-          const newline = buffer.indexOf('\n'); if (newline < 0) return;
-          const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
-          let frame: Row; try { frame = JSON.parse(line); } catch { next.destroy(); return; }
-          if (!acknowledged) { if (frame.error) { reject(new Error(String(frame.error))); next.destroy(); return; } acknowledged = true; attempts = 0; resolve(); }
-          else if (frame.event?.kind) listener({ ...frame.event, processId } as IntegratedConversationEvent);
-        }
-      });
+    return this.host.subscribe({
+      processId,
+      socketPath,
+      label: 'ACP host',
+      reconnectErrorMessage: 'Could not reconnect to the ACP host.',
+      listener
     });
-    try { await connect(); } catch (error) { stopped = true; if (retry) clearTimeout(retry); (socket as net.Socket | null)?.destroy(); throw error; }
-    return () => { stopped = true; if (retry) clearTimeout(retry); socket?.destroy(); };
   }
   async stop(processId: string): Promise<void> {
     const runtime = this.runtime(processId);
-    try {
-      await callIntegratedHost(runtime.socketPath, 'stop', {});
-    } catch {
-      if (this.launcher.stop) await this.launcher.stop(runtime.socketPath, runtime.pid);
-      else await stopRecordedHostProcess(runtime.pid, runtime.socketPath);
-    }
+    await this.host.stop(runtime.socketPath, runtime.pid, this.launcher);
   }
-  async cleanupLaunch(_input: IntegratedLaunchInput, result: IntegratedLaunchResult): Promise<void> {
-    const socketPath = typeof result.argv[2] === 'string' ? result.argv[2] : '';
-    const pid = Number(result.argv[3]) || null;
-    if (this.launcher.stop && socketPath) await this.launcher.stop(socketPath, pid);
-    else await stopHostProcess(pid);
+  async cleanupLaunch(_input: AgentLaunchInput, result: AgentLaunchResult): Promise<void> {
+    const socketPath = result.runtimeState?.socketPath ?? (typeof result.argv[2] === 'string' ? result.argv[2] : undefined);
+    const pid = result.runtimeState?.pid ?? (Number(result.argv[3]) || null);
+    await this.host.cleanupLaunch(socketPath, pid, this.launcher);
   }
   async stopAll(): Promise<void> {
-    const rows = this.database.connection.prepare("select process_id as id from sessions where harness = 'agy' and interface_mode = 'integrated' and exited_at is null").all() as Array<{ id: string }>;
-    const results = await Promise.allSettled(rows.map((row) => this.stop(row.id)));
-    results.push(...await Promise.allSettled([this.launcher.stopAll('agy')]));
-    const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
-    if (failures.length) throw new AggregateError(failures.map((failure) => failure.reason), 'Could not stop every ACP host');
+    const rows = this.database.connection.prepare("select process_id as id from sessions where harness = 'agy' and exited_at is null and process_id is not null").all() as Array<{ id: string }>;
+    await this.host.stopAll('agy', rows.map((row) => row.id), (id) => this.stop(id), this.launcher, 'Could not stop every ACP host');
   }
   private runtime(processId: string) {
-    const row = this.database.connection.prepare("select processes.argv, sessions.id as session_id, sessions.resume_id from sessions join processes on processes.id = sessions.process_id where (sessions.process_id = ? or sessions.id = ?) and sessions.harness = 'agy' and sessions.interface_mode = 'integrated' order by sessions.exited_at is null desc, sessions.started_at desc limit 1").get(processId, processId) as { argv: string; session_id: string; resume_id: string | null } | undefined;
+    const row = this.database.connection.prepare(`
+      select processes.argv, sessions.runtime_state, sessions.id as session_id, sessions.resume_id
+      from sessions join processes on processes.id = sessions.process_id
+      where (sessions.process_id = ? or sessions.id = ?) and sessions.harness = 'agy'
+      order by sessions.exited_at is null desc, sessions.started_at desc limit 1
+    `).get(processId, processId) as { argv: string | null; runtime_state: string | null; session_id: string; resume_id: string | null } | undefined;
     if (!row) throw new Error('Antigravity Integrated session not found');
-    const argv = JSON.parse(row.argv) as unknown[];
-    if (argv[1] !== 'acp-host' || typeof argv[2] !== 'string') throw new Error('ACP runtime metadata is invalid');
-    return { socketPath: argv[2], pid: Number(argv[3]) || null, sessionId: row.session_id, resumeId: row.resume_id };
+    const state = resolveSessionRuntimeState(row.runtime_state, row.argv);
+    if (state.hostKind !== 'acp-host' || !state.socketPath) throw new Error('ACP runtime metadata is invalid');
+    return { socketPath: state.socketPath, pid: state.pid ?? null, sessionId: row.session_id, resumeId: row.resume_id };
   }
 }

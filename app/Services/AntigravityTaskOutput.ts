@@ -4,15 +4,14 @@ import path from 'node:path';
 import { userHome } from '../Platform/ServiceProcess';
 import { AntigravityHistoryAdapter } from './AgentHistory/AntigravityHistoryAdapter';
 import { readJsonl } from './AgentHistory/HistoryAdapterUtils';
+import { projectHistoryTaskMessages } from '../Agents/HistoryTaskProjection';
+import type { IntegratedTaskOutput } from './IntegratedConversation';
 
 const CONVERSATION_ID = /^[A-Za-z0-9_-]{1,128}$/;
 // Messages per transcript page. The drawer loads earlier pages on request.
 const TRANSCRIPT_PAGE = 200;
 
-export type AntigravityTaskOutput =
-  | { format: 'missing'; version: null }
-  | { format: 'unchanged'; version: string }
-  | { format: 'transcript'; version: string; archived_messages: unknown[]; cursor: string | null };
+export type AntigravityTaskOutput = IntegratedTaskOutput;
 
 export function antigravityBrainDir(env: NodeJS.ProcessEnv = process.env): string {
   const home = process.platform === 'win32' ? userHome(env) : env.HOME || os.homedir();
@@ -126,15 +125,9 @@ export function readAntigravityTaskOutput(
   }
   const kept = messages.slice(start, sliceEnd);
   return {
-    format: 'transcript',
+    format: 'messages',
     version,
     cursor: start > 0 ? String(start) : null,
-    archived_messages: kept.map((message) => ({
-      ...message,
-      id: `${taskId}:${message.seq}`,
-      conversationId: taskId,
-      redactionCount: 0,
-      createdAt: message.providerCreatedAt ?? ''
-    }))
+    messages: projectHistoryTaskMessages(taskId, kept)
   };
 }

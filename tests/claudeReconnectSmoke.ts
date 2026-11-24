@@ -17,6 +17,7 @@ interface Fixture {
   connections: () => number;
   drop: () => void;
   append: (delta: string) => void;
+  appendSplitUtf8: (delta: string) => Promise<void>;
   release: () => void;
   stopListening: () => Promise<void>;
   listen: () => Promise<void>;
@@ -75,6 +76,18 @@ async function fixture(): Promise<Fixture> {
     connections: () => connections,
     drop: () => { for (const socket of sockets) socket.destroy(); },
     append: (delta) => { text += delta; publish({ kind: 'append', id: 'message-1', delta }); },
+    appendSplitUtf8: async (delta) => {
+      text += delta;
+      revision += 1;
+      const bytes = Buffer.from(`${JSON.stringify({ event: { kind: 'append', id: 'message-1', delta, revision } })}\n`, 'utf8');
+      const split = bytes.indexOf(0xc3) + 1;
+      assert.ok(split > 0 && split < bytes.length, 'fixture payload must contain a multi-byte UTF-8 sequence');
+      for (const socket of subscribers) {
+        socket.write(bytes.subarray(0, split));
+        await delay(20);
+        socket.write(bytes.subarray(split));
+      }
+    },
     release,
     stopListening: () => new Promise((resolve) => server.close(() => resolve())),
     listen: () => new Promise((resolve) => server.listen(ipcPath(socketPath), () => resolve())),
@@ -185,10 +198,14 @@ async function main(): Promise<void> {
     await delay(400);
     boundary.append(' B');
     await delay(30);
-    const snapshot = await boundary.service.conversation('process_test') as { revision: number; messages: { data: Array<Record<string, unknown>> } };
+    const snapshot = await boundary.service.conversation('process_test') as unknown as { revision: number; messages: { data: Array<Record<string, unknown>> } };
     const delta = boundary.events.filter((event) => event.kind === 'append').at(-1)!;
     assert.equal(snapshot.messages.data[0]?.text, 'Hello B', 'the snapshot contains the append');
     assert.equal(delta.revision, snapshot.revision, 'the forwarded append shares the snapshot revision');
+    // Multi-byte UTF-8 characters split across socket reads decode intact.
+    await boundary.appendSplitUtf8(' A café ☕');
+    await delay(30);
+    assert.equal(boundary.events.filter((event) => event.kind === 'append').at(-1)?.delta, ' A café ☕', 'split UTF-8 chunks do not corrupt streamed text');
   } finally {
     await boundary.close();
   }

@@ -180,25 +180,19 @@ async function main(): Promise<void> {
     assert.ok(failedWorktreeProcess.exited_at, 'process exit timestamp is stored');
     assert.deepEqual(failedProcesses, [{ processId: inWorktree.process_id, exitCode: 127 }], 'non-zero process exit notifies failure listener');
 
-    // Startup inventory reconciliation reconnects live non-agent PTYs and reaps legacy TUI agent rows.
+    // Startup inventory reconciliation reconnects live non-agent PTYs and reconciles orphaned agent rows.
     database.connection.prepare(`insert into processes (id, project_id, kind, name, status, pty_process_id, created_at, updated_at)
-      values ('legacy_tui_agent', ?, 'agent', 'Legacy TUI', 'running', 'pty_legacy_tui', ?, ?)`)
+      values ('orphaned_agent', ?, 'agent', 'Orphaned Agent', 'running', null, ?, ?)`)
       .run(projectId, now, now);
-    database.connection.prepare(`insert into sessions (id, project_id, session_role, interface_mode, resume_status, started_at, process_id)
-      values ('session_legacy_tui', ?, 'orchestrator', 'tui', 'unknown', ?, 'legacy_tui_agent')`)
-      .run(projectId, now);
-    const legacyReconciled = new ReconcileRuntimeAction(database).execute([
-      { process_id: created.pty_process_id, status: 'running', exit_code: null, activity: 'working', title: 'dev' },
-      { process_id: 'pty_legacy_tui', status: 'running', exit_code: null, activity: 'idle', title: 'Legacy TUI' }
+    new ReconcileRuntimeAction(database).execute([
+      { process_id: created.pty_process_id, status: 'running', exit_code: null, activity: 'working', title: 'dev' }
     ]);
-    assert.deepEqual(legacyReconciled.reapedPtyIds, ['pty_legacy_tui'], 'live legacy TUI agent PTYs are returned for cleanup');
     assert.equal((database.connection.prepare(`select activity from processes where id = ?`).get(created.process_id) as { activity: string }).activity, 'working', 'live command PTY reconnects and syncs activity');
-    assert.equal((database.connection.prepare(`select status from processes where id = 'legacy_tui_agent'`).get() as { status: string }).status, 'exited', 'legacy TUI agent process is reaped on startup');
-    assert.ok((database.connection.prepare(`select exited_at from sessions where id = 'session_legacy_tui'`).get() as { exited_at: string | null }).exited_at, 'legacy TUI agent session is marked exited on startup');
+    assert.equal((database.connection.prepare(`select status from processes where id = 'orphaned_agent'`).get() as { status: string }).status, 'exited', 'orphaned agent process without a live session is reconciled on startup');
 
     // PTY relaunch and update reject agent processes so agents cannot be respawned as unmanaged PTYs.
-    await assert.rejects(launcher.relaunch('legacy_tui_agent'), /is an agent; resume or restart its conversation/);
-    await assert.rejects(launcher.update({ process_id: 'legacy_tui_agent', name: 'Renamed', command: 'echo hi', auto_restart: false }), /is an agent; resume or restart its conversation/);
+    await assert.rejects(launcher.relaunch('orphaned_agent'), /is an agent; resume or restart its conversation/);
+    await assert.rejects(launcher.update({ process_id: 'orphaned_agent', name: 'Renamed', command: 'echo hi', auto_restart: false }), /is an agent; resume or restart its conversation/);
     reconciler.dispose();
 
     // Relaunch re-attaches a fresh PTY reusing the stored argv.
@@ -312,11 +306,11 @@ async function main(): Promise<void> {
       database.connection.exec('drop trigger fail_process_update');
     }
 
-    // Startup reconciliation marks leftover running processes and legacy TUI sessions dead.
+    // Startup reconciliation marks leftover running PTY processes and orphaned sessions dead.
     database.connection
       .prepare(
         `insert into sessions (id, project_id, session_role, interface_mode, resume_status, started_at, process_id)
-         values (?, ?, 'orchestrator', 'tui', 'unknown', ?, 'proc_99')`
+         values (?, ?, 'orchestrator', 'integrated', 'unknown', ?, 'proc_99')`
       )
       .run(`session_${randomUUID()}`, projectId, now);
     const reconciled = new ReconcileRuntimeAction(database).execute();

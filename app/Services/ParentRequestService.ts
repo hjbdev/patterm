@@ -18,7 +18,6 @@ interface Process {
   status: string;
   name: string;
   session_id: string | null;
-  interface_mode: string | null;
   harness: string | null;
   session_role: string | null;
   mcp_identity: string | null;
@@ -146,7 +145,7 @@ export class ParentRequestService {
   // answers questions. Requests still with a parent agent are left to it.
   async overseerReply(processId: string, requestId: string, reply: DirectRequestReply, overseerProcessId: string): Promise<{ status: 'resolved'; kind: RequestKind }> {
     const source = this.process(processId);
-    if (!source || source.status !== 'running' || !source.session_id || source.interface_mode !== 'integrated') throw new Error('This agent has no pending requests Patterm can answer');
+    if (!source || source.status !== 'running' || !source.session_id) throw new Error('This agent has no pending requests Patterm can answer');
     if (source.id === overseerProcessId) throw new Error('A bot can\'t answer its own requests');
     const current = await this.integrated.peekConversation(source.id);
     const now = this.process(processId);
@@ -236,7 +235,7 @@ export class ParentRequestService {
       parentId = parent.parent_process_id;
       // Never type a review prompt into a terminal that might itself be
       // waiting for approval. Skip parents that cannot call the reply tool.
-      if (parent.status !== 'running' || parent.interface_mode !== 'integrated' || !parent.mcp_identity || !parent.session_id || parent.session_role === 'routine') continue;
+      if (parent.status !== 'running' || !parent.mcp_identity || !parent.session_id || parent.session_role === 'routine') continue;
       const id = randomUUID();
       const next = () => {
         if (this.offers.get(id) !== offer) return;
@@ -288,7 +287,7 @@ export class ParentRequestService {
 
   private process(processId: string): Process | undefined {
     return this.database.connection.prepare(`select p.id, p.project_id, p.parent_process_id, p.status, p.name,
-      s.id as session_id, s.interface_mode, s.harness, s.session_role, s.mcp_identity, s.cwd
+      s.id as session_id, s.harness, s.session_role, s.mcp_identity, s.cwd
       from processes p left join sessions s on s.process_id = p.id and s.exited_at is null
       where p.id = ? and p.kind = 'agent' order by s.started_at desc limit 1`).get(processId) as Process | undefined;
   }
