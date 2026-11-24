@@ -99,7 +99,7 @@ async function main(): Promise<void> {
       db.prepare(`insert into processes(id,project_id,parent_process_id,kind,name,status,activity,created_at,updated_at) values(?,?,?,'agent',?,?,?,?,?)`)
         .run(`proc-${id}`, project, options.parent ?? null, id, options.status ?? 'running', options.activity ?? 'idle', now, now);
       db.prepare(`insert into sessions(id,project_id,process_id,harness,interface_mode,session_role,started_at,cwd,mcp_identity,resume_id,bot_id) values(?,?,?,?,?,?,?,?,?,?,?)`)
-        .run(id, project, `proc-${id}`, 'claude', options.mode ?? 'tui', options.role ?? 'orchestrator', now, dir, `mcp-${id}`, options.resume ?? null, options.bot ?? null);
+        .run(id, project, `proc-${id}`, 'claude', options.mode ?? 'integrated', options.role ?? 'orchestrator', now, dir, `mcp-${id}`, options.resume ?? null, options.bot ?? null);
     };
     agent('live', 'p', { mode: 'integrated' });
     agent('tui', 'p', { resume: 'native-tui' });
@@ -327,28 +327,27 @@ async function main(): Promise<void> {
     const deploy = await registry.callPublic('search_output', { process_id: 'proc-oc', pattern: 'DEPLOY_DONE' }, worker) as { matches: string[] };
     assert.deepEqual(deploy.matches, ['DEPLOY_DONE in 4s'], 'searches see OpenCode tool output');
 
-    // Terminal agents page through imported history, flagged when it may be behind.
-    const tui = await read({ process_id: 'proc-tui', limit: 5 });
-    assert.deepEqual(tui.sources, ['history']);
-    assert.equal(tui.stale, true);
-    assert.equal(tui.conversation_id, 'conv-tui');
-    assert.deepEqual(tui.latest_answer, { message_id: 'h449', in_page: true });
+    // Ended agents page through imported history, flagged when it may be behind.
+    const archivedPage = await read({ process_id: 'proc-old', limit: 5 });
+    assert.deepEqual(archivedPage.sources, ['history']);
+    assert.equal(archivedPage.stale, true);
+    assert.equal(archivedPage.conversation_id, 'conv-old');
+    assert.deepEqual(archivedPage.latest_answer, { message_id: 'h449', in_page: true });
     const textRows = historyRows.filter((row) => row.kind === 'message').map((row) => row.id);
-    assert.deepEqual(await all({ process_id: 'proc-tui', limit: 37 }), textRows, 'history pages cross batches with no gaps or repeats');
+    assert.deepEqual(await all({ process_id: 'proc-old', limit: 37 }), textRows, 'history pages cross batches with no gaps or repeats');
     // Imported reasoning is marked in metadata; it is not an answer.
     (historyRows as Array<Record<string, unknown>>).push({ id: 'hreason', seq: 450, role: 'assistant', kind: 'message', text: 'Pondering', toolName: null, toolInputSummary: null, toolStatus: null, metadata: { type: 'reasoning' } });
-    const pondering = await read({ process_id: 'proc-tui', limit: 2 });
+    const pondering = await read({ process_id: 'proc-old', limit: 2 });
     assert.deepEqual(pondering.messages.map((message) => message.id), ['h448', 'h449']);
     assert.deepEqual(pondering.latest_answer, { message_id: 'h449', in_page: true });
-    assert.equal((await read({ process_id: 'proc-tui', limit: 1, include: ['reasoning'] })).messages[0]?.id, 'hreason');
+    assert.equal((await read({ process_id: 'proc-old', limit: 1, include: ['reasoning'] })).messages[0]?.id, 'hreason');
     historyRows.splice(450);
     for (let index = 0; index < 250; index += 1) historyRows.push({ id: `ht${index}`, seq: 450 + index, role: 'tool', kind: 'tool_result', text: `tool ${index}`, toolName: null, toolInputSummary: null, toolStatus: null });
-    const buried = await read({ process_id: 'proc-tui', limit: 2, include: ['tools'] });
+    const buried = await read({ process_id: 'proc-old', limit: 2, include: ['tools'] });
     assert.deepEqual(buried.messages.map((message) => message.id), ['ht248', 'ht249']);
     assert.equal((buried.latest_answer as { message_id: string } | null)?.message_id, 'h449', 'the latest answer is found beyond the first batch');
     historyRows.splice(450);
     importedAt = new Date(Date.now() + 60_000).toISOString();
-    assert.equal((await read({ process_id: 'proc-tui' })).stale, true, 'a running agent can always be ahead of its import');
     db.prepare(`update processes set exited_at = ? where id = 'proc-old'`).run(now);
     assert.equal((await read({ process_id: 'proc-old' })).stale, false, 'an exited agent imported after it exited is current');
     importedAt = '2000-01-01T00:00:00.000Z';

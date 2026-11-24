@@ -71,6 +71,7 @@ import addSessionModel from './2026_09_10_000021_add_session_model';
 import addAssistantMemory from './2026_10_09_000046_add_assistant_memory';
 import addAutoTitles from './2026_10_12_000047_add_auto_titles';
 import addAssistantBot from './2026_11_01_000060_add_assistant_bot';
+import addSessionRuntimeState from './2026_11_24_000071_add_session_runtime_state';
 
 export const migrations: Migration[] = [
   createInitialSchema,
@@ -144,5 +145,6 @@ export const migrations: Migration[] = [
   addDecisions,
   addMissingPerformanceIndexes,
   addRoutineDeliveryBot,
-  retireTuiAgents
+  retireTuiAgents,
+  addSessionRuntimeState
 ];

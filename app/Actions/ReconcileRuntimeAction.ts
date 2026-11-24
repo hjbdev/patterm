@@ -2,50 +2,46 @@ import type { DatabaseService } from '../Services/DatabaseService';
 import { SessionContextService } from '../Services/SessionContextService';
 import type { TerminalInventoryProcess } from '../Services/TerminalHostService';
 
-// Match saved non-agent PTY records to supervised hosts, and reap any legacy
-// TUI agent rows left over from before TUI agents were retired. A fresh
-// standalone sidecar, or a completed Quit, has no inventory and invalidates
-// every previous PTY handle.
+// Match saved non-agent PTY records to supervised hosts. A fresh standalone
+// sidecar, or a completed Quit, has no inventory and invalidates every previous
+// PTY handle.
 export class ReconcileRuntimeAction {
   constructor(private readonly database: DatabaseService) {}
 
-  execute(inventory?: TerminalInventoryProcess[]): { sessions: number; processes: number; reapedPtyIds: string[] } {
+  execute(inventory?: TerminalInventoryProcess[]): { sessions: number; processes: number } {
     if (inventory) return this.reconnect(inventory);
     const now = new Date().toISOString();
     const db = this.database.connection;
 
-    const sessions = db
-      .prepare(`update sessions set exited_at = ? where exited_at is null and interface_mode = 'tui'`)
-      .run(now).changes;
     const processes = db
       .prepare(`update processes set status = 'exited', exited_at = coalesce(exited_at, ?), updated_at = ?
         where status = 'running' and (
           kind != 'agent' or not exists (
-            select 1 from sessions where sessions.process_id = processes.id and sessions.interface_mode = 'integrated' and sessions.exited_at is null
+            select 1 from sessions where sessions.process_id = processes.id and sessions.exited_at is null
           )
         )`)
       .run(now, now).changes;
+    const sessions = db
+      .prepare(`update sessions set exited_at = ? where exited_at is null and not exists (select 1 from processes where processes.id = sessions.process_id and processes.status = 'running')`)
+      .run(now).changes;
 
     // PTY handles belong to one sidecar instance and its counter restarts at launch.
     db.prepare(`update processes set pty_process_id = null where pty_process_id is not null`).run();
 
     new SessionContextService(this.database).reconcileLeases();
-    return { sessions, processes, reapedPtyIds: [] };
+    return { sessions, processes };
   }
 
-  private reconnect(inventory: TerminalInventoryProcess[]): { sessions: number; processes: number; reapedPtyIds: string[] } {
+  private reconnect(inventory: TerminalInventoryProcess[]): { sessions: number; processes: number } {
     const db = this.database.connection;
     const terminals = new Map(inventory.map((process) => [process.process_id, process]));
     const now = new Date().toISOString();
-    let sessions = db
-      .prepare(`update sessions set exited_at = ? where exited_at is null and interface_mode = 'tui'`)
-      .run(now).changes;
+    let sessions = 0;
     let processes = 0;
-    const reapedPtyIds: string[] = [];
     const rows = db.prepare(`select processes.id, processes.pty_process_id, processes.kind from processes
       where processes.status = 'running' and (
         processes.kind != 'agent' or not exists (
-          select 1 from sessions where sessions.process_id = processes.id and sessions.interface_mode = 'integrated' and sessions.exited_at is null
+          select 1 from sessions where sessions.process_id = processes.id and sessions.exited_at is null
         )
       )`).all() as Array<{ id: string; pty_process_id: string | null; kind: string }>;
     for (const row of rows) {
@@ -53,9 +49,6 @@ export class ReconcileRuntimeAction {
       if (row.kind !== 'agent' && terminal?.status === 'running') {
         db.prepare(`update processes set activity = ?, updated_at = ? where id = ? and activity != ?`).run(terminal.activity, now, row.id, terminal.activity);
         continue;
-      }
-      if (row.kind === 'agent' && row.pty_process_id && terminal?.status === 'running') {
-        reapedPtyIds.push(row.pty_process_id);
       }
       const code = terminal?.exit_code ?? null;
       const status = code !== null && code !== 0 ? 'failed' : 'exited';
@@ -65,6 +58,6 @@ export class ReconcileRuntimeAction {
     }
     sessions += db.prepare(`update sessions set exited_at = ? where exited_at is null and not exists (select 1 from processes where processes.id = sessions.process_id and processes.status = 'running')`).run(now).changes;
     new SessionContextService(this.database).reconcileLeases();
-    return { sessions, processes, reapedPtyIds };
+    return { sessions, processes };
   }
 }

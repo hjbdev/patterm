@@ -10,7 +10,7 @@ import { registerIdleCompactionTools } from './MCP/registerIdleCompactionTools';
 import { StatusLabelActions } from './Actions/StatusLabelActions';
 import { registerBotTools } from './MCP/registerBotTools';
 import { BotService } from './Services/BotService';
-import { claudeConversationSaved } from './Services/ClaudeTaskOutput';
+import { AgentAdapterRegistry } from './Agents/AgentAdapterRegistry';
 import { integratedActivityNotifications } from './Listeners/IntegratedActivityNotifications';
 import { ParentRequestService } from './Services/ParentRequestService';
 import { integratedHistoryCheckpoints } from './Listeners/IntegratedHistoryCheckpoints';
@@ -384,8 +384,14 @@ async function createApplicationResources(
   const codexAppServer = new CodexAppServerService(database, harnessRuntimeDir, resolvedEnv, nodePath, undefined, { launcher: hostLauncher, images: transcriptImages });
   const claudeStream = new ClaudeStreamService(database, harnessRuntimeDir, nodePath, resolvedEnv, undefined, hostLauncher, transcriptImages);
   const agyAcp = new AcpProviderService(database, harnessRuntimeDir, nodePath, resolvedEnv, undefined, hostLauncher, transcriptImages);
+  const agentAdapters = new AgentAdapterRegistry([
+    ['opencode', openCodeServer],
+    ['codex', codexAppServer],
+    ['claude', claudeStream],
+    ['agy', agyAcp]
+  ]);
   const integratedInputs = new WorktreeFileService(database, new UploadService(path.join(options.appDataPath, 'uploads')));
-  const integrated = new IntegratedAgentService(database, { opencode: openCodeServer, codex: codexAppServer, claude: claudeStream, agy: agyAcp }, () => notifyWorkbenchChanged(), integratedInputs, hostLauncher);
+  const integrated = new IntegratedAgentService(database, agentAdapters, () => notifyWorkbenchChanged(), integratedInputs, hostLauncher);
   integrated.setDebugLog(debugLog);
   integrated.setMemoryPush(new MemoryPushService(database, assistantMemory, (event, data) => debugLog.write('memory', event, data)));
   // Holds unprompted input for a bot while its Focus mode is on.
@@ -487,10 +493,6 @@ async function createApplicationResources(
 
   const inventory = persistentTerminals ? terminalInventory.parse(await terminal.request('terminal.process.list')).processes : undefined;
   const reconciled = new ReconcileRuntimeAction(database).execute(inventory);
-  for (const ptyId of reconciled.reapedPtyIds) {
-    await terminal.request('terminal.process.stop', { process_id: ptyId }).catch(() => undefined);
-    await terminal.request('terminal.process.close', { process_id: ptyId }).catch(() => undefined);
-  }
   debugLog.write('runtime', 'reconciled', reconciled);
   const integratedReconciled = await integrated.reconcile();
   notificationService.resumeTurns();
@@ -633,9 +635,7 @@ async function createApplicationResources(
     database,
     settings,
     env: resolvedEnv,
-    openCodeServer,
-    liveClaudeModels: () => claudeStream.liveModels(),
-    liveCodexModels: () => codexAppServer.liveModels(),
+    adapters: agentAdapters,
     debugLog,
     onChanged: () => notifyChanged(['settings'])
   });
@@ -703,7 +703,6 @@ async function createApplicationResources(
     isBusy: (processId) => Boolean(relay?.voiceActive(processId))
       || idleCompaction.compacting(processId)
       || timers.list().some((timer) => timer.ownerProcessId === processId && timer.status === 'pending'),
-    canResume: (harness, cwd, resumeId) => harness !== 'claude' || claudeConversationSaved({ cwd, sessionId: resumeId, env: resolvedEnv }),
     wake: (processId) => harnessLauncher.wakeIntegrated(processId)
   });
   openCodeServer.setMcpSource(harnessLauncher.openCodeMcpSource());
@@ -717,7 +716,7 @@ async function createApplicationResources(
     },
     {
       log: (event, data) => debugLog.write('bots', event, data),
-      conversationSaved: (harness, cwd, resumeId) => harness !== 'claude' || claudeConversationSaved({ cwd, sessionId: resumeId, env: process.env }),
+      conversationSaved: (harness, cwd, resumeId) => agentAdapters.capabilities(harness).hibernation.canResume?.(cwd, resumeId) ?? true,
       memory: assistantMemory,
       history: historyReadService,
       launched: (botId) => botRelay.launched(botId),

@@ -153,7 +153,7 @@ async function main(): Promise<void> {
       realtimeAppendText: async (_processId: string, text: string) => { if (appendFailure) throw appendFailure; appended.push(text); },
       onRealtime: (_processId: string, listener: (event: CodexRealtimeEvent) => void) => { realtimeListeners.add(listener); return () => realtimeListeners.delete(listener); }
     };
-    let promptResult: unknown = {};
+    let promptResult: Record<string, unknown> = {};
     const routineDigests: string[] = [];
     const integrated = {
       prompt: async (_processId: string, input: unknown) => { prompts.push(String(input)); return promptResult; },

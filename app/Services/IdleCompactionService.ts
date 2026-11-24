@@ -336,7 +336,7 @@ export class IdleCompactionService {
       select sessions.harness, sessions.session_role as role, processes.activity, processes.cache_compaction as state, processes.cache_idle_since as idle_since,
         processes.cache_compaction_notice as notice
       from processes join sessions on sessions.process_id = processes.id
-      where processes.id = ? and processes.status = 'running' and sessions.interface_mode = 'integrated' and sessions.exited_at is null
+      where processes.id = ? and processes.status = 'running' and sessions.exited_at is null
       order by sessions.started_at desc limit 1
     `).get(processId) as CompactionRow | undefined;
   }

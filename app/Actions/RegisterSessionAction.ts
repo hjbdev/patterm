@@ -24,6 +24,7 @@ export const registerSessionInput = z.object({
   service_tier: z.string().trim().min(1).max(60).nullable().default(null),
   resumed_conversation_id: z.string().nullable().default(null),
   resumed_from_session_id: z.string().min(1).nullable().optional(),
+  runtime_state: z.string().nullable().optional(),
   created_by_actor: z.string().default('user')
 });
 
@@ -49,8 +50,8 @@ export class RegisterSessionAction {
       .prepare(
         `insert into sessions
           (id, project_id, process_id, mcp_identity, harness, interface_mode, session_role, resume_status,
-           resume_id, started_at, cwd, worktree_id, last_title, display_name, model, reasoning, service_tier, created_by_actor, bot_id)
-          values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           resume_id, started_at, cwd, worktree_id, last_title, display_name, model, reasoning, service_tier, created_by_actor, bot_id, runtime_state)
+          values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -71,7 +72,8 @@ export class RegisterSessionAction {
         input.reasoning,
         input.service_tier,
         input.created_by_actor,
-        input.bot_id
+        input.bot_id,
+        input.runtime_state ?? null
       );
 
     if (input.resume_id && (input.resumed_conversation_id || input.resumed_from_session_id || input.resume_status === 'imported')) {

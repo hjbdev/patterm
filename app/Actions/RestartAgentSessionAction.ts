@@ -60,14 +60,13 @@ interface SourceSession {
   name: string;
   activity: string | null;
   status: string;
-  interface_mode: string;
 }
 
 const SOURCE_COLUMNS = `sessions.id as session_id, sessions.project_id, sessions.harness, sessions.model, sessions.reasoning, sessions.service_tier,
   sessions.cwd, sessions.worktree_id, sessions.resume_id, sessions.session_role, sessions.title_set_by_user,
-  sessions.display_name, sessions.last_title, sessions.interface_mode, processes.name, processes.activity, processes.status, processes.id as process_id`;
+  sessions.display_name, sessions.last_title, processes.name, processes.activity, processes.status, processes.id as process_id`;
 const WORKING = 'This agent is working, and restarting would stop its turn. Wait for it to finish or stop the response first.';
-const LIVE_INTEGRATED = `sessions.interface_mode = 'integrated' and sessions.exited_at is null and processes.status = 'running'`;
+const LIVE_INTEGRATED = `sessions.exited_at is null and processes.status = 'running'`;
 
 export class RestartAgentSessionAction {
   private readonly restarting = new Set<string>();
@@ -140,10 +139,9 @@ export class RestartAgentSessionAction {
         throw error;
       }
       try {
-        // The native conversation can only be open in one process, so the
-        // old one stops before the new one resumes it. Historical TUI sessions
-        // have no Integrated host to stop.
-        if (source.interface_mode === 'integrated') await this.processes.stop(processId);
+        // The native conversation can only be open in one process, so a
+        // running one stops before the new one resumes it.
+        if (source.status === 'running') await this.processes.stop(processId);
         launched = await this.launcher.resume({
           harness: source.harness as 'claude' | 'codex' | 'opencode' | 'agy',
           model: source.model,

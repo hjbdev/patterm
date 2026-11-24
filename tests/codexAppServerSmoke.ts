@@ -5,6 +5,7 @@ import path from 'node:path';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import net from 'node:net';
 import { CodexAppServerService, CodexRpcClient, effectiveStatus, snapshotStatus } from '../app/Services/CodexAppServerService';
+import { serializeRuntimeState } from '../app/Agents/SessionRuntimeState';
 import { codexOutputPlaceholder, codexThreadStatus, mergeCodexSeedEvents, projectCodexItem, projectCodexPlan, restoreCodexWindowGap, trimCodexWindow, CODEX_MESSAGE_WINDOW, CODEX_CHILD_WINDOW, type CodexConversationState } from '../app/Services/CodexTranscript';
 import { elicitationForm } from '../app/Services/McpElicitation';
 import { TranscriptImageStore } from '../app/Services/TranscriptImageStore';
@@ -613,8 +614,8 @@ if (socketPath) {
   assert.ok(nativeArgs.includes('service_tier="priority"'), 'Integrated Codex pins the selected service tier before app-server');
   database.connection.prepare(`insert into processes (id,project_id,kind,name,status,cwd,argv,created_at,updated_at) values ('process_test','project_test','agent','Codex','running',?,?,?,?)`)
     .run(directory, JSON.stringify(prepared.argv), now, now);
-  database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor,model,reasoning,service_tier) values ('session_test','project_test','process_test','codex','integrated','identity_test',?,'${now}','orchestrator','found','user','gpt-test','high','priority')`)
-    .run(prepared.resumeId);
+  database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,runtime_state,started_at,session_role,resume_status,created_by_actor,model,reasoning,service_tier) values ('session_test','project_test','process_test','codex','integrated','identity_test',?,?,'${now}','orchestrator','found','user','gpt-test','high','priority')`)
+    .run(prepared.resumeId, serializeRuntimeState(prepared.runtimeState));
 
   const activityChanges: string[] = [];
   const integrated = new IntegratedAgentService(database, { codex: service }, () => activityChanges.push('changed'));
@@ -803,8 +804,8 @@ if (socketPath) {
     const processId = `process_delivery_${launchCount}`;
     database.connection.prepare(`insert into processes (id,project_id,kind,name,status,cwd,argv,created_at,updated_at) values (?, 'project_test','agent','Codex','running',?,?,?,?)`)
       .run(processId, directory, JSON.stringify(launched.argv), now, now);
-    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor) values (?, 'project_test', ?, 'codex','integrated',?,?, ?, 'orchestrator','found','user')`)
-      .run(`session_delivery_${launchCount}`, processId, `identity_delivery_${launchCount}`, launched.resumeId, now);
+    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,runtime_state,started_at,session_role,resume_status,created_by_actor) values (?, 'project_test', ?, 'codex','integrated',?,?,?, ?, 'orchestrator','found','user')`)
+      .run(`session_delivery_${launchCount}`, processId, `identity_delivery_${launchCount}`, launched.resumeId, serializeRuntimeState(launched.runtimeState), now);
     if (!requestTimeoutMs) return { service: launcher, processId };
     launcher.disconnect();
     return { service: new CodexAppServerService(database, runtimeDirectory, mode, process.execPath, undefined, { requestTimeoutMs }), processId };

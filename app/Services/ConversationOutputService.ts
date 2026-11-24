@@ -40,7 +40,6 @@ interface ProcessRow {
   session_id: string | null;
   harness: string | null;
   resume_id: string | null;
-  interface_mode: string | null;
   session_exited_at: string | null;
   cwd: string | null;
 }
@@ -71,7 +70,7 @@ export class ConversationOutputService {
     const input = conversationOutputInput.parse(raw);
     const process = this.process(input.process_id);
     if (!process) throw new Error(`unknown process: ${input.process_id}`);
-    const live = Boolean(this.integrated) && process.interface_mode === 'integrated' && !process.session_exited_at && process.status === 'running';
+    const live = Boolean(this.integrated) && !process.session_exited_at && process.status === 'running';
     const kind = live ? 'live' : 'history';
     const cursor = input.before ? decodeCursor(input.before) : null;
     if (cursor && cursor.k !== kind) throw new Error('get_conversation_output: cursor expired; read again without before');
@@ -209,7 +208,7 @@ export class ConversationOutputService {
     return (this.database.connection.prepare(`
       select processes.id, coalesce(sessions.title, processes.name) as name, processes.project_id, processes.status,
              processes.activity, processes.updated_at, processes.exited_at, sessions.id as session_id, sessions.harness, sessions.resume_id,
-             sessions.interface_mode, sessions.exited_at as session_exited_at, sessions.cwd
+             sessions.exited_at as session_exited_at, sessions.cwd
       from processes left join sessions on sessions.process_id = processes.id
       where processes.id = ?
       order by sessions.started_at desc limit 1

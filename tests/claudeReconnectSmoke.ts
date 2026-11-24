@@ -185,7 +185,7 @@ async function main(): Promise<void> {
     await delay(400);
     boundary.append(' B');
     await delay(30);
-    const snapshot = await boundary.service.conversation('process_test') as { revision: number; messages: { data: Array<Record<string, unknown>> } };
+    const snapshot = await boundary.service.conversation('process_test') as unknown as { revision: number; messages: { data: Array<Record<string, unknown>> } };
     const delta = boundary.events.filter((event) => event.kind === 'append').at(-1)!;
     assert.equal(snapshot.messages.data[0]?.text, 'Hello B', 'the snapshot contains the append');
     assert.equal(delta.revision, snapshot.revision, 'the forwarded append shares the snapshot revision');

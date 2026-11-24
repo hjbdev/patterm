@@ -8,6 +8,7 @@ import path from 'node:path';
 import { CloseProcessAction } from '../app/Actions/CloseProcessAction';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import { ClaudeStreamService } from '../app/Services/ClaudeStreamService';
+import { serializeRuntimeState } from '../app/Agents/SessionRuntimeState';
 import { ClaudeHistoryAdapter } from '../app/Services/AgentHistory/ClaudeHistoryAdapter';
 import { quietReplyDirectory } from '../app/Services/ClaudeQuietReplies';
 import { TranscriptImageStore } from '../app/Services/TranscriptImageStore';
@@ -477,14 +478,14 @@ process.stdin.on('data', (chunk) => {
     assert.match(prepared.resumeId, /^[0-9a-f-]{36}$/);
     database.connection.prepare(`insert into processes (id,project_id,kind,name,status,cwd,argv,created_at,updated_at) values ('process_test','project_test','agent','Claude','running',?,?,?,?)`)
       .run(directory, JSON.stringify(prepared.argv), now, now);
-    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor) values ('session_test','project_test','process_test','claude','integrated','identity_test',?,?, 'orchestrator','found','user')`)
-      .run(prepared.resumeId, now);
+    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,runtime_state,started_at,session_role,resume_status,created_by_actor) values ('session_test','project_test','process_test','claude','integrated','identity_test',?,?,?, 'orchestrator','found','user')`)
+      .run(prepared.resumeId, serializeRuntimeState(prepared.runtimeState), now);
 
     // A viewer can disappear with host replies still unread. Losing that
     // socket must not end the native conversation or prevent a new viewer.
     for (let attempt = 0; attempt < 8; attempt++) {
       await new Promise<void>((resolve, reject) => {
-        const socket = net.createConnection(ipcPath(prepared.argv[2]!));
+        const socket = net.createConnection(ipcPath(prepared.runtimeState!.socketPath!));
         socket.once('error', reject);
         socket.once('close', () => resolve());
         socket.once('connect', () => {
@@ -779,8 +780,8 @@ process.stdin.on('data', (chunk) => {
     });
     database.connection.prepare(`insert into processes (id,project_id,kind,name,status,cwd,argv,created_at,updated_at) values ('process_delayed','project_test','agent','Claude delayed','running',?,?,?,?)`)
       .run(directory, JSON.stringify(delayedPrepared.argv), now, now);
-    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor) values ('session_delayed','project_test','process_delayed','claude','integrated','identity_delayed',?,?, 'orchestrator','found','user')`)
-      .run(delayedPrepared.resumeId, now);
+    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,runtime_state,started_at,session_role,resume_status,created_by_actor) values ('session_delayed','project_test','process_delayed','claude','integrated','identity_delayed',?,?,?, 'orchestrator','found','user')`)
+      .run(delayedPrepared.resumeId, serializeRuntimeState(delayedPrepared.runtimeState), now);
     const delayedId = '88888888-8888-8888-8888-888888888888';
     await delayedService.prompt('process_delayed', { text: 'delayed ack', references: [], attachments: [], messageId: delayedId });
     assert.equal(await delayedService.reconcile('process_delayed', delayedId), 'unknown', 'a local write is not native acceptance');
@@ -799,8 +800,8 @@ process.stdin.on('data', (chunk) => {
     });
     database.connection.prepare(`insert into processes (id,project_id,kind,name,status,cwd,argv,created_at,updated_at) values ('process_memory','project_test','agent','Claude bot','running',?,?,?,?)`)
       .run(directory, JSON.stringify(memoryPrepared.argv), now, now);
-    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,started_at,session_role,bot_id,resume_status,created_by_actor) values ('session_memory','project_test','process_memory','claude','integrated','identity_memory',?,?, 'bot','fable','found','user')`)
-      .run(memoryPrepared.resumeId, now);
+    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,runtime_state,started_at,session_role,bot_id,resume_status,created_by_actor) values ('session_memory','project_test','process_memory','claude','integrated','identity_memory',?,?,?, 'bot','fable','found','user')`)
+      .run(memoryPrepared.resumeId, serializeRuntimeState(memoryPrepared.runtimeState), now);
     await waitFor(() => fs.existsSync(memoryArgvPath));
     const memoryArgv = JSON.parse(fs.readFileSync(memoryArgvPath, 'utf8')) as string[];
     if (process.platform === 'win32') {
@@ -845,8 +846,8 @@ process.stdin.on('data', (chunk) => {
     });
     database.connection.prepare(`insert into processes (id,project_id,kind,name,status,cwd,argv,created_at,updated_at) values ('process_control','project_test','agent','Claude control','running',?,?,?,?)`)
       .run(directory, JSON.stringify(controlPrepared.argv), now, now);
-    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor) values ('session_control','project_test','process_control','claude','integrated','identity_control',?,?, 'orchestrator','found','user')`)
-      .run(controlPrepared.resumeId, now);
+    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,runtime_state,started_at,session_role,resume_status,created_by_actor) values ('session_control','project_test','process_control','claude','integrated','identity_control',?,?,?, 'orchestrator','found','user')`)
+      .run(controlPrepared.resumeId, serializeRuntimeState(controlPrepared.runtimeState), now);
     await controlService.prompt('process_control', { text: 'ask', references: [], attachments: [] });
     const controlled = await waitForConversation(controlService, 'process_control', /resp_hook_1/) as {
       status: string; permissions: { data: Array<{ id: string; action: string }> }; forms: { data: Array<{ id: string; title: string; detail: string; declinable: boolean; fields: Array<{ key: string; options: unknown[] }> }> }; messages: { data: Array<{ id: string; text: string }> }
@@ -888,8 +889,8 @@ process.stdin.on('data', (chunk) => {
     });
     database.connection.prepare(`insert into processes (id,project_id,kind,name,status,cwd,argv,created_at,updated_at) values ('process_notices','project_test','agent','Claude notices','running',?,?,?,?)`)
       .run(directory, JSON.stringify(noticePrepared.argv), now, now);
-    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor) values ('session_notices','project_test','process_notices','claude','integrated','identity_notices',?,?, 'orchestrator','found','user')`)
-      .run(noticePrepared.resumeId, now);
+    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,runtime_state,started_at,session_role,resume_status,created_by_actor) values ('session_notices','project_test','process_notices','claude','integrated','identity_notices',?,?,?, 'orchestrator','found','user')`)
+      .run(noticePrepared.resumeId, serializeRuntimeState(noticePrepared.runtimeState), now);
     const noticeEvents: Array<{ kind: string; message?: { text?: string } }> = [];
     const releaseNotices = await noticeService.subscribe('process_notices', (event) => noticeEvents.push(event as { kind: string; message?: { text?: string } }));
     cleanup.push(releaseNotices);
@@ -932,8 +933,8 @@ process.stdin.on('data', (chunk) => {
     });
     database.connection.prepare(`insert into processes (id,project_id,kind,name,status,cwd,argv,created_at,updated_at) values ('process_trim','project_test','agent','Claude trim','running',?,?,?,?)`)
       .run(directory, JSON.stringify(trimPrepared.argv), now, now);
-    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor) values ('session_trim','project_test','process_trim','claude','integrated','identity_trim',?,?, 'orchestrator','found','user')`)
-      .run(trimPrepared.resumeId, now);
+    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,runtime_state,started_at,session_role,resume_status,created_by_actor) values ('session_trim','project_test','process_trim','claude','integrated','identity_trim',?,?,?, 'orchestrator','found','user')`)
+      .run(trimPrepared.resumeId, serializeRuntimeState(trimPrepared.runtimeState), now);
     await trimService.prompt('process_trim', { text: 'delegate', references: [], attachments: [] });
     const trimView = await waitForConversation(trimService, 'process_trim', /"status":"idle"/) as { messages: { data: Array<{ id: string; parentId?: string }> } };
     const trimmed = new Set(trimView.messages.data.map((row) => row.id));
@@ -952,8 +953,8 @@ process.stdin.on('data', (chunk) => {
     });
     database.connection.prepare(`insert into processes (id,project_id,kind,name,status,cwd,argv,created_at,updated_at) values ('process_subagent','project_test','agent','Claude subagent','running',?,?,?,?)`)
       .run(directory, JSON.stringify(subagentPrepared.argv), now, now);
-    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor) values ('session_subagent','project_test','process_subagent','claude','integrated','identity_subagent',?,?, 'orchestrator','found','user')`)
-      .run(subagentPrepared.resumeId, now);
+    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,runtime_state,started_at,session_role,resume_status,created_by_actor) values ('session_subagent','project_test','process_subagent','claude','integrated','identity_subagent',?,?,?, 'orchestrator','found','user')`)
+      .run(subagentPrepared.resumeId, serializeRuntimeState(subagentPrepared.runtimeState), now);
     await subagentService.prompt('process_subagent', { text: 'delegate', references: [], attachments: [] });
     const nestedView = await waitForConversation(subagentService, 'process_subagent', /"status":"idle"/) as { messages: { data: Array<{ id: string; parentId?: string; text: string; tool?: { input?: unknown; state?: { status?: string } } }> } };
     const byId = new Map(nestedView.messages.data.map((row) => [row.id, row]));
@@ -992,8 +993,8 @@ process.stdin.on('data', (chunk) => {
     });
     database.connection.prepare(`insert into processes (id,project_id,kind,name,status,cwd,argv,created_at,updated_at) values ('process_error','project_test','agent','Claude error','running',?,?,?,?)`)
       .run(directory, JSON.stringify(errorPrepared.argv), now, now);
-    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor) values ('session_error','project_test','process_error','claude','integrated','identity_error',?,?, 'orchestrator','found','user')`)
-      .run(errorPrepared.resumeId, now);
+    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,runtime_state,started_at,session_role,resume_status,created_by_actor) values ('session_error','project_test','process_error','claude','integrated','identity_error',?,?,?, 'orchestrator','found','user')`)
+      .run(errorPrepared.resumeId, serializeRuntimeState(errorPrepared.runtimeState), now);
     await errorService.prompt('process_error', { text: 'fail', references: [], attachments: [] });
     const errored = await waitForConversation(errorService, 'process_error', /credential expired/);
     assert.equal(errored.status, 'error', 'a failed native turn reports error');
@@ -1009,8 +1010,8 @@ process.stdin.on('data', (chunk) => {
     });
     database.connection.prepare(`insert into processes (id,project_id,kind,name,status,cwd,argv,created_at,updated_at) values ('process_interrupt','project_test','agent','Claude interrupt','running',?,?,?,?)`)
       .run(directory, JSON.stringify(interruptPrepared.argv), now, now);
-    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor) values ('session_interrupt','project_test','process_interrupt','claude','integrated','identity_interrupt',?,?, 'orchestrator','found','user')`)
-      .run(interruptPrepared.resumeId, now);
+    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,runtime_state,started_at,session_role,resume_status,created_by_actor) values ('session_interrupt','project_test','process_interrupt','claude','integrated','identity_interrupt',?,?,?, 'orchestrator','found','user')`)
+      .run(interruptPrepared.resumeId, serializeRuntimeState(interruptPrepared.runtimeState), now);
     await interruptService.prompt('process_interrupt', { text: 'stall', references: [], attachments: [] });
     await waitForConversation(interruptService, 'process_interrupt', /toolu_stall/);
     await interruptService.interrupt('process_interrupt');
@@ -1043,8 +1044,8 @@ process.stdin.on('data', (chunk) => {
       const processId = `process_activity_${name}`;
       database.connection.prepare(`insert into processes (id,project_id,kind,name,status,cwd,argv,created_at,updated_at) values (?,'project_test','agent',?,'running',?,?,?,?)`)
         .run(processId, name, directory, JSON.stringify(launched.argv), now, now);
-      database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor) values (?,'project_test',?,'claude','integrated',?,?,?, 'orchestrator','found','user')`)
-        .run(`session_activity_${name}`, processId, `identity_activity_${name}`, launched.resumeId, now);
+      database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,runtime_state,started_at,session_role,resume_status,created_by_actor) values (?,'project_test',?,'claude','integrated',?,?,?,?, 'orchestrator','found','user')`)
+        .run(`session_activity_${name}`, processId, `identity_activity_${name}`, launched.resumeId, serializeRuntimeState(launched.runtimeState), now);
       const activityEvents: IntegratedConversationEvent[] = [];
       const releaseActivity = await activityService.subscribe(processId, (event) => activityEvents.push(event));
       cleanup.push(releaseActivity);
@@ -1331,8 +1332,8 @@ process.stdin.on('data', (chunk) => {
     });
     database.connection.prepare(`insert into processes (id,project_id,kind,name,status,cwd,argv,created_at,updated_at) values ('process_dying','project_test','agent','Claude dying','running',?,?,?,?)`)
       .run(directory, JSON.stringify(dyingPrepared.argv), now, now);
-    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,started_at,session_role,resume_status,created_by_actor) values ('session_dying','project_test','process_dying','claude','integrated','identity_dying',?,?, 'orchestrator','found','user')`)
-      .run(dyingPrepared.resumeId, now);
+    database.connection.prepare(`insert into sessions (id,project_id,process_id,harness,interface_mode,mcp_identity,resume_id,runtime_state,started_at,session_role,resume_status,created_by_actor) values ('session_dying','project_test','process_dying','claude','integrated','identity_dying',?,?,?, 'orchestrator','found','user')`)
+      .run(dyingPrepared.resumeId, serializeRuntimeState(dyingPrepared.runtimeState), now);
     await dyingService.prompt('process_dying', { text: 'die', references: [], attachments: [] });
     let dyingState: Record<string, unknown> = {};
     for (let attempt = 0; attempt < 100; attempt++) {
@@ -1390,12 +1391,12 @@ process.stdin.on('data', (chunk) => {
     const reconnected = new ClaudeStreamService(database, runtimeDirectory, process.execPath, process.env, undefined, hosts);
     assert.match(JSON.stringify(await reconnected.conversation('process_test')), /Native Claude reply/);
     await reconnected.stop('process_test');
-    await hosts.waitForExit(Number(prepared.argv[3]));
+    await hosts.waitForExit(Number(prepared.runtimeState!.pid));
     // A host that has ended reports a resumable state, not a raw socket error.
     // A named pipe leaves no file behind, so Windows waits for it to close.
     if (process.platform === 'win32') {
-      for (let attempt = 0; attempt < 100 && await integratedHostListening(prepared.argv[2]!); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
-    } else await waitFor(() => !fs.existsSync(prepared.argv[2]!));
+      for (let attempt = 0; attempt < 100 && await integratedHostListening(prepared.runtimeState!.socketPath!); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+    } else await waitFor(() => !fs.existsSync(prepared.runtimeState!.socketPath!));
     await assert.rejects(reconnected.conversation('process_test'), /host is no longer running\. Resume the conversation to continue\./);
   } finally {
     for (const dispose of cleanup.reverse()) dispose();

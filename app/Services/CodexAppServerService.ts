@@ -4,8 +4,19 @@ import net from 'node:net';
 import path from 'node:path';
 import { awaitingActivity, awaitingUser } from './Activity';
 import type { DatabaseService } from './DatabaseService';
-import { detachedHostLauncher, hostConnectionError, integratedHostReady, stopHostProcess, stopRecordedHostProcess, type IntegratedHostLauncher } from './IntegratedHostLauncher';
-import type { IntegratedControls, IntegratedFormAction, IntegratedLaunchInput, IntegratedLaunchResult, ReviewPrompt } from './IntegratedAgentService';
+import { detachedHostLauncher, hostConnectionError, stopHostProcess, stopRecordedHostProcess, type IntegratedHostLauncher } from './IntegratedHostLauncher';
+import {
+  defaultAgentCapabilities,
+  type AgentAdapter,
+  type AgentCapabilities,
+  type AgentConversationSnapshot,
+  type AgentLaunchInput,
+  type AgentLaunchResult,
+  type AgentOlderMessagesPage
+} from '../Agents/AgentProtocol';
+import { resolveSessionRuntimeState } from '../Agents/SessionRuntimeState';
+import { HOST_RECONNECT_ATTEMPTS, HOST_RECONNECT_BASE_MS, HOST_RECONNECT_MAX_MS, waitForHostSocket } from '../Runtime/SupervisedHostClient';
+import type { IntegratedControls, IntegratedFormAction, ReviewPrompt } from './IntegratedAgentService';
 import { elicitationContent, elicitationForm, type ElicitationForm } from './McpElicitation';
 import { TurnBusyError, UncertainDeliveryError, type IntegratedDeliveryState } from './IntegratedDelivery';
 import type { ResolvedIntegratedPrompt } from './IntegratedInput';
@@ -96,9 +107,10 @@ interface CodexChannel {
   descendants: Set<string>;
 }
 
-const RECONNECT_BASE_MS = 250;
-const RECONNECT_MAX_MS = 5_000;
-const RECONNECT_ATTEMPTS = 8;
+const RECONNECT_BASE_MS = HOST_RECONNECT_BASE_MS;
+const RECONNECT_MAX_MS = HOST_RECONNECT_MAX_MS;
+const RECONNECT_ATTEMPTS = HOST_RECONNECT_ATTEMPTS;
+const CODEX_CACHE_TTL_MS = 27 * 60_000;
 const CODEX_OLDER_PAGE = 50;
 const CODEX_CHILD_THREADS = 8;
 // Notifications consumed outside the channel projection (turn tracking, usage,
@@ -115,7 +127,32 @@ const REALTIME_ANSWER_MS = 20_000;
 // Newest subagent items the task drawer shows; the app-server caps a page at 100.
 const CODEX_TASK_ITEMS = 100;
 
-export class CodexAppServerService {
+export const CODEX_CAPABILITIES: AgentCapabilities = defaultAgentCapabilities({
+  hostKind: 'supervised-socket',
+  hibernation: { supported: true },
+  archiveFallback: 'when-unavailable',
+  input: { steering: true, nativeQueue: false, configureWhileBusy: true, routineDigest: false },
+  interactions: { permissions: true, questions: true, forms: true, parentReadAutoApprove: false },
+  features: {
+    goals: true,
+    compact: true,
+    slashCommands: true,
+    memoryPush: true,
+    quietReplies: false,
+    voice: true,
+    statelessGenerate: false,
+    serviceTier: true,
+    liveModels: true,
+    sessionDirectory: false,
+    olderMessages: true
+  },
+  selectors: { reasoning: 'effort', speed: 'speed' },
+  compaction: { defaultCacheTtlMs: CODEX_CACHE_TTL_MS }
+});
+
+export class CodexAppServerService implements AgentAdapter {
+  readonly id = 'codex';
+  readonly capabilities = CODEX_CAPABILITIES;
   // Threads that compacted, and app-servers reconnected after a drop, since
   // memory last reached them: either may have lost memory Patterm injected,
   // so their next update is the whole memory. Kept here, not on the
@@ -166,7 +203,7 @@ export class CodexAppServerService {
     return message ? [{ ...message, ...codexTimes(value.startedAtMs, value.completedAtMs) }] : [];
   };
 
-  async prepare(input: IntegratedLaunchInput): Promise<IntegratedLaunchResult> {
+  async prepare(input: AgentLaunchInput): Promise<AgentLaunchResult> {
     const directory = path.join(this.runtimeDir, 'codex');
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     const key = randomUUID();
@@ -194,7 +231,10 @@ export class CodexAppServerService {
     const pid = await (this.options.launcher ?? detachedHostLauncher).launch({ harness: 'codex', key, nodePath: this.nodePath, script: this.hostScript, configPath, cwd: input.cwd, env: { ...this.env, ...CODEX_MCP_PROXY_ENV } });
 
     try {
-      await waitForSocket(socketPath, pid);
+      await waitForHostSocket(socketPath, pid, {
+        exitedMessage: 'Codex app-server exited during startup',
+        timeoutMessage: 'Codex app-server did not create its control socket'
+      });
       const client = await this.connect(socketPath);
       const response = await client.request(input.resumeId ? 'thread/resume' : 'thread/start', input.resumeId
         ? { threadId: input.resumeId, cwd: input.cwd, developerInstructions: input.context, approvalPolicy: 'on-request', approvalsReviewer: 'auto_review', excludeTurns: true, ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}) }
@@ -203,7 +243,8 @@ export class CodexAppServerService {
       if (typeof thread.id !== 'string') throw new Error('Codex app-server did not return a thread ID');
       return {
         resumeId: thread.id,
-        argv: [input.executable, 'app-server', socketPath, String(pid ?? ''), configPath]
+        argv: [input.executable],
+        runtimeState: { hostKind: 'app-server', executable: input.executable, socketPath, pid, configPath }
       };
     } catch (error) {
       const detail = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8').trim().slice(-4_000) : '';
@@ -218,7 +259,7 @@ export class CodexAppServerService {
     }
   }
 
-  async conversation(processId: string): Promise<unknown> {
+  async conversation(processId: string): Promise<AgentConversationSnapshot> {
     const runtime = this.runtime(processId);
     const client = await this.client(runtime);
     const channel = this.channels.get(processId);
@@ -327,16 +368,16 @@ export class CodexAppServerService {
     return client.goals.goal(threadId);
   }
 
-  async goal(processId: string, action: IntegratedGoalAction, objective?: string): Promise<unknown> {
+  async goal(processId: string, action: IntegratedGoalAction, objective?: string): Promise<Record<string, unknown>> {
     const runtime = this.runtime(processId);
     const client = await this.client(runtime);
     const threadId = runtime.threadId;
-    if (action === 'clear') return client.request('thread/goal/clear', { threadId, origin: 'user' });
+    if (action === 'clear') return record(await client.request('thread/goal/clear', { threadId, origin: 'user' }));
     if (action === 'set') {
       if (!objective) throw new Error('Describe the goal after /goal');
-      return client.request('thread/goal/set', { threadId, objective, status: 'active', origin: 'user' });
+      return record(await client.request('thread/goal/set', { threadId, objective, status: 'active', origin: 'user' }));
     }
-    return client.request('thread/goal/set', { threadId, status: action === 'pause' ? 'paused' : 'active', origin: 'user' });
+    return record(await client.request('thread/goal/set', { threadId, status: action === 'pause' ? 'paused' : 'active', origin: 'user' }));
   }
 
   // Readers that arrive while a refresh runs wait for the same one, so none
@@ -357,7 +398,7 @@ export class CodexAppServerService {
   }
 
   // Pages backwards from a snapshot's cursor, oldest page last.
-  async olderMessages(processId: string, cursor: string): Promise<unknown> {
+  async olderMessages(processId: string, cursor: string): Promise<AgentOlderMessagesPage> {
     const runtime = this.runtime(processId);
     const client = await this.client(runtime);
     const response = record(await client.request('thread/items/list', {
@@ -1055,9 +1096,9 @@ export class CodexAppServerService {
     else this.efforts.set(processId, value);
   }
 
-  async compact(processId: string): Promise<unknown> {
+  async compact(processId: string): Promise<Record<string, unknown>> {
     const runtime = this.runtime(processId);
-    return (await this.client(runtime)).request('thread/compact/start', { threadId: runtime.threadId });
+    return record(await (await this.client(runtime)).request('thread/compact/start', { threadId: runtime.threadId }));
   }
 
   // Codex records when each turn started, and a running turn is activity
@@ -1075,7 +1116,7 @@ export class CodexAppServerService {
     return Array.isArray(latest.data) ? record(latest.data[0]) : {};
   }
 
-  async command(processId: string, name: string, text: string): Promise<unknown> {
+  async command(processId: string, name: string, text: string): Promise<Record<string, unknown>> {
     const runtime = this.runtime(processId);
     const client = await this.client(runtime);
     const argument = text.trim();
@@ -1090,10 +1131,10 @@ export class CodexAppServerService {
       this.tiers.set(processId, enable ? fast.value : 'default');
       return { speed: enable ? fast.value : 'default' };
     }
-    if (name === 'review') return client.request('review/start', { threadId: runtime.threadId, target: reviewTarget(argument), delivery: 'inline' });
+    if (name === 'review') return record(await client.request('review/start', { threadId: runtime.threadId, target: reviewTarget(argument), delivery: 'inline' }));
     if (name === 'rename') {
       if (!argument) throw new Error('Give the new name after /rename');
-      return client.request('thread/name/set', { threadId: runtime.threadId, name: argument });
+      return record(await client.request('thread/name/set', { threadId: runtime.threadId, name: argument }));
     }
     if (name === 'goal') {
       const { action, objective } = goalCommand(argument);
@@ -1101,7 +1142,7 @@ export class CodexAppServerService {
     }
     if (name === 'shell') {
       if (!argument) throw new Error('Give a shell command after /shell');
-      return client.request('thread/shellCommand', { threadId: runtime.threadId, command: argument });
+      return record(await client.request('thread/shellCommand', { threadId: runtime.threadId, command: argument }));
     }
     if (name === 'undo') {
       const turn = await this.latestTurn(client, runtime.threadId);
@@ -1111,7 +1152,7 @@ export class CodexAppServerService {
       // The history changed underneath the live projection; read it again.
       const channel = this.channels.get(processId);
       if (channel && !channel.closed) this.reattach(channel, client);
-      return result;
+      return record(result);
     }
     throw new Error('Unknown Codex slash command');
   }
@@ -1369,14 +1410,14 @@ export class CodexAppServerService {
     }
   }
 
-  async cleanupLaunch(_input: IntegratedLaunchInput, result: IntegratedLaunchResult): Promise<void> {
-    await stopRuntime(result.argv, this.options.launcher);
+  async cleanupLaunch(_input: AgentLaunchInput, result: AgentLaunchResult): Promise<void> {
+    await stopRuntime(result, this.options.launcher);
   }
 
   async stopAll(): Promise<void> {
     const rows = this.database.connection.prepare(`
       select processes.id from processes join sessions on sessions.process_id = processes.id
-      where sessions.harness = 'codex' and sessions.interface_mode = 'integrated' and sessions.exited_at is null
+      where sessions.harness = 'codex' and sessions.exited_at is null
     `).all() as Array<{ id: string }>;
     const results = await Promise.allSettled(rows.map(async (row) => {
       // A missing or unresponsive host cannot acknowledge an interrupt.
@@ -1418,19 +1459,28 @@ export class CodexAppServerService {
 
   private runtime(processId: string): CodexRuntime {
     const row = this.database.connection.prepare(`
-      select processes.argv, sessions.resume_id, sessions.id as session_id, sessions.model, sessions.reasoning, sessions.service_tier
+      select processes.argv, sessions.runtime_state, sessions.resume_id, sessions.id as session_id, sessions.model, sessions.reasoning, sessions.service_tier
       from sessions join processes on processes.id = sessions.process_id
       where (sessions.process_id = ? or sessions.id = ?) and sessions.harness = 'codex'
-        and sessions.interface_mode = 'integrated' and sessions.resume_id is not null
+        and sessions.resume_id is not null
       order by sessions.exited_at is null desc, sessions.started_at desc limit 1
-    `).get(processId, processId) as { argv: string; resume_id: string; session_id: string; model: string | null; reasoning: string | null; service_tier: string | null } | undefined;
+    `).get(processId, processId) as { argv: string | null; runtime_state: string | null; resume_id: string; session_id: string; model: string | null; reasoning: string | null; service_tier: string | null } | undefined;
     if (!row) throw new Error('Codex Integrated session not found');
-    const argv = JSON.parse(row.argv) as unknown;
-    if (!Array.isArray(argv) || argv[1] !== 'app-server' || typeof argv[0] !== 'string' || typeof argv[2] !== 'string') {
+    const state = resolveSessionRuntimeState(row.runtime_state, row.argv);
+    if (state.hostKind !== 'app-server' || !state.socketPath) {
       throw new Error('Codex Integrated runtime metadata is invalid');
     }
-    const pid = typeof argv[3] === 'string' && /^\d+$/.test(argv[3]) ? Number(argv[3]) : null;
-    return { executable: argv[0], socketPath: argv[2], pid, configPath: typeof argv[4] === 'string' ? argv[4] : null, threadId: row.resume_id, sessionId: row.session_id, model: row.model, reasoning: row.reasoning, serviceTier: row.service_tier };
+    return {
+      executable: state.executable ?? 'codex',
+      socketPath: state.socketPath,
+      pid: state.pid ?? null,
+      configPath: state.configPath ?? null,
+      threadId: row.resume_id,
+      sessionId: row.session_id,
+      model: row.model,
+      reasoning: row.reasoning,
+      serviceTier: row.service_tier
+    };
   }
 
   private async client(runtime: CodexRuntime): Promise<CodexRpcClient> {
@@ -1852,7 +1902,7 @@ export class CodexRpcClient {
   }
 }
 
-function codexMcpOverrides(mcp: IntegratedLaunchInput['mcp']): string[] {
+function codexMcpOverrides(mcp: AgentLaunchInput['mcp']): string[] {
   return [
     `mcp_servers.patterm.command=${JSON.stringify(mcp.command)}`,
     `mcp_servers.patterm.args=[${mcp.args.map((value) => JSON.stringify(value)).join(',')}]`,
@@ -2142,26 +2192,16 @@ function record(value: unknown): JsonRecord {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as JsonRecord : {};
 }
 
-async function waitForSocket(socketPath: string, pid: number | null): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if (await integratedHostReady(socketPath)) return;
-    if (pid) {
-      try { process.kill(pid, 0); } catch { throw new Error('Codex app-server exited during startup'); }
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error('Codex app-server did not create its control socket');
-}
-
-async function stopRuntime(argv: string[], launcher?: IntegratedHostLauncher): Promise<void> {
-  const socketPath = typeof argv[2] === 'string' ? argv[2] : '';
-  const pid = typeof argv[3] === 'string' && /^\d+$/.test(argv[3]) ? Number(argv[3]) : null;
+async function stopRuntime(result: AgentLaunchResult, launcher?: IntegratedHostLauncher): Promise<void> {
+  const socketPath = result.runtimeState?.socketPath ?? (typeof result.argv[2] === 'string' ? result.argv[2] : '');
+  const pid = result.runtimeState?.pid ?? (typeof result.argv[3] === 'string' && /^\d+$/.test(result.argv[3]) ? Number(result.argv[3]) : null);
+  const configPath = result.runtimeState?.configPath ?? (typeof result.argv[4] === 'string' ? result.argv[4] : null);
   if (launcher?.stop && socketPath) await launcher.stop(socketPath, pid);
   else await stopHostProcess(pid);
   if (socketPath) {
     try { fs.unlinkSync(socketPath); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   }
-  removeForcedHostConfig(typeof argv[4] === 'string' ? argv[4] : null);
+  removeForcedHostConfig(configPath);
 }
 
 // A POSIX host removes its launch config as SIGTERM stops it. A Windows host

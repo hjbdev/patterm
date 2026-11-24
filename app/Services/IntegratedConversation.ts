@@ -87,10 +87,10 @@ export interface IntegratedTask {
 export type IntegratedTaskOutput =
   | { format: 'missing'; version: null }
   | { format: 'unchanged'; version: string }
-  | { format: 'messages'; version: string; messages: unknown[]; cursor: string | null }
+  | { format: 'messages'; version: string; messages: IntegratedConversationMessage[]; cursor: string | null }
   | { format: 'text'; version: string; text: string; truncated: boolean };
 
-export function messagesTaskOutput(messages: unknown[], cursor: string | null, since?: string | null): IntegratedTaskOutput {
+export function messagesTaskOutput(messages: IntegratedConversationMessage[], cursor: string | null, since?: string | null): IntegratedTaskOutput {
   const version = outputVersion([messages, cursor]);
   return since === version ? { format: 'unchanged', version } : { format: 'messages', version, messages, cursor };
 }

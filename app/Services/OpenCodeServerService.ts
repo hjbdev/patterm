@@ -10,7 +10,18 @@ import type { DatabaseService } from './DatabaseService';
 import { firstSemver, type McpServerSpec } from '../Harness/HarnessProvider';
 import { openCodeMcpConfigs } from '../Harness/McpDelivery';
 import { openCodeProviderNames } from '../Harness/ModelCatalog';
-import type { IntegratedControls, IntegratedFormAction, IntegratedLaunchInput, IntegratedLaunchResult, LiveSettings, ReviewPrompt } from './IntegratedAgentService';
+import type { IntegratedControls, IntegratedFormAction, LiveSettings, ReviewPrompt } from './IntegratedAgentService';
+import {
+  defaultAgentCapabilities,
+  type AgentAdapter,
+  type AgentCapabilities,
+  type AgentConversationSnapshot,
+  type AgentLaunchInput,
+  type AgentLaunchResult,
+  type AgentOlderMessagesPage
+} from '../Agents/AgentProtocol';
+import { clientMessageIdFromOpenCodeId, projectOpenCodeRows, resolveOpenCodeToolIdentity } from '../Agents/OpenCodeProjection';
+import { resolveSessionRuntimeState } from '../Agents/SessionRuntimeState';
 import { OPENCODE_VERSION_MISMATCH } from './OpenCodeServiceErrors';
 import { UncertainDeliveryError, type IntegratedDeliveryState } from './IntegratedDelivery';
 import type { ResolvedIntegratedPrompt } from './IntegratedInput';
@@ -165,9 +176,37 @@ export function openCodeBridgeName(mcp: McpServerSpec): string {
   return `patterm_${createHash('sha256').update(mcp.env.PATTERM_MCP_SOCKET ?? '').digest('hex').slice(0, 12)}`;
 }
 
+export const OPENCODE_CAPABILITIES: AgentCapabilities = defaultAgentCapabilities({
+  hostKind: 'external-daemon',
+  hibernation: { supported: false },
+  archiveFallback: 'never',
+  input: { steering: true, nativeQueue: true, configureWhileBusy: true, routineDigest: false },
+  interactions: { permissions: true, questions: false, forms: true, parentReadAutoApprove: false },
+  features: {
+    goals: true,
+    compact: true,
+    slashCommands: true,
+    memoryPush: true,
+    quietReplies: false,
+    voice: false,
+    statelessGenerate: true,
+    serviceTier: false,
+    liveModels: true,
+    sessionDirectory: true,
+    olderMessages: true
+  },
+  selectors: { reasoning: 'variant' },
+  compaction: {
+    defaultCacheTtlMs: 27 * 60_000,
+    modelCacheTtlMs: (model) => model && /anthropic|claude/i.test(model) ? 57 * 60_000 : 27 * 60_000
+  }
+});
+
 // OpenCode owns its shared daemon. Patterm registers a runtime-only MCP bridge
 // and durable per-session context; it never edits the user's OpenCode config.
-export class OpenCodeServerService {
+export class OpenCodeServerService implements AgentAdapter {
+  readonly id = 'opencode';
+  readonly capabilities = OPENCODE_CAPABILITIES;
   private readonly token: string;
   private readonly selections = new Map<string, { agent?: string; model?: string; variant?: string }>();
   // Digests of the server configs installed per directory, never the configs:
@@ -385,7 +424,7 @@ export class OpenCodeServerService {
     const listing = record(await this.api(runtime.executable, runtime.cwd, 'GET', route));
     const rows = Array.isArray(listing.data) ? listing.data as unknown[] : [];
     const next = record(listing.cursor).next;
-    return messagesTaskOutput(this.withStoredImages([...rows].reverse()), rows.length >= OPENCODE_TASK_PAGE && typeof next === 'string' ? next : null, since);
+    return messagesTaskOutput(projectOpenCodeRows(this.withStoredImages([...rows].reverse())), rows.length >= OPENCODE_TASK_PAGE && typeof next === 'string' ? next : null, since);
   }
 
   // The daemon keeps a shell and its output file until it is removed, which
@@ -935,7 +974,8 @@ export class OpenCodeServerService {
       const item = record(data.item);
       const payload = record(item.payload);
       if (inboxID && item.type === 'user' && typeof payload.text === 'string') {
-        emit({ kind: 'replace', message: { id: inboxID, role: 'user', kind: 'text', text: payload.text, createdAt: at, completedAt: at } });
+        const clientMessageId = clientMessageIdFromOpenCodeId(inboxID);
+        emit({ kind: 'replace', message: { id: inboxID, ...(clientMessageId ? { clientMessageId } : {}), role: 'user', kind: 'text', text: payload.text, createdAt: at, completedAt: at } });
       }
       return;
     }
@@ -1162,7 +1202,10 @@ export class OpenCodeServerService {
       const inboxID = typeof data.inboxID === 'string' ? data.inboxID : '';
       const item = record(data.item);
       const payload = record(item.payload);
-      if (inboxID && item.type === 'user' && typeof payload.text === 'string') nested({ kind: 'replace', message: { id: inboxID, role: 'user', kind: 'text', text: payload.text, createdAt: at, completedAt: at } });
+      if (inboxID && item.type === 'user' && typeof payload.text === 'string') {
+        const clientMessageId = clientMessageIdFromOpenCodeId(inboxID);
+        nested({ kind: 'replace', message: { id: inboxID, ...(clientMessageId ? { clientMessageId } : {}), role: 'user', kind: 'text', text: payload.text, createdAt: at, completedAt: at } });
+      }
     }
   }
 
@@ -1327,15 +1370,16 @@ export class OpenCodeServerService {
   private emitRow(row: OpenCodeRow, emit: (event: Omit<IntegratedConversationEvent, 'processId' | 'revision'>) => void): void {
     const times = { ...(row.createdAt ? { createdAt: row.createdAt } : {}), ...(row.completedAt ? { completedAt: row.completedAt } : {}) };
     if (row.kind === 'tool') {
+      const name = row.name ?? 'Tool';
       emit({
         kind: 'replace',
         message: {
           id: row.rowId,
           role: 'assistant',
           kind: 'tool',
-          title: row.name ?? 'Tool',
+          title: name,
           text: row.text,
-          tool: { name: row.name ?? 'Tool', input: row.inputValue !== undefined ? row.inputValue : row.input, state: row.state, ...(row.images?.length ? { images: row.images } : {}) },
+          tool: { name, ...resolveOpenCodeToolIdentity(name), input: row.inputValue !== undefined ? row.inputValue : row.input, state: row.state, ...(row.images?.length ? { images: row.images } : {}) },
           ...times
         }
       });
@@ -1616,7 +1660,7 @@ export class OpenCodeServerService {
           if (typeof file.data !== 'string') return item;
           const { data, ...rest } = file;
           const image = this.images?.fromBase64(data, typeof file.name === 'string' ? file.name : undefined);
-          return { ...rest, ...(image ? { sha256: image.sha256 } : {}) };
+          return { ...rest, ...(image ? { sha256: image.sha256, mime: image.mime, size: image.size } : {}) };
         });
       }
       if (content) {
@@ -1629,7 +1673,7 @@ export class OpenCodeServerService {
             if (block.type !== 'file' || typeof block.uri !== 'string' || !block.uri.startsWith('data:')) return entry;
             const { uri, ...rest } = block;
             const image = this.images?.fromDataUrl(uri, typeof block.name === 'string' ? block.name : undefined);
-            return { ...rest, ...(image ? { sha256: image.sha256 } : {}) };
+            return { ...rest, ...(image ? { sha256: image.sha256, mime: image.mime, size: image.size } : {}) };
           }) } };
         });
       }
@@ -1794,7 +1838,7 @@ export class OpenCodeServerService {
     throw new Error('Unknown OpenCode setting');
   }
 
-  async compact(processId: string): Promise<unknown> {
+  async compact(processId: string): Promise<Record<string, unknown>> {
     const runtime = this.runtime(processId);
     let result: unknown;
     try {
@@ -1805,7 +1849,7 @@ export class OpenCodeServerService {
       throw error;
     }
     this.admitted(runtime.resumeId);
-    return result;
+    return record(result);
   }
 
   // The daemon keeps a model change across a Patterm restart; the selection
@@ -1842,7 +1886,7 @@ export class OpenCodeServerService {
 
   // The TUI's built-in commands are session API calls, not native commands.
   // Everything else is a custom command the daemon runs.
-  async command(processId: string, name: string, text: string): Promise<unknown> {
+  async command(processId: string, name: string, text: string): Promise<Record<string, unknown>> {
     const runtime = this.runtime(processId);
     const session = `/api/session/${encodeURIComponent(runtime.resumeId)}`;
     // A custom command with a built-in's name wins, as it did before.
@@ -1850,21 +1894,21 @@ export class OpenCodeServerService {
       && dataRows(await this.api(runtime.executable, runtime.cwd, 'GET', `/api/command?${new URLSearchParams({ 'location[directory]': runtime.cwd })}`).catch(() => null)).some((command) => command.name === name);
     // A native command starts a turn. Built-ins other than compact do not:
     // /shell runs outside one.
-    const native = async (): Promise<unknown> => {
+    const native = async (): Promise<Record<string, unknown>> => {
       await this.ensureMcp(runtime);
       const result = await this.api(runtime.executable, runtime.cwd, 'POST', `${session}/command`, { name, text, delivery: 'queue' });
       this.admitted(runtime.resumeId);
-      return result;
+      return record(result);
     };
     if (custom) return native();
     if (name === 'compact') return this.compact(processId);
     if (name === 'rename') {
       if (!text.trim()) throw new Error('Give the new name after /rename');
-      return this.api(runtime.executable, runtime.cwd, 'PATCH', session, { title: text.trim() });
+      return record(await this.api(runtime.executable, runtime.cwd, 'PATCH', session, { title: text.trim() }));
     }
     if (name === 'shell') {
       if (!text.trim()) throw new Error('Give a shell command after /shell');
-      return this.api(runtime.executable, runtime.cwd, 'POST', `${session}/shell`, { command: text.trim() });
+      return record(await this.api(runtime.executable, runtime.cwd, 'POST', `${session}/shell`, { command: text.trim() }));
     }
     if (name === 'undo') {
       // Like the TUI: stage a revert of the latest prompt and its reply, which
@@ -1876,13 +1920,13 @@ export class OpenCodeServerService {
       const { rows } = await this.messageRows(runtime, 50);
       const latest = rows.map(record).find((row) => row.type === 'user' && typeof row.id === 'string' && row.id.startsWith('msg_'));
       if (!latest) throw new Error('There is no message to undo');
-      return this.api(runtime.executable, runtime.cwd, 'POST', `${session}/revert/stage`, { messageID: latest.id });
+      return record(await this.api(runtime.executable, runtime.cwd, 'POST', `${session}/revert/stage`, { messageID: latest.id }));
     }
-    if (name === 'redo') return this.api(runtime.executable, runtime.cwd, 'DELETE', `${session}/revert`);
+    if (name === 'redo') return record(await this.api(runtime.executable, runtime.cwd, 'DELETE', `${session}/revert`));
     return native();
   }
 
-  async conversation(processId: string): Promise<unknown> {
+  async conversation(processId: string): Promise<AgentConversationSnapshot> {
     const runtime = this.runtime(processId);
     // Capture the event boundary before the native reads: an event that lands
     // during a read keeps a newer revision, so the renderer re-applies it
@@ -1934,16 +1978,21 @@ export class OpenCodeServerService {
       requests: [...permissions, ...forms].map(record),
       forms: new Set(forms.flatMap((form) => typeof record(form).id === 'string' ? [record(form).id as string] : []))
     });
+    const normalizedCursor = typeof record(cursor).next === 'string' && record(cursor).next
+      ? { next: String(record(cursor).next) }
+      : typeof cursor === 'string' && cursor
+        ? { next: cursor }
+        : null;
     return snapshotWithGoal({
       process_id: processId, session_id: runtime.sessionId, provider_session_id: runtime.resumeId, provider: 'opencode',
       status,
       ...(status === 'error' && detail ? { status_detail: detail } : {}),
       // Newest-first bounded read, reversed for chronological display.
       history_truncated: truncated,
-      history_cursor: cursor ?? null,
+      history_cursor: normalizedCursor,
       revision,
       streaming: true,
-      messages: { data: this.withStoredImages(withLiveParts([...[...rows].reverse(), ...nestedRows], live)) },
+      messages: { data: projectOpenCodeRows(this.withStoredImages(withLiveParts([...[...rows].reverse(), ...nestedRows], live))) },
       permissions: { data: permissions.map(permissionView) },
       forms: declinableForms(forms),
       usage,
@@ -1956,7 +2005,7 @@ export class OpenCodeServerService {
         ...undelivered
       ],
       questions: { data: [] }
-    }, goal, this.goals.list(runtime.resumeId));
+    }, goal, this.goals.list(runtime.resumeId)) as unknown as AgentConversationSnapshot;
   }
 
   // The plugin's own state wins; change events between snapshots leave the
@@ -1970,12 +2019,12 @@ export class OpenCodeServerService {
   }
 
   // The goal plugin takes the same words as the TUI's /goal.
-  async goal(processId: string, action: IntegratedGoalAction, objective?: string): Promise<unknown> {
+  async goal(processId: string, action: IntegratedGoalAction, objective?: string): Promise<Record<string, unknown>> {
     if (action === 'set' && !objective) throw new Error('Describe the goal after /goal');
     return this.command(processId, 'goal', action === 'set' ? objective! : action);
   }
 
-  async olderMessages(processId: string, cursor: string): Promise<unknown> {
+  async olderMessages(processId: string, cursor: string): Promise<AgentOlderMessagesPage> {
     const runtime = this.runtime(processId);
     const limit = 50;
     // A cursor encodes the native order and direction. OpenCode rejects a
@@ -1985,7 +2034,7 @@ export class OpenCodeServerService {
     const rows = Array.isArray(listing.data) ? listing.data as unknown[] : [];
     const next = record(listing.cursor).next;
     return {
-      messages: { data: this.withStoredImages([...rows].reverse()) },
+      messages: { data: projectOpenCodeRows(this.withStoredImages([...rows].reverse())) },
       cursor: rows.length >= limit && typeof next === 'string' ? next : null
     };
   }
@@ -2151,7 +2200,7 @@ export class OpenCodeServerService {
     return failed;
   }
 
-  async prepare(input: IntegratedLaunchInput): Promise<IntegratedLaunchResult> {
+  async prepare(input: AgentLaunchInput): Promise<AgentLaunchResult> {
     // A directory's bridge and MCP clients are shared. Later launches reuse
     // the first launch's installation rather than racing a second connect.
     return this.inDirectory(input.cwd, () => this.prepareInDirectory(input));
@@ -2219,7 +2268,7 @@ export class OpenCodeServerService {
       && servers.every((server) => statuses.has(server.name) && statuses.get(server.name) !== 'disabled');
   }
 
-  private async prepareInDirectory(input: IntegratedLaunchInput): Promise<IntegratedLaunchResult> {
+  private async prepareInDirectory(input: AgentLaunchInput): Promise<AgentLaunchResult> {
     const { executable, cwd } = input;
     // The native API caps each durable instruction entry at 8 KiB.
     if (Buffer.byteLength(JSON.stringify(input.context)) > 8 * 1024) throw new Error('Patterm context exceeds the OpenCode instruction limit');
@@ -2250,7 +2299,7 @@ export class OpenCodeServerService {
     }
     if (!sessionId?.startsWith('ses')) throw new Error('OpenCode did not return a session ID');
     await this.api(executable, cwd, 'PUT', `/api/experimental/session/${encodeURIComponent(sessionId)}/instructions/entries/patterm`, { value: input.context });
-    return { resumeId: sessionId, argv: [executable] };
+    return { resumeId: sessionId, argv: [executable], runtimeState: { executable } };
   }
 
   // Installs Patterm's bridge and the user's MCP servers in a directory, and
@@ -2393,7 +2442,7 @@ export class OpenCodeServerService {
     }
   }
 
-  async cleanupLaunch(input: IntegratedLaunchInput, result: IntegratedLaunchResult): Promise<void> {
+  async cleanupLaunch(input: AgentLaunchInput, result: AgentLaunchResult): Promise<void> {
     await this.api(input.executable, input.cwd, 'POST', `/api/session/${encodeURIComponent(result.resumeId)}/interrupt`);
   }
 
@@ -2545,17 +2594,17 @@ export class OpenCodeServerService {
 
   private runtime(processId: string): { executable: string; cwd: string; resumeId: string; sessionId: string; model: string | null; reasoning: string | null } {
     const row = this.database.connection.prepare(`
-      select sessions.id, sessions.resume_id, sessions.model, sessions.reasoning, processes.cwd, processes.argv
+      select sessions.id, sessions.resume_id, sessions.model, sessions.reasoning, sessions.runtime_state, processes.cwd, processes.argv
       from sessions join processes on processes.id = sessions.process_id
       where sessions.process_id = ? and sessions.harness = 'opencode'
-        and sessions.interface_mode = 'integrated' and sessions.exited_at is null
+        and sessions.exited_at is null
         and processes.status = 'running'
-    `).get(processId) as { id: string; resume_id: string | null; model: string | null; reasoning: string | null; cwd: string | null; argv: string | null } | undefined;
-    const argv = row?.argv ? JSON.parse(row.argv) as unknown : null;
-    if (!row?.resume_id || !row.cwd || !Array.isArray(argv) || typeof argv[0] !== 'string') {
+    `).get(processId) as { id: string; resume_id: string | null; model: string | null; reasoning: string | null; runtime_state: string | null; cwd: string | null; argv: string | null } | undefined;
+    const state = resolveSessionRuntimeState(row?.runtime_state, row?.argv);
+    if (!row?.resume_id || !row.cwd || !state.executable) {
       throw new Error('OpenCode Integrated session is not active');
     }
-    return { executable: argv[0], cwd: row.cwd, resumeId: row.resume_id, sessionId: row.id, model: row.model, reasoning: row.reasoning };
+    return { executable: state.executable, cwd: row.cwd, resumeId: row.resume_id, sessionId: row.id, model: row.model, reasoning: row.reasoning };
   }
 
   private runCli(executable: string, cwd: string, args: string[]): Promise<string> {

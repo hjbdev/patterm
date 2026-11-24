@@ -314,7 +314,7 @@ export class TimerService {
   }
 
   private async findOutputLine(processId: string, pattern: string): Promise<string | null> {
-    const integrated = this.database.connection.prepare(`select 1 from sessions where process_id = ? and interface_mode = 'integrated' and exited_at is null`).get(processId);
+    const integrated = this.database.connection.prepare(`select 1 from sessions where process_id = ? and exited_at is null`).get(processId);
     if (integrated) {
       if (!this.options.integrated) return null;
       const lines = snapshotText(await this.options.integrated.conversation(processId)).split('\n');
@@ -512,7 +512,7 @@ export class TimerService {
         return;
       }
       if (entry.isIntegrated === undefined) {
-        entry.isIntegrated = Boolean(this.database.connection.prepare(`select 1 from sessions where process_id = ? and interface_mode = 'integrated' and exited_at is null`).get(row.id));
+        entry.isIntegrated = Boolean(this.database.connection.prepare(`select 1 from sessions where process_id = ? and exited_at is null`).get(row.id));
       }
       const integratedStamp = entry.isIntegrated ? `${row.status}\0${row.activity}\0${row.updated_at}` : undefined;
       // Only skip while running and idle; during active turns (`working`/`thinking`),
