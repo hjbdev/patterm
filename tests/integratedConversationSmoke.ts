@@ -463,6 +463,7 @@ assert.equal(normaliseUsage({ lastModelActivityAt: 'yesterday' }), null);
   assert.deepEqual(origin('[Patterm timer timer_2 (check): time elapsed]\nMeasure the rate'), { kind: 'patterm', label: 'Timer', detail: 'timer_2 (check): time elapsed', body: 'Measure the rate' }, 'a timer_set callback shows as Patterm, not the user');
   assert.deepEqual(origin('[Patterm notifications]\nA needs input'), { kind: 'patterm', label: 'Notifications', detail: '', body: 'A needs input' });
   assert.equal(origin('Please read [message from process_1] in the log'), undefined);
+  assert.equal(origin('[Notification from GitHub]\nWhy was the workflow cancelled?'), undefined);
   assert.equal(transcriptMessageOrigin({ id: 'a', role: 'assistant', kind: 'text', text: '[message from process_1]\nx' }), undefined);
   const [row] = groupTranscriptMessages([{ id: 'u', role: 'user', kind: 'text', text: '[message from process_42]\nHello' }]);
   assert.equal(row?.kind === 'message' ? row.origin?.kind : null, 'agent');

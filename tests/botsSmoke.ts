@@ -563,6 +563,7 @@ async function main(): Promise<void> {
     assert.equal(hiddenFromBot(text), true, text);
   }
   assert.equal(hiddenFromBot('Can you check the deploy?'), false);
+  assert.equal(hiddenFromBot('[Notification from GitHub]\nWhy was the workflow cancelled?'), false, 'a pasted heading stays');
 
   console.log('botsSmoke: ok');
 }
