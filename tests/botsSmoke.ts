@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { defaultAgentCapabilities } from '../app/Agents/AgentProtocol';
 import { isSingleEmoji } from '../app/Bots/BotAvatar';
 import { ASSISTANT_BOT_ID, botInput, botSettingsInput, parseBotSettings, purviewAllows, readBotSettings, type Bot } from '../app/Bots/BotSettings';
 import type { HarnessPreset } from '../app/Harness/HarnessPresets';
@@ -13,6 +14,7 @@ import { BROWSER_TOOLS, INTEGRATED_CONTROL_TOOLS } from '../app/Http/BrowserTool
 import type { AgentHistoryReadService } from '../app/Services/AgentHistory/AgentHistoryReadService';
 import { DatabaseService } from '../app/Services/DatabaseService';
 import type { HarnessResume, LaunchHarnessInput } from '../app/Services/HarnessLauncher';
+import { OPENCODE_CAPABILITIES } from '../app/Services/OpenCodeServerService';
 import { SettingsService } from '../app/Services/SettingsService';
 import type { TerminalService } from '../app/Services/TerminalService';
 import { TimelineService } from '../app/Services/TimelineService';
@@ -240,7 +242,11 @@ async function main(): Promise<void> {
       },
       releaseTimers: (ids) => { for (const id of ids) { paused.delete(id); events.push(`release ${id} to ${timerOwners.get(id)}`); } }
     },
-      { conversationSaved: (_harness, _cwd, resumeId) => !unsaved.has(resumeId), history });
+      {
+        conversationSaved: (_harness, _cwd, resumeId) => !unsaved.has(resumeId),
+        capabilities: (harness) => harness === 'opencode' ? OPENCODE_CAPABILITIES : defaultAgentCapabilities(),
+        history
+      });
     botsRef = bots;
 
     // Every bot starts once, in its own folder in the hidden bots project.
@@ -464,7 +470,11 @@ async function main(): Promise<void> {
     await bots.ensureAll();
     assert.equal(launches.slice(launchesBefore).some((launch) => launch.input.bot_id === ASSISTANT_BOT_ID), false);
     await assert.rejects(bots.ensure(ASSISTANT_BOT_ID), /turned off/);
-    settings.updateBots({ bots: [{ ...settings.bots().bots[0]!, enabled: true, harness: 'codex', model: null, reasoning: null, serviceTier: null }, ...settings.bots().bots.slice(1)] });
+    settings.updateBots({ bots: [{ ...settings.bots().bots[0]!, enabled: true, harness: 'opencode', instructions: `${'Keep briefings direct. '.repeat(63)}FINAL_ASSISTANT_INSTRUCTION`, model: null, reasoning: null, serviceTier: null }, ...settings.bots().bots.slice(1)] });
+    const openCodeAssistantCtx = bots.context(ASSISTANT_BOT_ID);
+    assert.ok(Buffer.byteLength(JSON.stringify(openCodeAssistantCtx), 'utf8') <= BOT_CONTEXT_BYTES, 'OpenCode assistant context stays within BOT_CONTEXT_BYTES');
+    assert.match(openCodeAssistantCtx, /FINAL_ASSISTANT_INSTRUCTION/, 'OpenCode assistant preserves full valid instructions up to BOT_CONTEXT_BYTES');
+    settings.updateBots({ bots: [{ ...settings.bots().bots[0]!, enabled: true, harness: 'codex', instructions: '', model: null, reasoning: null, serviceTier: null }, ...settings.bots().bots.slice(1)] });
     // Until its first conversation it starts only when opened, not with Patterm.
     await bots.ensureAll();
     assert.equal(bots.currentProcess(ASSISTANT_BOT_ID), null);

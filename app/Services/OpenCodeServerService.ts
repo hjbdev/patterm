@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { pathsMatch } from '../Platform/PathIdentity';
 import { commandLineTooLong, execFileResolved, resolveService } from '../Platform/ServiceProcess';
 import { awaitingActivity } from './Activity';
+import { BOT_CONTEXT_BYTES } from './AgentContextService';
 import type { DatabaseService } from './DatabaseService';
 import { firstSemver, type McpServerSpec } from '../Harness/HarnessProvider';
 import { openCodeMcpConfigs } from '../Harness/McpDelivery';
@@ -181,7 +182,7 @@ export const OPENCODE_CAPABILITIES: AgentCapabilities = defaultAgentCapabilities
   hostKind: 'external-daemon',
   hibernation: { supported: false },
   archiveFallback: 'never',
-  input: { steering: true, nativeQueue: true, configureWhileBusy: true, routineDigest: false, maxContextBytes: 6_000 },
+  input: { steering: true, nativeQueue: true, configureWhileBusy: true, routineDigest: false, maxContextBytes: BOT_CONTEXT_BYTES },
   interactions: { permissions: true, questions: false, forms: true, parentReadAutoApprove: false, choiceFormsAsQuestions: true },
   features: {
     goals: true,
