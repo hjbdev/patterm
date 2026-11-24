@@ -7,6 +7,9 @@ import { MemoryPushService } from './Services/MemoryPushService';
 import { AssistantMemoryService } from './Services/AssistantMemoryService';
 import { ASSISTANT_BOT_ID } from './Bots/BotIdentity';
 import { registerIdleCompactionTools } from './MCP/registerIdleCompactionTools';
+import { registerOnboardingTools } from './MCP/registerOnboardingTools';
+import { GetOnboardingStatusAction, UpdateOnboardingAction } from './Actions/OnboardingActions';
+import { HarnessSignInService } from './Services/HarnessSignInService';
 import { StatusLabelActions } from './Actions/StatusLabelActions';
 import { registerBotTools } from './MCP/registerBotTools';
 import { BotService } from './Services/BotService';
@@ -927,6 +930,19 @@ async function createApplicationResources(
   registerSecretTools(mcp, secretActions);
   registerMcpServerTools(mcp, mcpServers);
   registerIdleCompactionTools(mcp, settings, agentAdapters);
+  registerOnboardingTools(mcp, {
+    status: new GetOnboardingStatusAction({
+      database,
+      settings,
+      providers: harnessProviders,
+      signIn: new HarnessSignInService(harnessProviders, { env: resolvedEnv }),
+      // A newly installed agent also appears in the launch menus.
+      discover: async () => {
+        if ((await actions.discoverHarnesses.execute()).changed) notifyWorkbenchChanged();
+      }
+    }),
+    update: new UpdateOnboardingAction(settings)
+  });
   registerBotTools(mcp, bots, botRelay, settings, (event, data) => debugLog.write('bots', event, data), () => remote.remoteBots());
   const releaseInstall = detectReleaseInstall(options.appRoot);
   const updateMode = options.runtime === 'node' ? 'server' : 'desktop';

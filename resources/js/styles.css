@@ -274,3 +274,18 @@ button.mention-glow:hover {
   margin-inline: calc((100% - var(--breakout-width)) / 2);
   justify-content: var(--patterm-conversation-breakout-justify, flex-start);
 }
+
+/* Get started's Show button points at the + that starts an agent. */
+@keyframes launch-pulse {
+  0% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0.55); }
+  100% { box-shadow: 0 0 0 10px hsl(var(--primary) / 0); }
+}
+.launch-pulse {
+  animation: launch-pulse 900ms ease-out 3;
+}
+@media (prefers-reduced-motion: reduce) {
+  .launch-pulse {
+    animation: none;
+    box-shadow: 0 0 0 2px hsl(var(--primary) / 0.7);
+  }
+}

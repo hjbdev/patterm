@@ -87,7 +87,7 @@ const copied = [
     name: 'Lobe Icons',
     license: 'MIT',
     files: ['lobe-icons.LICENSE'],
-    note: 'resources/js/assets/agents/claude-code.svg, codex.svg, and opencode.svg come from it unmodified. The names and logos are trademarks of their owners.'
+    note: 'resources/js/assets/agents/antigravity.svg, claude-code.svg, codex.svg, and opencode.svg come from it unmodified. The names and logos are trademarks of their owners.'
   }
 ];
 // node-llama-cpp's prebuilt binaries come in one optional package per

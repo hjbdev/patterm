@@ -10,7 +10,8 @@ interface HarnessInstallationRow {
 
 // Runs harness discovery and upserts the result into harness_installations,
 // keyed by harness so re-running refreshes status/version without duplicating
-// rows or losing the original discovered_at.
+// rows or losing the original discovered_at. The timeline records a scan only
+// when it changed something, since Get started re-scans while it is open.
 export class DiscoverHarnessesAction {
   constructor(
     private readonly database: DatabaseService,
@@ -18,10 +19,14 @@ export class DiscoverHarnessesAction {
     private readonly discovery: HarnessDiscoveryService
   ) {}
 
-  async execute(): Promise<{ harnesses: DiscoveredHarness[] }> {
+  // changed: whether any harness's status, version or path differs.
+  async execute(): Promise<{ harnesses: DiscoveredHarness[]; changed: boolean }> {
     const found = await this.discovery.discover();
     const now = new Date().toISOString();
     const db = this.database.connection;
+    const before = new Map((db.prepare(`select harness, status, version, executable_path from harness_installations`).all() as Array<{ harness: string; status: string; version: string | null; executable_path: string }>)
+      .map((row) => [row.harness, `${row.status}|${row.version ?? ''}|${row.executable_path}`]));
+    const changed = found.some((row) => before.get(row.harness) !== `${row.status}|${row.version ?? ''}|${row.executablePath ?? ''}`);
 
     const upsert = db.transaction((rows: DiscoveredHarness[]) => {
       for (const row of rows) {
@@ -47,7 +52,7 @@ export class DiscoverHarnessesAction {
 
     upsert(found);
 
-    this.timeline.append({
+    if (changed) this.timeline.append({
       event_type: 'harness.discovered',
       actor_type: 'system',
       metadata: {
@@ -56,6 +61,6 @@ export class DiscoverHarnessesAction {
       }
     });
 
-    return { harnesses: found };
+    return { harnesses: found, changed };
   }
 }

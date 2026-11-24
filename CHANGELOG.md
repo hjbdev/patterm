@@ -7,8 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A Get started checklist for new installs: install an agent, sign in to it,
+  add a project folder and start an agent. Each step ticks itself. Install
+  links go to each agent's official page, and sign-in is checked with the
+  agent's own command, keeping only whether you are signed in. It shows on the
+  Projects page, in the sidebar, over the workspace in tabs mode, and at the
+  top of a phone's list. It never shows when everything is already done, and
+  can be hidden and reopened from the ⋯ or settings menu, or Library on a phone.
+- Antigravity agents show its icon.
+
 ### Changed
 
+- Harness discovery adds a timeline entry only when it finds a change.
 - Messages to Antigravity now steer a running turn instead of waiting for it
   to end. agy 1.5 keeps a turn open until its subagents and background
   commands finish, so a message could wait for minutes. A message still waits

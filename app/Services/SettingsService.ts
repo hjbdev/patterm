@@ -114,6 +114,14 @@ export const semanticSearchSettingsInput = z.object({
 }).strict();
 export type SemanticSearchSettings = z.infer<typeof semanticSearchSettingsInput>;
 const SEMANTIC_SEARCH_SETTINGS_KEY = 'semantic_search.v1';
+// The Get started checklist: hidden by the owner, or finished. Either way it
+// never shows again.
+export const onboardingSettingsInput = z.object({
+  dismissed: z.boolean().default(false),
+  completed: z.boolean().default(false)
+}).strict();
+export type OnboardingSettings = z.infer<typeof onboardingSettingsInput>;
+const ONBOARDING_SETTINGS_KEY = 'onboarding.v1';
 const UPDATE_RECORD_KEY = 'updates.record.v1';
 const TELEMETRY_SETTINGS_KEY = 'telemetry.v1';
 
@@ -277,6 +285,16 @@ export class SettingsService {
   saveSemanticSearchSettings(input: unknown): SemanticSearchSettings {
     const settings = semanticSearchSettingsInput.parse(input);
     this.write(SEMANTIC_SEARCH_SETTINGS_KEY, JSON.stringify(settings));
+    return settings;
+  }
+
+  onboardingSettings(): OnboardingSettings {
+    return this.readParsed(ONBOARDING_SETTINGS_KEY, onboardingSettingsInput);
+  }
+
+  saveOnboardingSettings(input: OnboardingSettings): OnboardingSettings {
+    const settings = onboardingSettingsInput.parse(input);
+    this.write(ONBOARDING_SETTINGS_KEY, JSON.stringify(settings));
     return settings;
   }
 

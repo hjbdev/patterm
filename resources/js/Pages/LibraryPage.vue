@@ -24,6 +24,10 @@
             <span v-if="updateAvailable" :class="[DETAIL, 'flex items-center gap-1.5']"><span class="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true" />Patterm {{ updates?.latest?.version }} available</span>
           </span>
         </RouterLink>
+        <button v-if="onboarding.status.value?.dismissed" type="button" :class="ROW" @click="reopenGetStarted">
+          <ListChecks :class="ICON" />
+          <span class="min-w-0 flex-1 truncate">Get started</span>
+        </button>
         <SidebarViewOptions label="List options" :trigger-class="cn(ROW, 'justify-start [&>svg]:ml-auto')" />
       </template>
     </nav>
@@ -32,8 +36,9 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { RouterLink } from 'vue-router';
-import { CalendarClock, Gauge, Settings } from 'lucide-vue-next';
+import { RouterLink, useRouter } from 'vue-router';
+import { CalendarClock, Gauge, ListChecks, Settings } from 'lucide-vue-next';
+import { useOnboarding } from '../Composables/useOnboarding';
 import { cn } from '@/lib/utils';
 import LibraryRows from '../Components/LibraryRows.vue';
 import SidebarViewOptions from '../Components/Sidebar/SidebarViewOptions.vue';
@@ -53,4 +58,12 @@ const routineCount = computed(() => routines.value.filter((routine) => routine.e
 
 const updates = useUpdates();
 const updateAvailable = computed(() => updates.value?.status === 'available');
+
+// Get started shows at the top of the list, so reopening it goes back there.
+const router = useRouter();
+const onboarding = useOnboarding();
+function reopenGetStarted(): void {
+  void onboarding.restore();
+  router.back();
+}
 </script>
