@@ -261,10 +261,11 @@ export class CodexAppServerService implements AgentAdapter {
         : { cwd: input.cwd, developerInstructions: input.context, ephemeral: false, ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}) });
       const thread = record(record(response).thread);
       if (typeof thread.id !== 'string') throw new Error('Codex app-server did not return a thread ID');
+      const instructions = input.memoryPush ? await this.refreshInstructions(client, thread.id, input) : null;
       return {
         resumeId: thread.id,
         argv: [input.executable],
-        runtimeState: { hostKind: 'app-server', executable: input.executable, socketPath, pid, configPath }
+        runtimeState: { hostKind: 'app-server', executable: input.executable, socketPath, pid, configPath, ...(instructions ? { adapterData: { instructionsHash: instructions } } : {}) }
       };
     } catch (error) {
       const detail = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8').trim().slice(-4_000) : '';
@@ -277,6 +278,26 @@ export class CodexAppServerService implements AgentAdapter {
       fs.rmSync(configPath, { force: true });
       throw new Error(`${error instanceof Error ? error.message : String(error)}${detail ? `: ${detail}` : ''}`);
     }
+  }
+
+  // Codex keeps a thread's developer instructions from its start and ignores
+  // new ones on thread/resume, so a bot whose projects or brief changed would
+  // keep its old ones. When a resumed thread's instructions differ from those
+  // it last received, they ride in a hidden developer message. Only bot and
+  // assistant threads, whose instructions carry no memory and so rarely
+  // change; a thread from before this was tracked gets them once.
+  private async refreshInstructions(client: CodexRpcClient, threadId: string, input: AgentLaunchInput): Promise<string | null> {
+    const context = input.context.trim();
+    if (!context) return null;
+    const hash = createHash('sha256').update(context).digest('hex');
+    if (!input.resumeId) return hash;
+    const row = this.database.connection.prepare(`select runtime_state from sessions where harness = 'codex' and resume_id = ?
+      order by started_at desc limit 1`).get(threadId) as { runtime_state: string | null } | undefined;
+    const previous = record(resolveSessionRuntimeState(row?.runtime_state ?? null, null).adapterData).instructionsHash;
+    if (previous === hash) return hash;
+    const text = `[Patterm updated your instructions. Where they differ from your earlier Patterm instructions, these replace them.]\n\n${context}`;
+    await client.request('thread/inject_items', { threadId, items: [{ type: 'message', role: 'developer', content: [{ type: 'input_text', text }] }] });
+    return hash;
   }
 
   async conversation(processId: string): Promise<AgentConversationSnapshot> {
