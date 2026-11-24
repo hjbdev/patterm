@@ -20,9 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings search. Type in the box above the settings list, or press `/`, to
   filter every settings page at once. Matching settings keep their controls,
   so you can change them straight from the results.
+- New conversation page. The top bar's "+" opens a centred composer: pick the
+  agent CLI by hovering its logo, choose the model, thinking level, project and
+  worktree, and write the first message. Sending starts the agent with that
+  message and the composer slides down into place.
 
 ### Changed
 
+- An agent with no messages yet shows its composer in the middle of the page,
+  under the agent's logo, and slides it to the bottom on the first send.
+  Conversations show the agent's icon beside the model picker, and the
+  composer uses a lighter fill with a subtle border.
 - Harness discovery adds a timeline entry only when it finds a change.
 - Completed final Integrated-agent polish and archived-history parity pass:
   - Emitted `controls_revision` on Codex and OpenCode snapshots and `controls()`
