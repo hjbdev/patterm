@@ -3,7 +3,7 @@
     <DialogTrigger as-child>
       <slot name="trigger" />
     </DialogTrigger>
-    <DialogContent class="sm:max-w-md">
+    <DialogContent class="sm:max-w-md" @close-auto-focus="onCloseAutoFocus">
       <DialogHeader>
         <DialogTitle>New project</DialogTitle>
         <DialogDescription>{{ isBrowser ? 'Register a project using a directory on the server.' : 'Register a local project rooted at a directory on disk.' }}</DialogDescription>
@@ -39,6 +39,7 @@ import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
 import { Input } from './ui/input';
 import { useAutofocus } from '../Composables/useAutofocus';
+import { focusArrivalInput } from '../lib/arrivalFocus';
 
 const emit = defineEmits<{ created: [projectId: string] }>();
 
@@ -49,8 +50,15 @@ const path = ref('');
 const name = ref('');
 const error = ref('');
 const busy = ref(false);
+// The new project opens on its new conversation page, which keeps focus.
+let created = false;
 
 useAutofocus(open, pathInput);
+
+function onCloseAutoFocus(event: Event): void {
+  if (created && focusArrivalInput()) event.preventDefault();
+  created = false;
+}
 
 async function browse(): Promise<void> {
   const picked = await window.patterm?.pickDirectory?.(path.value.trim());
@@ -74,6 +82,7 @@ async function submit(): Promise<void> {
     path.value = '';
     name.value = '';
     if (result?.project_id) {
+      created = true;
       emit('created', result.project_id);
     }
   } catch (caught) {

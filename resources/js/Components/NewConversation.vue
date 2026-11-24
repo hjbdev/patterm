@@ -16,6 +16,7 @@
           class="block max-h-44 min-h-8 min-w-0 flex-1 resize-none self-center bg-transparent px-3 py-1 text-[15px] leading-6 outline-none placeholder:text-muted-foreground"
           :placeholder="`What should ${harnessLabel(harness)} work on?`"
           aria-label="First message"
+          data-patterm-new-conversation-input
           @input="grow"
           @keydown="onKeydown"
         />
@@ -79,7 +80,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { ArrowUp, Check, ChevronsUpDown, GitBranch } from 'lucide-vue-next';
 import { toast } from 'vue-sonner';
 import HarnessFan from './HarnessFan.vue';
@@ -272,8 +273,11 @@ function refocus(event: Event): void {
   focusField();
 }
 
-onMounted(() => {
+// The field renders once the agent CLIs are known, which is often after
+// mount, so it is focused when it appears.
+watch(field, (element) => {
+  if (!element) return;
   grow();
   focusField();
-});
+}, { immediate: true, flush: 'post' });
 </script>

@@ -74,6 +74,8 @@ export interface NotificationUnread {
   urgency: NotificationUrgency;
   // Its project is snoozed: it marks the tab but stays out of the tray's total.
   snoozed: boolean;
+  // The newest unread notification's plain-text body, such as a bot's reply.
+  preview: string | null;
 }
 
 interface ProcessContext {
@@ -90,13 +92,14 @@ interface ProcessContext {
 interface NotificationRow extends Omit<NotificationRecord, 'url' | 'held'> {
   held: number;
   dedupe_key: string | null;
+  session_role?: string | null;
 }
 
 export const TITLE_LIMIT = 120;
 export const BODY_LIMIT = 1_000;
 const RATE_WINDOW_MS = 60_000;
 const RECORD_SELECT = `select notifications.*, projects.name as project_name,
-    coalesce(sessions.title, processes.name) as process_name
+    coalesce(sessions.title, processes.name) as process_name, sessions.session_role as session_role
   from notifications
   left join projects on projects.id = notifications.project_id
   left join processes on processes.id = notifications.process_id
@@ -254,11 +257,27 @@ export class NotificationService {
   unread(): NotificationUnread[] {
     const rows = this.database.connection.prepare(`select notifications.process_id, notifications.project_id, count(*) as count,
         max(case notifications.urgency when 'high' then 2 when 'normal' then 1 else 0 end) as rank,
-        coalesce(projects.snoozed_until > ?, 0) as snoozed
+        coalesce(projects.snoozed_until > ?, 0) as snoozed,
+        (select newest.body from notifications newest
+          where newest.process_id = notifications.process_id and newest.resolved_at is null and newest.read_at is null
+          order by newest.updated_at desc, newest.id desc limit 1) as preview
       from notifications left join projects on projects.id = notifications.project_id
       where notifications.resolved_at is null and notifications.read_at is null
-      group by notifications.process_id, notifications.project_id`).all(new Date(this.now()).toISOString()) as Array<{ process_id: string | null; project_id: string | null; count: number; rank: number; snoozed: number }>;
-    return rows.map((row) => ({ process_id: row.process_id, project_id: row.project_id, count: row.count, urgency: row.rank === 2 ? 'high' : row.rank === 1 ? 'normal' : 'low', snoozed: Boolean(row.snoozed) }));
+      group by notifications.process_id, notifications.project_id`).all(new Date(this.now()).toISOString()) as Array<{ process_id: string | null; project_id: string | null; count: number; rank: number; snoozed: number; preview: string | null }>;
+    return rows.map((row) => ({ process_id: row.process_id, project_id: row.project_id, count: row.count, urgency: row.rank === 2 ? 'high' : row.rank === 1 ? 'normal' : 'low', snoozed: Boolean(row.snoozed), preview: row.preview || null }));
+  }
+
+  // Moves unread replies to another process, such as a bot's new session
+  // after a restart, so they show and are read there. Failures and requests
+  // belong to the session that raised them.
+  transferUnreadReplies(fromProcessIds: readonly string[], toProcessId: string): number {
+    const to = this.processContext(toProcessId);
+    if (!to || !fromProcessIds.length) return 0;
+    const moved = this.database.connection.prepare(`update notifications set process_id = ?, session_id = ?
+      where process_id in (${fromProcessIds.map(() => '?').join(', ')}) and kind = 'turn_finished' and read_at is null and resolved_at is null`)
+      .run(to.id, to.session_id ?? null, ...fromProcessIds).changes;
+    if (moved) this.onChange({ type: 'counts' });
+    return Number(moved);
   }
 
   // Unread totals depend on which projects are snoozed.
@@ -339,8 +358,14 @@ export class NotificationService {
   }
 
   // Clears any stale turn_finished notice when a bot marks its turn quiet.
+  // Mid-turn, only this turn's: a reply from an earlier turn stays unread.
   quiet(processId: string): number {
-    return this.reported(processId);
+    const db = this.database.connection;
+    const turn = db.prepare(`select turn_started_at from processes where id = ?`).get(processId) as { turn_started_at: string | null } | undefined;
+    if (!turn?.turn_started_at) return this.reported(processId);
+    const ids = (db.prepare(`select id from notifications where process_id = ? and kind = 'turn_finished' and resolved_at is null and updated_at >= ?`)
+      .all(processId, turn.turn_started_at) as Array<{ id: string }>).map((row) => row.id);
+    return ids.length ? this.resolve({ ids }) : 0;
   }
 
   // A native turn boundary inside a continuous working stretch (such as a
@@ -497,7 +522,7 @@ const ROUTINE_REPORT_KEY = 'routine-report:';
 export const UPDATE_NOTICE_KEY = 'update:';
 
 function toRecord(row: NotificationRow): NotificationRecord {
-  const { dedupe_key: _dedupe, ...record } = row;
+  const { dedupe_key: _dedupe, session_role: _role, ...record } = row;
   return { ...record, held: Boolean(row.held), project_name: row.project_name ?? null, process_name: row.process_name ? displayName(row.process_name) : null, url: notificationUrl(row) };
 }
 
@@ -507,13 +532,15 @@ function decodeCursor(cursor: string | undefined): { updatedAt: string; id: stri
   return { updatedAt: cursor.slice(0, split), id: cursor.slice(split + 1) };
 }
 
-export function notificationUrl(row: Pick<NotificationRecord, 'project_id' | 'process_id' | 'session_id'> & { dedupe_key: string | null }): string {
+export function notificationUrl(row: Pick<NotificationRecord, 'project_id' | 'process_id' | 'session_id'> & { dedupe_key: string | null; session_role?: string | null }): string {
   // A routine's report opens on the Routines page, which keeps it after the run's agent stops.
   const reportRun = row.dedupe_key?.startsWith(ROUTINE_REPORT_KEY) ? row.dedupe_key.slice(ROUTINE_REPORT_KEY.length) : '';
   if (reportRun) return `/routines?report=${encodeURIComponent(reportRun)}`;
   if (row.dedupe_key?.startsWith(UPDATE_NOTICE_KEY)) return '/settings?tab=about';
   if (!row.project_id) return '/projects';
   // Workspace routine runs have no project tab; the Routines page opens them.
+  // The assistant's own replies open its page; its project otherwise holds workspace routine runs.
+  if (row.project_id === ASSISTANT_PROJECT_ID && row.session_role === 'assistant') return '/bots/assistant';
   if (row.project_id === ASSISTANT_PROJECT_ID) return row.process_id ? `/routines?run=${encodeURIComponent(row.process_id)}` : '/routines';
   const project = `/projects/${encodeURIComponent(row.project_id)}`;
   if (row.session_id) return `${project}/agents/${encodeURIComponent(row.session_id)}`;

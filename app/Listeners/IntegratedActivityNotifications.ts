@@ -10,7 +10,9 @@ export interface IntegratedActivityNotificationContext {
   routesRequests?(processId: string): boolean;
   // Created after this listener is registered.
   closeRequests(): Pick<CloseRequestActions, 'clear' | 'pending' | 'announce'> | null;
-  isAssistant(processId: string): boolean;
+  // A bot or the assistant. Its replies stay unread while it works, until
+  // you read them or it replies again.
+  isBot?(processId: string): boolean;
   // The turn woke a snoozed agent, which announced that instead.
   wokeFromSnooze(processId: string): boolean;
   // An automatic idle compaction is running. Registered before the idle
@@ -20,6 +22,8 @@ export interface IntegratedActivityNotificationContext {
   // A bot's final reply this turn, or null for other agents and turns
   // without one. Only top-level assistant text, never tools or reasoning.
   botReply(processId: string): string | null;
+  // The turn that just ended said nothing at all.
+  botSilent?(processId: string): boolean;
   log(event: string, data: Record<string, unknown>): void;
 }
 
@@ -50,7 +54,8 @@ export function integratedActivityNotifications(context: IntegratedActivityNotif
       if (preserveAttention) {
         context.notifications.resolve({ process_id: processId, kinds: ['permission', 'turn_finished', 'bell', 'message'] });
       } else {
-        context.notifications.resolveHandled(processId);
+        if (context.isBot?.(processId)) context.notifications.resolve({ process_id: processId, kinds: ['attention', 'permission', 'bell', 'message'] });
+        else context.notifications.resolveHandled(processId);
         // New work makes an earlier close request stale.
         if (!snapshot && (previous === 'idle' || previous === 'error')) context.closeRequests()?.clear(processId);
       }
@@ -68,14 +73,19 @@ export function integratedActivityNotifications(context: IntegratedActivityNotif
       // A turn that asked to be closed announces that instead of finishing.
       const closeRequests = context.closeRequests();
       if (closeRequests?.pending(processId)) void closeRequests.announce(processId).catch(() => undefined);
-      // The assistant's own turns are read in its panel, not announced, and
-      // neither is a turn that reported or woke a snoozed agent.
-      else if (!woke && !context.isAssistant(processId) && !reportedThisTurn) {
+      // A turn that reported or woke a snoozed agent is not announced, and
+      // nor is a bot's turn that called bot_stay_quiet.
+      // A bot's turn that said nothing, such as a digest it answered silently,
+      // is not news either, and leaves its earlier reply unread.
+      else if (!woke && !reportedThisTurn && !(context.isBot?.(processId) && context.botSilent?.(processId))) {
         const decision = context.triage(processId);
         if (decision.reason !== 'disabled') context.log('triage', { processId, ...decision });
         // A bot's replies are short, so its notification shows the reply.
         // One that shows nothing as plain text, such as an image, falls back.
         const reply = context.botReply(processId) ?? '';
+        // A bot's earlier reply gives way to this one, raised afresh so it
+        // still notifies.
+        if (context.isBot?.(processId)) context.notifications.resolve({ process_id: processId, kinds: ['turn_finished'] });
         const shown = Boolean(clean(markdownText(reply), REPLY_PREVIEW_LIMIT));
         context.raise({ processId, source: 'integrated', kind: 'turn_finished', body: shown ? reply : 'Finished its turn', ...(shown ? { bodyLimit: REPLY_PREVIEW_LIMIT } : {}), dedupeKey: 'integrated:turn_finished', quiet: decision.quiet });
       }
