@@ -267,7 +267,7 @@ import { createComposerEditor, type ComposerEditor } from '../lib/composerEditor
 import { interceptMcpCallbackPaste } from '../lib/mcpCallbackPaste';
 import { processStatusIcon, sessionStatusIcon } from '../lib/statusIcons';
 import { touchScreen } from '../lib/touch';
-import { composerPlace, flipComposer, takeComposerHandoff } from '../lib/composerFlip';
+import { composerPlace, flipComposer, takeComposerHandoff, type ComposerPlace } from '../lib/composerFlip';
 
 interface Selector { id: string; label: string; value: string; options: Array<{ value: string; label: string; description?: string }> }
 interface NativeCommand { name: string; description?: string; source?: 'patterm' }
@@ -562,6 +562,9 @@ function submit(): void {
     emit('invalid', prepared.error);
     return;
   }
+  // The page re-lays out around the sent message before `hero` turns off,
+  // so the slide starts from where the card is now.
+  if (props.hero && card.value) heroPlace = composerPlace(card.value);
   emit('send', { ...prepared.payload, hash: prepared.hash });
   closeMenus();
 }
@@ -732,11 +735,13 @@ watch(() => props.processId, () => {
   void nextTick(focusOnArrival);
 });
 watch(previewSessionId, (sessionId) => { mentionPreview.value = sessionId; });
-// Leaving the centred layout, measure the card before the page re-lays out,
-// then slide it from there to its place at the bottom.
+// Leaving the centred layout, slide the card from where it was sent to its
+// place at the bottom.
+let heroPlace: ComposerPlace | null = null;
 watch(() => props.hero, (hero, was) => {
   if (hero || !was || !card.value) return;
-  const from = composerPlace(card.value);
+  const from = heroPlace ?? composerPlace(card.value);
+  heroPlace = null;
   void nextTick(() => {
     if (card.value) flipComposer(card.value, from, toolbar.value ? [toolbar.value] : []);
     focusEditor();

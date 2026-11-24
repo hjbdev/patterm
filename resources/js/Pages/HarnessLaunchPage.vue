@@ -76,7 +76,9 @@ function dismiss(): void {
   const current = launch.value;
   if (!current) return;
   harnessLaunches.dismiss(current.id);
-  if (current.input.initialPrompt && !newConversationDraft.value.trim()) newConversationDraft.value = current.input.initialPrompt;
+  // Put the prompt back, ahead of anything written since.
+  const prompt = current.input.initialPrompt, draft = newConversationDraft.value.trim();
+  if (prompt) newConversationDraft.value = draft ? `${prompt}\n\n${draft}` : prompt;
   void router.replace({ name: 'project', params: { projectId: current.input.projectId } });
 }
 

@@ -2,11 +2,13 @@
   <!-- A project with nothing open starts its next conversation here: the
        agent CLI's logo, the first message, and where and how it runs. -->
   <div class="flex min-h-0 w-full flex-1 flex-col items-center justify-center overflow-y-auto px-4 pb-[14vh] pt-4">
-    <form v-if="harness" class="w-full max-w-[40rem]" @submit.prevent="start">
-      <div class="pb-3.5">
+    <form class="w-full max-w-[40rem]" @submit.prevent="start">
+      <div v-if="harness" class="pb-3.5">
         <HarnessFan :harness="harness" :harnesses="installed" @select="chooseHarness" />
       </div>
-      <div ref="card" class="flex items-end gap-1.5 rounded-[26px] border border-foreground/[0.07] bg-muted/50 p-2 shadow-sm">
+      <!-- With no agent CLI on the chosen machine, the project picker stays so you can pick another. -->
+      <p v-if="!harness" class="text-center text-sm text-muted-foreground">{{ emptyText }}</p>
+      <div v-else ref="card" class="flex items-end gap-1.5 rounded-[26px] border border-foreground/[0.07] bg-muted/50 p-2 shadow-sm">
         <textarea
           ref="field"
           v-model="newConversationDraft"
@@ -22,7 +24,7 @@
         </Button>
       </div>
       <div class="flex flex-wrap items-center justify-center gap-0.5 pt-3.5 text-muted-foreground">
-        <template v-if="!target?.host">
+        <template v-if="!target?.host && harness">
           <IntegratedControlPicker v-if="modelSelector" :selector="modelSelector" :disabled="false" @select="chooseModel" />
           <template v-if="reasoningSelector">
             <span aria-hidden="true" class="text-xs opacity-50">·</span>
@@ -73,7 +75,6 @@
         </template>
       </div>
     </form>
-    <p v-else class="text-sm text-muted-foreground">{{ emptyText }}</p>
   </div>
 </template>
 
@@ -205,7 +206,8 @@ function capitalise(text: string): string {
 }
 
 const worktrees = computed<WorktreeRecord[]>(() => target.value && !target.value.host
-  ? projects.value.find((item) => item.project.id === target.value!.projectId)?.worktrees ?? []
+  // A linked host's worktrees are merged in; launching in one would run there.
+  ? (projects.value.find((item) => item.project.id === target.value!.projectId)?.worktrees ?? []).filter((worktree) => !worktree.host)
   : []);
 const worktreeId = ref<string | null>(null);
 watch(targetProjectId, () => { worktreeId.value = null; });
@@ -237,9 +239,11 @@ function start(): void {
     projectId: chosen.projectId,
     targetProjectId: chosen.targetProjectId,
     initialPrompt: prompt,
-    ...(chosen.host ? { host: chosen.host } : overridden
-      ? { model: model.value!, ...(reasoning.value ? { reasoning: reasoning.value } : {}) }
-      : base ? { preset: base.id } : {}),
+    // The preset still applies under an override, keeping its Codex speed.
+    ...(chosen.host ? { host: chosen.host } : {
+      ...(base ? { preset: base.id } : {}),
+      ...(overridden ? { model: model.value!, ...(reasoning.value ? { reasoning: reasoning.value } : {}) } : {})
+    }),
     ...(!chosen.host && worktreeId.value ? { worktreeId: worktreeId.value } : {})
   });
 }
