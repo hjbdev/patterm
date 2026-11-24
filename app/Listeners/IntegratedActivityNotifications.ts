@@ -10,9 +10,8 @@ export interface IntegratedActivityNotificationContext {
   routesRequests?(processId: string): boolean;
   // Created after this listener is registered.
   closeRequests(): Pick<CloseRequestActions, 'clear' | 'pending' | 'announce'> | null;
-  isAssistant(processId: string): boolean;
-  // A bot's replies stay unread while it works, until you read them or it
-  // replies again.
+  // A bot or the assistant. Its replies stay unread while it works, until
+  // you read them or it replies again.
   isBot?(processId: string): boolean;
   // The turn woke a snoozed agent, which announced that instead.
   wokeFromSnooze(processId: string): boolean;
@@ -72,9 +71,9 @@ export function integratedActivityNotifications(context: IntegratedActivityNotif
       // A turn that asked to be closed announces that instead of finishing.
       const closeRequests = context.closeRequests();
       if (closeRequests?.pending(processId)) void closeRequests.announce(processId).catch(() => undefined);
-      // The assistant's own turns are read in its panel, not announced, and
-      // neither is a turn that reported or woke a snoozed agent.
-      else if (!woke && !context.isAssistant(processId) && !reportedThisTurn) {
+      // A turn that reported or woke a snoozed agent is not announced, and
+      // nor is a bot's turn that called bot_stay_quiet.
+      else if (!woke && !reportedThisTurn) {
         const decision = context.triage(processId);
         if (decision.reason !== 'disabled') context.log('triage', { processId, ...decision });
         // A bot's replies are short, so its notification shows the reply.

@@ -232,8 +232,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - The sidebar shows when a bot has replied: an unread dot, with the start of
-  its reply under its name. Opening a bot now marks its replies read and keeps
-  them from popping up as notifications while you're reading them.
+  its reply under its name. A reply stays unread until you open the bot, even
+  if it starts other work or restarts first. Opening a bot marks its replies
+  read and keeps them from popping up as notifications while you're reading
+  them.
+- The assistant's replies notify you like any other bot's, unless it chose to
+  stay quiet, and open its page.
 - A new agent started from the command palette, and a project just added,
   focus their composer. The palette and the New project dialog used to hand
   focus back to the button that opened them.

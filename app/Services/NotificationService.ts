@@ -92,13 +92,14 @@ interface ProcessContext {
 interface NotificationRow extends Omit<NotificationRecord, 'url' | 'held'> {
   held: number;
   dedupe_key: string | null;
+  session_role?: string | null;
 }
 
 export const TITLE_LIMIT = 120;
 export const BODY_LIMIT = 1_000;
 const RATE_WINDOW_MS = 60_000;
 const RECORD_SELECT = `select notifications.*, projects.name as project_name,
-    coalesce(sessions.title, processes.name) as process_name
+    coalesce(sessions.title, processes.name) as process_name, sessions.session_role as session_role
   from notifications
   left join projects on projects.id = notifications.project_id
   left join processes on processes.id = notifications.process_id
@@ -520,7 +521,7 @@ const ROUTINE_REPORT_KEY = 'routine-report:';
 export const UPDATE_NOTICE_KEY = 'update:';
 
 function toRecord(row: NotificationRow): NotificationRecord {
-  const { dedupe_key: _dedupe, ...record } = row;
+  const { dedupe_key: _dedupe, session_role: _role, ...record } = row;
   return { ...record, held: Boolean(row.held), project_name: row.project_name ?? null, process_name: row.process_name ? displayName(row.process_name) : null, url: notificationUrl(row) };
 }
 
@@ -530,13 +531,15 @@ function decodeCursor(cursor: string | undefined): { updatedAt: string; id: stri
   return { updatedAt: cursor.slice(0, split), id: cursor.slice(split + 1) };
 }
 
-export function notificationUrl(row: Pick<NotificationRecord, 'project_id' | 'process_id' | 'session_id'> & { dedupe_key: string | null }): string {
+export function notificationUrl(row: Pick<NotificationRecord, 'project_id' | 'process_id' | 'session_id'> & { dedupe_key: string | null; session_role?: string | null }): string {
   // A routine's report opens on the Routines page, which keeps it after the run's agent stops.
   const reportRun = row.dedupe_key?.startsWith(ROUTINE_REPORT_KEY) ? row.dedupe_key.slice(ROUTINE_REPORT_KEY.length) : '';
   if (reportRun) return `/routines?report=${encodeURIComponent(reportRun)}`;
   if (row.dedupe_key?.startsWith(UPDATE_NOTICE_KEY)) return '/settings?tab=about';
   if (!row.project_id) return '/projects';
   // Workspace routine runs have no project tab; the Routines page opens them.
+  // The assistant's own replies open its page; its project otherwise holds workspace routine runs.
+  if (row.project_id === ASSISTANT_PROJECT_ID && row.session_role === 'assistant') return '/bots/assistant';
   if (row.project_id === ASSISTANT_PROJECT_ID) return row.process_id ? `/routines?run=${encodeURIComponent(row.process_id)}` : '/routines';
   const project = `/projects/${encodeURIComponent(row.project_id)}`;
   if (row.session_id) return `${project}/agents/${encodeURIComponent(row.session_id)}`;
