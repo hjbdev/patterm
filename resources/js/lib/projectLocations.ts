@@ -18,8 +18,8 @@ interface RouteLike {
 const lastLocations = new Map<string, ProjectLocation>();
 
 // The bare project route is a place to return to when it shows a page of its
-// own, such as the board; when it redirects to the first tab, that tab is
-// remembered over it straight away.
+// own (such as a phone's agent list); when it redirects to the first tab, that
+// tab is remembered over it straight away.
 export function rememberProjectLocation(route: RouteLike): void {
   if (route.name === 'launch') return;
   const { projectId, sessionId, processId } = route.params;
@@ -48,7 +48,7 @@ export function resolveProjectReturnPath(project: ProjectWorkbench | undefined, 
   return location.fullPath;
 }
 
-// Where a project's own page goes when it doesn't show the board: its first
+// Where a project's own page goes on desktop: its first
 // agent, or else its first process. Null when it has neither.
 export function projectFirstTab(project: ProjectWorkbench | null | undefined): { name: 'agent'; params: { projectId: string; sessionId: string } } | { name: 'process'; params: { projectId: string; processId: string } } | null {
   if (!project) return null;

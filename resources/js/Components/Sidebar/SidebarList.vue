@@ -128,7 +128,7 @@
       </template>
     </div>
     <slot v-if="placement === 'phone'" name="footer" />
-    <!-- The project's pages and the canvas wait in the Library menu. -->
+    <!-- The project's pages wait in the Library menu. -->
     <div v-else class="flex shrink-0 items-center gap-0.5 border-t border-white/[0.06] px-1 pt-2">
       <LibraryMenu v-if="!sidebar.allAgents.value" />
       <span class="flex-1" />

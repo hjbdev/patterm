@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   theme sync, the TUI `xdg-open` / `--open` URL opener and native OAuth callback
   replay, the legacy TUI summary fallback, and TUI agent notification channels
   (`agent_terminal`, `agent_bells`).
+- Retired the Agent Canvas view, its `Ctrl+Shift+Space` shortcut, and its
+  sidebar rail and Library menu entries. Opening a project on desktop now goes
+  straight to its first tab or empty state in both sidebar and tab-bar modes.
 
 ### Added
 

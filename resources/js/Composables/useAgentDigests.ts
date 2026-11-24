@@ -17,12 +17,11 @@ export interface AgentDigests {
   // A 30-second clock for ages and countdowns.
   now: ComputedRef<number>;
   // Keeps notices, todos, links and diffs fresh while `active` holds, as it
-  // does while a card or the board shows them.
+  // does while a card shows them.
   show: (active: () => boolean) => void;
 }
 
-// The sidebar's digests, read once for its agent cards and for the board,
-// which isn't inside it.
+// The sidebar's digests, read once for its agent cards.
 const current = shallowRef<AgentDigests | null>(null);
 
 export function provideAgentDigests(): void {
@@ -33,7 +32,7 @@ export function provideAgentDigests(): void {
   });
 }
 
-// The cards and the board mount with the sidebar, after it has read the digests.
+// The cards mount with the sidebar, after it has read the digests.
 export function useAgentDigests(): AgentDigests {
   if (!current.value) throw new Error('Agent digests missing');
   return current.value;

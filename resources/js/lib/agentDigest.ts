@@ -7,7 +7,7 @@ import type { StripTab } from './tabStrip';
 import type { DiffTotals } from './worktreeDiff';
 import type { SessionRecord } from '../types';
 
-// What the sidebar's agent card and the board say about an agent family: who
+// What the sidebar's agent card says about an agent family: who
 // it is, what it needs or is doing, its summary and members, and where its
 // work lives. useAgentDigests builds them from the workbench, notifications,
 // and each root session's context; the helpers here word them.

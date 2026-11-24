@@ -60,7 +60,7 @@ test('launch tabs open before native readiness; independent completions preserve
     assert.equal(router.currentRoute.value.name, 'launch');
     assert.equal(router.currentRoute.value.params.launchId, firstId);
     assert.equal(calls.length, 1);
-    assert.equal(sidebarLayout.drawerOpen, false, 'Board-to-launch navigation closes the narrow sidebar');
+    assert.equal(sidebarLayout.drawerOpen, false, 'Project-to-launch navigation closes the narrow sidebar');
     assert.equal(fixture.lastProjectLocation('p1').name, 'project', 'Temporary routes do not become saved project locations');
 
     sidebarLayout.drawerOpen = true;

@@ -20,7 +20,7 @@ export function useTerminalPageNavigation() {
 }
 
 // A project's own page opens its first tab, unless the page is a home of its
-// own: the board, or a phone's agent list. It runs before any terminal page
+// own, such as a phone's agent list. It runs before any terminal page
 // mounts there, which the tab would only replace.
 export function useProjectFirstTab(staysHome: Readonly<Ref<boolean>>) {
   const { route, router, activeProject } = useWorkbenchNavigation();

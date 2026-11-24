@@ -1,6 +1,6 @@
 <template>
-  <!-- The project's pages with their counts, then the canvas where there's
-       room for it. `compact` sizes them for the sidebar's menu. -->
+  <!-- The project's pages with their counts. `compact` sizes them for the
+       sidebar's menu. -->
   <button v-for="row in rows" :key="row.page" type="button" :class="[classes.row, sidebar.page.value === row.page && 'bg-primary/10']" :aria-current="sidebar.page.value === row.page ? 'page' : undefined" @click="open(row.page)">
     <component :is="row.icon" :class="classes.icon" />
     <span class="min-w-0 flex-1 truncate">{{ row.label }}</span>
@@ -9,23 +9,14 @@
     </span>
     <span v-else-if="row.count" :class="classes.count">{{ row.count }}</span>
   </button>
-  <!-- Phones can't show the canvas. -->
-  <button v-if="!phoneLayout" type="button" :class="classes.row" @click="openCanvas">
-    <Workflow :class="classes.icon" />
-    <span class="min-w-0 flex-1 truncate">Canvas</span>
-    <kbd class="shrink-0 rounded border border-border/70 px-1 text-[10px] text-muted-foreground">Ctrl ⇧ Space</kbd>
-  </button>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { Workflow } from 'lucide-vue-next';
 import MediaThumb from './peek/MediaThumb.vue';
 import { useSidebar, type SidebarPage } from './Sidebar/sidebarContext';
 import { projectPages } from './Sidebar/sidebarPages';
-import { useBoardRoute } from '../Composables/useBoard';
 import { useMedia } from '../Composables/useMedia';
-import { phoneLayout } from '../lib/phoneLayout';
 import { contextRead, useContextVersion, type Page, type Scratchpad, type Todo } from '../lib/projectContext';
 
 const props = defineProps<{ compact?: boolean }>();
@@ -35,7 +26,6 @@ const classes = computed(() => props.compact
   : { row: 'flex min-h-12 w-full items-center gap-3 rounded-lg px-3 py-1.5 text-left text-[15.5px] transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:min-h-11 sm:text-[14px]', icon: 'h-[18px] w-[18px] shrink-0 text-muted-foreground sm:h-4 sm:w-4', count: 'shrink-0 text-sm tabular-nums text-muted-foreground sm:text-[13px]' });
 
 const sidebar = useSidebar();
-const board = useBoardRoute();
 const projectId = computed(() => sidebar.projectId.value);
 
 // How many open todos and active scratchpads there are, and the newest images.
@@ -58,10 +48,6 @@ const rows = computed(() => projectPages(sidebar).map((link) => {
 
 function open(page: SidebarPage): void {
   sidebar.navigate(page);
-  emit('navigate');
-}
-function openCanvas(): void {
-  board.toggle();
   emit('navigate');
 }
 </script>

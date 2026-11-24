@@ -43,7 +43,6 @@ import { useWindowSize } from '@vueuse/core';
 import { touchScreen } from '../../lib/touch';
 import { provideAgentDigests } from '../../Composables/useAgentDigests';
 import { useSelectedHarnessLaunch } from '../../Composables/useHarnessLaunch';
-import { useBoardKeys } from '../../Composables/useBoard';
 import SidebarDrawer from './SidebarDrawer.vue';
 import SidebarRail from './SidebarRail.vue';
 import { useSidebar } from './sidebarContext';
@@ -52,9 +51,8 @@ import SidebarList from './SidebarList.vue';
 
 const sidebar = useSidebar();
 const selectedLaunch = useSelectedHarnessLaunch();
-// Read once for every list's agent cards and for the board.
+// Read once for every list's agent cards.
 provideAgentDigests();
-useBoardKeys();
 const { width } = useWindowSize();
 // The sidebar narrows to keep 720 px of workspace, then rails once even its
 // minimum width doesn't fit. A tablet keeps its list beside a narrower
