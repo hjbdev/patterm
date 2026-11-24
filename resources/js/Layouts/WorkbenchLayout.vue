@@ -21,10 +21,10 @@
     <RouterView v-if="showStandalonePage" />
 
     <div v-else data-workbench class="flex h-dvh min-h-0 flex-col overflow-hidden bg-[#080808] text-foreground">
-      <!-- A phone shows the bar over its list only; agents and pages open
-           over the list with a back button of their own. -->
+      <!-- Tabs mode and mobile home show the top bar; desktop sidebar mode
+           replaces it with the far-left project dock so the workspace gets full height. -->
       <WorkbenchTopBar
-        v-if="!mobile || route.name === 'project'"
+        v-if="mobile ? route.name === 'project' : !sidebarMode"
         :projects="projects"
         :active-project-id="activeProjectId"
         :sidecar-status="sidecarStatus"
@@ -73,9 +73,29 @@
       </WorkbenchTopBar>
 
       <div class="flex min-h-0 flex-1">
+      <SidebarProjectDock
+        v-if="sidebarMode && !mobile"
+        :projects="projects"
+        :active-project-id="activeProjectId"
+        :all-agents="showingAll"
+        :sidecar-status="sidecarStatus"
+        :sidecar-available="sidecarAvailable"
+        @select-project="pickProject"
+        @select-all-agents="allAgents.active = true"
+        @command-palette="paletteOpen = true"
+        @settings="openSettings"
+        @usage="openUsage"
+        @routines="openRoutines"
+      />
       <WorkbenchSidebar v-if="sidebarMode && !mobile" />
 
-      <main id="workbench-main" class="relative mx-1.5 mb-1.5 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border-t border-white/5 bg-background" :class="mobile && route.name !== 'project' && 'mt-1.5'">
+      <main
+        id="workbench-main"
+        class="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl bg-background"
+        :class="sidebarMode && !mobile
+          ? 'my-2 mr-2 border border-white/[0.06]'
+          : ['mx-1.5 mb-1.5 border-t border-white/5', mobile && route.name !== 'project' && 'mt-1.5']"
+      >
         <div v-if="!loaded" class="p-5 text-sm text-muted-foreground">Loading project…</div>
         <div v-else-if="!activeProject" class="p-5 text-sm text-muted-foreground">Project not found. Select another project from the toolbar.</div>
         <template v-else>
@@ -130,6 +150,7 @@ import PhonePageHeader from '../Components/Phone/PhonePageHeader.vue';
 import AllAgentsOptions from '../Components/AllAgentsOptions.vue';
 import WorkspaceSearchDialog from '../Components/WorkspaceSearchDialog.vue';
 import SidebarDialogs from '../Components/Sidebar/SidebarDialogs.vue';
+import SidebarProjectDock from '../Components/Sidebar/SidebarProjectDock.vue';
 import WorkbenchSidebar from '../Components/Sidebar/WorkbenchSidebar.vue';
 import { phoneLayout } from '../lib/phoneLayout';
 import { provideSidebarContext } from '../Components/Sidebar/sidebarContext';
@@ -412,6 +433,8 @@ const sidebarMode = computed(() => navigation.value === 'sidebar' && Boolean(act
 const agentPage = computed(() => activeWorkspacePage.value === 'workbench' && projectViewMode.value === 'agents');
 provideSidebarContext({
   projectId: () => activeProjectId.value ?? '',
+  projectName: () => activeProject.value?.project.name ?? 'Projects',
+  projectHost: () => activeProject.value?.project.host,
   shown: () => sidebarMode.value,
   tabs: () => shownStripTabs.value,
   processes: () => scopeProcesses.value,

@@ -3,8 +3,8 @@
     <!-- The incoming state fades in. Width changes are left instant so the
          workspace (and any terminal in it) resizes once, not every frame. -->
     <Transition enter-active-class="transition-opacity duration-200 ease-out motion-reduce:transition-none" enter-from-class="opacity-0">
-    <SidebarRail v-if="railed" class="pb-1.5" @expand="expand" />
-    <aside v-else aria-label="Agents" class="relative flex min-h-0 flex-col pb-1.5 pl-1" :style="{ width: `${shownWidth}px` }">
+    <SidebarRail v-if="railed" class="border-l border-white/[0.06] py-2" @expand="expand" />
+    <aside v-else aria-label="Agents" class="relative flex min-h-0 flex-col border-l border-white/[0.06] py-2 pl-2 pr-1.5" :style="{ width: `${shownWidth}px` }">
       <!-- Same handle as the session context panel: drag, arrow keys, and double-click to reset. -->
       <div
         role="separator"

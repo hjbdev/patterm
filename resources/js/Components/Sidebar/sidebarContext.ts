@@ -17,6 +17,8 @@ export type AgentTab = Extract<StripTab, { kind: 'agent' }>;
 // Everything the sidebar reads or does, built once by the workbench layout.
 export interface SidebarContext extends SidebarTreeView {
   projectId: ComputedRef<string>;
+  projectName: ComputedRef<string>;
+  projectHost: ComputedRef<string | undefined>;
   // Whether agents show in the sidebar, rather than as tabs.
   shown: ComputedRef<boolean>;
   tabs: ComputedRef<StripTab[]>;
@@ -69,6 +71,8 @@ export function useSidebar(): SidebarContext {
 
 export interface SidebarInput {
   projectId: () => string;
+  projectName: () => string;
+  projectHost: () => string | undefined;
   shown: () => boolean;
   tabs: () => StripTab[];
   allAgents: () => boolean;
@@ -134,6 +138,8 @@ export function provideSidebarContext(input: SidebarInput): SidebarContext {
 
   const context: SidebarContext = {
     projectId: computed(input.projectId),
+    projectName: computed(input.projectName),
+    projectHost: computed(input.projectHost),
     shown: computed(input.shown),
     tabs: computed(input.tabs),
     allAgents: computed(input.allAgents),

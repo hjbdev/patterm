@@ -5,7 +5,7 @@
     <PopoverTrigger as-child>
       <button
         type="button"
-        class="flex h-[30px] items-center gap-2 rounded-tab px-2 text-[12.5px] text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-muted/50 data-[state=open]:text-foreground"
+        class="flex h-8 items-center gap-2 rounded-tab px-2 text-[13.5px] text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-muted/50 data-[state=open]:text-foreground"
         :class="onPage && 'bg-primary/10 text-foreground'"
       >
         <Library class="h-4 w-4" aria-hidden="true" />Library

@@ -31,8 +31,8 @@ import { contextRead, useContextVersion, type Page, type Scratchpad, type Todo }
 const props = defineProps<{ compact?: boolean }>();
 const emit = defineEmits<{ navigate: [] }>();
 const classes = computed(() => props.compact
-  ? { row: 'flex min-h-10 w-full items-center gap-2.5 rounded-md px-2 py-1 text-left text-[13px] transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring', icon: 'h-4 w-4 shrink-0 text-muted-foreground', count: 'shrink-0 text-xs tabular-nums text-muted-foreground' }
-  : { row: 'flex min-h-12 w-full items-center gap-3 rounded-lg px-3 py-1.5 text-left text-[15px] transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:min-h-11 sm:text-[13.5px]', icon: 'h-[18px] w-[18px] shrink-0 text-muted-foreground sm:h-4 sm:w-4', count: 'shrink-0 text-sm tabular-nums text-muted-foreground sm:text-xs' });
+  ? { row: 'flex min-h-10 w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[14px] transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring', icon: 'h-4 w-4 shrink-0 text-muted-foreground', count: 'shrink-0 text-[13px] tabular-nums text-muted-foreground' }
+  : { row: 'flex min-h-12 w-full items-center gap-3 rounded-lg px-3 py-1.5 text-left text-[15.5px] transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:min-h-11 sm:text-[14px]', icon: 'h-[18px] w-[18px] shrink-0 text-muted-foreground sm:h-4 sm:w-4', count: 'shrink-0 text-sm tabular-nums text-muted-foreground sm:text-[13px]' });
 
 const sidebar = useSidebar();
 const board = useBoardRoute();

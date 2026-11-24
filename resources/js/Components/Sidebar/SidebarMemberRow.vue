@@ -13,7 +13,7 @@
         :title="hostLabel(label, host)"
         :aria-current="active ? 'page' : undefined"
         :class="cn(
-          'relative isolate flex h-7 w-full min-w-0 select-none items-center gap-2 rounded-tab pl-2 text-left text-[13px] transition-[color,background-color,box-shadow] hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
+          'relative isolate flex h-[34px] w-full min-w-0 select-none items-center gap-2.5 rounded-tab pl-2 text-left text-[14px] transition-[color,background-color,box-shadow] hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
           count ? 'pr-[60px]' : 'pr-7',
           active || holdsSelection ? 'bg-primary/10 text-foreground' : peeked ? 'bg-muted/40 text-foreground' : 'text-foreground/85',
           session && mentionPreview === session.id && 'mention-glow'
@@ -24,14 +24,14 @@
         <span class="flex h-4 w-4 shrink-0 items-center justify-center">
           <RowStatus :activity="rowActivity" :count="count" :count-label="countLabel" />
         </span>
-        <ProjectLogo v-if="project" :project="project" :size="14" :title="project.name" />
+        <ProjectLogo v-if="project" :project="project" :size="15" :title="project.name" />
         <!-- Rows outside the selected thread dim their text until hovered; status stays bright. -->
         <span class="min-w-0 truncate transition-colors duration-200 motion-reduce:transition-none" :class="dimmed && 'text-muted-foreground/80 group-hover/row:text-foreground/85'">{{ label }}</span>
         <StatusLabelPill v-if="session?.statusLabel" :label="session.statusLabel" dot />
         <HostBadge v-if="host && host !== parentHost" :host="host" class="-ml-0.5" />
       </button>
     </SidebarItemMenu>
-    <span class="absolute right-1.5 top-1 flex h-5 items-center gap-0.5">
+    <span class="absolute right-1.5 top-[7px] flex h-5 items-center gap-0.5">
       <!-- An agent with its own subagents or processes folds like a family. -->
       <button
         v-if="nodeId && count"

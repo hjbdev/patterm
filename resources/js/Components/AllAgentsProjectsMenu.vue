@@ -2,33 +2,33 @@
   <!-- Which projects All agents shows. Toggling one keeps the menu open, so
        several can be set at once. -->
   <DropdownMenuSub>
-    <DropdownMenuSubTrigger class="gap-2 pl-8 text-[13px]">
-      <Layers class="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+    <DropdownMenuSubTrigger class="gap-2 pl-8 text-[14px]">
+      <Layers class="h-4 w-4 text-muted-foreground" aria-hidden="true" />
       <span class="flex-1">Projects</span>
-      <span class="text-xs tabular-nums text-muted-foreground">{{ shownCount }}/{{ listed.length }}</span>
+      <span class="text-[13px] tabular-nums text-muted-foreground">{{ shownCount }}/{{ listed.length }}</span>
     </DropdownMenuSubTrigger>
     <DropdownMenuPortal>
-      <DropdownMenuSubContent class="max-h-80 w-60 overflow-y-auto">
+      <DropdownMenuSubContent class="max-h-80 w-64 overflow-y-auto">
         <DropdownMenuCheckboxItem
           v-for="item in listed"
           :key="item.project.id"
           :model-value="projectShown(allAgents, item.project.id)"
-          class="gap-2 text-[13px]"
+          class="gap-2 text-[14px]"
           @update:model-value="setProjectShown(allAgents, item.project.id, Boolean($event))"
           @select.prevent
         >
-          <ProjectLogo :project="item.project" :size="14" />
+          <ProjectLogo :project="item.project" :size="15" />
           <span class="min-w-0 flex-1 truncate">{{ item.project.name }}</span>
           <HostBadge v-if="item.project.host" :host="item.project.host" />
-          <span class="text-xs tabular-nums text-muted-foreground">{{ openAgentCount(item, botHidden.sessions) || '' }}</span>
+          <span class="text-[13px] tabular-nums text-muted-foreground">{{ openAgentCount(item, botHidden.sessions) || '' }}</span>
         </DropdownMenuCheckboxItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem class="gap-2 text-[13px]" :disabled="!allAgents.hidden.length" @select.prevent="allAgents.hidden = []">
-          <ListChecks class="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+        <DropdownMenuItem class="gap-2 text-[14px]" :disabled="!allAgents.hidden.length" @select.prevent="allAgents.hidden = []">
+          <ListChecks class="h-4 w-4 text-muted-foreground" aria-hidden="true" />
           Show all projects
         </DropdownMenuItem>
-        <DropdownMenuItem v-if="current" class="gap-2 text-[13px]" @select.prevent="showOnly(current.project.id)">
-          <Crosshair class="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+        <DropdownMenuItem v-if="current" class="gap-2 text-[14px]" @select.prevent="showOnly(current.project.id)">
+          <Crosshair class="h-4 w-4 text-muted-foreground" aria-hidden="true" />
           <span class="truncate">Only {{ current.project.name }}</span>
         </DropdownMenuItem>
       </DropdownMenuSubContent>

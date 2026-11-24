@@ -3,34 +3,34 @@
   <DropdownMenu>
     <DropdownMenuTrigger as-child>
       <!-- With a label, the list's own heading opens it. -->
-      <button v-if="label" type="button" :aria-label="`${label}: view options`" :class="cn('flex h-6 items-center gap-1 rounded-tab px-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-muted/50 data-[state=open]:text-foreground', triggerClass)">
-        {{ label }}<ChevronDown class="h-3 w-3" aria-hidden="true" />
+      <button v-if="label" type="button" :aria-label="`${label}: view options`" :class="cn('flex h-7 items-center gap-1 rounded-tab px-2 text-[13px] font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-muted/50 data-[state=open]:text-foreground', triggerClass)">
+        <span class="truncate">{{ label }}</span><ChevronDown class="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden="true" />
       </button>
-      <button v-else type="button" aria-label="Sidebar view options" title="View options" :class="cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-tab text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring', triggerClass)">
-        <SlidersHorizontal class="h-3.5 w-3.5" aria-hidden="true" />
+      <button v-else type="button" aria-label="Sidebar view options" title="View options" :class="cn('flex h-8 w-8 shrink-0 items-center justify-center rounded-tab text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring', triggerClass)">
+        <SlidersHorizontal class="h-4 w-4" aria-hidden="true" />
       </button>
     </DropdownMenuTrigger>
     <DropdownMenuContent :align="label ? 'start' : 'end'" class="w-64">
-      <DropdownMenuCheckboxItem v-model="expansion.view.value.members" class="gap-2 text-[13px]" @select.prevent>
-        <ListTree class="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />Show subagents and servers
+      <DropdownMenuCheckboxItem v-model="expansion.view.value.members" class="gap-2 text-[14px]" @select.prevent>
+        <ListTree class="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />Show subagents and servers
       </DropdownMenuCheckboxItem>
-      <DropdownMenuCheckboxItem :model-value="groupingByStatus" class="gap-2 text-[13px]" @update:model-value="setGrouping('status', Boolean($event))" @select.prevent>
-        <CircleDot class="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />Group by status
+      <DropdownMenuCheckboxItem :model-value="groupingByStatus" class="gap-2 text-[14px]" @update:model-value="setGrouping('status', Boolean($event))" @select.prevent>
+        <CircleDot class="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />Group by status
       </DropdownMenuCheckboxItem>
       <!-- One grouping at a time; with neither, All agents keeps the order you give it. -->
-      <DropdownMenuCheckboxItem v-if="sidebar.allAgents.value" :model-value="expansion.view.value.groupByProject" class="gap-2 text-[13px]" @update:model-value="setGrouping('project', Boolean($event))" @select.prevent>
-        <Folders class="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />Group by project
+      <DropdownMenuCheckboxItem v-if="sidebar.allAgents.value" :model-value="expansion.view.value.groupByProject" class="gap-2 text-[14px]" @update:model-value="setGrouping('project', Boolean($event))" @select.prevent>
+        <Folders class="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />Group by project
       </DropdownMenuCheckboxItem>
-      <DropdownMenuCheckboxItem v-model="expansion.view.value.sortByActivity" class="gap-2 text-[13px]" @select.prevent>
-        <ArrowDownWideNarrow class="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />Sort by recent activity
+      <DropdownMenuCheckboxItem v-model="expansion.view.value.sortByActivity" class="gap-2 text-[14px]" @select.prevent>
+        <ArrowDownWideNarrow class="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />Sort by recent activity
       </DropdownMenuCheckboxItem>
       <!-- Shared with the tab strip, which toggles it from the command palette. -->
-      <DropdownMenuCheckboxItem :model-value="showSnoozed" class="gap-2 text-[13px]" @update:model-value="setShowSnoozed(Boolean($event))" @select.prevent>
-        <Moon class="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />Show snoozed
+      <DropdownMenuCheckboxItem :model-value="showSnoozed" class="gap-2 text-[14px]" @update:model-value="setShowSnoozed(Boolean($event))" @select.prevent>
+        <Moon class="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />Show snoozed
       </DropdownMenuCheckboxItem>
       <!-- Shared with the tab strip too; bots' own conversations never list here. -->
-      <DropdownMenuCheckboxItem :model-value="showBotAgents" class="gap-2 text-[13px]" @update:model-value="setShowBotAgents(Boolean($event))" @select.prevent>
-        <Bot class="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />Show agents started by bots
+      <DropdownMenuCheckboxItem :model-value="showBotAgents" class="gap-2 text-[14px]" @update:model-value="setShowBotAgents(Boolean($event))" @select.prevent>
+        <Bot class="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />Show agents started by bots
       </DropdownMenuCheckboxItem>
       <template v-if="sidebar.allAgents.value">
         <DropdownMenuSeparator />

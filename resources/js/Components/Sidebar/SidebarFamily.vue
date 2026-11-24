@@ -13,8 +13,8 @@
           :data-patterm-tab-id="tab.key"
           :aria-current="active ? 'page' : undefined"
           :class="cn(
-            'relative isolate flex w-full min-w-0 select-none items-start gap-2 rounded-tab px-2 text-left text-[13px] transition-[padding,color,background-color,box-shadow] duration-200 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring motion-reduce:transition-none',
-            twoLines ? 'py-1.5' : 'py-1',
+            'relative isolate flex w-full min-w-0 select-none items-start gap-2.5 rounded-tab px-2 text-left text-[14px] transition-[padding,color,background-color,box-shadow] duration-200 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring motion-reduce:transition-none',
+            twoLines ? 'py-2' : 'py-[7px]',
             active ? 'bg-primary/10 text-foreground' : 'text-foreground/85',
             mentionPreview === tab.family.rootId && 'mention-glow'
           )"
@@ -27,25 +27,25 @@
           </span>
           <span class="min-w-0 flex-1">
             <span class="flex min-w-0 items-center gap-1.5 leading-5" :style="{ paddingRight: `${reserve}px` }">
-              <ProjectLogo v-if="project" :project="project" :size="14" :title="project.name" />
+              <ProjectLogo v-if="project" :project="project" :size="15" :title="project.name" />
               <span class="truncate" :class="sidebar.familyActive(tab.family) && 'font-medium'">{{ label }}</span>
               <BotOwnerPill v-if="ownerBot" :bot="ownerBot" />
               <StatusLabelPill v-if="root.statusLabel" :label="root.statusLabel" dot />
               <HostBadge v-if="root.host" :host="root.host" />
             </span>
             <Transition :css="false" @enter="expandIn" @leave="collapseOut">
-              <span v-if="twoLines" class="flex items-center gap-2 text-xs leading-4">
+              <span v-if="twoLines" class="mt-0.5 flex items-center gap-2 text-[13px] leading-[18px]">
                 <span class="min-w-0 flex-1 truncate" :class="waiting ? 'text-foreground/75' : 'text-muted-foreground'">{{ subtitle }}</span>
-                <span v-if="timer" class="flex shrink-0 items-center gap-1 tabular-nums text-muted-foreground" :title="timer.title"><TimerIcon class="h-3 w-3" />{{ timer.remaining }}</span>
+                <span v-if="timer" class="flex shrink-0 items-center gap-1 tabular-nums text-muted-foreground" :title="timer.title"><TimerIcon class="h-3.5 w-3.5" />{{ timer.remaining }}</span>
               </span>
             </Transition>
           </span>
         </button>
       </SidebarItemMenu>
       <!-- Over the first line: the member toggle, then the unread dot, which hover swaps for a close button. -->
-      <div class="absolute right-1.5 flex h-5 items-center gap-0.5 transition-[top] duration-200 motion-reduce:transition-none" :class="twoLines ? 'top-1.5' : 'top-1'">
+      <div class="absolute right-1.5 flex h-5 items-center gap-0.5 transition-[top] duration-200 motion-reduce:transition-none" :class="twoLines ? 'top-2' : 'top-[7px]'">
         <!-- Without a second line, the timer joins the first. -->
-        <span v-if="timer && !twoLines" class="mr-0.5 flex items-center gap-1 text-[11px] tabular-nums text-muted-foreground" :title="timer.title"><TimerIcon class="h-3 w-3" />{{ timer.remaining }}</span>
+        <span v-if="timer && !twoLines" class="mr-0.5 flex items-center gap-1 text-[12px] tabular-nums text-muted-foreground" :title="timer.title"><TimerIcon class="h-3.5 w-3.5" />{{ timer.remaining }}</span>
         <button
           v-if="foldable"
           type="button"

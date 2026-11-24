@@ -91,24 +91,25 @@
   [data-phone-list] [data-sidebar-row][data-family] {
     padding-top: 0.75rem;
     padding-bottom: 0.75rem;
-    font-size: 15px;
+    font-size: 15.5px;
   }
   [data-phone-list] [data-sidebar-row]:not([data-family]) {
-    height: 2.75rem;
-    font-size: 14px;
+    height: 3rem;
+    font-size: 15px;
   }
-  [data-phone-list] [data-sidebar-row] .text-xs {
-    font-size: 13px;
-    line-height: 1.125rem;
+  [data-phone-list] [data-sidebar-row] .text-xs,
+  [data-phone-list] [data-sidebar-row] .text-\[13px\] {
+    font-size: 13.5px;
+    line-height: 1.25rem;
   }
   [data-phone-list] .group\/row > .absolute {
-    top: 0.75rem;
+    top: 0.875rem;
   }
   [data-phone-list] .sidebar-folder-member::after {
-    top: 24px;
+    top: 26px;
   }
   [data-phone-list] .sidebar-folder-member[data-last]::before {
-    height: 25px;
+    height: 27px;
   }
 }
 
@@ -188,7 +189,7 @@ button.mention-glow:hover {
 /* The sidebar's agent tree. Each member draws its own piece of the line, so the
    line can turn: a vertical beside every member, a stub at the member's row into
    its status glyph, and the last member's vertical stopping at its stub. Rows
-   are 28px tall, so a member's own row is centred 14px from its top. The line
+   are 34px tall, so a member's own row is centred 17px from its top. The line
    is translucent, so the pieces meet edge to edge on whole pixels: anywhere
    two overlapped would paint brighter. */
 .sidebar-tree {
@@ -217,11 +218,11 @@ button.mention-glow:hover {
 
 .sidebar-tree > *:last-child::before {
   bottom: auto;
-  height: 14px;
+  height: 17px;
 }
 
 .sidebar-tree > *::after {
-  top: 13px;
+  top: 16px;
   left: calc(-0.25rem + 1px);
   width: 9px;
   height: 1px;
@@ -252,11 +253,11 @@ button.mention-glow:hover {
 
 .sidebar-folder-member[data-last]::before {
   bottom: auto;
-  height: 16px;
+  height: 19px;
 }
 
 .sidebar-folder-member::after {
-  top: 15px;
+  top: 18px;
   left: 1px;
   width: 9px;
   height: 1px;

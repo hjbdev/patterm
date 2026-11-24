@@ -17,7 +17,7 @@
       <span
         v-else
         v-bind="$attrs"
-        class="inline-flex h-4 min-w-0 max-w-40 shrink items-center gap-1 rounded-full border px-1.5 text-[11px] font-medium leading-none"
+        class="inline-flex h-5 min-w-0 max-w-44 shrink items-center gap-1.5 rounded-full border px-2 text-[12px] font-medium leading-none"
         :style="statusLabelStyle(label.color)"
         title=""
       >
