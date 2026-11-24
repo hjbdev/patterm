@@ -138,6 +138,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The usage page opens straight away instead of after several seconds. Its
+  token figures come from a cache that is filled after startup and refreshed
+  in the background, the usage query no longer rebuilds part of itself for
+  every row, and the page no longer waits for Antigravity's quota command.
 - An Integrated agent woken from hibernation shows its earlier conversation
   again. Its empty new host made the imported history stop at the session's
   first start, which hid every turn.
