@@ -57,6 +57,9 @@ interface PendingHandoff {
 export class BotService {
   private readonly queue = new Map<string, Promise<unknown>>();
   private readonly pendingHandoff = new Map<string, PendingHandoff>();
+  // The instructions each bot's live session launched with, kept in memory:
+  // after a Patterm restart every bot launches again and records them anew.
+  private readonly launchedContext = new Map<string, { processId: string; context: string }>();
 
   constructor(
     private readonly database: DatabaseService,
@@ -132,6 +135,22 @@ export class BotService {
 
   // The system context a bot's session launches with.
   context(botId: string): string {
+    const base = this.baseContext(botId);
+    const handoff = this.pendingHandoff.get(botId);
+    if (!base || !handoff) return base;
+    return appendHandoff(base, handoff, this.maxContextBytes(botId));
+  }
+
+  private maxContextBytes(botId: string): number | null {
+    const bot = this.bot(botId);
+    if (!bot) return null;
+    const capabilities = this.options.capabilities?.(bot.harness);
+    return capabilities ? (capabilities.input.maxContextBytes ?? null) : (bot.harness === 'opencode' ? BOT_CONTEXT_BYTES : null);
+  }
+
+  // The bot's instructions without a handoff: what a settings change can
+  // alter in a running session.
+  private baseContext(botId: string): string {
     const bot = this.bot(botId);
     if (!bot) return '';
     // Where Patterm keeps memory current, launch instructions carry none.
@@ -150,9 +169,7 @@ export class BotService {
         : purview.kind;
       base = new AgentContextService().buildBot(bot, projects, { memoryPush });
     }
-    const handoff = this.pendingHandoff.get(botId);
-    if (!handoff) return base;
-    return appendHandoff(base, handoff, maxContextBytes);
+    return base;
   }
 
   // Starts a bot that isn't running: on its latest conversation, or a new
@@ -226,6 +243,23 @@ export class BotService {
       where sessions.session_role in ('assistant', 'bot') and sessions.bot_id is not null and sessions.exited_at is null and processes.status = 'running'`).all() as Array<{ bot_id: string }>).map((row) => row.bot_id);
     const removed = new Set([...live, ...this.queue.keys()].filter((botId) => !ids.has(botId)));
     await Promise.all([...removed].map((botId) => this.serial(botId, () => this.stopAll(botId)).catch((error: unknown) => this.log('stop.failed', { bot_id: botId, message: errorMessage(error) }))));
+    // A running session keeps the instructions it launched with, so a bot
+    // whose projects, name or brief changed restarts on its conversation to
+    // pick up the new ones.
+    const stale = [...ids].filter((botId) => {
+      const sent = this.launchedContext.get(botId);
+      const current = this.current(botId);
+      return sent !== undefined && current && sent.processId === current.process_id && sent.context !== this.baseContext(botId);
+    });
+    await Promise.all(stale.map(async (botId) => {
+      const processId = this.launchedContext.get(botId)!.processId;
+      try {
+        await this.restart(botId, false, processId);
+        this.log('instructions_changed', { bot_id: botId, from: processId });
+      } catch (error) {
+        this.log('restart.failed', { bot_id: botId, message: errorMessage(error) });
+      }
+    }));
     await this.ensureAll();
   }
 
@@ -279,11 +313,15 @@ export class BotService {
       name: bot.name,
       actor_id: 'user'
     };
+    // The instructions this launch carries, to notice when settings change
+    // them. Ones holding a memory snapshot change with every note, so they
+    // are not tracked.
+    const context = this.contextHasMemory(bot) ? null : this.baseContext(bot.id);
     // A bot nobody has messaged yet has nothing to resume.
     if (previous?.resume_id && (this.options.conversationSaved?.(harness, cwd, previous.resume_id) ?? true)) {
       try {
         await this.launcher.resume(input, { resume_id: previous.resume_id, conversation_id: '', source_session_id: previous.session_id });
-        return this.launched(bot.id);
+        return this.launched(bot.id, context);
       } catch (error) {
         // A conversation the CLI can no longer resume starts over rather than
         // leaving the bot down.
@@ -297,7 +335,13 @@ export class BotService {
     } finally {
       this.pendingHandoff.delete(bot.id);
     }
-    return this.launched(bot.id);
+    return this.launched(bot.id, context);
+  }
+
+  private contextHasMemory(bot: Bot): boolean {
+    if (bot.id !== ASSISTANT_BOT_ID) return false;
+    const capabilities = this.options.capabilities?.(bot.harness);
+    return !(capabilities ? capabilities.features.memoryPush : memoryPushSupported(bot.harness));
   }
 
   // Builds a bounded continuity handoff from imported history and live helpers
@@ -360,8 +404,10 @@ export class BotService {
     return { conversationId, helpers, turns };
   }
 
-  private launched(botId: string): BotState {
+  private launched(botId: string, context: string | null): BotState {
     const state = this.state(botId);
+    if (state.process_id && context !== null) this.launchedContext.set(botId, { processId: state.process_id, context });
+    else this.launchedContext.delete(botId);
     if (state.process_id) {
       this.adoptPrevious(botId, state.process_id);
       this.options.launched?.(botId, state.process_id);

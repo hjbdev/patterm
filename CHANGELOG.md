@@ -241,6 +241,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A new agent started from the command palette, and a project just added,
   focus their composer. The palette and the New project dialog used to hand
   focus back to the button that opened them.
+- A running bot picks up changes to its projects, name or brief. Saving bot
+  settings restarts it on the same conversation with the new instructions, and
+  a resumed Codex bot now receives them too, where before it kept the ones its
+  thread started with, even after a restart.
 - A failed Codex MCP tool call shows its error instead of `""`, and a
   successful one shows its result text rather than the raw `{ "content": … }`
   wrapper.
