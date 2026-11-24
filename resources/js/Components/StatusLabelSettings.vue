@@ -7,7 +7,7 @@
         <Button type="button" size="sm" variant="outline" :disabled="!loaded || labels.length >= STATUS_LABEL_LIMIT" @click="addLabel">Add label</Button>
       </template>
 
-      <SettingsItem v-for="label in labels" :key="label.id" :save-key="`status_labels.${label.id}`">
+      <SettingsItem v-for="label in labels" :key="label.id" :keywords="`${label.name} ${label.description ?? ''}`" :save-key="`status_labels.${label.id}`">
         <template #title>
           <StatusLabelPill :label="label" />
           <Badge v-if="label.createdBy === 'agent'" variant="secondary" class="h-4 px-1.5 text-[10px] font-medium">Added by an agent</Badge>

@@ -1,12 +1,12 @@
 <template>
   <!-- A lone section spans the panel. Otherwise wide panels put each heading in a
        left column, and narrow ones stack it above the settings. -->
-  <section v-if="solo" class="py-6">
+  <section v-if="solo" v-show="visible" class="py-6">
     <p v-if="description || $slots.description" class="mb-4 text-xs leading-relaxed text-muted-foreground"><slot name="description">{{ description }}</slot></p>
     <div v-if="$slots.actions" class="mb-4 flex flex-wrap items-center gap-2"><slot name="actions" /></div>
     <div :class="contentClass"><slot /></div>
   </section>
-  <section v-else class="grid grid-cols-1 gap-x-8 gap-y-4 py-7 [@container(min-width:40rem)]:grid-cols-[168px_minmax(0,1fr)]">
+  <section v-else v-show="visible" class="grid grid-cols-1 gap-x-8 gap-y-4 py-7 [@container(min-width:40rem)]:grid-cols-[168px_minmax(0,1fr)]">
     <div class="min-w-0">
       <div class="flex items-center gap-2">
         <h3 class="flex items-center gap-2 text-[13px] font-medium"><slot name="title">{{ title }}</slot></h3>
@@ -23,10 +23,14 @@
 import { computed, inject, onBeforeUnmount, watch } from 'vue';
 import { settingsPanelSections } from './panelContext';
 import SettingsSaveStatus from './SettingsSaveStatus.vue';
+import { useSettingsSearch } from './settingsSearch';
 
 // `scope` is the save-key prefix of the settings inside; the heading shows
 // their save status. `list` frames a list of items, such as sources or servers.
-const props = defineProps<{ title?: string; description?: string; scope?: string; list?: boolean }>();
+// `keywords` are extra words search should find the whole section by.
+const props = defineProps<{ title?: string; description?: string; keywords?: string; scope?: string; list?: boolean }>();
+
+const { visible } = useSettingsSearch(() => [props.title, props.keywords]);
 
 const sections = inject(settingsPanelSections, null);
 const id = Symbol('settings-section');

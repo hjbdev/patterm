@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { envValue } from '../../Platform/Environment';
 import { isQuietReply, QUIET_DIGEST_INSTRUCTION, QUIET_REPLY } from '../ClaudeQuietReplies';
 import type { HistoryFileFingerprint, HistorySourceCandidate, ParsedConversation, ParsedHistoryFile, ParsedMedia, ParsedMessage, ParsedSkillUse, ParsedUsage, ProviderHistoryAdapter } from './AgentHistoryTypes';
 import { defaultFileFingerprint, digestJson, isoFromString, nonNegative, parsedImage, readJsonl, statOnlyFingerprint, stringValue, textFromUnknown, walkFiles } from './HistoryAdapterUtils';
@@ -10,8 +11,8 @@ export class ClaudeHistoryAdapter implements ProviderHistoryAdapter {
 
   constructor(private readonly quietReplies?: string) {}
 
-  defaultSources(homeDir: string): HistorySourceCandidate[] {
-    const projects = path.join(homeDir, '.claude', 'projects');
+  defaultSources(homeDir: string, env: NodeJS.ProcessEnv = {}): HistorySourceCandidate[] {
+    const projects = path.join(envValue(env, 'CLAUDE_CONFIG_DIR') || path.join(homeDir, '.claude'), 'projects');
     return [{ provider: this.provider, sourceKind: 'default', path: projects, exists: fs.existsSync(projects) }];
   }
 

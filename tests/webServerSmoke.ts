@@ -98,6 +98,7 @@ async function main(): Promise<void> {
   fs.writeFileSync(path.join(rendererPath, 'assets', 'app.js'), appScript);
   const options = {
     appDataPath: path.join(temp, 'data'),
+    historyHomeDir: temp,
     sidecarPath: debugSidecarPath(),
     mcpShimPath: path.resolve('dist/mcp/patterm-mcp.js'),
     runtime: 'node' as const

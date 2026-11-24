@@ -125,7 +125,7 @@ async function main(): Promise<void> {
     const appDataPath = path.join(temp, 'app');
     acquireApplicationLock(appDataPath)();
     const app = await createApplication({
-      appDataPath, runtime: 'node',
+      appDataPath, runtime: 'node', historyHomeDir: temp,
       sidecarPath: debugSidecarPath(),
       mcpShimPath: path.resolve('dist/mcp/patterm-mcp.js')
     });

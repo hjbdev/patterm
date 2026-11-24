@@ -261,8 +261,39 @@ function verifyScopedScanLinking(): void {
   }
 }
 
+// Every agent CLI's history imports automatically: a default location turned
+// off before stays on after startup, and one that doesn't exist yet is still
+// watched so a CLI installed later imports without a restart.
+function verifyDefaultSourcesAlwaysOn(): void {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-history-defaults-'));
+  const database = new DatabaseService(directory);
+  try {
+    database.initialize();
+    const home = path.join(directory, 'home');
+    fs.mkdirSync(path.join(home, '.claude', 'projects'), { recursive: true });
+    const discovery = new ProviderHistoryDiscoveryService();
+    const sources = new AgentHistorySourceService(database, discovery);
+    const defaults = discovery.defaultSources(home);
+    const claude = defaults.find((source) => source.provider === 'claude')!;
+    sources.configure({ provider: 'claude', path: claude.path, enabled: false, watch_enabled: false });
+    sources.enableDefaultSources(home);
+    sources.enableDefaultSources(home);
+    assert.deepEqual(sources.enabledWatchSources().map((source) => source.path).sort(), defaults.map((source) => source.path).sort(), 'every default history location is watched, once each');
+    assert.deepEqual(sources.importCandidates({}).map((source) => source.path), [claude.path], 'only locations that exist are imported');
+
+    const claudeConfig = path.join(directory, 'claude-config');
+    sources.enableDefaultSources(home, { CLAUDE_CONFIG_DIR: claudeConfig, CODEX_HOME: path.join(directory, 'codex-home') });
+    const watched = sources.enabledWatchSources().map((source) => source.path);
+    assert.ok(watched.includes(path.join(claudeConfig, 'projects')) && watched.includes(path.join(directory, 'codex-home', 'sessions')), 'CLAUDE_CONFIG_DIR and CODEX_HOME move where history imports from');
+  } finally {
+    database.dispose();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
 async function main(): Promise<void> {
   verifySecretRedaction();
+  verifyDefaultSourcesAlwaysOn();
   verifyScopedScanLinking();
   verifyConversationSearch();
   verifyNativeThreadIdentity();

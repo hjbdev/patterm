@@ -19,7 +19,7 @@ test('resource cleanup logs its underlying failure and still releases applicatio
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-cleanup-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const application = await createApplication({
-    appDataPath: directory, runtime: 'node', sidecarPath: path.join(directory, 'missing-sidecar'), mcpShimPath: ''
+    appDataPath: directory, historyHomeDir: directory, runtime: 'node', sidecarPath: path.join(directory, 'missing-sidecar'), mcpShimPath: ''
   });
   const events: Array<{ event: string; data: unknown }> = [];
   const write = application.debugLog.write.bind(application.debugLog);

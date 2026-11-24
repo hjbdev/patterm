@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Settings search. Type in the box above the settings list, or press `/`, to
+  filter every settings page at once. Matching settings keep their controls,
+  so you can change them straight from the results.
+
 ### Changed
 
 - Completed final Integrated-agent polish and archived-history parity pass:
@@ -25,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Updated `AGENTS.md` to reflect Integrated agent hosts and centralized the
     remaining static capability defaults (`harnessSupportsServiceTier`,
     `defaultReasoningLevelsFor`) in `AgentCapabilitiesDto`.
+- Settings pages are grouped into Workspace, Agents, Activity, Connections and
+  System. Appearance is split into Look & feel, Conversations and Terminal,
+  and the list shows short states such as how many MCP servers are on.
+- Conversation history imports from every agent CLI Patterm finds, with
+  nothing to turn on. A CLI's history folder is watched even before it is
+  installed, and sources turned off before are turned back on. The Sources
+  list has gone from Settings.
 - Messages to Antigravity now steer a running turn instead of waiting for it
   to end. agy 1.5 keeps a turn open until its subagents and background
   commands finish, so a message could wait for minutes. A message still waits

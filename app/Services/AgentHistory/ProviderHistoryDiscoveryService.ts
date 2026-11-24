@@ -19,8 +19,8 @@ export class ProviderHistoryDiscoveryService {
     return adapter;
   }
 
-  defaultSources(homeDir = os.homedir()): HistorySourceCandidate[] {
-    return this.adapters.flatMap((adapter) => adapter.defaultSources(homeDir));
+  defaultSources(homeDir = os.homedir(), env: NodeJS.ProcessEnv = {}): HistorySourceCandidate[] {
+    return this.adapters.flatMap((adapter) => adapter.defaultSources(homeDir, env));
   }
 
   candidateForPath(provider: AgentHistoryProvider, sourcePath: string): HistorySourceCandidate {

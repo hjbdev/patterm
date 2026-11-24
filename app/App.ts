@@ -166,6 +166,9 @@ export interface AppOptions {
   // The application's install directory. A release package there has a BUILD
   // file and signing key, and checks for updates; a source checkout does not.
   appRoot?: string;
+  // The home directory whose agent CLI history imports. Defaults to the
+  // user's; tests pass a temporary one so they never read real history.
+  historyHomeDir?: string;
   // Replaces the release download endpoints, for tests.
   updates?: { fetch?: typeof fetch; releasesUrl?: string; apiUrl?: string };
   // Seals the agent secrets key with the system keyring. The desktop app
@@ -528,6 +531,9 @@ async function createApplicationResources(
   const diffService = new DiffService({ worktrees: worktreeService, git });
   const historyDiscovery = new ProviderHistoryDiscoveryService(undefined, quietReplies);
   const historySourceService = new AgentHistorySourceService(database, historyDiscovery);
+  // A test's own home ignores the shell's CLI locations, so it never reads real history.
+  if (options.historyHomeDir) historySourceService.enableDefaultSources(options.historyHomeDir);
+  else historySourceService.enableDefaultSources(undefined, resolvedEnv);
   const historyImportService = new AgentHistoryImportService(database, historyDiscovery, timeline, undefined, database, historySourceService);
   const historyReadService = new AgentHistoryReadService(historyDatabase, quietReplies);
   integrated.setHistoryReadService(historyReadService);
