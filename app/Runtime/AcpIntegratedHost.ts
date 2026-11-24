@@ -271,17 +271,6 @@ function runningTaskCount(): number {
   return [...(subagents?.tasks() ?? []), ...backgroundTasks()]
     .filter((task) => task.status === 'running' || task.status === 'pending').length;
 }
-function noteBackgroundPromotion(): void {
-  if (!loaded || failed || stopping || !active || !runningTools.size) return;
-  let hasUnpromoted = false;
-  for (const id of runningTools) {
-    if (!backgroundCommands.has(id)) { hasUnpromoted = true; break; }
-  }
-  if (!hasUnpromoted) return;
-  const known = backgroundCommands.size;
-  const count = runningTaskCount();
-  if (backgroundCommands.size > known) publish({ kind: 'pending', backgroundTasks: count });
-}
 function noteModelActivity(): void {
   if (loaded && !failed && !stopping) usage.lastModelActivityAt = new Date().toISOString();
 }
@@ -560,7 +549,11 @@ function replace(message: IntegratedConversationMessage): void {
   const index = messages.findIndex((row) => row.id === message.id);
   if (index < 0) { messages.push(message); trimMessages(); } else messages[index] = message;
   publish({ kind: 'replace', message });
-  if (index < 0 && message.role === 'assistant') noteBackgroundPromotion();
+  if (index < 0 && message.role === 'assistant' && loaded && !failed && !stopping && active && [...runningTools].some((id) => !backgroundCommands.has(id))) {
+    const known = backgroundCommands.size;
+    const count = runningTaskCount();
+    if (backgroundCommands.size > known) publish({ kind: 'pending', backgroundTasks: count });
+  }
 }
 function nativeMessageKey(role: string, kind: string, id: string): string {
   return JSON.stringify([role, kind, id]);
@@ -584,7 +577,11 @@ function chunk(kind: 'text' | 'reasoning', text: string, role: 'user' | 'assista
   block = key === null ? row : null;
   row.text += text;
   publish({ kind: 'append', id: row.id, messageKind: kind, delta: text });
-  if (added && role === 'assistant') noteBackgroundPromotion();
+  if (added && role === 'assistant' && loaded && !failed && !stopping && active && [...runningTools].some((id) => !backgroundCommands.has(id))) {
+    const known = backgroundCommands.size;
+    const count = runningTaskCount();
+    if (backgroundCommands.size > known) publish({ kind: 'pending', backgroundTasks: count });
+  }
 }
 function contentChunk(content: Row, kind: 'text' | 'reasoning', role: 'user' | 'assistant', nativeId?: string): void {
   if (role === 'assistant' && (content.type === 'text' || content.type === 'image')) {
