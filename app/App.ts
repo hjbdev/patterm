@@ -487,6 +487,7 @@ async function createApplicationResources(
     routesRequests: (processId) => parentRequests.handles(processId),
     closeRequests: () => closeRequests,
     isAssistant: (processId) => Boolean(database.connection.prepare(`select 1 from sessions where process_id = ? and session_role = 'assistant'`).get(processId)),
+    isBot: (processId) => Boolean(database.connection.prepare(`select 1 from sessions where process_id = ? and session_role = 'bot'`).get(processId)),
     wokeFromSnooze: (processId) => snoozes.announcedWake(processId),
     compacting: (processId) => idleCompaction.compacting(processId),
     triage: (processId) => triage.decide(processId),
@@ -729,6 +730,7 @@ async function createApplicationResources(
     {
       stop: (processId) => actions.stopProcess.execute(processId),
       transferTimers: (from, to) => timers.transferOwner(from, to),
+      transferNotifications: (from, to) => notificationService.transferUnread(from, to),
       holdTimers: (processId) => timers.holdOwner(processId),
       releaseTimers: (timerIds) => { for (const id of timerIds) timers.resume(id); }
     },

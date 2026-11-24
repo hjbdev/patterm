@@ -69,6 +69,8 @@ export class BotService {
     private readonly processes: {
       stop(processId: string): Promise<unknown>;
       transferTimers(fromProcessIds: readonly string[], toProcessId: string): void;
+      // Unread replies follow the bot to its new session, where it is read.
+      transferNotifications?(fromProcessIds: readonly string[], toProcessId: string): void;
       holdTimers(processId: string): string[];
       releaseTimers(timerIds: readonly string[]): void;
     },
@@ -377,6 +379,7 @@ export class BotService {
     this.database.connection.prepare(`update processes set parent_process_id = ? where parent_process_id in
       (select process_id from sessions where session_role = ? and bot_id = ? and process_id <> ?)`).run(processId, role, botId, processId);
     this.processes.transferTimers(previous, processId);
+    this.processes.transferNotifications?.(previous, processId);
   }
 
   private ensureProject(bot: Bot): string {

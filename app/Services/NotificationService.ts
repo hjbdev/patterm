@@ -266,6 +266,18 @@ export class NotificationService {
     return rows.map((row) => ({ process_id: row.process_id, project_id: row.project_id, count: row.count, urgency: row.rank === 2 ? 'high' : row.rank === 1 ? 'normal' : 'low', snoozed: Boolean(row.snoozed), preview: row.preview || null }));
   }
 
+  // Moves unread notices to another process, such as a bot's new session
+  // after a restart, so they show and are read there.
+  transferUnread(fromProcessIds: readonly string[], toProcessId: string): number {
+    const to = this.processContext(toProcessId);
+    if (!to || !fromProcessIds.length) return 0;
+    const moved = this.database.connection.prepare(`update notifications set process_id = ?, session_id = ?
+      where process_id in (${fromProcessIds.map(() => '?').join(', ')}) and read_at is null and resolved_at is null`)
+      .run(to.id, to.session_id ?? null, ...fromProcessIds).changes;
+    if (moved) this.onChange({ type: 'counts' });
+    return Number(moved);
+  }
+
   // Unread totals depend on which projects are snoozed.
   snoozeChanged(): void {
     this.onChange({ type: 'counts' });
@@ -344,8 +356,14 @@ export class NotificationService {
   }
 
   // Clears any stale turn_finished notice when a bot marks its turn quiet.
+  // Mid-turn, only this turn's: a reply from an earlier turn stays unread.
   quiet(processId: string): number {
-    return this.reported(processId);
+    const db = this.database.connection;
+    const turn = db.prepare(`select turn_started_at from processes where id = ?`).get(processId) as { turn_started_at: string | null } | undefined;
+    if (!turn?.turn_started_at) return this.reported(processId);
+    const ids = (db.prepare(`select id from notifications where process_id = ? and kind = 'turn_finished' and resolved_at is null and updated_at >= ?`)
+      .all(processId, turn.turn_started_at) as Array<{ id: string }>).map((row) => row.id);
+    return ids.length ? this.resolve({ ids }) : 0;
   }
 
   // A native turn boundary inside a continuous working stretch (such as a

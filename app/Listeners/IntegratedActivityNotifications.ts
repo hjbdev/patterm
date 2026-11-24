@@ -11,6 +11,9 @@ export interface IntegratedActivityNotificationContext {
   // Created after this listener is registered.
   closeRequests(): Pick<CloseRequestActions, 'clear' | 'pending' | 'announce'> | null;
   isAssistant(processId: string): boolean;
+  // A bot's replies stay unread while it works, until you read them or it
+  // replies again.
+  isBot?(processId: string): boolean;
   // The turn woke a snoozed agent, which announced that instead.
   wokeFromSnooze(processId: string): boolean;
   // An automatic idle compaction is running. Registered before the idle
@@ -50,7 +53,8 @@ export function integratedActivityNotifications(context: IntegratedActivityNotif
       if (preserveAttention) {
         context.notifications.resolve({ process_id: processId, kinds: ['permission', 'turn_finished', 'bell', 'message'] });
       } else {
-        context.notifications.resolveHandled(processId);
+        if (context.isBot?.(processId)) context.notifications.resolve({ process_id: processId, kinds: ['attention', 'permission', 'bell', 'message'] });
+        else context.notifications.resolveHandled(processId);
         // New work makes an earlier close request stale.
         if (!snapshot && (previous === 'idle' || previous === 'error')) context.closeRequests()?.clear(processId);
       }
@@ -76,6 +80,9 @@ export function integratedActivityNotifications(context: IntegratedActivityNotif
         // A bot's replies are short, so its notification shows the reply.
         // One that shows nothing as plain text, such as an image, falls back.
         const reply = context.botReply(processId) ?? '';
+        // A bot's earlier reply gives way to this one, raised afresh so it
+        // still notifies.
+        if (context.isBot?.(processId)) context.notifications.resolve({ process_id: processId, kinds: ['turn_finished'] });
         const shown = Boolean(clean(markdownText(reply), REPLY_PREVIEW_LIMIT));
         context.raise({ processId, source: 'integrated', kind: 'turn_finished', body: shown ? reply : 'Finished its turn', ...(shown ? { bodyLimit: REPLY_PREVIEW_LIMIT } : {}), dedupeKey: 'integrated:turn_finished', quiet: decision.quiet });
       }
