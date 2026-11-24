@@ -87,6 +87,7 @@ import { displayPath } from '../lib/projectOverview';
 import { processStatusIcon, sessionStatusIcon } from '../lib/statusIcons';
 import { describeDuration, parseDurationSeconds, timerRemaining } from '../lib/timers';
 import { sendWorkspaceRequest, type WorkspaceRequest } from '../lib/workspaceRequests';
+import { focusArrivalInput } from '../lib/arrivalFocus';
 import { usePaletteSources } from '../Composables/usePaletteSources';
 import { useWorkbench } from '../Composables/useWorkbench';
 import ProjectLogo from './ProjectLogo.vue';
@@ -170,6 +171,8 @@ const sources = usePaletteSources({
 // Actions that move focus, such as opening the session panel, wait until the
 // palette has closed. Its focus trap would otherwise take focus back.
 let afterClose: (() => void) | null = null;
+// The page the palette opened over.
+let openedAt = '';
 // Until the selection moves, the top row stays selected as rows arrive.
 let selectionMoved = false;
 
@@ -252,6 +255,7 @@ watch(() => open.value ? visibleRows.value[highlighted.value]?.command.id : null
 
 watch(open, async (isOpen) => {
   if (!isOpen) return;
+  openedAt = window.location?.href;
   query.value = '';
   pages.value = [];
   highlighted.value = 0;
@@ -365,9 +369,14 @@ function handleEscape(event: KeyboardEvent): void {
 function handleCloseAutoFocus(event: Event): void {
   const next = afterClose;
   afterClose = null;
-  if (!next) return;
-  event.preventDefault();
-  next();
+  if (next) {
+    event.preventDefault();
+    next();
+    return;
+  }
+  // A command that opened another page, such as a new agent, leaves focus in
+  // that page's input. Its own arrival focus ran while the palette held focus.
+  if (window.location?.href !== openedAt && focusArrivalInput()) event.preventDefault();
 }
 
 function handleTab(event: KeyboardEvent): void {
