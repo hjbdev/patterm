@@ -68,7 +68,7 @@
       </CommandList>
     </Command>
 
-    <div class="flex items-center gap-1 border-t border-border px-1.5 py-1.5">
+    <div v-if="chooseProject || targets.length > 1 || composing" class="flex items-center gap-1 border-t border-border px-1.5 py-1.5">
       <DropdownMenu v-if="chooseProject || targets.length > 1">
         <DropdownMenuTrigger as-child>
           <button type="button" class="flex h-7 min-w-0 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground" :aria-label="`Start in ${targetLabel(target)}`">

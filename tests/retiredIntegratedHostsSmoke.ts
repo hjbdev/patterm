@@ -75,7 +75,7 @@ async function main(): Promise<void> {
     database.connection.prepare('insert into projects (id,name,path,created_at,updated_at) values (?,?,?,?,?)').run('project', 'Test', directory, now, now);
     add('upgrade');
     await host('upgrade');
-    assert.deepEqual(await service.reconcile(), { checked: 1, failed: 1, unreachable: 0, failedProcessIds: [] });
+    assert.deepEqual(await service.reconcile(), { checked: 1, failed: 1, unreachable: 0 });
     assert.equal(state('upgrade').status, 'failed');
     assert.ok(state('upgrade').exited_at);
     assert.deepEqual(requests, ['upgrade:stop']);
@@ -113,7 +113,7 @@ async function main(): Promise<void> {
     add('refusing');
     await host('refusing');
     refuse = true;
-    assert.deepEqual(await service.reconcile(), { checked: 1, failed: 0, unreachable: 1, failedProcessIds: [] });
+    assert.deepEqual(await service.reconcile(), { checked: 1, failed: 0, unreachable: 1 });
     assert.equal(state('refusing').status, 'running', 'a host that refused cleanup is not marked stopped');
     await assert.rejects(service.stop('refusing'), /Could not stop unsupported Integrated hosts/);
     await assert.rejects(service.stopAll(), /Could not stop every Integrated agent/);

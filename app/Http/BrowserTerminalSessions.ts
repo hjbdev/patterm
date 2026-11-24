@@ -213,7 +213,7 @@ export class BrowserTerminalSessions {
       if (cached && cached.expiresAt > now) return cached.value;
     }
     const integrated = this.application.database.connection.prepare(`select processes.id, processes.status, sessions.exited_at from processes join sessions on sessions.process_id = processes.id
-      where processes.id = ? and sessions.interface_mode = 'integrated' order by sessions.started_at desc limit 1`).get(processId) as { id: string; status: string; exited_at: string | null } | undefined;
+      where processes.id = ? order by sessions.started_at desc limit 1`).get(processId) as { id: string; status: string; exited_at: string | null } | undefined;
     const value: ResolvedTerminal = integrated
       ? { id: integrated.id, integrated: true, active: integrated.status === 'running' && integrated.exited_at === null, controllable: integrated.status !== 'closed' }
       : { id: resolvePtyProcessId(this.application.database, processId), integrated: false, active: true, controllable: true };

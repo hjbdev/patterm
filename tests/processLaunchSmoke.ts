@@ -187,10 +187,11 @@ async function main(): Promise<void> {
     database.connection.prepare(`insert into sessions (id, project_id, session_role, interface_mode, resume_status, started_at, process_id)
       values ('session_legacy_tui', ?, 'orchestrator', 'tui', 'unknown', ?, 'legacy_tui_agent')`)
       .run(projectId, now);
-    new ReconcileRuntimeAction(database).execute([
+    const legacyReconciled = new ReconcileRuntimeAction(database).execute([
       { process_id: created.pty_process_id, status: 'running', exit_code: null, activity: 'working', title: 'dev' },
       { process_id: 'pty_legacy_tui', status: 'running', exit_code: null, activity: 'idle', title: 'Legacy TUI' }
     ]);
+    assert.deepEqual(legacyReconciled.reapedPtyIds, ['pty_legacy_tui'], 'live legacy TUI agent PTYs are returned for cleanup');
     assert.equal((database.connection.prepare(`select activity from processes where id = ?`).get(created.process_id) as { activity: string }).activity, 'working', 'live command PTY reconnects and syncs activity');
     assert.equal((database.connection.prepare(`select status from processes where id = 'legacy_tui_agent'`).get() as { status: string }).status, 'exited', 'legacy TUI agent process is reaped on startup');
     assert.ok((database.connection.prepare(`select exited_at from sessions where id = 'session_legacy_tui'`).get() as { exited_at: string | null }).exited_at, 'legacy TUI agent session is marked exited on startup');

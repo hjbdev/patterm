@@ -184,7 +184,7 @@ export class RestartAgentSessionAction {
   private restartableSource(processId: string, projectId: string): SourceSession | undefined {
     return this.database.connection.prepare(`select ${SOURCE_COLUMNS}
       from sessions join processes on processes.id = sessions.process_id
-      where sessions.process_id = ? and sessions.project_id = ? and sessions.interface_mode = 'integrated' and processes.status != 'closed'
+      where sessions.process_id = ? and sessions.project_id = ? and processes.status != 'closed'
       order by sessions.started_at desc limit 1`).get(processId, projectId) as SourceSession | undefined;
   }
 

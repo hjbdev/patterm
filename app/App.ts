@@ -487,6 +487,10 @@ async function createApplicationResources(
 
   const inventory = persistentTerminals ? terminalInventory.parse(await terminal.request('terminal.process.list')).processes : undefined;
   const reconciled = new ReconcileRuntimeAction(database).execute(inventory);
+  for (const ptyId of reconciled.reapedPtyIds) {
+    await terminal.request('terminal.process.stop', { process_id: ptyId }).catch(() => undefined);
+    await terminal.request('terminal.process.close', { process_id: ptyId }).catch(() => undefined);
+  }
   debugLog.write('runtime', 'reconciled', reconciled);
   const integratedReconciled = await integrated.reconcile();
   notificationService.resumeTurns();
@@ -806,7 +810,7 @@ async function createApplicationResources(
     resolvePty: (processId) => resolvePtyProcessId(database, processId),
     saveUpload: (name, bytes) => uploads.save(name, bytes),
     notifyRemoteTopics: (topics) => notifyChanged(topics, true),
-    isIntegrated: (processId) => Boolean(database.connection.prepare(`select 1 from sessions where process_id = ? and interface_mode = 'integrated' limit 1`).get(processId)),
+    isIntegrated: (processId) => Boolean(database.connection.prepare(`select 1 from sessions where process_id = ? limit 1`).get(processId)),
     subscribeConversation: (processId, listener) => integrated.subscribeConversation(processId, listener),
     // A paired host's UI runs the same tools as a browser, except ones that
     // change this host's settings or pairing.
@@ -994,9 +998,6 @@ async function createApplicationResources(
   timers.activate();
   routines.activate();
   projectSnoozes.activate();
-  for (const processId of integratedReconciled.failedProcessIds) {
-    raiseNotification({ processId, source: 'runtime', kind: 'failure', body: 'Agent host stopped unexpectedly', dedupeKey: 'failure' });
-  }
   debugLog.write('mcp', 'socket.listening', { address: mcpSocket.address, elapsed_ms: Date.now() - mcpStartedAt });
   debugLog.write('startup', 'critical.ready', { elapsed_ms: Date.now() - startupStartedAt });
 
