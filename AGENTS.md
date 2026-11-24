@@ -114,6 +114,11 @@ help
 session_context
 ```
 
+Antigravity is the one exception: it drops MCP tools past a shared size
+budget, so its sessions declare a core set and reach the rest through `help`
+(which lists them) and `call`. Both shims, `mcp/shim.ts` and the native
+`patterm_mcp.rs`, implement it and must stay in step.
+
 Every tool name is snake_case, so it reads the same in every harness. Never
 register a tool with dots in its name. Call namespaced tools directly, such as:
 

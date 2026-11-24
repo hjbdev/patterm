@@ -305,7 +305,10 @@ const timerIdleInput = z.object({
 const timerReportInput = timerIdleInput;
 
 const projectIdInput = z.object({ project_id: z.string().min(1) });
-const helpInput = z.object({ tool: z.string().min(1) });
+const helpInput = z.object({
+  tool: z.string().min(1).optional().describe('A tool name, for its full description, usage notes and schema. Omit to list tools.'),
+  query: z.string().trim().max(200).optional().describe('Words that listed tools must all match, in their name or description.')
+});
 
 const terminalProcessInput = z.object({
   process_id: z.string().min(1),
@@ -1742,11 +1745,19 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
     {
       name: 'help',
       namespace: 'meta',
-      description: 'Return the schema and usage notes for one tool.',
-      inputSchema: { type: 'object', required: ['tool'] },
-      usageNotes: ['Use when a tool needs detailed guidance, such as revision guards or lease renewal.']
+      description: 'Return one tool\'s schema and usage notes, or list the tools you can call.',
+      inputSchema: { type: 'object' },
+      usageNotes: ['Use when a tool needs detailed guidance, such as revision guards or lease renewal. Without tool, it lists each tool with the first sentence of its description; query narrows the list.']
     },
-    (args) => registry.helpPublic(helpInput.parse(args).tool)
+    (args, context) => {
+      const input = helpInput.parse(args);
+      if (input.tool) return registry.helpPublic(input.tool);
+      const words = (input.query ?? '').toLowerCase().split(/\s+/).filter(Boolean);
+      const tools = registry.publicTools(context)
+        .filter((tool) => words.every((word) => `${tool.name} ${tool.description}`.toLowerCase().includes(word)))
+        .map((tool) => ({ name: tool.name, description: tool.description.split(/(?<=\.)\s/)[0] }));
+      return { tools };
+    }
   );
 
   const searchConversationHistory = (args: unknown, context: McpCallContext) => {

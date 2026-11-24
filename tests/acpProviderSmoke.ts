@@ -257,7 +257,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     const creation = frames().find((frame) => frame.method === 'session/new');
     assert.equal(creation.params._meta.antigravity.systemPrompt.append, input.context);
     assert.deepEqual(creation.params.mcpServers.map((server: any) => server.name).sort(), ['Extra-One', 'patterm'], 'all configured servers are delivered');
-    assert.deepEqual(creation.params.mcpServers.find((server: any) => server.name === 'patterm').env, [{ name: 'PATTERM_MCP_IDENTITY', value: 'private-identity' }, { name: 'PATTERM_MCP_COMPACT', value: '1' }], 'agy gets the compact Patterm catalogue');
+    assert.deepEqual(creation.params.mcpServers.find((server: any) => server.name === 'patterm').env, [{ name: 'PATTERM_MCP_IDENTITY', value: 'private-identity' }, { name: 'PATTERM_MCP_GATEWAY', value: '1' }], 'agy gets the Patterm tool gateway');
     assert.deepEqual(frames()[0].params.clientCapabilities, {}, 'unimplemented filesystem and terminal capabilities are not advertised');
     if (process.platform !== 'win32') assert.equal(fs.statSync(prepared.runtimeState!.configPath!).mode & 0o777, 0o600);
     await assert.rejects(provider.prepare({ ...input, resumeId: prepared.resumeId }), /already attached/);

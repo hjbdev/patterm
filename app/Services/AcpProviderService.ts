@@ -80,8 +80,8 @@ export class AcpProviderService implements AgentAdapter {
     const socketPath = path.join(directory, `${key}.sock`);
     const configPath = path.join(directory, `${key}.json`);
     // agy drops the largest MCP tools once their declarations pass its size
-    // budget, so Patterm's own tools advertise without usage notes.
-    const patterm = { ...input.mcp, env: { ...input.mcp.env, PATTERM_MCP_COMPACT: '1' } };
+    // budget, so Patterm declares its most used tools and a gateway to the rest.
+    const patterm = { ...input.mcp, env: { ...input.mcp.env, PATTERM_MCP_GATEWAY: '1' } };
     const servers = { ...claudeMcpServers(input.mcpServers ?? [], input.mcp, { httpNative: false }), patterm };
     const mcpServers = Object.entries(servers).map(([name, value]) => {
       const server = value as { command: string; args: string[]; env: Record<string, string> };

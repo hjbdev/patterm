@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Antigravity agents get Patterm's tools through a gateway. Antigravity
+  drops the largest MCP tools once all servers' declarations pass its size
+  budget, which Patterm's catalogue nearly filled on its own. Its sessions now
+  declare the most used Patterm tools in full, plus `help` to list and explain
+  the rest and `call` to run them, so no tool goes missing and none loses its
+  usage notes. `help` without a tool name lists every tool you can call.
 - Tool calls in a conversation are quieter and open into a richer view. Each
   call is one line: its name, target and, on hover, how long it took, with its
   result (a line range, `+6 −1`, `exit 1`) on the right. Opening a call slides

@@ -181,7 +181,7 @@ async function main(): Promise<void> {
     const projectContext = firstPrepare.context;
     assert.match(projectContext, new RegExp(`Project: ${projectId}`), 'project-level claude receives project identity');
     assert.match(projectContext, /Orient with get_project_status/, 'project-level claude receives an orientation pointer');
-    assert.match(projectContext, /Agent-facing tools are available directly; use help/, 'project-level claude receives direct tool guidance');
+    assert.match(projectContext, /Agent-facing tools are available directly; where only a core set is declared, list the rest with help/, 'project-level claude receives direct tool guidance');
     assert.match(projectContext, /never to satisfy host-internal planning\/review requirements/, 'project-level claude is told not to use Patterm delegation for host workflows');
     assert.match(projectContext, /report_to_parent/, 'project-level claude receives child completion report guidance');
     assert.match(projectContext, /send_message the child that already reported instead of spawning a replacement/, 'project-level claude reuses reported children for follow-ups');
