@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     fallback for corrupt/retired saved settings, tracked socket teardown,
     Windows config cleanup on forced kills, and subscribe handshake timeout with
     deduplicated reconnect error events.
+- Bot conversations also hide the turn-finished notices, routine reports and
+  bounced-message notes Patterm sends a bot, so they show only what you and
+  the bot say to each other. Elsewhere, turn-finished notices show as the
+  child agent's message rather than as your own.
 - Bot conversations no longer show the notification and Focus mode digests
   Patterm sends the bot; only the bot's replies to them appear.
 - Replaced hardcoded provider-name feature switches across core backend services

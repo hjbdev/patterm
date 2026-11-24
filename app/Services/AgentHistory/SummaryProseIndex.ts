@@ -15,7 +15,7 @@ export function proseLabel(message: ProseMessage): string | null {
   if (message.role === 'assistant') return 'Assistant';
   const text = message.text.trim();
   if (/^\[(?:report from|message from|agent message from)\b/i.test(text)) return 'Agent report';
-  if (/^\[(?:Patterm\b|System notification\b|system\]|Attention (?:requested|needed) by|Failure reported by)/i.test(text)) return null;
+  if (/^\[(?:Patterm\b|System notification\b|system\]|Attention (?:requested|needed) by|Failure reported by|Notification from process_\d+ \()/i.test(text)) return null;
   if (/^# AGENTS\.md instructions for\b/.test(text)) return null;
   if (/^<(?:environment_context|INSTRUCTIONS|system-reminder|command-name|local-command|task-notification)\b/i.test(text)) return null;
   if (/^\/(?:compact|clear|new|help|model|status)(?:\s|$)/i.test(text)) return null;
