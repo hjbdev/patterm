@@ -815,7 +815,7 @@ export class IntegratedAgentService {
       const resolved = JSON.parse(row.payload) as ResolvedIntegratedPrompt;
       const identity = { key, messageId: row.message_id, hash: row.payload_hash ?? submissionHash(resolved) };
       if ((resolved.sourceScope || resolved.focusDigestId) && this.heldPromptGuard && !this.heldPromptGuard(key, resolved)) {
-        this.claimHeld(key, row, identity.hash);
+        this.dropHeld(key, row.message_id);
         continue;
       }
       // Claimed before the call, as a first send reserves its id: a restart
@@ -850,11 +850,17 @@ export class IntegratedAgentService {
         this.dispatching.delete(key);
       }
       if ((result as { delivery?: unknown } | null | undefined)?.delivery === 'dropped') {
+        this.removeSubmission(key, row.message_id);
         if (resolved.preserveAttention) this.preservedAttention.delete(key);
         continue;
       }
       this.admitted(key, key, sequence, sendInput, identity, result);
     }
+  }
+
+  private dropHeld(key: string, messageId: string): void {
+    this.database.connection.prepare('delete from integrated_held_prompts where process_id = ? and message_id = ?').run(key, messageId);
+    this.queueChanged(key);
   }
 
   private claimHeld(key: string, row: HeldPromptRow, hash: string): void {
@@ -1202,6 +1208,7 @@ export class IntegratedAgentService {
     if (this.inflight.get(key)?.size || this.nextHeld(key)) return false;
     const conversation = record(await this.conversation(processId));
     if (conversation.history_truncated === true || record(conversation.history_cursor).next || typeof conversation.history_cursor === 'string') return false;
+    if (Array.isArray(conversation.archived_messages) && conversation.archived_messages.length > 0) return false;
     const messages = Array.isArray(conversation.messages) ? conversation.messages : record(conversation.messages).data;
     return !Array.isArray(messages) || messages.length === 0;
   }
@@ -1810,13 +1817,15 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 function archiveBoundary(conversation: unknown, startedAt: string): string {
-  const data = record(record(conversation).messages).data;
+  const raw = record(conversation).messages;
+  const data = Array.isArray(raw) ? raw : record(raw).data;
   const messages = Array.isArray(data) ? data : [];
   // A host woken from hibernation, or restarted, holds nothing yet, while the
   // session keeps its first start time. Everything imported is older.
   if (!messages.length) return new Date().toISOString();
   for (const item of messages) {
-    const createdAt = record(item).created_at;
+    const row = record(item);
+    const createdAt = row.createdAt ?? row.created_at;
     if (typeof createdAt === 'string' && Number.isFinite(Date.parse(createdAt))) return createdAt;
   }
   // Older live hosts have no message timestamps. When their window is full,

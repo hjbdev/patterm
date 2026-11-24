@@ -331,6 +331,7 @@ import {
   normaliseConversation,
   normaliseMessages,
   rememberConversation,
+  snapshotHistoryCursor,
   type ConversationStreamEvent,
   type IntegratedControls,
   type IntegratedFormField,
@@ -766,8 +767,7 @@ async function applySnapshot(load: () => Promise<Record<string, unknown>>, reque
     historyTruncated.value = historyLoaded ? historyCursor.value !== null : result.history_truncated === true;
     historyUnavailable.value = result.history_unavailable === true;
     if (!historyLoaded) {
-      const cursor = result.history_cursor as Record<string, unknown> | null | undefined;
-      historyCursor.value = result.history_truncated === true && typeof cursor?.next === 'string' ? cursor.next : null;
+      historyCursor.value = result.history_truncated === true ? snapshotHistoryCursor(result) : null;
     }
     streaming.value = result.streaming === true;
     // Agents that change their own mode (such as entering or leaving plan mode)
@@ -817,8 +817,7 @@ async function applySnapshot(load: () => Promise<Record<string, unknown>>, reque
       const splicedBeforeWindow = typeof result.history_spliced_id === 'string' && !shownIds.has(result.history_spliced_id);
       if (historyLoaded && result.history_truncated === true && (!rows.some((message) => shownIds.has(message.id)) || splicedBeforeWindow)) {
         historyLoaded = false;
-        const cursor = result.history_cursor as Record<string, unknown> | null | undefined;
-        historyCursor.value = typeof cursor?.next === 'string' ? cursor.next : null;
+        historyCursor.value = snapshotHistoryCursor(result);
         historyTruncated.value = true;
       }
       messages.value = historyLoaded ? replaceLiveWindow(messages.value, rows) : rows;

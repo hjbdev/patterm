@@ -204,6 +204,14 @@ export class ClaudeStreamService implements AgentAdapter {
       attachment,
       data: attachment.data ?? (await fs.promises.readFile(attachment.path)).toString('base64')
     })));
+    let promptText = text;
+    if (input.admitGuard) {
+      const checked = input.admitGuard();
+      if (!checked) return { delivery: 'dropped' };
+      const checkedRefs = checked.references.filter((reference) => !containsReferenceToken(checked.text, reference.relativePath));
+      promptText = [checked.text.trim(), ...checkedRefs.map((reference) => referenceToken(reference.relativePath))].filter(Boolean).join(' ');
+      if (!promptText && !uploads.length) return { delivery: 'dropped' };
+    }
     const images = uploads.filter(({ attachment }) => attachment.mime.startsWith('image/'))
       .map(({ attachment, data }) => ({ media_type: attachment.mime, data }));
     const documents = uploads.filter(({ attachment }) => !attachment.mime.startsWith('image/'))
@@ -221,12 +229,12 @@ export class ClaudeStreamService implements AgentAdapter {
         return { type: 'image', name: attachment.name, mime: attachment.mime, ...(stored ? { sha256: stored.sha256 } : {}) };
       })
     ];
-    if (!text && !uploads.length) throw new Error('Message is empty');
+    if (!promptText && !uploads.length) throw new Error('Message is empty');
     try {
       // Hosts that predate documents reject promptDocuments as unknown
       // instead of dropping the files from a plain prompt.
       return await callHost(this.runtime(processId).socketPath, documents.length ? 'promptDocuments' : 'prompt', {
-        text,
+        text: promptText,
         images,
         ...(documents.length ? { documents } : {}),
         attachments: displayAttachments,

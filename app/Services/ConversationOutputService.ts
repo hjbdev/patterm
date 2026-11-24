@@ -81,6 +81,9 @@ export class ConversationOutputService {
       if (live && batch === null) {
         const snapshot = (await this.integrated!.conversation(process.id) ?? {}) as Record<string, unknown>;
         read.snapshot = snapshot;
+        if (Array.isArray(snapshot.archived_messages)) {
+          return { rows: historyRows(snapshot.archived_messages as Parameters<typeof historyRows>[0]), older: snapshotCursor(snapshot), source: 'archive' };
+        }
         return { rows: snapshotRows(snapshot), older: snapshotCursor(snapshot), source: 'live' };
       }
       if (live) {

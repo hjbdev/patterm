@@ -620,7 +620,7 @@ else if (method === 'GET') console.log(JSON.stringify({data:{location:{directory
       line.includes('"method":"DELETE"') && line.includes(`/inbox/${admittedReview.id}`)));
     await assert.rejects(queueService.prompt('process_0', reviewInput, offer), /no longer waiting/);
     assert.equal(fs.readFileSync(record, 'utf8').split('\n').filter((line) =>
-      line.includes('"method":"POST"') && line.includes(admittedReview.id)).length, 1, 'only the current offer reaches native admission');
+      line.includes('"method":"POST"') && line.includes(admittedReview.id!)).length, 1, 'only the current offer reaches native admission');
 
     // An accepted steer is tracked until the transcript shows it. One that
     // leaves the inbox without arriving is flagged, never passed off as

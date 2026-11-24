@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Hardened integrated agent runtimes across all four adapters:
+  - Unified live and archived conversation reads for hibernated sessions in
+    `ConversationOutputService`, renderer prefetch, `IntegratedAgentService.isEmpty()`,
+    and `archiveBoundary()`, and tightened timeless-row archive boundary queries.
+  - Enforced `admitGuard` before native prompt dispatch across OpenCode, Claude,
+    and Antigravity/ACP alongside Codex, routed `BotRelay.deliverAgentMessage()`
+    through `scopedPrompt()`, and cleaned up dropped held-prompt submissions.
+  - Persisted Codex mid-session model, effort, speed, Plan mode, answered plan,
+    and post-compaction memory-refresh state across Patterm restarts and
+    hibernation/wake, deduplicated concurrent Codex host connections, added a
+    duplicate-attach guard, and replayed Codex host token/quota/MCP telemetry on
+    reconnect.
+  - Parallelized OpenCode cold launches (version check with `/api/info`, bridge
+    and user MCP staging/connect, session creation/validation with MCP setup,
+    and snapshot goal reads).
+  - Added lightweight ACP/host mitigations: transient socket retry on startup,
+    8.5s configure RPC timeout with single-round-trip SQLite sync, graceful
+    fallback for corrupt/retired saved settings, tracked socket teardown,
+    Windows config cleanup on forced kills, and subscribe handshake timeout with
+    deduplicated reconnect error events.
 - Replaced hardcoded provider-name feature switches across core backend services
   and the Vue renderer (idle compaction, parent request approval, launch/restart,
   bots, routines, composer selectors, control drawer, and settings forms) with
