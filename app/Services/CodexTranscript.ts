@@ -466,13 +466,15 @@ function fileChanges(item: JsonRecord): { text: string; changes: JsonRecord[] } 
   return { text: body, changes };
 }
 
-// A failed call has no result, so its error is the body. An MCP result is
-// { content: [...] }; its text parts are the body.
+// A failed call has no result, so its error is the body. An MCP result whose
+// only payload is text content shows that text; one with structured content
+// shows in full.
 function toolResultText(result: unknown, error: unknown): string {
   const message = text(record(error).message) || text(error);
   if (message) return message;
-  const content = record(result).content;
-  return outputBody(Array.isArray(content) ? content : result);
+  const { content, structuredContent } = record(result);
+  if (Array.isArray(content) && structuredContent == null && content.length && content.every((part) => typeof record(part).text === 'string')) return outputBody(content);
+  return outputBody(result);
 }
 
 function outputBody(value: unknown): string {

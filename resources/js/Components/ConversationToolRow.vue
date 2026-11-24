@@ -96,8 +96,7 @@
 
       <!-- A rendered page shows here, in case the reply never placed it. -->
       <HtmlFigureCard v-if="drawn" :message="message" />
-      <!-- A failed call's output is often just its error, shown above. -->
-      <div v-else-if="tool.output && tool.output !== tool.error" class="min-w-0">
+      <div v-else-if="tool.output" class="min-w-0">
         <div class="flex items-center justify-between gap-2">
           <span class="text-[0.77em] uppercase tracking-wide text-muted-foreground">Output</span>
           <button type="button" class="rounded p-0.5 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50" :aria-label="`Copy output`" @click="copy(tool.output)">
