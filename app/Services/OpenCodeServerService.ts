@@ -20,7 +20,8 @@ import {
   type AgentConversationSnapshot,
   type AgentLaunchInput,
   type AgentLaunchResult,
-  type AgentOlderMessagesPage
+  type AgentOlderMessagesPage,
+  type AgentPromptResult
 } from '../Agents/AgentProtocol';
 import { clientMessageIdFromOpenCodeId, projectOpenCodeRows, resolveOpenCodeToolIdentity } from '../Agents/OpenCodeProjection';
 import { resolveSessionRuntimeState } from '../Agents/SessionRuntimeState';
@@ -481,12 +482,34 @@ export class OpenCodeServerService implements AgentAdapter {
     this.memoryChanges.set(processId, changes);
   }
 
-  async prompt(processId: string, input: ResolvedIntegratedPrompt, review?: ReviewPrompt): Promise<{ id: string }> {
+  async prompt(processId: string, input: ResolvedIntegratedPrompt, review?: ReviewPrompt): Promise<AgentPromptResult> {
     const runtime = this.runtime(processId);
     const files = this.promptFiles(input);
     await this.ensureMcp(runtime);
-    if (review && !review.current()) throw new Error('This request is no longer waiting for this parent');
-    const messageId = review ? `msg_${review.id}` : input.messageId ? `msg_${input.messageId}` : undefined;
+    const body = {
+      text: input.text.trim(),
+      ...(files.length ? { files } : {}),
+      ...(review ? { id: `msg_${review.id}` } : input.messageId ? { id: `msg_${input.messageId}` } : {}),
+      // Like OpenCode's own clients, a prompt sent mid-turn joins the turn
+      // at its next model step instead of waiting for it to end.
+      delivery: 'steer', resume: true
+    };
+    const beforeSend = (): void => {
+      if (review && !review.current()) throw new ProviderCommandError('This request is no longer waiting for this parent', undefined, true);
+      if (!input.admitGuard) return;
+      const checked = input.admitGuard();
+      if (!checked) throw new PromptDroppedError();
+      const nextText = checked.text.trim();
+      if (!nextText && !files.length) throw new PromptDroppedError();
+      body.text = nextText;
+    };
+    try {
+      beforeSend();
+    } catch (error) {
+      if (error instanceof PromptDroppedError) return { delivery: 'dropped' };
+      throw error;
+    }
+    const messageId = body.id;
     const cancelOnRevoke = (id: string) => {
       if (!review) return;
       const cancel = () => {
@@ -499,18 +522,10 @@ export class OpenCodeServerService implements AgentAdapter {
       else review.revoked.addEventListener('abort', cancel, { once: true });
     };
     try {
-      const body = {
-        text: input.text.trim(),
-        ...(files.length ? { files } : {}),
-        ...(messageId ? { id: messageId } : {}),
-        // Like OpenCode's own clients, a prompt sent mid-turn joins the turn
-        // at its next model step instead of waiting for it to end.
-        delivery: 'steer', resume: true
-      };
       const route = `/api/session/${encodeURIComponent(runtime.resumeId)}/prompt`;
       const response = (input.attachments.length
-        ? await this.inlinePrompt(route, body)
-        : await this.api(runtime.executable, runtime.cwd, 'POST', route, body, review?.current)) as { data?: { id?: unknown } };
+        ? await this.inlinePrompt(route, body, beforeSend)
+        : await this.api(runtime.executable, runtime.cwd, 'POST', route, body, beforeSend)) as { data?: { id?: unknown } };
       if (typeof response.data?.id !== 'string') {
         throw new Error('OpenCode did not acknowledge the message');
       }
@@ -519,6 +534,7 @@ export class OpenCodeServerService implements AgentAdapter {
       else this.trackPending(processId, runtime.resumeId, response.data.id, input);
       return { id: response.data.id };
     } catch (error) {
+      if (error instanceof PromptDroppedError) return { delivery: 'dropped' };
       // 4xx responses and pre-execution failures are definitive rejections.
       // Anything else may have been admitted before the reply was lost, so
       // reconcile before deciding.
@@ -551,8 +567,8 @@ export class OpenCodeServerService implements AgentAdapter {
     ];
   }
 
-  private async inlinePrompt(route: string, body: unknown): Promise<unknown> {
-    return (await this.daemonRequest('POST', route, body, true))!.value;
+  private async inlinePrompt(route: string, body: unknown, beforeSend?: () => void): Promise<unknown> {
+    return (await this.daemonRequest('POST', route, body, true, beforeSend))!.value;
   }
 
   // Native evidence: a bounded newest-first read can prove admission but never
@@ -1949,7 +1965,7 @@ export class OpenCodeServerService implements AgentAdapter {
     const activity = this.activity.get(runtime.resumeId) ?? newActivity();
     const activityVersion = activity.version;
     const readAt = Date.now();
-    const [{ rows, truncated, cursor }, ownPermissions, ownForms, active, childRequests, inbox, shells] = await Promise.all([
+    const [{ rows, truncated, cursor }, ownPermissions, ownForms, active, childRequests, inbox, shells, goal] = await Promise.all([
       this.messageRows(runtime),
       this.api(runtime.executable, runtime.cwd, 'GET', `/api/session/${encodeURIComponent(runtime.resumeId)}/permission`),
       this.api(runtime.executable, runtime.cwd, 'GET', `/api/session/${encodeURIComponent(runtime.resumeId)}/form`),
@@ -1962,12 +1978,12 @@ export class OpenCodeServerService implements AgentAdapter {
       // route to their session.
       this.api(runtime.executable, runtime.cwd, 'GET', `/api/shell?${new URLSearchParams({ 'location[directory]': runtime.cwd })}`)
         .then((listing) => { this.learnShellOwners(listing); return listing; })
-        .catch(() => null)
-    ]);
-    const [nestedRows, usage, undelivered, goal] = await Promise.all([
-      this.childMessages(runtime, rows), this.usage(runtime, rows),
-      this.settlePending(runtime, rows, inbox === null ? null : dataRows(inbox)).catch((): IntegratedQueuedMessage[] => []),
+        .catch(() => null),
       this.sessionGoal(runtime)
+    ]);
+    const [nestedRows, usage, undelivered] = await Promise.all([
+      this.childMessages(runtime, rows), this.usage(runtime, rows),
+      this.settlePending(runtime, rows, inbox === null ? null : dataRows(inbox)).catch((): IntegratedQueuedMessage[] => [])
     ]);
     const tasks = subagentTasks(rows, runtime.resumeId, active, new Set(dataRows(shells).map((shell) => String(shell.id))));
     const permissions = [...dataRows(ownPermissions), ...childRequests.permissions];
@@ -2156,58 +2172,6 @@ export class OpenCodeServerService implements AgentAdapter {
     return rows[0]!.mcp_identity;
   }
 
-  // The daemon is shared by every session in a directory, so a server is only
-  // replaced when its configuration changes or the daemon has restarted and
-  // forgotten it. Replacing an unchanged config is a no-op in OpenCode, and
-  // the cache of what was installed does not survive a Patterm restart, so a
-  // restart that wants fresh tool lists also reconnects every server the
-  // daemon already had. That starts a new client for every session in the
-  // directory.
-  // A server that fails to start shows as failed in OpenCode and does not stop
-  // the launch. Native configuration reconciliation is serial and an enabled
-  // PUT waits for the handshake under that lock. Stage all configs disabled,
-  // then connect through the per-server endpoint concurrently; resources,
-  // prompts, authentication and tool discovery remain owned by OpenCode.
-  // Resolves the names of servers that could not be staged or connected.
-  private async installGlobalMcpServers(executable: string, cwd: string, location: URLSearchParams, configs: Record<string, Record<string, unknown>>, daemonRestarted: boolean, reconnect: boolean): Promise<string[]> {
-    const pending: Array<{ name: string; key: string; body: string; route: string }> = [];
-    const failed: string[] = [];
-    await Promise.all(Object.entries(configs).map(async ([name, config]) => {
-      const key = `${cwd}\0${name}`;
-      const body = createHash('sha256').update(JSON.stringify(config)).digest('hex');
-      const route = `/api/experimental/mcp/${encodeURIComponent(name)}`;
-      try {
-        const changed = daemonRestarted || this.installedMcp.get(key) !== body;
-        if (changed) {
-          await this.api(executable, cwd, 'PUT', `${route}?${location}`, { config: { ...config, disabled: true } });
-        }
-        if (changed || reconnect) pending.push({ name, key, body, route });
-      } catch {
-        this.installedMcp.delete(key);
-        failed.push(name);
-      }
-    }));
-    if (!pending.length) return failed;
-    const listed = await this.api(executable, cwd, 'GET', `/api/mcp?${location}`) as {
-      data?: Array<{ name: string; status: { status: string } }>;
-    };
-    const statuses = new Map((listed.data ?? []).map((server) => [server.name, server.status.status]));
-    await Promise.all(pending.map(async ({ name, key, body, route }) => {
-      try {
-        // An empty Patterm cache does not mean the native client is new: an
-        // unchanged disabled PUT leaves a surviving connection untouched.
-        if (reconnect || statuses.get(name) === 'disabled') {
-          await this.api(executable, cwd, 'POST', `${route}/connect?${location}`);
-        }
-        this.installedMcp.set(key, body);
-      } catch {
-        this.installedMcp.delete(key);
-        failed.push(name);
-      }
-    }));
-    return failed;
-  }
-
   async prepare(input: AgentLaunchInput): Promise<AgentLaunchResult> {
     // A directory's bridge and MCP clients are shared. Later launches reuse
     // the first launch's installation rather than racing a second connect.
@@ -2280,38 +2244,53 @@ export class OpenCodeServerService implements AgentAdapter {
     const { executable, cwd } = input;
     // The native API caps each durable instruction entry at 8 KiB.
     if (Buffer.byteLength(JSON.stringify(input.context)) > 8 * 1024) throw new Error('Patterm context exceeds the OpenCode instruction limit');
-    if (!(await this.versions(executable, cwd)).matched) await this.replaceStaleService(executable, cwd);
-    await this.installMcp(executable, cwd, input.mcp, input.mcpServers ?? [], input.reconnectMcp === true);
-
-    let sessionId = input.resumeId;
     const selectedModel = input.model ? openCodeModelRef(input.model, input.reasoning ?? null) : null;
-    if (sessionId) {
-      const existing = await this.api(executable, cwd, 'GET', `/api/session/${encodeURIComponent(sessionId)}`) as {
-        data?: { location?: { directory?: string } };
-      };
-      if (!pathsMatch(existing.data?.location?.directory, cwd)) throw new Error('OpenCode session directory does not match the Patterm launch directory');
-      const attached = this.database.connection.prepare(`select id from sessions where harness = 'opencode' and resume_id = ? and exited_at is null`).get(sessionId);
+    if (input.resumeId) {
+      const attached = this.database.connection.prepare(`select id from sessions where harness = 'opencode' and resume_id = ? and exited_at is null`).get(input.resumeId);
       if (attached) throw new Error('OpenCode session is already attached to Patterm');
-      if (selectedModel) {
-        await this.api(executable, cwd, 'POST', `/api/session/${encodeURIComponent(sessionId)}/model`, { model: selectedModel });
-      }
-    } else {
-      // An explicit title stops OpenCode generating one, so pass only a name
-      // the user chose.
-      const created = await this.api(executable, cwd, 'POST', '/api/session', {
-        ...(input.name ? { title: input.name } : {}),
-        location: { directory: cwd },
-        ...(selectedModel ? { model: selectedModel } : {})
-      }) as { data?: { id?: string } };
-      sessionId = created.data?.id ?? null;
     }
+    if (!(await this.versions(executable, cwd)).matched) await this.replaceStaleService(executable, cwd);
+
+    // Keep all mutating session writes strictly behind successful MCP bridge
+    // installation so a failed bridge never creates orphan sessions or mutates
+    // an existing session's model/instructions.
+    let sessionId = input.resumeId;
+    if (sessionId) {
+      const [, existing] = await Promise.all([
+        this.installMcp(executable, cwd, input.mcp, input.mcpServers ?? [], input.reconnectMcp === true),
+        this.api(executable, cwd, 'GET', `/api/session/${encodeURIComponent(sessionId)}`) as Promise<{
+          data?: { location?: { directory?: string } };
+        }>
+      ]);
+      if (!pathsMatch(existing.data?.location?.directory, cwd)) throw new Error('OpenCode session directory does not match the Patterm launch directory');
+      const instructionsRoute = `/api/experimental/session/${encodeURIComponent(sessionId)}/instructions/entries/patterm`;
+      if (selectedModel) {
+        await Promise.all([
+          this.api(executable, cwd, 'POST', `/api/session/${encodeURIComponent(sessionId)}/model`, { model: selectedModel }),
+          this.api(executable, cwd, 'PUT', instructionsRoute, { value: input.context })
+        ]);
+      } else {
+        await this.api(executable, cwd, 'PUT', instructionsRoute, { value: input.context });
+      }
+      return { resumeId: sessionId, argv: [executable], runtimeState: { executable } };
+    }
+
+    await this.installMcp(executable, cwd, input.mcp, input.mcpServers ?? [], input.reconnectMcp === true);
+    // An explicit title stops OpenCode generating one, so pass only a name
+    // the user chose.
+    const created = await this.api(executable, cwd, 'POST', '/api/session', {
+      ...(input.name ? { title: input.name } : {}),
+      location: { directory: cwd },
+      ...(selectedModel ? { model: selectedModel } : {})
+    }) as { data?: { id?: string } };
+    sessionId = created.data?.id ?? null;
     if (!sessionId?.startsWith('ses')) throw new Error('OpenCode did not return a session ID');
     await this.api(executable, cwd, 'PUT', `/api/experimental/session/${encodeURIComponent(sessionId)}/instructions/entries/patterm`, { value: input.context });
     return { resumeId: sessionId, argv: [executable], runtimeState: { executable } };
   }
 
   // Installs Patterm's bridge and the user's MCP servers in a directory, and
-  // connects them. Runs inside the directory's queue.
+  // connects them concurrently. Runs inside the directory's queue.
   // Resolves the user's servers that did not install; the bridge must.
   private async installMcp(executable: string, cwd: string, mcp: McpServerSpec, servers: McpLaunchServer[], reconnect: boolean): Promise<string[]> {
     const bridgeName = openCodeBridgeName(mcp);
@@ -2327,29 +2306,78 @@ export class OpenCodeServerService implements AgentAdapter {
         }
       }
     };
-    // Patterm's bridge is missing when the daemon has not seen this directory
-    // since it started, or has dropped the directory's services since.
-    const before = await this.api(executable, cwd, 'GET', `/api/mcp?${location}`) as { data?: Array<{ name: string }> };
-    const daemonRestarted = !(before.data ?? []).some((server) => server.name === bridgeName);
-    await this.api(executable, cwd, 'PUT', `/api/experimental/mcp/${bridgeName}?${location}`, bridge);
-    for (let attempt = 0; ; attempt++) {
-      const listed = await this.api(executable, cwd, 'GET', `/api/mcp?${location}`) as {
-        data?: Array<{ name: string; status: { status: string } }>;
-      };
-      const status = listed.data?.find((server) => server.name === bridgeName)?.status.status;
-      if (status === 'connected') break;
-      if (status === 'disabled' && attempt === 0) {
-        await this.api(executable, cwd, 'POST', `/api/experimental/mcp/${bridgeName}/connect?${location}`);
-        continue;
-      }
-      if (status !== 'pending' || attempt >= 20) throw new Error(`OpenCode MCP bridge did not connect (${status ?? 'missing'})`);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
     // The daemon's helpers serve every session, so they carry the bridge
     // token rather than this agent's identity.
     const { PATTERM_MCP_IDENTITY: _identity, ...shared } = mcp.env;
     const helpers = { ...mcp, env: { ...shared, PATTERM_OPENCODE_BRIDGE: this.token } };
-    return this.installGlobalMcpServers(executable, cwd, location, openCodeMcpConfigs(servers, helpers), daemonRestarted, reconnect);
+    const userConfigs = openCodeMcpConfigs(servers, helpers);
+    // Patterm's bridge is missing when the daemon has not seen this directory
+    // since it started, or has dropped the directory's services since.
+    const before = await this.api(executable, cwd, 'GET', `/api/mcp?${location}`) as { data?: Array<{ name: string }> };
+    const daemonRestarted = !(before.data ?? []).some((server) => server.name === bridgeName);
+
+    const pending: Array<{ name: string; key: string; body: string; route: string }> = [];
+    const failed: string[] = [];
+    await Promise.all([
+      this.api(executable, cwd, 'PUT', `/api/experimental/mcp/${bridgeName}?${location}`, bridge),
+      ...Object.entries(userConfigs).map(async ([name, config]) => {
+        const key = `${cwd}\0${name}`;
+        const body = createHash('sha256').update(JSON.stringify(config)).digest('hex');
+        const route = `/api/experimental/mcp/${encodeURIComponent(name)}`;
+        try {
+          const changed = daemonRestarted || this.installedMcp.get(key) !== body;
+          if (changed) {
+            await this.api(executable, cwd, 'PUT', `${route}?${location}`, { config: { ...config, disabled: true } });
+          }
+          if (changed || reconnect) pending.push({ name, key, body, route });
+        } catch {
+          this.installedMcp.delete(key);
+          failed.push(name);
+        }
+      })
+    ]);
+
+    const listed = await this.api(executable, cwd, 'GET', `/api/mcp?${location}`) as {
+      data?: Array<{ name: string; status: { status: string } }>;
+    };
+    const statuses = new Map((listed.data ?? []).map((server) => [server.name, server.status.status]));
+
+    const connectBridge = async (): Promise<void> => {
+      let status = statuses.get(bridgeName);
+      for (let attempt = 0; ; attempt++) {
+        if (attempt > 0) {
+          const next = await this.api(executable, cwd, 'GET', `/api/mcp?${location}`) as {
+            data?: Array<{ name: string; status: { status: string } }>;
+          };
+          status = next.data?.find((server) => server.name === bridgeName)?.status.status;
+        }
+        if (status === 'connected') return;
+        if (status === 'disabled' && attempt === 0) {
+          await this.api(executable, cwd, 'POST', `/api/experimental/mcp/${bridgeName}/connect?${location}`);
+          continue;
+        }
+        if (status !== 'pending' || attempt >= 20) throw new Error(`OpenCode MCP bridge did not connect (${status ?? 'missing'})`);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    };
+
+    await Promise.all([
+      connectBridge(),
+      ...pending.map(async ({ name, key, body, route }) => {
+        try {
+          // An empty Patterm cache does not mean the native client is new: an
+          // unchanged disabled PUT leaves a surviving connection untouched.
+          if (reconnect || statuses.get(name) === 'disabled') {
+            await this.api(executable, cwd, 'POST', `${route}/connect?${location}`);
+          }
+          this.installedMcp.set(key, body);
+        } catch {
+          this.installedMcp.delete(key);
+          failed.push(name);
+        }
+      })
+    ]);
+    return failed;
   }
 
   private async cliVersion(executable: string, cwd: string): Promise<string | null> {
@@ -2372,8 +2400,11 @@ export class OpenCodeServerService implements AgentAdapter {
   }
 
   private async versions(executable: string, cwd: string): Promise<{ matched: boolean; cli: string | null; server: string | null }> {
-    const cli = await this.cliVersion(executable, cwd);
-    const identity = record(await this.api(executable, cwd, 'GET', '/api/info'));
+    const [cli, rawIdentity] = await Promise.all([
+      this.cliVersion(executable, cwd),
+      this.api(executable, cwd, 'GET', '/api/info')
+    ]);
+    const identity = record(rawIdentity);
     const server = typeof identity.version === 'string' ? identity.version : null;
     return { matched: Boolean(cli) && identity.healthy !== false && server === cli, cli, server };
   }
@@ -2524,20 +2555,20 @@ export class OpenCodeServerService implements AgentAdapter {
   // the registration is missing or cannot be verified. A refused connection or
   // rejected credential happens before the request runs, so it rediscovers and
   // retries once; a dropped pooled connection does the same for reads only.
-  private async api(executable: string, cwd: string, method: string, route: string, body?: unknown, current?: () => boolean): Promise<unknown> {
-    const response = await this.daemonRequest(method, route, body, false, current);
+  private async api(executable: string, cwd: string, method: string, route: string, body?: unknown, beforeSend?: () => void): Promise<unknown> {
+    const response = await this.daemonRequest(method, route, body, false, beforeSend);
     if (response) return response.value;
-    if (current && !current()) throw new ProviderCommandError('This request is no longer waiting for this parent', undefined, true);
+    beforeSend?.();
     return this.cliApi(executable, cwd, method, route, body);
   }
 
   // Resolves null when an optional daemon cannot be used; a required daemon
   // reports why instead.
-  private async daemonRequest(method: string, route: string, body: unknown, required: boolean, current?: () => boolean): Promise<{ value: unknown } | null> {
+  private async daemonRequest(method: string, route: string, body: unknown, required: boolean, beforeSend?: () => void): Promise<{ value: unknown } | null> {
     for (let attempt = 0; attempt < 2; attempt++) {
       const daemon = required ? await this.daemon() : await this.daemon().catch(() => null);
       if (!daemon) return null;
-      if (current && !current()) throw new ProviderCommandError('This request is no longer waiting for this parent', undefined, true);
+      beforeSend?.();
       try {
         return { value: await this.daemonApi(daemon, method, route, body) };
       } catch (error) {
@@ -2658,6 +2689,7 @@ interface OpenCodeDaemon {
 // only when the request cannot have run, or is a read that is safe to repeat,
 // so the caller may rediscover and retry.
 class StaleDaemonError extends Error {}
+class PromptDroppedError extends Error {}
 
 function connectionRefused(error: unknown): boolean {
   return errorCause(error) === 'ECONNREFUSED';

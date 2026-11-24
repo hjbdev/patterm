@@ -301,6 +301,7 @@ export interface AgentPromptResult {
   id?: string;
   turnId?: string;
   queued?: boolean;
+  delivery?: string;
   [key: string]: unknown;
 }
 

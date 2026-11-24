@@ -51,6 +51,8 @@ export function startCodexHostSession(
   fs.closeSync(log);
   const clients = new Set<net.Socket>();
   const pendingServerRequests = new Map<string, string>();
+  const latestTokenUsage = new Map<string, string>();
+  const mcpStartupFailures = new Map<string, string>();
   let sendAppServer: (line: string) => void = () => {};
   let server: net.Server | null = null;
   let appSocket: WebSocket | null = null;
@@ -79,6 +81,8 @@ export function startCodexHostSession(
         admitted = true;
         clients.add(socket);
         for (const line of pendingServerRequests.values()) socket.write(`${line}\n`);
+        for (const line of latestTokenUsage.values()) socket.write(`${line}\n`);
+        for (const line of mcpStartupFailures.values()) socket.write(`${line}\n`);
       };
       // A named pipe's default ACL lets every local user open it for reading but
       // only its owner for writing, so on Windows a client receives app-server
@@ -89,6 +93,11 @@ export function startCodexHostSession(
       socket.on('data', (chunk) => {
         if (!admitted) admit();
         buffer += chunk;
+        if (buffer.length > 32 * 1024 * 1024) {
+          clients.delete(socket);
+          socket.destroy();
+          return;
+        }
         for (;;) {
           const newline = buffer.indexOf('\n');
           if (newline < 0) return;
@@ -149,8 +158,31 @@ export function startCodexHostSession(
       if (!line.trim()) continue;
       const message = parse(line);
       if ('id' in message && typeof message.method === 'string') pendingServerRequests.set(String(message.id), line);
-      else forgetResolvedRequests(message);
-      for (const client of clients) client.write(`${line}\n`);
+      else {
+        forgetResolvedRequests(message);
+        rememberTelemetry(message, line);
+      }
+      for (const client of clients) {
+        if (client.destroyed || client.writableLength > 1024 * 1024) {
+          clients.delete(client);
+          client.destroy();
+        } else {
+          client.write(`${line}\n`);
+        }
+      }
+    }
+  }
+
+  function rememberTelemetry(message: JsonRecord, line: string): void {
+    const params = message.params && typeof message.params === 'object' ? message.params as JsonRecord : {};
+    if (message.method === 'thread/tokenUsage/updated' && typeof params.threadId === 'string') {
+      latestTokenUsage.set(params.threadId, line);
+    } else if (message.method === 'mcpServer/startupStatus/updated') {
+      const name = typeof params.name === 'string' ? params.name : typeof params.server === 'string' ? params.server : '';
+      if (!name) return;
+      const key = `${typeof params.threadId === 'string' ? params.threadId : ''}\0${name}`;
+      if (params.status === 'failed') mcpStartupFailures.set(key, line);
+      else mcpStartupFailures.delete(key);
     }
   }
 
@@ -208,13 +240,33 @@ export function startCodexHostSession(
   }
 
   // Windows has no SIGTERM, and npm's codex launcher runs the native binary as
-  // its own child, so the whole tree ends there.
+  // its own child, so the whole tree ends there. On POSIX wait briefly for
+  // SIGTERM exit so a rapid restart/wake cannot collide with the exiting daemon.
   function stopAppServer(): Promise<void> {
-    if (process.platform !== 'win32') {
-      try { if (appServer.exitCode === null) appServer.kill('SIGTERM'); } catch {}
-      return Promise.resolve();
+    if (appServer.exitCode !== null || appServer.signalCode !== null) return Promise.resolve();
+    if (process.platform === 'win32') {
+      return appServer.pid ? killProcessTree(appServer.pid) : Promise.resolve();
     }
-    return appServer.pid && appServer.exitCode === null ? killProcessTree(appServer.pid) : Promise.resolve();
+    return new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        appServer.off('exit', finish);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        if (appServer.pid && appServer.exitCode === null && appServer.signalCode === null) {
+          void killProcessTree(appServer.pid).catch(() => undefined).finally(finish);
+        } else {
+          finish();
+        }
+      }, 2_000);
+      timer.unref?.();
+      appServer.once('exit', finish);
+      try { appServer.kill('SIGTERM'); } catch { finish(); }
+    });
   }
 
   return {

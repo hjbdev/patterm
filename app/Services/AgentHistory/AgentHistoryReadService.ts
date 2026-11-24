@@ -98,7 +98,7 @@ export class AgentHistoryReadService {
       select id from conversations where provider = ? and provider_conversation_id = ? and project_id = ?
     `).get(provider, resumeId, projectId) as { id: string } | undefined;
     if (!conversation) return { count: 0, messages: [] };
-    const predicate = `conversation_id = ? and (provider_created_at is null or provider_created_at < ?) and ${this.visibleMessages()}`;
+    const predicate = `conversation_id = ? and coalesce(provider_created_at, created_at) < ? and ${this.visibleMessages()}`;
     const count = (this.database.connection.prepare(`select count(*) as count from conversation_messages where ${predicate}`).get(conversation.id, before) as { count: number }).count;
     const messages = this.database.connection.prepare(`
       select * from conversation_messages where ${predicate} order by seq asc limit ? offset ?

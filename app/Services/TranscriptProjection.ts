@@ -509,6 +509,8 @@ function assistantNotices(row: Record<string, unknown>, id: string, nested: Pick
 function projectedMessage(row: Record<string, unknown>, id: string): TranscriptMessage {
   const tool = record(row.tool);
   const attachments = Array.isArray(row.attachments) ? row.attachments.map(record).filter((item) => Object.keys(item).length > 0) : [];
+  const fileReferences = Array.isArray(row.fileReferences) ? row.fileReferences.filter((item): item is string => typeof item === 'string') : [];
+  const approval = record(row.approval);
   const text = stripAnsi(String(row.text ?? ''));
   return {
     id,
@@ -522,9 +524,29 @@ function projectedMessage(row: Record<string, unknown>, id: string): TranscriptM
       ? { tool: buildTranscriptTool(tool.name, { input: tool.input, state: tool.state, result: tool.result, images: tool.images, row: tool }, text) }
       : {}),
     ...(attachments.length ? { attachments } : {}),
+    ...(fileReferences.length ? { fileReferences } : {}),
     ...(typeof row.parentId === 'string' && row.parentId ? { parentId: row.parentId } : {}),
+    ...(row.archived === true ? { archived: true } : {}),
+    ...(typeof row.redactionCount === 'number' && row.redactionCount > 0 ? { redactionCount: row.redactionCount } : {}),
+    ...(Object.keys(approval).length > 0 && ('riskLevel' in approval || 'outcome' in approval || 'rationale' in approval || 'userAuthorization' in approval)
+      ? {
+          approval: {
+            riskLevel: typeof approval.riskLevel === 'string' ? approval.riskLevel : null,
+            userAuthorization: typeof approval.userAuthorization === 'string' ? approval.userAuthorization : null,
+            outcome: typeof approval.outcome === 'string' ? approval.outcome : null,
+            rationale: typeof approval.rationale === 'string' ? approval.rationale : null
+          }
+        }
+      : {}),
     ...rowTimes(row.createdAt ?? row.created_at, row.completedAt ?? row.completed_at)
   };
+}
+
+export function snapshotHistoryCursor(value: unknown): string | null {
+  const envelope = record(value);
+  if (typeof envelope.history_cursor === 'string' && envelope.history_cursor) return envelope.history_cursor;
+  const cursor = record(envelope.history_cursor);
+  return typeof cursor.next === 'string' && cursor.next ? cursor.next : null;
 }
 
 // Native times arrive as epoch milliseconds or date strings; rows carry ISO
