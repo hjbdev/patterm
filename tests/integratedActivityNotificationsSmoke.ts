@@ -7,7 +7,9 @@ import { CloseRequestActions } from '../app/Actions/CloseRequestActions';
 import { NotificationActions } from '../app/Actions/NotificationActions';
 import { integratedActivityNotifications, REPLY_PREVIEW_LIMIT, type IntegratedActivityNotificationContext } from '../app/Listeners/IntegratedActivityNotifications';
 import { WorkbenchRepository } from '../app/Repositories/WorkbenchRepository';
+import { ACP_CAPABILITIES } from '../app/Services/AcpProviderService';
 import { DatabaseService } from '../app/Services/DatabaseService';
+import { OPENCODE_CAPABILITIES } from '../app/Services/OpenCodeServerService';
 import { IDLE_COMPACTION_AFTER_MS, IdleCompactionService, type IdleCompactionSource } from '../app/Services/IdleCompactionService';
 import { IntegratedAgentService, type CompactionSignal, type IntegratedActivityChange, type IntegratedProviderService } from '../app/Services/IntegratedAgentService';
 import type { IntegratedConversationListener } from '../app/Services/IntegratedConversation';
@@ -302,7 +304,11 @@ async function main(): Promise<void> {
       replyQuestion: async (...args) => { replies.push(args); nativeQuestions = nativeQuestions.filter((question) => question.id !== args[1]); },
       replyForm: async (...args) => { replies.push(args); nativeForms = []; }
     };
-    const agy = new IntegratedAgentService(database, { agy: delegatedProvider, claude: delegatedProvider, opencode: delegatedProvider });
+    const agy = new IntegratedAgentService(database, {
+      agy: { ...delegatedProvider, capabilities: ACP_CAPABILITIES },
+      claude: delegatedProvider,
+      opencode: { ...delegatedProvider, capabilities: OPENCODE_CAPABILITIES }
+    });
     const permissionNotices: Array<Promise<unknown>> = [];
     const permissions = new ParentRequestService(database, agy,
       async (target, text) => { reviews.push({ target, offerId: /offer_id "([^"]+)"/.exec(text)![1]! }); },
@@ -387,7 +393,7 @@ async function main(): Promise<void> {
 
       // A bot overseeing the agent answers what waits for the user, with a
       // parent's limits and nothing more.
-      const summary = pendingRequestSummary({ harness: 'agy', cwd: directory }, await agy.peekConversation('agent'));
+      const summary = pendingRequestSummary({ harness: 'agy', cwd: directory }, await agy.peekConversation('agent'), ACP_CAPABILITIES);
       assert.deepEqual(summary.map((item) => [item.request_id, item.can_approve_once]), [['sensitive-read', false]]);
       await assert.rejects(permissions.overseerReply('agent', 'sensitive-read', { decision: 'once' }, 'bot'), /only a one-time read/i);
       await assert.rejects(permissions.overseerReply('agent', 'sensitive-read', { decision: 'answer', answers: [['Yes']] }, 'bot'), /once or reject/);
@@ -455,7 +461,7 @@ async function main(): Promise<void> {
         ];
         stream!({ processId: 'agent', revision: 145, kind: 'pending' });
         await settle();
-        const skillSummary = pendingRequestSummary({ harness: 'agy', cwd: directory }, await agy.peekConversation('agent'));
+        const skillSummary = pendingRequestSummary({ harness: 'agy', cwd: directory }, await agy.peekConversation('agent'), ACP_CAPABILITIES);
         assert.deepEqual(skillSummary.map((item) => [item.request_id, item.can_approve_once]), [
           ['skill-read', true],
           ['symlink-skill-read', true],
@@ -474,7 +480,7 @@ async function main(): Promise<void> {
         ];
         stream!({ processId: 'agent', revision: 146, kind: 'pending' });
         await settle();
-        const deniedSummary = pendingRequestSummary({ harness: 'agy', cwd: directory }, await agy.peekConversation('agent'));
+        const deniedSummary = pendingRequestSummary({ harness: 'agy', cwd: directory }, await agy.peekConversation('agent'), ACP_CAPABILITIES);
         assert.deepEqual(deniedSummary.map((item) => [item.request_id, item.can_approve_once]), [
           ['skill-secret', false],
           ['home-other', false],
@@ -497,11 +503,11 @@ async function main(): Promise<void> {
           fs.symlinkSync(directory, aliasCwd, 'dir');
           const escaped = pendingRequestSummary({ harness: 'agy', cwd: directory }, {
             permissions: { data: [{ id: 'escape', tool_kind: 'read', once: true, resources: ['.agents/skills/outside-note.txt'] }] }
-          });
+          }, ACP_CAPABILITIES);
           assert.equal(escaped[0]!.can_approve_once, false, 'a repo skill symlink cannot widen the read boundary');
           const aliased = pendingRequestSummary({ harness: 'agy', cwd: aliasCwd }, {
             permissions: { data: [{ id: 'alias', tool_kind: 'read', once: true, resources: [path.join(aliasCwd, 'README.md')] }] }
-          });
+          }, ACP_CAPABILITIES);
           assert.equal(aliased[0]!.can_approve_once, true, 'ordinary files under a symlinked workspace cwd alias remain allowed');
         } finally {
           removeTree(outsideDir);

@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { presetHarnessInput } from '../Harness/HarnessPresets';
+import type { HarnessId } from '../Harness/HarnessProvider';
 import { nativePath, storedPath } from '../Platform/PathIdentity';
 import type { DatabaseService } from '../Services/DatabaseService';
 import type { AgentHistoryReadService } from '../Services/AgentHistory/AgentHistoryReadService';
@@ -143,8 +145,8 @@ export class ResumeConversationAgentAction {
   }
 }
 
-function isResumableProvider(provider: string): provider is 'claude' | 'codex' | 'opencode' | 'agy' {
-  return provider === 'claude' || provider === 'codex' || provider === 'opencode' || provider === 'agy';
+function isResumableProvider(provider: string): provider is HarnessId {
+  return presetHarnessInput.safeParse(provider).success;
 }
 
 function duplicateResumeError(processId: string): Error {

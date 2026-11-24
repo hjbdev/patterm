@@ -14,22 +14,23 @@ import { presetHarnessInput } from '../Harness/HarnessPresets';
 import type { HarnessId } from '../Harness/HarnessProvider';
 import { goalIsOpen, normaliseGoal, type IntegratedGoalAction } from './IntegratedGoal';
 import { AgentAdapterRegistry } from '../Agents/AgentAdapterRegistry';
-import type {
-  AgentAdapter,
-  AgentCapabilities,
-  AgentCommand,
-  AgentControls,
-  AgentControlSelector,
-  AgentConversationSnapshot,
-  AgentFormAction,
-  AgentLaunchInput,
-  AgentLaunchResult,
-  AgentLiveSettings,
-  AgentOlderMessagesPage,
-  AgentPendingRequests,
-  AgentPromptResult,
-  AgentReviewPrompt,
-  AgentTaskOutput
+import {
+  serializeAgentCapabilities,
+  type AgentAdapter,
+  type AgentCapabilities,
+  type AgentCommand,
+  type AgentControls,
+  type AgentControlSelector,
+  type AgentConversationSnapshot,
+  type AgentFormAction,
+  type AgentLaunchInput,
+  type AgentLaunchResult,
+  type AgentLiveSettings,
+  type AgentOlderMessagesPage,
+  type AgentPendingRequests,
+  type AgentPromptResult,
+  type AgentReviewPrompt,
+  type AgentTaskOutput
 } from '../Agents/AgentProtocol';
 import { hostSocketPathFromRow, isHibernatedRuntimeState, parseArgvArray, updateSessionRuntimeState } from '../Agents/SessionRuntimeState';
 
@@ -101,9 +102,7 @@ export class IntegratedAgentService {
   }
 
   supportsHibernation(harness: string): boolean {
-    const adapter = this.adapters.get(harness);
-    if (adapter?.capabilities) return adapter.capabilities.hibernation.supported;
-    return harness === 'claude' || harness === 'codex' || harness === 'agy';
+    return this.adapters.capabilities(harness).hibernation.supported;
   }
 
   private readonly conversationSubscriptions = new Map<string, ConversationSubscription>();
@@ -395,11 +394,11 @@ export class IntegratedAgentService {
     }
   }
 
-  prepare(harness: 'claude' | 'codex' | 'opencode' | 'agy', input: IntegratedLaunchInput): Promise<IntegratedLaunchResult> {
+  prepare(harness: HarnessId, input: IntegratedLaunchInput): Promise<IntegratedLaunchResult> {
     return this.provider(harness).prepare(input);
   }
 
-  async cleanupLaunch(harness: 'claude' | 'codex' | 'opencode' | 'agy', input: IntegratedLaunchInput, result: IntegratedLaunchResult): Promise<void> {
+  async cleanupLaunch(harness: HarnessId, input: IntegratedLaunchInput, result: IntegratedLaunchResult): Promise<void> {
     await this.provider(harness).cleanupLaunch?.(input, result);
   }
 
@@ -507,9 +506,7 @@ export class IntegratedAgentService {
 
   routineNotificationDigest(processId: string, text: string): Promise<AgentPromptResult | void> {
     const harness = this.harness(processId);
-    const adapter = this.adapters.get(harness);
-    const supportsDigest = adapter?.capabilities ? adapter.capabilities.input.routineDigest : harness === 'claude';
-    if (!supportsDigest) return this.prompt(processId, text);
+    if (!this.adapters.capabilities(harness).input.routineDigest) return this.prompt(processId, text);
     return this.whileSending(processId, () => this.submit(processId, text, true));
   }
 
@@ -1186,9 +1183,16 @@ export class IntegratedAgentService {
   async controls(processId: string): Promise<IntegratedControls> {
     const key = this.ledgerKey(processId);
     if (this.hibernated.has(key)) await this.ensureAwake(key);
-    const native = await (this.forProcess(processId).controls?.(processId) ?? Promise.resolve({ selectors: [], commands: [] }));
+    const harness = this.harness(processId);
+    const native = await (this.provider(harness).controls?.(processId) ?? Promise.resolve({ selectors: [], commands: [] }));
     const owned = new Set(PATTERM_COMMANDS.map((command) => command.name));
-    return { ...native, commands: [...PATTERM_COMMANDS, ...native.commands.filter((command) => !owned.has(command.name))] };
+    const adapter = this.adapters.get(harness);
+    const capabilities = adapter?.capabilities ? serializeAgentCapabilities(adapter.capabilities) : undefined;
+    return {
+      ...native,
+      commands: [...PATTERM_COMMANDS, ...native.commands.filter((command) => !owned.has(command.name))],
+      ...(capabilities ? { capabilities } : {})
+    };
   }
 
   // A session is empty when it has no visible messages and no older history
@@ -1498,7 +1502,7 @@ export class IntegratedAgentService {
     return row?.harness ?? null;
   }
 
-  private harness(processId: string): 'claude' | 'codex' | 'opencode' | 'agy' {
+  private harness(processId: string): HarnessId {
     const parsed = presetHarnessInput.safeParse(this.sessionHarness(processId));
     if (!parsed.success) throw new Error('Integrated agent session not found');
     return parsed.data;
@@ -1515,9 +1519,7 @@ export class IntegratedAgentService {
     `).get(processId, processId) as { harness: string; resume_id: string; project_id: string; started_at: string } | undefined;
     if (!row || !presetHarnessInput.safeParse(row.harness).success) return null;
     if (conversation !== null) {
-      const adapter = this.adapters.get(row.harness);
-      const fallback = adapter?.capabilities?.archiveFallback
-        ?? (row.harness === 'claude' ? 'always' : row.harness === 'codex' ? 'when-unavailable' : 'never');
+      const fallback = this.adapters.capabilities(row.harness).archiveFallback;
       if (fallback === 'never') return null;
       if (fallback === 'when-unavailable' && record(conversation).history_unavailable !== true) return null;
     }

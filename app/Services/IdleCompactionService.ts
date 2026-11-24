@@ -1,8 +1,11 @@
 import { awaitingUser } from './Activity';
+import { thirtyMinuteCacheModel, type AgentCapabilities } from '../Agents/AgentProtocol';
 import type { DatabaseService } from './DatabaseService';
 import { UncertainDeliveryError } from './IntegratedDelivery';
 import type { CompactionSignal, IntegratedActivityChange } from './IntegratedAgentService';
 import type { IntegratedConversationEvent } from './IntegratedConversation';
+
+export { thirtyMinuteCacheModel };
 
 // A prompt cache expires a fixed time after its last use. Compacting an idle
 // agent just before then reads the conversation from the cache once, so the
@@ -32,18 +35,9 @@ const LATE_MS = 20_000;
 // nothing after it went idle. Times this close to the idle are that turn's.
 const RESTORED_SLOP_MS = 2_000;
 
-// OpenAI documents a 30-minute minimum only for GPT-5.6 and later; earlier
-// models can drop an in-memory cache after 5 to 10 minutes.
-export function thirtyMinuteCacheModel(model: string): boolean {
-  const match = /^gpt-(\d+)(?:\.(\d+))?(?![\d.])/.exec(model);
-  if (!match) return false;
-  const major = Number(match[1]);
-  return major > 5 || (major === 5 && Number(match[2] ?? 0) >= 6);
-}
-
 // How long an agent on this model idles before compacting, or undefined when
 // its cache lifetime is unknown.
-function idleDelay(harness: string, model: string | null): number | undefined {
+function legacyIdleDelay(harness: string, model: string | null): number | undefined {
   if (harness === 'claude') return IDLE_COMPACTION_AFTER_MS.claude;
   if (!model) return undefined;
   if (harness === 'codex') return thirtyMinuteCacheModel(model) ? IDLE_COMPACTION_AFTER_MS.codex : undefined;
@@ -54,7 +48,7 @@ function idleDelay(harness: string, model: string | null): number | undefined {
 
 // The model is read when a deadline arrives, so a harness's first deadline is
 // the soonest any of its models can be due.
-function firstDelay(harness: string): number | undefined {
+function legacyFirstDelay(harness: string): number | undefined {
   const after = IDLE_COMPACTION_AFTER_MS[harness];
   const claude = IDLE_COMPACTION_AFTER_MS.claude;
   return harness === 'opencode' && after && claude ? Math.min(after, claude) : after;
@@ -69,6 +63,7 @@ export interface IdleCompactionSource {
   // When the native agent last did anything, in epoch milliseconds, or null
   // when unknown.
   lastActivity(processId: string): Promise<number | null>;
+  capabilities?(harness: string): AgentCapabilities;
 }
 
 interface CompactionRow {
@@ -209,14 +204,34 @@ export class IdleCompactionService {
     }
   }
 
+  private adapterCompaction(harness: string): AgentCapabilities['compaction'] | null {
+    const compaction = this.integrated.capabilities?.(harness)?.compaction;
+    return compaction && compaction.defaultCacheTtlMs !== null ? compaction : null;
+  }
+
+  private firstDelay(harness: string): number | undefined {
+    const compaction = this.adapterCompaction(harness);
+    if (compaction) return compaction.defaultCacheTtlMs ?? undefined;
+    return legacyFirstDelay(harness);
+  }
+
+  private idleDelay(harness: string, model: string | null): number | undefined {
+    const compaction = this.adapterCompaction(harness);
+    if (compaction) {
+      const ttl = compaction.modelCacheTtlMs ? compaction.modelCacheTtlMs(model) : compaction.defaultCacheTtlMs;
+      return ttl ?? undefined;
+    }
+    return legacyIdleDelay(harness, model);
+  }
+
   private eligibleAgent(row: CompactionRow): boolean {
-    return Boolean(firstDelay(row.harness));
+    return Boolean(this.firstDelay(row.harness));
   }
 
   private schedule(processId: string, delayAfter?: number): void {
     this.cancel(processId);
     const row = this.row(processId);
-    const after = delayAfter ?? (row && firstDelay(row.harness));
+    const after = delayAfter ?? (row && this.firstDelay(row.harness));
     if (!row?.idle_since || !after) return;
     const delay = Math.max(0, Date.parse(row.idle_since) + after - this.now());
     const timer = setTimeout(() => {
@@ -249,9 +264,11 @@ export class IdleCompactionService {
       }
       this.restored.delete(processId);
     }
-    const model = row.harness === 'claude' ? null : await this.integrated.model(processId);
+    const compaction = this.adapterCompaction(row.harness);
+    const needsModel = compaction ? Boolean(compaction.modelCacheTtlMs) : row.harness !== 'claude';
+    const model = needsModel ? await this.integrated.model(processId) : null;
     if (!this.unchanged(processId, row)) return;
-    const after = idleDelay(row.harness, model);
+    const after = this.idleDelay(row.harness, model);
     if (!after) {
       this.write(processId, null, null);
       this.log('skipped', { processId, harness: row.harness, model, reason: 'model' });

@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { presetHarnessInput } from '../Harness/HarnessPresets';
+import type { HarnessId } from '../Harness/HarnessProvider';
 import { nativePath, pathsMatch, storedPath } from '../Platform/PathIdentity';
 import type { DatabaseService } from '../Services/DatabaseService';
 import type { HarnessLauncher, LaunchHarnessResult } from '../Services/HarnessLauncher';
@@ -122,7 +124,7 @@ export class RestartAgentSessionAction {
       const [live, located] = await Promise.all([
         source.status === 'running' ? this.processes.liveSettings?.(processId).catch(() => ({})) ?? {} : {},
         // An unreadable location leaves the launch's own directory check to decide.
-        source.harness === 'opencode' ? this.processes.sessionDirectory?.(processId).catch(() => null) ?? null : null
+        this.processes.sessionDirectory?.(processId).catch(() => null) ?? null
       ]);
       // A prompt can start a turn during the read.
       const current = this.restartableSource(processId, projectId);
@@ -143,7 +145,7 @@ export class RestartAgentSessionAction {
         // running one stops before the new one resumes it.
         if (source.status === 'running') await this.processes.stop(processId);
         launched = await this.launcher.resume({
-          harness: source.harness as 'claude' | 'codex' | 'opencode' | 'agy',
+          harness: source.harness as HarnessId,
           model: source.model,
           reasoning: source.reasoning,
           service_tier: source.service_tier,
@@ -201,11 +203,11 @@ export class RestartAgentSessionAction {
     const moved = !source.cwd || !pathsMatch(directory, source.cwd);
     const kept = source.status === 'running' ? ' It is still running.' : '';
     if (!isDirectory(directory)) {
-      throw new Error(`This agent's OpenCode session is in ${located}, which no longer exists, so it was not restarted.${kept}`);
+      throw new Error(`This agent's session is in ${located}, which no longer exists, so it was not restarted.${kept}`);
     }
     if (!moved) return unchanged;
     if (!withinProject(this.database.connection, source.project_id, directory)) {
-      throw new Error(`This agent's OpenCode session moved to ${located}, outside this project, so it was not restarted.${kept}`);
+      throw new Error(`This agent's session moved to ${located}, outside this project, so it was not restarted.${kept}`);
     }
     return { cwd: directory, worktree_id: projectWorktreeAt(this.database.connection, source.project_id, directory)?.id ?? null };
   }
@@ -233,6 +235,6 @@ function isWorking(source: SourceSession): boolean {
   return source.status === 'running' && source.activity !== 'idle' && source.activity !== 'error';
 }
 
-function isIntegratedHarness(harness: string): boolean {
-  return harness === 'claude' || harness === 'codex' || harness === 'opencode' || harness === 'agy';
+function isIntegratedHarness(harness: string): harness is HarnessId {
+  return presetHarnessInput.safeParse(harness).success;
 }

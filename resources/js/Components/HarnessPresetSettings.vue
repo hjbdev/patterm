@@ -55,7 +55,7 @@
           <div class="grid items-center gap-3 sm:grid-cols-[90px_minmax(0,1fr)]">
               <label class="text-xs text-muted-foreground" for="preset-name">Name</label>
               <Input id="preset-name" v-model="editor.name" class="h-8 text-xs" placeholder="smartypants" autocomplete="off" />
-              <HarnessProfileFields v-model:fields="editor.fields" :catalog="catalog" id-prefix="preset" />
+              <HarnessProfileFields v-model:fields="editor.fields" :catalog="catalog" :supports-service-tier="supportsServiceTier(editor.fields.harness)" id-prefix="preset" />
           </div>
           <label class="flex items-center gap-2 text-xs">
             <Checkbox v-model="editor.isDefault" />
@@ -121,6 +121,9 @@ interface EditorState {
 const PRESET_HARNESSES = PROFILE_HARNESSES;
 
 const { harnesses } = useWorkbench();
+function supportsServiceTier(harness: PresetHarness): boolean | undefined {
+  return harnesses.value.find((item) => item.harness === harness)?.capabilities?.features.serviceTier;
+}
 const presets = ref<HarnessPreset[]>([]);
 const defaults = reactive<Record<PresetHarness, string | null>>({ claude: null, codex: null, opencode: null, agy: null });
 const catalog = ref<ModelCatalog>(emptyModelCatalog());
@@ -236,7 +239,7 @@ function applyEditor(): void {
     editorError.value = 'Give the profile a name.';
     return;
   }
-  const settings = settingsFrom(current.fields);
+  const settings = settingsFrom(current.fields, supportsServiceTier(current.fields.harness));
   if ('error' in settings) {
     editorError.value = settings.error;
     return;

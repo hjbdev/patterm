@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { AgentCapabilities } from '../Agents/AgentProtocol';
 import type { DatabaseService } from './DatabaseService';
 import type { CodexAppServerService, CodexRealtimeEvent } from './CodexAppServerService';
 import type { IntegratedAgentService } from './IntegratedAgentService';
@@ -63,7 +64,7 @@ export class BotRelay {
     private readonly integrated: Pick<IntegratedAgentService, 'prompt' | 'conversation' | 'routineNotificationDigest'> & { scopedPrompt?: IntegratedAgentService['scopedPrompt'] },
     private readonly settings: Pick<SettingsService, 'bots'>,
     private readonly inbox: BotInbox,
-    private readonly options: { log?: (event: string, data: Record<string, unknown>) => void; digestDelayMs?: number; compacting?: (processId: string) => boolean; notify?: (input: RaiseNotificationInput) => void } = {}
+    private readonly options: { log?: (event: string, data: Record<string, unknown>) => void; digestDelayMs?: number; compacting?: (processId: string) => boolean; notify?: (input: RaiseNotificationInput) => void; capabilities?: (harness: string) => AgentCapabilities } = {}
   ) {
     this.releaseInbox = inbox.onChange(({ botId, flush }) => {
       this.emitState(botId);
@@ -577,7 +578,10 @@ export class BotRelay {
   }
 
   private voiceAvailable(bot: Bot): boolean {
-    return bot.enabled && bot.voice.enabled && this.bots.harness(bot.id) === 'codex';
+    if (!bot.enabled || !bot.voice.enabled) return false;
+    const harness = this.bots.harness(bot.id);
+    if (!harness) return false;
+    return this.options.capabilities ? this.options.capabilities(harness).features.voice : harness === 'codex';
   }
 
   private isBotProject(projectId: string): boolean {

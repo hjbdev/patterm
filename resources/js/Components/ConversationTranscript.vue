@@ -12,7 +12,7 @@
         </button>
         <p v-else-if="truncated">Showing the most recent messages.</p>
         <p v-if="historyError" role="alert" class="text-destructive">{{ historyError }}</p>
-        <p v-if="historyUnavailable" role="status">This Codex version cannot load earlier messages. New messages appear here live.</p>
+        <p v-if="historyUnavailable" role="status">This agent version cannot load earlier messages. New messages appear here live.</p>
       </div>
       <MessageScrollerViewport ref="viewportRef" class="conversation-transcript-viewport [container-type:inline-size] overflow-x-hidden">
         <MessageScrollerContent class="mx-auto w-full max-w-[var(--patterm-conversation-max-width,50rem)] px-4">

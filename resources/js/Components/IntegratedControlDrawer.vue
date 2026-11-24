@@ -105,12 +105,12 @@ import ResponsiveMenu from './ResponsiveMenu.vue';
 type Option = { value: string; label: string; description?: string };
 type Selector = { id: string; label: string; value: string; options: Option[] };
 
-// Claude and Codex call reasoning `effort`, OpenCode `variant`. Their levels
-// arrive in order, least first, with an optional `default` ahead of them.
-const REASONING = new Set(['effort', 'variant']);
+// Reasoning selectors arrive in order, least first, with an optional `default`
+// ahead of them. Fallback ids apply when a host has not advertised capabilities.
+const FALLBACK_REASONING = new Set(['effort', 'variant', 'thought_level']);
 const DEFAULT = 'default';
 
-const props = defineProps<{ selectors: Selector[]; disabled: boolean }>();
+const props = defineProps<{ selectors: Selector[]; reasoningSelectorId?: string | undefined; disabled: boolean }>();
 const emit = defineEmits<{ select: [id: string, value: string] }>();
 const open = ref(false);
 // The list setting whose options are showing, and the filter for long lists.
@@ -136,7 +136,8 @@ function selectedLabel(selector: Selector): string {
 }
 
 function levelsOf(selector: Selector): Option[] {
-  return REASONING.has(selector.id) ? selector.options.filter((option) => option.value !== DEFAULT) : [];
+  const isReasoning = props.reasoningSelectorId ? selector.id === props.reasoningSelectorId : FALLBACK_REASONING.has(selector.id);
+  return isReasoning ? selector.options.filter((option) => option.value !== DEFAULT) : [];
 }
 
 function hasDefault(selector: Selector): boolean {

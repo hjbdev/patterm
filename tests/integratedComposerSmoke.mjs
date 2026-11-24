@@ -644,7 +644,7 @@ test('optimistic image previews survive acceptance and are released after native
     const draft = composer.draftFor('preview_lifetime');
     draft.attachments.push({ id: 'image', name: 'example.png', mime: 'image/png', size: 100, image: true, status: 'ready', serverPath: '/uploads/image', previewUrl: 'blob:optimistic-test' });
     const prepared = composer.payloadFor('preview_lifetime');
-    composer.beginOutgoingMessage('preview_lifetime', { ...prepared.payload, hash: prepared.hash }, [], 'claude');
+    composer.beginOutgoingMessage('preview_lifetime', { ...prepared.payload, hash: prepared.hash }, [], undefined);
     assert.equal(draft.attachments.length, 0);
     assert.deepEqual(revoked, []);
     const rows = composer.outgoingTranscript('preview_lifetime', [], []);
@@ -664,7 +664,7 @@ test('provider rows and native queues replace optimistic rows by identity', () =
     composer.clearDrafts();
     composer.draftFor(provider).text = 'hello';
     const prepared = composer.payloadFor(provider);
-    composer.beginOutgoingMessage(provider, { ...prepared.payload, hash: prepared.hash }, [], provider);
+    composer.beginOutgoingMessage(provider, { ...prepared.payload, hash: prepared.hash }, [], provider === 'opencode' ? 'msg_' : undefined);
     const id = `${provider === 'opencode' ? 'msg_' : 'user_'}${prepared.payload.messageId}`;
     const native = { id, role: 'user', kind: 'text', text: 'hello' };
     assert.deepEqual(composer.outgoingTranscript(provider, [native], []), [native]);
@@ -690,7 +690,7 @@ test('a send behind a natively queued message stays after it', () => {
   const send = (text, transcript) => {
     composer.draftFor('opencode').text = text;
     const prepared = composer.payloadFor('opencode');
-    composer.beginOutgoingMessage('opencode', { ...prepared.payload, hash: prepared.hash }, transcript, 'opencode');
+    composer.beginOutgoingMessage('opencode', { ...prepared.payload, hash: prepared.hash }, transcript, 'msg_');
     composer.completeSend('opencode', { ...prepared.payload, hash: prepared.hash }, { preserveDraft: true });
     return `msg_${prepared.payload.messageId}`;
   };
@@ -715,7 +715,7 @@ test('a steer that never reached the agent is flagged in place, not shown as sen
   const reply = { id: 'reply', role: 'assistant', kind: 'text', text: 'working', createdAt: '2026-11-04T10:03:00.000Z' };
   composer.draftFor('opencode').text = 'use staging';
   const prepared = composer.payloadFor('opencode');
-  composer.beginOutgoingMessage('opencode', { ...prepared.payload, hash: prepared.hash }, [reply], 'opencode');
+  composer.beginOutgoingMessage('opencode', { ...prepared.payload, hash: prepared.hash }, [reply], 'msg_');
   composer.completeSend('opencode', { ...prepared.payload, hash: prepared.hash }, { preserveDraft: true });
   const id = `msg_${prepared.payload.messageId}`;
   const later = { id: 'later', role: 'assistant', kind: 'text', text: 'still working', createdAt: '2026-11-04T10:04:00.000Z' };
@@ -759,7 +759,7 @@ test('a message Patterm holds during compaction shows only in the queue', () => 
   composer.clearDrafts();
   composer.draftFor('codex').text = 'recap please';
   const prepared = composer.payloadFor('codex');
-  composer.beginOutgoingMessage('codex', { ...prepared.payload, hash: prepared.hash }, [], 'codex');
+  composer.beginOutgoingMessage('codex', { ...prepared.payload, hash: prepared.hash }, [], undefined);
   // Held queue items carry the client message id, not the provider row id.
   const queue = [{ id: prepared.payload.messageId, text: 'recap please', delivery: 'held', reason: 'compact' }];
   assert.deepEqual(composer.outgoingTranscript('codex', [], queue), []);
@@ -774,7 +774,7 @@ test('a cancelled held message leaves no sent-looking copy behind', () => {
   composer.clearDrafts();
   composer.draftFor('codex').text = 'never mind';
   const prepared = composer.payloadFor('codex');
-  composer.beginOutgoingMessage('codex', { ...prepared.payload, hash: prepared.hash }, [], 'codex');
+  composer.beginOutgoingMessage('codex', { ...prepared.payload, hash: prepared.hash }, [], undefined);
   const queue = [{ id: prepared.payload.messageId, text: 'never mind', delivery: 'held', reason: 'compact' }];
   composer.reconcileOutgoingMessages('codex', [], queue);
   composer.reconcileOutgoingMessages('codex', [], []);

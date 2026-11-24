@@ -67,13 +67,13 @@ export function fieldsFrom(catalog: ModelCatalog, harness: ProfileHarness, value
 }
 
 // The settings to save, or an error to show.
-export function settingsFrom(fields: ProfileFieldsState): ProfileSettingsValue | { error: string } {
+export function settingsFrom(fields: ProfileFieldsState, supportsServiceTier = fields.harness === 'codex'): ProfileSettingsValue | { error: string } {
   const model = fields.model === DEFAULT_MODEL ? null : fields.model === CUSTOM_MODEL ? fields.customModel.trim() : fields.model;
   if (fields.model === CUSTOM_MODEL && !model) return { error: 'Enter a custom model ID.' };
   return {
     model,
     reasoning: model === null ? null : fields.reasoning.trim() || null,
-    serviceTier: fields.harness === 'codex' ? fields.serviceTier || null : null
+    serviceTier: supportsServiceTier ? fields.serviceTier || null : null
   };
 }
 
