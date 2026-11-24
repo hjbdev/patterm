@@ -936,9 +936,11 @@ async function createApplicationResources(
       settings,
       providers: harnessProviders,
       signIn: new HarnessSignInService(harnessProviders, { env: resolvedEnv }),
-      // A newly installed agent also appears in the launch menus.
+      // Reads the shell environment again, since an installer may have just
+      // added to PATH. A newly found agent also appears in the launch menus.
       discover: async () => {
-        if ((await actions.discoverHarnesses.execute()).changed) notifyWorkbenchChanged();
+        const env = await new ShellEnvironmentService().resolve();
+        if ((await actions.discoverHarnesses.execute(env)).changed) notifyWorkbenchChanged();
       }
     }),
     update: new UpdateOnboardingAction(settings)

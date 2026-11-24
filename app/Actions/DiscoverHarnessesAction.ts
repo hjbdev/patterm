@@ -20,8 +20,8 @@ export class DiscoverHarnessesAction {
   ) {}
 
   // changed: whether any harness's status, version or path differs.
-  async execute(): Promise<{ harnesses: DiscoveredHarness[]; changed: boolean }> {
-    const found = await this.discovery.discover();
+  async execute(env?: NodeJS.ProcessEnv): Promise<{ harnesses: DiscoveredHarness[]; changed: boolean }> {
+    const found = await this.discovery.discover(env);
     const now = new Date().toISOString();
     const db = this.database.connection;
     const before = new Map((db.prepare(`select harness, status, version, executable_path from harness_installations`).all() as Array<{ harness: string; status: string; version: string | null; executable_path: string }>)

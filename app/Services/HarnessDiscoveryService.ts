@@ -30,12 +30,14 @@ export class HarnessDiscoveryService {
     this.versionTimeoutMs = options.versionTimeoutMs ?? 4000;
   }
 
-  async discover(): Promise<DiscoveredHarness[]> {
-    return Promise.all(this.providers.map((provider) => this.discoverOne(provider)));
+  // env replaces the one given at construction, such as a shell environment
+  // read again after the user installed a CLI.
+  async discover(env: NodeJS.ProcessEnv = this.env): Promise<DiscoveredHarness[]> {
+    return Promise.all(this.providers.map((provider) => this.discoverOne(provider, env)));
   }
 
-  private async discoverOne(provider: HarnessProvider): Promise<DiscoveredHarness> {
-    const executablePath = this.resolveOnPath(provider.executableCandidates);
+  private async discoverOne(provider: HarnessProvider, env: NodeJS.ProcessEnv): Promise<DiscoveredHarness> {
+    const executablePath = this.resolveOnPath(provider.executableCandidates, env);
     if (!executablePath) {
       return { harness: provider.id, executablePath: null, version: null, status: 'missing' };
     }
@@ -44,7 +46,7 @@ export class HarnessDiscoveryService {
       return { harness: provider.id, executablePath, version: null, status: 'available' };
     }
 
-    const probe = await this.probeVersion(executablePath, provider.versionArgs);
+    const probe = await this.probeVersion(executablePath, provider.versionArgs, env);
     if (!probe.ok) {
       // Found on PATH but it would not run/respond — record it as broken.
       return { harness: provider.id, executablePath, version: null, status: 'broken' };
@@ -58,21 +60,21 @@ export class HarnessDiscoveryService {
     };
   }
 
-  private resolveOnPath(candidates: string[]): string | null {
+  private resolveOnPath(candidates: string[], env: NodeJS.ProcessEnv): string | null {
     for (const candidate of candidates) {
-      const found = findExecutable(candidate, this.env);
+      const found = findExecutable(candidate, env);
       if (found) return found;
     }
     return null;
   }
 
-  private probeVersion(executablePath: string, args: string[]): Promise<{ ok: boolean; output: string }> {
-    const command = resolveCommand(executablePath, args, this.env);
+  private probeVersion(executablePath: string, args: string[], env: NodeJS.ProcessEnv): Promise<{ ok: boolean; output: string }> {
+    const command = resolveCommand(executablePath, args, env);
     return new Promise((resolve) => {
       execFile(
         command.command,
         command.args,
-        { timeout: this.versionTimeoutMs, env: this.env, windowsHide: true, windowsVerbatimArguments: command.verbatim },
+        { timeout: this.versionTimeoutMs, env, windowsHide: true, windowsVerbatimArguments: command.verbatim },
         (error, stdout, stderr) => {
           const output = `${stdout ?? ''}${stderr ?? ''}`;
           // Some CLIs exit non-zero yet still print a usable version banner, so

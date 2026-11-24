@@ -106,14 +106,18 @@ export class GetOnboardingStatusAction {
     return Boolean(this.deps.database.connection.prepare(`select 1 from projects where kind = 'workspace' limit 1`).get());
   }
 
-  // An agent the owner started, not a bot, the assistant or a routine.
+  // An agent the owner started, not a bot, the assistant or a routine, and
+  // not one that failed to launch.
   private hasStartedAgent(): boolean {
     return Boolean(this.deps.database.connection.prepare(
       `select 1 from sessions
        join projects on projects.id = sessions.project_id
+       left join processes on processes.id = sessions.process_id
        where projects.kind in ${USER_PROJECT_KINDS_SQL}
          and sessions.session_role not in ('assistant', 'bot', 'routine')
          and sessions.bot_id is null
+         and sessions.id not in (select session_id from routine_runs where session_id is not null)
+         and (processes.status is null or processes.status != 'failed')
        limit 1`
     ).get());
   }
