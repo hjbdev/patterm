@@ -42,8 +42,9 @@ export function outputTail(output: string, max: number): { hidden: number; text:
 }
 
 // Claude's Read numbers lines `1\t` (or `1→`); OpenCode's read prints a short
-// header, then `1: `. Header and trailer lines are dropped.
+// header, then `1: `. Header lines are dropped, except truncation notices.
 const NUMBERED_LINE = /^\s*(\d+)(?:\t|→|: ?$|: |\| ?)(.*)$/;
+const NOTICE_LINE = /truncated|showing lines|offset=/i;
 
 export function parseNumberedOutput(output: string): CodeLine[] | null {
   const raw = output.replace(/\n+$/, '').split('\n');
@@ -52,11 +53,15 @@ export function parseNumberedOutput(output: string): CodeLine[] | null {
   for (const line of raw) {
     const match = NUMBERED_LINE.exec(line);
     if (match) lines.push({ n: Number(match[1]), text: match[2]! });
+    // A notice in the header, such as the archive's truncation line, is the
+    // only sign the file is incomplete, so it leads the lines.
+    else if (!lines.some((entry) => entry.n !== undefined) && NOTICE_LINE.test(line)) lines.push({ text: line.trim(), context: true });
     // Notices after the first line, such as a truncation or the offset to
     // continue from, stay in place, dimmed.
     else if (lines.length && line.trim()) { lines.push({ text: line, context: true }); unmatched++; }
   }
-  if (!lines.length || unmatched > (lines.length - unmatched) * 0.2) return null;
+  const numbered = lines.filter((entry) => entry.n !== undefined).length;
+  if (!numbered || unmatched > numbered * 0.2) return null;
   return lines;
 }
 
@@ -73,10 +78,16 @@ export function parseGrepOutput(output: string): CodeGroup[] | null {
     else groups.push({ ...(file ? { file } : {}), lines: [line] });
   };
   const opencode = raw.some((line) => /^\s+Line \d+: /.test(line));
+  // Every way each line could split into file, number and text. A path can
+  // hold `-12-` (dated logs) and text can hold `:12:` (stack locations), so
+  // a line takes the file most lines could name.
+  const readings = opencode ? [] : raw.map(grepReadings);
+  const support = new Map<string, number>();
+  for (const options of readings) for (const file of new Set(options.map((option) => option.file))) support.set(file, (support.get(file) ?? 0) + 1);
   let heading: string | undefined;
   let matched = 0;
   let unmatched = 0;
-  for (const line of raw) {
+  for (const [index, line] of raw.entries()) {
     if (!line.trim() || line === '--' || /^Found \d+ (?:matches|files?)/.test(line)) continue;
     if (opencode) {
       const hit = /^\s+Line (\d+): ?(.*)$/.exec(line);
@@ -86,20 +97,39 @@ export function parseGrepOutput(output: string): CodeGroup[] | null {
       continue;
     }
     const bare = /^(\d+)([:-])(.*)$/.exec(line);
-    const colon = bare ? null : /^(.+?):(\d+):(.*)$/.exec(line);
-    const dash = bare ? null : /^(.+?)-(\d+)-(.*)$/.exec(line);
-    // The separator nearest the start is ripgrep's; a later `:12:` belongs to
-    // the text, such as a stack location in a context line.
-    const hit = colon && (!dash || colon[1]!.length <= dash[1]!.length) ? colon : null;
-    const context = hit ? null : dash;
+    const reading = bare ? null : bestReading(readings[index]!, support);
     if (bare) add(undefined, { n: Number(bare[1]), text: bare[3]!, ...(bare[2] === '-' ? { context: true } : {}) });
-    else if (hit) add(hit[1], { n: Number(hit[2]), text: hit[3]! });
-    else if (context) add(context[1], { n: Number(context[2]), text: context[3]!, context: true });
+    else if (reading) add(reading.file, { n: reading.n, text: reading.text, ...(reading.context ? { context: true } : {}) });
     else { unmatched++; continue; }
     matched++;
   }
   if (!matched || unmatched > matched * 0.2) return null;
   return groups;
+}
+
+interface GrepReading { file: string; n: number; text: string; context: boolean }
+
+function grepReadings(line: string): GrepReading[] {
+  const readings: GrepReading[] = [];
+  for (const match of line.matchAll(/([:-])(\d+)\1/g)) {
+    if (!match.index) continue;
+    readings.push({ file: line.slice(0, match.index), n: Number(match[2]), text: line.slice(match.index + match[0].length), context: match[1] === '-' });
+  }
+  return readings;
+}
+
+// Most supported file first, then one without spaces, then a hit, then the
+// longer name.
+function bestReading(readings: GrepReading[], support: Map<string, number>): GrepReading | null {
+  const rank = (reading: GrepReading): number[] => [support.get(reading.file) ?? 0, /\s/.test(reading.file) ? 0 : 1, reading.context ? 0 : 1, reading.file.length];
+  let best: GrepReading | null = null;
+  for (const reading of readings) {
+    if (!best) { best = reading; continue; }
+    const [x, y] = [rank(reading), rank(best)];
+    const diff = x.findIndex((value, i) => value !== y[i]);
+    if (diff >= 0 && x[diff]! > y[diff]!) best = reading;
+  }
+  return best;
 }
 
 // Ranges of a grep pattern in a line, for marking. Treated as a regular
