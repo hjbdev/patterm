@@ -1240,7 +1240,7 @@ const AGENT_MESSAGE = /^\[message from ([^\s\]]+)\]\r?\n/;
 const AGENT_REPORT = /^\[report from ([^\s\]:]+): ([^\]]+)\](?:\r?\n|$)/;
 const ASSISTANT_MESSAGE = /^\[agent message from ([^\s\],]+)(?: \(([^\n]*?)\))?, not the user\]\r?\n/;
 const CLOSE_REQUEST = /^\[Close requested by ([^\s\]]+)(?: \(([^\n]*?)\))?\]\r?\n/;
-const CHILD_NOTICE = /^\[(Attention requested|Attention needed|Failure reported) by ([^\s\]]+)(?: \(([^\n]*?)\))?\]\r?\n/;
+const CHILD_NOTICE = /^\[(Attention requested by|Attention needed by|Failure reported by|Notification from(?= process_\d+ \()) ([^\s\]]+)(?: \(([^\n]*?)\))?\]\r?\n/;
 const CLOSE_HINT = /\s*Close it with close_process once its work is settled, or send it follow-ups with send_message\.\s*$/;
 const PATTERM_MESSAGE = /^\[Patterm (timer|notifications|focus digest)\b([^\n]*?)\](?:\r?\n|$)/;
 const PATTERM_LABELS: Record<string, string> = { timer: 'Timer', notifications: 'Notifications', 'focus digest': 'Focus digest' };
@@ -1261,7 +1261,7 @@ export function transcriptMessageOrigin(message: TranscriptMessage): TranscriptO
   match = CLOSE_REQUEST.exec(text);
   if (match) return { kind: 'agent', processId: match[1]!, ...(match[2] ? { name: match[2] } : {}), closeRequested: true, body: text.slice(match[0].length).replace(CLOSE_HINT, '') };
   match = CHILD_NOTICE.exec(text);
-  if (match) return { kind: 'agent', processId: match[2]!, ...(match[3] ? { name: match[3] } : {}), ...(match[1] === 'Failure reported' ? { status: 'failure' } : {}), body: text.slice(match[0].length) };
+  if (match) return { kind: 'agent', processId: match[2]!, ...(match[3] ? { name: match[3] } : {}), ...(match[1] === 'Failure reported by' ? { status: 'failure' } : {}), body: text.slice(match[0].length) };
   match = PATTERM_MESSAGE.exec(text);
   if (match) return { kind: 'patterm', label: PATTERM_LABELS[match[1]!]!, detail: match[2]!.trim(), body: text.slice(match[0].length) };
   return undefined;
