@@ -297,6 +297,244 @@ button.mention-glow:hover {
   .transcript-quiet { transition: none; }
 }
 
+/* A tool call's row: name, target, then its duration on hover. The result
+   (line range, changes, failure) sits at the right. The highlight reaches
+   past the text on both sides. */
+.tool-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: calc(100% + 1rem);
+  min-width: 0;
+  min-height: 2em;
+  margin-inline: -0.5rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 0.5rem;
+  text-align: left;
+  outline: none;
+  transition: background-color 160ms;
+}
+.tool-row:not(:disabled):hover { background: hsl(0 0% 100% / 0.03); }
+.tool-row:not(:disabled):active { background: hsl(0 0% 100% / 0.07); }
+.tool-row[aria-expanded='true'] { background: hsl(0 0% 100% / 0.05); }
+.tool-row:focus-visible { box-shadow: 0 0 0 2px hsl(var(--ring) / 0.5); }
+.tool-row:disabled { cursor: default; }
+
+.tool-row-target {
+  flex: 0 1 auto;
+  color: hsl(var(--muted-foreground));
+  transition: color 160ms;
+}
+.tool-row:not(:disabled):hover .tool-row-target,
+.tool-row[aria-expanded='true'] .tool-row-target { color: hsl(240 5% 78%); }
+
+/* The delay stops durations flickering as the pointer sweeps down a list. */
+.tool-row-duration {
+  flex: none;
+  font-size: 0.86em;
+  color: hsl(240 5% 48%);
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: opacity 160ms, transform 200ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+.tool-row:hover .tool-row-duration,
+.tool-row:focus-visible .tool-row-duration {
+  opacity: 1;
+  transform: none;
+  transition-delay: 90ms;
+}
+
+.tool-row-meta {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+  padding-left: 0.75rem;
+  font-size: 0.86em;
+  color: hsl(var(--muted-foreground));
+  font-variant-numeric: tabular-nums;
+}
+
+/* Opens from 0fr to 1fr so the panel animates to its content's height. The
+   content fades and settles a little after the panel starts to grow. */
+.tool-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 200ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+.tool-collapse[data-open] {
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 340ms cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+.tool-collapse-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+.tool-collapse-inner > * {
+  opacity: 0;
+  transform: translateY(-6px);
+  transition: opacity 120ms, transform 200ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+.tool-collapse[data-open] > .tool-collapse-inner > * {
+  opacity: 1;
+  transform: none;
+  transition: opacity 220ms 50ms, transform 300ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* A tool call's detail: command, diff and output in one dark block. Pierre
+   reads its background from these variables. */
+.tool-block {
+  --tool-block-bg: hsl(0 0% 5.5%);
+  overflow: hidden;
+  border: 1px solid hsl(0 0% 100% / 0.07);
+  border-radius: 0.625rem;
+  background: var(--tool-block-bg);
+}
+.tool-block diffs-container {
+  --diffs-dark-bg: var(--tool-block-bg);
+  --diffs-bg: var(--tool-block-bg);
+}
+.tool-section { position: relative; }
+.tool-section + .tool-section { border-top: 1px solid hsl(0 0% 100% / 0.05); }
+.tool-section-command {
+  display: flex;
+  align-items: flex-start;
+  background: hsl(0 0% 100% / 0.025);
+}
+.tool-section-command > .tool-code { flex: 1; min-width: 0; padding-left: 0.5rem; }
+.tool-section-failed { box-shadow: inset 2px 0 0 hsl(var(--destructive)); }
+.tool-prompt {
+  flex: none;
+  padding: 0.5rem 0 0 0.75rem;
+  font-family: theme('fontFamily.mono');
+  font-size: 0.93em;
+  line-height: 1.65;
+  color: hsl(var(--success));
+  user-select: none;
+}
+
+/* Copy and split buttons float over a section and show on hover. */
+.tool-section-actions {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 0.5rem;
+  background: hsl(0 0% 11% / 0.92);
+  box-shadow: 0 0 0 1px hsl(0 0% 100% / 0.06);
+  opacity: 0;
+  transition: opacity 120ms;
+}
+.tool-section:hover > .tool-section-actions,
+.tool-section:focus-within > .tool-section-actions { opacity: 1; }
+@media (hover: none) {
+  .tool-section-actions { opacity: 1; }
+}
+.tool-action {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 0.375rem;
+  color: hsl(var(--muted-foreground));
+}
+.tool-action svg { width: 0.95em; height: 0.95em; }
+.tool-action-text { padding: 0 0.5rem; font-size: 0.86em; }
+.tool-action:hover { background: hsl(var(--muted)); color: hsl(var(--foreground)); }
+.tool-action:focus-visible { outline: 2px solid hsl(var(--ring) / 0.5); outline-offset: 1px; }
+
+.tool-output {
+  max-height: 20rem;
+  overflow: auto;
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  font-family: theme('fontFamily.mono');
+  font-size: 0.93em;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: hsl(240 5% 78%);
+}
+.tool-earlier {
+  display: block;
+  width: 100%;
+  padding: 0.4rem 0.75rem 0;
+  text-align: left;
+  font-family: theme('fontFamily.mono');
+  font-size: 0.86em;
+  color: hsl(var(--muted-foreground));
+}
+.tool-earlier:hover { color: hsl(var(--foreground)); }
+
+/* Highlighted lines: a command, a read file or grep matches. */
+.tool-code {
+  max-height: 20rem;
+  overflow: auto;
+  padding: 0.5rem 0;
+  font-family: theme('fontFamily.mono');
+  font-size: 0.93em;
+  line-height: 1.65;
+  color: hsl(240 5% 80%);
+}
+.tool-section-command > .tool-code { max-height: 12rem; }
+.tool-code-line { padding: 0 0.75rem; }
+.tool-code-numbered .tool-code-line {
+  display: grid;
+  grid-template-columns: 4.5ch minmax(0, 1fr);
+  gap: 0.75rem;
+}
+.tool-code-line code {
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.tool-code-number {
+  text-align: right;
+  color: hsl(240 5% 40%);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.tool-code-context { opacity: 0.6; }
+.tool-code-file {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0.125rem 0.75rem;
+  font-family: var(--patterm-ui-font-family);
+  font-size: 0.93em;
+  color: hsl(240 5% 85%);
+}
+.tool-code-file:not(:first-child) { margin-top: 0.375rem; }
+.tool-code-count {
+  margin-left: 0.5rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  font-size: 0.86em;
+  font-variant-numeric: tabular-nums;
+}
+.tool-code-mark {
+  border-radius: 3px;
+  background: hsl(45 90% 55% / 0.18);
+  box-shadow: 0 0 0 1px hsl(45 90% 55% / 0.25);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-row,
+  .tool-row-target,
+  .tool-row-duration,
+  .tool-collapse,
+  .tool-collapse-inner > *,
+  .tool-section-actions { transition: none !important; }
+}
+
 /* A group names its skills and MCP tools only when the owner turns that on. */
 .transcript-tool-names {
   display: var(--patterm-tool-names-display, none);

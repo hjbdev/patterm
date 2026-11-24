@@ -120,12 +120,15 @@
                   <div v-if="!item.open && item.groupImages.length" class="conversation-breakout-images mt-1 flex flex-wrap gap-2">
                     <TranscriptImage v-for="image in item.groupImages" :key="image.sha256" :image="image" :project-id="item.row.messages.some((message) => message.archived) ? (projectId || undefined) : undefined" :gallery="item.groupImages" breakout />
                   </div>
-                  <div v-if="item.open" class="mt-0.5 pl-3">
-                    <template v-for="message in item.row.messages" :key="message.id">
-                      <ConversationThoughtRow v-if="message.kind === 'reasoning'" :message="message" :process-id="processId" :duration-ms="thoughtDurations.get(message.id)" :thinking="isThinking(message)" :active="activeMessageId === message.id" :class="freshIds.has(message.id) ? ENTER_CLASS : ''" />
-                      <ConversationToolRow v-else :message="message" :process-id="processId" :project-id="projectId" :active="activeMessageId === message.id" :class="freshIds.has(message.id) ? ENTER_CLASS : ''" />
-                    </template>
-                  </div>
+                  <!-- Calls sit indented by the same amount on both sides. -->
+                  <ToolCollapse :open="item.open">
+                    <div class="mt-0.5 px-[1.375rem] pb-1">
+                      <template v-for="message in item.row.messages" :key="message.id">
+                        <ConversationThoughtRow v-if="message.kind === 'reasoning'" :message="message" :process-id="processId" :duration-ms="thoughtDurations.get(message.id)" :thinking="isThinking(message)" :active="activeMessageId === message.id" :class="freshIds.has(message.id) ? ENTER_CLASS : ''" />
+                        <ConversationToolRow v-else :message="message" :process-id="processId" :project-id="projectId" :active="activeMessageId === message.id" :class="freshIds.has(message.id) ? ENTER_CLASS : ''" />
+                      </template>
+                    </div>
+                  </ToolCollapse>
                 </div>
                 <ConversationToolRow v-else-if="item.row.message.kind === 'tool'" :message="item.row.message" :process-id="processId" :project-id="projectId" :active="activeMessageId === item.row.message.id" breakout />
                 <div
@@ -185,6 +188,7 @@ import {
   MessageScrollerViewport
 } from './ui/message-scroller';
 import ConversationToolRow from './ConversationToolRow.vue';
+import ToolCollapse from './ToolCollapse.vue';
 import { figureAnsweredKey, figuresKey } from '../lib/htmlFigure';
 import ConversationThoughtRow from './ConversationThoughtRow.vue';
 import ConversationMessageFooter from './ConversationMessageFooter.vue';
