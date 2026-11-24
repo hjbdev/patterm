@@ -48,11 +48,13 @@ if (gate) {
 `);
     const options = {
       appDataPath: path.join(directory, 'data'),
+      historyHomeDir: directory,
       sidecarPath: path.resolve('native/terminal-core/target/debug', windows ? 'patterm-terminal-core.exe' : 'patterm-terminal-core'),
       mcpShimPath: path.resolve('dist/mcp/patterm-mcp.js'),
       runtime: 'node' as const,
       terminalHosts: {
         appDataPath: path.join(directory, 'data'),
+      historyHomeDir: directory,
         serviceName: 'patterm-test',
         supervisor
       }

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { harnessSupportsServiceTier } from '../Agents/AgentCapabilitiesDto';
 import type { HarnessId } from './HarnessProvider';
 import { FACE_COLORS, FACE_EYES, FACE_FINISHES, FACE_HATS, FACE_IDLES, FACE_MARKINGS, FACE_MOUTHS, FACE_SHAPES } from './ProfileLook';
 
@@ -68,7 +69,7 @@ export const harnessPresetSettingsInput = z.object({
     if (preset.model === null && preset.reasoning !== null) {
       context.addIssue({ code: z.ZodIssueCode.custom, path: ['presets', index, 'reasoning'], message: 'reasoning requires a model' });
     }
-    if (preset.harness !== 'codex' && preset.serviceTier !== null) {
+    if (!harnessSupportsServiceTier(preset.harness) && preset.serviceTier !== null) {
       context.addIssue({ code: z.ZodIssueCode.custom, path: ['presets', index, 'serviceTier'], message: 'only Codex presets select a service tier' });
     }
   }

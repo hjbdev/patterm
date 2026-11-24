@@ -41,6 +41,9 @@ export const appearanceSettingsInput = z.object({
   conversationFontSizePx: z.coerce.number().finite().min(12).max(22).transform(Math.round).default(14),
   conversationWidth: conversationWidthPreset.default('default'),
   conversationBreakout: conversationBreakoutPreset.default('off'),
+  // Whether a collapsed tool group names its skills and MCP tools, as in
+  // "MCP (notify_user)". Off by default: the names clutter the transcript.
+  conversationToolNames: z.boolean().default(false),
   historyImportToasts: z.boolean().default(true),
   // How the worktree diff viewer lays out a review: a file tree or a review deck.
   diffViewer: z.enum(['drawer', 'deck']).default('drawer'),
@@ -140,6 +143,7 @@ export const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
   conversationFontSizePx: 14,
   conversationWidth: 'default',
   conversationBreakout: 'off',
+  conversationToolNames: false,
   historyImportToasts: true,
   diffViewer: 'drawer',
   navigation: 'tabs',

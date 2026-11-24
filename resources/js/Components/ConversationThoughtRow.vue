@@ -1,17 +1,18 @@
 <template>
-  <div class="w-full min-w-0 text-xs" data-component="transcript-thinking">
+  <div class="transcript-tool-text w-full min-w-0" data-component="transcript-thinking">
     <button
       type="button"
       class="group/thought flex min-w-0 items-center gap-1.5 rounded-md py-1 pr-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+      :class="open ? '' : 'transcript-quiet'"
       :aria-expanded="open"
       :aria-controls="`thinking-${message.id}`"
       @click="open = toggleTranscriptRow(processId, message.id)"
     >
       <span class="shrink-0 font-[440] text-foreground"><ShimmerText v-if="thinking" text="Thinking" /><template v-else>Thought</template></span>
       <span v-if="duration" class="shrink-0 text-muted-foreground">{{ duration }}</span>
-      <ChevronRight class="h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 transition-[transform,opacity] duration-150 group-hover/thought:opacity-100 group-focus-visible/thought:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100" :class="open ? 'rotate-90 opacity-100' : ''" aria-hidden="true" />
+      <ChevronRight class="size-[1.1em] shrink-0 text-muted-foreground opacity-0 transition-[transform,opacity] duration-150 group-hover/thought:opacity-100 group-focus-visible/thought:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100" :class="open ? 'rotate-90 opacity-100' : ''" aria-hidden="true" />
     </button>
-    <div v-if="open" :id="`thinking-${message.id}`" class="mb-1 mt-0.5 break-words pl-3 text-xs italic text-muted-foreground [&>p]:m-0" v-html="renderedHtml" />
+    <div v-if="open" :id="`thinking-${message.id}`" class="mb-1 mt-0.5 break-words pl-3 italic text-muted-foreground [&>p]:m-0" v-html="renderedHtml" />
   </div>
 </template>
 

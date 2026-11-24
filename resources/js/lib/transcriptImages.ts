@@ -6,15 +6,16 @@ const CACHE_LIMIT = 96;
 const cache = new Map<string, Promise<string>>();
 
 export function transcriptImageUrl(sha256: string, projectId?: string): Promise<string> {
-  const cached = cache.get(sha256);
+  const cacheKey = projectId ? `project:${projectId}:${sha256}` : `live:${sha256}`;
+  const cached = cache.get(cacheKey);
   if (cached) {
-    cache.delete(sha256);
-    cache.set(sha256, cached);
+    cache.delete(cacheKey);
+    cache.set(cacheKey, cached);
     return cached;
   }
   const loading = fetchImage(sha256, projectId);
-  cache.set(sha256, loading);
-  loading.catch(() => { if (cache.get(sha256) === loading) cache.delete(sha256); });
+  cache.set(cacheKey, loading);
+  loading.catch(() => { if (cache.get(cacheKey) === loading) cache.delete(cacheKey); });
   for (const [key, oldest] of cache) {
     if (cache.size <= CACHE_LIMIT) break;
     cache.delete(key);
@@ -23,15 +24,25 @@ export function transcriptImageUrl(sha256: string, projectId?: string): Promise<
   return loading;
 }
 
-// A stored image's type and base64 bytes.
+// A stored image's type and base64 bytes. When a project is given, read from
+// imported history media first and fall back to the live transcript store so
+// mixed live/archived tool groups keep every image readable.
 export async function transcriptImageData(sha256: string, projectId?: string): Promise<{ mime: string; data: string }> {
-  const result = await (projectId
-    ? window.patterm.call('media_get', { project_id: projectId, sha256 })
-    : window.patterm.call('integrated_image', { sha256 })) as { mime?: unknown; data?: unknown } | null;
-  if (typeof result?.data !== 'string' || typeof result.mime !== 'string' || !result.mime.startsWith('image/')) {
-    throw new Error('This image is no longer stored');
+  const read = async (tool: 'media_get' | 'integrated_image'): Promise<{ mime: string; data: string } | null> => {
+    const result = await (tool === 'media_get'
+      ? window.patterm.call('media_get', { project_id: projectId, sha256 })
+      : window.patterm.call('integrated_image', { sha256 })) as { mime?: unknown; data?: unknown } | null;
+    return typeof result?.data === 'string' && typeof result.mime === 'string' && result.mime.startsWith('image/')
+      ? { mime: result.mime, data: result.data }
+      : null;
+  };
+  const primary = await read(projectId ? 'media_get' : 'integrated_image').catch(() => null);
+  if (primary) return primary;
+  if (projectId) {
+    const fallback = await read('integrated_image').catch(() => null);
+    if (fallback) return fallback;
   }
-  return { mime: result.mime, data: result.data };
+  throw new Error('This image is no longer stored');
 }
 
 async function fetchImage(sha256: string, projectId: string | undefined): Promise<string> {

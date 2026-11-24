@@ -1,12 +1,12 @@
 <template>
   <div
-    class="w-full min-w-0 text-xs"
+    class="transcript-tool-text w-full min-w-0"
     data-component="transcript-tool"
     :data-family="tool.family"
     :data-status="tool.status"
   >
     <!-- A process the call names sits beside the toggle, not inside it. -->
-    <div class="flex w-full min-w-0 items-center gap-1.5">
+    <div class="flex w-full min-w-0 items-center gap-1.5" :class="open && expandable ? '' : 'transcript-quiet'">
     <button
       type="button"
       class="group/tool flex min-w-0 items-center gap-1.5 rounded-md py-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-default"
@@ -15,21 +15,21 @@
       @click="toggle"
     >
       <span class="shrink-0 font-[440]" :class="tool.status === 'failed' ? 'text-destructive' : 'text-foreground'">{{ tool.title }}</span>
-      <Loader2 v-if="tool.status === 'running'" class="h-3 w-3 shrink-0 animate-spin text-muted-foreground motion-reduce:animate-none" aria-label="Running" />
-      <X v-else-if="tool.status === 'failed'" class="h-3 w-3 shrink-0 text-destructive" aria-label="Failed" />
+      <Loader2 v-if="tool.status === 'running'" class="size-[0.95em] shrink-0 animate-spin text-muted-foreground motion-reduce:animate-none" aria-label="Running" />
+      <X v-else-if="tool.status === 'failed'" class="size-[0.95em] shrink-0 text-destructive" aria-label="Failed" />
       <span v-if="target" class="min-w-0 truncate text-muted-foreground" :title="tool.target">{{ target }}</span>
       <span v-for="arg in tool.args ?? []" :key="arg" class="shrink-0 text-muted-foreground">{{ arg }}</span>
       <template v-if="children.length">
         <span class="shrink-0 text-muted-foreground">{{ children.length }} {{ children.length === 1 ? 'step' : 'steps' }}</span>
         <span v-if="!open && latest" class="min-w-0 truncate text-muted-foreground/80">{{ latest }}</span>
       </template>
-      <span v-if="tool.changes" class="flex shrink-0 items-center gap-1 font-mono text-[11px]" aria-label="Diff changes">
+      <span v-if="tool.changes" class="flex shrink-0 items-center gap-1 font-mono text-[0.85em]" aria-label="Diff changes">
         <span v-if="tool.changes.additions" class="text-diff-add">+{{ tool.changes.additions }}</span>
         <span v-if="tool.changes.deletions" class="text-diff-remove">-{{ tool.changes.deletions }}</span>
       </span>
       <ChevronRight
         v-if="expandable"
-        class="h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 transition-[transform,opacity] duration-150 group-hover/tool:opacity-100 group-focus-visible/tool:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100"
+        class="size-[1.1em] shrink-0 text-muted-foreground opacity-0 transition-[transform,opacity] duration-150 group-hover/tool:opacity-100 group-focus-visible/tool:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100"
         :class="open ? 'rotate-90 opacity-100' : ''"
         aria-hidden="true"
       />
@@ -38,22 +38,22 @@
     </div>
 
     <div v-if="toolImages.length" :class="['mt-1 flex flex-wrap gap-2', breakout && 'conversation-breakout-images']" data-component="transcript-tool-images">
-      <TranscriptImage v-for="image in toolImages" :key="image.sha256" :image="image" :gallery="toolImages" :breakout="breakout" />
+      <TranscriptImage v-for="image in toolImages" :key="image.sha256" :image="image" :project-id="message.archived ? (projectId || undefined) : undefined" :gallery="toolImages" :breakout="breakout" />
     </div>
 
     <div v-if="open && expandable" class="mb-1 mt-0.5 min-w-0 space-y-2 pl-3">
       <ul v-if="tool.checklist?.length" class="min-w-0 space-y-0.5" data-component="transcript-checklist" aria-label="Checklist">
         <li v-for="(item, index) in tool.checklist" :key="index" class="flex min-w-0 items-start gap-1.5">
-          <Check v-if="item.status === 'completed'" class="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-          <Loader2 v-else-if="item.status === 'in_progress'" class="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
-          <Circle v-else class="mt-1 h-2.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <Check v-if="item.status === 'completed'" class="mt-0.5 size-[1.1em] shrink-0 text-muted-foreground" aria-hidden="true" />
+          <Loader2 v-else-if="item.status === 'in_progress'" class="mt-0.5 size-[1.1em] shrink-0 text-primary" aria-hidden="true" />
+          <Circle v-else class="mt-1 h-[0.75em] w-[1.1em] shrink-0 text-muted-foreground" aria-hidden="true" />
           <span class="min-w-0 break-words" :class="item.status === 'completed' ? 'text-muted-foreground line-through' : item.status === 'in_progress' ? 'font-[440] text-foreground' : 'text-foreground'">{{ item.text }}</span>
           <span class="sr-only">{{ item.status.replace('_', ' ') }}</span>
         </li>
       </ul>
       <div v-if="children.length" class="min-w-0 space-y-0.5" data-component="transcript-subagent" aria-label="Subagent steps">
         <template v-for="child in children" :key="child.id">
-          <ConversationToolRow v-if="child.kind === 'tool'" :message="child" :process-id="processId" />
+          <ConversationToolRow v-if="child.kind === 'tool'" :message="child" :process-id="processId" :project-id="projectId" />
           <p v-else-if="child.kind === 'reasoning'" class="line-clamp-3 whitespace-pre-wrap break-words py-0.5 italic text-muted-foreground">{{ child.text }}</p>
           <p v-else-if="child.text.trim()" class="whitespace-pre-wrap break-words py-0.5" :class="child.role === 'user' ? 'text-muted-foreground' : 'text-foreground'">{{ child.text }}</p>
         </template>
@@ -62,56 +62,56 @@
       <p v-if="!children.length && !tool.command && !tool.output && !tool.patch && !tool.files?.length && tool.input === undefined" class="text-muted-foreground">No input or output captured.</p>
       <div v-if="tool.command" class="min-w-0">
         <div class="flex items-center justify-between gap-2">
-          <span class="text-[10px] uppercase tracking-wide text-muted-foreground">Command</span>
+          <span class="text-[0.77em] uppercase tracking-wide text-muted-foreground">Command</span>
           <button type="button" class="rounded p-0.5 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50" :aria-label="`Copy command`" @click="copy(tool.command)">
-            <Copy class="h-3 w-3" />
+            <Copy class="size-[0.95em]" />
           </button>
         </div>
-        <pre class="mt-0.5 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/30 p-2 font-mono text-[11px] leading-5">{{ tool.command }}</pre>
+        <pre class="mt-0.5 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/30 p-2 font-mono text-[0.85em] leading-5">{{ tool.command }}</pre>
       </div>
 
-      <div v-if="tool.error" class="break-words rounded-md border border-destructive/40 bg-destructive/5 p-2 text-[11px] text-destructive">{{ tool.error }}</div>
+      <div v-if="tool.error" class="break-words rounded-md border border-destructive/40 bg-destructive/5 p-2 text-[0.85em] text-destructive">{{ tool.error }}</div>
 
       <template v-if="tool.patch">
         <DiffPatchView v-if="tool.patch.includes('diff --git')" :patch="tool.patch" :cache-key="`${processId}:${message.id}`" />
-        <pre v-else class="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/30 p-2 font-mono text-[11px] leading-5"><span v-for="(line, index) in patchLines" :key="index" :class="diffLineClass(line)">{{ line }}
+        <pre v-else class="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/30 p-2 font-mono text-[0.85em] leading-5"><span v-for="(line, index) in patchLines" :key="index" :class="diffLineClass(line)">{{ line }}
 </span></pre>
       </template>
       <template v-else-if="tool.files?.some(file => file.patch)">
         <div v-for="(file, index) in tool.files" :key="`${file.name ?? index}`" class="min-w-0 space-y-0.5">
           <div v-if="file.name" class="flex min-w-0 items-center gap-2">
-            <span class="min-w-0 truncate font-mono text-[11px] text-muted-foreground">{{ file.name }}</span>
-            <span v-if="file.additions || file.deletions" class="shrink-0 font-mono text-[10px]">
+            <span class="min-w-0 truncate font-mono text-[0.85em] text-muted-foreground">{{ file.name }}</span>
+            <span v-if="file.additions || file.deletions" class="shrink-0 font-mono text-[0.77em]">
               <span v-if="file.additions" class="text-diff-add">+{{ file.additions }}</span>
               <span v-if="file.deletions" class="text-diff-remove"> -{{ file.deletions }}</span>
             </span>
           </div>
-          <pre v-if="file.patch" class="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/30 p-2 font-mono text-[11px] leading-5"><span v-for="(line, lineIndex) in patchLinesOf(file)" :key="lineIndex" :class="diffLineClass(line)">{{ line }}
+          <pre v-if="file.patch" class="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/30 p-2 font-mono text-[0.85em] leading-5"><span v-for="(line, lineIndex) in patchLinesOf(file)" :key="lineIndex" :class="diffLineClass(line)">{{ line }}
 </span></pre>
         </div>
       </template>
       <div v-else-if="tool.files?.length" class="space-y-0.5">
-        <p v-for="file in tool.files" :key="file.name" class="truncate font-mono text-[11px] text-muted-foreground">{{ file.name }}</p>
+        <p v-for="file in tool.files" :key="file.name" class="truncate font-mono text-[0.85em] text-muted-foreground">{{ file.name }}</p>
       </div>
 
       <!-- A rendered page shows here, in case the reply never placed it. -->
       <HtmlFigureCard v-if="drawn" :message="message" />
       <div v-else-if="tool.output" class="min-w-0">
         <div class="flex items-center justify-between gap-2">
-          <span class="text-[10px] uppercase tracking-wide text-muted-foreground">Output</span>
+          <span class="text-[0.77em] uppercase tracking-wide text-muted-foreground">Output</span>
           <button type="button" class="rounded p-0.5 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50" :aria-label="`Copy output`" @click="copy(tool.output)">
-            <Copy class="h-3 w-3" />
+            <Copy class="size-[0.95em]" />
           </button>
         </div>
-        <pre class="mt-0.5 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/30 p-2 font-mono text-[11px] leading-5">{{ tool.output }}</pre>
+        <pre class="mt-0.5 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/30 p-2 font-mono text-[0.85em] leading-5">{{ tool.output }}</pre>
       </div>
 
       <div v-else-if="!tool.patch && !tool.files?.length && !tool.checklist?.length && !children.length && tool.input !== undefined" class="min-w-0">
-        <span class="text-[10px] uppercase tracking-wide text-muted-foreground">Arguments</span>
-        <pre class="mt-0.5 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/30 p-2 font-mono text-[11px] leading-5">{{ inputText }}</pre>
+        <span class="text-[0.77em] uppercase tracking-wide text-muted-foreground">Arguments</span>
+        <pre class="mt-0.5 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/30 p-2 font-mono text-[0.85em] leading-5">{{ inputText }}</pre>
       </div>
 
-      <p v-if="copied" role="status" class="text-[10px] text-muted-foreground">Copied to clipboard.</p>
+      <p v-if="copied" role="status" class="text-[0.77em] text-muted-foreground">Copied to clipboard.</p>
     </div>
   </div>
 </template>
@@ -128,7 +128,7 @@ import ProcessMention from './ProcessMention.vue';
 const DiffPatchView = defineAsyncComponent(() => import('./DiffPatchView.vue'));
 const HtmlFigureCard = defineAsyncComponent(() => import('./HtmlFigureCard.vue'));
 
-const props = withDefaults(defineProps<{ message: TranscriptMessage; processId: string; active?: boolean; breakout?: boolean }>(), { active: false, breakout: false });
+const props = withDefaults(defineProps<{ message: TranscriptMessage; processId: string; projectId?: string | null | undefined; active?: boolean; breakout?: boolean }>(), { projectId: null, active: false, breakout: false });
 
 const tool = computed(() => props.message.tool ?? {
   name: props.message.title ?? 'Tool',

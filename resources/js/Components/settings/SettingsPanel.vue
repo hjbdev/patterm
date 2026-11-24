@@ -1,6 +1,6 @@
 <template>
   <!-- A query container: the panel's sections and rows respond to its width. -->
-  <section class="[container-type:inline-size]">
+  <section v-show="visible" class="[container-type:inline-size]">
     <header class="flex flex-col gap-3 border-b border-white/[0.06] pb-5 [@container(min-width:36rem)]:flex-row [@container(min-width:36rem)]:items-start [@container(min-width:36rem)]:justify-between">
       <div class="min-w-0 flex-1">
         <div class="flex items-center gap-2">
@@ -19,8 +19,11 @@
 import { computed, provide, reactive } from 'vue';
 import { settingsPanelSections } from './panelContext';
 import SettingsSaveStatus from './SettingsSaveStatus.vue';
+import { useSettingsSearch } from './settingsSearch';
 
-defineProps<{ title: string; description?: string }>();
+const props = defineProps<{ title: string; description?: string }>();
+
+const { visible } = useSettingsSearch(() => [props.title]);
 
 const sections = reactive(new Map<symbol, string | undefined>());
 provide(settingsPanelSections, sections);

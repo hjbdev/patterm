@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -172,6 +172,9 @@ export class CodexAppServerService implements AgentAdapter {
   private readonly connectedSockets = new Set<string>();
   private readonly clients = new Map<string, CodexRpcClient>();
   private readonly connecting = new Map<string, Promise<CodexRpcClient>>();
+  private readonly run = randomUUID();
+  private readonly clientIds = new WeakMap<CodexRpcClient, number>();
+  private nextClientId = 0;
   private readonly models = new Map<string, string>();
   private readonly efforts = new Map<string, string>();
   // Speed chosen in the composer or with /fast; sent with every later turn.
@@ -320,7 +323,8 @@ export class CodexAppServerService implements AgentAdapter {
         tasks,
         diagnostics: { unhandled: channel.unhandled },
         messages: { data: messages },
-        mode: this.collaborationModes.get(processId) ?? runtime.collaborationMode
+        mode: this.collaborationModes.get(processId) ?? runtime.collaborationMode,
+        controls_revision: this.controlsRevision(processId, runtime, client)
       }, goal, client.goals.list(runtime.threadId));
     }
     const { response, unavailable } = await this.listItems(client, runtime.threadId);
@@ -360,6 +364,7 @@ export class CodexAppServerService implements AgentAdapter {
       tasks: codexTasks(parentMessages, client, await this.trackBackgroundTerminals(client, runtime.threadId, parentMessages)),
       messages: { data: messages },
       mode: this.collaborationModes.get(processId) ?? runtime.collaborationMode,
+      controls_revision: this.controlsRevision(processId, runtime, client),
       ...withPlan(pendingViews(pending, runtime.threadId, messages), plan)
     }, goal, client.goals.list(runtime.threadId));
   }
@@ -765,6 +770,7 @@ export class CodexAppServerService implements AgentAdapter {
         channel.descendants.add(thread.id);
         if (channel.descendants.size > 500) channel.descendants.delete(channel.descendants.values().next().value!);
         this.updateStatus(channel);
+        this.enqueue(channel, { revision: 0, kind: 'pending' });
       }
       // A subagent thread may start before its spawnAgent item names it; nest
       // it under the newest spawn until the item does.
@@ -800,7 +806,9 @@ export class CodexAppServerService implements AgentAdapter {
         // A subagent may have reported running before its row named it.
         if (spawned.size) this.updateStatus(channel);
         // Only a snapshot carries the task list, so a task's row asks for one.
-        if (message.tool?.name === 'subAgentActivity' || this.backgroundCommands.has(message.id)) this.enqueue(channel, { revision: 0, kind: 'pending' });
+        if (spawned.size || message.tool?.name === 'agent' || message.tool?.name === 'subAgentActivity' || this.backgroundCommands.has(message.id)) {
+          this.enqueue(channel, { revision: 0, kind: 'pending' });
+        }
       }
       return;
     }
@@ -853,12 +861,13 @@ export class CodexAppServerService implements AgentAdapter {
   // parent's turn.
   private handleChildNotification(channel: CodexChannel, threadId: string, method: string, params: JsonRecord): void {
     const parentId = channel.children.get(threadId);
-    if (!parentId) return;
-    // A subagent's own turn decides whether its task is running.
-    if (method === 'turn/started' || method === 'turn/completed') {
+    // A subagent's own turn or status change decides whether its task is running,
+    // including nested descendants tracked in channel.descendants.
+    if ((parentId || channel.descendants.has(threadId)) && (method === 'turn/started' || method === 'turn/completed' || method === 'thread/status/changed')) {
       this.enqueue(channel, { revision: 0, kind: 'pending' });
       return;
     }
+    if (!parentId) return;
     if (method === 'item/started' || method === 'item/completed') {
       const projected = projectCodexItem(params.item, this.options.images);
       const message = projected ? itemTimes(method, params, projected) : null;
@@ -1001,8 +1010,31 @@ export class CodexAppServerService implements AgentAdapter {
         { name: 'goal', description: 'Set a goal to work toward, or pause, resume, or clear it' },
         { name: 'shell', description: 'Run a shell command outside the sandbox' }
       ],
-      goals: { canPause: true, canResume: true, canEdit: true, canBudget: true }
+      goals: { canPause: true, canResume: true, canEdit: true, canBudget: true },
+      revision: this.controlsRevision(processId, runtime, client)
     };
+  }
+
+  private clientId(client: CodexRpcClient): number {
+    let id = this.clientIds.get(client);
+    if (id === undefined) {
+      id = ++this.nextClientId;
+      this.clientIds.set(client, id);
+    }
+    return id;
+  }
+
+  private controlsRevision(processId: string, runtime: CodexRuntime, client: CodexRpcClient): string {
+    return createHash('sha256').update(JSON.stringify([
+      this.run,
+      this.clientId(client),
+      this.models.get(processId) ?? runtime.model,
+      this.efforts.get(processId) ?? runtime.reasoning,
+      this.tiers.get(processId) ?? null,
+      runtime.serviceTier,
+      runtime.serviceTierExplicit,
+      this.collaborationModes.get(processId) ?? runtime.collaborationMode
+    ])).digest('base64url').slice(0, 16);
   }
 
   // Saved picks in sessions.model / sessions.reasoning are authoritative when
@@ -1106,6 +1138,8 @@ export class CodexAppServerService implements AgentAdapter {
       if (value !== 'default' && value !== 'plan') throw new Error('Unknown Codex mode');
       this.collaborationModes.set(processId, value);
       this.persistAdapterData(processId, { collaborationMode: value });
+      const channel = this.channels.get(processId);
+      if (channel) this.enqueue(channel, { revision: 0, kind: 'pending' });
       return;
     }
     if (selector !== 'model' && selector !== 'effort' && selector !== 'speed') throw new Error('Unknown Codex setting');
@@ -1124,6 +1158,8 @@ export class CodexAppServerService implements AgentAdapter {
       this.efforts.set(processId, value);
       this.database.connection.prepare('update sessions set reasoning = ? where id = ?').run(value, runtime.sessionId);
     }
+    const channel = this.channels.get(processId);
+    if (channel) this.enqueue(channel, { revision: 0, kind: 'pending' });
   }
 
   async compact(processId: string): Promise<Record<string, unknown>> {
@@ -1162,6 +1198,8 @@ export class CodexAppServerService implements AgentAdapter {
       this.tiers.set(processId, nextTier);
       this.database.connection.prepare('update sessions set service_tier = ? where id = ?').run(nextTier, runtime.sessionId);
       this.persistAdapterData(processId, { serviceTierExplicit: true });
+      const channel = this.channels.get(processId);
+      if (channel) this.enqueue(channel, { revision: 0, kind: 'pending' });
       return { speed: nextTier };
     }
     if (name === 'review') return record(await client.request('review/start', { threadId: runtime.threadId, target: reviewTarget(argument), delivery: 'inline' }));

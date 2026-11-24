@@ -53,7 +53,7 @@ export function historyRows(messages: Array<{ id: string; role: string; kind: st
   return messages.map((message) => {
     const tool = message.kind === 'tool_call' || message.kind === 'tool_result' || message.role === 'tool';
     // Importers mark reasoning in metadata, as the history view reads it.
-    const reasoning = !tool && message.metadata?.type === 'reasoning';
+    const reasoning = !tool && (message.metadata?.type === 'reasoning' || message.metadata?.contentType === 'thinking');
     const kind: ConversationRowKind = tool ? 'tool' : reasoning ? 'reasoning' : message.kind === 'summary' || message.kind === 'event' || message.role === 'system' ? 'notice' : 'text';
     const detail = tool ? toolDetail(message.toolInputSummary, message.toolStatus) : '';
     return {

@@ -897,8 +897,9 @@ export function createMcpRegistry(services: RegistryServices): McpToolRegistry {
   registry.register({
     name: 'bot_stay_quiet',
     namespace: 'assistant',
-    description: 'Bots and assistant only: mark this turn as handled silently with no user-facing notification. Call this when an incoming notification digest, helper report, agent message, timer callback, or routine report needs no update to the user.',
+    description: 'Bots and assistant only: end this turn without a reply of your own. It only stops your own turn from raising a "turn finished" notice. It never hides, dismisses or delays anything else: other agents\' notifications, permission prompts, questions and failures stay open and reach the user as before. Call this when an incoming notification digest, helper report, agent message, timer callback, or routine report needs no extra update from you.',
     inputSchema: { type: 'object', properties: { reason: { type: 'string', maxLength: 200, description: 'Optional brief note on why no user update is needed.' } } },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     changes: [],
     usageNotes: [
       'Call this only on unsolicited wakeups (digests, reports, agent messages, timer callbacks, routine reports) that need no user-facing update, then end your turn without prose.',

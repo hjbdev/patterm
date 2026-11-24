@@ -31,3 +31,18 @@ export interface AgentCapabilitiesDto {
   };
   messageIdPrefix?: string;
 }
+
+// Static capability defaults for pure schema validation and custom-model
+// fallbacks that run without a live AgentAdapterRegistry.
+const SERVICE_TIER_HARNESSES = new Set<string>(['codex']);
+const DEFAULT_REASONING_LEVELS: Readonly<Record<string, readonly string[]>> = {
+  claude: ['low', 'medium', 'high', 'xhigh', 'max']
+};
+
+export function harnessSupportsServiceTier(harness: string): boolean {
+  return SERVICE_TIER_HARNESSES.has(harness);
+}
+
+export function defaultReasoningLevelsFor(harness: string): string[] {
+  return [...(DEFAULT_REASONING_LEVELS[harness] ?? [])];
+}

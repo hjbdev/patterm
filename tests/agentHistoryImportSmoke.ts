@@ -261,8 +261,39 @@ function verifyScopedScanLinking(): void {
   }
 }
 
+// Every agent CLI's history imports automatically: a default location turned
+// off before stays on after startup, and one that doesn't exist yet is still
+// watched so a CLI installed later imports without a restart.
+function verifyDefaultSourcesAlwaysOn(): void {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'patterm-history-defaults-'));
+  const database = new DatabaseService(directory);
+  try {
+    database.initialize();
+    const home = path.join(directory, 'home');
+    fs.mkdirSync(path.join(home, '.claude', 'projects'), { recursive: true });
+    const discovery = new ProviderHistoryDiscoveryService();
+    const sources = new AgentHistorySourceService(database, discovery);
+    const defaults = discovery.defaultSources(home);
+    const claude = defaults.find((source) => source.provider === 'claude')!;
+    sources.configure({ provider: 'claude', path: claude.path, enabled: false, watch_enabled: false });
+    sources.enableDefaultSources(home);
+    sources.enableDefaultSources(home);
+    assert.deepEqual(sources.enabledWatchSources().map((source) => source.path).sort(), defaults.map((source) => source.path).sort(), 'every default history location is watched, once each');
+    assert.deepEqual(sources.importCandidates({}).map((source) => source.path), [claude.path], 'only locations that exist are imported');
+
+    const claudeConfig = path.join(directory, 'claude-config');
+    sources.enableDefaultSources(home, { CLAUDE_CONFIG_DIR: claudeConfig, CODEX_HOME: path.join(directory, 'codex-home') });
+    const watched = sources.enabledWatchSources().map((source) => source.path);
+    assert.ok(watched.includes(path.join(claudeConfig, 'projects')) && watched.includes(path.join(directory, 'codex-home', 'sessions')), 'CLAUDE_CONFIG_DIR and CODEX_HOME move where history imports from');
+  } finally {
+    database.dispose();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
 async function main(): Promise<void> {
   verifySecretRedaction();
+  verifyDefaultSourcesAlwaysOn();
   verifyScopedScanLinking();
   verifyConversationSearch();
   verifyNativeThreadIdentity();
@@ -368,6 +399,15 @@ async function main(): Promise<void> {
     assert.equal(claudeToolResult?.tool_name, 'Bash', 'Claude tool results inherit the preceding tool name');
     const emptyClaudeToolResults = database.connection.prepare(`select count(*) as count from conversation_messages where metadata like '%toolu_history_2%' and kind = 'tool_result'`).get() as { count: number };
     assert.equal(emptyClaudeToolResults.count, 0, 'Claude empty successful tool results are not imported as empty bubbles');
+
+    // Pagination limit is preserved strictly even when a tool_call / tool_result straddles a page boundary.
+    const claudeMessages = read.get({ conversation_id: claudeConversationId, limit: 200 }).messages;
+    const callIdx = claudeMessages.findIndex((message) => message.kind === 'tool_call' && message.metadata?.toolUseId === 'toolu_history_1');
+    const resultIdx = claudeMessages.findIndex((message) => message.kind === 'tool_result' && message.metadata?.toolUseId === 'toolu_history_1');
+    assert.equal(resultIdx, callIdx + 1, 'tool_call is followed by tool_result');
+    assert.equal(read.get({ conversation_id: claudeConversationId, limit: 1, offset: callIdx }).messages.length, 1, 'history_get(limit=1) returns at most 1 row on a tool_call boundary');
+    assert.equal(read.get({ conversation_id: claudeConversationId, limit: 1, offset: resultIdx }).messages.length, 1, 'history_get(limit=1) returns at most 1 row on a tool_result boundary');
+    assert.equal(read.archive('claude', 'claude_resume_1', project.id, '2026-07-02T00:00:00.000Z', resultIdx, 1).messages.length, 1, 'archive(limit=1) returns at most 1 row on a tool_result boundary');
 
     const codexConversation = database.connection.prepare(`select provider_conversation_id from conversations where provider = 'codex' limit 1`).get() as { provider_conversation_id: string } | undefined;
     assert.equal(codexConversation?.provider_conversation_id, 'codex_resume_1', 'Codex response item ids do not replace the session id');

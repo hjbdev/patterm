@@ -268,6 +268,7 @@ export interface CachedIntegratedConversation extends ConversationProjection {
   historyUnavailable: boolean;
   historyCursor: string | null;
   historyLoaded: boolean;
+  archivedRows?: unknown[];
 }
 
 // The one piece of module state here: a small LRU of recently shown panes.
@@ -878,7 +879,7 @@ export type IntegratedDeliveryStatus = 'working' | 'idle' | 'error' | 'permissio
 export interface ConversationStreamEvent {
   processId: string;
   revision: number;
-  kind: 'replace' | 'append' | 'status' | 'pending' | 'turn_boundary' | 'error' | 'reconnecting';
+  kind: 'replace' | 'append' | 'status' | 'pending' | 'tasks' | 'turn_boundary' | 'error' | 'reconnecting';
   message?: ConversationStreamMessage | undefined;
   id?: string | undefined;
   delta?: string | undefined;
@@ -888,6 +889,7 @@ export interface ConversationStreamEvent {
   parentId?: string | undefined;
   status?: IntegratedDeliveryStatus | undefined;
   detail?: string | undefined;
+  backgroundTasks?: number | undefined;
 }
 
 export function applyConversationStreamEvent(messages: TranscriptMessage[], event: ConversationStreamEvent): TranscriptMessage[] {
@@ -1451,7 +1453,8 @@ export function transcriptMessageKey(message: TranscriptMessage): string {
 // title once, in first-seen order, with its own call count. Thoughts in the
 // group are not counted. Skills and MCP calls share a title, so the summary
 // names which ones ran: "7 Bash, 2 Skill (simplify, run), MCP (notify_user)".
-export function transcriptToolGroupSummary(messages: TranscriptMessage[]): { count: number; tools: Array<{ title: string; count: number }>; label: string } {
+// Each tool's names are also returned apart, so the transcript can hide them.
+export function transcriptToolGroupSummary(messages: TranscriptMessage[]): { count: number; tools: Array<{ title: string; base: string; names: string; count: number }>; label: string } {
   const tools = new Map<string, { count: number; names: Set<string> }>();
   let count = 0;
   for (const message of messages) {
@@ -1463,7 +1466,10 @@ export function transcriptToolGroupSummary(messages: TranscriptMessage[]): { cou
     const name = groupName(message.tool);
     if (name) entry.names.add(name);
   }
-  const named = [...tools].map(([title, entry]) => ({ title: entry.names.size ? `${title} (${[...entry.names].join(', ')})` : title, count: entry.count }));
+  const named = [...tools].map(([title, entry]) => {
+    const names = entry.names.size ? `(${[...entry.names].join(', ')})` : '';
+    return { title: names ? `${title} ${names}` : title, base: title, names, count: entry.count };
+  });
   return { count, tools: named, label: named.map((tool) => tool.count > 1 ? `${tool.count} ${tool.title}` : tool.title).join(', ') };
 }
 

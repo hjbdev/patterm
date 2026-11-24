@@ -78,6 +78,7 @@
             ref="messageTranscriptRef"
             :messages="transcriptMessages"
             :process-id="`history:${selectedId}`"
+            :project-id="projectId ?? selectedConversation.projectId"
             :has-older="messageWindowOffset > 0"
             :loading-older="loadingOlderMessages"
             :active-message-id="focusedMessageId"

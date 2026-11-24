@@ -52,6 +52,12 @@
   }
 }
 
+/* Settings search marks matches without changing the DOM (lib/searchHighlight.ts). */
+::highlight(settings-search) {
+  background-color: rgb(250 204 21 / 0.25);
+  color: inherit;
+}
+
 /* Unlayered so it follows the Tailwind utilities and overrides `.h-dvh`. */
 @media (display-mode: standalone) {
   /* The safe-area padding shows the body, so match the application frame. */
@@ -265,6 +271,35 @@ button.mention-glow:hover {
 
 .conversation-transcript-viewport {
   --markdown-font-size: var(--patterm-conversation-font-size, 0.875rem);
+}
+
+/* Tool calls, thoughts and their groups follow the conversation font size, a
+   step below the prose. Sizes inside them are in em, so they scale too. */
+.transcript-tool-text {
+  font-size: calc(var(--patterm-conversation-font-size, 14px) * 0.93);
+  line-height: 1.5;
+}
+
+/* A collapsed tool call, thought or group recedes until it is hovered or
+   focused, so the replies stand out. */
+.transcript-quiet {
+  opacity: 0.55;
+  transition: opacity 150ms ease-out;
+}
+
+.transcript-quiet:hover,
+.transcript-quiet:focus-visible,
+.transcript-quiet:focus-within {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transcript-quiet { transition: none; }
+}
+
+/* A group names its skills and MCP tools only when the owner turns that on. */
+.transcript-tool-names {
+  display: var(--patterm-tool-names-display, none);
 }
 
 .conversation-breakout-images {

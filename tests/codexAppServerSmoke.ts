@@ -619,7 +619,11 @@ if (socketPath) {
 
   const activityChanges: string[] = [];
   const integrated = new IntegratedAgentService(database, { codex: service }, () => activityChanges.push('changed'));
-  assert.equal((await integrated.controls('process_test')).selectors[0]?.value, 'gpt-test');
+  const initialControls = await integrated.controls('process_test');
+  assert.equal(initialControls.selectors[0]?.value, 'gpt-test');
+  assert.equal(typeof initialControls.revision, 'string', 'Codex controls emit a revision');
+  const initialSnapshot = await integrated.conversation('process_test') as Record<string, unknown>;
+  assert.equal(initialSnapshot.controls_revision, initialControls.revision, 'Codex snapshot controls_revision matches controls().revision');
   assert.equal((await integrated.controls('process_test')).selectors.find((item) => item.id === 'effort')?.value, 'high', 'composer shows the launch preset before any live configuration');
   assert.deepEqual((await integrated.controls('process_test')).selectors.find((item) => item.id === 'effort')?.options.map((item) => item.value), ['low', 'medium', 'high']);
   const speed = async () => (await integrated.controls('process_test')).selectors.find((item) => item.id === 'speed');
@@ -645,7 +649,10 @@ if (socketPath) {
   assert.equal((await integrated.controls('process_test')).selectors.find((item) => item.id === 'mode')?.value, 'default');
   await assert.rejects(integrated.configure('process_test', 'mode', 'pair'), /Unknown Codex mode/);
   await integrated.configure('process_test', 'mode', 'plan');
-  assert.equal((await integrated.controls('process_test')).selectors.find((item) => item.id === 'mode')?.value, 'plan');
+  const planControls = await integrated.controls('process_test');
+  assert.equal(planControls.selectors.find((item) => item.id === 'mode')?.value, 'plan');
+  assert.notEqual(planControls.revision, initialControls.revision, 'changing Codex mode bumps controls_revision');
+  assert.equal((await integrated.conversation('process_test') as Record<string, unknown>).controls_revision, planControls.revision);
   await integrated.configure('process_test', 'mode', 'default');
   assert.match(first, /approval_test/);
   assert.match(first, /question_test/);

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import { AgentHistoryImportService } from '../app/Services/AgentHistory/AgentHistoryImportService';
+import { AgentHistoryReadService } from '../app/Services/AgentHistory/AgentHistoryReadService';
 import { ConversationMediaService } from '../app/Services/AgentHistory/ConversationMediaService';
 import { ProviderHistoryDiscoveryService } from '../app/Services/AgentHistory/ProviderHistoryDiscoveryService';
 import { DatabaseService } from '../app/Services/DatabaseService';
@@ -39,7 +40,10 @@ try {
     claude('c4', 'user', [{ type: 'tool_result', tool_use_id: 'toolu_1', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: OTHER } }] }], '2026-10-10T10:00:04.000Z'),
     // Viewing the pasted image again lists it once.
     claude('c5', 'assistant', [{ type: 'tool_use', id: 'toolu_2', name: 'Read', input: { file_path: '/tmp/again.png' } }], '2026-10-10T10:00:05.000Z'),
-    claude('c6', 'user', [{ type: 'tool_result', tool_use_id: 'toolu_2', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: PNG } }] }], '2026-10-10T10:00:06.000Z')
+    claude('c6', 'user', [{ type: 'tool_result', tool_use_id: 'toolu_2', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: PNG } }] }], '2026-10-10T10:00:06.000Z'),
+    // A bare image-only user turn after an assistant reply keeps its own user message row.
+    claude('c7', 'assistant', [{ type: 'text', text: 'Send me the diagram.' }], '2026-10-10T10:00:07.000Z'),
+    claude('c8', 'user', [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: PNG } }], '2026-10-10T10:00:08.000Z')
   ].join('\r\n') + '\r\n');
 
   const codexDir = path.join(directory, 'codex');
@@ -67,6 +71,19 @@ try {
   assert.equal(output.tool_output_summary, '[Image]', 'an image tool result is not stored as base64 text');
 
   const media = new ConversationMediaService(historyDatabase);
+  const read = new AgentHistoryReadService(historyDatabase);
+  const claudeConv = historyDatabase.connection.prepare(`select id from conversations where provider = 'claude' limit 1`).get() as { id: string };
+  const claudeRows = read.get({ conversation_id: claudeConv.id, limit: 50 }).messages;
+  assert.equal(claudeRows.find((row) => row.text === 'Here is a screenshot')?.media?.[0]?.sha256, sha(PNG), 'pasted image attaches to its archived user message');
+  const bareImageRow = claudeRows.find((row) => row.providerMessageId === 'c8');
+  assert.equal(bareImageRow?.role, 'user', 'image-only Claude user prompt preserves its own user message row');
+  assert.equal(bareImageRow?.media?.[0]?.sha256, sha(PNG), 'image-only Claude user prompt attaches its pasted image to the user row');
+  assert.equal(claudeRows.find((row) => row.providerMessageId === 'c7')?.media, undefined, 'image-only Claude user prompt does not attach to the preceding assistant reply');
+  const readResultIndex = claudeRows.findIndex((row) => row.kind === 'tool_result' && row.metadata?.toolUseId === 'toolu_1');
+  assert.equal(claudeRows[readResultIndex]?.media?.[0]?.sha256, sha(OTHER), 'viewed image attaches to its archived tool_result');
+  const singleResultPage = read.archive('claude', 'claude_media', 'media_project', '2026-10-10T11:00:00.000Z', readResultIndex, 1).messages;
+  assert.equal(singleResultPage.length, 1, 'archive(limit=1) keeps strict page size');
+  assert.equal(singleResultPage[0]?.media?.[0]?.sha256, sha(OTHER), 'archive() attaches conversation_media');
   const all = media.list({ project_id: 'media_project' });
   assert.equal(all.total, 4, 'each image is listed once per conversation');
   assert.deepEqual(all.items.map((item) => [item.kind, item.name, item.mime]), [

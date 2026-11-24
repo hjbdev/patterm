@@ -110,7 +110,7 @@ export { HELD_QUEUE_EVENT_ID, type IntegratedDeliveryStatus, type IntegratedQueu
 export interface IntegratedConversationEvent {
   processId: string;
   revision: number;
-  kind: 'replace' | 'append' | 'status' | 'pending' | 'turn_boundary' | 'error' | 'reconnecting';
+  kind: 'replace' | 'append' | 'status' | 'pending' | 'tasks' | 'turn_boundary' | 'error' | 'reconnecting';
   message?: IntegratedConversationMessage | undefined;
   id?: string | undefined;
   delta?: string | undefined;
@@ -119,6 +119,9 @@ export interface IntegratedConversationEvent {
   parentId?: string | undefined;
   status?: IntegratedDeliveryStatus | undefined;
   detail?: string | undefined;
+  // Optional live running/pending background task count pushed by the host so
+  // idle hibernation sees task transitions immediately without an extra snapshot.
+  backgroundTasks?: number | undefined;
 }
 
 export type IntegratedConversationListener = (event: IntegratedConversationEvent) => void;

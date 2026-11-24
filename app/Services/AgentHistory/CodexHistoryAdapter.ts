@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { envValue } from '../../Platform/Environment';
 import type { HistoryFileFingerprint, HistorySourceCandidate, ParsedConversation, ParsedHistoryFile, ParsedMedia, ParsedMessage, ParsedRateLimit, ParsedRateLimitReading, ParsedUsage, ProviderHistoryAdapter } from './AgentHistoryTypes';
 import { defaultFileFingerprint, isoFromString, nonNegative, parsedImage, readJsonl, skillUsesFromMessages, statOnlyFingerprint, stringValue, textFromUnknown, walkFiles } from './HistoryAdapterUtils';
 
@@ -7,8 +8,8 @@ export class CodexHistoryAdapter implements ProviderHistoryAdapter {
   readonly provider = 'codex' as const;
   readonly parserVersion = 'codex-jsonl-v7';
 
-  defaultSources(homeDir: string): HistorySourceCandidate[] {
-    const sessions = path.join(homeDir, '.codex', 'sessions');
+  defaultSources(homeDir: string, env: NodeJS.ProcessEnv = {}): HistorySourceCandidate[] {
+    const sessions = path.join(envValue(env, 'CODEX_HOME') || path.join(homeDir, '.codex'), 'sessions');
     return [{ provider: this.provider, sourceKind: 'default', path: sessions, exists: fs.existsSync(sessions) }];
   }
 
