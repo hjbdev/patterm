@@ -52,7 +52,6 @@ export function startCodexHostSession(
   const clients = new Set<net.Socket>();
   const pendingServerRequests = new Map<string, string>();
   const latestTokenUsage = new Map<string, string>();
-  const latestRateLimits = new Map<string, string>();
   const mcpStartupFailures = new Map<string, string>();
   let sendAppServer: (line: string) => void = () => {};
   let server: net.Server | null = null;
@@ -83,7 +82,6 @@ export function startCodexHostSession(
         clients.add(socket);
         for (const line of pendingServerRequests.values()) socket.write(`${line}\n`);
         for (const line of latestTokenUsage.values()) socket.write(`${line}\n`);
-        for (const line of latestRateLimits.values()) socket.write(`${line}\n`);
         for (const line of mcpStartupFailures.values()) socket.write(`${line}\n`);
       };
       // A named pipe's default ACL lets every local user open it for reading but
@@ -179,10 +177,6 @@ export function startCodexHostSession(
     const params = message.params && typeof message.params === 'object' ? message.params as JsonRecord : {};
     if (message.method === 'thread/tokenUsage/updated' && typeof params.threadId === 'string') {
       latestTokenUsage.set(params.threadId, line);
-    } else if (message.method === 'account/rateLimits/updated') {
-      const rateLimits = params.rateLimits && typeof params.rateLimits === 'object' ? params.rateLimits as JsonRecord : {};
-      const key = typeof rateLimits.limitId === 'string' ? rateLimits.limitId : 'default';
-      latestRateLimits.set(key, line);
     } else if (message.method === 'mcpServer/startupStatus/updated') {
       const name = typeof params.name === 'string' ? params.name : typeof params.server === 'string' ? params.server : '';
       if (!name) return;

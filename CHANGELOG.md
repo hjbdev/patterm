@@ -19,13 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Persisted Codex mid-session model, effort, speed, Plan mode, answered plan,
     and post-compaction memory-refresh state across Patterm restarts and
     hibernation/wake, deduplicated concurrent Codex host connections, added a
-    duplicate-attach guard, and replayed Codex host token/quota/MCP telemetry on
-    reconnect.
+    duplicate-attach guard, and replayed Codex host thread token and MCP startup
+    telemetry on reconnect.
   - Parallelized OpenCode cold launches (version check with `/api/info`, bridge
-    and user MCP staging/connect, session creation/validation with MCP setup,
-    and snapshot goal reads).
+    and user MCP staging/connect, read-only resume validation with MCP setup,
+    resume model and instructions updates, and snapshot goal reads).
   - Added lightweight ACP/host mitigations: transient socket retry on startup,
-    8.5s configure RPC timeout with single-round-trip SQLite sync, graceful
+    8.5s configure RPC timeout with single-round-trip SQLite sync, fail-closed
     fallback for corrupt/retired saved settings, tracked socket teardown,
     Windows config cleanup on forced kills, and subscribe handshake timeout with
     deduplicated reconnect error events.

@@ -2251,41 +2251,41 @@ export class OpenCodeServerService implements AgentAdapter {
     }
     if (!(await this.versions(executable, cwd)).matched) await this.replaceStaleService(executable, cwd);
 
-    const prepareSession = async (): Promise<string> => {
-      let sessionId = input.resumeId;
-      if (sessionId) {
-        const existing = await this.api(executable, cwd, 'GET', `/api/session/${encodeURIComponent(sessionId)}`) as {
+    // Keep all mutating session writes strictly behind successful MCP bridge
+    // installation so a failed bridge never creates orphan sessions or mutates
+    // an existing session's model/instructions.
+    let sessionId = input.resumeId;
+    if (sessionId) {
+      const [, existing] = await Promise.all([
+        this.installMcp(executable, cwd, input.mcp, input.mcpServers ?? [], input.reconnectMcp === true),
+        this.api(executable, cwd, 'GET', `/api/session/${encodeURIComponent(sessionId)}`) as Promise<{
           data?: { location?: { directory?: string } };
-        };
-        if (!pathsMatch(existing.data?.location?.directory, cwd)) throw new Error('OpenCode session directory does not match the Patterm launch directory');
-        const instructionsRoute = `/api/experimental/session/${encodeURIComponent(sessionId)}/instructions/entries/patterm`;
-        if (selectedModel) {
-          await Promise.all([
-            this.api(executable, cwd, 'POST', `/api/session/${encodeURIComponent(sessionId)}/model`, { model: selectedModel }),
-            this.api(executable, cwd, 'PUT', instructionsRoute, { value: input.context })
-          ]);
-        } else {
-          await this.api(executable, cwd, 'PUT', instructionsRoute, { value: input.context });
-        }
-        return sessionId;
+        }>
+      ]);
+      if (!pathsMatch(existing.data?.location?.directory, cwd)) throw new Error('OpenCode session directory does not match the Patterm launch directory');
+      const instructionsRoute = `/api/experimental/session/${encodeURIComponent(sessionId)}/instructions/entries/patterm`;
+      if (selectedModel) {
+        await Promise.all([
+          this.api(executable, cwd, 'POST', `/api/session/${encodeURIComponent(sessionId)}/model`, { model: selectedModel }),
+          this.api(executable, cwd, 'PUT', instructionsRoute, { value: input.context })
+        ]);
+      } else {
+        await this.api(executable, cwd, 'PUT', instructionsRoute, { value: input.context });
       }
-      // An explicit title stops OpenCode generating one, so pass only a name
-      // the user chose.
-      const created = await this.api(executable, cwd, 'POST', '/api/session', {
-        ...(input.name ? { title: input.name } : {}),
-        location: { directory: cwd },
-        ...(selectedModel ? { model: selectedModel } : {})
-      }) as { data?: { id?: string } };
-      sessionId = created.data?.id ?? null;
-      if (!sessionId?.startsWith('ses')) throw new Error('OpenCode did not return a session ID');
-      await this.api(executable, cwd, 'PUT', `/api/experimental/session/${encodeURIComponent(sessionId)}/instructions/entries/patterm`, { value: input.context });
-      return sessionId;
-    };
+      return { resumeId: sessionId, argv: [executable], runtimeState: { executable } };
+    }
 
-    const [, sessionId] = await Promise.all([
-      this.installMcp(executable, cwd, input.mcp, input.mcpServers ?? [], input.reconnectMcp === true),
-      prepareSession()
-    ]);
+    await this.installMcp(executable, cwd, input.mcp, input.mcpServers ?? [], input.reconnectMcp === true);
+    // An explicit title stops OpenCode generating one, so pass only a name
+    // the user chose.
+    const created = await this.api(executable, cwd, 'POST', '/api/session', {
+      ...(input.name ? { title: input.name } : {}),
+      location: { directory: cwd },
+      ...(selectedModel ? { model: selectedModel } : {})
+    }) as { data?: { id?: string } };
+    sessionId = created.data?.id ?? null;
+    if (!sessionId?.startsWith('ses')) throw new Error('OpenCode did not return a session ID');
+    await this.api(executable, cwd, 'PUT', `/api/experimental/session/${encodeURIComponent(sessionId)}/instructions/entries/patterm`, { value: input.context });
     return { resumeId: sessionId, argv: [executable], runtimeState: { executable } };
   }
 

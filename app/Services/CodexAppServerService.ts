@@ -66,6 +66,7 @@ interface CodexRuntime {
   reasoning: string | null;
   serviceTier: string | null;
   modelExplicit: boolean;
+  reasoningExplicit: boolean;
   serviceTierExplicit: boolean;
   collaborationMode: CodexCollaborationMode;
   answeredPlanId: string | null;
@@ -463,7 +464,7 @@ export class CodexAppServerService implements AgentAdapter {
     if (!items.length) throw new Error('Message is empty');
     await this.adoptThreadSettings(processId, runtime, client);
     const model = this.models.get(processId) ?? runtime.model;
-    const effort = this.efforts.get(processId) ?? (this.models.has(processId) ? null : runtime.reasoning);
+    const effort = this.efforts.get(processId) ?? (this.models.has(processId) && !runtime.reasoningExplicit ? null : runtime.reasoning);
     const serviceTier = this.tiers.get(processId) ?? (runtime.serviceTierExplicit ? runtime.serviceTier ?? undefined : undefined);
     // The mode's settings take precedence over the turn's model and effort;
     // null instructions keep Codex's built-in ones for the mode.
@@ -987,7 +988,7 @@ export class CodexAppServerService implements AgentAdapter {
       selectors: [
         ...(models.length ? [{ id: 'model', label: 'Model', value: selectedModel, options: models }] : []),
         ...(efforts.length ? [{ id: 'effort', label: 'Thinking', value: this.efforts.get(processId)
-          ?? (this.models.has(processId) ? null : runtime.reasoning)
+          ?? (this.models.has(processId) && !runtime.reasoningExplicit ? null : runtime.reasoning)
           ?? String(selectedMetadata?.defaultReasoningEffort ?? efforts[0]!.value), options: efforts }] : []),
         ...(speeds.length ? [{ id: 'speed', label: 'Speed', value: tierValue(this.tiers.get(processId)) ?? tierValue(runtime.serviceTier)
           ?? tierValue(configTier) ?? tierValue(selectedMetadata?.defaultServiceTier) ?? 'default', options: speeds }] : []),
@@ -1012,12 +1013,17 @@ export class CodexAppServerService implements AgentAdapter {
   // on the thread, so those are the starting point instead. A failed read
   // keeps the launch settings.
   private async adoptThreadSettings(processId: string, runtime: CodexRuntime, client: CodexRpcClient): Promise<void> {
+    if (runtime.reasoningExplicit && runtime.reasoning && !this.efforts.has(processId)) {
+      this.efforts.set(processId, runtime.reasoning);
+    }
     if (this.models.has(processId) || runtime.modelExplicit) return;
     const response = await client.request('thread/read', { threadId: runtime.threadId, includeTurns: false }).catch(() => null);
     const thread = record(record(response).thread);
     if (this.models.has(processId) || typeof thread.model !== 'string' || !thread.model) return;
     this.models.set(processId, thread.model);
-    if (typeof thread.reasoningEffort === 'string' && thread.reasoningEffort && !this.efforts.has(processId)) this.efforts.set(processId, thread.reasoningEffort);
+    if (typeof thread.reasoningEffort === 'string' && thread.reasoningEffort && !this.efforts.has(processId) && !runtime.reasoningExplicit) {
+      this.efforts.set(processId, thread.reasoningEffort);
+    }
   }
 
   // The model catalogue is treated as fixed for one connection. A restarted
@@ -1117,7 +1123,7 @@ export class CodexAppServerService implements AgentAdapter {
       this.models.set(processId, value);
       this.efforts.delete(processId);
       this.database.connection.prepare('update sessions set model = ?, reasoning = null where id = ?').run(value, runtime.sessionId);
-      this.persistAdapterData(processId, { modelExplicit: true });
+      this.persistAdapterData(processId, { modelExplicit: true, reasoningExplicit: false });
     } else if (selector === 'speed') {
       this.tiers.set(processId, value);
       this.database.connection.prepare('update sessions set service_tier = ? where id = ?').run(value, runtime.sessionId);
@@ -1125,6 +1131,7 @@ export class CodexAppServerService implements AgentAdapter {
     } else {
       this.efforts.set(processId, value);
       this.database.connection.prepare('update sessions set reasoning = ? where id = ?').run(value, runtime.sessionId);
+      this.persistAdapterData(processId, { reasoningExplicit: true });
     }
   }
 
@@ -1519,6 +1526,7 @@ export class CodexAppServerService implements AgentAdapter {
       reasoning: row.reasoning,
       serviceTier: row.service_tier,
       modelExplicit: adapter.modelExplicit === true,
+      reasoningExplicit: adapter.reasoningExplicit === true,
       serviceTierExplicit: adapter.serviceTierExplicit === true,
       collaborationMode: adapter.collaborationMode === 'plan' ? 'plan' : 'default',
       answeredPlanId: typeof adapter.answeredPlanId === 'string' ? adapter.answeredPlanId : null,

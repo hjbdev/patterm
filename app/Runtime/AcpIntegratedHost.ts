@@ -767,7 +767,10 @@ async function start(): Promise<void> {
     try {
       saved = readAcpSettings(config.settingsDirectory, sessionId);
     } catch (error) {
-      replace({ id: randomUUID(), role: 'assistant', kind: 'notice', level: 'warning', text: `Saved Antigravity settings could not be read and were reset (${error instanceof Error ? error.message : String(error)}).` });
+      // Fail closed on unreadable saved settings so a resumed Auto session
+      // cannot silently auto-approve MCP calls after an Ask policy was lost.
+      saved = { mcpPolicy: 'ask' };
+      replace({ id: randomUUID(), role: 'assistant', kind: 'notice', level: 'warning', text: `Saved Antigravity settings could not be read and were reset to ask for MCP approvals (${error instanceof Error ? error.message : String(error)}).` });
     }
   }
   savedSettings = JSON.stringify(saved);
