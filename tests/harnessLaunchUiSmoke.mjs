@@ -185,10 +185,9 @@ test('a launch view that cannot load still opens the agent, unless the user move
   } finally { app.unmount(); delete globalThis.window; fs.unlinkSync(output); }
 });
 
-test('menu and empty-state handlers submit every launch with click-time arguments', () => {
+test('menu handlers submit every launch with click-time arguments', () => {
   const calls = [];
   const menu = fs.readFileSync('resources/js/Components/LaunchAgentMenu.vue', 'utf8');
-  const empty = fs.readFileSync('resources/js/Components/AgentEmptyState.vue', 'utf8');
   function handler(page, values) {
     const parsed = ts.createSourceFile('launch.ts', page.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1], ts.ScriptTarget.Latest, true);
     const fn = parsed.statements.find(statement => ts.isFunctionDeclaration(statement) && statement.name?.text === 'launchHarness').getText(parsed);
@@ -210,8 +209,4 @@ test('menu and empty-state handlers submit every launch with click-time argument
   assert.equal(calls[2].preset, 'smarty');
   assert.equal(calls[2].initialPrompt, 'Review PR 126');
   assert.equal(calls[3].initialPrompt, undefined);
-  const emptyLaunch = handler(empty, { props, startHarness: input => calls.push(input) });
-  emptyLaunch('opencode'); emptyLaunch('claude');
-  assert.equal(calls.length, 6);
-  assert.equal(calls[5].projectId, 'p2');
 });

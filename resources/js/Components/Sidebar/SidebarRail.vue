@@ -2,7 +2,7 @@
   <!-- The collapsed sidebar: one button per tab. Hovering one shows what it's doing. -->
   <div class="flex h-full min-h-0 w-12 flex-col items-center">
     <div class="flex shrink-0 flex-col items-center gap-0.5 py-0.5">
-      <LaunchAgentMenu :project-id="sidebar.projectId.value" :choose-project="sidebar.allAgents.value" />
+      <LaunchAgentMenu :project-id="sidebar.projectId.value" :choose-project="sidebar.allAgents.value" pointable />
     </div>
     <div ref="list" class="flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-y-auto overflow-x-hidden py-1 [scrollbar-width:none]">
       <HarnessLaunchTabs v-for="projectId in sidebar.shownProjectIds.value" :key="projectId" :project-id="projectId" vertical compact />

@@ -85,6 +85,9 @@ function createHarness({ processId = 'composer_test', provider = 'codex', agents
       return id;
     },
     clearTimeout: id => { timers.delete(id); },
+    composerPlace: () => null,
+    flipComposer: () => null,
+    takeComposerHandoff: () => null,
     ...composer
   };
   const setup = new Function(...Object.keys(bindings), `${outputText}

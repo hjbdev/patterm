@@ -412,7 +412,7 @@ export class WebServer {
       return;
     }
     const pathname = decodeURIComponent(url.pathname);
-    const isPage = /^\/(?:settings|usage|routines(?:\/log)?)\/?$/.test(pathname) || /^\/projects(?:\/[^/]+(?:\/(?:worktrees|history|media|library|(?:todos|scratchpads)(?:\/[^/]+)?|processes\/[^/]+|bots\/[^/]+|agents\/[^/]+(?:\/diffs)?))?)?\/?$/.test(pathname);
+    const isPage = /^\/(?:settings|usage|routines(?:\/log)?)\/?$/.test(pathname) || /^\/projects(?:\/[^/]+(?:\/(?:worktrees|history|media|library|(?:todos|scratchpads)(?:\/[^/]+)?|processes\/[^/]+|bots\/[^/]+|agents\/[^/]+(?:\/diffs)?|new))?)?\/?$/.test(pathname);
     const relative = isPage ? 'index.html' : pathname.replace(/^\/+/, '') || 'index.html';
     const filename = path.resolve(this.options.rendererPath, relative);
     if (!filename.startsWith(path.resolve(this.options.rendererPath) + path.sep)) {

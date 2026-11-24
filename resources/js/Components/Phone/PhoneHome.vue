@@ -14,7 +14,7 @@
             <span v-if="updateAvailable" class="absolute right-1.5 top-2.5 h-1.5 w-1.5 rounded-full bg-primary" aria-label="An update is available" />
           </RouterLink>
           <span class="flex-1" />
-          <LaunchAgentMenu :project-id="sidebar.projectId.value" :choose-project="sidebar.allAgents.value" trigger-class="h-11 w-11 !rounded-full bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground [&_svg]:h-5 [&_svg]:w-5" />
+          <LaunchAgentMenu :project-id="sidebar.projectId.value" :choose-project="sidebar.allAgents.value" pointable trigger-class="h-11 w-11 !rounded-full bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground [&_svg]:h-5 [&_svg]:w-5" />
         </div>
       </template>
     </SidebarList>

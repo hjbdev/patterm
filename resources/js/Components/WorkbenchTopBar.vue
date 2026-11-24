@@ -122,6 +122,7 @@
           <DropdownMenuContent align="end" class="w-56">
             <DropdownMenuItem class="text-[14px]" @select="emit('routines')"><CalendarClock class="mr-2 h-4 w-4 text-muted-foreground" />Scheduled</DropdownMenuItem>
             <DropdownMenuItem class="text-[14px]" @select="emit('usage')"><Gauge class="mr-2 h-4 w-4 text-muted-foreground" />Usage</DropdownMenuItem>
+            <GetStartedMenuItem />
             <DropdownMenuSeparator />
             <DropdownMenuItem class="text-[14px]" @select="emit('settings')">
               <Settings class="mr-2 h-4 w-4 text-muted-foreground" /><span class="flex-1">Settings</span>
@@ -149,6 +150,7 @@
 import HostBadge from './HostBadge.vue';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { CalendarClock, ChevronDown, Ellipsis, Gauge, Layers, LayoutGrid, Plus, Search, Settings } from 'lucide-vue-next';
+import GetStartedMenuItem from './GetStartedMenuItem.vue';
 import NewProjectDialog from './NewProjectDialog.vue';
 import StatusIcon from './StatusIcon.vue';
 import { activityIcon } from '../lib/statusIcons';

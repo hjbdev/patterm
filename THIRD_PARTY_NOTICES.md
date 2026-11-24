@@ -6526,7 +6526,7 @@ SOFTWARE.
 
 ## MIT
 
-- Lobe Icons (copied source). resources/js/assets/agents/claude-code.svg, codex.svg, and opencode.svg come from it unmodified. The names and logos are trademarks of their owners.
+- Lobe Icons (copied source). resources/js/assets/agents/antigravity.svg, claude-code.svg, codex.svg, and opencode.svg come from it unmodified. The names and logos are trademarks of their owners.
 
 ```text
 MIT License

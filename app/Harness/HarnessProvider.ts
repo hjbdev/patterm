@@ -14,6 +14,24 @@ export interface McpServerSpec {
   httpProxyUrl?: string;
 }
 
+export type HarnessSignIn = 'signed_in' | 'signed_out' | 'unknown';
+
+export interface SignInCheckResult {
+  code: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+// Asks the CLI itself whether it is signed in. parse() keeps only that answer:
+// several CLIs also print the account's email and organisation.
+export interface SignInCheck {
+  args: string[];
+  parse(result: SignInCheckResult): HarnessSignIn;
+  // The CLI also works without saved credentials, such as with an API key in
+  // the environment or bundled models, so signed_out is only a hint.
+  optional?: boolean;
+}
+
 export interface HarnessProvider {
   readonly id: HarnessId;
   readonly displayName: string;
@@ -23,6 +41,10 @@ export interface HarnessProvider {
   // parseVersion() against combined stdout+stderr.
   readonly versionArgs: string[] | null;
   parseVersion(output: string): string | null;
+  // The official install page, and what to run in a terminal to sign in.
+  readonly installUrl?: string;
+  readonly signInCommand?: string;
+  readonly signInCheck?: SignInCheck;
 }
 
 const SEMVER = /\bv?(\d+\.\d+\.\d+(?:[-+.][0-9A-Za-z.-]+)?)\b/;

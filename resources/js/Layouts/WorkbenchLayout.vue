@@ -61,12 +61,17 @@
               @select-process="selectAgentProcess"
             />
             <HarnessLaunchTabs v-for="projectId in shownProjectIds" :key="projectId" :project-id="projectId" />
-            <div class="flex shrink-0 items-center">
+            <!-- A pixel in from the strip's edge, which would clip the +'s focus ring. -->
+            <div class="flex shrink-0 items-center pl-px">
               <AllAgentsOptions v-if="showingAll" />
-              <LaunchAgentMenu
-                :project-id="activeProject.project.id"
-                :choose-project="showingAll"
-              />
+              <!-- The open new conversation shows as a tab of its own. -->
+              <Button v-if="route.name === 'newConversation'" variant="ghost" size="sm" class="h-7 w-56 shrink-0 justify-start gap-2 rounded-tab bg-primary/10 text-[13px]" aria-current="page">
+                <SquarePen class="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <span class="truncate">New conversation</span>
+              </Button>
+              <Button variant="ghost" size="icon" :class="cn('h-7 w-7 rounded-tab text-muted-foreground', launchPointed && 'launch-pulse')" title="New conversation" aria-label="New conversation" @click="openNewConversation">
+                <Plus class="h-4 w-4" />
+              </Button>
             </div>
           </div>
         </template>
@@ -108,6 +113,8 @@
             </RouterView>
           </div>
         </template>
+        <!-- Tabs mode has no sidebar to dock Get started in. -->
+        <GetStarted v-if="loaded && !sidebarMode && !mobile" placement="floating" class="absolute bottom-3 left-3 z-40 w-[300px] max-w-[calc(100%-1.5rem)] shadow-lg shadow-black/40" />
         <div
           v-if="navigationMode"
           role="status"
@@ -142,7 +149,10 @@ import { tabSnoozed } from '../lib/snooze';
 import { projectSnoozed } from '../lib/projectSnooze';
 import { showSnoozed } from '../Composables/useSnooze';
 import CommandPalette from '../Components/CommandPalette.vue';
-import LaunchAgentMenu from '../Components/LaunchAgentMenu.vue';
+import { Plus, SquarePen } from 'lucide-vue-next';
+import { launchPointed } from '../lib/launchPointer';
+import { cn } from '../lib/utils';
+import { Button } from '../Components/ui/button';
 import HarnessLaunchTabs from '../Components/HarnessLaunchTabs.vue';
 import TabStrip from '../Components/TabStrip.vue';
 import WorkbenchTopBar from '../Components/WorkbenchTopBar.vue';
@@ -152,6 +162,7 @@ import WorkspaceSearchDialog from '../Components/WorkspaceSearchDialog.vue';
 import SidebarDialogs from '../Components/Sidebar/SidebarDialogs.vue';
 import SidebarProjectDock from '../Components/Sidebar/SidebarProjectDock.vue';
 import WorkbenchSidebar from '../Components/Sidebar/WorkbenchSidebar.vue';
+import GetStarted from '../Components/GetStarted.vue';
 import { phoneLayout } from '../lib/phoneLayout';
 import { provideSidebarContext } from '../Components/Sidebar/sidebarContext';
 import { TooltipProvider } from '../Components/ui/tooltip';
@@ -221,6 +232,10 @@ const phonePage = computed(() => {
       : { name: 'library', params: { projectId } };
   return { title, up };
 });
+
+function openNewConversation(): void {
+  if (activeProjectId.value) void router.push({ name: 'newConversation', params: { projectId: activeProjectId.value } });
+}
 
 function openSettings(): void {
   void router.push({ name: 'settings' });

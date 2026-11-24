@@ -14,7 +14,7 @@
         <div class="relative min-h-0 flex-1">
         <!-- The transcript fades in under the header rather than meeting it at a hard edge. -->
         <div v-if="integratedAgent && selectedAgent" class="pointer-events-none absolute inset-x-0 top-0 z-10 h-8 bg-gradient-to-b from-background to-transparent" aria-hidden="true" />
-        <IntegratedConversation v-if="pageActive && integratedAgent" :process-id="integratedAgent.processId" :project-id="activeProject?.project.id ?? null" :project-path="activeProject?.project.path ?? null" :exited="integratedAgent.exited" :restartable="selectedAgent?.sessionRole === 'orchestrator' && selectedAgent?.processStatus !== 'closed'" :mention-agents="mentionAgents" :mention-bots="mentionBots" :mention-processes="mentionProcesses" :mention-launchers="mentionLaunchers" :close-request="selectedAgent?.closeRequest" :snooze="selectedAgent?.snooze" :close-subagents="closeSubagents" class="h-full" @launched="selectLaunchedAgent" />
+        <IntegratedConversation v-if="pageActive && integratedAgent" :process-id="integratedAgent.processId" :project-id="activeProject?.project.id ?? null" :project-path="activeProject?.project.path ?? null" :exited="integratedAgent.exited" :restartable="selectedAgent?.sessionRole === 'orchestrator' && selectedAgent?.processStatus !== 'closed'" :mention-agents="mentionAgents" :mention-bots="mentionBots" :mention-processes="mentionProcesses" :mention-launchers="mentionLaunchers" :close-request="selectedAgent?.closeRequest" :snooze="selectedAgent?.snooze" :close-subagents="closeSubagents" :harness="selectedAgent?.harness ?? null" :first-prompt-pending="selectedAgent ? harnessLaunches.promptedSessions.has(selectedAgent.id) : false" class="h-full" @launched="selectLaunchedAgent" />
         <!-- Hidden rather than unmounted so switching back skips renderer setup. A null ID detaches the PTY. -->
         <TerminalPane v-show="!integratedAgent" ref="terminalPane" title="Terminal" :process-id="!pageActive || integratedAgent ? null : activeTerminalId" :capture-enabled="!!activeProject" @capture-selection="capture" />
         </div>
@@ -25,9 +25,9 @@
         <PeekPane v-model:peek="peek" :project-id="activeProject!.project.id" :session-id="selectedAgent.id" :process-id="selectedAgent.processId" :summary="selectedAgent.summary" :can-summarize="!selectedAgent.parentId" :active-worktree-id="diffWorktree?.id ?? null" @open-worktree="openWorktree" @close="close" />
       </aside>
     </div>
-    <div v-else-if="route.name !== 'project'" class="p-5 text-sm text-muted-foreground">This terminal is no longer available. Select another tab or launch an agent.</div>
-    <div v-else-if="activeProject" class="flex min-h-0 flex-1 overflow-auto p-5">
-      <AgentEmptyState :project-id="activeProject.project.id" :project-name="activeProject.project.name" :remote="Boolean(activeProject.project.host)" :harnesses="harnesses" :choose-project="allAgents.active" />
+    <div v-else-if="route.name !== 'project' && route.name !== 'newConversation'" class="p-5 text-sm text-muted-foreground">This terminal is no longer available. Select another tab or launch an agent.</div>
+    <div v-else-if="activeProject" class="flex min-h-0 flex-1">
+      <NewConversation :project-id="activeProject.project.id" :choose-project="allAgents.active" />
     </div>
     <!-- Over a narrow workspace the peek is a sheet, and on a phone it fills the screen. -->
     <Sheet :open="sheetOpen" @update:open="open => { if (!open) close() }">
@@ -52,7 +52,8 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue';
 defineOptions({ name: 'TerminalPage' });
-import AgentEmptyState from '../Components/AgentEmptyState.vue';
+import NewConversation from '../Components/NewConversation.vue';
+import { harnessLaunches } from '../lib/harnessLaunches';
 import { allAgents } from '../lib/allAgents';
 import IntegratedConversation from '../Components/IntegratedConversation.vue';
 import TerminalPane from '../Components/TerminalPane.vue';

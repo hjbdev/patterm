@@ -4,7 +4,7 @@
       <Button
         :variant="label ? 'secondary' : 'ghost'"
         :size="label ? 'sm' : 'icon'"
-        :class="cn(label ? 'h-7 gap-2 px-2 text-xs' : 'h-7 w-7 rounded-tab text-muted-foreground', triggerClass)"
+        :class="cn(label ? 'h-7 gap-2 px-2 text-xs' : 'h-7 w-7 rounded-tab text-muted-foreground', triggerClass, pointed && 'launch-pulse')"
         :title="label ?? 'Start an agent'"
         :aria-label="label ?? 'Start an agent'"
       >
@@ -110,6 +110,7 @@ import { toast } from 'vue-sonner';
 import { useHarnessLaunch } from '../Composables/useHarnessLaunch';
 import { useWorkbench } from '../Composables/useWorkbench';
 import { harnessLabel, launchableHarnesses as filterLaunchableHarnesses } from '../lib/harnesses';
+import { launchPointed } from '../lib/launchPointer';
 import { phoneLayout } from '../lib/phoneLayout';
 import { modelDisplayName } from '../lib/profileFields';
 import { composedRow, rosterRows, type ModelLabel, type ProfileSettings, type RosterRow } from '../lib/profiles';
@@ -130,7 +131,9 @@ interface ModelCatalog { providers: Record<string, { models: Array<{ id: string;
 
 // `chooseProject` picks the project from the footer, among the shown ones,
 // instead of using `projectId`.
-const props = defineProps<{ projectId: string; label?: string; chooseProject?: boolean; triggerClass?: string }>();
+// pointable: Get started's Show button may point at this +.
+const props = defineProps<{ projectId: string; label?: string; chooseProject?: boolean; triggerClass?: string; pointable?: boolean }>();
+const pointed = computed(() => Boolean(props.pointable) && launchPointed.value);
 const emit = defineEmits<{ started: [] }>();
 const router = useRouter();
 const { launchHarness: startHarness } = useHarnessLaunch();
