@@ -11,7 +11,9 @@ export class GetUsageSummaryAction {
 
   async execute(raw: unknown) {
     const { days } = usageSummaryInput.parse(raw ?? {});
-    await this.quotas?.refresh();
-    return this.usage.summary(days);
+    // The Antigravity CLI takes seconds to report its quota. Its windows are
+    // stored when it answers and appear on the page's next poll.
+    void this.quotas?.refresh();
+    return this.usage.cachedSummary(days);
   }
 }
